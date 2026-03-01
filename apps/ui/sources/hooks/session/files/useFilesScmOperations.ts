@@ -36,6 +36,7 @@ import { showScmCommitMessageEditorModal } from '@/components/sessions/files/com
 import { generateScmCommitMessage } from '@/scm/operations/commitMessageGenerator';
 import { tryShowDaemonUnavailableAlertForScmOperationFailure } from '@/scm/operations/scmDaemonUnavailableAlert';
 import { useMountedRef } from '@/hooks/ui/useMountedRef';
+import { buildCommitSelectionPathHints } from '@/scm/operations/commitSelectionHints';
 
 export function useFilesScmOperations(input: {
     sessionId: string;
@@ -78,17 +79,41 @@ export function useFilesScmOperations(input: {
     const scmCommitMessageGeneratorBackendId = useSetting('scmCommitMessageGeneratorBackendId');
     const scmCommitMessageGeneratorInstructions = useSetting('scmCommitMessageGeneratorInstructions');
     const commitSelectionPathHints = React.useMemo(() => {
-        const selected = new Set<string>();
-        for (const path of commitSelectionPaths) {
-            const normalized = path.trim();
-            if (normalized) selected.add(normalized);
-        }
-        for (const patch of commitSelectionPatches) {
-            const normalized = patch.path.trim();
-            if (normalized) selected.add(normalized);
-        }
-        return Array.from(selected).sort((a, b) => a.localeCompare(b));
+        return buildCommitSelectionPathHints({
+            commitSelectionPaths,
+            commitSelectionPatches,
+        });
     }, [commitSelectionPatches, commitSelectionPaths]);
+
+    const commitMessageGeneratorBackendId = React.useMemo(() => {
+        return typeof scmCommitMessageGeneratorBackendId === 'string' && scmCommitMessageGeneratorBackendId.trim().length > 0
+            ? scmCommitMessageGeneratorBackendId.trim()
+            : 'claude';
+    }, [scmCommitMessageGeneratorBackendId]);
+
+    const generateCommitMessageSuggestion = React.useCallback(async () => {
+        if (!sessionId) return { ok: false as const, error: t('files.commitMessageEditor.generateFailed') };
+        if (scmCommitMessageGeneratorEnabled !== true) {
+            return { ok: false as const, error: t('files.commitMessageEditor.generatorDisabled') };
+        }
+
+        const res = await generateScmCommitMessage({
+            sessionId,
+            backendId: commitMessageGeneratorBackendId,
+            instructions: typeof scmCommitMessageGeneratorInstructions === 'string'
+                ? scmCommitMessageGeneratorInstructions
+                : undefined,
+            scopePaths: commitSelectionPathHints,
+        });
+        if (!res.ok) return { ok: false as const, error: res.error };
+        return { ok: true as const, message: res.message };
+    }, [
+        commitMessageGeneratorBackendId,
+        commitSelectionPathHints,
+        scmCommitMessageGeneratorEnabled,
+        scmCommitMessageGeneratorInstructions,
+        sessionId,
+    ]);
 
     const commitPreflight = React.useMemo(
         () =>
@@ -101,6 +126,10 @@ export function useFilesScmOperations(input: {
                 commitSelectionPaths: commitSelectionPathHints,
             }),
         [commitSelectionPathHints, scmCommitStrategy, scmSnapshot, scmWriteEnabled, sessionPath]
+    );
+    const commitPreflightBlockedMessage = React.useMemo(
+        () => (commitPreflight.allowed ? null : commitPreflight.message),
+        [commitPreflight]
     );
     const pullPreflight = React.useMemo(
         () =>
@@ -295,56 +324,27 @@ export function useFilesScmOperations(input: {
         sessionPath,
     ]);
 
-    const createCommit = React.useCallback(async () => {
-        const preflight = evaluateScmOperationPreflight({
-            intent: 'commit',
-            scmWriteEnabled,
-            sessionPath,
-            snapshot: scmSnapshot,
-            commitStrategy: scmCommitStrategy,
-            commitSelectionPaths: commitSelectionPathHints,
-        });
-        if (!preflight.allowed) {
+    const createCommitFromMessage = React.useCallback(async (commitMessage: string) => {
+        if (!commitPreflight.allowed) {
             trackBlockedScmOperation({
                 operation: 'commit',
                 reason: 'preflight',
-                message: preflight.message,
+                message: commitPreflight.message,
                 surface: 'files',
                 tracking,
             });
-            Modal.alert(t('common.error'), preflight.message);
-            return;
+            Modal.alert(t('common.error'), commitPreflight.message);
+            return { ok: false } as const;
         }
-        if (!sessionPath) return;
+        if (!sessionPath) return { ok: false } as const;
 
-        const backendId =
-            typeof scmCommitMessageGeneratorBackendId === 'string' && scmCommitMessageGeneratorBackendId.trim().length > 0
-                ? scmCommitMessageGeneratorBackendId.trim()
-                : 'claude';
-
-        const rawMessage = await showScmCommitMessageEditorModal({
-            title: 'Create commit',
-            canGenerate: scmCommitMessageGeneratorEnabled === true,
-            onGenerate: async () => {
-                const res = await generateScmCommitMessage({
-                    sessionId,
-                    backendId,
-                    instructions: typeof scmCommitMessageGeneratorInstructions === 'string'
-                        ? scmCommitMessageGeneratorInstructions
-                        : undefined,
-                    scopePaths: commitSelectionPathHints,
-                });
-                if (!res.ok) return { ok: false, error: res.error };
-                return { ok: true, message: res.message };
-            },
-        });
-        const validation = validateCommitMessage(rawMessage ?? '');
+        const validation = validateCommitMessage(commitMessage ?? '');
         if (!validation.ok) {
             Modal.alert(t('common.error'), validation.message);
-            return;
+            return { ok: false } as const;
         }
 
-        await executeScmCommit({
+        const result = await executeScmCommit({
             sessionId,
             commitMessage: validation.message,
             scmCommitStrategy,
@@ -359,22 +359,59 @@ export function useFilesScmOperations(input: {
             tracking,
             shouldContinue: () => mountedRef.current,
         });
+        return result;
     }, [
-        scmCommitMessageGeneratorBackendId,
-        scmCommitMessageGeneratorEnabled,
-        scmCommitMessageGeneratorInstructions,
-        commitSelectionPathHints,
+        commitPreflight.allowed,
+        commitPreflightBlockedMessage,
         commitSelectionPatches,
         commitSelectionPaths,
         scmCommitStrategy,
-        scmSnapshot,
-        scmWriteEnabled,
         loadCommitHistory,
         sessionId,
         sessionPath,
         mountedRef,
         setScmOperationBusySafe,
         setScmOperationStatusSafe,
+        tracking,
+    ]);
+
+    const createCommit = React.useCallback(async () => {
+        if (!commitPreflight.allowed) {
+            trackBlockedScmOperation({
+                operation: 'commit',
+                reason: 'preflight',
+                message: commitPreflight.message,
+                surface: 'files',
+                tracking,
+            });
+            Modal.alert(t('common.error'), commitPreflight.message);
+            return;
+        }
+        if (!sessionPath) return;
+
+        const rawMessage = await showScmCommitMessageEditorModal({
+            title: 'Create commit',
+            canGenerate: scmCommitMessageGeneratorEnabled === true,
+            onGenerate: async () => {
+                const res = await generateCommitMessageSuggestion();
+                if (!res.ok) return { ok: false, error: res.error };
+                return { ok: true, message: res.message };
+            },
+        });
+
+        await createCommitFromMessage(rawMessage ?? '');
+    }, [
+        commitPreflight.allowed,
+        commitPreflightBlockedMessage,
+        commitSelectionPathHints,
+        createCommitFromMessage,
+        scmCommitMessageGeneratorBackendId,
+        scmCommitMessageGeneratorEnabled,
+        scmCommitMessageGeneratorInstructions,
+        sessionId,
+        sessionPath,
+        tracking,
+        generateCommitMessageSuggestion,
     ]);
 
     return {
@@ -385,5 +422,8 @@ export function useFilesScmOperations(input: {
         pushPreflight,
         runRemoteOperation,
         createCommit,
+        createCommitFromMessage,
+        commitMessageGeneratorEnabled: scmCommitMessageGeneratorEnabled === true,
+        generateCommitMessageSuggestion,
     };
 }

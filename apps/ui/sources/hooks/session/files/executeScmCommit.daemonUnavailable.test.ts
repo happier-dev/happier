@@ -45,7 +45,7 @@ describe('executeScmCommit (daemon unavailable)', () => {
 
     const { executeScmCommit } = await import('./executeScmCommit');
 
-    await executeScmCommit({
+    const result = await executeScmCommit({
       sessionId: 's1',
       commitMessage: 'feat: test',
       scmCommitStrategy: 'git_staging',
@@ -57,6 +57,7 @@ describe('executeScmCommit (daemon unavailable)', () => {
       tracking: null,
     });
 
+    expect(result.ok).toBe(false);
     expect(modalAlert).toHaveBeenCalled();
     const [title, message, buttons] = modalAlert.mock.calls[0] ?? [];
     expect(title).toBe('errors.daemonUnavailableTitle');
@@ -77,7 +78,7 @@ describe('executeScmCommit (daemon unavailable)', () => {
 
     const { executeScmCommit } = await import('./executeScmCommit');
 
-    await executeScmCommit({
+    const result = await executeScmCommit({
       sessionId: 's1',
       commitMessage: 'feat: test',
       scmCommitStrategy: 'git_staging',
@@ -88,8 +89,9 @@ describe('executeScmCommit (daemon unavailable)', () => {
       setScmOperationStatus: vi.fn(),
       tracking: null,
       shouldContinue: () => false,
-    } as any);
+    });
 
+    expect(result.ok).toBe(false);
     const [_title, _message, buttons] = modalAlert.mock.calls[0] ?? [];
     const retry = (buttons as any[]).find((b) => b?.text === 'common.retry');
     expect(retry).toBeTruthy();

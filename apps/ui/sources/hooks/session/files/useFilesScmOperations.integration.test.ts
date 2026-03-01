@@ -221,6 +221,57 @@ describe('useFilesScmOperations integration', () => {
         });
     });
 
+    it('creates a commit from an explicit draft message without opening the modal editor', async () => {
+        const workspace = mkdtempSync(join(tmpdir(), 'happier-ui-hook-draftcommit-'));
+        initRepo(workspace);
+        writeFileSync(join(workspace, 'a.txt'), 'base\n');
+        git(workspace, ['add', 'a.txt']);
+        git(workspace, ['commit', '-m', 'base']);
+
+        writeFileSync(join(workspace, 'a.txt'), 'base\nupdate\n');
+        git(workspace, ['add', 'a.txt']);
+
+        const sessionId = 'session-hook-draft-1';
+        storage.getState().applySessions([createSession(sessionId, workspace) as any]);
+        mockSessionRPC.mockImplementation(createGitSessionRpcHarness(workspace));
+
+        const snapshotResponse = await sessionScmStatusSnapshot(sessionId, {});
+        expect(snapshotResponse.success).toBe(true);
+        if (!snapshotResponse.success || !snapshotResponse.snapshot) {
+            throw new Error('expected git snapshot');
+        }
+
+        const refreshScmData = vi.fn(async () => {});
+        const loadCommitHistory = vi.fn(async () => {});
+
+        const hook = mountHook({
+            sessionId,
+            sessionPath: workspace,
+            scmSnapshot: normalizeWorkingSnapshotForUi(snapshotResponse.snapshot, `local:${workspace}`),
+            scmWriteEnabled: true,
+            scmCommitStrategy: 'git_staging',
+            scmRemoteConfirmPolicy: 'always',
+            scmPushRejectPolicy: 'prompt_fetch',
+            refreshScmData,
+            loadCommitHistory,
+        });
+
+        await act(async () => {
+            const current = hook.getCurrent();
+            await current.createCommitFromMessage('feat: draft commit');
+        });
+
+        expect(git(workspace, ['log', '-1', '--pretty=%s'])).toBe('feat: draft commit');
+        expect(showScmCommitMessageEditorModal).not.toHaveBeenCalled();
+        expect(modalAlert).not.toHaveBeenCalled();
+        expect(invalidateFromMutationAndAwait).toHaveBeenCalledTimes(1);
+        expect(loadCommitHistory).toHaveBeenCalledWith({ reset: true });
+
+        act(() => {
+            hook.unmount();
+        });
+    });
+
     it('does not auto-run commit message generation when opening commit editor (Generate must be explicit)', async () => {
         const workspace = mkdtempSync(join(tmpdir(), 'happier-ui-hook-commitgen-'));
         initRepo(workspace);
