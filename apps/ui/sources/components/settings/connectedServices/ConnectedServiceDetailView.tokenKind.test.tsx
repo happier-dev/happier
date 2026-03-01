@@ -5,6 +5,9 @@ import { describe, expect, it, vi } from 'vitest';
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 const backSpy = vi.fn();
+const promptSpy = vi.fn<() => Promise<string | null>>(async () => null);
+const alertSpy = vi.fn(async () => {});
+const storeCredentialSpy = vi.fn(async () => {});
 
 vi.mock('expo-router', () => ({
   useRouter: () => ({ back: backSpy, push: vi.fn() }),
@@ -17,8 +20,8 @@ vi.mock('@/auth/context/AuthContext', () => ({
 
 vi.mock('@/modal', () => ({
   Modal: {
-    prompt: vi.fn(async () => null),
-    alert: vi.fn(async () => {}),
+    prompt: promptSpy,
+    alert: alertSpy,
     confirm: vi.fn(async () => false),
   },
 }));
@@ -53,7 +56,7 @@ vi.mock('@/sync/sync', () => ({
 }));
 
 vi.mock('@/sync/domains/connectedServices/storeConnectedServiceCredentialForAccount', () => ({
-  storeConnectedServiceCredentialForAccount: vi.fn(async () => {}),
+  storeConnectedServiceCredentialForAccount: storeCredentialSpy,
   deleteConnectedServiceCredentialForAccount: vi.fn(async () => {}),
 }));
 
@@ -65,6 +68,31 @@ vi.mock('@/components/ui/lists/ItemRowActions', () => {
 });
 
 describe('ConnectedServiceDetailView token kind copy', () => {
+  it('keeps user on detail page after setup-token is saved', async () => {
+    promptSpy.mockReset();
+    alertSpy.mockReset();
+    backSpy.mockReset();
+    storeCredentialSpy.mockReset();
+    promptSpy.mockResolvedValueOnce('work');
+    promptSpy.mockResolvedValueOnce('setup-token-1');
+
+    const { ConnectedServiceDetailView } = await import('./ConnectedServiceDetailView');
+
+    let tree!: renderer.ReactTestRenderer;
+    await act(async () => {
+      tree = renderer.create(<ConnectedServiceDetailView />);
+    });
+
+    const tokenItem = tree.root.find((n) => n.props?.testID === 'connected-services-action:connect-token');
+    await act(async () => {
+      await tokenItem.props.onPress?.();
+    });
+
+    expect(storeCredentialSpy).toHaveBeenCalledTimes(1);
+    expect(alertSpy).toHaveBeenCalled();
+    expect(backSpy).not.toHaveBeenCalled();
+  });
+
   it('uses setup-token copy for claude-subscription', async () => {
     const { ConnectedServiceDetailView } = await import('./ConnectedServiceDetailView');
 
