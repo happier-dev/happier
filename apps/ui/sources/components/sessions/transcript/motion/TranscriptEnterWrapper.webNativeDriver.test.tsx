@@ -6,14 +6,14 @@ import { describe, expect, it, vi, beforeEach } from 'vitest';
 
 let capturedTimingConfigs: any[] = [];
 
-vi.mock('react-native', async (importOriginal) => {
+vi.mock('react-native', async () => {
   const ReactMod = await import('react');
-  const actual = await importOriginal<any>();
+  const stub = await import('@/dev/reactNativeStub');
   return {
-    ...actual,
-    Platform: { ...(actual.Platform ?? {}), OS: 'web' },
+    ...stub,
+    Platform: { ...(stub as any).Platform, OS: 'web' },
     Animated: {
-      ...(actual.Animated ?? {}),
+      ...(stub as any).Animated,
       Value: function Value(this: any, initial: number) {
         this.__value = initial;
       },

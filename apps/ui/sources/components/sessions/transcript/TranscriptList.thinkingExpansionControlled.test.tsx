@@ -11,12 +11,12 @@ vi.mock('@shopify/flash-list', () => ({
   FlashList: () => null,
 }));
 
-vi.mock('react-native', async (importOriginal) => {
+vi.mock('react-native', async () => {
   const ReactMod = await import('react');
-  const actual = await importOriginal<any>();
+  const stub = await import('@/dev/reactNativeStub');
   return {
-    ...actual,
-    Platform: { OS: 'web' },
+    ...stub,
+    Platform: { ...(stub as any).Platform, OS: 'web' },
     View: (props: any) => ReactMod.createElement('View', props, props.children),
     ActivityIndicator: () => ReactMod.createElement('ActivityIndicator'),
     FlatList: (props: any) => {

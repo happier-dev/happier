@@ -23,7 +23,13 @@ vi.mock('react-native', async (importOriginal) => {
   const actual = await importOriginal<any>();
   return {
     ...actual,
-    Platform: { OS: 'web' },
+    Platform: {
+      OS: 'web',
+      select: (spec: any) => {
+        if (!spec || typeof spec !== 'object') return undefined;
+        return spec.web ?? spec.default;
+      },
+    },
     View: (props: any) => ReactMod.createElement('View', props, props.children),
     ActivityIndicator: () => ReactMod.createElement('ActivityIndicator'),
     FlatList: (props: any) => {

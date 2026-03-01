@@ -37,8 +37,10 @@ vi.mock('@shopify/flash-list', () => ({
 }));
 
 vi.mock('react-native', async () => {
+  const stub = await import('@/dev/reactNativeStub');
   const ReactMod = await import('react');
   return {
+    ...stub,
     Platform: { OS: 'web', select: (values: any) => values?.web ?? values?.default },
     View: (props: any) => ReactMod.createElement('View', props, props.children),
     Pressable: ({ children, ...props }: any) => ReactMod.createElement('Pressable', props, children),

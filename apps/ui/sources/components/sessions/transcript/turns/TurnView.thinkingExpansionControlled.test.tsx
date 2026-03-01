@@ -27,8 +27,8 @@ vi.mock('@/components/sessions/transcript/motion/TranscriptEnterWrapper', () => 
   TranscriptEnterWrapper: (props: any) => React.createElement(React.Fragment, null, props.children),
 }));
 
-vi.mock('@/components/sessions/transcript/turns/activity/ActivityGroupView', () => ({
-  ActivityGroupView: () => React.createElement('ActivityGroupView'),
+vi.mock('@/components/sessions/transcript/turns/toolCalls/ToolCallsGroupView', () => ({
+  ToolCallsGroupView: () => React.createElement('ToolCallsGroupView'),
 }));
 
 vi.mock('@/sync/domains/state/storage', () => ({
@@ -67,8 +67,8 @@ describe('TurnView (thinking expansion controlled)', () => {
           metadata: null,
           sessionId: 's1',
           activeThinkingMessageId: null,
-          expandedActivityGroupIds: new Set(),
-          setActivityGroupExpanded: () => {},
+          expandedToolCallsGroupIds: new Set(),
+          setToolCallsGroupExpanded: () => {},
           interaction: { canSendMessages: true, canApprovePermissions: true },
           resolveThinkingExpanded,
           setThinkingExpanded,

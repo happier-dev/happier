@@ -8,24 +8,30 @@ const loopSpy = vi.fn((anim: any) => anim);
 const sequenceSpy = vi.fn((xs: any[]) => ({ start: vi.fn(), stop: vi.fn(), _xs: xs }));
 const timingSpy = vi.fn(() => ({ start: (cb?: any) => cb?.({ finished: true }) }));
 
-vi.mock('react-native', () => ({
-    Platform: { OS: 'web' },
-    Animated: {
-        Value: class {
-            constructor(_v: any) {}
+vi.mock('react-native', async () => {
+    const stub = await import('@/dev/reactNativeStub');
+    return {
+        ...stub,
+        Platform: { ...(stub as any).Platform, OS: 'web' },
+        Animated: {
+            ...(stub as any).Animated,
+            Value: class {
+                constructor(_v: any) { }
+            },
+            timing: timingSpy,
+            sequence: sequenceSpy,
+            loop: loopSpy,
+            View: ({ children, ...props }: any) => React.createElement('AnimatedView', props, children),
         },
-        timing: timingSpy,
-        sequence: sequenceSpy,
-        loop: loopSpy,
-        View: ({ children, ...props }: any) => React.createElement('AnimatedView', props, children),
-    },
-    Easing: {
-        quad: (t: number) => t,
-        bezier: () => (t: number) => t,
-        inOut: (fn: any) => fn,
-        linear: (t: number) => t,
-    },
-}));
+        Easing: {
+            ...(stub as any).Easing,
+            quad: (t: number) => t,
+            bezier: () => (t: number) => t,
+            inOut: (fn: any) => fn,
+            linear: (t: number) => t,
+        },
+    };
+});
 
 vi.mock('@/components/ui/text/Text', () => ({
     Text: (props: any) => React.createElement('Text', props, props.children),

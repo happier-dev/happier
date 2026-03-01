@@ -83,10 +83,16 @@ vi.mock('@shopify/flash-list', () => ({
   }),
 }));
 
-vi.mock('react-native', async () => {
+vi.mock('react-native', async (importOriginal) => {
   const ReactMod = await import('react');
+  const actual = await importOriginal<any>();
   return {
-    Platform: { OS: 'ios', select: (values: any) => values?.ios ?? values?.default },
+    ...actual,
+    Platform: {
+      ...(actual?.Platform ?? {}),
+      OS: 'ios',
+      select: (values: any) => values?.ios ?? values?.default,
+    },
     View: (props: any) => ReactMod.createElement('View', props, props.children),
     Text: (props: any) => ReactMod.createElement('Text', props, props.children),
     Pressable: ({ children, ...props }: any) => ReactMod.createElement('Pressable', props, children),
