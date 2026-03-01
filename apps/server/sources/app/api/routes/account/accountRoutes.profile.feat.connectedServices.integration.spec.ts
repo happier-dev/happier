@@ -103,7 +103,7 @@ describe("Account profile (integration)", () => {
                     },
                 });
 
-                // Legacy vendor token for OpenAI (not a connected service id) should not appear in connectedServicesV2.
+                // Legacy token (v1) stored under the same service id but without v2 metadata.
                 await db.serviceAccountToken.create({
                     data: {
                         accountId: account.id,
@@ -135,6 +135,15 @@ describe("Account profile (integration)", () => {
                         ],
                     }),
                     expect.objectContaining({
+                        serviceId: "openai",
+                        profiles: [
+                            expect.objectContaining({
+                                profileId: "default",
+                                status: "needs_reauth",
+                            }),
+                        ],
+                    }),
+                    expect.objectContaining({
                         serviceId: "anthropic",
                         profiles: [
                             expect.objectContaining({
@@ -144,13 +153,6 @@ describe("Account profile (integration)", () => {
                         ],
                     }),
                 ]));
-                expect(body.connectedServicesV2).toEqual(
-                    expect.not.arrayContaining([
-                        expect.objectContaining({
-                            serviceId: "openai",
-                        }),
-                    ]),
-                );
             },
         );
     });

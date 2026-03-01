@@ -304,7 +304,7 @@ describe("connectRoutes (connected services v2) sealed credential endpoints (int
         expect(fetchSpy).not.toHaveBeenCalled();
     });
 
-    it("returns connect_oauth_state_mismatch when state is missing for anthropic oauth exchange", async () => {
+    it("returns connect_oauth_state_mismatch when state is missing for claude-subscription oauth exchange", async () => {
         const user = await db.account.create({ data: { publicKey: "pk-csv2-oauth-state-missing" }, select: { id: true } });
 
         const keyPair = tweetnacl.box.keyPair();
@@ -316,7 +316,7 @@ describe("connectRoutes (connected services v2) sealed credential endpoints (int
 
         const res = await app.inject({
             method: "POST",
-            url: "/v2/connect/anthropic/oauth/exchange",
+            url: "/v2/connect/claude-subscription/oauth/exchange",
             headers: { "content-type": "application/json", "x-test-user-id": user.id },
             payload: {
                 publicKey: publicKeyB64Url,
