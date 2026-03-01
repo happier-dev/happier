@@ -44,6 +44,10 @@ vi.mock('@expo/vector-icons', () => ({
     Octicons: 'Octicons',
 }));
 
+vi.mock('@/components/ui/text/Text', () => ({
+    Text: 'Text',
+}));
+
 describe('SourceControlStatusBadge', () => {
     beforeEach(() => {
         snapshotMock = null;
@@ -86,14 +90,15 @@ describe('SourceControlStatusBadge', () => {
         expect(labels).toContain('-12');
     });
 
-    it('shows changed file count when there are changes without line deltas', async () => {
-        snapshotMock = {
-            repo: { isRepo: true, rootPath: '/repo' },
-            branch: { head: 'main', upstream: 'origin/main', ahead: 0, behind: 0, detached: false },
-            totals: {
-                includedFiles: 0,
-                pendingFiles: 0,
-                untrackedFiles: 2,
+      it('shows changed file count when there are changes without line deltas', async () => {
+          snapshotMock = {
+              repo: { isRepo: true, rootPath: '/repo' },
+              branch: { head: 'main', upstream: 'origin/main', ahead: 0, behind: 0, detached: false },
+              entries: [{}, {}],
+              totals: {
+                  includedFiles: 0,
+                  pendingFiles: 0,
+                  untrackedFiles: 2,
                 includedAdded: 0,
                 includedRemoved: 0,
                 pendingAdded: 0,

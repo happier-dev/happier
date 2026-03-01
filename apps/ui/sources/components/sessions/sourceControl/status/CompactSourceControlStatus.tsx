@@ -6,6 +6,8 @@ import { Ionicons } from '@expo/vector-icons';
 import { buildScmStatusSummaryFromSnapshot } from './statusSummary';
 import { Text } from '@/components/ui/text/Text';
 
+const LINE_ADDED_PREFIX = '+';
+const LINE_REMOVED_PREFIX = '-';
 
 const stylesheet = StyleSheet.create((theme) => ({
     container: {
@@ -69,12 +71,12 @@ export function CompactSourceControlStatus({ sessionId }: CompactSourceControlSt
                 <View style={styles.lineChanges}>
                     {scmStatusSummary.linesAdded > 0 && (
                         <Text style={styles.addedText}>
-                            +{scmStatusSummary.linesAdded}
+                            {`${LINE_ADDED_PREFIX}${scmStatusSummary.linesAdded}`}
                         </Text>
                     )}
                     {scmStatusSummary.linesRemoved > 0 && (
                         <Text style={styles.removedText}>
-                            -{scmStatusSummary.linesRemoved}
+                            {`${LINE_REMOVED_PREFIX}${scmStatusSummary.linesRemoved}`}
                         </Text>
                     )}
                 </View>

@@ -4,6 +4,10 @@ import { useSessionProjectScmSnapshot } from '@/sync/domains/state/storage';
 import { StyleSheet } from 'react-native-unistyles';
 import { buildScmStatusSummaryFromSnapshot } from './statusSummary';
 import { Text } from '@/components/ui/text/Text';
+import { t } from '@/text';
+
+const LINE_ADDED_PREFIX = '+';
+const LINE_REMOVED_PREFIX = '-';
 
 
 const stylesheet = StyleSheet.create((theme) => ({
@@ -74,7 +78,7 @@ export function ProjectSourceControlStatus({ sessionId }: ProjectSourceControlSt
     }
 
     const hasLineChanges = scmStatusSummary.hasLineChanges;
-    const changedFilesLabel = `${scmStatusSummary.changedFiles} ${scmStatusSummary.changedFiles === 1 ? 'file' : 'files'}`;
+    const changedFilesLabel = t('files.sourceControlStatus.changedFilesLabel', { count: scmStatusSummary.changedFiles });
 
     return (
         <View style={styles.container}>
@@ -85,12 +89,12 @@ export function ProjectSourceControlStatus({ sessionId }: ProjectSourceControlSt
                 <View style={styles.lineChanges}>
                     {scmStatusSummary.linesAdded > 0 && (
                         <Text style={styles.addedText}>
-                            +{scmStatusSummary.linesAdded}
+                            {`${LINE_ADDED_PREFIX}${scmStatusSummary.linesAdded}`}
                         </Text>
                     )}
                     {scmStatusSummary.linesRemoved > 0 && (
                         <Text style={styles.removedText}>
-                            -{scmStatusSummary.linesRemoved}
+                            {`${LINE_REMOVED_PREFIX}${scmStatusSummary.linesRemoved}`}
                         </Text>
                     )}
                 </View>

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import type { ScmWorkingSnapshot } from '@/sync/domains/state/storageTypes';
+import type { ScmWorkingEntry, ScmWorkingSnapshot } from '@/sync/domains/state/storageTypes';
 import { buildScmStatusSummaryFromSnapshot } from './statusSummary';
 
 function buildSnapshot(overrides?: Partial<ScmWorkingSnapshot>): ScmWorkingSnapshot {
@@ -46,7 +46,7 @@ describe('buildScmStatusSummaryFromSnapshot', () => {
         ).toBeNull();
     });
 
-    it('computes staged + unstaged line deltas and changed file count from canonical totals', () => {
+    it('computes line deltas from totals and changed file count from entry list', () => {
         const summary = buildScmStatusSummaryFromSnapshot(
             buildSnapshot({
                 branch: {
@@ -56,6 +56,13 @@ describe('buildScmStatusSummaryFromSnapshot', () => {
                     behind: 1,
                     detached: false,
                 },
+                entries: [
+                    { path: 'a.txt', previousPath: null, kind: 'modified', includeStatus: 'M', pendingStatus: ' ', hasIncludedDelta: true, hasPendingDelta: false, stats: { includedAdded: 1, includedRemoved: 0, pendingAdded: 0, pendingRemoved: 0, isBinary: false } },
+                    { path: 'b.txt', previousPath: null, kind: 'modified', includeStatus: ' ', pendingStatus: 'M', hasIncludedDelta: false, hasPendingDelta: true, stats: { includedAdded: 0, includedRemoved: 0, pendingAdded: 2, pendingRemoved: 1, isBinary: false } },
+                    { path: 'c.txt', previousPath: null, kind: 'untracked', includeStatus: '?', pendingStatus: '?', hasIncludedDelta: false, hasPendingDelta: true, stats: { includedAdded: 0, includedRemoved: 0, pendingAdded: 3, pendingRemoved: 0, isBinary: false } },
+                    { path: 'd.txt', previousPath: null, kind: 'added', includeStatus: 'A', pendingStatus: ' ', hasIncludedDelta: true, hasPendingDelta: false, stats: { includedAdded: 4, includedRemoved: 0, pendingAdded: 0, pendingRemoved: 0, isBinary: false } },
+                    { path: 'e.txt', previousPath: null, kind: 'deleted', includeStatus: 'D', pendingStatus: ' ', hasIncludedDelta: true, hasPendingDelta: false, stats: { includedAdded: 0, includedRemoved: 5, pendingAdded: 0, pendingRemoved: 0, isBinary: false } },
+                ] satisfies ScmWorkingEntry[],
                 totals: {
                     includedFiles: 3,
                     pendingFiles: 4,
@@ -73,7 +80,7 @@ describe('buildScmStatusSummaryFromSnapshot', () => {
             upstream: 'origin/feature/branch',
             ahead: 2,
             behind: 1,
-            changedFiles: 9,
+            changedFiles: 5,
             linesAdded: 18,
             linesRemoved: 12,
             hasLineChanges: true,
