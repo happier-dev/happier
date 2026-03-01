@@ -114,13 +114,25 @@ export const UI_FEATURE_REGISTRY = {
     'auth.recovery.providerReset': {
         settingsToggle: undefined,
     },
+    'auth.pairing.desktopQrMobileScan': {
+        settingsToggle: undefined,
+    },
     'auth.login.keyChallenge': {
+        settingsToggle: undefined,
+    },
+    'auth.mtls': {
         settingsToggle: undefined,
     },
     'auth.ui.recoveryKeyReminder': {
         settingsToggle: undefined,
     },
+    'e2ee.keylessAccounts': {
+        settingsToggle: undefined,
+    },
     'app.analytics': {
+        settingsToggle: undefined,
+    },
+    'app.crashReports': {
         settingsToggle: undefined,
     },
     'app.ui.storeReviewPrompts': {
