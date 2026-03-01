@@ -10,12 +10,13 @@ import { buildConnectedServiceCredentialRecord, sealConnectedServiceCredentialCi
 import type { CommandContext } from '@/cli/commandRegistry';
 import { parseConnectArgs, type ConnectParsedOptions } from './connect/parseConnectArgs';
 import { resolveConnectAuthIntent } from './connect/resolveConnectAuthIntent';
+import { resolveConnectTargetServiceIds } from './connect/resolveConnectTargetServiceIds';
 
 /**
  * Handle connect subcommand.
  *
  * Implements connect subcommands for storing Connected Services credentials (v2):
- * - connect codex: Store OpenAI Codex subscription OAuth (openai-codex)
+ * - connect codex: Store OpenAI Codex subscription OAuth (openai-codex) or OpenAI API key (openai)
  * - connect claude: Store Claude subscription auth (claude-subscription) or Anthropic API key (anthropic)
  * - connect gemini: Store Gemini OAuth (gemini)
  */
@@ -80,6 +81,7 @@ ${targetLines}
   happier connect <target> --profile <id>      Store under a specific profile (default: default)
   happier connect <target> --paste             Headless mode: paste redirect URL
   happier connect <target> --device            Use device-code auth (Codex)
+  happier connect codex --api-key              Store an OpenAI API key
   happier connect claude --api-key             Store an Anthropic API key (not Claude subscription)
   happier connect claude --setup-token         Store a Claude setup-token (default for claude)
   happier connect claude --oauth               Store Claude subscription OAuth (advanced)
@@ -136,9 +138,11 @@ async function handleConnectVendor(target: CloudConnectTarget, options: ConnectP
         const promptLabel =
           authIntent.tokenKind === 'setup-token'
             ? 'Paste Claude setup-token (from `claude setup-token`): '
-            : 'Paste Anthropic API key: ';
+            : serviceId === 'openai'
+              ? 'Paste OpenAI API key: '
+              : 'Paste Anthropic API key: ';
         const token = (await promptInput(promptLabel)).trim();
-        if (!token) throw new Error('Missing API key');
+        if (!token) throw new Error(authIntent.tokenKind === 'setup-token' ? 'Missing setup-token' : 'Missing API key');
         return buildConnectedServiceCredentialRecord({
           now,
           serviceId,
@@ -287,13 +291,7 @@ async function handleConnectStatus(targets: ReadonlyArray<CloudConnectTarget>): 
 
     for (const target of targets) {
       try {
-        const serviceIds: ConnectedServiceId[] = target.id === 'codex'
-          ? ['openai-codex']
-          : target.id === 'gemini'
-            ? ['gemini']
-            : target.id === 'claude'
-              ? ['claude-subscription', 'anthropic']
-              : [];
+        const serviceIds: ConnectedServiceId[] = resolveConnectTargetServiceIds(target.id);
 
         if (serviceIds.length === 0) {
           console.log(`  ${chalk.gray('○')}  ${target.vendorDisplayName}: ${chalk.gray('not supported')}`);

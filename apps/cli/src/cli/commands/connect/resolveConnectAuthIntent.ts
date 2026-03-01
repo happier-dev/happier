@@ -13,12 +13,27 @@ export function resolveConnectAuthIntent(params: Readonly<{
     throw new Error('--device is only supported for Codex');
   }
 
-  if (params.targetId !== 'claude') {
-    if (params.options.setupToken || params.options.apiKey) {
-      throw new Error('--setup-token/--api-key is only supported for Claude. Use the provider OAuth flow instead.');
+  if (params.targetId === 'codex') {
+    if (params.options.setupToken) {
+      throw new Error('--setup-token is only supported for Claude.');
     }
-    if (params.targetId === 'codex') return { kind: 'oauth', serviceId: 'openai-codex' };
-    if (params.targetId === 'gemini') return { kind: 'oauth', serviceId: 'gemini' };
+    if (params.options.oauth && params.options.apiKey) {
+      throw new Error('Use only one of: --oauth, --api-key');
+    }
+    if (params.options.apiKey) {
+      return { kind: 'token', serviceId: 'openai', tokenKind: 'api-key' };
+    }
+    return { kind: 'oauth', serviceId: 'openai-codex' };
+  }
+
+  if (params.targetId === 'gemini') {
+    if (params.options.setupToken || params.options.apiKey) {
+      throw new Error('--setup-token/--api-key is not supported for Gemini. Use the provider OAuth flow instead.');
+    }
+    return { kind: 'oauth', serviceId: 'gemini' };
+  }
+
+  if (params.targetId !== 'claude') {
     throw new Error(`Unsupported connect target: ${params.targetId}`);
   }
 

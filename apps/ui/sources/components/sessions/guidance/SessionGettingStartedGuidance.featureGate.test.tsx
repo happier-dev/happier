@@ -8,6 +8,15 @@ vi.mock('expo-clipboard', () => ({
     setStringAsync: vi.fn(async (_text: string) => {}),
 }));
 
+vi.mock('expo-constants', () => ({
+    default: { expoConfig: null, manifest: null },
+}));
+
+vi.mock('expo-updates', () => ({
+    channel: null,
+    releaseChannel: null,
+}));
+
 vi.mock('expo-router', () => ({
     useRouter: () => ({ push: vi.fn() }),
 }));
@@ -26,6 +35,10 @@ vi.mock('react-native', () => ({
 
 vi.mock('@expo/vector-icons', () => ({
     Ionicons: (props: any) => React.createElement('Ionicons', props, null),
+}));
+
+vi.mock('expo-image', () => ({
+    Image: (props: any) => React.createElement('Image', props, null),
 }));
 
 vi.mock('react-native-unistyles', () => ({
@@ -110,6 +123,10 @@ vi.mock('@/sync/domains/server/serverProfiles', () => ({
 
 vi.mock('@/components/ui/buttons/RoundButton', () => ({
     RoundButton: (props: any) => React.createElement('RoundButton', props, null),
+}));
+
+vi.mock('@/config', () => ({
+    config: { variant: 'production', cliNpmDistTag: undefined },
 }));
 
 describe('SessionGettingStartedGuidance (feature gate)', () => {

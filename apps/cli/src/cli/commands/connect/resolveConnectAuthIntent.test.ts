@@ -86,4 +86,21 @@ describe('resolveConnectAuthIntent', () => {
       },
     })).toThrow(/device/i);
   });
+
+  it('allows OpenAI API key for Codex via --api-key (stored as openai)', () => {
+    const res = resolveConnectAuthIntent({
+      targetId: 'codex',
+      options: {
+        profileId: 'default',
+        paste: false,
+        device: false,
+        noOpen: false,
+        timeoutSeconds: null,
+        setupToken: false,
+        oauth: false,
+        apiKey: true,
+      },
+    });
+    expect(res).toEqual({ kind: 'token', serviceId: 'openai', tokenKind: 'api-key' });
+  });
 });
