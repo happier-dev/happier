@@ -1,10 +1,12 @@
 import type { AuthCredentials } from '@/auth/storage/tokenStorage';
 import type { PlannedChangeActions } from './changesPlanner';
+import { runTasksWithLimit } from './runTasksWithLimit';
 
 export async function applyPlannedChangeActions(params: {
     planned: PlannedChangeActions;
     credentials: AuthCredentials;
     isSessionMessagesLoaded: (sessionId: string) => boolean;
+    concurrencyLimit?: number;
     invalidate: {
         settings?: () => Promise<void>;
         profile?: () => Promise<void>;
@@ -24,34 +26,64 @@ export async function applyPlannedChangeActions(params: {
 }): Promise<void> {
     const { planned } = params;
 
-    const refreshTasks: Array<Promise<void>> = [];
-    if (planned.invalidate.settings) refreshTasks.push(params.invalidate.settings?.() ?? Promise.resolve());
-    if (planned.invalidate.profile) refreshTasks.push(params.invalidate.profile?.() ?? Promise.resolve());
-    if (planned.invalidate.machines) refreshTasks.push(params.invalidate.machines?.() ?? Promise.resolve());
-    if (planned.invalidate.artifacts) refreshTasks.push(params.invalidate.artifacts?.() ?? Promise.resolve());
-    if (planned.invalidate.friends) {
-        refreshTasks.push(params.invalidate.friends?.() ?? Promise.resolve());
-        refreshTasks.push(params.invalidate.friendRequests?.() ?? Promise.resolve());
+    const concurrencyLimit = typeof params.concurrencyLimit === 'number' && params.concurrencyLimit > 0
+        ? Math.trunc(params.concurrencyLimit)
+        : 2;
+
+    const tasks: Array<() => Promise<void>> = [];
+
+    let sessionsInvalidationDone: Promise<void> | null = null;
+    let resolveSessionsInvalidationDone: (() => void) | null = null;
+    let rejectSessionsInvalidationDone: ((error: unknown) => void) | null = null;
+    if (planned.invalidate.sessions) {
+        sessionsInvalidationDone = new Promise<void>((resolve, reject) => {
+            resolveSessionsInvalidationDone = resolve;
+            rejectSessionsInvalidationDone = reject;
+        });
     }
-    if (planned.invalidate.feed) refreshTasks.push(params.invalidate.feed?.() ?? Promise.resolve());
-    if (planned.invalidate.automations) refreshTasks.push(params.invalidate.automations?.() ?? Promise.resolve());
-    if (planned.invalidate.sessions) refreshTasks.push(params.invalidate.sessions?.() ?? Promise.resolve());
+
+    if (planned.invalidate.settings) tasks.push(() => params.invalidate.settings?.() ?? Promise.resolve());
+    if (planned.invalidate.profile) tasks.push(() => params.invalidate.profile?.() ?? Promise.resolve());
+    if (planned.invalidate.machines) tasks.push(() => params.invalidate.machines?.() ?? Promise.resolve());
+    if (planned.invalidate.artifacts) tasks.push(() => params.invalidate.artifacts?.() ?? Promise.resolve());
+    if (planned.invalidate.friends) {
+        tasks.push(() => params.invalidate.friends?.() ?? Promise.resolve());
+        tasks.push(() => params.invalidate.friendRequests?.() ?? Promise.resolve());
+    }
+    if (planned.invalidate.feed) tasks.push(() => params.invalidate.feed?.() ?? Promise.resolve());
+    if (planned.invalidate.automations) tasks.push(() => params.invalidate.automations?.() ?? Promise.resolve());
+    if (planned.invalidate.sessions) {
+        tasks.push(async () => {
+            try {
+                await params.invalidate.sessions?.();
+                resolveSessionsInvalidationDone?.();
+            } catch (error) {
+                rejectSessionsInvalidationDone?.(error);
+                throw error;
+            }
+        });
+    }
 
     for (const sessionId of planned.sessionIdsToCatchUp) {
         if (!params.isSessionMessagesLoaded(sessionId)) {
             continue;
         }
-        refreshTasks.push(params.invalidateMessagesForSession(sessionId));
+        tasks.push(async () => {
+            if (sessionsInvalidationDone) {
+                await sessionsInvalidationDone;
+            }
+            await params.invalidateMessagesForSession(sessionId);
+        });
         params.invalidateScmStatusForSession(sessionId);
     }
 
     if (planned.kv.type === 'refresh-feature' && planned.kv.feature === 'todos') {
-        refreshTasks.push(params.invalidate.todos?.() ?? Promise.resolve());
+        tasks.push(() => params.invalidate.todos?.() ?? Promise.resolve());
     }
 
     if (planned.kv.type === 'bulk-keys' && planned.kv.feature === 'todos') {
         const keys = planned.kv.keys;
-        refreshTasks.push((async () => {
+        tasks.push(async () => {
             const todoKeys = keys.filter((key: string) => key.startsWith('todo.'));
             if (todoKeys.length === 0) {
                 return;
@@ -67,8 +99,8 @@ export async function applyPlannedChangeActions(params: {
             } catch {
                 await (params.invalidate.todos?.() ?? Promise.resolve());
             }
-        })());
+        });
     }
 
-    await Promise.all(refreshTasks);
+    await runTasksWithLimit(tasks, concurrencyLimit);
 }
