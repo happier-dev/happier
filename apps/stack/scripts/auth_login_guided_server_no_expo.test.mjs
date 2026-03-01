@@ -47,7 +47,7 @@ async function createHealthyServer() {
   return { server, port };
 }
 
-async function buildGuidedNoExpoFixture() {
+async function buildGuidedNoExpoFixture({ publicServerUrl = '' } = {}) {
   const tmp = await mkdtemp(join(tmpdir(), 'hstack-auth-guided-no-expo-'));
   const storageDir = join(tmp, 'storage');
   const monoRoot = join(tmp, 'happier');
@@ -62,6 +62,7 @@ async function buildGuidedNoExpoFixture() {
       'HAPPIER_STACK_STACK=main',
       `HAPPIER_STACK_REPO_DIR=${monoRoot}`,
       `HAPPIER_STACK_SERVER_PORT=${port}`,
+      ...(publicServerUrl ? [`HAPPIER_STACK_SERVER_URL=${publicServerUrl}`] : []),
       'HAPPIER_STACK_TAILSCALE_PREFER_PUBLIC_URL=0',
       'HAPPIER_STACK_TAILSCALE_SERVE=0',
       '',
@@ -83,6 +84,7 @@ async function buildGuidedNoExpoFixture() {
       HAPPIER_STACK_TEST_TTY: '1',
       HAPPIER_STACK_AUTH_FLOW: '0',
       HAPPIER_STACK_AUTH_UI_READY_TIMEOUT_MS: '1',
+      HAPPIER_STACK_AUTH_EXPO_SOFT_TIMEOUT_MS: '1',
       HAPPIER_NO_BROWSER_OPEN: '1',
     },
     async cleanup() {
@@ -92,7 +94,42 @@ async function buildGuidedNoExpoFixture() {
   };
 }
 
-test('guided auth login fails closed when Expo web UI is not ready (does not fall back to server URL)', async (t) => {
+test('hstack auth login --webapp=expo fails closed when Expo web UI is not ready (does not fall back to server URL)', async (t) => {
+  const scriptsDir = dirname(fileURLToPath(import.meta.url));
+  const rootDir = dirname(scriptsDir);
+
+  let fixture;
+  try {
+    try {
+      fixture = await buildGuidedNoExpoFixture();
+    } catch (e) {
+      if (e && typeof e === 'object' && 'code' in e && e.code === 'EPERM') {
+        t.skip('sandbox disallows binding localhost test server (EPERM)');
+        return;
+      }
+      throw e;
+    }
+    const res = await runNodeCapture([authScriptPath(rootDir), 'login', '--method', 'web', '--webapp=expo'], {
+      cwd: rootDir,
+      env: fixture.env,
+      input: '\n\n',
+    });
+    assert.notStrictEqual(res.code, 0, `expected non-zero exit when Expo is unavailable\nstderr:\n${res.stderr}\nstdout:\n${res.stdout}`);
+    assert.match(res.stderr, /attempted to start stack UI in background/i, `stderr:\n${res.stderr}`);
+    assert.match(
+      res.stderr,
+      /guid(ed)? login web UI is still not ready|startup failed/i,
+      `stderr:\n${res.stderr}`
+    );
+    assert.match(res.stderr, /Stack runtime path:/i, `stderr:\n${res.stderr}`);
+    assert.match(res.stderr, /server health:/i, `stderr:\n${res.stderr}`);
+    assert.doesNotMatch(res.stdout, new RegExp(`URL: http://localhost:${fixture.port}\\b`), `stdout:\n${res.stdout}`);
+  } finally {
+    if (fixture) await fixture.cleanup();
+  }
+});
+
+test('hstack auth login (auto) prefers Expo web UI in interactive mode and fails closed if Expo is not ready', async (t) => {
   const scriptsDir = dirname(fileURLToPath(import.meta.url));
   const rootDir = dirname(scriptsDir);
 
@@ -112,16 +149,130 @@ test('guided auth login fails closed when Expo web UI is not ready (does not fal
       env: fixture.env,
       input: '\n\n',
     });
-    assert.notStrictEqual(res.code, 0, `expected non-zero exit when Expo is unavailable\nstderr:\n${res.stderr}\nstdout:\n${res.stdout}`);
+    assert.notStrictEqual(res.code, 0, `expected non-zero exit when Expo is unavailable in auto mode\nstderr:\n${res.stderr}\nstdout:\n${res.stdout}`);
     assert.match(res.stderr, /attempted to start stack UI in background/i, `stderr:\n${res.stderr}`);
     assert.match(
       res.stderr,
       /guid(ed)? login web UI is still not ready|startup failed/i,
       `stderr:\n${res.stderr}`
     );
-    assert.match(res.stderr, /Stack runtime path:/i, `stderr:\n${res.stderr}`);
-    assert.match(res.stderr, /server health:/i, `stderr:\n${res.stderr}`);
     assert.doesNotMatch(res.stdout, new RegExp(`URL: http://localhost:${fixture.port}\\b`), `stdout:\n${res.stdout}`);
+  } finally {
+    if (fixture) await fixture.cleanup();
+  }
+});
+
+test('hstack auth login (auto) does not attempt Expo in service mode', async (t) => {
+  const scriptsDir = dirname(fileURLToPath(import.meta.url));
+  const rootDir = dirname(scriptsDir);
+
+  let fixture;
+  try {
+    try {
+      fixture = await buildGuidedNoExpoFixture();
+    } catch (e) {
+      if (e && typeof e === 'object' && 'code' in e && e.code === 'EPERM') {
+        t.skip('sandbox disallows binding localhost test server (EPERM)');
+        return;
+      }
+      throw e;
+    }
+    const res = await runNodeCapture([authScriptPath(rootDir), 'login', '--method', 'web'], {
+      cwd: rootDir,
+      env: { ...fixture.env, HAPPIER_STACK_SERVICE_MODE: '1' },
+      input: '\n\n',
+    });
+    assert.equal(res.code, 0, `expected exit 0 for auto auth in service mode without Expo\nstderr:\n${res.stderr}\nstdout:\n${res.stdout}`);
+    assert.doesNotMatch(res.stderr, /attempted to start stack UI in background/i, `stderr:\n${res.stderr}`);
+    assert.doesNotMatch(res.stderr, /Expo web UI/i, `stderr:\n${res.stderr}`);
+  } finally {
+    if (fixture) await fixture.cleanup();
+  }
+});
+
+test('hstack auth login (auto) falls back to hosted web app when Expo is not ready and a public URL exists', async (t) => {
+  const scriptsDir = dirname(fileURLToPath(import.meta.url));
+  const rootDir = dirname(scriptsDir);
+
+  let fixture;
+  try {
+    try {
+      fixture = await buildGuidedNoExpoFixture({ publicServerUrl: 'https://example.invalid' });
+    } catch (e) {
+      if (e && typeof e === 'object' && 'code' in e && e.code === 'EPERM') {
+        t.skip('sandbox disallows binding localhost test server (EPERM)');
+        return;
+      }
+      throw e;
+    }
+    const res = await runNodeCapture([authScriptPath(rootDir), 'login', '--method', 'web'], {
+      cwd: rootDir,
+      env: fixture.env,
+      input: '2\n',
+    });
+    assert.equal(res.code, 0, `expected exit 0 when auto auth falls back to hosted web app\nstderr:\n${res.stderr}\nstdout:\n${res.stdout}`);
+    assert.match(res.stderr, /falling back to hosted/i, `stderr:\n${res.stderr}`);
+    assert.match(res.stdout, /Pick \[1-\d+\]/i, `expected interactive fallback prompt\nstderr:\n${res.stderr}\nstdout:\n${res.stdout}`);
+  } finally {
+    if (fixture) await fixture.cleanup();
+  }
+});
+
+test('hstack auth login --method=mobile succeeds even when Expo web UI is not running', async (t) => {
+  const scriptsDir = dirname(fileURLToPath(import.meta.url));
+  const rootDir = dirname(scriptsDir);
+
+  let fixture;
+  try {
+    try {
+      fixture = await buildGuidedNoExpoFixture();
+    } catch (e) {
+      if (e && typeof e === 'object' && 'code' in e && e.code === 'EPERM') {
+        t.skip('sandbox disallows binding localhost test server (EPERM)');
+        return;
+      }
+      throw e;
+    }
+    const res = await runNodeCapture([authScriptPath(rootDir), 'login', '--method', 'mobile'], {
+      cwd: rootDir,
+      env: fixture.env,
+      input: '\n\n',
+    });
+    assert.equal(res.code, 0, `expected exit 0 for mobile auth without Expo\nstderr:\n${res.stderr}\nstdout:\n${res.stdout}`);
+    assert.doesNotMatch(res.stderr, /Expo web UI/i, `stderr:\n${res.stderr}`);
+    assert.doesNotMatch(res.stderr, /attempted to start stack UI in background/i, `stderr:\n${res.stderr}`);
+  } finally {
+    if (fixture) await fixture.cleanup();
+  }
+});
+
+test('hstack auth login --webapp=expo prints progress messages while waiting for Expo to become ready', async (t) => {
+  const scriptsDir = dirname(fileURLToPath(import.meta.url));
+  const rootDir = dirname(scriptsDir);
+
+  let fixture;
+  try {
+    try {
+      fixture = await buildGuidedNoExpoFixture();
+    } catch (e) {
+      if (e && typeof e === 'object' && 'code' in e && e.code === 'EPERM') {
+        t.skip('sandbox disallows binding localhost test server (EPERM)');
+        return;
+      }
+      throw e;
+    }
+    const res = await runNodeCapture([authScriptPath(rootDir), 'login', '--method', 'web', '--webapp=expo'], {
+      cwd: rootDir,
+      env: {
+        ...fixture.env,
+        HAPPIER_STACK_AUTH_UI_READY_TIMEOUT_MS: '50',
+        HAPPIER_STACK_AUTH_EXPO_PROGRESS_INTERVAL_MS: '1',
+        HAPPIER_STACK_AUTH_UI_START_TIMEOUT_MS: '10',
+      },
+      input: '\n\n',
+    });
+    assert.notStrictEqual(res.code, 0, `expected non-zero exit when Expo is unavailable\nstderr:\n${res.stderr}\nstdout:\n${res.stdout}`);
+    assert.match(res.stderr, /still starting|Expo dev server is running/i, `stderr:\n${res.stderr}`);
   } finally {
     if (fixture) await fixture.cleanup();
   }

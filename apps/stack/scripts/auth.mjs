@@ -26,7 +26,7 @@ import { resolveHandyMasterSecretFromStack } from './utils/auth/handy_master_sec
 import { ensureDir, readTextIfExists } from './utils/fs/ops.mjs';
 import { stackExistsSync } from './utils/stack/stacks.mjs';
 import { checkDaemonState } from './daemon.mjs';
-import { isTty, prompt, withRl } from './utils/cli/wizard.mjs';
+import { isTty, prompt, promptSelect, withRl } from './utils/cli/wizard.mjs';
 import { parseCliIdentityOrThrow, resolveCliHomeDirForIdentity } from './utils/stack/cli_identities.mjs';
 import {
   getCliHomeDirFromEnvOrDefault,
@@ -39,6 +39,7 @@ import { bold, cyan, dim } from './utils/ui/ansi.mjs';
 import { getVerbosityLevel } from './utils/cli/verbosity.mjs';
 import { runOrchestratedGuidedAuthFlow, startDaemonPostAuth } from './utils/auth/orchestrated_stack_auth_flow.mjs';
 import { applyStackActiveServerScopeEnv } from './utils/auth/stable_scope_id.mjs';
+import { isLocalishUrl } from './utils/service/auth_guidance.mjs';
 import {
   findAnyCredentialPathInCliHome,
   findExistingStackCredentialPath,
@@ -227,6 +228,28 @@ function resolveGuidedServerReadyTimeoutMs(env = process.env) {
   if (!raw) return 30_000;
   const n = Number(raw);
   return Number.isFinite(n) && n >= 1_000 ? n : 30_000;
+}
+
+function resolveAuthExpoSoftTimeoutMs(env = process.env) {
+  const raw = String(env.HAPPIER_STACK_AUTH_EXPO_SOFT_TIMEOUT_MS ?? '').trim();
+  if (!raw) return 120_000;
+  const n = Number(raw);
+  return Number.isFinite(n) && n >= 1 ? n : 120_000;
+}
+
+function resolveAuthExpoMaxTimeoutMs(env = process.env) {
+  const raw = String(env.HAPPIER_STACK_AUTH_EXPO_MAX_TIMEOUT_MS ?? '').trim();
+  if (!raw) return 900_000;
+  const n = Number(raw);
+  return Number.isFinite(n) && n >= 1 ? n : 900_000;
+}
+
+function formatDurationMs(ms) {
+  const n = Number(ms);
+  if (!Number.isFinite(n) || n <= 0) return `${ms}ms`;
+  if (n < 60_000) return `${Math.round(n / 1000)}s`;
+  const m = Math.round(n / 60_000);
+  return `${m}m`;
 }
 
 async function isStackRuntimeOwnerAlive(stackName) {
@@ -1541,7 +1564,8 @@ async function cmdLogin({ argv, json }) {
 
   const webappModeRaw =
     (argvKvValue(argv, '--webapp') || (kv.get('--webapp') ?? '')).toString().trim().toLowerCase();
-  const webappMode = webappModeRaw || 'auto'; // auto|stack|public|expo|hosted
+  const requestedWebappMode = webappModeRaw || 'auto'; // auto|stack|public|expo|hosted
+  const HOSTED_WEBAPP_URL = 'https://app.happier.dev';
   const explicitWebappUrl =
     (argvKvValue(argv, '--webapp-url') || (kv.get('--webapp-url') ?? '')).toString().trim();
   const methodRaw = (argvKvValue(argv, '--method') || (kv.get('--method') ?? '')).toString().trim().toLowerCase();
@@ -1553,19 +1577,28 @@ async function cmdLogin({ argv, json }) {
   const { envWebappUrl } = getWebappUrlEnvOverride({ env: process.env, stackName });
   const expoWebappUrl = await resolveWebappUrlFromRunningExpo({ rootDir, stackName });
 
+  const serviceMode = (process.env.HAPPIER_STACK_SERVICE_MODE ?? '').toString().trim() === '1';
+  const wantsDefaultExpoInAuto =
+    requestedWebappMode === 'auto' &&
+    !explicitWebappUrl &&
+    !envWebappUrl &&
+    method !== 'mobile' &&
+    tty &&
+    !serviceMode;
+  const effectiveWebappMode = wantsDefaultExpoInAuto ? 'expo' : requestedWebappMode;
+
   let webappUrlRaw = '';
   let webappUrlSource = '';
   if (explicitWebappUrl) {
     webappUrlRaw = explicitWebappUrl;
     webappUrlSource = 'webapp-url flag';
-  } else if (webappMode === 'public') {
+  } else if (effectiveWebappMode === 'public') {
     webappUrlRaw = publicServerUrl;
     webappUrlSource = 'public server';
-  } else if (webappMode === 'hosted') {
-    // Use happier-cli defaults (do not force a URL here).
-    webappUrlRaw = '';
-    webappUrlSource = 'cli default';
-  } else if (webappMode === 'expo') {
+  } else if (effectiveWebappMode === 'hosted') {
+    webappUrlRaw = HOSTED_WEBAPP_URL;
+    webappUrlSource = 'hosted';
+  } else if (effectiveWebappMode === 'expo') {
     webappUrlRaw = expoWebappUrl || '';
     webappUrlSource = 'expo';
   } else {
@@ -1718,16 +1751,23 @@ async function cmdLogin({ argv, json }) {
 
       await run(
         process.execPath,
-        [join(rootDir, 'scripts', 'stack.mjs'), 'dev', stackName, '--background', '--no-daemon', '--no-browser'],
+        [
+          join(rootDir, 'scripts', 'stack.mjs'),
+          effectiveWebappMode === 'expo' ? 'dev' : 'start',
+          stackName,
+          '--background',
+          '--no-daemon',
+          '--no-browser',
+        ],
         {
           cwd: rootDir,
-          env: { ...process.env, HAPPIER_STACK_AUTH_FLOW: '1' },
+          env: { ...process.env, ...(effectiveWebappMode === 'expo' ? { HAPPIER_STACK_AUTH_FLOW: '1' } : {}) },
         }
       ).catch((err) => {
         const msg =
           `[auth] ${stackName}: failed to start the stack for guided login.\n` +
           `[auth] Try starting it manually:\n` +
-          `  hstack stack dev ${stackName} --background\n\n` +
+          `  hstack stack ${effectiveWebappMode === 'expo' ? 'dev' : 'start'} ${stackName} --background\n\n` +
           `${String(err?.stack ?? err)}`;
         throw new Error(msg);
       });
@@ -1737,29 +1777,153 @@ async function cmdLogin({ argv, json }) {
   }
 
   const verbosity = getVerbosityLevel(process.env);
-  const guidedEnv = applyStackActiveServerScopeEnv({
-    env: { ...env, HAPPIER_STACK_AUTH_FLOW: '1' },
+  const scopedEnv = applyStackActiveServerScopeEnv({
+    env,
     stackName,
     cliIdentity: identity,
   });
-  const guided = await runOrchestratedGuidedAuthFlow({
-    rootDir,
-    stackName,
-    env: guidedEnv,
-    verbosity,
-    json: false,
-  });
 
-  const daemonStart = await startDaemonPostAuth({
-    rootDir,
-    stackName,
-    env: guidedEnv,
-    forceRestart: true,
-    webappUrl: guided?.webappUrl,
-  });
-  if (daemonStart?.ok === false) {
+  let webappUrlForDaemon = webappUrl;
+  if (method !== 'mobile' && effectiveWebappMode === 'expo') {
+    const guidedEnv = applyStackActiveServerScopeEnv({
+      env: { ...scopedEnv, HAPPIER_STACK_AUTH_FLOW: '1' },
+      stackName,
+      cliIdentity: identity,
+    });
+    const publicIsLocalish = isLocalishUrl(publicServerUrl);
+
+    // Auto mode is "local-first": try Expo first (but avoid making users think it's stalled).
+    // If Expo doesn't become ready within a soft timeout, offer safe fallbacks.
+    if (requestedWebappMode === 'auto') {
+      // eslint-disable-next-line no-console
+      console.error(
+        `[auth] ${stackName}: starting guided login via the stack’s Expo web UI (local-first).\n` +
+          `[auth] This can take several minutes on the first run while the stack starts and the web bundle builds.`
+      );
+    }
+
+    const baseSoftTimeoutMs = requestedWebappMode === 'auto' ? resolveAuthExpoSoftTimeoutMs(process.env) : null;
+    const maxTimeoutMs = requestedWebappMode === 'auto' ? resolveAuthExpoMaxTimeoutMs(process.env) : null;
+    let attemptTimeoutMs = baseSoftTimeoutMs;
+    // eslint-disable-next-line no-constant-condition
+    while (true) {
+      try {
+        const guided = await runOrchestratedGuidedAuthFlow({
+          rootDir,
+          stackName,
+          env:
+            requestedWebappMode === 'auto' && attemptTimeoutMs
+              ? {
+                  ...guidedEnv,
+                  HAPPIER_STACK_AUTH_UI_READY_TIMEOUT_MS: String(attemptTimeoutMs),
+                  HAPPIER_STACK_AUTH_EXPO_BUNDLE_READY_TIMEOUT_MS: String(attemptTimeoutMs),
+                }
+              : guidedEnv,
+          verbosity,
+          json: false,
+        });
+        webappUrlForDaemon = guided?.webappUrl || webappUrlForDaemon;
+        break;
+      } catch (e) {
+        if (requestedWebappMode === 'expo') {
+          throw e;
+        }
+        if (publicIsLocalish) {
+          // Hosted/mobile can't reach localhost; fail closed and let the error surface.
+          throw e;
+        }
+
+        if (!tty) {
+          // Non-interactive: default to the most reliable completion path.
+          // eslint-disable-next-line no-console
+          console.error(
+            `[auth] ${stackName}: Expo web UI is not ready yet.\n` +
+              `[auth] Falling back to hosted web app (${HOSTED_WEBAPP_URL}) for the approval UI (targets: ${publicServerUrl}).`
+          );
+          const hostedEnv = { ...scopedEnv, HAPPIER_WEBAPP_URL: HOSTED_WEBAPP_URL };
+          await run(process.execPath, nodeArgs, { cwd: rootDir, env: hostedEnv });
+          webappUrlForDaemon = HOSTED_WEBAPP_URL;
+          break;
+        }
+
+        const choice = await withRl(async (rl) => {
+          const timeoutText = attemptTimeoutMs ? formatDurationMs(attemptTimeoutMs) : '';
+          const title =
+            `[auth] ${stackName}: Expo web UI is not ready yet` +
+            (timeoutText ? ` (waited ~${timeoutText})` : '') +
+            `.\n` +
+            `[auth] First-time web builds can take several minutes.`;
+          return await promptSelect(rl, {
+            title,
+            options: [
+              { label: 'keep waiting for Expo (recommended)', value: 'wait' },
+              { label: `use hosted web app for approval UI (${HOSTED_WEBAPP_URL}) — still logs into your stack`, value: 'hosted' },
+              { label: 'use mobile QR / deep link (no browser; requires a public URL)', value: 'mobile' },
+              { label: 'cancel and show error', value: 'cancel' },
+            ],
+            defaultIndex: 0,
+          });
+        });
+
+        if (choice === 'cancel') {
+          throw e;
+        }
+        if (choice === 'hosted') {
+          // eslint-disable-next-line no-console
+          console.error(
+            `[auth] ${stackName}: falling back to hosted web app (${HOSTED_WEBAPP_URL}) for the approval UI (targets: ${publicServerUrl}).`
+          );
+          const hostedEnv = { ...scopedEnv, HAPPIER_WEBAPP_URL: HOSTED_WEBAPP_URL };
+          await run(process.execPath, nodeArgs, { cwd: rootDir, env: hostedEnv });
+          webappUrlForDaemon = HOSTED_WEBAPP_URL;
+          break;
+        }
+        if (choice === 'mobile') {
+          // eslint-disable-next-line no-console
+          console.error(`[auth] ${stackName}: switching to mobile login (targets: ${publicServerUrl}).`);
+          const mobileArgs = [...nodeArgs];
+          if (!mobileArgs.includes('--method')) {
+            mobileArgs.push('--method', 'mobile');
+          } else {
+            const idx = mobileArgs.indexOf('--method');
+            if (idx >= 0) {
+              mobileArgs[idx + 1] = 'mobile';
+            }
+          }
+          await run(process.execPath, mobileArgs, { cwd: rootDir, env: scopedEnv });
+          break;
+        }
+
+        // wait: increase timeout and retry
+        const next = attemptTimeoutMs ? Math.min(attemptTimeoutMs * 2, maxTimeoutMs ?? attemptTimeoutMs * 2) : null;
+        attemptTimeoutMs = next;
+        // eslint-disable-next-line no-console
+        console.error(
+          `[auth] ${stackName}: continuing to wait for Expo...` +
+            (attemptTimeoutMs ? ` (next timeout: ${formatDurationMs(attemptTimeoutMs)})` : '')
+        );
+      }
+    }
+  } else {
+    await run(process.execPath, nodeArgs, { cwd: rootDir, env: scopedEnv });
+  }
+
+  try {
+    const daemonStart = await startDaemonPostAuth({
+      rootDir,
+      stackName,
+      env: scopedEnv,
+      forceRestart: true,
+      webappUrl: webappUrlForDaemon,
+    });
+    if (daemonStart?.ok === false) {
+      // eslint-disable-next-line no-console
+      console.error(daemonStart.error ?? `[auth] ${stackName}: post-auth daemon start verification timed out`);
+    }
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
     // eslint-disable-next-line no-console
-    console.error(daemonStart.error ?? `[auth] ${stackName}: post-auth daemon start verification timed out`);
+    console.error(`[auth] ${stackName}: post-auth daemon start failed (non-fatal): ${msg}`);
   }
   return;
 }

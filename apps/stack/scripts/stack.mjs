@@ -1174,13 +1174,16 @@ async function cmdCreateDevAuthSeed({ rootDir, argv }) {
                 // Prefer localhost for readiness checks (faster/more reliable), even though we
                 // instruct the user to use the stack-scoped *.localhost origin for storage isolation.
                 await waitForHttpOk(uiRootLocalhost || uiRoot, { timeoutMs: 30_000 });
-                try {
-                  await assertExpoWebappBundlesOrThrow({
-                    rootDir,
-                    stackName: name,
-                    webappUrl: uiRootLocalhost || uiRoot,
-                  });
-                } catch (e) {
+	                try {
+	                  const bundleTimeoutRaw = String(process.env.HAPPIER_STACK_AUTH_EXPO_BUNDLE_READY_TIMEOUT_MS ?? '').trim();
+	                  const bundleTimeoutMs = bundleTimeoutRaw ? Number(bundleTimeoutRaw) : null;
+	                  await assertExpoWebappBundlesOrThrow({
+	                    rootDir,
+	                    stackName: name,
+	                    webappUrl: uiRootLocalhost || uiRoot,
+	                    timeoutMs: Number.isFinite(bundleTimeoutMs) && bundleTimeoutMs > 0 ? bundleTimeoutMs : undefined,
+	                  });
+	                } catch (e) {
                   const detail = e instanceof Error ? e.message : String(e);
                   throw new Error(
                     `[stack] temporary UI is reachable, but the Expo web bundle is not ready.\n` +

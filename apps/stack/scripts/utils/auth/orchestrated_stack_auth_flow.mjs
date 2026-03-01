@@ -11,6 +11,7 @@ import { run } from '../proc/proc.mjs';
 
 import { guidedStackAuthLoginNow, assertExpoWebappBundlesOrThrow, resolveStackWebappUrlForAuth } from './stack_guided_login.mjs';
 import { checkDaemonState, startLocalDaemonWithAuth } from '../../daemon.mjs';
+import { isTty } from '../cli/wizard.mjs';
 
 function appendCauseText(baseMessage, cause) {
   const msg = String(baseMessage ?? '').trim();
@@ -79,6 +80,28 @@ async function appendRuntimeHealthDiagnostics(message, stackName) {
   return `${String(message ?? '').trim()}\n\n${runtimeSummary}`;
 }
 
+function resolveAuthUiStartTimeoutMs(env = process.env) {
+  const raw = String(env?.HAPPIER_STACK_AUTH_UI_START_TIMEOUT_MS ?? '').trim();
+  const parsed = raw ? Number(raw) : NaN;
+  const timeoutMs = Number.isFinite(parsed) && parsed > 0 ? parsed : 20_000;
+  return timeoutMs;
+}
+
+function resolveAuthExpoProgressIntervalMs(env = process.env) {
+  const raw = String(env?.HAPPIER_STACK_AUTH_EXPO_PROGRESS_INTERVAL_MS ?? '').trim();
+  if (!raw) return 20_000;
+  const n = Number(raw);
+  if (!Number.isFinite(n)) return 20_000;
+  if (n <= 0) return 0;
+  return n;
+}
+
+function resolveAuthExpoBundleReadyTimeoutMs(env = process.env) {
+  const raw = String(env?.HAPPIER_STACK_AUTH_EXPO_BUNDLE_READY_TIMEOUT_MS ?? '').trim();
+  const n = raw ? Number(raw) : NaN;
+  return Number.isFinite(n) && n > 0 ? n : 60_000;
+}
+
 async function appendRunnerLogTailDiagnostics({ message, stackName, lines = 140 }) {
   const base = String(message ?? '').trim();
   const logPath = await resolveRunnerLogPathFromRuntime({ stackName, waitMs: 1000, pollMs: 100 }).catch(() => '');
@@ -99,6 +122,7 @@ async function tryStartStackUiInBackgroundForAuth({ rootDir, stackName, env = pr
       [join(rootDir, 'scripts', 'stack.mjs'), 'dev', name, '--background', '--no-daemon', '--no-browser'],
       {
         cwd: rootDir,
+        timeoutMs: resolveAuthUiStartTimeoutMs(env),
         env: {
           ...process.env,
           ...(env ?? {}),
@@ -142,10 +166,61 @@ export async function prepareGuidedLoginWebapp({ rootDir, stackName, env, steps 
   const printer = steps && typeof steps.start === 'function' && typeof steps.stop === 'function' ? steps : null;
 
   if (printer) printer.start(label);
+  const progressIntervalMs = resolveAuthExpoProgressIntervalMs(env ?? process.env);
+  const progressEnabled = Boolean(isTty() && progressIntervalMs > 0);
+  const startedAt = Date.now();
+  let stopProgress = null;
+  if (progressEnabled) {
+    let stopped = false;
+    let printedLogHint = false;
+    const tick = async () => {
+      if (stopped) return;
+      try {
+        const st = await readStackRuntimeStateFile(getStackRuntimeStatePath(name)).catch(() => null);
+        const ownerPid = Number(st?.ownerPid);
+        const ownerAlive = Number.isFinite(ownerPid) && ownerPid > 1 ? isPidAlive(ownerPid) : null;
+        const expoPid = Number(st?.processes?.expoPid);
+        const expoAlive = Number.isFinite(expoPid) && expoPid > 1 ? isPidAlive(expoPid) : null;
+        const elapsedSec = Math.max(0, Math.round((Date.now() - startedAt) / 1000));
+        const stateText =
+          expoAlive === true
+            ? 'Expo dev server is running; waiting for the first web build to finish...'
+            : 'Stack UI is still starting; waiting for Expo dev server...';
+        // eslint-disable-next-line no-console
+        console.error(`[auth] ${name}: ${stateText} (${elapsedSec}s elapsed; this can take several minutes on first run)`);
+
+        const logPath = String(st?.logs?.runner ?? '').trim();
+        if (!printedLogHint && logPath) {
+          printedLogHint = true;
+          // eslint-disable-next-line no-console
+          console.error(`[auth] ${name}: tip: tail runner log for details: ${logPath}`);
+        }
+        if (ownerAlive === false) {
+          // eslint-disable-next-line no-console
+          console.error(`[auth] ${name}: note: stack runtime owner pid looks stale; continuing to wait...`);
+        }
+      } catch {
+        // ignore
+      } finally {
+        if (!stopped) {
+          setTimeout(tick, progressIntervalMs).unref?.();
+        }
+      }
+    };
+    setTimeout(tick, progressIntervalMs).unref?.();
+    stopProgress = () => {
+      stopped = true;
+    };
+  }
   try {
     const resolveAndAssert = async () => {
       const webappUrl = await resolveStackWebappUrlForAuth({ rootDir, stackName: name, env });
-      await assertExpoWebappBundlesOrThrow({ rootDir, stackName: name, webappUrl });
+      await assertExpoWebappBundlesOrThrow({
+        rootDir,
+        stackName: name,
+        webappUrl,
+        timeoutMs: resolveAuthExpoBundleReadyTimeoutMs(env ?? process.env),
+      });
       return webappUrl;
     };
 
@@ -187,6 +262,12 @@ export async function prepareGuidedLoginWebapp({ rootDir, stackName, env, steps 
   } catch (e) {
     if (printer) printer.stop('x', label);
     throw e;
+  } finally {
+    try {
+      stopProgress?.();
+    } catch {
+      // ignore
+    }
   }
 }
 
