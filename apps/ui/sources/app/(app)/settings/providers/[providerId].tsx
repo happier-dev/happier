@@ -219,6 +219,7 @@ export default React.memo(function ProviderSettingsScreen() {
         none: t('settingsProviders.sessionModeNone'),
         acpPolicyPresets: t('settingsProviders.sessionModeAcpPolicyPresets'),
         acpAgentModes: t('settingsProviders.sessionModeAcpAgentModes'),
+        staticAgentModes: t('settingsProviders.sessionModeStaticAgentModes'),
     }[sessionModeKind];
     const runtimeSwitchKind = classifyRuntimeSwitchKind(advanced.supportsRuntimeModeSwitch);
     const runtimeSwitchSupport = {
@@ -492,7 +493,7 @@ export default React.memo(function ProviderSettingsScreen() {
 
                 <ItemGroup title={t('settingsProviders.cliConnectionTitle')}>
                     <Item
-                        title="Target machine"
+                        title={t('settingsProviders.targetMachineTitle')}
                         subtitle={primaryMachineLabel ?? t('machine.detectedCliUnknown')}
                         icon={<Ionicons name="desktop-outline" size={29} color={theme.colors.textSecondary} />}
                         showChevron={false}
