@@ -14,15 +14,10 @@ import { getAgentCore, type AgentId } from '@/agents/catalog/catalog';
 import { getPermissionModeOptionsForAgentType } from '@/sync/domains/permissions/permissionModeOptions';
 import type { PermissionMode } from '@/sync/domains/permissions/permissionTypes';
 import { resolvePermissionPromptSurface } from '@/utils/sessions/permissions/permissionPromptPolicy';
+import { getPermissionApplyTimingSubtitleKey } from '@/components/settings/session/sessionI18n';
 
 type PermissionApplyTiming = 'immediate' | 'next_prompt';
 type PermissionPromptSurfaceMenuOption = 'composer' | 'transcript';
-
-function getPermissionApplyTimingSubtitleKey(applyTiming: PermissionApplyTiming): 'settingsSession.defaultPermissions.applyPermissionChangesImmediateSubtitle' | 'settingsSession.defaultPermissions.applyPermissionChangesNextPromptSubtitle' {
-    return applyTiming === 'immediate'
-        ? 'settingsSession.defaultPermissions.applyPermissionChangesImmediateSubtitle'
-        : 'settingsSession.defaultPermissions.applyPermissionChangesNextPromptSubtitle';
-}
 
 export const PermissionsSettingsView = React.memo(function PermissionsSettingsView() {
     const { theme } = useUnistyles();

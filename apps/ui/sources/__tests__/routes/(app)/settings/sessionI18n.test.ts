@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { getPermissionApplyTimingSubtitleKey } from '@/app/(app)/settings/sessionI18n';
+import { getPermissionApplyTimingSubtitleKey } from '@/components/settings/session/sessionI18n';
 
 describe('getPermissionApplyTimingSubtitleKey', () => {
     it('returns immediate subtitle key when apply timing is immediate', () => {
