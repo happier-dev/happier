@@ -12,6 +12,7 @@ describe('structured message registry (voice agent turn)', () => {
 
     const el = entry!.render(parsed.success ? parsed.data : (null as any), {
       sessionId: 's1',
+      message: { kind: 'agent-text', id: 'm1', localId: null, createdAt: 1, text: 'x' } as any,
       onJumpToAnchor: () => {},
     });
     expect(el).toBeNull();
@@ -26,6 +27,7 @@ describe('structured message registry (voice agent turn)', () => {
 
     const el = entry!.render(parsed.success ? parsed.data : (null as any), {
       sessionId: 's1',
+      message: { kind: 'agent-text', id: 'm1', localId: null, createdAt: 1, text: 'x' } as any,
       onJumpToAnchor: () => {},
     });
     expect(el).toBeNull();
@@ -50,6 +52,7 @@ describe('structured message registry (voice agent turn)', () => {
 
     const el = entry!.render(parsed.success ? parsed.data : (null as any), {
       sessionId: 's1',
+      message: { kind: 'agent-text', id: 'm1', localId: null, createdAt: 1, text: 'x' } as any,
       onJumpToAnchor: () => {},
     });
     expect(el).toBeNull();
