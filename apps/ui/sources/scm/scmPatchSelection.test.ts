@@ -16,12 +16,12 @@ const sampleDiff = [
 
 describe('buildPatchFromSelectedDiffLines', () => {
     it('returns null when no selected diff lines are provided', () => {
-        const patch = buildPatchFromSelectedDiffLines(sampleDiff, new Set<number>());
+        const patch = buildPatchFromSelectedDiffLines(sampleDiff, new Set<string>());
         expect(patch).toBeNull();
     });
 
     it('builds a valid add-only patch hunk for selected + lines', () => {
-        const patch = buildPatchFromSelectedDiffLines(sampleDiff, new Set([7]));
+        const patch = buildPatchFromSelectedDiffLines(sampleDiff, new Set(['additions:2']));
         expect(patch).toContain('diff --git a/src/a.ts b/src/a.ts');
         expect(patch).toContain('@@ -1,3 +1,4 @@');
         expect(patch).toContain(' old-line');
@@ -29,14 +29,14 @@ describe('buildPatchFromSelectedDiffLines', () => {
     });
 
     it('builds a valid remove-only patch hunk for selected - lines', () => {
-        const patch = buildPatchFromSelectedDiffLines(sampleDiff, new Set([6]));
+        const patch = buildPatchFromSelectedDiffLines(sampleDiff, new Set(['deletions:2']));
         expect(patch).toContain('diff --git a/src/a.ts b/src/a.ts');
         expect(patch).toContain('@@ -1,3 +1,2 @@');
         expect(patch).toContain('-old-line');
     });
 
     it('keeps paired delete/add selection in a single coherent hunk', () => {
-        const patch = buildPatchFromSelectedDiffLines(sampleDiff, new Set([6, 7]));
+        const patch = buildPatchFromSelectedDiffLines(sampleDiff, new Set(['deletions:2', 'additions:2']));
         expect(patch).toBeTruthy();
         expect(patch).toContain(' keep-1');
         expect(patch).toContain('-old-line');
@@ -48,14 +48,14 @@ describe('buildPatchFromSelectedDiffLines', () => {
     });
 
     it('converts unselected deletions to context when only additions are selected', () => {
-        const patch = buildPatchFromSelectedDiffLines(sampleDiff, new Set([7]));
+        const patch = buildPatchFromSelectedDiffLines(sampleDiff, new Set(['additions:2']));
         expect(patch).toContain('+new-line');
         expect(patch).toContain(' old-line');
         expect(patch).not.toContain('\n-old-line\n');
     });
 
     it('drops unselected deletions for unstage mode when only additions are selected', () => {
-        const patch = buildPatchFromSelectedDiffLines(sampleDiff, new Set([7]), {
+        const patch = buildPatchFromSelectedDiffLines(sampleDiff, new Set(['additions:2']), {
             mode: 'unstage',
         });
         expect(patch).toContain('+new-line');
@@ -74,7 +74,7 @@ describe('buildPatchFromSelectedDiffLines', () => {
             '\\ No newline at end of file',
         ].join('\n');
 
-        const patch = buildPatchFromSelectedDiffLines(noNewlineDiff, new Set([5]));
+        const patch = buildPatchFromSelectedDiffLines(noNewlineDiff, new Set(['additions:1']));
         expect(patch).toContain('+new');
         expect(patch).toContain('\\ No newline at end of file');
     });
@@ -97,7 +97,7 @@ describe('buildPatchFromSelectedDiffLines', () => {
             ' keep-d',
         ].join('\n');
 
-        const patch = buildPatchFromSelectedDiffLines(multiHunkDiff, new Set([7, 12]));
+        const patch = buildPatchFromSelectedDiffLines(multiHunkDiff, new Set(['additions:2', 'additions:11']));
         expect(patch).toContain('+new-a');
         expect(patch).toContain('+new-c');
         const hunkCount = (patch?.match(/^@@/gm) ?? []).length;
