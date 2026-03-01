@@ -79,7 +79,7 @@ describe('sessions domain: modelMode normalization', () => {
                 createdAt: 1,
                 active: false,
                 activeAt: 1,
-                metadata: { flavor: 'gemini' },
+                metadata: { flavor: 'codex' },
             } as any,
         ]);
 
@@ -100,7 +100,7 @@ describe('sessions domain: modelMode normalization', () => {
                 createdAt: 1,
                 active: false,
                 activeAt: 1,
-                metadata: { flavor: 'gemini' },
+                metadata: { flavor: 'codex' },
             } as any,
         ]);
 
@@ -138,7 +138,7 @@ describe('sessions domain: modelMode normalization', () => {
                 active: false,
                 activeAt: 1,
                 metadata: {
-                    flavor: 'gemini',
+                    flavor: 'codex',
                     modelOverrideV1: { v: 1, updatedAt: 1000, modelId: 'not-a-real-model' },
                 },
             } as any,
@@ -156,7 +156,7 @@ describe('sessions domain: modelMode normalization', () => {
             active: false,
             activeAt: 1,
             metadata: {
-                flavor: 'gemini',
+                flavor: 'codex',
                 modelOverrideV1: { v: 1, updatedAt: 1000, modelId: 'not-a-real-model' },
             },
         } as any;
