@@ -65,6 +65,9 @@ vi.mock('@shopify/flash-list', () => ({
 vi.mock('react-native', async () => {
     const ReactMod = await import('react');
     return {
+        Dimensions: {
+            get: () => ({ width: 1024, height: 768, scale: 1, fontScale: 1 }),
+        },
         Platform: {
             get OS() {
                 return platformOs;
@@ -212,8 +215,8 @@ describe('ChatList (FlashList v2)', () => {
         };
         for (const k of Object.keys(settingValues)) delete settingValues[k];
         settingValues.transcriptGroupingMode = 'linear';
-        settingValues.transcriptTurnShowActivityGroup = false;
-        settingValues.transcriptTurnActivityGroupStrategy = 'consecutive_tools';
+        settingValues.transcriptGroupToolCalls = false;
+        settingValues.transcriptTurnToolCallsGroupStrategy = 'consecutive_tools';
         settingValues.transcriptListImplementation = 'flash_v2';
     });
 

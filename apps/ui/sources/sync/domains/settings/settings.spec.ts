@@ -525,9 +525,13 @@ describe('settings', () => {
         it('defaults transcript grouping settings', () => {
             const parsed = settingsParse({});
             expect((parsed as any).transcriptGroupingMode).toBe('linear');
-            expect((parsed as any).transcriptTurnShowActivityGroup).toBe(false);
-            expect((parsed as any).transcriptTurnActivityGroupStrategy).toBe('consecutive_tools');
-            expect((parsed as any).transcriptTurnActivityGroupCollapsedPreviewCount).toBe(5);
+            expect((parsed as any).transcriptGroupToolCalls).toBe(false);
+            expect((parsed as any).transcriptTurnToolCallsGroupStrategy).toBe('consecutive_tools');
+            expect((parsed as any).transcriptToolCallsCollapsedPreviewCount).toBe(5);
+            expect((parsed as any).transcriptToolCallsGroupShowBackground).toBe(false);
+            expect((parsed as any).transcriptTurnGroupToolCalls).toBeUndefined();
+            expect((parsed as any).transcriptTurnToolCallsCollapsedPreviewCount).toBeUndefined();
+            expect((parsed as any).transcriptTurnToolCallsGroupShowBackground).toBeUndefined();
         });
 
         it('defaults thinking to inline (summary)', () => {
@@ -564,9 +568,10 @@ describe('settings', () => {
             const parsed = settingsParse({});
             expect((parsed as any).toolViewTimelineChromeMode).toBe('cards');
             expect((parsed as any).toolViewTimelineFeedDefaultExpanded).toBe(false);
-            expect((parsed as any).toolViewTimelineFeedTapAction).toBe('expand');
+            expect((parsed as any).toolViewTimelineFeedTapAction).toBeUndefined();
             expect((parsed as any).toolViewTimelineDensity).toBeUndefined();
             expect((parsed as any).toolViewDetailLevelDefault).toBe('default');
+            expect((parsed as any).toolViewTapAction).toBe('expand');
             expect((parsed as any).toolViewExpandedDetailLevelDefault).toBe('default');
         });
 

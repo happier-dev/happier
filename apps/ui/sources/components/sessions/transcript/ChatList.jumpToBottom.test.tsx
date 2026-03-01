@@ -165,8 +165,8 @@ describe('ChatList (jump-to-bottom)', () => {
     for (const k of Object.keys(settingValues)) delete settingValues[k];
 
     settingValues.transcriptGroupingMode = 'linear';
-    settingValues.transcriptTurnShowActivityGroup = false;
-    settingValues.transcriptTurnActivityGroupStrategy = 'consecutive_tools';
+    settingValues.transcriptGroupToolCalls = false;
+    settingValues.transcriptTurnToolCallsGroupStrategy = 'consecutive_tools';
     settingValues.transcriptListImplementation = 'flatlist_legacy';
 
     settingValues.transcriptScrollPinEnabled = true;

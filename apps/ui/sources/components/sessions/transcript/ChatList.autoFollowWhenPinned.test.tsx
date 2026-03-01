@@ -164,8 +164,8 @@ describe('ChatList (auto-follow while pinned)', () => {
     scrollToOffsetSpy.mockClear();
 
     settingValues.transcriptGroupingMode = 'linear';
-    settingValues.transcriptTurnShowActivityGroup = false;
-    settingValues.transcriptTurnActivityGroupStrategy = 'consecutive_tools';
+    settingValues.transcriptGroupToolCalls = false;
+    settingValues.transcriptTurnToolCallsGroupStrategy = 'consecutive_tools';
     settingValues.transcriptListImplementation = 'flatlist_legacy';
 
     settingValues.transcriptScrollPinEnabled = true;

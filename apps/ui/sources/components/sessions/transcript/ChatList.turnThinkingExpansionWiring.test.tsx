@@ -23,7 +23,13 @@ vi.mock('react-native', async (importOriginal) => {
   const actual = await importOriginal<any>();
   return {
     ...actual,
-    Platform: { OS: 'web' },
+    Platform: {
+      OS: 'web',
+      select: (spec: any) => {
+        if (!spec || typeof spec !== 'object') return undefined;
+        return spec.web ?? spec.default;
+      },
+    },
     View: (props: any) => ReactMod.createElement('View', props, props.children),
     ActivityIndicator: () => ReactMod.createElement('ActivityIndicator'),
     FlatList: (props: any) => {
@@ -160,8 +166,8 @@ describe('ChatList (turn thinking expansion wiring)', () => {
 
   it('passes thinking expansion helpers into TurnView when in turns mode', async () => {
     settingValues.transcriptGroupingMode = 'turns';
-    settingValues.transcriptTurnShowActivityGroup = false;
-    settingValues.transcriptTurnActivityGroupStrategy = 'consecutive_tools';
+    settingValues.transcriptGroupToolCalls = false;
+    settingValues.transcriptTurnToolCallsGroupStrategy = 'consecutive_tools';
     settingValues.transcriptListImplementation = 'flatlist_legacy';
     settingValues.sessionThinkingDisplayMode = 'inline';
     settingValues.sessionThinkingInlinePresentation = 'summary';

@@ -496,9 +496,10 @@ const SettingsSchemaBase = z.object({
 
     // Transcript rendering (premium, configurable; defaults preserve current behavior).
     transcriptGroupingMode: z.enum(['linear', 'turns']).describe('Transcript grouping mode (linear vs turn grouping)'),
-    transcriptTurnShowActivityGroup: z.boolean().describe('When turn grouping is enabled, group tools into an Activity section'),
-    transcriptTurnActivityGroupStrategy: z.enum(['consecutive_tools', 'all_tools_in_turn']).describe('Activity grouping strategy inside a turn'),
-    transcriptTurnActivityGroupCollapsedPreviewCount: z.number().describe('How many tools to preview when an Activity group is collapsed (turn grouping)'),
+    transcriptGroupToolCalls: z.boolean().describe('Group consecutive tool calls into a Tool calls section in the transcript'),
+    transcriptTurnToolCallsGroupStrategy: z.enum(['consecutive_tools', 'all_tools_in_turn']).describe('Tool calls grouping strategy inside a turn'),
+    transcriptToolCallsCollapsedPreviewCount: z.number().describe('How many tool calls to preview when a Tool calls group is collapsed'),
+    transcriptToolCallsGroupShowBackground: z.boolean().describe('When Tool calls are grouped and rendered in feed mode, show a group background behind the Tool calls'),
     transcriptPendingQueueMaxHeightPx: z.number().describe('Max height (px) for the pending queue block in the transcript'),
     transcriptPendingQueueExpandedMaxHeightPx: z.number().describe('Max height (px) for the pending queue block when expanded'),
     transcriptPendingQueueReorderRowHeightPx: z.number().describe('Row height (px) used by drag reorder in the pending queue transcript block'),
@@ -512,10 +513,9 @@ const SettingsSchemaBase = z.object({
     transcriptThinkingPulseStaleMs: z.number().describe('Stale window for thinking pulse to auto-clear (ms)'),
     transcriptListImplementation: z.enum(['flash_v2', 'flatlist_legacy']).describe('Which transcript list implementation to use'),
 
-    // Tool timeline chrome (how tools render within grouped Activity sections).
+    // Tool timeline chrome (how tools render within grouped Tool calls sections).
     toolViewTimelineChromeMode: z.enum(['cards', 'activity_feed']).describe('Tool timeline chrome mode (cards vs activity feed rows)'),
     toolViewTimelineFeedDefaultExpanded: z.boolean().describe('Default expansion state for activity feed tool rows'),
-    toolViewTimelineFeedTapAction: z.enum(['expand', 'open']).describe('Primary tap action in activity feed tool rows'),
 
     // Transcript motion (freshness-gated).
     transcriptMotionPreset: z.enum(['off', 'subtle', 'full']).describe('Transcript animation preset'),
@@ -718,9 +718,10 @@ export type Settings = KnownSettings & Record<string, unknown>;
     toolViewExpandedDetailLevelByToolName: {},
 
       transcriptGroupingMode: 'linear',
-      transcriptTurnShowActivityGroup: false,
-      transcriptTurnActivityGroupStrategy: 'consecutive_tools',
-      transcriptTurnActivityGroupCollapsedPreviewCount: 5,
+      transcriptGroupToolCalls: false,
+      transcriptTurnToolCallsGroupStrategy: 'consecutive_tools',
+      transcriptToolCallsCollapsedPreviewCount: 5,
+      transcriptToolCallsGroupShowBackground: false,
 
         transcriptStreamingCoalesceEnabled: true,
         transcriptStreamingCoalesceWindowMs: 16,
@@ -735,7 +736,6 @@ export type Settings = KnownSettings & Record<string, unknown>;
 
       toolViewTimelineChromeMode: 'cards',
       toolViewTimelineFeedDefaultExpanded: false,
-      toolViewTimelineFeedTapAction: 'expand',
 
     transcriptMotionPreset: 'subtle',
     transcriptMotionFreshnessMs: 60_000,

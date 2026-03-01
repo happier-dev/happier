@@ -24,7 +24,13 @@ vi.mock('react-native', async (importOriginal) => {
   const actual = await importOriginal<any>();
   return {
     ...actual,
-    Platform: { OS: 'web' },
+    Platform: {
+      OS: 'web',
+      select: (spec: any) => {
+        if (!spec || typeof spec !== 'object') return undefined;
+        return spec.web ?? spec.default;
+      },
+    },
     View: (props: any) => ReactMod.createElement('View', props, props.children),
     ActivityIndicator: () => ReactMod.createElement('ActivityIndicator'),
     FlatList: (props: any) => {
@@ -135,8 +141,8 @@ describe('ChatList (turn grouping mode)', () => {
 
   it('renders turn items when transcriptGroupingMode is turns', async () => {
     settingValues.transcriptGroupingMode = 'turns';
-    settingValues.transcriptTurnShowActivityGroup = false;
-    settingValues.transcriptTurnActivityGroupStrategy = 'consecutive_tools';
+    settingValues.transcriptGroupToolCalls = false;
+    settingValues.transcriptTurnToolCallsGroupStrategy = 'consecutive_tools';
     settingValues.transcriptListImplementation = 'flatlist_legacy';
 
     const messages = [
@@ -163,5 +169,40 @@ describe('ChatList (turn grouping mode)', () => {
     expect(capturedFlatListProps).toBeTruthy();
     expect(Array.isArray(capturedFlatListProps.data)).toBe(true);
     expect(capturedFlatListProps.data[0]?.kind).toBe('turn');
+  });
+
+  it('does not group tool calls into tool-call groups when tool chrome mode is cards', async () => {
+    settingValues.transcriptGroupingMode = 'turns';
+    settingValues.transcriptGroupToolCalls = true;
+    settingValues.transcriptTurnToolCallsGroupStrategy = 'consecutive_tools';
+    settingValues.toolViewTimelineChromeMode = 'cards';
+    settingValues.transcriptListImplementation = 'flatlist_legacy';
+
+    const messages = [
+      { kind: 'user-text', id: 'u1', localId: null, createdAt: 1, text: 'u1' },
+      { kind: 'tool-call', id: 't1', localId: null, createdAt: 2, tool: { name: 'Bash' } },
+      { kind: 'agent-text', id: 'a1', localId: null, createdAt: 3, text: 'a1' },
+    ];
+    sessionMessagesState = { isLoaded: true, messages };
+    buildChatListItemsMock.mockImplementation((opts: any) => {
+      if (opts?.includeCommittedMessages === false) return [];
+      return messages.map((m) => ({
+        kind: 'message',
+        id: m.id,
+        messageId: m.id,
+        createdAt: m.createdAt,
+        seq: null,
+      }));
+    });
+
+    const { ChatList } = await import('./ChatList');
+    await act(async () => {
+      renderer.create(<ChatList session={sessionState} />);
+    });
+
+    const firstTurn = capturedFlatListProps.data[0]?.turn;
+    expect(firstTurn).toBeTruthy();
+    const kinds = (firstTurn.content ?? []).map((c: any) => c.kind);
+    expect(kinds).not.toContain('tool_calls');
   });
 });

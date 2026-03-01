@@ -25,9 +25,8 @@ import {
 
 type TranscriptGroupingMode = 'linear' | 'turns';
 type TranscriptMotionPreset = 'off' | 'subtle' | 'full';
-type ActivityGroupStrategy = 'consecutive_tools' | 'all_tools_in_turn';
-type ToolTimelineFeedTapAction = 'expand' | 'open';
-type ToolCardTapAction = 'expand' | 'open';
+type ToolCallsGroupStrategy = 'consecutive_tools' | 'all_tools_in_turn';
+type ToolTapAction = 'expand' | 'open';
 
 function clampInt(value: number, bounds: Readonly<{ min: number; max: number }>): number {
     if (!Number.isFinite(value)) return bounds.min;
@@ -40,9 +39,10 @@ export const TranscriptSettingsView = React.memo(function TranscriptSettingsView
     const popoverBoundaryRef = React.useRef<any>(null);
 
     const [transcriptGroupingMode, setTranscriptGroupingMode] = useSettingMutable('transcriptGroupingMode');
-    const [transcriptTurnShowActivityGroup, setTranscriptTurnShowActivityGroup] = useSettingMutable('transcriptTurnShowActivityGroup');
-    const [transcriptTurnActivityGroupStrategy, setTranscriptTurnActivityGroupStrategy] = useSettingMutable('transcriptTurnActivityGroupStrategy');
-    const [transcriptTurnActivityGroupCollapsedPreviewCount, setTranscriptTurnActivityGroupCollapsedPreviewCount] = useSettingMutable('transcriptTurnActivityGroupCollapsedPreviewCount');
+    const [transcriptGroupToolCalls, setTranscriptGroupToolCalls] = useSettingMutable('transcriptGroupToolCalls');
+    const [transcriptTurnToolCallsGroupStrategy, setTranscriptTurnToolCallsGroupStrategy] = useSettingMutable('transcriptTurnToolCallsGroupStrategy');
+    const [transcriptToolCallsCollapsedPreviewCount, setTranscriptToolCallsCollapsedPreviewCount] = useSettingMutable('transcriptToolCallsCollapsedPreviewCount');
+    const [transcriptToolCallsGroupShowBackground, setTranscriptToolCallsGroupShowBackground] = useSettingMutable('transcriptToolCallsGroupShowBackground');
 
     const [sessionThinkingDisplayMode, setSessionThinkingDisplayMode] = useSettingMutable('sessionThinkingDisplayMode');
     const [sessionThinkingInlinePresentation, setSessionThinkingInlinePresentation] = useSettingMutable('sessionThinkingInlinePresentation');
@@ -54,7 +54,6 @@ export const TranscriptSettingsView = React.memo(function TranscriptSettingsView
     const [toolViewTapAction, setToolViewTapAction] = useSettingMutable('toolViewTapAction');
     const [toolViewShowDebugByDefault, setToolViewShowDebugByDefault] = useSettingMutable('toolViewShowDebugByDefault');
 
-    const [toolViewTimelineFeedTapAction, setToolViewTimelineFeedTapAction] = useSettingMutable('toolViewTimelineFeedTapAction');
     const [toolViewTimelineFeedDefaultExpanded, setToolViewTimelineFeedDefaultExpanded] = useSettingMutable('toolViewTimelineFeedDefaultExpanded');
 
     const [transcriptMotionPreset, setTranscriptMotionPreset] = useSettingMutable('transcriptMotionPreset');
@@ -100,8 +99,8 @@ export const TranscriptSettingsView = React.memo(function TranscriptSettingsView
         setting: normalizedToolViewExpandedDetailLevelDefaultSetting,
     });
 
-    const normalizedStrategy: ActivityGroupStrategy =
-        transcriptTurnActivityGroupStrategy === 'all_tools_in_turn' ? 'all_tools_in_turn' : 'consecutive_tools';
+    const normalizedStrategy: ToolCallsGroupStrategy =
+        transcriptTurnToolCallsGroupStrategy === 'all_tools_in_turn' ? 'all_tools_in_turn' : 'consecutive_tools';
 
     const groupingOptions: Array<{ key: TranscriptGroupingMode; title: string; subtitle: string }> = [
         {
@@ -116,22 +115,22 @@ export const TranscriptSettingsView = React.memo(function TranscriptSettingsView
         },
     ];
 
-    const strategyOptions: Array<{ key: ActivityGroupStrategy; title: string; subtitle: string }> = [
+    const strategyOptions: Array<{ key: ToolCallsGroupStrategy; title: string; subtitle: string }> = [
         {
             key: 'consecutive_tools',
-            title: t('settingsSession.transcript.advanced.activityStrategy.consecutiveTitle'),
-            subtitle: t('settingsSession.transcript.advanced.activityStrategy.consecutiveSubtitle'),
+            title: t('settingsSession.transcript.advanced.toolCallsStrategy.consecutiveTitle'),
+            subtitle: t('settingsSession.transcript.advanced.toolCallsStrategy.consecutiveSubtitle'),
         },
         {
             key: 'all_tools_in_turn',
-            title: t('settingsSession.transcript.advanced.activityStrategy.allToolsTitle'),
-            subtitle: t('settingsSession.transcript.advanced.activityStrategy.allToolsSubtitle'),
+            title: t('settingsSession.transcript.advanced.toolCallsStrategy.allToolsTitle'),
+            subtitle: t('settingsSession.transcript.advanced.toolCallsStrategy.allToolsSubtitle'),
         },
     ];
 
     const normalizedCollapsedPreviewCount = clampInt(
-        typeof transcriptTurnActivityGroupCollapsedPreviewCount === 'number'
-            ? transcriptTurnActivityGroupCollapsedPreviewCount
+        typeof transcriptToolCallsCollapsedPreviewCount === 'number'
+            ? transcriptToolCallsCollapsedPreviewCount
             : 5,
         { min: 0, max: 15 },
     );
@@ -139,35 +138,35 @@ export const TranscriptSettingsView = React.memo(function TranscriptSettingsView
     const collapsedPreviewOptions: Array<{ key: number; title: string; subtitle: string }> = [
         {
             key: 0,
-            title: t('settingsSession.transcript.advanced.activityCollapsedPreviewCount.offTitle'),
-            subtitle: t('settingsSession.transcript.advanced.activityCollapsedPreviewCount.offSubtitle'),
+            title: t('settingsSession.transcript.advanced.toolCallsCollapsedPreviewCount.offTitle'),
+            subtitle: t('settingsSession.transcript.advanced.toolCallsCollapsedPreviewCount.offSubtitle'),
         },
         ...Array.from({ length: 15 }, (_, i) => i + 1).map((count) => {
             if (count === 1) {
                 return {
                     key: 1,
-                    title: t('settingsSession.transcript.advanced.activityCollapsedPreviewCount.oneTitle'),
-                    subtitle: t('settingsSession.transcript.advanced.activityCollapsedPreviewCount.oneSubtitle'),
+                    title: t('settingsSession.transcript.advanced.toolCallsCollapsedPreviewCount.oneTitle'),
+                    subtitle: t('settingsSession.transcript.advanced.toolCallsCollapsedPreviewCount.oneSubtitle'),
                 };
             }
             if (count === 2) {
                 return {
                     key: 2,
-                    title: t('settingsSession.transcript.advanced.activityCollapsedPreviewCount.twoTitle'),
-                    subtitle: t('settingsSession.transcript.advanced.activityCollapsedPreviewCount.twoSubtitle'),
+                    title: t('settingsSession.transcript.advanced.toolCallsCollapsedPreviewCount.twoTitle'),
+                    subtitle: t('settingsSession.transcript.advanced.toolCallsCollapsedPreviewCount.twoSubtitle'),
                 };
             }
             if (count === 3) {
                 return {
                     key: 3,
-                    title: t('settingsSession.transcript.advanced.activityCollapsedPreviewCount.threeTitle'),
-                    subtitle: t('settingsSession.transcript.advanced.activityCollapsedPreviewCount.threeSubtitle'),
+                    title: t('settingsSession.transcript.advanced.toolCallsCollapsedPreviewCount.threeTitle'),
+                    subtitle: t('settingsSession.transcript.advanced.toolCallsCollapsedPreviewCount.threeSubtitle'),
                 };
             }
             return {
                 key: count,
-                title: t('settingsSession.transcript.advanced.activityCollapsedPreviewCount.countTitle', { value: String(count) }),
-                subtitle: t('settingsSession.transcript.advanced.activityCollapsedPreviewCount.countSubtitle', { value: String(count) }),
+                title: t('settingsSession.transcript.advanced.toolCallsCollapsedPreviewCount.countTitle', { value: String(count) }),
+                subtitle: t('settingsSession.transcript.advanced.toolCallsCollapsedPreviewCount.countSubtitle', { value: String(count) }),
             };
         }),
     ];
@@ -203,7 +202,7 @@ export const TranscriptSettingsView = React.memo(function TranscriptSettingsView
         },
     ];
 
-    const tapActionOptions: Array<{ key: ToolTimelineFeedTapAction; title: string; subtitle: string }> = [
+    const tapActionOptions: Array<{ key: ToolTapAction; title: string; subtitle: string }> = [
         {
             key: 'expand',
             title: t('settingsSession.toolRendering.activityFeed.tapAction.expandTitle'),
@@ -216,8 +215,7 @@ export const TranscriptSettingsView = React.memo(function TranscriptSettingsView
         },
     ];
 
-    const normalizedTapAction: ToolTimelineFeedTapAction = toolViewTimelineFeedTapAction === 'open' ? 'open' : 'expand';
-    const normalizedCardTapAction: ToolCardTapAction = toolViewTapAction === 'open' ? 'open' : 'expand';
+    const normalizedToolTapAction: ToolTapAction = toolViewTapAction === 'open' ? 'open' : 'expand';
 
     const advancedRoute = '/(app)/settings/session/transcript/advanced';
     const toolOverridesRoute = '/(app)/settings/session/tool-rendering';
@@ -291,93 +289,6 @@ export const TranscriptSettingsView = React.memo(function TranscriptSettingsView
                         setOpenGroupingMenu(false);
                     }}
                 />
-
-                {normalizedGroupingMode === 'turns' ? (
-                    <>
-                        <Item
-                            title={t('settingsSession.transcript.activityGroupTitle')}
-                            subtitle={t('settingsSession.transcript.activityGroupSubtitle')}
-                            icon={<Ionicons name="pulse-outline" size={29} color={theme.colors.accent.indigo} />}
-                            testID="settings-session-transcript-activity-group"
-                            rightElement={
-                                <Switch
-                                    value={transcriptTurnShowActivityGroup === true}
-                                    onValueChange={(v) => setTranscriptTurnShowActivityGroup(Boolean(v) as any)}
-                                />
-                            }
-                            showChevron={false}
-                            onPress={() => setTranscriptTurnShowActivityGroup((transcriptTurnShowActivityGroup !== true) as any)}
-                        />
-
-                        {transcriptTurnShowActivityGroup === true ? (
-                            <>
-                                <DropdownMenu
-                                    open={openToolDetailMenu === 'transcriptTurnActivityGroupStrategy'}
-                                    onOpenChange={(next) => setOpenToolDetailMenu(next ? 'transcriptTurnActivityGroupStrategy' : null)}
-                                    variant="selectable"
-                                    search={false}
-                                    selectedId={normalizedStrategy as any}
-                                    showCategoryTitles={false}
-                                    matchTriggerWidth={true}
-                                    connectToTrigger={true}
-                                    rowKind="item"
-                                    popoverBoundaryRef={popoverBoundaryRef}
-                                    itemTrigger={{
-                                        title: t('settingsSession.transcript.advanced.activityStrategyTitle'),
-                                        icon: <Ionicons name="git-branch-outline" size={29} color={theme.colors.textSecondary} />,
-                                    }}
-                                    items={strategyOptions.map((opt) => ({
-                                        id: opt.key,
-                                        title: opt.title,
-                                        subtitle: opt.subtitle,
-                                        icon: (
-                                            <View style={{ width: 32, height: 32, alignItems: 'center', justifyContent: 'center' }}>
-                                                <Ionicons name="git-branch-outline" size={22} color={theme.colors.textSecondary} />
-                                            </View>
-                                        ),
-                                    }))}
-                                    onSelect={(id) => {
-                                        setTranscriptTurnActivityGroupStrategy(id as any);
-                                        setOpenToolDetailMenu(null);
-                                    }}
-                                />
-
-                                <DropdownMenu
-                                    open={openToolDetailMenu === 'transcriptTurnActivityGroupCollapsedPreviewCount'}
-                                    onOpenChange={(next) => setOpenToolDetailMenu(next ? 'transcriptTurnActivityGroupCollapsedPreviewCount' : null)}
-                                    variant="selectable"
-                                    search={false}
-                                    selectedId={String(normalizedCollapsedPreviewCount)}
-                                    showCategoryTitles={false}
-                                    matchTriggerWidth={true}
-                                    connectToTrigger={true}
-                                    rowKind="item"
-                                    popoverBoundaryRef={popoverBoundaryRef}
-                                    itemTrigger={{
-                                        title: t('settingsSession.transcript.advanced.activityCollapsedPreviewCountTitle'),
-                                        icon: <Ionicons name="eye-outline" size={29} color={theme.colors.textSecondary} />,
-                                    }}
-                                    items={collapsedPreviewOptions.map((opt) => ({
-                                        id: String(opt.key),
-                                        title: opt.title,
-                                        subtitle: opt.subtitle,
-                                        icon: (
-                                            <View style={{ width: 32, height: 32, alignItems: 'center', justifyContent: 'center' }}>
-                                                <Ionicons name="eye-outline" size={22} color={theme.colors.textSecondary} />
-                                            </View>
-                                        ),
-                                    }))}
-                                    onSelect={(id) => {
-                                        const parsed = Number(id);
-                                        if (!Number.isFinite(parsed)) return;
-                                        setTranscriptTurnActivityGroupCollapsedPreviewCount(clampInt(parsed, { min: 0, max: 15 }) as any);
-                                        setOpenToolDetailMenu(null);
-                                    }}
-                                />
-                            </>
-                        ) : null}
-                    </>
-                ) : null}
             </ItemGroup>
 
             <ItemGroup title={t('settingsSession.thinking.title')} footer={t('settingsSession.thinking.footer')}>
@@ -478,6 +389,110 @@ export const TranscriptSettingsView = React.memo(function TranscriptSettingsView
                     }}
                 />
 
+                {normalizedToolChromeMode === 'activity_feed' ? (
+                    <>
+                        <Item
+                            title={t('settingsSession.transcript.toolCallsGroupTitle')}
+                            subtitle={t('settingsSession.transcript.toolCallsGroupSubtitle')}
+                            icon={<Ionicons name="layers-outline" size={29} color={theme.colors.accent.indigo} />}
+                            testID="settings-session-transcript-tool-calls-group"
+                            rightElement={
+                                <Switch
+                                    value={transcriptGroupToolCalls === true}
+                                    onValueChange={(v) => setTranscriptGroupToolCalls(Boolean(v) as any)}
+                                />
+                            }
+                            showChevron={false}
+                            onPress={() => setTranscriptGroupToolCalls((transcriptGroupToolCalls !== true) as any)}
+                        />
+
+                        {transcriptGroupToolCalls === true ? (
+                            <>
+                                {normalizedGroupingMode === 'turns' ? (
+                                    <DropdownMenu
+                                        open={openToolDetailMenu === 'transcriptTurnToolCallsGroupStrategy'}
+                                        onOpenChange={(next) => setOpenToolDetailMenu(next ? 'transcriptTurnToolCallsGroupStrategy' : null)}
+                                        variant="selectable"
+                                        search={false}
+                                        selectedId={normalizedStrategy as any}
+                                        showCategoryTitles={false}
+                                        matchTriggerWidth={true}
+                                        connectToTrigger={true}
+                                        rowKind="item"
+                                        popoverBoundaryRef={popoverBoundaryRef}
+                                        itemTrigger={{
+                                            title: t('settingsSession.transcript.advanced.toolCallsStrategyTitle'),
+                                            icon: <Ionicons name="git-branch-outline" size={29} color={theme.colors.textSecondary} />,
+                                        }}
+                                        items={strategyOptions.map((opt) => ({
+                                            id: opt.key,
+                                            title: opt.title,
+                                            subtitle: opt.subtitle,
+                                            icon: (
+                                                <View style={{ width: 32, height: 32, alignItems: 'center', justifyContent: 'center' }}>
+                                                    <Ionicons name="git-branch-outline" size={22} color={theme.colors.textSecondary} />
+                                                </View>
+                                            ),
+                                        }))}
+                                        onSelect={(id) => {
+                                            setTranscriptTurnToolCallsGroupStrategy(id as any);
+                                            setOpenToolDetailMenu(null);
+                                        }}
+                                    />
+                                ) : null}
+
+                                <DropdownMenu
+                                    open={openToolDetailMenu === 'transcriptToolCallsCollapsedPreviewCount'}
+                                    onOpenChange={(next) => setOpenToolDetailMenu(next ? 'transcriptToolCallsCollapsedPreviewCount' : null)}
+                                    variant="selectable"
+                                    search={false}
+                                    selectedId={String(normalizedCollapsedPreviewCount)}
+                                    showCategoryTitles={false}
+                                    matchTriggerWidth={true}
+                                    connectToTrigger={true}
+                                    rowKind="item"
+                                    popoverBoundaryRef={popoverBoundaryRef}
+                                    itemTrigger={{
+                                        title: t('settingsSession.transcript.advanced.toolCallsCollapsedPreviewCountTitle'),
+                                        icon: <Ionicons name="eye-outline" size={29} color={theme.colors.textSecondary} />,
+                                    }}
+                                    items={collapsedPreviewOptions.map((opt) => ({
+                                        id: String(opt.key),
+                                        title: opt.title,
+                                        subtitle: opt.subtitle,
+                                        icon: (
+                                            <View style={{ width: 32, height: 32, alignItems: 'center', justifyContent: 'center' }}>
+                                                <Ionicons name="eye-outline" size={22} color={theme.colors.textSecondary} />
+                                            </View>
+                                        ),
+                                    }))}
+                                    onSelect={(id) => {
+                                        const parsed = Number(id);
+                                        if (!Number.isFinite(parsed)) return;
+                                        setTranscriptToolCallsCollapsedPreviewCount(clampInt(parsed, { min: 0, max: 15 }) as any);
+                                        setOpenToolDetailMenu(null);
+                                    }}
+                                />
+
+                                <Item
+                                    title={t('settingsSession.transcript.toolCallsGroupBackgroundTitle')}
+                                    subtitle={t('settingsSession.transcript.toolCallsGroupBackgroundSubtitle')}
+                                    icon={<Ionicons name="albums-outline" size={29} color={theme.colors.textSecondary} />}
+                                    testID="settings-session-transcript-tool-calls-group-background"
+                                    rightElement={
+                                        <Switch
+                                            value={transcriptToolCallsGroupShowBackground === true}
+                                            onValueChange={(v) => setTranscriptToolCallsGroupShowBackground(Boolean(v) as any)}
+                                        />
+                                    }
+                                    showChevron={false}
+                                    onPress={() => setTranscriptToolCallsGroupShowBackground((transcriptToolCallsGroupShowBackground !== true) as any)}
+                                />
+                            </>
+                        ) : null}
+                    </>
+                ) : null}
+
                 <DropdownMenu
                     open={openToolDetailMenu === 'toolViewDetailLevelDefault'}
                     onOpenChange={(next) => setOpenToolDetailMenu(next ? 'toolViewDetailLevelDefault' : null)}
@@ -553,7 +568,7 @@ export const TranscriptSettingsView = React.memo(function TranscriptSettingsView
                     onOpenChange={(next) => setOpenToolDetailMenu(next ? 'toolViewTapAction' : null)}
                     variant="selectable"
                     search={false}
-                    selectedId={normalizedCardTapAction as any}
+                    selectedId={normalizedToolTapAction as any}
                     showCategoryTitles={false}
                     matchTriggerWidth={true}
                     connectToTrigger={true}
@@ -581,37 +596,6 @@ export const TranscriptSettingsView = React.memo(function TranscriptSettingsView
 
                 {normalizedToolChromeMode === 'activity_feed' ? (
                     <>
-                        <DropdownMenu
-                            open={openToolDetailMenu === 'toolViewTimelineFeedTapAction'}
-                            onOpenChange={(next) => setOpenToolDetailMenu(next ? 'toolViewTimelineFeedTapAction' : null)}
-                            variant="selectable"
-                            search={false}
-                            selectedId={normalizedTapAction as any}
-                            showCategoryTitles={false}
-                            matchTriggerWidth={true}
-                            connectToTrigger={true}
-                            rowKind="item"
-                            popoverBoundaryRef={popoverBoundaryRef}
-                            itemTrigger={{
-                                title: t('settingsSession.toolRendering.activityFeed.tapActionTitle'),
-                                icon: <Ionicons name="hand-left-outline" size={29} color={theme.colors.textSecondary} />,
-                            }}
-                            items={tapActionOptions.map((opt) => ({
-                                id: opt.key,
-                                title: opt.title,
-                                subtitle: opt.subtitle,
-                                icon: (
-                                    <View style={{ width: 32, height: 32, alignItems: 'center', justifyContent: 'center' }}>
-                                        <Ionicons name="hand-left-outline" size={22} color={theme.colors.textSecondary} />
-                                    </View>
-                                ),
-                            }))}
-                            onSelect={(id) => {
-                                setToolViewTimelineFeedTapAction(id as any);
-                                setOpenToolDetailMenu(null);
-                            }}
-                        />
-
                         <Item
                             title={t('settingsSession.toolRendering.activityFeed.defaultExpandedTitle')}
                             subtitle={t('settingsSession.toolRendering.activityFeed.defaultExpandedSubtitle')}
