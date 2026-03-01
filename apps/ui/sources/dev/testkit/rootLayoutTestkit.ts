@@ -3,7 +3,7 @@ import type { FeaturesResponse as RootLayoutFeatures } from '@happier-dev/protoc
 type RootLayoutFeaturesOverrides = Omit<Partial<RootLayoutFeatures>, 'features' | 'capabilities'> & Readonly<{
     features?: Omit<
         Partial<RootLayoutFeatures['features']>,
-        'attachments' | 'automations' | 'connectedServices' | 'updates' | 'sharing' | 'voice' | 'social' | 'auth' | 'encryption'
+        'attachments' | 'automations' | 'connectedServices' | 'updates' | 'sharing' | 'voice' | 'social' | 'auth' | 'encryption' | 'e2ee'
     > &
         Readonly<{
         attachments?: Partial<RootLayoutFeatures['features']['attachments']>;
@@ -15,6 +15,7 @@ type RootLayoutFeaturesOverrides = Omit<Partial<RootLayoutFeatures>, 'features' 
         social?: Partial<RootLayoutFeatures['features']['social']>;
         auth?: Partial<RootLayoutFeatures['features']['auth']>;
         encryption?: Partial<RootLayoutFeatures['features']['encryption']>;
+        e2ee?: Partial<RootLayoutFeatures['features']['e2ee']>;
     }>;
     capabilities?: Omit<Partial<RootLayoutFeatures['capabilities']>, 'oauth' | 'social' | 'auth' | 'encryption'> &
         Readonly<{
@@ -28,6 +29,9 @@ type RootLayoutFeaturesOverrides = Omit<Partial<RootLayoutFeatures>, 'features' 
 const BASE_ROOT_LAYOUT_FEATURES: RootLayoutFeatures = {
     features: {
         bugReports: { enabled: true },
+        e2ee: {
+            keylessAccounts: { enabled: false },
+        },
         encryption: {
             plaintextStorage: { enabled: false },
             accountOptOut: { enabled: false },
@@ -61,8 +65,12 @@ const BASE_ROOT_LAYOUT_FEATURES: RootLayoutFeatures = {
             recovery: {
                 providerReset: { enabled: false },
             },
+            mtls: { enabled: false },
             login: {
                 keyChallenge: { enabled: true },
+            },
+            pairing: {
+                desktopQrMobileScan: { enabled: true },
             },
             ui: {
                 recoveryKeyReminder: { enabled: true },
@@ -78,24 +86,38 @@ const BASE_ROOT_LAYOUT_FEATURES: RootLayoutFeatures = {
             uploadTimeoutMs: 20_000,
             contextWindowMs: 30 * 60 * 1_000,
         },
-        voice: { configured: false, provider: null, requested: false, disabledByBuildPolicy: false },
-        encryption: {
-            storagePolicy: 'required_e2ee',
-            allowAccountOptOut: false,
-            defaultAccountMode: 'e2ee',
-        },
-        social: {
-            friends: {
-                allowUsername: false,
-                requiredIdentityProviderId: 'github',
-            },
-        },
+          voice: { configured: false, provider: null, requested: false, disabledByBuildPolicy: false },
+          encryption: {
+              storagePolicy: 'required_e2ee',
+              allowAccountOptOut: false,
+              defaultAccountMode: 'e2ee',
+              plainAccountSettingsAtRest: 'server_sealed',
+              plainAccountCredentialsAtRest: 'server_sealed',
+          },
+          server: {},
+          social: {
+              friends: {
+                  allowUsername: false,
+                  requiredIdentityProviderId: 'github',
+              },
+          },
         oauth: { providers: { github: { enabled: true, configured: true } } },
         auth: {
+            methods: [],
             signup: { methods: [{ id: 'anonymous', enabled: true }] },
             login: { methods: [{ id: 'key_challenge', enabled: true }], requiredProviders: [] },
             recovery: {
                 providerReset: { providers: [] },
+            },
+            mtls: {
+                mode: 'forwarded',
+                autoProvision: false,
+                identitySource: 'san_email',
+                policy: {
+                    trustForwardedHeaders: false,
+                    issuerAllowlist: { enabled: false, count: 0 },
+                    emailDomainAllowlist: { enabled: false, count: 0 },
+                },
             },
             ui: {
                 autoRedirect: { enabled: false, providerId: null },
@@ -123,6 +145,7 @@ export function createRootLayoutFeaturesResponse(overrides?: RootLayoutFeaturesO
     const nextSharing: Partial<RootLayoutFeatures['features']['sharing']> = nextFeatures.sharing ?? {};
     const nextAttachments: Partial<RootLayoutFeatures['features']['attachments']> = nextFeatures.attachments ?? {};
     const nextEncryption: Partial<RootLayoutFeatures['features']['encryption']> = nextFeatures.encryption ?? {};
+    const nextE2ee: Partial<RootLayoutFeatures['features']['e2ee']> = nextFeatures.e2ee ?? {};
     const nextConnectedServices: Partial<RootLayoutFeatures['features']['connectedServices']> =
         nextFeatures.connectedServices ?? {};
     const nextUpdates: Partial<RootLayoutFeatures['features']['updates']> = nextFeatures.updates ?? {};
@@ -140,6 +163,14 @@ export function createRootLayoutFeaturesResponse(overrides?: RootLayoutFeaturesO
         features: {
             ...BASE_ROOT_LAYOUT_FEATURES.features,
             ...nextFeatures,
+            e2ee: {
+                ...BASE_ROOT_LAYOUT_FEATURES.features.e2ee,
+                ...nextE2ee,
+                keylessAccounts: {
+                    ...BASE_ROOT_LAYOUT_FEATURES.features.e2ee.keylessAccounts,
+                    ...(nextE2ee.keylessAccounts ?? {}),
+                },
+            },
             encryption: {
                 ...BASE_ROOT_LAYOUT_FEATURES.features.encryption,
                 ...nextEncryption,
@@ -198,6 +229,10 @@ export function createRootLayoutFeaturesResponse(overrides?: RootLayoutFeaturesO
                 recovery: {
                     ...BASE_ROOT_LAYOUT_FEATURES.features.auth.recovery,
                     ...(nextAuth.recovery ?? {}),
+                },
+                mtls: {
+                    ...BASE_ROOT_LAYOUT_FEATURES.features.auth.mtls,
+                    ...(nextAuth.mtls ?? {}),
                 },
                 login: {
                     ...BASE_ROOT_LAYOUT_FEATURES.features.auth.login,
