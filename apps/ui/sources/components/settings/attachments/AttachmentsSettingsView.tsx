@@ -6,6 +6,7 @@ import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { ItemList } from '@/components/ui/lists/ItemList';
 import { Modal } from '@/modal';
+import { t, type TranslationKey } from '@/text';
 import { useSettingMutable } from '@/sync/domains/state/storage';
 import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
 
@@ -13,46 +14,46 @@ type IoniconName = React.ComponentProps<typeof Ionicons>['name'];
 
 const UPLOAD_LOCATION_OPTIONS: ReadonlyArray<{
     id: 'workspace' | 'os_temp';
-    title: string;
-    subtitle: string;
+    titleKey: TranslationKey;
+    subtitleKey: TranslationKey;
     iconName: IoniconName;
 }> = [
     {
         id: 'workspace',
-        title: 'Workspace directory (recommended)',
-        subtitle: 'Uploads are written under a workspace-relative directory so the agent sandbox can read them reliably.',
+        titleKey: 'settingsAttachments.uploadLocation.options.workspace.title',
+        subtitleKey: 'settingsAttachments.uploadLocation.options.workspace.subtitle',
         iconName: 'folder-outline',
     },
     {
         id: 'os_temp',
-        title: 'OS temp directory',
-        subtitle: 'Uploads are written to your OS temp directory. This can break in stricter sandboxes.',
+        titleKey: 'settingsAttachments.uploadLocation.options.osTemp.title',
+        subtitleKey: 'settingsAttachments.uploadLocation.options.osTemp.subtitle',
         iconName: 'cloud-upload-outline',
     },
 ];
 
 const VCS_IGNORE_OPTIONS: ReadonlyArray<{
     id: 'git_info_exclude' | 'gitignore' | 'none';
-    title: string;
-    subtitle: string;
+    titleKey: TranslationKey;
+    subtitleKey: TranslationKey;
     iconName: IoniconName;
 }> = [
     {
         id: 'git_info_exclude',
-        title: 'Ignore locally (.git/info/exclude) (recommended)',
-        subtitle: 'Avoids accidental commits without modifying repository files.',
+        titleKey: 'settingsAttachments.sourceControlIgnore.options.gitInfoExclude.title',
+        subtitleKey: 'settingsAttachments.sourceControlIgnore.options.gitInfoExclude.subtitle',
         iconName: 'shield-checkmark-outline',
     },
     {
         id: 'gitignore',
-        title: 'Ignore via .gitignore',
-        subtitle: 'Writes an entry to the workspace .gitignore file (may be committed).',
+        titleKey: 'settingsAttachments.sourceControlIgnore.options.gitignore.title',
+        subtitleKey: 'settingsAttachments.sourceControlIgnore.options.gitignore.subtitle',
         iconName: 'git-branch-outline',
     },
     {
         id: 'none',
-        title: 'Do not write ignore rules',
-        subtitle: 'Uploads may be picked up by source control depending on your repo config.',
+        titleKey: 'settingsAttachments.sourceControlIgnore.options.none.title',
+        subtitleKey: 'settingsAttachments.sourceControlIgnore.options.none.subtitle',
         iconName: 'alert-circle-outline',
     },
 ];
@@ -97,12 +98,12 @@ export const AttachmentsSettingsView = React.memo(function AttachmentsSettingsVi
         return (
             <ItemList style={{ paddingTop: 0 }}>
                 <ItemGroup
-                    title="Attachments"
-                    footer="This feature is disabled by your server or build policy."
+                    title={t('settingsAttachments.disabled.title')}
+                    footer={t('settingsAttachments.disabled.footer')}
                 >
                     <Item
-                        title="File uploads"
-                        subtitle="Disabled"
+                        title={t('settingsAttachments.fileUploads.title')}
+                        subtitle={t('common.disabled')}
                         icon={<Ionicons name="attach-outline" size={29} color={theme.colors.warningCritical} />}
                         showChevron={false}
                     />
@@ -118,14 +119,14 @@ export const AttachmentsSettingsView = React.memo(function AttachmentsSettingsVi
     return (
         <ItemList style={{ paddingTop: 0 }}>
             <ItemGroup
-                title="Upload location"
-                footer="Workspace uploads are the most compatible option. OS temp uploads can be useful to avoid repository artifacts, but may not be readable in stricter sandboxes."
+                title={t('settingsAttachments.uploadLocation.title')}
+                footer={t('settingsAttachments.uploadLocation.footer')}
             >
                 {UPLOAD_LOCATION_OPTIONS.map((option) => (
                     <Item
                         key={option.id}
-                        title={option.title}
-                        subtitle={option.subtitle}
+                        title={t(option.titleKey)}
+                        subtitle={t(option.subtitleKey)}
                         icon={renderIcon(option.iconName)}
                         rightElement={effectiveUploadLocation === option.id ? <Ionicons name="checkmark" size={20} color={theme.colors.accent.blue} /> : null}
                         onPress={() => setUploadLocation(option.id)}
@@ -134,21 +135,21 @@ export const AttachmentsSettingsView = React.memo(function AttachmentsSettingsVi
                 ))}
             </ItemGroup>
 
-            <ItemGroup title="Workspace directory" footer="Only used when upload location is set to Workspace directory.">
+            <ItemGroup title={t('settingsAttachments.workspaceDirectory.title')} footer={t('settingsAttachments.workspaceDirectory.footer')}>
                 <Item
-                    title="Uploads directory"
+                    title={t('settingsAttachments.workspaceDirectory.uploadsDirectory.title')}
                     subtitle={effectiveWorkspaceRelativeDir}
                     icon={renderIcon('folder-outline')}
                     onPress={async () => {
                         const raw = await Modal.prompt(
-                            'Uploads directory',
-                            'Enter a workspace-relative directory (no absolute paths, no ..).',
+                            t('settingsAttachments.workspaceDirectory.uploadsDirectory.promptTitle'),
+                            t('settingsAttachments.workspaceDirectory.uploadsDirectory.promptMessage'),
                             { placeholder: effectiveWorkspaceRelativeDir },
                         );
                         if (raw === null) return;
                         const normalized = normalizeWorkspaceRelativeDir(raw);
                         if (!normalized) {
-                            Modal.alert('Invalid directory', 'Use a relative path like `.happier/uploads`.');
+                            Modal.alert(t('settingsAttachments.workspaceDirectory.uploadsDirectory.invalidDirectoryTitle'), t('settingsAttachments.workspaceDirectory.uploadsDirectory.invalidDirectoryMessage'));
                             return;
                         }
                         setWorkspaceRelativeDir(normalized);
@@ -157,14 +158,14 @@ export const AttachmentsSettingsView = React.memo(function AttachmentsSettingsVi
             </ItemGroup>
 
             <ItemGroup
-                title="Source control ignore"
-                footer="Local-only ignores avoid accidental commits. If you choose .gitignore, this may modify a tracked file."
+                title={t('settingsAttachments.sourceControlIgnore.title')}
+                footer={t('settingsAttachments.sourceControlIgnore.footer')}
             >
                 {VCS_IGNORE_OPTIONS.map((option) => (
                     <Item
                         key={option.id}
-                        title={option.title}
-                        subtitle={option.subtitle}
+                        title={t(option.titleKey)}
+                        subtitle={t(option.subtitleKey)}
                         icon={renderIcon(option.iconName)}
                         rightElement={effectiveIgnoreStrategy === option.id ? <Ionicons name="checkmark" size={20} color={theme.colors.accent.blue} /> : null}
                         onPress={() => setVcsIgnoreStrategy(option.id)}
@@ -172,67 +173,67 @@ export const AttachmentsSettingsView = React.memo(function AttachmentsSettingsVi
                     />
                 ))}
                 <Item
-                    title="Write ignore rules"
-                    subtitle={vcsIgnoreWritesEnabled === false ? 'Disabled' : 'Enabled'}
+                    title={t('settingsAttachments.sourceControlIgnore.writeIgnoreRules.title')}
+                    subtitle={vcsIgnoreWritesEnabled === false ? t('common.disabled') : t('common.enabled')}
                     icon={renderIcon('create-outline')}
                     showChevron={false}
                     onPress={() => setVcsIgnoreWritesEnabled(!(vcsIgnoreWritesEnabled === false))}
                 />
             </ItemGroup>
 
-            <ItemGroup title="Limits" footer="These limits are enforced by the local CLI upload handler (best-effort).">
+            <ItemGroup title={t('settingsAttachments.limits.title')} footer={t('settingsAttachments.limits.footer')}>
                 <Item
-                    title="Max attachment size (bytes)"
-                    subtitle={typeof maxFileBytes === 'number' ? String(maxFileBytes) : 'Default'}
+                    title={t('settingsAttachments.limits.maxAttachmentSize.title')}
+                    subtitle={typeof maxFileBytes === 'number' ? String(maxFileBytes) : t('common.default')}
                     icon={renderIcon('resize-outline')}
                     onPress={async () => {
                         const raw = await Modal.prompt(
-                            'Max attachment size (bytes)',
-                            'Example: 26214400 for 25MB.',
+                            t('settingsAttachments.limits.maxAttachmentSize.promptTitle'),
+                            t('settingsAttachments.limits.maxAttachmentSize.promptMessage'),
                             { placeholder: typeof maxFileBytes === 'number' ? String(maxFileBytes) : '26214400' },
                         );
                         if (raw === null) return;
                         const parsed = parsePositiveInt(raw, { min: 1024, max: 1024 * 1024 * 1024 });
                         if (parsed == null) {
-                            Modal.alert('Invalid value', 'Enter a number between 1024 and 1073741824.');
+                            Modal.alert(t('settingsAttachments.limits.invalidValueTitle'), t('settingsAttachments.limits.maxAttachmentSize.invalidValueMessage'));
                             return;
                         }
                         setMaxFileBytes(parsed);
                     }}
                 />
                 <Item
-                    title="Upload TTL (ms)"
-                    subtitle={typeof uploadTtlMs === 'number' ? String(uploadTtlMs) : 'Default'}
+                    title={t('settingsAttachments.limits.uploadTtl.title')}
+                    subtitle={typeof uploadTtlMs === 'number' ? String(uploadTtlMs) : t('common.default')}
                     icon={renderIcon('timer-outline')}
                     onPress={async () => {
                         const raw = await Modal.prompt(
-                            'Upload TTL (ms)',
-                            'How long an upload can stay idle before it expires.',
+                            t('settingsAttachments.limits.uploadTtl.promptTitle'),
+                            t('settingsAttachments.limits.uploadTtl.promptMessage'),
                             { placeholder: typeof uploadTtlMs === 'number' ? String(uploadTtlMs) : String(5 * 60 * 1000) },
                         );
                         if (raw === null) return;
                         const parsed = parsePositiveInt(raw, { min: 5000, max: 60 * 60 * 1000 });
                         if (parsed == null) {
-                            Modal.alert('Invalid value', 'Enter a number between 5000 and 3600000.');
+                            Modal.alert(t('settingsAttachments.limits.invalidValueTitle'), t('settingsAttachments.limits.uploadTtl.invalidValueMessage'));
                             return;
                         }
                         setUploadTtlMs(parsed);
                     }}
                 />
                 <Item
-                    title="Preferred chunk size (bytes)"
-                    subtitle={typeof chunkSizeBytes === 'number' ? String(chunkSizeBytes) : 'Default'}
+                    title={t('settingsAttachments.limits.chunkSize.title')}
+                    subtitle={typeof chunkSizeBytes === 'number' ? String(chunkSizeBytes) : t('common.default')}
                     icon={renderIcon('albums-outline')}
                     onPress={async () => {
                         const raw = await Modal.prompt(
-                            'Preferred chunk size (bytes)',
-                            'The CLI may clamp this to safe bounds.',
+                            t('settingsAttachments.limits.chunkSize.promptTitle'),
+                            t('settingsAttachments.limits.chunkSize.promptMessage'),
                             { placeholder: typeof chunkSizeBytes === 'number' ? String(chunkSizeBytes) : String(256 * 1024) },
                         );
                         if (raw === null) return;
                         const parsed = parsePositiveInt(raw, { min: 4096, max: 1024 * 1024 });
                         if (parsed == null) {
-                            Modal.alert('Invalid value', 'Enter a number between 4096 and 1048576.');
+                            Modal.alert(t('settingsAttachments.limits.invalidValueTitle'), t('settingsAttachments.limits.chunkSize.invalidValueMessage'));
                             return;
                         }
                         setChunkSizeBytes(parsed);

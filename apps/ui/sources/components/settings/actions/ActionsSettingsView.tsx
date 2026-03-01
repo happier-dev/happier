@@ -16,6 +16,7 @@ import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { ItemList } from '@/components/ui/lists/ItemList';
 import { Switch } from '@/components/ui/forms/Switch';
 import { useSettingMutable } from '@/sync/domains/state/storage';
+import { t } from '@/text';
 
 type ActionSettingsEntry = Readonly<{
   enabled?: boolean;
@@ -106,10 +107,10 @@ export const ActionsSettingsView = React.memo(function ActionsSettingsView() {
 
   return (
     <ItemList style={{ paddingTop: 0 }}>
-      <ItemGroup title="Actions">
+      <ItemGroup title={t('common.actions')}>
         <Item
-          title="About"
-          subtitle="Enable or disable actions globally, per surface (UI/voice/MCP), and per placement (where they appear in the UI). Disabled actions are fail-closed at runtime."
+          title={t('settings.about')}
+          subtitle={t('settings.actionsSettingsAboutSubtitle')}
           icon={<Ionicons name="information-circle-outline" size={29} color={theme.colors.textSecondary} />}
           showChevron={false}
         />
@@ -180,12 +181,12 @@ export const ActionsSettingsView = React.memo(function ActionsSettingsView() {
         };
 
         const effectiveEnabled = isActionEnabledByActionsSettings(spec.id as any, settings as any);
-        const statusLabel = effectiveEnabled ? 'Enabled' : 'Disabled';
+        const statusLabel = effectiveEnabled ? t('common.enabled') : t('common.disabled');
 
         return (
           <ItemGroup key={spec.id} title={spec.title} footer={spec.id}>
             <Item
-              title="Enabled"
+              title={t('common.enabled')}
               subtitle={statusLabel}
               icon={
                 <Ionicons
@@ -205,7 +206,7 @@ export const ActionsSettingsView = React.memo(function ActionsSettingsView() {
                 <Item
                   key={`surface:${surface}`}
                   title={SURFACE_LABELS[surface] ?? String(surface)}
-                  subtitle={isEnabledOnSurface ? 'Enabled' : 'Disabled'}
+                  subtitle={isEnabledOnSurface ? t('common.enabled') : t('common.disabled')}
                   icon={<Ionicons name={SURFACE_ICONS[surface] ?? 'options-outline'} size={29} color={theme.colors.textSecondary} />}
                   rightElement={<Switch value={isEnabledOnSurface} onValueChange={() => toggleSurface(surface)} />}
                   showChevron={false}
@@ -216,11 +217,11 @@ export const ActionsSettingsView = React.memo(function ActionsSettingsView() {
 
             {supportedPlacements.map((placement) => {
               const isEnabledInPlacement = isActionEnabledByActionsSettings(spec.id as any, settings as any, { placement } as any);
-              return (
-                <Item
+                return (
+                  <Item
                   key={`placement:${placement}`}
                   title={PLACEMENT_LABELS[placement] ?? String(placement)}
-                  subtitle={isEnabledInPlacement ? 'Enabled' : 'Disabled'}
+                  subtitle={isEnabledInPlacement ? t('common.enabled') : t('common.disabled')}
                   icon={<Ionicons name={PLACEMENT_ICONS[placement] ?? 'options-outline'} size={29} color={theme.colors.textSecondary} />}
                   rightElement={<Switch value={isEnabledInPlacement} onValueChange={() => togglePlacement(placement)} />}
                   showChevron={false}
