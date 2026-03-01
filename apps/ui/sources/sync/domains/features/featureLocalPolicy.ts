@@ -34,7 +34,6 @@ const LOCAL_POLICY_BY_FEATURE: Readonly<Partial<Record<FeatureId, FeatureLocalPo
     'session.typeSelector': (settings) => resolveUiFeatureToggleEnabled(settings, 'session.typeSelector'),
     'zen.navigation': (settings) => resolveUiFeatureToggleEnabled(settings, 'zen.navigation'),
     'usage.reporting': (settings) => resolveUiFeatureToggleEnabled(settings, 'usage.reporting'),
-    'messages.thinkingVisibility': (settings) => resolveUiFeatureToggleEnabled(settings, 'messages.thinkingVisibility'),
     'codex.resume.mcp': (settings) => settings.codexBackendMode === 'mcp_resume',
     'codex.resume.acp': (settings) => settings.codexBackendMode === 'acp',
 };

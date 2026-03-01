@@ -235,16 +235,6 @@ export const UI_FEATURE_REGISTRY = {
             icon: { ioniconName: 'analytics-outline', color: '#007AFF' },
         },
     },
-    'messages.thinkingVisibility': {
-        settingsToggle: {
-            showInSettings: true,
-            isExperimental: true,
-            defaultEnabled: true,
-            titleKey: 'settingsFeatures.expShowThinkingMessages',
-            subtitleKey: 'settingsFeatures.expShowThinkingMessagesSubtitle',
-            icon: { ioniconName: 'chatbubbles-outline', color: '#34C759' },
-        },
-    },
     'codex.resume.mcp': {
         settingsToggle: undefined,
     },
