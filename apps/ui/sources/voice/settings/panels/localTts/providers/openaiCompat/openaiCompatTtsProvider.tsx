@@ -20,6 +20,9 @@ function normalizeSecretStringPromptInput(value: string | null): VoiceLocalTtsSe
   return trimmed.length > 0 ? { _isSecretValue: true, value: trimmed } : null;
 }
 
+const MP3_FORMAT_TITLE = 'MP3';
+const WAV_FORMAT_TITLE = 'WAV';
+
 const OpenAiCompatTtsSettings: LocalTtsProviderSpec['Settings'] = (props) => {
   const { theme } = useUnistyles();
   const [openMenu, setOpenMenu] = React.useState<null | 'ttsFormat'>(null);
@@ -96,14 +99,14 @@ const OpenAiCompatTtsSettings: LocalTtsProviderSpec['Settings'] = (props) => {
         items={[
           {
             id: 'mp3',
-            title: 'MP3',
-            subtitle: 'Smaller output, broadly compatible.',
+            title: MP3_FORMAT_TITLE,
+            subtitle: t('settingsVoice.local.ttsFormatOptions.mp3Subtitle'),
             icon: <Ionicons name="musical-notes-outline" size={22} color={theme.colors.textSecondary} />,
           },
           {
             id: 'wav',
-            title: 'WAV',
-            subtitle: 'Larger output, uncompressed.',
+            title: WAV_FORMAT_TITLE,
+            subtitle: t('settingsVoice.local.ttsFormatOptions.wavSubtitle'),
             icon: <Ionicons name="pulse-outline" size={22} color={theme.colors.textSecondary} />,
           },
         ]}

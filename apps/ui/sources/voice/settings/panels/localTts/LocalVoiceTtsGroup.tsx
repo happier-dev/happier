@@ -63,7 +63,7 @@ export function LocalVoiceTtsGroup(props: {
         rightElement={<Switch value={cfg.autoSpeakReplies} onValueChange={(v) => setCfg({ autoSpeakReplies: v })} />}
       />
       <Item
-        title="Barge-in"
+        title={t('settingsVoice.local.bargeIn')}
         rightElement={<Switch value={cfg.bargeInEnabled} onValueChange={(v) => setCfg({ bargeInEnabled: v })} />}
       />
 
@@ -77,7 +77,7 @@ export function LocalVoiceTtsGroup(props: {
       <Item
         title={t('settingsVoice.local.testTts')}
         subtitle={t('settingsVoice.local.testTtsSubtitle')}
-        detail={testStatus === 'speaking' ? 'Speaking…' : '—'}
+        detail={testStatus === 'speaking' ? t('settingsVoice.local.speaking') : t('common.none')}
         onPress={() => {
           primeWebAudioPlayback();
           fireAndForget((async () => {

@@ -88,37 +88,46 @@ export function LocalNeuralTtsSettings(props: {
     [effectiveAssetSetId, effectiveSpeed, previewController.registerStopper, previewingVoiceId, props.networkTimeoutMs, stopPreview],
   );
 
+  const buildLabel = formatModelPackBuildLabel((installSummary as any)?.manifest);
+  const readyDetail = buildLabel ? `${t('settingsVoice.local.kokoro.modelStatus.ready')} • ${buildLabel}` : t('settingsVoice.local.kokoro.modelStatus.ready');
+
   const modelDetail =
     modelStatus === 'downloading'
-      ? (downloadDetail ?? 'Downloading…')
+      ? (downloadDetail ?? t('settingsVoice.local.kokoro.modelStatus.downloading'))
       : modelStatus === 'ready'
-        ? formatModelPackBuildLabel((installSummary as any)?.manifest)
-          ? `Ready • ${formatModelPackBuildLabel((installSummary as any)?.manifest)}`
-          : 'Ready'
+        ? readyDetail
         : modelStatus === 'error'
-          ? 'Error'
+          ? t('settingsVoice.local.kokoro.modelStatus.error')
         : installed
-            ? formatModelPackBuildLabel((installSummary as any)?.manifest)
-              ? `Ready • ${formatModelPackBuildLabel((installSummary as any)?.manifest)}`
-              : 'Ready'
-            : 'Not downloaded';
+            ? readyDetail
+            : t('settingsVoice.local.kokoro.modelStatus.notDownloaded');
+
+  const updateDetail = updateCheckedRemote
+    ? updateCheckedRemote.updateAvailable
+      ? `${t('settingsVoice.local.kokoro.updates.updateAvailable')}${updateCheckedRemote.build ? ` • ${updateCheckedRemote.build}` : ''}`
+      : updateCheckedRemote.build
+        ? `${t('settingsVoice.local.kokoro.updates.upToDate')} • ${updateCheckedRemote.build}`
+        : t('settingsVoice.local.kokoro.updates.upToDate')
+    : t('settingsVoice.local.kokoro.updates.check');
 
   return (
     <>
       {!runtimeSupported ? (
         <Item
-          title="Kokoro runtime"
-          subtitle="Kokoro is not supported on this device/runtime."
-          detail="Unavailable"
+          title={t('settingsVoice.local.kokoro.runtime.title')}
+          subtitle={t('settingsVoice.local.kokoro.runtime.unsupportedSubtitle')}
+          detail={t('settingsVoice.local.kokoro.runtime.unavailableDetail')}
           selected={false}
           showChevron={false}
         />
       ) : null}
 
       <Item
-        title="Model pack manifest"
-        subtitle="Defaults to Happier model packs (override via EXPO_PUBLIC_HAPPIER_MODEL_PACK_MANIFESTS)."
-        detail={manifestUrl ? 'Resolved' : 'Missing'}
+        title={t('settingsVoice.local.kokoro.manifest.title')}
+        subtitle={t('settingsVoice.local.kokoro.manifest.subtitle')}
+        detail={
+          manifestUrl ? t('settingsVoice.local.kokoro.manifest.detailResolved') : t('settingsVoice.local.kokoro.manifest.detailMissing')
+        }
         selected={false}
         showChevron={false}
       />
@@ -135,10 +144,10 @@ export function LocalNeuralTtsSettings(props: {
         rowKind="item"
         popoverBoundaryRef={props.popoverBoundaryRef}
         itemTrigger={{
-          title: 'Kokoro model pack',
-          subtitle: 'Select which asset pack to use for Kokoro.',
+          title: t('settingsVoice.local.kokoro.assetPack.title'),
+          subtitle: t('settingsVoice.local.kokoro.assetPack.subtitleNative'),
           showSelectedSubtitle: false,
-          detailFormatter: () => (effectiveAssetSetId ?? 'Default'),
+          detailFormatter: () => (effectiveAssetSetId ?? t('settingsVoice.local.kokoro.common.default')),
         }}
         items={assetSets.map((s) => ({
           id: s.id,
@@ -153,13 +162,13 @@ export function LocalNeuralTtsSettings(props: {
       />
 
       <Item
-        title="Kokoro model"
-        subtitle="Download required files to enable on-device synthesis."
+        title={t('settingsVoice.local.kokoro.model.title')}
+        subtitle={t('settingsVoice.local.kokoro.model.subtitleNative')}
         detail={modelDetail}
         onPress={() => {
           if (!runtimeSupported) {
             fireAndForget((async () => {
-              await Modal.alert(t('common.error'), 'Kokoro is not supported on this device/runtime.');
+              await Modal.alert(t('common.error'), t('settingsVoice.local.kokoro.alerts.runtimeUnsupported.body'));
             })(), {
               tag: 'LocalNeuralTtsSettings.alert.runtimeUnsupported',
             });
@@ -168,8 +177,8 @@ export function LocalNeuralTtsSettings(props: {
           if (!manifestUrl) {
             fireAndForget((async () => {
               await Modal.alert(
-                'Manifest URL missing',
-                'Unable to resolve the model pack manifest URL. Check EXPO_PUBLIC_HAPPIER_MODEL_PACK_MANIFESTS (or legacy Kokoro env vars).',
+                t('settingsVoice.local.kokoro.alerts.missingManifest.title'),
+                t('settingsVoice.local.kokoro.alerts.missingManifest.body'),
               );
             })(), { tag: 'LocalNeuralTtsSettings.alert.missingManifestUrl' });
             return;
@@ -190,26 +199,18 @@ export function LocalNeuralTtsSettings(props: {
       />
 
       <Item
-        title="Remove Kokoro assets"
-        subtitle="Free storage by removing downloaded Kokoro files."
-        detail={installed ? 'Remove' : '—'}
+        title={t('settingsVoice.local.kokoro.removeAssets.title')}
+        subtitle={t('settingsVoice.local.kokoro.removeAssets.subtitle')}
+        detail={installed ? t('settingsVoice.local.kokoro.removeAssets.detailRemove') : t('settingsVoice.local.kokoro.common.none')}
         onPress={installed ? clearAssets : undefined}
         showChevron={false}
         selected={false}
       />
 
       <Item
-        title="Check for model updates"
-        subtitle="Manually check if a newer model pack is available."
-        detail={
-          updateCheckedRemote
-            ? updateCheckedRemote.updateAvailable
-              ? `Update available${updateCheckedRemote.build ? ` • ${updateCheckedRemote.build}` : ''}`
-              : updateCheckedRemote.build
-                ? `Up to date • ${updateCheckedRemote.build}`
-                : 'Up to date'
-            : 'Check'
-        }
+        title={t('settingsVoice.local.kokoro.updates.title')}
+        subtitle={t('settingsVoice.local.kokoro.updates.subtitle')}
+        detail={updateDetail}
         onPress={checkForUpdates}
         showChevron={false}
         selected={false}
@@ -227,8 +228,8 @@ export function LocalNeuralTtsSettings(props: {
         rowKind="item"
         popoverBoundaryRef={props.popoverBoundaryRef}
         itemTrigger={{
-          title: 'Voice',
-          subtitle: 'Select the Kokoro voice.',
+          title: t('settingsVoice.local.kokoro.voice.title'),
+          subtitle: t('settingsVoice.local.kokoro.voice.subtitleNative'),
           showSelectedSubtitle: false,
           detailFormatter: () => effectiveVoiceId,
         }}

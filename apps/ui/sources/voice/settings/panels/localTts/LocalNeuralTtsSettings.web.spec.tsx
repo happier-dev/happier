@@ -130,7 +130,7 @@ describe('LocalNeuralTtsSettings (web)', () => {
     });
 
     const modelItem = tree.root
-      .findAll((n) => n.props?.title === 'Kokoro model')
+      .findAll((n) => n.props?.title === 'settingsVoice.local.kokoro.model.title')
       .find((n) => typeof n.props?.onPress === 'function');
     expect(modelItem).toBeTruthy();
 
@@ -172,7 +172,7 @@ describe('LocalNeuralTtsSettings (web)', () => {
 
     const getModelItem = () =>
       tree.root
-        .findAll((n) => n.props?.title === 'Kokoro model')
+        .findAll((n) => n.props?.title === 'settingsVoice.local.kokoro.model.title')
         .find((n) => typeof n.props?.onPress === 'function')!;
 
     await act(async () => {
@@ -180,7 +180,7 @@ describe('LocalNeuralTtsSettings (web)', () => {
     });
     await act(async () => {});
 
-    expect(getModelItem().props.detail).toBe('Downloading • 50% • model_quantized.onnx');
+    expect(getModelItem().props.detail).toBe('settingsVoice.local.kokoro.modelStatus.downloadingPrefix • 50% • model_quantized.onnx');
 
     await act(async () => {
       resolvePrepare();
@@ -188,7 +188,7 @@ describe('LocalNeuralTtsSettings (web)', () => {
     await act(async () => {});
 
     expect(synthesizeKokoroWavSpy).toHaveBeenCalled();
-    expect(getModelItem().props.detail).toBe('Ready');
+    expect(getModelItem().props.detail).toBe('settingsVoice.local.kokoro.modelStatus.ready');
   });
 
   it('uses Kokoro operation timeout (not the raw network timeout) when preparing', async () => {
@@ -212,7 +212,7 @@ describe('LocalNeuralTtsSettings (web)', () => {
     });
 
     const modelItem = tree.root
-      .findAll((n) => n.props?.title === 'Kokoro model')
+      .findAll((n) => n.props?.title === 'settingsVoice.local.kokoro.model.title')
       .find((n) => typeof n.props?.onPress === 'function');
     expect(modelItem).toBeTruthy();
 

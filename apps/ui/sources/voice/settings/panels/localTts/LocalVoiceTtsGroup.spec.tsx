@@ -111,7 +111,7 @@ describe('LocalVoiceTtsGroup', () => {
         .findAll((n) => n.props?.title === 'settingsVoice.local.testTts')
         .find((n) => typeof n.props?.onPress === 'function')!;
 
-    expect(getTestItem().props.detail).toBe('—');
+    expect(getTestItem().props.detail).toBe('common.none');
 
     await act(async () => {
       getTestItem().props.onPress?.();
@@ -119,13 +119,13 @@ describe('LocalVoiceTtsGroup', () => {
     await act(async () => {});
 
     expect(primeWebAudioPlaybackSpy).toHaveBeenCalledTimes(1);
-    expect(getTestItem().props.detail).toBe('Speaking…');
+    expect(getTestItem().props.detail).toBe('settingsVoice.local.speaking');
 
     await act(async () => {
       resolve();
     });
     await act(async () => {});
 
-    expect(getTestItem().props.detail).toBe('—');
+    expect(getTestItem().props.detail).toBe('common.none');
   });
 });

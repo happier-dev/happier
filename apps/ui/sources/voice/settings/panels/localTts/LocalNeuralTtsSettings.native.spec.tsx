@@ -110,7 +110,7 @@ describe('LocalNeuralTtsSettings (native)', () => {
     await act(async () => {});
 
     const modelItem = tree.root
-      .findAll((n) => n.props?.title === 'Kokoro model')
+      .findAll((n) => n.props?.title === 'settingsVoice.local.kokoro.model.title')
       .find((n) => typeof n.props?.onPress === 'function');
     expect(modelItem).toBeTruthy();
 
@@ -121,6 +121,6 @@ describe('LocalNeuralTtsSettings (native)', () => {
 
     expect(prepareModelSpy).not.toHaveBeenCalled();
     expect(modalAlertSpy).toHaveBeenCalled();
-    expect(String(modalAlertSpy.mock.calls[0]?.[1] ?? '')).toContain('Kokoro is not supported');
+    expect(modalAlertSpy.mock.calls[0]?.[1]).toBe('settingsVoice.local.kokoro.alerts.runtimeUnsupported.body');
   });
 });
