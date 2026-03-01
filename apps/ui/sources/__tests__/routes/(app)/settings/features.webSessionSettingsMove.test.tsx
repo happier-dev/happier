@@ -102,14 +102,13 @@ describe('FeaturesSettingsScreen (web settings moved)', () => {
 
         useLocalSettingMutableMock.mockImplementation((key: string) => {
             if (key === 'commandPaletteEnabled') return createNoopMutable(false);
-            if (key === 'markdownCopyV2') return createNoopMutable(false);
             if (key === 'devModeEnabled') return createNoopMutable(false);
             return createNoopMutable(false);
         });
     });
 
     it('does not show Enter-to-send or Message history (moved to Session settings)', async () => {
-        const { default: FeaturesSettingsScreen } = await import('./features');
+        const { default: FeaturesSettingsScreen } = await import('@/app/(app)/settings/features');
 
         let tree!: renderer.ReactTestRenderer;
         await act(async () => {

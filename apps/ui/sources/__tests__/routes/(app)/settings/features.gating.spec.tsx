@@ -113,7 +113,6 @@ describe('FeaturesSettingsScreen gating', () => {
 
         useLocalSettingMutableMock.mockImplementation((key: string) => {
             if (key === 'commandPaletteEnabled') return createNoopMutable(false);
-            if (key === 'markdownCopyV2') return createNoopMutable(false);
             if (key === 'devModeEnabled') return createNoopMutable(false);
             return createNoopMutable(false);
         });
@@ -125,7 +124,7 @@ describe('FeaturesSettingsScreen gating', () => {
         const { getFeatureBuildPolicyDecision } = await import('@/sync/domains/features/featureBuildPolicy');
         expect(getFeatureBuildPolicyDecision('execution.runs')).toBe('deny');
 
-        const { default: FeaturesSettingsScreen } = await import('./features');
+        const { default: FeaturesSettingsScreen } = await import('@/app/(app)/settings/features');
 
         let tree: renderer.ReactTestRenderer;
         await act(async () => {
@@ -165,7 +164,7 @@ describe('FeaturesSettingsScreen gating', () => {
             },
         });
 
-        const { default: FeaturesSettingsScreen } = await import('./features');
+        const { default: FeaturesSettingsScreen } = await import('@/app/(app)/settings/features');
 
         let tree: renderer.ReactTestRenderer;
         await act(async () => {
@@ -201,7 +200,7 @@ describe('FeaturesSettingsScreen gating', () => {
             },
         });
 
-        const { default: FeaturesSettingsScreen } = await import('./features');
+        const { default: FeaturesSettingsScreen } = await import('@/app/(app)/settings/features');
 
         let tree: renderer.ReactTestRenderer;
         await act(async () => {
@@ -232,7 +231,7 @@ describe('FeaturesSettingsScreen gating', () => {
             return createNoopMutable(null);
         });
 
-        const { default: FeaturesSettingsScreen } = await import('./features');
+        const { default: FeaturesSettingsScreen } = await import('@/app/(app)/settings/features');
 
         let tree: renderer.ReactTestRenderer;
         await act(async () => {
@@ -272,7 +271,7 @@ describe('FeaturesSettingsScreen gating', () => {
             return createNoopMutable(null);
         });
 
-        const { default: FeaturesSettingsScreen } = await import('./features');
+        const { default: FeaturesSettingsScreen } = await import('@/app/(app)/settings/features');
 
         let tree: renderer.ReactTestRenderer;
         await act(async () => {
