@@ -61,7 +61,7 @@ describe('FilesToolbar', () => {
 
         const scmToggle = pressables.find((node) => {
             const textNodes = node.findAllByType?.('Text' as any) ?? [];
-            return textNodes.some((t: any) => String(t.props?.children ?? '') === 'SCM');
+            return textNodes.some((t: any) => String(t.props?.children ?? '') === 'files.toolbar.scm');
         });
         expect(scmToggle).toBeTruthy();
 
@@ -105,8 +105,8 @@ describe('FilesToolbar', () => {
 
         const textNodes = tree!.root.findAllByType('Text' as any);
         const labels = textNodes.map((node) => String(node.props.children));
-        expect(labels).toContain('Repository view');
-        expect(labels).not.toContain('Session view');
+        expect(labels).toContain('files.toolbar.repositoryView');
+        expect(labels).not.toContain('files.toolbar.sessionView');
         expect(labels).toContain('files.attributionReliabilityLimited');
     });
 });
