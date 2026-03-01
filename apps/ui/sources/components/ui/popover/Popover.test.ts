@@ -157,6 +157,52 @@ describe('Popover (web)', () => {
         expect(tree?.root.findAllByType('DismissableLayerBranch' as any).length).toBe(1);
     });
 
+    it('can close when clicking the anchor when closeOnAnchorPress is enabled', async () => {
+        const { Popover } = await import('./Popover');
+
+        const pointerHandlers: any[] = [];
+        const keyHandlers: any[] = [];
+        const addEventListener = vi.fn((type: string, handler: any) => {
+            if (type === 'pointerdown') pointerHandlers.push(handler);
+            if (type === 'keydown') keyHandlers.push(handler);
+        });
+        const removeEventListener = vi.fn();
+
+        vi.stubGlobal('document', {
+            addEventListener,
+            removeEventListener,
+        });
+
+        const onRequestClose = vi.fn();
+
+        const anchorTarget = {} as any;
+        const anchorRef = {
+            current: {
+                contains: (node: any) => node === anchorTarget,
+                getBoundingClientRect: () => ({ left: 0, top: 0, width: 10, height: 10 }),
+            },
+        } as any;
+
+        await act(async () => {
+            renderer.create(
+                React.createElement(Popover, {
+                    open: true,
+                    anchorRef,
+                    closeOnAnchorPress: true,
+                    onRequestClose,
+                    backdrop: false,
+                    children: () => React.createElement('PopoverChild'),
+                }),
+            );
+        });
+
+        await act(async () => {});
+
+        expect(pointerHandlers.length).toBeGreaterThan(0);
+        pointerHandlers.at(-1)?.({ target: anchorTarget });
+        expect(onRequestClose).toHaveBeenCalledTimes(1);
+    });
+
     it('portals to a modal portal host when available (prevents Radix Dialog scroll-lock from swallowing wheel/touch scroll)', async () => {
         const { Popover } = await import('./Popover');
         const { ModalPortalTargetProvider } = await import('@/modal/portal/ModalPortalTarget');
@@ -530,7 +576,16 @@ describe('Popover (web)', () => {
 
         const childAfter = tree?.root.findByType('PopoverChild' as any);
         const contentViewAfter = nearestView(childAfter);
-        expect(flattenStyle(contentViewAfter?.props?.style).opacity).toBe(1);
+        // Still hidden until content layout is known (prevents clamp jiggle for top/bottom portals).
+        expect(flattenStyle(contentViewAfter?.props?.style).opacity).toBe(0);
+
+        await act(async () => {
+            contentViewAfter?.props?.onLayout?.({ nativeEvent: { layout: { width: 200, height: 120 } } });
+        });
+
+        const childAfterLayout = tree?.root.findByType('PopoverChild' as any);
+        const contentViewAfterLayout = nearestView(childAfterLayout);
+        expect(flattenStyle(contentViewAfterLayout?.props?.style).opacity).toBe(1);
     });
 
     it('measures DOM anchors on web when measureInWindow is unavailable (prevents invisible portal popovers)', async () => {
@@ -566,7 +621,15 @@ describe('Popover (web)', () => {
 
         const childAfter = tree?.root.findByType('PopoverChild' as any);
         const contentViewAfter = nearestView(childAfter);
-        expect(flattenStyle(contentViewAfter?.props?.style).opacity).toBe(1);
+        expect(flattenStyle(contentViewAfter?.props?.style).opacity).toBe(0);
+
+        await act(async () => {
+            contentViewAfter?.props?.onLayout?.({ nativeEvent: { layout: { width: 200, height: 120 } } });
+        });
+
+        const childAfterLayout = tree?.root.findByType('PopoverChild' as any);
+        const contentViewAfterLayout = nearestView(childAfterLayout);
+        expect(flattenStyle(contentViewAfterLayout?.props?.style).opacity).toBe(1);
     });
 
     it('falls back to DOM anchors on web when measureInWindow returns invalid values (prevents stuck invisible portal popovers)', async () => {
@@ -605,7 +668,15 @@ describe('Popover (web)', () => {
 
         const childAfter = tree?.root.findByType('PopoverChild' as any);
         const contentViewAfter = nearestView(childAfter);
-        expect(flattenStyle(contentViewAfter?.props?.style).opacity).toBe(1);
+        expect(flattenStyle(contentViewAfter?.props?.style).opacity).toBe(0);
+
+        await act(async () => {
+            contentViewAfter?.props?.onLayout?.({ nativeEvent: { layout: { width: 200, height: 120 } } });
+        });
+
+        const childAfterLayout = tree?.root.findByType('PopoverChild' as any);
+        const contentViewAfterLayout = nearestView(childAfterLayout);
+        expect(flattenStyle(contentViewAfterLayout?.props?.style).opacity).toBe(1);
     });
 
     it('retries measuring portal anchors on web when measureInWindow returns invalid values (prevents needing a resize)', async () => {
@@ -648,7 +719,15 @@ describe('Popover (web)', () => {
 
         const childAfter = tree?.root.findByType('PopoverChild' as any);
         const contentViewAfter = nearestView(childAfter);
-        expect(flattenStyle(contentViewAfter?.props?.style).opacity).toBe(1);
+        expect(flattenStyle(contentViewAfter?.props?.style).opacity).toBe(0);
+
+        await act(async () => {
+            contentViewAfter?.props?.onLayout?.({ nativeEvent: { layout: { width: 200, height: 120 } } });
+        });
+
+        const childAfterLayout = tree?.root.findByType('PopoverChild' as any);
+        const contentViewAfterLayout = nearestView(childAfterLayout);
+        expect(flattenStyle(contentViewAfterLayout?.props?.style).opacity).toBe(1);
     });
 
     it('keeps left/right portal popovers hidden until content layout is known (prevents recenter jiggle)', async () => {
@@ -698,6 +777,56 @@ describe('Popover (web)', () => {
 
         await act(async () => {
             contentViewAfterFirstLayout?.props?.onLayout?.({ nativeEvent: { layout: { width: 180, height: 120 } } });
+        });
+
+        const childAfter = tree?.root.findByType('PopoverChild' as any);
+        const contentViewAfter = nearestView(childAfter);
+        expect(flattenStyle(contentViewAfter?.props?.style).opacity).toBe(1);
+    });
+
+    it('keeps top/bottom portal popovers hidden until content layout is known (prevents clamp jiggle)', async () => {
+        const { Popover } = await import('./Popover');
+
+        const anchorRef = {
+            current: {
+                measureInWindow: (cb: any) => {
+                    queueMicrotask(() => cb(200, 200, 140, 34));
+                },
+            },
+        } as any;
+
+        let tree: ReturnType<typeof renderer.create> | undefined;
+        act(() => {
+            tree = renderer.create(
+                React.createElement(Popover, {
+                    open: true,
+                    anchorRef,
+                    placement: 'bottom',
+                    portal: { web: true },
+                    backdrop: false,
+                    children: () => React.createElement('PopoverChild'),
+                }),
+            );
+        });
+
+        await act(async () => {
+            await flushInitialPositioning();
+        });
+
+        const child = tree?.root.findByType('PopoverChild' as any);
+        const contentView = nearestView(child);
+        expect(flattenStyle(contentView?.props?.style).opacity).toBe(0);
+
+        await act(async () => {
+            contentView?.props?.onLayout?.({ nativeEvent: { layout: { width: 180, height: 0 } } });
+        });
+
+        const childAfterFirstLayout = tree?.root.findByType('PopoverChild' as any);
+        const contentViewAfterFirstLayout = nearestView(childAfterFirstLayout);
+        expect(flattenStyle(contentViewAfterFirstLayout?.props?.style).opacity).toBe(0);
+
+        await act(async () => {
+            contentViewAfterFirstLayout?.props?.onLayout?.({ nativeEvent: { layout: { width: 180, height: 140 } } });
         });
 
         const childAfter = tree?.root.findByType('PopoverChild' as any);

@@ -50,6 +50,12 @@ type PopoverCommonProps = Readonly<{
     edgePadding?: number | Readonly<{ horizontal?: number; vertical?: number }>;
     /** Extra styles applied to the positioned popover container. */
     containerStyle?: StyleProp<ViewStyle>;
+    /**
+     * When true (web only), clicking the anchor while the popover is open will also close it.
+     * Useful for trigger chips that behave like toggles, especially when global pointerdown-capture
+     * close handlers run before the anchor's press handler.
+     */
+    closeOnAnchorPress?: boolean;
     children: (render: PopoverRenderProps) => React.ReactNode;
 }>;
 
@@ -519,6 +525,13 @@ export function Popover(props: PopoverWithBackdrop | PopoverWithoutBackdrop) {
         if (!shouldPortalWeb && !shouldPortalNative) return 1;
         if (!anchorRectState) return 0;
         if (
+            (computed.placement === 'top' || computed.placement === 'bottom') &&
+            shouldPortalWeb &&
+            (!contentRectState || contentRectState.height < 1)
+        ) {
+            return 0;
+        }
+        if (
             (computed.placement === 'left' || computed.placement === 'right') &&
             anchorAlignVerticalOnPortal !== 'start' &&
             (!contentRectState || contentRectState.height < 1)
@@ -592,7 +605,12 @@ export function Popover(props: PopoverWithBackdrop | PopoverWithoutBackdrop) {
             const contentEl = getDomElementFromNode(contentContainerRef.current);
             if (contentEl && contentEl.contains(target)) return;
             const anchorEl = getDomElementFromNode(anchorRef.current);
-            if (anchorEl && anchorEl.contains(target)) return;
+            if (anchorEl && anchorEl.contains(target)) {
+                if (props.closeOnAnchorPress) {
+                    onRequestClose();
+                }
+                return;
+            }
             onRequestClose();
         };
 
