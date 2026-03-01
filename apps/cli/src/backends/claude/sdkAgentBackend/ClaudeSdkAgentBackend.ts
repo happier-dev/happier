@@ -6,7 +6,7 @@ import { query } from '@/backends/claude/sdk/query';
 import type { SDKAssistantMessage, SDKMessage, SDKResultMessage, SDKSystemMessage } from '@/backends/claude/sdk/types';
 import { createSubprocessStderrAppender, type BoundedTextFileAppender } from '@/agent/runtime/subprocessArtifacts';
 
-export type ClaudeSdkPermissionPolicy = 'no_tools' | 'read_only';
+export type ClaudeSdkPermissionPolicy = 'no_tools' | 'read_only' | 'workspace_write';
 
 const READ_ONLY_SAFE_TOOL_NAMES = new Set([
   'fetch',
@@ -35,6 +35,7 @@ export class ClaudeSdkAgentBackend implements AgentBackend {
   private readonly env: NodeJS.ProcessEnv;
   private stderrAppender: BoundedTextFileAppender | null = null;
   private readonly toolNameByCallId = new Map<string, string>();
+  private query: ReturnType<typeof query> | null = null;
 
   private readonly localSessionId: SessionId = `voice-agent-claude-${randomUUID()}`;
   private readonly acceptedSessionIds = new Set<SessionId>();
@@ -49,6 +50,8 @@ export class ClaudeSdkAgentBackend implements AgentBackend {
 
   private sendChain: Promise<void> = Promise.resolve();
   private pendingTurn: { resolve: () => void; reject: (e: Error) => void; buffer: string[] } | null = null;
+  private pendingTurnCompletion: Promise<void> | null = null;
+  private ignoreNextNonSuccessResult = false;
 
   constructor(
     private readonly opts: Readonly<{
@@ -134,6 +137,7 @@ export class ClaudeSdkAgentBackend implements AgentBackend {
       },
     });
 
+    this.query = q;
     this.queryIter = q[Symbol.asyncIterator]();
     this.loopPromise = this.runLoop();
   }
@@ -147,26 +151,85 @@ export class ClaudeSdkAgentBackend implements AgentBackend {
       await this.startSession();
     }
 
-    // Serialize turns.
+    let startedResolve!: () => void;
+    let startedReject!: (e: Error) => void;
+    const startedPromise = new Promise<void>((resolve, reject) => {
+      startedResolve = resolve;
+      startedReject = reject;
+    });
+
+    // Serialize turns: enqueue the prompt only once the previous turn has settled.
     const run = async () => {
       if (this.disposed) throw new Error('Backend disposed');
-      const result = await new Promise<void>((resolve, reject) => {
-        this.pendingTurn = { resolve, reject, buffer: [] };
+
+      try {
+        let completionResolve!: () => void;
+        let completionReject!: (e: Error) => void;
+        const completionPromise = new Promise<void>((resolve, reject) => {
+          completionResolve = resolve;
+          completionReject = reject;
+        });
+
+        this.pendingTurn = { resolve: completionResolve, reject: completionReject, buffer: [] };
+        this.pendingTurnCompletion = completionPromise;
         this.promptStream.push({
           type: 'user',
           message: { role: 'user', content: prompt },
         });
-      });
-      return result;
+        startedResolve();
+
+        // Hold the send chain until the turn settles (success/error/cancel) so subsequent sendPrompt calls
+        // don't overlap. Do not propagate the rejection into the chain.
+        await completionPromise.catch(() => {});
+      } catch (e: any) {
+        const err = e instanceof Error ? e : new Error('Failed to enqueue prompt');
+        startedReject(err);
+        throw err;
+      }
     };
 
     this.sendChain = this.sendChain.then(run, run);
-    return await this.sendChain;
+
+    try {
+      await startedPromise;
+    } catch (e: any) {
+      throw e instanceof Error ? e : new Error('Failed to send prompt');
+    }
   }
 
-  async cancel(_sessionId: SessionId): Promise<void> {
-    // Best-effort: abort the whole process.
-    this.abortController.abort();
+  async cancel(sessionId: SessionId): Promise<void> {
+    if (!this.acceptedSessionIds.has(sessionId)) {
+      throw new Error(`Unknown sessionId: ${sessionId}`);
+    }
+    if (this.disposed) return;
+
+    // Only ignore a non-success result when we're actually cancelling an in-flight turn.
+    // Otherwise we'd swallow legitimate error results from future turns.
+    const hadPendingTurn = Boolean(this.pendingTurn);
+    if (hadPendingTurn) {
+      this.ignoreNextNonSuccessResult = true;
+    }
+
+    // Best-effort: interrupt the current execution in the Claude Code subprocess.
+    try {
+      void this.query?.interrupt().catch(() => {});
+    } catch {
+      // Best-effort: interrupt is optional and should not crash cancellation.
+    }
+  }
+
+  async waitForResponseComplete(timeoutMs?: number): Promise<void> {
+    if (this.disposed) throw new Error('Backend disposed');
+    const completion = this.pendingTurnCompletion;
+    if (!completion) return;
+
+    const ms = typeof timeoutMs === 'number' && Number.isFinite(timeoutMs) && timeoutMs >= 1 ? Math.floor(timeoutMs) : 120_000;
+    await Promise.race([
+      completion,
+      new Promise<void>((_resolve, reject) => {
+        setTimeout(() => reject(new Error(`Timed out after ${ms}ms`)), ms);
+      }),
+    ]);
   }
 
   async dispose(): Promise<void> {
@@ -175,6 +238,7 @@ export class ClaudeSdkAgentBackend implements AgentBackend {
     const pending = this.pendingTurn;
     if (pending) {
       this.pendingTurn = null;
+      this.pendingTurnCompletion = null;
       pending.reject(new Error('Agent disposed'));
     }
     try {
@@ -190,6 +254,7 @@ export class ClaudeSdkAgentBackend implements AgentBackend {
       await this.stderrAppender?.close();
     } catch {}
     this.stderrAppender = null;
+    this.query = null;
     this.emit({ type: 'status', status: 'stopped' });
   }
 
@@ -202,6 +267,13 @@ export class ClaudeSdkAgentBackend implements AgentBackend {
   private buildCanCallTool() {
     if (this.opts.permissionPolicy === 'no_tools') {
       return async () => ({ behavior: 'deny', message: 'Tools are disabled for voice agent.', interrupt: true } as const);
+    }
+
+    if (this.opts.permissionPolicy === 'workspace_write') {
+      return async (_toolName: string, input: unknown) => {
+        const updatedInput = input && typeof input === 'object' ? (input as Record<string, unknown>) : {};
+        return { behavior: 'allow', updatedInput } as const;
+      };
     }
 
     return async (toolName: string, input: unknown) => {
@@ -294,28 +366,46 @@ export class ClaudeSdkAgentBackend implements AgentBackend {
       const result = msg as SDKResultMessage;
       this.noteVendorSessionId(result.session_id);
       this.emitTokenCountTelemetry(result);
-      if (result.subtype === 'success') {
-        // A completed turn means tool call ids won't be reused; keep memory bounded.
-        this.toolNameByCallId.clear();
+    if (result.subtype === 'success') {
+      // A completed turn means tool call ids won't be reused; keep memory bounded.
+      this.toolNameByCallId.clear();
+    }
+    if (result.subtype === 'success') {
+      if (this.ignoreNextNonSuccessResult) {
+        // Cancellation raced with a clean completion; clear the ignore flag so we don't swallow future errors.
+        this.ignoreNextNonSuccessResult = false;
       }
-      if (result.subtype === 'success') {
-        const pending = this.pendingTurn;
-        if (pending) {
-          this.pendingTurn = null;
-          pending.resolve();
-        }
-        this.emit({ type: 'status', status: 'idle' });
-        return;
-      }
-
       const pending = this.pendingTurn;
       if (pending) {
         this.pendingTurn = null;
-        pending.reject(new Error(`Claude SDK error: ${result.subtype}`));
+        this.pendingTurnCompletion = null;
+        pending.resolve();
       }
-      this.emit({ type: 'status', status: 'error', detail: String(result.subtype) });
+      this.emit({ type: 'status', status: 'idle' });
       return;
     }
+
+    if (this.ignoreNextNonSuccessResult) {
+      this.ignoreNextNonSuccessResult = false;
+      const pending = this.pendingTurn;
+      if (pending) {
+        this.pendingTurn = null;
+        this.pendingTurnCompletion = null;
+        pending.reject(new Error('Turn cancelled'));
+      }
+      this.emit({ type: 'status', status: 'idle' });
+      return;
+    }
+
+    const pending = this.pendingTurn;
+    if (pending) {
+      this.pendingTurn = null;
+      this.pendingTurnCompletion = null;
+      pending.reject(new Error(`Claude SDK error: ${result.subtype}`));
+    }
+    this.emit({ type: 'status', status: 'error', detail: String(result.subtype) });
+    return;
+  }
   }
 
   private emitTokenCountTelemetry(result: SDKResultMessage): void {
