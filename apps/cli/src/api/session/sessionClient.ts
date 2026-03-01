@@ -168,26 +168,25 @@ export class ApiSessionClient extends EventEmitter {
               : {}),
         });
 
-                const executionRunsDecision = resolveCliFeatureDecision({ featureId: 'execution.runs', env: process.env });
-                if (executionRunsDecision.state === 'enabled') {
-                    registerExecutionRunHandlers(this.rpcHandlerManager, {
-                      sessionId: this.sessionId,
-                      cwd: this.metadata?.path ?? process.cwd(),
-                      serverUrl: configuration.serverUrl,
-                      parentProvider,
-                      createBackend: ({ backendId, permissionMode, modelId, start }) =>
-                        createExecutionRunBackend({ cwd: this.metadata?.path ?? process.cwd(), backendId, permissionMode, modelId, start }),
-                      sendAcp: (provider, body, opts) => this.sendAgentMessage(provider as any, body as any, opts),
-                      transcriptWriter,
-                      budgetRegistry: executionBudgetRegistry,
-                      policy: {
-                          maxConcurrentRuns: configuration.executionRunsMaxConcurrentPerSession,
-                          boundedTimeoutMs: configuration.executionRunsBoundedTimeoutMs,
-                          maxTurns: configuration.executionRunsMaxTurns,
-                          maxDepth: configuration.executionRunsMaxDepth,
-                      },
-                    });
-                }
+        // Always register execution-run RPC methods so callers never see "RPC method not available".
+        // Feature gating is enforced inside the handler implementations.
+        registerExecutionRunHandlers(this.rpcHandlerManager, {
+            sessionId: this.sessionId,
+            cwd: this.metadata?.path ?? process.cwd(),
+            serverUrl: configuration.serverUrl,
+            parentProvider,
+            createBackend: ({ backendId, permissionMode, modelId, start }) =>
+                createExecutionRunBackend({ cwd: this.metadata?.path ?? process.cwd(), backendId, permissionMode, modelId, start }),
+            sendAcp: (provider, body, opts) => this.sendAgentMessage(provider as any, body as any, opts),
+            transcriptWriter,
+            budgetRegistry: executionBudgetRegistry,
+            policy: {
+                maxConcurrentRuns: configuration.executionRunsMaxConcurrentPerSession,
+                boundedTimeoutMs: configuration.executionRunsBoundedTimeoutMs,
+                maxTurns: configuration.executionRunsMaxTurns,
+                maxDepth: configuration.executionRunsMaxDepth,
+            },
+        });
 
         registerEphemeralTaskHandlers(this.rpcHandlerManager, {
           workingDirectory: this.metadata?.path ?? process.cwd(),

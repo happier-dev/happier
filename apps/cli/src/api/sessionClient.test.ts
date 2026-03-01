@@ -108,6 +108,25 @@ describe('ApiSessionClient connection handling', () => {
         expect(client.getLastObservedMessageSeq()).toBe(0);
     });
 
+    it('keeps execution.run.send RPC registered even when execution.runs is disabled', async () => {
+        const previous = process.env.HAPPIER_FEATURE_EXECUTION_RUNS__ENABLED;
+        process.env.HAPPIER_FEATURE_EXECUTION_RUNS__ENABLED = '0';
+        try {
+            const client = new ApiSessionClient('token', mockSession);
+
+            expect(client.rpcHandlerManager.hasHandler('execution.run.send')).toBe(true);
+
+            const result = await client.rpcHandlerManager.invokeLocal('execution.run.send', {
+                runId: 'run-1',
+                message: 'hello',
+            });
+            expect(result).toMatchObject({ ok: false, errorCode: 'execution_run_not_allowed' });
+        } finally {
+            if (previous === undefined) delete process.env.HAPPIER_FEATURE_EXECUTION_RUNS__ENABLED;
+            else process.env.HAPPIER_FEATURE_EXECUTION_RUNS__ENABLED = previous;
+        }
+    });
+
     it('filters historical catch-up user messages from delivery for terminal-started sessions', async () => {
         const axiosMod = await import('axios');
         const axios = axiosMod.default as any;
