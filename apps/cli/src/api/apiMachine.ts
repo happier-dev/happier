@@ -9,6 +9,8 @@ import { logger } from '@/ui/logger';
 import { configuration } from '@/configuration';
 import { MachineMetadata, DaemonState, Machine, Update, UpdateMachineBody } from './types';
 import { registerSessionHandlers } from '@/rpc/handlers/registerSessionHandlers';
+import { registerScmHandlers } from '@/rpc/handlers/scm';
+import { registerFileSystemHandlers } from '@/rpc/handlers/fileSystem';
 import { encodeBase64, decodeBase64, encrypt, decrypt } from './encryption';
 import { backoff } from '@/utils/time';
 import { RpcHandlerManager } from './rpc/RpcHandlerManager';
@@ -43,7 +45,12 @@ export class ApiMachineClient {
             logger: (msg, data) => logger.debug(msg, data)
         });
 
-        registerSessionHandlers(this.rpcHandlerManager, resolveMachineRpcWorkingDirectory());
+        const machineRpcWorkingDirectory = resolveMachineRpcWorkingDirectory();
+        registerSessionHandlers(this.rpcHandlerManager, machineRpcWorkingDirectory);
+        registerFileSystemHandlers(this.rpcHandlerManager, machineRpcWorkingDirectory);
+        // SCM must be machine-scoped so the UI can view diffs/logs and perform staging/commit operations
+        // even when no session is currently active.
+        registerScmHandlers(this.rpcHandlerManager, machineRpcWorkingDirectory);
     }
 
     setRPCHandlers({
