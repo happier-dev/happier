@@ -3,6 +3,7 @@ import * as React from 'react';
 import { Modal } from '@/modal';
 import { machineCapabilitiesInvoke } from '@/sync/ops';
 import type { CapabilitiesInvokeRequest, CapabilitiesInvokeResponse } from '@/sync/ops';
+import { t } from '@/text';
 
 type UnsupportedReason = 'not-supported' | 'error';
 
@@ -58,11 +59,11 @@ export function useMachineCapabilityInvokeWithAlerts() {
             const logPath = resolveLogPathFromInvokeResponse(invoke.response);
             const successMsg = logPath && params.alerts.successWithLogPath
                 ? params.alerts.successWithLogPath(logPath)
-                : (params.alerts.successMessage ?? 'Done.');
+                : (params.alerts.successMessage ?? t('common.done'));
             Modal.alert(params.alerts.successTitle, successMsg);
             return invoke;
         } catch (e) {
-            Modal.alert(params.alerts.errorTitle, e instanceof Error ? e.message : 'Request failed.');
+            Modal.alert(params.alerts.errorTitle, e instanceof Error ? e.message : t('common.requestFailed'));
             return { supported: false, reason: 'error' as const };
         } finally {
             setIsInvoking(false);
@@ -71,4 +72,3 @@ export function useMachineCapabilityInvokeWithAlerts() {
 
     return { isInvoking, invokeWithAlerts } as const;
 }
-
