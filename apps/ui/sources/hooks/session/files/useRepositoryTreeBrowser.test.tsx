@@ -8,12 +8,62 @@ const listRepositoryDirectoryEntriesSpy = vi.fn<
     (input: { sessionId: string; directoryPath: string }) => Promise<{ ok: true; entries: Array<{ name: string; type: 'file' | 'directory' }> }>
 >();
 
+const cachedDirectoryEntries = new Map<string, Array<{ name: string; type: 'file' | 'directory' }>>();
+
 vi.mock('@/sync/domains/input/repositoryDirectory', () => ({
     listRepositoryDirectoryEntries: (input: any) => listRepositoryDirectoryEntriesSpy(input),
+    getCachedRepositoryDirectoryEntries: (input: any) => cachedDirectoryEntries.get(`${input.sessionId}:${input.directoryPath}`) ?? null,
+    setCachedRepositoryDirectoryEntries: (input: any) => {
+        cachedDirectoryEntries.set(`${input.sessionId}:${input.directoryPath}`, input.entries);
+    },
 }));
 
 describe('useRepositoryTreeBrowser', () => {
+    it('hydrates initial nodes from the directory cache while revalidating in the background', async () => {
+        cachedDirectoryEntries.set('session-1:', [
+            { name: 'cached.md', type: 'file' },
+        ]);
+
+        listRepositoryDirectoryEntriesSpy.mockImplementation(async ({ directoryPath }) => {
+            if (!directoryPath) {
+                return {
+                    ok: true,
+                    entries: [
+                        { name: 'src', type: 'directory' },
+                        { name: 'README.md', type: 'file' },
+                    ],
+                };
+            }
+            return { ok: true, entries: [] };
+        });
+
+        const { useRepositoryTreeBrowser } = await import('./useRepositoryTreeBrowser');
+
+        let api: any = null;
+        function Test() {
+            const [expandedPaths, setExpandedPaths] = React.useState<string[]>([]);
+            api = useRepositoryTreeBrowser({
+                sessionId: 'session-1',
+                enabled: true,
+                expandedPaths,
+                onExpandedPathsChange: setExpandedPaths,
+            });
+            return null;
+        }
+
+        act(() => {
+            renderer.create(<Test />);
+        });
+
+        expect(api.nodes.map((n: any) => n.path)).toEqual(['cached.md']);
+
+        // Revalidation should still occur.
+        await act(async () => {});
+        expect(listRepositoryDirectoryEntriesSpy).toHaveBeenCalledWith({ sessionId: 'session-1', directoryPath: '' });
+    });
+
     it('persists expanded directories via provided callbacks and collapses all', async () => {
+        cachedDirectoryEntries.clear();
         listRepositoryDirectoryEntriesSpy.mockImplementation(async ({ directoryPath }) => {
             if (!directoryPath) {
                 return {
@@ -80,6 +130,7 @@ describe('useRepositoryTreeBrowser', () => {
     });
 
     it('does not apply stale directory results after switching sessions', async () => {
+        cachedDirectoryEntries.clear();
         let resolveSession1Src: ((value: any) => void) | null = null;
 
         listRepositoryDirectoryEntriesSpy.mockImplementation(async ({ sessionId, directoryPath }) => {

@@ -1,6 +1,7 @@
 import * as React from 'react';
 
 import {
+    getCachedRepositoryDirectoryEntries,
     listRepositoryDirectoryEntries,
     type ListRepositoryDirectoryEntriesResult,
     type RepositoryDirectoryEntry,
@@ -107,24 +108,50 @@ function flattenTree(input: {
     return out;
 }
 
+function seedDirectoryEntriesByPathFromCache(input: Readonly<{
+    sessionId: string;
+    expandedPaths: readonly string[] | null;
+}>): Map<string, RepositoryDirectoryEntry[]> {
+    const map = new Map<string, RepositoryDirectoryEntry[]>();
+    const root = getCachedRepositoryDirectoryEntries({ sessionId: input.sessionId, directoryPath: '' });
+    if (root) map.set('', root);
+    if (Array.isArray(input.expandedPaths)) {
+        for (const dir of input.expandedPaths) {
+            const clean = normalizeDirectoryPath(dir);
+            if (!clean) continue;
+            const cached = getCachedRepositoryDirectoryEntries({ sessionId: input.sessionId, directoryPath: clean });
+            if (cached) map.set(clean, cached);
+        }
+    }
+    return map;
+}
+
 export function useRepositoryTreeBrowser(input: {
     sessionId: string;
     enabled: boolean;
     expandedPaths?: readonly string[];
     onExpandedPathsChange?: (paths: string[]) => void;
+    reloadToken?: number;
 }) {
-    const { sessionId, enabled, expandedPaths, onExpandedPathsChange } = input;
+    const { sessionId, enabled, expandedPaths, onExpandedPathsChange, reloadToken } = input;
     const sessionIdRef = React.useRef(sessionId);
     React.useEffect(() => {
         sessionIdRef.current = sessionId;
     }, [sessionId]);
     const useExternalExpanded = Array.isArray(expandedPaths) && typeof onExpandedPathsChange === 'function';
+    const expandedPathsRef = React.useRef(expandedPaths);
+    const useExternalExpandedRef = React.useRef(useExternalExpanded);
+    React.useEffect(() => {
+        expandedPathsRef.current = expandedPaths;
+        useExternalExpandedRef.current = useExternalExpanded;
+    }, [expandedPaths, useExternalExpanded]);
 
     const [rootLoading, setRootLoading] = React.useState(false);
     const [rootError, setRootError] = React.useState<string | null>(null);
-    const [directoryEntriesByPath, setDirectoryEntriesByPath] = React.useState<Map<string, RepositoryDirectoryEntry[]>>(
-        () => new Map()
-    );
+    const [directoryEntriesByPath, setDirectoryEntriesByPath] = React.useState<Map<string, RepositoryDirectoryEntry[]>>(() => {
+        const seedExpandedPaths = useExternalExpanded ? normalizeExpandedPaths(expandedPaths!) : null;
+        return seedDirectoryEntriesByPathFromCache({ sessionId, expandedPaths: seedExpandedPaths });
+    });
     const [internalExpandedPaths, setInternalExpandedPaths] = React.useState<string[]>([]);
     const [loadingDirectories, setLoadingDirectories] = React.useState<Set<string>>(() => new Set());
     const [directoryErrors, setDirectoryErrors] = React.useState<Map<string, string>>(() => new Map());
@@ -153,7 +180,11 @@ export function useRepositoryTreeBrowser(input: {
     }, [currentExpandedPaths, onExpandedPathsChange, useExternalExpanded]);
 
     React.useEffect(() => {
-        setDirectoryEntriesByPath(new Map());
+        const seedExpandedPaths =
+            useExternalExpandedRef.current
+                ? normalizeExpandedPaths(Array.isArray(expandedPathsRef.current) ? expandedPathsRef.current : [])
+                : null;
+        setDirectoryEntriesByPath(seedDirectoryEntriesByPathFromCache({ sessionId, expandedPaths: seedExpandedPaths }));
         setInternalExpandedPaths([]);
         setLoadingDirectories(new Set());
         setDirectoryErrors(new Map());
@@ -215,7 +246,7 @@ export function useRepositoryTreeBrowser(input: {
         return () => {
             cancelled = true;
         };
-    }, [enabled, sessionId]);
+    }, [enabled, reloadToken, sessionId]);
 
     const loadDirectory = React.useCallback(async (directoryPath: string) => {
         const clean = normalizeDirectoryPath(directoryPath);
