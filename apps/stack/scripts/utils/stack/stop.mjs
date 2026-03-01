@@ -153,6 +153,7 @@ export async function stopStackWithEnv({
   const cliDir = getComponentDir(rootDir, 'happier-cli', env);
   const cliBin = join(cliDir, 'bin', 'happier.mjs');
   const envPath = (env.HAPPIER_STACK_ENV_FILE ?? '').toString();
+  const selfPgid = await getProcessGroupId(process.pid);
 
   // Preferred: stop stack-started processes (by PID) recorded in stack.runtime.json.
   // This is safer than killing whatever happens to listen on a port, and doesn't rely on the runner's shutdown handler.
@@ -185,6 +186,13 @@ export async function stopStackWithEnv({
         // eslint-disable-next-line no-await-in-loop
         const pgid = await getProcessGroupId(pid);
         if (pgid) {
+          if (selfPgid && pgid === selfPgid) {
+            // Avoid killing the stop command / TUI manager itself when PGIDs are shared.
+            // eslint-disable-next-line no-await-in-loop
+            await killPid(pid);
+            killedProcessPids.push({ key, pid, reason: 'killed_ephemeral_runtime_pid_only_same_pgid', pgid });
+            continue;
+          }
           // eslint-disable-next-line no-await-in-loop
           const terminated = await terminateProcessGroup(pgid, { graceMs: 800, signal: 'SIGTERM' });
           if (terminated.ok) {
@@ -311,6 +319,11 @@ export async function stopStackWithEnv({
     const sweepPidDirect = async (pid, reason) => {
       const pgid = await getProcessGroupId(pid);
       if (pgid) {
+        if (selfPgid && pgid === selfPgid) {
+          await killPid(pid);
+          swept.push({ pid, reason: `${reason}_pid_only_same_pgid`, pgid });
+          return true;
+        }
         const terminated = await terminateProcessGroup(pgid, { graceMs: 800, signal: 'SIGTERM' });
         if (terminated.ok) {
           swept.push({ pid, reason, pgid });

@@ -214,3 +214,83 @@ test('killProcessGroupOwnedByStack honors requested initial signal when provided
     }
   }
 });
+
+test('killProcessGroupOwnedByStack does not signal the caller process group when target shares PGID', async (t) => {
+  if (process.platform === 'win32') {
+    t.skip('POSIX process-group signaling semantics');
+    return;
+  }
+
+  const tmp = await mkdtemp(join(tmpdir(), 'hstack-kill-self-pgid-'));
+  const envPath = join(tmp, 'env');
+  const ownershipModuleUrl = new URL('./ownership.mjs', import.meta.url).href;
+
+  const runner = spawn(
+    process.execPath,
+    [
+      '-e',
+      `
+      const { spawn } = require('node:child_process');
+
+      (async () => {
+        const mod = await import(${JSON.stringify(ownershipModuleUrl)});
+        const envPath = process.argv[1];
+        const child = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], {
+          env: {
+            ...process.env,
+            HAPPIER_STACK_STACK: 't',
+            HAPPIER_STACK_ENV_FILE: envPath,
+            HAPPIER_STACK_PROCESS_KIND: 'infra',
+          },
+          stdio: 'ignore',
+          detached: false,
+        });
+
+        try {
+          const res = await mod.killProcessGroupOwnedByStack(child.pid, {
+            stackName: 't',
+            envPath,
+            json: true,
+            graceMs: 400,
+          });
+          process.stdout.write(JSON.stringify(res) + '\\n');
+          process.exit(0);
+        } catch (err) {
+          process.stderr.write(String(err && err.message ? err.message : err));
+          process.exit(1);
+        }
+      })();
+    `,
+      envPath,
+    ],
+    { stdio: ['ignore', 'pipe', 'pipe'] }
+  );
+
+  let stdout = '';
+  let stderr = '';
+  runner.stdout?.on('data', (d) => {
+    stdout += d.toString();
+  });
+  runner.stderr?.on('data', (d) => {
+    stderr += d.toString();
+  });
+
+  const status = await new Promise((resolvePromise) => {
+    runner.on('exit', (code, signal) => resolvePromise({ code, signal }));
+    runner.on('error', (err) => resolvePromise({ code: -1, signal: String(err) }));
+  });
+
+  try {
+    assert.equal(status.code, 0, `runner failed (signal=${status.signal ?? 'null'}) stderr=${stderr}`);
+    const line = stdout.trim().split('\n').filter(Boolean).at(-1) || '';
+    const parsed = JSON.parse(line || '{}');
+    assert.equal(parsed.killed, true);
+    assert.equal(parsed.reason, 'killed_pid_only');
+  } finally {
+    try {
+      await rm(tmp, { recursive: true, force: true });
+    } catch {
+      // ignore
+    }
+  }
+});
