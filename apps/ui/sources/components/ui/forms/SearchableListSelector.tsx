@@ -89,6 +89,11 @@ export interface SearchableListSelectorProps<T> {
     onSelect: (item: T) => void;
     onToggleFavorite?: (item: T) => void;
     context?: any; // Additional context (e.g., homeDir for paths)
+    /**
+     * Optional test id prefix applied to each rendered row as `${prefix}:${itemId}`.
+     * Used by Playwright UI e2e to select items without depending on visible copy.
+     */
+    testIdPrefix?: string;
 
     // Optional overrides
     showFavorites?: boolean;
@@ -120,6 +125,7 @@ export function SearchableListSelector<T>(props: SearchableListSelectorProps<T>)
         onSelect,
         onToggleFavorite,
         context,
+        testIdPrefix,
         showFavorites = config.showFavorites !== false,
         showRecent = config.showRecent !== false,
         showSearch = config.showSearch !== false,
@@ -225,6 +231,9 @@ export function SearchableListSelector<T>(props: SearchableListSelectorProps<T>)
 
     const renderItem = (item: T, isSelected: boolean, isLast: boolean, showDividerOverride?: boolean, forRecent = false, forFavorite = false) => {
         const itemId = config.getItemId(item);
+        const rowTestID = typeof testIdPrefix === 'string' && testIdPrefix.trim()
+            ? `${testIdPrefix.trim()}:${itemId}`
+            : undefined;
         const title = config.getItemTitle(item);
         const isDisabled = config.isItemDisabled?.(item, context) ?? false;
         const subtitle = forRecent && config.getRecentItemSubtitle
@@ -243,6 +252,7 @@ export function SearchableListSelector<T>(props: SearchableListSelectorProps<T>)
         return (
             <Item
                 key={itemId}
+                testID={rowTestID}
                 title={title}
                 subtitle={subtitle}
                 subtitleLines={0}

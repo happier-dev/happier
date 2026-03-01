@@ -120,4 +120,50 @@ describe('SearchableListSelector (disabled items)', () => {
         expect(onSelect).toHaveBeenCalledTimes(1);
         expect(onSelect).toHaveBeenCalledWith(items[0]);
     });
+
+    it('applies test ids for items when configured', async () => {
+        const onSelect = vi.fn();
+
+        const items = [
+            { id: 'a', title: 'A' },
+            { id: 'b', title: 'B' },
+        ] as const;
+
+        const config: any = {
+            getItemId: (item: any) => item.id,
+            getItemTitle: (item: any) => item.title,
+            getItemIcon: () => null,
+            formatForDisplay: (item: any) => item.title,
+            parseFromDisplay: () => null,
+            filterItem: () => true,
+            searchPlaceholder: 'Search…',
+            recentSectionTitle: 'Recent',
+            favoritesSectionTitle: 'Favorites',
+            allSectionTitle: 'All',
+            noItemsMessage: 'Empty',
+            showFavorites: false,
+            showRecent: false,
+            showSearch: false,
+            allowCustomInput: false,
+        };
+
+        let tree: renderer.ReactTestRenderer | null = null;
+        await act(async () => {
+            tree = renderer.create(
+                <SearchableListSelector
+                    config={config}
+                    items={[...items] as any}
+                    selectedItem={null}
+                    onSelect={onSelect}
+                    testIdPrefix="selector"
+                />,
+            );
+        });
+
+        const renderedItems = tree!.root.findAllByType('Item');
+        const rowA = renderedItems.find((n) => n.props.title === 'A');
+        const rowB = renderedItems.find((n) => n.props.title === 'B');
+        expect(rowA?.props.testID).toBe('selector:a');
+        expect(rowB?.props.testID).toBe('selector:b');
+    });
 });
