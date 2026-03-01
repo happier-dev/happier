@@ -1,9 +1,11 @@
 import * as React from 'react';
 import renderer, { act } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
+import { AppPaneProvider } from '@/components/appShell/panes/AppPaneProvider';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 (globalThis as any).__DEV__ = false;
+let authCredentials: any = { token: 't', secret: 's' };
 
 vi.mock('react-native-reanimated', () => ({}));
 vi.mock('expo-linear-gradient', () => ({
@@ -17,6 +19,34 @@ vi.mock('react-native', () => ({
   Text: 'Text',
   Pressable: 'Pressable',
   ActivityIndicator: 'ActivityIndicator',
+  Easing: {
+    bezier: vi.fn(() => ({})),
+    linear: {},
+  },
+  Animated: {
+    View: 'Animated.View',
+    Value: class {
+      private _v: number;
+      constructor(v: number) {
+        this._v = v;
+      }
+      // Minimal stub for Animated.Value used by MultiPaneHost.
+      interpolate() {
+        return this;
+      }
+    },
+    timing: () => ({
+      start: (cb?: any) => cb?.({ finished: true }),
+    }),
+  },
+  AccessibilityInfo: {
+    isReduceMotionEnabled: vi.fn(async () => false),
+    addEventListener: vi.fn(() => ({ remove: vi.fn() })),
+  },
+  Dimensions: {
+    get: () => ({ width: 800, height: 600, scale: 2, fontScale: 1 }),
+  },
+  useWindowDimensions: () => ({ width: 1200, height: 800 }),
   Platform: {
     OS: 'ios',
     select: (spec: Record<string, unknown>) =>
@@ -27,21 +57,55 @@ vi.mock('react-native-safe-area-context', () => ({
   useSafeAreaInsets: () => ({ top: 0, bottom: 0, left: 0, right: 0 }),
 }));
 vi.mock('react-native-unistyles', () => ({
+  __esModule: true,
+  // Keep this mock theme shape aligned with `sources/theme.ts` keys that are read by core UI primitives.
+  // A few tests use a custom Unistyles mock instead of the shared vitest setup.
   useUnistyles: () => ({
     theme: {
       dark: false,
       colors: {
         text: '#000',
         textSecondary: '#666',
+        textLink: '#00f',
         surface: '#fff',
+        surfaceHigh: '#f5f5f5',
+        divider: '#ddd',
+        border: '#ddd',
+        indigo: '#5856D6',
+        modal: { border: '#ddd' },
+        input: { background: '#f5f5f5' },
         header: { tint: '#000' },
         status: { error: '#f00' },
         shadow: { color: '#000', opacity: 0.2 },
+        groupped: { background: '#F5F5F5', chevron: '#C7C7CC', sectionTitle: '#8E8E93' },
       },
     },
   }),
   StyleSheet: {
-    create: (styles: any) => (typeof styles === 'function' ? styles({ colors: {} }) : styles),
+    create: (styles: any) =>
+      typeof styles === 'function'
+        ? styles(
+            {
+              colors: {
+                text: '#000',
+                textSecondary: '#666',
+                textLink: '#00f',
+                surface: '#fff',
+                surfaceHigh: '#f5f5f5',
+                divider: '#ddd',
+                border: '#ddd',
+                indigo: '#5856D6',
+                modal: { border: '#ddd' },
+                input: { background: '#f5f5f5' },
+                header: { tint: '#000' },
+                status: { error: '#f00' },
+                shadow: { color: '#000', opacity: 0.2 },
+                groupped: { background: '#F5F5F5', chevron: '#C7C7CC', sectionTitle: '#8E8E93' },
+              },
+            },
+            {}
+          )
+        : styles,
     absoluteFillObject: {},
   },
 }));
@@ -52,6 +116,10 @@ vi.mock('@react-navigation/native', () => ({
 
 vi.mock('expo-router', () => ({
   useRouter: () => ({ push: vi.fn(), back: vi.fn() }),
+}));
+
+vi.mock('@/auth/context/AuthContext', () => ({
+  useAuth: () => ({ credentials: authCredentials }),
 }));
 
 vi.mock('@/text', () => ({
@@ -94,6 +162,7 @@ vi.mock('@/hooks/server/useFeatureEnabled', () => ({
 }));
 
 vi.mock('@/utils/platform/responsive', () => ({
+  getDeviceType: () => 'phone',
   useDeviceType: () => 'phone',
   useHeaderHeight: () => 0,
   useIsLandscape: () => false,
@@ -165,31 +234,38 @@ vi.mock('@/sync/domains/state/storage', () => {
     metadata: { machineId: 'm1', flavor: 'codex', version: '0.0.0', path: '/tmp', homeDir: '/tmp' },
     agentState: {},
   };
-  const storage = {
-    getState: () => ({
-      sessions: { s1: session },
-      settings: { sessionMessageSendMode: 'direct', sessionBusySteerSendPolicy: 'steerImmediately' },
-      sessionListViewDataByServerId: {},
-    }),
-  };
-  return {
-    storage,
-    useSession: () => session,
-    useIsDataReady: () => true,
-    useRealtimeStatus: () => ({ status: 'connected' }),
-    useSessionMessages: () => ({ messages: [], isLoaded: true }),
-    useLocalSetting: () => ({}),
-    useSessionPendingMessages: () => ({ messages: [] }),
-    useSessionReviewCommentsDrafts: () => [],
-    useSessionUsage: () => null,
-    useSetting: () => null,
-    useSettings: () => ({ experiments: true, featureToggles: {} }),
-    useAutomations: () => [],
-    useMachine: () => null,
-    useLocalSettingMutable: () => [false, vi.fn()],
-    useSettingMutable: () => [null, vi.fn()],
-  };
-});
+    const storage = {
+      getState: () => ({
+        sessions: { s1: session },
+        settings: { sessionMessageSendMode: 'direct', sessionBusySteerSendPolicy: 'steerImmediately' },
+        sessionListViewDataByServerId: {},
+        updateSessionProjectScmSnapshotError: () => {},
+      }),
+    };
+      return {
+        storage,
+        useSession: () => session,
+        useIsDataReady: () => true,
+        useRealtimeStatus: () => ({ status: 'connected' }),
+        useSessionMessages: () => ({ messages: [], isLoaded: true }),
+        useSessionTranscriptIds: () => ({ ids: [], isLoaded: true }),
+        useLocalSetting: (key: string) => {
+          if (key === 'uiMultiPanePanelsEnabled') return false;
+          if (key === 'editorFocusModeEnabled') return false;
+          if (key === 'acknowledgedCliVersions') return [];
+          return null;
+      },
+      useSessionPendingMessages: () => ({ messages: [] }),
+      useSessionReviewCommentsDrafts: () => [],
+      useSessionUsage: () => null,
+      useSetting: () => null,
+      useSettings: () => ({ experiments: true, featureToggles: {} }),
+      useAutomations: () => [],
+      useMachine: () => null,
+      useLocalSettingMutable: () => [false, vi.fn()],
+      useSettingMutable: () => [null, vi.fn()],
+    };
+  });
 
 vi.mock('@/hooks/server/useAutomationsSupport', () => ({
   useAutomationsSupport: () => ({ enabled: false }),
@@ -255,7 +331,7 @@ vi.mock('@/sync/domains/session/control/localControlSwitch', () => ({
   shouldRequestRemoteControlAfterPendingEnqueue: () => false,
 }));
 vi.mock('@/sync/acp/sessionModeControl', () => ({
-  supportsAcpAgentModeOverrides: () => false,
+  supportsSessionModeOverrides: () => false,
 }));
 vi.mock('@/sync/ops/sessionSwitch', () => ({
   sessionSwitch: vi.fn(),
@@ -271,7 +347,11 @@ describe('SessionView attachments gating', () => {
 
     let tree!: renderer.ReactTestRenderer;
     await act(async () => {
-      tree = renderer.create(<SessionView id="s1" />);
+      tree = renderer.create(
+        <AppPaneProvider>
+          <SessionView id="s1" />
+        </AppPaneProvider>
+      );
     });
 
     const agentInput = tree.root.findByType('AgentInput' as any);

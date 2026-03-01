@@ -379,21 +379,30 @@ export const SessionItem = React.memo(
         const canStopSession = isOwnedByCurrentUser;
         const canArchiveSession = hasAdminAccess && !isActiveSession;
         const swipeEnabled = Platform.OS !== 'web' && (isActiveSession ? canStopSession : canArchiveSession);
-        const [isHovered, setIsHovered] = React.useState(false);
+        const [isRowHovered, setIsRowHovered] = React.useState(false);
+        const [isActionsHovered, setIsActionsHovered] = React.useState(false);
         const [tagMenuOpen, setTagMenuOpen] = React.useState(false);
-        const showRowActions = Platform.OS !== 'web' || isHovered || tagMenuOpen;
+        const showRowActions = Platform.OS !== 'web' || isRowHovered || isActionsHovered || tagMenuOpen;
         const rowActionIconColor = String((styles.rowActionIcon as any)?.color ?? '#666');
         const supportsPin = typeof onTogglePinned === 'function';
         const supportsTag = tagsEnabled === true && typeof onSetTags === 'function';
         const showTagAction = supportsTag && (Platform.OS !== 'web' || showRowActions);
         const activeTags = tags ?? [];
         const knownTags = allKnownTags ?? [];
-        const handleHoverIn = React.useCallback(() => {
-            setIsHovered(true);
+        const handleRowHoverIn = React.useCallback(() => {
+            setIsRowHovered(true);
         }, []);
 
-        const handleHoverOut = React.useCallback(() => {
-            setIsHovered(false);
+        const handleRowHoverOut = React.useCallback(() => {
+            setIsRowHovered(false);
+        }, []);
+
+        const handleActionsHoverIn = React.useCallback(() => {
+            setIsActionsHovered(true);
+        }, []);
+
+        const handleActionsHoverOut = React.useCallback(() => {
+            setIsActionsHovered(false);
         }, []);
 
         const tagMenuItems = React.useMemo((): DropdownMenuItem[] => {
@@ -486,8 +495,8 @@ export const SessionItem = React.memo(
                     selected ? styles.sessionItemSelected : null,
                     embedded && !embeddedIsLast ? styles.embeddedSeparator : null,
                 ]}
-                onHoverIn={Platform.OS === 'web' ? handleHoverIn : undefined}
-                onHoverOut={Platform.OS === 'web' ? handleHoverOut : undefined}
+                onHoverIn={Platform.OS === 'web' ? handleRowHoverIn : undefined}
+                onHoverOut={Platform.OS === 'web' ? handleRowHoverOut : undefined}
                 onPressIn={() => {
                     if (isTablet) {
                         navigateToSession(session.id, serverId ? { serverId } : undefined);
@@ -620,6 +629,8 @@ export const SessionItem = React.memo(
                             },
                         ]}
                         pointerEvents={showRowActions ? 'auto' : 'none'}
+                        onPointerEnter={Platform.OS === 'web' ? handleActionsHoverIn : undefined}
+                        onPointerLeave={Platform.OS === 'web' ? handleActionsHoverOut : undefined}
                     >
                         {showTagAction ? (
                             <DropdownMenu

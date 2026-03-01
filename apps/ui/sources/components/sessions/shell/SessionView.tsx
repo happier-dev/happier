@@ -13,10 +13,11 @@ import { EmptyMessages } from '@/components/ui/empty/EmptyMessages';
 import { VoiceSurface } from '@/components/voice/surface/VoiceSurface';
 import { useDraft } from '@/hooks/session/useDraft';
 import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
-	import { Modal } from '@/modal';
-	import { scmStatusSync } from '@/scm/scmStatusSync';
-	import { continueSessionWithReplay, sessionAbort, resumeSession } from '@/sync/ops';
-import { storage, useAutomations, useIsDataReady, useLocalSetting, useMachine, useRealtimeStatus, useSessionMessages, useSessionPendingMessages, useSessionReviewCommentsDrafts, useSessionUsage, useSetting, useSettings } from '@/sync/domains/state/storage';
+import { useWarmRepositoryDirectoryCacheOnSessionOpen } from '@/hooks/session/files/useWarmRepositoryDirectoryCacheOnSessionOpen';
+  import { Modal } from '@/modal';
+  import { scmStatusSync } from '@/scm/scmStatusSync';
+  import { continueSessionWithReplay, sessionAbort, resumeSession } from '@/sync/ops';
+import { storage, useAutomations, useIsDataReady, useLocalSetting, useMachine, useRealtimeStatus, useSessionMessages, useSessionPendingMessages, useSessionReviewCommentsDrafts, useSessionTranscriptIds, useSessionUsage, useSetting, useSettings } from '@/sync/domains/state/storage';
 import { canResumeSessionWithOptions, getAgentVendorResumeId } from '@/agents/runtime/resumeCapabilities';
 import { DEFAULT_AGENT_ID, getAgentCore, resolveAgentIdFromFlavor, buildResumeSessionExtrasFromUiState, getAgentResumeExperimentsFromSettings, getResumePreflightIssues, getResumePreflightPrefetchPlan } from '@/agents/catalog/catalog';
 import { useResumeCapabilityOptions } from '@/agents/hooks/useResumeCapabilityOptions';
@@ -27,13 +28,14 @@ import { buildReviewCommentsDisplayText, buildReviewCommentsPromptText } from '@
 import { buildReviewCommentsV1MetaPayload } from '@/sync/domains/input/reviewComments/reviewCommentMeta';
 import { resolveSessionComposerSend } from '@/sync/domains/input/slashCommands/resolveSessionComposerSend';
 import { applyPermissionModeSelection } from '@/sync/domains/permissions/permissionModeApply';
-import { supportsAcpAgentModeOverrides } from '@/sync/acp/sessionModeControl';
+import { supportsSessionModeOverrides } from '@/sync/acp/sessionModeControl';
 import { t } from '@/text';
 import { tracking, trackMessageSent } from '@/track';
 import { isRunningOnMac } from '@/utils/platform/platform';
 import { randomUUID } from '@/platform/randomUUID';
 import { useDeviceType, useHeaderHeight, useIsLandscape, useIsTablet } from '@/utils/platform/responsive';
 import { formatPathRelativeToHome, getSessionAvatarId, getSessionName, listPendingPermissionRequests, shouldShowAbortButtonForSessionState, useSessionStatus } from '@/utils/sessions/sessionUtils';
+import { deriveTranscriptInteraction } from '@/utils/sessions/deriveTranscriptInteraction';
 import { isVersionSupported, MINIMUM_CLI_VERSION } from '@/utils/system/versionUtils';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 import { getMachineCapabilitiesSnapshot, prefetchMachineCapabilities, useMachineCapabilitiesCache } from '@/hooks/server/useMachineCapabilitiesCache';
@@ -42,10 +44,15 @@ import type { ModelMode, PermissionMode } from '@/sync/domains/permissions/permi
 import { getPendingQueueWakeResumeOptions } from '@/sync/domains/pending/pendingQueueWake';
 import { getPermissionModeOverrideForSpawn } from '@/sync/domains/permissions/permissionModeOverride';
 import { getModelOverrideForSpawn } from '@/sync/domains/models/modelOverride';
-	import { nowServerMs } from '@/sync/runtime/time';
-	import { buildResumeSessionBaseOptionsFromSession } from '@/sync/domains/session/resume/resumeSessionBase';
-	import { resolveHappierReplayConfig } from '@/sync/domains/session/resume/happierReplayPrompt';
-	import { chooseSubmitMode } from '@/sync/domains/session/control/submitMode';
+import { deriveSessionParticipantTargets } from '@/sync/domains/session/participants/deriveSessionParticipantTargets';
+import { RecipientChip } from '@/components/sessions/agentInput/recipient/RecipientChip';
+import { useSessionRecipientState } from '@/components/sessions/agentInput/recipient/useSessionRecipientState';
+import { resolveParticipantRoutedSend } from '@/sync/domains/input/participants/resolveParticipantRoutedSend';
+import { sessionExecutionRunSend } from '@/sync/ops/sessionExecutionRuns';
+  import { nowServerMs } from '@/sync/runtime/time';
+  import { buildResumeSessionBaseOptionsFromSession } from '@/sync/domains/session/resume/resumeSessionBase';
+  import { resolveHappierReplayConfig } from '@/sync/domains/session/resume/happierReplayPrompt';
+  import { chooseSubmitMode } from '@/sync/domains/session/control/submitMode';
 import { isModelSelectableForSession } from '@/sync/domains/models/modelOptions';
 import { isMachineOnline } from '@/utils/sessions/machineUtils';
 import { getInactiveSessionUiState } from '@/components/sessions/model/inactiveSessionUi';
@@ -55,7 +62,7 @@ import { useFocusEffect } from '@react-navigation/native';
 import { useRouter } from 'expo-router';
 import * as React from 'react';
 import { useMemo } from 'react';
-import { ActivityIndicator, Platform, Pressable, View } from 'react-native';
+import { ActivityIndicator, Platform, Pressable, View, useWindowDimensions } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useUnistyles } from 'react-native-unistyles';
 import { sessionSwitch } from '@/sync/ops';
@@ -70,6 +77,19 @@ import { useAttachmentsUploadConfig } from '@/components/sessions/attachments/us
 import { useAttachmentDraftManager } from '@/components/sessions/attachments/useAttachmentDraftManager';
 import { formatAttachmentsBlock, uploadAttachmentDraftsToSession } from '@/components/sessions/attachments/uploadAttachmentDraftsToSession';
 import { Text } from '@/components/ui/text/Text';
+import { AppPaneScopeHost } from '@/components/appShell/panes/AppPaneScopeHost';
+import { useRegisterSessionPaneDriver } from '@/components/sessions/panes/useRegisterSessionPaneDriver';
+import { useAppPaneScope } from '@/components/appShell/panes/hooks/useAppPaneScope';
+import { resolvePaneLayout } from '@/components/ui/panels/paneBreakpoints';
+import { PANE_SIZING_DEFAULTS } from '@/components/appShell/panes/layout/paneSizing';
+import { resolveMultiPaneDeviceType } from '@/components/appShell/panes/layout/resolveMultiPaneDeviceType';
+import { SessionLinkFileAction } from '@/components/sessions/linkedFiles/projectPicker/SessionLinkFileAction';
+import type { SessionPaneUrlState } from '@/components/sessions/panes/url/sessionPaneUrlState';
+import { useSessionPaneUrlSync } from '@/components/sessions/panes/url/useSessionPaneUrlSync';
+import { SessionResumeProvider } from '@/components/sessions/model/SessionResumeContext';
+import { useSessionResumeRequestListener } from '@/components/sessions/model/sessionResumeRequests';
+import { useAuth } from '@/auth/context/AuthContext';
+import { isLegacyAuthCredentials } from '@/auth/storage/tokenStorage';
 
 
 function formatResumeSupportDetailCode(code: 'cliNotDetected' | 'capabilityProbeFailed' | 'acpProbeFailed' | 'loadSessionFalse'): string {
@@ -85,29 +105,44 @@ function formatResumeSupportDetailCode(code: 'cliNotDetected' | 'capabilityProbe
     }
 }
 
-export const SessionView = React.memo((props: { id: string; jumpToSeq?: number | null }) => {
+export const SessionView = React.memo((props: { id: string; jumpToSeq?: number | null; paneUrlState?: SessionPaneUrlState | null }) => {
     const sessionId = props.id;
     const router = useRouter();
+    const auth = useAuth();
     const session = useSession(sessionId);
     const isDataReady = useIsDataReady();
     const { theme } = useUnistyles();
-	    const automations = useAutomations();
-		    const automationsSupport = useAutomationsSupport();
-		    const showAutomations = automationsSupport?.enabled !== false;
-		    const executionRunsEnabled = useFeatureEnabled('execution.runs');
-		    const safeArea = useSafeAreaInsets();
+      const automations = useAutomations();
+        const automationsSupport = useAutomationsSupport();
+        const showAutomations = automationsSupport?.enabled !== false;
+        const executionRunsEnabled = useFeatureEnabled('execution.runs');
+    const safeArea = useSafeAreaInsets();
     const isLandscape = useIsLandscape();
     const deviceType = useDeviceType();
     const headerHeight = useHeaderHeight();
     const realtimeStatus = useRealtimeStatus();
     const isTablet = useIsTablet();
-		    const voiceSnap = useVoiceSessionSnapshot();
-		    const showTopHeader = !(isLandscape && deviceType === 'phone' && Platform.OS !== 'web');
+        const voiceSnap = useVoiceSessionSnapshot();
+    const hasLegacySecretCredentials = Boolean(auth.credentials && isLegacyAuthCredentials(auth.credentials));
+    const sessionEncryptionMode: 'e2ee' | 'plain' = (session?.encryptionMode ?? 'e2ee');
+    const isEncryptedSessionLocked = Boolean(session && sessionEncryptionMode === 'e2ee' && !hasLegacySecretCredentials);
+        const showTopHeader = !(isLandscape && deviceType === 'phone' && Platform.OS !== 'web');
+
+    // Treat multi-pane panels as enabled unless explicitly disabled. `useLocalSetting` can return
+    // `undefined` during hydration; failing closed here causes deep links like `?right=git` to be
+    // ignored and makes the UI feel broken on first load.
+    const multiPaneEnabled = useLocalSetting('uiMultiPanePanelsEnabled') !== false;
+    const paneScopeId = useRegisterSessionPaneDriver(sessionId);
+    const pane = useAppPaneScope(paneScopeId);
 
     const sessionAutomationsEnabledCount = React.useMemo(() => {
         if (!showAutomations) return 0;
         return countEnabledAutomationsLinkedToSession(automations, sessionId);
     }, [automations, sessionId, showAutomations]);
+
+    const constrainHeaderWidth = !(multiPaneEnabled
+        && Platform.OS === 'web'
+        && ((pane.scopeState?.right.isOpen ?? false) || (pane.scopeState?.details.isOpen ?? false)));
 
     // Compute header props based on session state
     const headerProps = useMemo(() => {
@@ -156,7 +191,7 @@ export const SessionView = React.memo((props: { id: string; jumpToSeq?: number |
                             opacity: pressed ? 0.7 : 1,
                         })}
                         accessibilityRole="button"
-                        accessibilityLabel="Open session runs"
+                        accessibilityLabel={t('session.openRuns')}
                     >
                         <Ionicons name="play-outline" size={22} color={theme.colors.header.tint} />
                     </Pressable>
@@ -173,7 +208,7 @@ export const SessionView = React.memo((props: { id: string; jumpToSeq?: number |
                             opacity: pressed ? 0.7 : 1,
                         })}
                         accessibilityRole="button"
-                        accessibilityLabel="Open session automations"
+                        accessibilityLabel={t('session.openAutomations')}
                     >
                         <View style={{ position: 'relative', width: 32, height: 32, alignItems: 'center', justifyContent: 'center' }}>
                             <Ionicons name="timer-outline" size={22} color={theme.colors.header.tint} />
@@ -250,7 +285,8 @@ export const SessionView = React.memo((props: { id: string; jumpToSeq?: number |
                 }}>
                     <ChatHeaderView
                         {...headerProps}
-                        onBackPress={() => router.back()}
+                        onBackPress={() => router.push('/')}
+                        constrainWidth={constrainHeaderWidth}
                     />
                 </View>
             )}
@@ -269,26 +305,84 @@ export const SessionView = React.memo((props: { id: string; jumpToSeq?: number |
                         <Text style={{ color: theme.colors.text, fontSize: 20, marginTop: 16, fontWeight: '600' }}>{t('errors.sessionDeleted')}</Text>
                         <Text style={{ color: theme.colors.textSecondary, fontSize: 15, marginTop: 8, textAlign: 'center', paddingHorizontal: 32 }}>{t('errors.sessionDeletedDescription')}</Text>
                     </View>
-                ) : (
-                    // Normal session view
-                    <SessionViewLoaded key={sessionId} sessionId={sessionId} session={session} jumpToSeq={props.jumpToSeq ?? null} />
-                )}
+                  ) : (
+                      // Normal session view
+                      <SessionViewLoaded
+                          key={sessionId}
+                          sessionId={sessionId}
+                          session={session}
+                          isEncryptedSessionLocked={isEncryptedSessionLocked}
+                          jumpToSeq={props.jumpToSeq ?? null}
+                          paneUrlState={props.paneUrlState ?? null}
+                          paneScopeId={paneScopeId}
+                      />
+                  )}
             </View>
         </>
     );
 });
 
 
-function SessionViewLoaded({ sessionId, session, jumpToSeq }: { sessionId: string; session: Session; jumpToSeq: number | null }) {
+function SessionViewLoaded({ sessionId, session, isEncryptedSessionLocked, jumpToSeq, paneUrlState, paneScopeId }: { sessionId: string; session: Session; isEncryptedSessionLocked: boolean; jumpToSeq: number | null; paneUrlState: SessionPaneUrlState | null; paneScopeId: string }) {
     const { theme } = useUnistyles();
     const router = useRouter();
     const safeArea = useSafeAreaInsets();
     const isLandscape = useIsLandscape();
     const deviceType = useDeviceType();
+    const multiPaneDeviceType = React.useMemo(
+        () => resolveMultiPaneDeviceType({ platform: Platform.OS, deviceType }),
+        [deviceType],
+    );
+    const { width: windowWidth } = useWindowDimensions();
+    // Treat multi-pane panels as enabled unless explicitly disabled. `useLocalSetting` can return
+    // `undefined` during hydration; failing closed here causes deep links like `?right=git` to be
+    // ignored and makes the UI feel broken on first load.
+    const multiPaneEnabled = useLocalSetting('uiMultiPanePanelsEnabled') !== false;
+    const sessionsRightPaneDefaultOpen = useLocalSetting('sessionsRightPaneDefaultOpen');
+    const pane = useAppPaneScope(paneScopeId);
+
+    useSessionPaneUrlSync({
+        enabled: multiPaneEnabled && Platform.OS === 'web',
+        scopeState: pane.scopeState,
+        urlState: paneUrlState,
+        pane,
+        setParams: typeof (router as any)?.setParams === 'function' ? (router as any).setParams.bind(router) : null,
+    });
+
+    // Session preference: optionally open the right sidebar by default (files tab) when
+    // entering a session for the first time on this device.
+    React.useEffect(() => {
+        if (!sessionsRightPaneDefaultOpen) return;
+        if (!multiPaneEnabled) return;
+        if (!(Platform.OS === 'web' || deviceType === 'tablet')) return;
+        if (paneUrlState?.rightTabId) return;
+        const right = (pane.scopeState as any)?.right ?? null;
+        if (!right) return;
+        if (right.isOpen === true) return;
+        // If the user previously opened any right-pane tab in this session, don't override their choice
+        // (even if they closed the pane after).
+        if (right.activeTabId !== null && right.activeTabId !== undefined) return;
+        pane.openRight({ tabId: 'files' });
+        pane.setRightTab('files');
+    }, [
+        deviceType,
+        multiPaneEnabled,
+        pane,
+        pane.scopeState,
+        paneUrlState?.rightTabId,
+        sessionsRightPaneDefaultOpen,
+    ]);
     const [message, setMessage] = React.useState('');
     const realtimeStatus = useRealtimeStatus();
-    const { messages, isLoaded } = useSessionMessages(sessionId);
+    const { ids: committedMessageIds, isLoaded } = useSessionTranscriptIds(sessionId);
     const acknowledgedCliVersions = useLocalSetting('acknowledgedCliVersions');
+    const isForkedSessionV1 = React.useMemo(() => {
+        const fork = (session.metadata as any)?.forkV1;
+        if (!fork || typeof fork !== 'object') return false;
+        if ((fork as any).v !== 1) return false;
+        const parentSessionId = (fork as any).parentSessionId;
+        return typeof parentSessionId === 'string' && parentSessionId.trim().length > 0;
+    }, [session.metadata]);
 
     // Check if CLI version is outdated and not already acknowledged
     const cliVersion = session.metadata?.version;
@@ -313,32 +407,38 @@ function SessionViewLoaded({ sessionId, session, jumpToSeq }: { sessionId: strin
             ? scmSessionAutoRefreshIntervalMsSetting
             : 5 * 60 * 1000;
     const voice = useSetting('voice') as any;
-    const voiceProviderId = voice?.providerId ?? 'off';
-    const voiceSnap = useVoiceSessionSnapshot();
-    const { messages: pendingMessages } = useSessionPendingMessages(sessionId);
-    const settings = useSettings();
-	    const voiceEnabled = useFeatureEnabled('voice');
-	    const reviewCommentsEnabled = useFeatureEnabled('files.reviewComments');
-	    const executionRunsEnabled = useFeatureEnabled('execution.runs');
-		    const attachmentsUploadsEnabled = useFeatureEnabled('attachments.uploads');
-		    const reviewCommentDrafts = useSessionReviewCommentsDrafts(sessionId);
-		    const hasReviewCommentDrafts = reviewCommentsEnabled && reviewCommentDrafts.length > 0;
+      const voiceProviderId = voice?.providerId ?? 'off';
+      const voiceSnap = useVoiceSessionSnapshot();
+      const { messages: pendingMessages } = useSessionPendingMessages(sessionId);
+        const { messages: committedMessages } = useSessionMessages(sessionId);
+      const settings = useSettings();
+        const voiceEnabled = useFeatureEnabled('voice');
+        const reviewCommentsEnabled = useFeatureEnabled('files.reviewComments');
+        const executionRunsEnabled = useFeatureEnabled('execution.runs');
+        const attachmentsUploadsEnabled = useFeatureEnabled('attachments.uploads');
+        const reviewCommentDrafts = useSessionReviewCommentsDrafts(sessionId);
+        const hasReviewCommentDrafts = reviewCommentsEnabled && reviewCommentDrafts.length > 0;
 
-		    const attachmentsUploadConfig = useAttachmentsUploadConfig();
+        const attachmentsUploadConfig = useAttachmentsUploadConfig();
 
-		    const attachmentDraftManager = useAttachmentDraftManager({
-		        enabled: attachmentsUploadsEnabled,
-		        maxFileBytes: attachmentsUploadConfig.maxFileBytes,
-		    });
-		    const filePickerRef = attachmentDraftManager.filePickerRef;
-		    const attachmentDrafts = attachmentDraftManager.drafts;
-		    const agentInputAttachments = attachmentDraftManager.agentInputAttachments;
-		    const addAttachments = attachmentDraftManager.addWebFiles;
-		    const addPickedAttachments = attachmentDraftManager.addPickedAttachments;
-		    const [isUploadingAttachments, setIsUploadingAttachments] = React.useState(false);
+          const attachmentDraftManager = useAttachmentDraftManager({
+              enabled: attachmentsUploadsEnabled,
+              maxFileBytes: attachmentsUploadConfig.maxFileBytes,
+          });
+        const filePickerRef = attachmentDraftManager.filePickerRef;
+        const attachmentDrafts = attachmentDraftManager.drafts;
+        const agentInputAttachments = attachmentDraftManager.agentInputAttachments;
+        const addAttachments = attachmentDraftManager.addWebFiles;
+        const addPickedAttachments = attachmentDraftManager.addPickedAttachments;
+          const [isUploadingAttachments, setIsUploadingAttachments] = React.useState(false);
 
-    React.useEffect(() => {
-        if (!sessionId) return;
+        const participantTargets = React.useMemo(() => {
+            return deriveSessionParticipantTargets({ session, messages: committedMessages });
+        }, [committedMessages, session]);
+        const recipientState = useSessionRecipientState({ targets: participantTargets, autoRecipient: null });
+
+      React.useEffect(() => {
+          if (!sessionId) return;
         // Screen-scoped SCM refresh: keep the status badge reasonably up-to-date without noisy polling.
         scmStatusSync.invalidateFromAutoRefresh(sessionId);
         const interval = setInterval(() => {
@@ -409,6 +509,12 @@ function SessionViewLoaded({ sessionId, session, jumpToSeq }: { sessionId: strin
     const isMachineReachable = resolveSessionMachineReachability({
         machineIsKnown: Boolean(machine),
         machineIsOnline: machine ? isMachineOnline(machine) : false,
+    });
+
+    useWarmRepositoryDirectoryCacheOnSessionOpen({
+        sessionId,
+        sessionPath: session?.metadata?.path ?? null,
+        machineOnline: machine ? isMachineOnline(machine) : false,
     });
 
     const inactiveUi = React.useMemo(() => {
@@ -500,9 +606,12 @@ function SessionViewLoaded({ sessionId, session, jumpToSeq }: { sessionId: strin
     }, [sessionId, settings.sessionPermissionModeApplyTiming]);
 
     const updateAcpSessionModeOverride = React.useCallback((modeId: string) => {
+        const normalized = typeof modeId === 'string' ? modeId.trim() : '';
+        // `default` is a UI sentinel meaning "clear override".
+        const publishModeId = normalized === 'default' ? '' : normalized;
         fireAndForget(sync.publishSessionAcpSessionModeOverrideToMetadata({
             sessionId,
-            modeId,
+            modeId: publishModeId,
             updatedAt: nowServerMs(),
         }), { tag: 'SessionView.updateAcpSessionModeOverride' });
     }, [sessionId]);
@@ -528,64 +637,62 @@ function SessionViewLoaded({ sessionId, session, jumpToSeq }: { sessionId: strin
     }, [agentId, sessionId, session.metadata]);
 
     // Handle resuming an inactive session
-	    const handleResumeSession = React.useCallback(async (): Promise<boolean> => {
-	        if (!session.metadata?.machineId || !session.metadata?.path || !session.metadata?.flavor) {
-	            Modal.alert(t('common.error'), t('session.resumeFailed'));
-	            return false;
-	        }
-	        if (!canResumeSessionWithOptions(session.metadata, resumeCapabilityOptions)) {
-		            const replayCfg = resolveHappierReplayConfig(settings);
-	            if (replayCfg.enabled) {
-	                if (!isMachineReachable) {
-	                    Modal.alert(t('common.error'), t('session.machineOfflineCannotResume'));
-	                    return false;
-	                }
-	
-	                const wantsReplay = await Modal.confirm(
-	                    t('session.resumeFailed'),
-	                    t('settingsSession.replayResume.footer'),
-	                    { confirmText: t('common.continue') },
-	                );
-	                if (wantsReplay) {
-	                    try {
-	                        const permissionOverride = getPermissionModeOverrideForSpawn(session);
-	                        const modelOverride = getModelOverrideForSpawn(session);
-	                        const spawnResult: any = await continueSessionWithReplay({
-	                            machineId: session.metadata.machineId,
-	                            serverId: capabilityServerId,
-	                            directory: session.metadata.path,
-	                            approvedNewDirectoryCreation: true,
-	                            agent: agentId,
-	                            ...(permissionOverride ? permissionOverride : {}),
-	                            ...(modelOverride ? modelOverride : {}),
-	                            replay: {
-	                                previousSessionId: sessionId,
-	                                strategy: replayCfg.strategy,
-	                                recentMessagesCount: replayCfg.recentMessagesCount,
-	                                seedMode: 'draft',
-	                            },
-	                        });
-	                        if (spawnResult.type !== 'success' || !spawnResult.sessionId || !spawnResult.seedDraft) {
-	                            Modal.alert(t('common.error'), t('session.resumeFailed'));
-	                            return false;
-	                        }
-	
-	                        await sync.refreshSessions();
-	                        storage.getState().updateSessionDraft(spawnResult.sessionId, spawnResult.seedDraft);
-	                        router.push(`/session/${spawnResult.sessionId}` as any);
-	                        return true;
-	                    } catch (e) {
-	                        Modal.alert(t('common.error'), e instanceof Error ? e.message : t('session.resumeFailed'));
-	                        return false;
-	                    }
-	                }
-	            }
+      const handleResumeSession = React.useCallback(async (): Promise<boolean> => {
+          if (!session.metadata?.machineId || !session.metadata?.path || !session.metadata?.flavor) {
+              Modal.alert(t('common.error'), t('session.resumeFailed'));
+              return false;
+          }
+          if (!canResumeSessionWithOptions(session.metadata, resumeCapabilityOptions)) {
+                const replayCfg = resolveHappierReplayConfig(settings);
+              if (replayCfg.enabled) {
+                  if (!isMachineReachable) {
+                      Modal.alert(t('common.error'), t('session.machineOfflineCannotResume'));
+                      return false;
+                  }
 
-	            if (acpLoadSessionSupport?.kind === 'error' || acpLoadSessionSupport?.kind === 'unknown') {
-	                const detailLines: string[] = [];
-	                if (acpLoadSessionSupport?.code) {
-	                    detailLines.push(formatResumeSupportDetailCode(acpLoadSessionSupport.code));
-	                }
+                  const wantsReplay = await Modal.confirm(
+                      t('session.resumeFailed'),
+                      t('settingsSession.replayResume.footer'),
+                      { confirmText: t('common.continue') },
+                  );
+                  if (wantsReplay) {
+                      try {
+                          const permissionOverride = getPermissionModeOverrideForSpawn(session);
+                          const modelOverride = getModelOverrideForSpawn(session);
+                          const spawnResult: any = await continueSessionWithReplay({
+                              machineId: session.metadata.machineId,
+                              serverId: capabilityServerId,
+                              directory: session.metadata.path,
+                              approvedNewDirectoryCreation: true,
+                              agent: agentId,
+                              ...(permissionOverride ? permissionOverride : {}),
+                              ...(modelOverride ? modelOverride : {}),
+                              replay: {
+                                  previousSessionId: sessionId,
+                                  strategy: replayCfg.strategy,
+                                  recentMessagesCount: replayCfg.recentMessagesCount,
+                              },
+                          });
+                          if (spawnResult.type !== 'success' || !spawnResult.sessionId) {
+                              Modal.alert(t('common.error'), t('session.resumeFailed'));
+                              return false;
+                          }
+
+                          await sync.refreshSessions();
+                          router.push(`/session/${spawnResult.sessionId}` as any);
+                          return true;
+                      } catch (e) {
+                          Modal.alert(t('common.error'), e instanceof Error ? e.message : t('session.resumeFailed'));
+                          return false;
+                      }
+                  }
+              }
+
+              if (acpLoadSessionSupport?.kind === 'error' || acpLoadSessionSupport?.kind === 'unknown') {
+                  const detailLines: string[] = [];
+                  if (acpLoadSessionSupport?.code) {
+                      detailLines.push(formatResumeSupportDetailCode(acpLoadSessionSupport.code));
+                  }
                 if (acpLoadSessionSupport?.rawMessage) {
                     detailLines.push(acpLoadSessionSupport.rawMessage);
                 }
@@ -677,6 +784,11 @@ function SessionViewLoaded({ sessionId, session, jumpToSeq }: { sessionId: strin
         }
     }, [agentId, capabilityServerId, resumeCapabilityOptions, router, session, sessionId, settings]);
 
+    useSessionResumeRequestListener(React.useCallback((requestedSessionId) => {
+        if (requestedSessionId !== sessionId) return;
+        void handleResumeSession();
+    }, [handleResumeSession, sessionId]));
+
     // Memoize header-dependent styles to prevent re-renders
     const headerDependentStyles = React.useMemo(() => ({
         contentContainer: {
@@ -720,7 +832,7 @@ function SessionViewLoaded({ sessionId, session, jumpToSeq }: { sessionId: strin
 
         // Trigger session sync
         sync.onSessionVisible(sessionId);
-    }, [sessionId, realtimeStatus]);
+    }, [sessionId]);
 
     const showInactiveNotResumableNotice = inactiveUi.noticeKind === 'not-resumable';
     const showMachineOfflineNotice = inactiveUi.noticeKind === 'machine-offline';
@@ -762,6 +874,14 @@ function SessionViewLoaded({ sessionId, session, jumpToSeq }: { sessionId: strin
 
     const hasWriteAccess = !session.accessLevel || session.accessLevel === 'edit' || session.accessLevel === 'admin';
     const isReadOnly = session.accessLevel === 'view';
+    const transcriptInteraction = React.useMemo(() => {
+        return deriveTranscriptInteraction({
+            kind: 'session',
+            accessLevel: session.accessLevel,
+            canApprovePermissions: session.canApprovePermissions,
+            isSessionActive,
+        });
+    }, [isSessionActive, session.accessLevel, session.canApprovePermissions]);
 
     const handleRequestSwitchToRemote = React.useCallback(() => {
         if (!hasWriteAccess) {
@@ -780,33 +900,82 @@ function SessionViewLoaded({ sessionId, session, jumpToSeq }: { sessionId: strin
         })(), { tag: 'SessionView.requestSwitchToRemote' });
     }, [hasWriteAccess, sessionId]);
 
-    const shouldRenderChatTimeline = React.useMemo(() => shouldRenderChatTimelineForSession({
-        committedMessagesCount: messages.length,
+    const shouldRenderChatTimeline = React.useMemo(() => {
+        if (isEncryptedSessionLocked) return false;
+        return shouldRenderChatTimelineForSession({
+        committedMessagesCount: committedMessageIds.length,
         pendingMessagesCount: pendingMessages.length,
         controlledByUser: Boolean(session.agentState?.controlledByUser),
         // Some sessions can have a non-zero committed transcript seq but end up with 0 visible
         // main-timeline messages (e.g. newest page is sidechain-only). In that case, we must
         // still render the transcript so it can page backwards to find visible messages.
-        forceRenderFooter: isLoaded === true && (session.seq ?? 0) > 0 && messages.length === 0,
-    }), [isLoaded, messages.length, pendingMessages.length, session.agentState?.controlledByUser, session.seq]);
+        forceRenderFooter: isForkedSessionV1 || (isLoaded === true && (session.seq ?? 0) > 0 && committedMessageIds.length === 0),
+        });
+    }, [committedMessageIds.length, isEncryptedSessionLocked, isForkedSessionV1, isLoaded, pendingMessages.length, session.agentState?.controlledByUser, session.seq]);
 
-	    let content = (
-	        <>
-	            <Deferred>
-	                {shouldRenderChatTimeline && (
-	                    <ChatList
-	                        session={session}
-	                        bottomNotice={bottomNotice}
-	                        onRequestSwitchToRemote={handleRequestSwitchToRemote}
-	                        jumpToSeq={jumpToSeq}
-	                    />
-	                )}
-	            </Deferred>
-	        </>
-	    );
+      let content = (
+          <>
+              <Deferred>
+                  {shouldRenderChatTimeline && (
+                      <ChatList
+                          session={session}
+                          bottomNotice={bottomNotice}
+                          onRequestSwitchToRemote={handleRequestSwitchToRemote}
+                          jumpToSeq={jumpToSeq}
+                          onViewportChange={(state) => {
+                              sync.onSessionViewportChange(sessionId, state);
+                          }}
+                      />
+                  )}
+              </Deferred>
+          </>
+      );
     const placeholder = !shouldRenderChatTimeline ? (
         <>
-            {isLoaded ? (
+            {isEncryptedSessionLocked ? (
+                <View
+                    testID="session-encrypted-locked"
+                    style={{
+                        flex: 1,
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        paddingHorizontal: 24,
+                    }}
+                >
+                    <View
+                        style={{
+                            width: '100%',
+                            maxWidth: 520,
+                            gap: 10,
+                        }}
+                    >
+                        <Text style={{ fontSize: 18, color: theme.colors.text }}>
+                            {t('navigation.restoreWithSecretKey')}
+                        </Text>
+                        <Text style={{ fontSize: 14, color: theme.colors.textSecondary, lineHeight: 20 }}>
+                            {t('connect.restoreWithSecretKeyDescription')}
+                        </Text>
+                        <Pressable
+                            testID="session-encrypted-locked-restore"
+                            onPress={() => router.push('/restore/manual')}
+                            style={({ pressed }) => ({
+                                alignSelf: 'flex-start',
+                                paddingVertical: 12,
+                                paddingHorizontal: 14,
+                                borderRadius: 12,
+                                backgroundColor: theme.colors.surfaceHigh,
+                                borderWidth: 1,
+                                borderColor: theme.colors.divider,
+                                opacity: pressed ? 0.7 : 1,
+                            })}
+                        >
+                            <Text style={{ fontSize: 14, color: theme.colors.text }}>
+                                {t('connect.restoreWithSecretKeyInstead')}
+                            </Text>
+                        </Pressable>
+                    </View>
+                </View>
+            ) : isLoaded ? (
                 <EmptyMessages session={session} />
             ) : (
                 <ActivityIndicator size="small" color={theme.colors.textSecondary} />
@@ -817,37 +986,75 @@ function SessionViewLoaded({ sessionId, session, jumpToSeq }: { sessionId: strin
     // Determine the status text to show for inactive sessions
     const inactiveStatusText = inactiveUi.inactiveStatusTextKey ? t(inactiveUi.inactiveStatusTextKey) : null;
 
-	    const shouldShowInput = inactiveUi.shouldShowInput;
-	    const reviewCommentDraftCount = reviewCommentDrafts.length;
-	    const extraActionChips: ReadonlyArray<AgentInputExtraActionChip> | undefined = React.useMemo(() => {
-	        const chips: AgentInputExtraActionChip[] = [];
+      const shouldShowInput = inactiveUi.shouldShowInput && !isEncryptedSessionLocked;
+        const reviewCommentDraftCount = reviewCommentDrafts.length;
+        const extraActionChips: ReadonlyArray<AgentInputExtraActionChip> | undefined = React.useMemo(() => {
+            const chips: AgentInputExtraActionChip[] = [];
 
-	        if (attachmentsUploadsEnabled && !isReadOnly) {
-	            chips.push({
-	                key: 'attachments-add',
-	                render: (ctx: AgentInputExtraActionChipRenderContext) => (
-	                    <Pressable
-	                        onPress={() => {
-	                            filePickerRef.current?.open();
-	                        }}
-	                        disabled={isUploadingAttachments}
-	                        style={({ pressed }) => ctx.chipStyle(Boolean(pressed))}
-	                    >
-	                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-	                            <Ionicons name="attach-outline" size={16} color={ctx.iconColor} />
-	                            {ctx.showLabel ? (
-	                                <Text style={ctx.textStyle}>Attach</Text>
-	                            ) : null}
-	                        </View>
-	                    </Pressable>
-	                ),
-	            });
-	        }
+                if (!isReadOnly && participantTargets.length > 0) {
+                    chips.push({
+                        key: 'participants-recipient',
+                        render: (ctx: AgentInputExtraActionChipRenderContext) => (
+                            <RecipientChip
+                                targets={participantTargets}
+                                recipient={recipientState.recipient}
+                                onRecipientChange={recipientState.setManualRecipient}
+                                ctx={ctx}
+                            />
+                        ),
+                    });
+                }
 
-	        if (reviewCommentsEnabled && reviewCommentDraftCount > 0) {
-	            chips.push({
-	                key: 'review-comments',
-	                render: (ctx: AgentInputExtraActionChipRenderContext) => (
+            if (attachmentsUploadsEnabled && !isReadOnly) {
+                chips.push({
+                    key: 'attachments-add',
+                    render: (ctx: AgentInputExtraActionChipRenderContext) => (
+                      <Pressable
+                          onPress={() => {
+                              filePickerRef.current?.open();
+                          }}
+                          disabled={isUploadingAttachments}
+                          style={({ pressed }) => ctx.chipStyle(Boolean(pressed))}
+                      >
+                          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                              <Ionicons name="attach-outline" size={16} color={ctx.iconColor} />
+                              {ctx.showLabel ? (
+                                  <Text style={ctx.textStyle}>{t('common.attach')}</Text>
+                              ) : null}
+                          </View>
+                      </Pressable>
+                  ),
+              });
+          }
+
+            if (!isReadOnly) {
+                chips.push({
+                    key: 'project-file-link',
+                    render: (ctx: AgentInputExtraActionChipRenderContext) => (
+                        <SessionLinkFileAction
+                            sessionId={sessionId}
+                            disabled={isUploadingAttachments}
+                            showLabel={ctx.showLabel}
+                            chipStyle={ctx.chipStyle}
+                            iconColor={ctx.iconColor}
+                            textStyle={ctx.textStyle}
+                            popoverAnchorRef={ctx.popoverAnchorRef}
+                            onPickPath={(path) => {
+                                setMessage((prev) => {
+                                    const base = prev ?? '';
+                                    const spacer = base.length === 0 || base.endsWith(' ') || base.endsWith('\n') ? '' : ' ';
+                                    return `${base}${spacer}@${path} `;
+                                });
+                            }}
+                        />
+                    ),
+                });
+            }
+
+          if (reviewCommentsEnabled && reviewCommentDraftCount > 0) {
+              chips.push({
+                  key: 'review-comments',
+                  render: (ctx: AgentInputExtraActionChipRenderContext) => (
                     <Pressable
                         onPress={() => {
                             const preview = reviewCommentDrafts
@@ -873,13 +1080,13 @@ function SessionViewLoaded({ sessionId, session, jumpToSeq }: { sessionId: strin
                         style={({ pressed }) => ctx.chipStyle(Boolean(pressed))}
                     >
                         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-                            <Ionicons name="chatbox-ellipses-outline" size={14} color={ctx.iconColor} />
-                            {ctx.showLabel ? (
-                                <Text style={ctx.textStyle}>{`Review (${reviewCommentDraftCount})`}</Text>
-                            ) : null}
-                        </View>
-                    </Pressable>
-                ),
+                              <Ionicons name="chatbox-ellipses-outline" size={14} color={ctx.iconColor} />
+                              {ctx.showLabel ? (
+                                  <Text style={ctx.textStyle}>{t('files.reviewComments.draftsChipLabel', { count: reviewCommentDraftCount })}</Text>
+                              ) : null}
+                          </View>
+                      </Pressable>
+                  ),
             });
         }
 
@@ -890,8 +1097,44 @@ function SessionViewLoaded({ sessionId, session, jumpToSeq }: { sessionId: strin
         })();
         chips.push(...buildSessionAgentInputActionChips({ sessionId, defaultBackendId, instructionsText: message }));
 
-	        return chips.length > 0 ? chips : undefined;
-	    }, [actionsSettingsV1, agentId, attachmentsUploadsEnabled, isReadOnly, isUploadingAttachments, message, reviewCommentDraftCount, reviewCommentDrafts, reviewCommentsEnabled, session, sessionId]);
+          return chips.length > 0 ? chips : undefined;
+        }, [
+                actionsSettingsV1,
+                agentId,
+                attachmentsUploadsEnabled,
+                isReadOnly,
+                isUploadingAttachments,
+                message,
+                participantTargets,
+                recipientState.recipient,
+                recipientState.setManualRecipient,
+                reviewCommentDraftCount,
+                reviewCommentDrafts,
+                reviewCommentsEnabled,
+                session,
+                sessionId,
+            ]);
+
+    const openFileViewer = React.useCallback(() => {
+        const layoutIfOpened = resolvePaneLayout({
+            containerWidthPx: windowWidth,
+            deviceType: multiPaneDeviceType,
+            multiPaneEnabled,
+            rightOpen: true,
+            detailsOpen: false,
+            mainMinPx: PANE_SIZING_DEFAULTS.mainMinPx,
+            rightMinPx: PANE_SIZING_DEFAULTS.right.minPx,
+            detailsMinPx: PANE_SIZING_DEFAULTS.details.minPx,
+        });
+
+        if (layoutIfOpened.kind === 'single') {
+            router.push(`/session/${sessionId}/files`);
+            return;
+        }
+
+        pane.openRight({ tabId: 'files' });
+        pane.setRightTab('files');
+    }, [multiPaneDeviceType, multiPaneEnabled, pane, router, sessionId, windowWidth]);
 
     const input = shouldShowInput ? (
         <View>
@@ -905,11 +1148,11 @@ function SessionViewLoaded({ sessionId, session, jumpToSeq }: { sessionId: strin
                 onAttachmentsAdded={attachmentsUploadsEnabled ? addAttachments : undefined}
                 hasSendableAttachments={hasReviewCommentDrafts || (attachmentsUploadsEnabled && attachmentDrafts.length > 0)}
                 permissionRequests={listPendingPermissionRequests(session)}
-                canApprovePermissions={hasWriteAccess}
-                permissionDisabledReason={hasWriteAccess ? undefined : 'readOnly'}
+                canApprovePermissions={transcriptInteraction.canApprovePermissions}
+                permissionDisabledReason={transcriptInteraction.permissionDisabledReason}
                 permissionMode={permissionMode}
                 onPermissionModeChange={updatePermissionMode}
-                onAcpSessionModeChange={supportsAcpAgentModeOverrides(agentId) ? updateAcpSessionModeOverride : undefined}
+                onAcpSessionModeChange={supportsSessionModeOverrides(agentId) ? updateAcpSessionModeOverride : undefined}
                 onAcpConfigOptionChange={updateAcpConfigOptionOverride}
                 modelMode={modelMode}
                 onModelModeChange={updateModelMode}
@@ -938,28 +1181,24 @@ function SessionViewLoaded({ sessionId, session, jumpToSeq }: { sessionId: strin
                     }
 
                     const resolved = resolveSessionComposerSend({ input: message, executionRunsEnabled });
-                    if (resolved.kind === 'client.clear_input') {
-                        setMessage('');
-                        return;
-                    }
                     if (resolved.kind === 'noop') {
                         return;
                     }
 
-	                    if (
-	                        resolved.kind === 'action' &&
-	                        (
-	                            resolved.actionId === 'ui.voice_global.reset' ||
-	                            resolved.actionId === 'execution.run.list' ||
-	                            resolved.actionId === 'review.start' ||
-	                            resolved.actionId === 'plan.start' ||
-	                            resolved.actionId === 'delegate.start'
-	                        )
-	                    ) {
-	                        const previousMessage = message;
-	                        void executeSessionComposerResolution({
-	                            resolved,
-	                            sessionId,
+                      if (
+                          resolved.kind === 'action' &&
+                          (
+                              resolved.actionId === 'ui.voice_global.reset' ||
+                              resolved.actionId === 'execution.run.list' ||
+                              resolved.actionId === 'review.start' ||
+                              resolved.actionId === 'plan.start' ||
+                              resolved.actionId === 'delegate.start'
+                          )
+                      ) {
+                          const previousMessage = message;
+                          void executeSessionComposerResolution({
+                              resolved,
+                              sessionId,
                             agentId,
                             permissionMode,
                             actionExecutor,
@@ -969,26 +1208,32 @@ function SessionViewLoaded({ sessionId, session, jumpToSeq }: { sessionId: strin
                             trackMessageSent,
                             navigateToRuns: () => router.push(`/session/${sessionId}/runs` as any),
                             modalAlert: (_title, msg) => Modal.alert(t('common.error'), msg),
-	                        });
-	                        return;
-	                    }
+                          });
+                          return;
+                      }
 
-	                    if (resolved.kind !== 'send') return;
-	                    const messageToSend = resolved.text;
+                      if (resolved.kind !== 'send') return;
+                      const messageToSend = resolved.text;
 
                     const configuredMode = storage.getState().settings.sessionMessageSendMode;
                     const busySteerSendPolicy = storage.getState().settings.sessionBusySteerSendPolicy;
                     const submitMode = chooseSubmitMode({ configuredMode, busySteerSendPolicy, session });
 
-                    const additionalMessage = messageToSend;
-	                    const trimmedText = messageToSend.trim();
-	                    const shouldSendReviewComments = hasReviewCommentDrafts;
-	                    const hasAttachments = attachmentsUploadsEnabled && attachmentDrafts.length > 0;
+                      const additionalMessage = messageToSend;
+                        const trimmedText = messageToSend.trim();
+                        const shouldSendReviewComments = hasReviewCommentDrafts;
+                        const hasAttachments = attachmentsUploadsEnabled && attachmentDrafts.length > 0;
+                            const participantRecipient = recipientState.recipient;
 
-	                    if (hasAttachments && !isSessionActive && !isResumable) {
-	                        Modal.alert(t('common.error'), t('session.inactiveNotResumableNoticeTitle'));
-	                        return;
-	                    }
+                            if (participantRecipient && (shouldSendReviewComments || hasAttachments)) {
+                                Modal.alert(t('common.error'), t('session.participants.unsupportedAttachmentsOrReviewComments'));
+                                return;
+                            }
+
+                        if (hasAttachments && !isSessionActive && !isResumable) {
+                            Modal.alert(t('common.error'), t('session.inactiveNotResumableNoticeTitle'));
+                            return;
+                      }
 
                     const outboundBase = shouldSendReviewComments
                         ? { kind: 'review_comments' as const }
@@ -1014,18 +1259,32 @@ function SessionViewLoaded({ sessionId, session, jumpToSeq }: { sessionId: strin
                                     }
                                 }
 
-	                                const { uploaded } = await uploadAttachmentDraftsToSession({
-	                                    sessionId,
-	                                    drafts: attachmentDrafts,
-	                                    config: attachmentsUploadConfig,
-	                                    applyDraftPatch: attachmentDraftManager.applyDraftPatch,
-	                                });
-	                                const attachmentsBlock = formatAttachmentsBlock(uploaded);
+                                  const { uploaded } = await uploadAttachmentDraftsToSession({
+                                      sessionId,
+                                      drafts: attachmentDrafts,
+                                      config: attachmentsUploadConfig,
+                                      applyDraftPatch: attachmentDraftManager.applyDraftPatch,
+                                  });
+                                  const attachmentsBlock = formatAttachmentsBlock(uploaded);
+                                  const attachmentsMetaOverrides = {
+                                      happier: {
+                                          kind: 'attachments.v1',
+                                          payload: {
+                                              attachments: uploaded.map((a) => ({
+                                                  name: a.name,
+                                                  path: a.path,
+                                                  mimeType: a.mimeType,
+                                                  sizeBytes: a.sizeBytes,
+                                                  sha256: a.sha256,
+                                              })),
+                                          },
+                                      },
+                                  } as Record<string, unknown>;
 
-                                const outbound = shouldSendReviewComments
-                                    ? {
-                                        text: buildReviewCommentsPromptText({
-                                            sessionId,
+                      const outbound = shouldSendReviewComments
+                          ? {
+                              text: buildReviewCommentsPromptText({
+                                  sessionId,
                                             drafts: reviewCommentDrafts,
                                             additionalMessage: trimmedText.length > 0 ? `${additionalMessage}\n\n${attachmentsBlock}` : attachmentsBlock,
                                         }),
@@ -1039,8 +1298,8 @@ function SessionViewLoaded({ sessionId, session, jumpToSeq }: { sessionId: strin
                                     }
                                     : {
                                         text: trimmedText.length > 0 ? `${trimmedText}\n\n${attachmentsBlock}` : attachmentsBlock,
-                                        displayText: undefined,
-                                        metaOverrides: undefined,
+                                        displayText: trimmedText,
+                                        metaOverrides: attachmentsMetaOverrides,
                                     };
 
                                 if (submitMode === 'interrupt') {
@@ -1050,7 +1309,7 @@ function SessionViewLoaded({ sessionId, session, jumpToSeq }: { sessionId: strin
                                 if (shouldSendReviewComments) {
                                     storage.getState().clearSessionReviewCommentDrafts(sessionId);
                                 }
-	                                attachmentDraftManager.clearDrafts();
+                                  attachmentDraftManager.clearDrafts();
                             } catch (e) {
                                 setMessage(previousMessage);
                                 Modal.alert(t('common.error'), e instanceof Error ? e.message : t('errors.failedToSendMessage'));
@@ -1074,17 +1333,38 @@ function SessionViewLoaded({ sessionId, session, jumpToSeq }: { sessionId: strin
                                     kind: 'review_comments.v1',
                                     payload: buildReviewCommentsV1MetaPayload({ sessionId, drafts: reviewCommentDrafts }),
                                 },
-                            } as Record<string, unknown>,
+                              } as Record<string, unknown>,
+                          }
+                          : (trimmedText.length > 0
+                              ? { text: trimmedText, displayText: undefined, metaOverrides: undefined }
+                              : null);
+
+                      if (!outbound) return;
+
+                        if (outboundBase.kind === 'plain' && participantRecipient) {
+                            const routed = resolveParticipantRoutedSend({ text: outbound.text, recipient: participantRecipient });
+                            if (routed.type === 'execution_run_send') {
+                                fireAndForget((async () => {
+                                    const result = await sessionExecutionRunSend(sessionId, {
+                                        runId: routed.runId,
+                                        message: routed.message,
+                                        delivery: routed.delivery,
+                                    });
+                                    if (!result.ok) {
+                                        setMessage(previousMessage);
+                                        Modal.alert(t('common.error'), result.error ?? t('runs.send.failedToSend'));
+                                    }
+                                })(), { tag: 'SessionView.sendMessage.participantRouting.executionRun' });
+                                return;
+                            }
+                            outbound.text = routed.text;
+                            outbound.displayText = routed.displayText;
+                            outbound.metaOverrides = routed.metaOverrides;
                         }
-                        : (trimmedText.length > 0
-                            ? { text: trimmedText, displayText: undefined, metaOverrides: undefined }
-                            : null);
 
-                    if (!outbound) return;
-
-                    if (submitMode === 'server_pending') {
-                        fireAndForget((async () => {
-                            try {
+                      if (submitMode === 'server_pending') {
+                          fireAndForget((async () => {
+                              try {
                                 await sync.enqueuePendingMessage(sessionId, outbound.text, outbound.displayText, outbound.metaOverrides);
                             } catch (e) {
                                 setMessage(previousMessage);
@@ -1181,7 +1461,7 @@ function SessionViewLoaded({ sessionId, session, jumpToSeq }: { sessionId: strin
                 isMicActive={micButtonState.isMicActive}
                 onAbort={() => sessionAbort(sessionId)}
                 showAbortButton={shouldShowAbortButtonForSessionState(sessionStatus.state)}
-                onFileViewerPress={() => router.push(`/session/${sessionId}/files`)}
+                onFileViewerPress={openFileViewer}
                 // Autocomplete configuration
                 autocompletePrefixes={['@', '/']}
                 autocompleteSuggestions={(query) => getSuggestions(sessionId, query)}
@@ -1212,8 +1492,7 @@ function SessionViewLoaded({ sessionId, session, jumpToSeq }: { sessionId: strin
         </View>
     ) : null;
 
-
-    return (
+    const main = (
         <>
             {/* CLI Version Warning Overlay - Subtle centered pill */}
             {shouldShowCliWarning && !(isLandscape && deviceType === 'phone') && (
@@ -1264,7 +1543,7 @@ function SessionViewLoaded({ sessionId, session, jumpToSeq }: { sessionId: strin
             {
                 isLandscape && deviceType === 'phone' && (
                     <Pressable
-                        onPress={() => router.back()}
+                        onPress={() => router.push('/')}
                         style={{
                             position: 'absolute',
                             top: safeArea.top + 8,
@@ -1298,5 +1577,17 @@ function SessionViewLoaded({ sessionId, session, jumpToSeq }: { sessionId: strin
                 )
             }
         </>
-    )
+    );
+
+    return (
+        <SessionResumeProvider onResumeSession={handleResumeSession}>
+            <AppPaneScopeHost
+                scopeId={paneScopeId}
+                // Keep the real session tree mounted; the pane host is responsible for hiding
+                // the main region in editor focus mode so focus toggles don't accidentally
+                // render an empty placeholder region.
+                main={main}
+            />
+        </SessionResumeProvider>
+    );
 }

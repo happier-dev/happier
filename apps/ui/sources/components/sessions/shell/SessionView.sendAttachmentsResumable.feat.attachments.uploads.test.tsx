@@ -4,6 +4,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 (globalThis as any).__DEV__ = false;
+let authCredentials: any = { token: 't', secret: 's' };
 
 const pendingFireAndForget: Promise<unknown>[] = [];
 
@@ -16,11 +17,42 @@ vi.mock('expo-linear-gradient', () => ({
 vi.mock('@expo/vector-icons', () => ({
     Ionicons: 'Ionicons',
 }));
+
+class MockAnimatedValue {
+    private value: number;
+    constructor(value: number) {
+        this.value = value;
+    }
+    setValue(value: number) {
+        this.value = value;
+    }
+    interpolate(_config: unknown) {
+        return 0;
+    }
+}
+
 vi.mock('react-native', () => ({
     View: 'View',
     Text: 'Text',
     Pressable: 'Pressable',
     ActivityIndicator: 'ActivityIndicator',
+    AccessibilityInfo: {
+        isReduceMotionEnabled: async () => false,
+        addEventListener: () => ({ remove: () => {} }),
+    },
+    Animated: {
+        View: 'Animated.View',
+        Value: MockAnimatedValue,
+        timing: (_value: unknown, _config: unknown) => ({ start: (cb?: () => void) => cb?.() }),
+    },
+    Easing: {
+        bezier: (..._args: any[]) => (t: number) => t,
+        linear: (t: number) => t,
+    },
+    Dimensions: {
+        get: () => ({ width: 800, height: 600, scale: 2, fontScale: 1 }),
+    },
+    useWindowDimensions: () => ({ width: 1200, height: 800 }),
     Platform: {
         OS: 'ios',
         select: (spec: Record<string, unknown>) =>
@@ -31,21 +63,49 @@ vi.mock('react-native-safe-area-context', () => ({
     useSafeAreaInsets: () => ({ top: 0, bottom: 0, left: 0, right: 0 }),
 }));
 vi.mock('react-native-unistyles', () => ({
+    __esModule: true,
     useUnistyles: () => ({
         theme: {
             dark: false,
             colors: {
                 text: '#000',
                 textSecondary: '#666',
+                textLink: '#00f',
                 surface: '#fff',
+                surfaceHigh: '#f5f5f5',
+                divider: '#ddd',
+                input: { background: '#f5f5f5' },
                 header: { tint: '#000' },
+                modal: { border: '#ddd' },
                 status: { error: '#f00' },
                 shadow: { color: '#000', opacity: 0.2 },
+                groupped: { background: '#F5F5F5', chevron: '#C7C7CC', sectionTitle: '#8E8E93' },
             },
         },
     }),
     StyleSheet: {
-        create: (styles: any) => (typeof styles === 'function' ? styles({ colors: {} }) : styles),
+        create: (styles: any) =>
+            typeof styles === 'function'
+                ? styles(
+                      {
+                          colors: {
+                              text: '#000',
+                              textSecondary: '#666',
+                              textLink: '#00f',
+                              surface: '#fff',
+                              surfaceHigh: '#f5f5f5',
+                              divider: '#ddd',
+                              input: { background: '#f5f5f5' },
+                              header: { tint: '#000' },
+                              modal: { border: '#ddd' },
+                              status: { error: '#f00' },
+                              shadow: { color: '#000', opacity: 0.2 },
+                              groupped: { background: '#F5F5F5', chevron: '#C7C7CC', sectionTitle: '#8E8E93' },
+                          },
+                      },
+                      {}
+                  )
+                : styles,
         absoluteFillObject: {},
     },
 }));
@@ -56,6 +116,10 @@ vi.mock('@react-navigation/native', () => ({
 
 vi.mock('expo-router', () => ({
     useRouter: () => ({ push: vi.fn(), back: vi.fn() }),
+}));
+
+vi.mock('@/auth/context/AuthContext', () => ({
+    useAuth: () => ({ credentials: authCredentials }),
 }));
 
 vi.mock('@/text', () => ({
@@ -92,6 +156,7 @@ vi.mock('@/hooks/server/useFeatureEnabled', () => ({
 }));
 
 vi.mock('@/utils/platform/responsive', () => ({
+    getDeviceType: () => 'phone',
     useDeviceType: () => 'phone',
     useHeaderHeight: () => 0,
     useIsLandscape: () => false,
@@ -179,24 +244,36 @@ vi.mock('@/sync/domains/state/storage', () => {
             sessions: { s1: session },
             settings: { sessionMessageSendMode: 'server_pending', sessionBusySteerSendPolicy: 'server_pending' },
             sessionListViewDataByServerId: {},
+            updateSessionProjectScmSnapshotError: () => {},
         }),
         subscribe: () => () => {},
     };
-    return {
-        storage,
-        useSession: () => session,
-        useIsDataReady: () => true,
-        useRealtimeStatus: () => ({ status: 'connected' }),
-        useSessionMessages: () => ({ messages: [], isLoaded: true }),
-        useLocalSetting: () => ({}),
-        useSessionPendingMessages: () => ({ messages: [] }),
-        useSessionReviewCommentsDrafts: () => [],
-        useSessionUsage: () => null,
-        useSetting: () => null,
+      return {
+          storage,
+          useSession: () => session,
+          useIsDataReady: () => true,
+          useRealtimeStatus: () => ({ status: 'connected' }),
+          useSessionMessages: () => ({ messages: [], isLoaded: true }),
+          useSessionTranscriptIds: () => ({ ids: [], isLoaded: true }),
+          useSessionPendingMessages: () => ({ messages: [] }),
+          useSessionReviewCommentsDrafts: () => [],
+          useSessionUsage: () => null,
+          useSetting: () => null,
         useSettings: () => ({ experiments: true, featureToggles: {} }),
         useAutomations: () => [],
         useMachine: () => null,
-        useLocalSettingMutable: () => [false, vi.fn()],
+        useLocalSetting: (key: string) => {
+            if (key === 'acknowledgedCliVersions') return {};
+            if (key === 'uiMultiPanePanelsEnabled') return false;
+            if (key === 'editorFocusModeEnabled') return false;
+            if (key === 'detailsPaneTabsBehavior') return 'preview';
+            if (key === 'rightPaneWidthPx') return 360;
+            if (key === 'rightPaneWidthBasisPx') return 1200;
+            if (key === 'detailsPaneWidthPx') return 520;
+            if (key === 'detailsPaneWidthBasisPx') return 1200;
+            return null;
+        },
+        useLocalSettingMutable: () => [null, vi.fn()],
         useSettingMutable: () => [null, vi.fn()],
     };
 });
@@ -278,7 +355,7 @@ vi.mock('@/sync/domains/session/control/localControlSwitch', () => ({
     shouldRequestRemoteControlAfterPendingEnqueue: () => false,
 }));
 vi.mock('@/sync/acp/sessionModeControl', () => ({
-    supportsAcpAgentModeOverrides: () => false,
+    supportsSessionModeOverrides: () => false,
 }));
 vi.mock('@/sync/ops/sessionSwitch', () => ({
     sessionSwitch: vi.fn(),
@@ -289,6 +366,9 @@ vi.mock('@/sync/domains/automations/automationSessionLink', () => ({
 
 describe('SessionView (attachments.uploads resumable send)', () => {
     it('resumes and sends attachments even when chooseSubmitMode selects server_pending', async () => {
+        const { AppPaneProvider } = await import('@/components/appShell/panes/AppPaneProvider');
+        const { getInactiveSessionUiState } = await import('@/components/sessions/model/inactiveSessionUi');
+        expect(getInactiveSessionUiState({ isSessionActive: true, isResumable: true, isMachineOnline: true })).toMatchObject({ shouldShowInput: true });
         const { SessionView } = await import('./SessionView');
 
         sendMessageSpy.mockClear();
@@ -300,13 +380,21 @@ describe('SessionView (attachments.uploads resumable send)', () => {
 
         let tree!: renderer.ReactTestRenderer;
         await act(async () => {
-            tree = renderer.create(<SessionView id="s1" />);
+            tree = renderer.create(
+                <AppPaneProvider>
+                    <SessionView id="s1" />
+                </AppPaneProvider>
+            );
         });
 
         // Ignore mount-time fire-and-forget work; we only care about the send flow.
         pendingFireAndForget.length = 0;
 
-        const agentInput = tree.root.findByType('AgentInput' as any);
+        const agentInputCandidates = tree.root.findAll(
+            (node) => typeof node.props?.onSend === 'function' && typeof node.props?.onAttachmentsAdded === 'function',
+        );
+        expect(agentInputCandidates.length).toBeGreaterThan(0);
+        const agentInput = agentInputCandidates[0]!;
         expect(typeof agentInput.props.onAttachmentsAdded).toBe('function');
 
         await act(async () => {
@@ -326,6 +414,29 @@ describe('SessionView (attachments.uploads resumable send)', () => {
         expect(modalAlertSpy.mock.calls.some((c) => String(c?.[1] ?? '').includes('Attachments require direct sending'))).toBe(false);
         expect(resumeSessionSpy).toHaveBeenCalled();
         expect(uploadSpy).toHaveBeenCalled();
-        expect(sendMessageSpy).toHaveBeenCalled();
+        expect(sendMessageSpy).toHaveBeenCalledTimes(1);
+
+        const [sentSessionId, sentText, sentDisplayText, sentMetaOverrides] = sendMessageSpy.mock.calls[0] ?? [];
+        expect(sentSessionId).toBe('s1');
+        expect(String(sentText)).toContain('[attachments]');
+        expect(String(sentText)).toContain('- p1');
+        expect(String(sentText)).toContain('a.txt');
+        expect(sentDisplayText).toBe('hello');
+        expect(sentMetaOverrides).toMatchObject({
+            happier: {
+                kind: 'attachments.v1',
+                payload: {
+                    attachments: [
+                        {
+                            name: 'a.txt',
+                            path: 'p1',
+                            mimeType: 'text/plain',
+                            sizeBytes: 1,
+                            sha256: 'h1',
+                        },
+                    ],
+                },
+            },
+        });
     });
 });

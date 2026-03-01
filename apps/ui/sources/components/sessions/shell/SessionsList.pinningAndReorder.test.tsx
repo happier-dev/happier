@@ -4,6 +4,8 @@ import { describe, expect, it, vi } from 'vitest';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
+let capturedRootFlatListProps: any | null = null;
+
 let pinnedSessionKeysV1: string[] = [];
 const setPinnedSessionKeysV1 = vi.fn();
 
@@ -52,7 +54,8 @@ vi.mock('react-native', async () => {
         ...stub,
         Platform: { ...stub.Platform, OS: 'web' },
         TurboModuleRegistry: { ...stub.TurboModuleRegistry, get: () => ({}) },
-        FlatList: ({ data, renderItem, keyExtractor, ListHeaderComponent }: any) => {
+        FlatList: ({ data, renderItem, keyExtractor, ListHeaderComponent, ...rest }: any) => {
+            capturedRootFlatListProps = rest;
             return React.createElement(
                 'FlatList',
                 null,
@@ -220,6 +223,31 @@ vi.mock('./SessionGroupDragList', () => ({
 }));
 
 describe('SessionsList pinning + per-group ordering', () => {
+    it('stops wheel event propagation on web so session list scrolling is not blocked by document scroll-lock listeners', async () => {
+        pinnedSessionKeysV1 = [];
+        sessionListGroupOrderV1 = {};
+        sessionTagsV1 = {};
+        setPinnedSessionKeysV1.mockClear();
+        setSessionListGroupOrderV1.mockClear();
+        setSessionTagsV1.mockClear();
+        capturedRootFlatListProps = null;
+
+        const { SessionsList } = await import('./SessionsList');
+
+        let tree: renderer.ReactTestRenderer | null = null;
+        await act(async () => {
+            tree = renderer.create(<SessionsList />);
+        });
+
+        expect(tree).toBeTruthy();
+        expect(capturedRootFlatListProps).toBeTruthy();
+        expect(typeof capturedRootFlatListProps?.onWheel).toBe('function');
+
+        const stopPropagation = vi.fn();
+        capturedRootFlatListProps?.onWheel?.({ stopPropagation });
+        expect(stopPropagation).toHaveBeenCalledTimes(1);
+    });
+
     it('passes session tags from settings into group row models when enabled', async () => {
         pinnedSessionKeysV1 = [];
         sessionListGroupOrderV1 = {};

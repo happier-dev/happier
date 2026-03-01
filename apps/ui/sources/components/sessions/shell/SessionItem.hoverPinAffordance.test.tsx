@@ -181,6 +181,58 @@ describe('SessionItem pin hover affordance (web)', () => {
         expect(resolveOpacity(overlay?.props.style)).toBe(0);
     });
 
+    it('keeps the actions visible when moving the cursor from the row to the pin action', async () => {
+        const { SessionItem } = await import('./SessionItem');
+
+        const session = createSession('sess_3');
+        const onTogglePinned = vi.fn();
+
+        let tree: renderer.ReactTestRenderer | null = null;
+        await act(async () => {
+            tree = renderer.create(
+                <SessionItem
+                    session={session}
+                    serverId="server_a"
+                    pinned={false}
+                    onTogglePinned={onTogglePinned}
+                    selected={false}
+                    isFirst={true}
+                    isLast={true}
+                    isSingle={true}
+                    variant="default"
+                    compact={false}
+                />,
+            );
+        });
+
+        const row = findRowPressable(tree!);
+        const pin = findPinPressable(tree!);
+        const overlay = pin.parent;
+        expect(overlay?.props.pointerEvents).toBe('none');
+        expect(resolveOpacity(overlay?.props.style)).toBe(0);
+
+        await act(async () => {
+            triggerHoverEnter(row);
+        });
+        expect(overlay?.props.pointerEvents).toBe('auto');
+        expect(resolveOpacity(overlay?.props.style)).toBe(1);
+
+        // Some web implementations can fire a hover-leave on the row when moving onto nested action buttons.
+        // The actions should remain visible as long as the cursor is still within the actions overlay.
+        await act(async () => {
+            triggerHoverLeave(row);
+            if (overlay) triggerHoverEnter(overlay);
+        });
+        expect(overlay?.props.pointerEvents).toBe('auto');
+        expect(resolveOpacity(overlay?.props.style)).toBe(1);
+
+        await act(async () => {
+            if (overlay) triggerHoverLeave(overlay);
+        });
+        expect(overlay?.props.pointerEvents).toBe('none');
+        expect(resolveOpacity(overlay?.props.style)).toBe(0);
+    });
+
     it('shows the actions when hovered and hides them when leaving the row', async () => {
         const { SessionItem } = await import('./SessionItem');
 

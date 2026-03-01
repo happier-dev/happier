@@ -1,5 +1,5 @@
 import React from 'react';
-import { View, FlatList, Pressable } from 'react-native';
+import { View, FlatList, Pressable, Platform } from 'react-native';
 import { Text } from '@/components/ui/text/Text';
 import { usePathname, useRouter } from 'expo-router';
 import { SessionListViewItem, useSetting, useSettingMutable } from '@/sync/domains/state/storage';
@@ -134,6 +134,15 @@ export function SessionsList() {
     const showServerBadge = selection.enabled && selection.presentation === 'flat-with-badge' && selectedServerCount > 1;
     const showPinnedServerBadge = selection.enabled && selectedServerCount > 1;
     const selectable = isTablet;
+
+    const stopScrollEventPropagationOnWeb = React.useCallback((event: any) => {
+        // Expo Router (Vaul/Radix) modals on web often install document-level scroll-lock listeners
+        // that `preventDefault()` wheel/touch scroll, which breaks scrolling inside nested scroll views.
+        // Stopping propagation here keeps the event within the sessions list subtree so native scrolling works.
+        if (Platform.OS !== 'web') return;
+        if (typeof event?.stopPropagation === 'function') event.stopPropagation();
+    }, []);
+
     const dataWithSelected = React.useMemo(() => {
         if (!data) return data;
         if (!selectable) return data;
@@ -317,7 +326,7 @@ export function SessionsList() {
             case 'server-header':
                 return (
                     <View style={styles.headerSection}>
-                        <Text style={styles.headerText}>{`Server: ${item.title}`}</Text>
+                        <Text style={styles.headerText}>{t('sessionsList.serverHeader', { server: item.title })}</Text>
                     </View>
                 );
             case 'section-header':
@@ -385,6 +394,9 @@ export function SessionsList() {
         <View style={styles.container}>
             <View style={styles.contentContainer}>
                 <FlatList
+                    {...(Platform.OS === 'web'
+                        ? ({ onWheel: stopScrollEventPropagationOnWeb, onTouchMove: stopScrollEventPropagationOnWeb } as any)
+                        : {})}
                     data={blocks}
                     renderItem={renderItem}
                     keyExtractor={keyExtractor}
