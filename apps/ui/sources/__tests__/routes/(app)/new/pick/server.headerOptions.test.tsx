@@ -83,7 +83,7 @@ vi.mock('@/sync/domains/server/serverProfiles', () => ({
     ],
 }));
 
-import ServerPickerScreen from './server';
+import ServerPickerScreen from '@/app/(app)/new/pick/server';
 
 describe('ServerPickerScreen header options', () => {
     it('does not provide a headerTitle function that returns a raw string (RN Web text node error)', () => {
