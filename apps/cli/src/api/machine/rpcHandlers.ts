@@ -17,6 +17,7 @@ import { CATALOG_AGENT_IDS } from '@/backends/types';
 import type { CatalogAgentId } from '@/backends/types';
 import { readCredentials } from '@/persistence';
 import { hydrateReplayDialogFromTranscript } from '@/session/replay/hydrateReplayDialogFromTranscript';
+import { hydrateReplayDialogFromForkChain } from '@/session/replay/hydrateReplayDialogFromForkChain';
 import { createReplaySeededSession } from '@/session/replay/createReplaySeededSession';
 import { fetchSessionById } from '@/sessionControl/sessionsHttp';
 import { tryDecryptSessionMetadata } from '@/sessionControl/sessionEncryptionContext';
@@ -264,7 +265,6 @@ export function registerMachineRpcHandlers(params: Readonly<{
       };
     }
 
-    const { hydrateReplayDialogFromForkChain } = await import('@/session/replay/hydrateReplayDialogFromForkChain');
     const hydrated = await hydrateReplayDialogFromForkChain({
       credentials,
       startingSessionId: replay.previousSessionId,
@@ -656,7 +656,6 @@ export function registerMachineRpcHandlers(params: Readonly<{
       };
     }
 
-    const { hydrateReplayDialogFromForkChain } = await import('@/session/replay/hydrateReplayDialogFromForkChain');
 	    const hydrated = await hydrateReplayDialogFromForkChain({
       credentials,
       startingSessionId: parentSessionId,
