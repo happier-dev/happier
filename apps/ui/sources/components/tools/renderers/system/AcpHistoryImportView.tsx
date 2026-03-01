@@ -78,13 +78,13 @@ export const AcpHistoryImportView = React.memo<ToolViewProps>(({ tool, sessionId
   return (
     <ToolSectionView>
       <View style={styles.container}>
-        <Text style={styles.title}>Import session history?</Text>
+        <Text style={styles.title}>{t('tools.acpHistoryImport.title')}</Text>
         <Text style={styles.subtitle}>
           {provider}{remoteSessionId ? ` • ${remoteSessionId}` : ''}
         </Text>
-	        <Text style={styles.body}>
-	        {note ?? 'This session history differs from what is already in Happier. Importing may create duplicates.'}
-	      </Text>
+        <Text style={styles.body}>
+          {note ?? t('tools.acpHistoryImport.defaultNote')}
+        </Text>
 
         {isPending && !canApprovePermissions ? (
           <Text style={[styles.body, { color: theme.colors.textSecondary }]}>
@@ -94,8 +94,8 @@ export const AcpHistoryImportView = React.memo<ToolViewProps>(({ tool, sessionId
 
         {(typeof localCount === 'number' || typeof remoteCount === 'number') && (
           <View style={styles.countRow}>
-            {typeof localCount === 'number' && <Text style={styles.countText}>Local: {localCount}</Text>}
-            {typeof remoteCount === 'number' && <Text style={styles.countText}>Remote: {remoteCount}</Text>}
+            {typeof localCount === 'number' && <Text style={styles.countText}>{t('tools.acpHistoryImport.counts.local', { count: localCount })}</Text>}
+            {typeof remoteCount === 'number' && <Text style={styles.countText}>{t('tools.acpHistoryImport.counts.remote', { count: remoteCount })}</Text>}
           </View>
         )}
 
@@ -103,20 +103,20 @@ export const AcpHistoryImportView = React.memo<ToolViewProps>(({ tool, sessionId
           <View style={styles.previewContainer}>
             {localTail.length > 0 && (
               <View style={styles.previewBlock}>
-                <Text style={styles.previewHeader}>Local (tail)</Text>
+                <Text style={styles.previewHeader}>{t('tools.acpHistoryImport.preview.localTail')}</Text>
                 {localTail.map((m, idx) => (
                   <Text key={idx} style={styles.previewLine} numberOfLines={2}>
-                    {(m.role ?? 'unknown')}: {m.text ?? ''}
+                    {(m.role ?? t('tools.acpHistoryImport.preview.unknownRole'))}: {m.text ?? ''}
                   </Text>
                 ))}
               </View>
             )}
             {remoteTail.length > 0 && (
               <View style={styles.previewBlock}>
-                <Text style={styles.previewHeader}>Remote (tail)</Text>
+                <Text style={styles.previewHeader}>{t('tools.acpHistoryImport.preview.remoteTail')}</Text>
                 {remoteTail.map((m, idx) => (
                   <Text key={idx} style={styles.previewLine} numberOfLines={2}>
-                    {(m.role ?? 'unknown')}: {m.text ?? ''}
+                    {(m.role ?? t('tools.acpHistoryImport.preview.unknownRole'))}: {m.text ?? ''}
                   </Text>
                 ))}
               </View>
@@ -130,14 +130,14 @@ export const AcpHistoryImportView = React.memo<ToolViewProps>(({ tool, sessionId
             disabled={!isPending || loading !== null || !canApprovePermissions}
             onPress={onImport}
           >
-            {loading === 'import' ? <ActivityIndicator color={theme.colors.button.primary.tint} /> : <Text style={styles.primaryText}>Import</Text>}
+            {loading === 'import' ? <ActivityIndicator color={theme.colors.button.primary.tint} /> : <Text style={styles.primaryText}>{t('tools.acpHistoryImport.actions.import')}</Text>}
           </TouchableOpacity>
           <TouchableOpacity
             style={[styles.button, styles.secondaryButton, !isPending && styles.disabled]}
             disabled={!isPending || loading !== null || !canApprovePermissions}
             onPress={onSkip}
           >
-            {loading === 'skip' ? <ActivityIndicator color={theme.colors.text} /> : <Text style={styles.secondaryText}>Skip</Text>}
+            {loading === 'skip' ? <ActivityIndicator color={theme.colors.text} /> : <Text style={styles.secondaryText}>{t('tools.acpHistoryImport.actions.skip')}</Text>}
           </TouchableOpacity>
         </View>
       </View>
