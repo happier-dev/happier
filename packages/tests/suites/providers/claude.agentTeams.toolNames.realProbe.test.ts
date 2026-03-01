@@ -53,7 +53,8 @@ describe('real Claude Agent Teams tool name probe', () => {
         stopWhen: FULL_PROBE
           ? ({ toolUses, toolResults }) => {
               const hasTeamCreate = toolUses.some((u) => u.name === 'TeamCreate');
-              const hasSendMessage = toolUses.some((u) => u.name === 'SendMessage');
+              const sendMessages = toolUses.filter((u) => u.name === 'SendMessage');
+              const hasSendMessage = sendMessages.length >= 2;
               const hasSpawned = toolResults.some((r) => {
                 if (!r.result || typeof r.result !== 'object' || Array.isArray(r.result)) return false;
                 return (r.result as any)?.tool_use_result?.status === 'teammate_spawned';
@@ -83,6 +84,25 @@ describe('real Claude Agent Teams tool name probe', () => {
         for (const use of sendMessageUses.slice(0, 3)) {
           expect(use.input).toEqual(expect.anything());
           expect(use.input && typeof use.input === 'object' && !Array.isArray(use.input)).toBe(true);
+        }
+
+        // Validate the observed SendMessage input shape (direct + broadcast) so downstream normalization/UX can stay stable.
+        const direct = sendMessageUses.find((u) => (u.input as any)?.type === 'message') ?? null;
+        const broadcast = sendMessageUses.find((u) => (u.input as any)?.type === 'broadcast') ?? null;
+        expect(direct).not.toBeNull();
+        expect(broadcast).not.toBeNull();
+        if (direct) {
+          expect(direct.input).toEqual(expect.objectContaining({
+            type: 'message',
+            recipient: expect.any(String),
+            content: expect.any(String),
+          }));
+        }
+        if (broadcast) {
+          expect(broadcast.input).toEqual(expect.objectContaining({
+            type: 'broadcast',
+            content: expect.any(String),
+          }));
         }
 
         // Teammate spawn: Claude Code currently emits this via Task tool_result. Capture either the structured
