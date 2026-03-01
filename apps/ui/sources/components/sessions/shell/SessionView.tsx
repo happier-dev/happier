@@ -176,7 +176,7 @@ export const SessionView = React.memo((props: { id: string; jumpToSeq?: number |
         const isConnected = session.presence === 'online';
         const badgeLabel =
             sessionAutomationsEnabledCount > 99 ? '99+' : String(sessionAutomationsEnabledCount);
-        const rightElement = (showAutomations || executionRunsEnabled) ? (
+        const rightElement = (
             <View style={{ flexDirection: 'row', alignItems: 'center' }}>
                 <SessionHeaderActionMenu sessionId={sessionId} session={session} />
                 {executionRunsEnabled ? (
@@ -238,7 +238,7 @@ export const SessionView = React.memo((props: { id: string; jumpToSeq?: number |
                     </Pressable>
                 ) : null}
             </View>
-        ) : undefined;
+        );
         return {
             title: getSessionName(session),
             subtitle: session.metadata?.path ? formatPathRelativeToHome(session.metadata.path, session.metadata?.homeDir) : undefined,
