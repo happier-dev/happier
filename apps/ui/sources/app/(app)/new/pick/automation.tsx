@@ -108,7 +108,7 @@ export default React.memo(function AutomationPickerScreen() {
             hitSlop={10}
             style={({ pressed }) => ({ padding: 2, opacity: !isValid ? 0.4 : pressed ? 0.7 : 1 })}
             accessibilityRole="button"
-            accessibilityLabel="Save automation settings"
+            accessibilityLabel={t('automations.edit.saveAutomationLabel')}
         >
             <Ionicons name="checkmark" size={22} color={theme.colors.header.tint} />
         </Pressable>
@@ -116,7 +116,7 @@ export default React.memo(function AutomationPickerScreen() {
 
     const screenOptions = React.useMemo(() => ({
         headerShown: true,
-        title: 'Automation',
+        title: t('automations.form.groupAutomationTitle'),
         headerBackTitle: t('common.back'),
         presentation: Platform.OS === 'ios' ? ('containedModal' as const) : undefined,
         headerLeft,
