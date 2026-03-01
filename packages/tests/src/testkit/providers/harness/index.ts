@@ -47,6 +47,7 @@ import { scenarioCatalog } from '../scenarios/scenarioCatalog';
 import { resolveProviderAuthOverlay } from './providerAuthOverlay';
 import { applyCliDevTsxTsconfigEnv, applyHomeIsolationEnv } from './harnessEnv';
 import { resolveAcpToolPermissionPromptExpectation } from '../permissions/acpPermissionPrompts';
+import { stopOpenCodeManagedServerFromHomeDir } from '../opencode/stopOpenCodeManagedServerFromHomeDir';
 import {
   extractFatalAgentErrorMessage,
   isSkippableProviderUnavailabilityError,
@@ -1015,6 +1016,7 @@ async function runOneScenario(params: {
   await mkdir(cliHome, { recursive: true });
   await mkdir(workspaceDir, { recursive: true });
 
+  try {
   if (scenario.setup) {
     await scenario.setup({ workspaceDir, cliHome });
   }
@@ -1874,6 +1876,14 @@ async function runOneScenario(params: {
       secret,
       resumeId: resumeIdForVerify,
     });
+  }
+  } finally {
+    // OpenCode server-native backend starts a detached managed `opencode serve` process.
+    // Provider harness runs each scenario with its own isolated happy home; without cleanup,
+    // we'd accumulate one server process per scenario and eventually hit resource exhaustion.
+    if (provider.id === 'opencode_server') {
+      await stopOpenCodeManagedServerFromHomeDir(cliHome).catch(() => {});
+    }
   }
 }
 
