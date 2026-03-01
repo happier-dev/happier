@@ -492,10 +492,35 @@ export function Popover(props: PopoverWithBackdrop | PopoverWithoutBackdrop) {
                 Math.max(boundaryRect.x, left),
             );
 
+            const verticalStyle: ViewStyle = (() => {
+                // Prefer anchoring the edge closest to the anchor so the popover doesn’t “jiggle”
+                // when its content height changes after opening (e.g. async-loaded trees/lists).
+                //
+                // For top-placed portals we can pin the bottom edge to (anchorTop - gap) using `bottom`,
+                // which avoids depending on the measured content height for vertical positioning.
+                if (computed.placement === 'top') {
+                    const anchorTopInPortalSpace =
+                        position === 'absolute'
+                            ? (anchorRectState.y - webPortalOffsetY)
+                            : anchorRectState.y;
+                    const portalHeight =
+                        position === 'absolute'
+                            ? (webPortalTargetRect?.height ?? windowHeight)
+                            : windowHeight;
+                    return {
+                        bottom: Math.floor(portalHeight - (anchorTopInPortalSpace - gap)),
+                    } as any;
+                }
+
+                return {
+                    top: Math.floor(top - (position === 'absolute' ? webPortalOffsetY : 0)),
+                } as any;
+            })();
+
             return {
                 position,
                 left: Math.floor(clampedLeft - (position === 'absolute' ? webPortalOffsetX : 0)),
-                top: Math.floor(top - (position === 'absolute' ? webPortalOffsetY : 0)),
+                ...verticalStyle,
                 zIndex: 1000,
                 width:
                     computed.placement === 'top' ||
