@@ -31,6 +31,7 @@ import {
 } from '@/sync/api/account/apiConnectedServicesV2';
 import { storeConnectedServiceCredentialForAccount } from '@/sync/domains/connectedServices/storeConnectedServiceCredentialForAccount';
 import { buildOauthRecordFromProxyPayload, parseConnectedServiceOauthProxyBundle } from '@/sync/domains/connectedServices/oauth/connectedServiceOauthProxyBundle';
+import { resolveConnectedServiceOauthErrorMessage } from '../resolveConnectedServiceOauthErrorMessage';
 
 function asStringParam(value: unknown): string {
   if (Array.isArray(value)) return typeof value[0] === 'string' ? value[0] : '';
@@ -110,7 +111,11 @@ export const OpenAiCodexDeviceAuthView = React.memo(function OpenAiCodexDeviceAu
         setDeviceAuth(started);
       } catch (e: unknown) {
         if (cancelled) return;
-        setError(e instanceof Error ? e.message : t('connectedServices.deviceAuth.alerts.failedToStart'));
+        const message = resolveConnectedServiceOauthErrorMessage(
+          e,
+          t('connectedServices.deviceAuth.alerts.failedToStart'),
+        );
+        setError(message);
       } finally {
         if (!cancelled) setStarting(false);
       }
@@ -185,7 +190,10 @@ export const OpenAiCodexDeviceAuthView = React.memo(function OpenAiCodexDeviceAu
           return;
         }
       } catch (e: unknown) {
-        const message = e instanceof Error ? e.message : t('connectedServices.deviceAuth.alerts.failedToConnect');
+        const message = resolveConnectedServiceOauthErrorMessage(
+          e,
+          t('connectedServices.deviceAuth.alerts.failedToConnect'),
+        );
         setError(message);
         await Modal.alert(t('common.error'), message);
       } finally {
@@ -205,7 +213,7 @@ export const OpenAiCodexDeviceAuthView = React.memo(function OpenAiCodexDeviceAu
       <ItemList>
         <ItemGroup title={t('connectedServices.title')}>
           <View style={{ paddingHorizontal: 16, paddingVertical: 12 }}>
-            <Text style={{ opacity: 0.7 }}>{t('connectedServices.deviceAuth.invalidConfig')}</Text>
+            <Text style={{ color: theme.colors.textSecondary }}>{t('connectedServices.deviceAuth.invalidConfig')}</Text>
           </View>
         </ItemGroup>
       </ItemList>
@@ -258,7 +266,7 @@ export const OpenAiCodexDeviceAuthView = React.memo(function OpenAiCodexDeviceAu
               </Text>
             </Pressable>
           </View>
-          <Text style={{ opacity: 0.7, marginTop: 10 }}>
+          <Text style={{ color: theme.colors.textSecondary, marginTop: 10 }}>
             {t('connectedServices.deviceAuth.securityHint')}
           </Text>
         </View>
@@ -266,7 +274,7 @@ export const OpenAiCodexDeviceAuthView = React.memo(function OpenAiCodexDeviceAu
 
       <ItemGroup title={t('connectedServices.deviceAuth.openVerificationUrl')}>
         <View style={{ paddingHorizontal: 16, paddingVertical: 12 }}>
-          <Text selectable={true} style={{ opacity: 0.9 }}>
+          <Text selectable={true} style={{ color: theme.colors.text }}>
             {deviceAuth?.verificationUrl || t('connectedServices.deviceAuth.preparing')}
           </Text>
           <View style={{ marginTop: 12 }}>
@@ -281,7 +289,7 @@ export const OpenAiCodexDeviceAuthView = React.memo(function OpenAiCodexDeviceAu
               }
             />
           </View>
-          <Text style={{ opacity: 0.7, marginTop: 10 }}>
+          <Text style={{ color: theme.colors.textSecondary, marginTop: 10 }}>
             {t('connectedServices.deviceAuth.deviceAuthDisabledHint')}
           </Text>
         </View>
@@ -290,16 +298,16 @@ export const OpenAiCodexDeviceAuthView = React.memo(function OpenAiCodexDeviceAu
       <ItemGroup title={t('connectedServices.deviceAuth.waiting')}>
         <View style={{ paddingHorizontal: 16, paddingVertical: 12 }}>
           {starting ? (
-            <Text style={{ opacity: 0.7 }}>{t('connectedServices.deviceAuth.preparing')}</Text>
+            <Text style={{ color: theme.colors.textSecondary }}>{t('connectedServices.deviceAuth.preparing')}</Text>
           ) : (
             <>
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
                 {polling ? <ActivityIndicator size="small" color={theme.colors.textSecondary} /> : null}
-                <Text style={{ opacity: 0.7 }}>{t('connectedServices.deviceAuth.waiting')}</Text>
+                <Text style={{ color: theme.colors.textSecondary }}>{t('connectedServices.deviceAuth.waiting')}</Text>
               </View>
               {error ? (
                 <View style={{ marginTop: 10 }}>
-                  <Text style={{ opacity: 0.9 }}>{error}</Text>
+                  <Text style={{ color: theme.colors.textDestructive }}>{error}</Text>
                 </View>
               ) : null}
             </>
