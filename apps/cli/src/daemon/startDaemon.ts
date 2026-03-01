@@ -1008,7 +1008,12 @@ export async function startDaemon(): Promise<void> {
       controlToken,
     });
 
-    // Write initial daemon state (no lock needed for state file)
+    // Persist daemon.state.json only after the daemon has connected to the server at least once.
+    //
+    // Why: many automated flows (and user surfaces) treat the presence of daemon.state.json as
+    // "daemon is ready to service machine-scoped RPC". If we write it before the machine socket
+    // has connected + registered RPC methods, callers can observe transient METHOD_NOT_AVAILABLE
+    // errors right after daemon start.
     const fileState: DaemonLocallyPersistedState = {
       pid: process.pid,
       httpPort: controlPort,
@@ -1017,8 +1022,13 @@ export async function startDaemon(): Promise<void> {
       daemonLogPath: logger.logFilePath,
       controlToken,
     };
-    writeDaemonState(fileState);
-    logger.debug('[DAEMON RUN] Daemon state written');
+    let didWriteDaemonState = false;
+    const writeDaemonStateOnce = () => {
+      if (didWriteDaemonState) return;
+      didWriteDaemonState = true;
+      writeDaemonState(fileState);
+      logger.debug('[DAEMON RUN] Daemon state written');
+    };
 
         // Prepare initial daemon state
         const initialDaemonState: DaemonState = {
@@ -1198,6 +1208,7 @@ export async function startDaemon(): Promise<void> {
             let didRefreshMachineMetadata = false;
             connectedApiMachine.connect({
               onConnect: async () => {
+                writeDaemonStateOnce();
                 if (shutdownInitiated) return;
 
               if (automationWorker) {
