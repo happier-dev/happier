@@ -39,17 +39,18 @@ export function BaseModal({
     const [modalPortalTarget, setModalPortalTarget] = React.useState<HTMLElement | null>(null);
 
     useEffect(() => {
+        const useNativeDriver = Platform.OS !== 'web';
         if (visible) {
             Animated.timing(fadeAnim, {
                 toValue: 1,
                 duration: 200,
-                useNativeDriver: true
+                useNativeDriver,
             }).start();
         } else {
             Animated.timing(fadeAnim, {
                 toValue: 0,
                 duration: 200,
-                useNativeDriver: true
+                useNativeDriver,
             }).start();
         }
     }, [visible, fadeAnim]);
