@@ -22,12 +22,13 @@ export interface ItemProps {
     leftElement?: React.ReactNode;
     rightElement?: React.ReactNode;
     onPress?: () => void;
+    onDoublePress?: () => void;
     onLongPress?: () => void;
     disabled?: boolean;
     loading?: boolean;
     selected?: boolean;
     destructive?: boolean;
-    density?: 'comfortable' | 'compact';
+    density?: 'comfortable' | 'compact' | 'tight';
     style?: StyleProp<ViewStyle>;
     titleStyle?: StyleProp<TextStyle>;
     subtitleStyle?: StyleProp<TextStyle>;
@@ -48,19 +49,33 @@ const stylesheet = StyleSheet.create((theme, runtime) => ({
     },
     containerCompact: {
         paddingHorizontal: 12,
-        minHeight: Platform.select({ ios: 38, default: 40 }),
+        // Compact rows are used heavily in right rails (files/SCM) and should feel editor-like on web/tablet.
+        // Keep iOS slightly taller for touch affordance, but reduce desktop web density.
+        minHeight: Platform.select({ ios: 38, default: 34 }),
+    },
+    containerTight: {
+        paddingHorizontal: 10,
+        // Tight density is reserved for file trees / editor-like lists where users expect high information density.
+        // Keep iOS sufficiently tall for touch affordance.
+        minHeight: Platform.select({ ios: 36, default: 24 }),
     },
     containerWithSubtitle: {
         paddingVertical: Platform.select({ ios: 11, default: 16 }),
     },
     containerWithSubtitleCompact: {
-        paddingVertical: Platform.select({ ios: 7, default: 8 }),
+        paddingVertical: Platform.select({ ios: 7, default: 6 }),
+    },
+    containerWithSubtitleTight: {
+        paddingVertical: Platform.select({ ios: 7, default: 2 }),
     },
     containerWithoutSubtitle: {
         paddingVertical: Platform.select({ ios: 12, default: 16 }),
     },
     containerWithoutSubtitleCompact: {
-        paddingVertical: Platform.select({ ios: 8, default: 8 }),
+        paddingVertical: Platform.select({ ios: 8, default: 5 }),
+    },
+    containerWithoutSubtitleTight: {
+        paddingVertical: Platform.select({ ios: 8, default: 2 }),
     },
     iconContainer: {
         marginRight: 12,
@@ -73,6 +88,11 @@ const stylesheet = StyleSheet.create((theme, runtime) => ({
         marginRight: 10,
         width: Platform.select({ ios: 18, default: 20 }),
         height: Platform.select({ ios: 18, default: 20 }),
+    },
+    iconContainerTight: {
+        marginRight: 8,
+        width: Platform.select({ ios: 18, default: 18 }),
+        height: Platform.select({ ios: 18, default: 18 }),
     },
     centerContent: {
         flex: 1,
@@ -87,6 +107,11 @@ const stylesheet = StyleSheet.create((theme, runtime) => ({
     titleCompact: {
         fontSize: Platform.select({ ios: 14, default: 13 }),
         lineHeight: Platform.select({ ios: 18, default: 18 }),
+        letterSpacing: Platform.select({ ios: -0.24, default: 0.1 }),
+    },
+    titleTight: {
+        fontSize: Platform.select({ ios: 14, default: 12 }),
+        lineHeight: Platform.select({ ios: 18, default: 16 }),
         letterSpacing: Platform.select({ ios: -0.24, default: 0.1 }),
     },
     titleNormal: {
@@ -109,6 +134,11 @@ const stylesheet = StyleSheet.create((theme, runtime) => ({
     subtitleCompact: {
         fontSize: Platform.select({ ios: 12, default: 12 }),
         lineHeight: 16,
+        marginTop: Platform.select({ ios: 1, default: 0 }),
+    },
+    subtitleTight: {
+        fontSize: Platform.select({ ios: 12, default: 11 }),
+        lineHeight: 14,
         marginTop: Platform.select({ ios: 1, default: 0 }),
     },
     rightSection: {
@@ -158,6 +188,7 @@ export const Item = React.memo<ItemProps>((props) => {
         leftElement,
         rightElement,
         onPress,
+        onDoublePress,
         onLongPress,
         disabled,
         loading,
@@ -224,25 +255,71 @@ export const Item = React.memo<ItemProps>((props) => {
         };
     }, []);
     
-    // If copy is enabled and no onPress is provided, don't set a regular press handler
-    // The copy will be handled by long press instead
-    const handlePress = onPress;
+    const webDoublePressHandledAtMsRef = React.useRef<number>(0);
+    const webLastPressAtMsRef = React.useRef<number | null>(null);
 
-    const isInteractive = handlePress || onLongPress || (copy && !isWeb);
-    const showAccessory = isInteractive && showChevron && !rightElement;
+    const handlePress = React.useCallback((event?: any) => {
+        if (isWeb && onDoublePress) {
+            const nowMs = Date.now();
+            if (webDoublePressHandledAtMsRef.current > 0 && nowMs - webDoublePressHandledAtMsRef.current < 240) {
+                event?.preventDefault?.();
+                event?.stopPropagation?.();
+                return;
+            }
+            const lastMs = webLastPressAtMsRef.current;
+            webLastPressAtMsRef.current = nowMs;
+
+            const detail = event?.nativeEvent?.detail ?? event?.detail;
+            if (detail === 2) {
+                webDoublePressHandledAtMsRef.current = Date.now();
+                webLastPressAtMsRef.current = null;
+                event?.preventDefault?.();
+                event?.stopPropagation?.();
+                onDoublePress();
+                return;
+            }
+
+            if (lastMs != null && nowMs - lastMs < 320) {
+                webDoublePressHandledAtMsRef.current = nowMs;
+                webLastPressAtMsRef.current = null;
+                event?.preventDefault?.();
+                event?.stopPropagation?.();
+                onDoublePress();
+                return;
+            }
+        }
+        onPress?.();
+    }, [isWeb, onDoublePress, onPress]);
+
+    const hasPrimaryPressAction = Boolean(onPress || onDoublePress || onLongPress);
+    const hasCopyLongPress = Boolean(copy && !isWeb && !onPress);
+    const isInteractive = hasPrimaryPressAction || hasCopyLongPress;
+
+    // Only show the navigation chevron when the row has an actual "tap to do something" affordance.
+    // Long-press copy rows (mobile) and long-press-only rows should not look like navigation.
+    const showAccessory = Boolean(showChevron && !rightElement && (onPress || onDoublePress));
     const chevronSize = (isIOS && !isWeb) ? 17 : 24;
     const showSelectedBackground = !!selected && ((selectionContext?.selectableItemCount ?? 2) > 1);
     const groupCornerRadius = Platform.select({ ios: 10, default: 16 });
 
     const titleColor = destructive ? styles.titleDestructive : (selected ? styles.titleSelected : styles.titleNormal);
     const isCompact = density === 'compact';
+    const isTight = density === 'tight';
     const containerPadding = subtitle
-        ? (isCompact ? styles.containerWithSubtitleCompact : styles.containerWithSubtitle)
-        : (isCompact ? styles.containerWithoutSubtitleCompact : styles.containerWithoutSubtitle);
-    const containerCore = isCompact ? [styles.container, styles.containerCompact] : styles.container;
-    const iconContainerStyle = isCompact ? [styles.iconContainer, styles.iconContainerCompact] : styles.iconContainer;
-    const titleSizeStyle = isCompact ? styles.titleCompact : null;
-    const subtitleSizeStyle = isCompact ? styles.subtitleCompact : null;
+        ? (isTight ? styles.containerWithSubtitleTight : isCompact ? styles.containerWithSubtitleCompact : styles.containerWithSubtitle)
+        : (isTight ? styles.containerWithoutSubtitleTight : isCompact ? styles.containerWithoutSubtitleCompact : styles.containerWithoutSubtitle);
+    const containerCore = isTight
+        ? [styles.container, styles.containerTight]
+        : isCompact
+            ? [styles.container, styles.containerCompact]
+            : styles.container;
+    const iconContainerStyle = isTight
+        ? [styles.iconContainer, styles.iconContainerTight]
+        : isCompact
+            ? [styles.iconContainer, styles.iconContainerCompact]
+            : styles.iconContainer;
+    const titleSizeStyle = isTight ? styles.titleTight : isCompact ? styles.titleCompact : null;
+    const subtitleSizeStyle = isTight ? styles.subtitleTight : isCompact ? styles.subtitleCompact : null;
 
     const isSelectableRow = React.useMemo(() => {
         // Only show hover for "selection lists" (where rows participate in a selected-state group).
@@ -384,6 +461,17 @@ export const Item = React.memo<ItemProps>((props) => {
                 testID={testID}
                 onPress={handlePress}
                 onLongPress={onLongPress}
+                // @ts-expect-error - react-native types do not model web-only double click props; RN Web supports onDoubleClick.
+                onDoubleClick={isWeb && onDoublePress ? (event: any) => {
+                    if (Date.now() - webDoublePressHandledAtMsRef.current < 600) {
+                        return;
+                    }
+                    webDoublePressHandledAtMsRef.current = Date.now();
+                    webLastPressAtMsRef.current = null;
+                    event?.preventDefault?.();
+                    event?.stopPropagation?.();
+                    onDoublePress();
+                } : undefined}
                 onPressIn={handlePressIn}
                 onPressOut={handlePressOut}
                 onHoverIn={isWeb && isSelectableRow && !disabled && !loading ? () => setIsHovered(true) : undefined}
