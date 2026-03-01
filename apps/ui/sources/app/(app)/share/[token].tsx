@@ -21,6 +21,7 @@ import { ChatHeaderView } from '@/components/sessions/transcript/ChatHeaderView'
 import type { Message } from '@/sync/domains/messages/messageTypes';
 import { serverFetch } from '@/sync/http/client';
 import { AgentStateSchema, MetadataSchema } from '@/sync/domains/state/storageTypes';
+import { deriveTranscriptInteraction } from '@/utils/sessions/deriveTranscriptInteraction';
 import { sortNormalizedMessagesOldestFirst } from '@/utils/sessions/sortNormalizedMessagesOldestFirst';
 
 const SHARE_SCREEN_OPTIONS = { headerShown: false } as const;
@@ -306,12 +307,7 @@ export default memo(function PublicShareViewerScreen() {
 
     const ownerName = getOwnerDisplayName(share.owner);
     const sessionName = decryptedMetadata?.name || decryptedMetadata?.path || t('session.sharing.session');
-    const interaction = {
-        canSendMessages: false,
-        canApprovePermissions: false,
-        permissionDisabledReason: 'public' as const,
-        disableToolNavigation: true,
-    };
+    const interaction = deriveTranscriptInteraction({ kind: 'public', disableToolNavigation: true });
 
     return (
         <>
