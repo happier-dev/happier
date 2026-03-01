@@ -77,13 +77,13 @@ vi.mock('@/sync/sync', () => ({
     sync: syncSpies,
 }));
 
-const serverFetchSpy = vi.fn(async () => ({
+const serverFetchSpy = vi.fn(async (..._args: unknown[]) => ({
     ok: true,
     status: 200,
     json: async () => ({ mode: 'e2ee', updatedAt: 1 }),
 }));
 vi.mock('@/sync/http/client', () => ({
-    serverFetch: (...args: any[]) => serverFetchSpy(...args),
+    serverFetch: (...args: unknown[]) => serverFetchSpy(...args),
 }));
 
 async function flushRender(): Promise<void> {
