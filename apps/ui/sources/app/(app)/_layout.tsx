@@ -697,6 +697,14 @@ export default function RootLayout() {
                 name="restore/index"
                 options={{
                     headerShown: true,
+                    headerTitle: t('connect.restoreAccount'),
+                    headerBackTitle: t('common.back'),
+                }}
+            />
+            <Stack.Screen
+                name="restore/show-qr"
+                options={{
+                    headerShown: true,
                     headerTitle: t('navigation.linkNewDevice'),
                     headerBackTitle: t('common.back'),
                 }}

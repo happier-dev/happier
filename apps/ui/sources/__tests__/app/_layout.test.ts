@@ -253,3 +253,32 @@ describe('RootLayout notification routing', () => {
         }
     }, 30_000);
 });
+
+describe('RootLayout restore navigation', () => {
+    it('uses coherent headers for restore flows', async () => {
+        stubFeatureFetch();
+
+        const { default: RootLayout } = await import('@/app/(app)/_layout');
+
+        let tree: renderer.ReactTestRenderer | undefined;
+        try {
+            await act(async () => {
+                tree = renderer.create(React.createElement(RootLayout));
+            });
+            if (!tree) throw new Error('Expected renderer');
+
+            const screens = tree.root.findAllByType('StackScreen' as any);
+            const restoreIndex = screens.find((s) => s.props?.name === 'restore/index');
+            expect(restoreIndex?.props?.options?.headerTitle).toBe('connect.restoreAccount');
+
+            const showQr = screens.find((s) => s.props?.name === 'restore/show-qr');
+            expect(showQr?.props?.options?.headerTitle).toBe('navigation.linkNewDevice');
+        } finally {
+            if (tree) {
+                act(() => {
+                    tree!.unmount();
+                });
+            }
+        }
+    }, 30_000);
+});
