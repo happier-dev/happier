@@ -12,16 +12,16 @@ export function DelegateOutputMessageCard(props: Readonly<{ payload: DelegateOut
 
     return (
         <View style={styles.container}>
-            <Text style={styles.headerText}>{t('delegation.output.title')}</Text>
-            <Text style={styles.summaryText}>{props.payload.summary}</Text>
+            <Text selectable style={styles.headerText}>{t('delegation.output.title')}</Text>
+            <Text selectable style={styles.summaryText}>{props.payload.summary}</Text>
 
             {deliverables.length > 0 ? (
                 <View style={styles.section}>
-                    <Text style={styles.sectionTitle}>{t('delegation.output.deliverablesTitle')}</Text>
+                    <Text selectable style={styles.sectionTitle}>{t('delegation.output.deliverablesTitle')}</Text>
                     {deliverables.slice(0, 30).map((d) => (
                         <View key={d.id} style={styles.deliverableRow}>
-                            <Text style={styles.deliverableTitle}>{d.title}</Text>
-                            {d.details ? <Text style={styles.deliverableDetails}>{d.details}</Text> : null}
+                            <Text selectable style={styles.deliverableTitle}>{d.title}</Text>
+                            {d.details ? <Text selectable style={styles.deliverableDetails}>{d.details}</Text> : null}
                         </View>
                     ))}
                 </View>

@@ -230,7 +230,7 @@ function UserTextBlock(props: {
         <View style={styles.structuredUserMessageContent}>
           {structuredNode}
           {isDiscarded ? (
-            <Text style={styles.discardedCommittedMessageLabel}>{t('message.discarded')}</Text>
+            <Text selectable style={styles.discardedCommittedMessageLabel}>{t('message.discarded')}</Text>
           ) : null}
         </View>
         <View
@@ -302,7 +302,7 @@ function UserTextBlock(props: {
             <LinkedWorkspaceFilesRow sessionId={props.sessionId} paths={linkedWorkspaceFiles} />
           ) : null}
           {isDiscarded && (
-            <Text style={styles.discardedCommittedMessageLabel}>{t('message.discarded')}</Text>
+            <Text selectable style={styles.discardedCommittedMessageLabel}>{t('message.discarded')}</Text>
           )}
           {/* {__DEV__ && (
             <Text style={styles.debugText}>{JSON.stringify(props.message.meta)}</Text>
@@ -659,14 +659,14 @@ function AgentEventBlock(props: {
   if (props.event.type === 'switch') {
     return (
       <View style={styles.agentEventContainer}>
-        <Text style={styles.agentEventText}>{t('message.switchedToMode', { mode: props.event.mode })}</Text>
+        <Text selectable style={styles.agentEventText}>{t('message.switchedToMode', { mode: props.event.mode })}</Text>
       </View>
     );
   }
   if (props.event.type === 'message') {
     return (
       <View style={styles.agentEventContainer}>
-        <Text style={styles.agentEventText}>{props.event.message}</Text>
+        <Text selectable style={styles.agentEventText}>{props.event.message}</Text>
       </View>
     );
   }
@@ -682,7 +682,7 @@ function AgentEventBlock(props: {
 
     return (
       <View style={styles.agentEventContainer}>
-        <Text style={styles.agentEventText}>
+        <Text selectable style={styles.agentEventText}>
           {t('message.usageLimitUntil', { time: formatTime(props.event.endsAt) })}
         </Text>
       </View>
@@ -690,7 +690,7 @@ function AgentEventBlock(props: {
   }
   return (
     <View style={styles.agentEventContainer}>
-      <Text style={styles.agentEventText}>{t('message.unknownEvent')}</Text>
+      <Text selectable style={styles.agentEventText}>{t('message.unknownEvent')}</Text>
     </View>
   );
 }
