@@ -870,4 +870,5 @@ describe.skipIf(!await isServerHealthy())('Daemon Integration Tests', { timeout:
     // Output can be empty in CI depending on stream flush timing; state assertions above are authoritative.
     expect(typeof captured.output()).toBe('string');
   });
+
 });
