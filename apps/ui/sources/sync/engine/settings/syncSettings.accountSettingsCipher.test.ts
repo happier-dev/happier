@@ -71,6 +71,10 @@ vi.mock('@/sync/domains/state/storage', () => ({
     },
 }));
 
+vi.mock('@/sync/domains/state/persistence', () => ({
+    loadPendingSettings: () => ({}),
+}));
+
 vi.mock('@/sync/encryption/secretSettings', async (importOriginal) => {
     const actual = await importOriginal<typeof import('@/sync/encryption/secretSettings')>();
     return {
@@ -222,5 +226,64 @@ describe('syncSettings account settings ciphertext', () => {
             expect.objectContaining({ analyticsOptOut: true }),
             12,
         );
+    });
+
+    it('falls back to v1 settings POST when v2 settings is not supported (e2ee)', async () => {
+        const encryptionStub = {
+            getContentPrivateKey: () => TEST_MACHINE_KEY,
+            decryptRaw: vi.fn(async () => null),
+            encryptRaw: vi.fn(async () => {
+                throw new Error('encryptRaw should not be used for account settings');
+            }),
+        } as unknown as Encryption;
+
+        mocks.serverFetch
+            // GET /v1/account/encryption
+            .mockResolvedValueOnce(
+                new Response(JSON.stringify({ mode: 'e2ee', updatedAt: Date.now() }), {
+                    status: 200,
+                    headers: { 'Content-Type': 'application/json' },
+                }),
+            )
+            // POST /v2/account/settings -> 404 (old server)
+            .mockResolvedValueOnce(new Response(JSON.stringify({ error: 'not_found' }), { status: 404 }))
+            // POST /v1/account/settings -> success
+            .mockResolvedValueOnce(
+                new Response(JSON.stringify({ success: true, version: 10 }), {
+                    status: 200,
+                    headers: { 'Content-Type': 'application/json' },
+                }),
+            )
+            // GET /v2/account/settings -> 404 (old server)
+            .mockResolvedValueOnce(new Response(JSON.stringify({ error: 'not_found' }), { status: 404 }))
+            // GET /v1/account/settings -> empty
+            .mockResolvedValueOnce(
+                new Response(JSON.stringify({ settings: null, settingsVersion: 10 }), {
+                    status: 200,
+                    headers: { 'Content-Type': 'application/json' },
+                }),
+            );
+
+        await syncSettings({
+            credentials,
+            encryption: encryptionStub,
+            pendingSettings: { claudeLocalPermissionBridgeEnabled: true } as any,
+            clearPendingSettings: vi.fn(),
+        });
+
+        const calls = mocks.serverFetch.mock.calls.map((call) => [call[0], call[1]?.method ?? 'GET']);
+        expect(calls).toEqual([
+            ['/v1/account/encryption', 'GET'],
+            ['/v2/account/settings', 'POST'],
+            ['/v1/account/settings', 'POST'],
+            ['/v2/account/settings', 'GET'],
+            ['/v1/account/settings', 'GET'],
+        ]);
+
+        const [, initV1] = mocks.serverFetch.mock.calls[2];
+        expect(initV1?.method).toBe('POST');
+        const body = JSON.parse(String(initV1?.body)) as { settings?: unknown; expectedVersion?: unknown };
+        expect(typeof body.settings).toBe('string');
+        expect(body.expectedVersion).toBe(9);
     });
 });

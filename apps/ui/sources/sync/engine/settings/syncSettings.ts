@@ -8,6 +8,7 @@ import {
 } from '@/sync/domains/settings/localOnlyAccountSettings';
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 import { storage } from '@/sync/domains/state/storage';
+import { loadPendingSettings } from '@/sync/domains/state/persistence';
 import type { AuthCredentials } from '@/auth/storage/tokenStorage';
 import type { Encryption } from '@/sync/encryption/encryption';
 import { sealSecretsDeep, unsealSecretsDeep } from '@/sync/encryption/secretSettings';
@@ -324,10 +325,23 @@ export async function syncSettings(params: {
         parsed: summarizeSettings(parsedSettings, { version: fetched.version }),
     });
 
-    const nextSettings = applySettings(
-        parsedSettings,
-        pickLocalOnlyAccountSettings(storage.getState().settings),
-    );
+    // Merge any locally-pending settings deltas before applying server settings.
+    //
+    // Why:
+    // - Local writes apply immediately but do not bump `settingsVersion`.
+    // - A concurrent sync tick can fetch/apply a newer server version (e.g. migrations/other clients)
+    //   and accidentally clobber recent local edits before the pending POST flush runs.
+    // - Pending settings are persisted for crash safety; reload from disk so in-flight sync calls
+    //   don't miss deltas when the Sync instance replaces the pending object reference.
+    const pendingLatest = loadPendingSettings();
+    const pendingLatestForServer = stripLocalOnlyAccountSettings(pendingLatest);
+
+    const mergedWithPending =
+        Object.keys(pendingLatestForServer).length > 0
+            ? applySettings(parsedSettings, pendingLatestForServer)
+            : parsedSettings;
+
+    const nextSettings = applySettings(mergedWithPending, pickLocalOnlyAccountSettings(storage.getState().settings));
 
     // Apply settings to storage
     storage.getState().applySettings(nextSettings, fetched.version);
