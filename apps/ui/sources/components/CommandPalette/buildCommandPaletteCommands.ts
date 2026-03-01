@@ -99,11 +99,11 @@ export function buildCommandPaletteCommands(params: Readonly<{
     },
     {
       id: 'connect',
-      title: 'Connect Device',
-      subtitle: 'Connect a new device via web',
+      title: 'Scan QR to connect terminal',
+      subtitle: 'Approve the connection shown in your terminal',
       icon: 'link-outline',
       category: 'Navigation',
-      action: () => nav.push('/terminal/connect'),
+      action: () => nav.push('/scan/terminal'),
     },
   ];
 
