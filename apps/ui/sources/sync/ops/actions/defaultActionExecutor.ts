@@ -66,11 +66,18 @@ export function createDefaultActionExecutor(opts?: Readonly<{
       const machineId = typeof session?.metadata?.machineId === 'string' ? String(session.metadata.machineId).trim() : '';
       if (!machineId) return { ok: false, errorCode: 'machine_not_found', errorMessage: 'machine_not_found' };
 
+      const settings = stateAny?.settings ?? null;
+      const replaySummaryRunner =
+        settings?.sessionReplayStrategy === 'summary_plus_recent'
+          ? (settings?.sessionReplaySummaryRunnerV1 ?? null)
+          : null;
+
       const result = await forkSessionOp({
         machineId,
         serverId,
         parentSessionId: sid,
         forkPoint: { type: 'latest' },
+        ...(replaySummaryRunner ? { replaySummaryRunner } : {}),
       } as any);
       if ((result as any)?.ok !== true) return result as any;
 
