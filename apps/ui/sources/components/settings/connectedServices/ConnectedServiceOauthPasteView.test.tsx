@@ -6,7 +6,6 @@ import { decodeBase64, encodeBase64, sealBoxBundle } from '@happier-dev/protocol
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
-const promptSpy = vi.fn(async () => 'http://localhost:1455/auth/callback?code=code-1&state=state-1');
 const alertSpy = vi.fn(async () => {});
 const refreshProfileSpy = vi.fn(async () => {});
 const storeCredentialSpy = vi.fn(async () => {});
@@ -44,8 +43,8 @@ vi.mock('@/auth/context/AuthContext', () => ({
 
 vi.mock('@/modal', () => ({
   Modal: {
-    prompt: promptSpy,
     alert: alertSpy,
+    alertAsync: vi.fn(async () => {}),
   },
 }));
 
@@ -84,7 +83,6 @@ describe('ConnectedServiceOauthPasteView', () => {
   }
 
   function resetMocks(): void {
-    promptSpy.mockClear();
     alertSpy.mockClear();
     refreshProfileSpy.mockClear();
     storeCredentialSpy.mockClear();
@@ -104,7 +102,12 @@ describe('ConnectedServiceOauthPasteView', () => {
     });
     await flushAsyncEffects();
 
-    const pasteItem = tree.root.find((n) => n.props?.testID === 'connectedServices.oauthPaste.pasteRedirectButton');
+    const redirectInput = tree.root.findByProps({ testID: 'connectedServices.oauthPaste.redirectUrlInput' });
+    await act(async () => {
+      redirectInput.props.onChangeText?.('http://localhost:1455/auth/callback?code=code-1&state=state-1');
+    });
+
+    const pasteItem = tree.root.find((n) => n.props?.testID === 'connectedServices.oauthPaste.validateRedirectButton');
     await act(async () => {
       await pasteItem.props.onPress?.();
     });
@@ -173,7 +176,12 @@ describe('ConnectedServiceOauthPasteView', () => {
     });
     await flushAsyncEffects();
 
-    const pasteItem = tree.root.find((n) => n.props?.testID === 'connectedServices.oauthPaste.pasteRedirectButton');
+    const redirectInput = tree.root.findByProps({ testID: 'connectedServices.oauthPaste.redirectUrlInput' });
+    await act(async () => {
+      redirectInput.props.onChangeText?.('http://localhost:1455/auth/callback?code=code-1&state=state-1');
+    });
+
+    const pasteItem = tree.root.find((n) => n.props?.testID === 'connectedServices.oauthPaste.validateRedirectButton');
     await act(async () => {
       await pasteItem.props.onPress?.();
     });

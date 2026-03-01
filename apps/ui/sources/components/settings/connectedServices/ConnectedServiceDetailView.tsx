@@ -1,6 +1,7 @@
 import * as React from 'react';
-import { View } from 'react-native';
+import { Platform, View } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
+import { useUnistyles } from 'react-native-unistyles';
 
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { ItemList } from '@/components/ui/lists/ItemList';
@@ -26,6 +27,8 @@ import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
 import { ConnectedServiceDetailActionsGroup } from './detail/ConnectedServiceDetailActionsGroup';
 import { ConnectedServiceDetailProfilesGroup } from './detail/ConnectedServiceDetailProfilesGroup';
 import { ConnectedServiceDetailQuotasSection } from './detail/ConnectedServiceDetailQuotasSection';
+import { resolveConnectedServiceDisplayName } from './model/resolveConnectedServiceDisplayName';
+import { resolveConnectedServiceOauthAddActionModesForPlatform } from './oauth/resolveConnectedServiceOauthAddActionModesForPlatform';
 
 function asStringParam(value: unknown): string {
   if (Array.isArray(value)) return typeof value[0] === 'string' ? value[0] : '';
@@ -33,6 +36,7 @@ function asStringParam(value: unknown): string {
 }
 
 export const ConnectedServiceDetailView = React.memo(function ConnectedServiceDetailView() {
+  const { theme } = useUnistyles();
   const router = useRouter();
   const params = useLocalSearchParams();
   const auth = useAuth();
@@ -46,6 +50,7 @@ export const ConnectedServiceDetailView = React.memo(function ConnectedServiceDe
   const parsedServiceId = ConnectedServiceIdSchema.safeParse(rawServiceId);
   const serviceId: ConnectedServiceId | null = parsedServiceId.success ? parsedServiceId.data : null;
   const entry = serviceId ? getConnectedServiceRegistryEntry(serviceId) : null;
+  const serviceLabel = serviceId ? resolveConnectedServiceDisplayName(serviceId) : t('connectedServices.fallbackName');
 
   const services = profile.connectedServicesV2;
   const svc = serviceId ? (services.find((s) => s.serviceId === serviceId) ?? null) : null;
@@ -85,7 +90,6 @@ export const ConnectedServiceDetailView = React.memo(function ConnectedServiceDe
   };
 
   const handleDisconnect = async (profileId: string) => {
-    const serviceLabel = entry?.displayName ?? serviceId ?? t('connectedServices.fallbackName');
     const ok = await Modal.confirm(
       t('modals.disconnect'),
       t('connectedServices.detail.disconnectConfirmBody', { service: serviceLabel, profileId }),
@@ -101,7 +105,7 @@ export const ConnectedServiceDetailView = React.memo(function ConnectedServiceDe
     if (!serviceId || !entry) return;
     if (!entry?.supportsOauth) {
       await Modal.alert(
-        t('connect.unsupported.connectTitle', { name: entry?.displayName ?? serviceId ?? t('connectedServices.fallbackName') }),
+        t('connect.unsupported.connectTitle', { name: serviceLabel }),
         t('connect.unsupported.runCommandInTerminalWithCommand', { command: entry.connectCommand }),
         [{ text: t('common.ok'), style: 'cancel' }],
       );
@@ -114,7 +118,7 @@ export const ConnectedServiceDetailView = React.memo(function ConnectedServiceDe
       });
     } catch {
       await Modal.alert(
-        t('connect.unsupported.connectTitle', { name: entry?.displayName ?? serviceId ?? t('connectedServices.fallbackName') }),
+        t('connect.unsupported.connectTitle', { name: serviceLabel }),
         t('connect.unsupported.runCommandInTerminalWithCommand', { command: entry.connectCommand }),
         [{ text: t('common.ok'), style: 'cancel' }],
       );
@@ -164,7 +168,13 @@ export const ConnectedServiceDetailView = React.memo(function ConnectedServiceDe
       record,
     });
     await sync.refreshProfile();
-    router.back();
+    await Modal.alert(
+      t('connectedServices.oauthPaste.alerts.connectedTitle'),
+      t('connectedServices.oauthPaste.alerts.connectedBody', {
+        serviceId: serviceLabel,
+        profileId,
+      }),
+    );
   };
 
   const handleAddOauthProfile = async (method: 'device' | 'paste' | 'browser' | null) => {
@@ -192,7 +202,7 @@ export const ConnectedServiceDetailView = React.memo(function ConnectedServiceDe
     } else {
       await Modal.alert(
         t('connectedServices.detail.alerts.unknownProfileTitle'),
-        t('connectedServices.detail.alerts.unknownProfileBody', { profileId, service: entry?.displayName ?? serviceId }),
+        t('connectedServices.detail.alerts.unknownProfileBody', { profileId, service: serviceLabel }),
       );
       return;
     }
@@ -205,7 +215,7 @@ export const ConnectedServiceDetailView = React.memo(function ConnectedServiceDe
     if (!exists) {
       await Modal.alert(
         t('connectedServices.detail.alerts.unknownProfileTitle'),
-        t('connectedServices.detail.alerts.unknownProfileBody', { profileId, service: entry?.displayName ?? serviceId }),
+        t('connectedServices.detail.alerts.unknownProfileBody', { profileId, service: serviceLabel }),
       );
       return;
     }
@@ -254,7 +264,7 @@ export const ConnectedServiceDetailView = React.memo(function ConnectedServiceDe
       <ItemList>
         <ItemGroup title={t('settings.connectedAccounts')}>
           <View style={{ paddingHorizontal: 16, paddingVertical: 12 }}>
-            <Text style={{ opacity: 0.7 }}>{t('settings.connectedAccountsDisabled')}</Text>
+            <Text style={{ color: theme.colors.textSecondary }}>{t('settings.connectedAccountsDisabled')}</Text>
           </View>
         </ItemGroup>
       </ItemList>
@@ -266,17 +276,22 @@ export const ConnectedServiceDetailView = React.memo(function ConnectedServiceDe
       <ItemList>
         <ItemGroup title={t('connectedServices.title')}>
           <View style={{ paddingHorizontal: 16, paddingVertical: 12 }}>
-            <Text style={{ opacity: 0.7 }}>{t('connectedServices.detail.unknownService')}</Text>
+            <Text style={{ color: theme.colors.textSecondary }}>{t('connectedServices.detail.unknownService')}</Text>
           </View>
         </ItemGroup>
       </ItemList>
     );
   }
 
+  const oauthAddActionModes = resolveConnectedServiceOauthAddActionModesForPlatform({
+    platformOS: Platform.OS,
+    oauthAddActionModes: entry.oauthAddActionModes,
+  });
+
   return (
     <ItemList>
       <ConnectedServiceDetailProfilesGroup
-        title={entry.displayName}
+        title={serviceLabel}
         serviceId={serviceId}
         profiles={profiles}
         defaultProfileId={defaultProfileId}
@@ -305,7 +320,7 @@ export const ConnectedServiceDetailView = React.memo(function ConnectedServiceDe
 
       <ConnectedServiceDetailActionsGroup
         supportsOauth={Boolean(entry.supportsOauth)}
-        oauthAddActionModes={entry.oauthAddActionModes}
+        oauthAddActionModes={oauthAddActionModes}
         supportsToken={Boolean(entry.supportsToken)}
         tokenKind={entry.tokenKind ?? null}
         onAddOauthProfile={(method) => void handleAddOauthProfile(method)}

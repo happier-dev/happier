@@ -1,14 +1,14 @@
 import * as React from 'react';
 import { View } from 'react-native';
 import tweetnacl from 'tweetnacl';
-import { useUnistyles } from 'react-native-unistyles';
+import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { Ionicons } from '@expo/vector-icons';
 
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { ItemList } from '@/components/ui/lists/ItemList';
-import { Text } from '@/components/ui/text/Text';
+import { Text, TextInput } from '@/components/ui/text/Text';
 import { Modal } from '@/modal';
 import { useAuth } from '@/auth/context/AuthContext';
 import { sync } from '@/sync/sync';
@@ -27,6 +27,8 @@ import {
 
 import { getConnectedServiceOauthAdapter } from '@/sync/domains/connectedServices/oauth/connectedServiceOauthAdapters';
 import { buildOauthRecordFromProxyPayload, parseConnectedServiceOauthProxyBundle } from '@/sync/domains/connectedServices/oauth/connectedServiceOauthProxyBundle';
+import { resolveConnectedServiceOauthPasteCopy } from './oauth/resolveConnectedServiceOauthPasteCopy';
+import { resolveConnectedServiceOauthErrorMessage } from './oauth/resolveConnectedServiceOauthErrorMessage';
 
 function asStringParam(value: unknown): string {
   if (Array.isArray(value)) return typeof value[0] === 'string' ? value[0] : '';
@@ -45,10 +47,13 @@ export const ConnectedServiceOauthPasteView = React.memo(function ConnectedServi
   const serviceId: ConnectedServiceId | null = parsedServiceId.success ? parsedServiceId.data : null;
   const profileId = asStringParam(props.profileId).trim();
   const adapter = React.useMemo(() => (serviceId ? getConnectedServiceOauthAdapter(serviceId) : null), [serviceId]);
+  const copy = React.useMemo(() => (serviceId ? resolveConnectedServiceOauthPasteCopy(serviceId) : null), [serviceId]);
 
   const [state, setState] = React.useState<string>('');
   const [pkce, setPkce] = React.useState<{ verifier: string; challenge: string } | null>(null);
   const [busy, setBusy] = React.useState(false);
+  const [redirectUrlInput, setRedirectUrlInput] = React.useState('');
+  const [didShowOpenInstructions, setDidShowOpenInstructions] = React.useState(false);
   const keyPairRef = React.useRef<tweetnacl.BoxKeyPair | null>(null);
   if (!keyPairRef.current) {
     keyPairRef.current = tweetnacl.box.keyPair();
@@ -85,22 +90,17 @@ export const ConnectedServiceOauthPasteView = React.memo(function ConnectedServi
 
   const handlePaste = React.useCallback(async () => {
     if (!serviceId || !adapter || !pkce || !state || !profileId) return;
+    const pastedUrl = redirectUrlInput.trim();
+    if (!pastedUrl) return;
     setBusy(true);
     try {
-      const pasted = await Modal.prompt(
-        t('connectedServices.oauthPaste.pasteRedirectUrl'),
-        t('connectedServices.oauthPaste.pasteRedirectUrlPromptBody'),
-        { placeholder: redirectUri, confirmText: t('common.continue'), cancelText: t('common.cancel') },
-      );
-      const pastedUrl = typeof pasted === 'string' ? pasted.trim() : '';
-      if (!pastedUrl) return;
-
       const parsed = parseOauthCallbackUrl({ url: pastedUrl, redirectUri });
       if (parsed.error) throw new Error(`OAuth error: ${parsed.error}`);
       const code = parsed.code ?? '';
       const returnedState = parsed.state ?? '';
       if (!code) throw new Error('Missing code');
-      if (!returnedState || returnedState !== state) throw new Error('State mismatch');
+      if (!returnedState) throw new Error(copy?.missingStateError ?? t('connectedServices.oauthPaste.errors.missingState'));
+      if (returnedState !== state) throw new Error(t('connectedServices.oauthPaste.errors.stateMismatch'));
 
       const credentials = ensureCredentials();
       const now = Date.now();
@@ -139,21 +139,46 @@ export const ConnectedServiceOauthPasteView = React.memo(function ConnectedServi
       );
       props.onDone();
     } catch (e: unknown) {
+      const message = resolveConnectedServiceOauthErrorMessage(
+        e,
+        t('connectedServices.oauthPaste.alerts.failedToConnect'),
+      );
       await Modal.alert(
         t('common.error'),
-        e instanceof Error ? e.message : t('connectedServices.oauthPaste.alerts.failedToConnect')
+        message,
       );
     } finally {
       setBusy(false);
     }
-  }, [adapter, auth.credentials, pkce, profileId, props, redirectUri, serviceId, state]);
+  }, [adapter, auth.credentials, copy?.missingStateError, pkce, profileId, props, redirectUri, serviceId, state, redirectUrlInput]);
+
+  const handleOpenAuthorization = React.useCallback(() => {
+    if (!authorizationUrl) return;
+    fireAndForget((async () => {
+      if (!didShowOpenInstructions) {
+        setDidShowOpenInstructions(true);
+        await Modal.alertAsync(
+          copy?.connectWebDescription ?? t('connectedServices.oauthPaste.connectWebDescription'),
+          copy?.pasteRedirectUrlPromptBody ?? t('connectedServices.oauthPaste.pasteRedirectUrlPromptBody'),
+          [{ text: t('connectedServices.oauthPaste.openAuthorizationUrl') }],
+        );
+      }
+      const ok = await openExternalUrl(authorizationUrl);
+      if (!ok) {
+        await Modal.alert(
+          t('common.error'),
+          t('connectedServices.oauthPaste.alerts.failedToOpenUrl'),
+        );
+      }
+    })(), { tag: 'ConnectedServiceOauthPasteView.openAuthorizationUrl' });
+  }, [authorizationUrl, copy?.connectWebDescription, copy?.pasteRedirectUrlPromptBody, didShowOpenInstructions]);
 
   if (!serviceId || !profileId || !adapter) {
     return (
       <ItemList>
         <ItemGroup title={t('connectedServices.title')}>
           <View style={{ paddingHorizontal: 16, paddingVertical: 12 }}>
-            <Text style={{ opacity: 0.7 }}>{t('connectedServices.oauthPaste.invalidConfig')}</Text>
+            <Text style={{ color: theme.colors.textSecondary }}>{t('connectedServices.oauthPaste.invalidConfig')}</Text>
           </View>
         </ItemGroup>
       </ItemList>
@@ -164,16 +189,16 @@ export const ConnectedServiceOauthPasteView = React.memo(function ConnectedServi
     <ItemList>
       <ItemGroup title={t('connectedServices.oauthPaste.connectWebGroupTitle')}>
         <View style={{ paddingHorizontal: 16, paddingVertical: 12 }}>
-          <Text style={{ opacity: 0.7 }}>
-            {t('connectedServices.oauthPaste.connectWebDescription')}
+          <Text style={{ color: theme.colors.textSecondary }}>
+            {copy?.connectWebDescription ?? t('connectedServices.oauthPaste.connectWebDescription')}
           </Text>
         </View>
       </ItemGroup>
 
       <ItemGroup title={t('connectedServices.oauthPaste.openAuthorizationUrl')}>
         <View style={{ paddingHorizontal: 16, paddingVertical: 12 }}>
-          <Text style={{ opacity: 0.7, marginBottom: 6 }}>{t('connectedServices.oauthPaste.openAuthorizationUrl')}</Text>
-          <Text selectable={true} style={{ opacity: 0.9 }}>
+          <Text style={{ color: theme.colors.textSecondary, marginBottom: 6 }}>{t('connectedServices.oauthPaste.openAuthorizationUrl')}</Text>
+          <Text selectable={true} style={{ color: theme.colors.textSecondary }}>
             {authorizationUrl || t('connectedServices.oauthPaste.preparing')}
           </Text>
           <View style={{ marginTop: 12 }}>
@@ -182,22 +207,11 @@ export const ConnectedServiceOauthPasteView = React.memo(function ConnectedServi
               size="normal"
               title={t('connectedServices.oauthPaste.openAuthorizationUrl')}
               disabled={!authorizationUrl}
-              onPress={() => {
-                if (!authorizationUrl) return;
-                fireAndForget((async () => {
-                  const ok = await openExternalUrl(authorizationUrl);
-                  if (!ok) {
-                    await Modal.alert(
-                      t('common.error'),
-                      t('connectedServices.oauthPaste.alerts.failedToOpenUrl'),
-                    );
-                  }
-                })(), { tag: 'ConnectedServiceOauthPasteView.openAuthorizationUrl' });
-              }}
+              onPress={handleOpenAuthorization}
             />
           </View>
           <View style={{ marginTop: 8 }}>
-            <Text style={{ opacity: 0.7 }}>
+            <Text style={{ color: theme.colors.textSecondary }}>
               {authorizationUrl ? t('connectedServices.oauthPaste.opensInNewTab') : t('connectedServices.oauthPaste.preparing')}
             </Text>
           </View>
@@ -206,15 +220,28 @@ export const ConnectedServiceOauthPasteView = React.memo(function ConnectedServi
 
       <ItemGroup title={t('connectedServices.oauthPaste.pasteRedirectUrl')}>
         <View style={{ paddingHorizontal: 16, paddingVertical: 12 }}>
+          <Text style={{ color: theme.colors.textSecondary, marginBottom: 8 }}>
+            {copy?.pasteRedirectUrlPromptBody ?? t('connectedServices.oauthPaste.pasteRedirectUrlPromptBody')}
+          </Text>
+          <TextInput
+            testID="connectedServices.oauthPaste.redirectUrlInput"
+            value={redirectUrlInput}
+            onChangeText={setRedirectUrlInput}
+            placeholder={copy?.pasteRedirectUrlPlaceholder ?? redirectUri}
+            placeholderTextColor={theme.colors.input.placeholder}
+            autoCapitalize="none"
+            autoCorrect={false}
+            style={styles.redirectInput}
+          />
           <RoundButton
-            testID="connectedServices.oauthPaste.pasteRedirectButton"
+            testID="connectedServices.oauthPaste.validateRedirectButton"
             size="normal"
-            title={busy ? t('connectedServices.oauthPaste.working') : t('connectedServices.oauthPaste.pasteRedirectUrl')}
-            disabled={busy}
+            title={busy ? t('connectedServices.oauthPaste.working') : t('common.continue')}
+            disabled={busy || !redirectUrlInput.trim()}
             onPress={busy ? undefined : handlePaste}
           />
           <View style={{ marginTop: 8 }}>
-            <Text selectable={true} style={{ opacity: 0.7 }}>{redirectUri}</Text>
+            <Text selectable={true} style={{ color: theme.colors.textSecondary }}>{redirectUri}</Text>
           </View>
         </View>
       </ItemGroup>
@@ -232,3 +259,17 @@ export const ConnectedServiceOauthPasteView = React.memo(function ConnectedServi
     </ItemList>
   );
 });
+
+const styles = StyleSheet.create((theme) => ({
+  redirectInput: {
+    minHeight: 42,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: theme.colors.divider,
+    backgroundColor: theme.colors.input.background,
+    color: theme.colors.input.text,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    marginBottom: 12,
+  },
+}));
