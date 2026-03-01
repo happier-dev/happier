@@ -45,6 +45,7 @@ export type DiffFilesListViewProps = Readonly<{
 
 export function DiffFilesListView(props: DiffFilesListViewProps) {
     const [focusedFileKey, setFocusedFileKey] = React.useState<string | null>(null);
+    const listRef = React.useRef<any>(null);
 
     const { height: windowHeight } = useWindowDimensions();
     const { lineThreshold: virtualizationLineThreshold, byteThreshold: virtualizationByteThreshold } = useInlineDiffVirtualizationThresholds();
@@ -52,6 +53,13 @@ export function DiffFilesListView(props: DiffFilesListViewProps) {
     if (props.files.length === 0) return null;
 
     const maxVirtualizedHeight = resolveInlineDiffVirtualizedMaxHeight(windowHeight);
+    const virtualizedListStyle = React.useMemo(() => {
+        const style: Record<string, unknown> = { flex: 1 };
+        if (Platform.OS === 'web') {
+            style.overflowAnchor = 'none';
+        }
+        return style;
+    }, []);
 
     const renderFileNode = React.useCallback((file: DiffFileEntry) => {
         const expanded = props.expandedKeys.has(file.key);
@@ -78,7 +86,15 @@ export function DiffFilesListView(props: DiffFilesListViewProps) {
                     ]}
                 >
                     <Pressable
-                        onPress={() => props.onToggleExpanded(file.key)}
+                        onPress={() => {
+                            // FlashList on web can keep stale measurement caches when rows expand/collapse
+                            // (inline diffs have highly variable height). Clearing the cache before the
+                            // state change helps prevent large empty "virtualizer buffer" gaps.
+                            if (Platform.OS === 'web' && props.virtualizeFileList === true) {
+                                listRef.current?.clearLayoutCacheOnUpdate?.();
+                            }
+                            props.onToggleExpanded(file.key);
+                        }}
                         onFocus={() => setFocusedFileKey(file.key)}
                         onBlur={() => setFocusedFileKey((prev) => (prev === file.key ? null : prev))}
                         style={({ hovered, pressed }) => ([
@@ -209,15 +225,12 @@ export function DiffFilesListView(props: DiffFilesListViewProps) {
         <PierreScrollRootVirtualizerProvider>
             {props.virtualizeFileList === true ? (
                 <FlashList
-                    style={[
-                        { flex: 1 },
-                        Platform.select({ web: ({ overflowAnchor: 'none' } as any), default: null }) as any,
-                    ]}
+                    ref={listRef}
+                    style={virtualizedListStyle as any}
                     data={props.files as DiffFileEntry[]}
                     keyExtractor={(item) => item.key}
                     renderItem={({ item }) => renderFileNode(item)}
                     contentContainerStyle={{ paddingBottom: 12 }}
-                    estimatedItemSize={56}
                     extraData={props.expandedKeys}
                     onScroll={props.onScroll}
                     onLayout={props.onLayout}
