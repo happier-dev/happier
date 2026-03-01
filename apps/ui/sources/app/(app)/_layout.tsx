@@ -567,7 +567,7 @@ export default function RootLayout() {
                 name="automations/index"
                 options={{
                     headerShown: true,
-                    headerTitle: 'Automations',
+                    headerTitle: t('navigation.automations'),
                     headerBackTitle: t('common.back'),
                 }}
             />
@@ -575,7 +575,7 @@ export default function RootLayout() {
                 name="automations/[id]"
                 options={{
                     headerShown: true,
-                    headerTitle: 'Automation',
+                    headerTitle: t('navigation.automation'),
                     headerBackTitle: t('common.back'),
                 }}
             />
@@ -583,7 +583,7 @@ export default function RootLayout() {
                 name="automations/new"
                 options={{
                     headerShown: true,
-                    headerTitle: 'New Automation',
+                    headerTitle: t('navigation.newAutomation'),
                     headerBackTitle: t('common.back'),
                 }}
             />
@@ -660,7 +660,7 @@ export default function RootLayout() {
             <Stack.Screen
                 name="settings/source-control"
                 options={{
-                    headerTitle: 'Source control',
+                    headerTitle: t('navigation.sourceControl'),
                 }}
             />
             <Stack.Screen
@@ -841,50 +841,50 @@ export default function RootLayout() {
             <Stack.Screen
                 name="dev/index"
                 options={{
-                    headerTitle: 'Developer Tools',
+                    headerTitle: t('navigation.developerTools'),
                 }}
             />
 
             <Stack.Screen
                 name="dev/list-demo"
                 options={{
-                    headerTitle: 'List Components Demo',
+                    headerTitle: t('navigation.listComponentsDemo'),
                 }}
             />
             <Stack.Screen
                 name="dev/typography"
                 options={{
-                    headerTitle: 'Typography',
+                    headerTitle: t('navigation.typography'),
                 }}
             />
             <Stack.Screen
                 name="dev/colors"
                 options={{
-                    headerTitle: 'Colors',
+                    headerTitle: t('navigation.colors'),
                 }}
             />
             <Stack.Screen
                 name="dev/tools2"
                 options={{
-                    headerTitle: 'Tool Views Demo',
+                    headerTitle: t('navigation.toolViewsDemo'),
                 }}
             />
             <Stack.Screen
                 name="dev/masked-progress"
                 options={{
-                    headerTitle: 'Masked Progress',
+                    headerTitle: t('navigation.maskedProgress'),
                 }}
             />
             <Stack.Screen
                 name="dev/shimmer-demo"
                 options={{
-                    headerTitle: 'Shimmer View Demo',
+                    headerTitle: t('navigation.shimmerViewDemo'),
                 }}
             />
             <Stack.Screen
                 name="dev/multi-text-input"
                 options={{
-                    headerTitle: 'Multi Text Input',
+                    headerTitle: t('navigation.multiTextInput'),
                 }}
             />
             <Stack.Screen
@@ -899,7 +899,7 @@ export default function RootLayout() {
                 name="settings/connect/claude"
                 options={{
                     headerShown: true,
-                    headerTitle: 'Connect to Claude',
+                    headerTitle: t('navigation.connectClaude'),
                     headerBackTitle: t('common.back'),
                     // headerStyle: {
                     //     backgroundColor: Platform.OS === 'web' ? theme.colors.header.background : '#1F1E1C',
@@ -989,7 +989,7 @@ export default function RootLayout() {
                 name="zen/new"
                 options={{
                     presentation: 'modal',
-                    headerTitle: 'New Task',
+                    headerTitle: t('navigation.zenNewTask'),
                     headerBackTitle: t('common.cancel'),
                 }}
             />
@@ -997,7 +997,7 @@ export default function RootLayout() {
                 name="zen/view"
                 options={{
                     presentation: 'modal',
-                    headerTitle: 'Task Details',
+                    headerTitle: t('navigation.zenTaskDetails'),
                     headerBackTitle: t('common.back'),
                 }}
             />
