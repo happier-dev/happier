@@ -9,6 +9,7 @@ import { chmodSync, existsSync, mkdirSync, readFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { isServerIdFilesystemSafe, sanitizeServerIdForFilesystem } from '@/server/serverId'
+import { isLocalishServerUrl } from '@/server/serverUrlClassification'
 import packageJson from '../package.json'
 
 export function isDaemonProcessArgv(args: readonly string[]): boolean {
@@ -19,6 +20,11 @@ export function isDaemonProcessArgv(args: readonly string[]): boolean {
 
 class Configuration {
   public readonly serverUrl: string
+  public readonly apiServerUrl: string
+  /**
+   * Deprecated alias: historically used as “public URL for QR/deep links”.
+   * In schema v6+ the canonical/share URL is `serverUrl`, so this is always equal to `serverUrl`.
+   */
   public readonly publicServerUrl: string
   public readonly webappUrl: string
   public readonly activeServerId: string
@@ -127,6 +133,7 @@ class Configuration {
     this.serversDir = join(this.happyHomeDir, 'servers')
 
     const envServerUrl = (process.env.HAPPIER_SERVER_URL ?? '').toString().trim();
+    const envLocalServerUrl = (process.env.HAPPIER_LOCAL_SERVER_URL ?? '').toString().trim();
     const envWebappUrl = (process.env.HAPPIER_WEBAPP_URL ?? '').toString().trim();
     const envPublicServerUrl = (process.env.HAPPIER_PUBLIC_SERVER_URL ?? '').toString().trim();
     const envActiveServerIdRaw = (process.env.HAPPIER_ACTIVE_SERVER_ID ?? '').toString().trim();
@@ -136,13 +143,16 @@ class Configuration {
     const persisted = readActiveServerFromSettingsFile(this.settingsFile);
     const resolved = resolveServerSelection({
       envServerUrl: envServerUrl || null,
+      envLocalServerUrl: envLocalServerUrl || null,
+      envPublicServerUrl: envPublicServerUrl || null,
       envWebappUrl: envWebappUrl || null,
       envActiveServerId,
       persisted,
     });
 
     this.serverUrl = resolved.serverUrl
-    this.publicServerUrl = (envPublicServerUrl || resolved.publicServerUrl).replace(/\/+$/, '')
+    this.apiServerUrl = resolved.apiServerUrl
+    this.publicServerUrl = resolved.serverUrl
     this.webappUrl = resolved.webappUrl
     this.activeServerId = sanitizeServerIdForFilesystem(resolved.activeServerId, 'cloud')
 
@@ -323,7 +333,10 @@ class Configuration {
     const allowTaskBackgroundRaw = String(process.env.HAPPIER_CLAUDE_TASK_ALLOW_RUN_IN_BACKGROUND ?? '').trim().toLowerCase();
     this.claudeTaskAllowRunInBackground = ['1', 'true', 'yes', 'on'].includes(allowTaskBackgroundRaw);
 
-    const abortIgnoreWindowRaw = Number.parseInt(String(process.env.HAPPIER_CLAUDE_ABORT_UNHANDLED_REJECTION_IGNORE_WINDOW_MS ?? ''), 10);
+    const abortIgnoreWindowRaw = Number.parseInt(
+      String(process.env.HAPPIER_CLAUDE_ABORT_UNHANDLED_REJECTION_IGNORE_WINDOW_MS ?? ''),
+      10,
+    );
     // Default: 10s. Set to 0 to disable suppression.
     this.claudeAbortUnhandledRejectionIgnoreWindowMs =
       Number.isFinite(abortIgnoreWindowRaw) && abortIgnoreWindowRaw >= 0 ? Math.min(abortIgnoreWindowRaw, 60_000) : 10_000;
@@ -475,7 +488,7 @@ class Configuration {
 type PersistedServerProfile = Readonly<{
   id: string;
   serverUrl: string;
-  publicServerUrl?: string;
+  localServerUrl?: string;
   webappUrl: string;
 }>;
 
@@ -494,17 +507,30 @@ function readActiveServerFromSettingsFile(path: string): PersistedServerSettings
     const activeServerId = sanitizeServerIdForFilesystem((raw as any).activeServerId ?? '', '');
     const serversRaw = (raw as any).servers;
     if (!activeServerId || !serversRaw || typeof serversRaw !== 'object') return null;
-    const servers: Record<string, PersistedServerProfile> = {};
-    for (const [id, v] of Object.entries(serversRaw as Record<string, any>)) {
-      const sid = sanitizeServerIdForFilesystem((v as any)?.id ?? id, '');
-      const serverUrl = String((v as any)?.serverUrl ?? '').trim();
-      const publicServerUrl = String((v as any)?.publicServerUrl ?? '').trim();
-      const webappUrl = String((v as any)?.webappUrl ?? '').trim();
-      if (!sid || !serverUrl || !webappUrl) continue;
-      servers[sid] = {
-        id: sid,
-        serverUrl,
-        ...(publicServerUrl ? { publicServerUrl } : {}),
+        const servers: Record<string, PersistedServerProfile> = {};
+        const normalizeUrl = (value: unknown): string => String(value ?? '').trim().replace(/\/+$/, '');
+        for (const [id, v] of Object.entries(serversRaw as Record<string, any>)) {
+          const sid = sanitizeServerIdForFilesystem((v as any)?.id ?? id, '');
+          const serverUrlRaw = normalizeUrl((v as any)?.serverUrl);
+          const legacyPublicServerUrl = normalizeUrl((v as any)?.publicServerUrl);
+      const localServerUrlRaw = normalizeUrl((v as any)?.localServerUrl);
+      const webappUrl = normalizeUrl((v as any)?.webappUrl);
+      if (!sid || !serverUrlRaw || !webappUrl) continue;
+
+      const serverUrl =
+        legacyPublicServerUrl && legacyPublicServerUrl !== serverUrlRaw
+          ? legacyPublicServerUrl
+          : serverUrlRaw;
+
+          const localServerUrl =
+            localServerUrlRaw
+              ? localServerUrlRaw
+              : (legacyPublicServerUrl && legacyPublicServerUrl !== serverUrlRaw && isLocalishServerUrl(serverUrlRaw) ? serverUrlRaw : '');
+
+          servers[sid] = {
+            id: sid,
+            serverUrl,
+        ...(localServerUrl ? { localServerUrl } : {}),
         webappUrl,
       };
     }
@@ -532,47 +558,63 @@ function normalizeServerUrl(url: string): string {
 
 function resolveServerSelection(params: Readonly<{
   envServerUrl: string | null;
+  envLocalServerUrl: string | null;
+  envPublicServerUrl: string | null;
   envWebappUrl: string | null;
   envActiveServerId: string | null;
   persisted: PersistedServerSettings | null;
-}>): Readonly<{ activeServerId: string; serverUrl: string; publicServerUrl: string; webappUrl: string }> {
+}>): Readonly<{ activeServerId: string; serverUrl: string; apiServerUrl: string; webappUrl: string }> {
   const DEFAULT_SERVER_URL = 'https://api.happier.dev';
   const DEFAULT_WEBAPP_URL = 'https://app.happier.dev';
   const resolveActiveServerId = (fallbackId: string): string =>
     sanitizeServerIdForFilesystem(params.envActiveServerId ?? fallbackId, 'cloud');
 
-  // If env vars are set, treat them as an explicit (non-persisted) override for this invocation.
-  if (params.envServerUrl) {
-    const serverUrl = normalizeServerUrl(params.envServerUrl);
+  const normalizeUrl = (value: string | null): string | null => {
+    const out = normalizeServerUrl(value ?? '');
+    return out ? out : null;
+  };
+
+  // Env override semantics (compat):
+  // - If HAPPIER_PUBLIC_SERVER_URL is set: treat it as canonical serverUrl and use HAPPIER_LOCAL_SERVER_URL/HAPPIER_SERVER_URL for apiServerUrl.
+  // - Else: treat HAPPIER_SERVER_URL as canonical serverUrl (legacy), and use HAPPIER_LOCAL_SERVER_URL as apiServerUrl override if provided.
+  const envCanonicalServerUrl = normalizeUrl(params.envPublicServerUrl) ?? normalizeUrl(params.envServerUrl);
+  if (envCanonicalServerUrl) {
+    const envApiServerUrl =
+      normalizeUrl(params.envLocalServerUrl)
+      ?? (params.envPublicServerUrl ? normalizeUrl(params.envServerUrl) : null)
+      ?? envCanonicalServerUrl;
+
     const persistedMatch = params.persisted
-      ? Object.values(params.persisted.servers).find((s) => normalizeServerUrl(s.serverUrl) === serverUrl) ?? null
+      ? Object.values(params.persisted.servers).find((s) => normalizeServerUrl(s.serverUrl) === envCanonicalServerUrl) ?? null
       : null;
-    const publicServerUrl = normalizeServerUrl(persistedMatch?.publicServerUrl ?? serverUrl);
+
     let webappUrl = params.envWebappUrl;
     if (!webappUrl) {
       if (persistedMatch?.webappUrl) {
         webappUrl = persistedMatch.webappUrl;
-      } else if (serverUrl === DEFAULT_SERVER_URL) {
+      } else if (envCanonicalServerUrl === DEFAULT_SERVER_URL) {
         webappUrl = DEFAULT_WEBAPP_URL;
       } else {
         try {
-          webappUrl = new URL(serverUrl).origin;
+          webappUrl = new URL(envCanonicalServerUrl).origin;
         } catch {
           webappUrl = DEFAULT_WEBAPP_URL;
         }
       }
     }
-    const activeServerId = resolveActiveServerId(persistedMatch?.id ?? deriveServerIdFromUrl(serverUrl));
-    return { activeServerId, serverUrl, publicServerUrl, webappUrl };
+    const activeServerId = resolveActiveServerId(persistedMatch?.id ?? deriveServerIdFromUrl(envCanonicalServerUrl));
+    return { activeServerId, serverUrl: envCanonicalServerUrl, apiServerUrl: envApiServerUrl, webappUrl };
   }
 
   if (params.persisted) {
     const active = params.persisted.servers[params.persisted.activeServerId];
     if (active) {
+      const canonical = normalizeServerUrl(active.serverUrl);
+      const apiServerUrl = normalizeServerUrl(active.localServerUrl ?? '') || canonical;
       return {
         activeServerId: resolveActiveServerId(active.id),
-        serverUrl: normalizeServerUrl(active.serverUrl),
-        publicServerUrl: normalizeServerUrl(active.publicServerUrl ?? active.serverUrl),
+        serverUrl: canonical,
+        apiServerUrl,
         webappUrl: active.webappUrl,
       };
     }
@@ -581,7 +623,7 @@ function resolveServerSelection(params: Readonly<{
   return {
     activeServerId: resolveActiveServerId('cloud'),
     serverUrl: DEFAULT_SERVER_URL,
-    publicServerUrl: DEFAULT_SERVER_URL,
+    apiServerUrl: DEFAULT_SERVER_URL,
     webappUrl: DEFAULT_WEBAPP_URL,
   };
 }
