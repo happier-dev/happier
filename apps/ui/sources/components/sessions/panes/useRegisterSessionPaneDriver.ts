@@ -5,10 +5,53 @@ import { SessionPaneLazyLoader, type SessionPaneLazyLoaderProps } from './Sessio
 
 type SessionPaneScopedProps = Readonly<{ sessionId: string; scopeId: string }>;
 
+type SessionPaneComponent = React.ComponentType<SessionPaneScopedProps>;
+
+let rightPaneImpl: SessionPaneComponent | null = null;
+let rightPanePromise: Promise<SessionPaneComponent> | null = null;
+let detailsPaneImpl: SessionPaneComponent | null = null;
+let detailsPanePromise: Promise<SessionPaneComponent> | null = null;
+
+function loadRightPaneModule(): Promise<SessionPaneComponent> {
+    if (rightPaneImpl) return Promise.resolve(rightPaneImpl);
+    if (!rightPanePromise) {
+        rightPanePromise = import('./SessionRightPanel')
+            .then((mod) => {
+                rightPaneImpl = mod.SessionRightPanel as SessionPaneComponent;
+                return rightPaneImpl;
+            })
+            .catch((error) => {
+                rightPanePromise = null;
+                throw error;
+            });
+    }
+    return rightPanePromise;
+}
+
+function loadDetailsPaneModule(): Promise<SessionPaneComponent> {
+    if (detailsPaneImpl) return Promise.resolve(detailsPaneImpl);
+    if (!detailsPanePromise) {
+        detailsPanePromise = import('./SessionDetailsPanel')
+            .then((mod) => {
+                detailsPaneImpl = mod.SessionDetailsPanel as SessionPaneComponent;
+                return detailsPaneImpl;
+            })
+            .catch((error) => {
+                detailsPanePromise = null;
+                throw error;
+            });
+    }
+    return detailsPanePromise;
+}
+
+function prefetchSessionPaneModules(): void {
+    void loadRightPaneModule().catch(() => {});
+    void loadDetailsPaneModule().catch(() => {});
+}
+
 const LazySessionRightPanel = React.memo((props: SessionPaneScopedProps) => {
     const load = React.useCallback(async () => {
-        const mod = await import('./SessionRightPanel');
-        return mod.SessionRightPanel as React.ComponentType<SessionPaneScopedProps>;
+        return loadRightPaneModule();
     }, []);
     const Loader = SessionPaneLazyLoader as unknown as React.ComponentType<SessionPaneLazyLoaderProps<SessionPaneScopedProps>>;
     return React.createElement(Loader, { testID: 'session-right-pane-module-loading', load, props });
@@ -16,8 +59,7 @@ const LazySessionRightPanel = React.memo((props: SessionPaneScopedProps) => {
 
 const LazySessionDetailsPanel = React.memo((props: SessionPaneScopedProps) => {
     const load = React.useCallback(async () => {
-        const mod = await import('./SessionDetailsPanel');
-        return mod.SessionDetailsPanel as React.ComponentType<SessionPaneScopedProps>;
+        return loadDetailsPaneModule();
     }, []);
     const Loader = SessionPaneLazyLoader as unknown as React.ComponentType<SessionPaneLazyLoaderProps<SessionPaneScopedProps>>;
     return React.createElement(Loader, { testID: 'session-details-pane-module-loading', load, props });
@@ -26,6 +68,10 @@ const LazySessionDetailsPanel = React.memo((props: SessionPaneScopedProps) => {
 export function useRegisterSessionPaneDriver(sessionId: string): string {
     const scopeId = React.useMemo(() => `session:${sessionId}`, [sessionId]);
     const { registerDriver } = useAppPaneContext();
+
+    React.useEffect(() => {
+        prefetchSessionPaneModules();
+    }, []);
 
     React.useEffect(() => {
         const driver: PaneDriver = {
