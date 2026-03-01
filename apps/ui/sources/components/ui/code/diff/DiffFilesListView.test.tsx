@@ -113,6 +113,36 @@ describe('DiffFilesListView', () => {
         expect(list.props.onContentSizeChange).toBe(onContentSizeChange);
     });
 
+    it('passes a flat style object to FlashList when virtualized', async () => {
+        const { DiffFilesListView } = await import('./DiffFilesListView');
+
+        let tree!: renderer.ReactTestRenderer;
+        await act(async () => {
+            tree = renderer.create(
+                <DiffFilesListView
+                    files={[{
+                        key: 'k1',
+                        filePath: 'src/a.ts',
+                        added: 1,
+                        removed: 0,
+                        unifiedDiff: 'a\n',
+                    } as any]}
+                    expandedKeys={new Set()}
+                    onToggleExpanded={() => {}}
+                    canRenderInlineDiffs={true}
+                    wrapLines={true}
+                    showLineNumbers={true}
+                    showPrefix={true}
+                    virtualizeFileList
+                />
+            );
+        });
+
+        const list = tree.root.findByType('FlashList' as any);
+        expect(Array.isArray(list.props.style)).toBe(false);
+        expect(typeof list.props.style).toBe('object');
+    });
+
     it('enables virtualization when the diff exceeds the byte threshold', async () => {
         const { DiffFilesListView } = await import('./DiffFilesListView');
 
