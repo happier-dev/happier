@@ -19,4 +19,9 @@ describe('parseConnectArgs', () => {
     const res = parseConnectArgs(['claude', '--oauth']);
     expect(res.options.oauth).toBe(true);
   });
+
+  it('parses --api-key', () => {
+    const res = parseConnectArgs(['claude', '--api-key']);
+    expect(res.options.apiKey).toBe(true);
+  });
 });

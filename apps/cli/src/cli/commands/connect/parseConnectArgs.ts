@@ -6,6 +6,7 @@ export type ConnectParsedOptions = Readonly<{
   timeoutSeconds: number | null;
   setupToken: boolean;
   oauth: boolean;
+  apiKey: boolean;
 }>;
 
 export function parseConnectArgs(args: ReadonlyArray<string>): Readonly<{
@@ -19,6 +20,7 @@ export function parseConnectArgs(args: ReadonlyArray<string>): Readonly<{
   const noOpen = args.includes('--no-open');
   const setupToken = args.includes('--setup-token') || args.includes('--setup_token');
   const oauth = args.includes('--oauth');
+  const apiKey = args.includes('--api-key') || args.includes('--api_key');
 
   const profileFlagIdx = args.findIndex((a) => a === '--profile');
   const profileId = profileFlagIdx !== -1 ? String(args[profileFlagIdx + 1] ?? '').trim() : '';
@@ -37,6 +39,8 @@ export function parseConnectArgs(args: ReadonlyArray<string>): Readonly<{
     '--setup-token',
     '--setup_token',
     '--oauth',
+    '--api-key',
+    '--api_key',
     '--profile',
     '--timeout',
   ]);
@@ -62,6 +66,7 @@ export function parseConnectArgs(args: ReadonlyArray<string>): Readonly<{
       timeoutSeconds: timeoutSecondsValue,
       setupToken,
       oauth,
+      apiKey,
     },
   };
 }

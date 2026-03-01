@@ -12,13 +12,12 @@ import { parseConnectArgs, type ConnectParsedOptions } from './connect/parseConn
 import { resolveConnectAuthIntent } from './connect/resolveConnectAuthIntent';
 
 /**
- * Handle connect subcommand
- * 
+ * Handle connect subcommand.
+ *
  * Implements connect subcommands for storing Connected Services credentials (v2):
  * - connect codex: Store OpenAI Codex subscription OAuth (openai-codex)
- * - connect claude: Store Anthropic Claude subscription OAuth or setup-token (anthropic)
+ * - connect claude: Store Claude subscription auth (claude-subscription) or Anthropic API key (anthropic)
  * - connect gemini: Store Gemini OAuth (gemini)
- * - connect help: Show help for connect command
  */
 export async function handleConnectCommand(args: string[]): Promise<void> {
     const { includeExperimental, subcommand, options } = parseConnectArgs(args);
@@ -71,7 +70,7 @@ function showConnectHelp(targets: ReadonlyArray<CloudConnectTarget>, opts: Reado
       ? targets.map((t) => formatTargetLine(t)).join('\n')
       : '  (no connect targets registered)';
     console.log(`
-${chalk.bold('happier connect')} - Connect AI vendor API keys to Happier cloud
+${chalk.bold('happier connect')} - Connect AI vendor subscriptions and API keys to Happier cloud
 
 ${chalk.bold('Usage:')}
 ${targetLines}
@@ -81,15 +80,16 @@ ${targetLines}
   happier connect <target> --profile <id>      Store under a specific profile (default: default)
   happier connect <target> --paste             Headless mode: paste redirect URL
   happier connect <target> --device            Use device-code auth (Codex)
+  happier connect claude --api-key             Store an Anthropic API key (not Claude subscription)
+  happier connect claude --setup-token         Store a Claude setup-token (default for claude)
+  happier connect claude --oauth               Store Claude subscription OAuth (advanced)
   happier connect <target> --no-open           Do not attempt to open a browser
   happier connect <target> --timeout <seconds> Override OAuth timeout
-  happier connect claude --oauth               Use Claude OAuth (experimental)
-  happier connect claude --setup-token         Paste a Claude setup-token (default)
 
 ${chalk.bold('Description:')}
-  The connect command allows you to securely store your AI vendor API keys
+  The connect command allows you to securely store your connected-service credentials
   in Happier cloud. This enables you to use these services through Happier
-  without exposing your API keys locally.
+  without exposing credentials locally.
 
 ${chalk.bold('Examples:')}
   happier connect ${targets[0]?.id ?? 'gemini'}
@@ -97,9 +97,8 @@ ${chalk.bold('Examples:')}
 
 ${chalk.bold('Notes:')} 
   • You must be authenticated with Happier first (run 'happier auth login')
-  • API keys are encrypted and stored securely in Happier cloud
+  • Credentials are encrypted and stored securely in Happier cloud
   • You can manage your stored keys at app.happier.dev
-  • For Claude subscription auth, run 'claude setup-token' (Claude Code CLI) on any machine and paste it with 'happier connect claude --setup-token'
   ${opts.includeExperimental ? '' : '• Some providers are experimental; use --all to show them'}
 `);
 }
@@ -107,13 +106,6 @@ ${chalk.bold('Notes:')}
 function formatTargetLine(target: CloudConnectTarget): string {
   const statusSuffix = target.status === 'wired' ? '' : chalk.gray(' (experimental)');
   return `  happier connect ${target.id.padEnd(12)} ${target.vendorDisplayName}${statusSuffix}`;
-}
-
-function resolveConnectedServiceIdForTarget(targetId: string): ConnectedServiceId | null {
-  if (targetId === 'codex') return 'openai-codex';
-  if (targetId === 'claude') return 'anthropic';
-  if (targetId === 'gemini') return 'gemini';
-  return null;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -134,20 +126,19 @@ async function handleConnectVendor(target: CloudConnectTarget, options: ConnectP
     // Create API client
     const api = await ApiClient.create(credentials);
 
-    const serviceId = resolveConnectedServiceIdForTarget(target.id);
-    if (!serviceId) {
-      console.error(chalk.red(`Connect target '${target.id}' does not support connected services yet.`));
-      process.exit(1);
-    }
-
     const now = Date.now();
     let postConnectPayload: unknown | null = null;
 
     const record = await (async () => {
       const authIntent = resolveConnectAuthIntent({ targetId: target.id, options });
-      if (authIntent.kind === 'setup-token') {
-        const token = (await promptInput('Paste Claude setup-token: ')).trim();
-        if (!token) throw new Error('Missing setup-token');
+      const serviceId: ConnectedServiceId = authIntent.serviceId;
+      if (authIntent.kind === 'token') {
+        const promptLabel =
+          authIntent.tokenKind === 'setup-token'
+            ? 'Paste Claude setup-token (from `claude setup-token`): '
+            : 'Paste Anthropic API key: ';
+        const token = (await promptInput(promptLabel)).trim();
+        if (!token) throw new Error('Missing API key');
         return buildConnectedServiceCredentialRecord({
           now,
           serviceId,
@@ -157,12 +148,12 @@ async function handleConnectVendor(target: CloudConnectTarget, options: ConnectP
         });
       }
 
-        const oauth = await target.authenticate({
-          paste: options.paste,
-          device: options.device,
-          noOpen: options.noOpen,
-          timeoutSeconds: options.timeoutSeconds ?? undefined,
-        });
+      const oauth = await target.authenticate({
+        paste: options.paste,
+        device: options.device,
+        noOpen: options.noOpen,
+        timeoutSeconds: options.timeoutSeconds ?? undefined,
+      });
       postConnectPayload = oauth;
 
       if (target.id === 'codex') {
@@ -196,24 +187,28 @@ async function handleConnectVendor(target: CloudConnectTarget, options: ConnectP
 
       if (target.id === 'claude') {
         const t = isRecord(oauth) ? oauth : {};
-        const raw = isRecord(t.raw) ? t.raw : null;
-        const account = raw && isRecord(raw.account) ? raw.account : null;
-        const email = account?.email_address;
-        const accountId = account?.uuid;
+        const expiresAt = (() => {
+          const expiresIn = t.expires_in;
+          if (typeof expiresIn === 'number' && Number.isFinite(expiresIn) && expiresIn > 0) {
+            return now + Math.trunc(expiresIn) * 1000;
+          }
+          return null;
+        })();
+        const account = isRecord(t.account) ? t.account : null;
         return buildConnectedServiceCredentialRecord({
           now,
           serviceId,
           profileId: options.profileId,
           kind: 'oauth',
-          expiresAt: typeof t.expires === 'number' ? t.expires : null,
+          expiresAt,
           oauth: {
-            accessToken: String(t.token ?? ''),
+            accessToken: String(t.access_token ?? ''),
             refreshToken: String(t.refresh_token ?? ''),
             idToken: null,
-            scope: raw && typeof raw.scope === 'string' ? raw.scope : null,
-            tokenType: raw && typeof raw.token_type === 'string' ? raw.token_type : null,
-            providerAccountId: typeof accountId === 'string' ? accountId : null,
-            providerEmail: typeof email === 'string' ? email : null,
+            scope: typeof t.scope === 'string' ? t.scope : null,
+            tokenType: typeof t.token_type === 'string' ? t.token_type : null,
+            providerAccountId: account && typeof account.uuid === 'string' ? account.uuid : null,
+            providerEmail: account && typeof account.email_address === 'string' ? account.email_address : null,
           },
         });
       }
@@ -251,9 +246,9 @@ async function handleConnectVendor(target: CloudConnectTarget, options: ConnectP
       randomBytes: (length) => randomBytes(length),
     });
 
-    console.log(`🚀 Registering ${target.displayName} credential with server (${serviceId}/${options.profileId})`);
+    console.log(`🚀 Registering ${target.displayName} credential with server (${record.serviceId}/${options.profileId})`);
     await api.registerConnectedServiceCredentialSealed({
-      serviceId,
+      serviceId: record.serviceId,
       profileId: options.profileId,
       sealed: { format: 'account_scoped_v1', ciphertext: sealedCiphertext },
       metadata: {
@@ -292,16 +287,27 @@ async function handleConnectStatus(targets: ReadonlyArray<CloudConnectTarget>): 
 
     for (const target of targets) {
       try {
-        const serviceId = resolveConnectedServiceIdForTarget(target.id);
-        if (!serviceId) {
+        const serviceIds: ConnectedServiceId[] = target.id === 'codex'
+          ? ['openai-codex']
+          : target.id === 'gemini'
+            ? ['gemini']
+            : target.id === 'claude'
+              ? ['claude-subscription', 'anthropic']
+              : [];
+
+        if (serviceIds.length === 0) {
           console.log(`  ${chalk.gray('○')}  ${target.vendorDisplayName}: ${chalk.gray('not supported')}`);
           continue;
         }
 
-        const { profiles } = await api.listConnectedServiceProfiles({ serviceId });
-        const connected = profiles.filter((p) => p.status === 'connected');
+        const allProfiles = (await Promise.all(serviceIds.map(async (serviceId) => {
+          const { profiles } = await api.listConnectedServiceProfiles({ serviceId });
+          return profiles;
+        }))).flat();
+
+        const connected = allProfiles.filter((p) => p.status === 'connected');
         if (connected.length === 0) {
-          const needsReauth = profiles.length > 0;
+          const needsReauth = allProfiles.length > 0;
           const label = needsReauth ? 'needs re-auth' : 'not connected';
           const icon = needsReauth ? chalk.yellow('⚠️') : chalk.gray('○');
           const color = needsReauth ? chalk.yellow(label) : chalk.gray(label);
