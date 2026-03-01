@@ -4,6 +4,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
+type TestRenderer = import('react-test-renderer').ReactTestRenderer;
+
 const filesToolbarSpy = vi.fn();
 const routerPushSpy = vi.fn();
 let mockLocalSearchParams: Record<string, any> = {};
@@ -20,7 +22,7 @@ let mockScmSnapshotError: any = null;
 let mockSessionPath: string | null = '/repo';
 let mockSessionActive = true;
 let mockShouldShowAllFiles = false;
-const invalidateFromUserAndAwaitSpy = vi.fn(async () => {});
+const invalidateFromUserAndAwaitSpy = vi.fn(async (_sessionId: string) => {});
 let sourceControlUnavailableStateProps: any = null;
 
 vi.mock('react-native', () => {
@@ -31,6 +33,8 @@ vi.mock('react-native', () => {
 
     return {
         View: 'View',
+        ScrollView: 'ScrollView',
+        TextInput: 'TextInput',
         ActivityIndicator: 'ActivityIndicator',
         Pressable: 'Pressable',
         AppState: {
@@ -46,6 +50,7 @@ vi.mock('react-native-unistyles', () => ({
             colors: {
                 surface: '#111',
                 surfaceHigh: '#222',
+                groupped: { sectionTitle: '#eee' },
                 divider: '#333',
                 text: '#eee',
                 textSecondary: '#aaa',
@@ -65,6 +70,7 @@ vi.mock('react-native-unistyles', () => ({
                 colors: {
                     surface: '#111',
                     surfaceHigh: '#222',
+                    groupped: { sectionTitle: '#eee' },
                     divider: '#333',
                     text: '#eee',
                     textSecondary: '#aaa',
@@ -137,6 +143,7 @@ vi.mock('@/scm/scmAttribution', () => ({
 
 vi.mock('@/scm/scmStatusSync', () => ({
     scmStatusSync: {
+        invalidateFromUser: (sessionId: string) => void invalidateFromUserAndAwaitSpy(sessionId),
         invalidateFromUserAndAwait: invalidateFromUserAndAwaitSpy,
         invalidateFromAutoRefresh: vi.fn(),
     },
@@ -158,6 +165,7 @@ vi.mock('@/sync/domains/state/storage', () => ({
             },
             clearSessionProjectScmCommitSelectionPaths: clearCommitSelectionPathsSpy,
             clearSessionProjectScmCommitSelectionPatches: clearCommitSelectionPatchesSpy,
+            getSessionRepositoryTreeExpandedPaths: () => [],
             setSessionRepositoryTreeExpandedPaths: setRepositoryTreeExpandedPathsSpy,
         }),
     },
@@ -220,6 +228,7 @@ vi.mock('@/hooks/session/files/useFilesScmOperations', () => ({
         pushPreflight: { allowed: true, message: '' },
         runRemoteOperation: vi.fn(async () => {}),
         createCommit: vi.fn(async () => {}),
+        createCommitFromMessage: vi.fn(async () => ({ ok: true })),
     }),
 }));
 
@@ -236,6 +245,14 @@ vi.mock('@/components/sessions/files/FilesToolbar', () => ({
 
 vi.mock('@/components/sessions/files/SourceControlBranchSummary', () => ({
     SourceControlBranchSummary: () => null,
+}));
+
+vi.mock('@/components/sessions/sourceControl/changes/ScmChangeDiscardButton', () => ({
+    ScmChangeDiscardButton: (props: any) => React.createElement('ScmChangeDiscardButton', props),
+}));
+
+vi.mock('@/components/sessions/sourceControl/changes/ScmChangeOverflowMenu', () => ({
+    ScmChangeOverflowMenu: (props: any) => React.createElement('ScmChangeOverflowMenu', props),
 }));
 
 vi.mock('@/components/sessions/files/SourceControlOperationsPanel', () => ({
@@ -296,9 +313,21 @@ describe('FilesScreen', () => {
         mockSessionActive = true;
         invalidateFromUserAndAwaitSpy.mockClear();
         mockScmSnapshot = {
+            projectKey: 'project-1',
+            fetchedAt: 0,
             repo: { isRepo: true, rootPath: '/repo' },
-            branch: { head: 'main', detached: false },
+            branch: { head: 'main', upstream: null, ahead: 0, behind: 0, detached: false },
             hasConflicts: false,
+            entries: [],
+            totals: {
+                includedFiles: 0,
+                pendingFiles: 0,
+                untrackedFiles: 0,
+                includedAdded: 0,
+                includedRemoved: 0,
+                pendingAdded: 0,
+                pendingRemoved: 0,
+            },
             capabilities: {},
         };
         mockScmSnapshotError = null;
@@ -307,7 +336,7 @@ describe('FilesScreen', () => {
     });
 
     it('falls back to repository mode when session view is not available', async () => {
-        const Screen = (await import('./files')).default;
+        const Screen = (await import('@/app/(app)/session/[id]/files')).default;
 
         await act(async () => {
             renderer.create(<Screen />);
@@ -322,7 +351,7 @@ describe('FilesScreen', () => {
     });
 
     it('navigates to commit screen without pre-encoding sha', async () => {
-        const Screen = (await import('./files')).default;
+        const Screen = (await import('@/app/(app)/session/[id]/files')).default;
 
         await act(async () => {
             renderer.create(<Screen />);
@@ -355,7 +384,7 @@ describe('FilesScreen', () => {
             focusPath: 'src/example.ts',
         };
 
-        const Screen = (await import('./files')).default;
+        const Screen = (await import('@/app/(app)/session/[id]/files')).default;
 
         await act(async () => {
             renderer.create(<Screen />);
@@ -372,7 +401,7 @@ describe('FilesScreen', () => {
     });
 
     it('sanitizes whitespace-containing commit refs when navigating to the commit screen', async () => {
-        const Screen = (await import('./files')).default;
+        const Screen = (await import('@/app/(app)/session/[id]/files')).default;
 
         await act(async () => {
             renderer.create(<Screen />);
@@ -401,7 +430,7 @@ describe('FilesScreen', () => {
     });
 
     it('navigates to file screen without pre-encoding path', async () => {
-        const Screen = (await import('./files')).default;
+        const Screen = (await import('@/app/(app)/session/[id]/files')).default;
 
         await act(async () => {
             renderer.create(<Screen />);
@@ -426,7 +455,7 @@ describe('FilesScreen', () => {
     });
 
     it('defaults to review mode for changed files', async () => {
-        const Screen = (await import('./files')).default;
+        const Screen = (await import('@/app/(app)/session/[id]/files')).default;
 
         await act(async () => {
             renderer.create(<Screen />);
@@ -437,7 +466,7 @@ describe('FilesScreen', () => {
     });
 
     it('shows commit selection state when only patch selection exists and clears both stores', async () => {
-        const Screen = (await import('./files')).default;
+        const Screen = (await import('@/app/(app)/session/[id]/files')).default;
 
         await act(async () => {
             renderer.create(<Screen />);
@@ -464,9 +493,9 @@ describe('FilesScreen', () => {
         mockScmSnapshot = null;
         mockScmSnapshotError = { message: 'Session RPC unavailable', at: 1 };
 
-        const Screen = (await import('./files')).default;
+        const Screen = (await import('@/app/(app)/session/[id]/files')).default;
 
-        let tree: renderer.ReactTestRenderer;
+        let tree: TestRenderer;
         await act(async () => {
             tree = renderer.create(<Screen />);
         });
@@ -480,9 +509,9 @@ describe('FilesScreen', () => {
         mockScmSnapshotError = { message: 'RPC method not available', at: 1 };
         mockSessionActive = false;
 
-        const Screen = (await import('./files')).default;
+        const Screen = (await import('@/app/(app)/session/[id]/files')).default;
 
-        let tree: renderer.ReactTestRenderer;
+        let tree: TestRenderer;
         await act(async () => {
             tree = renderer.create(<Screen />);
         });
@@ -500,7 +529,7 @@ describe('FilesScreen', () => {
             errorCode: SCM_OPERATION_ERROR_CODES.FEATURE_UNSUPPORTED,
         };
 
-        const Screen = (await import('./files')).default;
+        const Screen = (await import('@/app/(app)/session/[id]/files')).default;
 
         await act(async () => {
             renderer.create(<Screen />);
@@ -514,9 +543,9 @@ describe('FilesScreen', () => {
     it('refreshes scm snapshot once session path becomes available after first render', async () => {
         mockSessionPath = null;
 
-        const Screen = (await import('./files')).default;
+        const Screen = (await import('@/app/(app)/session/[id]/files')).default;
 
-        let tree: renderer.ReactTestRenderer;
+        let tree: TestRenderer;
         await act(async () => {
             tree = renderer.create(<Screen />);
         });
@@ -534,11 +563,11 @@ describe('FilesScreen', () => {
     });
 
     it('renders repository tree in all-files view when search query is empty', async () => {
-        const Screen = (await import('./files')).default;
+        const Screen = (await import('@/app/(app)/session/[id]/files')).default;
 
         mockShouldShowAllFiles = true;
 
-        let tree: renderer.ReactTestRenderer;
+        let tree: TestRenderer;
         await act(async () => {
             tree = renderer.create(<Screen />);
         });
@@ -559,10 +588,57 @@ describe('FilesScreen', () => {
         expect(repositoryTreeListProps.sessionId).toBe('session-1');
     });
 
-    it('renders the operations panel inside the scroll container so the screen can scroll naturally', async () => {
-        const Screen = (await import('./files')).default;
+    it('renders a combined trailing actions row with discard + overflow and reveal expands the tree', async () => {
+        mockScmSnapshot = {
+            ...mockScmSnapshot,
+            capabilities: {
+                ...(mockScmSnapshot?.capabilities ?? {}),
+                writeDiscard: true,
+            },
+        };
 
-        let tree: renderer.ReactTestRenderer;
+        const Screen = (await import('@/app/(app)/session/[id]/files')).default;
+
+        await act(async () => {
+            renderer.create(<Screen />);
+        });
+        await act(async () => {});
+
+        expect(changedFilesReviewProps).toBeTruthy();
+        expect(typeof changedFilesReviewProps.renderFileTrailingActions).toBe('function');
+
+        const trailing = changedFilesReviewProps.renderFileTrailingActions({
+            fileName: 'index.ts',
+            filePath: 'apps/ui/sources',
+            fullPath: 'apps/ui/sources/index.ts',
+            status: 'modified',
+            linesAdded: 1,
+            linesRemoved: 0,
+        });
+
+        // react-test-renderer types can resolve incorrectly under some TS/vitest module settings in this repo;
+        // keep this local renderer instance untyped to avoid blocking typecheck.
+        let tree: any = null;
+        await act(async () => {
+            tree = renderer.create(trailing);
+        });
+        if (!tree) throw new Error('Expected renderer tree to be set');
+        expect(tree.root.findAllByType('ScmChangeDiscardButton').length).toBe(1);
+
+        const overflow = tree.root.findByType('ScmChangeOverflowMenu');
+        expect(typeof overflow.props.onRevealInTree).toBe('function');
+
+        await act(async () => {
+            overflow.props.onRevealInTree();
+        });
+
+        expect(setRepositoryTreeExpandedPathsSpy).toHaveBeenCalledWith('session-1', ['apps', 'apps/ui', 'apps/ui/sources']);
+    });
+
+    it('renders the operations panel inside the scroll container so the screen can scroll naturally', async () => {
+        const Screen = (await import('@/app/(app)/session/[id]/files')).default;
+
+        let tree: TestRenderer;
         await act(async () => {
             tree = renderer.create(<Screen />);
         });
@@ -586,10 +662,10 @@ describe('FilesScreen', () => {
         const originalPlatformOs = rn.Platform.OS;
         (rn.Platform as unknown as { OS: string }).OS = 'web';
 
-        const Screen = (await import('./files')).default;
+        const Screen = (await import('@/app/(app)/session/[id]/files')).default;
 
         try {
-            let tree: renderer.ReactTestRenderer;
+            let tree: TestRenderer;
             await act(async () => {
                 tree = renderer.create(<Screen />);
             });

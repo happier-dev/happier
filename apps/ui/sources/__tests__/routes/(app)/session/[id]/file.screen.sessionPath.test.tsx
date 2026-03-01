@@ -4,16 +4,20 @@ import renderer, { act } from 'react-test-renderer';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
-let sessionPath: string | null = null;
-let sessionsReady = false;
-
-const sessionScmDiffFileMock = vi.fn(async () => ({ success: true, diff: 'diff --git a/a.txt b/a.txt' }));
-const sessionReadFileMock = vi.fn(async () => ({ success: false, error: 'read unavailable' }));
+let mockFilePathParam = 'a.txt';
+const routerReplaceSpy = vi.fn();
+const openDetailsTabSpy = vi.fn();
+let shouldRedirectToPanes = false;
 
 vi.mock('expo-router', () => ({
     useLocalSearchParams: () => ({
         id: 'session-1',
-        path: 'a.txt',
+        path: mockFilePathParam,
+    }),
+    useRouter: () => ({
+        back: vi.fn(),
+        push: vi.fn(),
+        replace: routerReplaceSpy,
     }),
 }));
 
@@ -22,6 +26,12 @@ vi.mock('react-native', async () => {
     return {
         ...actual,
         View: (props: any) => React.createElement('View', props, props.children),
+        useWindowDimensions: () => ({
+            width: 1400,
+            height: 900,
+            scale: 1,
+            fontScale: 1,
+        }),
     };
 });
 
@@ -68,43 +78,27 @@ vi.mock('@/hooks/session/files/useFileScmStageActions', () => ({
     }),
 }));
 
-vi.mock('@/sync/ops', () => ({
-    sessionScmDiffFile: sessionScmDiffFileMock,
-    sessionReadFile: sessionReadFileMock,
-    sessionWriteFile: vi.fn(async () => ({ success: false, error: 'write unavailable' })),
+vi.mock('@/sync/domains/state/storage', () => ({
+    useLocalSetting: () => false,
 }));
 
-vi.mock('@/sync/domains/state/storage', () => ({
-    storage: {
-        getState: () => ({
-            sessions: sessionPath
-                ? {
-                    'session-1': {
-                        metadata: {
-                            path: sessionPath,
-                        },
-                    },
-                }
-                : {},
-        }),
-    },
-    useSession: () =>
-        sessionPath
-            ? {
-                metadata: {
-                    path: sessionPath,
-                },
-            }
-            : null,
-    useSessions: () => (sessionsReady ? [] : null),
-    useSessionProjectScmInFlightOperation: () => null,
-    useSessionProjectScmSnapshot: () => ({
-        entries: [],
-        hasConflicts: false,
+vi.mock('@/components/ui/panels/shouldRedirectDetailsRouteToPanes', () => ({
+    shouldRedirectDetailsRouteToPanes: () => shouldRedirectToPanes,
+}));
+
+vi.mock('@/utils/platform/responsive', async (importOriginal) => {
+    const actual = await importOriginal<typeof import('@/utils/platform/responsive')>();
+    return {
+        ...actual,
+        useDeviceType: () => 'tablet',
+        getDeviceType: () => 'tablet',
+    };
+});
+
+vi.mock('@/components/appShell/panes/hooks/useAppPaneScope', () => ({
+    useAppPaneScope: () => ({
+        openDetailsTab: openDetailsTabSpy,
     }),
-    useSessionProjectScmCommitSelectionPaths: () => [],
-    useSessionReviewCommentsDrafts: () => [],
-    useSetting: () => null,
 }));
 
 vi.mock('@/scm/scmLineSelection', () => ({
@@ -116,8 +110,11 @@ vi.mock('@/hooks/server/useFeatureEnabled', () => ({
     useFeatureEnabled: () => true,
 }));
 
-vi.mock('@/scm/utils/filePresentation', () => ({
+vi.mock('@/utils/code/fileLanguage', () => ({
     getFileLanguageFromPath: () => 'plaintext',
+}));
+
+vi.mock('@/scm/utils/filePresentation', () => ({
     isBinaryContent: () => false,
     isKnownBinaryPath: () => false,
 }));
@@ -147,28 +144,37 @@ vi.mock('@/encryption/base64', () => ({
 }));
 
 describe('FileScreen session path hydration', () => {
-    it('retries file load when session path appears after first render', async () => {
-        const { default: FileScreen } = await import('./file');
-        sessionPath = null;
-        sessionsReady = false;
-        sessionScmDiffFileMock.mockClear();
-        sessionReadFileMock.mockClear();
-
-        let tree: renderer.ReactTestRenderer | null = null;
+    it('redirects away from unsafe file path params', async () => {
+        vi.resetModules();
+        const { default: FileScreen } = await import('@/app/(app)/session/[id]/file');
+        shouldRedirectToPanes = false;
+        mockFilePathParam = '../secrets.txt';
+        routerReplaceSpy.mockClear();
+        openDetailsTabSpy.mockClear();
 
         await act(async () => {
-            tree = renderer.create(React.createElement(FileScreen));
+            renderer.create(React.createElement(FileScreen));
+            await new Promise((r) => setTimeout(r, 0));
         });
 
-        expect(sessionScmDiffFileMock).not.toHaveBeenCalled();
+        expect(routerReplaceSpy).toHaveBeenCalledTimes(1);
+        expect(openDetailsTabSpy).not.toHaveBeenCalled();
+    });
 
-        sessionPath = '/tmp/workspace';
-        sessionsReady = true;
+    it('redirects to panes when details routes should be in the right panel', async () => {
+        vi.resetModules();
+        const { default: FileScreen } = await import('@/app/(app)/session/[id]/file');
+        shouldRedirectToPanes = true;
+        mockFilePathParam = 'a.txt';
+        routerReplaceSpy.mockClear();
+        openDetailsTabSpy.mockClear();
+
         await act(async () => {
-            tree!.update(React.createElement(FileScreen));
+            renderer.create(React.createElement(FileScreen));
+            await new Promise((r) => setTimeout(r, 0));
         });
 
-        expect(sessionScmDiffFileMock).toHaveBeenCalledTimes(1);
-        expect(sessionReadFileMock).toHaveBeenCalledTimes(1);
+        expect(openDetailsTabSpy).toHaveBeenCalledTimes(1);
+        expect(routerReplaceSpy).toHaveBeenCalledTimes(1);
     });
 });
