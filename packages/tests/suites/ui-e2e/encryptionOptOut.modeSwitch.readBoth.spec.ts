@@ -39,14 +39,16 @@ function collectBrowserDiagnostics(params: Readonly<{ page: Page }>): () => stri
 async function toggleAccountEncryptionMode(params: Readonly<{ page: Page; uiBaseUrl: string; expectedMode: 'plain' | 'e2ee' }>): Promise<void> {
   await params.page.goto(`${params.uiBaseUrl}/settings/account`, { waitUntil: 'domcontentloaded' });
   await expect(params.page.getByTestId('settings-account-encryption-mode-switch')).toHaveCount(1, { timeout: 120_000 });
-  const patchOk = params.page.waitForResponse(
-    (resp) => resp.url().endsWith('/v1/account/encryption') && resp.request().method() === 'PATCH' && resp.status() === 200,
+  const migrateOk = params.page.waitForResponse(
+    (resp) =>
+      resp.url().endsWith('/v1/account/encryption/migrate') && resp.request().method() === 'POST' && resp.status() === 200,
     { timeout: 60_000 },
   );
   await params.page.getByTestId('settings-account-encryption-mode-switch').click();
-  const patchResp = await patchOk;
-  const patchJson = (await patchResp.json()) as { mode?: unknown };
-  expect(patchJson?.mode).toBe(params.expectedMode);
+  const migrateResp = await migrateOk;
+  const migrateJson = (await migrateResp.json()) as { success?: unknown; mode?: unknown };
+  expect(migrateJson?.success).toBe(true);
+  expect(migrateJson?.mode).toBe(params.expectedMode);
 }
 
 test.describe('ui e2e: encryption opt-out mode switching', () => {
@@ -258,4 +260,3 @@ test.describe('ui e2e: encryption opt-out mode switching', () => {
     }
   });
 });
-
