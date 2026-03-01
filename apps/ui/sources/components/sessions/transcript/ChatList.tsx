@@ -463,7 +463,51 @@ const ChatListInternal = React.memo((props: {
             : 1;
     const jumpAnimateScroll = transcriptScrollJumpToBottomAnimateScroll !== false;
 
-    const listImplementation = transcriptListImplementation === 'flatlist_legacy' ? 'flatlist_legacy' : 'flash_v2';
+    const preferredListImplementation = transcriptListImplementation === 'flatlist_legacy' ? 'flatlist_legacy' : 'flash_v2';
+    const [webFlashListCrashed, setWebFlashListCrashed] = React.useState(false);
+    const listImplementation =
+        Platform.OS === 'web' && preferredListImplementation === 'flash_v2' && webFlashListCrashed
+            ? 'flatlist_legacy'
+            : preferredListImplementation;
+
+    React.useEffect(() => {
+        if (Platform.OS !== 'web') return;
+        if (preferredListImplementation !== 'flash_v2') return;
+        if (webFlashListCrashed) return;
+        const win = (globalThis as any)?.window as undefined | { addEventListener?: any; removeEventListener?: any };
+        if (!win || typeof win.addEventListener !== 'function' || typeof win.removeEventListener !== 'function') return;
+
+        const shouldFallback = (message: string): boolean => {
+            const text = (message ?? '').toLowerCase();
+            if (!text) return false;
+            return text.includes('not enough layouts') || text.includes('index out of bounds');
+        };
+
+        const onError = (event: any) => {
+            const message = String(event?.error?.message ?? event?.message ?? '');
+            if (!shouldFallback(message)) return;
+            try {
+                event?.preventDefault?.();
+            } catch {
+                // ignore
+            }
+            try {
+                event?.stopImmediatePropagation?.();
+            } catch {
+                // ignore
+            }
+            setWebFlashListCrashed(true);
+        };
+
+        win.addEventListener('error', onError, true);
+        return () => {
+            try {
+                win.removeEventListener('error', onError, true);
+            } catch {
+                // ignore
+            }
+        };
+    }, [preferredListImplementation, webFlashListCrashed]);
     const listData = React.useMemo(() => {
         if (listImplementation === 'flatlist_legacy') {
             // Legacy: inverted lists expect newest-first input.
