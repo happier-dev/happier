@@ -4,6 +4,7 @@ import { tmpdir } from 'os';
 import { dirname, join, relative } from 'path';
 
 import type { RpcHandlerRegistrar } from '@/api/rpc/types';
+import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { validatePath } from './pathSecurity';
 
 type UploadLocation = 'workspace' | 'os_temp';
@@ -53,6 +54,11 @@ type UploadAbortRequest = Readonly<{ uploadId: string }>;
 
 type UploadAbortResponse =
   | Readonly<{ success: true }>
+  | Readonly<{ success: false; error: string }>;
+
+type ReadFileRequest = Readonly<{ path: string }>;
+type ReadFileResponse =
+  | Readonly<{ success: true; content: string }>
   | Readonly<{ success: false; error: string }>;
 
 type AttachmentsConfig = Readonly<{
@@ -213,10 +219,37 @@ export function registerAttachmentsUploadHandlers(
 
   let config: AttachmentsConfig = DEFAULT_CONFIG;
   const uploads = new Map<string, UploadSession>();
+  let readFileHandlerRegistered = false;
+
+  const registerTempUploadReadFileHandler = (): void => {
+    if (readFileHandlerRegistered) return;
+    readFileHandlerRegistered = true;
+
+    rpcHandlerManager.registerHandler<ReadFileRequest, ReadFileResponse>(RPC_METHODS.READ_FILE, async (data) => {
+      if (config.uploadLocation !== 'os_temp') {
+        return { success: false, error: 'readFile is only available for os_temp attachments uploads' };
+      }
+      const path = typeof data?.path === 'string' ? data.path : '';
+      if (!path) return { success: false, error: 'Missing path' };
+
+      const validation = validatePath(path, deps.workingDirectory, [tempUploadRoot]);
+      if (!validation.valid || !validation.resolvedPath) {
+        return { success: false, error: validation.error ?? 'Invalid path' };
+      }
+
+      try {
+        const buffer = await fsReadFile(validation.resolvedPath);
+        return { success: true, content: buffer.toString('base64') };
+      } catch (error) {
+        return { success: false, error: error instanceof Error ? error.message : 'Failed to read file' };
+      }
+    });
+  };
 
   const applyConfigSideEffectsBestEffort = async (): Promise<void> => {
     if (config.uploadLocation === 'os_temp') {
       deps.setAdditionalAllowedReadDirs([tempUploadRoot]);
+      registerTempUploadReadFileHandler();
       return;
     }
     deps.setAdditionalAllowedReadDirs([]);
