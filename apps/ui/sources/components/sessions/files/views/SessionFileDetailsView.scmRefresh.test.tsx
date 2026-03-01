@@ -173,6 +173,7 @@ let scmSnapshot: any = null;
 
 vi.mock('@/sync/domains/state/storage', () => ({
   useSession: () => ({ active: true, metadata: { path: '/workspace', machineId: 'm1' } }),
+  useProjectForSession: () => ({ key: { machineId: 'm1', path: '/workspace' } }),
   useSessions: () => [],
   useSessionReviewCommentsDrafts: () => [],
   useSessionProjectScmCommitSelectionPaths: () => [],

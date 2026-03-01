@@ -9,6 +9,7 @@ import { ScmChangeDiscardButton } from '@/components/sessions/sourceControl/chan
 import {
     useSession,
     useSessions,
+    useProjectForSession,
     useSessionReviewCommentsDrafts,
     useSessionProjectScmCommitSelectionPaths,
     useSessionProjectScmCommitSelectionPatches,
@@ -38,6 +39,7 @@ import { useScrollEdgeFades } from '@/components/ui/scroll/useScrollEdgeFades';
 import { ScrollEdgeFades } from '@/components/ui/scroll/ScrollEdgeFades';
 import { ScrollEdgeIndicators } from '@/components/ui/scroll/ScrollEdgeIndicators';
 import { useAppPaneScope } from '@/components/appShell/panes/hooks/useAppPaneScope';
+import { resolveSessionWorkspacePath } from '@/sync/domains/session/resolveSessionWorkspacePath';
 export type SessionFileDeepLinkAnchor = Readonly<{
     source: ReviewCommentSource;
     anchor: ReviewCommentAnchor;
@@ -101,8 +103,12 @@ export function SessionFileDetailsView(props: SessionFileDetailsViewProps) {
     const filesEditorWebMonacoEnabled = useSetting('filesEditorWebMonacoEnabled');
     const filesEditorNativeCodeMirrorEnabled = useSetting('filesEditorNativeCodeMirrorEnabled');
     const session = useSession(sessionId);
+    const project = useProjectForSession(sessionId);
     const sessionsReady = useSessions() !== null;
-    const sessionPath = session?.metadata?.path ?? null;
+    const sessionPath = resolveSessionWorkspacePath({
+        sessionPath: session?.metadata?.path ?? null,
+        projectPath: project?.key?.path ?? null,
+    });
 
     const scmSnapshot = useSessionProjectScmSnapshot(sessionId);
     const commitSelectionPaths = useSessionProjectScmCommitSelectionPaths(sessionId);
