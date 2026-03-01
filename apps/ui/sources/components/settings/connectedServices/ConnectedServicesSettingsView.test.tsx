@@ -88,6 +88,6 @@ describe('ConnectedServicesSettingsView', () => {
         });
 
         const items = tree.root.findAllByType('Item' as any);
-        expect(items.length).toBe(1);
+        expect(items.length).toBe(0);
     });
 });

@@ -63,15 +63,6 @@ export const ConnectedServicesSettingsView = React.memo(function ConnectedServic
             </Text>
           </View>
         </ItemGroup>
-
-        <ItemGroup>
-          <Item
-            title={t('common.close')}
-            icon={<Ionicons name="close-outline" size={22} color={theme.colors.accent.blue} />}
-            onPress={() => router.back()}
-            showChevron={false}
-          />
-        </ItemGroup>
       </ItemList>
     );
   }
@@ -130,15 +121,6 @@ export const ConnectedServicesSettingsView = React.memo(function ConnectedServic
             />
           );
         })}
-      </ItemGroup>
-
-      <ItemGroup>
-        <Item
-          title={t('common.close')}
-          icon={<Ionicons name="close-outline" size={22} color={theme.colors.accent.blue} />}
-          onPress={() => router.back()}
-          showChevron={false}
-        />
       </ItemGroup>
     </ItemList>
   );
