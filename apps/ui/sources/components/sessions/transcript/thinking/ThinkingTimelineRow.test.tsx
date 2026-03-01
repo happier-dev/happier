@@ -15,6 +15,7 @@ vi.mock('react-native-unistyles', () => ({
     useUnistyles: () => ({
         theme: {
             colors: {
+                input: { background: '#222' },
                 text: '#fff',
                 textSecondary: '#aaa',
                 surface: '#111',
@@ -29,6 +30,7 @@ vi.mock('react-native-unistyles', () => ({
                 ? input(
                       {
                           colors: {
+                              input: { background: '#222' },
                               text: '#fff',
                               textSecondary: '#aaa',
                               surface: '#111',

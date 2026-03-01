@@ -4,9 +4,11 @@ import { describe, expect, it, vi } from 'vitest';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
-let capturedThinkingPulseProps: any[] = [];
-let capturedMarkdownProps: any[] = [];
-let capturedThinkingRowProps: any[] = [];
+const captured = vi.hoisted(() => ({
+    thinkingPulseProps: [] as any[],
+    markdownProps: [] as any[],
+    thinkingRowProps: [] as any[],
+}));
 
 vi.mock('react-native', () => ({
     Platform: {
@@ -41,8 +43,42 @@ vi.mock('react-native', () => ({
 }));
 
 vi.mock('react-native-unistyles', () => ({
-    useUnistyles: () => ({ theme: { colors: { textSecondary: '#777', text: '#111', divider: '#ddd', userMessageBackground: '#eef', agentEventText: '#999', surfaceHighest: '#fff', success: '#0a0', link: '#06f' } } }),
-    StyleSheet: { create: (input: any) => (typeof input === 'function' ? input({ colors: { textSecondary: '#777', text: '#111', divider: '#ddd', userMessageBackground: '#eef', agentEventText: '#999', surfaceHighest: '#fff', success: '#0a0', link: '#06f' } }, {}) : input) },
+    useUnistyles: () => ({
+        theme: {
+            colors: {
+                textSecondary: '#777',
+                text: '#111',
+                divider: '#ddd',
+                input: { background: '#f7f7f7' },
+                userMessageBackground: '#eef',
+                agentEventText: '#999',
+                surfaceHighest: '#fff',
+                success: '#0a0',
+                link: '#06f',
+            },
+        },
+    }),
+    StyleSheet: {
+        create: (input: any) =>
+            typeof input === 'function'
+                ? input(
+                    {
+                        colors: {
+                            textSecondary: '#777',
+                            text: '#111',
+                            divider: '#ddd',
+                            input: { background: '#f7f7f7' },
+                            userMessageBackground: '#eef',
+                            agentEventText: '#999',
+                            surfaceHighest: '#fff',
+                            success: '#0a0',
+                            link: '#06f',
+                        },
+                    },
+                    {},
+                )
+                : input,
+    },
 }));
 
 vi.mock('@expo/vector-icons', () => ({ Ionicons: 'Ionicons' }));
@@ -51,7 +87,7 @@ vi.mock('@/modal', () => ({ Modal: { alert: vi.fn() } }));
 vi.mock('@/sync/sync', () => ({ sync: { submitMessage: vi.fn(), sendMessage: vi.fn() } }));
 vi.mock('@/components/markdown/MarkdownView', () => ({
     MarkdownView: (props: any) => {
-        capturedMarkdownProps.push(props);
+        captured.markdownProps.push(props);
         return React.createElement('MarkdownView', props);
     },
 }));
@@ -83,7 +119,7 @@ vi.mock('@/components/sessions/transcript/motion/TranscriptMotionContext', () =>
 
 vi.mock('@/components/sessions/transcript/motion/ThinkingPulseLabel', () => ({
     ThinkingPulseLabel: (props: any) => {
-        capturedThinkingPulseProps.push(props);
+        captured.thinkingPulseProps.push(props);
         return React.createElement('ThinkingPulseLabel', props);
     },
 }));
@@ -93,7 +129,7 @@ vi.mock('@/components/sessions/transcript/thinking/ThinkingTimelineRow', async (
     return {
         ...actual,
         ThinkingTimelineRow: (props: any) => {
-            capturedThinkingRowProps.push(props);
+            captured.thinkingRowProps.push(props);
             return React.createElement(actual.ThinkingTimelineRow, props, props.children);
         },
     };
@@ -112,9 +148,9 @@ vi.mock('@/sync/domains/state/storage', () => ({
 describe('MessageView (thinking pulse gating)', () => {
     it('enables the pulse only for the active thinking message id', async () => {
         const { MessageView } = await import('./MessageView');
-        capturedThinkingPulseProps = [];
-        capturedMarkdownProps = [];
-        capturedThinkingRowProps = [];
+        captured.thinkingPulseProps.length = 0;
+        captured.markdownProps.length = 0;
+        captured.thinkingRowProps.length = 0;
 
         const baseMessage: any = {
             kind: 'agent-text',
@@ -136,15 +172,15 @@ describe('MessageView (thinking pulse gating)', () => {
                 />,
             );
         });
-        expect(capturedThinkingPulseProps.at(-1)?.enabled).toBe(true);
-        expect(capturedThinkingRowProps.at(-1)?.chrome).toBe('plain');
-        expect(capturedMarkdownProps.at(-1)?.testID).toBe('transcript-thinking-body-markdown');
-        expect(capturedMarkdownProps.at(-1)?.variant).toBe('thinking');
+        expect(captured.thinkingPulseProps.at(-1)?.enabled).toBe(true);
+        expect(captured.thinkingRowProps.at(-1)?.chrome).toBe('plain');
+        expect(captured.markdownProps.at(-1)?.testID).toBe('transcript-thinking-body-markdown');
+        expect(captured.markdownProps.at(-1)?.variant).toBe('thinking');
         expect(tree!.root.findAll((node) => (node.props as any).testID === 'transcript-thinking-body-plain')).toHaveLength(0);
 
-        capturedThinkingPulseProps = [];
-        capturedMarkdownProps = [];
-        capturedThinkingRowProps = [];
+        captured.thinkingPulseProps.length = 0;
+        captured.markdownProps.length = 0;
+        captured.thinkingRowProps.length = 0;
         await act(async () => {
             tree = renderer.create(
                 <MessageView
@@ -155,8 +191,8 @@ describe('MessageView (thinking pulse gating)', () => {
                 />,
             );
         });
-        expect(capturedThinkingPulseProps.at(-1)?.enabled).toBe(false);
-        expect(capturedMarkdownProps.at(-1)?.textStyle?.fontStyle).toBe('italic');
+        expect(captured.thinkingPulseProps.at(-1)?.enabled).toBe(false);
+        expect(captured.markdownProps.at(-1)?.textStyle?.fontStyle).toBe('italic');
         expect(tree!.root.findAll((node) => (node.props as any).testID === 'transcript-thinking-body-plain')).toHaveLength(0);
     });
 });

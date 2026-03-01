@@ -85,7 +85,7 @@ const styles = StyleSheet.create((theme) => ({
         borderRadius: 12,
         paddingHorizontal: 10,
         paddingVertical: 8,
-        backgroundColor: theme.colors.surfaceHigh ?? theme.colors.surface,
+        backgroundColor: theme.colors.input.background,
     },
     containerPlain: {
         paddingVertical: 0,
