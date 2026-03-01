@@ -51,6 +51,7 @@ describe('sessionScm', () => {
             },
             sessions: {
                 'session-1': {
+                    active: true,
                     metadata: {
                         path: '~/repo',
                         homeDir: '/Users/tester',
@@ -85,6 +86,7 @@ describe('sessionScm', () => {
             },
             sessions: {
                 'session-1': {
+                    active: true,
                     metadata: {
                         path: '~/repo',
                         homeDir: '/Users/tester',
@@ -122,6 +124,7 @@ describe('sessionScm', () => {
             },
             sessions: {
                 'session-1': {
+                    active: true,
                     metadata: {
                         path: '~/repo',
                         homeDir: '/Users/tester',
@@ -146,5 +149,111 @@ describe('sessionScm', () => {
         expect(response.success).toBe(true);
         expect(machineRpcMock).toHaveBeenCalledTimes(1);
         expect(sessionRpcMock).toHaveBeenCalledTimes(1);
+    });
+
+    it('does not fall back to session RPC for inactive sessions', async () => {
+        getStateMock.mockReturnValue({
+            settings: {
+                scmGitRepoPreferredBackend: 'git',
+            },
+            sessions: {
+                'session-1': {
+                    active: false,
+                    metadata: {
+                        path: '~/repo',
+                        homeDir: '/Users/tester',
+                        machineId: 'machine-1',
+                    },
+                },
+            },
+        });
+        machineRpcMock.mockRejectedValue(
+            Object.assign(new Error(RPC_ERROR_MESSAGES.METHOD_NOT_AVAILABLE), {
+                rpcErrorCode: RPC_ERROR_CODES.METHOD_NOT_AVAILABLE,
+            }),
+        );
+        sessionRpcMock.mockResolvedValue({
+            success: true,
+            snapshot: undefined,
+        });
+
+        const { sessionScmStatusSnapshot } = await import('./sessionScm');
+        const response = await sessionScmStatusSnapshot('session-1', {});
+
+        expect(response.success).toBe(false);
+        expect(response.errorCode).toBe(SCM_OPERATION_ERROR_CODES.BACKEND_UNAVAILABLE);
+        expect(machineRpcMock).toHaveBeenCalledTimes(1);
+        expect(sessionRpcMock).not.toHaveBeenCalled();
+    });
+
+    it('resolves machine target from project fallback for inactive sessions', async () => {
+        getStateMock.mockReturnValue({
+            settings: {
+                scmGitRepoPreferredBackend: 'git',
+            },
+            sessions: {
+                'session-1': {
+                    active: false,
+                    metadata: {
+                        path: '',
+                        machineId: '',
+                    },
+                },
+            },
+            getProjectForSession: (sessionId: string) =>
+                sessionId === 'session-1'
+                    ? {
+                        key: {
+                            machineId: 'machine-1',
+                            path: '~/repo',
+                        },
+                    }
+                    : null,
+        });
+        machineRpcMock.mockResolvedValue({
+            success: true,
+            snapshot: undefined,
+        });
+
+        const { sessionScmStatusSnapshot } = await import('./sessionScm');
+        const response = await sessionScmStatusSnapshot('session-1', {});
+
+        expect(response.success).toBe(true);
+        expect(machineRpcMock).toHaveBeenCalledWith(
+            'machine-1',
+            RPC_METHODS.SCM_STATUS_SNAPSHOT,
+            { cwd: '~/repo' },
+        );
+        expect(sessionRpcMock).not.toHaveBeenCalled();
+    });
+
+    it('fails closed for inactive sessions when machine target is unavailable', async () => {
+        getStateMock.mockReturnValue({
+            settings: {
+                scmGitRepoPreferredBackend: 'git',
+            },
+            sessions: {
+                'session-1': {
+                    active: false,
+                    metadata: {
+                        path: '',
+                        machineId: '',
+                    },
+                },
+            },
+            getProjectForSession: () => null,
+        });
+        sessionRpcMock.mockResolvedValue({
+            success: true,
+            snapshot: undefined,
+        });
+
+        const { sessionScmStatusSnapshot } = await import('./sessionScm');
+        const response = await sessionScmStatusSnapshot('session-1', {});
+
+        expect(response.success).toBe(false);
+        expect(response.errorCode).toBe(SCM_OPERATION_ERROR_CODES.BACKEND_UNAVAILABLE);
+        expect(machineRpcMock).not.toHaveBeenCalled();
+        expect(sessionRpcMock).not.toHaveBeenCalled();
     });
 });

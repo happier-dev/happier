@@ -24,8 +24,15 @@ import { RPC_ERROR_MESSAGES, RPC_METHODS } from '@happier-dev/protocol/rpc';
 
 import { storage } from '../domains/state/storage';
 import { apiSocket } from '../api/session/apiSocket';
+import { canUseSessionRpc, readMachineTargetForSession, resolveMachinePathFromSessionBase, shouldFallbackToSessionRpc } from './sessionMachineTarget';
 
 const SCM_UNSUPPORTED_RESPONSE_ERROR = 'SCM_UNSUPPORTED_RESPONSE_ERROR';
+const SCM_DIFF_COMMIT_TIMEOUT_MS = 120_000;
+
+function resolveScmRpcTimeoutMs(method: string): number | undefined {
+    if (method === RPC_METHODS.SCM_DIFF_COMMIT) return SCM_DIFF_COMMIT_TIMEOUT_MS;
+    return undefined;
+}
 
 function scmFallbackError<T extends { success: boolean; error?: string; errorCode?: string }>(error: unknown): T {
     if (error instanceof Error && error.message === SCM_UNSUPPORTED_RESPONSE_ERROR) {
@@ -95,58 +102,6 @@ function withScmBackendPreference<T extends { backendPreference?: unknown }>(req
     return request;
 }
 
-function resolveMachineScmCwd(input: { baseCwd: string; requestCwd?: string }): string {
-    const requestCwd = input.requestCwd;
-    if (!requestCwd || requestCwd === '.') {
-        return input.baseCwd;
-    }
-    if (requestCwd.startsWith('~')) {
-        return requestCwd;
-    }
-    const isAbsolutePosix = requestCwd.startsWith('/');
-    const isAbsoluteWindows = /^[a-zA-Z]:[\\/]/.test(requestCwd) || requestCwd.startsWith('\\\\');
-    if (isAbsolutePosix || isAbsoluteWindows) {
-        return requestCwd;
-    }
-    const separator = input.baseCwd.includes('\\') ? '\\' : '/';
-    const base = input.baseCwd.endsWith(separator) ? input.baseCwd.slice(0, -1) : input.baseCwd;
-    const rel = requestCwd.startsWith(separator) ? requestCwd.slice(1) : requestCwd;
-    return `${base}${separator}${rel}`;
-}
-
-function readScmMachineTarget(sessionId: string): { machineId: string; baseCwd: string } | null {
-    const state = storage.getState();
-    const session = state.sessions?.[sessionId];
-    const machineId = session?.metadata?.machineId;
-    const baseCwd = session?.metadata?.path;
-    if (typeof machineId !== 'string' || machineId.trim().length === 0) return null;
-    if (typeof baseCwd !== 'string' || baseCwd.trim().length === 0) return null;
-    return { machineId, baseCwd };
-}
-
-function shouldFallbackFromMachineRpc(error: unknown): boolean {
-    if (error instanceof Error && typeof error.message === 'string') {
-        if (error.message.includes('Machine encryption not found')) return true;
-        if (error.message.includes('Socket not connected')) return true;
-    }
-
-    if (error && typeof error === 'object') {
-        const rpcError: RpcErrorCarrier = {
-            rpcErrorCode:
-                typeof (error as { rpcErrorCode?: unknown }).rpcErrorCode === 'string'
-                    ? (error as { rpcErrorCode: string }).rpcErrorCode
-                    : undefined,
-            message:
-                typeof (error as { message?: unknown }).message === 'string'
-                    ? (error as { message: string }).message
-                    : undefined,
-        };
-        return isRpcMethodNotAvailableError(rpcError) || isRpcMethodNotFoundError(rpcError);
-    }
-
-    return false;
-}
-
 async function callScmPreferMachine<
     T extends { success: boolean; error?: string; errorCode?: string },
     R extends { cwd?: string; backendPreference?: unknown }
@@ -155,19 +110,39 @@ async function callScmPreferMachine<
     method: string,
     request: R,
 ): Promise<T> {
-    const machineTarget = readScmMachineTarget(sessionId);
+    const machineTarget = readMachineTargetForSession(sessionId);
 
     if (machineTarget) {
-        const cwd = resolveMachineScmCwd({ baseCwd: machineTarget.baseCwd, requestCwd: request.cwd });
-        const machineRequest = withScmBackendPreference({ ...request, cwd });
+        const cwd = resolveMachinePathFromSessionBase({ basePath: machineTarget.basePath, requestPath: request.cwd });
+        const machineRequest = withScmBackendPreference({ ...request, cwd } as R);
+        const timeoutMs = resolveScmRpcTimeoutMs(method);
         try {
-            const response = await apiSocket.machineRPC<T, R>(machineTarget.machineId, method, machineRequest);
+            const response = timeoutMs
+                ? await apiSocket.machineRPC<T, R>(
+                    machineTarget.machineId,
+                    method,
+                    machineRequest as R,
+                    { timeoutMs },
+                )
+                : await apiSocket.machineRPC<T, R>(
+                    machineTarget.machineId,
+                    method,
+                    machineRequest as R,
+                );
             return assertScmResponse<T>(response);
         } catch (error) {
-            if (!shouldFallbackFromMachineRpc(error)) {
+            if (!shouldFallbackToSessionRpc(sessionId, error)) {
                 return scmFallbackError<T>(error);
             }
         }
+    }
+
+    if (!canUseSessionRpc(sessionId)) {
+        return {
+            success: false,
+            error: RPC_ERROR_MESSAGES.METHOD_NOT_AVAILABLE,
+            errorCode: SCM_OPERATION_ERROR_CODES.BACKEND_UNAVAILABLE,
+        } as T;
     }
 
     try {
