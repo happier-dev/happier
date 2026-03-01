@@ -59,6 +59,7 @@ import {
     forwardCodexStatusToUi as forwardCodexStatusToUiShared,
 } from './runtime/mcpMessageHandler';
 import { runCodexLocalModePass } from './runtime/localModePass';
+import { resolveCodexQueuedPromptWithReplaySeed } from './runtime/resolveCodexQueuedPromptWithReplaySeed';
 import { cleanupCodexRunResources } from './runtime/cleanupRunResources';
 import {
     emitReadyIfIdle,
@@ -513,6 +514,7 @@ export async function runCodex(opts: {
 
     let thinking = false;
     let currentTaskId: string | null = null;
+    let didReplaySeedBootstrap = false;
     if (localModeFallbackMessage) {
         session.sendSessionEvent({ type: 'message', message: localModeFallbackMessage });
     }
@@ -1080,6 +1082,20 @@ export async function runCodex(opts: {
             }
 
             try {
+                const localId =
+                    typeof message.mode.localId === 'string' && message.mode.localId
+                        ? message.mode.localId
+                        : null;
+                const replaySeedResolution = await resolveCodexQueuedPromptWithReplaySeed({
+                    sessionClient: session,
+                    text: message.message,
+                    localId,
+                    replaySeedAllowed: specialCommand.type === null,
+                    didBootstrap: didReplaySeedBootstrap,
+                });
+                didReplaySeedBootstrap = replaySeedResolution.didBootstrap;
+                const providerPromptText = replaySeedResolution.text;
+
                 if (useCodexAcp) {
                     const codexAcp = codexAcpRuntime;
                     if (!codexAcp) {
@@ -1165,7 +1181,7 @@ export async function runCodex(opts: {
                     } catch (e) {
                         logger.debug('[CodexACP] Failed to sync session mode before prompt (non-fatal)', e);
                     }
-                    await codexAcp.sendPrompt(message.message);
+                    await codexAcp.sendPrompt(providerPromptText);
                     if (shouldLogAcpDebug) {
                         logger.debug('[CodexACP] sendPrompt complete');
                     }
@@ -1187,7 +1203,7 @@ export async function runCodex(opts: {
 
                     if (!wasCreated) {
                     const startConfig: CodexSessionConfig = buildCodexMcpStartConfigForMessage({
-                        message: message.message,
+                        message: providerPromptText,
                         first,
                         sandbox,
                         approvalPolicy,
@@ -1200,7 +1216,7 @@ export async function runCodex(opts: {
                         const resumeId = storedSessionIdForResume;
                         messageBuffer.addMessage('Resuming previous context…', 'status');
                         mcpClient.setSessionIdForResume(resumeId);
-                        const resumeResponse = await mcpClient.continueSession(message.message, { signal: abortController.signal });
+                        const resumeResponse = await mcpClient.continueSession(providerPromptText, { signal: abortController.signal });
                         const resumeError = extractCodexToolErrorText(resumeResponse);
                         if (resumeError) {
                             forwardCodexErrorToUi(resumeError);
@@ -1232,7 +1248,7 @@ export async function runCodex(opts: {
                     first = false;
                 } else {
                     const response = await mcpClient.continueSession(
-                        message.message,
+                        providerPromptText,
                         { signal: abortController.signal }
                     );
                     logger.debug('[Codex] continueSession response:', response);
