@@ -152,54 +152,7 @@ export async function sendBackendLongLivedRun(args: Readonly<{
     delayMs: abortRetry.delayMs,
   }));
 
-  // Long-lived send should ACK quickly so UIs can steer/interrupt without timing out.
-  // Completion is handled asynchronously; output is streamed via onMessage and flushed
-  // to the sidechain once the backend signals the turn has completed.
-  try {
-    await sendPromise;
-  } catch (e: any) {
-    if (isAbortLikeError(e)) {
-      await args.writeActivityMarker(args.runId, args.getNowMs(), { force: true }).catch(() => {});
-      if (ctrl2.turnEpoch === thisEpoch) ctrl2.turnInFlight = false;
-      return { ok: false, errorCode: 'execution_run_failed', error: e instanceof Error ? e.message : 'Turn cancelled' };
-    }
-
-    await args.writeActivityMarker(args.runId, args.getNowMs(), { force: true }).catch(() => {});
-    const message = e instanceof Error ? e.message : 'Execution failed';
-    const finishedAtMs = args.getNowMs();
-    args.finishRun(
-      args.runId,
-      { status: 'failed', summary: message, finishedAtMs, error: { code: 'execution_run_failed', message } },
-      {
-        output: {
-          status: 'failed',
-          summary: message,
-          runId: run.runId,
-          callId: run.callId,
-          sidechainId: run.sidechainId,
-          finishedAtMs,
-          startedAtMs: run.startedAtMs,
-          error: { code: 'execution_run_failed', message },
-        },
-        isError: true,
-      },
-    );
-    try {
-      await ctrl2.backend.dispose();
-    } catch {
-      // ignore
-    }
-    try {
-      await ctrl2.terminalMarkerWritePromise;
-    } catch {
-      // ignore
-    }
-    ctrl2.resolveTerminal();
-    args.controllers.delete(args.runId);
-    return { ok: false, errorCode: 'execution_run_failed', error: message };
-  }
-
-  void (async () => {
+  const runCompletionLoop = async (): Promise<void> => {
     try {
       if (ctrl2.backend.waitForResponseComplete) {
         await ctrl2.backend.waitForResponseComplete();
@@ -271,7 +224,60 @@ export async function sendBackendLongLivedRun(args: Readonly<{
     } finally {
       await args.writeActivityMarker(args.runId, args.getNowMs(), { force: true }).catch(() => {});
     }
-  })();
+  };
+
+  // Long-lived send should ACK quickly so UIs can steer/interrupt without timing out.
+  // Completion is handled asynchronously; output is streamed via onMessage and flushed
+  // to the sidechain once the backend signals the turn has completed.
+  try {
+    await sendPromise;
+    // Attach completion handlers before any other awaited work to avoid unhandled rejections when
+    // backends signal cancellation/completion on a near-zero timer.
+    void runCompletionLoop();
+    // Best-effort: record explicit user activity immediately so machine-level dashboards can
+    // surface active long-lived runs even if model output streams are throttled.
+    await args.writeActivityMarker(args.runId, args.getNowMs(), { force: true }).catch(() => {});
+  } catch (e: any) {
+    if (isAbortLikeError(e)) {
+      await args.writeActivityMarker(args.runId, args.getNowMs(), { force: true }).catch(() => {});
+      if (ctrl2.turnEpoch === thisEpoch) ctrl2.turnInFlight = false;
+      return { ok: false, errorCode: 'execution_run_failed', error: e instanceof Error ? e.message : 'Turn cancelled' };
+    }
+
+    await args.writeActivityMarker(args.runId, args.getNowMs(), { force: true }).catch(() => {});
+    const message = e instanceof Error ? e.message : 'Execution failed';
+    const finishedAtMs = args.getNowMs();
+    args.finishRun(
+      args.runId,
+      { status: 'failed', summary: message, finishedAtMs, error: { code: 'execution_run_failed', message } },
+      {
+        output: {
+          status: 'failed',
+          summary: message,
+          runId: run.runId,
+          callId: run.callId,
+          sidechainId: run.sidechainId,
+          finishedAtMs,
+          startedAtMs: run.startedAtMs,
+          error: { code: 'execution_run_failed', message },
+        },
+        isError: true,
+      },
+    );
+    try {
+      await ctrl2.backend.dispose();
+    } catch {
+      // ignore
+    }
+    try {
+      await ctrl2.terminalMarkerWritePromise;
+    } catch {
+      // ignore
+    }
+    ctrl2.resolveTerminal();
+    args.controllers.delete(args.runId);
+    return { ok: false, errorCode: 'execution_run_failed', error: message };
+  }
 
   return { ok: true };
 }
