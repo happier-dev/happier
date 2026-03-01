@@ -53,6 +53,43 @@ describe('forwardCodexErrorToUi', () => {
 });
 
 describe('createCodexMcpMessageHandler', () => {
+  it('does not throw when receiving circular event payloads', () => {
+    let thinking = false;
+    let currentTaskId: string | null = null;
+    const session = {
+      sendAgentMessage: vi.fn(),
+      sendCodexMessage: vi.fn(),
+      sendSessionEvent: vi.fn(),
+      keepAlive: vi.fn(),
+    };
+    const messageBuffer = { addMessage: vi.fn() };
+    const logger = { debug: vi.fn() };
+    const diffProcessor = { processDiff: vi.fn() };
+
+    const handler = createCodexMcpMessageHandler({
+      logger,
+      session,
+      messageBuffer,
+      sendReady: vi.fn(),
+      publishCodexThreadIdToMetadata: vi.fn(),
+      diffProcessor,
+      getCurrentTaskId: () => currentTaskId,
+      setCurrentTaskId: (next: string | null) => {
+        currentTaskId = next;
+      },
+      getThinking: () => thinking,
+      setThinking: (next: boolean) => {
+        thinking = next;
+      },
+    });
+
+    const msg: Record<string, unknown> = { type: 'codex/event' };
+    msg.self = msg;
+
+    expect(() => handler(msg)).not.toThrow();
+    expect(logger.debug).toHaveBeenCalled();
+  });
+
   it('tracks thinking state and emits ready on task completion', () => {
     let thinking = false;
     let currentTaskId: string | null = null;
