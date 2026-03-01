@@ -1,5 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { chmod, mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 import {
   resolveServiceBackend,
@@ -141,6 +144,25 @@ test('planServiceAction uses ONSTART for system scheduled tasks', () => {
   assert.equal(create.args.includes('SYSTEM'), true);
 });
 
+test('planServiceAction uses launchctl bootstrap when process.getuid is unavailable', () => {
+  const originalGetUid = process.getuid;
+  try {
+    process.getuid = undefined;
+    const plan = planServiceAction({
+      backend: 'launchd-user',
+      action: 'install',
+      label: 'dev.happier.test',
+      definitionPath: '/Users/me/Library/LaunchAgents/dev.happier.test.plist',
+      definitionContents: '<plist/>',
+      persistent: true,
+    });
+    const bootstrap = plan.commands.find((c) => c.cmd === 'launchctl' && c.args[0] === 'bootstrap');
+    assert.ok(bootstrap, 'expected launchctl bootstrap plan when uid can be resolved without process.getuid');
+  } finally {
+    process.getuid = originalGetUid;
+  }
+});
+
 test('applyServicePlan throws when a required command is missing', async () => {
   await assert.rejects(
     () => applyServicePlan({ writes: [], commands: [{ cmd: '__happier_missing_cmd__', args: [] }] }),
@@ -158,4 +180,60 @@ test('applyServicePlan throws when a command exits non-zero (unless allowFail)',
     writes: [],
     commands: [{ cmd: process.execPath, args: ['-e', 'process.exit(2)'], allowFail: true }],
   });
+});
+
+test('applyServicePlan falls back to launchctl load when bootstrap gui/uid fails with EIO', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'happier-cli-common-launchctl-fallback-'));
+  const binDir = join(root, 'bin');
+  await mkdir(binDir, { recursive: true });
+
+  const tracePath = join(root, 'trace.txt');
+  const launchctlPath = join(binDir, 'launchctl');
+  await writeFile(
+    launchctlPath,
+    `#!/usr/bin/env bash
+ set -euo pipefail
+ echo "$*" >> ${JSON.stringify(tracePath)}
+ cmd="$1"
+ shift 1 || true
+ if [[ "$cmd" == "bootstrap" ]]; then
+   echo "Bootstrap failed: 5: Input/output error" >&2
+   exit 5
+ fi
+ if [[ "$cmd" == "enable" || "$cmd" == "kickstart" ]]; then
+   echo "should not call $cmd after fallback" >&2
+   exit 42
+ fi
+ exit 0
+`,
+    'utf8',
+  );
+  await chmod(launchctlPath, 0o755);
+
+  const definitionPath = join(root, 'dev.happier.test.plist');
+  const plan = planServiceAction({
+    backend: 'launchd-user',
+    action: 'install',
+    label: 'dev.happier.test',
+    definitionPath,
+    definitionContents: '<?xml version="1.0" encoding="UTF-8"?><plist version="1.0"><dict></dict></plist>',
+    persistent: true,
+    uid: 501,
+  });
+
+  const prevPath = process.env.PATH;
+  process.env.PATH = `${binDir}:${prevPath ?? ''}`;
+  try {
+    await applyServicePlan(plan);
+  } finally {
+    process.env.PATH = prevPath;
+  }
+
+  const trace = await readFile(tracePath, 'utf8').catch(() => '');
+  assert.match(trace, /^bootout\s+gui\/501\/dev\.happier\.test/m);
+  assert.match(trace, /^bootstrap\s+gui\/501\s+/m);
+  assert.match(trace, /^unload\s+-w\s+/m);
+  assert.match(trace, /^load\s+-w\s+/m);
+
+  await rm(root, { recursive: true, force: true });
 });
