@@ -200,8 +200,8 @@ const rawAgentOutputDataKnownSchema = z.discriminatedUnion('type', [
             role: z.literal('assistant'),
             model: z.string(),
             // Fail-soft: upstream providers occasionally emit malformed `assistant` payloads (e.g. `content: string`).
-            // We accept unknown shapes here and let `normalizeRawMessage` drop them safely.
-            content: z.union([z.array(rawAgentContentSchema), z.any()]),
+            // We accept strings here (instead of `z.any()`) so malformed arrays still fail validation.
+            content: z.union([z.array(rawAgentContentSchema), z.string()]),
             usage: usageDataSchema.optional(),
         }),
         parent_tool_use_id: z.string().nullable().optional(),

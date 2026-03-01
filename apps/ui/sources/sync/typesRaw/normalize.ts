@@ -250,7 +250,7 @@ export function normalizeRawMessage(
             return typeof content === 'string' || Array.isArray(content);
         };
 
-        if (raw.content.type === 'output') {
+	        if (raw.content.type === 'output') {
             // Skip Meta messages
             if (raw.content.data.isMeta) {
                 return null;
@@ -266,44 +266,49 @@ export function normalizeRawMessage(
                 return null;
             }
 
-            // Handle Assistant messages (including sidechains)
-            if (isOutputAssistantData(raw.content.data)) {
-                if (!raw.content.data.uuid) {
-                    return null;
-                }
+	            // Handle Assistant messages (including sidechains)
+	            if (isOutputAssistantData(raw.content.data)) {
+	                if (!raw.content.data.uuid) {
+	                    return null;
+	                }
 
-                // Claude's streaming API encodes sidechains via parent_tool_use_id.
-                // Map that to the provider-agnostic `sidechainId` so reducer sidechain linking can attach
-                // sub-agent transcripts to the originating tool call and keep them out of the main transcript.
-                const claudeParentToolUseId =
-                    typeof (raw.content.data as any).parent_tool_use_id === 'string'
+	                const isRecord = (value: unknown): value is Record<string, unknown> =>
+	                    typeof value === 'object' && value !== null;
+
+	                // Claude's streaming API encodes sidechains via parent_tool_use_id.
+	                // Map that to the provider-agnostic `sidechainId` so reducer sidechain linking can attach
+	                // sub-agent transcripts to the originating tool call and keep them out of the main transcript.
+	                const claudeParentToolUseId =
+	                    typeof (raw.content.data as any).parent_tool_use_id === 'string'
                         ? String((raw.content.data as any).parent_tool_use_id)
-                        : undefined;
-                let content: NormalizedAgentContent[] = [];
-                for (let c of raw.content.data.message.content) {
-                    if (c.type === 'text') {
-                        content.push({
-                            ...c,  // WOLOG: Preserve all fields including unknown ones
-                            uuid: raw.content.data.uuid,
-                            parentUUID: raw.content.data.parentUuid ?? null
-                        } as NormalizedAgentContent);
-                    } else if (c.type === 'thinking') {
-                        content.push({
-                            ...c,  // WOLOG: Preserve all fields including unknown ones (signature, etc.)
-                            uuid: raw.content.data.uuid,
-                            parentUUID: raw.content.data.parentUuid ?? null
-                        } as NormalizedAgentContent);
-                    } else if (c.type === 'tool_use') {
-                        let description: string | null = null;
-                        if (typeof c.input === 'object' && c.input !== null && 'description' in c.input && typeof c.input.description === 'string') {
-                            description = c.input.description;
-                        }
-                        content.push({
-                            ...c,  // WOLOG: Preserve all fields including unknown ones
-                            type: 'tool-call',
-                            description,
-                            uuid: raw.content.data.uuid,
-                            parentUUID: raw.content.data.parentUuid ?? null
+	                        : undefined;
+	                let content: NormalizedAgentContent[] = [];
+	                for (const cRaw of raw.content.data.message.content) {
+		                    if (!isRecord(cRaw) || typeof cRaw.type !== 'string') continue;
+		                    if (cRaw.type === 'text') {
+		                        content.push({
+		                            ...(cRaw as Record<string, unknown>),  // WOLOG: Preserve all fields including unknown ones
+		                            uuid: raw.content.data.uuid,
+		                            parentUUID: raw.content.data.parentUuid ?? null
+		                        } as NormalizedAgentContent);
+		                    } else if (cRaw.type === 'thinking') {
+		                        content.push({
+		                            ...(cRaw as Record<string, unknown>),  // WOLOG: Preserve all fields including unknown ones (signature, etc.)
+		                            uuid: raw.content.data.uuid,
+		                            parentUUID: raw.content.data.parentUuid ?? null
+		                        } as NormalizedAgentContent);
+		                    } else if (cRaw.type === 'tool_use') {
+	                        let description: string | null = null;
+	                        const input = cRaw.input;
+	                        if (isRecord(input) && typeof input.description === 'string') {
+	                            description = input.description;
+		                        }
+		                        content.push({
+		                            ...(cRaw as Record<string, unknown>),  // WOLOG: Preserve all fields including unknown ones
+		                            type: 'tool-call',
+		                            description,
+		                            uuid: raw.content.data.uuid,
+		                            parentUUID: raw.content.data.parentUuid ?? null
                         } as NormalizedAgentContent);
                     }
                 }
