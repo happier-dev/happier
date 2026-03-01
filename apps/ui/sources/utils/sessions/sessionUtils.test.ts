@@ -54,6 +54,23 @@ describe('getSessionStatus', () => {
         expect(status.shouldShowStatus).toBe(true);
     });
 
+    it('returns action_required when the agent has pending user-action requests', async () => {
+        const { getSessionStatus } = await import('./sessionUtils');
+        const session = createBaseSession({
+            agentState: {
+                controlledByUser: null,
+                requests: {
+                    req1: { tool: 'AskUserQuestion', kind: 'user_action', arguments: { q: 'x' }, createdAt: 1 },
+                },
+                completedRequests: null,
+            },
+        });
+        const status = getSessionStatus(session, 1_000, 0);
+        expect(status.state).toBe('action_required');
+        expect(status.isConnected).toBe(true);
+        expect(status.shouldShowStatus).toBe(true);
+    });
+
     it('does not return permission_required when agentState.requests is stale relative to completedRequests', async () => {
         const { getSessionStatus } = await import('./sessionUtils');
         const session = createBaseSession({
@@ -130,6 +147,71 @@ describe('getSessionStatus', () => {
         const status = getSessionStatus(session, 1_000, 0);
         expect(status.state).toBe('permission_required');
     });
+
+    it('prioritizes action_required over thinking state', async () => {
+        const { getSessionStatus } = await import('./sessionUtils');
+        const session = createBaseSession({
+            thinking: true,
+            agentState: {
+                controlledByUser: false,
+                requests: {
+                    req1: { tool: 'AskUserQuestion', kind: 'user_action', arguments: {}, createdAt: 1 },
+                },
+                completedRequests: null,
+            },
+        });
+        const status = getSessionStatus(session, 1_000, 0);
+        expect(status.state).toBe('action_required');
+    });
+});
+
+describe('listPendingPermissionRequests', () => {
+    it('filters out requests that are user-action prompts (kind=user_action) and custom-tool fallbacks', async () => {
+        const { listPendingPermissionRequests } = await import('./sessionUtils');
+        const session = createBaseSession({
+            agentState: {
+                controlledByUser: null,
+                requests: {
+                    req1: { tool: 'AskUserQuestion', kind: 'user_action', arguments: { q: 'x' }, createdAt: 1 },
+                    req2: { tool: 'ExitPlanMode', arguments: {}, createdAt: 2 },
+                    req3: { tool: 'exit_plan_mode', arguments: {}, createdAt: 3 },
+                    req4: { tool: 'AcpHistoryImport', arguments: {}, createdAt: 4 },
+                    req4b: { tool: 'SomeNewInteractiveTool', kind: 'user_action', arguments: {}, createdAt: 4 },
+                    req5: { tool: 'Bash', arguments: { command: 'ls' }, createdAt: 5 },
+                },
+                completedRequests: null,
+            },
+        });
+
+        expect(listPendingPermissionRequests(session)).toEqual([
+            { id: 'req5', tool: 'Bash', kind: 'permission', arguments: { command: 'ls' }, createdAt: 5 },
+        ]);
+    });
+
+    it('includes permissionSuggestions when present on agentState requests', async () => {
+        const { listPendingPermissionRequests } = await import('./sessionUtils');
+        const suggestions = [{ type: 'setMode', mode: 'acceptEdits', destination: 'session' }];
+        const session = createBaseSession({
+            agentState: {
+                controlledByUser: null,
+                requests: {
+                    req1: { tool: 'Bash', arguments: { command: 'ls' }, createdAt: 5, permissionSuggestions: suggestions },
+                },
+                completedRequests: null,
+            },
+        });
+
+        expect(listPendingPermissionRequests(session)).toEqual([
+            {
+                id: 'req1',
+                tool: 'Bash',
+                kind: 'permission',
+                arguments: { command: 'ls' },
+                createdAt: 5,
+                permissionSuggestions: suggestions,
+            },
+        ]);
+    });
 });
 
 describe('shouldShowAbortButtonForSessionState', () => {
@@ -146,6 +228,11 @@ describe('shouldShowAbortButtonForSessionState', () => {
     it('returns true for permission_required sessions', async () => {
         const { shouldShowAbortButtonForSessionState } = await import('./sessionUtils');
         expect(shouldShowAbortButtonForSessionState('permission_required')).toBe(true);
+    });
+
+    it('returns true for action_required sessions', async () => {
+        const { shouldShowAbortButtonForSessionState } = await import('./sessionUtils');
+        expect(shouldShowAbortButtonForSessionState('action_required')).toBe(true);
     });
 
     it('returns false for disconnected sessions', async () => {

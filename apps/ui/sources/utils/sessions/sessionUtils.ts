@@ -1,8 +1,9 @@
 import * as React from 'react';
 import { Session } from '@/sync/domains/state/storageTypes';
 import { t } from '@/text';
+import { resolveAgentRequestKind, shouldShowGenericPermissionPromptForRequest, type AgentRequestKind } from '@/utils/sessions/permissions/permissionPromptPolicy';
 
-export type SessionState = 'disconnected' | 'thinking' | 'waiting' | 'permission_required';
+export type SessionState = 'disconnected' | 'thinking' | 'waiting' | 'permission_required' | 'action_required';
 
 export interface SessionStatus {
     state: SessionState;
@@ -19,21 +20,33 @@ export const OPTIMISTIC_SESSION_THINKING_TIMEOUT_MS = 15_000;
 export type PendingPermissionRequest = Readonly<{
     id: string;
     tool: string;
+    kind: AgentRequestKind;
     arguments: unknown;
     createdAt: number | null;
+    permissionSuggestions?: unknown;
 }>;
 
-export function listPendingPermissionRequests(session: Session): PendingPermissionRequest[] {
+function listPendingAgentRequests(session: Session): PendingPermissionRequest[] {
     const requests = session.agentState?.requests;
     if (!requests || Object.keys(requests).length === 0) return [];
 
+    const getPermissionSuggestions = (req: unknown): unknown[] | null => {
+        if (!req || typeof req !== 'object') return null;
+        const suggestions = (req as { permissionSuggestions?: unknown }).permissionSuggestions;
+        if (!Array.isArray(suggestions) || suggestions.length === 0) return null;
+        return suggestions as unknown[];
+    };
+
     const completed = session.agentState?.completedRequests ?? null;
     if (!completed) {
-        return Object.entries(requests).map(([id, req]) => ({
+        return Object.entries(requests)
+            .map(([id, req]) => ({
             id,
             tool: req.tool,
+            kind: resolveAgentRequestKind({ toolName: req.tool, requestKind: req.kind }),
             arguments: req.arguments,
             createdAt: typeof req.createdAt === 'number' ? req.createdAt : null,
+            ...(getPermissionSuggestions(req) ? { permissionSuggestions: getPermissionSuggestions(req) } : {}),
         }));
     }
 
@@ -46,8 +59,10 @@ export function listPendingPermissionRequests(session: Session): PendingPermissi
             pending.push({
                 id: permId,
                 tool: req.tool,
+                kind: resolveAgentRequestKind({ toolName: req.tool, requestKind: req.kind }),
                 arguments: req.arguments,
                 createdAt: typeof req.createdAt === 'number' ? req.createdAt : null,
+                ...(getPermissionSuggestions(req) ? { permissionSuggestions: getPermissionSuggestions(req) } : {}),
             });
             continue;
         }
@@ -58,8 +73,10 @@ export function listPendingPermissionRequests(session: Session): PendingPermissi
             pending.push({
                 id: permId,
                 tool: req.tool,
+                kind: resolveAgentRequestKind({ toolName: req.tool, requestKind: req.kind }),
                 arguments: req.arguments,
                 createdAt: typeof req.createdAt === 'number' ? req.createdAt : null,
+                ...(getPermissionSuggestions(req) ? { permissionSuggestions: getPermissionSuggestions(req) } : {}),
             });
         }
     }
@@ -67,14 +84,28 @@ export function listPendingPermissionRequests(session: Session): PendingPermissi
     return pending;
 }
 
+export function listPendingPermissionRequests(session: Session): PendingPermissionRequest[] {
+    return listPendingAgentRequests(session).filter((r) =>
+        shouldShowGenericPermissionPromptForRequest({ toolName: r.tool, requestKind: r.kind })
+    );
+}
+
+export function listPendingUserActionRequests(session: Session): PendingPermissionRequest[] {
+    return listPendingAgentRequests(session).filter((r) => r.kind === 'user_action');
+}
+
 function hasPendingPermissionRequests(session: Session): boolean {
     return listPendingPermissionRequests(session).length > 0;
+}
+
+function hasPendingUserActionRequests(session: Session): boolean {
+    return listPendingUserActionRequests(session).length > 0;
 }
 
 export function shouldShowAbortButtonForSessionState(state: SessionState): boolean {
     // Abort should only be available when there's an in-flight operation or a permission gate.
     // Idle online sessions are represented as `waiting` today.
-    return state === 'thinking' || state === 'permission_required';
+    return state === 'thinking' || state === 'permission_required' || state === 'action_required';
 }
 
 /**
@@ -84,6 +115,7 @@ export function shouldShowAbortButtonForSessionState(state: SessionState): boole
 export function getSessionStatus(session: Session, nowMs: number = Date.now(), vibingIndex?: number): SessionStatus {
     const isOnline = session.presence === "online";
     const hasPermissions = hasPendingPermissionRequests(session);
+    const hasUserActions = hasPendingUserActionRequests(session);
 
     const optimisticThinkingAt = session.optimisticThinkingAt ?? null;
     const isOptimisticThinking = typeof optimisticThinkingAt === 'number' && nowMs - optimisticThinkingAt < OPTIMISTIC_SESSION_THINKING_TIMEOUT_MS;
@@ -107,7 +139,19 @@ export function getSessionStatus(session: Session, nowMs: number = Date.now(), v
         };
     }
 
-    // Check if permission is required
+    // Check if user action is required (structured prompt), then permissions.
+    if (hasUserActions) {
+        return {
+            state: 'action_required',
+            isConnected: true,
+            statusText: t('status.actionRequired'),
+            shouldShowStatus: true,
+            statusColor: '#FF9500',
+            statusDotColor: '#FF9500',
+            isPulsing: true
+        };
+    }
+
     if (hasPermissions) {
         return {
             state: 'permission_required',
@@ -148,6 +192,7 @@ export function getSessionStatus(session: Session, nowMs: number = Date.now(), v
 export function useSessionStatus(session: Session): SessionStatus {
     const isOnline = session.presence === "online";
     const hasPermissions = hasPendingPermissionRequests(session);
+    const hasUserActions = hasPendingUserActionRequests(session);
 
     const now = Date.now();
     const optimisticThinkingAt = session.optimisticThinkingAt ?? null;
@@ -156,7 +201,7 @@ export function useSessionStatus(session: Session): SessionStatus {
 
     const vibingIndex = React.useMemo(() => {
         return Math.floor(Math.random() * vibingMessages.length);
-    }, [isOnline, hasPermissions, isThinking]);
+    }, [isOnline, hasPermissions, hasUserActions, isThinking]);
 
     return getSessionStatus(session, now, vibingIndex);
 }
