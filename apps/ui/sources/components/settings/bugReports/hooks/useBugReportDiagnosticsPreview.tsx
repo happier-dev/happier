@@ -1,6 +1,7 @@
 import * as React from 'react';
 
 import { Modal } from '@/modal';
+import { t } from '@/text';
 
 import { BugReportDiagnosticsPreviewModal, type BugReportDiagnosticsPreviewArtifact } from '../BugReportDiagnosticsPreviewModal';
 import type { BugReportDiagnosticsArtifact } from '../bugReportDiagnostics';
@@ -51,7 +52,10 @@ export function useBugReportDiagnosticsPreview(input: {
         props: {},
       });
     } catch (error) {
-      await Modal.alert('Preview unavailable', error instanceof Error ? error.message : 'Could not build diagnostics preview.');
+      await Modal.alert(
+        t('bugReports.composer.alerts.previewUnavailableTitle'),
+        error instanceof Error ? error.message : t('bugReports.composer.alerts.previewUnavailableBody'),
+      );
     } finally {
       setPreviewing(false);
     }
