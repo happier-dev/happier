@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { buildChangedFilesOutlineTree } from './buildChangedFilesOutlineTree';
+import { buildChangedFilesOutlineTree } from '@/components/sessions/files/repositoryTree/buildChangedFilesOutlineTree';
 
 describe('buildChangedFilesOutlineTree', () => {
     it('builds a directory-first, case-insensitive sorted outline tree', () => {

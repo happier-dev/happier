@@ -46,14 +46,16 @@ afterEach(() => {
 });
 
 function file(path: string): ScmFileStatus {
+    const segments = path.split('/');
+    const fileName = segments[segments.length - 1] || path;
+    const filePath = segments.slice(0, -1).join('/');
+
     return {
+        fileName,
+        filePath,
         fullPath: path,
-        relativePath: path,
-        name: path.split('/').pop() ?? path,
         status: 'modified',
         isIncluded: false,
-        kind: 'file',
-        isDeleted: false,
         linesAdded: 1,
         linesRemoved: 1,
     };

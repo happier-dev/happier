@@ -13,6 +13,8 @@ type FileActionToolbarProps = {
     theme: any;
     displayMode: FileDisplayMode;
     onDisplayMode: (mode: FileDisplayMode) => void;
+    showDiffToggle?: boolean;
+    showFileToggle?: boolean;
     diffMode: FileDiffMode;
     onDiffMode: (mode: FileDiffMode) => void;
     hasPendingDelta: boolean;
@@ -44,6 +46,8 @@ export function FileActionToolbar(props: FileActionToolbarProps) {
         theme,
         displayMode,
         onDisplayMode,
+        showDiffToggle,
+        showFileToggle,
         diffMode,
         onDiffMode,
         hasPendingDelta,
@@ -74,7 +78,13 @@ export function FileActionToolbar(props: FileActionToolbarProps) {
     const canIncludeFile = hasPendingDelta || isUntrackedFile === true;
     const canUseSelectionActions = includeExcludeEnabled || virtualSelectionEnabled;
     const canRemoveFromSelection = virtualSelectionEnabled ? isSelectedForCommit : hasIncludedDelta;
-    const showFileEditorActions = fileEditorEnabled === true && displayMode === 'file';
+    const showFileEditorActions = fileEditorEnabled === true;
+    const shouldShowDiffToggle = showDiffToggle !== false;
+    const shouldShowFileToggle = showFileToggle !== false;
+    const displayToggleCount = (shouldShowDiffToggle ? 1 : 0) + (shouldShowFileToggle ? 1 : 0);
+    const shouldShowDisplayToggles = displayToggleCount > 1;
+    const stageLabel = virtualSelectionEnabled ? t('files.fileActions.selectForCommit') : t('files.fileActions.stageFile');
+    const unstageLabel = virtualSelectionEnabled ? t('files.fileActions.removeFromSelection') : t('files.fileActions.unstageFile');
 
     const chipStyle = (active: boolean) => ({
         paddingVertical: 7,
@@ -98,40 +108,57 @@ export function FileActionToolbar(props: FileActionToolbarProps) {
                 gap: 8,
             }}
         >
-            <Pressable
-                onPress={() => onDisplayMode('diff')}
-                style={chipStyle(displayMode === 'diff')}
-            >
-                <Text
-                    style={{
-                        fontSize: 13,
-                        fontWeight: '600',
-                        color: displayMode === 'diff' ? theme.colors.text : theme.colors.textSecondary,
-                        ...Typography.default(),
-                    }}
-                >
-                    {t('files.diff')}
-                </Text>
-            </Pressable>
+            {shouldShowDisplayToggles ? (
+                <>
+                    {shouldShowDiffToggle ? (
+                        <Pressable
+                            onPress={() => onDisplayMode('diff')}
+                            testID="file-details-toggle-diff"
+                            style={chipStyle(displayMode === 'diff')}
+                        >
+                            <Text
+                                style={{
+                                    fontSize: 13,
+                                    fontWeight: '600',
+                                    color: displayMode === 'diff' ? theme.colors.text : theme.colors.textSecondary,
+                                    ...Typography.default(),
+                                }}
+                            >
+                                {t('files.diff')}
+                            </Text>
+                        </Pressable>
+                    ) : null}
 
-            <Pressable
-                onPress={() => onDisplayMode('file')}
-                style={chipStyle(displayMode === 'file')}
-            >
-                <Text
-                    style={{
-                        fontSize: 13,
-                        fontWeight: '600',
-                        color: displayMode === 'file' ? theme.colors.text : theme.colors.textSecondary,
-                        ...Typography.default(),
-                    }}
-                >
-                    {t('files.file')}
-                </Text>
-            </Pressable>
+                    {shouldShowFileToggle ? (
+                        <Pressable
+                            onPress={() => onDisplayMode('file')}
+                            testID="file-details-toggle-file"
+                            style={chipStyle(displayMode === 'file')}
+                        >
+                            <Text
+                                style={{
+                                    fontSize: 13,
+                                    fontWeight: '600',
+                                    color: displayMode === 'file' ? theme.colors.text : theme.colors.textSecondary,
+                                    ...Typography.default(),
+                                }}
+                            >
+                                {t('files.file')}
+                            </Text>
+                        </Pressable>
+                    ) : null}
+                </>
+            ) : null}
 
             {showFileEditorActions && !isEditingFile && onStartEditingFile ? (
-                <Pressable onPress={onStartEditingFile} style={chipStyle(false)}>
+                <Pressable
+                    onPress={() => {
+                        onDisplayMode('file');
+                        onStartEditingFile();
+                    }}
+                    testID="file-details-edit"
+                    style={chipStyle(false)}
+                >
                     <Text
                         style={{
                             fontSize: 13,
@@ -139,17 +166,18 @@ export function FileActionToolbar(props: FileActionToolbarProps) {
                             color: theme.colors.text,
                             ...Typography.default(),
                         }}
-                    >
-                        Edit
-                    </Text>
-                </Pressable>
-            ) : null}
+                      >
+                          {t('common.edit')}
+                      </Text>
+                  </Pressable>
+              ) : null}
 
-            {showFileEditorActions && isEditingFile ? (
+            {showFileEditorActions && displayMode === 'file' && isEditingFile ? (
                 <>
                     <Pressable
                         disabled={Boolean(fileEditorBusy) || !fileEditorDirty}
                         onPress={onSaveEditingFile}
+                        testID="file-details-save"
                         style={{
                             paddingHorizontal: 12,
                             paddingVertical: 8,
@@ -157,16 +185,16 @@ export function FileActionToolbar(props: FileActionToolbarProps) {
                             backgroundColor: theme.colors.textLink,
                             opacity: Boolean(fileEditorBusy) || !fileEditorDirty ? 0.6 : 1,
                         }}
-                    >
-                        <Text style={{ color: 'white', fontSize: 13, ...Typography.default('semiBold') }}>
-                            Save
-                        </Text>
-                    </Pressable>
-                    <Pressable onPress={onCancelEditingFile} style={chipStyle(false)}>
-                        <Text style={{ color: theme.colors.text, fontSize: 13, ...Typography.default('semiBold') }}>
-                            Cancel
-                        </Text>
-                    </Pressable>
+                      >
+                          <Text style={{ color: 'white', fontSize: 13, ...Typography.default('semiBold') }}>
+                              {t('common.save')}
+                          </Text>
+                      </Pressable>
+                      <Pressable onPress={onCancelEditingFile} testID="file-details-cancel" style={chipStyle(false)}>
+                          <Text style={{ color: theme.colors.text, fontSize: 13, ...Typography.default('semiBold') }}>
+                              {t('common.cancel')}
+                          </Text>
+                      </Pressable>
                 </>
             ) : null}
 
@@ -174,39 +202,40 @@ export function FileActionToolbar(props: FileActionToolbarProps) {
                 <Pressable
                     onPress={() => onDiffMode('pending')}
                     style={chipStyle(diffMode === 'pending')}
-                >
-                    <Text style={{ fontSize: 13, color: theme.colors.text, ...Typography.default('semiBold') }}>
-                        Pending
-                    </Text>
-                </Pressable>
-            )}
+                  >
+                      <Text style={{ fontSize: 13, color: theme.colors.text, ...Typography.default('semiBold') }}>
+                          {t('files.diffModes.pending')}
+                      </Text>
+                  </Pressable>
+              )}
 
             {hasIncludedDelta && (
                 <Pressable
                     onPress={() => onDiffMode('included')}
                     style={chipStyle(diffMode === 'included')}
-                >
-                    <Text style={{ fontSize: 13, color: theme.colors.text, ...Typography.default('semiBold') }}>
-                        Included
-                    </Text>
-                </Pressable>
-            )}
+                  >
+                      <Text style={{ fontSize: 13, color: theme.colors.text, ...Typography.default('semiBold') }}>
+                          {t('files.diffModes.included')}
+                      </Text>
+                  </Pressable>
+              )}
 
             {hasIncludedDelta && hasPendingDelta && (
                 <Pressable
                     onPress={() => onDiffMode('both')}
                     style={chipStyle(diffMode === 'both')}
-                >
-                    <Text style={{ fontSize: 13, color: theme.colors.text, ...Typography.default('semiBold') }}>
-                        Combined
-                    </Text>
-                </Pressable>
-            )}
+                  >
+                      <Text style={{ fontSize: 13, color: theme.colors.text, ...Typography.default('semiBold') }}>
+                          {t('files.diffModes.combined')}
+                      </Text>
+                  </Pressable>
+              )}
 
             {scmWriteEnabled && canUseSelectionActions && canIncludeFile && (
                 <Pressable
                     disabled={actionBusy}
                     onPress={onStageFile}
+                    testID="file-details-stage-file"
                     style={{
                         paddingHorizontal: 12,
                         paddingVertical: 8,
@@ -214,17 +243,18 @@ export function FileActionToolbar(props: FileActionToolbarProps) {
                         backgroundColor: theme.colors.success,
                         opacity: actionBusy ? 0.6 : 1,
                     }}
-                >
-                    <Text style={{ color: 'white', fontSize: 13, ...Typography.default('semiBold') }}>
-                        {virtualSelectionEnabled ? 'Select for commit' : 'Stage file'}
-                    </Text>
-                </Pressable>
-            )}
+                  >
+                      <Text style={{ color: 'white', fontSize: 13, ...Typography.default('semiBold') }}>
+                          {stageLabel}
+                      </Text>
+                  </Pressable>
+              )}
 
             {scmWriteEnabled && canUseSelectionActions && canRemoveFromSelection && (
                 <Pressable
                     disabled={actionBusy}
                     onPress={onUnstageFile}
+                    testID="file-details-unstage-file"
                     style={{
                         paddingHorizontal: 12,
                         paddingVertical: 8,
@@ -232,12 +262,12 @@ export function FileActionToolbar(props: FileActionToolbarProps) {
                         backgroundColor: theme.colors.warning,
                         opacity: actionBusy ? 0.6 : 1,
                     }}
-                >
-                    <Text style={{ color: 'white', fontSize: 13, ...Typography.default('semiBold') }}>
-                        {virtualSelectionEnabled ? 'Remove from selection' : 'Unstage file'}
-                    </Text>
-                </Pressable>
-            )}
+                  >
+                      <Text style={{ color: 'white', fontSize: 13, ...Typography.default('semiBold') }}>
+                          {unstageLabel}
+                      </Text>
+                  </Pressable>
+              )}
 
             {scmWriteEnabled && canUseSelectionActions && diffMode === 'both' && (
                 <Text
@@ -246,16 +276,17 @@ export function FileActionToolbar(props: FileActionToolbarProps) {
                         color: theme.colors.textSecondary,
                         ...Typography.default(),
                     }}
-                >
-                    Select Included or Pending to enable line selection.
-                </Text>
-            )}
+                  >
+                      {t('files.fileActions.selectionHint')}
+                  </Text>
+              )}
 
             {lineSelectionEnabled && selectedLineCount > 0 && (
                 <>
                     <Pressable
                         disabled={actionBusy}
                         onPress={onApplySelectedLines}
+                        testID="file-details-apply-selected-lines"
                         style={{
                             paddingHorizontal: 12,
                             paddingVertical: 8,
@@ -263,25 +294,26 @@ export function FileActionToolbar(props: FileActionToolbarProps) {
                             backgroundColor: theme.colors.textLink,
                             opacity: actionBusy ? 0.6 : 1,
                         }}
-                    >
-                        <Text style={{ color: 'white', fontSize: 13, ...Typography.default('semiBold') }}>
-                            {virtualSelectionEnabled
-                                ? 'Select lines for commit'
-                                : diffMode === 'included'
-                                    ? 'Unstage selected lines'
-                                    : 'Stage selected lines'}
-                        </Text>
-                    </Pressable>
-                    <Pressable
-                        onPress={onClearSelection}
+                      >
+                          <Text style={{ color: 'white', fontSize: 13, ...Typography.default('semiBold') }}>
+                              {virtualSelectionEnabled
+                                  ? t('files.fileActions.selectedLines.selectLinesForCommit')
+                                  : diffMode === 'included'
+                                      ? t('files.fileActions.selectedLines.unstageSelectedLines')
+                                      : t('files.fileActions.selectedLines.stageSelectedLines')}
+                          </Text>
+                      </Pressable>
+                      <Pressable
+                          onPress={onClearSelection}
+                          testID="file-details-clear-selection"
                         style={chipStyle(false)}
-                    >
-                        <Text style={{ color: theme.colors.text, fontSize: 13, ...Typography.default('semiBold') }}>
-                            Clear selection
-                        </Text>
-                    </Pressable>
-                </>
-            )}
+                      >
+                          <Text style={{ color: theme.colors.text, fontSize: 13, ...Typography.default('semiBold') }}>
+                              {t('files.fileActions.clearSelection')}
+                          </Text>
+                      </Pressable>
+                  </>
+              )}
         </View>
     );
 }

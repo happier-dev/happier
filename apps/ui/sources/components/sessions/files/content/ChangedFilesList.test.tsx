@@ -32,6 +32,10 @@ vi.mock('@/components/ui/lists/Item', () => ({
     Item: (props: any) => React.createElement('Item', props),
 }));
 
+vi.mock('@/components/sessions/sourceControl/changes/ScmChangeRow', () => ({
+    ScmChangeRow: (props: any) => React.createElement('ScmChangeRow', props),
+}));
+
 describe('ChangedFilesList', () => {
     const file = {
         fileName: 'a.ts',
@@ -41,6 +45,15 @@ describe('ChangedFilesList', () => {
         isIncluded: false,
         linesAdded: 1,
         linesRemoved: 1,
+    } as const;
+    const directoryLike = {
+        fileName: 'src/some-dir/',
+        filePath: 'src/some-dir/',
+        fullPath: 'src/some-dir/',
+        status: 'added',
+        isIncluded: false,
+        linesAdded: 0,
+        linesRemoved: 0,
     } as const;
 
     it('renders repository view heading and rows', async () => {
@@ -52,7 +65,7 @@ describe('ChangedFilesList', () => {
                     theme={{ colors: { surfaceHigh: '#111', divider: '#222', textLink: '#09f', textSecondary: '#999', text: '#fff', dark: false } } as any}
                     changedFilesViewMode="repository"
                     attributionReliability="high"
-                    allRepositoryChangedFiles={[file as any]}
+                    allRepositoryChangedFiles={[file as any, directoryLike as any]}
                     sessionAttributedFiles={[]}
                     repositoryOnlyFiles={[]}
                     suppressedInferredCount={0}
@@ -72,10 +85,11 @@ describe('ChangedFilesList', () => {
                 }
                 return String(value);
             });
+        // Directory-like SCM entries should be ignored (they cannot be opened / diffed).
         expect(textContent).toContain('Repository changed files (1)');
-        const items = tree!.root.findAllByType('Item' as any);
-        expect(items).toHaveLength(1);
-        expect(items[0].props.density).toBe('compact');
+        const rows = tree!.root.findAllByType('ScmChangeRow' as any);
+        expect(rows).toHaveLength(1);
+        expect(rows[0].props.density).toBe('compact');
     });
 
     it('supports injecting per-file actions for commit/stage flows', async () => {
@@ -98,15 +112,47 @@ describe('ChangedFilesList', () => {
             );
         });
 
-        const items = tree!.root.findAllByType('Item' as any);
-        expect(items).toHaveLength(1);
+        const rows = tree!.root.findAllByType('ScmChangeRow' as any);
+        expect(rows).toHaveLength(1);
 
-        const right = items[0]!.props.rightElement;
+        const right = rows[0]!.props.leadingElement;
         let rightTree: renderer.ReactTestRenderer | null = null;
         act(() => {
             rightTree = renderer.create(right);
         });
         expect(rightTree!.root.findAllByType('Action' as any)).toHaveLength(1);
+    });
+
+    it('supports opening a pinned details tab via onFilePressPinned', async () => {
+        const { ChangedFilesList } = await import('./ChangedFilesList');
+        const onFilePressPinned = vi.fn();
+
+        let tree: renderer.ReactTestRenderer | null = null;
+        act(() => {
+            tree = renderer.create(
+                <ChangedFilesList
+                    theme={{ colors: { surfaceHigh: '#111', divider: '#222', textLink: '#09f', textSecondary: '#999', text: '#fff', dark: false } } as any}
+                    changedFilesViewMode="repository"
+                    attributionReliability="high"
+                    allRepositoryChangedFiles={[file as any]}
+                    sessionAttributedFiles={[]}
+                    repositoryOnlyFiles={[]}
+                    suppressedInferredCount={0}
+                    onFilePress={vi.fn()}
+                    onFilePressPinned={onFilePressPinned}
+                />
+            );
+        });
+
+        const row = tree!.root.findByType('ScmChangeRow' as any);
+        expect(typeof row.props.onPressPinned).toBe('function');
+
+        act(() => {
+            row.props.onPressPinned();
+        });
+
+        expect(onFilePressPinned).toHaveBeenCalledTimes(1);
+        expect(onFilePressPinned).toHaveBeenCalledWith(file);
     });
 
     it('renders session reliability warning when attribution is limited', async () => {

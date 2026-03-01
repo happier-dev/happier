@@ -1,31 +1,51 @@
 import * as React from 'react';
-import { ActivityIndicator, Platform, Pressable, View, useWindowDimensions } from 'react-native';
+import { Platform, Pressable, View, type ScrollViewProps } from 'react-native';
 import { Octicons } from '@expo/vector-icons';
+import { FlashList, type FlashListRef } from '@shopify/flash-list';
 
-import { Item } from '@/components/ui/lists/Item';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import type { SessionAttributedFile, SessionAttributionReliability, ChangedFilesViewMode } from '@/scm/scmAttribution';
 import type { ScmWorkingSnapshot } from '@/sync/domains/state/storageTypes';
 import type { ScmFileStatus } from '@/scm/scmStatusFiles';
 import { t } from '@/text';
-import { formatFileSubtitle } from '@/components/sessions/files/filesUtils';
 import { scmUiBackendRegistry } from '@/scm/registry/scmUiBackendRegistry';
 import type { ScmDiffArea } from '@happier-dev/protocol';
-import { CodeLinesView } from '@/components/ui/code/view/CodeLinesView';
-import { buildCodeLinesFromUnifiedDiff } from '@/components/ui/code/model/buildCodeLinesFromUnifiedDiff';
-import { ChangedFilesReviewOutline } from '@/components/sessions/files/content/review/ChangedFilesReviewOutline';
-import { changedFilesReviewAnchorId } from '@/components/sessions/files/content/review/changedFilesReviewAnchorId';
+import { PierreScrollRootVirtualizerProvider } from '@/components/ui/code/diff/pierre/PierreScrollRootVirtualizerProvider';
 import { useChangedFilesReviewCollapsedPaths } from '@/components/sessions/files/content/review/useChangedFilesReviewCollapsedPaths';
 import { useChangedFilesReviewDiffLoading } from '@/components/sessions/files/content/review/useChangedFilesReviewDiffLoading';
-import { ChangedFileIcon, ChangedFileStatusIcon } from '@/components/sessions/files/changedFiles/ChangedFileRowIcons';
+import { buildChangedFilesReviewRows, type ChangedFilesReviewRow } from '@/components/sessions/files/content/review/buildChangedFilesReviewRows';
+import { ChangedFilesReviewDiffBlock, type ReviewDiffState } from '@/components/sessions/files/content/review/ChangedFilesReviewDiffBlock';
+import { useChangedFilesReviewPrefetch } from '@/components/sessions/files/content/review/useChangedFilesReviewPrefetch';
+import { useChangedFilesReviewFocusPath } from '@/components/sessions/files/content/review/useChangedFilesReviewFocusPath';
+import { entryToDelta, fileHasDeltaForArea, toAreaFileStatus, totalsChangedLines, type ScmEntryDelta } from '@/components/sessions/files/content/review/scmEntryDelta';
 import { ChangedFilesSectionHeader } from '@/components/sessions/files/changedFiles/ChangedFilesSectionHeader';
-import { useCodeLinesReviewComments } from '@/components/sessions/reviews/comments/useCodeLinesReviewComments';
+import { ChangedFilesReviewDiffAreaSelector } from '@/components/sessions/files/content/review/ChangedFilesReviewDiffAreaSelector';
+import { useChangedFilesReviewDiffBlockRenderer } from '@/components/sessions/files/content/review/useChangedFilesReviewDiffBlockRenderer';
 import type { ReviewCommentDraft } from '@/sync/domains/input/reviewComments/reviewCommentTypes';
-import { useCodeLinesSyntaxHighlighting } from '@/components/ui/code/highlighting/useCodeLinesSyntaxHighlighting';
+import { ScmChangeRow } from '@/components/sessions/sourceControl/changes/ScmChangeRow';
+import { buildSnapshotSignature } from '@/scm/statusSync/projectState';
+import { scmDiffCache } from '@/scm/diffCache/scmDiffCacheSingleton';
+import { toTestIdSafeValue } from '@/utils/ui/toTestIdSafeValue';
+import { resolveDefaultDiffModeForFile } from '@/scm/diff/defaultMode';
+import { useSetting } from '@/sync/domains/state/storage';
+import { deferOnWeb } from '@/utils/platform/deferOnWeb';
+import { filterDirectoryLikeScmFileStatuses, isDirectoryLikeScmFileStatus } from '@/scm/isDirectoryLikeScmFileStatus';
+
+const ViewWithClick = View as unknown as React.ComponentType<
+    React.ComponentPropsWithRef<typeof View> & { onClick?: any; onKeyDown?: any; tabIndex?: number }
+>;
+
+type ChangedFilesReviewTheme = Readonly<{
+    colors: Readonly<{
+        surfaceHigh: string;
+        divider: string;
+        textSecondary: string;
+    }>;
+}>;
 
 type ChangedFilesReviewProps = {
-    theme: any;
+    theme: ChangedFilesReviewTheme;
     sessionId: string;
     snapshot: ScmWorkingSnapshot | null;
     changedFilesViewMode: ChangedFilesViewMode;
@@ -37,9 +57,16 @@ type ChangedFilesReviewProps = {
     maxFiles: number;
     maxChangedLines: number;
     onFilePress: (file: ScmFileStatus) => void;
+    onFilePressPinned?: (file: ScmFileStatus) => void;
+    onToggleSelectionForFile?: (file: ScmFileStatus) => void;
     renderFileActions?: (file: ScmFileStatus) => React.ReactNode;
+    renderFileTrailingActions?: (file: ScmFileStatus) => React.ReactNode;
     focusPath?: string | null;
     rowDensity?: 'comfortable' | 'compact';
+    initialCollapsedPaths?: readonly string[] | null;
+    onCollapsedPathsChange?: (paths: string[]) => void;
+    initialScrollTop?: number | null;
+    onScrollTopChange?: (top: number) => void;
     diffAutoRefreshIntervalMs?: number;
     diffRefreshToken?: number;
     reviewCommentsEnabled?: boolean;
@@ -47,156 +74,10 @@ type ChangedFilesReviewProps = {
     onUpsertReviewCommentDraft?: (draft: ReviewCommentDraft) => void;
     onDeleteReviewCommentDraft?: (commentId: string) => void;
     onReviewCommentError?: (message: string) => void;
+    onScroll?: ScrollViewProps['onScroll'];
+    onLayout?: ScrollViewProps['onLayout'];
+    onContentSizeChange?: ScrollViewProps['onContentSizeChange'];
 };
-
-function renderFileSubtitle(file: ScmFileStatus) {
-    return formatFileSubtitle(file, t('files.projectRoot'));
-}
-
-function totalsChangedLines(snapshot: ScmWorkingSnapshot | null, area: ScmDiffArea): number {
-    const totals = snapshot?.totals;
-    if (!totals) return 0;
-    if (area === 'included') return totals.includedAdded + totals.includedRemoved;
-    if (area === 'pending') return totals.pendingAdded + totals.pendingRemoved;
-    return totals.includedAdded + totals.includedRemoved + totals.pendingAdded + totals.pendingRemoved;
-}
-
-type ScmEntryDelta = Readonly<{
-    hasIncludedDelta: boolean;
-    hasPendingDelta: boolean;
-    includedAdded: number;
-    includedRemoved: number;
-    pendingAdded: number;
-    pendingRemoved: number;
-}>;
-
-function entryToDelta(entry: any): ScmEntryDelta {
-    return {
-        hasIncludedDelta: Boolean(entry?.hasIncludedDelta),
-        hasPendingDelta: Boolean(entry?.hasPendingDelta),
-        includedAdded: Number(entry?.stats?.includedAdded ?? 0),
-        includedRemoved: Number(entry?.stats?.includedRemoved ?? 0),
-        pendingAdded: Number(entry?.stats?.pendingAdded ?? 0),
-        pendingRemoved: Number(entry?.stats?.pendingRemoved ?? 0),
-    };
-}
-
-function fileHasDeltaForArea(file: ScmFileStatus, delta: ScmEntryDelta | null, area: ScmDiffArea): boolean {
-    if (delta) {
-        if (area === 'included') return delta.hasIncludedDelta;
-        if (area === 'pending') return delta.hasPendingDelta;
-        return delta.hasIncludedDelta || delta.hasPendingDelta;
-    }
-    // Fallback when snapshot entries are not available in tests or partial snapshots.
-    if (area === 'included') return file.isIncluded === true;
-    if (area === 'pending') return file.isIncluded === false;
-    return true;
-}
-
-function toAreaFileStatus(file: ScmFileStatus, delta: ScmEntryDelta | null, area: ScmDiffArea): ScmFileStatus {
-    if (!delta) {
-        // Best-effort: keep existing stats if we don't have entry-level numbers.
-        return area === 'included'
-            ? { ...file, isIncluded: true }
-            : area === 'pending'
-                ? { ...file, isIncluded: false }
-                : file;
-    }
-    if (area === 'included') {
-        return { ...file, isIncluded: true, linesAdded: delta.includedAdded, linesRemoved: delta.includedRemoved };
-    }
-    if (area === 'pending') {
-        return { ...file, isIncluded: false, linesAdded: delta.pendingAdded, linesRemoved: delta.pendingRemoved };
-    }
-    return {
-        ...file,
-        linesAdded: delta.includedAdded + delta.pendingAdded,
-        linesRemoved: delta.includedRemoved + delta.pendingRemoved,
-    };
-}
-
-type DiffState = {
-    status: 'idle' | 'loading' | 'loaded' | 'error';
-    diff: string;
-    error: string | null;
-};
-
-function ChangedFilesReviewDiffBlock(props: {
-    theme: any;
-    sessionId: string;
-    filePath: string;
-    state: DiffState;
-    reviewCommentsEnabled: boolean;
-    reviewCommentDrafts: readonly ReviewCommentDraft[];
-    onUpsertReviewCommentDraft?: (draft: ReviewCommentDraft) => void;
-    onDeleteReviewCommentDraft?: (commentId: string) => void;
-    onReviewCommentError?: (message: string) => void;
-}) {
-    const { theme, sessionId, filePath, state } = props;
-    const syntaxHighlighting = useCodeLinesSyntaxHighlighting(filePath);
-
-    const diffLoaded = state.status === 'loaded';
-    const hasDiff = diffLoaded && Boolean(state.diff);
-
-    const lines = React.useMemo(
-        () => (hasDiff ? buildCodeLinesFromUnifiedDiff({ unifiedDiff: state.diff }) : []),
-        [hasDiff, state.diff]
-    );
-    const draftsForFile = React.useMemo(() => {
-        if (!props.reviewCommentsEnabled) return [];
-        return props.reviewCommentDrafts.filter((d) => d.filePath === filePath && d.source === 'diff');
-    }, [filePath, props.reviewCommentDrafts, props.reviewCommentsEnabled]);
-
-    const controls = useCodeLinesReviewComments({
-        enabled: props.reviewCommentsEnabled && hasDiff,
-        filePath,
-        source: 'diff',
-        lines,
-        drafts: draftsForFile,
-        onUpsertDraft: props.onUpsertReviewCommentDraft,
-        onDeleteDraft: props.onDeleteReviewCommentDraft,
-        onError: props.onReviewCommentError,
-    });
-
-    if (state.status === 'loading' || state.status === 'idle') {
-        return (
-            <View style={{ paddingHorizontal: 16, paddingVertical: 12 }}>
-                <ActivityIndicator size="small" color={theme.colors.textSecondary} />
-            </View>
-        );
-    }
-    if (state.status === 'error') {
-        return (
-            <View style={{ paddingHorizontal: 16, paddingVertical: 12 }}>
-                <Text style={{ fontSize: 12, color: theme.colors.textSecondary, ...Typography.default() }}>
-                    {state.error ?? t('files.reviewUnableToLoadDiff')}
-                </Text>
-            </View>
-        );
-    }
-    if (!state.diff) {
-        return (
-            <View style={{ paddingHorizontal: 16, paddingVertical: 12 }}>
-                <Text style={{ fontSize: 12, color: theme.colors.textSecondary, ...Typography.default() }}>
-                    {t('files.noChanges')}
-                </Text>
-            </View>
-        );
-    }
-
-    return (
-        <View style={{ paddingHorizontal: 16, paddingBottom: 12 }}>
-            <CodeLinesView
-                lines={lines}
-                onPressAddComment={controls?.onPressAddComment}
-                isCommentActive={controls?.isCommentActive}
-                renderAfterLine={controls?.renderAfterLine}
-                virtualized={!props.reviewCommentsEnabled}
-                syntaxHighlighting={syntaxHighlighting}
-            />
-        </View>
-    );
-}
 
 export function ChangedFilesReview(props: ChangedFilesReviewProps) {
     const {
@@ -215,10 +96,9 @@ export function ChangedFilesReview(props: ChangedFilesReviewProps) {
         rowDensity = 'comfortable',
     } = props;
 
-    const isDarkTheme = theme.dark === true;
-    const iconSize = rowDensity === 'compact' ? 20 : 32;
     const plugin = scmUiBackendRegistry.getPluginForSnapshot(snapshot);
     const diffConfig = plugin.diffModeConfig(snapshot);
+    const scmDefaultDiffModeByBackend = useSetting('scmDefaultDiffModeByBackend');
     const reviewCommentsEnabled = props.reviewCommentsEnabled === true;
     const reviewCommentDrafts = props.reviewCommentDrafts ?? [];
     const diffAutoRefreshIntervalMs =
@@ -230,14 +110,41 @@ export function ChangedFilesReview(props: ChangedFilesReviewProps) {
             ? props.diffRefreshToken
             : 0;
 
-    const [diffArea, setDiffArea] = React.useState<ScmDiffArea>(diffConfig.defaultMode);
+    const userSelectedDiffAreaRef = React.useRef(false);
+    const hasIncludedDelta = Number(snapshot?.totals?.includedFiles ?? 0) > 0;
+    const hasPendingDelta = Number(snapshot?.totals?.pendingFiles ?? 0) > 0;
+    const [diffArea, setDiffAreaRaw] = React.useState<ScmDiffArea>(() => {
+        return resolveDefaultDiffModeForFile({
+            snapshot,
+            backendOverrides: scmDefaultDiffModeByBackend as Record<string, ScmDiffArea> | undefined,
+            hasIncludedDelta,
+            hasPendingDelta,
+        });
+    });
+    const setDiffArea = React.useCallback((next: ScmDiffArea) => {
+        userSelectedDiffAreaRef.current = true;
+        setDiffAreaRaw(next);
+    }, []);
     React.useEffect(() => {
         const available = new Set<ScmDiffArea>(diffConfig.availableModes);
         const fallback = available.has(diffConfig.defaultMode)
             ? diffConfig.defaultMode
             : (diffConfig.availableModes[0] ?? 'pending');
-        setDiffArea((prev) => (available.has(prev) ? prev : fallback));
+        setDiffAreaRaw((prev) => (available.has(prev) ? prev : fallback));
     }, [diffConfig.availableModes, diffConfig.defaultMode]);
+
+    React.useEffect(() => {
+        if (userSelectedDiffAreaRef.current) return;
+        const available = new Set<ScmDiffArea>(diffConfig.availableModes);
+
+        if (hasIncludedDelta && !hasPendingDelta && available.has('included')) {
+            setDiffAreaRaw((prev) => (prev === 'included' ? prev : 'included'));
+            return;
+        }
+        if (hasPendingDelta && !hasIncludedDelta && available.has('pending')) {
+            setDiffAreaRaw((prev) => (prev === 'pending' ? prev : 'pending'));
+        }
+    }, [diffConfig.availableModes, hasIncludedDelta, hasPendingDelta]);
 
     const entryDeltaByPath = React.useMemo(() => {
         const map = new Map<string, ScmEntryDelta>();
@@ -249,12 +156,18 @@ export function ChangedFilesReview(props: ChangedFilesReviewProps) {
     }, [snapshot?.entries]);
 
     const baseSections = React.useMemo(() => {
+        const repositoryChangedFiles = filterDirectoryLikeScmFileStatuses(allRepositoryChangedFiles);
+        const sessionChangedFiles = sessionAttributedFiles
+            .filter((entry) => entry?.file && !isDirectoryLikeScmFileStatus(entry.file))
+            .map((entry) => entry.file);
+        const otherRepositoryChangedFiles = filterDirectoryLikeScmFileStatuses(repositoryOnlyFiles);
+
         if (changedFilesViewMode === 'repository') {
             return [
                 {
                     key: 'repository',
                     kind: 'repository',
-                    files: allRepositoryChangedFiles,
+                    files: repositoryChangedFiles,
                 },
             ] as const;
         }
@@ -263,14 +176,14 @@ export function ChangedFilesReview(props: ChangedFilesReviewProps) {
             {
                 key: 'session',
                 kind: 'session',
-                files: sessionAttributedFiles.map((entry) => entry.file),
+                files: sessionChangedFiles,
             },
-            ...(repositoryOnlyFiles.length > 0
+            ...(otherRepositoryChangedFiles.length > 0
                 ? ([
                     {
                         key: 'other',
                         kind: 'other',
-                        files: repositoryOnlyFiles,
+                        files: otherRepositoryChangedFiles,
                     },
                 ] as const)
                 : ([] as const)),
@@ -332,262 +245,618 @@ export function ChangedFilesReview(props: ChangedFilesReviewProps) {
     }, [sections]);
 
     const tooLarge = reviewFiles.length > maxFiles || totalsChangedLines(snapshot, diffArea) > maxChangedLines;
-    const [selectedPath, setSelectedPath] = React.useState<string>(() => reviewFiles.at(0)?.fullPath ?? '');
-    React.useEffect(() => {
-        setSelectedPath((prev) => {
-            if (!prev) return reviewFiles.at(0)?.fullPath ?? '';
-            const stillPresent = reviewFiles.some((f) => f.fullPath === prev);
-            return stillPresent ? prev : (reviewFiles.at(0)?.fullPath ?? '');
-        });
-    }, [reviewFiles]);
+    const rows = React.useMemo(() => buildChangedFilesReviewRows({ sections }), [sections]);
+    const pathToRowIndex = React.useMemo(() => {
+        const map = new Map<string, number>();
+        for (let i = 0; i < rows.length; i++) {
+            const row = rows[i];
+            if (row?.kind === 'file' && row.file?.fullPath) {
+                map.set(row.file.fullPath, i);
+            }
+        }
+        return map;
+    }, [rows]);
+    const listRef = React.useRef<FlashListRef<ChangedFilesReviewRow> | null>(null);
+    const lastScrollTopRef = React.useRef<number>(typeof props.initialScrollTop === 'number' ? props.initialScrollTop : 0);
+    const hasAppliedInitialScrollRef = React.useRef(false);
 
-    const { isCollapsed, toggleCollapsed, expandPath } = useChangedFilesReviewCollapsedPaths({ reviewFiles });
+    const snapshotSignature = React.useMemo(() => {
+        if (!snapshot) return null;
+        return buildSnapshotSignature(snapshot);
+    }, [snapshot]);
+
+    const { collapsedPaths, isCollapsed, toggleCollapsed, expandPath } = useChangedFilesReviewCollapsedPaths({
+        reviewFiles,
+        initialCollapsedPaths: props.initialCollapsedPaths,
+        onCollapsedPathsChange: props.onCollapsedPathsChange,
+    });
+    const fallbackError = t('files.reviewDiffRequestFailed');
+
+    const initialRequestedPaths = React.useMemo(() => {
+        const count = Math.max(1, Math.min(maxFiles, reviewFiles.length));
+        const out: string[] = [];
+        for (const file of reviewFiles.slice(0, count)) {
+            if (file?.fullPath) out.push(file.fullPath);
+        }
+        return out;
+    }, [maxFiles, reviewFiles]);
+
+    const reportScrollTop = React.useCallback((nextTop: number) => {
+        if (!Number.isFinite(nextTop)) return;
+        lastScrollTopRef.current = nextTop;
+        props.onScrollTopChange?.(nextTop);
+    }, [props.onScrollTopChange]);
+
+    const webScrollRootRef = React.useRef<HTMLElement | null>(null);
+    const resolveWebScrollRoot = React.useCallback((): HTMLElement | null => {
+        if (Platform.OS !== 'web') return null;
+        const rawList: any = listRef.current as any;
+        const host = (rawList?.getScrollableNode?.() as HTMLElement | null) ?? null;
+        if (!host) return null;
+
+        const win = (globalThis as any).window as Window | undefined;
+        const isScrollable = (el: HTMLElement | null) => {
+            if (!el) return false;
+            if (!win?.getComputedStyle) return false;
+            const style = win.getComputedStyle(el);
+            const overflowY = style.overflowY;
+            return (overflowY === 'auto' || overflowY === 'scroll') && el.scrollHeight > el.clientHeight + 1;
+        };
+        const candidates: HTMLElement[] = [];
+        if (isScrollable(host)) candidates.push(host);
+        const descendants = Array.from(host.querySelectorAll('*')) as HTMLElement[];
+        for (const child of descendants) {
+            if (isScrollable(child)) candidates.push(child);
+        }
+
+        const boundary = host.closest?.('[data-testid="session-details-panel-root"]') as HTMLElement | null;
+        let cursor: HTMLElement | null = host.parentElement;
+        let steps = 0;
+        while (cursor && steps < 30) {
+            if (isScrollable(cursor)) candidates.push(cursor);
+            if (boundary && cursor === boundary) break;
+            cursor = cursor.parentElement;
+            steps += 1;
+        }
+
+        if (candidates.length === 0) return null;
+        const best = candidates.reduce((prev, next) => {
+            const prevScore = Math.max(prev.clientHeight, 0) * 1_000_000 + Math.max(prev.scrollHeight - prev.clientHeight, 0);
+            const nextScore = Math.max(next.clientHeight, 0) * 1_000_000 + Math.max(next.scrollHeight - next.clientHeight, 0);
+            return nextScore >= prevScore ? next : prev;
+        });
+        webScrollRootRef.current = best;
+        return best;
+    }, []);
+
+    React.useEffect(() => {
+        if (Platform.OS !== 'web') return;
+        let cancelled = false;
+        const raf: (cb: FrameRequestCallback) => number =
+            typeof globalThis.requestAnimationFrame === 'function'
+                ? globalThis.requestAnimationFrame.bind(globalThis)
+                : (cb) => globalThis.setTimeout(() => cb(Date.now()), 0);
+
+        let attempts = 0;
+        const maxAttempts = 12;
+        const step = () => {
+            if (cancelled) return;
+            if (webScrollRootRef.current) return;
+            resolveWebScrollRoot();
+            attempts += 1;
+            if (attempts >= maxAttempts) return;
+            raf(() => step());
+        };
+        raf(() => step());
+        return () => {
+            cancelled = true;
+            webScrollRootRef.current = null;
+        };
+    }, [resolveWebScrollRoot]);
+
+    const handleScroll = React.useCallback((event: any) => {
+        // Some consumers (scroll-edge fades) assume `event.nativeEvent` exists. FlashList can invoke
+        // onScroll with non-standard shapes on web, so guard defensively.
+        if (event?.nativeEvent) {
+            props.onScroll?.(event);
+        }
+
+        if (Platform.OS === 'web') {
+            // Prefer DOM scrollTop over RN-web's `contentOffset.y` (often unreliable with FlashList).
+            const scrollRoot = webScrollRootRef.current ?? resolveWebScrollRoot();
+            const current = scrollRoot && typeof (scrollRoot as any).scrollTop === 'number' ? (scrollRoot as any).scrollTop : null;
+            if (typeof current === 'number') {
+                reportScrollTop(current);
+                return;
+            }
+        }
+
+        const y = event?.nativeEvent?.contentOffset?.y;
+        if (typeof y === 'number') {
+            reportScrollTop(y);
+        }
+    }, [props.onScroll, reportScrollTop, resolveWebScrollRoot]);
+
+    React.useEffect(() => {
+        if (Platform.OS !== 'web') return;
+        if (hasAppliedInitialScrollRef.current) return;
+        const initial = props.initialScrollTop;
+        if (typeof initial !== 'number' || !Number.isFinite(initial) || initial <= 0) return;
+        hasAppliedInitialScrollRef.current = true;
+        deferOnWeb(() => {
+            const raf: (cb: FrameRequestCallback) => number =
+                typeof globalThis.requestAnimationFrame === 'function'
+                    ? globalThis.requestAnimationFrame.bind(globalThis)
+                    : (cb) => globalThis.setTimeout(() => cb(Date.now()), 0);
+
+            let attempts = 0;
+            const maxAttempts = 12;
+            const tryApply = () => {
+                const scrollRoot = webScrollRootRef.current ?? resolveWebScrollRoot();
+                if (!scrollRoot) {
+                    attempts += 1;
+                    if (attempts >= maxAttempts) return;
+                    raf(() => tryApply());
+                    return;
+                }
+
+                const rawList: any = listRef.current as any;
+                try {
+                    rawList?.scrollToOffset?.({ offset: initial, animated: false });
+                } catch {
+                    // ignore
+                }
+                try {
+                    (scrollRoot as any).scrollTop = initial;
+                } catch {
+                    // ignore
+                }
+
+                // Re-apply a couple times to beat post-layout adjustments.
+                raf(() => {
+                    try {
+                        rawList?.scrollToOffset?.({ offset: initial, animated: false });
+                    } catch {
+                        // ignore
+                    }
+                    try {
+                        (scrollRoot as any).scrollTop = initial;
+                    } catch {
+                        // ignore
+                    }
+                    raf(() => {
+                        try {
+                            rawList?.scrollToOffset?.({ offset: initial, animated: false });
+                        } catch {
+                            // ignore
+                        }
+                        try {
+                            (scrollRoot as any).scrollTop = initial;
+                        } catch {
+                            // ignore
+                        }
+                    });
+                });
+            };
+
+            tryApply();
+        });
+    }, [props.initialScrollTop, resolveWebScrollRoot]);
+
+    React.useEffect(() => {
+        return () => {
+            props.onScrollTopChange?.(lastScrollTopRef.current);
+        };
+    }, [props.onScrollTopChange]);
+
+    const preserveScrollOnToggleCollapsed = React.useCallback((path: string) => {
+        // FlashList caches row measurements. When we expand/collapse diffs, clear the layout cache
+        // up-front so the next layout pass uses updated heights (prevents empty gaps on web and
+        // avoids stale measurement artifacts in virtualization).
+        const rawList: any = listRef.current as any;
+        rawList?.clearLayoutCacheOnUpdate?.();
+
+        if (Platform.OS !== 'web') {
+            toggleCollapsed(path);
+            return;
+        }
+
+        const host =
+            (rawList?.getScrollableNode?.() as HTMLElement | null)
+            ?? null;
+        if (!host) {
+            toggleCollapsed(path);
+            return;
+        }
+
+        const isScrollable = (el: HTMLElement | null) => {
+            if (!el) return false;
+            const win = (globalThis as any).window as Window | undefined;
+            if (!win?.getComputedStyle) return false;
+            const style = win.getComputedStyle(el);
+            const overflowY = style.overflowY;
+            return (overflowY === 'auto' || overflowY === 'scroll') && el.scrollHeight > el.clientHeight + 1;
+        };
+
+        const safePath = toTestIdSafeValue(path);
+        const rowSelector = `[data-testid="scm-change-row-${safePath}"]`;
+        const rowBefore = host.querySelector<HTMLElement>(rowSelector) ?? null;
+
+        // Match Playwright helpers: identify the real scroll container by `overflowY` and measurable overflow.
+        // FlashList can render a nested scroll div on web; prefer that over arbitrary ancestors with scrollTop.
+        const findScrollRoot = (base: HTMLElement | null): HTMLElement | null => {
+            if (!base) return null;
+            const candidates: HTMLElement[] = [];
+            if (isScrollable(base)) candidates.push(base);
+            const descendants = Array.from(base.querySelectorAll('*')) as HTMLElement[];
+            for (const child of descendants) {
+                if (isScrollable(child)) candidates.push(child);
+            }
+            let cursor: HTMLElement | null = base.parentElement;
+            while (cursor) {
+                if (isScrollable(cursor)) candidates.push(cursor);
+                cursor = cursor.parentElement;
+            }
+            if (candidates.length === 0) return null;
+            return candidates.reduce((prev, next) => {
+                const prevScore = Math.max(prev.clientHeight, 0) * 1_000_000 + Math.max(prev.scrollHeight - prev.clientHeight, 0);
+                const nextScore = Math.max(next.clientHeight, 0) * 1_000_000 + Math.max(next.scrollHeight - next.clientHeight, 0);
+                return nextScore >= prevScore ? next : prev;
+            });
+        };
+
+        const scrollRoot =
+            findScrollRoot(host)
+            ?? findScrollRoot(rowBefore)
+            ?? (rawList?.getScrollableNode?.() as HTMLElement | null)
+            ?? host;
+
+        const scrollRootTopBefore = scrollRoot.getBoundingClientRect?.().top ?? 0;
+        const rowTopBefore = rowBefore?.getBoundingClientRect?.().top ?? null;
+        const scrollTopBefore = typeof (scrollRoot as any).scrollTop === 'number' ? (scrollRoot as any).scrollTop : null;
+        const rowOffsetBefore = rowTopBefore == null ? null : rowTopBefore - scrollRootTopBefore;
+
+        toggleCollapsed(path);
+
+        if (rowOffsetBefore == null || scrollTopBefore == null) return;
+
+        const applyCorrection = () => {
+            const rowAfter = scrollRoot.querySelector<HTMLElement>(rowSelector) ?? null;
+            const scrollRootTop = scrollRoot.getBoundingClientRect?.().top ?? 0;
+            const rowTopAfter = rowAfter?.getBoundingClientRect?.().top ?? null;
+            if (rowTopAfter == null) return;
+            const rowOffsetAfter = rowTopAfter - scrollRootTop;
+            const delta = rowOffsetAfter - rowOffsetBefore;
+            if (!Number.isFinite(delta) || Math.abs(delta) < 0.5) return;
+            const currentOffset =
+                typeof (scrollRoot as any).scrollTop === 'number'
+                    ? (scrollRoot as any).scrollTop
+                    : scrollTopBefore;
+            if (currentOffset == null) return;
+            const nextOffset = currentOffset + delta;
+            try {
+                rawList?.scrollToOffset?.({ offset: nextOffset, animated: false });
+                (scrollRoot as any).scrollTop = nextOffset;
+            } catch {
+                // ignore
+            }
+        };
+
+        const raf: (cb: FrameRequestCallback) => number =
+            typeof globalThis.requestAnimationFrame === 'function'
+                ? globalThis.requestAnimationFrame.bind(globalThis)
+                : (cb) => globalThis.setTimeout(() => cb(Date.now()), 0);
+
+        // FlashList may apply post-layout scroll adjustments; re-apply correction for a short, bounded window.
+        const startedAt = typeof performance !== 'undefined' && typeof performance.now === 'function'
+            ? performance.now()
+            : Date.now();
+        const maxMs = 420;
+        const step = () => {
+            applyCorrection();
+            const now = typeof performance !== 'undefined' && typeof performance.now === 'function'
+                ? performance.now()
+                : Date.now();
+            if (now - startedAt >= maxMs) return;
+            raf(() => step());
+        };
+        raf(() => step());
+    }, [toggleCollapsed]);
+
+    const prefetch = useChangedFilesReviewPrefetch({
+        sessionId,
+        snapshotSignature,
+        diffArea,
+        rows,
+        reviewFiles,
+        isCollapsed,
+        normalizeError: plugin.errorNormalizer,
+        fallbackError,
+        initialRequestedPaths,
+    });
+
     const { getDiffState } = useChangedFilesReviewDiffLoading({
         sessionId,
         isRepo: Boolean(snapshot?.repo.isRepo),
         reviewFiles,
         diffArea,
-        tooLarge,
-        selectedPath,
+        // Review is now virtualized, so we no longer force a "single-file" mode when thresholds are exceeded.
+        // Render cost is bounded by virtualization; diff fetch is bounded via requestedPaths + cache/prefetch.
+        tooLarge: false,
+        selectedPath: '',
+        snapshotSignature,
+        diffCache: prefetch.prefetchEnabled ? scmDiffCache : null,
+        requestedPaths: prefetch.requestedPaths ?? undefined,
+        maxConcurrency: prefetch.maxDiffLoadConcurrency,
         minRefetchMs: diffAutoRefreshIntervalMs,
         refreshToken: diffRefreshToken,
         normalizeError: plugin.errorNormalizer,
-        fallbackError: t('files.reviewDiffRequestFailed'),
+        fallbackError,
     });
 
-    const { width: viewportWidth } = useWindowDimensions();
-    const showOutline = Platform.OS === 'web' && viewportWidth >= 900 && reviewFiles.length > 0;
+    const scrollToPath = React.useCallback((path: string) => {
+        const index = pathToRowIndex.get(path);
+        if (typeof index !== 'number') return;
+        // On web, animated programmatic scrolls can trigger subtle event/restore-state glitches in
+        // some browsers / RN-web stacks. Focus navigation should be deterministic, so keep it
+        // non-animated on web.
+        listRef.current?.scrollToIndex({ index, animated: Platform.OS !== 'web', viewPosition: 0 });
+    }, [pathToRowIndex]);
 
-    const [highlightedPath, setHighlightedPath] = React.useState<string | null>(null);
+    const highlightedPath = useChangedFilesReviewFocusPath({
+        focusPath: typeof props.focusPath === 'string' ? props.focusPath : null,
+        reviewFiles,
+        expandPath,
+        scrollToPath,
+    });
 
-    const jumpToPath = React.useCallback((path: string) => {
-        if (typeof document === 'undefined') return;
-        const elementId = changedFilesReviewAnchorId(path);
-        const el = document.getElementById(elementId);
-        el?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-    }, []);
+    // Prefetch scheduling + viewability windowing is handled by useChangedFilesReviewPrefetch.
 
-    React.useEffect(() => {
-        const focusPath = typeof props.focusPath === 'string' ? props.focusPath : null;
-        if (!focusPath) return;
-        if (!reviewFiles.some((f) => f.fullPath === focusPath)) return;
+    const autoExpandedPathSet = React.useMemo(() => {
+        // When a review is "too large", rendering every diff block at once can lead to large layout shifts
+        // and unstable scroll behavior on web. Prefer rendering only the diff blocks near the viewport
+        // (plus a small buffer) while leaving the rest collapsed by default.
+        if (!tooLarge) return null;
+        const windowPaths = prefetch.prefetchWindowPaths;
+        const expanded =
+            Array.isArray(windowPaths) && windowPaths.length > 0
+                ? windowPaths
+                : (Array.isArray(prefetch.requestedPaths) && prefetch.requestedPaths.length > 0
+                    ? prefetch.requestedPaths
+                    : null);
+        if (!expanded) return null;
+        return new Set(expanded);
+    }, [prefetch.prefetchWindowPaths, prefetch.requestedPaths, tooLarge]);
 
-        setHighlightedPath(focusPath);
-        expandPath(focusPath);
-        if (tooLarge) {
-            setSelectedPath(focusPath);
-        }
+    // FlashList can aggressively recycle rows; ensure collapsed/expanded state is reflected by
+    // baking it into the `data` items (in addition to `extraData`) so visible rows always update.
+    const rowsWithViewState = React.useMemo(() => {
+        if (collapsedPaths.size === 0 && !autoExpandedPathSet) return rows;
+        return rows.map((row) => {
+            if (row.kind !== 'file') return row;
+            const path = row.file.fullPath;
+            const nextCollapsed = isCollapsed(path) || (autoExpandedPathSet ? !autoExpandedPathSet.has(path) : false);
+            if (row.collapsed === nextCollapsed) return row;
+            return { ...row, collapsed: nextCollapsed };
+        });
+    }, [autoExpandedPathSet, collapsedPaths, isCollapsed, rows]);
 
-        // Only schedule timers on web/DOM environments (avoids test warnings and native overhead).
-        if (Platform.OS === 'web' && typeof document !== 'undefined') {
-            const scrollTimer = setTimeout(() => {
-                jumpToPath(focusPath);
-            }, 50);
-            const clearTimer = setTimeout(() => {
-                setHighlightedPath(null);
-            }, 8000);
-            return () => {
-                clearTimeout(scrollTimer);
-                clearTimeout(clearTimer);
-            };
-        }
-    }, [expandPath, jumpToPath, props.focusPath, reviewFiles, tooLarge]);
+    const renderDiffBlock = useChangedFilesReviewDiffBlockRenderer({
+        theme,
+        sessionId,
+        snapshotSignature,
+        getDiffState,
+        reviewCommentsEnabled,
+        reviewCommentDrafts,
+        onUpsertReviewCommentDraft: props.onUpsertReviewCommentDraft,
+        onDeleteReviewCommentDraft: props.onDeleteReviewCommentDraft,
+        onReviewCommentError: props.onReviewCommentError,
+    });
 
-    const diffAreaSelector = diffConfig.availableModes.length > 1 ? (
-        <View style={{ flexDirection: 'row', gap: 8, paddingHorizontal: 16, paddingTop: 12, paddingBottom: 4 }}>
-            {diffConfig.availableModes.map((mode) => (
-                <Pressable
-                    key={mode}
-                    onPress={() => setDiffArea(mode)}
-                    style={{
-                        paddingVertical: 6,
-                        paddingHorizontal: 10,
-                        borderRadius: 10,
-                        borderWidth: 1,
-                        borderColor: theme.colors.divider,
-                        backgroundColor: diffArea === mode ? theme.colors.surfaceHigh : theme.colors.surface,
-                    }}
-                >
-                    <Text style={{ fontSize: 12, color: theme.colors.text, ...Typography.default('semiBold') }}>
-                        {diffConfig.labels[mode]}
-                    </Text>
-                </Pressable>
-            ))}
-        </View>
-    ) : null;
+    const onFilePressPinned = props.onFilePressPinned;
+    const onToggleSelectionForFile = props.onToggleSelectionForFile;
+    const renderFileActions = props.renderFileActions;
+    const renderFileTrailingActions = props.renderFileTrailingActions;
 
-    const renderDiffBlock = (path: string) => {
-        const state: DiffState = getDiffState(path);
+    const ListHeaderComponent = React.useCallback(() => {
         return (
-            <ChangedFilesReviewDiffBlock
-                theme={theme}
-                sessionId={sessionId}
-                filePath={path}
-                state={state}
-                reviewCommentsEnabled={reviewCommentsEnabled}
-                reviewCommentDrafts={reviewCommentDrafts}
-                onUpsertReviewCommentDraft={props.onUpsertReviewCommentDraft}
-                onDeleteReviewCommentDraft={props.onDeleteReviewCommentDraft}
-                onReviewCommentError={props.onReviewCommentError}
-            />
-        );
-    };
-
-    const leftContent = (
-        <>
-            {diffAreaSelector}
-
-            {reviewFiles.length === 0 && (
-                <View style={{ paddingHorizontal: 16, paddingTop: 12, paddingBottom: 6 }}>
-                    <Text style={{ fontSize: 12, color: theme.colors.textSecondary, ...Typography.default() }}>
-                        {t('files.noChanges')}
-                    </Text>
-                </View>
-            )}
-
-            {tooLarge && reviewFiles.length > 0 && (
-                <View style={{ paddingHorizontal: 16, paddingTop: 10, paddingBottom: 6 }}>
-                    <Text style={{ fontSize: 12, color: theme.colors.textSecondary, ...Typography.default() }}>
-                        {t('files.reviewLargeDiffOneAtATime')}
-                    </Text>
-                </View>
-            )}
-
-            {changedFilesViewMode === 'session' && (
-                <View
-                    style={{
-                        backgroundColor: theme.colors.surfaceHigh,
-                        paddingHorizontal: 16,
-                        paddingVertical: 12,
-                        borderBottomWidth: Platform.select({ ios: 0.33, default: 1 }),
-                        borderBottomColor: theme.colors.divider,
-                    }}
-                >
-                    <Text style={{ fontSize: 12, color: theme.colors.textSecondary, ...Typography.default() }}>
-                        {attributionReliability === 'high'
-                            ? t('files.attributionReliabilityHigh')
-                            : t('files.attributionReliabilityLimited')}
-                    </Text>
-                    {suppressedInferredCount > 0 && (
-                        <Text style={{ marginTop: 2, fontSize: 11, color: theme.colors.textSecondary, ...Typography.default() }}>
-                            {t('files.inferredSuppressed', { count: suppressedInferredCount })}
-                        </Text>
-                    )}
-                </View>
-            )}
-
-            {sections.map((section) => {
-                const files = section.files;
-                if (files.length === 0) {
-                    return null;
-                }
-                return (
-                    <React.Fragment key={section.key}>
-                        <ChangedFilesSectionHeader theme={theme} color={theme.colors.textSecondary}>
-                            {section.title}
-                        </ChangedFilesSectionHeader>
-                        {files.map((file, index) => {
-                            const isSelected = tooLarge && selectedPath === file.fullPath;
-                            const collapsed = isCollapsed(file.fullPath);
-                            const showDiff = (!tooLarge || isSelected) && !collapsed;
-
-                            const openFileButton = (
-                                <Pressable onPress={() => onFilePress(file)} style={{ paddingHorizontal: 8, paddingVertical: 6 }}>
-                                    <Octicons name="link-external" size={14} color={theme.colors.textSecondary} />
-                                </Pressable>
-                            );
-
-                            const collapseIndicator = (
-                                <Octicons
-                                    name={collapsed ? 'chevron-right' : 'chevron-down'}
-                                    size={16}
-                                    color={theme.colors.textSecondary}
-                                />
-                            );
-
-                            const rightElement = (
-                                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
-                                    {props.renderFileActions ? props.renderFileActions(file) : null}
-                                    {!tooLarge && (
-                                        <ChangedFileStatusIcon file={file} theme={theme} isDarkTheme={isDarkTheme} />
-                                    )}
-                                    {tooLarge && !isSelected ? null : collapseIndicator}
-                                    {openFileButton}
-                                </View>
-                            );
-
-                            return (
-                                <View
-                                    key={`${section.key}-${file.fullPath}-${index}`}
-                                    nativeID={changedFilesReviewAnchorId(file.fullPath)}
-                                >
-                                    <Item
-                                        title={file.fileName}
-                                        subtitle={renderFileSubtitle(file)}
-                                        icon={<ChangedFileIcon file={file} size={iconSize} />}
-                                        density={rowDensity}
-                                        rightElement={rightElement}
-                                        showChevron={false}
-                                        onPress={
-                                            tooLarge
-                                                ? () => {
-                                                    if (!isSelected) {
-                                                        setSelectedPath(file.fullPath);
-                                                        expandPath(file.fullPath);
-                                                        return;
-                                                    }
-                                                    toggleCollapsed(file.fullPath);
-                                                }
-                                                : () => toggleCollapsed(file.fullPath)
-                                        }
-                                        showDivider={index < files.length - 1}
-                                        style={(isSelected || highlightedPath === file.fullPath) ? { backgroundColor: theme.colors.surfaceHigh } : undefined}
-                                    />
-                                    {showDiff && renderDiffBlock(file.fullPath)}
-                                </View>
-                            );
-                        })}
-                    </React.Fragment>
-                    );
-                })}
-        </>
-    );
-
-    if (!showOutline) {
-        return leftContent;
-    }
-
-    return (
-        <View style={{ flexDirection: 'row', alignItems: 'flex-start' }}>
-            <View style={{ flex: 1, minWidth: 0 }}>{leftContent}</View>
-            <View
-                testID="scm-review-outline"
-                style={{
-                    width: 300,
-                    marginTop: diffConfig.availableModes.length > 1 ? 0 : 8,
-                    marginRight: 16,
-                    marginLeft: 12,
-                    borderWidth: 1,
-                    borderColor: theme.colors.divider,
-                    borderRadius: 12,
-                    backgroundColor: theme.colors.surface,
-                    overflow: 'hidden',
-                }}
-            >
-                <ChangedFilesReviewOutline
+            <View>
+                <ChangedFilesReviewDiffAreaSelector
                     theme={theme}
-                    files={reviewFiles}
-                    selectedPath={tooLarge ? selectedPath : null}
-                    onSelectFile={(file) => {
-                        if (tooLarge) {
-                            setSelectedPath(file.fullPath);
-                            expandPath(file.fullPath);
-                            return;
-                        }
-                        jumpToPath(file.fullPath);
-                    }}
+                    diffArea={diffArea}
+                    availableModes={diffConfig.availableModes}
+                    labels={diffConfig.labels}
+                    onChange={setDiffArea}
+                />
+
+                {reviewFiles.length === 0 && (
+                    <View style={{ paddingHorizontal: 16, paddingTop: 12, paddingBottom: 6 }}>
+                        <Text style={{ fontSize: 12, color: theme.colors.textSecondary, ...Typography.default() }}>
+                            {t('files.noChanges')}
+                        </Text>
+                    </View>
+                )}
+
+                {tooLarge && reviewFiles.length > 0 && (
+                    <View style={{ paddingHorizontal: 16, paddingTop: 10, paddingBottom: 6 }}>
+                        <Text style={{ fontSize: 12, color: theme.colors.textSecondary, ...Typography.default() }}>
+                            {t('files.reviewLargeDiffOneAtATime')}
+                        </Text>
+                    </View>
+                )}
+
+                {changedFilesViewMode === 'session' && (
+                    <View
+                        style={{
+                            backgroundColor: theme.colors.surfaceHigh,
+                            paddingHorizontal: 16,
+                            paddingVertical: 12,
+                            borderBottomWidth: Platform.select({ ios: 0.33, default: 1 }),
+                            borderBottomColor: theme.colors.divider,
+                        }}
+                    >
+                        <Text style={{ fontSize: 12, color: theme.colors.textSecondary, ...Typography.default() }}>
+                            {attributionReliability === 'high'
+                                ? t('files.attributionReliabilityHigh')
+                                : t('files.attributionReliabilityLimited')}
+                        </Text>
+                        {suppressedInferredCount > 0 && (
+                            <Text style={{ marginTop: 2, fontSize: 11, color: theme.colors.textSecondary, ...Typography.default() }}>
+                                {t('files.inferredSuppressed', { count: suppressedInferredCount })}
+                            </Text>
+                        )}
+                    </View>
+                )}
+            </View>
+        );
+    }, [
+        attributionReliability,
+        changedFilesViewMode,
+        diffArea,
+        diffConfig.availableModes,
+        diffConfig.labels,
+        diffConfig.defaultMode,
+        reviewFiles.length,
+        setDiffArea,
+        suppressedInferredCount,
+        theme.colors.divider,
+        theme.colors.surfaceHigh,
+        theme.colors.textSecondary,
+        tooLarge,
+    ]);
+
+    const renderRow = React.useCallback(({ item, index }: { item: ChangedFilesReviewRow; index: number }) => {
+        if (item.kind === 'section') {
+            return (
+                <ChangedFilesSectionHeader theme={theme} color={theme.colors.textSecondary}>
+                    {item.title}
+                </ChangedFilesSectionHeader>
+            );
+        }
+
+        const file = item.file;
+        const safePath = toTestIdSafeValue(file.fullPath);
+        const collapsed = item.collapsed === true || isCollapsed(file.fullPath);
+        const showDiff = !collapsed;
+        const stopPropagationIfPossible = (event: unknown) => {
+            const maybeEvent: any = event as any;
+            try {
+                maybeEvent?.stopPropagation?.();
+            } catch {
+                // ignore
+            }
+            try {
+                // Some web event implementations can expose a `nativeEvent` getter that throws
+                // (e.g. pooled events or cross-realm wrappers). Treat this as best-effort.
+                maybeEvent?.nativeEvent?.stopPropagation?.();
+            } catch {
+                // ignore
+            }
+        };
+
+        const openFileTestId = `scm-change-open-file-${safePath}`;
+        const onOpenFile = (event: unknown) => {
+            stopPropagationIfPossible(event);
+            deferOnWeb(() => onFilePress(file));
+        };
+        const openFileButton =
+            Platform.OS === 'web'
+                ? (
+                    <ViewWithClick
+                        testID={openFileTestId}
+                        accessibilityRole="button"
+                        accessibilityLabel={t('common.open')}
+                        onClick={onOpenFile}
+                        onKeyDown={(event: any) => {
+                            const key = String(event?.key ?? '');
+                            if (key !== 'Enter' && key !== ' ') return;
+                            onOpenFile(event);
+                        }}
+                        tabIndex={0}
+                        style={{ paddingHorizontal: 8, paddingVertical: 6 }}
+                    >
+                        <Octicons name="link-external" size={14} color={theme.colors.textSecondary} />
+                    </ViewWithClick>
+                )
+                : (
+                    <Pressable
+                        testID={openFileTestId}
+                        onPress={onOpenFile as any}
+                        style={{ paddingHorizontal: 8, paddingVertical: 6 }}
+                        accessibilityRole="button"
+                        accessibilityLabel={t('common.open')}
+                    >
+                        <Octicons name="link-external" size={14} color={theme.colors.textSecondary} />
+                    </Pressable>
+                );
+
+        const rightElement = (
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+                {renderFileActions ? renderFileActions(file) : null}
+                {renderFileTrailingActions ? renderFileTrailingActions(file) : null}
+                {openFileButton}
+            </View>
+        );
+
+        const next = rowsWithViewState[index + 1];
+        const showDivider = next?.kind === 'file' && next.sectionKey === item.sectionKey;
+
+        return (
+            <View>
+                <ScmChangeRow
+                    theme={theme}
+                    file={file}
+                    density={rowDensity}
+                    highlighted={highlightedPath === file.fullPath}
+                    onPressPinned={
+                        onFilePressPinned
+                            ? () => deferOnWeb(() => onFilePressPinned(file))
+                            : undefined
+                    }
+                    onToggleSelection={onToggleSelectionForFile ? () => onToggleSelectionForFile(file) : undefined}
+                    trailingElement={rightElement}
+                    showDivider={showDivider}
+                    onPress={() => preserveScrollOnToggleCollapsed(file.fullPath)}
+                />
+                {showDiff && renderDiffBlock(file.fullPath)}
+            </View>
+        );
+    }, [
+        highlightedPath,
+        isCollapsed,
+        onFilePressPinned,
+        onFilePress,
+        onToggleSelectionForFile,
+        preserveScrollOnToggleCollapsed,
+        renderFileActions,
+        renderFileTrailingActions,
+        renderDiffBlock,
+        rowDensity,
+        rowsWithViewState,
+        theme,
+    ]);
+
+      return (
+          <PierreScrollRootVirtualizerProvider>
+                <View style={{ flex: 1, minHeight: 0 }}>
+                <FlashList
+                    ref={listRef}
+                    testID="scm-review-list"
+                    style={{ flex: 1, minHeight: 0 }}
+                    data={rowsWithViewState}
+                    keyExtractor={(item) => item.key}
+                    getItemType={(item) => item.kind}
+                    drawDistance={1200}
+                    // FlashList memoizes row rendering; ensure UI state like collapsed paths triggers visible re-renders.
+                    extraData={collapsedPaths}
+                    onScroll={handleScroll}
+                    onLayout={props.onLayout}
+                    onContentSizeChange={props.onContentSizeChange}
+                    onViewableItemsChanged={prefetch.onViewableItemsChanged}
+                    renderItem={renderRow}
+                    ListHeaderComponent={ListHeaderComponent}
                 />
             </View>
-        </View>
+        </PierreScrollRootVirtualizerProvider>
     );
 }

@@ -73,7 +73,7 @@ describe('FileActionToolbar', () => {
         });
 
         const texts = tree!.root.findAllByType('Text' as any);
-        expect(texts.some((node) => node.props.children === 'Stage file')).toBe(true);
+        expect(texts.some((node) => node.props.children === 'files.fileActions.stageFile')).toBe(true);
     });
 
     it('hides include/exclude controls when backend does not support them', async () => {
@@ -106,8 +106,8 @@ describe('FileActionToolbar', () => {
         });
 
         const texts = tree!.root.findAllByType('Text' as any);
-        expect(texts.some((node) => node.props.children === 'Stage file')).toBe(false);
-        expect(texts.some((node) => node.props.children === 'Unstage file')).toBe(false);
+        expect(texts.some((node) => node.props.children === 'files.fileActions.stageFile')).toBe(false);
+        expect(texts.some((node) => node.props.children === 'files.fileActions.unstageFile')).toBe(false);
     });
 
     it('keeps Stage file action enabled when conflicts are present', async () => {
@@ -142,7 +142,7 @@ describe('FileActionToolbar', () => {
         const stageButton = tree!.root
             .findAllByType('Pressable' as any)
             .find((pressable) =>
-                pressable.findAllByType('Text' as any).some((textNode) => textNode.props.children === 'Stage file')
+                pressable.findAllByType('Text' as any).some((textNode) => textNode.props.children === 'files.fileActions.stageFile')
             );
         expect(stageButton?.props.disabled).toBe(false);
     });
@@ -179,8 +179,8 @@ describe('FileActionToolbar', () => {
         });
 
         const texts = tree!.root.findAllByType('Text' as any);
-        expect(texts.some((node) => node.props.children === 'Select for commit')).toBe(true);
-        expect(texts.some((node) => node.props.children === 'Remove from selection')).toBe(true);
+        expect(texts.some((node) => node.props.children === 'files.fileActions.selectForCommit')).toBe(true);
+        expect(texts.some((node) => node.props.children === 'files.fileActions.removeFromSelection')).toBe(true);
     });
 
     it('shows an Edit button in file mode when editor is enabled', async () => {
@@ -220,7 +220,7 @@ describe('FileActionToolbar', () => {
         const editButton = tree!.root
             .findAllByType('Pressable' as any)
             .find((pressable) =>
-                pressable.findAllByType('Text' as any).some((textNode) => textNode.props.children === 'Edit')
+                pressable.findAllByType('Text' as any).some((textNode) => textNode.props.children === 'common.edit')
             );
         expect(editButton).toBeTruthy();
 
@@ -228,5 +228,42 @@ describe('FileActionToolbar', () => {
             editButton!.props.onPress();
         });
         expect(onStartEditingFile).toHaveBeenCalledTimes(1);
+    });
+
+    it('hides Diff/File toggles when only one mode is available', async () => {
+        const { FileActionToolbar } = await import('./FileActionToolbar');
+
+        let tree: renderer.ReactTestRenderer | null = null;
+        act(() => {
+            tree = renderer.create(
+                React.createElement(FileActionToolbar as any, {
+                    theme,
+                    displayMode: 'file',
+                    onDisplayMode: () => {},
+                    diffMode: 'pending',
+                    onDiffMode: () => {},
+                    hasPendingDelta: false,
+                    hasIncludedDelta: false,
+                    scmWriteEnabled: false,
+                    includeExcludeEnabled: false,
+                    virtualSelectionEnabled: false,
+                    isSelectedForCommit: false,
+                    lineSelectionEnabled: false,
+                    selectedLineCount: 0,
+                    isApplyingStage: false,
+                    inFlightScmOperation: null,
+                    onStageFile: () => {},
+                    onUnstageFile: () => {},
+                    onApplySelectedLines: () => {},
+                    onClearSelection: () => {},
+                    showDiffToggle: false,
+                    showFileToggle: true,
+                })
+            );
+        });
+
+        const texts = tree!.root.findAllByType('Text' as any).map((node) => node.props.children);
+        expect(texts).not.toContain('files.diff');
+        expect(texts).not.toContain('files.file');
     });
 });

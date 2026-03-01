@@ -6,12 +6,110 @@ import { describe, expect, it, vi } from 'vitest';
 
 // Spy is intentionally `any` to allow multiple response shapes (success/failure) without fighting inference.
 const sessionScmDiffFileSpy: any = vi.fn(async (_sessionId: string, _req: any) => ({ success: true, diff: 'diff', error: null }));
+const flashListScrollToIndexSpy: any = vi.fn();
+const deferOnWebSpy: any = vi.fn((cb: any) => cb());
+
+const resolveInlineDiffVirtualizationSpy = vi.hoisted(() => vi.fn());
+
+let wrapLinesInDiffsSetting: boolean = true;
+let showLineNumbersSetting: boolean = true;
+let inlineVirtualizationLineThresholdSetting: number | undefined = undefined;
+let inlineVirtualizationByteThresholdSetting: number | undefined = undefined;
+
+function buildUnifiedDiff(path: string) {
+    return `diff --git a/${path} b/${path}\n--- a/${path}\n+++ b/${path}\n@@ -1 +1 @@\n-old\n+new\n`;
+}
+
+vi.mock('@/components/ui/code/diff/resolveInlineDiffVirtualization', async (importOriginal) => {
+    const mod = await importOriginal<typeof import('@/components/ui/code/diff/resolveInlineDiffVirtualization')>();
+    return {
+        ...mod,
+        resolveInlineDiffVirtualization: (...args: any[]) => {
+            resolveInlineDiffVirtualizationSpy(...args);
+            return (mod as any).resolveInlineDiffVirtualization(...args);
+        },
+    };
+});
+
+vi.mock('@/components/ui/code/diff/reviewComments/DiffReviewCommentsViewer', () => ({
+    DiffReviewCommentsViewer: (props: any) => React.createElement('DiffReviewCommentsViewer', props),
+}));
+
+vi.mock('@/components/ui/code/diff/DiffViewer', () => ({
+    DiffViewer: (props: any) => React.createElement('CodeLinesView', { ...props, virtualized: props.virtualized }),
+}));
+
+vi.mock('@/utils/platform/deferOnWeb', () => ({
+    deferOnWeb: (cb: any) => deferOnWebSpy(cb),
+}));
+
+vi.mock('@shopify/flash-list', () => ({
+    FlashList: React.forwardRef((props: any, ref: any) => {
+        React.useImperativeHandle(ref, () => ({
+            scrollToIndex: flashListScrollToIndexSpy,
+            // Some callers may attempt to read the underlying scroll node on web.
+            getScrollableNode: () => null,
+        }));
+        const data = Array.isArray(props.data) ? props.data : [];
+        React.useEffect(() => {
+            if (typeof props.onViewableItemsChanged !== 'function') return;
+            props.onViewableItemsChanged({
+                viewableItems: data.map((_item: any, index: number) => ({ index })),
+            });
+        }, [data, props.onViewableItemsChanged]);
+
+        const header =
+            props.ListHeaderComponent
+                ? (typeof props.ListHeaderComponent === 'function'
+                    ? props.ListHeaderComponent()
+                    : props.ListHeaderComponent)
+                : null;
+        const footer =
+            props.ListFooterComponent
+                ? (typeof props.ListFooterComponent === 'function'
+                    ? props.ListFooterComponent()
+                    : props.ListFooterComponent)
+                : null;
+
+        return React.createElement(
+            'FlashList',
+            props,
+            header,
+            data.map((item: any, index: number) => {
+                const key =
+                    typeof props.keyExtractor === 'function'
+                        ? props.keyExtractor(item, index)
+                        : (item?.key ?? String(index));
+                const child = typeof props.renderItem === 'function' ? props.renderItem({ item, index }) : null;
+                return React.createElement('FlashListItem', { key }, child);
+            }),
+            footer,
+        );
+    }),
+}));
+
+vi.mock('@/sync/domains/state/storage', () => ({
+    useSetting: (key: string) => {
+        if (key === 'wrapLinesInDiffs') return wrapLinesInDiffsSetting;
+        if (key === 'showLineNumbers') return showLineNumbersSetting;
+        if (key === 'filesDiffInlineVirtualizationLineThreshold') return inlineVirtualizationLineThresholdSetting;
+        if (key === 'filesDiffInlineVirtualizationByteThreshold') return inlineVirtualizationByteThresholdSetting;
+        return undefined;
+    },
+}));
 
 vi.mock('react-native', () => ({
     View: 'View',
+    Image: 'Image',
     Pressable: 'Pressable',
+    ScrollView: 'ScrollView',
     ActivityIndicator: 'ActivityIndicator',
     TextInput: 'TextInput',
+    Dimensions: { get: () => ({ width: 1200, height: 800, scale: 2, fontScale: 1 }) },
+    AppState: {
+        addEventListener: () => ({ remove: () => {} }),
+        currentState: 'active',
+    },
     useWindowDimensions: () => ({ width: 1200, height: 800 }),
     Platform: { OS: 'web', select: (value: any) => value?.default ?? null },
 }));
@@ -29,8 +127,8 @@ vi.mock('@/components/ui/media/FileIcon', () => ({
     FileIcon: 'FileIcon',
 }));
 
-vi.mock('@/components/ui/lists/Item', () => ({
-    Item: 'Item',
+vi.mock('@/components/sessions/sourceControl/changes/ScmChangeRow', () => ({
+    ScmChangeRow: (props: any) => React.createElement('ScmChangeRow', props),
 }));
 
 vi.mock('@/constants/Typography', () => ({
@@ -46,6 +144,7 @@ vi.mock('@/text', () => ({
 
 vi.mock('@/sync/ops', () => ({
     sessionScmDiffFile: (sessionId: string, req: any) => sessionScmDiffFileSpy(sessionId, req),
+    sessionReadFile: vi.fn(async () => ({ success: false, content: '', error: 'nope' })),
 }));
 
 vi.mock('@/components/ui/code/view/CodeLinesView', () => ({
@@ -107,8 +206,13 @@ describe('ChangedFilesReview', () => {
     const fileA = { fileName: 'a.ts', filePath: 'src', fullPath: 'src/a.ts', status: 'modified', isIncluded: false, linesAdded: 1, linesRemoved: 1 } as any;
     const fileB = { fileName: 'b.ts', filePath: 'src', fullPath: 'src/b.ts', status: 'modified', isIncluded: false, linesAdded: 1, linesRemoved: 1 } as any;
     const fileC = { fileName: 'c.ts', filePath: 'src', fullPath: 'src/c.ts', status: 'modified', isIncluded: false, linesAdded: 1, linesRemoved: 1 } as any;
+    const directoryLike = { fileName: 'src/some-dir/', filePath: 'src/some-dir/', fullPath: 'src/some-dir/', status: 'added', isIncluded: false, linesAdded: 1, linesRemoved: 0 } as any;
 
     it('loads diffs for all files when within thresholds', async () => {
+        wrapLinesInDiffsSetting = true;
+        showLineNumbersSetting = true;
+        inlineVirtualizationLineThresholdSetting = undefined;
+        inlineVirtualizationByteThresholdSetting = undefined;
         sessionScmDiffFileSpy.mockClear();
         sessionScmDiffFileSpy.mockImplementation(async (_sessionId: string, req: any) => ({
             success: true,
@@ -149,8 +253,56 @@ describe('ChangedFilesReview', () => {
         expect(calledPaths).toEqual(['src/a.ts', 'src/b.ts']);
     });
 
-    it('highlights a focused path when provided', async () => {
+    it('filters directory-like SCM entries from review rows', async () => {
         sessionScmDiffFileSpy.mockClear();
+        sessionScmDiffFileSpy.mockImplementation(async (_sessionId: string, req: any) => ({
+            success: true,
+            diff: buildUnifiedDiff(req.path),
+            error: null,
+        }));
+
+        const { ChangedFilesReview } = await import('./ChangedFilesReview');
+
+        let tree: renderer.ReactTestRenderer | null = null;
+        await act(async () => {
+            tree = renderer.create(
+                <ChangedFilesReview
+                    theme={theme}
+                    sessionId="session-1"
+                    snapshot={snapshot}
+                    changedFilesViewMode="repository"
+                    attributionReliability="high"
+                    allRepositoryChangedFiles={[fileA, directoryLike]}
+                    sessionAttributedFiles={[]}
+                    repositoryOnlyFiles={[]}
+                    suppressedInferredCount={0}
+                    maxFiles={25}
+                    maxChangedLines={2000}
+                    onFilePress={vi.fn()}
+                />
+            );
+        });
+
+        for (let i = 0; i < 10; i++) {
+            await act(async () => {
+                await Promise.resolve();
+            });
+        }
+
+        const rows = tree!.root.findAllByType('ScmChangeRow' as any);
+        expect(rows).toHaveLength(1);
+
+        const calledPaths = sessionScmDiffFileSpy.mock.calls.map((call: any) => call?.[1]?.path);
+        expect(calledPaths).toEqual(['src/a.ts']);
+    });
+
+    it('highlights a focused path when provided', async () => {
+        wrapLinesInDiffsSetting = true;
+        showLineNumbersSetting = true;
+        inlineVirtualizationLineThresholdSetting = undefined;
+        inlineVirtualizationByteThresholdSetting = undefined;
+        sessionScmDiffFileSpy.mockClear();
+        flashListScrollToIndexSpy.mockClear();
         sessionScmDiffFileSpy.mockImplementation(async (_sessionId: string, req: any) => ({
             success: true,
             diff: `diff:${req.path}:${req.area}`,
@@ -185,20 +337,120 @@ describe('ChangedFilesReview', () => {
             await Promise.resolve();
         });
 
-        const items = tree!.root.findAllByType('Item' as any);
-        const bItem = items.find((n) => n.props?.title === 'b.ts');
-        expect(bItem).toBeTruthy();
-        expect(bItem!.props.style).toBeTruthy();
-        expect(bItem!.props.style.backgroundColor).toBe(theme.colors.surfaceHigh);
+        const rows = tree!.root.findAllByType('ScmChangeRow' as any);
+        const bRow = rows.find((n) => n.props?.file?.fullPath === 'src/b.ts');
+        expect(bRow).toBeTruthy();
+        expect(bRow!.props.highlighted).toBe(true);
+
+        await act(async () => {
+            tree!.unmount();
+        });
     });
 
-    it('disables virtualization for diff blocks when review comments are enabled', async () => {
-        sessionScmDiffFileSpy.mockClear();
-        sessionScmDiffFileSpy.mockImplementation(async (_sessionId: string, req: any) => ({
-            success: true,
-            diff: `diff:${req.path}:${req.area}`,
-            error: null,
-        }));
+    it('scrolls to a focused path without animation on web to avoid scroll/event glitches', async () => {
+        vi.useFakeTimers();
+        try {
+            wrapLinesInDiffsSetting = true;
+            showLineNumbersSetting = true;
+            inlineVirtualizationLineThresholdSetting = undefined;
+            inlineVirtualizationByteThresholdSetting = undefined;
+            sessionScmDiffFileSpy.mockClear();
+            flashListScrollToIndexSpy.mockClear();
+            sessionScmDiffFileSpy.mockImplementation(async (_sessionId: string, req: any) => ({
+                success: true,
+                diff: `diff:${req.path}:${req.area}`,
+                error: null,
+            }));
+
+            const { ChangedFilesReview } = await import('./ChangedFilesReview');
+
+            let tree: renderer.ReactTestRenderer | null = null;
+            await act(async () => {
+                tree = renderer.create(
+                    <ChangedFilesReview
+                        theme={theme}
+                        sessionId="session-1"
+                        snapshot={snapshot}
+                        changedFilesViewMode="repository"
+                        attributionReliability="high"
+                        allRepositoryChangedFiles={[fileA, fileB]}
+                        sessionAttributedFiles={[]}
+                        repositoryOnlyFiles={[]}
+                        suppressedInferredCount={0}
+                        maxFiles={25}
+                        maxChangedLines={2000}
+                        onFilePress={vi.fn()}
+                        focusPath="src/b.ts"
+                    />
+                );
+            });
+
+            // Run focus effect timers (scroll after a short delay).
+            await act(async () => {
+                vi.advanceTimersByTime(60);
+            });
+
+            expect(flashListScrollToIndexSpy).toHaveBeenCalled();
+            const args = flashListScrollToIndexSpy.mock.calls[0]?.[0] ?? null;
+            expect(args).toBeTruthy();
+            expect(args.animated).toBe(false);
+
+            await act(async () => {
+                tree!.unmount();
+            });
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+
+    it('wires onFilePressPinned to ScmChangeRow.onPressPinned', async () => {
+        const { ChangedFilesReview } = await import('./ChangedFilesReview');
+        const onFilePressPinned = vi.fn();
+
+        let tree: renderer.ReactTestRenderer | null = null;
+        await act(async () => {
+            tree = renderer.create(
+                <ChangedFilesReview
+                    theme={theme}
+                    sessionId="session-1"
+                    snapshot={snapshot}
+                    changedFilesViewMode="repository"
+                    attributionReliability="high"
+                    allRepositoryChangedFiles={[fileA]}
+                    sessionAttributedFiles={[]}
+                    repositoryOnlyFiles={[]}
+                    suppressedInferredCount={0}
+                    maxFiles={25}
+                    maxChangedLines={2000}
+                    onFilePress={vi.fn()}
+                    onFilePressPinned={onFilePressPinned}
+                />
+            );
+        });
+
+        const row = tree!.root.findByType('ScmChangeRow' as any);
+        expect(typeof row.props.onPressPinned).toBe('function');
+
+        act(() => {
+            row.props.onPressPinned();
+        });
+
+        expect(onFilePressPinned).toHaveBeenCalledTimes(1);
+        expect(onFilePressPinned).toHaveBeenCalledWith(fileA);
+    });
+
+        it('disables virtualization for diff blocks when review comments are enabled', async () => {
+        wrapLinesInDiffsSetting = true;
+        showLineNumbersSetting = true;
+        inlineVirtualizationLineThresholdSetting = undefined;
+        inlineVirtualizationByteThresholdSetting = undefined;
+            resolveInlineDiffVirtualizationSpy.mockClear();
+            sessionScmDiffFileSpy.mockClear();
+            sessionScmDiffFileSpy.mockImplementation(async (_sessionId: string, req: any) => ({
+                success: true,
+                diff: buildUnifiedDiff(req.path),
+                error: null,
+            }));
 
         const { ChangedFilesReview } = await import('./ChangedFilesReview');
 
@@ -228,6 +480,53 @@ describe('ChangedFilesReview', () => {
             await act(async () => {
                 await Promise.resolve();
             });
+            const views = tree!.root.findAllByType('DiffReviewCommentsViewer' as any);
+            if (views.length > 0) break;
+        }
+
+        const views = tree!.root.findAllByType('DiffReviewCommentsViewer' as any);
+        expect(views.length).toBeGreaterThan(0);
+        expect(resolveInlineDiffVirtualizationSpy).toHaveBeenCalledTimes(0);
+    });
+
+        it('does not force virtualization for small diffs when review comments are disabled', async () => {
+        wrapLinesInDiffsSetting = true;
+        showLineNumbersSetting = true;
+        inlineVirtualizationLineThresholdSetting = undefined;
+            inlineVirtualizationByteThresholdSetting = undefined;
+            sessionScmDiffFileSpy.mockClear();
+            sessionScmDiffFileSpy.mockImplementation(async (_sessionId: string, req: any) => ({
+                success: true,
+                diff: buildUnifiedDiff(req.path),
+                error: null,
+            }));
+
+        const { ChangedFilesReview } = await import('./ChangedFilesReview');
+
+        let tree: renderer.ReactTestRenderer | null = null;
+        await act(async () => {
+            tree = renderer.create(
+                <ChangedFilesReview
+                    theme={theme}
+                    sessionId="session-1"
+                    snapshot={snapshot}
+                    changedFilesViewMode="repository"
+                    attributionReliability="high"
+                    allRepositoryChangedFiles={[fileA]}
+                    sessionAttributedFiles={[]}
+                    repositoryOnlyFiles={[]}
+                    suppressedInferredCount={0}
+                    maxFiles={25}
+                    maxChangedLines={2000}
+                    onFilePress={vi.fn()}
+                />
+            );
+        });
+
+        for (let i = 0; i < 20; i++) {
+            await act(async () => {
+                await Promise.resolve();
+            });
             const views = tree!.root.findAllByType('CodeLinesView' as any);
             if (views.length > 0) break;
         }
@@ -239,19 +538,73 @@ describe('ChangedFilesReview', () => {
         }
     });
 
-    it('keeps loaded diffs visible while refreshing due to snapshot churn', async () => {
+    it('enables virtualization for large diffs above the byte threshold when review comments are disabled', async () => {
+        wrapLinesInDiffsSetting = true;
+        showLineNumbersSetting = true;
+        inlineVirtualizationLineThresholdSetting = 50_000;
+        inlineVirtualizationByteThresholdSetting = 100;
+
+        sessionScmDiffFileSpy.mockClear();
+        sessionScmDiffFileSpy.mockImplementation(async (_sessionId: string, req: any) => ({
+            success: true,
+            diff: `diff --git a/${req.path} b/${req.path}\n--- a/${req.path}\n+++ b/${req.path}\n@@\n+${'a'.repeat(2_000)}\n`,
+            error: null,
+        }));
+
+        const { ChangedFilesReview } = await import('./ChangedFilesReview');
+
+        let tree: renderer.ReactTestRenderer | null = null;
+        await act(async () => {
+            tree = renderer.create(
+                <ChangedFilesReview
+                    theme={theme}
+                    sessionId="session-1"
+                    snapshot={snapshot}
+                    changedFilesViewMode="repository"
+                    attributionReliability="high"
+                    allRepositoryChangedFiles={[fileA]}
+                    sessionAttributedFiles={[]}
+                    repositoryOnlyFiles={[]}
+                    suppressedInferredCount={0}
+                    maxFiles={25}
+                    maxChangedLines={2000}
+                    onFilePress={vi.fn()}
+                />
+            );
+        });
+
+        for (let i = 0; i < 20; i++) {
+            await act(async () => {
+                await Promise.resolve();
+            });
+            const views = tree!.root.findAllByType('CodeLinesView' as any);
+            if (views.length > 0) break;
+        }
+
+        const views = tree!.root.findAllByType('CodeLinesView' as any);
+        expect(views.length).toBeGreaterThan(0);
+        for (const view of views) {
+            expect(view.props.virtualized).toBe(true);
+        }
+    });
+
+        it('keeps loaded diffs visible while refreshing due to snapshot churn', async () => {
+        wrapLinesInDiffsSetting = true;
+        showLineNumbersSetting = true;
+        inlineVirtualizationLineThresholdSetting = undefined;
+        inlineVirtualizationByteThresholdSetting = undefined;
         sessionScmDiffFileSpy.mockClear();
         let pendingRefreshResolve: ((value: any) => void) | null = null;
-        sessionScmDiffFileSpy
-            .mockImplementationOnce(async (_sessionId: string, req: any) => ({
-                success: true,
-                diff: `diff:${req.path}:${req.area}`,
-                error: null,
-            }))
-            // Second call simulates a slow refresh so we can assert there is no "loading" flicker.
-            .mockImplementationOnce((_sessionId: string, req: any) => new Promise((resolve) => {
-                pendingRefreshResolve = resolve;
-            }));
+            sessionScmDiffFileSpy
+                .mockImplementationOnce(async (_sessionId: string, req: any) => ({
+                    success: true,
+                    diff: buildUnifiedDiff(req.path),
+                    error: null,
+                }))
+                // Second call simulates a slow refresh so we can assert there is no "loading" flicker.
+                .mockImplementationOnce((_sessionId: string, req: any) => new Promise((resolve) => {
+                    pendingRefreshResolve = resolve;
+                }));
 
         const { ChangedFilesReview } = await import('./ChangedFilesReview');
 
@@ -311,11 +664,11 @@ describe('ChangedFilesReview', () => {
         expect(tree!.root.findAllByType('CodeLinesView' as any).length).toBeGreaterThan(0);
         expect(tree!.root.findAllByType('ActivityIndicator' as any).length).toBe(0);
 
-        await act(async () => {
-            pendingRefreshResolve?.({ success: true, diff: 'diff:refreshed', error: null });
-            await Promise.resolve();
+            await act(async () => {
+                pendingRefreshResolve?.({ success: true, diff: buildUnifiedDiff('src/a.ts'), error: null });
+                await Promise.resolve();
+            });
         });
-    });
 
     it('does not re-fetch diffs again when within the refresh interval', async () => {
         sessionScmDiffFileSpy.mockClear();
@@ -488,83 +841,25 @@ describe('ChangedFilesReview', () => {
             await act(async () => {
                 await Promise.resolve();
             });
-            if (sessionScmDiffFileSpy.mock.calls.length >= 1) break;
+            if (sessionScmDiffFileSpy.mock.calls.length >= 2) break;
         }
 
-        expect(sessionScmDiffFileSpy.mock.calls.length).toBe(1);
-        expect(sessionScmDiffFileSpy.mock.calls[0]?.[1]?.path).toBe('src/a.ts');
-    });
-
-    it('resets too-large selectedPath when the selected file disappears', async () => {
-        sessionScmDiffFileSpy.mockClear();
-
-        const { ChangedFilesReview } = await import('./ChangedFilesReview');
-
-        let tree: renderer.ReactTestRenderer | null = null;
-        await act(async () => {
-            tree = renderer.create(
-                <ChangedFilesReview
-                    theme={theme}
-                    sessionId="session-1"
-                    snapshot={snapshot}
-                    changedFilesViewMode="repository"
-                    attributionReliability="high"
-                    allRepositoryChangedFiles={[fileA, fileB]}
-                    sessionAttributedFiles={[]}
-                    repositoryOnlyFiles={[]}
-                    suppressedInferredCount={0}
-                    maxFiles={1}
-                    maxChangedLines={2000}
-                    onFilePress={vi.fn()}
-                />
-            );
-        });
-
-        for (let i = 0; i < 20; i++) {
-            await act(async () => {
-                await Promise.resolve();
-            });
-            if (sessionScmDiffFileSpy.mock.calls.length >= 1) break;
-        }
-        expect(sessionScmDiffFileSpy.mock.calls[0]?.[1]?.path).toBe('src/a.ts');
-
-        // Update the list so the previously selected file is no longer present.
-        await act(async () => {
-            tree!.update(
-                <ChangedFilesReview
-                    theme={theme}
-                    sessionId="session-1"
-                    snapshot={snapshot}
-                    changedFilesViewMode="repository"
-                    attributionReliability="high"
-                    allRepositoryChangedFiles={[fileC]}
-                    sessionAttributedFiles={[]}
-                    repositoryOnlyFiles={[]}
-                    suppressedInferredCount={0}
-                    maxFiles={1}
-                    maxChangedLines={2000}
-                    onFilePress={vi.fn()}
-                />
-            );
-        });
-
-        for (let i = 0; i < 20; i++) {
-            await act(async () => {
-                await Promise.resolve();
-            });
-            const calledPaths = sessionScmDiffFileSpy.mock.calls.map((call: any) => call[1]?.path);
-            if (calledPaths.includes('src/c.ts')) break;
-        }
-
+        expect(sessionScmDiffFileSpy.mock.calls.length).toBe(2);
         const calledPaths = sessionScmDiffFileSpy.mock.calls.map((call: any) => call[1]?.path);
-        expect(calledPaths).toContain('src/c.ts');
+        expect(calledPaths).toEqual(['src/a.ts', 'src/b.ts']);
     });
 
-    it('renders a changed-files outline panel on wide web viewports', async () => {
+    it('filters collapsed paths when a file disappears', async () => {
+        sessionScmDiffFileSpy.mockClear();
+        sessionScmDiffFileSpy.mockImplementation(async (_sessionId: string, req: any) => ({
+            success: true,
+            diff: buildUnifiedDiff(req.path),
+            error: null,
+        }));
+
         const { ChangedFilesReview } = await import('./ChangedFilesReview');
 
         let tree: renderer.ReactTestRenderer | null = null;
-
         await act(async () => {
             tree = renderer.create(
                 <ChangedFilesReview
@@ -584,42 +879,44 @@ describe('ChangedFilesReview', () => {
             );
         });
 
-        const outline = tree!.root.findAll((node) => node.props?.testID === 'scm-review-outline');
-        expect(outline.length).toBe(1);
-    });
+        for (let i = 0; i < 20; i++) {
+            await act(async () => {
+                await Promise.resolve();
+            });
+            const diffs = tree!.root.findAllByType('CodeLinesView' as any);
+            if (diffs.length >= 2) break;
+        }
 
-    it('expands a collapsed diff when selecting from outline in too-large mode', async () => {
-        sessionScmDiffFileSpy.mockClear();
-        sessionScmDiffFileSpy.mockImplementation(async (_sessionId: string, req: any) => ({
-            success: true,
-            diff: `diff:${req.path}:${req.area}`,
-            error: null,
-        }));
+        expect(tree!.root.findAllByType('CodeLinesView' as any)).toHaveLength(2);
 
-        const { ChangedFilesReview } = await import('./ChangedFilesReview');
-        const { ChangedFilesReviewOutline } = await import('./review/ChangedFilesReviewOutline');
+        const items = tree!.root.findAllByType('ScmChangeRow' as any);
+        expect(items.length).toBe(2);
 
-        let tree: renderer.ReactTestRenderer | null = null;
         await act(async () => {
-            tree = renderer.create(
+            items[0]!.props.onPress();
+        });
+        expect(tree!.root.findAllByType('CodeLinesView' as any)).toHaveLength(1);
+
+        // Update the list so the previously selected file is no longer present.
+        await act(async () => {
+            tree!.update(
                 <ChangedFilesReview
                     theme={theme}
                     sessionId="session-1"
                     snapshot={snapshot}
                     changedFilesViewMode="repository"
                     attributionReliability="high"
-                    allRepositoryChangedFiles={[fileA, fileB]}
+                    allRepositoryChangedFiles={[fileC]}
                     sessionAttributedFiles={[]}
                     repositoryOnlyFiles={[]}
                     suppressedInferredCount={0}
-                    maxFiles={1}
+                    maxFiles={25}
                     maxChangedLines={2000}
                     onFilePress={vi.fn()}
                 />
             );
         });
 
-        // Wait until at least one diff loads.
         for (let i = 0; i < 20; i++) {
             await act(async () => {
                 await Promise.resolve();
@@ -628,30 +925,17 @@ describe('ChangedFilesReview', () => {
             if (diffs.length >= 1) break;
         }
 
-        // Select fileB (unselected -> select), then collapse it (selected -> toggle collapse).
-        const items = tree!.root.findAllByType('Item' as any);
-        await act(async () => {
-            items[1]!.props.onPress();
-        });
-        await act(async () => {
-            items[1]!.props.onPress();
-        });
-        expect(tree!.root.findAllByType('CodeLinesView' as any)).toHaveLength(0);
-
-        const outline = tree!.root.findByType(ChangedFilesReviewOutline as any);
-        await act(async () => {
-            outline.props.onSelectFile(fileB);
-        });
-        expect(tree!.root.findAllByType('CodeLinesView' as any)).toHaveLength(1);
+        const calledPaths = sessionScmDiffFileSpy.mock.calls.map((call: any) => call[1]?.path);
+        expect(calledPaths).toContain('src/c.ts');
     });
 
-    it('toggles diff visibility when pressing a file row in stacked review mode', async () => {
-        sessionScmDiffFileSpy.mockClear();
-        sessionScmDiffFileSpy.mockImplementation(async (_sessionId: string, req: any) => ({
-            success: true,
-            diff: `diff:${req.path}:${req.area}`,
-            error: null,
-        }));
+        it('toggles diff visibility when pressing a file row in stacked review mode', async () => {
+            sessionScmDiffFileSpy.mockClear();
+            sessionScmDiffFileSpy.mockImplementation(async (_sessionId: string, req: any) => ({
+                success: true,
+                diff: buildUnifiedDiff(req.path),
+                error: null,
+            }));
 
         const { ChangedFilesReview } = await import('./ChangedFilesReview');
 
@@ -686,7 +970,7 @@ describe('ChangedFilesReview', () => {
 
         expect(tree!.root.findAllByType('CodeLinesView' as any)).toHaveLength(2);
 
-        const items = tree!.root.findAllByType('Item' as any);
+        const items = tree!.root.findAllByType('ScmChangeRow' as any);
         expect(items.length).toBe(2);
 
         await act(async () => {
@@ -777,6 +1061,61 @@ describe('ChangedFilesReview', () => {
         expect(Array.from(calledPaths).sort()).toEqual(['src/a.ts', 'src/b.ts']);
     });
 
+    it('opens a file via the per-row open-file button', async () => {
+        deferOnWebSpy.mockClear();
+        const { ChangedFilesReview } = await import('./ChangedFilesReview');
+        const onFilePress = vi.fn();
+
+        let tree: renderer.ReactTestRenderer | null = null;
+        await act(async () => {
+            tree = renderer.create(
+                <ChangedFilesReview
+                    theme={theme}
+                    sessionId="session-1"
+                    snapshot={snapshot}
+                    changedFilesViewMode="repository"
+                    attributionReliability="high"
+                    allRepositoryChangedFiles={[fileA]}
+                    sessionAttributedFiles={[]}
+                    repositoryOnlyFiles={[]}
+                    suppressedInferredCount={0}
+                    maxFiles={25}
+                    maxChangedLines={2000}
+                    onFilePress={onFilePress}
+                />
+            );
+        });
+
+        const row = tree!.root.findByType('ScmChangeRow' as any);
+        const trailing = row.props.trailingElement;
+        expect(trailing).toBeTruthy();
+
+        let trailingTree: renderer.ReactTestRenderer | null = null;
+        await act(async () => {
+            trailingTree = renderer.create(trailing);
+        });
+
+        const button = trailingTree!.root.findByProps({ testID: 'scm-change-open-file-src_a.ts' });
+        act(() => {
+            const eventWithThrowingNativeEvent = {
+                stopPropagation: vi.fn(),
+                preventDefault: vi.fn(),
+                get nativeEvent() {
+                    throw new Error('nativeEvent getter should not be required');
+                },
+            };
+            if (typeof button.props.onPress === 'function') {
+                button.props.onPress(eventWithThrowingNativeEvent);
+            } else if (typeof button.props.onClick === 'function') {
+                button.props.onClick(eventWithThrowingNativeEvent);
+            }
+        });
+
+        expect(onFilePress).toHaveBeenCalledTimes(1);
+        expect(onFilePress.mock.calls[0]?.[0]?.fullPath).toBe('src/a.ts');
+        expect(deferOnWebSpy).toHaveBeenCalledTimes(1);
+    });
+
     it('filters out files that have no delta in the selected diff area', async () => {
         sessionScmDiffFileSpy.mockClear();
         sessionScmDiffFileSpy.mockImplementation(async (_sessionId: string, req: any) => ({
@@ -822,7 +1161,7 @@ describe('ChangedFilesReview', () => {
         });
 
         // Sanity: pending mode shows the file.
-        expect(tree!.root.findAllByType('Item' as any)).toHaveLength(1);
+        expect(tree!.root.findAllByType('ScmChangeRow' as any)).toHaveLength(1);
 
         // Switch to Included; this should hide the file entirely (no included delta).
         const includedPressables = tree!.root.findAll((node) => {
@@ -837,12 +1176,142 @@ describe('ChangedFilesReview', () => {
             await Promise.resolve();
         });
 
-        expect(tree!.root.findAllByType('Item' as any)).toHaveLength(0);
+        expect(tree!.root.findAllByType('ScmChangeRow' as any)).toHaveLength(0);
 
         const emptyTexts = tree!.root.findAll((node) => {
             if ((node as any).type !== 'Text') return false;
             return String(((node as any).children ?? []).join('')) === 'files.noChanges';
         });
         expect(emptyTexts.length).toBeGreaterThan(0);
+    });
+
+    it('defaults to Included when only included changes exist', async () => {
+        sessionScmDiffFileSpy.mockClear();
+        sessionScmDiffFileSpy.mockImplementation(async (_sessionId: string, req: any) => ({
+            success: true,
+            diff: `diff:${req.path}:${req.area}`,
+            error: null,
+        }));
+
+        const { ChangedFilesReview } = await import('./ChangedFilesReview');
+
+        const includedSnapshot = {
+            ...snapshot,
+            totals: {
+                ...snapshot.totals,
+                includedFiles: 1,
+                pendingFiles: 0,
+                includedAdded: 1,
+                includedRemoved: 0,
+                pendingAdded: 0,
+                pendingRemoved: 0,
+            },
+        } as any;
+
+        const includedFile = { ...fileA, isIncluded: true } as any;
+
+        let tree: renderer.ReactTestRenderer | null = null;
+        await act(async () => {
+            tree = renderer.create(
+                <ChangedFilesReview
+                    theme={theme}
+                    sessionId="session-1"
+                    snapshot={includedSnapshot}
+                    changedFilesViewMode="repository"
+                    attributionReliability="high"
+                    allRepositoryChangedFiles={[includedFile]}
+                    sessionAttributedFiles={[]}
+                    repositoryOnlyFiles={[]}
+                    suppressedInferredCount={0}
+                    maxFiles={25}
+                    maxChangedLines={2000}
+                    onFilePress={vi.fn()}
+                />
+            );
+        });
+
+        expect(tree!.root.findAllByType('ScmChangeRow' as any)).toHaveLength(1);
+    });
+
+    it('auto-switches diff area when the snapshot transitions to included-only (without user selection)', async () => {
+        sessionScmDiffFileSpy.mockClear();
+        sessionScmDiffFileSpy.mockImplementation(async (_sessionId: string, req: any) => ({
+            success: true,
+            diff: `diff:${req.path}:${req.area}`,
+            error: null,
+        }));
+
+        const { ChangedFilesReview } = await import('./ChangedFilesReview');
+
+        const pendingSnapshot = {
+            ...snapshot,
+            totals: {
+                ...snapshot.totals,
+                includedFiles: 0,
+                pendingFiles: 1,
+                includedAdded: 0,
+                includedRemoved: 0,
+                pendingAdded: 1,
+                pendingRemoved: 0,
+            },
+        } as any;
+        const pendingFile = { ...fileA, isIncluded: false } as any;
+
+        const includedSnapshot = {
+            ...snapshot,
+            totals: {
+                ...snapshot.totals,
+                includedFiles: 1,
+                pendingFiles: 0,
+                includedAdded: 1,
+                includedRemoved: 0,
+                pendingAdded: 0,
+                pendingRemoved: 0,
+            },
+        } as any;
+        const includedFile = { ...fileA, isIncluded: true } as any;
+
+        let tree: renderer.ReactTestRenderer | null = null;
+        await act(async () => {
+            tree = renderer.create(
+                <ChangedFilesReview
+                    theme={theme}
+                    sessionId="session-1"
+                    snapshot={pendingSnapshot}
+                    changedFilesViewMode="repository"
+                    attributionReliability="high"
+                    allRepositoryChangedFiles={[pendingFile]}
+                    sessionAttributedFiles={[]}
+                    repositoryOnlyFiles={[]}
+                    suppressedInferredCount={0}
+                    maxFiles={25}
+                    maxChangedLines={2000}
+                    onFilePress={vi.fn()}
+                />
+            );
+        });
+
+        expect(tree!.root.findAllByType('ScmChangeRow' as any)).toHaveLength(1);
+
+        await act(async () => {
+            tree!.update(
+                <ChangedFilesReview
+                    theme={theme}
+                    sessionId="session-1"
+                    snapshot={includedSnapshot}
+                    changedFilesViewMode="repository"
+                    attributionReliability="high"
+                    allRepositoryChangedFiles={[includedFile]}
+                    sessionAttributedFiles={[]}
+                    repositoryOnlyFiles={[]}
+                    suppressedInferredCount={0}
+                    maxFiles={25}
+                    maxChangedLines={2000}
+                    onFilePress={vi.fn()}
+                />
+            );
+        });
+
+        expect(tree!.root.findAllByType('ScmChangeRow' as any)).toHaveLength(1);
     });
 });

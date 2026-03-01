@@ -1,6 +1,7 @@
 import * as React from 'react';
 import { describe, expect, it, vi } from 'vitest';
 import renderer, { act } from 'react-test-renderer';
+import { View as RNView } from 'react-native';
 
 // Required for React 18+ act() semantics with react-test-renderer.
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
@@ -70,5 +71,24 @@ describe('FileHeader', () => {
 
         const texts = tree!.root.findAllByType('Text' as any);
         expect(texts.some((node) => node.props.children === 'src/utils/')).toBe(true);
+    });
+
+    it('renders a rightElement when provided', async () => {
+        const { FileHeader } = await import('./FileHeader');
+
+        let tree: renderer.ReactTestRenderer | null = null;
+        act(() => {
+            tree = renderer.create(
+                <FileHeader
+                    theme={theme as any}
+                    fileName="README.md"
+                    filePathDir=""
+                    rightElement={<RNView testID="right-child" />}
+                />
+            );
+        });
+
+        expect(tree!.root.findByProps({ testID: 'file-header-right' })).toBeDefined();
+        expect(tree!.root.findByProps({ testID: 'right-child' })).toBeDefined();
     });
 });

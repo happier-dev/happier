@@ -4,6 +4,7 @@ import { View } from 'react-native';
 import { CodeEditor } from '@/components/ui/code/editor/CodeEditor';
 import { Typography } from '@/constants/Typography';
 import { Text } from '@/components/ui/text/Text';
+import { t } from '@/text';
 
 export function FileEditorPanel(props: Readonly<{
     theme: any;
@@ -31,7 +32,7 @@ export function FileEditorPanel(props: Readonly<{
                 bridgeMaxChunkBytes={props.bridgeMaxChunkBytes}
             />
             <Text style={{ marginTop: 8, color: props.theme.colors.textSecondary, fontSize: 12, ...Typography.default() }}>
-                Editing is experimental. Save to write changes back to the session worktree.
+                {t('files.fileEditor.experimentalHint')}
             </Text>
         </View>
     );

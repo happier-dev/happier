@@ -28,6 +28,39 @@ vi.mock('@expo/vector-icons', () => ({
     Octicons: 'Octicons',
 }));
 
+vi.mock('@/text', () => ({
+    t: (key: string, params?: any) => {
+        if (key === 'files.sourceControlOperations.title') return 'Source control';
+        if (key === 'files.sourceControlOperations.actorThisSession') return 'this session';
+        if (key === 'files.sourceControlOperations.actorSession') return `session ${params?.sessionIdPrefix ?? ''}`;
+        if (key === 'files.sourceControlOperations.running')
+            return `Running: ${params?.operation ?? ''} · ${params?.actor ?? ''}`;
+        if (key === 'files.sourceControlOperations.lockedBy')
+            return `Source control operations are locked by ${params?.actor ?? ''}.`;
+        if (key === 'files.sourceControlOperations.globalLock')
+            return 'Operations are temporarily locked because another session is running a source control command.';
+        if (key === 'files.sourceControlOperations.selection') {
+            const count = Number(params?.count ?? 0);
+            return count === 1 ? '1 file selected for the next commit.' : `${count} files selected for the next commit.`;
+        }
+        if (key === 'files.sourceControlOperations.clear') return 'Clear';
+        if (key === 'files.sourceControlOperations.conflictsDetected')
+            return 'Conflicts detected. Commit, pull, and push are blocked until conflicts are resolved.';
+        if (key === 'files.sourceControlOperations.actions.fetch') return 'Fetch';
+        if (key === 'files.sourceControlOperations.actions.pull') return 'Pull';
+        if (key === 'files.sourceControlOperations.actions.push') return 'Push';
+        if (key === 'files.sourceControlOperations.blockedHints.lock') return 'Lock';
+        if (key === 'files.sourceControlOperations.blockedHints.commitBlocked') return 'Commit blocked';
+        if (key === 'files.sourceControlOperations.blockedHints.pullBlocked') return 'Pull blocked';
+        if (key === 'files.sourceControlOperations.blockedHints.pushBlocked') return 'Push blocked';
+        if (key === 'files.sourceControlOperationsLog.title') return 'Recent operations';
+        if (key === 'files.sourceControlOperationsLog.allSessions') return 'all sessions';
+        if (key === 'files.sourceControlOperationsLog.thisSession') return 'this session';
+        if (key === 'files.sourceControlOperationsLog.emptyThisSession') return 'No recent operations for this session.';
+        return key;
+    },
+}));
+
 describe('SourceControlOperationsPanel', () => {
     it('shows selected commit scope count and clear action', async () => {
         const { SourceControlOperationsPanel } = await import('./SourceControlOperationsPanel');
@@ -89,6 +122,50 @@ describe('SourceControlOperationsPanel', () => {
             clearButton!.props.onPress();
         });
         expect(onClearCommitSelection).toHaveBeenCalledTimes(1);
+    });
+
+    it('hides remote actions when remote capabilities are not available', async () => {
+        const { SourceControlOperationsPanel } = await import('./SourceControlOperationsPanel');
+
+        let tree: renderer.ReactTestRenderer | null = null;
+        act(() => {
+            tree = renderer.create(
+                <SourceControlOperationsPanel
+                    backendLabel="Git"
+                    commitActionLabel="Commit staged"
+                    capabilities={{ readLog: true, writeCommit: true, writeRemoteFetch: false, writeRemotePull: false, writeRemotePush: false }}
+                    theme={{ colors: { divider: '#000', text: '#fff', textSecondary: '#aaa', warning: '#f90', textDestructive: '#f00', success: '#0a0', input: { background: '#111' }, textLink: '#09f', surfaceHigh: '#222', surface: '#111' } }}
+                    currentSessionId="session-1"
+                    hasConflicts={false}
+                    scmOperationBusy={false}
+                    hasGlobalOperationInFlight={false}
+                    inFlightScmOperation={null}
+                    scmOperationStatus={null}
+                    commitAllowed
+                    commitBlockedMessage={null}
+                    pullAllowed
+                    pullBlockedMessage={null}
+                    pushAllowed
+                    pushBlockedMessage={null}
+                    onCreateCommit={vi.fn()}
+                    onFetch={vi.fn()}
+                    onPull={vi.fn()}
+                    onPush={vi.fn()}
+                    historyLoading={false}
+                    historyEntries={[]}
+                    historyHasMore={false}
+                    onLoadMoreHistory={vi.fn()}
+                    onOpenCommit={vi.fn()}
+                    operationLog={[]}
+                    commitSelectionCount={0}
+                />
+            );
+        });
+
+        const texts = tree!.root.findAllByType('Text' as any).map((node) => String(node.props.children ?? ''));
+        expect(texts.some((value) => value === 'Fetch')).toBe(false);
+        expect(texts.some((value) => value === 'Pull')).toBe(false);
+        expect(texts.some((value) => value === 'Push')).toBe(false);
     });
 
     it('shows which session currently owns the in-flight operation lock', async () => {
@@ -203,6 +280,117 @@ describe('SourceControlOperationsPanel', () => {
         expect(onFetch).toHaveBeenCalledTimes(1);
         expect(onPull).toHaveBeenCalledTimes(1);
         expect(onPush).toHaveBeenCalledTimes(1);
+    });
+
+    it('renders an inline commit message composer when draft props are provided', async () => {
+        const { SourceControlOperationsPanel } = await import('./SourceControlOperationsPanel');
+        const onFetch = vi.fn();
+        const onPull = vi.fn();
+        const onPush = vi.fn();
+        const onCreateCommit = vi.fn();
+        const onCommitMessageDraftChange = vi.fn();
+        const onCommitFromMessage = vi.fn();
+
+        let tree: renderer.ReactTestRenderer | null = null;
+        act(() => {
+            tree = renderer.create(
+                <SourceControlOperationsPanel
+                    backendLabel="Git"
+                    commitActionLabel="Commit staged"
+                    capabilities={{ readLog: true, writeCommit: true, writeRemoteFetch: true, writeRemotePull: true, writeRemotePush: true }}
+                    theme={{ colors: { divider: '#000', text: '#fff', textSecondary: '#aaa', warning: '#f90', textDestructive: '#f00', success: '#0a0', input: { background: '#111' }, textLink: '#09f', surfaceHigh: '#222', surface: '#111' } }}
+                    currentSessionId="session-1"
+                    hasConflicts={false}
+                    scmOperationBusy={false}
+                    hasGlobalOperationInFlight={false}
+                    inFlightScmOperation={null}
+                    scmOperationStatus={null}
+                    commitAllowed
+                    commitBlockedMessage={null}
+                    pullAllowed
+                    pullBlockedMessage={null}
+                    pushAllowed
+                    pushBlockedMessage={null}
+                    onCreateCommit={onCreateCommit}
+                    onFetch={onFetch}
+                    onPull={onPull}
+                    onPush={onPush}
+                    historyLoading={false}
+                    historyEntries={[]}
+                    historyHasMore={false}
+                    onLoadMoreHistory={vi.fn()}
+                    onOpenCommit={vi.fn()}
+                    operationLog={[]}
+                    commitMessageDraft="feat: inline"
+                    onCommitMessageDraftChange={onCommitMessageDraftChange}
+                    onCommitFromMessage={onCommitFromMessage}
+                />
+            );
+        });
+
+        const input = tree!.root.findByType('TextInput' as any);
+        expect(input.props.value).toBe('feat: inline');
+
+        const commitButton = tree!.root
+            .findAllByType('Pressable' as any)
+            .find((pressable) =>
+                pressable.findAllByType('Text' as any).some((textNode) => textNode.props.children === 'Commit staged')
+            );
+        expect(commitButton).toBeTruthy();
+
+        act(() => {
+            commitButton!.props.onPress();
+        });
+
+        expect(onCommitFromMessage).toHaveBeenCalledTimes(1);
+        expect(onCommitFromMessage).toHaveBeenCalledWith('feat: inline');
+        expect(onCreateCommit).not.toHaveBeenCalled();
+    });
+
+    it('hides the commit action chip when hideCommitAction is enabled', async () => {
+        const { SourceControlOperationsPanel } = await import('./SourceControlOperationsPanel');
+
+        let tree: renderer.ReactTestRenderer | null = null;
+        act(() => {
+            tree = renderer.create(
+                <SourceControlOperationsPanel
+                    hideCommitAction
+                    backendLabel="Git"
+                    commitActionLabel="Commit staged"
+                    capabilities={{ readLog: false, writeCommit: true, writeRemoteFetch: true, writeRemotePull: true, writeRemotePush: true }}
+                    theme={{ colors: { divider: '#000', text: '#fff', textSecondary: '#aaa', warning: '#f90', textDestructive: '#f00', success: '#0a0', input: { background: '#111' }, textLink: '#09f', surfaceHigh: '#222', surface: '#111' } }}
+                    currentSessionId="session-1"
+                    hasConflicts={false}
+                    scmOperationBusy={false}
+                    hasGlobalOperationInFlight={false}
+                    inFlightScmOperation={null}
+                    scmOperationStatus={null}
+                    commitAllowed
+                    commitBlockedMessage={null}
+                    pullAllowed
+                    pullBlockedMessage={null}
+                    pushAllowed
+                    pushBlockedMessage={null}
+                    onCreateCommit={vi.fn()}
+                    onFetch={vi.fn()}
+                    onPull={vi.fn()}
+                    onPush={vi.fn()}
+                    historyLoading={false}
+                    historyEntries={[]}
+                    historyHasMore={false}
+                    onLoadMoreHistory={vi.fn()}
+                    onOpenCommit={vi.fn()}
+                    operationLog={[]}
+                />
+            );
+        });
+
+        const commitChip = tree!.root
+            .findAllByType('Pressable' as any)
+            .find((pressable) =>
+                pressable.findAllByType('Text' as any).some((textNode) => textNode.props.children === 'Commit staged')
+            );
+        expect(commitChip).toBeFalsy();
     });
 
     it('hides write action buttons when capabilities are missing', async () => {
@@ -608,14 +796,14 @@ describe('SourceControlOperationsPanel', () => {
         expect(beforeFilter.some((text) => text.includes('this session'))).toBe(true);
         expect(beforeFilter.some((text) => text.includes('session sessio'))).toBe(true);
 
-        const pressables = tree!.root.findAllByType('Pressable' as any);
-        const thisSessionFilter = pressables.find((node) => {
-            const children = node.props.children;
-            if (!children || typeof children !== 'object') return false;
-            const label = (children as any).props?.children;
-            return label === 'This session';
-        });
-        expect(thisSessionFilter).toBeTruthy();
+            const pressables = tree!.root.findAllByType('Pressable' as any);
+            const thisSessionFilter = pressables.find((node) => {
+                const children = node.props.children;
+                if (!children || typeof children !== 'object') return false;
+                const label = (children as any).props?.children;
+                return typeof label === 'string' && label.toLowerCase() === 'this session';
+            });
+            expect(thisSessionFilter).toBeTruthy();
 
         act(() => {
             thisSessionFilter!.props.onPress();
@@ -682,14 +870,14 @@ describe('SourceControlOperationsPanel', () => {
             );
         });
 
-        const pressables = tree!.root.findAllByType('Pressable' as any);
-        const thisSessionFilter = pressables.find((node) => {
-            const children = node.props.children;
-            if (!children || typeof children !== 'object') return false;
-            const label = (children as any).props?.children;
-            return label === 'This session';
-        });
-        expect(thisSessionFilter).toBeTruthy();
+            const pressables = tree!.root.findAllByType('Pressable' as any);
+            const thisSessionFilter = pressables.find((node) => {
+                const children = node.props.children;
+                if (!children || typeof children !== 'object') return false;
+                const label = (children as any).props?.children;
+                return typeof label === 'string' && label.toLowerCase() === 'this session';
+            });
+            expect(thisSessionFilter).toBeTruthy();
         act(() => {
             thisSessionFilter!.props.onPress();
         });
