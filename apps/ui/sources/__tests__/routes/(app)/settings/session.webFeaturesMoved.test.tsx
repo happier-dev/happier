@@ -7,6 +7,9 @@ import { describe, expect, it, vi } from 'vitest';
 vi.mock('react-native', () => ({
     View: 'View',
     TextInput: 'TextInput',
+    AppState: {
+        addEventListener: vi.fn(() => ({ remove: vi.fn() })),
+    },
     Platform: {
         OS: 'web',
         select: (options: any) => (options && 'default' in options ? options.default : undefined),
@@ -84,6 +87,7 @@ vi.mock('@/agents/hooks/useEnabledAgentIds', () => ({
 }));
 
 vi.mock('@/agents/catalog/catalog', () => ({
+    AGENT_IDS: ['codex'],
     getAgentCore: () => ({ displayNameKey: 'agent.name' }),
 }));
 
