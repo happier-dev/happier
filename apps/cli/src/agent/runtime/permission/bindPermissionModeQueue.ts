@@ -1,6 +1,7 @@
 import type { Metadata, PermissionMode, UserMessage } from '@/api/types';
 
 import { pushMessageToQueueWithSpecialCommands, type SpecialCommandQueue } from '@/agent/runtime/queueSpecialCommands';
+import { resolveProviderPromptWithReplaySeed } from '@/agent/runtime/replaySeed/replaySeedV1';
 import { parseSpecialCommand } from '@/cli/parsers/specialCommands';
 
 import { resolvePermissionModeUpdatedAtFromMessage } from './permissionModeCanonical';
@@ -29,6 +30,8 @@ export function registerPermissionModeMessageQueueBinding(opts: {
   session: {
     onUserMessage: (handler: (message: UserMessage) => void) => void;
     updateMetadata: (updater: (current: Metadata) => Metadata) => Promise<void> | void;
+    getMetadataSnapshot?: () => unknown;
+    refreshSessionSnapshotFromServerBestEffort?: (opts?: { reason: 'connect' | 'waitForMetadataUpdate' }) => Promise<void>;
   };
   queue: SpecialCommandQueue<{ permissionMode: PermissionMode }, PermissionModeQueuedPrompt>;
   getCurrentPermissionMode: () => PermissionMode | undefined;
@@ -36,6 +39,7 @@ export function registerPermissionModeMessageQueueBinding(opts: {
   inFlightSteer?: InFlightSteerController | null;
 }): void {
   let steerSequence: Promise<void> = Promise.resolve();
+  let didReplaySeedBootstrapForSteer = false;
 
   opts.session.onUserMessage((message) => {
     const previousPermissionMode = opts.getCurrentPermissionMode();
@@ -68,7 +72,29 @@ export function registerPermissionModeMessageQueueBinding(opts: {
     ) {
       steerSequence = steerSequence.then(async () => {
         try {
-          await steer.steerText(text);
+          let providerText = text;
+          if (typeof opts.session.getMetadataSnapshot === 'function') {
+            try {
+              const seedResolution = await resolveProviderPromptWithReplaySeed({
+                session: {
+                  getMetadataSnapshot: opts.session.getMetadataSnapshot,
+                  updateMetadata: opts.session.updateMetadata,
+                  refreshSessionSnapshotFromServerBestEffort: opts.session.refreshSessionSnapshotFromServerBestEffort,
+                },
+                userText: text,
+                allowSeed: true,
+                localId: message.localId ?? null,
+                nowMs: Date.now(),
+                refreshMetadataBeforeRead: !didReplaySeedBootstrapForSteer,
+              });
+              didReplaySeedBootstrapForSteer = true;
+              providerText = seedResolution.providerPrompt;
+            } catch {
+              // Best-effort only; fall back to steering the raw user text.
+            }
+          }
+
+          await steer.steerText(providerText);
           return;
         } catch {
           try {
