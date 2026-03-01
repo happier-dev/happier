@@ -12,10 +12,37 @@ describe('thinkingText', () => {
       expect(normalized).toContain('**Ensuring correct file changes**');
     });
 
+    it('reassembles tokenized bold markers in word-per-line streams (no extra spaces around "**")', () => {
+      const input = ['**', 'Exploring', 'Reasoning', 'Options', '**', ''].join('\n');
+      const normalized = normalizeThinkingChunk(input);
+      expect(normalized).toBe('**Exploring Reasoning Options** ');
+    });
+
+    it('reassembles tokenized inline-code markers in word-per-line streams (no extra spaces around "`")', () => {
+      const input = ['`', 'git', 'diff', '`', ''].join('\n');
+      const normalized = normalizeThinkingChunk(input);
+      expect(normalized).toBe('`git diff` ');
+    });
+
+    it('does not insert spaces before punctuation tokens in word-per-line streams', () => {
+      const input = ['Hello', ',', 'world', '!', ''].join('\n');
+      const normalized = normalizeThinkingChunk(input);
+      expect(normalized).toBe('Hello, world! ');
+    });
+
     it('preserves list newlines (does not collapse markdown lists into one line)', () => {
       const input = '- first item\n- second item\n';
       const normalized = normalizeThinkingChunk(input);
       expect(normalized).toContain('\n- second item');
+    });
+
+    it('collapses word-per-line deltas outside fenced code blocks (preserves fences verbatim)', () => {
+      const input = ['Considering', 'commands', 'and', 'tools', '', '```sh', 'curl -I https://example.com', '```', ''].join(
+        '\n',
+      );
+      const normalized = normalizeThinkingChunk(input);
+      expect(normalized).toContain('Considering commands and tools');
+      expect(normalized).toContain('```sh\ncurl -I https://example.com\n```');
     });
 
     it('collapses word-per-line streams into spaces for readability', () => {
@@ -34,6 +61,12 @@ describe('thinkingText', () => {
       const input = 'constx=1;\nreturnx;\n';
       const normalized = normalizeThinkingChunk(input);
       expect(normalized).toBe(input);
+    });
+
+    it('normalizes bare carriage returns into newlines (preserves intended line breaks)', () => {
+      const input = 'Exploring reasoning options\rConsidering command and tools';
+      const normalized = normalizeThinkingChunk(input);
+      expect(normalized).toBe('Exploring reasoning options\nConsidering command and tools');
     });
   });
 
@@ -83,6 +116,28 @@ describe('thinkingText', () => {
       );
       expect(thinkingMessages).toHaveLength(1);
       expect(String(thinkingMessages[0]!.text)).toBe('Hello world');
+    });
+
+    it('inserts a space when streamed deltas omit boundary whitespace', () => {
+      const state = createReducer();
+
+      const mkThinking = (id: string, createdAt: number, thinking: string): NormalizedMessage => ({
+        id,
+        localId: null,
+        createdAt,
+        role: 'agent',
+        isSidechain: false,
+        content: [{ type: 'thinking', thinking, uuid: id, parentUUID: null }],
+      });
+
+      reducer(state, [mkThinking('t1', 1000, 'Maybe I can streamline it a bit.')]);
+      reducer(state, [mkThinking('t2', 1010, 'Outlining execution steps')]);
+
+      const thinkingMessages = [...state.messages.values()].filter(
+        (m) => m.role === 'agent' && m.isThinking && typeof m.text === 'string',
+      );
+      expect(thinkingMessages).toHaveLength(1);
+      expect(String(thinkingMessages[0]!.text)).toBe('Maybe I can streamline it a bit. Outlining execution steps');
     });
 
     it('preserves paragraph breaks streamed as standalone newline chunks', () => {
@@ -199,6 +254,74 @@ describe('thinkingText', () => {
       );
       expect(thinkingMessages).toHaveLength(1);
       expect(String(thinkingMessages[0]!.text)).toBe('Responding');
+    });
+
+    it('dedupes overlapping streamed thinking chunks when providers resend cumulative text', () => {
+      const state = createReducer();
+
+      const mkThinking = (id: string, createdAt: number, thinking: string): NormalizedMessage => ({
+        id,
+        localId: null,
+        createdAt,
+        role: 'agent',
+        isSidechain: false,
+        content: [{ type: 'thinking', thinking, uuid: id, parentUUID: null }],
+      });
+
+      reducer(state, [mkThinking('t1', 1000, 'Reading files with sed\n')]);
+      reducer(state, [mkThinking('t2', 1010, 'Reading files with sed\nI will now execute commands.')]);
+
+      const thinkingMessages = [...state.messages.values()].filter(
+        (m) => m.role === 'agent' && m.isThinking && typeof m.text === 'string',
+      );
+      expect(thinkingMessages).toHaveLength(1);
+      expect(String(thinkingMessages[0]!.text)).toBe('Reading files with sed\nI will now execute commands.');
+    });
+
+    it('dedupes drifted cumulative thinking chunks (minor quote/whitespace changes) by preferring replacement', () => {
+      const state = createReducer();
+
+      const mkThinking = (id: string, createdAt: number, thinking: string): NormalizedMessage => ({
+        id,
+        localId: null,
+        createdAt,
+        role: 'agent',
+        isSidechain: false,
+        content: [{ type: 'thinking', thinking, uuid: id, parentUUID: null }],
+      });
+
+      reducer(state, [mkThinking('t1', 1000, 'Planning command execution\nI’ll start with exec_command.\n')]);
+      reducer(state, [mkThinking('t2', 1010, 'Planning command execution\nI\'ll start with exec_command.\nDeciding on title update\n')]);
+
+      const thinkingMessages = [...state.messages.values()].filter(
+        (m) => m.role === 'agent' && m.isThinking && typeof m.text === 'string',
+      );
+      expect(thinkingMessages).toHaveLength(1);
+      expect(String(thinkingMessages[0]!.text)).toBe(
+        'Planning command execution\nI\'ll start with exec_command.\nDeciding on title update\n',
+      );
+    });
+
+    it('inserts a space after sentence-ending punctuation even when followed by a closing quote', () => {
+      const state = createReducer();
+
+      const mkThinking = (id: string, createdAt: number, thinking: string): NormalizedMessage => ({
+        id,
+        localId: null,
+        createdAt,
+        role: 'agent',
+        isSidechain: false,
+        content: [{ type: 'thinking', thinking, uuid: id, parentUUID: null }],
+      });
+
+      reducer(state, [mkThinking('t1', 1000, 'I might go with \"Offline gap stream.\"')]);
+      reducer(state, [mkThinking('t2', 1010, 'Deciding on title update')]);
+
+      const thinkingMessages = [...state.messages.values()].filter(
+        (m) => m.role === 'agent' && m.isThinking && typeof m.text === 'string',
+      );
+      expect(thinkingMessages).toHaveLength(1);
+      expect(String(thinkingMessages[0]!.text)).toBe('I might go with \"Offline gap stream.\" Deciding on title update');
     });
   });
 });

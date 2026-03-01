@@ -3,7 +3,7 @@ import type { UsageData } from '../../typesRaw';
 import type { ReducerState } from '../reducer';
 import type { ToolCall } from '../../domains/messages/messageTypes';
 import { clearAllMainMergeCursors, setStreamMergeCursor, setThinkingMergeCursor } from '../helpers/mergeCursors';
-import { normalizeThinkingChunk, unwrapThinkingText } from '../helpers/thinkingText';
+import { mergeThinkingText, normalizeThinkingChunk } from '../helpers/thinkingText';
 import { cancelRunningTools } from '../helpers/cancelRunningApprovedTools';
 import { drainAndApplyOrphanToolResultsToMessage } from '../helpers/drainAndApplyOrphanToolResultsToMessage';
 
@@ -103,17 +103,17 @@ export function runUserAndTextPhase(params: Readonly<{
                     // Provider-agnostic fallback: some transports reuse the same agent message id for
                     // incremental chunks but do not attach a stable stream key. Use the transport id
                     // as a merge key so streaming remains coherent until the server snapshot reload.
-	                    const shouldUseIdFallback = !streamKeyFromMeta && msg.content.length === 1 && Boolean(msg.id);
-	                    const streamKey = streamKeyFromMeta ?? (shouldUseIdFallback ? `id:${msg.id}` : null);
+                      const shouldUseIdFallback = !streamKeyFromMeta && msg.content.length === 1 && Boolean(msg.id);
+                      const streamKey = streamKeyFromMeta ?? (shouldUseIdFallback ? `id:${msg.id}` : null);
 
-	                    const textDelta = String(c.text ?? '');
+                      const textDelta = String(c.text ?? '');
                         const hasVisibleText = textDelta.trim().length > 0;
 
-	                    const canMerge =
-	                        streamKey
-	                        && lastMainStreamMessageId
-	                        && lastMainStreamKey === streamKey
-	                        && (() => {
+                      const canMerge =
+                          streamKey
+                          && lastMainStreamMessageId
+                          && lastMainStreamKey === streamKey
+                          && (() => {
                             const prev = state.messages.get(lastMainStreamMessageId!);
                             return prev?.role === 'agent' && !prev.isThinking && typeof prev.text === 'string';
                         })();
@@ -180,11 +180,10 @@ export function runUserAndTextPhase(params: Readonly<{
                             return prev?.role === 'agent' && prev.isThinking && typeof prev.text === 'string';
                         })();
 
-	                    if (canAppendToPrevious) {
-	                        const prev = prevThinkingId ? state.messages.get(prevThinkingId) : null;
-	                        if (prev && typeof prev.text === 'string') {
-	                            const merged = unwrapThinkingText(prev.text) + chunk;
-	                            prev.text = merged;
+                      if (canAppendToPrevious) {
+                          const prev = prevThinkingId ? state.messages.get(prevThinkingId) : null;
+                          if (prev && typeof prev.text === 'string') {
+                              prev.text = mergeThinkingText(prev.text, chunk);
                             if (typeof msg.seq === 'number') {
                                 const nextSeq = Math.trunc(msg.seq);
                                 if (prev.seq === null || nextSeq > prev.seq) {
