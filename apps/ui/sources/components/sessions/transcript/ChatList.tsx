@@ -31,6 +31,7 @@ import { jumpToTranscriptSeq } from '@/utils/sessions/jumpToTranscriptSeq';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 import { buildTranscriptTurnsCached, type TranscriptTurn, type TranscriptTurnsBuildCache } from '@/components/sessions/transcript/turnGrouping/buildTranscriptTurns';
 import { TurnView } from '@/components/sessions/transcript/turns/TurnView';
+import { ToolCallsGroupRow } from '@/components/sessions/transcript/toolCalls/ToolCallsGroupRow';
 import { TranscriptMotionProvider } from '@/components/sessions/transcript/motion/TranscriptMotionProvider';
 import { resolveTranscriptMotionConfig } from '@/components/sessions/transcript/motion/resolveTranscriptMotionConfig';
 import { TranscriptEnterWrapper } from '@/components/sessions/transcript/motion/TranscriptEnterWrapper';
@@ -73,8 +74,9 @@ export const ChatList = React.memo((props: {
     const actionDrafts = useSessionActionDrafts(props.session.id);
 
     const transcriptGroupingMode = useSetting('transcriptGroupingMode');
-    const transcriptTurnShowActivityGroup = useSetting('transcriptTurnShowActivityGroup');
-    const transcriptTurnActivityGroupStrategy = useSetting('transcriptTurnActivityGroupStrategy');
+    const transcriptGroupToolCalls = useSetting('transcriptGroupToolCalls');
+    const transcriptTurnToolCallsGroupStrategy = useSetting('transcriptTurnToolCallsGroupStrategy');
+    const toolViewTimelineChromeMode = useSetting('toolViewTimelineChromeMode');
 
     const forkedTranscriptEnabled = fork != null;
 
@@ -98,9 +100,12 @@ export const ChatList = React.memo((props: {
     const messagesById = forkedTranscriptEnabled ? (fork!.combinedMessagesById as any) : childMessagesById;
 
     const groupingMode = forkedTranscriptEnabled ? 'linear' : (transcriptGroupingMode === 'turns' ? 'turns' : 'linear');
-    const showActivityGroup = transcriptTurnShowActivityGroup === true;
-    const activityGroupStrategy =
-        transcriptTurnActivityGroupStrategy === 'all_tools_in_turn' ? 'all_tools_in_turn' : 'consecutive_tools';
+    const groupToolCalls =
+        transcriptGroupToolCalls === true &&
+        (toolViewTimelineChromeMode === 'activity_feed') &&
+        forkedTranscriptEnabled !== true;
+    const toolCallsGroupStrategy =
+        transcriptTurnToolCallsGroupStrategy === 'all_tools_in_turn' ? 'all_tools_in_turn' : 'consecutive_tools';
 
     const linearItemsCacheRef = React.useRef<ChatListItemsBuildCache | null>(null);
     const turnsCacheRef = React.useRef<TranscriptTurnsBuildCache | null>(null);
@@ -110,10 +115,10 @@ export const ChatList = React.memo((props: {
             cache: turnsCacheRef.current,
             messageIdsOldestFirst,
             messagesById,
-            showActivityGroup,
-            activityGroupStrategy,
+            groupToolCalls,
+            toolCallsGroupStrategy,
         });
-    }, [activityGroupStrategy, groupingMode, messageIdsOldestFirst, messagesById, showActivityGroup]);
+    }, [groupingMode, messageIdsOldestFirst, messagesById, groupToolCalls, toolCallsGroupStrategy]);
 
     React.useEffect(() => {
         turnsCacheRef.current = turnsCache;
@@ -128,8 +133,9 @@ export const ChatList = React.memo((props: {
             pendingMessages,
             discardedMessages: discardedPendingMessages,
             actionDrafts,
+            groupConsecutiveToolCalls: groupToolCalls,
         });
-    }, [actionDrafts, groupingMode, messageIdsOldestFirst, messagesById, pendingMessages, discardedPendingMessages]);
+    }, [actionDrafts, groupingMode, groupToolCalls, messageIdsOldestFirst, messagesById, pendingMessages, discardedPendingMessages]);
 
     React.useEffect(() => {
         if (groupingMode === 'turns') {
@@ -401,7 +407,7 @@ const ChatListInternal = React.memo((props: {
           lastActivityKey: null,
       });
       const isPinnedRef = React.useRef(true);
-      const [expandedActivityGroupIds, setExpandedActivityGroupIds] = React.useState<ReadonlySet<string>>(
+      const [expandedToolCallsGroupIds, setExpandedToolCallsGroupIds] = React.useState<ReadonlySet<string>>(
           () => new Set<string>(),
       );
         const thinkingDefaultExpanded =
@@ -410,13 +416,13 @@ const ChatListInternal = React.memo((props: {
             () => new Map<string, boolean>(),
         );
 
-      const setActivityGroupExpanded = React.useCallback((activityGroupId: string, expanded: boolean) => {
-          setExpandedActivityGroupIds((prev) => {
+      const setToolCallsGroupExpanded = React.useCallback((toolCallsGroupId: string, expanded: boolean) => {
+          setExpandedToolCallsGroupIds((prev) => {
               const next = new Set(prev);
               if (expanded) {
-                  next.add(activityGroupId);
+                  next.add(toolCallsGroupId);
               } else {
-                  next.delete(activityGroupId);
+                  next.delete(toolCallsGroupId);
               }
               return next;
           });
@@ -508,6 +514,7 @@ const ChatListInternal = React.memo((props: {
         return typeof kind === 'string' ? kind : null;
     }, [props.sessionId]);
 
+    const toolTimelineChromeMode = useSetting('toolViewTimelineChromeMode');
     const keyExtractor = useCallback((item: ChatTranscriptListItem) => item.id, []);
     const getItemType = useCallback((item: ChatTranscriptListItem): string => item.kind, []);
       const renderItem = useCallback(({ item, index }: { item: ChatTranscriptListItem; index: number }) => {
@@ -537,12 +544,25 @@ const ChatListInternal = React.memo((props: {
                 </TranscriptEnterWrapper>
             );
         }
+        if (item.kind === 'tool-calls-group') {
+            return (
+                <ToolCallsGroupRow
+                    sessionId={props.sessionId}
+                    toolCallsGroupId={item.id}
+                    toolMessageIds={item.toolMessageIds}
+                    metadata={props.metadata}
+                    expanded={expandedToolCallsGroupIds.has(item.id)}
+                    setExpanded={(expanded) => setToolCallsGroupExpanded(item.id, expanded)}
+                    interaction={props.interaction}
+                />
+            );
+        }
         if (item.kind === 'turn') {
             const turnCreatedAt =
                 (item.turn.userMessageId ? resolveCreatedAtForMessageId(item.turn.userMessageId) : null) ??
                 (item.turn.content[0]?.kind === 'message'
                     ? resolveCreatedAtForMessageId(item.turn.content[0].messageId)
-                    : item.turn.content[0]?.kind === 'activity'
+                    : item.turn.content[0]?.kind === 'tool_calls'
                         ? (item.turn.content[0].toolMessageIds[0]
                             ? resolveCreatedAtForMessageId(item.turn.content[0].toolMessageIds[0])
                             : null)
@@ -558,14 +578,14 @@ const ChatListInternal = React.memo((props: {
                           activeThinkingMessageId={props.activeThinkingMessageId}
                             resolveThinkingExpanded={resolveThinkingExpanded}
                             setThinkingExpanded={setThinkingExpanded}
-                          expandedActivityGroupIds={expandedActivityGroupIds}
-                          setActivityGroupExpanded={setActivityGroupExpanded}
+                          expandedToolCallsGroupIds={expandedToolCallsGroupIds}
+                          setToolCallsGroupExpanded={setToolCallsGroupExpanded}
                       />
                   </TranscriptEnterWrapper>
               );
           }
         if (item.kind === 'message') {
-            const toolChromeMode = toolViewTimelineChromeMode === 'activity_feed' ? 'activity_feed' : 'cards';
+            const toolChromeMode = toolTimelineChromeMode === 'activity_feed' ? 'activity_feed' : 'cards';
             const prev = listImplementation === 'flash_v2' ? itemsRef.current[index - 1] : undefined;
             const shouldTightenToolStack =
                 listImplementation === 'flash_v2' &&
@@ -594,7 +614,7 @@ const ChatListInternal = React.memo((props: {
             );
         }
         return null;
-      }, [expandedActivityGroupIds, listImplementation, props.activeThinkingMessageId, props.interaction, props.metadata, props.sessionId, resolveCreatedAtForMessageId, resolveKindForMessageId, resolveThinkingExpanded, setActivityGroupExpanded, setThinkingExpanded, toolViewTimelineChromeMode]);
+      }, [expandedToolCallsGroupIds, listImplementation, props.activeThinkingMessageId, props.interaction, props.metadata, props.sessionId, resolveCreatedAtForMessageId, resolveKindForMessageId, resolveThinkingExpanded, setThinkingExpanded, setToolCallsGroupExpanded, toolTimelineChromeMode]);
 
     const loadOlder = useCallback(async (): Promise<{
         loaded: number;
@@ -954,7 +974,7 @@ const ChatListInternal = React.memo((props: {
                     if (c.kind === 'message') {
                         const seq = resolveSeqForMessageId(c.messageId);
                         if (typeof seq === 'number' && Number.isFinite(seq)) considerSeq(i, seq);
-                    } else if (c.kind === 'activity') {
+                    } else if (c.kind === 'tool_calls') {
                         for (const toolMessageId of c.toolMessageIds) {
                             const seq = resolveSeqForMessageId(toolMessageId);
                             if (typeof seq === 'number' && Number.isFinite(seq)) considerSeq(i, seq);

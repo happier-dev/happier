@@ -40,7 +40,7 @@ let collapsedPreviewCount: number = 1;
 vi.mock('@/sync/domains/state/storage', () => ({
     useSetting: (key: string) => {
         if (key === 'toolViewTimelineChromeMode') return 'activity_feed';
-        if (key === 'transcriptTurnActivityGroupCollapsedPreviewCount') return collapsedPreviewCount;
+        if (key === 'transcriptToolCallsCollapsedPreviewCount') return collapsedPreviewCount;
         return null;
     },
 }));
@@ -50,7 +50,7 @@ vi.mock('@/components/tools/shell/views/ToolView', () => ({
 }));
 
 vi.mock('@/components/tools/shell/views/ToolTimelineRow', () => ({
-    ToolTimelineRow: () => null,
+    ToolTimelineRow: (props: any) => React.createElement('ToolTimelineRow', props),
 }));
 
 vi.mock('@/components/tools/shell/views/timeline/ToolTimelinePreviewRow', () => ({
@@ -84,9 +84,9 @@ function makeToolMessage(id: string, createdAt: number): ToolCallMessage {
     };
 }
 
-describe('ActivityGroupView (collapsed preview)', () => {
+describe('ToolCallsGroupView (collapsed preview)', () => {
     it('renders the last N tool previews when collapsed', async () => {
-        const { ActivityGroupView } = await import('./ActivityGroupView');
+        const { ToolCallsGroupView } = await import('./ToolCallsGroupView');
         collapsedPreviewCount = 2;
 
         const toolMessages: ToolCallMessage[] = [makeToolMessage('m1', 1), makeToolMessage('m2', 2), makeToolMessage('m3', 3)];
@@ -94,8 +94,8 @@ describe('ActivityGroupView (collapsed preview)', () => {
         let tree: ReturnType<typeof renderer.create> | undefined;
         await act(async () => {
             tree = renderer.create(
-                <ActivityGroupView
-                    id="activity:1"
+                <ToolCallsGroupView
+                    id="toolCalls:1"
                     status="running"
                     toolMessages={toolMessages}
                     metadata={null}
@@ -107,18 +107,18 @@ describe('ActivityGroupView (collapsed preview)', () => {
             );
         });
 
-        const previews = tree!.root.findAll((node) => (node.props as any).testID === 'transcript-activity-preview-row');
+        const previews = tree!.root.findAll((node) => (node.props as any).testID === 'transcript-tool-calls-preview-row');
         expect(previews).toHaveLength(2);
 
-        const previewIds = previews.map((p) => (p.props as any).children?.props?.toolMessage?.id).filter(Boolean);
+        const previewIds = previews.map((p) => (p.props as any).children?.props?.messageId).filter(Boolean);
         expect(previewIds).toEqual(['m2', 'm3']);
 
-        const moreRows = tree!.root.findAll((node) => (node.props as any).testID === 'transcript-activity-preview-more');
+        const moreRows = tree!.root.findAll((node) => (node.props as any).testID === 'transcript-tool-calls-preview-more');
         expect(moreRows).toHaveLength(1);
     });
 
     it('renders no previews when count is 0', async () => {
-        const { ActivityGroupView } = await import('./ActivityGroupView');
+        const { ToolCallsGroupView } = await import('./ToolCallsGroupView');
         collapsedPreviewCount = 0;
 
         const toolMessages: ToolCallMessage[] = [makeToolMessage('m1', 1), makeToolMessage('m2', 2)];
@@ -126,8 +126,8 @@ describe('ActivityGroupView (collapsed preview)', () => {
         let tree: ReturnType<typeof renderer.create> | undefined;
         await act(async () => {
             tree = renderer.create(
-                <ActivityGroupView
-                    id="activity:1"
+                <ToolCallsGroupView
+                    id="toolCalls:1"
                     status="running"
                     toolMessages={toolMessages}
                     metadata={null}
@@ -139,15 +139,15 @@ describe('ActivityGroupView (collapsed preview)', () => {
             );
         });
 
-        const previews = tree!.root.findAll((node) => (node.props as any).testID === 'transcript-activity-preview-row');
+        const previews = tree!.root.findAll((node) => (node.props as any).testID === 'transcript-tool-calls-preview-row');
         expect(previews).toHaveLength(0);
 
-        const moreRows = tree!.root.findAll((node) => (node.props as any).testID === 'transcript-activity-preview-more');
+        const moreRows = tree!.root.findAll((node) => (node.props as any).testID === 'transcript-tool-calls-preview-more');
         expect(moreRows).toHaveLength(0);
     });
 
     it('clamps preview count to 15', async () => {
-        const { ActivityGroupView } = await import('./ActivityGroupView');
+        const { ToolCallsGroupView } = await import('./ToolCallsGroupView');
         collapsedPreviewCount = 999;
 
         const toolMessages: ToolCallMessage[] = Array.from({ length: 20 }, (_, i) => makeToolMessage(`m${i + 1}`, i + 1));
@@ -155,8 +155,8 @@ describe('ActivityGroupView (collapsed preview)', () => {
         let tree: ReturnType<typeof renderer.create> | undefined;
         await act(async () => {
             tree = renderer.create(
-                <ActivityGroupView
-                    id="activity:1"
+                <ToolCallsGroupView
+                    id="toolCalls:1"
                     status="running"
                     toolMessages={toolMessages}
                     metadata={null}
@@ -168,12 +168,12 @@ describe('ActivityGroupView (collapsed preview)', () => {
             );
         });
 
-        const previews = tree!.root.findAll((node) => (node.props as any).testID === 'transcript-activity-preview-row');
+        const previews = tree!.root.findAll((node) => (node.props as any).testID === 'transcript-tool-calls-preview-row');
         expect(previews).toHaveLength(15);
     });
 
     it('requests expansion via setExpanded(true) when tapping the +N more row', async () => {
-        const { ActivityGroupView } = await import('./ActivityGroupView');
+        const { ToolCallsGroupView } = await import('./ToolCallsGroupView');
         collapsedPreviewCount = 1;
 
         const toolMessages: ToolCallMessage[] = [makeToolMessage('m1', 1), makeToolMessage('m2', 2)];
@@ -182,8 +182,8 @@ describe('ActivityGroupView (collapsed preview)', () => {
         let tree: ReturnType<typeof renderer.create> | undefined;
         await act(async () => {
             tree = renderer.create(
-                <ActivityGroupView
-                    id="activity:1"
+                <ToolCallsGroupView
+                    id="toolCalls:1"
                     status="running"
                     toolMessages={toolMessages}
                     metadata={null}
@@ -195,7 +195,7 @@ describe('ActivityGroupView (collapsed preview)', () => {
             );
         });
 
-        const moreRow = tree!.root.findByProps({ testID: 'transcript-activity-preview-more' });
+        const moreRow = tree!.root.findByProps({ testID: 'transcript-tool-calls-preview-more' });
         await act(async () => {
             moreRow.props.onPress?.();
         });
