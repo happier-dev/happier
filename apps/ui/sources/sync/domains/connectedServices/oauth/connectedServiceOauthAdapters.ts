@@ -14,8 +14,8 @@ import { exchangeConnectedServiceOauthViaProxy } from '@/sync/api/account/apiCon
 import { buildOauthRecordFromProxyPayload, parseConnectedServiceOauthProxyBundle } from './connectedServiceOauthProxyBundle';
 
 import { buildClaudeSubscriptionAuthorizationUrl, CLAUDE_SUBSCRIPTION_OAUTH } from './claudeSubscriptionOauth';
-import { buildGeminiAuthorizationUrl, exchangeGeminiTokens, GEMINI_OAUTH } from './geminiOauth';
-import { buildOpenAiCodexAuthorizationUrl, exchangeOpenAiCodexTokens, OPENAI_CODEX_OAUTH } from './openAiCodexOauth';
+import { buildGeminiAuthorizationUrl, GEMINI_OAUTH } from './geminiOauth';
+import { buildOpenAiCodexAuthorizationUrl, OPENAI_CODEX_OAUTH } from './openAiCodexOauth';
 
 export type ConnectedServiceOauthAddMethod = 'device' | 'paste' | 'browser';
 export type ConnectedServiceOauthMode = 'device' | 'paste' | 'embedded';
@@ -39,28 +39,56 @@ export type ConnectedServiceOauthAdapter = Readonly<{
   }>) => Promise<ConnectedServiceCredentialRecordV1>;
 }>;
 
+async function exchangeOauthViaProxy(params: Readonly<{
+  credentials: AuthCredentials;
+  serviceId: ConnectedServiceId;
+  profileId: string;
+  code: string;
+  verifier: string;
+  redirectUri: string;
+  state: string;
+  now: number;
+}>): Promise<Extract<ConnectedServiceCredentialRecordV1, { kind: 'oauth' }>> {
+  const keyPair = tweetnacl.box.keyPair();
+  const publicKeyB64Url = encodeBase64(keyPair.publicKey, 'base64url');
+  const exchanged = await exchangeConnectedServiceOauthViaProxy(params.credentials, {
+    serviceId: params.serviceId,
+    publicKey: publicKeyB64Url,
+    code: params.code,
+    verifier: params.verifier,
+    redirectUri: params.redirectUri,
+    state: params.state,
+  });
+  const payload = parseConnectedServiceOauthProxyBundle({
+    bundleB64Url: exchanged.bundle,
+    recipientSecretKey: keyPair.secretKey,
+  });
+  if (payload.serviceId !== params.serviceId) {
+    throw new Error('OAuth bundle service mismatch');
+  }
+  return buildOauthRecordFromProxyPayload({
+    now: params.now,
+    serviceId: params.serviceId,
+    profileId: params.profileId,
+    payload,
+  });
+}
+
 const OPENAI_CODEX_ADAPTER: ConnectedServiceOauthAdapter = Object.freeze({
   serviceId: 'openai-codex',
   defaultRedirectUri: OPENAI_CODEX_OAUTH.defaultRedirectUri,
   buildAuthorizationUrl: ({ redirectUri, state, challenge }) =>
     buildOpenAiCodexAuthorizationUrl({ redirectUri, state, challenge }),
-  exchangeAuthorizationCodeForRecord: async ({ profileId, code, verifier, redirectUri, state: _state, now }) => {
-    const tokens = await exchangeOpenAiCodexTokens({ code, verifier, redirectUri, now });
-    return buildConnectedServiceCredentialRecord({
-      now,
+  exchangeAuthorizationCodeForRecord: async ({ credentials, profileId, code, verifier, redirectUri, state, now }) => {
+    return await exchangeOauthViaProxy({
+      credentials,
       serviceId: 'openai-codex',
       profileId,
-      kind: 'oauth',
-      expiresAt: tokens.expiresAt,
-      oauth: {
-        accessToken: tokens.accessToken,
-        refreshToken: tokens.refreshToken,
-        idToken: tokens.idToken,
-        scope: null,
-        tokenType: null,
-        providerAccountId: tokens.providerAccountId,
-        providerEmail: null,
-      },
+      code,
+      verifier,
+      redirectUri,
+      state,
+      now,
     });
   },
 });
@@ -70,23 +98,16 @@ const GEMINI_ADAPTER: ConnectedServiceOauthAdapter = Object.freeze({
   defaultRedirectUri: GEMINI_OAUTH.defaultRedirectUri,
   buildAuthorizationUrl: ({ redirectUri, state, challenge }) =>
     buildGeminiAuthorizationUrl({ redirectUri, state, challenge }),
-  exchangeAuthorizationCodeForRecord: async ({ profileId, code, verifier, redirectUri, state: _state, now }) => {
-    const tokens = await exchangeGeminiTokens({ code, verifier, redirectUri, now });
-    return buildConnectedServiceCredentialRecord({
-      now,
+  exchangeAuthorizationCodeForRecord: async ({ credentials, profileId, code, verifier, redirectUri, state, now }) => {
+    return await exchangeOauthViaProxy({
+      credentials,
       serviceId: 'gemini',
       profileId,
-      kind: 'oauth',
-      expiresAt: tokens.expiresAt,
-      oauth: {
-        accessToken: tokens.accessToken,
-        refreshToken: tokens.refreshToken,
-        idToken: tokens.idToken,
-        scope: tokens.scope,
-        tokenType: tokens.tokenType,
-        providerAccountId: null,
-        providerEmail: null,
-      },
+      code,
+      verifier,
+      redirectUri,
+      state,
+      now,
     });
   },
 });
@@ -97,28 +118,15 @@ const CLAUDE_SUBSCRIPTION_ADAPTER: ConnectedServiceOauthAdapter = Object.freeze(
   buildAuthorizationUrl: ({ redirectUri, state, challenge }) =>
     buildClaudeSubscriptionAuthorizationUrl({ redirectUri, state, challenge }),
   exchangeAuthorizationCodeForRecord: async ({ credentials, profileId, code, verifier, redirectUri, state, now }) => {
-    const keyPair = tweetnacl.box.keyPair();
-    const publicKeyB64Url = encodeBase64(keyPair.publicKey, 'base64url');
-    const exchanged = await exchangeConnectedServiceOauthViaProxy(credentials, {
+    return await exchangeOauthViaProxy({
+      credentials,
       serviceId: 'claude-subscription',
-      publicKey: publicKeyB64Url,
+      profileId,
       code,
       verifier,
       redirectUri,
       state,
-    });
-    const payload = parseConnectedServiceOauthProxyBundle({
-      bundleB64Url: exchanged.bundle,
-      recipientSecretKey: keyPair.secretKey,
-    });
-    if (payload.serviceId !== 'claude-subscription') {
-      throw new Error('OAuth bundle service mismatch');
-    }
-    return buildOauthRecordFromProxyPayload({
       now,
-      serviceId: 'claude-subscription',
-      profileId,
-      payload,
     });
   },
 });
