@@ -612,34 +612,18 @@ export function ChangedFilesReview(props: ChangedFilesReviewProps) {
 
     // Prefetch scheduling + viewability windowing is handled by useChangedFilesReviewPrefetch.
 
-    const autoExpandedPathSet = React.useMemo(() => {
-        // When a review is "too large", rendering every diff block at once can lead to large layout shifts
-        // and unstable scroll behavior on web. Prefer rendering only the diff blocks near the viewport
-        // (plus a small buffer) while leaving the rest collapsed by default.
-        if (!tooLarge) return null;
-        const windowPaths = prefetch.prefetchWindowPaths;
-        const expanded =
-            Array.isArray(windowPaths) && windowPaths.length > 0
-                ? windowPaths
-                : (Array.isArray(prefetch.requestedPaths) && prefetch.requestedPaths.length > 0
-                    ? prefetch.requestedPaths
-                    : null);
-        if (!expanded) return null;
-        return new Set(expanded);
-    }, [prefetch.prefetchWindowPaths, prefetch.requestedPaths, tooLarge]);
-
     // FlashList can aggressively recycle rows; ensure collapsed/expanded state is reflected by
     // baking it into the `data` items (in addition to `extraData`) so visible rows always update.
     const rowsWithViewState = React.useMemo(() => {
-        if (collapsedPaths.size === 0 && !autoExpandedPathSet) return rows;
+        if (collapsedPaths.size === 0) return rows;
         return rows.map((row) => {
             if (row.kind !== 'file') return row;
             const path = row.file.fullPath;
-            const nextCollapsed = isCollapsed(path) || (autoExpandedPathSet ? !autoExpandedPathSet.has(path) : false);
+            const nextCollapsed = isCollapsed(path);
             if (row.collapsed === nextCollapsed) return row;
             return { ...row, collapsed: nextCollapsed };
         });
-    }, [autoExpandedPathSet, collapsedPaths, isCollapsed, rows]);
+    }, [collapsedPaths, isCollapsed, rows]);
 
     const renderDiffBlock = useChangedFilesReviewDiffBlockRenderer({
         theme,

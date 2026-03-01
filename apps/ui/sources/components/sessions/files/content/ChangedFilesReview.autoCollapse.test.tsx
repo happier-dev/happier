@@ -143,8 +143,8 @@ vi.mock('@expo/vector-icons', () => ({
     Octicons: 'Octicons',
 }));
 
-describe('ChangedFilesReview (auto-collapse)', () => {
-    it('collapses diffs outside the viewability prefetch window when tooLarge', async () => {
+describe('ChangedFilesReview (tooLarge behavior)', () => {
+    it('keeps diff rows expanded by default even when tooLarge', async () => {
         sessionScmDiffFileSpy.mockClear();
 
         const { ChangedFilesReview } = await import('./ChangedFilesReview');
@@ -206,11 +206,11 @@ describe('ChangedFilesReview (auto-collapse)', () => {
         const diffBlocks = tree.root.findAll((node: any) => typeof node.props?.testID === 'string' && node.props.testID.startsWith('scm-review-diff-'));
         const diffTestIds = diffBlocks.map((node: any) => node.props.testID);
 
-        // Only the first file in the viewability window (plus the lookahead buffer)
-        // should render its diff block. The last file should be collapsed by default.
+        // Virtualization now limits render cost, so tooLarge must not auto-collapse rows.
+        // All rows remain expanded by default unless the user explicitly collapses them.
         expect(diffTestIds).toContain('scm-review-diff-src_a.ts');
         expect(diffTestIds).toContain('scm-review-diff-src_b.ts');
-        expect(diffTestIds).not.toContain('scm-review-diff-src_c.ts');
+        expect(diffTestIds).toContain('scm-review-diff-src_c.ts');
 
         await act(async () => {
             tree.unmount();
