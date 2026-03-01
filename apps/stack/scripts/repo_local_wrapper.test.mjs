@@ -22,7 +22,16 @@ function runNode(args, { cwd, env }) {
 }
 
 async function listenOnPort(port) {
-  const srv = createServer(() => {});
+  const srv = createServer((socket) => {
+    // Tests use this only as a port reservation primitive. If something external
+    // (e.g. a browser tab) connects, immediately close the socket so server.close()
+    // cannot hang waiting for long-lived connections to drain.
+    try {
+      socket.destroy();
+    } catch {
+      // ignore
+    }
+  });
   await new Promise((resolve, reject) => {
     srv.once('error', reject);
     srv.listen({ host: '127.0.0.1', port }, () => resolve());
