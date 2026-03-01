@@ -58,4 +58,54 @@ describe('MonacoEditorSurface (web)', () => {
         const flattened = Array.isArray(style) ? Object.assign({}, ...style.filter(Boolean)) : style;
         expect(flattened.fontSize).toBe(26);
     });
+
+    it('loads Monaco basic languages contributions when Monaco is available', async () => {
+        const requireCalls: any[] = [];
+
+        const requireFn: any = (deps: any[], onOk?: any, _onErr?: any) => {
+            requireCalls.push(deps);
+            if (Array.isArray(deps) && deps.includes('vs/editor/editor.main')) {
+                (globalThis as any).window.monaco = {
+                    editor: {
+                        createModel: () => ({ getValue: () => '', setValue: () => {}, dispose: () => {} }),
+                        create: () => ({ onDidChangeModelContent: () => {}, updateOptions: () => {}, dispose: () => {} }),
+                    },
+                };
+            }
+            if (typeof onOk === 'function') onOk();
+        };
+        requireFn.config = () => {};
+
+        const previousWindow = (globalThis as any).window;
+        const previousDocument = (globalThis as any).document;
+
+        (globalThis as any).window = { require: requireFn };
+        (globalThis as any).document = {};
+
+        const { MonacoEditorSurface } = await import('./MonacoEditorSurface.web');
+
+        let tree!: renderer.ReactTestRenderer;
+        await renderer.act(async () => {
+            tree = renderer.create(
+                <MonacoEditorSurface
+                    resetKey="1"
+                    value="hello"
+                    language="markdown"
+                    onChange={() => {}}
+                />,
+            );
+            await Promise.resolve();
+        });
+
+        // Cleanup
+        renderer.act(() => {
+            tree.unmount();
+        });
+        (globalThis as any).window = previousWindow;
+        (globalThis as any).document = previousDocument;
+
+        const flattened = requireCalls.flat();
+        expect(flattened).toContain('vs/editor/editor.main');
+        expect(flattened).toContain('vs/basic-languages/monaco.contribution');
+    });
 });

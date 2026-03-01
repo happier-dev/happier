@@ -22,6 +22,7 @@ declare global {
 const MONACO_LOADER_SCRIPT_SRC = '/monaco/vs/loader.js';
 
 let loaderPromise: Promise<void> | null = null;
+let basicLanguagesPromise: Promise<void> | null = null;
 
 function ensureMonacoLoader(): Promise<void> {
     if (typeof window === 'undefined' || typeof document === 'undefined') {
@@ -63,10 +64,34 @@ function ensureMonacoLoader(): Promise<void> {
     return loaderPromise;
 }
 
+async function ensureMonacoBasicLanguages(): Promise<void> {
+    if (typeof window === 'undefined') return;
+    if (!window.require) return;
+    if (basicLanguagesPromise) return await basicLanguagesPromise;
+
+    basicLanguagesPromise = new Promise<void>((resolve) => {
+        try {
+            window.require(
+                ['vs/basic-languages/monaco.contribution'],
+                () => resolve(),
+                () => resolve(),
+            );
+        } catch {
+            resolve();
+        }
+    });
+
+    return await basicLanguagesPromise;
+}
+
 async function ensureMonaco(): Promise<MonacoType> {
     await ensureMonacoLoader();
 
-    if (window.monaco) return window.monaco;
+    if (window.monaco) {
+        // Best-effort: register Monaco basic languages (markdown, yaml, python, etc.).
+        await ensureMonacoBasicLanguages();
+        return window.monaco;
+    }
     if (!window.require) throw new Error('Monaco loader did not initialize require()');
 
     // Configure AMD loader for the vendored static assets.
@@ -85,6 +110,9 @@ async function ensureMonaco(): Promise<MonacoType> {
     await new Promise<void>((resolve, reject) => {
         window.require(['vs/editor/editor.main'], () => resolve(), (err: any) => reject(err));
     });
+
+    // Register basic languages before we create models so syntax highlighting is available for common file types.
+    await ensureMonacoBasicLanguages();
 
     if (!window.monaco) throw new Error('Monaco loaded but window.monaco is missing');
     return window.monaco;
