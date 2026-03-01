@@ -30,10 +30,12 @@ export function buildHappierReplayPromptFromDialog(params: Readonly<{
   dialog: readonly HappierReplayDialogItem[];
   strategy: HappierReplayStrategy;
   recentMessagesCount: number;
+  summaryText?: string | null;
 }>): string {
   const previousSessionId = String(params.previousSessionId ?? '').trim();
-  const recentMessagesCount = normalizePositiveInt(params.recentMessagesCount, 16, { min: 1, max: 100 });
+  const recentMessagesCount = normalizePositiveInt(params.recentMessagesCount, 16, { min: 1, max: 200 });
   const strategy = normalizeStrategy(params.strategy);
+  const summaryText = normalizeText(params.summaryText ?? null);
 
   const dialog: Array<{ role: 'User' | 'Assistant'; createdAt: number; text: string }> = [];
   for (const item of params.dialog ?? []) {
@@ -63,8 +65,11 @@ export function buildHappierReplayPromptFromDialog(params: Readonly<{
   lines.push('');
 
   if (strategy === 'summary_plus_recent') {
-    // Future: insert a compact summary block before recent messages.
-    // For now, fall back to recent_messages to keep behavior predictable.
+    if (summaryText) {
+      lines.push('Summary:');
+      lines.push(summaryText);
+      lines.push('');
+    }
   }
 
   lines.push('Recent transcript:');
@@ -75,4 +80,3 @@ export function buildHappierReplayPromptFromDialog(params: Readonly<{
   lines.push('Continue from here. If important details are missing, ask clarifying questions.');
   return lines.join('\n');
 }
-

@@ -1,5 +1,7 @@
 import { z } from 'zod';
 
+import { LlmTaskRunnerConfigV1Schema } from './llmTasks/llmTaskRunnerConfigV1.js';
+
 export const HappierReplayStrategySchema = z.enum(['recent_messages', 'summary_plus_recent']);
 export type HappierReplayStrategy = z.infer<typeof HappierReplayStrategySchema>;
 
@@ -21,6 +23,7 @@ export const SessionContinueWithReplayRequestSchema = z
     strategy: HappierReplayStrategySchema.optional(),
     recentMessagesCount: z.number().int().min(1).max(100).optional(),
     seedMode: HappierReplaySeedModeSchema.optional(),
+    summaryRunner: LlmTaskRunnerConfigV1Schema.optional(),
   })
   .strict();
 export type SessionContinueWithReplayRequest = z.infer<typeof SessionContinueWithReplayRequestSchema>;
