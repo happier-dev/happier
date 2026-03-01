@@ -15,6 +15,8 @@
     "providers:run:parallel": "node scripts/run-providers-parallel.mjs",
     "providers:opencode:smoke": "yarn -s providers:run opencode smoke",
     "providers:opencode:extended": "yarn -s providers:run opencode extended",
+    "providers:opencode_server:smoke": "yarn -s providers:run opencode_server smoke",
+    "providers:opencode_server:extended": "yarn -s providers:run opencode_server extended",
     "providers:claude:smoke": "yarn -s providers:run claude smoke",
     "providers:claude:extended": "yarn -s providers:run claude extended",
     "providers:codex:smoke": "yarn -s providers:run codex smoke",

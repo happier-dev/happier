@@ -7,6 +7,7 @@ describe('providers: contract matrix (harness)', () => {
     // Extended provider matrix runs can exceed 20 minutes under parallel load for large ACP suites.
     // Keep timeouts realistic so we fail on real regressions, not harness wall-clock limits.
     { id: 'opencode', envVar: 'HAPPIER_E2E_PROVIDER_OPENCODE', timeoutMs: 2_400_000 },
+    { id: 'opencode_server', envVar: 'HAPPIER_E2E_PROVIDER_OPENCODE_SERVER', timeoutMs: 2_400_000 },
     { id: 'claude', envVar: 'HAPPIER_E2E_PROVIDER_CLAUDE', timeoutMs: 1_800_000 },
     // Codex extended runs include many ACP scenarios and can legitimately exceed 40 minutes on
     // loaded developer machines; keep this higher to avoid false timeout failures.
