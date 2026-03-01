@@ -104,10 +104,8 @@ export function useScmCommitHistory(input: {
                     }
                 }
             } else {
-                if (opts?.reset) {
-                    setHistoryEntries([]);
-                    setHistorySkip(0);
-                }
+                // Stale-while-revalidate: keep last-known entries visible on refresh failures.
+                // If this was the first load (no entries yet), callers still see an empty list.
                 setHistoryHasMore(false);
             }
         } finally {
