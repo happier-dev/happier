@@ -20,7 +20,7 @@ import { renderStructuredMessage, StructuredMessageBlock } from '@/components/se
 import { useRouter } from 'expo-router';
 import { buildSessionFileDeepLink } from '@/utils/url/sessionFileDeepLink';
 import { fireAndForget } from '@/utils/system/fireAndForget';
-import { useSession, useSetting } from '@/sync/domains/state/storage';
+import { storage, useSession, useSetting } from '@/sync/domains/state/storage';
 import { Text } from '@/components/ui/text/Text';
 import { extractWorkspaceFileMentions } from '@/components/sessions/linkedFiles/extractWorkspaceFileMentions';
 import { LinkedWorkspaceFilesRow } from '@/components/sessions/linkedFiles/LinkedWorkspaceFilesRow';
@@ -31,6 +31,8 @@ import { AttachmentsMessageMetaV1Schema } from '@/sync/domains/attachments/attac
 import { AttachmentsMessageRow } from '@/components/sessions/attachments/messages/AttachmentsMessageRow';
 import { forkSession } from '@/sync/ops';
 import { canForkFromMessage } from '@/sync/domains/sessionFork/forkUiSupport';
+import { resolveForkFromMessageSemantics } from '@/sync/domains/sessionFork/forkFromMessageSemantics';
+import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
 
 
 export const MessageView = (props: {
@@ -206,6 +208,7 @@ function UserTextBlock(props: {
 
   const showCopyButton = shouldShowMessageCopyButton({ platformOS: Platform.OS, isMessageHovered, isCopyButtonHovered });
   const copyText = isStructuredOnly ? props.message.text : (props.message.displayText || props.message.text);
+  const actionPointerEvents = showCopyButton ? 'auto' : 'none';
   const sessionReplayEnabled = useSetting('sessionReplayEnabled');
   const session = useSession(props.sessionId);
   const seq =
@@ -213,6 +216,10 @@ function UserTextBlock(props: {
       ? Math.trunc((props.message as any).seq)
       : null;
   const showForkButton = canForkFromMessage({ session, messageSeq: seq, replayEnabled: sessionReplayEnabled });
+  const forkSemantics = React.useMemo(() => {
+    if (seq == null) return null;
+    return resolveForkFromMessageSemantics({ message: props.message, messageSeqInclusive: seq });
+  }, [props.message, seq]);
 
   // Structured user messages should render as standalone blocks (tool-card style),
   // not inside a chat bubble background, and without echoing displayText fallback.
@@ -234,18 +241,20 @@ function UserTextBlock(props: {
           ) : null}
         </View>
         <View
-          pointerEvents={showCopyButton ? 'auto' : 'none'}
+          {...(isWeb ? {} : { pointerEvents: actionPointerEvents })}
           accessibilityElementsHidden={!showCopyButton}
           importantForAccessibility={showCopyButton ? 'auto' : 'no-hide-descendants'}
           style={[
             styles.messageActionContainer,
             !showCopyButton && styles.messageActionContainerHidden,
+            isWeb ? { pointerEvents: actionPointerEvents } : null,
           ]}
         >
           {showForkButton ? (
             <ForkMessageButton
               sessionId={props.sessionId}
-              upToSeqInclusive={seq!}
+              upToSeqInclusive={(forkSemantics?.upToSeqInclusive ?? seq!)}
+              restoredDraftText={forkSemantics?.restoredDraftText ?? null}
               messageId={props.message.id}
               onHoverIn={isWeb ? () => setIsCopyButtonHovered(true) : undefined}
               onHoverOut={isWeb ? () => setIsCopyButtonHovered(false) : undefined}
@@ -309,18 +318,20 @@ function UserTextBlock(props: {
           )} */}
         </View>
         <View
-          pointerEvents={showCopyButton ? 'auto' : 'none'}
+          {...(isWeb ? {} : { pointerEvents: actionPointerEvents })}
           accessibilityElementsHidden={!showCopyButton}
           importantForAccessibility={showCopyButton ? 'auto' : 'no-hide-descendants'}
           style={[
             styles.messageActionContainer,
             !showCopyButton && styles.messageActionContainerHidden,
+            isWeb ? { pointerEvents: actionPointerEvents } : null,
           ]}
         >
           {showForkButton ? (
             <ForkMessageButton
               sessionId={props.sessionId}
-              upToSeqInclusive={seq!}
+              upToSeqInclusive={(forkSemantics?.upToSeqInclusive ?? seq!)}
+              restoredDraftText={forkSemantics?.restoredDraftText ?? null}
               messageId={props.message.id}
               onHoverIn={isWeb ? () => setIsCopyButtonHovered(true) : undefined}
               onHoverOut={isWeb ? () => setIsCopyButtonHovered(false) : undefined}
@@ -415,6 +426,7 @@ function AgentTextBlock(props: {
   }
 
   const showCopyButton = shouldShowMessageCopyButton({ platformOS: Platform.OS, isMessageHovered, isCopyButtonHovered });
+  const actionPointerEvents = showCopyButton ? 'auto' : 'none';
   const sessionReplayEnabled = useSetting('sessionReplayEnabled');
   const session = useSession(props.sessionId);
   const seq =
@@ -422,6 +434,10 @@ function AgentTextBlock(props: {
       ? Math.trunc((props.message as any).seq)
       : null;
   const showForkButton = canForkFromMessage({ session, messageSeq: seq, replayEnabled: sessionReplayEnabled });
+  const forkSemantics = React.useMemo(() => {
+    if (seq == null) return null;
+    return resolveForkFromMessageSemantics({ message: props.message, messageSeqInclusive: seq });
+  }, [props.message, seq]);
   const renderThinkingAsToolCard = props.message.isThinking && sessionThinkingDisplayMode === 'tool';
   const renderThinkingInline = props.message.isThinking === true && !renderThinkingAsToolCard;
     const normalizedThinkingInlinePresentation: 'full' | 'summary' =
@@ -494,18 +510,20 @@ function AgentTextBlock(props: {
         <LinkedWorkspaceFilesRow sessionId={props.sessionId} paths={linkedWorkspaceFiles} />
       ) : null}
       <View
-        pointerEvents={showCopyButton ? 'auto' : 'none'}
+        {...(isWeb ? {} : { pointerEvents: actionPointerEvents })}
         accessibilityElementsHidden={!showCopyButton}
         importantForAccessibility={showCopyButton ? 'auto' : 'no-hide-descendants'}
         style={[
           styles.messageActionContainer,
           !showCopyButton && styles.messageActionContainerHidden,
+          isWeb ? { pointerEvents: actionPointerEvents } : null,
         ]}
       >
         {showForkButton ? (
           <ForkMessageButton
             sessionId={props.sessionId}
-            upToSeqInclusive={seq!}
+            upToSeqInclusive={(forkSemantics?.upToSeqInclusive ?? seq!)}
+            restoredDraftText={forkSemantics?.restoredDraftText ?? null}
             messageId={props.message.id}
             onHoverIn={isWeb ? () => setIsCopyButtonHovered(true) : undefined}
             onHoverOut={isWeb ? () => setIsCopyButtonHovered(false) : undefined}
@@ -525,6 +543,7 @@ function AgentTextBlock(props: {
 function ForkMessageButton(props: {
   sessionId: string;
   upToSeqInclusive: number;
+  restoredDraftText?: string | null;
   messageId: string;
   onHoverIn?: () => void;
   onHoverOut?: () => void;
@@ -534,6 +553,9 @@ function ForkMessageButton(props: {
   const session = useSession(props.sessionId);
   const [isForking, setIsForking] = React.useState(false);
   const hitSlop = Platform.OS === 'web' ? undefined : 15;
+  const executionRunsEnabled = useFeatureEnabled('execution.runs');
+  const sessionReplayStrategy = useSetting('sessionReplayStrategy');
+  const sessionReplaySummaryRunner = useSetting('sessionReplaySummaryRunnerV1');
 
   const handlePress = React.useCallback(async () => {
     if (isForking) return;
@@ -544,16 +566,38 @@ function ForkMessageButton(props: {
     }
     setIsForking(true);
     try {
+      const replaySummaryRunner =
+        executionRunsEnabled && sessionReplayStrategy === 'summary_plus_recent' && sessionReplaySummaryRunner
+          ? sessionReplaySummaryRunner
+          : undefined;
       const result = await forkSession({
         machineId,
         parentSessionId: props.sessionId,
         forkPoint: { type: 'seq', upToSeqInclusive: props.upToSeqInclusive },
+        ...(replaySummaryRunner ? { replaySummaryRunner } : {}),
       } as any);
       if (result.ok !== true) {
         Modal.alert(t('common.error'), result.errorMessage || t('errors.failedToForkSession'));
         return;
       }
+      const restored = typeof props.restoredDraftText === 'string' ? props.restoredDraftText : null;
+      if (restored && restored.trim().length > 0) {
+        try {
+          // Persist immediately so the child session composer can initialize from drafts even if the session
+          // is not yet hydrated into local state.
+          storage.getState().updateSessionDraft(result.childSessionId, restored);
+        } catch {
+          // best-effort
+        }
+      }
       router.push((`/session/${result.childSessionId}`) as any);
+      fireAndForget((async () => {
+        try {
+          await (sync as any).ensureSessionVisibleForMessageRoute?.(result.childSessionId);
+        } catch {
+          // best-effort
+        }
+      })(), { tag: 'ForkMessageButton.ensureChildVisible' });
     } catch (e) {
       Modal.alert(t('common.error'), e instanceof Error ? e.message : t('errors.failedToForkSession'));
     } finally {

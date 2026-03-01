@@ -6,8 +6,11 @@ import { describe, expect, it, vi, beforeEach } from 'vitest';
 
 const routerPushSpy = vi.fn();
 const forkSessionSpy = vi.fn();
+const ensureSessionVisibleSpy = vi.fn();
+const updateSessionDraftSpy = vi.fn();
 
 let replayEnabled = true;
+let copyButtonsVisible = true;
 let sessionMetadata: any = { machineId: 'm1' };
 
 vi.mock('react-native', async () => ({
@@ -31,6 +34,7 @@ vi.mock('react-native-unistyles', () => ({
         border: '#ddd',
         surfaceHighest: '#fff',
         divider: '#ddd',
+        input: { background: '#f7f7f7' },
         userMessageBackground: '#eef',
         agentEventText: '#777',
         warning: '#f90',
@@ -49,6 +53,7 @@ vi.mock('react-native-unistyles', () => ({
           border: '#ddd',
           surfaceHighest: '#fff',
           divider: '#ddd',
+          input: { background: '#f7f7f7' },
           userMessageBackground: '#eef',
           agentEventText: '#777',
           warning: '#f90',
@@ -64,7 +69,7 @@ vi.mock('@/components/markdown/MarkdownView', () => ({
 }));
 
 vi.mock('@/components/sessions/transcript/messageCopyVisibility', () => ({
-  shouldShowMessageCopyButton: () => true,
+  shouldShowMessageCopyButton: () => copyButtonsVisible,
 }));
 
 vi.mock('@/text', () => ({
@@ -82,6 +87,7 @@ vi.mock('@/sync/ops', () => ({
 vi.mock('@/sync/sync', () => ({
   sync: {
     submitMessage: vi.fn(),
+    ensureSessionVisibleForMessageRoute: (sessionId: string) => ensureSessionVisibleSpy(sessionId),
   },
 }));
 
@@ -107,6 +113,11 @@ vi.mock('@/sync/domains/state/storage', () => ({
     thinkingAt: 0,
     presence: 'online',
   }),
+  storage: {
+    getState: () => ({
+      updateSessionDraft: (...args: any[]) => updateSessionDraftSpy(...args),
+    }),
+  },
 }));
 
 vi.mock('expo-router', () => ({
@@ -158,12 +169,45 @@ vi.mock('@/components/sessions/attachments/messages/AttachmentsMessageRow', () =
   AttachmentsMessageRow: () => null,
 }));
 
+vi.mock('@/hooks/server/useFeatureEnabled', () => ({
+  useFeatureEnabled: () => false,
+}));
+
 describe('MessageView (fork button)', () => {
   beforeEach(() => {
     routerPushSpy.mockReset();
     forkSessionSpy.mockReset();
+    ensureSessionVisibleSpy.mockReset();
+    updateSessionDraftSpy.mockReset();
     replayEnabled = true;
+    copyButtonsVisible = true;
     sessionMetadata = { machineId: 'm1' };
+  });
+
+  it('does not use pointerEvents prop on web when actions are hidden (prevents click interception)', async () => {
+    copyButtonsVisible = false;
+    const { MessageView } = await import('./MessageView');
+
+    const message: any = { kind: 'agent-text', id: 'm1', createdAt: 1, text: 'hi', isThinking: false, seq: 5 };
+
+    let tree: renderer.ReactTestRenderer | null = null;
+    await act(async () => {
+      tree = renderer.create(<MessageView message={message} metadata={null} sessionId="s1" />);
+    });
+
+    const actionContainers = tree!.root.findAll(
+      (node: any) => node.type === 'View' && node.props.accessibilityElementsHidden === true,
+    );
+    expect(actionContainers).toHaveLength(1);
+
+    const actionContainer = actionContainers[0]!;
+    expect(actionContainer.props.pointerEvents).toBeUndefined();
+
+    const style = actionContainer.props.style;
+    const flattened = Array.isArray(style)
+      ? Object.assign({}, ...style.filter(Boolean))
+      : style;
+    expect(flattened.pointerEvents).toBe('none');
   });
 
   it('renders fork button left of copy when replay is enabled and message has seq', async () => {
@@ -210,6 +254,32 @@ describe('MessageView (fork button)', () => {
     expect(forkIndex).toBeGreaterThanOrEqual(0);
     expect(copyIndex).toBeGreaterThanOrEqual(0);
     expect(forkIndex).toBeLessThan(copyIndex);
+  });
+
+  it('forks before a committed user message and restores it as a draft', async () => {
+    forkSessionSpy.mockResolvedValueOnce({ ok: true, childSessionId: 'child-1' });
+    ensureSessionVisibleSpy.mockResolvedValueOnce(undefined);
+    const { MessageView } = await import('./MessageView');
+
+    const message: any = { kind: 'user-text', id: 'm1', createdAt: 1, text: 'hi', seq: 5 };
+
+    let tree: renderer.ReactTestRenderer | null = null;
+    await act(async () => {
+      tree = renderer.create(<MessageView message={message} metadata={null} sessionId="s1" />);
+    });
+
+    const forkButton = tree!.root.findByProps({ testID: 'transcript-message-fork:m1' });
+    await act(async () => {
+      await forkButton.props.onPress();
+    });
+
+    expect(forkSessionSpy).toHaveBeenCalledWith(expect.objectContaining({
+      parentSessionId: 's1',
+      forkPoint: { type: 'seq', upToSeqInclusive: 4 },
+    }));
+    expect(routerPushSpy).toHaveBeenCalledWith('/session/child-1');
+    expect(ensureSessionVisibleSpy).toHaveBeenCalledWith('child-1');
+    expect(updateSessionDraftSpy).toHaveBeenCalledWith('child-1', 'hi');
   });
 
   it('renders fork button when replay is disabled but provider supports native fork-at-message', async () => {
