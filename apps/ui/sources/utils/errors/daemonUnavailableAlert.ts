@@ -2,7 +2,7 @@ import { RPC_ERROR_CODES } from '@happier-dev/protocol/rpc';
 import { isRpcMethodNotAvailableError, readRpcErrorCode } from '@happier-dev/protocol/rpcErrors';
 
 import { Modal } from '@/modal';
-import { t } from '@/text';
+import { t, type TranslationKey } from '@/text';
 import { formatLastSeen } from '@/utils/sessions/sessionUtils';
 
 export type MachineStatusLineInput =
@@ -36,8 +36,8 @@ export function buildMachineStatusLine(machine: MachineStatusLineInput): string 
 }
 
 export function showDaemonUnavailableAlert(params: Readonly<{
-    titleKey: string;
-    bodyKey: string;
+    titleKey: TranslationKey;
+    bodyKey: TranslationKey;
     machine?: MachineStatusLineInput;
     onRetry?: (() => void) | null;
     shouldContinue?: (() => boolean) | null;
@@ -75,8 +75,8 @@ export function tryShowDaemonUnavailableAlertForRpcError(params: Readonly<{
     machine?: MachineStatusLineInput;
     onRetry?: (() => void) | null;
     shouldContinue?: (() => boolean) | null;
-    titleKey?: string;
-    bodyKey?: string;
+    titleKey?: TranslationKey;
+    bodyKey?: TranslationKey;
 }>): boolean {
     const rpcErrorCode = readRpcErrorCode(params.error);
     if (typeof rpcErrorCode === 'string' && rpcErrorCode.trim() && rpcErrorCode.trim() !== DAEMON_UNAVAILABLE_RPC_ERROR_CODE) {
@@ -103,8 +103,8 @@ export function tryShowDaemonUnavailableAlertForRpcFailure(params: Readonly<{
     machine?: MachineStatusLineInput;
     onRetry?: (() => void) | null;
     shouldContinue?: (() => boolean) | null;
-    titleKey?: string;
-    bodyKey?: string;
+    titleKey?: TranslationKey;
+    bodyKey?: TranslationKey;
 }>): boolean {
     const normalizedCode = typeof params.rpcErrorCode === 'string' ? params.rpcErrorCode.trim() : '';
     if (normalizedCode && normalizedCode !== DAEMON_UNAVAILABLE_RPC_ERROR_CODE) {
