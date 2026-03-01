@@ -14,7 +14,7 @@ import type { Credentials } from '@/persistence';
 import { parseConnectedServicesBindings } from '../parseConnectedServicesBindings';
 import { resolveConnectedServiceCredentials } from '@/cloud/connectedServices/resolveConnectedServiceCredentials';
 import { materializeConnectedServicesForSpawn } from '../materialize/materializeConnectedServicesForSpawn';
-import { refreshAnthropicOauthTokens, refreshGeminiOauthTokens, refreshOpenAiCodexOauthTokens } from './serviceRefreshers';
+import { refreshClaudeSubscriptionOauthTokens, refreshGeminiOauthTokens, refreshOpenAiCodexOauthTokens } from './serviceRefreshers';
 
 type BoundProfile = Readonly<{ serviceId: ConnectedServiceId; profileId: string }>;
 
@@ -106,6 +106,7 @@ export class ConnectedServiceRefreshCoordinator {
   async tickOnce(): Promise<void> {
     const now = this.params.now();
     const unique = new Map<string, BoundProfile>();
+    const errors: unknown[] = [];
 
     for (const target of this.targetsByPid.values()) {
       for (const binding of target.bindings) {
@@ -114,7 +115,15 @@ export class ConnectedServiceRefreshCoordinator {
     }
 
     for (const binding of unique.values()) {
-      await this.maybeRefreshBinding(binding, now);
+      try {
+        await this.maybeRefreshBinding(binding, now);
+      } catch (error) {
+        errors.push(error);
+      }
+    }
+
+    if (errors.length > 0) {
+      throw new AggregateError(errors, 'Connected services refresh tick failed');
     }
   }
 
@@ -160,8 +169,8 @@ export class ConnectedServiceRefreshCoordinator {
           expiresAt: refreshed.expiresAt,
         };
       }
-      if (binding.serviceId === 'anthropic') {
-        const refreshed = await refreshAnthropicOauthTokens({
+      if (binding.serviceId === 'claude-subscription') {
+        const refreshed = await refreshClaudeSubscriptionOauthTokens({
           refreshToken: record.oauth.refreshToken,
           now,
         });
