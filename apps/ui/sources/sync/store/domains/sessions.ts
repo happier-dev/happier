@@ -454,25 +454,26 @@ export function createSessionsDomain<S extends SessionsDomain & SessionsDomainDe
         }),
         updateSessionDraft: (sessionId: string, draft: string | null) => set((state) => {
             const session = state.sessions[sessionId];
-            if (!session) return state;
-
             // Don't store empty strings, convert to null
             const normalizedDraft = draft?.trim() ? draft : null;
 
             // Collect all drafts for persistence
             const allDrafts: Record<string, string> = {};
             Object.entries(state.sessions).forEach(([id, sess]) => {
-                if (id === sessionId) {
-                    if (normalizedDraft) {
-                        allDrafts[id] = normalizedDraft;
-                    }
-                } else if (sess.draft) {
+                if (sess.draft) {
                     allDrafts[id] = sess.draft;
                 }
             });
+            if (normalizedDraft) {
+                allDrafts[sessionId] = normalizedDraft;
+            } else {
+                delete allDrafts[sessionId];
+            }
 
             // Persist drafts
             saveSessionDrafts(allDrafts);
+
+            if (!session) return state;
 
             const updatedSessions = {
                 ...state.sessions,
