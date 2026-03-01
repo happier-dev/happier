@@ -141,6 +141,10 @@ vi.mock('@/scm/scmAttribution', () => ({
     getDefaultChangedFilesViewMode: () => 'session',
 }));
 
+vi.mock('@/components/sessions/model/useSessionMachineReachability', () => ({
+    useSessionMachineReachability: () => ({ machineReachable: true, machineOnline: true }),
+}));
+
 vi.mock('@/scm/scmStatusSync', () => ({
     scmStatusSync: {
         invalidateFromUser: (sessionId: string) => void invalidateFromUserAndAwaitSpy(sessionId),
