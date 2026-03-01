@@ -127,7 +127,6 @@ export const SessionLinkFileAction = React.memo((props: SessionLinkFileActionPro
                             <SessionRepositoryTreeBrowserView
                                 sessionId={props.sessionId}
                                 density="panel"
-                                allowWhenSessionInactive
                                 onRequestClose={handleClose}
                                 onOpenFile={(fullPath) => {
                                     props.onPickPath(fullPath);
