@@ -22,6 +22,9 @@ const fatalCliLogSubstrings = [
   'usage_limit_exceeded',
   'hit your usage limit',
   'usage limit',
+  'rate_limit_error',
+  'rate limited',
+  'too many requests',
   'failed to connect mcp servers',
   'client failed to connect',
   'authentication required',
@@ -46,6 +49,9 @@ const providerUnavailabilityErrorSubstrings = [
   'out of credits',
   'usage_limit_exceeded',
   'usage limit',
+  'rate_limit_error',
+  'rate limited',
+  'too many requests',
   'unauthorized',
   'api key',
   'verify your account',
@@ -144,6 +150,22 @@ function extractTextMessageContent(content: unknown): string | null {
   return null;
 }
 
+function shouldIgnoreFatalSubstring(params: { needle: string; lowerSample: string }): boolean {
+  // Claude Code can log authentication errors for optional claude.ai proxy MCP servers (e.g. Gmail/Calendar)
+  // when the host has not completed OAuth setup for those specific servers. These warnings should not cause
+  // the provider harness to treat the entire Claude run as "Authentication required" because Claude can
+  // continue without those optional MCP integrations.
+  if (params.needle === 'authentication required' || params.needle === 'unauthorized') {
+    if (params.lowerSample.includes('mcp server') && params.lowerSample.includes('oauth token is configured')) {
+      return true;
+    }
+    if (params.lowerSample.includes('claude.ai proxy') && params.lowerSample.includes('oauth token is configured')) {
+      return true;
+    }
+  }
+  return false;
+}
+
 export function extractFatalAgentErrorMessage(messages: unknown[]): string | null {
   for (const message of messages) {
     if (!message || typeof message !== 'object') continue;
@@ -184,8 +206,25 @@ export async function readFatalProviderErrorFromCliLogs(params: {
 
   for (const extraPath of params.extraLogPaths ?? []) {
     const normalized = String(extraPath ?? '').trim();
-    if (!normalized || !normalized.endsWith('.log')) continue;
+    if (!normalized) continue;
     candidateSet.add(normalized);
+  }
+
+  const subprocessRoot = join(params.cliHome, 'cli', 'logs', 'subprocess');
+  if (existsSync(subprocessRoot)) {
+    const subprocessDirs = await readdir(subprocessRoot, { withFileTypes: true }).catch(() => []);
+    for (const dirent of subprocessDirs.filter((entry) => entry.isDirectory()).slice(0, 4)) {
+      const subprocessDir = join(subprocessRoot, dirent.name);
+      const entries = await readdir(subprocessDir, { withFileTypes: true }).catch(() => []);
+      for (const filePath of entries
+        .filter((entry) => (entry.isFile() && entry.name.endsWith('.log')) || entry.name === 'latest')
+        .map((entry) => join(subprocessDir, entry.name))
+        .sort()
+        .slice(-3)
+        .reverse()) {
+        candidateSet.add(filePath);
+      }
+    }
   }
 
   const candidates = [...candidateSet];
@@ -198,7 +237,7 @@ export async function readFatalProviderErrorFromCliLogs(params: {
       ? `${raw.slice(0, 32_000)}\n${raw.slice(-80_000)}`
       : raw;
     const lower = sample.toLowerCase();
-    const fatal = fatalCliLogSubstrings.find((needle) => lower.includes(needle));
+    const fatal = fatalCliLogSubstrings.find((needle) => lower.includes(needle) && !shouldIgnoreFatalSubstring({ needle, lowerSample: lower }));
     if (!fatal) continue;
 
     // Some providers log non-fatal "No API key found" warnings when they support alternate
@@ -210,6 +249,9 @@ export async function readFatalProviderErrorFromCliLogs(params: {
     if (fatal === 'out of credits') return 'Out of credits';
     if (fatal === 'usage_limit_exceeded' || fatal === 'hit your usage limit' || fatal === 'usage limit') {
       return 'Usage limit exceeded';
+    }
+    if (fatal === 'rate_limit_error' || fatal === 'rate limited' || fatal === 'too many requests') {
+      return 'Rate limited';
     }
     if (fatal === 'failed to connect mcp servers' || fatal === 'client failed to connect') {
       return 'Failed to connect MCP servers';
