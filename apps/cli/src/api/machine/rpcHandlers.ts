@@ -17,6 +17,7 @@ import { CATALOG_AGENT_IDS } from '@/backends/types';
 import type { CatalogAgentId } from '@/backends/types';
 import { readCredentials } from '@/persistence';
 import { hydrateReplayDialogFromTranscript } from '@/session/replay/hydrateReplayDialogFromTranscript';
+import { createReplaySeededSession } from '@/session/replay/createReplaySeededSession';
 import { fetchSessionById } from '@/sessionControl/sessionsHttp';
 import { tryDecryptSessionMetadata } from '@/sessionControl/sessionEncryptionContext';
 import { updateSessionMetadataWithRetry } from '@/sessionControl/updateSessionMetadataWithRetry';
@@ -27,6 +28,8 @@ import type { DaemonExecutionRunEntry, DaemonExecutionRunProcessInfo } from '@ha
 import type { RpcHandlerManager } from '../rpc/RpcHandlerManager';
 import type { MemoryWorkerHandle } from '@/daemon/memory/memoryWorker';
 import { registerMachineMemoryRpcHandlers } from './rpcHandlers.memory';
+import { runReplaySummaryForDialog } from '@/session/replay/summary/runReplaySummaryForDialog';
+import { resolveCliFeatureDecision } from '@/features/featureDecisionService';
 
 export type MachineRpcHandlers = {
   spawnSession: (options: SpawnSessionOptions) => Promise<SpawnSessionResult>;
@@ -34,6 +37,10 @@ export type MachineRpcHandlers = {
   requestShutdown: () => void;
   memory?: MemoryWorkerHandle;
 };
+
+export type MachineRpcHandlerDeps = Readonly<{
+  runReplaySummaryForDialog?: typeof runReplaySummaryForDialog;
+}>;
 
 async function toCanonicalPath(path: string): Promise<string | null> {
   const normalized = String(path ?? '').trim();
@@ -64,6 +71,7 @@ function parseEnvBoundedInt(
 export function registerMachineRpcHandlers(params: Readonly<{
   rpcHandlerManager: RpcHandlerManager;
   handlers: MachineRpcHandlers;
+  deps?: MachineRpcHandlerDeps;
 }>): void {
   const { rpcHandlerManager, handlers } = params;
   const { spawnSession, stopSession, requestShutdown } = handlers;
@@ -216,7 +224,7 @@ export function registerMachineRpcHandlers(params: Readonly<{
     });
   }
 
-  rpcHandlerManager.registerHandler(RPC_METHODS.SESSION_CONTINUE_WITH_REPLAY, async (raw: unknown) => {
+	  rpcHandlerManager.registerHandler(RPC_METHODS.SESSION_CONTINUE_WITH_REPLAY, async (raw: unknown) => {
     const parsed = SessionContinueWithReplayRpcParamsSchema.safeParse(raw);
     if (!parsed.success) {
       return {
@@ -256,9 +264,10 @@ export function registerMachineRpcHandlers(params: Readonly<{
       };
     }
 
-    const hydrated = await hydrateReplayDialogFromTranscript({
+    const { hydrateReplayDialogFromForkChain } = await import('@/session/replay/hydrateReplayDialogFromForkChain');
+    const hydrated = await hydrateReplayDialogFromForkChain({
       credentials,
-      previousSessionId: replay.previousSessionId,
+      startingSessionId: replay.previousSessionId,
       limit: 200,
       maxTextChars: maxTextChars ?? undefined,
     }).catch(() => null);
@@ -270,10 +279,41 @@ export function registerMachineRpcHandlers(params: Readonly<{
       };
     }
 
+	    const summaryText = await (async () => {
+	      if ((replay.strategy ?? 'recent_messages') !== 'summary_plus_recent') return null;
+	      const hydratedSynopsis = typeof (hydrated as any)?.synopsisText === 'string' ? String((hydrated as any).synopsisText).trim() : '';
+	      if (hydratedSynopsis) return hydratedSynopsis;
+
+	      const summaryRunner = (replay as any)?.summaryRunner;
+	      if (summaryRunner && resolveCliFeatureDecision({ featureId: 'execution.runs', env: process.env }).state === 'enabled') {
+	        try {
+	          const fn = params.deps?.runReplaySummaryForDialog ?? runReplaySummaryForDialog;
+	          const generated = await fn({
+	            cwd: directory,
+	            parentSessionId: replay.previousSessionId,
+	            runner: summaryRunner,
+	            dialog: hydrated.dialog,
+	          });
+	          const trimmed = typeof generated === 'string' ? generated.trim() : '';
+	          if (trimmed) return trimmed;
+	        } catch {
+	          // Best-effort only: fall back to any cached/metadata summary.
+	        }
+	      }
+
+	      const rawSession = await fetchSessionById({ token: credentials.token, sessionId: replay.previousSessionId }).catch(() => null);
+	      if (!rawSession) return null;
+	      const metadata = tryDecryptSessionMetadata({ credentials, rawSession });
+	      const text = typeof (metadata as any)?.summary?.text === 'string' ? String((metadata as any).summary.text) : '';
+	      const trimmed = text.trim();
+	      return trimmed.length > 0 ? trimmed : null;
+	    })();
+
     const seedDraft = buildHappierReplayPromptFromDialog({
       previousSessionId: replay.previousSessionId,
       strategy: replay.strategy ?? 'recent_messages',
       recentMessagesCount: replay.recentMessagesCount ?? 16,
+      summaryText,
       dialog: hydrated.dialog,
     });
 
@@ -305,40 +345,20 @@ export function registerMachineRpcHandlers(params: Readonly<{
       recentMessagesCount: replay.recentMessagesCount ?? 16,
     });
 
-    const result = await spawnSession({
-      directory,
-      agent,
-      approvedNewDirectoryCreation,
-      permissionMode: normalizedPermissionMode,
-      permissionModeUpdatedAt: normalizedPermissionModeUpdatedAt,
-      modelId: normalizedModelId,
-      modelUpdatedAt: typeof modelUpdatedAt === 'number' ? modelUpdatedAt : undefined,
-    } satisfies SpawnSessionOptions);
-
-    if (result.type === 'success') {
-      if (!result.sessionId) {
-        return {
-          type: 'error',
-          errorCode: SPAWN_SESSION_ERROR_CODES.SPAWN_NO_PID,
-          errorMessage: 'Spawn succeeded but no session id was returned',
-        };
-      }
-      const childSessionId = result.sessionId;
-
-      const childRaw = await fetchSessionById({ token: credentials.token, sessionId: childSessionId }).catch(() => null);
-      if (childRaw) {
-        await updateSessionMetadataWithRetry({
-          token: credentials.token,
+    const nowMs = Date.now();
+    const created = await (async () => {
+      try {
+        return await createReplaySeededSession({
           credentials,
-          sessionId: childSessionId,
-          rawSession: childRaw,
-          updater: (metadata) => ({
-            ...metadata,
+          directory,
+          agentId: agent,
+          tag: `replay:${replay.previousSessionId}:${hydrated.sourceCutoffSeqInclusive}:${randomUUID()}`,
+          metadata: {
             forkV1: {
               v: 1,
               parentSessionId: replay.previousSessionId,
               parentCutoffSeqInclusive: hydrated.sourceCutoffSeqInclusive,
-              createdAtMs: Date.now(),
+              createdAtMs: nowMs,
               strategy: 'replay',
               providerHint: { providerId: agent },
             },
@@ -347,14 +367,39 @@ export function registerMachineRpcHandlers(params: Readonly<{
               seedText: seedDraft,
               sourceSessionId: replay.previousSessionId,
               sourceCutoffSeqInclusive: hydrated.sourceCutoffSeqInclusive,
-              createdAtMs: Date.now(),
+              createdAtMs: nowMs,
             },
-          }),
-          maxAttempts: 6,
+          },
         });
+      } catch (error) {
+        logger.debug('[API MACHINE] Failed to create replay-seeded session', {
+          error: error instanceof Error ? error.message : String(error),
+        });
+        return null;
       }
+    })();
 
-      return { type: 'success', sessionId: childSessionId };
+    if (!created) {
+      return {
+        type: 'error',
+        errorCode: SPAWN_SESSION_ERROR_CODES.UNEXPECTED,
+        errorMessage: 'Failed to create a new session for replay',
+      };
+    }
+
+    const result = await spawnSession({
+      directory,
+      agent,
+      approvedNewDirectoryCreation,
+      existingSessionId: created.sessionId,
+      permissionMode: normalizedPermissionMode,
+      permissionModeUpdatedAt: normalizedPermissionModeUpdatedAt,
+      modelId: normalizedModelId,
+      modelUpdatedAt: typeof modelUpdatedAt === 'number' ? modelUpdatedAt : undefined,
+    } satisfies SpawnSessionOptions);
+
+    if (result.type === 'success') {
+      return { type: 'success', sessionId: created.sessionId };
     }
 
     return result;
@@ -559,6 +604,8 @@ export function registerMachineRpcHandlers(params: Readonly<{
                   agent: agentRaw,
                   approvedNewDirectoryCreation: true,
                   resume: forkedSessionId,
+                  ...(agentRaw === 'codex' ? { experimentalCodexAcp: true } : {}),
+                  ...(agentRaw === 'opencode' ? { environmentVariables: { HAPPIER_OPENCODE_BACKEND_MODE: 'acp' } } : {}),
                 } satisfies SpawnSessionOptions);
 
                 if (result.type === 'success' && result.sessionId) {
@@ -575,6 +622,7 @@ export function registerMachineRpcHandlers(params: Readonly<{
                       rawSession: childRaw,
                       updater: (metadata) => ({
                         ...metadata,
+                        ...(agentRaw === 'opencode' ? { opencodeBackendMode: 'acp', opencodeSessionId: forkedSessionId } : {}),
                         forkV1: {
                           v: 1,
                           parentSessionId,
@@ -608,9 +656,10 @@ export function registerMachineRpcHandlers(params: Readonly<{
       };
     }
 
-    const hydrated = await hydrateReplayDialogFromTranscript({
+    const { hydrateReplayDialogFromForkChain } = await import('@/session/replay/hydrateReplayDialogFromForkChain');
+	    const hydrated = await hydrateReplayDialogFromForkChain({
       credentials,
-      previousSessionId: parentSessionId,
+      startingSessionId: parentSessionId,
       limit: 200,
       maxTextChars: maxTextChars ?? undefined,
       ...(forkPoint.type === 'seq' ? { upToSeqInclusive: forkPoint.upToSeqInclusive } : {}),
@@ -623,12 +672,43 @@ export function registerMachineRpcHandlers(params: Readonly<{
       };
     }
 
-    const seedDraft = buildHappierReplayPromptFromDialog({
-      previousSessionId: parentSessionId,
-      strategy: 'recent_messages',
-      recentMessagesCount: 16,
-      dialog: hydrated.dialog,
-    });
+	    const summaryText = await (async () => {
+	      const hydratedSynopsis = typeof (hydrated as any)?.synopsisText === 'string'
+	        ? String((hydrated as any).synopsisText).trim()
+	        : '';
+	      if (hydratedSynopsis) return hydratedSynopsis;
+
+	      const summaryRunner = parsed.data.replaySummaryRunner;
+	      if (summaryRunner && resolveCliFeatureDecision({ featureId: 'execution.runs', env: process.env }).state === 'enabled') {
+	        try {
+	          const fn = params.deps?.runReplaySummaryForDialog ?? runReplaySummaryForDialog;
+	          const generated = await fn({
+	            cwd: directory,
+	            parentSessionId,
+	            runner: summaryRunner,
+	            dialog: hydrated.dialog,
+	          });
+	          const trimmed = typeof generated === 'string' ? generated.trim() : '';
+	          if (trimmed) return trimmed;
+	        } catch {
+	          // Best-effort only.
+	        }
+	      }
+
+	      const metaSummary = typeof (parentMetadata as any)?.summary?.text === 'string'
+	        ? String((parentMetadata as any).summary.text)
+	        : '';
+	      const trimmed = metaSummary.trim();
+	      return trimmed.length > 0 ? trimmed : null;
+	    })();
+
+	    const seedDraft = buildHappierReplayPromptFromDialog({
+	      previousSessionId: parentSessionId,
+	      strategy: summaryText ? 'summary_plus_recent' : 'recent_messages',
+	      recentMessagesCount: hydrated.dialog.length,
+	      summaryText,
+	      dialog: hydrated.dialog,
+	    });
 
     if (!seedDraft.trim()) {
       return {
@@ -638,17 +718,63 @@ export function registerMachineRpcHandlers(params: Readonly<{
       };
     }
 
+    const nowMs = Date.now();
+    const created = await (async () => {
+      try {
+        return await createReplaySeededSession({
+          credentials,
+          directory,
+          agentId: agentRaw,
+          tag: `fork:${parentSessionId}:${cutoffSeqInclusive}:${randomUUID()}`,
+          metadata: {
+            ...(agentRaw === 'opencode'
+              ? { opencodeBackendMode: opencodeBackendModeFromParent ?? 'server' }
+              : {}),
+            forkV1: {
+              v: 1,
+              parentSessionId,
+              parentCutoffSeqInclusive: cutoffSeqInclusive,
+              createdAtMs: nowMs,
+              strategy: 'replay',
+              providerHint: { providerId: agentRaw },
+            },
+            replaySeedV1: {
+              v: 1,
+              seedText: seedDraft,
+              sourceSessionId: parentSessionId,
+              sourceCutoffSeqInclusive: cutoffSeqInclusive,
+              createdAtMs: nowMs,
+            },
+          },
+        });
+      } catch (error) {
+        logger.debug('[API MACHINE] Failed to create fork session for replay', {
+          error: error instanceof Error ? error.message : String(error),
+        });
+        return null;
+      }
+    })();
+
+    if (!created) {
+      return {
+        ok: false,
+        errorCode: SPAWN_SESSION_ERROR_CODES.UNEXPECTED,
+        errorMessage: 'Failed to create fork session',
+      };
+    }
+
     const spawnResult = await spawnSession({
       directory,
       agent: agentRaw,
       approvedNewDirectoryCreation: true,
       spawnNonce,
+      existingSessionId: created.sessionId,
       ...(agentRaw === 'opencode'
         ? { environmentVariables: { HAPPIER_OPENCODE_BACKEND_MODE: opencodeBackendModeFromParent ?? 'server' } }
         : {}),
     } satisfies SpawnSessionOptions);
 
-    if (spawnResult.type !== 'success' || !spawnResult.sessionId) {
+    if (spawnResult.type !== 'success') {
       return {
         ok: false,
         errorCode: (spawnResult as any)?.errorCode ?? SPAWN_SESSION_ERROR_CODES.UNEXPECTED,
@@ -656,45 +782,11 @@ export function registerMachineRpcHandlers(params: Readonly<{
       };
     }
 
-    const childSessionId = spawnResult.sessionId;
-    if (childSessionId === parentSessionId) {
+    if (created.sessionId === parentSessionId) {
       return { ok: false, errorCode: SPAWN_SESSION_ERROR_CODES.UNEXPECTED, errorMessage: 'Fork spawn returned parent session id' };
     }
-    const childRaw = await fetchSessionById({ token: credentials.token, sessionId: childSessionId }).catch(() => null);
-    if (childRaw) {
-      await updateSessionMetadataWithRetry({
-        token: credentials.token,
-        credentials,
-        sessionId: childSessionId,
-        rawSession: childRaw,
-        updater: (metadata) => ({
-          ...metadata,
-          ...(agentRaw === 'opencode'
-            ? { opencodeBackendMode: opencodeBackendModeFromParent ?? 'server' }
-            : {}),
-          forkV1: {
-            v: 1,
-            parentSessionId,
-            parentCutoffSeqInclusive: cutoffSeqInclusive,
-            createdAtMs: Date.now(),
-            strategy: 'replay',
-            providerHint: { providerId: agentRaw },
-          },
-          replaySeedV1: {
-            v: 1,
-            seedText: seedDraft,
-            sourceSessionId: parentSessionId,
-            sourceCutoffSeqInclusive: cutoffSeqInclusive,
-            createdAtMs: Date.now(),
-          },
-        }),
-        maxAttempts: 6,
-      }).catch(() => {
-        // Best-effort; fork session still exists even if metadata write fails.
-      });
-    }
 
-    return { ok: true, childSessionId };
+    return { ok: true, childSessionId: created.sessionId };
   });
 
   rpcHandlerManager.registerHandler(RPC_METHODS.DAEMON_EXECUTION_RUNS_LIST, async () => {
