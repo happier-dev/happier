@@ -11,6 +11,7 @@ test('hstack service --help documents systemd mode flag', async () => {
   const res = await runNode([join(rootDir, 'scripts', 'service.mjs'), '--help'], { cwd: rootDir, env: process.env });
   assert.equal(res.code, 0, `expected exit 0, got ${res.code}\nstdout:\n${res.stdout}\nstderr:\n${res.stderr}`);
   assert.match(res.stdout, /--mode=system\|user/);
+  assert.match(res.stdout, /--auth-now\b/, `expected help to mention --auth-now\nstdout:\n${res.stdout}`);
 });
 
 test('hstack service --help tolerates invalid mode values', async () => {
