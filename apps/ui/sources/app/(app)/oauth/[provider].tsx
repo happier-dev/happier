@@ -444,6 +444,14 @@ export default function OAuthProviderReturn() {
                 const proof = typeof state?.proof === 'string' ? state.proof : null;
 
                 if (!pending || !state || state.provider !== providerId || (!proof && !secret)) {
+                    // In dev (React strict-mode) or certain hydration paths, this screen can mount more than once.
+                    // If another instance already completed the flow, pending state may have been cleared even
+                    // though the user is now logged in. Avoid showing a false-negative OAuth error in that case.
+                    const existingCredentials = await TokenStorage.getCredentials().catch(() => null);
+                    if (existingCredentials?.token) {
+                        safeReplace('/');
+                        return;
+                    }
                     await Modal.alert(t('common.error'), t('errors.oauthInitializationFailed'));
                     safeReplace('/');
                     return;

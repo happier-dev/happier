@@ -37,6 +37,7 @@ let pendingExternalAuthState: PendingExternalAuth | null = {
     secret: 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA',
 };
 let pendingExternalConnectState: PendingExternalConnect | null = null;
+let storedCredentialsState: { token: string; secret: string } | null = null;
 let authState: {
     isAuthenticated: boolean;
     credentials: { token: string; secret: string } | null;
@@ -54,6 +55,10 @@ export function setPendingExternalAuthState(next: PendingExternalAuth | null) {
 
 export function setPendingExternalConnectState(next: PendingExternalConnect | null) {
     pendingExternalConnectState = next;
+}
+
+export function setStoredCredentialsState(next: { token: string; secret: string } | null) {
+    storedCredentialsState = next;
 }
 
 export function setAuthState(next: { isAuthenticated: boolean; credentials: { token: string; secret: string } | null }) {
@@ -103,6 +108,7 @@ vi.mock('@/auth/storage/tokenStorage', async () => {
             clearPendingExternalAuth: clearPendingExternalAuthMock,
             getPendingExternalConnect: async () => pendingExternalConnectState,
             clearPendingExternalConnect: clearPendingExternalConnectMock,
+            getCredentials: async () => storedCredentialsState,
         },
     };
 });
@@ -184,6 +190,7 @@ export function resetOAuthHarness() {
         secret: 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA',
     });
     setPendingExternalConnectState(null);
+    setStoredCredentialsState(null);
     setAuthState({
         isAuthenticated: false,
         credentials: null,
