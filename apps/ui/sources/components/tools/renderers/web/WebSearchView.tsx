@@ -5,6 +5,7 @@ import type { ToolViewProps } from '../core/_registry';
 import { ToolSectionView } from '../../shell/presentation/ToolSectionView';
 import { maybeParseJson } from '../../normalization/parse/parseJson';
 import { Text } from '@/components/ui/text/Text';
+import { t } from '@/text';
 
 
 type WebResult = { title?: string; url?: string; snippet?: string };
@@ -68,7 +69,7 @@ export const WebSearchView = React.memo<ToolViewProps>(({ tool, detailLevel }) =
                         {r.snippet ? <Text style={styles.snippet} numberOfLines={isFullView ? 6 : 3}>{r.snippet}</Text> : null}
                     </View>
                 ))}
-                {more > 0 ? <Text style={styles.more}>+{more} more</Text> : null}
+                {more > 0 ? <Text style={styles.more}>{t('tools.structuredResult.more', { count: more })}</Text> : null}
             </View>
         </ToolSectionView>
     );

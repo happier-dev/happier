@@ -7,6 +7,7 @@ import { CodeView } from '@/components/ui/media/CodeView';
 import { maybeParseJson } from '../../normalization/parse/parseJson';
 import { tailTextWithEllipsis } from '../../normalization/parse/stdStreams';
 import { Text } from '@/components/ui/text/Text';
+import { t } from '@/text';
 
 
 function truncate(text: string, maxChars: number): string {
@@ -134,13 +135,13 @@ export const StructuredResultView = React.memo<ToolViewProps>(({ tool }) => {
             <View style={styles.container}>
                 {typeof streams?.exitCode === 'number' && (
                     <Text style={[styles.meta, { color: theme.colors.textSecondary }]}>
-                        exit {streams.exitCode}
+                        {t('tools.structuredResult.exit')} {streams.exitCode}
                     </Text>
                 )}
 
                 {streams?.stdout && streams.stdout.trim() ? (
                     <View style={styles.block}>
-                        <Text style={styles.label}>stdout</Text>
+                        <Text style={styles.label}>{t('tools.structuredResult.stdout')}</Text>
                         <CodeView
                             code={
                                 tool.state === 'running'
@@ -153,7 +154,7 @@ export const StructuredResultView = React.memo<ToolViewProps>(({ tool }) => {
 
                 {streams?.stderr && streams.stderr.trim() ? (
                     <View style={styles.block}>
-                        <Text style={styles.label}>stderr</Text>
+                        <Text style={styles.label}>{t('tools.structuredResult.stderr')}</Text>
                         <CodeView
                             code={
                                 tool.state === 'running'
@@ -166,21 +167,21 @@ export const StructuredResultView = React.memo<ToolViewProps>(({ tool }) => {
 
                 {diff && (
                     <View style={styles.block}>
-                        <Text style={styles.label}>diff</Text>
+                        <Text style={styles.label}>{t('tools.structuredResult.diff')}</Text>
                         <CodeView code={truncate(diff, 2200)} />
                     </View>
                 )}
 
                 {!streams?.stdout && !streams?.stderr && !diff && text && (
                     <View style={styles.block}>
-                        <Text style={styles.label}>result</Text>
+                        <Text style={styles.label}>{t('tools.structuredResult.result')}</Text>
                         <CodeView code={truncate(text, 2200)} />
                     </View>
                 )}
 
                 {paths.length > 0 && (
                     <View style={styles.block}>
-                        <Text style={styles.label}>items</Text>
+                        <Text style={styles.label}>{t('tools.structuredResult.items')}</Text>
                         {paths.slice(0, 8).map((p, idx) => (
                             <Text key={`${idx}-${p}`} style={styles.path} numberOfLines={1}>
                                 {p}
@@ -188,7 +189,7 @@ export const StructuredResultView = React.memo<ToolViewProps>(({ tool }) => {
                         ))}
                         {paths.length > 8 && (
                             <Text style={[styles.meta, { color: theme.colors.textSecondary }]}>
-                                +{paths.length - 8} more
+                                {t('tools.structuredResult.more', { count: paths.length - 8 })}
                             </Text>
                         )}
                     </View>
