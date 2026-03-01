@@ -74,7 +74,7 @@ export default function SessionNewRunScreen() {
 
     const screenOptions = React.useMemo(() => ({
         headerShown: true,
-        headerTitle: 'Start run',
+        headerTitle: t('executionRuns.newRun.headerTitle'),
         headerBackTitle: t('common.back'),
     }), []);
 
@@ -152,15 +152,20 @@ export default function SessionNewRunScreen() {
                 }}
             >
                 <View style={{ gap: 8 }}>
-                    <Text style={{ color: theme.colors.textSecondary }}>Intent</Text>
+                    <Text style={{ color: theme.colors.textSecondary }}>{t('executionRuns.newRun.sections.intent')}</Text>
                     <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 10 }}>
                         {(['review', 'plan', 'delegate'] as const).map((next) => {
                             const selected = intent === next;
+                            const intentLabel = next === 'review'
+                                ? t('executionRuns.newRun.intents.review')
+                                : next === 'plan'
+                                    ? t('executionRuns.newRun.intents.plan')
+                                    : t('executionRuns.newRun.intents.delegate');
                             return (
                                 <Pressable
                                     key={next}
                                     accessibilityRole="button"
-                                    accessibilityLabel={`Select intent ${next}`}
+                                    accessibilityLabel={t('executionRuns.newRun.a11y.selectIntent', { intent: intentLabel })}
                                     onPress={() => {
                                         setIntent(next);
                                         setPermissionMode(defaultPermissionModeForIntent(next));
@@ -178,7 +183,7 @@ export default function SessionNewRunScreen() {
                                     })}
                                 >
                                     <Text style={{ color: selected ? theme.colors.text : theme.colors.textSecondary }}>
-                                        {next}
+                                        {intentLabel}
                                     </Text>
                                 </Pressable>
                             );
@@ -187,15 +192,18 @@ export default function SessionNewRunScreen() {
                 </View>
 
                 <View style={{ gap: 8 }}>
-                    <Text style={{ color: theme.colors.textSecondary }}>Permissions</Text>
+                    <Text style={{ color: theme.colors.textSecondary }}>{t('executionRuns.newRun.sections.permissions')}</Text>
                     <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 10 }}>
                         {(['read_only', 'default'] as const).map((next) => {
                             const selected = permissionMode === next;
+                            const permissionLabel = next === 'read_only'
+                                ? t('executionRuns.newRun.permissionModes.readOnly')
+                                : t('executionRuns.newRun.permissionModes.default');
                             return (
                                 <Pressable
                                     key={next}
                                     accessibilityRole="button"
-                                    accessibilityLabel={`Select permissionMode ${next}`}
+                                    accessibilityLabel={t('executionRuns.newRun.a11y.selectPermissionMode', { mode: permissionLabel })}
                                     onPress={() => setPermissionMode(next)}
                                     style={({ pressed }) => ({
                                         paddingVertical: 8,
@@ -207,7 +215,7 @@ export default function SessionNewRunScreen() {
                                     })}
                                 >
                                     <Text style={{ color: selected ? theme.colors.text : theme.colors.textSecondary }}>
-                                        {next}
+                                        {permissionLabel}
                                     </Text>
                                 </Pressable>
                             );
@@ -216,7 +224,7 @@ export default function SessionNewRunScreen() {
                 </View>
 
                 <View style={{ gap: 8 }}>
-                    <Text style={{ color: theme.colors.textSecondary }}>Backends</Text>
+                    <Text style={{ color: theme.colors.textSecondary }}>{t('executionRuns.newRun.sections.backends')}</Text>
                     <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 10 }}>
                         {backendChoices.map((choice) => {
                             const backendId = choice.id;
@@ -226,7 +234,7 @@ export default function SessionNewRunScreen() {
                                 <Pressable
                                     key={backendId}
                                     accessibilityRole="button"
-                                    accessibilityLabel={`Toggle backend ${backendId}`}
+                                    accessibilityLabel={t('executionRuns.newRun.a11y.toggleBackend', { backendId })}
                                     onPress={disabled ? undefined : () => toggleBackend(backendId)}
                                     style={({ pressed }) => ({
                                         paddingVertical: 8,
@@ -247,11 +255,11 @@ export default function SessionNewRunScreen() {
                 </View>
 
                 <View style={{ gap: 8 }}>
-                    <Text style={{ color: theme.colors.textSecondary }}>Instructions</Text>
+                    <Text style={{ color: theme.colors.textSecondary }}>{t('executionRuns.newRun.sections.instructions')}</Text>
                     <TextInput
                         value={instructions}
                         onChangeText={setInstructions}
-                        placeholder={'What should the sub-agent do?'}
+                        placeholder={t('executionRuns.newRun.instructionsPlaceholder')}
                         placeholderTextColor={theme.colors.textSecondary}
                         multiline
                         style={{
@@ -268,7 +276,7 @@ export default function SessionNewRunScreen() {
                 <View style={{ flexDirection: 'row', gap: 12 }}>
                     <Pressable
                         accessibilityRole="button"
-                        accessibilityLabel="Start run"
+                        accessibilityLabel={t('executionRuns.newRun.a11y.startRun')}
                         onPress={onStart}
                         disabled={!canStart}
                         style={({ pressed }) => ({
@@ -279,11 +287,11 @@ export default function SessionNewRunScreen() {
                             opacity: !canStart ? 0.5 : pressed ? 0.7 : 1,
                         })}
                     >
-                        <Text style={{ color: theme.colors.text }}>Start</Text>
+                        <Text style={{ color: theme.colors.text }}>{t('executionRuns.newRun.actions.start')}</Text>
                     </Pressable>
                     <Pressable
                         accessibilityRole="button"
-                        accessibilityLabel="Cancel"
+                        accessibilityLabel={t('executionRuns.newRun.a11y.cancel')}
                         onPress={() => router.back()}
                         style={({ pressed }) => ({
                             paddingVertical: 10,
@@ -292,13 +300,13 @@ export default function SessionNewRunScreen() {
                             opacity: pressed ? 0.7 : 1,
                         })}
                     >
-                        <Text style={{ color: theme.colors.textSecondary }}>{t('common.cancel') ?? 'Cancel'}</Text>
+                        <Text style={{ color: theme.colors.textSecondary }}>{t('common.cancel')}</Text>
                     </Pressable>
                 </View>
 
                 {guidancePreview ? (
                     <View style={{ gap: 6 }}>
-                        <Text style={{ color: theme.colors.textSecondary, fontSize: 12 }}>Guidance preview</Text>
+                        <Text style={{ color: theme.colors.textSecondary, fontSize: 12 }}>{t('executionRuns.newRun.guidancePreview')}</Text>
                         <Text style={{ color: theme.colors.textSecondary, fontSize: 12, fontFamily: 'Menlo' }}>
                             {guidancePreview}
                         </Text>

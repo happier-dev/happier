@@ -56,7 +56,7 @@ export default function SessionRunsScreen() {
       <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
         <Pressable
           accessibilityRole="button"
-          accessibilityLabel="Run review"
+          accessibilityLabel={t('executionRuns.newRun.intents.review')}
           onPress={() => {
             if (!sessionId) return;
             router.push(`/session/${sessionId}/runs/new?intent=review` as any);
@@ -68,7 +68,7 @@ export default function SessionRunsScreen() {
         </Pressable>
         <Pressable
           accessibilityRole="button"
-          accessibilityLabel="Delegate task"
+          accessibilityLabel={t('executionRuns.newRun.intents.delegate')}
           onPress={() => {
             if (!sessionId) return;
             router.push(`/session/${sessionId}/runs/new?intent=delegate` as any);
@@ -80,7 +80,7 @@ export default function SessionRunsScreen() {
         </Pressable>
         <Pressable
           accessibilityRole="button"
-          accessibilityLabel="Refresh runs"
+          accessibilityLabel={t('common.refresh')}
           onPress={() => void load()}
           hitSlop={10}
           style={({ pressed }) => ({ padding: 4, opacity: pressed ? 0.7 : 1 })}
@@ -93,7 +93,7 @@ export default function SessionRunsScreen() {
 
   const screenOptions = React.useMemo(() => ({
     headerShown: true,
-    headerTitle: 'Runs',
+    headerTitle: t('runs.title'),
     headerRight,
   }), [headerRight]);
 

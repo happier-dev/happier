@@ -113,7 +113,12 @@ vi.mock('expo-router', () => ({
 vi.mock('@expo/vector-icons', () => ({ Ionicons: 'Ionicons' }));
 
 vi.mock('@/text', () => ({
-    t: (key: string) => key,
+    t: (key: string, vars?: any) => {
+        if (key === 'runs.detail.pid') return `pid ${vars?.pid ?? ''}`.trim();
+        if (key === 'runs.detail.cpu') return `cpu ${vars?.percent ?? ''}`.trim();
+        if (key === 'runs.detail.memory') return `memory ${vars?.megabytes ?? ''}`.trim();
+        return key;
+    },
 }));
 
 vi.mock('@/sync/sync', () => ({
@@ -148,7 +153,7 @@ describe('Session Run Details Screen', () => {
     it('configures the run details header and constrains the content width', async () => {
         stackScreenSpy.mockClear();
         getRunSpy.mockClear();
-        const Screen = (await import('./[runId]')).default;
+        const Screen = (await import('@/app/(app)/session/[id]/runs/[runId]')).default;
 
         let tree: renderer.ReactTestRenderer | null = null;
         await act(async () => {
@@ -158,7 +163,7 @@ describe('Session Run Details Screen', () => {
 
         expect(stackScreenSpy).toHaveBeenCalled();
         const stackOptions = stackScreenSpy.mock.calls.at(-1)?.[0]?.options;
-        expect(stackOptions?.headerTitle).toBe('Run');
+        expect(stackOptions?.headerTitle).toBe('runs.runLabel');
         expect(typeof stackOptions?.headerRight).toBe('function');
 
         let headerRightTree: renderer.ReactTestRenderer | null = null;
@@ -166,7 +171,7 @@ describe('Session Run Details Screen', () => {
             headerRightTree = renderer.create(React.createElement(stackOptions.headerRight));
         });
         const refreshButton = headerRightTree!.root.findAllByType('Pressable')
-            .find((node: any) => node.props.accessibilityLabel === 'Refresh run');
+            .find((node: any) => node.props.accessibilityLabel === 'runs.runDetails.a11y.refreshRun');
         expect(refreshButton).toBeDefined();
 
         const views = tree!.root.findAllByType('View');
@@ -184,7 +189,7 @@ describe('Session Run Details Screen', () => {
 
     it('loads run details via session execution run get', async () => {
         getRunSpy.mockClear();
-        const Screen = (await import('./[runId]')).default;
+        const Screen = (await import('@/app/(app)/session/[id]/runs/[runId]')).default;
 
         let tree: renderer.ReactTestRenderer | null = null;
         await act(async () => {
@@ -200,7 +205,7 @@ describe('Session Run Details Screen', () => {
     it('renders daemon process stats when machine execution runs list includes the run', async () => {
         getRunSpy.mockClear();
         machineExecutionRunsListSpy.mockClear();
-        const Screen = (await import('./[runId]')).default;
+        const Screen = (await import('@/app/(app)/session/[id]/runs/[runId]')).default;
 
         let tree: renderer.ReactTestRenderer | null = null;
         await act(async () => {
@@ -239,7 +244,7 @@ describe('Session Run Details Screen', () => {
             },
         });
 
-        const Screen = (await import('./[runId]')).default;
+        const Screen = (await import('@/app/(app)/session/[id]/runs/[runId]')).default;
 
         let tree: renderer.ReactTestRenderer | null = null;
         await act(async () => {
@@ -272,7 +277,7 @@ describe('Session Run Details Screen', () => {
             },
         });
 
-        const Screen = (await import('./[runId]')).default;
+        const Screen = (await import('@/app/(app)/session/[id]/runs/[runId]')).default;
 
         let tree: renderer.ReactTestRenderer | null = null;
         await act(async () => {
@@ -288,7 +293,7 @@ describe('Session Run Details Screen', () => {
 
         const sendButtons = tree!.root.findAll((node) => {
             if ((node as any).type !== 'Pressable') return false;
-            return String((node as any).props?.accessibilityLabel ?? '') === 'Send to run';
+            return String((node as any).props?.accessibilityLabel ?? '') === 'runs.send.a11y.sendToRun';
         });
         expect(sendButtons).toHaveLength(1);
         await act(async () => {
@@ -298,7 +303,7 @@ describe('Session Run Details Screen', () => {
 
         const stopButtons = tree!.root.findAll((node) => {
             if ((node as any).type !== 'Pressable') return false;
-            return String((node as any).props?.accessibilityLabel ?? '') === 'Stop run';
+            return String((node as any).props?.accessibilityLabel ?? '') === 'runs.stop.stopRunA11y';
         });
         expect(stopButtons).toHaveLength(1);
         await act(async () => {

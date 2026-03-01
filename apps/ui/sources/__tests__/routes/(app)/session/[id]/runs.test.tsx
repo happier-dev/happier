@@ -63,7 +63,7 @@ describe('Session Runs Screen', () => {
         stackScreenSpy.mockClear();
         listRunsSpy.mockResolvedValueOnce({ runs: [] });
 
-        const RunsScreen = (await import('./runs')).default;
+        const RunsScreen = (await import('@/app/(app)/session/[id]/runs')).default;
 
         let tree: renderer.ReactTestRenderer | null = null;
         await act(async () => {
@@ -71,14 +71,14 @@ describe('Session Runs Screen', () => {
         });
 
         const stackOptions = stackScreenSpy.mock.calls.at(-1)?.[0]?.options;
-        expect(stackOptions?.headerTitle).toBe('Runs');
+        expect(stackOptions?.headerTitle).toBe('runs.title');
         expect(typeof stackOptions?.headerRight).toBe('function');
         let headerRightTree: renderer.ReactTestRenderer | null = null;
         await act(async () => {
             headerRightTree = renderer.create(React.createElement(stackOptions.headerRight));
         });
         const buttons = headerRightTree!.root.findAllByType('Pressable');
-        const runReview = buttons.find((b: any) => b.props.accessibilityLabel === 'Run review');
+        const runReview = buttons.find((b: any) => b.props.accessibilityLabel === 'executionRuns.newRun.intents.review');
         expect(runReview).toBeDefined();
 
         await act(async () => {
@@ -93,7 +93,7 @@ describe('Session Runs Screen', () => {
         stackScreenSpy.mockClear();
         listRunsSpy.mockResolvedValueOnce({ runs: [] });
 
-        const RunsScreen = (await import('./runs')).default;
+        const RunsScreen = (await import('@/app/(app)/session/[id]/runs')).default;
 
         let tree: renderer.ReactTestRenderer | null = null;
         await act(async () => {
@@ -107,7 +107,7 @@ describe('Session Runs Screen', () => {
             headerRightTree = renderer.create(React.createElement(stackOptions.headerRight));
         });
         const buttons = headerRightTree!.root.findAllByType('Pressable');
-        const delegate = buttons.find((b: any) => b.props.accessibilityLabel === 'Delegate task');
+        const delegate = buttons.find((b: any) => b.props.accessibilityLabel === 'executionRuns.newRun.intents.delegate');
         expect(delegate).toBeDefined();
 
         await act(async () => {
@@ -119,7 +119,7 @@ describe('Session Runs Screen', () => {
 
     it('constrains content to the shared max width', async () => {
         listRunsSpy.mockResolvedValueOnce({ runs: [] });
-        const RunsScreen = (await import('./runs')).default;
+        const RunsScreen = (await import('@/app/(app)/session/[id]/runs')).default;
 
         let tree: renderer.ReactTestRenderer | null = null;
         await act(async () => {
@@ -156,7 +156,7 @@ describe('Session Runs Screen', () => {
             ],
         });
 
-        const RunsScreen = (await import('./runs')).default;
+        const RunsScreen = (await import('@/app/(app)/session/[id]/runs')).default;
 
         let tree: renderer.ReactTestRenderer | null = null;
         await act(async () => {
@@ -186,7 +186,7 @@ describe('Session Runs Screen', () => {
             ],
         });
 
-        const RunsScreen = (await import('./runs')).default;
+        const RunsScreen = (await import('@/app/(app)/session/[id]/runs')).default;
 
         let tree: renderer.ReactTestRenderer | null = null;
         await act(async () => {

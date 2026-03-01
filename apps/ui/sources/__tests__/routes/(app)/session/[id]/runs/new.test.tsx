@@ -46,7 +46,27 @@ vi.mock('expo-router', () => ({
 }));
 
 vi.mock('@/text', () => ({
-    t: (key: string) => key,
+    t: (key: string, params?: any) => {
+        if (key === 'executionRuns.newRun.headerTitle') return 'Start run';
+        if (key === 'executionRuns.newRun.sections.intent') return 'Intent';
+        if (key === 'executionRuns.newRun.sections.permissions') return 'Permissions';
+        if (key === 'executionRuns.newRun.sections.backends') return 'Backends';
+        if (key === 'executionRuns.newRun.sections.instructions') return 'Instructions';
+        if (key === 'executionRuns.newRun.intents.review') return 'review';
+        if (key === 'executionRuns.newRun.intents.plan') return 'plan';
+        if (key === 'executionRuns.newRun.intents.delegate') return 'delegate';
+        if (key === 'executionRuns.newRun.permissionModes.readOnly') return 'read_only';
+        if (key === 'executionRuns.newRun.permissionModes.default') return 'default';
+        if (key === 'executionRuns.newRun.instructionsPlaceholder') return 'What should the sub-agent do?';
+        if (key === 'executionRuns.newRun.actions.start') return 'Start';
+        if (key === 'executionRuns.newRun.guidancePreview') return 'Guidance preview';
+        if (key === 'executionRuns.newRun.a11y.startRun') return 'Start run';
+        if (key === 'executionRuns.newRun.a11y.cancel') return 'Cancel';
+        if (key === 'executionRuns.newRun.a11y.selectIntent') return `Select intent ${String(params?.intent ?? '')}`;
+        if (key === 'executionRuns.newRun.a11y.selectPermissionMode') return `Select permissionMode ${String(params?.mode ?? '')}`;
+        if (key === 'executionRuns.newRun.a11y.toggleBackend') return `Toggle backend ${String(params?.backendId ?? '')}`;
+        return key;
+    },
 }));
 vi.mock('@/components/ui/layout/layout', () => ({ layout: { maxWidth: 999 } }));
 
@@ -127,7 +147,7 @@ vi.mock('@/hooks/server/useMachineCapabilitiesCache', () => ({
 describe('Session New Run Screen', () => {
     it('configures the header title and constrains form content width', async () => {
         stackScreenSpy.mockClear();
-        const NewRunScreen = (await import('./new')).default;
+        const NewRunScreen = (await import('@/app/(app)/session/[id]/runs/new')).default;
 
         let tree: renderer.ReactTestRenderer | null = null;
         await act(async () => {
@@ -153,7 +173,7 @@ describe('Session New Run Screen', () => {
         startRunSpy.mockClear();
         routerPushSpy.mockClear();
 
-        const NewRunScreen = (await import('./new')).default;
+        const NewRunScreen = (await import('@/app/(app)/session/[id]/runs/new')).default;
 
         let tree: renderer.ReactTestRenderer | null = null;
         await act(async () => {
@@ -209,7 +229,7 @@ describe('Session New Run Screen', () => {
             },
         };
 
-        const NewRunScreen = (await import('./new')).default;
+        const NewRunScreen = (await import('@/app/(app)/session/[id]/runs/new')).default;
 
         let tree: renderer.ReactTestRenderer | null = null;
         await act(async () => {
@@ -224,7 +244,7 @@ describe('Session New Run Screen', () => {
     it('allows selecting a different intent before starting', async () => {
         startRunSpy.mockClear();
 
-        const NewRunScreen = (await import('./new')).default;
+        const NewRunScreen = (await import('@/app/(app)/session/[id]/runs/new')).default;
 
         let tree: renderer.ReactTestRenderer | null = null;
         await act(async () => {
@@ -264,7 +284,7 @@ describe('Session New Run Screen', () => {
     it('allows overriding the permission mode before starting', async () => {
         startRunSpy.mockClear();
 
-        const NewRunScreen = (await import('./new')).default;
+        const NewRunScreen = (await import('@/app/(app)/session/[id]/runs/new')).default;
 
         let tree: renderer.ReactTestRenderer | null = null;
         await act(async () => {
