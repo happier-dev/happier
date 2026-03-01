@@ -794,14 +794,6 @@ export default function RootLayout() {
                 }}
             />
             <Stack.Screen
-                name="text-selection"
-                options={{
-                    headerShown: true,
-                    headerTitle: t('textSelection.title'),
-                    headerBackTitle: t('common.back'),
-                }}
-            />
-            <Stack.Screen
                 name="friends/manage"
                 options={({ navigation }) => ({
                     headerShown: true,
