@@ -989,6 +989,10 @@ export function makeAcpPermissionOutsideWorkspaceScenario(params: {
    */
   requireTaskCompleteWhenNoToolAttempt?: boolean;
 }): ProviderScenario {
+  const shouldUseTmpOutsidePath =
+    params.providerId === 'opencode' ||
+    params.providerId === 'opencode_server' ||
+    params.providerId === 'kilo';
   const decision = params.decision ?? 'approve';
   const expectPermissionRequest = params.expectPermissionRequest ?? true;
   // Avoid OS temp directories: some providers (notably Codex) treat $TMPDIR and /tmp as writable roots
@@ -1022,6 +1026,7 @@ export function makeAcpPermissionOutsideWorkspaceScenario(params: {
       outsidePath = makeOutsideWorkspacePath({
         workspaceDir,
         prefix: `happier-e2e-outside-${decision}`,
+        ...(shouldUseTmpOutsidePath ? { strategy: 'tmpdir' } : null),
       });
       await cleanupOutsideWorkspacePath(outsidePath);
     },
@@ -1037,6 +1042,7 @@ export function makeAcpPermissionOutsideWorkspaceScenario(params: {
                   outsidePath = makeOutsideWorkspacePath({
                     workspaceDir,
                     prefix: `happier-e2e-outside-${decision}`,
+                    ...(shouldUseTmpOutsidePath ? { strategy: 'tmpdir' } : null),
                   });
                 }
                 return outsidePath;
@@ -1050,6 +1056,7 @@ export function makeAcpPermissionOutsideWorkspaceScenario(params: {
                   outsidePath = makeOutsideWorkspacePath({
                     workspaceDir,
                     prefix: `happier-e2e-outside-${decision}`,
+                    ...(shouldUseTmpOutsidePath ? { strategy: 'tmpdir' } : null),
                   });
                 }
                 return outsidePath;
@@ -1075,6 +1082,8 @@ export function makeAcpPermissionOutsideWorkspaceScenario(params: {
             [
               k(params.providerId, 'permission-request', 'Edit'),
               k(params.providerId, 'permission-request', 'Write'),
+              k(params.providerId, 'permission-request', 'Patch'),
+              ...(shouldUseTmpOutsidePath ? [k(params.providerId, 'permission-request', 'external_directory')] : []),
               k(params.providerId, 'permission-request', 'edit'),
               k(params.providerId, 'permission-request', 'write'),
             ],
@@ -1117,6 +1126,8 @@ export function makeAcpPermissionOutsideWorkspaceScenario(params: {
               const keys = [
                 k(params.providerId, 'permission-request', 'Edit'),
                 k(params.providerId, 'permission-request', 'Write'),
+                k(params.providerId, 'permission-request', 'Patch'),
+                ...(shouldUseTmpOutsidePath ? [k(params.providerId, 'permission-request', 'external_directory')] : []),
                 k(params.providerId, 'permission-request', 'edit'),
                 k(params.providerId, 'permission-request', 'write'),
                 k(params.providerId, 'permission-request', 'unknown'),
@@ -1133,6 +1144,7 @@ export function makeAcpPermissionOutsideWorkspaceScenario(params: {
                 reqs[0]?.payload?.options?.input?.filepath ??
                 reqs[0]?.payload?.options?.input?.filePath ??
                 reqs[0]?.payload?.options?.input?.path ??
+                reqs[0]?.payload?.options?.input?.metadata?.filepath ??
                 reqs[0]?.payload?.options?.toolCall?.content?.find((entry: any) => typeof entry?.path === 'string')?.path ??
                 reqs[0]?.payload?.options?.input?.content?.find((entry: any) => typeof entry?.path === 'string')?.path;
               if (typeof requestedPath !== 'string' || requestedPath.length === 0) {

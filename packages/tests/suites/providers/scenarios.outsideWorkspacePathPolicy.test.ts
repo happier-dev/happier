@@ -1,4 +1,5 @@
 import { dirname } from 'node:path';
+import { tmpdir } from 'node:os';
 
 import { describe, expect, it } from 'vitest';
 
@@ -42,5 +43,17 @@ describe('provider scenarios outside-workspace policy', () => {
     });
 
     expect(typeof scenario.setup).toBe('function');
+    const promptBuilder = scenario.prompt;
+    expect(typeof promptBuilder).toBe('function');
+    if (!promptBuilder) throw new Error('Scenario prompt builder is required');
+
+    const workspaceDir = '/tmp/workspace-root';
+    const prompt = promptBuilder({ workspaceDir });
+    const match = prompt.match(/- Absolute path: (.+)/);
+    expect(match).toBeTruthy();
+    const outsidePath = match?.[1]?.trim() ?? '';
+    expect(outsidePath.startsWith(workspaceDir)).toBe(false);
+    // OpenCode-family providers often treat the workspace as a git-rooted project, so we force tmpdir().
+    expect(outsidePath.startsWith(tmpdir())).toBe(true);
   });
 });
