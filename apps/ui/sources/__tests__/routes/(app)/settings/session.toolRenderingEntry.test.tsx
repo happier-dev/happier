@@ -90,9 +90,9 @@ afterEach(() => {
     routerPushSpy.mockClear();
 });
 
-describe('Session settings (Tool rendering entry)', () => {
-    it('routes to the tool rendering sub-screen and no longer renders tool detail controls inline', async () => {
-        const mod = await import('./session');
+describe('Session settings (Transcript entry)', () => {
+    it('routes to the transcript sub-screen and does not show a separate tool rendering entry', async () => {
+        const mod = await import('@/app/(app)/settings/session');
         const SessionSettingsScreen = mod.default;
 
         let tree!: ReactTestRenderer;
@@ -103,22 +103,15 @@ describe('Session settings (Tool rendering entry)', () => {
         const items = tree.root.findAllByType('Item' as any);
 
         const toolRenderingLink = items.find((item: any) => item?.props?.title === 'settingsSession.toolRendering.title');
-        expect(toolRenderingLink).toBeTruthy();
+        expect(toolRenderingLink).toBeFalsy();
 
-        const legacyInlineToolTitles = new Set([
-            'settingsSession.toolRendering.defaultToolDetailLevelTitle',
-            'settingsSession.toolRendering.localControlDefaultTitle',
-            'settingsSession.toolRendering.showDebugByDefaultTitle',
-            'Bash',
-        ]);
-        for (const title of legacyInlineToolTitles) {
-            expect(items.some((item: any) => item?.props?.title === title)).toBe(false);
-        }
+        const transcriptLink = items.find((item: any) => item?.props?.title === 'settingsSession.transcript.title');
+        expect(transcriptLink).toBeTruthy();
 
         await act(async () => {
-            toolRenderingLink!.props.onPress();
+            transcriptLink!.props.onPress();
         });
 
-        expect(routerPushSpy).toHaveBeenCalledWith('/(app)/settings/session/tool-rendering');
+        expect(routerPushSpy).toHaveBeenCalledWith('/(app)/settings/session/transcript');
     });
 });

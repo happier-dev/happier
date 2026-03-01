@@ -89,7 +89,7 @@ afterEach(() => {
 
 describe('Session settings (Actions entry)', () => {
     it('includes an Actions entry that routes to /settings/actions', async () => {
-        const mod = await import('./session');
+        const mod = await import('@/app/(app)/settings/session');
         const SessionSettingsScreen = mod.default;
 
         let tree!: ReactTestRenderer;
@@ -98,7 +98,7 @@ describe('Session settings (Actions entry)', () => {
         });
 
         const items = tree.root.findAllByType('Item' as any);
-        const actionsItem = items.find((item: any) => item?.props?.title === 'Actions');
+        const actionsItem = items.find((item: any) => item?.props?.title === 'common.actions');
         expect(actionsItem).toBeTruthy();
 
         await act(async () => {

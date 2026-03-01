@@ -70,29 +70,32 @@ vi.mock('@/text', () => ({
 }));
 
 const setThinkingDisplayMode = vi.fn();
+const setThinkingInlinePresentation = vi.fn();
 vi.mock('@/sync/domains/state/storage', () => ({
     useSettingMutable: (key: string) => {
         if (key === 'sessionThinkingDisplayMode') return ['inline', setThinkingDisplayMode];
+        if (key === 'sessionThinkingInlinePresentation') return ['summary', setThinkingInlinePresentation];
         return [null, vi.fn()];
     },
 }));
 
 vi.mock('@/hooks/server/useFeatureEnabled', () => ({
-    useFeatureEnabled: (key: string) => key === 'messages.thinkingVisibility',
+    useFeatureEnabled: () => false,
 }));
 
 afterEach(() => {
     setThinkingDisplayMode.mockClear();
+    setThinkingInlinePresentation.mockClear();
 });
 
-describe('Session settings (thinking display mode)', () => {
-    it('renders a dropdown and updates sessionThinkingDisplayMode', async () => {
-        const mod = await import('./session');
-        const SessionSettingsScreen = mod.default;
+describe('Transcript settings (thinking display mode)', () => {
+    it('renders a dropdown and updates session thinking mode + inline presentation', async () => {
+        const mod = await import('@/app/(app)/settings/session/transcript');
+        const TranscriptSettingsScreen = mod.default;
 
         let tree!: ReactTestRenderer;
         await act(async () => {
-            tree = renderer.create(React.createElement(SessionSettingsScreen));
+            tree = renderer.create(React.createElement(TranscriptSettingsScreen));
         });
 
         const items = tree.root.findAllByType('Item' as any);
@@ -102,13 +105,14 @@ describe('Session settings (thinking display mode)', () => {
         const dropdowns = tree.root.findAllByType('DropdownMenu' as any);
         expect(dropdowns.length).toBeGreaterThan(0);
 
-        const thinkingDropdown = dropdowns.find((d: any) => d?.props?.selectedId === 'inline');
+        const thinkingDropdown = dropdowns.find((d: any) => d?.props?.selectedId === 'inline_summary');
         expect(thinkingDropdown).toBeTruthy();
 
         await act(async () => {
-            thinkingDropdown!.props.onSelect('tool');
+            thinkingDropdown!.props.onSelect('inline_full');
         });
 
-        expect(setThinkingDisplayMode).toHaveBeenCalledWith('tool');
+        expect(setThinkingDisplayMode).toHaveBeenCalledWith('inline');
+        expect(setThinkingInlinePresentation).toHaveBeenCalledWith('full');
     });
 });
