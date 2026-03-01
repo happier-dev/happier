@@ -15,7 +15,7 @@ import { PermissionFooter } from '../permissions/PermissionFooter';
 import { useSetting } from '@/sync/domains/state/storage';
 import { MessageView } from '@/components/sessions/transcript/MessageView';
 import { useUnistyles } from 'react-native-unistyles';
-import { Text } from '@/components/ui/text/Text';
+import { Text, TextSelectabilityScope } from '@/components/ui/text/Text';
 import { resolveToolHeaderTextPresentation } from '@/components/tools/shell/presentation/resolveToolHeaderTextPresentation';
 import { TranscriptMessageBlockList } from '@/components/sessions/transcript/messageBlocks/TranscriptMessageBlockList';
 import { shouldShowGenericPermissionPromptForRequest } from '@/utils/sessions/permissions/permissionPromptPolicy';
@@ -85,90 +85,93 @@ export function ToolFullView({ tool, sessionId, metadata, messages = [], jumpChi
                         />
                     </View>
                 ) : SpecializedFullView ? (
-                    <SpecializedFullView
-                        tool={toolForRendering}
-                        metadata={metadata || null}
-                        messages={messages}
-                        sessionId={sessionId}
-                        detailLevel="full"
-                        interaction={interaction}
-                    />
+                    <TextSelectabilityScope selectable>
+                        <SpecializedFullView
+                            tool={toolForRendering}
+                            metadata={metadata || null}
+                            messages={messages}
+                            sessionId={sessionId}
+                            detailLevel="full"
+                            interaction={interaction}
+                        />
+                    </TextSelectabilityScope>
                 ) : (
-                    <>
-                    {/* Generic fallback for tools without specialized views */}
-                    {/* Tool Description */}
-                    {toolForRendering.description && (
-                        <View style={styles.section}>
-                            <View style={styles.sectionHeader}>
-                                <Ionicons name="information-circle" size={20} color={theme.colors.accent.indigo} />
-                                <Text style={styles.sectionTitle}>{t('tools.fullView.description')}</Text>
-                            </View>
-                            <Text style={styles.description}>{toolForRendering.description}</Text>
-                        </View>
-                    )}
-                    {/* Input Parameters */}
-                    {toolForRendering.input && (
-                        <View style={styles.section}>
-                            <View style={styles.sectionHeader}>
-                                <Ionicons name="log-in" size={20} color={theme.colors.accent.indigo} />
-                                <Text style={styles.sectionTitle}>{t('tools.fullView.inputParams')}</Text>
-                            </View>
-                            <CodeView code={JSON.stringify(toolForRendering.input, null, 2)} />
-                        </View>
-                    )}
+                    <TextSelectabilityScope selectable>
+                        <>
+                            {/* Generic fallback for tools without specialized views */}
+                            {/* Tool Description */}
+                            {toolForRendering.description && (
+                                <View style={styles.section}>
+                                    <View style={styles.sectionHeader}>
+                                        <Ionicons name="information-circle" size={20} color={theme.colors.accent.indigo} />
+                                        <Text style={styles.sectionTitle}>{t('tools.fullView.description')}</Text>
+                                    </View>
+                                    <Text style={styles.description}>{toolForRendering.description}</Text>
+                                </View>
+                            )}
+                            {/* Input Parameters */}
+                            {toolForRendering.input && (
+                                <View style={styles.section}>
+                                    <View style={styles.sectionHeader}>
+                                        <Ionicons name="log-in" size={20} color={theme.colors.accent.indigo} />
+                                        <Text style={styles.sectionTitle}>{t('tools.fullView.inputParams')}</Text>
+                                    </View>
+                                    <CodeView code={JSON.stringify(toolForRendering.input, null, 2)} />
+                                </View>
+                            )}
 
-                    {/* Result/Output */}
-                    {toolForRendering.state === 'completed' && toolForRendering.result && (
-                        <View style={styles.section}>
-                            <View style={styles.sectionHeader}>
-                                <Ionicons name="log-out" size={20} color={theme.colors.success} />
-                                <Text style={styles.sectionTitle}>{t('tools.fullView.output')}</Text>
-                            </View>
-                            <CodeView
-                                code={typeof toolForRendering.result === 'string' ? toolForRendering.result : JSON.stringify(toolForRendering.result, null, 2)}
-                            />
-                        </View>
-                    )}
+                            {/* Result/Output */}
+                            {toolForRendering.state === 'completed' && toolForRendering.result && (
+                                <View style={styles.section}>
+                                    <View style={styles.sectionHeader}>
+                                        <Ionicons name="log-out" size={20} color={theme.colors.success} />
+                                        <Text style={styles.sectionTitle}>{t('tools.fullView.output')}</Text>
+                                    </View>
+                                    <CodeView
+                                        code={typeof toolForRendering.result === 'string' ? toolForRendering.result : JSON.stringify(toolForRendering.result, null, 2)}
+                                    />
+                                </View>
+                            )}
 
-                    {toolForRendering.state === 'running' && toolForRendering.result && (
-                        <View style={styles.section}>
-                            <View style={styles.sectionHeader}>
-                                <Ionicons name="log-out" size={20} color={theme.colors.success} />
-                                <Text style={styles.sectionTitle}>{t('tools.fullView.output')}</Text>
-                            </View>
-                            <StructuredResultView tool={toolForRendering} metadata={metadata || null} messages={messages} sessionId={sessionId} />
-                        </View>
-                    )}
+                            {toolForRendering.state === 'running' && toolForRendering.result && (
+                                <View style={styles.section}>
+                                    <View style={styles.sectionHeader}>
+                                        <Ionicons name="log-out" size={20} color={theme.colors.success} />
+                                        <Text style={styles.sectionTitle}>{t('tools.fullView.output')}</Text>
+                                    </View>
+                                    <StructuredResultView tool={toolForRendering} metadata={metadata || null} messages={messages} sessionId={sessionId} />
+                                </View>
+                            )}
 
-                    {/* Error Details */}
-                    {toolForRendering.state === 'error' && toolForRendering.result && (
-                        <View style={styles.section}>
-                            <View style={styles.sectionHeader}>
-                                <Ionicons name="close-circle" size={20} color={theme.colors.warningCritical} />
-                                <Text style={styles.sectionTitle}>{t('tools.fullView.error')}</Text>
-                            </View>
-                            <View style={styles.errorContainer}>
-                                <Text style={styles.errorText}>
-                                    {typeof toolForRendering.result === 'string'
-                                        ? toolForRendering.result
-                                        : JSON.stringify(toolForRendering.result, null, 2)}
-                                </Text>
-                            </View>
-                        </View>
-                    )}
+                            {/* Error Details */}
+                            {toolForRendering.state === 'error' && toolForRendering.result && (
+                                <View style={styles.section}>
+                                    <View style={styles.sectionHeader}>
+                                        <Ionicons name="close-circle" size={20} color={theme.colors.warningCritical} />
+                                        <Text style={styles.sectionTitle}>{t('tools.fullView.error')}</Text>
+                                    </View>
+                                    <View style={styles.errorContainer}>
+                                        <Text style={styles.errorText}>
+                                            {typeof toolForRendering.result === 'string'
+                                                ? toolForRendering.result
+                                                : JSON.stringify(toolForRendering.result, null, 2)}
+                                        </Text>
+                                    </View>
+                                </View>
+                            )}
 
-                    {/* No Output Message */}
-                    {toolForRendering.state === 'completed' && !toolForRendering.result && (
-                        <View style={styles.section}>
-                            <View style={styles.emptyOutputContainer}>
-                                <Ionicons name="checkmark-circle-outline" size={48} color={theme.colors.success} />
-                                <Text style={styles.emptyOutputText}>{t('tools.fullView.completed')}</Text>
-                                <Text style={styles.emptyOutputSubtext}>{t('tools.fullView.noOutput')}</Text>
-                            </View>
-                        </View>
-                    )}
-
-                </>
+                            {/* No Output Message */}
+                            {toolForRendering.state === 'completed' && !toolForRendering.result && (
+                                <View style={styles.section}>
+                                    <View style={styles.emptyOutputContainer}>
+                                        <Ionicons name="checkmark-circle-outline" size={48} color={theme.colors.success} />
+                                        <Text style={styles.emptyOutputText}>{t('tools.fullView.completed')}</Text>
+                                        <Text style={styles.emptyOutputSubtext}>{t('tools.fullView.noOutput')}</Text>
+                                    </View>
+                                </View>
+                            )}
+                        </>
+                    </TextSelectabilityScope>
                 )}
 
                 {/* Permission footer - allow approve/deny from the full view */}

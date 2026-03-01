@@ -10,6 +10,7 @@ import { ToolHeaderActionsContext } from '@/components/tools/shell/presentation/
 import { ToolError } from '@/components/tools/shell/presentation/ToolError';
 import { ToolSectionView } from '@/components/tools/shell/presentation/ToolSectionView';
 import { CodeView } from '@/components/ui/media/CodeView';
+import { TextSelectabilityScope } from '@/components/ui/text/Text';
 import { parseToolUseError } from '@/utils/errors/toolErrorParser';
 import { getAgentCore, resolveAgentIdFromFlavor } from '@/agents/catalog/catalog';
 import { t } from '@/text';
@@ -82,14 +83,18 @@ export const ToolInlineBody = React.memo(function ToolInlineBody(props: {
                     ? 'Denied by Read Only mode (write actions are denied).'
                     : t('errors.permissionDenied')
                 : 'Permission canceled';
-        return <ToolError message={message} />;
+        return (
+            <TextSelectabilityScope selectable>
+                <ToolError message={message} />
+            </TextSelectabilityScope>
+        );
     }
 
     // Try to use a specific tool view component first
     const SpecificToolView = getToolViewComponent(normalizedToolName);
     if (SpecificToolView) {
         return (
-            <>
+            <TextSelectabilityScope selectable>
                 <ToolHeaderActionsContext.Provider value={{ setHeaderActions: props.setHeaderActions }}>
                     <SpecificToolView
                         tool={tool}
@@ -109,7 +114,7 @@ export const ToolInlineBody = React.memo(function ToolInlineBody(props: {
                         }
                     />
                 )}
-            </>
+            </TextSelectabilityScope>
         );
     }
 
@@ -131,13 +136,15 @@ export const ToolInlineBody = React.memo(function ToolInlineBody(props: {
     // Show error state if present (not a tool-use error)
     if (tool.state === 'error' && tool.result && !isToolUseError) {
         return (
-            <ToolError
-                message={
-                    typeof tool.result === 'string'
-                        ? tool.result
-                        : JSON.stringify(tool.result, null, 2)
-                }
-            />
+            <TextSelectabilityScope selectable>
+                <ToolError
+                    message={
+                        typeof tool.result === 'string'
+                            ? tool.result
+                            : JSON.stringify(tool.result, null, 2)
+                    }
+                />
+            </TextSelectabilityScope>
         );
     }
 
@@ -145,16 +152,18 @@ export const ToolInlineBody = React.memo(function ToolInlineBody(props: {
     if (props.mode === 'timeline' && props.detailLevel === 'summary') {
         if (tool.input) {
             return (
-                <ToolSectionView title={t('toolView.input')}>
-                    <CodeView code={JSON.stringify(tool.input, null, 2)} />
-                </ToolSectionView>
+                <TextSelectabilityScope selectable>
+                    <ToolSectionView title={t('toolView.input')}>
+                        <CodeView code={JSON.stringify(tool.input, null, 2)} />
+                    </ToolSectionView>
+                </TextSelectabilityScope>
             );
         }
         return null;
     }
 
     return (
-        <>
+        <TextSelectabilityScope selectable>
             {tool.input ? (
                 <ToolSectionView title={t('toolView.input')}>
                     <CodeView code={JSON.stringify(tool.input, null, 2)} />
@@ -179,6 +188,6 @@ export const ToolInlineBody = React.memo(function ToolInlineBody(props: {
                     />
                 </ToolSectionView>
             ) : null}
-        </>
+        </TextSelectabilityScope>
     );
 });

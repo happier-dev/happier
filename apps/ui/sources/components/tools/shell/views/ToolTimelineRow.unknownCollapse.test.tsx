@@ -99,6 +99,7 @@ vi.mock('@/components/tools/normalization/policy/resolveToolViewDetailLevel', ()
 
 vi.mock('@/components/ui/text/Text', () => ({
     Text: (props: any) => React.createElement('Text', props, props.children),
+    TextSelectabilityScope: (props: any) => React.createElement('TextSelectabilityScope', props, props.children),
 }));
 
 vi.mock('@/components/tools/shell/views/ToolInlineBody', () => ({

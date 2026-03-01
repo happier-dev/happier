@@ -27,6 +27,7 @@ vi.mock('react-native-unistyles', () => ({
 
 vi.mock('@/components/ui/text/Text', () => ({
     Text: (props: any) => React.createElement('Text', props, props.children),
+    TextSelectabilityScope: (props: any) => React.createElement('TextSelectabilityScope', props, props.children),
 }));
 
 vi.mock('@/text', () => ({ t: (k: string) => k }));
