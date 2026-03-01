@@ -180,6 +180,31 @@ describe('ScmStatusSync polling', () => {
     expect(updateSnapshotMock).toHaveBeenCalledTimes(2);
   });
 
+  it('triggers a fetch when invalidated from auto-refresh before getSync is called', async () => {
+    getStateMock.mockReturnValue({
+      sessions: {
+        s1: { id: 's1', metadata: { machineId: 'machine-a', path: '/repo' } },
+      },
+      applyScmStatus: applyScmStatusMock,
+      updateSessionProjectScmSnapshot: updateSnapshotMock,
+      updateSessionProjectScmSnapshotError: updateSnapshotErrorMock,
+      getSessionProjectScmSnapshotError: getSnapshotErrorMock,
+      pruneSessionProjectScmTouchedPaths: pruneTouchedPathsMock,
+      pruneSessionProjectScmCommitSelectionPaths: pruneCommitSelectionPathsMock,
+      pruneSessionProjectScmCommitSelectionPatches: pruneCommitSelectionPatchesMock,
+    });
+
+    fetchSnapshotForSessionMock.mockResolvedValueOnce(buildRepoSnapshot({ fetchedAt: 100 }));
+
+    const { ScmStatusSync } = await import('./scmStatusSync');
+
+    const syncer = new ScmStatusSync();
+    syncer.invalidateFromAutoRefresh('s1');
+
+    await syncer.getSync('s1').awaitQueue({ timeoutMs: 1000 });
+    expect(fetchSnapshotForSessionMock).toHaveBeenCalledTimes(1);
+  });
+
   it('suspends auto-refresh after feature unsupported until a user refresh occurs', async () => {
     getStateMock.mockReturnValue({
       sessions: {
@@ -205,10 +230,10 @@ describe('ScmStatusSync polling', () => {
 
     // Auto refresh hits unsupported and suspends further auto refreshes.
     syncer.invalidateFromAutoRefresh('s1');
-    await syncer.getSync('s1').invalidateAndAwait();
+    await syncer.getSync('s1').awaitQueue({ timeoutMs: 1000 });
 
     syncer.invalidateFromAutoRefresh('s1');
-    await syncer.getSync('s1').awaitQueue();
+    await syncer.getSync('s1').awaitQueue({ timeoutMs: 50 });
     expect(fetchSnapshotForSessionMock).toHaveBeenCalledTimes(1);
 
     // User refresh clears the suspension and retries.
@@ -221,5 +246,42 @@ describe('ScmStatusSync polling', () => {
       message: 'RPC method not available',
       errorCode: SCM_OPERATION_ERROR_CODES.FEATURE_UNSUPPORTED,
     });
+  });
+
+  it('does not bypass auto-refresh suspension when invalidated from mutations', async () => {
+    getStateMock.mockReturnValue({
+      sessions: {
+        s1: { id: 's1', metadata: { machineId: 'machine-a', path: '/repo' } },
+      },
+      applyScmStatus: applyScmStatusMock,
+      updateSessionProjectScmSnapshot: updateSnapshotMock,
+      updateSessionProjectScmSnapshotError: updateSnapshotErrorMock,
+      getSessionProjectScmSnapshotError: getSnapshotErrorMock,
+      pruneSessionProjectScmTouchedPaths: pruneTouchedPathsMock,
+      pruneSessionProjectScmCommitSelectionPaths: pruneCommitSelectionPathsMock,
+      pruneSessionProjectScmCommitSelectionPatches: pruneCommitSelectionPatchesMock,
+    });
+
+    const err = Object.assign(new Error('RPC method not available'), {
+      scmErrorCode: SCM_OPERATION_ERROR_CODES.FEATURE_UNSUPPORTED,
+    });
+    fetchSnapshotForSessionMock.mockRejectedValueOnce(err).mockResolvedValueOnce(buildRepoSnapshot({ fetchedAt: 123 }));
+
+    const { ScmStatusSync } = await import('./scmStatusSync');
+
+    const syncer = new ScmStatusSync();
+
+    // Auto refresh hits unsupported and suspends further automatic refresh attempts.
+    syncer.invalidateFromAutoRefresh('s1');
+    await syncer.getSync('s1').awaitQueue({ timeoutMs: 1000 });
+
+    // Mutation invalidation should not bypass the suspension.
+    syncer.invalidateFromMutation('s1');
+    await syncer.getSync('s1').awaitQueue({ timeoutMs: 50 });
+    expect(fetchSnapshotForSessionMock).toHaveBeenCalledTimes(1);
+
+    // User refresh clears the suspension and retries.
+    await syncer.invalidateFromUserAndAwait('s1');
+    expect(fetchSnapshotForSessionMock).toHaveBeenCalledTimes(2);
   });
 });

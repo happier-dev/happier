@@ -144,14 +144,21 @@ export class ScmStatusSync {
     }
 
     invalidateFromMutation(sessionId: string): void {
+        const projectKey = this.getProjectKeyForSession(sessionId);
+        if (!projectKey) return;
+        if (this.projectAutoRefreshSuspended.has(projectKey)) {
+            return;
+        }
         this.invalidateWithSource(sessionId, 'mutation');
     }
 
     async invalidateFromMutationAndAwait(sessionId: string): Promise<void> {
         const projectKey = this.getProjectKeyForSession(sessionId);
         if (!projectKey) return;
+        if (this.projectAutoRefreshSuspended.has(projectKey)) {
+            return;
+        }
 
-        this.projectAutoRefreshSuspended.delete(projectKey);
         this.projectLastInvalidatedBySession.set(projectKey, sessionId);
         this.projectLastInvalidationSource.set(projectKey, 'mutation');
         const now = Date.now();
@@ -204,12 +211,6 @@ export class ScmStatusSync {
 	        this.projectLastInvalidationSource.delete(projectKey);
 	        this.projectLastInvalidatedBySessionAt.delete(projectKey);
 	    }
-
-    private invalidateProject(projectKey: string): void {
-        const sync = this.projectSyncMap.get(projectKey);
-        if (!sync) return;
-        sync.invalidate();
-    }
 
     private getAnySessionForProject(projectKey: string): string | null {
         for (const [sessionId, key] of this.sessionToProjectKey.entries()) {
@@ -373,7 +374,7 @@ export class ScmStatusSync {
         this.projectLastInvalidationSource.set(projectKey, source);
         const now = Date.now();
         this.projectLastInvalidatedBySessionAt.set(projectKey, now);
-        this.invalidateProject(projectKey);
+        this.getSync(sessionId).invalidate();
     }
 }
 
