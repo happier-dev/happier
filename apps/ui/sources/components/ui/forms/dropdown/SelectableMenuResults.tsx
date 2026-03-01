@@ -77,10 +77,12 @@ export function SelectableMenuResults(props: {
                     const itemIndex = categoryStartIndex + idx;
                     const isSelected = itemIndex === props.selectedIndex;
                     currentIndex++;
+                    const testIdSafeItemId = String(item.id).replace(/[^a-zA-Z0-9_-]/g, '_');
                     return (
                         <View
                             key={item.id}
                             ref={(ref) => { itemRefs.current[itemIndex] = ref; }}
+                            testID={`dropdown-option-${testIdSafeItemId}`}
                         >
                             {rowKind === 'item' ? (
                                 <Item
