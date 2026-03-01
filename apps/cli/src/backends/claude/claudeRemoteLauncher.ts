@@ -17,6 +17,7 @@ import { getToolName } from "./utils/getToolName";
 import { syncClaudePermissionModeFromMetadata } from "./utils/syncPermissionModeFromMetadata";
 import { formatErrorForUi } from '@/ui/formatErrorForUi';
 import { waitForMessagesOrPending } from '@/agent/runtime/waitForMessagesOrPending';
+import { resolveClaudeRemoteQueuedPromptWithReplaySeed } from '@/backends/claude/remote/resolveClaudeRemoteQueuedPromptWithReplaySeed';
 import { cleanupStdinAfterInk } from '@/ui/ink/cleanupStdinAfterInk';
 import { restoreStdinBestEffort } from '@/ui/ink/restoreStdinBestEffort';
 import { resolveSwitchRequestTarget } from '@/agent/localControl/switchRequestTarget';
@@ -24,6 +25,7 @@ import { ensureSessionInfoBeforeSwitch } from '@/backends/claude/utils/ensureSes
 import { ClaudeRemoteTaskOutputCollector } from './remote/sidechains/claudeRemoteTaskOutputCollector';
 import { ClaudeRemoteSubagentFileCollector } from './remote/sidechains/claudeRemoteSubagentFileCollector';
 import { resolveClaudeSubagentJsonlPathForRemoteSession } from './remote/sidechains/resolveClaudeSubagentJsonlPathForRemoteSession';
+import { createClaudeRemoteTeamInboxBridge } from './remote/teamInbox/claudeRemoteTeamInboxBridge';
 import { resolveHasTTY } from '@/ui/tty/resolveHasTTY';
 import { createNonBlockingStdout } from '@/ui/ink/nonBlockingStdout';
 import { updateMetadataBestEffort } from '@/api/session/sessionWritesBestEffort';
@@ -33,6 +35,8 @@ import { dirname, join } from 'node:path';
 import { getProjectPath } from './utils/path';
 import { resolveClaudeConfigDirOverride } from './utils/resolveClaudeConfigDirOverride';
 import { tryReadTextFileTail } from '@/agent/runtime/readTextFileTail';
+import { readClaudeSessionJsonlMessages } from './utils/readClaudeSessionJsonlMessages';
+import { normalizeClaudeToolUseNamesInRawJsonLines } from './utils/normalizeClaudeToolUseNames';
 
 interface PermissionsField {
     date: number;
@@ -115,7 +119,7 @@ async function formatClaudeCodeArtifactsTailForUi(artifacts: ClaudeCodeArtifacts
         if (!path) return;
         const tail = await tryReadTextFileTail(path, { maxBytes: 32_000 });
         if (!tail) return;
-        const header = '--- ' + label + ' tail (' + path + ') ---';
+        const header = `--- ${label} tail (${path}) ---`;
         const body = tail.tail.trimEnd();
         sections.push([header, body.length > 0 ? body : '[empty]', ''].join('\n'));
     };
@@ -125,6 +129,7 @@ async function formatClaudeCodeArtifactsTailForUi(artifacts: ClaudeCodeArtifacts
 
     return sections.join('\n');
 }
+
 function resolveClaudeProjectDir(session: Session): string {
     if (session.transcriptPath) {
         return dirname(session.transcriptPath);
@@ -293,6 +298,53 @@ export async function claudeRemoteLauncher(session: Session): Promise<'switch' |
         version: process.env.npm_package_version
     }, permissionHandler.getResponses());
 
+    const teamInboxBridge = createClaudeRemoteTeamInboxBridge({
+        claudeConfigDir: resolveClaudeConfigDirOverride(process.env),
+        enqueue: (message) => {
+            messageQueue.enqueue(message, { meta: { importedFrom: 'claude-team-inbox' } });
+        },
+    });
+    const teamInboxIntervalId = setInterval(() => {
+        void teamInboxBridge.syncAll();
+    }, 3000);
+
+    const seededTeamInboxSessionIds = new Set<string>();
+    const seedTeamInboxFromTranscriptPath = async (sessionId: string | null, transcriptPath: string | null): Promise<void> => {
+        const sid = typeof sessionId === 'string' ? sessionId.trim() : '';
+        if (!sid) return;
+        if (seededTeamInboxSessionIds.has(sid)) return;
+
+        const resolvedTranscriptPath = (() => {
+            const direct = typeof transcriptPath === 'string' ? transcriptPath.trim() : '';
+            if (direct.length > 0) return direct;
+            // Best-effort fallback: try the heuristic project dir path (matches session scanner behavior).
+            try {
+                const projectDir = resolveClaudeProjectDir(session);
+                return join(projectDir, `${sid}.jsonl`);
+            } catch {
+                return '';
+            }
+        })();
+        if (!resolvedTranscriptPath) return;
+
+        seededTeamInboxSessionIds.add(sid);
+        try {
+            const messages = await readClaudeSessionJsonlMessages({
+                sessionFilePath: resolvedTranscriptPath,
+                logLabel: 'CLAUDE_TEAM_INBOX_SEED',
+            });
+            for (const m of messages) {
+                try {
+                    teamInboxBridge.observe(normalizeClaudeToolUseNamesInRawJsonLines(m));
+                } catch {
+                    // ignore malformed history lines
+                }
+            }
+            await teamInboxBridge.syncAll();
+        } catch (error) {
+            logger.debug('[remote]: failed seeding team inbox from transcript path (non-fatal)', { error });
+        }
+    };
 
     let lastAssistantUuidSeen: string | null = null;
 
@@ -303,6 +355,8 @@ export async function claudeRemoteLauncher(session: Session): Promise<'switch' |
             const parentToolUseId =
                 typeof (message as any).parent_tool_use_id === 'string' ? (message as any).parent_tool_use_id.trim() : '';
             const maybeUuid = typeof (message as any).uuid === 'string' ? (message as any).uuid.trim() : '';
+            // Only persist mainline assistant UUIDs. Sidechain/sub-agent assistant messages can also have UUIDs,
+            // but resuming at those anchors can produce surprising results.
             if (!parentToolUseId && maybeUuid.length > 0 && maybeUuid !== lastAssistantUuidSeen) {
                 lastAssistantUuidSeen = maybeUuid;
                 updateMetadataBestEffort(
@@ -316,6 +370,7 @@ export async function claudeRemoteLauncher(session: Session): Promise<'switch' |
                 );
             }
         }
+
         // Write to message log
         formatClaudeMessageForInk(message, messageBuffer);
 
@@ -342,6 +397,12 @@ export async function claudeRemoteLauncher(session: Session): Promise<'switch' |
 
         const logMessage = sdkToLogConverter.convert(msg);
         if (logMessage) {
+            try {
+                teamInboxBridge.observe(logMessage);
+            } catch {
+                // ignore
+            }
+
             const taskOutputToolUseIds = new Set<string>();
             for (const info of taskOutputIngest.taskOutputToolResults) {
                 taskOutputToolUseIds.add(info.toolUseId);
@@ -485,6 +546,7 @@ export async function claudeRemoteLauncher(session: Session): Promise<'switch' |
             abortFuture = new Future<void>();
             let modeHash: string | null = null;
             let mode: EnhancedMode | null = null;
+            let didReplaySeedBootstrap = false;
             try {
                 const readyHandler = createClaudeRemoteReadyHandler({
                     session: session.client,
@@ -496,66 +558,76 @@ export async function claudeRemoteLauncher(session: Session): Promise<'switch' |
                     shouldSendPush: () => shouldSendReadyPushNotification(session.accountSettings ?? null),
                 });
 
-                const { mcpServers: baseMcpServers, mcpConfigJson: baseMcpConfigJson } = await session.getOrCreateHappierMcpBridge();
+                    const { mcpServers: baseMcpServers, mcpConfigJson: baseMcpConfigJson } = await session.getOrCreateHappierMcpBridge();
+                    const resumeSessionAt = (() => {
+                        const snapshot = session.client.getMetadataSnapshot?.() as any;
+                        const value = typeof snapshot?.claudeLastAssistantUuid === 'string' ? snapshot.claudeLastAssistantUuid.trim() : '';
+                        return value.length > 0 ? value : null;
+                    })();
 
-                const resumeSessionAt = (() => {
-                    const snapshot = session.client.getMetadataSnapshot?.() as any;
-                    const value = typeof snapshot?.claudeLastAssistantUuid === 'string' ? snapshot.claudeLastAssistantUuid.trim() : '';
-                    return value.length > 0 ? value : null;
-                })();
+                    // If this is a restarted daemon process resuming an existing agent-team session,
+                    // we may not replay transcript history through `onMessage`. Seed team inbox mapping
+                    // from the transcript file so unread teammate messages still import correctly.
+                    await seedTeamInboxFromTranscriptPath(session.sessionId, session.transcriptPath ?? null);
 
-                const remoteResult = await claudeRemoteDispatch({
-                    sessionId: session.sessionId,
-                    transcriptPath: session.transcriptPath,
-                    path: session.path,
-                    hookSettingsPath: session.hookSettingsPath,
-                    jsRuntime: session.jsRuntime,
-                    resumeSessionAt,
-                    happierMcpServers: baseMcpServers,
-                    happierMcpConfigJson: baseMcpConfigJson,
+                    const remoteResult = await claudeRemoteDispatch({
+                        sessionId: session.sessionId,
+                        transcriptPath: session.transcriptPath,
+                        path: session.path,
+                        hookSettingsPath: session.hookSettingsPath,
+                        jsRuntime: session.jsRuntime,
+                        resumeSessionAt,
+                        happierMcpServers: baseMcpServers,
+                        happierMcpConfigJson: baseMcpConfigJson,
                     canCallTool: permissionHandler.handleToolCall,
                     isAborted: (toolCallId: string) => {
                         return permissionHandler.isAborted(toolCallId);
                     },
-	                    nextMessage: async () => {
-	                        if (pending) {
-	                            let p = pending;
-	                            pending = null;
-	                            permissionHandler.handleModeChange(p.mode.permissionMode);
-	                            return p;
-	                        }
+                        nextMessage: async () => {
+                            if (pending) {
+                                let p = pending;
+                                pending = null;
+                                permissionHandler.handleModeChange(p.mode.permissionMode);
+                                return p;
+                            }
 
-		                        const msg = await waitForMessagesOrPending({
-		                            messageQueue: session.queue,
-		                            abortSignal: controller.signal,
-		                            popPendingMessage: async () => {
-		                                // Only materialize pending items when there are no committed transcript messages
-		                                // queued locally; committed messages must be processed first.
-		                                if (session.queue.size() > 0) return false;
-		                                return await session.client.popPendingMessage();
-		                            },
-		                            waitForMetadataUpdate: (signal) => session.client.waitForMetadataUpdate(signal),
-		                            onMetadataUpdate: () => {
-		                                const updated = syncClaudePermissionModeFromMetadata({ session, permissionHandler });
-		                                if (updated) {
-		                                    logger.debug(`[remote]: Permission mode updated from metadata to: ${updated}`);
-		                                }
-		                            },
-		                        });
+                                const msg = await waitForMessagesOrPending({
+                                    messageQueue: session.queue,
+                                    abortSignal: controller.signal,
+                                    popPendingMessage: async () => {
+                                        // Only materialize pending items when there are no committed transcript messages
+                                        // queued locally; committed messages must be processed first.
+                                        if (session.queue.size() > 0) return false;
+                                        return await session.client.popPendingMessage();
+                                    },
+                                    waitForMetadataUpdate: (signal) => session.client.waitForMetadataUpdate(signal),
+                                    onMetadataUpdate: () => {
+                                        const updated = syncClaudePermissionModeFromMetadata({ session, permissionHandler });
+                                        if (updated) {
+                                            logger.debug(`[remote]: Permission mode updated from metadata to: ${updated}`);
+                                        }
+                                    },
+                                });
 
-	                        // Check if mode has changed
-	                        if (msg) {
-	                            if ((modeHash && msg.hash !== modeHash) || msg.isolate) {
-	                                logger.debug('[remote]: mode has changed, pending message');
+                            // Check if mode has changed
+                            if (msg) {
+                                if ((modeHash && msg.hash !== modeHash) || msg.isolate) {
+                                    logger.debug('[remote]: mode has changed, pending message');
                                 pending = msg;
                                 return null;
                             }
                             modeHash = msg.hash;
                             mode = msg.mode;
                             permissionHandler.handleModeChange(mode.permissionMode);
+                            const replaySeedResolution = await resolveClaudeRemoteQueuedPromptWithReplaySeed({
+                                sessionClient: session.client,
+                                batch: { message: msg.message, mode: msg.mode },
+                                didBootstrap: didReplaySeedBootstrap,
+                            });
+                            didReplaySeedBootstrap = replaySeedResolution.didBootstrap;
                             return {
-                                message: msg.message,
-                                mode: msg.mode
+                                message: replaySeedResolution.message,
+                                mode: msg.mode,
                             }
                         }
 
@@ -566,6 +638,8 @@ export async function claudeRemoteLauncher(session: Session): Promise<'switch' |
                         // Update converter's session ID when new session is found
                         sdkToLogConverter.updateSessionId(sessionId);
                         session.onSessionFound(sessionId, data as any);
+                        const transcriptPath = typeof (data as any)?.transcript_path === 'string' ? String((data as any).transcript_path) : null;
+                        void seedTeamInboxFromTranscriptPath(sessionId, transcriptPath);
                     },
                     onCheckpointCaptured: (checkpointId: string) => {
                         updateMetadataBestEffort(
@@ -590,12 +664,11 @@ export async function claudeRemoteLauncher(session: Session): Promise<'switch' |
                             '[remote]',
                             'capabilities_update',
                         );
-                    },
-                    onThinkingChange: session.onThinkingChange,
-                    claudeEnvVars: session.claudeEnvVars,
-                    claudeArgs: session.claudeArgs,
-                    onMessage,
-                    onCompletionEvent: (message: string) => {
+                        },
+                        onThinkingChange: session.onThinkingChange,
+                            claudeArgs: session.claudeArgs,
+                            onMessage,
+                        onCompletionEvent: (message: string) => {
                         logger.debug(`[remote]: Completion event: ${message}`);
                         session.client.sendSessionEvent({ type: 'message', message });
                     },
@@ -624,26 +697,28 @@ export async function claudeRemoteLauncher(session: Session): Promise<'switch' |
                     abortError,
                 });
 
-                if (!exitReason) {
-                    if (abortError) {
-                        if (controller.signal.aborted) {
-                            session.client.sendSessionEvent({ type: 'message', message: 'Aborted by user' });
-                        }
-                        continue;
+                if (exitReason) {
+                    // Exit already requested (switch/exit).
+                } else if (abortError) {
+                    if (controller.signal.aborted) {
+                        session.client.sendSessionEvent({ type: 'message', message: 'Aborted by user' });
                     }
-
+                    continue;
+                } else {
                     const exitCode = resolveClaudeCodeExitCode(e);
                     if (exitCode === 1) {
                         const artifacts = resolveClaudeCodeArtifacts(e);
-                        const base = formatErrorForUi(e);
-                        const tails = artifacts ? await formatClaudeCodeArtifactsTailForUi(artifacts) : '';
-                        const message = tails.length > 0 ? base + '\n' + tails : base;
+                        const tailText = artifacts ? await formatClaudeCodeArtifactsTailForUi(artifacts) : '';
+                        const base = formatErrorForUi(e, { maxChars: 12_000 });
+                        const message = tailText
+                            ? `${base}\n\n${tailText}`
+                            : base;
                         session.client.sendSessionEvent({ type: 'message', message });
                         exitReason = 'exit';
+                    } else {
+                        session.client.sendSessionEvent({ type: 'message', message: `Claude process error: ${formatErrorForUi(e)}` });
                         continue;
                     }
-                    session.client.sendSessionEvent({ type: 'message', message: `Claude process error: ${formatErrorForUi(e)}` });
-                    continue;
                 }
             } finally {
 
@@ -674,6 +749,8 @@ export async function claudeRemoteLauncher(session: Session): Promise<'switch' |
         // Clean up permission handler
         permissionHandler.reset();
         subagentFileCollector.cleanup();
+        clearInterval(teamInboxIntervalId);
+        teamInboxBridge.cleanup();
 
         if (inkInstance) {
             inkInstance.unmount();

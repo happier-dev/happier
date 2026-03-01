@@ -43,6 +43,7 @@ export class ClaudeRemoteSubagentFileCollector {
 
   private lastClaudeSessionId: string | null = null;
   private toolNameByToolUseId = new Map<string, string>();
+  private agentIdByToolUseId = new Map<string, string>();
   private pendingRegistrations = new Set<Promise<void>>();
   private readonly pendingBySidechainId = new Map<string, { sidechainId: string; agentId: string }>();
   private readonly entriesBySidechainId = new Map<string, Entry>();
@@ -79,6 +80,7 @@ export class ClaudeRemoteSubagentFileCollector {
     this.entriesBySidechainId.clear();
     this.sidechainIdByJsonlPath.clear();
     this.toolNameByToolUseId.clear();
+    this.agentIdByToolUseId.clear();
     this.seenUuidsBySidechainId.clear();
   }
 
@@ -108,6 +110,12 @@ export class ClaudeRemoteSubagentFileCollector {
       const toolName = String((item as any).name ?? '').trim();
       if (!toolUseId || !toolName) continue;
       this.toolNameByToolUseId.set(toolUseId, toolName);
+      if (toolName === 'Agent') {
+        const agentIdFromInput = this.extractAgentIdFromAgentToolUseInput((item as any).input);
+        if (agentIdFromInput) {
+          this.agentIdByToolUseId.set(toolUseId, agentIdFromInput);
+        }
+      }
     }
   }
 
@@ -141,7 +149,8 @@ export class ClaudeRemoteSubagentFileCollector {
             : typeof toolUseResult?.teammate_id === 'string'
               ? String(toolUseResult.teammate_id).trim()
               : '';
-      const agentId = agentIdFromToolUseResult || (ids.agentId ? String(ids.agentId).trim() : '');
+      const agentIdFromToolUseInput = this.agentIdByToolUseId.get(toolUseId) ?? '';
+      const agentId = agentIdFromToolUseResult || (ids.agentId ? String(ids.agentId).trim() : '') || agentIdFromToolUseInput;
       if (!agentId) continue;
 
       const outputFilePath =
@@ -173,6 +182,40 @@ export class ClaudeRemoteSubagentFileCollector {
       this.pendingRegistrations.add(registration);
       void registration.finally(() => this.pendingRegistrations.delete(registration));
     }
+  }
+
+  private extractAgentIdFromAgentToolUseInput(input: unknown): string | null {
+    if (!input || typeof input !== 'object' || Array.isArray(input)) return null;
+    const record = input as Record<string, unknown>;
+    const directAgentId =
+      typeof record.agent_id === 'string'
+        ? String(record.agent_id).trim()
+        : typeof record.agentId === 'string'
+          ? String(record.agentId).trim()
+          : typeof record.teammate_id === 'string'
+            ? String(record.teammate_id).trim()
+            : typeof record.teammateId === 'string'
+              ? String(record.teammateId).trim()
+              : '';
+    if (directAgentId.length > 0) return directAgentId;
+
+    const name = typeof record.name === 'string' ? String(record.name).trim() : '';
+    if (!name) return null;
+
+    const teamName =
+      typeof record.team_name === 'string'
+        ? String(record.team_name).trim()
+        : typeof record.teamName === 'string'
+          ? String(record.teamName).trim()
+          : typeof record.team_id === 'string'
+            ? String(record.team_id).trim()
+            : typeof record.teamId === 'string'
+              ? String(record.teamId).trim()
+              : typeof record.team === 'string'
+                ? String(record.team).trim()
+                : '';
+    if (!teamName) return name.includes('@') ? name : null;
+    return name.includes('@') ? name : `${name}@${teamName}`;
   }
 
   private async registerTaskOutputFile(params: {

@@ -6,6 +6,7 @@ import type { SessionClientPort } from '@/api/session/sessionClientPort';
 import { MessageQueue2 } from '@/agent/runtime/modeMessageQueue';
 import { Session } from './session';
 import type { EnhancedMode } from './loop';
+import { readFile } from 'node:fs/promises';
 
 vi.mock('@/agent/runtime/createHappierMcpBridge', () => ({
   createHappierMcpBridge: vi.fn(async () => ({
@@ -176,6 +177,172 @@ describe.sequential('claudeRemoteLauncher', () => {
       session.cleanup();
     }
   });
+
+  it('flushes agent-team inbox messages on shutdown', async () => {
+    const prevClaudeConfigDir = process.env.CLAUDE_CONFIG_DIR;
+    const tmpRoot = await mkdtemp(join(tmpdir(), 'happier-claude-team-inbox-'));
+    const claudeConfigDir = join(tmpRoot, 'claude-config');
+    const teamName = 'happier-ui-test';
+    const inboxDir = join(claudeConfigDir, 'teams', teamName, 'inboxes');
+    const leadInboxPath = join(inboxDir, 'team-lead.json');
+
+    try {
+      process.env.CLAUDE_CONFIG_DIR = claudeConfigDir;
+      await mkdir(inboxDir, { recursive: true });
+      await writeFile(
+        leadInboxPath,
+        JSON.stringify(
+          [
+            {
+              from: 'Alpha',
+              text: 'hello from alpha',
+              timestamp: 't1',
+              read: false,
+            },
+          ],
+          null,
+          2,
+        ),
+        'utf-8',
+      );
+
+      const { session, switchHandlerReady } = createRemoteHarness({ sessionId: 'sess_0' });
+      const dispatchStarted = createDeferred<void>();
+
+      const toolUseIdAlpha = 'toolu_alpha_1';
+
+      mockConvert
+        .mockReturnValueOnce({
+          type: 'assistant',
+          uuid: 'u_team_create',
+          message: {
+            role: 'assistant',
+            model: 'test',
+            content: [{ type: 'tool_use', id: 'toolu_team_create_1', name: 'AgentTeamCreate', input: { team_name: teamName } }],
+          },
+        })
+        .mockReturnValueOnce({
+          type: 'assistant',
+          uuid: 'u_spawn_alpha',
+          message: {
+            role: 'assistant',
+            model: 'test',
+            content: [{ type: 'tool_use', id: toolUseIdAlpha, name: 'Agent', input: { team_name: teamName, name: 'Alpha' } }],
+          },
+        })
+        .mockReturnValue(null);
+
+      mockClaudeRemoteDispatch.mockImplementationOnce(async (opts: unknown) => {
+        const dispatchOpts = opts as any;
+        dispatchStarted.resolve(undefined);
+        // Minimal SDK messages; converter is mocked so shape doesn't matter beyond type checks.
+        dispatchOpts.onMessage?.({ type: 'assistant', uuid: 'sdk_u1', message: { role: 'assistant', content: [] } });
+        dispatchOpts.onMessage?.({ type: 'assistant', uuid: 'sdk_u2', message: { role: 'assistant', content: [] } });
+        await waitForAbort(dispatchOpts.signal);
+      });
+
+      const { claudeRemoteLauncher } = await import('./claudeRemoteLauncher');
+      const launcherPromise = claudeRemoteLauncher(session);
+
+      const switchHandler = await switchHandlerReady;
+      await dispatchStarted.promise;
+
+      expect(await switchHandler({ to: 'local' })).toBe(true);
+      await expect(launcherPromise).resolves.toBe('switch');
+
+      const afterRaw = await readFile(leadInboxPath, 'utf-8');
+      const after = JSON.parse(afterRaw);
+      expect(Array.isArray(after)).toBe(true);
+      expect(after[0]?.read).toBe(true);
+    } finally {
+      if (prevClaudeConfigDir === undefined) delete process.env.CLAUDE_CONFIG_DIR;
+      else process.env.CLAUDE_CONFIG_DIR = prevClaudeConfigDir;
+      await rm(tmpRoot, { recursive: true, force: true });
+    }
+  }, 30_000);
+
+  it('backfills agent-team inbox mapping from transcriptPath on startup', async () => {
+    const prevClaudeConfigDir = process.env.CLAUDE_CONFIG_DIR;
+    const tmpRoot = await mkdtemp(join(tmpdir(), 'happier-claude-team-inbox-seed-'));
+    const claudeConfigDir = join(tmpRoot, 'claude-config');
+    const teamName = 'happier-ui-test';
+    const inboxDir = join(claudeConfigDir, 'teams', teamName, 'inboxes');
+    const leadInboxPath = join(inboxDir, 'team-lead.json');
+    const transcriptPath = join(tmpRoot, 'sess_0.jsonl');
+
+    try {
+      process.env.CLAUDE_CONFIG_DIR = claudeConfigDir;
+      await mkdir(inboxDir, { recursive: true });
+      await writeFile(
+        leadInboxPath,
+        JSON.stringify(
+          [
+            {
+              from: 'Alpha',
+              text: 'hello from alpha (seed)',
+              timestamp: 't1',
+              read: false,
+            },
+          ],
+          null,
+          2,
+        ),
+        'utf-8',
+      );
+
+      // Minimal transcript history that establishes the team name + maps Alpha -> tool_use id.
+      const transcriptLines = [
+        JSON.stringify({
+          type: 'assistant',
+          uuid: 'u_team_create',
+          message: {
+            role: 'assistant',
+            model: 'test',
+            content: [{ type: 'tool_use', id: 'toolu_team_create_1', name: 'AgentTeamCreate', input: { team_name: teamName } }],
+          },
+        }),
+        JSON.stringify({
+          type: 'assistant',
+          uuid: 'u_spawn_alpha',
+          message: {
+            role: 'assistant',
+            model: 'test',
+            content: [{ type: 'tool_use', id: 'toolu_alpha_1', name: 'Agent', input: { team_name: teamName, name: 'Alpha' } }],
+          },
+        }),
+        '',
+      ].join('\n');
+      await writeFile(transcriptPath, transcriptLines, 'utf-8');
+
+      const { session, switchHandlerReady } = createRemoteHarness({ sessionId: 'sess_0' });
+      session.transcriptPath = transcriptPath;
+
+      const dispatchStarted = createDeferred<void>();
+      mockClaudeRemoteDispatch.mockImplementationOnce(async (opts: unknown) => {
+        const dispatchOpts = opts as RemoteDispatchMockOptions;
+        dispatchStarted.resolve(undefined);
+        await waitForAbort(dispatchOpts.signal);
+      });
+
+      const { claudeRemoteLauncher } = await import('./claudeRemoteLauncher');
+      const launcherPromise = claudeRemoteLauncher(session);
+
+      const switchHandler = await switchHandlerReady;
+      await dispatchStarted.promise;
+
+      expect(await switchHandler({ to: 'local' })).toBe(true);
+      await expect(launcherPromise).resolves.toBe('switch');
+
+      const afterRaw = await readFile(leadInboxPath, 'utf-8');
+      const after = JSON.parse(afterRaw);
+      expect(Array.isArray(after)).toBe(true);
+      expect(after[0]?.read).toBe(true);
+    } finally {
+      if (prevClaudeConfigDir === undefined) delete process.env.CLAUDE_CONFIG_DIR;
+      else process.env.CLAUDE_CONFIG_DIR = prevClaudeConfigDir;
+      await rm(tmpRoot, { recursive: true, force: true });
+    }
+  }, 30_000);
 
   it('does not double-reset parent chain when sessionId changes during a remote run', async () => {
     const { session, switchHandlerReady } = createRemoteHarness({ sessionId: 'sess_0' });

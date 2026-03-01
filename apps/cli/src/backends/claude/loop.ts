@@ -34,6 +34,7 @@ export interface EnhancedMode {
 
     // Claude remote-mode (provider-scoped) settings forwarded via message meta.
     claudeRemoteAgentSdkEnabled?: boolean;
+    claudeRemoteSettingSourcesV2?: ReadonlyArray<'user' | 'project' | 'local'>;
     claudeRemoteSettingSources?: 'project' | 'user_project' | 'none';
     claudeRemoteIncludePartialMessages?: boolean;
     claudeCodeExperimentalAgentTeamsEnabled?: boolean;
