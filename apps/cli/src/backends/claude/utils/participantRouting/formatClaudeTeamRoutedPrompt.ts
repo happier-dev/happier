@@ -44,13 +44,16 @@ export function formatClaudeTeamRoutedPrompt(params: Readonly<{
 
     if (r.kind === 'agent_team_broadcast') {
         const teamId = clampUtf16(coerceNonEmpty(r.teamId), maxIdChars);
+        const teamConfigPath = `~/.claude/teams/${teamId}/config.json`;
         return [
             'You are the lead agent coordinating an Agent Team.',
             '',
-            'Task: Broadcast the user message to the entire team using the Agent Teams messaging tool.',
+            'Task: Deliver the user message to the entire team.',
             'Rules:',
             '- Do not answer the user directly.',
             '- Send the message exactly as provided under "User message".',
+            '- Prefer AgentTeamSendMessage in broadcast mode first.',
+            `- If broadcast is unavailable, read ${teamConfigPath} and send the message directly to each active teammate using AgentTeamSendMessage.`,
             '',
             `Team: ${teamId}`,
             '',

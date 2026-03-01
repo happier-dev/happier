@@ -32,5 +32,7 @@ describe('formatClaudeTeamRoutedPrompt', () => {
         });
         expect(out).toContain('team_1');
         expect(out).toContain('ping all');
+        expect(out).toContain('If broadcast is unavailable');
+        expect(out).toContain('~/.claude/teams/team_1/config.json');
     });
 });
