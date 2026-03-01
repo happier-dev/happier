@@ -93,6 +93,8 @@ describe('ChatFooter (local control)', () => {
         const textNodes = tree.root.findAllByType('Text');
         expect(textNodes.some((node) => node.props.children === 'chatFooter.permissionsTerminalOnly')).toBe(false);
         expect(textNodes.some((node) => node.props.children === 'chatFooter.sessionRunningLocally')).toBe(true);
+        const localNotice = textNodes.find((node) => node.props.children === 'chatFooter.sessionRunningLocally');
+        expect(localNotice?.props?.selectable).toBe(true);
 
         const pressables = tree.root.findAllByType('Pressable');
         expect(pressables.some((node) => node.props.accessibilityLabel === 'chatFooter.switchToRemote')).toBe(true);
