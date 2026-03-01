@@ -74,6 +74,27 @@ yarn service:install
 yarn service:enable
 ```
 
+### First-time auth (recommended)
+
+If this is your first time running a stack on this machine, the service will keep the server/UI running, but the daemon may stay stopped until you authenticate.
+
+Headless-friendly (prints a QR code / deep link, does not auto-open a browser):
+
+```bash
+yarn service:enable -- --auth-now -- --method=mobile --no-open
+```
+
+Laptop-friendly (uses the hosted web app for the approval UI):
+
+```bash
+yarn service:enable -- --auth-now -- --method=web --webapp=hosted
+```
+
+Notes:
+
+- If you already enabled the service, you can authenticate later with `yarn auth login ...` — the service will detect credentials and start the daemon automatically.
+- If your stack’s public URL is `localhost` / `127.0.0.1` (or empty) and you did not enable Tailscale Serve, `--method=mobile` won’t work from a phone until you configure a public URL (see the Tailscale section below).
+
 Other service commands:
 
 ```bash

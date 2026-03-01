@@ -169,8 +169,9 @@ If you installed **Dev box (server-light + daemon)**, the daemon is configured t
 
 After login completes:
 
-- If autostart is enabled: `/home/happier/.happier-stack/bin/hstack service restart --mode=system`
-- Otherwise: `/home/happier/.happier-stack/bin/hstack start --restart`
+- If autostart is enabled, the service will start the daemon automatically after credentials exist.
+- Otherwise (manual start), restart so the daemon can start with the new credentials:
+  - `/home/happier/.happier-stack/bin/hstack start --restart`
 
 ## Using Happier from another machine (common setup)
 
@@ -281,9 +282,8 @@ If you chose **Dev box (server-light + daemon)**, the server/UI can run before t
 
 After login succeeds:
 
-- If autostart is enabled, restart the service so it starts the daemon too:
-  - `/home/happier/.happier-stack/bin/hstack service restart --mode=system`
-- Or start the stack manually:
+- If autostart is enabled, the service will detect the new credentials and start the daemon automatically (usually within a few seconds).
+- If you started the stack manually (no service), restart so it can start the daemon with the new credentials:
   - `/home/happier/.happier-stack/bin/hstack start --restart`
 
 You can verify status with:

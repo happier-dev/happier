@@ -234,10 +234,22 @@ Each stack can have its own autostart service (so multiple stacks can start at l
 
 ```bash
 hstack stack service exp1 install
+hstack stack service exp1 enable
 hstack stack service exp1 status
 hstack stack service exp1 restart
 hstack stack service exp1 logs
 ```
+
+First-time auth (recommended):
+
+```bash
+hstack stack service exp1 enable --auth-now -- --method=mobile --no-open
+```
+
+Notes:
+
+- Services keep the server/UI up even if the daemon is not authenticated yet, and will start the daemon automatically once credentials exist.
+- `--method=mobile` requires a public-reachable URL for your phone (e.g. Tailscale Serve HTTPS, or a reverse proxy). If the stack’s public URL resolves to `localhost` / `127.0.0.1`, mobile auth won’t work until you configure remote access.
 
 Implementation notes:
 
