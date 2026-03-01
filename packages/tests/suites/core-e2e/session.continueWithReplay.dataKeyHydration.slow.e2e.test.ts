@@ -23,6 +23,7 @@ import { fetchJson } from '../../src/testkit/http';
 import { waitFor } from '../../src/testkit/timing';
 import { createSession, fetchAllMessages } from '../../src/testkit/sessions';
 import { fakeClaudeFixturePath } from '../../src/testkit/fakeClaude';
+import { decryptLegacyBase64 } from '../../src/testkit/messageCrypto';
 
 const run = createRunDirs({ runLabel: 'core' });
 
@@ -30,6 +31,7 @@ type SessionsV2GetResponse = {
   session?: {
     id?: unknown;
     dataEncryptionKey?: unknown;
+    metadata?: unknown;
   };
 };
 
@@ -50,6 +52,48 @@ async function fetchSessionDataEncryptionKeyBase64(params: {
     throw new Error('Missing session.dataEncryptionKey');
   }
   return dek;
+}
+
+async function fetchSessionMetadataCiphertextBase64(params: {
+  baseUrl: string;
+  token: string;
+  sessionId: string;
+}): Promise<string> {
+  const res = await fetchJson<SessionsV2GetResponse>(`${params.baseUrl}/v2/sessions/${params.sessionId}`, {
+    headers: { Authorization: `Bearer ${params.token}` },
+    timeoutMs: 20_000,
+  });
+  if (res.status !== 200) {
+    throw new Error(`Failed to fetch /v2/sessions/${params.sessionId} (status=${res.status})`);
+  }
+  const metadata = (res.data as any)?.session?.metadata;
+  if (typeof metadata !== 'string' || metadata.length === 0) {
+    throw new Error('Missing session.metadata');
+  }
+  return metadata;
+}
+
+function tryParseSessionMetadata(ciphertextBase64: string, machineKey: Uint8Array): any | null {
+  const trimmed = ciphertextBase64.trim();
+  if (trimmed.startsWith('{')) {
+    try {
+      return JSON.parse(trimmed);
+    } catch {
+      // Fall through to encrypted payload handling.
+    }
+  }
+
+  // Most sessions store metadata encrypted-at-rest. In dataKey mode this uses the same AES-256-GCM
+  // bundle format as encrypted messages, keyed by the opened DEK (or machineKey fallback).
+  try {
+    const maybeDataKey = decryptDataKeyBase64(trimmed, machineKey);
+    if (maybeDataKey && typeof maybeDataKey === 'object') return maybeDataKey;
+  } catch {
+    // Ignore and fall through to legacy.
+  }
+
+  const legacy = decryptLegacyBase64(trimmed, machineKey);
+  return legacy && typeof legacy === 'object' ? legacy : null;
 }
 
 async function postEncryptedMessage(params: {
@@ -81,7 +125,7 @@ describe('core e2e: machine RPC session.continueWithReplay hydrates transcript i
     await server?.stop();
   });
 
-  it('decrypts prior transcript via dataEncryptionKey and spawns a new session with seedDraft', async () => {
+  it('decrypts prior transcript via dataEncryptionKey and spawns a new session with replaySeedV1 stored in metadata', async () => {
     const testDir = run.testDir('session-continue-with-replay-datakey-hydration');
     // Deterministic control-plane timing.
     server = await startServerLight({ testDir, dbProvider: 'sqlite' });
@@ -209,9 +253,34 @@ describe('core e2e: machine RPC session.continueWithReplay hydrates transcript i
     if (!parsed.success || parsed.data.type !== 'success') {
       throw new Error('Expected success result from session.continueWithReplay');
     }
-    expect(parsed.data.seedDraft).toContain(userText);
+    expect((parsed.data as any).seedDraft).toBeUndefined();
     expect(typeof parsed.data.sessionId).toBe('string');
     expect(parsed.data.sessionId.length).toBeGreaterThan(0);
+
+    const childMetadataCiphertext = await fetchSessionMetadataCiphertextBase64({
+      baseUrl: server.baseUrl,
+      token: auth.token,
+      sessionId: parsed.data.sessionId,
+    });
+    const childEncryptedDekBase64 = await fetchSessionDataEncryptionKeyBase64({
+      baseUrl: server.baseUrl,
+      token: auth.token,
+      sessionId: parsed.data.sessionId,
+    });
+    const childDek = openEncryptedDataKeyEnvelopeV1({
+      envelope: new Uint8Array(Buffer.from(childEncryptedDekBase64, 'base64')),
+      recipientSecretKeyOrSeed: machineKey,
+    });
+    if (!childDek || childDek.length !== 32) {
+      throw new Error('Failed to open child session dataEncryptionKey');
+    }
+
+    const childMetadata =
+      tryParseSessionMetadata(childMetadataCiphertext, childDek) ??
+      tryParseSessionMetadata(childMetadataCiphertext, machineKey);
+    expect(childMetadata && typeof childMetadata === 'object').toBe(true);
+    expect((childMetadata as any)?.replaySeedV1?.seedText).toContain(userText);
+    expect((childMetadata as any)?.forkV1?.parentSessionId).toBe(previousSessionId);
 
     ui.close();
   });
