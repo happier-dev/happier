@@ -10,12 +10,14 @@ export const NotificationsSettingsV1Schema = z
     pushEnabled: z.boolean().default(true),
     ready: z.boolean().default(true),
     permissionRequest: z.boolean().default(true),
+    userActionRequest: z.boolean().default(true),
   })
   .catch({
     v: 1,
     pushEnabled: true,
     ready: true,
     permissionRequest: true,
+    userActionRequest: true,
   });
 
 export type NotificationsSettingsV1 = z.infer<typeof NotificationsSettingsV1Schema>;
@@ -61,4 +63,3 @@ export function getNotificationsSettingsV1FromAccountSettings(settingsLike: unkn
     : null;
   return NotificationsSettingsV1Schema.parse(rec?.notificationsSettingsV1);
 }
-
