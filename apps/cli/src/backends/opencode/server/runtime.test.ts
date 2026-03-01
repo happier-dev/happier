@@ -8,6 +8,7 @@ import type { OpenCodeGlobalEvent } from './types';
 function createFakeClient() {
   let onEvent: ((evt: OpenCodeGlobalEvent) => void) | null = null;
   let directoryOverride: string | null = null;
+  let statusType: string = 'idle';
   return {
     sessionCreate: vi.fn(async () => ({ id: 'ses_1' })),
     sessionGet: vi.fn(async ({ sessionId }: { sessionId: string }) => ({ id: sessionId })),
@@ -15,6 +16,7 @@ function createFakeClient() {
     sessionPromptAsync: vi.fn(async () => {}),
     sessionAbort: vi.fn(async () => {}),
     sessionFork: vi.fn(async () => ({ id: 'ses_fork' })),
+    sessionStatusList: vi.fn(async () => ({ ses_1: { type: statusType } })),
     setDirectoryOverride: vi.fn((next: string) => {
       directoryOverride = next;
     }),
@@ -39,6 +41,9 @@ function createFakeClient() {
     }),
     dispose: vi.fn(async () => {}),
     __emit: (evt: OpenCodeGlobalEvent) => onEvent?.(evt),
+    __setStatusType: (next: string) => {
+      statusType = next;
+    },
     __getDirectoryOverride: () => directoryOverride,
   };
 }
@@ -143,6 +148,34 @@ describe('createOpenCodeServerRuntime', () => {
     expect(client.__getDirectoryOverride()).toBe('/created');
   });
 
+  it('creates a session with an outside-worktree permission ruleset (ask ../* before allow *)', async () => {
+    const client = createFakeClient() as any;
+    client.sessionCreate = vi.fn(async () => ({ id: 'ses_1' }));
+
+    const session = createFakeSession();
+    const runtime = createOpenCodeServerRuntime({
+      directory: '/tmp',
+      session,
+      messageBuffer: new MessageBuffer(),
+      mcpServers: {},
+      permissionHandler: { handleToolCall: vi.fn(async () => ({ decision: 'approved' })) } as any,
+      onThinkingChange: vi.fn(),
+    }, {
+      createClient: async () => client as any,
+    });
+
+    await runtime.startOrLoad({});
+
+    expect(client.sessionCreate).toHaveBeenCalledTimes(1);
+    const firstCall = (client.sessionCreate as any).mock.calls[0]?.[0] as any;
+    expect(firstCall).toMatchObject({
+      permission: [
+        { permission: 'edit', pattern: '../*', action: 'ask' },
+        { permission: 'edit', pattern: '*', action: 'allow' },
+      ],
+    });
+  });
+
   it('sends prompt_async with a stable OpenCode-style messageID when localId is provided and waits for session.idle', async () => {
     const client = createFakeClient();
     const session = createFakeSession();
@@ -241,6 +274,72 @@ describe('createOpenCodeServerRuntime', () => {
     });
 
     await expect(promptPromise).resolves.toBeUndefined();
+  });
+
+  it('does not crash if session.error rejects the turn during prompt_async', async () => {
+    const client = createFakeClient() as any;
+    client.sessionPromptAsync = vi.fn(async () => {
+      client.__emit({
+        directory: '/tmp',
+        payload: { type: 'session.error', properties: { sessionID: 'ses_1', error: { message: 'Model not found' } } },
+      });
+    });
+
+    const session = createFakeSession();
+    const runtime = createOpenCodeServerRuntime({
+      directory: '/tmp',
+      session,
+      messageBuffer: new MessageBuffer(),
+      mcpServers: {},
+      permissionHandler: { handleToolCall: vi.fn(async () => ({ decision: 'approved' })) } as any,
+      onThinkingChange: vi.fn(),
+    }, {
+      createClient: async () => client as any,
+    });
+
+    await runtime.startOrLoad({});
+    runtime.beginTurn();
+
+    await expect((runtime as any).sendPromptWithMeta({ text: 'hello', localId: 'local-error' })).rejects.toBeTruthy();
+  });
+
+  it('responds to approved_for_session permissions with once (vendor should not persist approvals)', async () => {
+    const client = createFakeClient();
+    const session = createFakeSession();
+    const permissionHandler = { handleToolCall: vi.fn(async () => ({ decision: 'approved_for_session' })) } as any;
+
+    const runtime = createOpenCodeServerRuntime({
+      directory: '/tmp',
+      session,
+      messageBuffer: new MessageBuffer(),
+      mcpServers: {},
+      permissionHandler,
+      onThinkingChange: vi.fn(),
+    }, {
+      createClient: async () => client as any,
+    });
+
+    await runtime.startOrLoad({});
+    runtime.beginTurn();
+
+    client.__emit({
+      directory: '/tmp',
+      payload: {
+        type: 'permission.asked',
+        properties: {
+          id: 'perm_1',
+          sessionID: 'ses_1',
+          permission: 'edit',
+          patterns: ['../outside.txt'],
+          always: ['../*'],
+          metadata: {},
+          tool: { messageID: 'msg_tool_1', callID: 'call_1' },
+        },
+      },
+    });
+
+    await expect.poll(() => client.permissionReply.mock.calls.length).toBe(1);
+    expect(client.permissionReply).toHaveBeenCalledWith({ requestId: 'perm_1', reply: 'once' });
   });
 
   it('does not resolve a turn on session.idle until some provider activity is observed after prompt_async', async () => {
@@ -827,6 +926,59 @@ describe('createOpenCodeServerRuntime', () => {
     });
 
     await expect(promptPromise).resolves.toBeUndefined();
+  });
+
+  it('resolves turns when the control-plane /session/status reports idle and idle SSE signals are missing', async () => {
+    const prevPollInterval = process.env.HAPPIER_OPENCODE_SERVER_CONTROL_POLL_INTERVAL_MS;
+    const prevStatusPoll = process.env.HAPPIER_OPENCODE_SERVER_STATUS_POLL_ENABLED;
+    process.env.HAPPIER_OPENCODE_SERVER_CONTROL_POLL_INTERVAL_MS = '25';
+    process.env.HAPPIER_OPENCODE_SERVER_STATUS_POLL_ENABLED = '1';
+    try {
+      const client = createFakeClient();
+      client.__setStatusType('busy');
+      const session = createFakeSession();
+      const runtime = createOpenCodeServerRuntime({
+        directory: '/tmp',
+        session,
+        messageBuffer: new MessageBuffer(),
+        mcpServers: {},
+        permissionHandler: { handleToolCall: vi.fn(async () => ({ decision: 'approved' })) } as any,
+        onThinkingChange: vi.fn(),
+      }, {
+        createClient: async () => client as any,
+      });
+
+      await runtime.startOrLoad({});
+      runtime.beginTurn();
+
+      const promptPromise = (runtime as any).sendPromptWithMeta({ text: 'hello', localId: 'local-status-idle' });
+      await expect.poll(() => client.sessionPromptAsync.mock.calls.length).toBe(1);
+
+      client.__emit({
+        directory: '/tmp',
+        payload: { type: 'message.part.updated', properties: { part: { id: 'part_1', type: 'text', sessionID: 'ses_1' } } },
+      });
+      client.__emit({
+        directory: '/tmp',
+        payload: { type: 'message.part.delta', properties: { sessionID: 'ses_1', messageID: 'msg_asst_1', partID: 'part_1', delta: 'hi' } },
+      });
+
+      client.__setStatusType('idle');
+
+      await expect(promptPromise).resolves.toBeUndefined();
+      expect(client.sessionStatusList.mock.calls.length).toBeGreaterThan(0);
+    } finally {
+      if (prevPollInterval === undefined) {
+        delete process.env.HAPPIER_OPENCODE_SERVER_CONTROL_POLL_INTERVAL_MS;
+      } else {
+        process.env.HAPPIER_OPENCODE_SERVER_CONTROL_POLL_INTERVAL_MS = prevPollInterval;
+      }
+      if (prevStatusPoll === undefined) {
+        delete process.env.HAPPIER_OPENCODE_SERVER_STATUS_POLL_ENABLED;
+      } else {
+        process.env.HAPPIER_OPENCODE_SERVER_STATUS_POLL_ENABLED = prevStatusPoll;
+      }
+    }
   });
 
   it('surfaces session.error as an agent message (so model failures are visible)', async () => {

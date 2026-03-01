@@ -56,9 +56,10 @@ async function fetchJson<T>(params: {
 
 export type OpenCodeServerRuntimeClient = Readonly<{
   setDirectoryOverride: (directory: string) => void;
-  sessionCreate: () => Promise<OpenCodeSession>;
+  sessionCreate: (opts?: { permission?: unknown[] }) => Promise<OpenCodeSession>;
   sessionGet: (opts: { sessionId: string }) => Promise<OpenCodeSession>;
   sessionMessagesList: (opts: { sessionId: string }) => Promise<unknown[]>;
+  sessionStatusList: () => Promise<Record<string, { type?: string }>>;
   globalConfigGet: () => Promise<{ model?: string }>;
   agentsList: () => Promise<ReadonlyArray<{ name: string; description?: string }>>;
   providersList: () => Promise<ReadonlyArray<{ id: string; env?: readonly string[]; models?: Record<string, unknown> }>>;
@@ -128,12 +129,14 @@ export async function createOpenCodeServerRuntimeClient(params: Readonly<{ direc
     setDirectoryOverride: (directory) => {
       directoryOverride = typeof directory === 'string' ? directory : '';
     },
-    sessionCreate: async () => {
+    sessionCreate: async (opts) => {
       return await fetchJson<OpenCodeSession>({
         url: buildUrl(baseUrl, '/session', { directory: resolveDirectory() }),
         method: 'POST',
         headers,
-        body: {},
+        body: {
+          ...(Array.isArray(opts?.permission) ? { permission: opts?.permission } : {}),
+        },
       });
     },
     sessionGet: async ({ sessionId }) => {
@@ -150,6 +153,15 @@ export async function createOpenCodeServerRuntimeClient(params: Readonly<{ direc
         headers,
       });
       return Array.isArray(raw) ? raw : [];
+    },
+    sessionStatusList: async () => {
+      const raw = await fetchJson<unknown>({
+        url: buildUrl(baseUrl, '/session/status', { directory: resolveDirectory() }),
+        method: 'GET',
+        headers,
+      });
+      if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return {};
+      return raw as Record<string, { type?: string }>;
     },
     globalConfigGet: async () => {
       return await fetchJson<{ model?: string }>({

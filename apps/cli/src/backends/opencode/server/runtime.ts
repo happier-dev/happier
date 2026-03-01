@@ -250,6 +250,13 @@ export function createOpenCodeServerRuntime(params: {
   let turnStreamKey: string | null = null;
   const accumulatedTextByPartKey = new Map<string, string>();
 
+  const sessionPermissionRuleset = [
+    // Default policy: ask for outside-worktree edits (relative paths beginning with ../), then allow in-worktree edits.
+    // OpenCode applies the first matching rule, so ordering is important here.
+    { permission: 'edit', pattern: '../*', action: 'ask' },
+    { permission: 'edit', pattern: '*', action: 'allow' },
+  ] as const;
+
   const partTypeByPartId = new Map<string, string>();
   const toolCallSentByCallId = new Set<string>();
   const toolCallHadMeaningfulInputByCallId = new Map<string, boolean>();
@@ -435,6 +442,13 @@ export function createOpenCodeServerRuntime(params: {
     return Math.max(25, Math.min(30_000, configured));
   })();
 
+  const statusPollEnabled = (() => {
+    const raw = normalizeEnvVar(process.env.HAPPIER_OPENCODE_SERVER_STATUS_POLL_ENABLED);
+    if (!raw) return true;
+    if (raw === '0' || raw === 'false' || raw === 'no' || raw === 'off') return false;
+    return true;
+  })();
+
   const shouldTreatMessageIdAsTurnActivity = (messageID: string): boolean => {
     if (!turnPromptActive) return false;
     if (!messageID) return false;
@@ -461,6 +475,20 @@ export function createOpenCodeServerRuntime(params: {
       .map((item) => parseQuestionRequest(item))
       .filter((item): item is OpenCodeQuestionRequest => Boolean(item))
       .filter((item) => item.sessionID === sessionId);
+  };
+
+  const pollIdleStatusFromControlPlaneBestEffort = async (): Promise<void> => {
+    if (!statusPollEnabled) return;
+    if (!sessionId) return;
+    if (!turnPromptActive) return;
+    if (idleSignalSeen) return;
+    const c = await ensureClient();
+    const statuses = await c.sessionStatusList().catch(() => ({}));
+    const rec = statuses && typeof statuses === 'object' && !Array.isArray(statuses) ? (statuses as any)[sessionId] : null;
+    const statusType = normalizeString(asRecord(rec)?.type);
+    if (statusType !== 'idle') return;
+    setThinking(false);
+    idleSignalSeen = true;
   };
 
   const maybeResolveTurnOnIdleSignal = async () => {
@@ -713,7 +741,9 @@ export function createOpenCodeServerRuntime(params: {
     const c = await ensureClient();
 
     if (decision.decision === 'approved_for_session') {
-      await c.permissionReply({ requestId: req.id, reply: 'always' });
+      // Happier owns "always allow" persistence and scope. Always reply "once" to OpenCode so
+      // vendor-side approvals never leak across sessions via a shared server process.
+      await c.permissionReply({ requestId: req.id, reply: 'once' });
       return;
     }
     if (decision.decision === 'approved' || decision.decision === 'approved_execpolicy_amendment') {
@@ -966,7 +996,7 @@ export function createOpenCodeServerRuntime(params: {
         return sessionId!;
       }
 
-      const created: OpenCodeSession = await c.sessionCreate();
+      const created: OpenCodeSession = await c.sessionCreate({ permission: [...sessionPermissionRuleset] as unknown[] });
       sessionId = created.id;
       const createdDirectory = normalizeString((created as any)?.directory).trim();
       if (createdDirectory) {
@@ -993,6 +1023,7 @@ export function createOpenCodeServerRuntime(params: {
       const model = selectedModel ?? undefined;
       const config = Object.keys(configOverrides).length > 0 ? { ...configOverrides } : undefined;
       turnDeferred = createDeferred<void>();
+      const thisTurnDeferred = turnDeferred;
       turnPromptActive = true;
       turnActivitySeen = false;
       idleSignalSeen = false;
@@ -1046,6 +1077,7 @@ export function createOpenCodeServerRuntime(params: {
         if (controlAbort.signal.aborted) return;
         const perms = await listPendingPermissionRequests();
         const qs = await listPendingQuestionRequests();
+        await pollIdleStatusFromControlPlaneBestEffort();
         const permIds = handledPermissionIds ?? new Set<string>();
         const qIds = handledQuestionIds ?? new Set<string>();
         const permInFlight = inFlightPermissionIds ?? new Set<string>();
@@ -1110,7 +1142,7 @@ export function createOpenCodeServerRuntime(params: {
       });
 
       try {
-        await turnDeferred.promise;
+        await thisTurnDeferred.promise;
       } finally {
         try {
           controlAbort.abort();
