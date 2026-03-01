@@ -7,6 +7,7 @@ import type { CapabilityInstallability } from '@/hooks/machine/useCapabilityInst
 import { useMachineCapabilityInvokeWithAlerts } from '@/hooks/machine/useMachineCapabilityInvokeWithAlerts';
 import { Modal } from '@/modal';
 import type { CapabilityId } from '@/sync/api/capabilities/capabilitiesProtocol';
+import { t } from '@/text';
 
 export type ProviderCliInstallItemProps = Readonly<{
     machineId: string | null;
@@ -22,14 +23,16 @@ export function ProviderCliInstallItem(props: ProviderCliInstallItemProps) {
     const { isInvoking: isInstalling, invokeWithAlerts } = useMachineCapabilityInvokeWithAlerts();
 
     const skipIfInstalled = props.installed !== true;
-    const title = skipIfInstalled ? `Install ${props.providerTitle} CLI` : `Reinstall ${props.providerTitle} CLI`;
+    const title = skipIfInstalled
+        ? t('settingsProviders.cliInstaller.installTitle', { provider: props.providerTitle })
+        : t('settingsProviders.cliInstaller.reinstallTitle', { provider: props.providerTitle });
     const installabilityKind = props.installability?.kind ?? 'unknown';
     const autoInstallAvailable = installabilityKind !== 'not-installable';
     const subtitle = !autoInstallAvailable
-        ? 'Auto-install is not available for this machine.'
+        ? t('settingsProviders.cliInstaller.autoInstallUnavailable')
         : skipIfInstalled
-            ? 'Installs the provider CLI on the selected machine (best-effort).'
-            : 'Re-runs the provider installer even if the CLI is already present.';
+            ? t('settingsProviders.cliInstaller.installSubtitle')
+            : t('settingsProviders.cliInstaller.reinstallSubtitle');
 
     return (
         <Item
@@ -41,7 +44,7 @@ export function ProviderCliInstallItem(props: ProviderCliInstallItemProps) {
             rightElement={isInstalling ? <ActivityIndicator size="small" color={theme.colors.textSecondary} /> : undefined}
             onPress={async () => {
                 if (!props.machineId) {
-                    Modal.alert('Error', 'No machine selected.');
+                    Modal.alert(t('common.error'), t('settingsProviders.cliInstaller.noMachineSelected'));
                     return;
                 }
                 if (!autoInstallAvailable || installabilityKind === 'checking') {
@@ -58,12 +61,14 @@ export function ProviderCliInstallItem(props: ProviderCliInstallItemProps) {
                     timeoutMs: 5 * 60_000,
                     serverId: props.serverId,
                     alerts: {
-                        errorTitle: 'Error',
-                        successTitle: 'Success',
+                        errorTitle: t('common.error'),
+                        successTitle: t('common.success'),
                         unsupportedMessage: (reason) =>
-                            reason === 'not-supported' ? 'Install not supported on this machine.' : 'Install failed.',
-                        successMessage: 'Installed.',
-                        successWithLogPath: (logPath) => `Log: ${logPath}`,
+                            reason === 'not-supported'
+                                ? t('settingsProviders.cliInstaller.installNotSupported')
+                                : t('settingsProviders.cliInstaller.installFailed'),
+                        successMessage: t('settingsProviders.cliInstaller.installed'),
+                        successWithLogPath: (logPath) => t('settingsProviders.cliInstaller.logPath', { logPath }),
                     },
                 });
             }}
