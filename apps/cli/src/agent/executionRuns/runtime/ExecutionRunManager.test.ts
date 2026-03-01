@@ -685,6 +685,66 @@ describe('ExecutionRunManager (long-lived runs)', () => {
     };
   }
 
+  it('ACKs send() for long-lived runs without awaiting waitForResponseComplete (prevents UI timeouts)', async () => {
+    const sent: Array<{ provider: string; body: unknown; meta?: Record<string, unknown> }> = [];
+
+    let handler: AgentMessageHandler | null = null;
+    let turn = 0;
+    let wait: Promise<void> = Promise.resolve();
+    const backend: AgentBackend = {
+      async startSession(): Promise<{ sessionId: SessionId }> {
+        return { sessionId: 'child_session_1' as SessionId };
+      },
+      async sendPrompt(_sessionId: SessionId, prompt: string): Promise<void> {
+        turn += 1;
+        handler?.({ type: 'model-output', fullText: `reply:${prompt}` } as AgentMessage);
+        wait = turn === 1 ? Promise.resolve() : new Promise(() => {});
+      },
+      async cancel(_sessionId: SessionId): Promise<void> {},
+      onMessage(next: AgentMessageHandler): void {
+        handler = next;
+      },
+      async dispose(): Promise<void> {},
+      async waitForResponseComplete(): Promise<void> {
+        await wait;
+      },
+    };
+
+    const manager = new ExecutionRunManager({
+      parentProvider: 'claude',
+      cwd: process.cwd(),
+      createBackend: () => backend,
+      sendAcp: (provider: string, body: ACPMessageData, opts?: { meta?: Record<string, unknown> }) => {
+        sent.push({ provider, body, meta: opts?.meta });
+      },
+      getNowMs: () => 1_700_000_000_000,
+    });
+
+    const started = await manager.start({
+      sessionId: 'parent_session_1',
+      intent: 'delegate',
+      backendId: 'claude',
+      instructions: 'hello',
+      permissionMode: 'read_only',
+      retentionPolicy: 'ephemeral',
+      runClass: 'long_lived',
+      ioMode: 'request_response',
+    });
+
+    expect(manager.get(started.runId)?.status).toBe('running');
+    expect(sent.filter((m) => (m.body as any)?.type === 'message')).toHaveLength(1);
+
+    const sendPromise = manager.send(started.runId, { message: 'next' });
+    const raced = await Promise.race([
+      sendPromise,
+      new Promise<{ ok: false; errorCode: string; error: string }>((resolve) => {
+        setTimeout(() => resolve({ ok: false, errorCode: 'timeout', error: 'timeout' }), 50);
+      }),
+    ]);
+
+    expect(raced.ok).toBe(true);
+  });
+
   it('keeps long-lived runs running, supports send(), and emits tool-result only when stopped', async () => {
     const sent: Array<{ provider: string; body: unknown; meta?: Record<string, unknown> }> = [];
     const manager = new ExecutionRunManager({
@@ -716,7 +776,9 @@ describe('ExecutionRunManager (long-lived runs)', () => {
 
     const sendResult = await manager.send(started.runId, { message: 'next' });
     expect(sendResult.ok).toBe(true);
-    expect(sent.filter((m) => (m.body as any)?.type === 'message').length).toBe(2);
+    await expect
+      .poll(() => sent.filter((m) => (m.body as any)?.type === 'message').length, { timeout: 1_000 })
+      .toBe(2);
     expect(sent.filter((m) => (m.body as any)?.type === 'tool-result').length).toBe(0);
 
     const stopped = await manager.stop(started.runId);
@@ -772,14 +834,14 @@ describe('ExecutionRunManager (long-lived runs)', () => {
     const sendResult = await manager.send(started.runId, { message: 'hi' });
     expect(sendResult.ok).toBe(true);
 
-    const streaming = sent.filter(
-      (m) => (m.body as any)?.type === 'message' && typeof (m.meta as any)?.happierSidechainStreamKey === 'string',
-    );
-    expect(streaming.length).toBeGreaterThanOrEqual(1);
+    await expect
+      .poll(
+        () => sent.filter((m) => (m.body as any)?.type === 'message' && typeof (m.meta as any)?.happierSidechainStreamKey === 'string').length,
+        { timeout: 1_000 },
+      )
+      .toBeGreaterThanOrEqual(1);
 
-    const nonStreaming = sent.filter(
-      (m) => (m.body as any)?.type === 'message' && typeof (m.meta as any)?.happierSidechainStreamKey !== 'string',
-    );
+    const nonStreaming = sent.filter((m) => (m.body as any)?.type === 'message' && typeof (m.meta as any)?.happierSidechainStreamKey !== 'string');
     expect(nonStreaming).toHaveLength(0);
   });
 });
