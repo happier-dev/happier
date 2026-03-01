@@ -127,4 +127,30 @@ describe('providers harness: cli log fatal error detection', () => {
 
     await expect(readFatalProviderErrorFromCliLogs({ cliHome })).resolves.toContain('Failed to connect MCP servers');
   });
+
+  it('detects rate-limit errors from subprocess logs', async () => {
+    const cliHome = await mkdtemp(join(tmpdir(), 'happier-cli-home-'));
+    const subprocessDir = join(cliHome, 'cli', 'logs', 'subprocess', 'claude');
+    await mkdir(subprocessDir, { recursive: true });
+    await writeFile(
+      join(subprocessDir, 'claude-code-debug-123.log'),
+      '[ERROR] API error: 429 {"type":"error","error":{"type":"rate_limit_error","message":"Too many requests"}}\n',
+      'utf8',
+    );
+
+    await expect(readFatalProviderErrorFromCliLogs({ cliHome })).resolves.toContain('Rate limited');
+  });
+
+  it('does not treat Claude MCP server OAuth-missing warnings as fatal auth failures', async () => {
+    const cliHome = await mkdtemp(join(tmpdir(), 'happier-cli-home-'));
+    const subprocessDir = join(cliHome, 'cli', 'logs', 'subprocess', 'claude');
+    await mkdir(subprocessDir, { recursive: true });
+    await writeFile(
+      join(subprocessDir, 'claude-code-debug-123.log'),
+      'MCP server "claude.ai Gmail" Error: {"type":"error","error":{"type":"authentication_error","message":"MCP server requires authentication but no OAuth token is configured."}}\n',
+      'utf8',
+    );
+
+    await expect(readFatalProviderErrorFromCliLogs({ cliHome })).resolves.toBeNull();
+  });
 });
