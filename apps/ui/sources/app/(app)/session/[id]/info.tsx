@@ -7,7 +7,7 @@ import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { ItemList } from '@/components/ui/lists/ItemList';
 import { Avatar } from '@/components/ui/avatar/Avatar';
-import { useSession, useIsDataReady, useLocalSetting, useSetting } from '@/sync/domains/state/storage';
+import { storage, useSession, useIsDataReady, useLocalSetting, useSetting } from '@/sync/domains/state/storage';
 import { getSessionName, useSessionStatus, formatOSPlatform, formatPathRelativeToHome, getSessionAvatarId } from '@/utils/sessions/sessionUtils';
 import * as Clipboard from 'expo-clipboard';
 import { Modal } from '@/modal';
@@ -28,6 +28,10 @@ import { useSessionSharingSupport } from '@/hooks/session/useSessionSharingSuppo
 import { useAutomationsSupport } from '@/hooks/server/useAutomationsSupport';
 import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
 import { Text } from '@/components/ui/text/Text';
+import { createDefaultActionExecutor } from '@/sync/ops/actions/defaultActionExecutor';
+import { resolveServerIdForSessionIdFromLocalCache } from '@/sync/runtime/orchestration/serverScopedRpc/resolveServerIdForSessionIdFromLocalCache';
+import { isActionEnabledInState } from '@/sync/domains/settings/actionsSettings';
+import { canForkConversation } from '@/sync/domains/sessionFork/forkUiSupport';
 
 
 // Animated status dot component
@@ -79,6 +83,8 @@ function SessionInfoContent({ session }: { session: Session }) {
     const executionRunsEnabled = useFeatureEnabled('execution.runs');
     const useProfiles = useSetting('useProfiles');
     const profiles = useSetting('profiles');
+    const actionsSettingsV1 = useSetting('actionsSettingsV1');
+    const sessionReplayEnabled = useSetting('sessionReplayEnabled');
     const sharingSupported = useSessionSharingSupport();
     const automationsSupport = useAutomationsSupport();
     const showAutomations = automationsSupport?.enabled !== false;
@@ -87,6 +93,22 @@ function SessionInfoContent({ session }: { session: Session }) {
     const canManageSharing = !session.accessLevel || session.accessLevel === 'admin';
     const agentId = resolveAgentIdFromFlavor(session.metadata?.flavor) ?? DEFAULT_AGENT_ID;
     const core = getAgentCore(agentId);
+    const executor = React.useMemo(
+        () => createDefaultActionExecutor({ resolveServerIdForSessionId: resolveServerIdForSessionIdFromLocalCache }),
+        [],
+    );
+
+    const forkActionEnabled = React.useMemo(() => {
+        return isActionEnabledInState(
+            storage.getState() as any,
+            'session.fork' as any,
+            { surface: 'ui_button', placement: 'session_info' } as any,
+        );
+    }, [actionsSettingsV1]);
+
+    const forkSupported = React.useMemo(() => {
+        return canForkConversation({ session, replayEnabled: sessionReplayEnabled }) === true;
+    }, [session, sessionReplayEnabled]);
 
     const vendorResumeLabelKey = core.resume.uiVendorResumeIdLabelKey;
     const vendorResumeCopiedKey = core.resume.uiVendorResumeIdCopiedKey;
@@ -203,6 +225,17 @@ function SessionInfoContent({ session }: { session: Session }) {
         }
         router.back();
         router.back();
+    });
+
+    const [forkingSession, performFork] = useHappyAction(async () => {
+        const res = await executor.execute(
+            'session.fork' as any,
+            { sessionId: session.id },
+            { defaultSessionId: session.id, surface: 'ui_button', placement: 'session_info' } as any,
+        );
+        if (!res.ok) {
+            throw new HappyError(res.error ?? t('errors.failedToForkSession'), false);
+        }
     });
 
     const handleArchiveSession = useCallback(() => {
@@ -326,10 +359,10 @@ function SessionInfoContent({ session }: { session: Session }) {
                     </ItemGroup>
                 )}
 
-	                {/* Session Details */}
-	                <ItemGroup>
-	                    <Item
-	                        title={t('sessionInfo.happySessionId')}
+                    {/* Session Details */}
+                    <ItemGroup>
+                        <Item
+                            title={t('sessionInfo.happySessionId')}
                         subtitle={`${session.id.substring(0, 8)}...${session.id.substring(session.id.length - 8)}`}
                         icon={<Ionicons name="finger-print-outline" size={29} color={theme.colors.accent.blue} />}
                         onPress={handleCopySessionId}
@@ -383,35 +416,44 @@ function SessionInfoContent({ session }: { session: Session }) {
                         icon={<Ionicons name="pencil-outline" size={29} color={theme.colors.accent.blue} />}
                         onPress={handleRenameSession}
                     />
+                    {!session.accessLevel && forkActionEnabled && forkSupported && (
+                        <Item
+                            title={t('sessionInfo.forkSession')}
+                            subtitle={t('sessionInfo.forkSessionSubtitle')}
+                            icon={<Ionicons name="git-branch-outline" size={29} color={theme.colors.accent.blue} />}
+                            onPress={performFork}
+                            loading={forkingSession}
+                        />
+                    )}
                     {executionRunsEnabled ? (
                         <Item
-                            title={t('runs.title') ?? 'Runs'}
-                            subtitle={'See execution runs for this session'}
+                            title={t('runs.title')}
+                            subtitle={t('sessionInfo.executionRunsSubtitle')}
                             icon={<Ionicons name="play-outline" size={29} color={theme.colors.accent.blue} />}
                             onPress={() => router.push(`/session/${session.id}/runs`)}
                         />
                     ) : null}
                     {showAutomations ? (
                         <Item
-                            title="Automations"
-                            subtitle="Manage scheduled messages for this session"
+                            title={t('sessionInfo.automationsTitle')}
+                            subtitle={t('sessionInfo.automationsSubtitle')}
                             icon={<Ionicons name="timer-outline" size={29} color={theme.colors.accent.blue} />}
                             onPress={() => router.push(`/session/${session.id}/automations`)}
                         />
                     ) : null}
-                    {!session.active && Boolean(vendorResumeId) && (
-                        <Item
-                            title={t('sessionInfo.copyResumeCommand')}
-                            subtitle={`happier resume ${session.id}`}
-                            icon={<Ionicons name="terminal-outline" size={29} color={theme.colors.accent.purple} />}
-                            showChevron={false}
-                            onPress={() => handleCopyCommand(`happier resume ${session.id}`)}
-                        />
-                    )}
+                        {!session.active && Boolean(vendorResumeId) && (
+                            <Item
+                                title={t('sessionInfo.copyResumeCommand')}
+                                subtitle={t('sessionInfo.resumeCommand', { sessionId: session.id })}
+                                icon={<Ionicons name="terminal-outline" size={29} color={theme.colors.accent.purple} />}
+                                showChevron={false}
+                                onPress={() => handleCopyCommand(t('sessionInfo.resumeCommand', { sessionId: session.id }))}
+                            />
+                        )}
                     {devModeEnabled && Boolean(sessionLogPath) && (
                         <Item
-                            title="View session log"
-                            subtitle="Open live log tail for this session"
+                            title={t('sessionInfo.viewSessionLogTitle')}
+                            subtitle={t('sessionInfo.viewSessionLogSubtitle')}
                             icon={<Ionicons name="document-text-outline" size={29} color={theme.colors.accent.blue} />}
                             onPress={() => router.push(`/session/${session.id}/log`)}
                         />
@@ -490,9 +532,9 @@ function SessionInfoContent({ session }: { session: Session }) {
                                 showChevron={false}
                             />
                         )}
-	                        <Item
-	                            title={t('sessionInfo.aiProvider')}
-	                            subtitle={(() => {
+                            <Item
+                                title={t('sessionInfo.aiProvider')}
+                                subtitle={(() => {
                                     const flavor = session.metadata.flavor;
                                     const agentId = resolveAgentIdFromFlavor(flavor);
                                     if (agentId) return t(getAgentCore(agentId).displayNameKey);
@@ -500,9 +542,9 @@ function SessionInfoContent({ session }: { session: Session }) {
                                         ? flavor
                                         : t(getAgentCore(DEFAULT_AGENT_ID).displayNameKey);
                                 })()}
-	                            icon={<Ionicons name="sparkles-outline" size={29} color={theme.colors.accent.indigo} />}
-	                            showChevron={false}
-	                        />
+                                icon={<Ionicons name="sparkles-outline" size={29} color={theme.colors.accent.indigo} />}
+                                showChevron={false}
+                            />
                             {useProfiles && session.metadata?.profileId !== undefined && (
                                 <Item
                                     title={t('sessionInfo.aiProfile')}
@@ -511,10 +553,10 @@ function SessionInfoContent({ session }: { session: Session }) {
                                     showChevron={false}
                                 />
                             )}
-	                        {session.metadata.hostPid && (
-	                            <Item
-	                                title={t('sessionInfo.processId')}
-	                                subtitle={session.metadata.hostPid.toString()}
+                            {session.metadata.hostPid && (
+                                <Item
+                                    title={t('sessionInfo.processId')}
+                                    subtitle={session.metadata.hostPid.toString()}
                                 icon={<Ionicons name="terminal-outline" size={29} color={theme.colors.accent.indigo} />}
                                 showChevron={false}
                             />
@@ -529,7 +571,7 @@ function SessionInfoContent({ session }: { session: Session }) {
                         )}
                         {devModeEnabled && sessionLogPath && (
                             <Item
-                                title="Session log path"
+                                title={t('sessionLog.logPathCopyLabel')}
                                 subtitle={formatPathRelativeToHome(sessionLogPath, session.metadata.homeDir)}
                                 icon={<Ionicons name="document-text-outline" size={29} color={theme.colors.accent.indigo} />}
                                 onPress={handleCopySessionLogPath}
