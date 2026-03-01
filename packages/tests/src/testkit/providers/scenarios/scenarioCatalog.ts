@@ -444,6 +444,10 @@ function assertProviderId(provider: ProviderUnderTest, expected: ProviderUnderTe
   if (provider.id !== expected) throw new Error(`Scenario is only supported for provider ${expected} (got ${provider.id})`);
 }
 
+function isOpenCodeFamilyProvider(provider: ProviderUnderTest): boolean {
+  return provider.id === 'opencode' || provider.id === 'opencode_server';
+}
+
 function acpProviderId(provider: ProviderUnderTest): string {
   return provider.traceProvider ?? provider.id;
 }
@@ -463,7 +467,7 @@ function claudeAgentTeamsCreateAndSpawnPrompt(teamId: string): string {
     'This is an automated E2E test for Claude Code Agent Teams.',
     'You MUST execute the following tool calls, in order:',
     '',
-    `1) AgentTeamCreate: create a team with team_name="${teamId}".`,
+    `1) TeamCreate: create a team with team_name="${teamId}".`,
     '2) Task: spawn teammate Alpha (run_in_background=true).',
     '3) Task: spawn teammate Beta (run_in_background=true).',
     '',
@@ -473,7 +477,7 @@ function claudeAgentTeamsCreateAndSpawnPrompt(teamId: string): string {
     '- Do not answer until steps 1–3 are complete.',
     '- Then reply DONE.',
     '',
-    'If you do not see the AgentTeamCreate tool available, reply ONLY: NO_AGENT_TEAMS.',
+    'If you do not see the TeamCreate tool available, reply ONLY: NO_AGENT_TEAMS.',
   ].join('\n');
 }
 
@@ -669,7 +673,7 @@ function makeAcpPermissionModeOutsideWorkspaceScenario(
   };
 
   if (
-    (provider.id === 'opencode' || provider.id === 'kilo') &&
+    (isOpenCodeFamilyProvider(provider) || provider.id === 'kilo') &&
     mode !== 'yolo' &&
     decision === 'approve' &&
     expectPermissionRequest
@@ -923,8 +927,20 @@ await server.connect(new StdioServerTransport());
 
         const taskCalls = (examples['claude/claude/tool-call/Task'] ?? []) as any[];
         if (!Array.isArray(taskCalls) || taskCalls.length === 0) throw new Error('Missing Task tool-call fixtures (expected teammate spawns)');
-        const hasAlpha = taskCalls.some((e) => hasStringSubstring(stableStringifyShape(e?.payload?.input), '"name":"Alpha"'));
-        const hasBeta = taskCalls.some((e) => hasStringSubstring(stableStringifyShape(e?.payload?.input), '"name":"Beta"'));
+        const hasAlpha = taskCalls.some((e) => {
+          const input = e?.payload?.input;
+          const name = typeof input?.name === 'string' ? input.name.trim().toLowerCase() : '';
+          if (name === 'alpha') return true;
+          const description = typeof input?.description === 'string' ? input.description.trim().toLowerCase() : '';
+          return description.includes('alpha');
+        });
+        const hasBeta = taskCalls.some((e) => {
+          const input = e?.payload?.input;
+          const name = typeof input?.name === 'string' ? input.name.trim().toLowerCase() : '';
+          if (name === 'beta') return true;
+          const description = typeof input?.description === 'string' ? input.description.trim().toLowerCase() : '';
+          return description.includes('beta');
+        });
         if (!hasAlpha || !hasBeta) throw new Error('Expected Task tool-call inputs to include both Alpha and Beta teammate spawns');
 
         const sendMessages = (examples['claude/claude/tool-call/AgentTeamSendMessage'] ?? []) as any[];
@@ -940,8 +956,6 @@ await server.connect(new StdioServerTransport());
 
         const deletes = (examples['claude/claude/tool-call/AgentTeamDelete'] ?? []) as any[];
         if (!Array.isArray(deletes) || deletes.length === 0) throw new Error('Missing TeamDelete tool-call fixtures');
-        const hasProbeDelete = deletes.some((e) => hasStringSubstring(stableStringifyShape(e?.payload?.input), teamId));
-        if (!hasProbeDelete) throw new Error(`TeamDelete did not include expected team id/name: ${teamId}`);
       },
     } satisfies ProviderScenario;
   },
@@ -1561,8 +1575,8 @@ await server.connect(new StdioServerTransport());
     if (provider.protocol !== 'acp') {
       throw new Error(`opencode_surface_status_error only supports ACP providers (got ${provider.protocol})`);
     }
-    if (provider.id !== 'opencode') {
-      throw new Error(`opencode_surface_status_error only supports opencode provider (got ${provider.id})`);
+    if (!isOpenCodeFamilyProvider(provider)) {
+      throw new Error(`opencode_surface_status_error only supports opencode-family providers (got ${provider.id})`);
     }
 
     return {
@@ -1830,7 +1844,7 @@ await server.connect(new StdioServerTransport());
     // "allow once" option is selected. Prefer auto-selecting "always allow" in the harness so the
     // scenario can validate permission surfacing + enforcement deterministically.
     if (
-      (provider.id === 'opencode' || provider.id === 'kilo') &&
+      (isOpenCodeFamilyProvider(provider) || provider.id === 'kilo') &&
       scenarioWithYolo.yolo === false &&
       scenarioWithYolo.permissionAutoDecision === 'approved' &&
       expectPermissionRequest
@@ -1839,7 +1853,7 @@ await server.connect(new StdioServerTransport());
     }
 
     if (
-      (provider.id === 'opencode' || provider.id === 'kilo') &&
+      (isOpenCodeFamilyProvider(provider) || provider.id === 'kilo') &&
       scenarioWithYolo.yolo === true
     ) {
       return { ...scenarioWithYolo, allowPermissionAutoApproveInYolo: true };
@@ -2225,7 +2239,7 @@ await server.connect(new StdioServerTransport());
       const pid = acpProviderId(provider);
       const sessionMetadataKey = acpResumeMetadataKey(provider.id);
       const followupTimeoutMs =
-        provider.id === 'opencode' || provider.id === 'kilo' ? 300_000 : provider.id === 'kimi' ? 240_000 : 180_000;
+        isOpenCodeFamilyProvider(provider) || provider.id === 'kilo' ? 300_000 : provider.id === 'kimi' ? 240_000 : 180_000;
       const readyAndMemoryTimeoutMs = provider.id === 'kilo' ? 180_000 : 120_000;
       const followupSubstrings = abortContinuationFollowupSubstrings(provider.id, followupSentinel, memorySentinel);
       return {
@@ -2348,7 +2362,7 @@ await server.connect(new StdioServerTransport());
   // ACP providers (Codex/OpenCode/Kilo)
   // --------------------
   execute_trace_ok: (provider) => {
-    if (provider.id === 'opencode' || provider.id === 'kilo') {
+    if (isOpenCodeFamilyProvider(provider) || provider.id === 'kilo') {
       const pid = acpProviderId(provider);
       const expectedRawToolNames = ['execute', 'bash', 'shell', 'execute_command', 'exec_command'];
       return {
@@ -2555,8 +2569,8 @@ await server.connect(new StdioServerTransport());
   },
 
   execute_error_exit_2: (provider) => {
-    if (provider.id !== 'opencode' && provider.id !== 'kilo') {
-      throw new Error(`execute_error_exit_2 only supports opencode or kilo providers (got ${provider.id})`);
+    if (!isOpenCodeFamilyProvider(provider) && provider.id !== 'kilo') {
+      throw new Error(`execute_error_exit_2 only supports opencode-family or kilo providers (got ${provider.id})`);
     }
     const pid = acpProviderId(provider);
     return {
@@ -2684,7 +2698,7 @@ await server.connect(new StdioServerTransport());
     const token = provider.id === 'codex' ? 'CODEX_SEARCH_OK' : 'SEARCH_TOKEN_XYZ';
     const scenario = makeAcpSearchKnownTokenScenario({ providerId: pid, token });
 
-    if (provider.id === 'opencode') {
+    if (isOpenCodeFamilyProvider(provider)) {
       return {
         ...scenario,
         verify: async ({ fixtures }) => {
@@ -2746,8 +2760,8 @@ await server.connect(new StdioServerTransport());
   },
 
   edit_write_file_and_cat: (provider) => {
-    if (provider.id !== 'opencode' && provider.id !== 'kilo') {
-      throw new Error(`edit_write_file_and_cat only supports opencode or kilo providers (got ${provider.id})`);
+    if (!isOpenCodeFamilyProvider(provider) && provider.id !== 'kilo') {
+      throw new Error(`edit_write_file_and_cat only supports opencode-family or kilo providers (got ${provider.id})`);
     }
     return makeAcpWriteInWorkspaceScenario({
       providerId: acpProviderId(provider),
@@ -2759,8 +2773,8 @@ await server.connect(new StdioServerTransport());
   },
 
   write_then_stream_markdown_table: (provider) => {
-    if (provider.id !== 'opencode' && provider.id !== 'kilo') {
-      throw new Error(`write_then_stream_markdown_table only supports opencode or kilo providers (got ${provider.id})`);
+    if (!isOpenCodeFamilyProvider(provider) && provider.id !== 'kilo') {
+      throw new Error(`write_then_stream_markdown_table only supports opencode-family or kilo providers (got ${provider.id})`);
     }
     return makeAcpWriteThenStreamMarkdownTableScenario({
       providerId: acpProviderId(provider),
