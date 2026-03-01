@@ -3,19 +3,13 @@ import { View, ActivityIndicator, Platform } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { Ionicons } from '@expo/vector-icons';
 
-import { knownTools } from '@/components/tools/catalog';
 import { ToolSectionView } from '@/components/tools/shell/presentation/ToolSectionView';
 import type { Message, ToolCall } from '@/sync/domains/messages/messageTypes';
 import type { Metadata } from '@/sync/domains/state/storageTypes';
 import { t } from '@/text';
 import { Text } from '@/components/ui/text/Text';
+import { collectTaskLikeTools } from './collectTaskLikeTools';
 
-
-interface FilteredTool {
-    tool: ToolCall;
-    title: string;
-    state: 'running' | 'completed' | 'error';
-}
 
 type TaskOperation = 'run' | 'create' | 'list' | 'update' | 'unknown';
 
@@ -71,44 +65,6 @@ function coerceTaskResultText(result: unknown): string | null {
     }
     const joined = chunks.join('\n').trim();
     return joined.length > 0 ? joined : null;
-}
-
-function collectTaskLikeTools(params: Readonly<{
-    tool: ToolCall;
-    messages: readonly Message[];
-    metadata: Metadata | null;
-}>): readonly FilteredTool[] {
-    const filtered: FilteredTool[] = [];
-    const taskStartedAt = params.tool.startedAt ?? params.tool.createdAt;
-
-    for (const m of params.messages) {
-        if (m.kind !== 'tool-call') continue;
-        // Heuristic: show tool calls that happened during/after this task started.
-        if (typeof taskStartedAt === 'number' && typeof m.tool.createdAt === 'number' && m.tool.createdAt < taskStartedAt) {
-            continue;
-        }
-        if (m.tool.name === 'Task') continue;
-        const knownTool = knownTools[m.tool.name as keyof typeof knownTools] as any;
-
-        let title = m.tool.name;
-        if (knownTool) {
-            if ('extractDescription' in knownTool && typeof knownTool.extractDescription === 'function') {
-                title = knownTool.extractDescription({ tool: m.tool, metadata: params.metadata });
-            } else if (knownTool.title) {
-                if (typeof knownTool.title === 'function') {
-                    title = knownTool.title({ tool: m.tool, metadata: params.metadata });
-                } else {
-                    title = knownTool.title;
-                }
-            }
-        }
-
-        if (m.tool.state === 'running' || m.tool.state === 'completed' || m.tool.state === 'error') {
-            filtered.push({ tool: m.tool, title, state: m.tool.state });
-        }
-    }
-
-    return filtered;
 }
 
 export const TaskLikeSummarySection = React.memo<{
@@ -245,4 +201,3 @@ export const TaskLikeSummarySection = React.memo<{
         </ToolSectionView>
     );
 });
-

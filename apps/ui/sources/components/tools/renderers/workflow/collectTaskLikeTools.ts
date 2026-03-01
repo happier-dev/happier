@@ -1,0 +1,43 @@
+import type { Message, ToolCall } from '@/sync/domains/messages/messageTypes';
+import type { Metadata } from '@/sync/domains/state/storageTypes';
+
+import { normalizeToolCallForRendering } from '@/components/tools/normalization/core/normalizeToolCallForRendering';
+import { resolveToolHeaderTextPresentation } from '@/components/tools/shell/presentation/resolveToolHeaderTextPresentation';
+
+export interface FilteredTool {
+    tool: ToolCall;
+    title: string;
+    state: 'running' | 'completed' | 'error';
+}
+
+export function collectTaskLikeTools(params: Readonly<{
+    tool: ToolCall;
+    messages: readonly Message[];
+    metadata: Metadata | null;
+}>): readonly FilteredTool[] {
+    const filtered: FilteredTool[] = [];
+    const taskStartedAt = params.tool.startedAt ?? params.tool.createdAt;
+
+    for (const message of params.messages) {
+        if (message.kind !== 'tool-call') continue;
+        // Heuristic: show tool calls that happened during/after this task started.
+        if (
+            typeof taskStartedAt === 'number' &&
+            typeof message.tool.createdAt === 'number' &&
+            message.tool.createdAt < taskStartedAt
+        ) {
+            continue;
+        }
+        if (message.tool.name === 'Task') continue;
+
+        const toolForRendering = normalizeToolCallForRendering(message.tool);
+        const headerText = resolveToolHeaderTextPresentation({ tool: toolForRendering, metadata: params.metadata });
+
+        const state = message.tool.state;
+        if (state === 'running' || state === 'completed' || state === 'error') {
+            filtered.push({ tool: message.tool, title: headerText.title, state });
+        }
+    }
+
+    return filtered;
+}
