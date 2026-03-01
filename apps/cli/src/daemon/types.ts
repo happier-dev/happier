@@ -19,6 +19,12 @@ export interface TrackedSession {
   vendorResumeId?: string;
   pid: number;
   /**
+   * When the daemon spawns a wrapper script that then spawns the actual runner
+   * process, the session webhook reports the runner PID (child) while the daemon
+   * tracks the wrapper PID (parent). This field stores the runner PID when known.
+   */
+  sessionRunnerPid?: number;
+  /**
    * Hash of the observed process command line for PID reuse safety.
    * If present, we require this to match before sending SIGTERM by PID.
    */

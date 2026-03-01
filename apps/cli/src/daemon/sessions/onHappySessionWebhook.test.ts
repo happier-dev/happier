@@ -30,6 +30,7 @@ describe('createOnHappySessionWebhook', () => {
     const onWebhook = createOnHappySessionWebhook({
       pidToTrackedSession,
       pidToAwaiter,
+      getParentPidFn: () => null,
       findHappyProcessByPidFn: async () => null,
       writeSessionMarkerFn: async () => {},
     });
@@ -58,6 +59,7 @@ describe('createOnHappySessionWebhook', () => {
     const onWebhook = createOnHappySessionWebhook({
       pidToTrackedSession,
       pidToAwaiter,
+      getParentPidFn: () => null,
       findHappyProcessByPidFn: async () => null,
       writeSessionMarkerFn: async () => {},
     });
@@ -79,6 +81,7 @@ describe('createOnHappySessionWebhook', () => {
     const onWebhook = createOnHappySessionWebhook({
       pidToTrackedSession,
       pidToAwaiter,
+      getParentPidFn: () => null,
       findHappyProcessByPidFn: async () => null,
       writeSessionMarkerFn: async () => {},
     });
@@ -102,6 +105,7 @@ describe('createOnHappySessionWebhook', () => {
     const onWebhook = createOnHappySessionWebhook({
       pidToTrackedSession,
       pidToAwaiter,
+      getParentPidFn: () => null,
       findHappyProcessByPidFn: async () => null,
       writeSessionMarkerFn: async () => {},
     });
@@ -132,6 +136,7 @@ describe('createOnHappySessionWebhook', () => {
     const onWebhook = createOnHappySessionWebhook({
       pidToTrackedSession,
       pidToAwaiter,
+      getParentPidFn: () => null,
       findHappyProcessByPidFn: async () => null,
       writeSessionMarkerFn: async (args) => {
         markerArgs = args;
@@ -180,6 +185,7 @@ describe('createOnHappySessionWebhook', () => {
     const onWebhook = createOnHappySessionWebhook({
       pidToTrackedSession,
       pidToAwaiter,
+      getParentPidFn: () => null,
       findHappyProcessByPidFn: async () => null,
       writeSessionMarkerFn: async (args) => {
         markerArgs = args;
@@ -203,5 +209,57 @@ describe('createOnHappySessionWebhook', () => {
     expect(markerArgs.respawn?.environmentVariables).toBeUndefined();
     expect(markerArgs.respawn?.initialPrompt).toBeUndefined();
     expect(markerArgs.respawn?.resume).toBeUndefined();
+  });
+
+  it('matches an unknown webhook PID to a daemon-tracked wrapper PID via PPID and resolves awaiter', () => {
+    const wrapperPid = 111;
+    const runnerPid = 222;
+    const tracked: TrackedSession = { pid: wrapperPid, startedBy: 'daemon' };
+    const pidToTrackedSession = new Map<number, TrackedSession>([[wrapperPid, tracked]]);
+    const awaiter = vi.fn();
+    const pidToAwaiter = new Map<number, (session: TrackedSession) => void>([[wrapperPid, awaiter]]);
+
+    const onWebhook = createOnHappySessionWebhook({
+      pidToTrackedSession,
+      pidToAwaiter,
+      getParentPidFn: () => wrapperPid,
+      findHappyProcessByPidFn: async () => null,
+      writeSessionMarkerFn: async () => {},
+    });
+
+    onWebhook('session-real-222', createMetadata(runnerPid, 'daemon'));
+
+    expect(awaiter).toHaveBeenCalledTimes(1);
+    expect(pidToAwaiter.has(wrapperPid)).toBe(false);
+    expect(pidToTrackedSession.has(runnerPid)).toBe(false);
+    expect(pidToTrackedSession.get(wrapperPid)?.happySessionId).toBe('session-real-222');
+    expect(pidToTrackedSession.get(wrapperPid)?.sessionRunnerPid).toBe(runnerPid);
+  });
+
+  it('defers wrapper awaiter resolution on PID placeholder and resolves on canonical id', () => {
+    const wrapperPid = 111;
+    const runnerPid = 222;
+    const tracked: TrackedSession = { pid: wrapperPid, startedBy: 'daemon' };
+    const pidToTrackedSession = new Map<number, TrackedSession>([[wrapperPid, tracked]]);
+    const awaiter = vi.fn();
+    const pidToAwaiter = new Map<number, (session: TrackedSession) => void>([[wrapperPid, awaiter]]);
+
+    const onWebhook = createOnHappySessionWebhook({
+      pidToTrackedSession,
+      pidToAwaiter,
+      getParentPidFn: () => wrapperPid,
+      findHappyProcessByPidFn: async () => null,
+      writeSessionMarkerFn: async () => {},
+    });
+
+    onWebhook(`PID-${runnerPid}`, createMetadata(runnerPid, 'daemon'));
+
+    expect(awaiter).toHaveBeenCalledTimes(0);
+    expect(pidToAwaiter.has(wrapperPid)).toBe(true);
+
+    onWebhook('session-real-222', createMetadata(runnerPid, 'daemon'));
+
+    expect(awaiter).toHaveBeenCalledTimes(1);
+    expect(pidToAwaiter.has(wrapperPid)).toBe(false);
   });
 });
