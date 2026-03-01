@@ -12,23 +12,37 @@ export interface SDKMetadata {
     slashCommands?: string[]
 }
 
-/** Maximum time to wait for SDK metadata extraction before giving up. */
-const METADATA_EXTRACTION_TIMEOUT_MS = 10_000
+const DEFAULT_METADATA_EXTRACTION_TIMEOUT_MS = 10_000
+const MIN_METADATA_EXTRACTION_TIMEOUT_MS = 10
+const MAX_METADATA_EXTRACTION_TIMEOUT_MS = 120_000
+
+function resolveMetadataExtractionTimeoutMs(): number {
+    const raw = typeof process.env.HAPPIER_CLAUDE_SDK_METADATA_EXTRACTION_TIMEOUT_MS === 'string'
+        ? process.env.HAPPIER_CLAUDE_SDK_METADATA_EXTRACTION_TIMEOUT_MS.trim()
+        : ''
+    const parsed = Number.parseInt(raw, 10)
+    if (!Number.isFinite(parsed)) return DEFAULT_METADATA_EXTRACTION_TIMEOUT_MS
+    return Math.max(MIN_METADATA_EXTRACTION_TIMEOUT_MS, Math.min(MAX_METADATA_EXTRACTION_TIMEOUT_MS, parsed))
+}
 
 /**
  * Extract SDK metadata by running a minimal query and capturing the init message.
  *
- * Times out after METADATA_EXTRACTION_TIMEOUT_MS to prevent indefinite hangs
+ * Times out after the configured extraction timeout to prevent indefinite hangs
  * when the spawned SDK process blocks (e.g. on slow or inaccessible filesystems).
  *
  * @returns SDK metadata containing tools and slash commands
  */
 export async function extractSDKMetadata(): Promise<SDKMetadata> {
     const abortController = new AbortController()
+    const timeoutMs = resolveMetadataExtractionTimeoutMs()
     const timeoutId = setTimeout(() => {
-        logger.debug(`[metadataExtractor] Extraction timed out after ${METADATA_EXTRACTION_TIMEOUT_MS}ms`)
+        logger.debug(`[metadataExtractor] Extraction timed out after ${timeoutMs}ms`)
         abortController.abort()
-    }, METADATA_EXTRACTION_TIMEOUT_MS)
+    }, timeoutMs)
+    if (typeof timeoutId.unref === 'function') {
+        timeoutId.unref()
+    }
 
     try {
         logger.debug('[metadataExtractor] Starting SDK metadata extraction')
@@ -56,19 +70,16 @@ export async function extractSDKMetadata(): Promise<SDKMetadata> {
                 logger.debug('[metadataExtractor] Captured SDK metadata:', metadata)
 
                 // Abort the query since we got what we need
-                clearTimeout(timeoutId)
                 abortController.abort()
 
                 return metadata
             }
         }
 
-        clearTimeout(timeoutId)
         logger.debug('[metadataExtractor] No init message received from SDK')
         return {}
 
     } catch (error) {
-        clearTimeout(timeoutId)
         // Check if it's an abort error (expected — either from timeout or after capture)
         if (error instanceof Error && error.name === 'AbortError') {
             logger.debug('[metadataExtractor] SDK query aborted (timeout or after capturing metadata)')
@@ -76,6 +87,8 @@ export async function extractSDKMetadata(): Promise<SDKMetadata> {
         }
         logger.debug('[metadataExtractor] Error extracting SDK metadata:', error)
         return {}
+    } finally {
+        clearTimeout(timeoutId)
     }
 }
 
