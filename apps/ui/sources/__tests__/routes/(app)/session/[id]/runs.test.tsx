@@ -1,6 +1,6 @@
 import * as React from 'react';
 import renderer, { act } from 'react-test-renderer';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -16,12 +16,19 @@ type ExecutionRunSummary = Readonly<{
     finishedAtMs: number;
 }>;
 
-const listRunsSpy = vi.fn(async (_sessionId: string, _params: Record<string, unknown>) => ({
-    runs: [] as ExecutionRunSummary[],
-}));
+type ExecutionRunListResult =
+    | Readonly<{ ok: false; error: string; errorCode?: string }>
+    | Readonly<{ runs: readonly ExecutionRunSummary[] }>;
+
+const listRunsSpy = vi.fn<(...args: ExecutionRunListArgs) => Promise<ExecutionRunListResult>>(
+    async (_sessionId: string, _params: Record<string, unknown>) => ({
+        runs: [] as const,
+    }),
+);
 
 const routerPushSpy = vi.fn();
 const stackScreenSpy = vi.fn((_props: any) => null);
+let focusEffectHandler: (() => void | (() => void)) | null = null;
 
 vi.mock('react-native', async () => await import('@/dev/reactNativeStub'));
 
@@ -30,6 +37,9 @@ vi.mock('@expo/vector-icons', () => ({ Ionicons: 'Ionicons' }));
 vi.mock('expo-router', () => ({
     useLocalSearchParams: () => ({ id: 'session-1' }),
     useRouter: () => ({ push: routerPushSpy, back: vi.fn() }),
+    useFocusEffect: (handler: () => void | (() => void)) => {
+        focusEffectHandler = handler;
+    },
     Stack: { Screen: (props: any) => stackScreenSpy(props) },
 }));
 
@@ -58,6 +68,32 @@ vi.mock('@/components/sessions/runs/ExecutionRunList', () => ({
 }));
 
 describe('Session Runs Screen', () => {
+    afterEach(() => {
+        listRunsSpy.mockReset();
+        listRunsSpy.mockResolvedValue({ runs: [] });
+    });
+
+    it('reloads runs when the screen regains focus', async () => {
+        listRunsSpy.mockClear();
+        listRunsSpy.mockResolvedValue({ runs: [] });
+        focusEffectHandler = null;
+
+        const RunsScreen = (await import('@/app/(app)/session/[id]/runs')).default;
+
+        await act(async () => {
+            renderer.create(React.createElement(RunsScreen));
+        });
+
+        expect(listRunsSpy).toHaveBeenCalledTimes(1);
+        expect(typeof focusEffectHandler).toBe('function');
+
+        await act(async () => {
+            focusEffectHandler?.();
+        });
+
+        expect(listRunsSpy).toHaveBeenCalledTimes(2);
+    });
+
     it('configures a runs header and navigates when Run review is pressed', async () => {
         routerPushSpy.mockClear();
         stackScreenSpy.mockClear();
@@ -167,6 +203,39 @@ describe('Session Runs Screen', () => {
         expect(tree).not.toBeNull();
         const textNodes = tree!.root.findAllByType('Text');
         expect(textNodes.some((n: any) => String(n.props.children).includes('run_1'))).toBe(true);
+    });
+
+    it('retries once when execution run list returns RPC_METHOD_NOT_AVAILABLE', async () => {
+        listRunsSpy.mockReset();
+        listRunsSpy
+            .mockResolvedValueOnce({ ok: false, error: 'RPC method not available', errorCode: 'RPC_METHOD_NOT_AVAILABLE' })
+            .mockResolvedValueOnce({
+                runs: [
+                    {
+                        runId: 'run_retry',
+                        callId: 'call_retry',
+                        sidechainId: 'call_retry',
+                        intent: 'delegate',
+                        backendId: 'claude',
+                        status: 'running',
+                        startedAtMs: 1,
+                        finishedAtMs: 0,
+                    },
+                ],
+            });
+
+        const RunsScreen = (await import('@/app/(app)/session/[id]/runs')).default;
+
+        let tree: renderer.ReactTestRenderer | null = null;
+        await act(async () => {
+            tree = renderer.create(React.createElement(RunsScreen));
+            await Promise.resolve();
+            await Promise.resolve();
+        });
+
+        expect(listRunsSpy).toHaveBeenCalledTimes(2);
+        const textNodes = tree!.root.findAllByType('Text');
+        expect(textNodes.some((n: any) => String(n.props.children).includes('run_retry'))).toBe(true);
     });
 
     it('navigates to the run details screen when a run is pressed', async () => {
