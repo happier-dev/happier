@@ -6,6 +6,7 @@ import { sessionScmCommitBackout, sessionScmDiffCommit } from '@/sync/ops';
 import {
     storage,
     useSession,
+    useProjectForSession,
     useSessions,
     useSessionProjectScmInFlightOperation,
     useSessionProjectScmSnapshot,
@@ -36,6 +37,7 @@ import { ScrollEdgeIndicators } from '@/components/ui/scroll/ScrollEdgeIndicator
 import { useScmReviewViewabilityConfig } from '@/scm/review/useScmReviewViewabilityConfig';
 import { useViewableItemIndices } from '@/components/ui/scroll/useViewableItemIndices';
 import { resolveIndexWindow } from '@/components/ui/scroll/resolveIndexWindow';
+import { resolveSessionWorkspacePath } from '@/sync/domains/session/resolveSessionWorkspacePath';
 
 export type SessionCommitDetailsViewProps = Readonly<{
     sessionId: string;
@@ -110,19 +112,43 @@ export function SessionCommitDetailsView(props: SessionCommitDetailsViewProps) {
         return new Set(keys);
     }, [allKeys, viewabilityConfig.aheadCount, viewabilityConfig.behindCount]);
 
-    const autoExpandedKeySet = React.useMemo(() => {
-        if (!tooLarge) return null;
+    const [autoExpandedKeys, setAutoExpandedKeys] = React.useState<Set<string>>(() => new Set());
+
+    React.useEffect(() => {
+        // Reset whenever the commit content changes.
+        if (!tooLarge) {
+            setAutoExpandedKeys(new Set());
+            return;
+        }
+        setAutoExpandedKeys(new Set(initialAutoExpandedKeySet));
+        setCollapsedKeys(new Set());
+    }, [initialAutoExpandedKeySet, tooLarge, sessionId, sha]);
+
+    React.useEffect(() => {
+        if (!tooLarge) return;
         const window = resolveIndexWindow({
             viewableIndices: viewability.viewableIndices,
             aheadCount: viewabilityConfig.aheadCount,
-            behindCount: viewabilityConfig.behindCount,
+            // Never auto-expand diffs *above* the first visible row: expanding above the viewport
+            // changes height "behind" the user's scroll position and makes scrolling feel like it
+            // snaps back up on web. Prefetch can be bidirectional, but auto-expansion must not be.
+            behindCount: 0,
             maxIndex: Math.max(0, allKeys.length - 1),
         });
-        if (!window) return initialAutoExpandedKeySet;
-        return new Set(allKeys.slice(window.startIndex, window.endIndex + 1));
+        if (!window) return;
+        const windowKeys = allKeys.slice(window.startIndex, window.endIndex + 1);
+        setAutoExpandedKeys((prev) => {
+            let changed = false;
+            const next = new Set(prev);
+            for (const key of windowKeys) {
+                if (next.has(key)) continue;
+                next.add(key);
+                changed = true;
+            }
+            return changed ? next : prev;
+        });
     }, [
         allKeys,
-        initialAutoExpandedKeySet,
         tooLarge,
         viewability.viewableIndices,
         viewabilityConfig.aheadCount,
@@ -139,19 +165,23 @@ export function SessionCommitDetailsView(props: SessionCommitDetailsViewProps) {
             return out;
         }
 
-        const autoKeys = autoExpandedKeySet ?? new Set<string>();
+        const autoKeys = autoExpandedKeys.size > 0 ? autoExpandedKeys : initialAutoExpandedKeySet;
         const out = new Set<string>();
         for (const key of autoKeys) {
             if (collapsedKeys.has(key)) continue;
             out.add(key);
         }
         return out;
-    }, [allKeys, autoExpandedKeySet, collapsedKeys, tooLarge]);
+    }, [allKeys, autoExpandedKeys, collapsedKeys, initialAutoExpandedKeySet, tooLarge]);
 
     const sessionsData = useSessions();
     const isStorageReady = sessionsData !== null;
     const session = useSession(sessionId);
-    const sessionPath = session?.metadata?.path ?? null;
+    const project = useProjectForSession(sessionId);
+    const sessionPath = resolveSessionWorkspacePath({
+        sessionPath: session?.metadata?.path ?? null,
+        projectPath: project?.key?.path ?? null,
+    });
 
     const reviewCommentDrafts = useSessionReviewCommentsDrafts(sessionId);
     const reviewDraftHandlers = useSessionReviewCommentDraftHandlers(sessionId);

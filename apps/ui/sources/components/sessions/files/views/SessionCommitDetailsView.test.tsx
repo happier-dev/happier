@@ -24,6 +24,8 @@ const sessionScmDiffCommitSpy = vi.fn(async (..._args: any[]) => ({
 let sessionsMock: any = {};
 let sessionMock: any = { metadata: { path: '/repo' } };
 const stableSnapshot = { branch: { head: 'main', detached: false } };
+let prefetchAheadCount = 1;
+let prefetchBehindCount = 1;
 
 vi.mock('react-native', () => ({
     View: 'View',
@@ -83,6 +85,7 @@ vi.mock('@/sync/domains/state/storage', () => ({
     storage: { getState: () => ({ upsertSessionReviewCommentDraft: () => {}, deleteSessionReviewCommentDraft: () => {} }) },
     useSessions: () => sessionsMock,
     useSession: () => sessionMock,
+    useProjectForSession: () => ({ key: { machineId: 'm1', path: '/repo' } }),
     useSessionProjectScmSnapshot: () => stableSnapshot,
     useSessionProjectScmInFlightOperation: () => null,
     useSessionReviewCommentsDrafts: () => [],
@@ -91,8 +94,8 @@ vi.mock('@/sync/domains/state/storage', () => ({
         if (key === 'showLineNumbers') return true;
         if (key === 'scmReviewMaxFiles') return 1;
         if (key === 'scmReviewMaxChangedLines') return 2000;
-        if (key === 'scmReviewPrefetchAheadCountWeb') return 1;
-        if (key === 'scmReviewPrefetchBehindCountWeb') return 1;
+        if (key === 'scmReviewPrefetchAheadCountWeb') return prefetchAheadCount;
+        if (key === 'scmReviewPrefetchBehindCountWeb') return prefetchBehindCount;
         if (key === 'scmReviewPrefetchDebounceMs') return 0;
         return undefined;
     },
@@ -165,6 +168,8 @@ describe('SessionCommitDetailsView', () => {
         diffFilesListSpy.mockClear();
         sessionsMock = {};
         sessionMock = { metadata: { path: '/repo' } };
+        prefetchAheadCount = 1;
+        prefetchBehindCount = 1;
 
         const { SessionCommitDetailsView } = await import('./SessionCommitDetailsView');
 
@@ -186,12 +191,91 @@ describe('SessionCommitDetailsView', () => {
         expect(tree.root.findAllByType('ScrollView' as any)).toHaveLength(0);
     });
 
+    it('does not auto-collapse diffs that are already above the viewport (prevents scroll snapping)', async () => {
+        reviewCommentsEnabled = false;
+        sessionScmDiffCommitSpy.mockClear();
+        diffFilesListSpy.mockClear();
+        sessionsMock = {};
+        sessionMock = { metadata: { path: '/repo' } };
+        prefetchAheadCount = 0;
+        prefetchBehindCount = 0;
+
+        sessionScmDiffCommitSpy.mockResolvedValueOnce({
+            success: true,
+            diff: [
+                'diff --git a/src/a.ts b/src/a.ts',
+                'index 0000000..1111111 100644',
+                '--- a/src/a.ts',
+                '+++ b/src/a.ts',
+                '@@ -1,1 +1,1 @@',
+                '-export const a = 1;',
+                '+export const a = 2;',
+                '',
+                'diff --git a/src/b.ts b/src/b.ts',
+                'index 0000000..1111111 100644',
+                '--- a/src/b.ts',
+                '+++ b/src/b.ts',
+                '@@ -1,1 +1,1 @@',
+                '-export const b = 1;',
+                '+export const b = 2;',
+                '',
+                'diff --git a/src/c.ts b/src/c.ts',
+                'index 0000000..1111111 100644',
+                '--- a/src/c.ts',
+                '+++ b/src/c.ts',
+                '@@ -1,1 +1,1 @@',
+                '-export const c = 1;',
+                '+export const c = 2;',
+                '',
+            ].join('\n'),
+            error: null,
+        });
+
+        const { SessionCommitDetailsView } = await import('./SessionCommitDetailsView');
+
+        await act(async () => {
+            renderer.create(<SessionCommitDetailsView sessionId="s1" sha="abc" />);
+        });
+
+        for (let i = 0; i < 20; i++) {
+            await act(async () => {
+                await Promise.resolve();
+            });
+            if (diffFilesListSpy.mock.calls.length > 0) break;
+        }
+
+        const firstRenderProps = diffFilesListSpy.mock.calls.at(-1)?.[0];
+        expect(firstRenderProps).toBeTruthy();
+        const firstKeys = Array.from((firstRenderProps as any).expandedKeys as Set<string>);
+        expect(firstKeys).toHaveLength(1);
+
+        const files = (firstRenderProps as any).files as Array<{ key: string }>;
+        expect(files).toHaveLength(3);
+
+        await act(async () => {
+            (firstRenderProps as any).onViewableItemsChanged?.({
+                viewableItems: [{ index: 1 }],
+            });
+        });
+
+        await act(async () => {
+            await Promise.resolve();
+        });
+
+        const secondRenderProps = diffFilesListSpy.mock.calls.at(-1)?.[0];
+        const expandedKeys = (secondRenderProps as any).expandedKeys as Set<string>;
+        expect(expandedKeys.has(files[0].key)).toBe(true);
+        expect(expandedKeys.has(files[1].key)).toBe(true);
+    });
+
     it('does not refetch the diff when the session object identity changes', async () => {
         reviewCommentsEnabled = false;
         sessionScmDiffCommitSpy.mockClear();
         diffFilesListSpy.mockClear();
         sessionsMock = {};
         sessionMock = { metadata: { path: '/repo' } };
+        prefetchAheadCount = 1;
+        prefetchBehindCount = 1;
 
         const { SessionCommitDetailsView } = await import('./SessionCommitDetailsView');
 
@@ -401,5 +485,65 @@ describe('SessionCommitDetailsView', () => {
         const expected = keys.slice(0, 3).slice().sort(); // ahead(1)+behind(1)+1 = 3
         expect(expandedKeys).toEqual(expected);
         expect(typeof props.onViewableItemsChanged).toBe('function');
+    });
+
+    it('does not auto-expand diffs above the first visible file (prevents scroll snap-back)', async () => {
+        reviewCommentsEnabled = false;
+        sessionScmDiffCommitSpy.mockClear();
+        diffFilesListSpy.mockClear();
+        sessionsMock = {};
+        sessionMock = { metadata: { path: '/repo' } };
+        prefetchAheadCount = 1;
+        prefetchBehindCount = 2;
+
+        const filesDiff = Array.from({ length: 8 }, (_v, i) => ([
+            `diff --git a/src/f${i}.ts b/src/f${i}.ts`,
+            `--- a/src/f${i}.ts`,
+            `+++ b/src/f${i}.ts`,
+            '@@ -1 +1 @@',
+            `-v${i}`,
+            `+v${i + 1}`,
+            '',
+        ].join('\n'))).join('\n');
+
+        sessionScmDiffCommitSpy.mockImplementationOnce(async () => ({
+            success: true,
+            diff: filesDiff,
+            error: null,
+        }));
+
+        const { SessionCommitDetailsView } = await import('./SessionCommitDetailsView');
+
+        await act(async () => {
+            renderer.create(<SessionCommitDetailsView sessionId="s1" sha="abc" />);
+        });
+
+        for (let i = 0; i < 20; i++) {
+            await act(async () => {
+                await Promise.resolve();
+            });
+            if (diffFilesListSpy.mock.calls.length > 0) break;
+        }
+
+        const initialProps = diffFilesListSpy.mock.calls.at(-1)?.[0] as any;
+        expect(initialProps).toBeTruthy();
+
+        const files = initialProps.files as Array<{ key: string }>;
+        expect(files).toHaveLength(8);
+
+        await act(async () => {
+            initialProps.onViewableItemsChanged?.({ viewableItems: [{ index: 5 }] });
+        });
+        await act(async () => {
+            await Promise.resolve();
+        });
+
+        const afterProps = diffFilesListSpy.mock.calls.at(-1)?.[0] as any;
+        const expandedKeys = afterProps.expandedKeys as Set<string>;
+
+        // Index 4 is above the first visible index 5. Expanding it would change height above the viewport
+        // and make scrolling down feel like it's fighting the user.
+        expect(expandedKeys.has(files[4].key)).toBe(false);
+        expect(expandedKeys.has(files[5].key)).toBe(true);
     });
 });
