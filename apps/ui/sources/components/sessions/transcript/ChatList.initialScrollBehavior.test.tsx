@@ -19,6 +19,10 @@ let sessionState: any = null;
 
 const buildChatListItemsMock = vi.fn((..._args: any[]) => []);
 
+vi.mock('@shopify/flash-list', () => ({
+  FlashList: () => null,
+}));
+
 vi.mock('react-native', async (importOriginal) => {
   const ReactMod = await import('react');
   const actual = await importOriginal<any>();
@@ -46,14 +50,34 @@ vi.mock('react-native-safe-area-context', () => ({
 }));
 
 vi.mock('@/sync/domains/state/storage', () => ({
+  getStorage: () => ({
+    getState: () => ({
+      sessionMessages: {
+        [sessionState?.id ?? 'session-1']: {
+          messagesById: Object.fromEntries((sessionMessagesState.messages ?? []).map((m: any) => [m.id, m])),
+          messagesMap: Object.fromEntries((sessionMessagesState.messages ?? []).map((m: any) => [m.id, m])),
+        },
+      },
+    }),
+  }),
   useSession: () => sessionState,
-  useSessionMessages: () => sessionMessagesState,
+  useSessionTranscriptIds: () => ({
+    ids: (sessionMessagesState.messages ?? []).map((m: any) => m.id),
+    isLoaded: sessionMessagesState.isLoaded,
+  }),
+  useSessionMessagesById: () => Object.fromEntries((sessionMessagesState.messages ?? []).map((m: any) => [m.id, m])),
+  useForkedTranscriptSnapshot: () => null,
   useSessionPendingMessages: () => sessionPendingState,
   useSessionActionDrafts: () => sessionActionDraftsState,
+  useSessionLatestThinkingMessageId: () => null,
+  useSessionLatestThinkingMessageActivityAtMs: () => null,
+  useMessage: () => null,
+  useSetting: (key: string) => (key === 'transcriptListImplementation' ? 'flatlist_legacy' : undefined),
 }));
 
 vi.mock('@/components/sessions/chatListItems', () => ({
   buildChatListItems: buildChatListItemsMock,
+  buildChatListItemsCached: (opts: any) => ({ cache: null, items: buildChatListItemsMock(opts) }),
 }));
 
 vi.mock('./ChatFooter', () => ({
@@ -64,8 +88,12 @@ vi.mock('./MessageView', () => ({
   MessageView: () => React.createElement('MessageView'),
 }));
 
-vi.mock('@/components/sessions/pending/PendingUserTextMessageView', () => ({
-  PendingUserTextMessageView: () => React.createElement('PendingUserTextMessageView'),
+vi.mock('@/components/sessions/transcript/turns/TurnView', () => ({
+  TurnView: () => React.createElement('TurnView'),
+}));
+
+vi.mock('@/components/sessions/pending/PendingMessagesTranscriptBlock', () => ({
+  PendingMessagesTranscriptBlock: () => React.createElement('PendingMessagesTranscriptBlock'),
 }));
 
 vi.mock('@/components/sessions/actions/SessionActionDraftCard', () => ({
@@ -83,6 +111,14 @@ vi.mock('@/utils/system/fireAndForget', () => ({
 vi.mock('@/sync/sync', () => ({
   sync: {
     loadOlderMessages: loadOlderMessagesMock,
+    loadNewerMessages: vi.fn(),
+    hasDeferredNewerMessages: () => false,
+    getSyncTuning: () => ({
+      transcriptForwardPrefetchThresholdPx: 0,
+      transcriptFlashListEstimatedItemSize: 120,
+      transcriptWebInitialPinStabilizeMs: 3000,
+      transcriptWebInitialPinRetryIntervalMs: 250,
+    }),
   },
 }));
 
@@ -154,7 +190,8 @@ describe('ChatList (initial scroll/pagination behavior)', () => {
     });
 
     expect(loadOlderMessagesMock).toHaveBeenCalledTimes(1);
-    expect(scrollToOffsetMock).toHaveBeenCalledWith({ offset: 0, animated: false });
+    // On web, we avoid `scrollToOffset` during mount to prevent visible jitter. Pinning uses DOM scroll when available.
+    expect(scrollToOffsetMock).not.toHaveBeenCalled();
   });
 
   it('pins to the visual bottom on initial load (even before layout measurements)', async () => {
@@ -171,7 +208,22 @@ describe('ChatList (initial scroll/pagination behavior)', () => {
       await Promise.resolve();
     });
 
-    expect(scrollToOffsetMock).toHaveBeenCalledWith({ offset: 0, animated: false });
+    // On web, pinning happens via DOM scroll when possible; we do not rely on list ref scroll APIs.
+    expect(scrollToOffsetMock).not.toHaveBeenCalled();
+  });
+
+  it('stops wheel event propagation on web so transcript scrolling is not blocked by document scroll-lock listeners', async () => {
+    const { ChatList } = await import('./ChatList');
+    await act(async () => {
+      renderer.create(<ChatList session={sessionState} />);
+    });
+
+    expect(capturedFlatListProps).toBeTruthy();
+    expect(typeof capturedFlatListProps.onWheel).toBe('function');
+
+    const stopPropagation = vi.fn();
+    capturedFlatListProps.onWheel({ stopPropagation });
+    expect(stopPropagation).toHaveBeenCalledTimes(1);
   });
 
   it('falls back to setting scrollTop directly on web when FlatList ref methods are not available', async () => {

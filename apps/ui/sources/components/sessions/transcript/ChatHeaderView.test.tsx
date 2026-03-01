@@ -76,6 +76,29 @@ vi.mock('@/components/ui/layout/layout', () => ({
 }));
 
 describe('ChatHeaderView', () => {
+    it('uses elevation to keep the header above scroll content on Android', async () => {
+        const { ChatHeaderView } = await import('./ChatHeaderView');
+
+        let tree: renderer.ReactTestRenderer | null = null;
+        await act(async () => {
+            tree = renderer.create(<ChatHeaderView title="Title" />);
+        });
+
+        const allViews = tree!.root.findAllByType('View' as any);
+        const containerView = allViews.find((node) => {
+            const style = node.props?.style;
+            const flat = Array.isArray(style) ? style.flat() : [style];
+            return flat.some((s) => s && typeof s === 'object' && s.zIndex === 100);
+        });
+
+        expect(containerView).toBeTruthy();
+
+        const style = (containerView as any).props.style;
+        const flat = Array.isArray(style) ? style.flat() : [style];
+        const base = flat.find((s: any) => s && typeof s === 'object' && s.zIndex === 100);
+        expect(base?.elevation).toBe(10);
+    });
+
     it('renders an optional rightElement', async () => {
         const { ChatHeaderView } = await import('./ChatHeaderView');
 
@@ -90,5 +113,34 @@ describe('ChatHeaderView', () => {
         });
 
         expect(JSON.stringify(tree!.toJSON())).toContain('RIGHT');
+    });
+
+    it('stretches header width when constrainWidth is false', async () => {
+        const { ChatHeaderView } = await import('./ChatHeaderView');
+
+        let tree: renderer.ReactTestRenderer | null = null;
+        await act(async () => {
+            tree = renderer.create(
+                <ChatHeaderView
+                    title="Title"
+                    constrainWidth={false}
+                />,
+            );
+        });
+
+        const allViews = tree!.root.findAllByType('View' as any);
+        const contentView = allViews.find((node) => {
+            const style = node.props?.style;
+            if (!Array.isArray(style)) return false;
+            return style.some((s) => s && typeof s === 'object' && 'maxWidth' in s);
+        });
+
+        expect(contentView).toBeTruthy();
+
+        const flat = (contentView as any).props.style;
+        const maxWidth = flat
+            .filter((s: any) => s && typeof s === 'object' && 'maxWidth' in s)
+            .at(-1)?.maxWidth;
+        expect(maxWidth).toBe('100%');
     });
 });

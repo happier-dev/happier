@@ -9,6 +9,7 @@ import { useHeaderHeight } from '@/utils/platform/responsive';
 import { layout } from '@/components/ui/layout/layout';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { Text } from '@/components/ui/text/Text';
+import { t } from '@/text';
 
 
 interface ChatHeaderViewProps {
@@ -22,6 +23,7 @@ interface ChatHeaderViewProps {
     tintColor?: string;
     isConnected?: boolean;
     flavor?: string | null;
+    constrainWidth?: boolean;
 }
 
 export const ChatHeaderView: React.FC<ChatHeaderViewProps> = ({
@@ -33,6 +35,7 @@ export const ChatHeaderView: React.FC<ChatHeaderViewProps> = ({
     rightElement,
     isConnected = true,
     flavor,
+    constrainWidth = true,
 }) => {
     const { theme } = useUnistyles();
     const navigation = useNavigation();
@@ -49,9 +52,16 @@ export const ChatHeaderView: React.FC<ChatHeaderViewProps> = ({
 
     return (
         <View style={[styles.container, { paddingTop: insets.top, backgroundColor: theme.colors.header.background }]}>
-            <View style={styles.contentWrapper}>
-                <View style={[styles.content, { height: headerHeight }]}>
-                <Pressable onPress={handleBackPress} style={styles.backButton} hitSlop={15}>
+            <View style={[styles.contentWrapper, constrainWidth ? null : { alignItems: 'stretch' }]}>
+                <View style={[styles.content, { height: headerHeight }, constrainWidth ? null : { maxWidth: '100%' }]}>
+                <Pressable
+                    onPress={handleBackPress}
+                    testID="session-header-back"
+                    accessibilityRole="button"
+                    accessibilityLabel={t('common.back')}
+                    style={styles.backButton}
+                    hitSlop={15}
+                >
                     <Ionicons
                         name={Platform.OS === 'ios' ? 'chevron-back' : 'arrow-back'}
                         size={Platform.select({ ios: 28, default: 24 })}
@@ -121,6 +131,7 @@ const styles = StyleSheet.create({
     container: {
         position: 'relative',
         zIndex: 100,
+        elevation: 10,
     },
     contentWrapper: {
         width: '100%',

@@ -57,4 +57,41 @@ describe('StructuredMessageBlock', () => {
         expect(serialized).toContain('Review comments');
         expect(serialized).toContain('src/a.ts');
     });
+
+    it('renders participant message card for valid payload', () => {
+        let tree: renderer.ReactTestRenderer | null = null;
+        act(() => {
+            tree = renderer.create(
+                <StructuredMessageBlock
+                    message={{
+                        kind: 'user-text',
+                        id: 'm1',
+                        localId: null,
+                        createdAt: 1,
+                        text: 'hello there',
+                        meta: {
+                            happier: {
+                                kind: 'participant_message.v1',
+                                payload: {
+                                    recipient: {
+                                        kind: 'agent_team_member',
+                                        teamId: 'team_1',
+                                        memberId: 'agent_1',
+                                        memberLabel: 'Alice',
+                                    },
+                                },
+                            },
+                        },
+                    } as any}
+                    sessionId="s1"
+                    onJumpToAnchor={() => {}}
+                />,
+            );
+        });
+
+        const serialized = JSON.stringify(tree!.toJSON());
+        expect(serialized).toContain('To:');
+        expect(serialized).toContain('Alice');
+        expect(serialized).toContain('hello there');
+    });
 });

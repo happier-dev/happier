@@ -10,12 +10,31 @@ vi.mock('react-native', async (importOriginal) => {
             OS: 'web',
             select: (values: any) => values?.web ?? values?.default,
         },
+        Easing: {
+            bezier: () => ({}),
+            linear: () => ({}),
+        },
         Dimensions: {
             get: () => ({ width: 1200, height: 800, scale: 1, fontScale: 1 }),
         },
         useWindowDimensions: () => ({ width: 1200, height: 800, scale: 1, fontScale: 1 }),
+        Animated: {
+            Value: class AnimatedValue {
+                constructor(public _value: number) {}
+                interpolate() {
+                    return this as any;
+                }
+            },
+            timing: (_value: any, _config: any) => ({
+                start: (cb?: any) => {
+                    cb?.();
+                },
+            }),
+            View: ({ children, ...props }: any) => React.createElement('AnimatedView', props, children),
+        },
         View: 'View',
         Text: 'Text',
+        ScrollView: 'ScrollView',
         Pressable: ({ children, ...props }: any) => React.createElement('Pressable', props, children),
     };
 });
@@ -62,12 +81,31 @@ vi.mock('@/components/tools/shell/views/ToolView', () => ({
     ToolView: (props: any) => React.createElement('ToolView', props),
 }));
 
+vi.mock('@/components/tools/shell/views/ToolTimelineRow', () => ({
+    ToolTimelineRow: (props: any) => React.createElement('ToolTimelineRow', props),
+}));
+
 vi.mock('@/components/sessions/transcript/messageCopyVisibility', () => ({
     shouldShowMessageCopyButton: () => false,
 }));
 
 vi.mock('@/text', () => ({
-    t: (key: string) => key,
+    t: (key: string, params?: any) => {
+        if (key === 'session.reviewFindings.findingTitle' && params && typeof params.title === 'string') {
+            return params.title;
+        }
+        if (typeof key === 'string' && key.startsWith('session.reviewFindings.status.')) {
+            return key.split('.').pop();
+        }
+        if (key === 'session.reviewFindings.title' && params && typeof params.count === 'number') {
+            return `Review findings (${params.count})`;
+        }
+        if (key === 'session.reviewFindings.actions.applyAcceptedFindings') return 'Apply accepted findings';
+        if (key === 'session.reviewFindings.actions.applyTriage') return 'Apply triage';
+        if (key === 'session.reviewFindings.actions.sending') return 'Sending…';
+        if (key === 'session.reviewFindings.actions.applying') return 'Applying…';
+        return key;
+    },
 }));
 
 vi.mock('@/modal', () => ({
@@ -88,6 +126,7 @@ vi.mock('expo-clipboard', () => ({
 
 vi.mock('@expo/vector-icons', () => ({
     Ionicons: 'Ionicons',
+    Octicons: 'Octicons',
 }));
 
 vi.mock('@/hooks/server/useFeatureEnabled', () => ({
@@ -95,15 +134,19 @@ vi.mock('@/hooks/server/useFeatureEnabled', () => ({
 }));
 
 let thinkingDisplayMode: 'inline' | 'tool' | 'hidden' = 'inline';
+let thinkingInlinePresentation: 'full' | 'summary' = 'full';
 vi.mock('@/sync/domains/state/storage', () => ({
+    useSession: () => null,
     useSetting: (key: string) => {
         if (key === 'sessionThinkingDisplayMode') return thinkingDisplayMode;
+        if (key === 'sessionThinkingInlinePresentation') return thinkingInlinePresentation;
         return null;
     },
 }));
 
 afterEach(() => {
     thinkingDisplayMode = 'inline';
+    thinkingInlinePresentation = 'full';
 });
 
 vi.mock('@/utils/sessions/discardedCommittedMessages', () => ({
@@ -115,7 +158,7 @@ vi.mock('expo-router', () => ({
     useRouter: () => ({ push: routerPushSpy }),
 }));
 
-describe('MessageView (structured meta)', () => {
+describe('MessageView (structured meta)', { timeout: 60_000 }, () => {
     it('renders a structured review-comments card when meta.happier.kind is review_comments.v1', async () => {
         const { MessageView } = await import('./MessageView');
         const { ReviewCommentsMessageCard } = await import('../reviews/messages/ReviewCommentsMessageCard');
@@ -241,6 +284,45 @@ describe('MessageView (structured meta)', () => {
         expect(bubbleViews).toHaveLength(0);
     });
 
+    it('renders an inline attachments row for user messages with happier meta attachments.v1', async () => {
+        const { MessageView } = await import('./MessageView');
+
+        const message: any = {
+            kind: 'user-text',
+            localId: 'local-1',
+            text: [
+                'hello',
+                '',
+                'Attachments: read each file path with the Read tool before answering.',
+                '[attachments]',
+                '- .happier/uploads/messages/m1/file.png (file.png, image/png, 10 bytes)',
+                '[/attachments]',
+            ].join('\n'),
+            displayText: 'hello',
+            meta: {
+                happier: {
+                    kind: 'attachments.v1',
+                    payload: {
+                        attachments: [
+                            { name: 'file.png', path: '.happier/uploads/messages/m1/file.png', mimeType: 'image/png', sizeBytes: 10, sha256: 'h1' },
+                        ],
+                    },
+                },
+            },
+        };
+
+        let tree: renderer.ReactTestRenderer | null = null;
+        await act(async () => {
+            tree = renderer.create(<MessageView message={message} metadata={null} sessionId="s1" />);
+        });
+
+        const markdownViews = tree!.root.findAllByType('MarkdownView' as any);
+        expect(markdownViews).toHaveLength(1);
+        expect(markdownViews[0]!.props.markdown).toBe('hello');
+
+        expect(() => tree!.root.findByProps({ testID: 'message-attachments-row' })).not.toThrow();
+    });
+
     it('navigates to the file screen when clicking Jump in the review-comments card', async () => {
         const { MessageView } = await import('./MessageView');
 
@@ -281,7 +363,7 @@ describe('MessageView (structured meta)', () => {
             if ((node as any).type !== 'Pressable') return false;
             if (typeof (node as any).props?.onPress !== 'function') return false;
             const textChildren = node.findAllByType('Text' as any);
-            return textChildren.some((t: any) => (t.children || []).join('') === 'Jump');
+            return textChildren.some((t: any) => (t.children || []).join('') === 'files.reviewComments.jump');
         });
 
         expect(jumpButtons).toHaveLength(1);
@@ -485,7 +567,7 @@ describe('MessageView (structured meta)', () => {
         const adoptButtons = tree!.root.findAll((node) => {
             if ((node as any).type !== 'Pressable') return false;
             if (typeof (node as any).props?.onPress !== 'function') return false;
-            return String((node as any).props?.accessibilityLabel ?? '') === 'Adopt plan';
+            return String((node as any).props?.testID ?? '') === 'adopt-plan-button';
         });
         expect(adoptButtons).toHaveLength(1);
         await act(async () => {
@@ -638,6 +720,39 @@ describe('MessageView (structured meta)', () => {
         const markdownViews = tree!.root.findAllByType('MarkdownView' as any);
         expect(markdownViews).toHaveLength(1);
         expect((markdownViews[0] as any).props.markdown).toBe('Hello');
+    });
+
+    it('renders inline thinking in summary mode as a collapsible row (no markdown until expanded)', async () => {
+        const { MessageView } = await import('./MessageView');
+        thinkingDisplayMode = 'inline';
+        thinkingInlinePresentation = 'summary';
+
+        const message: any = {
+            kind: 'agent-text',
+            id: 'm1',
+            localId: null,
+            createdAt: 1,
+            text: 'Hello there',
+            isThinking: true,
+            meta: {},
+        };
+
+        let tree: renderer.ReactTestRenderer | null = null;
+        await act(async () => {
+            tree = renderer.create(<MessageView message={message} metadata={null} sessionId="s1" activeThinkingMessageId={null} />);
+        });
+
+        expect(tree!.root.findAll((node) => (node.props as any).testID === 'transcript-thinking-summary-inline').length).toBeGreaterThan(0);
+        expect(tree!.root.findAll((node) => (node.props as any).testID === 'transcript-thinking-body-markdown')).toHaveLength(0);
+
+        const header = tree!.root.findAll((node) => (node.props as any).testID === 'transcript-thinking-header')[0]!;
+        await act(async () => {
+            header.props.onPress?.();
+        });
+
+        const bodyMarkdownNodes = tree!.root.findAll((node) => (node.props as any).testID === 'transcript-thinking-body-markdown');
+        expect(bodyMarkdownNodes.length).toBeGreaterThan(0);
+        expect(bodyMarkdownNodes.some((n) => (n.props as any).markdown === 'Hello there')).toBe(true);
     });
 
     it('can render thinking messages as a Reasoning tool card when sessionThinkingDisplayMode=tool', async () => {

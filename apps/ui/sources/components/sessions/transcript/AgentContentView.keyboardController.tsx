@@ -13,48 +13,61 @@ interface AgentContentViewProps {
 
 export const AgentContentView: React.FC<AgentContentViewProps> = React.memo(({ input, content, placeholder }) => {
     const safeArea = useSafeAreaInsets();
-    const height = useReanimatedKeyboardAnimation();
+    const keyboard = useReanimatedKeyboardAnimation();
     const headerHeight = useHeaderHeight();
     const animatedPadding = useSharedValue(0);
-    useKeyboardHandler({
-        onEnd(e) {
-            'worklet';
-            animatedPadding.value = e.progress === 1 ? (-height.height.value - safeArea.bottom) : 0;
+
+    useKeyboardHandler(
+        {
+            onEnd(e) {
+                'worklet';
+                animatedPadding.value = e.progress === 1 ? (-keyboard.height.value - safeArea.bottom) : 0;
+            },
+            onStart() {
+                'worklet';
+                animatedPadding.value = 0;
+            },
         },
-        onStart(e) {
-            'worklet';
-            animatedPadding.value = 0;
-        },
-    },[safeArea.bottom]);
+        [safeArea.bottom],
+    );
+
     const animatedStyle = useAnimatedStyle(() => ({
         paddingTop: animatedPadding.value,
-        transform: [{ translateY: height.height.value + safeArea.bottom * height.progress.value }]
+        transform: [{ translateY: keyboard.height.value + safeArea.bottom * keyboard.progress.value }],
     }), [safeArea.bottom]);
+
     const animatedInputStyle = useAnimatedStyle(() => ({
-        transform: [{ translateY: height.height.value + safeArea.bottom * height.progress.value }]
+        transform: [{ translateY: keyboard.height.value + safeArea.bottom * keyboard.progress.value }],
     }), [safeArea.bottom]);
-    const animatePlaceholderdStyle = useAnimatedStyle(() => ({
-        paddingTop: height.progress.value === 1 ? height.height.value : 0,
-        transform: [{ translateY: (height.height.value  + safeArea.bottom * height.progress.value) / 2 }]
+
+    const animatePlaceholderStyle = useAnimatedStyle(() => ({
+        paddingTop: keyboard.progress.value === 1 ? keyboard.height.value : 0,
+        transform: [{ translateY: (keyboard.height.value + safeArea.bottom * keyboard.progress.value) / 2 }],
     }), [safeArea.bottom]);
+
     return (
-        <View style={{ flexBasis:0, flexGrow:1 }}>
-            <View style={{ flexBasis:0, flexGrow:1 }}>
-                {content && (
-                    <Animated.View style={[{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 }, animatedStyle]}>
+        <View style={{ flexBasis: 0, flexGrow: 1 }}>
+            <View style={{ flexBasis: 0, flexGrow: 1 }}>
+                {content ? (
+                    <Animated.View
+                        style={[{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 }, animatedStyle]}
+                    >
                         {content}
                     </Animated.View>
-                )}
-                {placeholder && (
-                    <Animated.ScrollView 
-                        style={[{ position: 'absolute', top: safeArea.top + headerHeight, left: 0, right: 0, bottom: 0 }, animatePlaceholderdStyle]}
+                ) : null}
+                {placeholder ? (
+                    <Animated.ScrollView
+                        style={[
+                            { position: 'absolute', top: safeArea.top + headerHeight, left: 0, right: 0, bottom: 0 },
+                            animatePlaceholderStyle,
+                        ]}
                         contentContainerStyle={{ alignItems: 'center', justifyContent: 'center', flex: 1 }}
                         keyboardShouldPersistTaps="handled"
                         alwaysBounceVertical={false}
                     >
                         {placeholder}
                     </Animated.ScrollView>
-                )}
+                ) : null}
             </View>
             <Animated.View style={[animatedInputStyle]}>
                 {input}
@@ -62,9 +75,3 @@ export const AgentContentView: React.FC<AgentContentViewProps> = React.memo(({ i
         </View>
     );
 });
-
-// const FallbackKeyboardAvoidingView: React.FC<AgentContentViewProps> = React.memo(({
-//     children,
-// }) => {
-    
-// });
