@@ -107,6 +107,8 @@ describe('SessionRightPanel (keep mounted tabs)', () => {
 
         expect(tree!.root.findAllByType('SessionRightPanelGitView')).toHaveLength(1);
         expect(tree!.root.findAllByType('SessionRepositoryTreeBrowserView')).toHaveLength(1);
+        const repositoryTree = tree!.root.findByType('SessionRepositoryTreeBrowserView');
+        expect(repositoryTree).toBeTruthy();
 
         // Switching back keeps both mounted.
         await act(async () => {

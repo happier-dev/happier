@@ -290,7 +290,7 @@ export const SessionDetailsPanel = React.memo((props: SessionDetailsPanelProps) 
                                             accessibilityLabel={t('session.detailsPanel.pinTabA11y')}
                                             hitSlop={10}
                                         >
-                                            <PinSlashIcon size={16} color={theme.colors.textSecondary} />
+                                            <PinIcon size={16} color={theme.colors.textSecondary} />
                                         </Pressable>
                                     ) : tab.isPinned ? (
                                         <View

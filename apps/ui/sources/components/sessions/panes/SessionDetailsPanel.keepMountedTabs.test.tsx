@@ -1,6 +1,6 @@
 import * as React from 'react';
 import renderer, { act } from 'react-test-renderer';
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -126,6 +126,10 @@ vi.mock('@/components/appShell/panes/hooks/useAppPaneScope', () => ({
 }));
 
 describe('SessionDetailsPanel (keep mounted tabs)', () => {
+    beforeEach(() => {
+        vi.resetModules();
+    });
+
     it('keeps inactive tab contents mounted so state can be preserved', async () => {
         const { SessionDetailsPanel } = await import('./SessionDetailsPanel');
 
@@ -199,5 +203,49 @@ describe('SessionDetailsPanel (keep mounted tabs)', () => {
         );
 
         (globalThis as any).document = originalDocument;
+    });
+
+    it('renders pinned tab affordance as a pin icon (not pin-slash)', async () => {
+        const { SessionDetailsPanel } = await import('./SessionDetailsPanel');
+
+        let tree: renderer.ReactTestRenderer | null = null;
+        await act(async () => {
+            tree = renderer.create(<SessionDetailsPanel sessionId="s1" scopeId="session:s1" />);
+        });
+
+        const pinnedA = tree!.root.findByProps({ testID: 'session-details-tab-pinned-file_a' });
+        const pinnedReview = tree!.root.findByProps({ testID: 'session-details-tab-pinned-scmReview' });
+
+        const aIcon = pinnedA.findByType('Octicons');
+        const reviewIcon = pinnedReview.findByType('Octicons');
+
+        expect((aIcon.props as any).name).toBe('pin');
+        expect((reviewIcon.props as any).name).toBe('pin');
+    });
+
+    it('renders preview tab pin action as a pin icon (not pin-slash)', async () => {
+        scopeState.details.tabs.push({
+            key: 'file:preview',
+            kind: 'file',
+            title: 'preview.txt',
+            isPinned: false,
+            isPreview: true,
+            resource: { kind: 'file', path: 'preview.txt' },
+        });
+
+        const { SessionDetailsPanel } = await import('./SessionDetailsPanel');
+
+        let tree: renderer.ReactTestRenderer | null = null;
+        try {
+            await act(async () => {
+                tree = renderer.create(<SessionDetailsPanel sessionId="s1" scopeId="session:s1" />);
+            });
+
+            const pinButton = tree!.root.findByProps({ testID: 'session-details-tab-pin-file_preview' });
+            const pinIcon = pinButton.findByType('Octicons');
+            expect((pinIcon.props as any).name).toBe('pin');
+        } finally {
+            scopeState.details.tabs.pop();
+        }
     });
 });
