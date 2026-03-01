@@ -1,5 +1,10 @@
 export type CodeLineKind = 'header' | 'context' | 'add' | 'remove' | 'file';
 
+export type IntraLineDiffSegment = Readonly<{
+    text: string;
+    kind: 'context' | 'added' | 'removed';
+}>;
+
 export type CodeLine = Readonly<{
     id: string;
     // Index in the original source list used to build these lines.
@@ -11,6 +16,7 @@ export type CodeLine = Readonly<{
     newLine: number | null;
     renderPrefixText: string;
     renderCodeText: string;
+    renderIntraLineDiffSegments?: readonly IntraLineDiffSegment[] | null;
     renderIsHeaderLine: boolean;
     selectable: boolean;
 }>;
