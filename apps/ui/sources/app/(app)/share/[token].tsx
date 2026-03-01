@@ -21,6 +21,7 @@ import { ChatHeaderView } from '@/components/sessions/transcript/ChatHeaderView'
 import type { Message } from '@/sync/domains/messages/messageTypes';
 import { serverFetch } from '@/sync/http/client';
 import { AgentStateSchema, MetadataSchema } from '@/sync/domains/state/storageTypes';
+import { sortNormalizedMessagesOldestFirst } from '@/utils/sessions/sortNormalizedMessagesOldestFirst';
 
 const SHARE_SCREEN_OPTIONS = { headerShown: false } as const;
 
@@ -170,7 +171,11 @@ export default memo(function PublicShareViewerScreen() {
                     if (!m) continue;
                     const content: any = (m as any).content;
                     if (!content || content.t !== 'plain') continue;
-                    const normalizedMessage = normalizeRawMessage(m.id, m.localId ?? null, m.createdAt, content.v);
+                    const seq =
+                        typeof (m as any).seq === 'number' && Number.isFinite((m as any).seq)
+                            ? Math.trunc((m as any).seq)
+                            : undefined;
+                    const normalizedMessage = normalizeRawMessage(m.id, m.localId ?? null, m.createdAt, content.v, { seq });
                     if (normalizedMessage) normalized.push(normalizedMessage);
                 }
             } else {
@@ -204,9 +209,15 @@ export default memo(function PublicShareViewerScreen() {
                 const decryptedMessages = await sessionEncryption.decryptMessages(messagesData.messages ?? []);
                 for (const m of decryptedMessages) {
                     if (!m || !m.content) continue;
-                    const normalizedMessage = normalizeRawMessage(m.id, m.localId ?? null, m.createdAt, m.content);
+                    const seq =
+                        typeof (m as any).seq === 'number' && Number.isFinite((m as any).seq)
+                            ? Math.trunc((m as any).seq)
+                            : undefined;
+                    const normalizedMessage = normalizeRawMessage(m.id, m.localId ?? null, m.createdAt, m.content, { seq });
                     if (normalizedMessage) normalized.push(normalizedMessage);
                 }
+
+                sortNormalizedMessagesOldestFirst(normalized);
 
                 const reducerState = createReducer();
                 const reduced = reducer(reducerState, normalized, e2eeAgentState);
@@ -218,7 +229,7 @@ export default memo(function PublicShareViewerScreen() {
                 return;
             }
 
-            normalized.sort((a, b) => a.createdAt - b.createdAt);
+            sortNormalizedMessagesOldestFirst(normalized);
 
             const reducerState = createReducer();
             const reduced = reducer(reducerState, normalized, decryptedAgentState);
