@@ -116,28 +116,28 @@ export function BaseModal({
                 onOpenChange={(open) => {
                     if (!open && onClose) onClose();
                 }}
-	            >
-	                <Dialog.Portal>
-	                    {showBackdrop ? (
-	                        <Dialog.Overlay
-	                            style={overlayStyle}
-	                            onClick={stopPropagation}
-	                            onPointerDown={stopPropagation}
-	                            onTouchStart={stopPropagation}
-	                        />
-	                    ) : null}
-	                    <DismissableLayerBranch asChild>
-	                        <Dialog.Content
-	                            aria-describedby={undefined}
-	                            style={contentStyle}
-	                            onPointerDown={stopPropagation}
-	                            onTouchStart={stopPropagation}
-	                            onClick={(e) => {
-	                                e.stopPropagation();
-	                                if (!closeOnBackdrop || !onClose) return;
-	                                // Close only when clicking the backdrop area (not inside the modal content).
-	                                // Since `Dialog.Content` covers the viewport, "backdrop" clicks are those where
-	                                // the event target is the container itself.
+              >
+                  <Dialog.Portal>
+                      {showBackdrop ? (
+                          <Dialog.Overlay
+                              style={overlayStyle}
+                              onClick={stopPropagation}
+                              onPointerDown={stopPropagation}
+                              onTouchStart={stopPropagation}
+                          />
+                      ) : null}
+                      <DismissableLayerBranch asChild>
+                          <Dialog.Content
+                              aria-describedby={undefined}
+                              style={contentStyle}
+                              onPointerDown={stopPropagation}
+                              onTouchStart={stopPropagation}
+                              onClick={(e) => {
+                                  e.stopPropagation();
+                                  if (!closeOnBackdrop || !onClose) return;
+                                  // Close only when clicking the backdrop area (not inside the modal content).
+                                  // Since `Dialog.Content` covers the viewport, "backdrop" clicks are those where
+                                  // the event target is the container itself.
                                 if (e.target === e.currentTarget) {
                                     e.preventDefault();
                                     e.stopPropagation();
@@ -148,7 +148,7 @@ export function BaseModal({
                                 closeOnBackdrop ? undefined : (e) => e.preventDefault()
                             }
                         >
-                            <Dialog.Title style={visuallyHiddenStyle}>{t('common.dialog')}</Dialog.Title>
+                              <Dialog.Title style={visuallyHiddenStyle}>{t('common.dialog')}</Dialog.Title>
                             {/* Host for web portals (e.g. popovers) that must live inside the dialog subtree. */}
                             <div
                                 data-happy-modal-portal-host=""
@@ -195,14 +195,14 @@ export function BaseModal({
     // On iOS, stacking native modals (expo-router / react-navigation modal screens + RN <Modal>)
     // can lead to the RN modal rendering behind the navigation modal, while still blocking touches.
     // To avoid this, we render "portal style" overlays on native (no RN <Modal>).
-	    if (!visible) return null;
+      if (!visible) return null;
 
-	    return (
-	        <View style={[styles.portalRoot, { zIndex: baseZ, elevation: baseZ }]} pointerEvents="auto">
-	            <KeyboardAvoidingView
-	                style={styles.container}
-	                behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-	                {...webEventHandlers}
+      return (
+          <View style={[styles.portalRoot, { zIndex: baseZ, elevation: baseZ }]} pointerEvents="auto">
+              <KeyboardAvoidingView
+                  style={styles.container}
+                  behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+                  {...webEventHandlers}
             >
                 {showBackdrop ? (
                     <TouchableWithoutFeedback onPress={handleBackdropPress}>
@@ -250,13 +250,13 @@ const styles = StyleSheet.create({
         zIndex: 100000,
         elevation: 100000,
     },
-	    container: {
-	        flex: 1,
-	        justifyContent: 'center',
-	        alignItems: 'center',
-	        // On web, ensure modal can receive pointer events when body has pointer-events: none
-	        ...Platform.select({ web: { pointerEvents: 'auto' as const } })
-	    },
+      container: {
+          flex: 1,
+          justifyContent: 'center',
+          alignItems: 'center',
+          // On web, ensure modal can receive pointer events when body has pointer-events: none
+          ...Platform.select({ web: { pointerEvents: 'auto' as const } })
+      },
     backdrop: {
         ...StyleSheet.absoluteFillObject,
         backgroundColor: 'black'
