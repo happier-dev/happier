@@ -1,7 +1,4 @@
 import { Platform } from 'react-native';
-import { getDeviceType } from 'react-native-device-info';
-
-const deviceType = getDeviceType();
 
 export function isRunningOnMac(): boolean {
     if (Platform.OS !== 'ios') {
@@ -13,6 +10,5 @@ export function isRunningOnMac(): boolean {
         return isMacCatalyst;
     }
 
-    // Fallback for environments where Platform.constants.isMacCatalyst is unavailable.
-    return deviceType === 'Desktop';
+    return false;
 }
