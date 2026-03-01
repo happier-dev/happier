@@ -95,6 +95,12 @@ vi.mock('@/sync/domains/pending/pendingNotificationNav', () => ({
     setPendingNotificationNav: vi.fn(),
 }));
 
+vi.mock('@/sync/domains/pending/pendingNotificationAction', () => ({
+    getPendingNotificationAction: () => null,
+    clearPendingNotificationAction: vi.fn(),
+    setPendingNotificationAction: vi.fn(),
+}));
+
 vi.mock('@/sync/domains/server/serverProfiles', () => ({
     getActiveServerUrl: () => activeServerUrl,
     getActiveServerSnapshot: () => ({ serverId: 'server-a', serverUrl: activeServerUrl, generation: 1 }),
@@ -123,7 +129,7 @@ afterEach(() => {
 });
 
 async function renderRootLayout() {
-    const RootLayout = (await import('./_layout')).default;
+    const RootLayout = (await import('@/app/(app)/_layout')).default;
     await act(async () => {
         renderer.create(React.createElement(RootLayout));
         await Promise.resolve();
