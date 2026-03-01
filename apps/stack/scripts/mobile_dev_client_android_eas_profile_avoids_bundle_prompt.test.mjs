@@ -26,7 +26,7 @@ function resolveBuildProfile(buildConfig, profileName) {
   };
 }
 
-test('Android dev-client EAS "development" profile builds an APK (non-interactive safe)', async () => {
+test('Android dev-client EAS "development" profile builds an APK in debug mode (dev-tools enabled)', async () => {
   const stackRoot = getStackRootFromMeta(import.meta.url);
   const repoRoot = dirname(dirname(stackRoot));
   const easPath = join(repoRoot, 'apps', 'ui', 'eas.json');
@@ -40,5 +40,6 @@ test('Android dev-client EAS "development" profile builds an APK (non-interactiv
   assert.equal(buildType, 'apk', 'expected development profile to set android.buildType=apk');
   assert.ok(gradleCommand.length > 0, 'expected development profile to have an android.gradleCommand');
   assert.ok(!/bundle/i.test(gradleCommand), `expected android.gradleCommand to avoid "bundle": ${gradleCommand}`);
-  assert.ok(/assemble/i.test(gradleCommand), `expected android.gradleCommand to use assemble*: ${gradleCommand}`);
+  assert.ok(/assembledebug/i.test(gradleCommand), `expected android.gradleCommand to use assembleDebug: ${gradleCommand}`);
+  assert.ok(!/assemblerelease/i.test(gradleCommand), `expected development profile to avoid release variant: ${gradleCommand}`);
 });

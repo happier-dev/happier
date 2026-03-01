@@ -24,7 +24,7 @@
       "channel": "development",
       "android": {
         "buildType": "apk",
-        "gradleCommand": ":app:assembleRelease -x lintVitalRelease -x lintVitalAnalyzeRelease"
+        "gradleCommand": ":app:assembleDebug"
       },
       "env": {
         "APP_ENV": "development"
