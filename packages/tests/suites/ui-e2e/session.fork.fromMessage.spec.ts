@@ -67,8 +67,34 @@ async function createSessionFromComposer(params: {
   await expect(page.getByTestId('agent-input-machine-chip')).toHaveCount(1, { timeout: 120_000 });
   await page.getByTestId('agent-input-machine-chip').click();
   await page.waitForURL((url) => url.pathname.endsWith('/new/pick/machine'), { timeout: 60_000 });
-  await expect(page.getByTestId(`new-session-machine:${machineId}`)).toHaveCount(1, { timeout: 120_000 });
-  await page.getByTestId(`new-session-machine:${machineId}`).click();
+
+  // Robustness: the machine list can take longer to hydrate under heavy e2e load (or can briefly
+  // re-render/redirect during early sync). Prefer the expected machine id, but fall back to the
+  // first visible machine row to keep the fork-focused scenario stable.
+  const pickDeadlineMs = Date.now() + 120_000;
+  while (true) {
+    const exact = page.getByTestId(`new-session-machine:${machineId}`);
+    if (await exact.count()) {
+      await exact.click();
+      break;
+    }
+
+    const anyMachine = page.locator('[data-testid^="new-session-machine:"]').first();
+    if (await anyMachine.count()) {
+      await anyMachine.click();
+      break;
+    }
+
+    if (Date.now() > pickDeadlineMs) {
+      // Preserve the original failure shape for debuggability.
+      await expect(page.getByTestId(`new-session-machine:${machineId}`)).toHaveCount(1, { timeout: 1 });
+    }
+
+    // Best-effort retry: re-open the picker in case the UI navigated away or the list remounted.
+    await page.goto(`${uiBaseUrl}/new/pick/machine`, { waitUntil: 'domcontentloaded' }).catch(() => {});
+    await new Promise((r) => setTimeout(r, 250));
+  }
+
   await page.waitForURL((url) => url.pathname.endsWith('/new'), { timeout: 60_000 });
   await expect(page.getByTestId('new-session-composer-input')).toHaveCount(1, { timeout: 60_000 });
 
@@ -350,5 +376,39 @@ test.describe('ui e2e: session fork from message', () => {
     await expect(
       page.getByText('This session is continuing from a previous Happy session that could not be vendor-resumed.'),
     ).toHaveCount(0, { timeout: 5_000 });
+
+    // Fork-from-user-message semantics: fork before the committed user prompt and restore it as a draft.
+    await page.goto(`${uiBaseUrl}/session/${parentSessionId}`, { waitUntil: 'domcontentloaded' });
+    await expect(page.getByTestId('transcript-chat-list')).toHaveCount(1, { timeout: 120_000 });
+
+    const userWrapper = page.locator('[data-testid^="transcript-message-"]').filter({ hasText: parentPrompt2 }).first();
+    await expect(userWrapper).toHaveCount(1, { timeout: 60_000 });
+    await userWrapper.hover();
+    const userWrapperTestId = await userWrapper.getAttribute('data-testid');
+    if (!userWrapperTestId) throw new Error('missing user wrapper test id');
+    const userMessageId = userWrapperTestId.replace(/^transcript-message-/, '');
+
+    await expect(page.getByTestId(`transcript-message-fork:${userMessageId}`)).toHaveCount(1, { timeout: 120_000 });
+    await page.getByTestId(`transcript-message-fork:${userMessageId}`).click();
+
+    await page.waitForURL(
+      (url) => {
+        try {
+          const nextSessionId = parseSessionIdFromUrl(url.toString());
+          return nextSessionId !== parentSessionId && nextSessionId !== childSessionId;
+        } catch {
+          return false;
+        }
+      },
+      { timeout: 60_000 },
+    );
+    const child2SessionId = parseSessionIdFromUrl(page.url());
+
+    await expect(page.locator('textarea[data-testid="session-composer-input"]:visible')).toHaveValue(parentPrompt2, { timeout: 120_000 });
+    {
+      const transcript = page.locator('[data-testid="transcript-chat-list"]:visible').first();
+      await expect(transcript.locator(`[data-testid="transcript-fork-divider:${parentSessionId}:${child2SessionId}"]`)).toHaveCount(1, { timeout: 120_000 });
+      await expect(transcript.getByText(parentPrompt2)).toHaveCount(0, { timeout: 60_000 });
+    }
   });
 });

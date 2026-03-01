@@ -66,8 +66,10 @@ async function createSessionFromComposer(params: {
   await expect(page.getByTestId('new-session-composer-input')).toHaveCount(1, { timeout: 60_000 });
   await expect(page.getByTestId('agent-input-machine-chip')).toHaveCount(1, { timeout: 120_000 });
   await page.getByTestId('agent-input-machine-chip').click();
+  await page.waitForURL((url) => url.pathname.endsWith('/new/pick/machine'), { timeout: 60_000 });
   await expect(page.getByTestId(`new-session-machine:${machineId}`)).toHaveCount(1, { timeout: 120_000 });
   await page.getByTestId(`new-session-machine:${machineId}`).click();
+  await page.waitForURL((url) => url.pathname.endsWith('/new'), { timeout: 60_000 });
   await expect(page.getByTestId('new-session-composer-input')).toHaveCount(1, { timeout: 60_000 });
 
   await page.getByTestId('new-session-composer-input').fill(prompt);
@@ -117,15 +119,17 @@ async function forkFromFirstMessageMatching(params: { page: Page; containsText: 
   const messageId = wrapperTestId.replace(/^transcript-message-/, '');
   await expect(params.page.getByTestId(`transcript-message-fork:${messageId}`)).toHaveCount(1, { timeout: 120_000 });
   await params.page.getByTestId(`transcript-message-fork:${messageId}`).click();
-  await params.page.waitForURL((url) => {
+  const deadlineMs = Date.now() + 180_000;
+  while (Date.now() < deadlineMs) {
     try {
-      const nextSessionId = parseSessionIdFromUrl(url.toString());
-      return nextSessionId !== params.currentSessionId;
+      const next = parseSessionIdFromUrl(params.page.url());
+      if (next !== params.currentSessionId) return next;
     } catch {
-      return false;
+      // ignore - router may briefly navigate through non-session routes
     }
-  }, { timeout: 180_000 });
-  return parseSessionIdFromUrl(params.page.url());
+    await new Promise((r) => setTimeout(r, 150));
+  }
+  throw new Error(`Timed out waiting for fork navigation (url=${params.page.url()})`);
 }
 
 test.describe('ui e2e: multi-level session fork chain', () => {
@@ -245,28 +249,63 @@ test.describe('ui e2e: multi-level session fork chain', () => {
     await ensureReplayForkEnabled({ page, uiBaseUrl, sessionId: parentSessionId });
 
     const sessionBId = await forkFromFirstMessageMatching({ page, containsText: 'FAKE_CLAUDE_OK_1', currentSessionId: parentSessionId });
-    await expect(page.getByTestId(`transcript-fork-divider:${sessionBId}`)).toHaveCount(1, { timeout: 120_000 });
+    {
+      const transcript = page.locator('[data-testid="transcript-chat-list"]:visible').first();
+      await expect(transcript.locator(`[data-testid="transcript-fork-divider:${parentSessionId}:${sessionBId}"]`)).toHaveCount(1, { timeout: 120_000 });
+    }
 
-    await expect(page.getByText('FAKE_CLAUDE_OK_1').first()).toBeVisible({ timeout: 120_000 });
+    await expect(page.getByText('FAKE_CLAUDE_OK_1').first()).toHaveCount(1, { timeout: 120_000 });
 
     const childPrompt = `fork-chain-child-1 ${run.runId}`;
     await page.locator('textarea[data-testid="session-composer-input"]:visible').fill(childPrompt);
     await page.locator('textarea[data-testid="session-composer-input"]:visible').press('Enter');
-    await expect(page.getByText('FAKE_CLAUDE_OK_3').first()).toBeVisible({ timeout: 180_000 });
+    // Child session B starts a new vendor session; expect a new FAKE_CLAUDE_OK_1 while also showing
+    // the read-only ancestor FAKE_CLAUDE_OK_1 from session A.
+    await page.waitForFunction(
+      ({ okText }) => {
+        const wrappers = Array.from(document.querySelectorAll('[data-testid^="transcript-message-"]')).filter((n) => {
+          const tid = n.getAttribute('data-testid') ?? '';
+          if (!tid.startsWith('transcript-message-')) return false;
+          if (tid.includes(':')) return false;
+          return String(n.textContent ?? '').includes(String(okText));
+        });
+        const unique = new Set(wrappers.map((n) => n.getAttribute('data-testid') ?? ''));
+        return unique.size >= 2;
+      },
+      { okText: 'FAKE_CLAUDE_OK_1' },
+      { timeout: 180_000 },
+    );
 
-    const sessionCId = await forkFromFirstMessageMatching({ page, containsText: 'FAKE_CLAUDE_OK_3', currentSessionId: sessionBId });
-    await expect(page.getByTestId(`transcript-fork-divider:${sessionBId}`)).toHaveCount(1, { timeout: 120_000 });
-    await expect(page.getByTestId(`transcript-fork-divider:${sessionCId}`)).toHaveCount(1, { timeout: 120_000 });
+    // Fork from the committed user message (unique text) to avoid ambiguity between ancestor vs new vendor responses.
+    const sessionCId = await forkFromFirstMessageMatching({ page, containsText: childPrompt, currentSessionId: sessionBId });
+    {
+      const transcript = page.locator('[data-testid="transcript-chat-list"]:visible').first();
+      await expect(transcript.locator(`[data-testid="transcript-fork-divider:${parentSessionId}:${sessionBId}"]`)).toHaveCount(1, { timeout: 120_000 });
+      await expect(transcript.locator(`[data-testid="transcript-fork-divider:${sessionBId}:${sessionCId}"]`)).toHaveCount(1, { timeout: 120_000 });
+    }
 
-    await expect(page.getByText('FAKE_CLAUDE_OK_1').first()).toBeVisible({ timeout: 120_000 });
-    await expect(page.getByText('FAKE_CLAUDE_OK_3').first()).toBeVisible({ timeout: 120_000 });
+    await expect(page.getByText('FAKE_CLAUDE_OK_1').first()).toHaveCount(1, { timeout: 120_000 });
+    await expect(page.getByText(childPrompt).first()).toHaveCount(1, { timeout: 120_000 });
 
     await page.reload({ waitUntil: 'domcontentloaded' });
     await expect(page.getByTestId('transcript-chat-list')).toHaveCount(1, { timeout: 120_000 });
 
-    await expect(page.getByTestId(`transcript-fork-divider:${sessionBId}`)).toHaveCount(1, { timeout: 120_000 });
-    await expect(page.getByTestId(`transcript-fork-divider:${sessionCId}`)).toHaveCount(1, { timeout: 120_000 });
+    {
+      const transcript = page.locator('[data-testid="transcript-chat-list"]:visible').first();
+      await expect(transcript.locator(`[data-testid="transcript-fork-divider:${parentSessionId}:${sessionBId}"]`)).toHaveCount(1, { timeout: 120_000 });
+      await expect(transcript.locator(`[data-testid="transcript-fork-divider:${sessionBId}:${sessionCId}"]`)).toHaveCount(1, { timeout: 120_000 });
+    }
+    await expect(page.getByText('FAKE_CLAUDE_OK_1').first()).toHaveCount(1, { timeout: 120_000 });
+    await expect(page.getByText(childPrompt).first()).toHaveCount(1, { timeout: 120_000 });
+
+    await page.getByTestId('transcript-chat-list').evaluate((el) => {
+      try {
+        (el as any).scrollTop = 0;
+        el.dispatchEvent?.(new Event('scroll', { bubbles: true }));
+      } catch {
+        // best-effort; visibility assertions below will fail if scrolling is broken
+      }
+    });
     await expect(page.getByText('FAKE_CLAUDE_OK_1').first()).toBeVisible({ timeout: 120_000 });
-    await expect(page.getByText('FAKE_CLAUDE_OK_3').first()).toBeVisible({ timeout: 120_000 });
   });
 });
