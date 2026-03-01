@@ -66,6 +66,7 @@ export async function resolveProviderPromptWithReplaySeed(params: Readonly<{
     getMetadataSnapshot: () => unknown;
     updateMetadata: (updater: (metadata: any) => any) => void | Promise<void>;
     refreshSessionSnapshotFromServerBestEffort?: (opts?: { reason: 'connect' | 'waitForMetadataUpdate' }) => Promise<void>;
+    ensureMetadataSnapshot?: (opts?: { timeoutMs?: number; abortSignal?: AbortSignal }) => Promise<unknown>;
   };
   userText: string;
   allowSeed: boolean;
@@ -78,6 +79,12 @@ export async function resolveProviderPromptWithReplaySeed(params: Readonly<{
       await params.session.refreshSessionSnapshotFromServerBestEffort({ reason: 'waitForMetadataUpdate' });
     } catch {
       // Best-effort only; avoid blocking on snapshot refresh failures.
+    }
+  } else if (params.refreshMetadataBeforeRead && typeof params.session.ensureMetadataSnapshot === 'function') {
+    try {
+      await params.session.ensureMetadataSnapshot();
+    } catch {
+      // Best-effort only; avoid blocking on snapshot ensure failures.
     }
   }
 

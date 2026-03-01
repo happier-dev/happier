@@ -130,4 +130,40 @@ describe('replaySeedV1', () => {
     expect(calls.map((c) => c.kind)).toEqual(['refresh', 'consume']);
     expect(res.providerPrompt).toBe('SEED\n\nhello');
   });
+
+  it('resolveProviderPromptWithReplaySeed can ensure a metadata snapshot before applying the seed', async () => {
+    const calls: Array<{ kind: string }> = [];
+    let metadata: any = {};
+    const session = {
+      getMetadataSnapshot: () => metadata,
+      ensureMetadataSnapshot: async () => {
+        calls.push({ kind: 'ensure' });
+        metadata = {
+          replaySeedV1: {
+            v: 1,
+            seedText: 'SEED',
+            sourceSessionId: 'parent',
+            sourceCutoffSeqInclusive: 3,
+            createdAtMs: 123,
+          },
+        };
+        return metadata;
+      },
+      updateMetadata: async (_updater: any) => {
+        calls.push({ kind: 'consume' });
+      },
+    };
+
+    const res = await resolveProviderPromptWithReplaySeed({
+      session,
+      userText: 'hello',
+      allowSeed: true,
+      localId: 'local-1',
+      nowMs: 999,
+      refreshMetadataBeforeRead: true,
+    });
+
+    expect(calls.map((c) => c.kind)).toEqual(['ensure', 'consume']);
+    expect(res.providerPrompt).toBe('SEED\n\nhello');
+  });
 });
