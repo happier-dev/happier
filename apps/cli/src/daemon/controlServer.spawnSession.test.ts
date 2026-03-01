@@ -97,7 +97,7 @@ describe('daemon control server: /spawn-session', () => {
 
       expect(observed).toEqual({
         directory: '/tmp',
-        sessionId: 'explicit-session',
+        existingSessionId: 'explicit-session',
         agent: 'codex',
         token: 'dummy-token',
         experimentalCodexAcp: true,

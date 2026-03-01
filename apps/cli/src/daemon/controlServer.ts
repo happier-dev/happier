@@ -162,6 +162,7 @@ export function createDaemonControlApp({
           body: z.object({
             directory: z.string(),
             sessionId: z.string().optional(),
+            existingSessionId: z.string().optional(),
             agent: z.enum(asNonEmptyStringTuple(CATALOG_AGENT_IDS as readonly CatalogAgentId[])).optional(),
             token: z.string().optional(),
             experimentalCodexResume: z.boolean().optional(),
@@ -202,6 +203,7 @@ export function createDaemonControlApp({
         const {
           directory,
           sessionId,
+          existingSessionId,
           agent,
           token,
           experimentalCodexResume,
@@ -214,9 +216,14 @@ export function createDaemonControlApp({
     logger.debug(`[CONTROL SERVER] Spawn session request: dir=${directory}, sessionId=${sessionId || 'new'}`);
         let result: SpawnSessionResult;
         try {
+          const normalizedExistingSessionId = typeof existingSessionId === 'string' && existingSessionId.trim().length > 0
+            ? existingSessionId.trim()
+            : typeof sessionId === 'string' && sessionId.trim().length > 0
+              ? sessionId.trim()
+              : undefined;
           result = await spawnSession({
             directory,
-            sessionId,
+            ...(normalizedExistingSessionId ? { existingSessionId: normalizedExistingSessionId } : {}),
             agent,
             token,
             experimentalCodexResume,
