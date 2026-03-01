@@ -79,7 +79,7 @@ describe('Settings → Account (username)', () => {
         const { Modal } = await import('@/modal');
         const promptSpy = vi.spyOn(Modal, 'prompt').mockResolvedValue('alice');
 
-        const { default: AccountScreen } = await import('./account');
+        const { default: AccountScreen } = await import('@/app/(app)/settings/account');
 
         let tree: ReturnType<typeof renderer.create> | undefined;
         try {

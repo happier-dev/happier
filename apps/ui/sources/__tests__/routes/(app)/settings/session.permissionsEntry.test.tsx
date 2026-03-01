@@ -92,7 +92,7 @@ afterEach(() => {
 
 describe('Session settings (Permissions entry)', () => {
     it('routes to the permissions sub-screen and no longer renders permission controls inline', async () => {
-        const mod = await import('./session');
+        const mod = await import('@/app/(app)/settings/session');
         const SessionSettingsScreen = mod.default;
 
         let tree!: ReactTestRenderer;

@@ -89,7 +89,7 @@ vi.mock('@/sync/domains/pending/pendingTerminalConnect', () => ({
 describe('/ (welcome) terminal connect intent notice', () => {
     it('shows terminal connect guidance when auth was initiated from a terminal link', async () => {
         vi.resetModules();
-        const { default: Screen } = await import('./index');
+        const { default: Screen } = await import('@/app/(app)/index');
 
         let tree: ReturnType<typeof renderer.create> | undefined;
         await act(async () => {

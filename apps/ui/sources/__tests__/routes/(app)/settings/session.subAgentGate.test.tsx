@@ -83,7 +83,7 @@ vi.mock('@/hooks/server/useFeatureEnabled', () => ({
 
 describe('Session settings (Sub-agent gate)', () => {
     it('does not render the Sub-agent section when execution runs are disabled', async () => {
-        const mod = await import('./session');
+        const mod = await import('@/app/(app)/settings/session');
         const SessionSettingsScreen = mod.default;
 
         let tree!: ReactTestRenderer;

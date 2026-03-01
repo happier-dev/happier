@@ -82,7 +82,7 @@ describe('Session log screen', () => {
     });
 
     it('does not fetch log tail when developer mode is disabled', async () => {
-        const { default: SessionLogScreen } = await import('./log');
+        const { default: SessionLogScreen } = await import('@/app/(app)/session/[id]/log');
 
         await act(async () => {
             renderer.create(React.createElement(SessionLogScreen));
@@ -94,7 +94,7 @@ describe('Session log screen', () => {
     it('fetches session log tail when developer mode is enabled and log path exists', async () => {
         devModeEnabled = true;
         sessionLogPath = '/tmp/.happier/logs/session.log';
-        const { default: SessionLogScreen } = await import('./log');
+        const { default: SessionLogScreen } = await import('@/app/(app)/session/[id]/log');
 
         await act(async () => {
             renderer.create(React.createElement(SessionLogScreen));

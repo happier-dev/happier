@@ -86,7 +86,7 @@ describe('Memory search screen', () => {
             throw new Error('unexpected rpc');
         });
 
-        const mod = await import('./search');
+        const mod = await import('@/app/(app)/search');
         const Screen = mod.default;
 
         let tree!: ReactTestRenderer;
@@ -107,7 +107,7 @@ describe('Memory search screen', () => {
             throw new Error('unexpected rpc');
         });
 
-        const mod = await import('./search');
+        const mod = await import('@/app/(app)/search');
         const Screen = mod.default;
 
         let tree!: ReactTestRenderer;
@@ -140,7 +140,7 @@ describe('Memory search screen', () => {
             throw new Error('unexpected rpc');
         });
 
-        const mod = await import('./search');
+        const mod = await import('@/app/(app)/search');
         const Screen = mod.default;
 
         let tree!: ReactTestRenderer;

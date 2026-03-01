@@ -143,7 +143,7 @@ describe('/ (welcome) auto redirect on web', () => {
         const originalWindow = (globalThis as any).window;
         (globalThis as any).window = { location: { assign } };
 
-        const { default: Screen } = await import('./index');
+        const { default: Screen } = await import('@/app/(app)/index');
         let tree: ReturnType<typeof renderer.create> | undefined;
         try {
             await act(async () => {

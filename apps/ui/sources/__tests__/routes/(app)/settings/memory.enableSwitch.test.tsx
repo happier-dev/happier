@@ -90,7 +90,7 @@ describe('Memory settings (enable switch)', () => {
             throw new Error('unexpected rpc');
         });
 
-        const mod = await import('./memory');
+        const mod = await import('@/app/(app)/settings/memory');
         const Screen = mod.default;
 
         let tree!: ReactTestRenderer;
@@ -114,7 +114,7 @@ describe('Memory settings (enable switch)', () => {
             return { v: 1 };
         });
 
-        const mod = await import('./memory');
+        const mod = await import('@/app/(app)/settings/memory');
         const Screen = mod.default;
 
         let tree!: ReactTestRenderer;

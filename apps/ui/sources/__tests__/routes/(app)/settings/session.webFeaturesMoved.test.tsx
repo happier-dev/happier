@@ -102,7 +102,7 @@ vi.mock('@/hooks/server/useFeatureEnabled', () => ({
 
 describe('Session settings (web features moved)', () => {
     it('shows Enter-to-send and Message history inside Session settings (web)', async () => {
-        const mod = await import('./session');
+        const mod = await import('@/app/(app)/settings/session');
         const SessionSettingsScreen = mod.default;
 
         let tree!: ReactTestRenderer;

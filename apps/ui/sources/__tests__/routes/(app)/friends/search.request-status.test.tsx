@@ -86,7 +86,7 @@ function TextStub(props: { children?: React.ReactNode }) {
 
 describe('SearchFriendsScreen', () => {
     it('updates the user row status after sending a friend request', async () => {
-        const { default: SearchFriendsScreen } = await import('./search');
+        const { default: SearchFriendsScreen } = await import('@/app/(app)/friends/search');
         let tree: renderer.ReactTestRenderer | undefined;
         await act(async () => {
             tree = renderer.create(<SearchFriendsScreen />);

@@ -94,7 +94,7 @@ describe('/ (welcome) signup methods', () => {
         });
         getServerFeaturesSnapshotMock.mockResolvedValueOnce({ status: 'ready', features: bothEnabled });
 
-        const { default: Screen } = await import('./index');
+        const { default: Screen } = await import('@/app/(app)/index');
 
         let tree: ReturnType<typeof renderer.create> | undefined;
         try {
@@ -160,7 +160,7 @@ describe('/ (welcome) signup methods', () => {
         });
         getServerFeaturesSnapshotMock.mockResolvedValueOnce({ status: 'ready', features: payload });
 
-        const { default: Screen } = await import('./index');
+        const { default: Screen } = await import('@/app/(app)/index');
 
         let tree: ReturnType<typeof renderer.create> | undefined;
         try {
@@ -192,7 +192,7 @@ describe('/ (welcome) signup methods', () => {
     it('hides Create account when anonymous signup is disabled and shows provider option', async () => {
         vi.resetModules();
         const { t } = await import('@/text');
-        const { default: Screen } = await import('./index');
+        const { default: Screen } = await import('@/app/(app)/index');
 
         let tree: ReturnType<typeof renderer.create> | undefined;
         try {
@@ -237,7 +237,7 @@ describe('/ (welcome) signup methods', () => {
         });
         getServerFeaturesSnapshotMock.mockResolvedValueOnce({ status: 'ready', features: mtlsOnly });
 
-        const { default: Screen } = await import('./index');
+        const { default: Screen } = await import('@/app/(app)/index');
 
         let tree: ReturnType<typeof renderer.create> | undefined;
         try {
@@ -294,7 +294,7 @@ describe('/ (welcome) signup methods', () => {
         });
         getServerFeaturesSnapshotMock.mockResolvedValueOnce({ status: 'ready', features: keylessOnly });
 
-        const { default: Screen } = await import('./index');
+        const { default: Screen } = await import('@/app/(app)/index');
 
         let tree: ReturnType<typeof renderer.create> | undefined;
         try {
@@ -330,7 +330,7 @@ describe('/ (welcome) signup methods', () => {
         getServerFeaturesSnapshotMock.mockClear();
         getServerFeaturesSnapshotMock.mockResolvedValue({ status: 'error', reason: 'network' });
 
-        const { default: Screen } = await import('./index');
+        const { default: Screen } = await import('@/app/(app)/index');
 
         let tree: ReturnType<typeof renderer.create> | undefined;
         try {
@@ -371,7 +371,7 @@ describe('/ (welcome) signup methods', () => {
         getServerFeaturesSnapshotMock.mockClear();
         getServerFeaturesSnapshotMock.mockResolvedValue({ status: 'unsupported', reason: 'invalid_payload' });
 
-        const { default: Screen } = await import('./index');
+        const { default: Screen } = await import('@/app/(app)/index');
 
         let tree: ReturnType<typeof renderer.create> | undefined;
         try {

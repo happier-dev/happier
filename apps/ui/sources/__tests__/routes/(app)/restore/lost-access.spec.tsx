@@ -118,7 +118,7 @@ describe('/restore/lost-access', () => {
         setPendingExternalAuth.mockClear();
         clearPendingExternalAuth.mockClear();
 
-        const { default: Screen } = await import('./lost-access');
+        const { default: Screen } = await import('@/app/(app)/restore/lost-access');
 
         let tree: ReturnType<typeof renderer.create> | undefined;
         try {
@@ -163,7 +163,7 @@ describe('/restore/lost-access', () => {
             }),
         }));
 
-        const { default: Screen } = await import('./lost-access');
+        const { default: Screen } = await import('@/app/(app)/restore/lost-access');
 
         let tree: ReturnType<typeof renderer.create> | undefined;
         try {

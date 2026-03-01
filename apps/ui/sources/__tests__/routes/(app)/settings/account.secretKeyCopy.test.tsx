@@ -69,7 +69,7 @@ describe('Settings → Account (secret key copy)', () => {
         clipboardMocks.setStringAsync.mockClear();
         modalMocks.alert.mockClear();
 
-        const { default: AccountScreen } = await import('./account');
+        const { default: AccountScreen } = await import('@/app/(app)/settings/account');
 
         let tree: ReturnType<typeof renderer.create> | undefined;
         try {

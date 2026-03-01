@@ -132,7 +132,7 @@ function textContent(node: renderer.ReactTestInstance): string {
 describe('/restore', () => {
     it('shows provider-specific restore notice when redirected after external auth', async () => {
         vi.resetModules();
-        const { default: Screen } = await import('./index');
+        const { default: Screen } = await import('@/app/(app)/restore/index');
 
         let tree: ReturnType<typeof renderer.create> | undefined;
         try {

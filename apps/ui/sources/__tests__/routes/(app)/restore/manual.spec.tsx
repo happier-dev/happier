@@ -84,7 +84,7 @@ afterEach(() => {
 describe('/restore/manual', () => {
     it('does not auto-capitalize secret key input (supports case-sensitive base64url input)', async () => {
         vi.resetModules();
-        const { default: Screen } = await import('./manual');
+        const { default: Screen } = await import('@/app/(app)/restore/manual');
 
         let tree: ReturnType<typeof renderer.create> | undefined;
         try {
@@ -105,7 +105,7 @@ describe('/restore/manual', () => {
 
     it('replaces navigation to home after a successful restore (does not return to link-new-device QR screen)', async () => {
         vi.resetModules();
-        const { default: Screen } = await import('./manual');
+        const { default: Screen } = await import('@/app/(app)/restore/manual');
 
         let tree: ReturnType<typeof renderer.create> | undefined;
         try {

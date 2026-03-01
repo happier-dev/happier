@@ -105,7 +105,7 @@ describe('ChangelogScreen (feature gate)', () => {
     });
 
     it('returns null when disabled by build policy', async () => {
-        const mod = await import('./changelog');
+        const mod = await import('@/app/(app)/changelog');
         const ChangelogScreen = mod.default;
 
         let tree!: renderer.ReactTestRenderer;

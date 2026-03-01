@@ -65,7 +65,7 @@ async function flushEffects(): Promise<void> {
 }
 
 async function renderRootLayout() {
-    const { default: RootLayout } = await import('./_layout');
+    const { default: RootLayout } = await import('@/app/(app)/_layout');
     let tree: ReturnType<typeof renderer.create> | undefined;
     await act(async () => {
         tree = renderer.create(<RootLayout />);
