@@ -80,7 +80,7 @@ export function DetectedClisModal({ onClose, machineId, isOnline, serverId }: Pr
                         hitSlop={10}
                         style={{ padding: 2 }}
                         accessibilityRole="button"
-                        accessibilityLabel="Refresh"
+                        accessibilityLabel={t('common.refresh')}
                         disabled={!isOnline || state.status === 'loading'}
                     >
                         {state.status === 'loading'
@@ -92,7 +92,7 @@ export function DetectedClisModal({ onClose, machineId, isOnline, serverId }: Pr
                         hitSlop={10}
                         style={{ padding: 2 }}
                         accessibilityRole="button"
-                        accessibilityLabel="Close"
+                        accessibilityLabel={t('common.close')}
                     >
                         <Ionicons name="close" size={22} color={theme.colors.textSecondary} />
                     </Pressable>
