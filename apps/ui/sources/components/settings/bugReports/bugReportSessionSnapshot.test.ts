@@ -33,14 +33,15 @@ describe('bugReportSessionSnapshot', () => {
             },
             sessionMessages: {
                 latest: {
-                    messages: [
-                        {
+                    messageIdsOldestFirst: ['message-1'],
+                    messagesById: {
+                        'message-1': {
                             id: 'message-1',
                             kind: 'assistant-text',
                             createdAt: 29,
                             localId: 'local-1',
                         },
-                    ],
+                    },
                 },
             },
             sessionPending: {
@@ -81,7 +82,8 @@ describe('bugReportSessionSnapshot', () => {
             },
             sessionMessages: {
                 latest: {
-                    messages,
+                    messageIdsOldestFirst: messages.map((m) => m.id),
+                    messagesById: Object.fromEntries(messages.map((m) => [m.id, m])),
                 },
             },
             sessionPending: {},
