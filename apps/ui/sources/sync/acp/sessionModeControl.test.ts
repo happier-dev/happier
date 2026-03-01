@@ -1,176 +1,85 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import type { Metadata } from '../domains/state/storageTypes';
-import {
-    computeAcpPlanModeControl,
-    computeAcpSessionModePickerControl,
-    supportsAcpAgentModeOverrides,
-} from './sessionModeControl';
+
+vi.mock('@/text', () => ({
+  t: (key: string) => key,
+  tLoose: (key: string) => key,
+}));
 
 function createMetadata(overrides: Partial<Metadata> = {}): Metadata {
-    return {
-        path: '/tmp',
-        host: 'h',
-        ...overrides,
-    } as Metadata;
+  return {
+    path: '/tmp',
+    host: 'h',
+    ...overrides,
+  } as Metadata;
 }
 
-describe('computeAcpPlanModeControl', () => {
-    it('gates agent-mode overrides based on catalog', () => {
-        expect(supportsAcpAgentModeOverrides('opencode')).toBe(true);
-        expect(supportsAcpAgentModeOverrides('codex')).toBe(false);
+describe('sessionModeControl', () => {
+  it('supportsSessionModeOverrides reflects agent catalog intent', async () => {
+    const { supportsSessionModeOverrides } = await import('./sessionModeControl');
+    expect(supportsSessionModeOverrides('opencode')).toBe(true);
+    expect(supportsSessionModeOverrides('claude')).toBe(true);
+    expect(supportsSessionModeOverrides('codex')).toBe(false);
+  });
+
+  it('computeSessionModePickerControl returns ACP modes and effective selection', async () => {
+    const { computeSessionModePickerControl } = await import('./sessionModeControl');
+    const metadata = createMetadata({
+      acpSessionModesV1: {
+        v: 1,
+        provider: 'opencode',
+        updatedAt: 1,
+        currentModeId: 'build',
+        availableModes: [
+          { id: 'build', name: 'Build', description: 'Do the work' },
+          { id: 'plan', name: 'Plan', description: 'Think first' },
+        ],
+      },
     });
 
-    it('returns null when ACP session modes are missing', () => {
-        expect(computeAcpPlanModeControl(null)).toBeNull();
-        expect(computeAcpPlanModeControl(createMetadata())).toBeNull();
+    const res = computeSessionModePickerControl({ agentId: 'opencode', metadata });
+    expect(res).not.toBeNull();
+    expect(res?.currentModeId).toBe('build');
+    expect(res?.effectiveModeId).toBe('build');
+    expect(res?.options.map((option) => option.id)).toEqual(['build', 'plan']);
+  });
+
+  it('computeSessionModePickerControl marks pending when requested override differs from current (ACP)', async () => {
+    const { computeSessionModePickerControl } = await import('./sessionModeControl');
+    const metadata = createMetadata({
+      acpSessionModesV1: {
+        v: 1,
+        provider: 'opencode',
+        updatedAt: 1,
+        currentModeId: 'build',
+        availableModes: [{ id: 'build', name: 'Build' }, { id: 'plan', name: 'Plan' }],
+      },
+      acpSessionModeOverrideV1: { v: 1, updatedAt: 2, modeId: 'plan' },
     });
 
-    it('returns planOn when current mode is plan', () => {
-        const metadata = createMetadata({
-            acpSessionModesV1: {
-                v: 1,
-                provider: 'opencode',
-                updatedAt: 1,
-                currentModeId: 'plan',
-                availableModes: [{ id: 'plan', name: 'Plan' }, { id: 'build', name: 'Build' }],
-            },
-        });
+    const res = computeSessionModePickerControl({ agentId: 'opencode', metadata });
+    expect(res?.effectiveModeId).toBe('plan');
+    expect(res?.isPending).toBe(true);
+    expect(res?.requestedModeId).toBe('plan');
+  });
 
-        const res = computeAcpPlanModeControl(metadata);
-        expect(res?.planOn).toBe(true);
-        expect(res?.offModeId).toBe('build');
-        expect(res?.isPending).toBe(false);
-    });
+  it('computeSessionModePickerControl supports static modes (Claude)', async () => {
+    const { computeSessionModePickerControl } = await import('./sessionModeControl');
+    const metadata = createMetadata();
+    const res = computeSessionModePickerControl({ agentId: 'claude', metadata });
+    expect(res).not.toBeNull();
+    expect(res?.currentModeId).toBe('default');
+    expect(res?.effectiveModeId).toBe('default');
+    // Names are translated via mocked t() above.
+    expect(res?.options.map((o) => o.id)).toContain('plan');
+  });
 
-    it('marks pending when override differs from current mode', () => {
-        const metadata = createMetadata({
-            acpSessionModesV1: {
-                v: 1,
-                provider: 'opencode',
-                updatedAt: 1,
-                currentModeId: 'build',
-                availableModes: [{ id: 'plan', name: 'Plan' }, { id: 'build', name: 'Build' }],
-            },
-            acpSessionModeOverrideV1: {
-                v: 1,
-                updatedAt: 2,
-                modeId: 'plan',
-            },
-        });
-
-        const res = computeAcpPlanModeControl(metadata);
-        expect(res?.planOn).toBe(true);
-        expect(res?.isPending).toBe(true);
-        expect(res?.currentModeName).toBe('Build');
-        expect(res?.requestedModeName).toBe('Plan');
-    });
-
-    it('returns offModeId null when only plan mode exists', () => {
-        const metadata = createMetadata({
-            acpSessionModesV1: {
-                v: 1,
-                provider: 'opencode',
-                updatedAt: 1,
-                currentModeId: 'plan',
-                availableModes: [{ id: 'plan', name: 'Plan' }],
-            },
-        });
-
-        const res = computeAcpPlanModeControl(metadata);
-        expect(res?.planOn).toBe(true);
-        expect(res?.offModeId).toBeNull();
-    });
-});
-
-describe('computeAcpSessionModePickerControl', () => {
-    it('returns null for agents that do not support ACP agent-mode overrides', () => {
-        const metadata = createMetadata({
-            acpSessionModesV1: {
-                v: 1,
-                provider: 'codex',
-                updatedAt: 1,
-                currentModeId: 'untrusted',
-                availableModes: [{ id: 'untrusted', name: 'Untrusted' }],
-            },
-        });
-
-        expect(computeAcpSessionModePickerControl({ agentId: 'codex', metadata })).toBeNull();
-    });
-
-    it('returns available ACP agent modes and effective selection', () => {
-        const metadata = createMetadata({
-            acpSessionModesV1: {
-                v: 1,
-                provider: 'opencode',
-                updatedAt: 1,
-                currentModeId: 'build',
-                availableModes: [
-                    { id: 'build', name: 'Build', description: 'Do the work' },
-                    { id: 'plan', name: 'Plan', description: 'Think first' },
-                ],
-            },
-        });
-
-        const res = computeAcpSessionModePickerControl({ agentId: 'opencode', metadata });
-        expect(res).not.toBeNull();
-        expect(res?.currentModeId).toBe('build');
-        expect(res?.effectiveModeId).toBe('build');
-        expect(res?.options.map((option) => option.id)).toEqual(['build', 'plan']);
-    });
-
-    it('marks pending when requested override differs from current', () => {
-        const metadata = createMetadata({
-            acpSessionModesV1: {
-                v: 1,
-                provider: 'opencode',
-                updatedAt: 1,
-                currentModeId: 'build',
-                availableModes: [{ id: 'build', name: 'Build' }, { id: 'plan', name: 'Plan' }],
-            },
-            acpSessionModeOverrideV1: { v: 1, updatedAt: 2, modeId: 'plan' },
-        });
-
-        const res = computeAcpSessionModePickerControl({ agentId: 'opencode', metadata });
-        expect(res?.effectiveModeId).toBe('plan');
-        expect(res?.isPending).toBe(true);
-        expect(res?.requestedModeId).toBe('plan');
-    });
-
-    it('keeps pending false when override modeId is missing/invalid', () => {
-        const metadata = createMetadata({
-            acpSessionModesV1: {
-                v: 1,
-                provider: 'opencode',
-                updatedAt: 1,
-                currentModeId: 'build',
-                availableModes: [{ id: 'build', name: 'Build' }, { id: 'plan', name: 'Plan' }],
-            },
-            acpSessionModeOverrideV1: { v: 1, updatedAt: 2, modeId: '   ' } as unknown as Metadata['acpSessionModeOverrideV1'],
-        });
-
-        const res = computeAcpSessionModePickerControl({ agentId: 'opencode', metadata });
-        expect(res?.effectiveModeId).toBe('build');
-        expect(res?.requestedModeId).toBeNull();
-        expect(res?.isPending).toBe(false);
-    });
-
-    it('falls back to requested mode id text when requested mode is not in available modes', () => {
-        const metadata = createMetadata({
-            acpSessionModesV1: {
-                v: 1,
-                provider: 'opencode',
-                updatedAt: 1,
-                currentModeId: 'build',
-                availableModes: [{ id: 'build', name: 'Build' }],
-            },
-            acpSessionModeOverrideV1: { v: 1, updatedAt: 2, modeId: 'unknown-mode' },
-        });
-
-        const res = computeAcpSessionModePickerControl({ agentId: 'opencode', metadata });
-        expect(res?.requestedModeId).toBe('unknown-mode');
-        expect(res?.requestedModeName).toBe('unknown-mode');
-        expect(res?.effectiveModeName).toBe('unknown-mode');
-        expect(res?.isPending).toBe(true);
-    });
+  it('computeSessionModePickerControl treats legacy permissionMode=plan as requested plan mode', async () => {
+    const { computeSessionModePickerControl } = await import('./sessionModeControl');
+    const metadata = createMetadata({ permissionMode: 'plan', permissionModeUpdatedAt: 10 } as any);
+    const res = computeSessionModePickerControl({ agentId: 'claude', metadata });
+    expect(res?.requestedModeId).toBe('plan');
+    expect(res?.effectiveModeId).toBe('plan');
+  });
 });

@@ -1,30 +1,24 @@
 import type { AgentId } from '@/agents/catalog/catalog';
 import { getAgentCore } from '@/agents/catalog/catalog';
 import type { Metadata } from '@/sync/domains/state/storageTypes';
+import { parsePermissionIntentAlias } from '@happier-dev/agents';
+import { tLoose } from '@/text';
 
 import { parseAcpSessionModesState, parseAcpSessionModeOverrideState } from './schema';
 
-export type AcpPlanModeControl = Readonly<{
-    planOn: boolean;
-    offModeId: string | null;
-    planModeName: string;
-    currentModeName: string;
-    requestedModeName: string;
-    isPending: boolean;
-}>;
-
-export function supportsAcpAgentModeOverrides(agentId: AgentId): boolean {
-    return getAgentCore(agentId).sessionModes.kind === 'acpAgentModes';
+export function supportsSessionModeOverrides(agentId: AgentId): boolean {
+    const kind = getAgentCore(agentId).sessionModes.kind;
+    return kind === 'acpAgentModes' || kind === 'staticAgentModes';
 }
 
-export type AcpSessionModeOption = Readonly<{
+export type SessionModeOption = Readonly<{
     id: string;
     name: string;
     description?: string;
 }>;
 
-export type AcpSessionModePickerControl = Readonly<{
-    options: readonly AcpSessionModeOption[];
+export type SessionModePickerControl = Readonly<{
+    options: readonly SessionModeOption[];
     currentModeId: string;
     currentModeName: string;
     requestedModeId: string | null;
@@ -34,11 +28,63 @@ export type AcpSessionModePickerControl = Readonly<{
     isPending: boolean;
 }>;
 
-export function computeAcpSessionModePickerControl(params: {
+function computeLegacyRequestedModeIdFromPermissionMode(metadata: Metadata | null | undefined): string | null {
+    const raw = typeof (metadata as any)?.permissionMode === 'string' ? String((metadata as any).permissionMode) : '';
+    const intent = raw ? parsePermissionIntentAlias(raw) : null;
+    return intent === 'plan' ? 'plan' : null;
+}
+
+function computeStaticSessionModePickerControl(params: {
     agentId: AgentId;
     metadata: Metadata | null | undefined;
-}): AcpSessionModePickerControl | null {
-    if (!supportsAcpAgentModeOverrides(params.agentId)) return null;
+}): SessionModePickerControl | null {
+    const core = getAgentCore(params.agentId);
+    if (core.sessionModes.kind !== 'staticAgentModes') return null;
+    const staticOptionsRaw = core.sessionModes.staticOptions ?? [];
+    if (!Array.isArray(staticOptionsRaw) || staticOptionsRaw.length === 0) return null;
+
+    const options: SessionModeOption[] = staticOptionsRaw
+        .filter((opt) => opt && typeof opt.id === 'string' && typeof opt.nameKey === 'string')
+        .map((opt) => ({
+            id: opt.id,
+            name: tLoose(opt.nameKey),
+            ...(typeof opt.descriptionKey === 'string' ? { description: tLoose(opt.descriptionKey) } : {}),
+        }))
+        .filter((opt) => opt.id.trim().length > 0 && opt.name.trim().length > 0);
+
+    const defaultOption = options.find((o) => o.id === 'default') ?? null;
+    if (!defaultOption) return null;
+
+    const modeOverride = parseAcpSessionModeOverrideState((params.metadata as any)?.acpSessionModeOverrideV1);
+    const legacy = computeLegacyRequestedModeIdFromPermissionMode(params.metadata);
+    const requestedModeId = modeOverride?.modeId ?? legacy ?? null;
+    const requestedMode = requestedModeId ? options.find((mode) => mode.id === requestedModeId) ?? null : null;
+
+    const currentModeId = 'default';
+    const currentModeName = defaultOption.name;
+    const effectiveModeId = requestedModeId ?? currentModeId;
+    const effectiveMode = options.find((mode) => mode.id === effectiveModeId) ?? defaultOption;
+
+    // Static modes have no provider-ack current mode signal, so we cannot report a meaningful pending state.
+    const isPending = false;
+
+    return {
+        options,
+        currentModeId,
+        currentModeName,
+        requestedModeId,
+        requestedModeName: requestedMode?.name ?? requestedModeId,
+        effectiveModeId,
+        effectiveModeName: effectiveMode?.name ?? effectiveModeId,
+        isPending,
+    };
+}
+
+function computeAcpSessionModePickerControlInternal(params: {
+    agentId: AgentId;
+    metadata: Metadata | null | undefined;
+}): SessionModePickerControl | null {
+    if (getAgentCore(params.agentId).sessionModes.kind !== 'acpAgentModes') return null;
 
     const state = parseAcpSessionModesState(params.metadata?.acpSessionModesV1);
     if (!state) return null;
@@ -50,7 +96,8 @@ export function computeAcpSessionModePickerControl(params: {
     if (!currentModeId) return null;
 
     const modeOverride = parseAcpSessionModeOverrideState((params.metadata as any)?.acpSessionModeOverrideV1);
-    const requestedModeId = modeOverride?.modeId ?? null;
+    const legacy = computeLegacyRequestedModeIdFromPermissionMode(params.metadata);
+    const requestedModeId = modeOverride?.modeId ?? legacy ?? null;
     const effectiveModeId = requestedModeId ?? currentModeId;
 
     const currentMode = options.find((mode) => mode.id === currentModeId) ?? null;
@@ -70,38 +117,10 @@ export function computeAcpSessionModePickerControl(params: {
     };
 }
 
-export function computeAcpPlanModeControl(metadata: Metadata | null | undefined): AcpPlanModeControl | null {
-    const state = parseAcpSessionModesState(metadata?.acpSessionModesV1);
-    if (!state) return null;
-
-    const available = state.availableModes;
-    const hasPlanMode = available.some((mode) => mode.id.toLowerCase() === 'plan');
-    if (!hasPlanMode) return null;
-
-    const modeOverride = parseAcpSessionModeOverrideState((metadata as any)?.acpSessionModeOverrideV1);
-    const requestedModeId = modeOverride?.modeId ?? '';
-    const currentModeId = state.currentModeId;
-    const effectiveModeId = requestedModeId || currentModeId;
-
-    const planOn = effectiveModeId.toLowerCase() === 'plan';
-    const planMode = available.find((mode) => mode.id.toLowerCase() === 'plan') ?? null;
-    const currentMode = available.find((mode) => mode.id === currentModeId) ?? null;
-    const requestedMode = requestedModeId ? available.find((mode) => mode.id === requestedModeId) ?? null : null;
-
-    const offModeId = (() => {
-        if (currentModeId && currentModeId.toLowerCase() !== 'plan') return currentModeId;
-        const fallback = available.find((mode) => mode.id.toLowerCase() !== 'plan');
-        return fallback?.id ?? null;
-    })();
-
-    const isPending = Boolean(requestedModeId && currentModeId && requestedModeId !== currentModeId);
-
-    return {
-        planOn,
-        offModeId,
-        planModeName: planMode?.name ?? 'Plan',
-        currentModeName: currentMode?.name ?? currentModeId,
-        requestedModeName: requestedMode?.name ?? requestedModeId,
-        isPending,
-    };
+export function computeSessionModePickerControl(params: {
+    agentId: AgentId;
+    metadata: Metadata | null | undefined;
+}): SessionModePickerControl | null {
+    if (!supportsSessionModeOverrides(params.agentId)) return null;
+    return computeAcpSessionModePickerControlInternal(params) ?? computeStaticSessionModePickerControl(params);
 }
