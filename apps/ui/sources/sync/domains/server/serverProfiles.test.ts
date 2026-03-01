@@ -89,12 +89,13 @@ describe('serverProfiles', () => {
         expect(profiles.getTabActiveServerId()).toBe(tab.id);
     });
 
-    it('does not auto-seed any built-in remote server profile when no preconfigured env exists', async () => {
+    it('seeds Happier Cloud on native when no preconfigured env exists', async () => {
         const scope = randomScope();
         process.env.EXPO_PUBLIC_HAPPY_STORAGE_SCOPE = scope;
 
         const profiles = await importFresh();
-        expect(profiles.listServerProfiles().some((p) => p.serverUrl === 'https://api.happier.dev')).toBe(false);
+        expect(profiles.listServerProfiles().some((p) => p.serverUrl === 'https://api.happier.dev')).toBe(true);
+        expect(profiles.getActiveServerUrl()).toBe('https://api.happier.dev');
     });
 
     it('seeds a same-origin server profile on web when no preconfigured env exists', async () => {
@@ -309,16 +310,19 @@ describe('serverProfiles', () => {
         expect(profiles.getActiveServerUrl()).toBe('http://localhost:3013');
     });
 
-    it('reset-to-default targets the first saved profile outside stack context when no preconfigured env exists', async () => {
+    it('reset-to-default targets the seeded cloud profile outside stack context when no preconfigured env exists', async () => {
         const scope = randomScope();
         process.env.EXPO_PUBLIC_HAPPY_STORAGE_SCOPE = scope;
         delete process.env.EXPO_PUBLIC_HAPPY_SERVER_CONTEXT;
 
         const profiles = await importFresh();
+        const cloud = profiles.listServerProfiles().find((p) => p.serverUrl === 'https://api.happier.dev');
+        expect(cloud).toBeTruthy();
+
         const one = profiles.upsertServerProfile({ serverUrl: 'https://one.example.test', name: 'one' });
         const two = profiles.upsertServerProfile({ serverUrl: 'https://two.example.test', name: 'two' });
         profiles.setActiveServerId(two.id, { scope: 'device' });
-        expect(profiles.getResetToDefaultServerId()).toBe(one.id);
+        expect(profiles.getResetToDefaultServerId()).toBe(cloud!.id);
     });
 
     it('seeds the stack env server profile on load in stack context', async () => {
