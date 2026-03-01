@@ -35,6 +35,14 @@ import {
   writeExecutionRunActivityMarker,
 } from '@/agent/executionRuns/runtime/executionRunManager/activityMarkers';
 
+function readBoundedExternalSendAckTimeoutMs(): number {
+  const raw = process.env.HAPPIER_EXECUTION_RUN_BOUNDED_SEND_ACK_TIMEOUT_MS;
+  if (typeof raw !== 'string' || raw.trim().length === 0) return 20_000;
+  const parsed = Number.parseInt(raw, 10);
+  if (!Number.isFinite(parsed) || parsed < 1) return 20_000;
+  return Math.min(parsed, 120_000);
+}
+
 export class ExecutionRunManager {
   private readonly parentProvider: ACPProvider;
   private readonly cwd: string;
@@ -334,18 +342,42 @@ export class ExecutionRunManager {
       }
       // enqueue: bounded runner will implement delivery semantics while the turn is running
       return new Promise((resolve) => {
-        ctrl.pendingExternalMessages.push({
+        let timeoutHandle: ReturnType<typeof setTimeout> | null = null;
+        let settled = false;
+        const finish = (result: { ok: boolean; errorCode?: string; error?: string }) => {
+          if (settled) return;
+          settled = true;
+          if (timeoutHandle) {
+            clearTimeout(timeoutHandle);
+            timeoutHandle = null;
+          }
+          resolve(result);
+        };
+        const queuedMessage = {
           message: params.message,
           delivery: (normalized === 'prompt' || normalized === 'steer_if_supported' || normalized === 'interrupt')
             ? normalized
             : 'prompt',
-          resolve: () => resolve({ ok: true }),
-          reject: (e) => resolve({ ok: false, errorCode: 'execution_run_failed', error: e.message }),
-        });
+          resolve: () => finish({ ok: true }),
+          reject: (e: Error) => finish({ ok: false, errorCode: 'execution_run_failed', error: e.message }),
+        } as const;
+        ctrl.pendingExternalMessages.push(queuedMessage);
         if (ctrl.pendingExternalMessagesSignal) {
           ctrl.pendingExternalMessagesSignal.resolve();
           ctrl.pendingExternalMessagesSignal = null;
         }
+        const timeoutMs = readBoundedExternalSendAckTimeoutMs();
+        timeoutHandle = setTimeout(() => {
+          const index = ctrl.pendingExternalMessages.indexOf(queuedMessage);
+          if (index >= 0) {
+            ctrl.pendingExternalMessages.splice(index, 1);
+          }
+          finish({
+            ok: false,
+            errorCode: 'execution_run_busy',
+            error: 'Run is busy',
+          });
+        }, timeoutMs);
       });
     }
 
