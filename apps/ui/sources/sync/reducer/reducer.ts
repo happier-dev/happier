@@ -194,6 +194,7 @@ type StoredPermission = {
     allowedTools?: string[];
     // Backward-compatible field name used by some clients/agents.
     allowTools?: string[];
+    suggestions?: unknown;
     decision?: 'approved' | 'approved_for_session' | 'approved_execpolicy_amendment' | 'denied' | 'abort';
 };
 

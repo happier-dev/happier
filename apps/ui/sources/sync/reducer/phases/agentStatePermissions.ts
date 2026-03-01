@@ -52,7 +52,32 @@ export function runAgentStatePermissionsPhase(params: Readonly<{
 
     const getCompletedAllowedTools = (completed: any): string[] | undefined => {
         const list = completed?.allowedTools ?? completed?.allowTools;
-        return Array.isArray(list) ? list : undefined;
+        if (Array.isArray(list)) return list;
+
+        const updatedPermissions = completed?.updatedPermissions;
+        if (!Array.isArray(updatedPermissions) || updatedPermissions.length === 0) return undefined;
+
+        const derived = new Set<string>();
+        for (const update of updatedPermissions) {
+            if (!update || typeof update !== 'object' || Array.isArray(update)) continue;
+            const rec = update as Record<string, unknown>;
+            if (rec.type !== 'addRules' || rec.behavior !== 'allow') continue;
+            const rules = rec.rules;
+            if (!Array.isArray(rules) || rules.length === 0) continue;
+            for (const rule of rules) {
+                if (!rule || typeof rule !== 'object' || Array.isArray(rule)) continue;
+                const toolName = (rule as any).toolName;
+                if (typeof toolName !== 'string' || toolName.length === 0) continue;
+                const ruleContent = (rule as any).ruleContent;
+                if (typeof ruleContent === 'string' && ruleContent.length > 0) {
+                    derived.add(`${toolName}(${ruleContent})`);
+                } else {
+                    derived.add(toolName);
+                }
+            }
+        }
+
+        return derived.size > 0 ? Array.from(derived) : undefined;
     };
 
     if (enableLogging) {
@@ -114,8 +139,18 @@ export function runAgentStatePermissionsPhase(params: Readonly<{
                         if (!message.tool.permission) {
                             message.tool.permission = {
                                 id: permId,
-                                status: 'pending'
+                                status: 'pending',
+                                kind: typeof request.kind === 'string' ? request.kind : undefined,
+                                suggestions: request.permissionSuggestions,
                             };
+                            hasChanged = true;
+                        }
+                        if (message.tool.permission && typeof request.kind === 'string' && message.tool.permission.kind !== request.kind) {
+                            message.tool.permission.kind = request.kind;
+                            hasChanged = true;
+                        }
+                        if (message.tool.permission && request.permissionSuggestions !== undefined && message.tool.permission.suggestions !== request.permissionSuggestions) {
+                            message.tool.permission.suggestions = request.permissionSuggestions;
                             hasChanged = true;
                         }
                         if (hasChanged) {
@@ -140,7 +175,9 @@ export function runAgentStatePermissionsPhase(params: Readonly<{
                         result: undefined,
                         permission: {
                             id: permId,
-                            status: 'pending'
+                            status: 'pending',
+                            kind: typeof request.kind === 'string' ? request.kind : undefined,
+                            suggestions: request.permissionSuggestions,
                         }
                     };
 
@@ -173,7 +210,8 @@ export function runAgentStatePermissionsPhase(params: Readonly<{
                     tool: request.tool,
                     arguments: request.arguments,
                     createdAt: request.createdAt || Date.now(),
-                    status: 'pending'
+                    status: 'pending',
+                    suggestions: request.permissionSuggestions,
                 });
             }
         }
@@ -203,6 +241,7 @@ export function runAgentStatePermissionsPhase(params: Readonly<{
                         // Check if we need to update ANY field
                         const needsUpdate =
                             message.tool.permission?.status !== completed.status ||
+                            (typeof completed.kind === 'string' && message.tool.permission?.kind !== completed.kind) ||
                             message.tool.permission?.reason !== completed.reason ||
                             message.tool.permission?.mode !== completed.mode ||
                             !equalOptionalStringArrays(message.tool.permission?.allowedTools, getCompletedAllowedTools(completed)) ||
@@ -219,6 +258,7 @@ export function runAgentStatePermissionsPhase(params: Readonly<{
                             message.tool.permission = {
                                 id: permId,
                                 status: completed.status,
+                                kind: typeof completed.kind === 'string' ? completed.kind : undefined,
                                 mode: completed.mode || undefined,
                                 allowedTools: getCompletedAllowedTools(completed),
                                 decision: completed.decision || undefined,
@@ -228,6 +268,9 @@ export function runAgentStatePermissionsPhase(params: Readonly<{
                         } else {
                             // Update all fields
                             message.tool.permission.status = completed.status;
+                            if (typeof completed.kind === 'string') {
+                                message.tool.permission.kind = completed.kind;
+                            }
                             message.tool.permission.mode = completed.mode || undefined;
                             message.tool.permission.allowedTools = getCompletedAllowedTools(completed);
                             message.tool.permission.decision = completed.decision || undefined;

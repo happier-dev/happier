@@ -148,6 +148,7 @@ export function runToolCallsPhase(params: Readonly<{
                                 reason: permission.reason,
                                 mode: permission.mode,
                                 allowedTools: permission.allowedTools,
+                                suggestions: permission.suggestions,
                                 decision: permission.decision
                             };
 

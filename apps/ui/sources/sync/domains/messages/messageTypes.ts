@@ -16,11 +16,19 @@ export type ToolCall = {
     permission?: {
         id: string;
         status: 'pending' | 'approved' | 'denied' | 'canceled';
+        kind?: string;
         reason?: string;
         mode?: string;
         allowedTools?: string[];
         decision?: 'approved' | 'approved_for_session' | 'approved_execpolicy_amendment' | 'denied' | 'abort';
         date?: number;
+        /**
+         * Provider-suggested permission updates that can be applied by the user when approving.
+         *
+         * Opaque by default so provider-specific schemas can flow through without core coupling.
+         * (e.g. Claude Agent SDK `permission_suggestions` / `PermissionUpdate[]`).
+         */
+        suggestions?: unknown;
     };
 }
 
