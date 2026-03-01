@@ -10,17 +10,18 @@ import type { ScmStatusFiles } from '@/scm/scmStatusFiles';
 type SourceControlBranchSummaryProps = {
     theme: any;
     scmStatusFiles: ScmStatusFiles;
+    variant?: 'screen' | 'rail';
 };
 
-export function SourceControlBranchSummary({ theme, scmStatusFiles }: SourceControlBranchSummaryProps) {
+export function SourceControlBranchSummary({ theme, scmStatusFiles, variant = 'screen' }: SourceControlBranchSummaryProps) {
     const ahead = Number(scmStatusFiles.ahead ?? 0);
     const behind = Number(scmStatusFiles.behind ?? 0);
     const showTracking = Boolean(scmStatusFiles.upstream) || ahead > 0 || behind > 0;
     const staged = Number(scmStatusFiles.totalIncluded ?? 0);
     const unstaged = Number(scmStatusFiles.totalPending ?? 0);
     const usesWorkingCopyModel = scmStatusFiles.changeSetModel === 'working-copy';
-    const includedLabel = usesWorkingCopyModel ? 'Included' : 'Staged';
-    const pendingLabel = usesWorkingCopyModel ? 'Pending' : 'Unstaged';
+    const includedLabel = usesWorkingCopyModel ? t('files.branchSummary.included') : t('files.branchSummary.staged');
+    const pendingLabel = usesWorkingCopyModel ? t('files.branchSummary.pending') : t('files.branchSummary.unstaged');
 
     const StatPill = ({ label, value, iconName }: { label: string; value: number; iconName: string }) => {
         return (
@@ -47,6 +48,64 @@ export function SourceControlBranchSummary({ theme, scmStatusFiles }: SourceCont
             </View>
         );
     };
+
+    const InlineStat = ({ value, iconName }: { value: number; iconName: string }) => {
+        return (
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                <Octicons name={iconName as any} size={13} color={theme.colors.textSecondary} />
+                <Text style={{ fontSize: 12, color: theme.colors.text, ...Typography.mono('semiBold') }}>
+                    {String(value)}
+                </Text>
+            </View>
+        );
+    };
+
+    if (variant === 'rail') {
+        return (
+            <View
+                style={{
+                    paddingHorizontal: 12,
+                    paddingTop: 12,
+                    paddingBottom: 10,
+                    borderBottomWidth: Platform.select({ ios: 0.33, default: 1 }),
+                    borderBottomColor: theme.colors.divider,
+                    backgroundColor: theme.colors.surface,
+                    gap: 6,
+                }}
+            >
+                <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, minWidth: 0, flex: 1 }}>
+                        <Octicons name="git-branch" size={15} color={theme.colors.textSecondary} />
+                        <Text
+                            numberOfLines={1}
+                            style={{
+                                fontSize: 14,
+                                color: theme.colors.text,
+                                ...Typography.default('semiBold'),
+                            }}
+                        >
+                            {scmStatusFiles.branch || t('files.detachedHead')}
+                        </Text>
+                    </View>
+
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12, flexShrink: 0 }}>
+                        <InlineStat value={staged} iconName="diff-added" />
+                        <InlineStat value={unstaged} iconName="diff-modified" />
+                        {showTracking ? <InlineStat value={ahead} iconName="arrow-up" /> : null}
+                        {showTracking ? <InlineStat value={behind} iconName="arrow-down" /> : null}
+                    </View>
+                </View>
+
+                {showTracking ? (
+                    <Text style={{ fontSize: 12, color: theme.colors.textSecondary, ...Typography.default() }}>
+                        {scmStatusFiles.upstream
+                            ? t('files.branchSummary.upstreamLabel', { upstream: scmStatusFiles.upstream })
+                            : t('files.branchSummary.noUpstream')}
+                    </Text>
+                ) : null}
+            </View>
+        );
+    }
 
     return (
         <View
@@ -78,10 +137,10 @@ export function SourceControlBranchSummary({ theme, scmStatusFiles }: SourceCont
                 <StatPill label={includedLabel} value={staged} iconName="diff-added" />
                 <StatPill label={pendingLabel} value={unstaged} iconName="diff-modified" />
                 {showTracking && (
-                    <StatPill label="Ahead" value={ahead} iconName="arrow-up" />
+                    <StatPill label={t('files.branchSummary.ahead')} value={ahead} iconName="arrow-up" />
                 )}
                 {showTracking && (
-                    <StatPill label="Behind" value={behind} iconName="arrow-down" />
+                    <StatPill label={t('files.branchSummary.behind')} value={behind} iconName="arrow-down" />
                 )}
             </View>
 
@@ -94,7 +153,9 @@ export function SourceControlBranchSummary({ theme, scmStatusFiles }: SourceCont
                         ...Typography.default(),
                     }}
                 >
-                    {scmStatusFiles.upstream ? `Upstream ${scmStatusFiles.upstream}` : 'No upstream'}
+                    {scmStatusFiles.upstream
+                        ? t('files.branchSummary.upstreamLabel', { upstream: scmStatusFiles.upstream })
+                        : t('files.branchSummary.noUpstream')}
                 </Text>
             )}
         </View>
