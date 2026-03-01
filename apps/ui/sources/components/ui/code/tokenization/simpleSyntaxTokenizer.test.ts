@@ -14,5 +14,13 @@ describe('simpleSyntaxTokenizer', () => {
         expect(tokens.some((t) => t.type === 'number' && t.text.includes('1'))).toBe(true);
         expect(tokens.some((t) => t.type === 'comment' && t.text.includes('// hello'))).toBe(true);
     });
-});
 
+    it('does not highlight generic programming keywords inside markdown text', () => {
+        const tokens = tokenizeSimpleSyntaxText({
+            text: 'This is a doc line for people.',
+            language: 'markdown',
+        });
+
+        expect(tokens.some((t) => t.type === 'keyword')).toBe(false);
+    });
+});

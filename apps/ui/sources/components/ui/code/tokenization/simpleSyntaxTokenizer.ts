@@ -95,6 +95,18 @@ function buildKeywordSet(language: string): ReadonlySet<string> {
     return new Set(keywords);
 }
 
+function shouldHighlightKeywords(language: string): boolean {
+    const lang = language.toLowerCase();
+
+    // Markdown and MDX are frequently plain prose; highlighting generic programming keywords is distracting.
+    if (lang === 'markdown' || lang === 'md' || lang === 'mdx') return false;
+
+    // Config-like formats: keep simple string/number/comment tokenization, but avoid keyword highlighting.
+    if (lang === 'text' || lang === 'ini' || lang === 'toml' || lang === 'yaml' || lang === 'json' || lang === 'jsonc' || lang === 'dotenv') return false;
+
+    return true;
+}
+
 function pushToken(out: SimpleSyntaxToken[], token: SimpleSyntaxToken) {
     const prev = out[out.length - 1];
     if (prev && prev.type === token.type) {
@@ -112,7 +124,7 @@ export function tokenizeSimpleSyntaxLine(params: {
     const language = params.language;
     if (!language) return [{ text: raw, type: 'default' }];
 
-    const keywords = buildKeywordSet(language);
+    const keywords = shouldHighlightKeywords(language) ? buildKeywordSet(language) : null;
     const out: SimpleSyntaxToken[] = [];
 
     const isPython = language.toLowerCase() === 'python' || language.toLowerCase() === 'py';
@@ -185,7 +197,7 @@ export function tokenizeSimpleSyntaxLine(params: {
                 j += 1;
             }
             const ident = raw.slice(i, j);
-            pushToken(out, { type: keywords.has(ident) ? 'keyword' : 'default', text: ident });
+            pushToken(out, { type: keywords?.has(ident) ? 'keyword' : 'default', text: ident });
             i = j;
             continue;
         }
