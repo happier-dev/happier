@@ -122,6 +122,14 @@ export function WebAlertModal({ config, onClose, onConfirm, showBackdrop = true,
 
     const buttonLayout = buttons.length === 3 ? 'twoPlusOne' : buttons.length > 3 ? 'column' : 'row';
 
+    const resolveButtonTestId = (index: number): string => {
+        if (isConfirm) {
+            if (index === 0) return 'web-modal-cancel';
+            if (index === 1) return 'web-modal-confirm';
+        }
+        return `web-modal-button-${index}`;
+    };
+
     return (
         <BaseModal
             visible={true}
@@ -150,6 +158,7 @@ export function WebAlertModal({ config, onClose, onConfirm, showBackdrop = true,
                                     styles.button,
                                     pressed && styles.buttonPressed
                                 ]}
+                                testID={resolveButtonTestId(0)}
                                 accessibilityRole="button"
                                 accessibilityLabel={buttons[0]?.text}
                                 onPress={() => handleButtonPress(0)}
@@ -171,6 +180,7 @@ export function WebAlertModal({ config, onClose, onConfirm, showBackdrop = true,
                                     styles.button,
                                     pressed && styles.buttonPressed
                                 ]}
+                                testID={resolveButtonTestId(2)}
                                 accessibilityRole="button"
                                 accessibilityLabel={buttons[2]?.text}
                                 onPress={() => handleButtonPress(2)}
@@ -193,6 +203,7 @@ export function WebAlertModal({ config, onClose, onConfirm, showBackdrop = true,
                                 styles.button,
                                 pressed && styles.buttonPressed
                             ]}
+                            testID={resolveButtonTestId(1)}
                             accessibilityRole="button"
                             accessibilityLabel={buttons[1]?.text}
                             onPress={() => handleButtonPress(1)}
@@ -225,6 +236,7 @@ export function WebAlertModal({ config, onClose, onConfirm, showBackdrop = true,
                                         styles.button,
                                         pressed && styles.buttonPressed
                                     ]}
+                                    testID={resolveButtonTestId(index)}
                                     accessibilityRole="button"
                                     accessibilityLabel={button.text}
                                     onPress={() => handleButtonPress(index)}
