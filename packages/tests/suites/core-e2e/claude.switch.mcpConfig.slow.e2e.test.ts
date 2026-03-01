@@ -31,7 +31,7 @@ describe('core e2e: Claude local↔remote switching carries MCP config', () => {
     await server?.stop();
   });
 
-  it('merges user --mcp-config with Happy MCP server and keeps it across local→remote switch', async () => {
+  it('merges user --mcp-config with Happier MCP server and keeps it across local→remote switch', async () => {
     const testDir = run.testDir('claude-switch-mcp-config');
     const startedAt = new Date().toISOString();
 
@@ -131,7 +131,7 @@ describe('core e2e: Claude local↔remote switching carries MCP config', () => {
         fakeLog,
         (i) => i.mode === 'local' && i.argv.includes('--settings'),
       );
-      expect(Object.keys(localInvocation.mergedMcpServers ?? {}).sort()).toEqual(['custom', 'happy']);
+      expect(Object.keys(localInvocation.mergedMcpServers ?? {}).sort()).toEqual(['custom', 'happier']);
       expect(localInvocation.mcpConfigs?.length ?? 0).toBe(1);
 
       // Legacy remote runner should keep the merged MCP config.
@@ -149,7 +149,7 @@ describe('core e2e: Claude local↔remote switching carries MCP config', () => {
         fakeLog,
         (i) => i.mode === 'sdk' && i.argv.includes('--settings'),
       );
-      expect(Object.keys(legacyRemoteInvocation.mergedMcpServers ?? {}).sort()).toEqual(['custom', 'happy']);
+      expect(Object.keys(legacyRemoteInvocation.mergedMcpServers ?? {}).sort()).toEqual(['custom', 'happier']);
       expect(legacyRemoteInvocation.mcpConfigs?.length ?? 0).toBe(1);
 
       // Switch back to local, then re-enter remote with Agent SDK enabled.
@@ -171,7 +171,7 @@ describe('core e2e: Claude local↔remote switching carries MCP config', () => {
         fakeLog,
         (i) => i.mode === 'sdk' && !i.argv.includes('--settings'),
       );
-      expect(Object.keys(agentSdkRemoteInvocation.mergedMcpServers ?? {}).sort()).toEqual(['custom', 'happy']);
+      expect(Object.keys(agentSdkRemoteInvocation.mergedMcpServers ?? {}).sort()).toEqual(['custom', 'happier']);
       expect(agentSdkRemoteInvocation.mcpConfigs?.length ?? 0).toBe(1);
 
       const snap = await fetchSessionV2(server.baseUrl, auth.token, sessionId);

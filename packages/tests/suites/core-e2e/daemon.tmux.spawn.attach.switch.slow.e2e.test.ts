@@ -263,7 +263,7 @@ describe('core e2e: daemon tmux spawn → attach → Claude remote↔local switc
         (i) => i.mode === 'local' && i.argv.includes('--settings'),
         { timeoutMs: 45_000, pollMs: 150 },
       );
-      expect(Object.prototype.hasOwnProperty.call(localInvocation.mergedMcpServers, 'happy')).toBe(true);
+      expect(Object.prototype.hasOwnProperty.call(localInvocation.mergedMcpServers, 'happier')).toBe(true);
 
       // Trigger a UI message to force local → remote switch, then ensure the SDK runner invokes fake Claude.
       await postEncryptedUiTextMessage({
@@ -279,7 +279,7 @@ describe('core e2e: daemon tmux spawn → attach → Claude remote↔local switc
         (i) => i.mode === 'sdk',
         { timeoutMs: 45_000, pollMs: 150 },
       );
-      expect(Object.prototype.hasOwnProperty.call(sdkInvocation.mergedMcpServers, 'happy')).toBe(true);
+      expect(Object.prototype.hasOwnProperty.call(sdkInvocation.mergedMcpServers, 'happier')).toBe(true);
       // Legacy remote runner still uses `--settings` for SessionStart hook forwarding.
       expect(sdkInvocation.argv).toContain('--settings');
 
