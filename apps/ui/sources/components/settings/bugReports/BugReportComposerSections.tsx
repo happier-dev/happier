@@ -1,8 +1,10 @@
 import React from 'react';
 import { Pressable, View } from 'react-native';
 
+import { parseDoctorSnapshotSafe } from '@happier-dev/protocol';
 import { Switch } from '@/components/ui/forms/Switch';
 import { Text, TextInput } from '@/components/ui/text/Text';
+import { t, type TranslationKey } from '@/text';
 
 import { type BugReportDeploymentType, type BugReportFrequency, type BugReportSeverity } from './bugReportFallback';
 import { BugReportChoiceRow } from './BugReportChoiceRow';
@@ -12,28 +14,28 @@ type BugReportDiagnosticsKind = 'ui-mobile' | 'daemon' | 'server' | 'stack-servi
 
 const DIAGNOSTICS_KIND_OPTIONS: Array<{
     kind: BugReportDiagnosticsKind;
-    title: string;
-    detail: string;
+    titleKey: TranslationKey;
+    detailKey: TranslationKey;
 }> = [
     {
         kind: 'ui-mobile',
-        title: 'App diagnostics',
-        detail: 'App console logs, recent user actions, and session summary.',
+        titleKey: 'bugReports.composer.diagnostics.kinds.app.title',
+        detailKey: 'bugReports.composer.diagnostics.kinds.app.detail',
     },
     {
         kind: 'daemon',
-        title: 'Daemon diagnostics',
-        detail: 'Daemon summary and recent daemon logs from selected machines.',
+        titleKey: 'bugReports.composer.diagnostics.kinds.daemon.title',
+        detailKey: 'bugReports.composer.diagnostics.kinds.daemon.detail',
     },
     {
         kind: 'stack-service',
-        title: 'Stack service diagnostics',
-        detail: 'Stack context and recent stack logs (if available).',
+        titleKey: 'bugReports.composer.diagnostics.kinds.stackService.title',
+        detailKey: 'bugReports.composer.diagnostics.kinds.stackService.detail',
     },
     {
         kind: 'server',
-        title: 'Server diagnostics',
-        detail: 'Server snapshot from the currently active server.',
+        titleKey: 'bugReports.composer.diagnostics.kinds.server.title',
+        detailKey: 'bugReports.composer.diagnostics.kinds.server.detail',
     },
 ];
 
@@ -45,6 +47,9 @@ export function BugReportDiagnosticsSection(props: Readonly<{
     onSelectedKindsChange: (kinds: string[]) => void;
     onPreviewDiagnostics: () => void;
     previewDisabled: boolean;
+    pastedCliDoctorSnapshotJson: string;
+    onPastedCliDoctorSnapshotJsonChange: (value: string) => void;
+    placeholderTextColor: string;
 }>): React.JSX.Element {
     const acceptedSet = new Set(props.acceptedKinds);
     const selectedSet = new Set(props.selectedKinds);
@@ -59,15 +64,15 @@ export function BugReportDiagnosticsSection(props: Readonly<{
     return (
         <View style={bugReportComposerStyles.section}>
             <View style={bugReportComposerStyles.sectionHeader}>
-                <Text style={bugReportComposerStyles.sectionTitle}>Diagnostics</Text>
-                <Text style={bugReportComposerStyles.helperText}>Choose what to include and preview before submitting.</Text>
+                <Text style={bugReportComposerStyles.sectionTitle}>{t('bugReports.composer.diagnostics.title')}</Text>
+                <Text style={bugReportComposerStyles.helperText}>{t('bugReports.composer.diagnostics.subtitle')}</Text>
             </View>
 
             <View style={bugReportComposerStyles.toggleRows}>
                 <View style={bugReportComposerStyles.toggleRow}>
                     <View style={{ flex: 1, gap: 4 }}>
-                        <Text style={bugReportComposerStyles.label}>Include diagnostics</Text>
-                        <Text style={bugReportComposerStyles.helperText}>Attach sanitized debugging artifacts for faster diagnosis.</Text>
+                        <Text style={bugReportComposerStyles.label}>{t('bugReports.composer.diagnostics.includeTitle')}</Text>
+                        <Text style={bugReportComposerStyles.helperText}>{t('bugReports.composer.diagnostics.includeSubtitle')}</Text>
                     </View>
                     <Switch value={props.includeDiagnostics} onValueChange={props.onIncludeDiagnosticsChange} />
                 </View>
@@ -80,9 +85,10 @@ export function BugReportDiagnosticsSection(props: Readonly<{
                             return (
                                 <View key={option.kind} style={bugReportComposerStyles.toggleRow}>
                                     <View style={{ flex: 1, gap: 4 }}>
-                                        <Text style={bugReportComposerStyles.label}>{option.title}</Text>
+                                        <Text style={bugReportComposerStyles.label}>{t(option.titleKey)}</Text>
                                         <Text style={bugReportComposerStyles.helperText}>
-                                            {option.detail}{allowed ? '' : ' (disabled by server)'}
+                                            {t(option.detailKey)}
+                                            {allowed ? '' : t('bugReports.composer.diagnostics.disabledByServerSuffix')}
                                         </Text>
                                     </View>
                                     <Switch
@@ -94,14 +100,44 @@ export function BugReportDiagnosticsSection(props: Readonly<{
                             );
                         })}
 
+                        {acceptedSet.has('daemon') ? (
+                            <View style={bugReportComposerStyles.field}>
+                                <Text style={bugReportComposerStyles.label}>{t('bugReports.composer.diagnostics.pasteDoctorJson.title')}</Text>
+                                <Text style={bugReportComposerStyles.helperText}>{t('bugReports.composer.diagnostics.pasteDoctorJson.subtitle')}</Text>
+                                <TextInput
+                                    value={props.pastedCliDoctorSnapshotJson}
+                                    onChangeText={props.onPastedCliDoctorSnapshotJsonChange}
+                                    placeholder={t('bugReports.composer.diagnostics.pasteDoctorJson.placeholder')}
+                                    placeholderTextColor={props.placeholderTextColor}
+                                    style={[bugReportComposerStyles.input, bugReportComposerStyles.textArea]}
+                                    editable
+                                    multiline
+                                    numberOfLines={4}
+                                    maxLength={200_000}
+                                    autoCapitalize="none"
+                                    autoCorrect={false}
+                                    textContentType="none"
+                                />
+                                {props.pastedCliDoctorSnapshotJson.trim().length > 0 ? (
+                                    (() => {
+                                        const parsed = parseDoctorSnapshotSafe(props.pastedCliDoctorSnapshotJson);
+                                        if (!parsed.ok) {
+                                            return <Text style={bugReportComposerStyles.errorText}>{t('bugReports.composer.diagnostics.pasteDoctorJson.invalid', { error: parsed.error })}</Text>;
+                                        }
+                                        return <Text style={bugReportComposerStyles.helperText}>{t('bugReports.composer.diagnostics.pasteDoctorJson.valid')}</Text>;
+                                    })()
+                                ) : null}
+                            </View>
+                        ) : null}
+
                         <Pressable
                             style={[bugReportComposerStyles.previewButton, props.previewDisabled && bugReportComposerStyles.previewButtonDisabled]}
                             onPress={props.onPreviewDiagnostics}
                             disabled={props.previewDisabled}
                             accessibilityRole="button"
-                            accessibilityLabel="Preview diagnostics"
+                            accessibilityLabel={t('bugReports.composer.diagnostics.previewButton')}
                         >
-                            <Text style={bugReportComposerStyles.previewButtonText}>Preview diagnostics</Text>
+                            <Text style={bugReportComposerStyles.previewButtonText}>{t('bugReports.composer.diagnostics.previewButton')}</Text>
                         </Pressable>
                     </>
                 )}
@@ -132,17 +168,17 @@ export function BugReportIssueDetailsSection(props: Readonly<{
     return (
         <View style={bugReportComposerStyles.section}>
             <View style={bugReportComposerStyles.sectionHeader}>
-                <Text style={bugReportComposerStyles.sectionTitle}>Describe the issue</Text>
-                <Text style={bugReportComposerStyles.helperText}>Provide enough detail so we can reproduce and diagnose quickly.</Text>
+                <Text style={bugReportComposerStyles.sectionTitle}>{t('bugReports.composer.issueDetails.title')}</Text>
+                <Text style={bugReportComposerStyles.helperText}>{t('bugReports.composer.issueDetails.subtitle')}</Text>
             </View>
 
                 <View style={bugReportComposerStyles.sectionFields}>
                     <View style={bugReportComposerStyles.field}>
-	                    <Text style={bugReportComposerStyles.label}>Title (required)</Text>
-	                    <TextInput
-	                        value={props.title}
-	                        onChangeText={props.onTitleChange}
-	                        placeholder="Short issue title"
+                      <Text style={bugReportComposerStyles.label}>{t('bugReports.composer.issueDetails.titleLabel')}</Text>
+                      <TextInput
+                          value={props.title}
+                          onChangeText={props.onTitleChange}
+                          placeholder={t('bugReports.composer.issueDetails.titlePlaceholder')}
                         placeholderTextColor={props.placeholderTextColor}
                         style={[bugReportComposerStyles.input, props.fieldErrors?.title ? bugReportComposerStyles.inputError : null]}
                         editable={!props.disabled}
@@ -154,11 +190,11 @@ export function BugReportIssueDetailsSection(props: Readonly<{
                 </View>
 
                 <View style={bugReportComposerStyles.field}>
-                    <Text style={bugReportComposerStyles.label}>GitHub username (optional)</Text>
+                    <Text style={bugReportComposerStyles.label}>{t('bugReports.composer.issueDetails.githubUsernameLabel')}</Text>
                     <TextInput
                         value={props.reporterGithubUsername}
                         onChangeText={props.onReporterGithubUsernameChange}
-                        placeholder="Used as contact info in the issue body"
+                        placeholder={t('bugReports.composer.issueDetails.githubUsernamePlaceholder')}
                         placeholderTextColor={props.placeholderTextColor}
                         style={bugReportComposerStyles.input}
                         editable={!props.disabled}
@@ -169,11 +205,11 @@ export function BugReportIssueDetailsSection(props: Readonly<{
                 </View>
 
                 <View style={bugReportComposerStyles.field}>
-                    <Text style={bugReportComposerStyles.label}>Concise summary (required)</Text>
+                    <Text style={bugReportComposerStyles.label}>{t('bugReports.composer.issueDetails.summaryLabel')}</Text>
                     <TextInput
                         value={props.summary}
                         onChangeText={props.onSummaryChange}
-                        placeholder="One-paragraph summary"
+                        placeholder={t('bugReports.composer.issueDetails.summaryPlaceholder')}
                         placeholderTextColor={props.placeholderTextColor}
                         style={[
                             bugReportComposerStyles.input,
@@ -191,11 +227,11 @@ export function BugReportIssueDetailsSection(props: Readonly<{
                 </View>
 
                 <View style={bugReportComposerStyles.field}>
-                    <Text style={bugReportComposerStyles.label}>Current behavior (optional)</Text>
+                    <Text style={bugReportComposerStyles.label}>{t('bugReports.composer.issueDetails.currentBehaviorLabel')}</Text>
                     <TextInput
                         value={props.currentBehavior}
                         onChangeText={props.onCurrentBehaviorChange}
-                        placeholder="What actually happens?"
+                        placeholder={t('bugReports.composer.issueDetails.currentBehaviorPlaceholder')}
                         placeholderTextColor={props.placeholderTextColor}
                         style={[bugReportComposerStyles.input, bugReportComposerStyles.textArea]}
                         editable={!props.disabled}
@@ -206,11 +242,11 @@ export function BugReportIssueDetailsSection(props: Readonly<{
                 </View>
 
                 <View style={bugReportComposerStyles.field}>
-                    <Text style={bugReportComposerStyles.label}>Expected behavior (optional)</Text>
+                    <Text style={bugReportComposerStyles.label}>{t('bugReports.composer.issueDetails.expectedBehaviorLabel')}</Text>
                     <TextInput
                         value={props.expectedBehavior}
                         onChangeText={props.onExpectedBehaviorChange}
-                        placeholder="What should happen instead?"
+                        placeholder={t('bugReports.composer.issueDetails.expectedBehaviorPlaceholder')}
                         placeholderTextColor={props.placeholderTextColor}
                         style={[bugReportComposerStyles.input, bugReportComposerStyles.textArea]}
                         editable={!props.disabled}
@@ -221,11 +257,11 @@ export function BugReportIssueDetailsSection(props: Readonly<{
                 </View>
 
                 <View style={bugReportComposerStyles.field}>
-                    <Text style={bugReportComposerStyles.label}>Reproduction steps (optional)</Text>
+                    <Text style={bugReportComposerStyles.label}>{t('bugReports.composer.issueDetails.reproductionStepsLabel')}</Text>
                     <TextInput
                         value={props.reproductionStepsText}
                         onChangeText={props.onReproductionStepsTextChange}
-                        placeholder={'1. Open Happier\n2. Start a session\n3. ...'}
+                        placeholder={t('bugReports.composer.issueDetails.reproductionStepsPlaceholder')}
                         placeholderTextColor={props.placeholderTextColor}
                         style={[bugReportComposerStyles.input, bugReportComposerStyles.textArea]}
                         editable={!props.disabled}
@@ -236,11 +272,11 @@ export function BugReportIssueDetailsSection(props: Readonly<{
                 </View>
 
                 <View style={bugReportComposerStyles.field}>
-                    <Text style={bugReportComposerStyles.label}>What changed recently (optional)</Text>
+                    <Text style={bugReportComposerStyles.label}>{t('bugReports.composer.issueDetails.whatChangedLabel')}</Text>
                     <TextInput
                         value={props.whatChangedRecently}
                         onChangeText={props.onWhatChangedRecentlyChange}
-                        placeholder="Updates, config changes, new setup steps..."
+                        placeholder={t('bugReports.composer.issueDetails.whatChangedPlaceholder')}
                         placeholderTextColor={props.placeholderTextColor}
                         style={[bugReportComposerStyles.input, bugReportComposerStyles.textArea]}
                         editable={!props.disabled}
@@ -263,34 +299,34 @@ export function BugReportFrequencySeveritySection(props: Readonly<{
     return (
         <View style={bugReportComposerStyles.section}>
             <View style={bugReportComposerStyles.sectionHeader}>
-                <Text style={bugReportComposerStyles.sectionTitle}>Frequency and severity</Text>
+                <Text style={bugReportComposerStyles.sectionTitle}>{t('bugReports.composer.frequencySeverity.title')}</Text>
             </View>
 
             <View style={bugReportComposerStyles.sectionFields}>
                 <View style={bugReportComposerStyles.field}>
-                    <Text style={bugReportComposerStyles.label}>Frequency</Text>
+                    <Text style={bugReportComposerStyles.label}>{t('bugReports.composer.frequencySeverity.frequencyLabel')}</Text>
                     <BugReportChoiceRow
                         value={props.frequency}
                         onChange={props.onFrequencyChange}
                         options={[
-                            { value: 'always', label: 'Always' },
-                            { value: 'often', label: 'Often' },
-                            { value: 'sometimes', label: 'Sometimes' },
-                            { value: 'once', label: 'Once' },
+                            { value: 'always', label: t('bugReports.composer.frequencySeverity.frequency.always') },
+                            { value: 'often', label: t('bugReports.composer.frequencySeverity.frequency.often') },
+                            { value: 'sometimes', label: t('bugReports.composer.frequencySeverity.frequency.sometimes') },
+                            { value: 'once', label: t('bugReports.composer.frequencySeverity.frequency.once') },
                         ]}
                     />
                 </View>
 
                 <View style={bugReportComposerStyles.field}>
-                    <Text style={bugReportComposerStyles.label}>Severity</Text>
+                    <Text style={bugReportComposerStyles.label}>{t('bugReports.composer.frequencySeverity.severityLabel')}</Text>
                     <BugReportChoiceRow
                         value={props.severity}
                         onChange={props.onSeverityChange}
                         options={[
-                            { value: 'blocker', label: 'Blocker' },
-                            { value: 'high', label: 'High' },
-                            { value: 'medium', label: 'Medium' },
-                            { value: 'low', label: 'Low' },
+                            { value: 'blocker', label: t('bugReports.composer.frequencySeverity.severity.blocker') },
+                            { value: 'high', label: t('bugReports.composer.frequencySeverity.severity.high') },
+                            { value: 'medium', label: t('bugReports.composer.frequencySeverity.severity.medium') },
+                            { value: 'low', label: t('bugReports.composer.frequencySeverity.severity.low') },
                         ]}
                     />
                 </View>
@@ -319,32 +355,32 @@ export function BugReportEnvironmentSection(props: Readonly<{
     return (
         <View style={bugReportComposerStyles.section}>
             <View style={bugReportComposerStyles.sectionHeader}>
-                <Text style={bugReportComposerStyles.sectionTitle}>Environment (editable)</Text>
+                <Text style={bugReportComposerStyles.sectionTitle}>{t('bugReports.composer.environment.title')}</Text>
             </View>
 
             <View style={bugReportComposerStyles.sectionFields}>
                 <View style={bugReportComposerStyles.field}>
-                    <Text style={bugReportComposerStyles.label}>App version</Text>
+                    <Text style={bugReportComposerStyles.label}>{t('bugReports.composer.environment.appVersionLabel')}</Text>
                     <TextInput value={props.appVersion} onChangeText={props.onAppVersionChange} style={bugReportComposerStyles.input} editable={!props.disabled} />
                 </View>
 
                 <View style={bugReportComposerStyles.field}>
-                    <Text style={bugReportComposerStyles.label}>Platform</Text>
+                    <Text style={bugReportComposerStyles.label}>{t('bugReports.composer.environment.platformLabel')}</Text>
                     <TextInput value={props.platformValue} onChangeText={props.onPlatformValueChange} style={bugReportComposerStyles.input} editable={!props.disabled} />
                 </View>
 
                 <View style={bugReportComposerStyles.field}>
-                    <Text style={bugReportComposerStyles.label}>OS version</Text>
+                    <Text style={bugReportComposerStyles.label}>{t('bugReports.composer.environment.osVersionLabel')}</Text>
                     <TextInput value={props.osVersion} onChangeText={props.onOsVersionChange} style={bugReportComposerStyles.input} editable={!props.disabled} />
                 </View>
 
                 <View style={bugReportComposerStyles.field}>
-                    <Text style={bugReportComposerStyles.label}>Device model</Text>
+                    <Text style={bugReportComposerStyles.label}>{t('bugReports.composer.environment.deviceModelLabel')}</Text>
                     <TextInput value={props.deviceModel} onChangeText={props.onDeviceModelChange} style={bugReportComposerStyles.input} editable={!props.disabled} />
                 </View>
 
                 <View style={bugReportComposerStyles.field}>
-                    <Text style={bugReportComposerStyles.label}>Server URL</Text>
+                    <Text style={bugReportComposerStyles.label}>{t('bugReports.composer.environment.serverUrlLabel')}</Text>
                     <TextInput
                         value={props.serverUrl}
                         onChangeText={props.onServerUrlChange}
@@ -355,7 +391,7 @@ export function BugReportEnvironmentSection(props: Readonly<{
                 </View>
 
                 <View style={bugReportComposerStyles.field}>
-                    <Text style={bugReportComposerStyles.label}>Server version (optional)</Text>
+                    <Text style={bugReportComposerStyles.label}>{t('bugReports.composer.environment.serverVersionLabel')}</Text>
                     <TextInput
                         value={props.serverVersion}
                         onChangeText={props.onServerVersionChange}
@@ -365,14 +401,14 @@ export function BugReportEnvironmentSection(props: Readonly<{
                 </View>
 
                 <View style={bugReportComposerStyles.field}>
-                    <Text style={bugReportComposerStyles.label}>Deployment type</Text>
+                    <Text style={bugReportComposerStyles.label}>{t('bugReports.composer.environment.deploymentTypeLabel')}</Text>
                     <BugReportChoiceRow
                         value={props.deploymentType}
                         onChange={props.onDeploymentTypeChange}
                         options={[
-                            { value: 'cloud', label: 'Cloud' },
-                            { value: 'self-hosted', label: 'Self-hosted' },
-                            { value: 'enterprise', label: 'Enterprise' },
+                            { value: 'cloud', label: t('bugReports.composer.environment.deploymentType.cloud') },
+                            { value: 'self-hosted', label: t('bugReports.composer.environment.deploymentType.selfHosted') },
+                            { value: 'enterprise', label: t('bugReports.composer.environment.deploymentType.enterprise') },
                         ]}
                     />
                 </View>
@@ -389,14 +425,14 @@ export function BugReportConsentSection(props: Readonly<{
     return (
         <View style={bugReportComposerStyles.section}>
             <View style={bugReportComposerStyles.sectionHeader}>
-                <Text style={bugReportComposerStyles.sectionTitle}>Consent</Text>
+                <Text style={bugReportComposerStyles.sectionTitle}>{t('bugReports.composer.consent.title')}</Text>
             </View>
 
             <View style={bugReportComposerStyles.toggleRows}>
                 <View style={bugReportComposerStyles.toggleRow}>
                     <View style={{ flex: 1, gap: 4 }}>
-                        <Text style={bugReportComposerStyles.label}>I understand diagnostics may include technical metadata</Text>
-                        <Text style={bugReportComposerStyles.helperText}>Do not include passwords, access tokens, or private keys.</Text>
+                        <Text style={bugReportComposerStyles.label}>{t('bugReports.composer.consent.understandTitle')}</Text>
+                        <Text style={bugReportComposerStyles.helperText}>{t('bugReports.composer.consent.understandSubtitle')}</Text>
                     </View>
                     <Switch value={props.acceptedPrivacyNotice} onValueChange={props.onAcceptedPrivacyNoticeChange} />
                 </View>

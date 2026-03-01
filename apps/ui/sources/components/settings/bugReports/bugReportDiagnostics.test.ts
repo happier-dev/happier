@@ -26,12 +26,59 @@ vi.mock('@/sync/domains/state/storage', () => ({
 
 vi.mock('@/sync/domains/server/serverRuntime', () => ({
   getActiveServerSnapshot: () => ({
+    serverId: 'cloud',
     serverUrl: 'https://admin:secret@api.happier.dev/path?token=abc',
+    generation: 1,
   }),
 }));
 
-const serverFetchMock = vi.fn(async (_url?: unknown, _init?: unknown, _options?: unknown) => ({
+vi.mock('@/sync/domains/server/serverProfiles', () => ({
+  listServerProfiles: () => ([
+    {
+      id: 'cloud',
+      name: 'Happier Cloud',
+      serverUrl: 'https://api.happier.dev?token=abc',
+      createdAt: 0,
+      updatedAt: 0,
+      lastUsedAt: 0,
+      source: 'preconfigured',
+    },
+    {
+      id: 'local',
+      name: 'Local',
+      serverUrl: 'https://admin:secret@localhost:3005/path?token=abc',
+      createdAt: 0,
+      updatedAt: 0,
+      lastUsedAt: 0,
+      source: 'manual',
+    },
+  ]),
+}));
+
+vi.mock('@/sync/domains/state/persistence', () => ({
+  loadProfile: () => ({
+    id: 'acct_ui_1',
+    timestamp: 1,
+    firstName: null,
+    lastName: null,
+    username: 'leeroy',
+    avatar: null,
+    linkedProviders: [{ id: 'github', displayName: null, login: null, avatarUrl: null }],
+    connectedServices: [],
+    connectedServicesV2: [],
+  }),
+}));
+
+type ServerFetchResponseLike = Readonly<{
+  ok: boolean;
+  status: number;
+  text: () => Promise<string>;
+  json?: () => Promise<unknown>;
+}>;
+
+const serverFetchMock = vi.fn(async (_url?: unknown, _init?: unknown, _options?: unknown): Promise<ServerFetchResponseLike> => ({
   ok: false,
+  status: 500,
   text: async () => '',
 }));
 vi.mock('@/sync/http/client', () => ({
@@ -48,6 +95,31 @@ const machineCollectBugReportDiagnosticsMock = vi.fn(async (_machineId?: string,
     daemonLogPath: '/tmp/daemon.log',
   },
   daemonLogs: [{ file: 'daemon.log', path: '/tmp/daemon.log', modifiedAt: new Date().toISOString() }],
+  doctorSnapshot: {
+    capturedAt: '2026-02-23T00:00:00.000Z',
+    server: {
+      activeServerId: 'cloud',
+      serverUrl: 'https://api.happier.dev',
+      publicServerUrl: 'https://api.happier.dev',
+      webappUrl: 'https://app.happier.dev',
+    },
+    accountId: 'acct_cli_1',
+    settings: {
+      activeServerId: 'cloud',
+      servers: [
+        {
+          id: 'cloud',
+          name: 'Happier Cloud',
+          serverUrl: 'https://api.happier.dev',
+          webappUrl: 'https://app.happier.dev',
+          createdAt: 0,
+          updatedAt: 0,
+          lastUsedAt: 0,
+        },
+      ],
+      knownAccountIds: ['acct_cli_1'],
+    },
+  },
   runtime: { cwd: '/tmp/private/project', platform: 'darwin', nodeVersion: 'v20.0.0' },
   stackContext: {
     stackName: 'exp1',
@@ -116,6 +188,7 @@ describe('collectBugReportDiagnosticsArtifacts', () => {
     const appContext = result.artifacts.find((artifact) => artifact.filename === 'app-context.json');
     const daemonSummary = result.artifacts.find((artifact) => artifact.filename.includes('daemon-summary'));
     const stackContext = result.artifacts.find((artifact) => artifact.filename.includes('stack-context'));
+    const cliDoctorSnapshot = result.artifacts.find((artifact) => artifact.filename.includes('cli-doctor-snapshot'));
     expect(appContext?.content).toContain('https://api.happier.dev/path');
     expect(appContext?.content).not.toContain('admin:secret');
     expect(appContext?.content).not.toContain('?token=');
@@ -126,17 +199,52 @@ describe('collectBugReportDiagnosticsArtifacts', () => {
     expect(stackContext?.content).toContain('"stackEnvPath": "env"');
     expect(stackContext?.content).toContain('"runtimeStatePath": "stack.runtime.json"');
     expect(stackContext?.content).toContain('"stack-runner.log"');
+    expect(cliDoctorSnapshot?.content).toContain('"acct_cli_1"');
     const appContextJson = JSON.parse(String(appContext?.content ?? '{}')) as {
       diagnosticsCollection?: Record<string, { status?: string }>;
+      profile?: { id?: string; username?: string; linkedProviderIds?: string[] };
+      serverProfiles?: Array<{ id?: string; serverUrl?: string }>;
     };
     expect(appContextJson.diagnosticsCollection).toBeDefined();
     expect(appContextJson.diagnosticsCollection?.machineDiagnostics?.status).toBe('collected');
+    expect(appContextJson.profile?.id).toBe('acct_ui_1');
+    expect(appContextJson.profile?.username).toBe('leeroy');
+    expect(appContextJson.profile?.linkedProviderIds).toContain('github');
+    expect((appContextJson.serverProfiles ?? []).map((entry) => entry.id)).toContain('cloud');
     expect(machineCollectBugReportDiagnosticsMock).toHaveBeenCalledWith('machine-1', { timeoutMs: 4000 });
     expect(machineGetBugReportLogTailMock).toHaveBeenCalledWith(
       'machine-1',
       expect.any(Object),
       expect.objectContaining({ timeoutMs: 4000 }),
     );
+  });
+
+  it('includes a pasted CLI doctor snapshot artifact when provided and daemon artifacts are accepted', async () => {
+    const result = await collectBugReportDiagnosticsArtifacts({
+      machines: [{ id: 'machine-1' } as any],
+      includeDiagnostics: true,
+      acceptedKinds: ['daemon', 'ui-mobile'],
+      maxArtifactBytes: 128_000,
+      pastedCliDoctorSnapshotJson: JSON.stringify({
+        capturedAt: '2026-02-23T00:00:00.000Z',
+        server: {
+          activeServerId: 'cloud',
+          serverUrl: 'https://api.happier.dev',
+          publicServerUrl: 'https://api.happier.dev',
+          webappUrl: 'https://app.happier.dev',
+        },
+        accountId: 'acct_pasted_1',
+        settings: {
+          activeServerId: 'cloud',
+          servers: [],
+          knownAccountIds: ['acct_pasted_1'],
+        },
+      }),
+    } as any);
+
+    const pasted = result.artifacts.find((artifact) => artifact.filename === 'pasted-cli-doctor-snapshot.json');
+    expect(pasted).toBeTruthy();
+    expect(String(pasted?.content ?? '')).toContain('acct_pasted_1');
   });
 
   it('skips server and machine diagnostics when accepted kinds exclude those sources', async () => {
@@ -217,6 +325,7 @@ describe('collectBugReportDiagnosticsArtifacts', () => {
   it('uses context-window-derived line count for server diagnostics requests', async () => {
     serverFetchMock.mockResolvedValueOnce({
       ok: true,
+      status: 200,
       text: async () => '{"ok":true}',
     });
 
@@ -232,6 +341,28 @@ describe('collectBugReportDiagnosticsArtifacts', () => {
     expect(requestPath).toContain('/v1/diagnostics/bug-report-snapshot?lines=50');
   });
 
+  it('treats server diagnostics 404 as skipped (disabled) instead of an error', async () => {
+    serverFetchMock.mockResolvedValueOnce({
+      ok: false,
+      status: 404,
+      text: async () => 'not found',
+    });
+
+    const result = await collectBugReportDiagnosticsArtifacts({
+      machines: [],
+      includeDiagnostics: true,
+      acceptedKinds: ['server', 'ui-mobile'],
+      maxArtifactBytes: 128_000,
+    } as any);
+
+    const appContext = result.artifacts.find((artifact) => artifact.filename === 'app-context.json');
+    const appContextJson = JSON.parse(String(appContext?.content ?? '{}')) as {
+      diagnosticsCollection?: Record<string, { status?: string; detail?: string }>;
+    };
+    expect(appContextJson.diagnosticsCollection?.serverDiagnostics?.status).toBe('skipped');
+    expect(String(appContextJson.diagnosticsCollection?.serverDiagnostics?.detail ?? '')).toContain('404');
+  });
+
   it('uses basename-only log filenames for windows-style machine log paths', async () => {
     machineCollectBugReportDiagnosticsMock.mockResolvedValueOnce({
       daemonState: {
@@ -243,6 +374,31 @@ describe('collectBugReportDiagnosticsArtifacts', () => {
         daemonLogPath: 'C:\\Users\\alice\\.happier\\logs\\daemon.log',
       },
       daemonLogs: [{ file: 'daemon.log', path: 'C:\\Users\\alice\\.happier\\logs\\daemon.log', modifiedAt: new Date().toISOString() }],
+      doctorSnapshot: {
+        capturedAt: '2026-02-23T00:00:00.000Z',
+        server: {
+          activeServerId: 'cloud',
+          serverUrl: 'https://api.happier.dev',
+          publicServerUrl: 'https://api.happier.dev',
+          webappUrl: 'https://app.happier.dev',
+        },
+        accountId: 'acct_cli_1',
+        settings: {
+          activeServerId: 'cloud',
+          servers: [
+            {
+              id: 'cloud',
+              name: 'Happier Cloud',
+              serverUrl: 'https://api.happier.dev',
+              webappUrl: 'https://app.happier.dev',
+              createdAt: 0,
+              updatedAt: 0,
+              lastUsedAt: 0,
+            },
+          ],
+          knownAccountIds: ['acct_cli_1'],
+        },
+      },
       runtime: { cwd: 'C:\\Users\\alice\\project', platform: 'win32', nodeVersion: 'v20.0.0' },
       stackContext: {
         stackName: 'exp1',

@@ -67,6 +67,8 @@ export function useBugReportComposerModel(input: Readonly<{
   setIncludeDiagnostics: (value: boolean) => void;
   diagnosticsKinds: string[];
   setDiagnosticsKinds: (value: string[]) => void;
+  pastedCliDoctorSnapshotJson: string;
+  setPastedCliDoctorSnapshotJson: (value: string) => void;
   acceptedPrivacyNotice: boolean;
   setAcceptedPrivacyNotice: (value: boolean) => void;
   submitting: boolean;
@@ -93,6 +95,8 @@ export function useBugReportComposerModel(input: Readonly<{
     setDiagnosticsKinds,
   } = useBugReportDiagnosticsSelection(input.feature);
 
+  const [pastedCliDoctorSnapshotJson, setPastedCliDoctorSnapshotJson] = React.useState<string>('');
+
   const [existingIssueNumber, setExistingIssueNumber] = React.useState<number | null>(null);
 
   const openFallbackIssue = useBugReportFallbackIssue({
@@ -109,15 +113,18 @@ export function useBugReportComposerModel(input: Readonly<{
     includeDiagnostics,
   });
 
-  const collectDiagnosticsForPreview = React.useCallback(async () => {
+  const collectDiagnosticsArtifacts = React.useCallback(async (args: {
+    machines: Machine[];
+    includeDiagnostics: boolean;
+    acceptedKinds: string[];
+    maxArtifactBytes: number;
+    contextWindowMs?: number;
+  }) => {
     return await collectBugReportDiagnosticsArtifacts({
-      machines: input.machines,
-      includeDiagnostics,
-      acceptedKinds: diagnosticsKinds,
-      maxArtifactBytes: input.feature.maxArtifactBytes,
-      contextWindowMs: input.feature.contextWindowMs,
+      ...args,
+      pastedCliDoctorSnapshotJson,
     });
-  }, [diagnosticsKinds, includeDiagnostics, input.feature.contextWindowMs, input.feature.maxArtifactBytes, input.machines]);
+  }, [pastedCliDoctorSnapshotJson]);
 
   const { submitting, handleSubmit } = useBugReportComposerSubmit({
     feature: input.feature,
@@ -129,6 +136,7 @@ export function useBugReportComposerModel(input: Readonly<{
     issueRepo: BUG_REPORT_DEFAULT_ISSUE_REPO,
     existingIssueNumber,
     openFallbackIssue,
+    collectDiagnosticsArtifacts,
     buildDraftInput,
   });
 
@@ -143,7 +151,13 @@ export function useBugReportComposerModel(input: Readonly<{
     disabled: submitting,
     includeDiagnostics,
     selectedKinds: diagnosticsKinds,
-    collectDiagnosticsArtifacts: collectDiagnosticsForPreview,
+    collectDiagnosticsArtifacts: async () => await collectDiagnosticsArtifacts({
+      machines: input.machines,
+      includeDiagnostics,
+      acceptedKinds: diagnosticsKinds,
+      maxArtifactBytes: input.feature.maxArtifactBytes,
+      contextWindowMs: input.feature.contextWindowMs,
+    }),
   });
 
   const similarIssues = useBugReportSimilarIssues({
@@ -164,6 +178,8 @@ export function useBugReportComposerModel(input: Readonly<{
     setIncludeDiagnostics,
     diagnosticsKinds,
     setDiagnosticsKinds,
+    pastedCliDoctorSnapshotJson,
+    setPastedCliDoctorSnapshotJson,
     submitting,
     existingIssueNumber,
     setExistingIssueNumber,

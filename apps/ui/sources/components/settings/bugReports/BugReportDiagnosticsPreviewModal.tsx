@@ -5,6 +5,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { Text } from '@/components/ui/text/Text';
+import { t } from '@/text';
 
 export type BugReportDiagnosticsPreviewArtifact = {
   filename: string;
@@ -129,7 +130,7 @@ export function BugReportDiagnosticsPreviewModal(props: Readonly<{
             <Pressable
               onPress={() => setSelected(null)}
               accessibilityRole="button"
-              accessibilityLabel="Back"
+              accessibilityLabel={t('common.back')}
               style={s.backButton}
               hitSlop={10}
             >
@@ -137,13 +138,13 @@ export function BugReportDiagnosticsPreviewModal(props: Readonly<{
             </Pressable>
           ) : null}
           <Text style={s.title} numberOfLines={1}>
-            {selected ? selected.filename : 'Diagnostics preview'}
+            {selected ? selected.filename : t('bugReports.composer.diagnostics.preview.title')}
           </Text>
         </View>
         <Pressable
           onPress={props.onClose}
           accessibilityRole="button"
-          accessibilityLabel="Close"
+          accessibilityLabel={t('common.close')}
           style={s.closeButton}
           hitSlop={10}
         >
@@ -162,12 +163,12 @@ export function BugReportDiagnosticsPreviewModal(props: Readonly<{
         ) : (
           <>
             <Text style={s.helper}>
-              These artifacts will be uploaded with your report (sanitized and size-bounded). Tap an item to view its full contents.
+              {t('bugReports.composer.diagnostics.preview.helper')}
             </Text>
 
             <View style={s.list}>
               {props.artifacts.length === 0 ? (
-                <Text style={s.helper}>No diagnostics artifacts would be sent.</Text>
+                <Text style={s.helper}>{t('bugReports.composer.diagnostics.preview.empty')}</Text>
               ) : (
                 props.artifacts.map((artifact) => (
                   <Pressable
@@ -175,7 +176,9 @@ export function BugReportDiagnosticsPreviewModal(props: Readonly<{
                     style={s.row}
                     onPress={() => setSelected(artifact)}
                     accessibilityRole="button"
-                    accessibilityLabel={`Open ${artifact.filename}`}
+                    accessibilityLabel={t('bugReports.composer.diagnostics.preview.openArtifactA11y', {
+                      filename: artifact.filename,
+                    })}
                   >
                     <Text style={s.filename}>{artifact.filename}</Text>
                     <Text style={s.meta}>
@@ -191,4 +194,3 @@ export function BugReportDiagnosticsPreviewModal(props: Readonly<{
     </View>
   );
 }
-
