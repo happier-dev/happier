@@ -29,12 +29,17 @@ vi.mock('react-native-unistyles', () => ({
     StyleSheet: {
         create: (styles: any) => {
             const theme = {
-                colors: {
-                    input: { background: '#fff' },
-                    button: {
-                        primary: { background: '#000', tint: '#fff' },
-                        secondary: { tint: '#000', surface: '#fff' },
-                    },
+                    colors: {
+                        input: { background: '#fff' },
+                        accent: { indigo: '#5856D6' },
+                        box: {
+                            error: { background: '#ffecec', border: '#ffa39e', text: '#a8071a' },
+                            warning: { background: '#fff7e6', border: '#ffd591', text: '#ad6800' },
+                        },
+                        button: {
+                            primary: { background: '#000', tint: '#fff' },
+                            secondary: { tint: '#000', surface: '#fff' },
+                        },
                     radio: { active: '#000', inactive: '#ddd' },
                     text: '#000',
                     textSecondary: '#666',
@@ -57,13 +62,18 @@ vi.mock('react-native-unistyles', () => ({
         },
     },
     useUnistyles: () => ({
-        theme: {
-            colors: {
-                input: { background: '#fff' },
-                button: {
-                    primary: { background: '#000', tint: '#fff' },
-                    secondary: { tint: '#000', surface: '#fff' },
-                },
+            theme: {
+                colors: {
+                    input: { background: '#fff' },
+                    accent: { indigo: '#5856D6' },
+                    box: {
+                        error: { background: '#ffecec', border: '#ffa39e', text: '#a8071a' },
+                        warning: { background: '#fff7e6', border: '#ffd591', text: '#ad6800' },
+                    },
+                    button: {
+                        primary: { background: '#000', tint: '#fff' },
+                        secondary: { tint: '#000', surface: '#fff' },
+                    },
                 radio: { active: '#000', inactive: '#ddd' },
                 text: '#000',
                 textSecondary: '#666',
@@ -98,6 +108,12 @@ vi.mock('@/text', () => ({
     t: (key: string) => key,
 }));
 
+vi.mock('@/components/ui/text/Text', () => ({
+    Text: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
+        React.createElement('Text', props, props.children),
+    TextInput: (props: Record<string, unknown>) => React.createElement('TextInput', props, null),
+}));
+
 vi.mock('@/sync/domains/state/storage', () => ({
     useSetting: (key: string) => {
         if (key === 'profiles') return [];
@@ -113,9 +129,12 @@ vi.mock('@/sync/domains/state/storage', () => ({
         agentInputActionBarLayout: 'wrap',
         agentInputChipDensity: 'labels',
         sessionPermissionModeApplyTiming: 'immediate',
-    }),
-    useSessionMessages: () => ({ messages: [], isLoaded: true }),
-}));
+        }),
+        useSessionMessages: () => ({ messages: [], isLoaded: true }),
+        useSessionTranscriptIds: () => ({ ids: [], isLoaded: true }),
+        useSessionMessagesById: () => ({}),
+        useSessionMessagesVersion: () => 0,
+    }));
 
 vi.mock('@/sync/domains/state/storageStore', () => ({
     getStorage: () => (selector: any) => selector({ sessionMessages: {} }),
@@ -160,9 +179,13 @@ vi.mock('@/components/tools/normalization/policy/permissionSummary', () => ({
     formatPermissionRequestSummary: () => 'Permission required',
 }));
 
-vi.mock('@/components/tools/normalization/parse/shellCommand', () => ({
-    extractShellCommand: () => null,
-}));
+vi.mock('@/components/tools/normalization/parse/shellCommand', async (importOriginal) => {
+    const actual = await importOriginal<typeof import('@/components/tools/normalization/parse/shellCommand')>();
+    return {
+        ...actual,
+        extractShellCommand: () => null,
+    };
+});
 
 vi.mock('@/components/tools/normalization/parse/parseParenIdentifier', () => ({
     parseParenIdentifier: () => null,
@@ -243,8 +266,7 @@ vi.mock('@/components/model/ModelPickerOverlay', () => ({
 }));
 
 vi.mock('@/sync/acp/sessionModeControl', () => ({
-    computeAcpPlanModeControl: () => null,
-    computeAcpSessionModePickerControl: () => null,
+    computeSessionModePickerControl: () => null,
 }));
 
 vi.mock('@/sync/acp/configOptionsControl', () => ({
@@ -331,5 +353,31 @@ describe('AgentInput (permission requests)', () => {
         });
 
         expect(tree!.root.findAllByType('PermissionFooter' as any)).toHaveLength(1);
+    });
+
+    it('renders permission requests inside a clamped scroll container', async () => {
+        const { AgentInput } = await import('./AgentInput');
+
+        let tree: renderer.ReactTestRenderer | null = null;
+        await act(async () => {
+            tree = renderer.create(
+                React.createElement(AgentInput as any, {
+                    value: '',
+                    placeholder: 'Type',
+                    onChangeText: () => {},
+                    sessionId: 's1',
+                    onSend: () => {},
+                    autocompletePrefixes: [],
+                    autocompleteSuggestions: async () => [],
+                    permissionRequests: [
+                        { id: 'req1', tool: 'Bash', arguments: { command: 'ls' }, createdAt: 123 },
+                        { id: 'req2', tool: 'Bash', arguments: { command: 'pwd' }, createdAt: 124 },
+                    ],
+                }),
+            );
+        });
+
+        const scrolls = tree!.root.findAll((node) => node.type === 'ScrollView' && node.props.testID === 'agentInput.permissionRequests.scroll');
+        expect(scrolls).toHaveLength(1);
     });
 });

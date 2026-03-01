@@ -13,8 +13,10 @@ import { useEnabledAgentIds } from '@/agents/hooks/useEnabledAgentIds';
 import { getAgentCore, type AgentId } from '@/agents/catalog/catalog';
 import { getPermissionModeOptionsForAgentType } from '@/sync/domains/permissions/permissionModeOptions';
 import type { PermissionMode } from '@/sync/domains/permissions/permissionTypes';
+import { resolvePermissionPromptSurface } from '@/utils/sessions/permissions/permissionPromptPolicy';
 
 type PermissionApplyTiming = 'immediate' | 'next_prompt';
+type PermissionPromptSurfaceMenuOption = 'composer' | 'transcript';
 
 function getPermissionApplyTimingSubtitleKey(applyTiming: PermissionApplyTiming): 'settingsSession.defaultPermissions.applyPermissionChangesImmediateSubtitle' | 'settingsSession.defaultPermissions.applyPermissionChangesNextPromptSubtitle' {
     return applyTiming === 'immediate'
@@ -30,6 +32,7 @@ export const PermissionsSettingsView = React.memo(function PermissionsSettingsVi
 
     const [defaultPermissionByAgent, setDefaultPermissionByAgent] = useSettingMutable('sessionDefaultPermissionModeByAgent');
     const [permissionModeApplyTiming, setPermissionModeApplyTiming] = useSettingMutable('sessionPermissionModeApplyTiming');
+    const [permissionPromptSurface, setPermissionPromptSurface] = useSettingMutable('permissionPromptSurface');
 
     const getDefaultPermission = React.useCallback((agent: AgentId): PermissionMode => {
         const raw = (defaultPermissionByAgent as any)?.[agent] as PermissionMode | undefined;
@@ -45,6 +48,7 @@ export const PermissionsSettingsView = React.memo(function PermissionsSettingsVi
 
     const [openProvider, setOpenProvider] = React.useState<null | AgentId>(null);
     const [openApplyTimingMenu, setOpenApplyTimingMenu] = React.useState<boolean>(false);
+    const [openPromptSurfaceMenu, setOpenPromptSurfaceMenu] = React.useState<boolean>(false);
 
     const applyTimingOptions: Array<{ key: PermissionApplyTiming; title: string; subtitle: string }> = [
         {
@@ -62,6 +66,22 @@ export const PermissionsSettingsView = React.memo(function PermissionsSettingsVi
     const normalizedApplyTiming: PermissionApplyTiming = permissionModeApplyTiming === 'immediate' ? 'immediate' : 'next_prompt';
     const applyTimingLabel = applyTimingOptions.find((opt) => opt.key === normalizedApplyTiming)?.title
         ?? t(getPermissionApplyTimingSubtitleKey(normalizedApplyTiming));
+
+    const normalizedPromptSurface: PermissionPromptSurfaceMenuOption =
+        resolvePermissionPromptSurface(permissionPromptSurface);
+
+    const promptSurfaceOptions: Array<{ key: PermissionPromptSurfaceMenuOption; title: string; subtitle: string }> = [
+        {
+            key: 'composer',
+            title: t('settingsSession.permissions.promptSurface.composerTitle'),
+            subtitle: t('settingsSession.permissions.promptSurface.composerSubtitle'),
+        },
+        {
+            key: 'transcript',
+            title: t('settingsSession.permissions.promptSurface.transcriptTitle'),
+            subtitle: t('settingsSession.permissions.promptSurface.transcriptSubtitle'),
+        },
+    ];
 
     return (
         <ItemList ref={popoverBoundaryRef} style={{ paddingTop: 0 }}>
@@ -99,6 +119,43 @@ export const PermissionsSettingsView = React.memo(function PermissionsSettingsVi
                     onSelect={(id) => {
                         setPermissionModeApplyTiming(id as any);
                         setOpenApplyTimingMenu(false);
+                    }}
+                />
+            </ItemGroup>
+
+            <ItemGroup
+                title={t('settingsSession.permissions.promptSurfaceTitle')}
+                footer={t('settingsSession.permissions.promptSurfaceFooter')}
+            >
+                <DropdownMenu
+                    open={openPromptSurfaceMenu}
+                    onOpenChange={setOpenPromptSurfaceMenu}
+                    variant="selectable"
+                    search={false}
+                    selectedId={normalizedPromptSurface as any}
+                    showCategoryTitles={false}
+                    matchTriggerWidth={true}
+                    connectToTrigger={true}
+                    rowKind="item"
+                    popoverBoundaryRef={popoverBoundaryRef}
+                    itemTrigger={{
+                        title: t('settingsSession.permissions.promptSurfaceTitle'),
+                        icon: <Ionicons name="chatbox-ellipses-outline" size={29} color={theme.colors.textSecondary} />,
+                        subtitle: promptSurfaceOptions.find((opt) => opt.key === normalizedPromptSurface)?.title ?? normalizedPromptSurface,
+                    }}
+                    items={promptSurfaceOptions.map((opt) => ({
+                        id: opt.key,
+                        title: opt.title,
+                        subtitle: opt.subtitle,
+                        icon: (
+                            <View style={{ width: 32, height: 32, alignItems: 'center', justifyContent: 'center' }}>
+                                <Ionicons name="chatbox-ellipses-outline" size={22} color={theme.colors.textSecondary} />
+                            </View>
+                        ),
+                    }))}
+                    onSelect={(id) => {
+                        setPermissionPromptSurface(id as any);
+                        setOpenPromptSurfaceMenu(false);
                     }}
                 />
             </ItemGroup>

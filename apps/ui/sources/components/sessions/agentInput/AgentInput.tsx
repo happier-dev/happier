@@ -34,7 +34,7 @@ import { applySuggestion } from '@/components/autocomplete/applySuggestion';
 import { SourceControlStatusBadge, useHasMeaningfulScmStatus } from '@/components/sessions/sourceControl/status';
 import { ModelPickerOverlay, type ModelPickerProbeState } from '@/components/model/ModelPickerOverlay';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
-import { useSetting } from '@/sync/domains/state/storage';
+import { useSessionMessagesById, useSessionMessagesVersion, useSessionTranscriptIds, useSetting } from '@/sync/domains/state/storage';
 import { useUserMessageHistory } from '@/hooks/session/useUserMessageHistory';
 import { Theme } from '@/theme';
 import { t } from '@/text';
@@ -60,13 +60,15 @@ import { getContextWarning } from './contextWarning';
 import { shouldRenderPermissionChip } from './permissionChipVisibility';
 import { buildAgentInputActionMenuActions } from './actionMenuActions';
 import { PermissionModePicker } from './components/PermissionModePicker';
-import { computeAcpPlanModeControl, computeAcpSessionModePickerControl } from '@/sync/acp/sessionModeControl';
+import { computeSessionModePickerControl } from '@/sync/acp/sessionModeControl';
 import { computeAcpConfigOptionControls, type AcpConfigOptionValueId } from '@/sync/acp/configOptionsControl';
-import { PermissionFooter } from '@/components/tools/shell/permissions/PermissionFooter';
-import { formatPermissionRequestSummary } from '@/components/tools/normalization/policy/permissionSummary';
 import type { PendingPermissionRequest } from '@/utils/sessions/sessionUtils';
 import { Text } from '@/components/ui/text/Text';
 import { attachActionBarMouseDragScroll } from './attachActionBarMouseDragScroll';
+import { PermissionPromptCard } from '@/components/tools/shell/permissions/PermissionPromptCard';
+import type { PermissionToolCallMessageLocation } from '@/utils/sessions/permissions/permissionToolCallLocationTypes';
+import { resolvePermissionToolCallLocations } from '@/utils/sessions/permissions/resolvePermissionToolCallLocations';
+import { resolvePermissionPromptSurface, shouldShowGenericPermissionPromptForRequest } from '@/utils/sessions/permissions/permissionPromptPolicy';
 
 const ACTION_BAR_SCROLL_END_GUTTER_WIDTH = 24;
 
@@ -76,6 +78,11 @@ export type AgentInputExtraActionChipRenderContext = Readonly<{
     showLabel: boolean;
     iconColor: string;
     textStyle: any;
+    /**
+     * Full-width anchor for agent-input popovers (matches the overall composer width).
+     * Useful for chip-triggered popovers (e.g. "Link file") that should size like the @ suggestions.
+     */
+    popoverAnchorRef: React.RefObject<any>;
 }>;
 
 export type AgentInputExtraActionChip = Readonly<{
@@ -188,7 +195,7 @@ interface AgentInputProps {
     hasSendableAttachments?: boolean;
     permissionRequests?: ReadonlyArray<PendingPermissionRequest>;
     canApprovePermissions?: boolean;
-    permissionDisabledReason?: 'public' | 'readOnly' | 'notGranted';
+    permissionDisabledReason?: 'public' | 'readOnly' | 'notGranted' | 'inactive';
 }
 
 function truncateWithEllipsis(value: string, maxChars: number) {
@@ -232,8 +239,6 @@ const stylesheet = StyleSheet.create((theme, runtime) => ({
         ...Typography.default('semiBold'),
     },
     permissionRequestCard: {
-        borderBottomWidth: 1,
-        borderColor: theme.colors.divider,
         overflow: 'hidden',
     },
     permissionRequestSummary: {
@@ -407,7 +412,8 @@ const stylesheet = StyleSheet.create((theme, runtime) => ({
         justifyContent: 'space-between',
     },
     actionButtonsRowWithBelow: {
-        marginBottom: Platform.OS === 'web' ? 3 : 8,
+        // Match the vertical rhythm of wrapped chip rows on native.
+        marginBottom: Platform.OS === 'web' ? 3 : 6,
     },
     pathRow: {
         flexDirection: 'row',
@@ -415,7 +421,7 @@ const stylesheet = StyleSheet.create((theme, runtime) => ({
     },
     actionButtonsLeft: {
         flexDirection: 'row',
-        ...(Platform.OS === 'web' ? { columnGap: 6, rowGap: 3 } : {}),
+        ...(Platform.OS === 'web' ? { columnGap: 6, rowGap: 3 } : { marginBottom: -6 }),
         flex: 1,
         flexWrap: 'wrap',
         overflow: 'visible',
@@ -427,7 +433,7 @@ const stylesheet = StyleSheet.create((theme, runtime) => ({
     actionButtonsLeftScrollContent: {
         flexDirection: 'row',
         alignItems: 'center',
-        ...(Platform.OS === 'web' ? { columnGap: 6 } : {}),
+        ...(Platform.OS === 'web' ? { columnGap: 6 } : { marginBottom: -6 }),
         paddingRight: 6 + ACTION_BAR_SCROLL_END_GUTTER_WIDTH,
     },
     actionButtonsFadeLeft: {
@@ -633,6 +639,41 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
 
     const pendingPermissionRequests = props.permissionRequests ?? [];
     const canApprovePermissions = props.canApprovePermissions ?? true;
+    const permissionPromptSurface = useSetting('permissionPromptSurface');
+    const resolvedPermissionPromptSurface = resolvePermissionPromptSurface(permissionPromptSurface);
+    const showComposerPermissionCards = resolvedPermissionPromptSurface === 'composer';
+    const composerPermissionRequests = React.useMemo(
+        () => pendingPermissionRequests.filter((req) => shouldShowGenericPermissionPromptForRequest({ toolName: req.tool, requestKind: req.kind })),
+        [pendingPermissionRequests],
+    );
+    const sessionIdForStorage = props.sessionId ?? '';
+    const { ids: committedMessageIdsOldestFirst } = useSessionTranscriptIds(sessionIdForStorage);
+    const committedMessagesById = useSessionMessagesById(sessionIdForStorage);
+    const permissionLocationVersion = useSessionMessagesVersion(
+        sessionIdForStorage,
+        Boolean(props.sessionId && showComposerPermissionCards && composerPermissionRequests.length > 0),
+    );
+
+    const permissionLocationsById = React.useMemo(() => {
+        if (!props.sessionId) return new Map<string, PermissionToolCallMessageLocation | null>();
+        if (!showComposerPermissionCards) return new Map<string, PermissionToolCallMessageLocation | null>();
+        if (composerPermissionRequests.length === 0) return new Map<string, PermissionToolCallMessageLocation | null>();
+        const ids = Array.isArray(composerPermissionRequests) ? composerPermissionRequests.map((r) => r.id) : [];
+        return new Map(
+            resolvePermissionToolCallLocations({
+                permissionIds: ids,
+                messageIdsOldestFirst: committedMessageIdsOldestFirst,
+                messagesById: committedMessagesById,
+            }),
+        );
+    }, [
+        committedMessageIdsOldestFirst,
+        committedMessagesById,
+        composerPermissionRequests,
+        props.sessionId,
+        showComposerPermissionCards,
+        permissionLocationVersion,
+    ]);
 
     const agentId: AgentId = resolveAgentIdFromFlavor(props.metadata?.flavor) ?? props.agentType ?? DEFAULT_AGENT_ID;
     const lastNonEmptySessionModelOptionsRef = React.useRef<readonly ModelOption[] | null>(null);
@@ -691,24 +732,24 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
         return resolveProfileById(props.profileId, profiles);
     }, [profiles, props.profileId]);
 
-	    const profileLabel = React.useMemo(() => {
-	        if (props.profileId === undefined) {
-	            return null;
-	        }
-	        if (props.profileId === null || props.profileId.trim() === '') {
-	            return t('profiles.noProfile');
-	        }
+        const profileLabel = React.useMemo(() => {
+            if (props.profileId === undefined) {
+                return null;
+            }
+            if (props.profileId === null || props.profileId.trim() === '') {
+                return t('profiles.noProfile');
+            }
         if (currentProfile) {
             return getProfileDisplayName(currentProfile);
         }
         const shortId = props.profileId.length > 8 ? `${props.profileId.slice(0, 8)}…` : props.profileId;
         return `${t('status.unknown')} (${shortId})`;
-	    }, [props.profileId, currentProfile]);
+        }, [props.profileId, currentProfile]);
 
-		    const profileIcon = React.useMemo(() => {
-		        // Always show a stable "profile" icon so the chip reads as Profile selection (not "current provider").
-		        return 'person-circle-outline';
-		    }, []);
+            const profileIcon = React.useMemo(() => {
+                // Always show a stable "profile" icon so the chip reads as Profile selection (not "current provider").
+                return 'person-circle-outline';
+            }, []);
 
     // Calculate context warning
     const contextWarning = props.usageData?.contextSize
@@ -803,6 +844,7 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
     // Settings modal state
     const [showSettings, setShowSettings] = React.useState(false);
     const overlayAnchorRef = React.useRef<View>(null);
+    const composerAnchorRef = React.useRef<View>(null);
     const settingsAnchorRef = React.useRef<View>(null);
 
     const actionBarFades = useScrollEdgeFades({
@@ -814,18 +856,35 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
     });
     const actionBarScrollRef = React.useRef<any>(null);
 
-		    const permissionModeOptions = React.useMemo(() => {
-		        return getPermissionModeOptionsForSession(agentId, props.metadata ?? null);
-		    }, [agentId, props.metadata]);
+    const permissionRequestsFades = useScrollEdgeFades({
+        enabledEdges: { top: true, bottom: true },
+        overflowThreshold: 2,
+        edgeThreshold: 2,
+    });
+    const [permissionRequestsContentHeightPx, setPermissionRequestsContentHeightPx] = React.useState<number | null>(null);
+    const permissionRequestsMaxHeightPx = React.useMemo(() => {
+        const available = Math.max(1, screenHeight - keyboardHeight);
+        const desired = Math.round(available * 0.34);
+        return Math.max(160, Math.min(320, desired));
+    }, [keyboardHeight, screenHeight]);
+    const permissionRequestsClampedHeightPx = React.useMemo(() => {
+        const raw = permissionRequestsContentHeightPx;
+        if (typeof raw !== 'number' || !Number.isFinite(raw) || raw <= 0) return undefined;
+        return Math.max(1, Math.min(Math.trunc(raw), permissionRequestsMaxHeightPx));
+    }, [permissionRequestsContentHeightPx, permissionRequestsMaxHeightPx]);
 
-	    const permissionModeOrder = React.useMemo(() => {
-	        return permissionModeOptions.map((o) => o.value);
-	    }, [permissionModeOptions]);
+            const permissionModeOptions = React.useMemo(() => {
+                return getPermissionModeOptionsForSession(agentId, props.metadata ?? null);
+            }, [agentId, props.metadata]);
+
+        const permissionModeOrder = React.useMemo(() => {
+            return permissionModeOptions.map((o) => o.value);
+        }, [permissionModeOptions]);
 
     const effectivePermissionPolicy = React.useMemo(() => {
-	            return describeEffectivePermissionMode({
-	                agentType: agentId,
-	                selectedMode: props.permissionMode ?? 'default',
+                return describeEffectivePermissionMode({
+                    agentType: agentId,
+                    selectedMode: props.permissionMode ?? 'default',
                 metadata: props.metadata ?? null,
                 applyTiming: sessionPermissionModeApplyTiming ?? 'immediate',
             });
@@ -842,22 +901,14 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
     const effectiveModelLabel = React.useMemo(() => {
         const found = modelOptions.find((o) => o.value === effectiveModelPolicy.effectiveModelId);
         if (found) return found.label;
-        return effectiveModelPolicy.effectiveModelId === 'default' ? t('agentInput.model.useCliSettings') : effectiveModelPolicy.effectiveModelId;
+        return effectiveModelPolicy.effectiveModelId === 'default'
+            ? t('agentInput.model.useCliSettings')
+            : effectiveModelPolicy.effectiveModelId;
     }, [effectiveModelPolicy.effectiveModelId, modelOptions]);
 
     const canEnterCustomModel = React.useMemo(() => {
         return supportsFreeformModelSelectionForSession(agentId, props.metadata ?? null);
     }, [agentId, props.metadata]);
-
-    const acpPlanModeControl = React.useMemo(() => {
-        if (!props.onAcpSessionModeChange) return null;
-        return computeAcpPlanModeControl(props.metadata ?? null);
-    }, [props.metadata, props.onAcpSessionModeChange]);
-
-    const acpSessionModePickerControl = React.useMemo(() => {
-        if (!props.onAcpSessionModeChange) return null;
-        return computeAcpSessionModePickerControl({ agentId, metadata: props.metadata ?? null });
-    }, [agentId, props.metadata, props.onAcpSessionModeChange]);
 
     const preflightAcpSessionModeOptions = React.useMemo(() => {
         const raw = props.acpSessionModeOptionsOverride;
@@ -872,6 +923,14 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
             .filter((m) => m.id.trim().length > 0 && m.name.trim().length > 0);
         return cleaned.length > 0 ? cleaned : null;
     }, [props.acpSessionModeOptionsOverride]);
+
+    const sessionModePickerControl = React.useMemo(() => {
+        if (!props.onAcpSessionModeChange) return null;
+        // When preflight options are provided (e.g. New Session), prefer the override surface so
+        // selections can be reflected immediately without relying on session metadata updates.
+        if (preflightAcpSessionModeOptions) return null;
+        return computeSessionModePickerControl({ agentId, metadata: props.metadata ?? null });
+    }, [agentId, props.metadata, preflightAcpSessionModeOptions, props.onAcpSessionModeChange]);
 
     const preflightAcpSessionModeEffective = React.useMemo(() => {
         const selected = typeof props.acpSessionModeSelectedIdOverride === 'string'
@@ -1110,29 +1169,29 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
             dismiss: () => setShowSettings(false),
             blurInput: () => inputRef.current?.blur(),
         });
-	    }, [
-	        actionBarIsCollapsed,
-	        hasAnyActions,
-	        handleAbortPress,
-	        agentId,
-	        profileIcon,
-	        profileLabel,
-	        props.agentType,
-	        props.currentPath,
-	        props.envVarsCount,
-	        props.machineName,
+        }, [
+            actionBarIsCollapsed,
+            hasAnyActions,
+            handleAbortPress,
+            agentId,
+            profileIcon,
+            profileLabel,
+            props.agentType,
+            props.currentPath,
+            props.envVarsCount,
+            props.machineName,
             props.onResumeClick,
             props.resumeSessionId,
-	        props.onAbort,
-	        props.onAgentClick,
-	        props.onEnvVarsClick,
-	        props.onFileViewerPress,
-	        props.onMachineClick,
-	        props.onPathClick,
-	        props.onProfileClick,
-	        props.sessionId,
-	        theme.colors.button.secondary.tint,
-	    ]);
+            props.onAbort,
+            props.onAgentClick,
+            props.onEnvVarsClick,
+            props.onFileViewerPress,
+            props.onMachineClick,
+            props.onPathClick,
+            props.onProfileClick,
+            props.sessionId,
+            theme.colors.button.secondary.tint,
+        ]);
 
     // Handle settings selection
     const handleSettingsSelect = React.useCallback((mode: PermissionMode) => {
@@ -1226,7 +1285,7 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
 
         }
         return false; // Key was not handled
-		    }, [suggestions, moveUp, moveDown, selected, handleSuggestionSelect, inputState.text, inputState.selection.start, inputState.selection.end, props.showAbortButton, props.onAbort, isAborting, handleAbortPress, agentInputEnterToSend, props.value, handleSend, props.onPermissionModeChange, agentId, permissionModeOrder, effectivePermissionPolicy.effectiveMode, messageHistory, props.onChangeText]);
+            }, [suggestions, moveUp, moveDown, selected, handleSuggestionSelect, inputState.text, inputState.selection.start, inputState.selection.end, props.showAbortButton, props.onAbort, isAborting, handleAbortPress, agentInputEnterToSend, props.value, handleSend, props.onPermissionModeChange, agentId, permissionModeOrder, effectivePermissionPolicy.effectiveMode, messageHistory, props.onChangeText]);
 
 
 
@@ -1266,27 +1325,27 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
                                 })}
                                 selectedIndex={selected}
                                 onSelect={handleSuggestionSelect}
-                                itemHeight={48}
+                                itemHeight={Platform.select({ ios: 42, default: 34 }) ?? 34}
                             />
                         )}
                     </Popover>
                 )}
 
                 {/* Settings overlay */}
-	                {showSettings && (
-	                    <Popover
-	                        open={showSettings}
-	                        anchorRef={settingsAnchorRef}
-	                        boundaryRef={null}
-	                        placement="top"
-	                        gap={8}
-	                        maxHeightCap={400}
-	                        portal={{
-	                            web: true,
-	                            native: true,
-	                            matchAnchorWidth: false,
-	                            anchorAlign: 'start',
-	                        }}
+                    {showSettings && (
+                        <Popover
+                            open={showSettings}
+                            anchorRef={settingsAnchorRef}
+                            boundaryRef={null}
+                            placement="top"
+                            gap={8}
+                            maxHeightCap={400}
+                            portal={{
+                                web: true,
+                                native: true,
+                                matchAnchorWidth: false,
+                                anchorAlign: 'start',
+                            }}
                         edgePadding={{
                             horizontal: Platform.OS === 'web' ? (screenWidth > 700 ? 12 : 16) : 0,
                             vertical: 12,
@@ -1309,11 +1368,11 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
                                     />
                                 ) : null}
 
-	                                {actionBarIsCollapsed && hasAnyActions ? (
-	                                    <View style={styles.overlayDivider} />
-	                                ) : null}
+                                    {actionBarIsCollapsed && hasAnyActions ? (
+                                        <View style={styles.overlayDivider} />
+                                    ) : null}
 
-	                                {/* Permission Mode Section */}
+                                    {/* Permission Mode Section */}
                                     <PermissionModePicker
                                         title={getPermissionModeTitleForAgentType(agentId)}
                                         options={permissionModeOptions}
@@ -1324,22 +1383,28 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
                                         effectivePermissionPolicy={effectivePermissionPolicy}
                                     />
 
-                                    {acpSessionModePickerControl ? (
+                                    {sessionModePickerControl ? (
                                         <>
                                             <View style={styles.overlayDivider} />
                                             <View style={styles.overlaySection}>
                                                 <Text style={styles.overlaySectionTitle}>
-                                                    Mode
+                                                    {t('agentInput.mode.sectionTitle')}
                                                 </Text>
 
                                                 <Text style={styles.overlayOptionDescription}>
-                                                    {acpSessionModePickerControl.isPending
-                                                        ? `Pending: switching from ${acpSessionModePickerControl.currentModeName} to ${acpSessionModePickerControl.requestedModeName}`
-                                                        : `Current: ${acpSessionModePickerControl.currentModeName}`}
+                                                    {sessionModePickerControl.isPending
+                                                        ? t('agentInput.mode.pendingSwitching', {
+                                                            from: sessionModePickerControl.currentModeName,
+                                                            to:
+                                                                sessionModePickerControl.requestedModeName
+                                                                ?? sessionModePickerControl.requestedModeId
+                                                                ?? '',
+                                                        })
+                                                        : t('agentInput.mode.currentMode', { name: sessionModePickerControl.currentModeName })}
                                                 </Text>
 
-                                                {acpSessionModePickerControl.options.map((option) => {
-                                                    const isSelected = acpSessionModePickerControl.effectiveModeId === option.id;
+                                                {sessionModePickerControl.options.map((option) => {
+                                                    const isSelected = sessionModePickerControl.effectiveModeId === option.id;
                                                     return (
                                                         <Pressable
                                                             key={option.id}
@@ -1391,7 +1456,7 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
                                             <View style={styles.overlayDivider} />
                                             <View style={styles.overlaySection}>
                                                 <Text style={styles.overlaySectionTitle}>
-                                                    Mode
+                                                    {t('agentInput.mode.sectionTitle')}
                                                 </Text>
                                                 {props.acpSessionModeOptionsOverrideProbe &&
                                                 (props.acpSessionModeOptionsOverrideProbe!.phase !== 'idle' ||
@@ -1399,7 +1464,7 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
                                                     typeof props.acpSessionModeOptionsOverrideProbe.onRefresh === 'function' ? (
                                                         <Pressable
                                                             accessibilityRole="button"
-                                                            accessibilityLabel="Refresh modes"
+                                                            accessibilityLabel={t('agentInput.mode.refreshModesA11y')}
                                                             onPress={
                                                                 props.acpSessionModeOptionsOverrideProbe!.phase === 'idle'
                                                                     ? props.acpSessionModeOptionsOverrideProbe.onRefresh
@@ -1428,12 +1493,12 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
 
                                                 <Text style={styles.overlayOptionDescription}>
                                                     {props.acpSessionModeOptionsOverrideProbe?.phase === 'loading'
-                                                        ? 'Loading modes…'
+                                                        ? t('agentInput.mode.loadingModes')
                                                         : props.acpSessionModeOptionsOverrideProbe?.phase === 'refreshing'
-                                                            ? 'Refreshing modes…'
+                                                            ? t('agentInput.mode.refreshingModes')
                                                             : preflightAcpSessionModeEffective.id === 'default'
-                                                                ? 'Use the default mode for this agent.'
-                                                                : `Start in: ${preflightAcpSessionModeEffective.name}`}
+                                                                ? t('agentInput.mode.useDefaultModeHint')
+                                                                : t('agentInput.mode.startIn', { name: preflightAcpSessionModeEffective.name })}
                                                 </Text>
 
                                                 {preflightAcpSessionModeOptions.map((option) => {
@@ -1491,7 +1556,7 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
                                             <View style={styles.overlayDivider} />
                                             <View style={styles.overlaySection}>
                                                 <Text style={styles.overlaySectionTitle}>
-                                                    Options
+                                                    {t('agentInput.acp.optionsSectionTitle')}
                                                 </Text>
 
                                                 {acpConfigOptionControls.map((control) => {
@@ -1527,8 +1592,11 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
                                                                         </Text>
                                                                         <Text style={styles.overlayOptionDescription}>
                                                                             {control.isPending
-                                                                                ? `Pending: ${formatValue(option.currentValue)} → ${formatValue(control.requestedValue!)}`
-                                                                                : `Current: ${formatValue(option.currentValue)}`}
+                                                                                ? t('agentInput.acp.pendingValue', {
+                                                                                    current: formatValue(option.currentValue),
+                                                                                    requested: formatValue(control.requestedValue!),
+                                                                                })
+                                                                                : t('agentInput.acp.currentValue', { value: formatValue(option.currentValue) })}
                                                                         </Text>
                                                                         {option.description ? (
                                                                             <Text style={styles.overlayOptionDescription}>
@@ -1536,15 +1604,15 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
                                                                             </Text>
                                                                         ) : null}
                                                                     </View>
-	                                                                    <View style={{ paddingLeft: 12 }}>
-	                                                                        <Switch
-	                                                                            value={boolValue}
-	                                                                            onValueChange={(next) => {
-	                                                                                hapticsLight();
-	                                                                                props.onAcpConfigOptionChange?.(option.id, next ? 'true' : 'false');
-	                                                                            }}
-	                                                                        />
-	                                                                    </View>
+                                                                        <View style={{ paddingLeft: 12 }}>
+                                                                            <Switch
+                                                                                value={boolValue}
+                                                                                onValueChange={(next) => {
+                                                                                    hapticsLight();
+                                                                                    props.onAcpConfigOptionChange?.(option.id, next ? 'true' : 'false');
+                                                                                }}
+                                                                            />
+                                                                        </View>
                                                                 </View>
                                                             </Pressable>
                                                         );
@@ -1558,7 +1626,7 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
                                                                     {option.name}
                                                                 </Text>
                                                                 <Text style={styles.overlayOptionDescription}>
-                                                                    Current: {formatValue(option.currentValue)}
+                                                                    {t('agentInput.acp.currentValue', { value: formatValue(option.currentValue) })}
                                                                 </Text>
                                                                 {option.description ? (
                                                                     <Text style={styles.overlayOptionDescription}>
@@ -1585,8 +1653,8 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
                                                             </Text>
                                                             <Text style={styles.overlayOptionDescription}>
                                                                 {control.isPending && requestedLabel
-                                                                    ? `Pending: ${currentLabel} → ${requestedLabel}`
-                                                                    : `Current: ${currentLabel}`}
+                                                                    ? t('agentInput.acp.pendingValue', { current: currentLabel, requested: requestedLabel })
+                                                                    : t('agentInput.acp.currentValue', { value: currentLabel })}
                                                             </Text>
                                                             {option.description ? (
                                                                 <Text style={styles.overlayOptionDescription}>
@@ -1647,8 +1715,8 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
                                         </>
                                     ) : null}
 
-	                                {/* Divider */}
-	                                <View style={styles.overlayDivider} />
+                                    {/* Divider */}
+                                    <View style={styles.overlayDivider} />
 
                                 <ModelPickerOverlay
                                     title={t('agentInput.model.title')}
@@ -1663,7 +1731,7 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
                                     emptyText={t('agentInput.model.configureInCli')}
                                     canEnterCustomModel={canEnterCustomModel}
                                     customLabel={`${t('profiles.custom')}…`}
-                                    customDescription="Use a model id that isn’t listed."
+                                    customDescription={t('agentInput.model.customDescription')}
                                     probe={props.modelOptionsOverrideProbe ?? (sessionModelOptionsProbe ?? undefined)}
                                     onSelect={(value) => {
                                         hapticsLight();
@@ -1673,9 +1741,9 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
                                         hapticsLight();
                                         const next = await Modal.prompt(
                                             t('profiles.model'),
-                                            'Enter a model id',
+                                            t('agentInput.model.customPromptBody'),
                                             {
-                                                placeholder: 'e.g. claude-3.5-sonnet',
+                                                placeholder: t('agentInput.model.customPlaceholder'),
                                                 confirmText: t('common.save'),
                                             },
                                         );
@@ -1756,23 +1824,64 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
                             </View>
                         </View>
                     ) : null}
-                    {props.sessionId && pendingPermissionRequests.length > 0 ? (
+                    {props.sessionId && composerPermissionRequests.length > 0 && showComposerPermissionCards ? (
                         <View style={styles.permissionRequestsContainer}>
-                            {pendingPermissionRequests.map((req) => {
-                                return (
-                                    <View key={req.id} style={styles.permissionRequestCard}>
-                                        <PermissionFooter
-                                            permission={{ id: req.id, status: 'pending' }}
-                                            sessionId={props.sessionId!}
-                                            toolName={req.tool}
-                                            toolInput={req.arguments}
-                                            metadata={props.metadata || null}
-                                            canApprovePermissions={canApprovePermissions}
-                                            disabledReason={props.permissionDisabledReason}
-                                        />
+                            <View style={{ position: 'relative' }}>
+                                <ScrollView
+                                    testID="agentInput.permissionRequests.scroll"
+                                    style={{ maxHeight: permissionRequestsMaxHeightPx, height: permissionRequestsClampedHeightPx }}
+                                    contentContainerStyle={{ paddingBottom: 2 }}
+                                    nestedScrollEnabled={true}
+                                    scrollEventThrottle={16}
+                                    showsVerticalScrollIndicator={false}
+                                    onContentSizeChange={(_w, h) => {
+                                        setPermissionRequestsContentHeightPx(h);
+                                        permissionRequestsFades.onContentSizeChange?.(_w, h);
+                                    }}
+                                    onLayout={(e) => {
+                                        permissionRequestsFades.onViewportLayout?.(e);
+                                    }}
+                                    onScroll={(e) => {
+                                        permissionRequestsFades.onScroll?.(e);
+                                    }}
+                                >
+                                    <View style={{ gap: 8, paddingTop: 2 }}>
+                                        {composerPermissionRequests.map((req) => {
+                                            const location =
+                                                props.sessionId
+                                                    ? (permissionLocationsById.get(req.id) ?? null)
+                                                    : null;
+                                            return (
+                                                <View key={req.id} style={styles.permissionRequestCard}>
+                                                    <PermissionPromptCard
+                                                        request={req}
+                                                        location={location}
+                                                        sessionId={props.sessionId!}
+                                                        metadata={props.metadata || null}
+                                                        canApprovePermissions={canApprovePermissions}
+                                                        disabledReason={props.permissionDisabledReason}
+                                                    />
+                                                </View>
+                                            );
+                                        })}
                                     </View>
-                                );
-                            })}
+                                </ScrollView>
+
+                                <ScrollEdgeFades
+                                    color={theme.colors.input.background}
+                                    edges={{
+                                        top: permissionRequestsFades.visibility?.top === true,
+                                        bottom: permissionRequestsFades.visibility?.bottom === true,
+                                    }}
+                                />
+                                <ScrollEdgeIndicators
+                                    color={theme.colors.textSecondary}
+                                    edges={{
+                                        top: permissionRequestsFades.visibility?.top === true,
+                                        bottom: permissionRequestsFades.visibility?.bottom === true,
+                                    }}
+                                />
+                            </View>
                         </View>
                     ) : null}
 
@@ -1825,7 +1934,11 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
                         </View>
                     ) : null}
                     {/* Input field */}
-                    <View style={[styles.inputContainer, props.minHeight ? { minHeight: props.minHeight } : undefined]}>
+                    <View
+                        ref={composerAnchorRef}
+                        collapsable={false}
+                        style={[styles.inputContainer, props.minHeight ? { minHeight: props.minHeight } : undefined]}
+                    >
                         <MultiTextInput
                             ref={inputRef}
                             testID={props.sessionId ? AGENT_INPUT_TEST_IDS.sessionInput : AGENT_INPUT_TEST_IDS.newSessionInput}
@@ -1865,6 +1978,7 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
                                                 showLabel: showChipLabels,
                                                 iconColor: theme.colors.button.secondary.tint,
                                                 textStyle: styles.actionChipText,
+                                                popoverAnchorRef: overlayAnchorRef,
                                             })}
                                         </React.Fragment>
                                     ));
@@ -1897,34 +2011,63 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
                                         </Pressable>
                                     ) : null;
 
-                                    const acpPlanChip = (acpPlanModeControl && props.onAcpSessionModeChange && !actionBarIsCollapsed) ? (
-                                        <Pressable
-                                            key="acp-plan"
-                                            onPress={() => {
-                                                hapticsLight();
-                                                if (acpPlanModeControl.planOn) {
-                                                    if (acpPlanModeControl.offModeId) {
-                                                        props.onAcpSessionModeChange?.(acpPlanModeControl.offModeId);
-                                                    }
-                                                } else {
-                                                    props.onAcpSessionModeChange?.('plan');
+                                    const modeChip = (!actionBarIsCollapsed && props.onAcpSessionModeChange) ? (() => {
+                                        const control = sessionModePickerControl
+                                            ? {
+                                                options: sessionModePickerControl.options,
+                                                selectedId: sessionModePickerControl.requestedModeId ?? 'default',
+                                                label: sessionModePickerControl.effectiveModeName,
+                                                isPending: sessionModePickerControl.isPending,
+                                            }
+                                            : preflightAcpSessionModeOptions
+                                                ? {
+                                                    options: preflightAcpSessionModeOptions,
+                                                    selectedId: preflightAcpSessionModeEffective.id,
+                                                    label: preflightAcpSessionModeEffective.name,
+                                                    isPending: false,
                                                 }
-                                            }}
-                                            hitSlop={{ top: 5, bottom: 10, left: 0, right: 0 }}
-                                            style={(p) => chipStyle(p.pressed)}
-                                        >
-                                            <Ionicons
-                                                name="list-outline"
-                                                size={16}
-                                                color={theme.colors.button.secondary.tint}
-                                            />
-                                            {showChipLabels ? (
-                                                <Text style={styles.actionChipText}>
-                                                    Plan
-                                                </Text>
-                                            ) : null}
-                                        </Pressable>
-                                    ) : null;
+                                                : null;
+                                        if (!control) return null;
+
+                                        const optionIds = [
+                                            'default',
+                                            ...control.options.map((o) => o.id).filter((id) => id && id !== 'default'),
+                                        ];
+                                        const uniqueIds = Array.from(new Set(optionIds));
+                                        if (uniqueIds.length < 2) return null;
+
+                                        const currentIndex = uniqueIds.indexOf(control.selectedId);
+                                        const safeIndex = currentIndex >= 0 ? currentIndex : 0;
+                                        const nextIndex = (safeIndex + 1) % uniqueIds.length;
+                                        const nextId = uniqueIds[nextIndex] ?? 'default';
+
+                                        return (
+                                            <Pressable
+                                                key="mode"
+                                                onPress={() => {
+                                                    hapticsLight();
+                                                    props.onAcpSessionModeChange?.(nextId);
+                                                }}
+                                                hitSlop={{ top: 5, bottom: 10, left: 0, right: 0 }}
+                                                style={(p) => chipStyle(p.pressed)}
+                                                accessibilityRole="button"
+                                                accessibilityLabel={t('agentInput.mode.badgeA11y', { name: control.label })}
+                                            >
+                                                <Ionicons
+                                                    name="list-outline"
+                                                    size={16}
+                                                    color={theme.colors.button.secondary.tint}
+                                                />
+                                                {showChipLabels ? (
+                                                    <Text style={styles.actionChipText}>
+                                                        {control.isPending
+                                                            ? t('agentInput.mode.badgePending', { name: control.label })
+                                                            : t('agentInput.mode.badge', { name: control.label })}
+                                                    </Text>
+                                                ) : null}
+                                            </Pressable>
+                                        );
+                                    })() : null;
 
                                     const profileChip = props.onProfileClick ? (
                                         <Pressable
@@ -1997,14 +2140,15 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
                                         </Pressable>
                                     ) : null;
 
-                                    const machineChip = props.onMachineClick ? (
-                                        <Pressable
-                                            key="machine"
-                                            onPress={() => {
-                                                hapticsLight();
-                                                props.onMachineClick?.();
-                                            }}
-                                            hitSlop={{ top: 5, bottom: 10, left: 0, right: 0 }}
+                                        const machineChip = props.onMachineClick ? (
+                                            <Pressable
+                                                key="machine"
+                                                testID="agent-input-machine-chip"
+                                                onPress={() => {
+                                                    hapticsLight();
+                                                    props.onMachineClick?.();
+                                                }}
+                                                hitSlop={{ top: 5, bottom: 10, left: 0, right: 0 }}
                                             style={(p) => chipStyle(p.pressed)}
                                         >
                                             <Ionicons
@@ -2024,14 +2168,15 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
                                         </Pressable>
                                     ) : null;
 
-                                    const pathChip = props.onPathClick ? (
-                                        <Pressable
-                                            key="path"
-                                            onPress={() => {
-                                                hapticsLight();
-                                                props.onPathClick?.();
-                                            }}
-                                            hitSlop={{ top: 5, bottom: 10, left: 0, right: 0 }}
+                                        const pathChip = props.onPathClick ? (
+                                            <Pressable
+                                                key="path"
+                                                testID="agent-input-path-chip"
+                                                onPress={() => {
+                                                    hapticsLight();
+                                                    props.onPathClick?.();
+                                                }}
+                                                hitSlop={{ top: 5, bottom: 10, left: 0, right: 0 }}
                                             style={(p) => chipStyle(p.pressed)}
                                         >
                                             <Ionicons
@@ -2049,18 +2194,18 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
                                         </Pressable>
                                     ) : null;
 
-	                                    const resumeChip = props.onResumeClick ? (
-	                                        <ResumeChip
-	                                            key="resume"
-	                                            onPress={() => {
-	                                                hapticsLight();
-	                                                inputRef.current?.blur();
-	                                                props.onResumeClick?.();
-	                                            }}
-	                                            showLabel={showChipLabels}
-	                                            resumeSessionId={props.resumeSessionId}
+                                        const resumeChip = props.onResumeClick ? (
+                                            <ResumeChip
+                                                key="resume"
+                                                onPress={() => {
+                                                    hapticsLight();
+                                                    inputRef.current?.blur();
+                                                    props.onResumeClick?.();
+                                                }}
+                                                showLabel={showChipLabels}
+                                                resumeSessionId={props.resumeSessionId}
                                                 isChecking={props.resumeIsChecking === true}
-	                                            labelTitle={t('newSession.resume.title')}
+                                                labelTitle={t('newSession.resume.title')}
                                             labelOptional={t('newSession.resume.optional')}
                                             iconColor={theme.colors.button.secondary.tint}
                                             pressableStyle={chipStyle}
@@ -2109,7 +2254,7 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
                                         ? [permissionOrControlsChip].filter(Boolean)
                                         : [
                                             permissionOrControlsChip,
-                                            acpPlanChip,
+                                            modeChip,
                                             profileChip,
                                             envVarsChip,
                                             agentChip,
@@ -2274,40 +2419,40 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
                                         />
                                     )}
                                 </PrimaryCircleIconButton>
-		                            </View>,
-	
-		                            // Row 2: Path + Resume selectors (separate line to match pre-PR272 layout)
-		                            // - wrap: shown below
-		                            // - scroll: folds into row 1
-		                            // - collapsed: moved into settings popover
-		                            (showPathAndResumeRow) ? (
-		                                <PathAndResumeRow
-		                                    key="row2"
-		                                    styles={{
-		                                        pathRow: styles.pathRow,
-		                                        actionButtonsLeft: styles.actionButtonsLeft,
-	                                        actionChip: styles.actionChip,
-	                                        actionChipIconOnly: styles.actionChipIconOnly,
-	                                        actionChipPressed: styles.actionChipPressed,
-	                                        actionChipText: styles.actionChipText,
-	                                    }}
-	                                    showChipLabels={showChipLabels}
-	                                    iconColor={theme.colors.button.secondary.tint}
-	                                    currentPath={props.currentPath}
-	                                    emptyPathLabel={t('newSession.selectPathTitle')}
-	                                    onPathClick={props.onPathClick ? () => {
-	                                        hapticsLight();
-	                                        props.onPathClick?.();
-	                                    } : undefined}
-		                                    resumeSessionId={props.resumeSessionId}
-		                                    onResumeClick={props.onResumeClick ? () => {
-		                                        hapticsLight();
-		                                        inputRef.current?.blur();
-		                                        props.onResumeClick?.();
-		                                    } : undefined}
-		                                    resumeLabelTitle={t('newSession.resume.title')}
-		                                    resumeLabelOptional={t('newSession.resume.optional')}
-		                                />
+                                    </View>,
+
+                                    // Row 2: Path + Resume selectors (separate line to match pre-PR272 layout)
+                                    // - wrap: shown below
+                                    // - scroll: folds into row 1
+                                    // - collapsed: moved into settings popover
+                                    (showPathAndResumeRow) ? (
+                                        <PathAndResumeRow
+                                            key="row2"
+                                            styles={{
+                                                pathRow: styles.pathRow,
+                                                actionButtonsLeft: styles.actionButtonsLeft,
+                                            actionChip: styles.actionChip,
+                                            actionChipIconOnly: styles.actionChipIconOnly,
+                                            actionChipPressed: styles.actionChipPressed,
+                                            actionChipText: styles.actionChipText,
+                                        }}
+                                        showChipLabels={showChipLabels}
+                                        iconColor={theme.colors.button.secondary.tint}
+                                        currentPath={props.currentPath}
+                                        emptyPathLabel={t('newSession.selectPathTitle')}
+                                        onPathClick={props.onPathClick ? () => {
+                                            hapticsLight();
+                                            props.onPathClick?.();
+                                        } : undefined}
+                                            resumeSessionId={props.resumeSessionId}
+                                            onResumeClick={props.onResumeClick ? () => {
+                                                hapticsLight();
+                                                inputRef.current?.blur();
+                                                props.onResumeClick?.();
+                                            } : undefined}
+                                            resumeLabelTitle={t('newSession.resume.title')}
+                                            resumeLabelOptional={t('newSession.resume.optional')}
+                                        />
                             ) : null,
                         ]}</View>
                     </View>
@@ -2329,6 +2474,9 @@ function SourceControlStatusButton({ sessionId, onPress, compact }: { sessionId?
 
     return (
         <Pressable
+            testID="session-open-source-control"
+            accessibilityRole="button"
+            accessibilityLabel={t('settings.sourceControl')}
             style={(p) => ({
                 flexDirection: 'row',
                 alignItems: 'center',
