@@ -79,6 +79,8 @@
     "test:providers": "yarn workspace @happier-dev/tests test:providers",
     "test:providers:opencode:smoke": "yarn workspace @happier-dev/tests providers:opencode:smoke",
     "test:providers:opencode:extended": "yarn workspace @happier-dev/tests providers:opencode:extended",
+    "test:providers:opencode_server:smoke": "yarn workspace @happier-dev/tests providers:opencode_server:smoke",
+    "test:providers:opencode_server:extended": "yarn workspace @happier-dev/tests providers:opencode_server:extended",
     "test:providers:claude:smoke": "yarn workspace @happier-dev/tests providers:claude:smoke",
     "test:providers:claude:extended": "yarn workspace @happier-dev/tests providers:claude:extended",
     "test:providers:pi:smoke": "yarn workspace @happier-dev/tests providers:pi:smoke",
