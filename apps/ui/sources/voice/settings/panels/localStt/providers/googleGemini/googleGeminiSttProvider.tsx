@@ -63,11 +63,11 @@ const GoogleGeminiSttSettings: LocalSttProviderSpec['Settings'] = (props) => {
   return (
     <>
       <Item
-        title="Gemini API key"
+        title={t('settingsVoice.local.googleGeminiStt.apiKey.title')}
         detail={cfg.googleGemini.apiKey ? t('settingsVoice.local.apiKeySet') : t('settingsVoice.local.apiKeyNotSet')}
         onPress={() => {
           fireAndForget((async () => {
-            const raw = await Modal.prompt('Gemini API key', 'Create an API key in Google AI Studio (Gemini API).', {
+            const raw = await Modal.prompt(t('settingsVoice.local.googleGeminiStt.apiKey.promptTitle'), t('settingsVoice.local.googleGeminiStt.apiKey.promptBody'), {
               inputType: 'secure-text',
             });
             if (raw === null) return;
@@ -80,7 +80,7 @@ const GoogleGeminiSttSettings: LocalSttProviderSpec['Settings'] = (props) => {
         onOpenChange={(next) => setOpenMenu(next ? 'model' : null)}
         variant="selectable"
         search={true}
-        searchPlaceholder="Search models"
+        searchPlaceholder={t('settingsVoice.local.googleGeminiStt.model.searchPlaceholder')}
         selectedId={String(cfg.googleGemini.model)}
         showCategoryTitles={false}
         matchTriggerWidth={true}
@@ -88,21 +88,21 @@ const GoogleGeminiSttSettings: LocalSttProviderSpec['Settings'] = (props) => {
         rowKind="item"
         popoverBoundaryRef={props.popoverBoundaryRef}
         itemTrigger={{
-          title: 'Gemini model',
-          subtitle: 'Choose which Gemini model to use for transcription.',
+          title: t('settingsVoice.local.googleGeminiStt.model.title'),
+          subtitle: t('settingsVoice.local.googleGeminiStt.model.subtitle'),
           showSelectedSubtitle: false,
           detailFormatter: () => String(cfg.googleGemini.model),
         }}
         items={[
           {
             id: '__custom__',
-            title: 'Custom model id…',
-            subtitle: 'Enter a model name manually.',
+            title: t('settingsVoice.local.googleGeminiStt.model.customTitle'),
+            subtitle: t('settingsVoice.local.googleGeminiStt.model.customSubtitle'),
             icon: <Ionicons name="create-outline" size={22} color={theme.colors.textSecondary} />,
           },
           ...((models.length > 0
             ? models
-            : [{ id: '', name: '', displayName: 'Loading models…', description: null }])
+            : [{ id: '', name: '', displayName: t('settingsVoice.local.googleGeminiStt.model.loadingModelsTitle'), description: null }])
             .filter((m) => m.displayName)
             .map((m) => ({
               id: m.id,
@@ -115,7 +115,7 @@ const GoogleGeminiSttSettings: LocalSttProviderSpec['Settings'] = (props) => {
         onSelect={(id) => {
           if (id === '__custom__') {
             fireAndForget((async () => {
-              const raw = await Modal.prompt('Gemini model', 'Example: gemini-2.5-flash', {
+              const raw = await Modal.prompt(t('settingsVoice.local.googleGeminiStt.model.promptTitle'), t('settingsVoice.local.googleGeminiStt.model.promptBody'), {
                 placeholder: String(cfg.googleGemini.model),
               });
               if (raw === null) return;
@@ -136,7 +136,7 @@ const GoogleGeminiSttSettings: LocalSttProviderSpec['Settings'] = (props) => {
         onOpenChange={(next) => setOpenMenu(next ? 'language' : null)}
         variant="selectable"
         search={true}
-        searchPlaceholder="Search languages"
+        searchPlaceholder={t('settingsVoice.local.googleGeminiStt.language.searchPlaceholder')}
         selectedId={cfg.googleGemini.language ?? ''}
         showCategoryTitles={false}
         matchTriggerWidth={true}
@@ -144,10 +144,10 @@ const GoogleGeminiSttSettings: LocalSttProviderSpec['Settings'] = (props) => {
         rowKind="item"
         popoverBoundaryRef={props.popoverBoundaryRef}
         itemTrigger={{
-          title: 'Language',
-          subtitle: 'Optional hint to improve transcription accuracy.',
+          title: t('settingsVoice.local.googleGeminiStt.language.title'),
+          subtitle: t('settingsVoice.local.googleGeminiStt.language.subtitle'),
           showSelectedSubtitle: false,
-          detailFormatter: () => (cfg.googleGemini.language ? String(cfg.googleGemini.language) : 'Auto'),
+          detailFormatter: () => (cfg.googleGemini.language ? String(cfg.googleGemini.language) : t('settingsVoice.local.googleGeminiStt.language.autoTitle')),
         }}
         items={LANGUAGES.flatMap((lang) => {
           const id = typeof lang.code === 'string' ? lang.code : '';
@@ -155,8 +155,8 @@ const GoogleGeminiSttSettings: LocalSttProviderSpec['Settings'] = (props) => {
             return [
               {
                 id: '',
-                title: 'Auto',
-                subtitle: 'Do not provide a language hint.',
+                title: t('settingsVoice.local.googleGeminiStt.language.autoTitle'),
+                subtitle: t('settingsVoice.local.googleGeminiStt.language.autoSubtitle'),
                 icon: <Ionicons name="sparkles-outline" size={22} color={theme.colors.textSecondary} />,
               },
             ];
@@ -181,9 +181,9 @@ const GoogleGeminiSttSettings: LocalSttProviderSpec['Settings'] = (props) => {
 
 export const googleGeminiSttProviderSpec: LocalSttProviderSpec = {
   id: 'google_gemini',
-  title: 'Google Gemini (audio)',
-  subtitle: 'Transcribe audio using Gemini multimodal models.',
+  title: t('settingsVoice.local.googleGeminiStt.provider.title'),
+  subtitle: t('settingsVoice.local.googleGeminiStt.provider.subtitle'),
   iconName: 'logo-google',
-  detail: 'Google Gemini',
+  detail: t('settingsVoice.local.googleGeminiStt.provider.detail'),
   Settings: GoogleGeminiSttSettings,
 };

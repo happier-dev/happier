@@ -89,8 +89,8 @@ export function LocalNeuralSttSettings(props: {
     const manifestUrl = resolveModelPackManifestUrl({ packId: effectivePackId });
     if (!manifestUrl) {
       await Modal.alert(
-        'Manifest URL missing',
-        'Unable to resolve the model pack manifest URL. Check EXPO_PUBLIC_HAPPIER_MODEL_PACK_MANIFESTS (or legacy Kokoro env vars).',
+        t('settingsVoice.local.kokoro.alerts.missingManifest.title'),
+        t('settingsVoice.local.kokoro.alerts.missingManifest.body'),
       );
       return;
     }
@@ -116,7 +116,10 @@ export function LocalNeuralSttSettings(props: {
         setModelStatus(installed ? 'ready' : 'idle');
       } else {
         setModelStatus('error');
-        await Modal.alert('Download failed', `Unable to download this model pack.\n\n${String((error as any)?.message ?? error)}`);
+        await Modal.alert(
+          t('settingsVoice.local.localNeuralStt.alerts.downloadFailedTitle'),
+          t('settingsVoice.local.localNeuralStt.alerts.downloadFailedBody', { message: String((error as any)?.message ?? error) }),
+        );
       }
     } finally {
       if (prepareAbortRef.current === abortController) prepareAbortRef.current = null;
@@ -127,9 +130,9 @@ export function LocalNeuralSttSettings(props: {
   const clearAssets = React.useCallback(async () => {
     if (!effectivePackId) return;
     const ok = await Modal.confirm(
-      'Remove model files?',
-      'This will remove the downloaded STT model pack from this device.',
-      { confirmText: 'Remove', destructive: true },
+      t('settingsVoice.local.localNeuralStt.removeModelFiles.confirmTitle'),
+      t('settingsVoice.local.localNeuralStt.removeModelFiles.confirmBody'),
+      { confirmText: t('common.remove'), destructive: true },
     );
     if (!ok) return;
     await removeModelPack({ packId: effectivePackId });
@@ -144,8 +147,8 @@ export function LocalNeuralSttSettings(props: {
     const manifestUrl = resolveModelPackManifestUrl({ packId: effectivePackId });
     if (!manifestUrl) {
       await Modal.alert(
-        'Manifest URL missing',
-        'Unable to resolve the model pack manifest URL. Check EXPO_PUBLIC_HAPPIER_MODEL_PACK_MANIFESTS (or legacy Kokoro env vars).',
+        t('settingsVoice.local.kokoro.alerts.missingManifest.title'),
+        t('settingsVoice.local.kokoro.alerts.missingManifest.body'),
       );
       return;
     }
@@ -159,21 +162,27 @@ export function LocalNeuralSttSettings(props: {
         signal: abortController.signal,
       });
       if (!status.installed) {
-        await Modal.alert('Not installed', 'Download the model pack first to enable update checks.');
+        await Modal.alert(
+          t('settingsVoice.local.localNeuralStt.alerts.notInstalledTitle'),
+          t('settingsVoice.local.localNeuralStt.alerts.notInstalledBody'),
+        );
         return;
       }
       const remoteBuild = formatModelPackBuildLabel(status.remoteManifest);
       setUpdateCheckedRemote({ build: remoteBuild, updateAvailable: status.updateAvailable });
       if (!status.updateAvailable) {
-        await Modal.alert('Up to date', 'No updates are available for this model pack.');
+        await Modal.alert(
+          t('settingsVoice.local.kokoro.updates.upToDate'),
+          t('settingsVoice.local.localNeuralStt.alerts.upToDateBody'),
+        );
         return;
       }
 
       const ok = await Modal.confirm(
-        'Update available',
-        `Download the latest version of this model pack now?${remoteBuild ? `\n\nRemote build: ${remoteBuild}` : ''}`,
+        t('settingsVoice.local.kokoro.updates.updateAvailable'),
+        t('settingsVoice.local.localNeuralStt.alerts.updateAvailableBody', { remoteBuild }),
         {
-        confirmText: 'Update',
+        confirmText: t('common.update'),
         },
       );
       if (!ok) return;
@@ -194,11 +203,17 @@ export function LocalNeuralSttSettings(props: {
 
       setModelStatus('ready');
       await refreshInstalled();
-      await Modal.alert('Updated', 'Model pack updated successfully.');
+      await Modal.alert(
+        t('settingsVoice.local.localNeuralStt.alerts.updatedTitle'),
+        t('settingsVoice.local.localNeuralStt.alerts.updatedBody'),
+      );
     } catch (error) {
       if (abortController.signal.aborted) return;
       setModelStatus('error');
-      await Modal.alert('Update failed', `Unable to update this model pack.\n\n${String((error as any)?.message ?? error)}`);
+      await Modal.alert(
+        t('settingsVoice.local.localNeuralStt.alerts.updateFailedTitle'),
+        t('settingsVoice.local.localNeuralStt.alerts.updateFailedBody', { message: String((error as any)?.message ?? error) }),
+      );
     } finally {
       prepareAbortRef.current = null;
       setProgress(null);
@@ -206,14 +221,20 @@ export function LocalNeuralSttSettings(props: {
   }, [effectivePackId, modelStatus, refreshInstalled]);
 
   const languageOptions = React.useMemo(
-    () => [
-      { id: '', title: t('settingsVoice.language.autoDetect'), subtitle: 'Let the recognizer decide (recommended).' },
-      { id: 'en', title: 'English', subtitle: 'en' },
-      { id: 'en-US', title: 'English (US)', subtitle: 'en-US' },
-      { id: 'fr', title: 'French', subtitle: 'fr' },
-      { id: 'es', title: 'Spanish', subtitle: 'es' },
-      { id: '__custom__', title: 'Custom…', subtitle: 'Enter a BCP-47 language tag.' },
-    ],
+    () => {
+      const bcp47Options = [
+        { id: 'en', titleKey: 'settingsVoice.language.options.english' as const },
+        { id: 'en-US', titleKey: 'settingsVoice.language.options.englishUs' as const },
+        { id: 'fr', titleKey: 'settingsVoice.language.options.french' as const },
+        { id: 'es', titleKey: 'settingsVoice.language.options.spanish' as const },
+      ];
+
+      return [
+        { id: '', title: t('settingsVoice.language.autoDetect'), subtitle: t('settingsVoice.language.autoDetectSubtitle') },
+        ...bcp47Options.map((o) => ({ id: o.id, title: t(o.titleKey), subtitle: o.id })),
+        { id: '__custom__', title: t('settingsVoice.language.customTitle'), subtitle: t('settingsVoice.language.customSubtitle') },
+      ];
+    },
     [],
   );
 
@@ -221,12 +242,14 @@ export function LocalNeuralSttSettings(props: {
   const installedBuild = formatModelPackBuildLabel((installSummary as any)?.manifest);
   const downloadDetail =
     modelStatus === 'downloading'
-      ? (progress ? formatDownloadProgressDetail(progress, { prefix: 'Downloading' }) : 'Downloading…')
+      ? (progress
+        ? formatDownloadProgressDetail(progress, { prefix: t('settingsVoice.local.kokoro.modelStatus.downloadingPrefix') })
+        : t('settingsVoice.local.kokoro.modelStatus.downloading'))
       : installed
         ? installedBuild
-          ? `Installed • ${installedBuild}`
-          : 'Installed'
-        : 'Not installed';
+          ? t('settingsVoice.local.localNeuralStt.status.installedWithBuild', { build: installedBuild })
+          : t('settingsVoice.local.localNeuralStt.status.installed')
+        : t('settingsVoice.local.localNeuralStt.status.notInstalled');
 
   return (
     <>
@@ -242,8 +265,8 @@ export function LocalNeuralSttSettings(props: {
         rowKind="item"
         popoverBoundaryRef={props.popoverBoundaryRef}
         itemTrigger={{
-          title: 'Model pack',
-          subtitle: 'Streaming STT model pack id.',
+          title: t('settingsVoice.local.localNeuralStt.modelPack.title'),
+          subtitle: t('settingsVoice.local.localNeuralStt.modelPack.subtitle'),
           showSelectedSubtitle: false,
           detailFormatter: () => (effectivePackId ?? t('settingsVoice.local.notSet')),
         }}
@@ -255,8 +278,8 @@ export function LocalNeuralSttSettings(props: {
       />
 
       <Item
-        title="Model files"
-        subtitle="Download required files to enable on-device streaming STT."
+        title={t('settingsVoice.local.localNeuralStt.modelFiles.title')}
+        subtitle={t('settingsVoice.local.localNeuralStt.modelFiles.subtitle')}
         detail={downloadDetail}
         onPress={() => void prepareModel()}
         rightElement={
@@ -273,25 +296,25 @@ export function LocalNeuralSttSettings(props: {
       />
 
       <Item
-        title="Remove model files"
-        subtitle="Free storage by removing downloaded model files."
-        detail={installed ? 'Remove' : '—'}
+        title={t('settingsVoice.local.localNeuralStt.removeModelFiles.title')}
+        subtitle={t('settingsVoice.local.localNeuralStt.removeModelFiles.subtitle')}
+        detail={installed ? t('common.remove') : '—'}
         onPress={installed ? () => void clearAssets() : undefined}
         showChevron={false}
         selected={false}
       />
 
       <Item
-        title="Check for model updates"
-        subtitle="Manually check if a newer model pack is available."
+        title={t('settingsVoice.local.kokoro.updates.title')}
+        subtitle={t('settingsVoice.local.kokoro.updates.subtitle')}
         detail={
           updateCheckedRemote
             ? updateCheckedRemote.updateAvailable
-              ? `Update available${updateCheckedRemote.build ? ` • ${updateCheckedRemote.build}` : ''}`
+              ? `${t('settingsVoice.local.kokoro.updates.updateAvailable')}${updateCheckedRemote.build ? ` • ${updateCheckedRemote.build}` : ''}`
               : updateCheckedRemote.build
-                ? `Up to date • ${updateCheckedRemote.build}`
-                : 'Up to date'
-            : 'Check'
+                ? `${t('settingsVoice.local.kokoro.updates.upToDate')} • ${updateCheckedRemote.build}`
+                : t('settingsVoice.local.kokoro.updates.upToDate')
+            : t('settingsVoice.local.kokoro.updates.check')
         }
         onPress={() => void checkForUpdates()}
         showChevron={false}
@@ -310,8 +333,8 @@ export function LocalNeuralSttSettings(props: {
         rowKind="item"
         popoverBoundaryRef={props.popoverBoundaryRef}
         itemTrigger={{
-          title: 'Language',
-          subtitle: 'Optional BCP-47 language tag.',
+          title: t('settingsVoice.local.localNeuralStt.language.title'),
+          subtitle: t('settingsVoice.local.localNeuralStt.language.subtitle'),
           showSelectedSubtitle: false,
           detailFormatter: () => (effectiveLanguage || t('settingsVoice.language.autoDetect')),
         }}
@@ -319,7 +342,11 @@ export function LocalNeuralSttSettings(props: {
         onSelect={(id) => {
           if (id === '__custom__') {
             fireAndForget((async () => {
-              const raw = await Modal.prompt('Language', 'Enter a BCP-47 language tag (e.g. en, en-US).', { placeholder: effectiveLanguage });
+              const raw = await Modal.prompt(
+                t('settingsVoice.local.localNeuralStt.language.promptTitle'),
+                t('settingsVoice.local.localNeuralStt.language.promptBody'),
+                { placeholder: effectiveLanguage },
+              );
               if (raw === null) return;
               const next = String(raw).trim();
               setLocalNeural({ language: next ? next : null });

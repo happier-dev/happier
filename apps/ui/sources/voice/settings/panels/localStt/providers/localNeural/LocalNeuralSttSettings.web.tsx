@@ -2,6 +2,7 @@ import * as React from 'react';
 
 import { Item } from '@/components/ui/lists/Item';
 import type { VoiceLocalSttSettings } from '@/sync/domains/settings/voiceLocalSttSettings';
+import { t } from '@/text';
 
 export function LocalNeuralSttSettings(_props: {
   cfg: VoiceLocalSttSettings;
@@ -10,12 +11,11 @@ export function LocalNeuralSttSettings(_props: {
 }) {
   return (
     <Item
-      title="On-device STT"
-      subtitle="Not available on web. Use Device, OpenAI-compatible, or Gemini STT."
-      detail="Unavailable"
+      title={t('settingsVoice.local.neuralStt.title')}
+      subtitle={t('settingsVoice.local.neuralStt.webNotAvailableSubtitle')}
+      detail={t('common.unavailable')}
       showChevron={false}
       selected={false}
     />
   );
 }
-

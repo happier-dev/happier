@@ -42,7 +42,7 @@ export function LocalVoiceSttGroup(props: {
         rowKind="item"
         popoverBoundaryRef={props.popoverBoundaryRef}
         itemTrigger={{
-          title: 'STT provider',
+          title: t('settingsVoice.local.sttProvider'),
         }}
         items={localSttProviderSpecs.map((spec) => ({
           id: spec.id,
