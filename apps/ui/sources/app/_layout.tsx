@@ -6,6 +6,7 @@ import * as Fonts from 'expo-font';
 import { Asset } from 'expo-asset';
 import * as Notifications from 'expo-notifications';
 import { FontAwesome } from '@expo/vector-icons';
+import { useRouter } from 'expo-router';
 import {
     PUSH_NOTIFICATION_ACTION_IDS,
     PUSH_NOTIFICATION_ANDROID_CHANNEL_IDS,
@@ -44,6 +45,7 @@ import { initializeSentryOnce } from '@/utils/system/sentry';
 import { t } from '@/text';
 import { AppCrashRecoveryBoundary } from '@/components/appShell/AppCrashRecoveryBoundary';
 import { WebCryptoStartupGate } from '@/components/web/WebCryptoStartupGate';
+import { consumeRestartBugReportIntent } from '@/utils/system/restartBugReportIntent';
 
 initializeSentryOnce();
 
@@ -626,7 +628,10 @@ function AppBoot(props: {
     //
     // Init sequence
     //
+    const router = useRouter();
     const [initState, setInitState] = React.useState<{ credentials: AuthCredentials | null } | null>(null);
+    const restartBugReportCheckedRef = React.useRef(false);
+
     React.useEffect(() => {
         let cancelled = false;
         (async () => {
@@ -660,6 +665,28 @@ function AppBoot(props: {
             cancelled = true;
         };
     }, []);
+
+    React.useEffect(() => {
+        if (!initState) return;
+        if (restartBugReportCheckedRef.current) return;
+        restartBugReportCheckedRef.current = true;
+
+        let cancelled = false;
+        (async () => {
+            try {
+                const shouldOpenBugReport = await consumeRestartBugReportIntent();
+                if (!shouldOpenBugReport) return;
+                if (cancelled) return;
+                router.push('/(app)/settings/report-issue');
+            } catch {
+                // ignore
+            }
+        })();
+
+        return () => {
+            cancelled = true;
+        };
+    }, [initState, router]);
 
     React.useEffect(() => {
         if (initState) {

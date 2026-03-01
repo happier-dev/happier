@@ -14,6 +14,7 @@ let mockedConfigVariant: string = '';
 const sentryInitMock = vi.fn();
 const sentryMobileReplayIntegrationMock = vi.fn(() => ({ name: 'mobileReplayIntegration' }));
 const sentryWrapMock = vi.fn((Component: any) => Component);
+const routerPushMock = vi.fn();
 
 const { fromModuleMock } = vi.hoisted(() => ({
     fromModuleMock: vi.fn(),
@@ -41,13 +42,22 @@ vi.mock('expo-splash-screen', () => ({
     hideAsync: hideAsyncMock,
 }));
 
+const consumeRestartBugReportIntentMock = vi.fn(async (..._args: unknown[]) => false);
+vi.mock('@/utils/system/restartBugReportIntent', () => ({
+    consumeRestartBugReportIntent: consumeRestartBugReportIntentMock,
+}));
+
+vi.mock('expo-router', () => ({
+    useRouter: () => ({ push: routerPushMock, back: vi.fn() }),
+}));
+
 vi.mock('expo-font', () => ({
     loadAsync: loadAsyncMock,
 }));
 
 vi.mock('expo-asset', () => ({
     Asset: {
-        fromModule: (...args: any[]) => fromModuleMock(...args),
+        fromModule: (...args: any[]) => (fromModuleMock as any).apply(undefined, args),
     },
 }));
 
@@ -244,6 +254,8 @@ describe('app/_layout init resilience', () => {
         sentryInitMock.mockClear();
         sentryMobileReplayIntegrationMock.mockClear();
         sentryWrapMock.mockClear();
+        routerPushMock.mockClear();
+        consumeRestartBugReportIntentMock.mockClear();
         if (previousSentryDsn === undefined) delete process.env.EXPO_PUBLIC_SENTRY_DSN;
         else process.env.EXPO_PUBLIC_SENTRY_DSN = previousSentryDsn;
         if (previousSentryLogs === undefined) delete process.env.EXPO_PUBLIC_SENTRY_ENABLE_LOGS;
@@ -356,6 +368,24 @@ describe('app/_layout init resilience', () => {
         });
 
         expect(tree!.root.findAllByType('AppCrashRecoveryBoundary' as any)).toHaveLength(1);
+    });
+
+    it('navigates to the bug report screen on boot when a restart bug report intent is present', async () => {
+        mockedPlatformOS = 'ios';
+        consumeRestartBugReportIntentMock.mockResolvedValueOnce(true);
+
+        const RootLayout = (await import('@/app/_layout')).default;
+
+        await act(async () => {
+            renderer.create(React.createElement(RootLayout));
+        });
+
+        await act(async () => {
+            await Promise.resolve();
+            await Promise.resolve();
+        });
+
+        expect(routerPushMock).toHaveBeenCalledWith('/(app)/settings/report-issue');
     });
 
     it('injects web font faces and does not invoke expo-font on web', async () => {
