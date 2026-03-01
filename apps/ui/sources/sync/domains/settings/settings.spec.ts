@@ -146,6 +146,52 @@ describe('settings', () => {
             });
         });
 
+        it('migrates legacy schemaVersion=2 files.editor=false into the new enabled-by-default behavior', () => {
+            const parsed = settingsParse({
+                schemaVersion: 2,
+                experiments: false,
+                featureToggles: {
+                    'files.editor': false,
+                },
+            } as any);
+
+            expect((parsed as any).featureToggles?.['files.editor']).toBeUndefined();
+            expect((parsed as any).schemaVersion).toBe(5);
+        });
+
+        it('keeps explicit disable for files.editor when schemaVersion matches current (user intent)', () => {
+            const parsed = settingsParse({
+                schemaVersion: 5,
+                experiments: false,
+                featureToggles: {
+                    'files.editor': false,
+                },
+            } as any);
+
+            expect((parsed as any).featureToggles?.['files.editor']).toBe(false);
+            expect((parsed as any).schemaVersion).toBe(5);
+        });
+
+        it('migrates legacy filesDiffPresentationStyle=split to unified (new default) for old schema versions', () => {
+            const parsed = settingsParse({
+                schemaVersion: 4,
+                filesDiffPresentationStyle: 'split',
+            } as any);
+
+            expect((parsed as any).filesDiffPresentationStyle).toBe('unified');
+            expect((parsed as any).schemaVersion).toBe(5);
+        });
+
+        it('keeps explicit filesDiffPresentationStyle=split when schemaVersion matches current (user intent)', () => {
+            const parsed = settingsParse({
+                schemaVersion: 5,
+                filesDiffPresentationStyle: 'split',
+            } as any);
+
+            expect((parsed as any).filesDiffPresentationStyle).toBe('split');
+            expect((parsed as any).schemaVersion).toBe(5);
+        });
+
         it('migrates featureToggles inbox.friends to social.friends (hard cutover)', () => {
             const parsed = settingsParse({
                 experiments: true,
@@ -188,6 +234,14 @@ describe('settings', () => {
             expect((parsed as any).scmDefaultDiffModeByBackend).toEqual({});
             expect((parsed as any).scmReviewMaxFiles).toBe(25);
             expect((parsed as any).scmReviewMaxChangedLines).toBe(2000);
+            expect((parsed as any).scmDiffCacheMaxEntries).toBe(30);
+            expect((parsed as any).scmDiffCacheMaxTotalBytes).toBe(20 * 1024 * 1024);
+            expect((parsed as any).scmReviewPrefetchAheadCountWeb).toBeGreaterThan(0);
+            expect((parsed as any).scmReviewPrefetchBehindCountWeb).toBeGreaterThanOrEqual(0);
+            expect((parsed as any).scmReviewPrefetchAheadCountNative).toBeGreaterThan(0);
+            expect((parsed as any).scmReviewPrefetchBehindCountNative).toBeGreaterThanOrEqual(0);
+            expect((parsed as any).scmReviewPrefetchConcurrency).toBeGreaterThan(0);
+            expect((parsed as any).scmReviewPrefetchDebounceMs).toBeGreaterThanOrEqual(0);
             expect((parsed as any).scmCommitMessageGeneratorEnabled).toBe(false);
             expect((parsed as any).scmCommitMessageGeneratorBackendId).toBe('claude');
             expect((parsed as any).scmCommitMessageGeneratorInstructions).toBe('');
@@ -218,9 +272,24 @@ describe('settings', () => {
         it('defaults files diff syntax highlighting and editor settings', () => {
             const parsed = settingsParse({} as any);
             expect((parsed as any).filesDiffSyntaxHighlightingMode).toBe('simple');
+            expect((parsed as any).filesDiffRendererMode).toBe('pierre');
+            expect((parsed as any).filesDiffPresentationStyle).toBe('unified');
+            expect((parsed as any).filesDiffFileListVirtualizationMinFiles).toBeGreaterThan(0);
+            expect((parsed as any).filesDiffInlineVirtualizationLineThreshold).toBeGreaterThan(0);
             expect((parsed as any).filesChangedFilesRowDensity).toBe('comfortable');
+            expect((parsed as any).filesDiffFoldingEnabled).toBe(true);
+            expect((parsed as any).filesDiffFoldingContextThreshold).toBeGreaterThan(0);
+            expect((parsed as any).filesDiffFoldingContextRadius).toBeGreaterThan(0);
+            expect((parsed as any).filesDiffIntraLineWordDiffEnabled).toBe(true);
+            expect((parsed as any).filesDiffIntraLineWordDiffMaxPatchLines).toBeGreaterThan(0);
+            expect((parsed as any).filesDiffIntraLineWordDiffMaxPairs).toBeGreaterThan(0);
+            expect((parsed as any).filesDiffIntraLineWordDiffMaxLineLength).toBeGreaterThan(0);
             expect((parsed as any).filesDiffTokenizationMaxBytes).toBeGreaterThan(0);
             expect((parsed as any).filesDiffTokenizationMaxLines).toBeGreaterThan(0);
+            expect((parsed as any).filesCodeViewJsonInferenceMaxBytes).toBeGreaterThan(0);
+            expect((parsed as any).filesImagePreviewCacheMaxEntries).toBeGreaterThan(0);
+            expect((parsed as any).filesImagePreviewCacheMaxTotalBytes).toBeGreaterThan(0);
+            expect((parsed as any).filesImagePreviewMaxBytes).toBeGreaterThan(0);
             expect((parsed as any).filesEditorChangeDebounceMs).toBeGreaterThan(0);
             expect((parsed as any).filesEditorMaxFileBytes).toBeGreaterThan(0);
         });
@@ -240,6 +309,7 @@ describe('settings', () => {
             expect((parsed as any).sessionReplayEnabled).toBe(false);
             expect((parsed as any).sessionReplayStrategy).toBe('recent_messages');
             expect((parsed as any).sessionReplayRecentMessagesCount).toBeGreaterThan(0);
+            expect((parsed as any).sessionReplaySummaryRunnerV1).toBe(null);
         });
 
         it('defaults voice settings', () => {
@@ -386,10 +456,11 @@ describe('settings', () => {
                 lastUsedAgent: 'claude',
                 lastUsedPermissionMode: 'plan',
             } as any);
-            expect((parsed as any).sessionDefaultPermissionModeByAgent?.claude).toBe('plan');
-            // Non-Claude agents clamp unsupported modes to defaults when seeding.
-            expect((parsed as any).sessionDefaultPermissionModeByAgent?.codex).toBe('default');
-            expect((parsed as any).sessionDefaultPermissionModeByAgent?.gemini).toBe('default');
+            // Legacy mapping: "plan" is now a session behavior mode; treat it as read-only at the
+            // permission layer when seeding per-agent defaults.
+            expect((parsed as any).sessionDefaultPermissionModeByAgent?.claude).toBe('read-only');
+            expect((parsed as any).sessionDefaultPermissionModeByAgent?.codex).toBe('read-only');
+            expect((parsed as any).sessionDefaultPermissionModeByAgent?.gemini).toBe('read-only');
         });
 
         it('should keep valid secrets when one secret entry is invalid', () => {
@@ -449,6 +520,84 @@ describe('settings', () => {
                     suggestedIntent: 'delegate',
                 }),
             ]);
+        });
+
+        it('defaults transcript grouping settings', () => {
+            const parsed = settingsParse({});
+            expect((parsed as any).transcriptGroupingMode).toBe('linear');
+            expect((parsed as any).transcriptTurnShowActivityGroup).toBe(false);
+            expect((parsed as any).transcriptTurnActivityGroupStrategy).toBe('consecutive_tools');
+            expect((parsed as any).transcriptTurnActivityGroupCollapsedPreviewCount).toBe(5);
+        });
+
+        it('defaults thinking to inline (summary)', () => {
+            const parsed = settingsParse({});
+            expect((parsed as any).sessionThinkingDisplayMode).toBe('inline');
+            expect((parsed as any).sessionThinkingInlinePresentation).toBe('summary');
+            expect((parsed as any).sessionThinkingInlineChrome).toBe('plain');
+        });
+
+        it('migrates pre-v4 inline thinking to inline (full) when no inline presentation is set', () => {
+            const parsed = settingsParse({ schemaVersion: 3, sessionThinkingDisplayMode: 'inline' } as any);
+            expect((parsed as any).schemaVersion).toBeGreaterThanOrEqual(4);
+            expect((parsed as any).sessionThinkingDisplayMode).toBe('inline');
+            expect((parsed as any).sessionThinkingInlinePresentation).toBe('full');
+        });
+
+        it('does not override explicit sessionThinkingInlinePresentation in pre-v4 settings', () => {
+            const parsed = settingsParse({ schemaVersion: 3, sessionThinkingDisplayMode: 'inline', sessionThinkingInlinePresentation: 'summary' } as any);
+            expect((parsed as any).sessionThinkingInlinePresentation).toBe('summary');
+        });
+
+        it('migrates pre-v5 settings to preserve inline thinking chrome (defaults legacy users to card)', () => {
+            const parsed = settingsParse({ schemaVersion: 4, sessionThinkingDisplayMode: 'inline' } as any);
+            expect((parsed as any).schemaVersion).toBeGreaterThanOrEqual(5);
+            expect((parsed as any).sessionThinkingInlineChrome).toBe('card');
+        });
+
+        it('does not override explicit sessionThinkingInlineChrome in pre-v5 settings', () => {
+            const parsed = settingsParse({ schemaVersion: 4, sessionThinkingInlineChrome: 'plain' } as any);
+            expect((parsed as any).sessionThinkingInlineChrome).toBe('plain');
+        });
+
+        it('defaults tool timeline chrome settings', () => {
+            const parsed = settingsParse({});
+            expect((parsed as any).toolViewTimelineChromeMode).toBe('cards');
+            expect((parsed as any).toolViewTimelineFeedDefaultExpanded).toBe(false);
+            expect((parsed as any).toolViewTimelineFeedTapAction).toBe('expand');
+            expect((parsed as any).toolViewTimelineDensity).toBeUndefined();
+            expect((parsed as any).toolViewDetailLevelDefault).toBe('default');
+            expect((parsed as any).toolViewExpandedDetailLevelDefault).toBe('default');
+        });
+
+        it('preserves legacy toolViewTimelineDensity as an unknown key (ignored by rendering)', () => {
+            const parsed = settingsParse({ toolViewTimelineDensity: 'compact' } as any);
+            expect((parsed as any).toolViewTimelineDensity).toBe('compact');
+        });
+
+        it('defaults transcript motion settings', () => {
+            const parsed = settingsParse({});
+            expect((parsed as any).transcriptMotionPreset).toBe('subtle');
+            expect((parsed as any).transcriptMotionFreshnessMs).toBe(60_000);
+            expect((parsed as any).transcriptAnimateNewItemsEnabled).toBe(true);
+            expect((parsed as any).transcriptAnimateToolExpandCollapseEnabled).toBe(true);
+            expect((parsed as any).transcriptAnimateToolExpandCollapseFreshOnly).toBe(true);
+            expect((parsed as any).transcriptAnimateThinkingEnabled).toBe(true);
+        });
+
+        it('defaults transcript scroll pin settings', () => {
+            const parsed = settingsParse({});
+            expect((parsed as any).transcriptScrollPinEnabled).toBe(true);
+            expect((parsed as any).transcriptScrollPinOffsetThresholdPx).toBe(72);
+            expect((parsed as any).transcriptScrollAutoFollowWhenPinned).toBe(true);
+            expect((parsed as any).transcriptScrollJumpToBottomEnabled).toBe(true);
+            expect((parsed as any).transcriptScrollJumpToBottomMinNewCount).toBe(1);
+            expect((parsed as any).transcriptScrollJumpToBottomAnimateScroll).toBe(true);
+        });
+
+        it('defaults permission prompt surface settings', () => {
+            const parsed = settingsParse({});
+            expect((parsed as any).permissionPromptSurface).toBe('composer');
         });
     });
 
@@ -529,9 +678,9 @@ describe('settings', () => {
         });
     });
 
-    describe('settingsDefaults', () => {
-        it('should have correct default values', () => {
-            expect(settingsDefaults.schemaVersion).toBe(2);
+        describe('settingsDefaults', () => {
+            it('should have correct default values', () => {
+            expect(settingsDefaults.schemaVersion).toBe(5);
             expect(settingsDefaults.experiments).toBe(false);
             expect(settingsDefaults.backendEnabledById).toMatchObject({
                 claude: true,
@@ -549,11 +698,11 @@ describe('settings', () => {
                 codex: 'default',
                 gemini: 'default',
             });
-            expect(settingsDefaults.toolViewDetailLevelDefault).toBe('summary');
+            expect(settingsDefaults.toolViewDetailLevelDefault).toBe('default');
             expect(settingsDefaults.toolViewDetailLevelDefaultLocalControl).toBe('title');
             expect(settingsDefaults.toolViewDetailLevelByToolName).toEqual({});
             expect((settingsDefaults as any).toolViewTapAction).toBe('expand');
-            expect((settingsDefaults as any).toolViewExpandedDetailLevelDefault).toBe('full');
+            expect((settingsDefaults as any).toolViewExpandedDetailLevelDefault).toBe('default');
             expect((settingsDefaults as any).toolViewExpandedDetailLevelByToolName).toEqual({});
             expect(settingsDefaults.toolViewShowDebugByDefault).toBe(false);
             expect(settingsDefaults.terminalConnectLegacySecretExportEnabled).toBe(false);
@@ -568,6 +717,7 @@ describe('settings', () => {
                 pushEnabled: true,
                 ready: true,
                 permissionRequest: true,
+                userActionRequest: true,
             });
             expect((settingsDefaults as any).attachmentsUploadsUploadLocation).toBe('workspace');
             expect((settingsDefaults as any).attachmentsUploadsWorkspaceRelativeDir).toBe('.happier/uploads');
@@ -585,6 +735,18 @@ describe('settings', () => {
         it('should be a valid Settings object', () => {
             const parsed = settingsParse(settingsDefaults);
             expect(parsed).toEqual(settingsDefaults);
+        });
+
+        it('drops deprecated session-only tool view keys', () => {
+            const parsed = settingsParse({
+                toolViewDetailLevelDefaultActivityFeed: 'title',
+                toolViewExpandedDetailLevelDefaultActivityFeed: 'summary',
+                toolViewCardDensity: 'compact',
+            } as any);
+
+            expect((parsed as any).toolViewDetailLevelDefaultActivityFeed).toBeUndefined();
+            expect((parsed as any).toolViewExpandedDetailLevelDefaultActivityFeed).toBeUndefined();
+            expect((parsed as any).toolViewCardDensity).toBeUndefined();
         });
     });
 
@@ -618,11 +780,14 @@ describe('settings', () => {
             expect((parsed as any).anotherNewField).toEqual({ complex: 'object' });
         });
 
-        it('should preserve unknown fields when applying changes', () => {
+        it('should preserve unknown fields when applying changes (but drop deprecated session-only tool view keys)', () => {
             const settingsWithFutureFields: any = {
                 viewInline: false,
                 futureField1: 'value1',
-                futureField2: 42
+                futureField2: 42,
+                toolViewDetailLevelDefaultActivityFeed: 'title',
+                toolViewExpandedDetailLevelDefaultActivityFeed: 'summary',
+                toolViewCardDensity: 'compact',
             };
             const delta: Partial<Settings> = {
                 viewInline: true
@@ -632,7 +797,7 @@ describe('settings', () => {
                 ...settingsDefaults,
                 viewInline: true,
                 futureField1: 'value1',
-                futureField2: 42
+                futureField2: 42,
             });
         });
     });
