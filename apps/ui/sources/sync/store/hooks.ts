@@ -26,6 +26,8 @@ import type { SessionActionDraft } from '../domains/sessionActions/sessionAction
 
 import { getStorage } from '../domains/state/storageStore';
 import type { KnownEntitlements } from '../domains/state/storageStore';
+import type { ForkedTranscriptSnapshot } from '../domains/sessionFork/forkedTranscriptSnapshot';
+import { getForkedTranscriptSnapshotCached } from '../domains/sessionFork/forkedTranscriptSnapshot';
 
 export function useSessions() {
   return getStorage()(useShallow((state) => (state.isDataReady ? state.sessionsData : null)));
@@ -36,19 +38,90 @@ export function useSession(id: string): Session | null {
 }
 
 const emptyArray: unknown[] = [];
+const emptyRecord: Record<string, any> = {};
 const emptyReviewCommentDrafts: ReviewCommentDraft[] = [];
 const emptyActionDrafts: SessionActionDraft[] = [];
 
 export function useSessionMessages(
   sessionId: string
 ): { messages: Message[]; isLoaded: boolean } {
+  // IMPORTANT:
+  // Do not derive new arrays inside the Zustand selector. React 18 can call getSnapshot twice, and if the
+  // selector allocates new references for unchanged store state it can trigger:
+  // - "The result of getSnapshot should be cached…"
+  // - "Maximum update depth exceeded"
+  //
+  // Subscribe to stable primitives instead (ids + version), then derive via useMemo.
+  const { ids, isLoaded } = useSessionTranscriptIds(sessionId);
+  const messagesById = useSessionMessagesById(sessionId);
+  const version = useSessionMessagesVersion(sessionId, true);
+
+  const messages = React.useMemo(() => {
+    if (!Array.isArray(ids) || ids.length === 0) return emptyArray as any as Message[];
+    const out: Message[] = [];
+    for (const id of ids) {
+      const m = messagesById[id];
+      if (m) out.push(m);
+    }
+    return out;
+  }, [ids, messagesById, version]);
+
+  return React.useMemo(() => ({ messages, isLoaded }), [isLoaded, messages]);
+}
+
+export function useSessionTranscriptIds(sessionId: string): { ids: string[]; isLoaded: boolean } {
   return getStorage()(
     useShallow((state) => {
       const session = state.sessionMessages[sessionId];
       return {
-        messages: session?.messages ?? emptyArray,
+        ids: session?.messageIdsOldestFirst ?? (emptyArray as any as string[]),
         isLoaded: session?.isLoaded ?? false,
       };
+    })
+  );
+}
+
+export function useForkedTranscriptSnapshot(sessionId: string): ForkedTranscriptSnapshot | null {
+  return getStorage()(
+    useShallow((state) => getForkedTranscriptSnapshotCached(state, sessionId))
+  );
+}
+
+export function useSessionMessagesById(sessionId: string): Record<string, Message> {
+  return getStorage()(
+    useShallow((state) => {
+      const session = state.sessionMessages[sessionId];
+      // NOTE: For streaming performance, messagesById is mutated in-place in the store.
+      // Do not rely on the returned object's identity changing to detect updates.
+      return session?.messagesById ?? (emptyRecord as Record<string, Message>);
+    })
+  );
+}
+
+export function useSessionMessagesVersion(sessionId: string, enabled: boolean = true): number {
+  return getStorage()(
+    useShallow((state) => {
+      if (!enabled) return 0;
+      const session = state.sessionMessages[sessionId];
+      return session?.messagesVersion ?? 0;
+    })
+  );
+}
+
+export function useSessionLatestThinkingMessageId(sessionId: string): string | null {
+  return getStorage()(
+    useShallow((state) => {
+      const session = state.sessionMessages[sessionId];
+      return session?.latestThinkingMessageId ?? null;
+    })
+  );
+}
+
+export function useSessionLatestThinkingMessageActivityAtMs(sessionId: string): number | null {
+  return getStorage()(
+    useShallow((state) => {
+      const session = state.sessionMessages[sessionId];
+      return session?.latestThinkingMessageActivityAtMs ?? null;
     })
   );
 }
@@ -98,9 +171,29 @@ export function useMessage(sessionId: string, messageId: string): Message | null
   return getStorage()(
     useShallow((state) => {
       const session = state.sessionMessages[sessionId];
-      return session?.messagesMap[messageId] ?? null;
+      return session?.messagesById?.[messageId] ?? session?.messagesMap?.[messageId] ?? null;
     })
   );
+}
+
+export function useMessagesByIds(sessionId: string, messageIds: readonly string[]): Message[] {
+  // IMPORTANT:
+  // Avoid allocating arrays inside the Zustand selector. React 18 can call getSnapshot twice, and if the
+  // selector allocates new references for unchanged store state it can trigger:
+  // - "The result of getSnapshot should be cached…"
+  // - "Maximum update depth exceeded"
+  const messagesById = useSessionMessagesById(sessionId);
+  const version = useSessionMessagesVersion(sessionId, true);
+
+  return React.useMemo(() => {
+    if (!Array.isArray(messageIds) || messageIds.length === 0) return emptyArray as any as Message[];
+    const out: Message[] = [];
+    for (const id of messageIds) {
+      const m = messagesById[id];
+      if (m) out.push(m);
+    }
+    return out;
+  }, [messageIds, messagesById, version]);
 }
 
 export function useSessionUsage(sessionId: string) {

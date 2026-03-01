@@ -182,9 +182,14 @@ describe('sync.sendMessage optimistic thinking', () => {
 
         const pending = storage.getState().sessionPending[sessionId]?.messages ?? [];
         expect(pending.length).toBe(0);
-        const transcript = storage.getState().sessionMessages[sessionId]?.messages ?? [];
+        const sessionMessages = storage.getState().sessionMessages[sessionId];
+        const transcriptIds = sessionMessages?.messageIdsOldestFirst ?? [];
+        const transcript = sessionMessages
+            ? transcriptIds.map((id) => sessionMessages.messagesById[id]).filter(Boolean)
+            : [];
         const user = transcript.find((m) => m.kind === 'user-text') as any;
         expect(user?.meta?.happier?.kind).toBe('review_comments.v1');
+        expect(user?.seq).toBe(1);
     });
 
     it('clears optimistic thinking when a turn is aborted even if session.thinking is already false', async () => {
@@ -241,7 +246,10 @@ describe('sync.sendMessage optimistic thinking', () => {
             }],
         } as any]);
 
-        const beforeAbort = storage.getState().sessionMessages[sessionId].messages.find(
+        const beforeAbortSessionMessages = storage.getState().sessionMessages[sessionId];
+        const beforeAbortIds = beforeAbortSessionMessages?.messageIdsOldestFirst ?? [];
+        const beforeAbortMessages = beforeAbortIds.map((id) => beforeAbortSessionMessages.messagesById[id]).filter(Boolean);
+        const beforeAbort = beforeAbortMessages.find(
             (message) => message.kind === 'tool-call' && message.tool.permission?.id === 'tool-1'
         );
         if (!beforeAbort || beforeAbort.kind !== 'tool-call') {
@@ -256,7 +264,10 @@ describe('sync.sendMessage optimistic thinking', () => {
             createdAt: Date.now(),
         });
 
-        const afterAbort = storage.getState().sessionMessages[sessionId].messages.find(
+        const afterAbortSessionMessages = storage.getState().sessionMessages[sessionId];
+        const afterAbortIds = afterAbortSessionMessages?.messageIdsOldestFirst ?? [];
+        const afterAbortMessages = afterAbortIds.map((id) => afterAbortSessionMessages.messagesById[id]).filter(Boolean);
+        const afterAbort = afterAbortMessages.find(
             (message) => message.kind === 'tool-call' && message.tool.permission?.id === 'tool-1'
         );
         if (!afterAbort || afterAbort.kind !== 'tool-call') {
