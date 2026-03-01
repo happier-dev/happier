@@ -19,6 +19,10 @@ export const ActivityIndicator = 'ActivityIndicator' as any;
 export const Switch = 'Switch' as any;
 export const Touchable = { Mixin: {} } as any;
 export const PanResponder = { create: () => ({ panHandlers: {} }) } as any;
+export const AccessibilityInfo = {
+    isReduceMotionEnabled: async () => false,
+    addEventListener: () => ({ remove: () => {} }),
+} as const;
 
 export const Dimensions = {
     get: () => ({ width: 800, height: 600, scale: 2, fontScale: 1 }),
@@ -55,19 +59,34 @@ export const registerCallableModule = () => {};
 class AnimatedValue {
     // Minimal stub for tests. Consumers generally call `interpolate` and pass the object through.
     constructor(public _value: number) { }
+    setValue(value: number) {
+        this._value = value;
+    }
     interpolate() {
         return this as any;
+    }
+    __getValue() {
+        return this._value;
     }
 }
 
 export const Animated = {
     Value: AnimatedValue as any,
+    createAnimatedComponent: (component: any) => component,
     timing: (_value: any, _config: any) => ({
         start: (cb?: any) => {
-            cb?.();
+            cb?.({ finished: true });
         },
     }),
     View: 'Animated.View' as any,
+} as const;
+
+export const Easing = {
+    linear: () => 0,
+    bezier: () => () => 0,
+    out: (fn: any) => fn,
+    inOut: (fn: any) => fn,
+    cubic: () => 0,
 } as const;
 
 export function useWindowDimensions() {

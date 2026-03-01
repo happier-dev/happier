@@ -28,6 +28,10 @@ export async function setNotificationChannelAsync(_id: string, _channel: unknown
     // no-op
 }
 
+export async function setNotificationCategoryAsync(_id: string, _actions: unknown): Promise<void> {
+    // no-op
+}
+
 export async function getPermissionsAsync(): Promise<{ status: PermissionStatus }> {
     return { status: 'denied' };
 }
