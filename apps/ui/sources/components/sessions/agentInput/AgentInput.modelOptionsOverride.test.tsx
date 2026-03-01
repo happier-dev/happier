@@ -5,6 +5,7 @@ import renderer, { act } from 'react-test-renderer';
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 let lastModelPickerOverlayProps: any = null;
+let mockSessionModePickerControl: any = null;
 
 function nodeContainsExactText(node: renderer.ReactTestInstance, value: string): boolean {
     return node.children.some((child) => {
@@ -38,6 +39,19 @@ function findPressableByAccessibilityLabel(tree: renderer.ReactTestRenderer, lab
         typeof (node.props as any)?.accessibilityLabel === 'string' &&
         (node.props as any).accessibilityLabel === label
     ))[0];
+}
+
+function findSettingsPressable(tree: renderer.ReactTestRenderer): renderer.ReactTestInstance | null {
+    const gearIcons = tree.root.findAll(
+        (node) => String(node.type) === 'Octicons' && (node.props as any)?.name === 'gear',
+    );
+    const gearIcon = gearIcons[0] ?? null;
+    if (!gearIcon) return null;
+    let current: any = gearIcon;
+    while (current && String(current.type) !== 'Pressable') {
+        current = current.parent;
+    }
+    return current ?? null;
 }
 
 vi.mock('react-native', async () => {
@@ -93,9 +107,12 @@ vi.mock('@/sync/domains/state/storage', () => ({
         agentInputActionBarLayout: 'wrap',
         agentInputChipDensity: 'labels',
         sessionPermissionModeApplyTiming: 'immediate',
-    }),
-    useSessionMessages: () => ({ messages: [], isLoaded: true }),
-}));
+        }),
+        useSessionMessages: () => ({ messages: [], isLoaded: true }),
+        useSessionTranscriptIds: () => ({ ids: [], isLoaded: true }),
+        useSessionMessagesById: () => ({}),
+        useSessionMessagesVersion: () => 0,
+    }));
 
 vi.mock('@/sync/domains/state/storageStore', () => ({
     getStorage: () => (selector: any) => selector({ sessionMessages: {}, localSettings: { uiFontScale: 1 } }),
@@ -242,8 +259,7 @@ vi.mock('@/modal', () => ({
 }));
 
 vi.mock('@/sync/acp/sessionModeControl', () => ({
-    computeAcpPlanModeControl: () => null,
-    computeAcpSessionModePickerControl: () => null,
+    computeSessionModePickerControl: () => mockSessionModePickerControl,
 }));
 
 vi.mock('@/sync/acp/configOptionsControl', () => ({
@@ -283,11 +299,7 @@ describe('AgentInput (modelOptionsOverride)', () => {
             );
         });
 
-        const pressables = tree!.root.findAllByType('Pressable');
-        const settings = pressables.find((p) => {
-            const octicons = p.findAllByType('Octicons');
-            return octicons.some((o) => (o.props as any).name === 'gear');
-        });
+        const settings = findSettingsPressable(tree!);
         expect(settings).toBeTruthy();
 
         await act(async () => {
@@ -327,11 +339,7 @@ describe('AgentInput (modelOptionsOverride)', () => {
             );
         });
 
-        const pressables = tree!.root.findAllByType('Pressable');
-        const settings = pressables.find((p) => {
-            const octicons = p.findAllByType('Octicons');
-            return octicons.some((o) => (o.props as any).name === 'gear');
-        });
+        const settings = findSettingsPressable(tree!);
         expect(settings).toBeTruthy();
 
         await act(async () => {
@@ -378,11 +386,7 @@ describe('AgentInput (modelOptionsOverride)', () => {
             );
         });
 
-        const pressables = tree!.root.findAllByType('Pressable');
-        const settings = pressables.find((p) => {
-            const octicons = p.findAllByType('Octicons');
-            return octicons.some((o) => (o.props as any).name === 'gear');
-        });
+        const settings = findSettingsPressable(tree!);
         expect(settings).toBeTruthy();
 
         await act(async () => {
@@ -438,11 +442,7 @@ describe('AgentInput (modelOptionsOverride)', () => {
             );
         });
 
-        const pressables = tree!.root.findAllByType('Pressable');
-        const settings = pressables.find((p) => {
-            const octicons = p.findAllByType('Octicons');
-            return octicons.some((o) => (o.props as any).name === 'gear');
-        });
+        const settings = findSettingsPressable(tree!);
         expect(settings).toBeTruthy();
 
         await act(async () => {
@@ -519,11 +519,7 @@ describe('AgentInput (modelOptionsOverride)', () => {
             );
         });
 
-        const pressables = tree!.root.findAllByType('Pressable');
-        const settings = pressables.find((p) => {
-            const octicons = p.findAllByType('Octicons');
-            return octicons.some((o) => (o.props as any).name === 'gear');
-        });
+        const settings = findSettingsPressable(tree!);
         expect(settings).toBeTruthy();
 
         await act(async () => {
@@ -585,18 +581,14 @@ describe('AgentInput (modelOptionsOverride)', () => {
             );
         });
 
-        const pressables = tree!.root.findAllByType('Pressable');
-        const settings = pressables.find((p) => {
-            const octicons = p.findAllByType('Octicons');
-            return octicons.some((o) => (o.props as any).name === 'gear');
-        });
+        const settings = findSettingsPressable(tree!);
         expect(settings).toBeTruthy();
 
         await act(async () => {
             settings!.props.onPress();
         });
 
-        expect(findTextNode(tree!, 'Mode')).toBeTruthy();
+        expect(findTextNode(tree!, 'agentInput.mode.sectionTitle')).toBeTruthy();
         expect(findPressableByLabel(tree!, 'Plan')).toBeTruthy();
         expect(findPressableByLabel(tree!, 'Build')).toBeTruthy();
     });
@@ -630,11 +622,7 @@ describe('AgentInput (modelOptionsOverride)', () => {
             );
         });
 
-        const pressables = tree!.root.findAllByType('Pressable');
-        const settings = pressables.find((p) => {
-            const octicons = p.findAllByType('Octicons');
-            return octicons.some((o) => (o.props as any).name === 'gear');
-        });
+        const settings = findSettingsPressable(tree!);
         expect(settings).toBeTruthy();
 
         await act(async () => {
@@ -649,6 +637,62 @@ describe('AgentInput (modelOptionsOverride)', () => {
         });
 
         expect(onAcpSessionModeChange).toHaveBeenCalledWith('plan');
+    });
+
+    it('renders preflight session mode controls for Claude even when static session modes exist', async () => {
+        const { AgentInput } = await import('./AgentInput');
+        const onRefresh = vi.fn();
+        mockSessionModePickerControl = {
+            options: [
+                { id: 'default', name: 'Build', description: 'Default behavior' },
+                { id: 'plan', name: 'Plan', description: 'Think first' },
+            ],
+            currentModeId: 'default',
+            currentModeName: 'Build',
+            requestedModeId: null,
+            requestedModeName: null,
+            effectiveModeId: 'default',
+            effectiveModeName: 'Build',
+            isPending: false,
+        };
+
+        let tree: renderer.ReactTestRenderer | undefined;
+        await act(async () => {
+            tree = renderer.create(
+                React.createElement(AgentInput, {
+                    value: 'hello',
+                    placeholder: 'placeholder',
+                    onChangeText: () => {},
+                    onSend: () => {},
+                    autocompletePrefixes: [],
+                    autocompleteSuggestions: async () => [],
+                    agentType: 'claude',
+                    permissionMode: 'default',
+                    onPermissionModeChange: () => {},
+                    modelMode: 'default',
+                    onModelModeChange: () => {},
+                    acpSessionModeOptionsOverride: [
+                        { id: 'default', name: 'Build' },
+                        { id: 'plan', name: 'Plan' },
+                    ],
+                    acpSessionModeSelectedIdOverride: 'plan',
+                    acpSessionModeOptionsOverrideProbe: { phase: 'idle', onRefresh },
+                    onAcpSessionModeChange: () => {},
+                } as any),
+            );
+        });
+
+        const settings = findSettingsPressable(tree!);
+        expect(settings).toBeTruthy();
+
+        await act(async () => {
+            settings!.props.onPress();
+        });
+
+        expect(findTextNode(tree!, 'agentInput.mode.sectionTitle')).toBeTruthy();
+        expect(findPressableByAccessibilityLabel(tree!, 'agentInput.mode.refreshModesA11y')).toBeTruthy();
+
+        mockSessionModePickerControl = null;
     });
 
     it('calls refresh handler for preflight ACP mode lists when provided', async () => {
@@ -681,18 +725,14 @@ describe('AgentInput (modelOptionsOverride)', () => {
             );
         });
 
-        const pressables = tree!.root.findAllByType('Pressable');
-        const settings = pressables.find((p) => {
-            const octicons = p.findAllByType('Octicons');
-            return octicons.some((o) => (o.props as any).name === 'gear');
-        });
+        const settings = findSettingsPressable(tree!);
         expect(settings).toBeTruthy();
 
         await act(async () => {
             settings!.props.onPress();
         });
 
-        const refresh = findPressableByAccessibilityLabel(tree!, 'Refresh modes');
+        const refresh = findPressableByAccessibilityLabel(tree!, 'agentInput.mode.refreshModesA11y');
         expect(refresh).toBeTruthy();
 
         await act(async () => {

@@ -75,9 +75,12 @@ vi.mock('@/sync/domains/state/storage', () => ({
     agentInputChipDensity: 'labels',
     sessionPermissionModeApplyTiming: 'immediate',
     agentInputHistoryScope: 'perSession',
-  }),
-  useSessionMessages: () => ({ messages: [], isLoaded: true }),
-}));
+      }),
+      useSessionMessages: () => ({ messages: [], isLoaded: true }),
+      useSessionTranscriptIds: () => ({ ids: [], isLoaded: true }),
+      useSessionMessagesById: () => ({}),
+      useSessionMessagesVersion: () => 0,
+    }));
 
 vi.mock('@/hooks/session/useUserMessageHistory', () => ({
   useUserMessageHistory: () => ({

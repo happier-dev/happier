@@ -71,9 +71,12 @@ vi.mock('@/sync/domains/state/storage', () => ({
         agentInputActionBarLayout: 'wrap',
         agentInputChipDensity: 'labels',
         sessionPermissionModeApplyTiming: 'immediate',
-    }),
-    useSessionMessages: () => ({ messages: [], isLoaded: true }),
-}));
+        }),
+        useSessionMessages: () => ({ messages: [], isLoaded: true }),
+        useSessionTranscriptIds: () => ({ ids: [], isLoaded: true }),
+        useSessionMessagesById: () => ({}),
+        useSessionMessagesVersion: () => 0,
+    }));
 
 vi.mock('@/sync/domains/state/storageStore', () => ({
     getStorage: () => (selector: any) => selector({ sessionMessages: {} }),
@@ -188,8 +191,7 @@ vi.mock('@/modal', () => ({
 }));
 
 vi.mock('@/sync/acp/sessionModeControl', () => ({
-    computeAcpPlanModeControl: () => null,
-    computeAcpSessionModePickerControl: () => null,
+    computeSessionModePickerControl: () => null,
 }));
 
 vi.mock('@/sync/acp/configOptionsControl', () => ({
@@ -269,7 +271,7 @@ describe('AgentInput (machine chip)', () => {
         });
 
         const matches = tree?.root.findAll(
-            (node) => node.type === 'Text' && node.props?.testID === 'agent-input-connection-status-text'
+            (node) => String(node.type) === 'Text' && node.props?.testID === 'agent-input-connection-status-text'
         );
         expect(matches).toHaveLength(1);
         expect(collectText(matches?.[0]?.props?.children).join(' ')).toContain('online');

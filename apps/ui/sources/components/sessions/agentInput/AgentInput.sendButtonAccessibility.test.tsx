@@ -66,9 +66,12 @@ vi.mock('@/sync/domains/state/storage', () => ({
         if (key === 'agentInputChipDensity') return 'labels';
         if (key === 'sessionPermissionModeApplyTiming') return 'immediate';
         return null;
-    },
-    useSessionMessages: () => ({ messages: [], isLoaded: true }),
-}));
+        },
+        useSessionMessages: () => ({ messages: [], isLoaded: true }),
+        useSessionTranscriptIds: () => ({ ids: [], isLoaded: true }),
+        useSessionMessagesById: () => ({}),
+        useSessionMessagesVersion: () => 0,
+    }));
 
 vi.mock('@/sync/domains/state/storageStore', () => ({
     getStorage: () => (selector: any) => selector({ sessionMessages: {} }),
@@ -179,8 +182,7 @@ vi.mock('@/modal', () => ({
 }));
 
 vi.mock('@/sync/acp/sessionModeControl', () => ({
-    computeAcpPlanModeControl: () => null,
-    computeAcpSessionModePickerControl: () => null,
+    computeSessionModePickerControl: () => null,
 }));
 
 vi.mock('@/sync/acp/configOptionsControl', () => ({
