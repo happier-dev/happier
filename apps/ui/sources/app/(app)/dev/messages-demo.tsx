@@ -2,7 +2,7 @@ import * as React from 'react';
 import { FlatList, View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 import { MessageView } from '@/components/sessions/transcript/MessageView';
-import { debugMessages } from './messages-demo-data';
+import { debugMessages } from '@/dev/messagesDemoData';
 import { Message } from '@/sync/domains/messages/messageTypes';
 import { useDemoMessages } from '@/hooks/session/useDemoMessages';
 

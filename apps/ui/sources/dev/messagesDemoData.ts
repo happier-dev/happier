@@ -1,5 +1,4 @@
-// TODO: Not sure where to put this demo data yet - temporary location
-// This contains mock message data for development and testing purposes
+// Demo message data for development and testing.
 
 import { Message, ToolCall } from '@/sync/domains/messages/messageTypes';
 
