@@ -5,6 +5,7 @@ import { parseOptionalBooleanEnv } from '@happier-dev/protocol';
 
 export interface AppConfig {
     variant?: string;
+    cliNpmDistTag?: string;
     postHogKey?: string;
     postHogHost?: string;
     revenueCatAppleKey?: string;
