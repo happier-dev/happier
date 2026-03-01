@@ -110,7 +110,9 @@ export function SessionAutomationCreateScreen(props: { sessionId: string }) {
                 prompt: message.trim(),
                 displayText: message.trim(),
                 existingSessionId: props.sessionId,
-                ...(sessionDekBase64 ? { sessionEncryptionKeyBase64: sessionDekBase64, sessionEncryptionVariant: 'dataKey' as const } : {}),
+                ...(requiresDek && sessionDekBase64
+                    ? { sessionEncryptionKeyBase64: sessionDekBase64, sessionEncryptionVariant: 'dataKey' as const }
+                    : {}),
             };
             validateAutomationTemplateTarget({
                 targetType: 'existing_session',
