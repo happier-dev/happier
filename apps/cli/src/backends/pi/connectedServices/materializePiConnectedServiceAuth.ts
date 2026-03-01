@@ -5,12 +5,14 @@ import type { ConnectedServiceCredentialRecordV1 } from '@happier-dev/protocol';
 import { writeJsonAtomic } from '@/utils/fs/writeJsonAtomic';
 import {
   buildConnectedServiceOauthAuthEntry,
+  requireConnectedServiceTokenCredentialRecord,
   requireConnectedServiceOauthCredentialRecordWithExpiry,
 } from '@/backends/connectedServices/connectedServiceCredentialRecord';
 
 export async function materializePiConnectedServiceAuth(params: Readonly<{
   rootDir: string;
   openaiCodex: ConnectedServiceCredentialRecordV1 | null;
+  openai: ConnectedServiceCredentialRecordV1 | null;
   claudeSubscription: ConnectedServiceCredentialRecordV1 | null;
   anthropic: ConnectedServiceCredentialRecordV1 | null;
 }>): Promise<Readonly<{ env: Record<string, string> }>> {
@@ -23,6 +25,14 @@ export async function materializePiConnectedServiceAuth(params: Readonly<{
   if (params.openaiCodex) {
     const record = requireConnectedServiceOauthCredentialRecordWithExpiry(params.openaiCodex);
     auth['openai-codex'] = buildConnectedServiceOauthAuthEntry(record);
+  }
+
+  if (params.openai) {
+    const record = requireConnectedServiceTokenCredentialRecord(params.openai);
+    auth.openai = {
+      type: 'api_key',
+      key: record.token.token,
+    };
   }
 
   if (params.claudeSubscription) {

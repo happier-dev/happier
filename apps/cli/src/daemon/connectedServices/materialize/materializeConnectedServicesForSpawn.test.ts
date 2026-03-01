@@ -40,7 +40,13 @@ describe('materializeConnectedServicesForSpawn', () => {
 
     const authPath = join(result!.env.CODEX_HOME, 'auth.json');
     const auth = JSON.parse(await readFile(authPath, 'utf8'));
-    expect(auth).toEqual({
+    expect(auth).toMatchObject({
+      access_token: 'access',
+      refresh_token: 'refresh',
+      id_token: 'id',
+      account_id: 'acct',
+    });
+    expect(auth.tokens).toEqual({
       access_token: 'access',
       refresh_token: 'refresh',
       id_token: 'id',
@@ -49,6 +55,32 @@ describe('materializeConnectedServicesForSpawn', () => {
 
     result!.cleanupOnFailure?.();
     result!.cleanupOnExit?.();
+  });
+
+  it('materializes Codex OPENAI_API_KEY when OpenAI API key connected service is selected', async () => {
+    const baseDir = await mkdtemp(join(tmpdir(), 'happier-connected-services-test-'));
+    const record = buildConnectedServiceCredentialRecord({
+      now: 10,
+      serviceId: 'openai',
+      profileId: 'work',
+      kind: 'token',
+      token: {
+        token: 'sk-openai-test',
+        providerAccountId: null,
+        providerEmail: null,
+      },
+    });
+
+    const result = await materializeConnectedServicesForSpawn({
+      agentId: 'codex',
+      materializationKey: 'session-openai-token',
+      baseDir,
+      recordsByServiceId: new Map([['openai', record]]),
+    });
+
+    expect(result).not.toBeNull();
+    expect(result!.env.OPENAI_API_KEY).toBe('sk-openai-test');
+    expect(result!.env.CODEX_HOME).toBeUndefined();
   });
 
   it('does not allow materializationKey to affect filesystem path resolution', async () => {
@@ -141,6 +173,42 @@ describe('materializeConnectedServicesForSpawn', () => {
     result!.cleanupOnExit?.();
   });
 
+  it('materializes OpenCode auth.json with OpenAI API key credentials', async () => {
+    const baseDir = await mkdtemp(join(tmpdir(), 'happier-connected-services-test-'));
+    const openai = buildConnectedServiceCredentialRecord({
+      now: 10,
+      serviceId: 'openai',
+      profileId: 'work',
+      kind: 'token',
+      token: {
+        token: 'sk-openai-test',
+        providerAccountId: null,
+        providerEmail: null,
+      },
+    });
+
+    const result = await materializeConnectedServicesForSpawn({
+      agentId: 'opencode',
+      materializationKey: 'session-2-openai',
+      baseDir,
+      recordsByServiceId: new Map([
+        ['openai', openai],
+      ]),
+    });
+
+    expect(result).not.toBeNull();
+    expect(typeof result!.env.XDG_DATA_HOME).toBe('string');
+
+    const authPath = join(result!.env.XDG_DATA_HOME, 'opencode', 'auth.json');
+    const auth = JSON.parse(await readFile(authPath, 'utf8'));
+    expect(auth).toEqual({
+      openai: {
+        type: 'api',
+        key: 'sk-openai-test',
+      },
+    });
+  });
+
   it('rejects OpenCode anthropic oauth credentials', async () => {
     const baseDir = await mkdtemp(join(tmpdir(), 'happier-connected-services-test-'));
     const claude = buildConnectedServiceCredentialRecord({
@@ -224,6 +292,42 @@ describe('materializeConnectedServicesForSpawn', () => {
 
     result!.cleanupOnFailure?.();
     result!.cleanupOnExit?.();
+  });
+
+  it('materializes Pi auth.json with OpenAI API key credentials', async () => {
+    const baseDir = await mkdtemp(join(tmpdir(), 'happier-connected-services-test-'));
+    const openai = buildConnectedServiceCredentialRecord({
+      now: 10,
+      serviceId: 'openai',
+      profileId: 'work',
+      kind: 'token',
+      token: {
+        token: 'sk-openai-test',
+        providerAccountId: null,
+        providerEmail: null,
+      },
+    });
+
+    const result = await materializeConnectedServicesForSpawn({
+      agentId: 'pi',
+      materializationKey: 'session-3-openai',
+      baseDir,
+      recordsByServiceId: new Map([
+        ['openai', openai],
+      ]),
+    });
+
+    expect(result).not.toBeNull();
+    expect(result!.env.PI_CODING_AGENT_DIR).toContain(baseDir);
+
+    const authPath = join(result!.env.PI_CODING_AGENT_DIR, 'auth.json');
+    const auth = JSON.parse(await readFile(authPath, 'utf8'));
+    expect(auth).toEqual({
+      openai: {
+        type: 'api_key',
+        key: 'sk-openai-test',
+      },
+    });
   });
 
   it('materializes Gemini API key env vars from a gemini oauth credential', async () => {

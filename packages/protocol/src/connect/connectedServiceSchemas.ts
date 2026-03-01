@@ -2,7 +2,9 @@ import { z } from 'zod';
 
 export const ConnectedServiceIdSchema = z.enum([
     'openai-codex',
+    'openai',
     'anthropic',
+    'claude-subscription',
     'gemini',
 ]);
 
