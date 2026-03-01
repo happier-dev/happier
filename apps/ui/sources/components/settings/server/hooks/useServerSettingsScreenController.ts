@@ -11,6 +11,7 @@ import {
     listServerProfiles,
     setActiveServerId,
     type ServerProfile,
+    removeServerProfile,
     upsertServerProfile,
 } from '@/sync/domains/server/serverProfiles';
 import {
@@ -19,6 +20,7 @@ import {
 } from '@/sync/domains/server/selection/serverSelectionMutations';
 import type { ServerSelectionGroup } from '@/sync/domains/server/selection/serverSelectionTypes';
 import { canonicalizeServerUrl } from '@/sync/domains/server/url/serverUrlCanonical';
+import { isInsecureRemoteHttpServerUrl } from '@/sync/domains/server/url/serverUrlClassification';
 import { switchConnectionToActiveServer } from '@/sync/runtime/orchestration/connectionManager';
 import { useAuth } from '@/auth/context/AuthContext';
 import { useSettingMutable } from '@/sync/domains/state/storage';
@@ -29,6 +31,7 @@ import { useServerSettingsServerProfileActions } from '@/components/settings/ser
 import { useServerSettingsGroupActions } from '@/components/settings/server/hooks/useServerSettingsGroupActions';
 import { useServerSettingsConcurrentActions } from '@/components/settings/server/hooks/useServerSettingsConcurrentActions';
 import { runtimeFetch } from '@/utils/system/runtimeFetch';
+import { getServerFeaturesSnapshot } from '@/sync/api/capabilities/serverFeaturesClient';
 import { clearPendingNotificationNav, getPendingNotificationNav } from '@/sync/domains/pending/pendingNotificationNav';
 
 type SearchParams = Readonly<{ url?: string | string[]; auto?: string | string[]; source?: string | string[] }>;
@@ -47,6 +50,12 @@ function defaultServerName(rawUrl: string): string {
     } catch {
         return url;
     }
+}
+
+function shouldWarnAboutInsecureHttpServerUrl(rawUrl: string): boolean {
+    const normalized = normalizeUrl(rawUrl);
+    if (!normalized) return false;
+    return isInsecureRemoteHttpServerUrl(normalized);
 }
 
 export type ServerSettingsController = Readonly<{
@@ -294,16 +303,58 @@ export function useServerSettingsScreenController(): ServerSettingsController {
             return;
         }
 
+        if (shouldWarnAboutInsecureHttpServerUrl(inputUrl)) {
+            const shouldContinue = await Modal.confirm(
+                t('server.insecureHttpUrlTitle'),
+                t('server.insecureHttpUrlBody'),
+                { confirmText: t('common.ok'), cancelText: t('common.cancel') },
+            );
+            if (!shouldContinue) return;
+        }
+
         const isValid = await validateServerReachable(inputUrl);
         if (!isValid) return;
 
         const normalized = normalizeUrl(inputUrl);
         const name = inputName.trim() ? inputName.trim() : defaultServerName(normalized);
-        const profile = upsertServerProfile({
+        const created = upsertServerProfile({
             serverUrl: normalized,
             name,
             source: 'manual',
         });
+
+        let profile = created;
+        try {
+            const featuresSnapshot = await getServerFeaturesSnapshot({ serverId: created.id, force: true, timeoutMs: 1000 });
+            if (featuresSnapshot.status === 'ready') {
+                const advertisedRaw = featuresSnapshot.features.capabilities?.server?.canonicalServerUrl;
+                const advertised = typeof advertisedRaw === 'string' ? normalizeUrl(advertisedRaw) : '';
+                if (advertised && advertised !== created.serverUrl) {
+                    const confirm = await Modal.confirm(
+                        t('server.useCanonicalServerUrlTitle'),
+                        t('server.useCanonicalServerUrlBody'),
+                        { confirmText: t('common.use'), cancelText: t('common.keep') },
+                    );
+                    if (confirm) {
+                        const canonical = upsertServerProfile({
+                            serverUrl: advertised,
+                            name: created.name,
+                            source: 'manual',
+                        });
+                        if (canonical.id !== created.id) {
+                            try {
+                                removeServerProfile(created.id);
+                            } catch {
+                                // ignore; best-effort cleanup
+                            }
+                        }
+                        profile = canonical;
+                    }
+                }
+            }
+        } catch {
+            // best-effort
+        }
 
         await switchServerById(profile.id, { normalizeRoute: route.source !== 'notification' });
         setRevision((r) => r + 1);

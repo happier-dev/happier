@@ -1,9 +1,11 @@
 import * as React from 'react';
 
 import { t } from '@/text';
+import { getServerFeaturesSnapshot } from '@/sync/api/capabilities/serverFeaturesClient';
 import { validateServerUrl } from '@/sync/domains/server/serverConfig';
-import { upsertServerProfile } from '@/sync/domains/server/serverProfiles';
+import { removeServerProfile, upsertServerProfile } from '@/sync/domains/server/serverProfiles';
 import { canonicalizeServerUrl } from '@/sync/domains/server/url/serverUrlCanonical';
+import { canSafelyAutoAdoptCanonicalServerUrl } from '@/sync/domains/server/url/serverUrlClassification';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 
 function normalizeUrl(raw: string): string {
@@ -52,11 +54,37 @@ export function useServerAutoAddFromRoute(params: Readonly<{
             if (!isValid) return;
 
             const normalized = normalizeUrl(url);
-            const profile = upsertServerProfile({
+            const created = upsertServerProfile({
                 serverUrl: normalized,
                 name: defaultServerName(normalized),
                 source: params.source,
             });
+
+            let profile = created;
+            try {
+                const featuresSnapshot = await getServerFeaturesSnapshot({ serverId: created.id, force: true, timeoutMs: 1000 });
+                if (featuresSnapshot.status === 'ready') {
+                    const advertisedRaw = featuresSnapshot.features.capabilities?.server?.canonicalServerUrl;
+                    const advertised = typeof advertisedRaw === 'string' ? normalizeUrl(advertisedRaw) : '';
+                    if (advertised && advertised !== created.serverUrl && canSafelyAutoAdoptCanonicalServerUrl({ currentUrl: created.serverUrl, advertisedUrl: advertised })) {
+                        const canonical = upsertServerProfile({
+                            serverUrl: advertised,
+                            name: created.name,
+                            source: params.source,
+                        });
+                        if (canonical.id !== created.id) {
+                            try {
+                                removeServerProfile(created.id);
+                            } catch {
+                                // ignore; best-effort cleanup
+                            }
+                        }
+                        profile = canonical;
+                    }
+                }
+            } catch {
+                // best-effort
+            }
 
             await params.onSwitchServerById(profile.id, { normalizeRoute: false });
             params.onAfterSuccess();
