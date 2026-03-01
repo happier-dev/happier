@@ -218,6 +218,10 @@ vi.mock('@/components/sessions/files/repositoryTree/computeExpandedPathsForRevea
     computeExpandedPathsForReveal: (args: any) => args.expandedPaths,
 }));
 
+vi.mock('@/components/sessions/model/useSessionMachineReachability', () => ({
+    useSessionMachineReachability: () => ({ machineReachable: true, machineOnline: true }),
+}));
+
 vi.mock('@/sync/domains/state/storage', () => {
     const state = {
         clearSessionProjectScmCommitSelectionPaths: vi.fn(),

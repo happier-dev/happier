@@ -5,21 +5,20 @@ import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { Text } from '@/components/ui/text/Text';
 import { useAppPaneScope } from '@/components/appShell/panes/hooks/useAppPaneScope';
 import { NotSourceControlRepositoryState, SourceControlSessionInactiveState, SourceControlUnavailableState } from '@/components/sessions/sourceControl/states';
-import { resolveSessionMachineReachability } from '@/components/sessions/model/resolveSessionMachineReachability';
+import { useSessionMachineReachability } from '@/components/sessions/model/useSessionMachineReachability';
 import { useSessionResumeAction } from '@/components/sessions/model/SessionResumeContext';
 import { emitSessionResumeRequest } from '@/components/sessions/model/sessionResumeRequests';
 import { useScmCommitHistory } from '@/hooks/session/files/useScmCommitHistory';
 import { useFilesScmOperations } from '@/hooks/session/files/useFilesScmOperations';
+import { resolveSessionWorkspacePath } from '@/sync/domains/session/resolveSessionWorkspacePath';
 import { scmUiBackendRegistry } from '@/scm/registry/scmUiBackendRegistry';
 import { scmStatusSync } from '@/scm/scmStatusSync';
 import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
-import { isMachineOnline } from '@/utils/sessions/machineUtils';
 import { SCM_COMMIT_STRATEGIES, type ScmCommitStrategy } from '@/scm/settings/commitStrategy';
 import { useLastNonNullValue } from '@/hooks/ui/useLastNonNullValue';
 import {
     useProjectForSession,
     useProjectSessions,
-    useMachine,
     useSession,
     useSessionProjectScmCommitSelectionPaths,
     useSessionProjectScmCommitSelectionPatches,
@@ -76,14 +75,12 @@ export const SessionRightPanelGitView = React.memo((props: SessionRightPanelGitV
     const project = useProjectForSession(props.sessionId);
     const projectSessionIds = useProjectSessions(project?.id ?? null);
     const hasGlobalOperationInFlight = Boolean(inFlightScmOperation);
-    const sessionPath = session?.metadata?.path ?? null;
-    const machineId = typeof session?.metadata?.machineId === 'string' ? session.metadata.machineId : '';
-    const machine = useMachine(machineId);
-    const isSessionInactive = session?.active === false;
-    const machineReachable = resolveSessionMachineReachability({
-        machineIsKnown: Boolean(machine),
-        machineIsOnline: machine ? isMachineOnline(machine) : false,
+    const sessionPath = resolveSessionWorkspacePath({
+        sessionPath: session?.metadata?.path ?? null,
+        projectPath: project?.key?.path ?? null,
     });
+    const { machineReachable, machineRpcTargetAvailable } = useSessionMachineReachability(props.sessionId);
+    const isSessionInactive = session?.active === false;
 
     const {
         historyEntries,
@@ -323,7 +320,7 @@ export const SessionRightPanelGitView = React.memo((props: SessionRightPanelGitV
     }, [pullPreflight.allowed, pullPreflightMessage, pullPreflightReason, pushPreflight.allowed, pushPreflightMessage, pushPreflightReason, remoteActions.length]);
 
     if (!effectiveScmSnapshot && scmSnapshotError) {
-        if (isSessionInactive) {
+        if (isSessionInactive && !machineRpcTargetAvailable) {
             return (
                 <SourceControlSessionInactiveState
                     machineReachable={machineReachable}

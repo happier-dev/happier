@@ -22,6 +22,7 @@ import { deferOnWeb } from '@/utils/platform/deferOnWeb';
 import { NotSourceControlRepositoryState, SourceControlUnavailableState } from '@/components/sessions/sourceControl/states';
 import { t } from '@/text';
 import { useLastNonNullValue } from '@/hooks/ui/useLastNonNullValue';
+import { resolveSessionWorkspacePath } from '@/sync/domains/session/resolveSessionWorkspacePath';
 
 export type SessionScmReviewDetailsViewProps = Readonly<{
     sessionId: string;
@@ -71,14 +72,17 @@ export const SessionScmReviewDetailsView = React.memo((props: SessionScmReviewDe
         setPersistedReviewTabState({ scrollTop: top });
     }, [setPersistedReviewTabState]);
     const session = useSession(props.sessionId);
-    const sessionPath = session?.metadata?.path ?? null;
+    const project = useProjectForSession(props.sessionId);
+    const sessionPath = resolveSessionWorkspacePath({
+        sessionPath: session?.metadata?.path ?? null,
+        projectPath: project?.key?.path ?? null,
+    });
     const snapshot = useSessionProjectScmSnapshot(props.sessionId);
     const lastGoodSnapshot = useLastNonNullValue(snapshot, { resetKey: props.sessionId });
     const effectiveSnapshot = snapshot ?? lastGoodSnapshot;
     const snapshotError = useSessionProjectScmSnapshotError(props.sessionId);
     const touchedPaths = useSessionProjectScmTouchedPaths(props.sessionId);
     const operationLog = useSessionProjectScmOperationLog(props.sessionId);
-    const project = useProjectForSession(props.sessionId);
     const projectSessionIds = useProjectSessions(project?.id ?? null);
     const scmReviewMaxFiles = useSetting('scmReviewMaxFiles');
     const scmReviewMaxChangedLines = useSetting('scmReviewMaxChangedLines');

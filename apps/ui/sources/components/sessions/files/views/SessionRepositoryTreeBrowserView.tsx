@@ -8,7 +8,7 @@ import { SearchResultsList } from '@/components/sessions/files/content/SearchRes
 import { ChangedFilesTreeList } from '@/components/sessions/files/content/ChangedFilesTreeList';
 import type { FileItem } from '@/sync/domains/input/suggestionFile';
 import { fileSearchCache, searchFiles } from '@/sync/domains/input/suggestionFile';
-import { storage, useMachine, useSession, useSessionProjectScmSnapshot, useSessionRepositoryTreeExpandedPaths } from '@/sync/domains/state/storage';
+import { storage, useSession, useSessionProjectScmSnapshot, useSessionRepositoryTreeExpandedPaths } from '@/sync/domains/state/storage';
 import { Typography } from '@/constants/Typography';
 import { t } from '@/text';
 import { Modal } from '@/modal';
@@ -16,9 +16,6 @@ import { sessionCreateDirectory, sessionWriteFile } from '@/sync/ops';
 import { isSafeWorkspaceRelativePath } from '@/utils/path/isSafeWorkspaceRelativePath';
 import { computeExpandedPathsForReveal } from '@/components/sessions/files/repositoryTree/computeExpandedPathsForReveal';
 import { scmStatusSync } from '@/scm/scmStatusSync';
-import { SourceControlSessionInactiveState } from '@/components/sessions/sourceControl/states';
-import { resolveSessionMachineReachability } from '@/components/sessions/model/resolveSessionMachineReachability';
-import { isMachineOnline } from '@/utils/sessions/machineUtils';
 import { useScrollEdgeFades } from '@/components/ui/scroll/useScrollEdgeFades';
 import { ScrollEdgeFades } from '@/components/ui/scroll/ScrollEdgeFades';
 import { ScrollEdgeIndicators } from '@/components/ui/scroll/ScrollEdgeIndicators';
@@ -32,11 +29,6 @@ export type SessionRepositoryTreeBrowserViewProps = Readonly<{
     onSearchQueryChange?: (value: string) => void;
     showSearchBar?: boolean;
     onRequestClose?: () => void;
-    /**
-     * Allows browsing/linking files even when the session is inactive.
-     * Useful for read-only surfaces like the agent input "Link file" popover.
-     */
-    allowWhenSessionInactive?: boolean;
 }>;
 
 const stylesheet = StyleSheet.create((theme) => ({
@@ -81,14 +73,7 @@ export const SessionRepositoryTreeBrowserView = React.memo((props: SessionReposi
     const styles = stylesheet;
     const { theme } = useUnistyles();
     const session = useSession(props.sessionId);
-    const machineId = typeof session?.metadata?.machineId === 'string' ? session.metadata.machineId : '';
-    const machine = useMachine(machineId);
-    const machineReachable = resolveSessionMachineReachability({
-        machineIsKnown: Boolean(machine),
-        machineIsOnline: machine ? isMachineOnline(machine) : false,
-    });
     const isSessionInactive = session?.active === false;
-    const allowWhenSessionInactive = props.allowWhenSessionInactive === true;
 
     const expandedPaths = useSessionRepositoryTreeExpandedPaths(props.sessionId);
     const scmSnapshot = useSessionProjectScmSnapshot(props.sessionId);
@@ -229,12 +214,6 @@ export const SessionRepositoryTreeBrowserView = React.memo((props: SessionReposi
             refresh();
         })();
     }, [expandedPaths, props.sessionId, refresh]);
-
-    if (isSessionInactive) {
-        if (!allowWhenSessionInactive) {
-            return <SourceControlSessionInactiveState machineReachable={machineReachable} />;
-        }
-    }
 
     return (
         <View style={{ flex: 1 }}>

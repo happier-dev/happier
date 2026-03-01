@@ -83,9 +83,18 @@ vi.mock('@/components/sessions/files/content/SearchResultsList', () => ({
 }));
 
 let sessionActive = true;
+let machineReachable = true;
+let sessionPath: string | null = null;
+let projectPath: string | null = '/repo';
 vi.mock('@/sync/domains/state/storage', () => ({
   storage: { getState: () => ({ setSessionRepositoryTreeExpandedPaths: vi.fn() }) },
-  useSession: () => ({ active: sessionActive, metadata: { machineId: 'm1' } }),
+  useSession: () => ({ active: sessionActive, metadata: { machineId: 'm1', host: 'mbp', path: sessionPath } }),
+  useProjectForSession: () => ({ key: { machineId: 'm1', path: projectPath } }),
+  useAllMachines: () => (
+    machineReachable
+      ? [{ id: 'm1', active: true, activeAt: 1, metadata: { host: 'mbp', platform: 'darwin', happyCliVersion: '0', happyHomeDir: '/tmp/.h', homeDir: '/tmp' } }]
+      : [{ id: 'm1', active: false, activeAt: 1, metadata: { host: 'mbp', platform: 'darwin', happyCliVersion: '0', happyHomeDir: '/tmp/.h', homeDir: '/tmp' } }]
+  ),
   useMachine: () => ({ id: 'm1' }),
   useSessionRepositoryTreeExpandedPaths: () => [],
   useSessionProjectScmSnapshot: () => null,
@@ -93,14 +102,6 @@ vi.mock('@/sync/domains/state/storage', () => ({
 
 vi.mock('@/components/sessions/sourceControl/states', () => ({
   SourceControlSessionInactiveState: 'SourceControlSessionInactiveState',
-}));
-
-vi.mock('@/components/sessions/model/resolveSessionMachineReachability', () => ({
-  resolveSessionMachineReachability: () => true,
-}));
-
-vi.mock('@/utils/sessions/machineUtils', () => ({
-  isMachineOnline: () => true,
 }));
 
 vi.mock('@/modal', () => ({
@@ -129,6 +130,9 @@ describe('SessionRepositoryTreeBrowserView', () => {
     vi.useFakeTimers();
     searchFilesSpy.mockReset();
     sessionActive = true;
+    machineReachable = true;
+    sessionPath = null;
+    projectPath = '/repo';
   });
 
   afterEach(() => {
@@ -194,7 +198,7 @@ describe('SessionRepositoryTreeBrowserView', () => {
     expect(onOpenFile).toHaveBeenCalledWith('src/api.ts');
   });
 
-  it('shows inactive state when the session is inactive', async () => {
+  it('renders repository tree when the session is inactive but machine is reachable', async () => {
     sessionActive = false;
     const { SessionRepositoryTreeBrowserView } = await import('./SessionRepositoryTreeBrowserView');
 
@@ -203,23 +207,33 @@ describe('SessionRepositoryTreeBrowserView', () => {
       tree = renderer.create(<SessionRepositoryTreeBrowserView sessionId="s1" onOpenFile={vi.fn()} />);
     });
 
-    expect(tree.root.findAllByType('SourceControlSessionInactiveState' as any).length).toBe(1);
-    expect(tree.root.findAllByType('RepositoryTreeList' as any).length).toBe(0);
+    expect(tree.root.findAllByType('SourceControlSessionInactiveState' as any).length).toBe(0);
+    expect(tree.root.findAllByType('RepositoryTreeList' as any).length).toBe(1);
   });
 
-  it('renders repository tree when allowWhenSessionInactive is enabled', async () => {
+  it('renders repository tree when session is inactive and machine is offline but target is resolvable', async () => {
     sessionActive = false;
+    machineReachable = false;
     const { SessionRepositoryTreeBrowserView } = await import('./SessionRepositoryTreeBrowserView');
 
     let tree!: renderer.ReactTestRenderer;
     await act(async () => {
-      tree = renderer.create(
-        <SessionRepositoryTreeBrowserView
-          sessionId="s1"
-          onOpenFile={vi.fn()}
-          allowWhenSessionInactive
-        />
-      );
+      tree = renderer.create(<SessionRepositoryTreeBrowserView sessionId="s1" onOpenFile={vi.fn()} />);
+    });
+
+    expect(tree.root.findAllByType('SourceControlSessionInactiveState' as any).length).toBe(0);
+    expect(tree.root.findAllByType('RepositoryTreeList' as any).length).toBe(1);
+  });
+
+  it('still renders the repository tree when the session is inactive and no machine target is available', async () => {
+    sessionActive = false;
+    sessionPath = '';
+    projectPath = '';
+    const { SessionRepositoryTreeBrowserView } = await import('./SessionRepositoryTreeBrowserView');
+
+    let tree!: renderer.ReactTestRenderer;
+    await act(async () => {
+      tree = renderer.create(<SessionRepositoryTreeBrowserView sessionId="s1" onOpenFile={vi.fn()} />);
     });
 
     expect(tree.root.findAllByType('SourceControlSessionInactiveState' as any).length).toBe(0);

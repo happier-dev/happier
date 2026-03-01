@@ -85,6 +85,7 @@ vi.mock('@/hooks/server/useFeatureEnabled', () => ({
 vi.mock('@/sync/domains/state/storage', () => ({
     __esModule: true,
     useSetting: () => null,
+    useAllMachines: () => [{ id: 'm1', active: true, activeAt: 1, metadata: { host: 'mbp', homeDir: '/tmp' } }],
     useProjectForSession: () => null,
     useProjectSessions: () => [],
     useMachine: () => ({ online: true }),

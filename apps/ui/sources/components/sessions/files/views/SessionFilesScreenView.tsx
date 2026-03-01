@@ -18,7 +18,6 @@ import {
     useProjectForSession,
     useProjectSessions,
     useSetting,
-    useMachine,
 } from '@/sync/domains/state/storage';
 import { useUnistyles, StyleSheet } from 'react-native-unistyles';
 import { layout } from '@/components/ui/layout/layout';
@@ -31,14 +30,14 @@ import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
 import { scmUiBackendRegistry } from '@/scm/registry/scmUiBackendRegistry';
 import { buildSnapshotSignature } from '@/scm/statusSync/projectState';
 import type { ChangedFilesPresentation } from '@/scm/scmAttribution';
-import { resolveSessionMachineReachability } from '@/components/sessions/model/resolveSessionMachineReachability';
-import { isMachineOnline } from '@/utils/sessions/machineUtils';
+import { useSessionMachineReachability } from '@/components/sessions/model/useSessionMachineReachability';
 import { computeExpandedPathsForReveal } from '@/components/sessions/files/repositoryTree/computeExpandedPathsForReveal';
 import { SessionFilesScreenBody } from '@/components/sessions/files/views/sessionFilesScreen/SessionFilesScreenBody';
 import { useSessionFilesCommitSelectionState } from '@/components/sessions/files/views/sessionFilesScreen/useSessionFilesCommitSelection';
 import { useSessionFilesScmRefreshState } from '@/components/sessions/files/views/sessionFilesScreen/useSessionFilesScmRefresh';
 import { useSessionFilesDeepLinkSync } from '@/components/sessions/files/views/sessionFilesScreen/useSessionFilesDeepLinkSync';
 import { useSessionFilesRowRenderers } from '@/components/sessions/files/views/sessionFilesScreen/useSessionFilesRowRenderers';
+import { resolveSessionWorkspacePath } from '@/sync/domains/session/resolveSessionWorkspacePath';
 
 export type SessionFilesScreenViewProps = Readonly<{
     sessionId: string;
@@ -88,15 +87,13 @@ export function SessionFilesScreenView(props: SessionFilesScreenViewProps) {
             : 60_000;
     const filesChangedFilesRowDensity = useSetting('filesChangedFilesRowDensity');
     const scmWriteEnabled = useFeatureEnabled('scm.writeOperations');
-    const sessionPath = session?.metadata?.path ?? null;
-    const machineId = typeof session?.metadata?.machineId === 'string' ? session.metadata.machineId : '';
-    const changedFilesRowDensity = filesChangedFilesRowDensity === 'compact' ? 'compact' : 'comfortable';
-    const machine = useMachine(machineId);
-    const isSessionInactive = session?.active === false;
-    const machineReachable = resolveSessionMachineReachability({
-        machineIsKnown: Boolean(machine),
-        machineIsOnline: machine ? isMachineOnline(machine) : false,
+    const sessionPath = resolveSessionWorkspacePath({
+        sessionPath: session?.metadata?.path ?? null,
+        projectPath: project?.key?.path ?? null,
     });
+    const changedFilesRowDensity = filesChangedFilesRowDensity === 'compact' ? 'compact' : 'comfortable';
+    const { machineReachable, machineRpcTargetAvailable } = useSessionMachineReachability(sessionId);
+    const isSessionInactive = session?.active === false;
     const hasConflicts = scmSnapshot?.hasConflicts === true;
     const hasGlobalOperationInFlight = Boolean(inFlightScmOperation);
 
@@ -285,6 +282,7 @@ export function SessionFilesScreenView(props: SessionFilesScreenViewProps) {
                 inFlightScmOperation={inFlightScmOperation}
                 isSessionInactive={isSessionInactive}
                 machineReachable={machineReachable}
+                machineRpcTargetAvailable={machineRpcTargetAvailable}
                 backendLabel={backendLabel}
                 commitActionLabel={commitActionLabel}
                 scmOperationBusy={scmOperationBusy}
