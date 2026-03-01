@@ -502,10 +502,12 @@ export function ChangedFilesReview(props: ChangedFilesReviewProps) {
                 return (overflowY === 'auto' || overflowY === 'scroll') && el.scrollHeight > el.clientHeight + 1;
             };
             const findScrollableAncestor = (el: HTMLElement | null): HTMLElement | null => {
+                const boundary = el?.closest?.('[data-testid="session-details-panel-root"]') as HTMLElement | null;
                 let cursor: HTMLElement | null = el;
                 let steps = 0;
                 while (cursor && steps < 40) {
                     if (isScrollable(cursor)) return cursor;
+                    if (boundary && cursor === boundary) break;
                     cursor = cursor.parentElement;
                     steps += 1;
                 }
