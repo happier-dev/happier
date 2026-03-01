@@ -1,6 +1,6 @@
 import React from 'react';
 import { Ionicons } from '@expo/vector-icons';
-import { View } from 'react-native';
+import { Platform, View } from 'react-native';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { ItemList } from '@/components/ui/lists/ItemList';
@@ -14,6 +14,7 @@ import { Appearance } from 'react-native';
 import * as SystemUI from 'expo-system-ui';
 import { darkTheme, lightTheme } from '@/theme';
 import { t, getLanguageNativeName, SUPPORTED_LANGUAGES } from '@/text';
+import { useDeviceType } from '@/utils/platform/responsive';
 
 // Define known avatar styles for this version of the app
 type KnownAvatarStyle = 'pixelated' | 'gradient' | 'brutalist';
@@ -25,6 +26,8 @@ const isKnownAvatarStyle = (style: string): style is KnownAvatarStyle => {
 export default React.memo(function AppearanceSettingsScreen() {
     const { theme } = useUnistyles();
     const router = useRouter();
+    const deviceType = useDeviceType();
+    const panelsSupported = Platform.OS === 'web' || deviceType === 'tablet';
     const [viewInline, setViewInline] = useSettingMutable('viewInline');
     const [expandTodos, setExpandTodos] = useSettingMutable('expandTodos');
     const [showLineNumbers, setShowLineNumbers] = useSettingMutable('showLineNumbers');
@@ -42,9 +45,14 @@ export default React.memo(function AppearanceSettingsScreen() {
     const [sessionListInactiveGroupingV1, setSessionListInactiveGroupingV1] = useSettingMutable('sessionListInactiveGroupingV1');
     const [themePreference, setThemePreference] = useLocalSettingMutable('themePreference');
     const [uiFontScale, setUiFontScale] = useLocalSettingMutable('uiFontScale');
+    const [uiMultiPanePanelsEnabled, setUiMultiPanePanelsEnabled] = useLocalSettingMutable('uiMultiPanePanelsEnabled');
+    const [sessionsRightPaneDefaultOpen, setSessionsRightPaneDefaultOpen] = useLocalSettingMutable('sessionsRightPaneDefaultOpen');
+    const [detailsPaneTabsBehavior, setDetailsPaneTabsBehavior] = useLocalSettingMutable('detailsPaneTabsBehavior');
+    const [editorFocusModeEnabled, setEditorFocusModeEnabled] = useLocalSettingMutable('editorFocusModeEnabled');
     const [preferredLanguage] = useSettingMutable('preferredLanguage');
     const [openGroupingMenu, setOpenGroupingMenu] = React.useState<null | 'active' | 'inactive'>(null);
     const [openTextSizeMenu, setOpenTextSizeMenu] = React.useState(false);
+    const [openDetailsTabsMenu, setOpenDetailsTabsMenu] = React.useState(false);
 
     const groupingMenuItems = React.useMemo(() => {
         return [
@@ -91,6 +99,13 @@ export default React.memo(function AppearanceSettingsScreen() {
             { id: 'large', title: t('settingsAppearance.textSizeOptions.large') },
             { id: 'xlarge', title: t('settingsAppearance.textSizeOptions.xlarge') },
             { id: 'xxlarge', title: t('settingsAppearance.textSizeOptions.xxlarge') },
+        ];
+    }, []);
+
+    const detailsTabsMenuItems = React.useMemo(() => {
+        return [
+            { id: 'preview', title: t('settingsAppearance.detailsPaneTabsBehaviorOptions.preview') },
+            { id: 'persistent', title: t('settingsAppearance.detailsPaneTabsBehaviorOptions.persistent') },
         ];
     }, []);
 
@@ -224,6 +239,71 @@ export default React.memo(function AppearanceSettingsScreen() {
 
             {/* Display Settings */}
             <ItemGroup title={t('settingsAppearance.display')} footer={t('settingsAppearance.displayDescription')}>
+                <Item
+                    title={t('settingsAppearance.multiPanePanels')}
+                    subtitle={t('settingsAppearance.multiPanePanelsDescription')}
+                    icon={<Ionicons name="browsers-outline" size={29} color={theme.colors.accent.blue} />}
+                    rightElement={
+                        <Switch
+                            value={uiMultiPanePanelsEnabled}
+                            onValueChange={setUiMultiPanePanelsEnabled}
+                            disabled={!panelsSupported}
+                        />
+                    }
+                    disabled={!panelsSupported}
+                    showChevron={false}
+                />
+                <Item
+                    title={t('settingsAppearance.sessionsRightPaneDefaultOpen')}
+                    subtitle={t('settingsAppearance.sessionsRightPaneDefaultOpenDescription')}
+                    icon={<Ionicons name="documents-outline" size={29} color={theme.colors.accent.blue} />}
+                    rightElement={
+                        <Switch
+                            value={sessionsRightPaneDefaultOpen}
+                            onValueChange={setSessionsRightPaneDefaultOpen}
+                            disabled={!panelsSupported || !uiMultiPanePanelsEnabled}
+                        />
+                    }
+                    disabled={!panelsSupported || !uiMultiPanePanelsEnabled}
+                    showChevron={false}
+                />
+                <DropdownMenu
+                    open={openDetailsTabsMenu}
+                    onOpenChange={setOpenDetailsTabsMenu}
+                    variant="selectable"
+                    search={false}
+                    selectedId={detailsPaneTabsBehavior as any}
+                    showCategoryTitles={false}
+                    matchTriggerWidth={true}
+                    connectToTrigger={true}
+                    rowKind="item"
+                    itemTrigger={{
+                        title: t('settingsAppearance.detailsPaneTabsBehavior'),
+                        subtitle: t('settingsAppearance.detailsPaneTabsBehaviorDescription'),
+                        icon: <Ionicons name="albums-outline" size={29} color={theme.colors.accent.blue} />,
+                        showSelectedSubtitle: false,
+                        itemProps: { disabled: !panelsSupported },
+                    }}
+                    items={detailsTabsMenuItems as any}
+                    onSelect={(itemId) => {
+                        if (itemId !== 'preview' && itemId !== 'persistent') return;
+                        setDetailsPaneTabsBehavior(itemId as any);
+                    }}
+                />
+                <Item
+                    title={t('settingsAppearance.editorFocusMode')}
+                    subtitle={t('settingsAppearance.editorFocusModeDescription')}
+                    icon={<Ionicons name="expand-outline" size={29} color={theme.colors.accent.blue} />}
+                    rightElement={
+                        <Switch
+                            value={editorFocusModeEnabled}
+                            onValueChange={setEditorFocusModeEnabled}
+                            disabled={!panelsSupported || !uiMultiPanePanelsEnabled}
+                        />
+                    }
+                    disabled={!panelsSupported || !uiMultiPanePanelsEnabled}
+                    showChevron={false}
+                />
                 <Item
                     title={t('settingsAppearance.compactSessionView')}
                     subtitle={t('settingsAppearance.compactSessionViewDescription')}
