@@ -7,6 +7,7 @@ import { type ItemAction } from '@/components/ui/lists/itemActions';
 import { Popover } from '@/components/ui/popover';
 import { FloatingOverlay } from '@/components/ui/overlays/FloatingOverlay';
 import { ActionListSection, type ActionListItem } from '@/components/ui/lists/ActionListSection';
+import { t } from '@/text';
 
 export interface ItemRowActionsProps {
     title: string;
@@ -147,8 +148,10 @@ export function ItemRowActions(props: ItemRowActionsProps) {
                             setShowOverflow((v) => !v);
                         }}
                         accessibilityRole="button"
-                        accessibilityLabel="More actions"
-                        accessibilityHint="Opens a menu with more actions"
+                        accessibilityLabel={t('common.moreActions')}
+                        accessibilityHint={t('common.moreActionsHint')}
+                        // @ts-expect-error - react-native types do not model the web-only `title` attribute; RN Web forwards it.
+                        title={t('common.moreActions')}
                     >
                         <Ionicons
                             name="ellipsis-vertical"
