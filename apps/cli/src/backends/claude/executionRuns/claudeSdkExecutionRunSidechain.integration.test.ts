@@ -59,6 +59,47 @@ rl.on('close', () => process.exit(0));
 }
 
 describe('ExecutionRunManager + ClaudeSdkAgentBackend (integration)', () => {
+  function createFakeClaudeLongLivedSteerEntrypointSource(): string {
+    // First user turn hangs (no assistant/result). Second user turn succeeds.
+    return `
+const readline = require('node:readline');
+
+process.stdout.write(JSON.stringify({ type: 'system', subtype: 'init', session_id: 'fake-session-1' }) + '\\n');
+
+const rl = readline.createInterface({ input: process.stdin });
+let turn = 0;
+
+rl.on('line', (line) => {
+  const trimmed = String(line || '').trim();
+  if (!trimmed) return;
+  let msg;
+  try { msg = JSON.parse(trimmed); } catch { return; }
+  if (!msg || msg.type !== 'user') return;
+  turn += 1;
+  if (turn === 1) {
+    // Hang: emit nothing.
+    return;
+  }
+  if (turn === 2) {
+    process.stdout.write(JSON.stringify({ type: 'assistant', message: { role: 'assistant', content: [{ type: 'text', text: 'STEER_OK' }] } }) + '\\n');
+    process.stdout.write(JSON.stringify({
+      type: 'result',
+      subtype: 'success',
+      result: 'DONE_2',
+      num_turns: 2,
+      total_cost_usd: 0,
+      duration_ms: 1,
+      duration_api_ms: 1,
+      is_error: false,
+      session_id: 'fake-session-1',
+    }) + '\\n');
+    return;
+  }
+});
+rl.on('close', () => process.exit(0));
+`;
+  }
+
   it('forwards Claude SDK tool-call/tool-result/token-count into the run sidechain', async () => {
     const savedClaudePath = process.env.HAPPIER_CLAUDE_PATH;
     const savedDebug = process.env.DEBUG;
@@ -123,6 +164,75 @@ describe('ExecutionRunManager + ClaudeSdkAgentBackend (integration)', () => {
       expect(tokenCount.body.tokens?.cache_read).toBe(3);
       expect(tokenCount.body.tokens?.cache_creation).toBe(4);
       expect(tokenCount.body.cost?.total).toBe(0.123);
+    } finally {
+      if (savedClaudePath === undefined) delete process.env.HAPPIER_CLAUDE_PATH;
+      else process.env.HAPPIER_CLAUDE_PATH = savedClaudePath;
+      if (savedDebug === undefined) delete process.env.DEBUG;
+      else process.env.DEBUG = savedDebug;
+      if (dir) await rm(dir, { recursive: true, force: true });
+    }
+  }, 60_000);
+
+  it('supports steer_if_supported delivery for long-lived runs without failing the run', async () => {
+    const savedClaudePath = process.env.HAPPIER_CLAUDE_PATH;
+    const savedDebug = process.env.DEBUG;
+
+    let dir: string | null = null;
+    try {
+      delete process.env.DEBUG;
+      dir = await mkdtemp(join(tmpdir(), 'happier-claude-exec-run-steer-'));
+      const cwd = dir;
+      const entry = join(dir, 'fake-claude.cjs');
+      await writeFile(entry, createFakeClaudeLongLivedSteerEntrypointSource(), 'utf8');
+      process.env.HAPPIER_CLAUDE_PATH = entry;
+
+      const sent: Array<{ provider: string; body: ACPMessageData; meta?: Record<string, unknown> }> = [];
+      const manager = new ExecutionRunManager({
+        parentProvider: 'claude',
+        cwd,
+        createBackend: (opts) =>
+          new ClaudeSdkAgentBackend({
+            cwd,
+            modelId: 'default',
+            permissionPolicy: opts.permissionMode as any,
+          }),
+        sendAcp: (provider: string, body: ACPMessageData, opts?: { meta?: Record<string, unknown> }) => {
+          sent.push({ provider, body, meta: opts?.meta });
+        },
+        getNowMs: () => 1_700_000_000_000,
+      });
+
+      const started = await manager.start({
+        sessionId: 'parent_session_1' as SessionId,
+        intent: 'delegate',
+        backendId: 'claude',
+        instructions: '',
+        permissionMode: 'workspace_write',
+        retentionPolicy: 'ephemeral',
+        runClass: 'long_lived',
+        ioMode: 'streaming',
+      });
+
+      const first = await manager.send(started.runId, { message: 'hang please' });
+      expect(first.ok).toBe(true);
+
+      const second = await manager.send(started.runId, { message: 'steer me', delivery: 'steer_if_supported' });
+      expect(second.ok).toBe(true);
+
+      // Allow async completion handlers to flush streamed output.
+      await new Promise<void>((resolve) => setTimeout(resolve, 50));
+
+      // Run stays alive.
+      expect(manager.get(started.runId)?.status).toBe('running');
+
+      // The successful second turn should have streamed an assistant message into the run sidechain.
+      const sidechainMessage = sent.find(
+        (m) => m.body.type === 'message' && m.body.sidechainId === started.callId && String((m.body as any).message ?? '').includes('STEER_OK'),
+      );
+      expect(sidechainMessage).toBeTruthy();
+
+      await manager.stop(started.runId);
+      await manager.waitForTerminal(started.runId);
     } finally {
       if (savedClaudePath === undefined) delete process.env.HAPPIER_CLAUDE_PATH;
       else process.env.HAPPIER_CLAUDE_PATH = savedClaudePath;
