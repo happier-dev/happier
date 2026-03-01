@@ -2,7 +2,6 @@ import type { ConnectedServiceId } from '@happier-dev/protocol';
 
 export type ConnectedServiceRegistryEntry = Readonly<{
   serviceId: ConnectedServiceId;
-  displayName: string;
   connectCommand: string;
   supportsOauth: boolean;
   /**
@@ -19,23 +18,27 @@ export type ConnectedServiceRegistryEntry = Readonly<{
 export const CONNECTED_SERVICES_REGISTRY: readonly ConnectedServiceRegistryEntry[] = Object.freeze([
   {
     serviceId: 'claude-subscription',
-    displayName: 'Claude subscription',
     connectCommand: 'happier connect claude',
     supportsOauth: true,
-    oauthAddActionModes: ['paste'],
+    oauthAddActionModes: ['paste', 'browser'],
     supportsToken: true,
     tokenKind: 'setup-token',
   },
   {
     serviceId: 'openai-codex',
-    displayName: 'OpenAI Codex',
     connectCommand: 'happier connect codex',
     supportsOauth: true,
-    oauthAddActionModes: ['device', 'paste'],
+    oauthAddActionModes: ['device', 'paste', 'browser'],
+  },
+  {
+    serviceId: 'openai',
+    connectCommand: 'happier connect codex --api-key',
+    supportsOauth: false,
+    supportsToken: true,
+    tokenKind: 'api-key',
   },
   {
     serviceId: 'anthropic',
-    displayName: 'Anthropic API key',
     connectCommand: 'happier connect claude --api-key',
     supportsOauth: false,
     supportsToken: true,
@@ -43,10 +46,9 @@ export const CONNECTED_SERVICES_REGISTRY: readonly ConnectedServiceRegistryEntry
   },
   {
     serviceId: 'gemini',
-    displayName: 'Google Gemini',
     connectCommand: 'happier connect gemini',
     supportsOauth: true,
-    oauthAddActionModes: ['paste'],
+    oauthAddActionModes: ['paste', 'browser'],
   },
 ]);
 
@@ -55,7 +57,6 @@ export function getConnectedServiceRegistryEntry(serviceId: ConnectedServiceId):
   if (entry) return entry;
   return {
     serviceId,
-    displayName: serviceId,
     connectCommand: `happier connect ${serviceId}`,
     supportsOauth: false,
     oauthAddActionModes: [],
