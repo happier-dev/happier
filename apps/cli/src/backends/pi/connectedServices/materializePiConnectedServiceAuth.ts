@@ -11,6 +11,7 @@ import {
 export async function materializePiConnectedServiceAuth(params: Readonly<{
   rootDir: string;
   openaiCodex: ConnectedServiceCredentialRecordV1 | null;
+  claudeSubscription: ConnectedServiceCredentialRecordV1 | null;
   anthropic: ConnectedServiceCredentialRecordV1 | null;
 }>): Promise<Readonly<{ env: Record<string, string> }>> {
   const agentDir = join(params.rootDir, 'pi-agent-dir');
@@ -22,6 +23,13 @@ export async function materializePiConnectedServiceAuth(params: Readonly<{
   if (params.openaiCodex) {
     const record = requireConnectedServiceOauthCredentialRecordWithExpiry(params.openaiCodex);
     auth['openai-codex'] = buildConnectedServiceOauthAuthEntry(record);
+  }
+
+  if (params.claudeSubscription) {
+    if (params.claudeSubscription.kind !== 'token') {
+      throw new Error('Claude subscription OAuth credentials are not supported by Pi. Reconnect using a Claude setup-token.');
+    }
+    env.ANTHROPIC_OAUTH_TOKEN = params.claudeSubscription.token.token;
   }
 
   if (params.anthropic) {

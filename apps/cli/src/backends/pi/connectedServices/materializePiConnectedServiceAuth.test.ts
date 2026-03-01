@@ -20,7 +20,7 @@ describe('materializePiConnectedServiceAuth', () => {
       token: { token: 'sk-ant-test', providerAccountId: null, providerEmail: null },
     });
 
-    const res = await materializePiConnectedServiceAuth({ rootDir, openaiCodex: null, anthropic });
+    const res = await materializePiConnectedServiceAuth({ rootDir, openaiCodex: null, claudeSubscription: null, anthropic });
 
     expect(res.env.PI_CODING_AGENT_DIR).toContain('pi-agent-dir');
     expect(res.env).toMatchObject({ ANTHROPIC_API_KEY: 'sk-ant-test' });
@@ -30,5 +30,22 @@ describe('materializePiConnectedServiceAuth', () => {
     const authRaw = await readFile(authPath, 'utf8');
     expect(JSON.parse(authRaw)).toEqual({});
   });
-});
 
+  it('maps Claude subscription setup-token credentials to ANTHROPIC_OAUTH_TOKEN', async () => {
+    const now = Date.now();
+    const rootDir = await mkdtemp(join(tmpdir(), 'happier-pi-auth-'));
+    const claudeSubscription = buildConnectedServiceCredentialRecord({
+      now,
+      serviceId: 'claude-subscription',
+      profileId: 'default',
+      kind: 'token',
+      token: { token: 'sk-ant-oat01-abc', providerAccountId: null, providerEmail: null },
+    });
+
+    const res = await materializePiConnectedServiceAuth({ rootDir, openaiCodex: null, claudeSubscription, anthropic: null });
+
+    expect(res.env.PI_CODING_AGENT_DIR).toContain('pi-agent-dir');
+    expect(res.env).toMatchObject({ ANTHROPIC_OAUTH_TOKEN: 'sk-ant-oat01-abc' });
+    expect(res.env).not.toHaveProperty('ANTHROPIC_API_KEY');
+  });
+});
