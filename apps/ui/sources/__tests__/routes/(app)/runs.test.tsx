@@ -106,7 +106,7 @@ vi.mock('@/utils/sessions/machineUtils', () => ({ isMachineOnline: () => true })
 describe('Runs screen', () => {
   it('configures a header title and right-side icon actions', async () => {
     stackScreenSpy.mockClear();
-    const Screen = (await import('./runs')).default;
+    const Screen = (await import('@/app/(app)/runs')).default;
 
     await act(async () => {
       renderer.create(React.createElement(Screen));
@@ -115,7 +115,7 @@ describe('Runs screen', () => {
 
     expect(stackScreenSpy).toHaveBeenCalled();
     const stackOptions = stackScreenSpy.mock.calls.at(-1)?.[0]?.options;
-    expect(stackOptions?.headerTitle).toBe('Runs');
+    expect(stackOptions?.headerTitle).toBe('runs.title');
     expect(typeof stackOptions?.headerRight).toBe('function');
 
     let headerRightTree: renderer.ReactTestRenderer | null = null;
@@ -124,12 +124,12 @@ describe('Runs screen', () => {
     });
     const rightButtons = headerRightTree!.root.findAllByType('Pressable');
     const labels = rightButtons.map((button: any) => button.props.accessibilityLabel);
-    expect(labels).toContain('Refresh runs');
-    expect(labels).toContain('Toggle finished runs');
+    expect(labels).toContain('runs.a11y.refresh');
+    expect(labels).toContain('runs.a11y.toggleFinished');
   });
 
   it('constrains runs content to the shared max width', async () => {
-    const Screen = (await import('./runs')).default;
+    const Screen = (await import('@/app/(app)/runs')).default;
 
     let tree: renderer.ReactTestRenderer | null = null;
     await act(async () => {
@@ -153,7 +153,7 @@ describe('Runs screen', () => {
   it('lists daemon execution runs for machines in the server-scoped machine cache', async () => {
     machineExecutionRunsListSpy.mockClear();
 
-    const Screen = (await import('./runs')).default;
+    const Screen = (await import('@/app/(app)/runs')).default;
 
     await act(async () => {
       renderer.create(React.createElement(Screen));
