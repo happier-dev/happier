@@ -235,7 +235,7 @@ describe('providers: ACP scenario builders (fs/search)', () => {
       expect(firstPrompt).toContain('First, use the Read tool');
       expect(firstPrompt).toContain('Do not use execute');
 
-      await scenario.setup?.({ workspaceDir });
+      await scenario.setup?.({ workspaceDir, cliHome: workspaceDir });
       await writeFile(join(workspaceDir, 'a.txt'), 'A_AFTER\n', 'utf8');
       await writeFile(join(workspaceDir, 'b.txt'), 'B_AFTER\n', 'utf8');
 
