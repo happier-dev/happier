@@ -3,7 +3,6 @@ import { useLocalSearchParams } from 'expo-router';
 import { SessionView } from '@/components/sessions/shell/SessionView';
 import { parseSessionPaneUrlState } from '@/components/sessions/panes/url/sessionPaneUrlState';
 
-
 export default React.memo(() => {
     const params = useLocalSearchParams<{
         id?: string | string[];
