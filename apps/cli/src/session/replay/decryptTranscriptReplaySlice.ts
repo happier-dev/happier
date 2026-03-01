@@ -7,11 +7,11 @@ type RawTranscriptRow = Readonly<{
   content?: unknown;
 }>;
 
-export function decryptTranscriptTextItems(params: Readonly<{
+export function decryptTranscriptReplaySlice(params: Readonly<{
   rows: readonly RawTranscriptRow[];
   encryptionKey?: Uint8Array;
   encryptionVariant?: 'dataKey';
   maxTextChars?: number;
-}>): HappierReplayDialogItem[] {
-  return decryptTranscriptReplayCore(params).dialog;
+}>): Readonly<{ dialog: HappierReplayDialogItem[]; latestSynopsisText: string | null }> {
+  return decryptTranscriptReplayCore(params);
 }

@@ -4,7 +4,7 @@ import { openSessionDataEncryptionKey } from '@/api/client/openSessionDataEncryp
 import { fetchSessionById } from '@/sessionControl/sessionsHttp';
 
 import { fetchEncryptedTranscriptMessages } from './fetchEncryptedTranscriptMessages';
-import { decryptTranscriptTextItems } from './decryptTranscriptTextItems';
+import { decryptTranscriptReplaySlice } from './decryptTranscriptReplaySlice';
 import type { HappierReplayDialogItem } from './types';
 
 export async function hydrateReplayDialogFromTranscript(params: Readonly<{
@@ -13,7 +13,7 @@ export async function hydrateReplayDialogFromTranscript(params: Readonly<{
   limit: number;
   maxTextChars?: number;
   upToSeqInclusive?: number;
-}>): Promise<{ dialog: HappierReplayDialogItem[]; sourceCutoffSeqInclusive: number } | null> {
+}>): Promise<{ dialog: HappierReplayDialogItem[]; sourceCutoffSeqInclusive: number; synopsisText?: string | null } | null> {
   const session = await fetchSessionById({ token: params.credentials.token, sessionId: params.previousSessionId });
   if (!session) return null;
 
@@ -37,8 +37,8 @@ export async function hydrateReplayDialogFromTranscript(params: Readonly<{
 
   const encryptionMode = (session as any)?.encryptionMode === 'plain' ? 'plain' : 'e2ee';
   if (encryptionMode === 'plain') {
-    const dialog = decryptTranscriptTextItems({ rows, maxTextChars: params.maxTextChars });
-    return { dialog, sourceCutoffSeqInclusive };
+    const slice = decryptTranscriptReplaySlice({ rows, maxTextChars: params.maxTextChars });
+    return { dialog: slice.dialog, sourceCutoffSeqInclusive, synopsisText: slice.latestSynopsisText };
   }
 
   if (params.credentials.encryption.type !== 'dataKey') {
@@ -56,12 +56,12 @@ export async function hydrateReplayDialogFromTranscript(params: Readonly<{
   });
   if (!dek) return null;
 
-  const dialog = decryptTranscriptTextItems({
+  const slice = decryptTranscriptReplaySlice({
     rows,
     encryptionKey: dek,
     encryptionVariant: 'dataKey',
     maxTextChars: params.maxTextChars,
   });
 
-  return { dialog, sourceCutoffSeqInclusive };
+  return { dialog: slice.dialog, sourceCutoffSeqInclusive, synopsisText: slice.latestSynopsisText };
 }
