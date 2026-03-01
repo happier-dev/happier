@@ -274,7 +274,7 @@ describe('runStandardAcpProvider', () => {
 
     await runStandardAcpProvider(harness.opts, harness.config, harness.deps);
 
-    expect(harness.metrics.queueResetCalls).toBe(1);
+    expect(harness.metrics.queueResetCalls).toBe(0);
     expect(harness.metrics.permissionResetCalls).toBe(1);
     expect(harness.metrics.archiveCalls).toBe(0);
   });

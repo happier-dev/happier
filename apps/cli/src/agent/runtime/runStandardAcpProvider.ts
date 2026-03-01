@@ -279,7 +279,6 @@ export async function runStandardAcpProvider(
     logger.debug(`${config.uiLogPrefix} Abort requested`);
     session.sendAgentMessage(config.agentMessageType, { type: 'turn_aborted', id: randomUUID() });
     permissionHandler.reset();
-    messageQueue.reset();
     try {
       abortController.abort();
       abortController = new AbortController();
