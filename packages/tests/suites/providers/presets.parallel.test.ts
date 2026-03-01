@@ -10,6 +10,7 @@ describe('providers: parallel preset helpers', () => {
   it('resolves all providers for all preset', () => {
     expect(resolveProviderPresetIds('all')).toEqual([
       'opencode',
+      'opencode_server',
       'claude',
       'codex',
       'kilo',
@@ -18,6 +19,7 @@ describe('providers: parallel preset helpers', () => {
       'kimi',
       'auggie',
       'pi',
+      'copilot',
     ]);
   });
 
@@ -47,6 +49,7 @@ describe('providers: parallel preset helpers', () => {
     expect(providerIds).not.toBeNull();
     expect(filterProviderIdsForScenarioSelection(providerIds!, 'acp_probe_models')).toEqual([
       'opencode',
+      'opencode_server',
       'codex',
       'kilo',
       'gemini',
@@ -54,6 +57,7 @@ describe('providers: parallel preset helpers', () => {
       'kimi',
       'auggie',
       'pi',
+      'copilot',
     ]);
   });
 
