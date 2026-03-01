@@ -22,14 +22,10 @@ export default function DeviceInfo() {
     const isRunningOnMacCatalyst = isRunningOnMac();
     const isPad = Platform.OS === 'ios' && (Platform as any).isPad === true;
     
-    // Calculate device dimensions using the correct function
     const dimensions = calculateDeviceDimensions({
         widthPoints: screenDimensions.width,
         heightPoints: screenDimensions.height,
-        pointsPerInch: Platform.OS === 'ios' ? 163 : 160
     });
-    
-    const { widthInches, heightInches, diagonalInches } = dimensions;
 
     const screenOptions = React.useMemo(() => {
         return {
@@ -70,7 +66,7 @@ export default function DeviceInfo() {
                     />
                     <Item
                         title="Detection Method"
-                        detail={isPad ? 'iOS isPad' : `${diagonalInches.toFixed(1)}" diagonal`}
+                        detail={isPad ? 'iOS isPad' : `minEdge>=600 (${dimensions.minEdgePoints}px)`}
                     />
                     <Item
                         title="Mac Catalyst"
@@ -81,24 +77,20 @@ export default function DeviceInfo() {
                         detail={`${headerHeight} points`}
                     />
                     <Item
-                        title="Diagonal Size"
-                        detail={`${diagonalInches.toFixed(2)} inches`}
+                        title="Min Edge"
+                        detail={`${dimensions.minEdgePoints}px`}
                     />
                     <Item
-                        title="Width (inches)"
-                        detail={`${widthInches.toFixed(2)}"`}
+                        title="Max Edge"
+                        detail={`${dimensions.maxEdgePoints}px`}
                     />
                     <Item
-                        title="Height (inches)"
-                        detail={`${heightInches.toFixed(2)}"`}
+                        title="Diagonal (points)"
+                        detail={`${dimensions.diagonalPoints.toFixed(2)}`}
                     />
                     <Item
                         title="Pixel Density"
                         detail={`${pixelDensity}x`}
-                    />
-                    <Item
-                        title="Points per Inch"
-                        detail={Platform.OS === 'ios' ? '163' : '160'}
                     />
                     <Item
                         title="Layout Max Width"
