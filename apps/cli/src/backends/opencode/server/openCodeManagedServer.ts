@@ -4,6 +4,32 @@ import { createServer } from 'node:net';
 
 import { logger } from '@/ui/logger';
 
+import { resolveOpenCodeManagedServerChildEnv } from './openCodeManagedServerEnv';
+
+async function waitForOkHealth(params: {
+  baseUrl: string;
+  timeoutMs: number;
+  pollIntervalMs: number;
+  signal?: AbortSignal;
+}): Promise<void> {
+  const deadline = Date.now() + params.timeoutMs;
+  while (Date.now() < deadline) {
+    if (params.signal?.aborted) throw new Error('Aborted while waiting for OpenCode server health');
+    try {
+      const ctrl = new AbortController();
+      const timer = setTimeout(() => ctrl.abort(), Math.min(1_500, params.pollIntervalMs * 5));
+      timer.unref?.();
+      const res = await fetch(`${params.baseUrl}/global/health`, { signal: ctrl.signal }).catch(() => null);
+      clearTimeout(timer);
+      if (res && res.ok) return;
+    } catch {
+      // ignore and retry until deadline
+    }
+    await new Promise((r) => setTimeout(r, params.pollIntervalMs));
+  }
+  throw new Error(`Timed out waiting for OpenCode server health after ${params.timeoutMs}ms`);
+}
+
 function readPositiveIntEnv(name: string): number | null {
   const raw = typeof process.env[name] === 'string' ? process.env[name]!.trim() : '';
   if (!raw) return null;
@@ -39,6 +65,8 @@ export async function startManagedOpenCodeServer(params: Readonly<{
   hostname?: string;
   port?: number;
   timeoutMs?: number;
+  xdgRootDir?: string | null;
+  isolateConfig?: boolean;
 }> = {}): Promise<{
   baseUrl: string;
   pid: number;
@@ -50,19 +78,23 @@ export async function startManagedOpenCodeServer(params: Readonly<{
     : await resolveEphemeralPort(hostname);
   const timeoutMs = typeof params.timeoutMs === 'number' && Number.isFinite(params.timeoutMs) && params.timeoutMs > 0
     ? Math.floor(params.timeoutMs)
-    : (readPositiveIntEnv('HAPPIER_OPENCODE_SERVER_START_TIMEOUT_MS') ?? 5_000);
+    : (readPositiveIntEnv('HAPPIER_OPENCODE_SERVER_START_TIMEOUT_MS') ?? 30_000);
 
   const cmd = resolveOpenCodeCommand();
   const args = [`serve`, `--hostname=${hostname}`, `--port=${port}`];
 
   logger.debug('[OpenCodeServer] Spawning managed server', { cmd, args });
 
+  const xdgRootDir = typeof params.xdgRootDir === 'string' ? params.xdgRootDir.trim() : '';
+  const isolateConfig = params.isolateConfig === true;
+  const childEnv = resolveOpenCodeManagedServerChildEnv({
+    baseEnv: process.env,
+    xdgRootDir: xdgRootDir.length > 0 ? xdgRootDir : null,
+    isolateConfig,
+  });
+
   const proc = spawn(cmd, args, {
-    env: {
-      ...process.env,
-      // Ensure the subprocess has a stable, explicit config envelope.
-      OPENCODE_CONFIG_CONTENT: process.env.OPENCODE_CONFIG_CONTENT ?? '{}',
-    },
+    env: childEnv,
     stdio: ['ignore', 'pipe', 'pipe'],
     detached: true,
   });
@@ -87,31 +119,23 @@ export async function startManagedOpenCodeServer(params: Readonly<{
     }
   };
 
-  const baseUrl = await new Promise<string>((resolve, reject) => {
+  const baseUrl = `http://${hostname}:${port}`;
+
+  await new Promise<void>((resolve, reject) => {
     const tag = randomUUID();
     const timer = setTimeout(() => {
       close();
-      reject(new Error(`Timeout waiting for OpenCode server to start after ${timeoutMs}ms (${tag})`));
+      reject(new Error(`Timeout waiting for OpenCode server to start after ${timeoutMs}ms (${tag}). Output:\n${output}`));
     }, timeoutMs);
     timer.unref?.();
 
     let output = '';
-    const tryParse = (chunk: Buffer) => {
+    const appendOutput = (chunk: Buffer) => {
       output += chunk.toString();
-      const lines = output.split('\n');
-      for (const line of lines) {
-        const trimmed = line.trim();
-        if (!trimmed.startsWith('opencode server listening')) continue;
-        const match = trimmed.match(/on\s+(https?:\/\/[^\s]+)/i);
-        if (!match) continue;
-        clearTimeout(timer);
-        resolve(match[1]!);
-        return;
-      }
     };
 
-    proc.stdout?.on('data', tryParse);
-    proc.stderr?.on('data', tryParse);
+    proc.stdout?.on('data', appendOutput);
+    proc.stderr?.on('data', appendOutput);
     proc.on('exit', (code) => {
       clearTimeout(timer);
       close();
@@ -122,6 +146,18 @@ export async function startManagedOpenCodeServer(params: Readonly<{
       close();
       reject(error);
     });
+
+    void waitForOkHealth({ baseUrl, timeoutMs, pollIntervalMs: 200 })
+      .then(() => {
+        clearTimeout(timer);
+        resolve();
+      })
+      .catch((error) => {
+        clearTimeout(timer);
+        close();
+        const message = error instanceof Error ? error.message : String(error);
+        reject(new Error(`OpenCode server did not become healthy: ${message}. Output:\\n${output}`));
+      });
   });
 
   try {
