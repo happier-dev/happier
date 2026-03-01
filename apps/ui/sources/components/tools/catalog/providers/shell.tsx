@@ -5,7 +5,7 @@ import * as z from 'zod';
 import { t } from '@/text';
 import { ICON_TERMINAL } from '../icons';
 import type { KnownToolDefinition } from '../_types';
-import { extractShellCommand } from '../../normalization/parse/shellCommand';
+import { extractShellCommand, stripShellCommandPreludeForDisplay } from '../../normalization/parse/shellCommand';
 
 export const providerShellTools = {
     'CodexBash': {
@@ -129,11 +129,11 @@ export const providerShellTools = {
                 // Title is often like "rm file.txt [cwd /path] (description)".
                 // Extract just the command part before [
                 const bracketIdx = acpTitle.indexOf(' [');
-                if (bracketIdx > 0) return acpTitle.substring(0, bracketIdx);
-                return acpTitle;
+                const rawTitle = bracketIdx > 0 ? acpTitle.substring(0, bracketIdx) : acpTitle;
+                return stripShellCommandPreludeForDisplay(rawTitle);
             }
             const cmd = extractShellCommand(opts.tool.input);
-            if (cmd) return cmd;
+            if (cmd) return stripShellCommandPreludeForDisplay(cmd);
             return t('tools.names.terminal');
         },
         icon: ICON_TERMINAL,
@@ -141,9 +141,8 @@ export const providerShellTools = {
         input: z.object({}).partial().passthrough(),
         extractSubtitle: (opts: { metadata: Metadata | null, tool: ToolCall }) => {
             const cmd = extractShellCommand(opts.tool.input);
-            if (cmd) return cmd;
+            if (cmd) return stripShellCommandPreludeForDisplay(cmd);
             return null;
         }
     },
 } satisfies Record<string, KnownToolDefinition>;
-
