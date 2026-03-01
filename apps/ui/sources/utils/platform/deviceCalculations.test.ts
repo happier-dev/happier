@@ -3,232 +3,116 @@ import { calculateDeviceDimensions, determineDeviceType, calculateHeaderHeight }
 
 describe('responsive utilities', () => {
     describe('calculateDeviceDimensions', () => {
-        it('should calculate dimensions correctly for standard phone (iPhone 13)', () => {
-            // iPhone 13: 390x844 points (logical pixels)
+        it('returns basic viewport metrics (iPhone 13 points)', () => {
+            // iPhone 13: 390x844 points
             const result = calculateDeviceDimensions({
                 widthPoints: 390,
                 heightPoints: 844,
-                pointsPerInch: 163 // iOS standard
             });
 
-            expect(result.widthInches).toBeCloseTo(2.393, 3); // 390/163
-            expect(result.heightInches).toBeCloseTo(5.178, 3); // 844/163
-            expect(result.diagonalInches).toBeCloseTo(5.704, 2); // ~5.7 inches
+            expect(result.minEdgePoints).toBe(390);
+            expect(result.maxEdgePoints).toBe(844);
+            expect(result.diagonalPoints).toBeCloseTo(Math.sqrt(390 * 390 + 844 * 844), 6);
         });
 
-        it('should calculate dimensions correctly for tablet (iPad Pro 11")', () => {
-            // iPad Pro 11": 834x1194 points
+        it('returns min/max edges regardless of orientation', () => {
             const result = calculateDeviceDimensions({
-                widthPoints: 834,
-                heightPoints: 1194,
-                pointsPerInch: 163 // iOS standard
+                widthPoints: 1194,
+                heightPoints: 834,
             });
 
-            expect(result.widthInches).toBeCloseTo(5.117, 3); // 834/163
-            expect(result.heightInches).toBeCloseTo(7.325, 3); // 1194/163
-            expect(result.diagonalInches).toBeCloseTo(8.935, 2); // ~8.9 inches (marketed as 11" diagonal screen)
+            expect(result.minEdgePoints).toBe(834);
+            expect(result.maxEdgePoints).toBe(1194);
         });
 
-        it('should calculate dimensions correctly for Android phone', () => {
-            // Typical Android phone: 360x800 dp (density-independent pixels)
+        it('handles non-finite inputs conservatively', () => {
             const result = calculateDeviceDimensions({
-                widthPoints: 360,
+                widthPoints: Number.NaN,
                 heightPoints: 800,
-                pointsPerInch: 160 // Android standard
             });
 
-            expect(result.widthInches).toBeCloseTo(2.25, 3); // 360/160
-            expect(result.heightInches).toBeCloseTo(5.0, 3); // 800/160
-            expect(result.diagonalInches).toBeCloseTo(5.483, 3); // ~5.5 inches
-        });
-
-        it('should calculate dimensions correctly for Android tablet', () => {
-            // Typical Android tablet: 800x1280 dp
-            const result = calculateDeviceDimensions({
-                widthPoints: 800,
-                heightPoints: 1280,
-                pointsPerInch: 160 // Android standard
-            });
-
-            expect(result.widthInches).toBeCloseTo(5.0, 4);
-            expect(result.heightInches).toBeCloseTo(8.0, 4);
-            expect(result.diagonalInches).toBeCloseTo(9.434, 4); // ~9.4 inches
-        });
-
-        it('should handle custom points per inch values', () => {
-            const result = calculateDeviceDimensions({
-                widthPoints: 1000,
-                heightPoints: 2000,
-                pointsPerInch: 96 // Custom value
-            });
-
-            expect(result.widthInches).toBeCloseTo(10.417, 3);
-            expect(result.heightInches).toBeCloseTo(20.833, 3);
-            expect(result.diagonalInches).toBeCloseTo(23.292, 2);
-        });
-
-        it('should handle very small screens', () => {
-            const result = calculateDeviceDimensions({
-                widthPoints: 320,
-                heightPoints: 480,
-                pointsPerInch: 160
-            });
-
-            expect(result.widthInches).toBeCloseTo(2.0, 4);
-            expect(result.heightInches).toBeCloseTo(3.0, 4);
-            expect(result.diagonalInches).toBeCloseTo(3.6056, 3);
+            expect(result.minEdgePoints).toBe(0);
+            expect(result.maxEdgePoints).toBe(800);
         });
     });
 
     describe('determineDeviceType', () => {
-        it('should identify small iPads (iPad Mini) as phones', () => {
+        it('treats iOS iPads as tablets (don’t special-case iPad mini)', () => {
             const result = determineDeviceType({
-                diagonalInches: 8.3, // iPad Mini diagonal
                 platform: 'ios',
-                isPad: true
-            });
-
-            expect(result).toBe('phone');
-        });
-
-        it('should identify large iPads as tablets', () => {
-            const result = determineDeviceType({
-                diagonalInches: 10.9, // iPad Air diagonal
-                platform: 'ios',
-                isPad: true
-            });
-
-            expect(result).toBe('tablet');
-        });
-
-        it('should identify large diagonal as tablet on Android', () => {
-            const result = determineDeviceType({
-                diagonalInches: 10.1, // Large Android tablet
-                platform: 'android'
-            });
-
-            expect(result).toBe('tablet');
-        });
-
-        it('should identify small diagonal as phone on Android', () => {
-            const result = determineDeviceType({
-                diagonalInches: 5.5,
-                platform: 'android'
-            });
-
-            expect(result).toBe('phone');
-        });
-
-        it('should respect custom tablet threshold', () => {
-            const result1 = determineDeviceType({
-                diagonalInches: 8.0,
-                platform: 'android',
-                tabletThresholdInches: 7.5
-            });
-            expect(result1).toBe('tablet');
-
-            const result2 = determineDeviceType({
-                diagonalInches: 8.0,
-                platform: 'android',
-                tabletThresholdInches: 8.5
-            });
-            expect(result2).toBe('phone');
-        });
-
-        it('should handle edge case at exact threshold', () => {
-            const result = determineDeviceType({
-                diagonalInches: 9.0,
-                platform: 'android'
-            });
-
-            expect(result).toBe('tablet');
-        });
-
-        it('should handle iOS non-iPad devices', () => {
-            const result = determineDeviceType({
-                diagonalInches: 5.8, // iPhone size
-                platform: 'ios',
-                isPad: false
-            });
-
-            expect(result).toBe('phone');
-        });
-
-        it('should handle web platform', () => {
-            const result = determineDeviceType({
-                diagonalInches: 15, // Large monitor
-                platform: 'web'
-            });
-
-            expect(result).toBe('tablet'); // Large screens are considered tablets
-        });
-    });
-
-    describe('integration scenarios', () => {
-        it('should correctly identify iPhone 13 Pro Max as phone', () => {
-            // iPhone 13 Pro Max: 428x926 points
-            const dimensions = calculateDeviceDimensions({
-                widthPoints: 428,
-                heightPoints: 926,
-                pointsPerInch: 163
-            });
-
-            const deviceType = determineDeviceType({
-                diagonalInches: dimensions.diagonalInches,
-                platform: 'ios',
-                isPad: false
-            });
-
-            expect(deviceType).toBe('phone');
-            expect(dimensions.diagonalInches).toBeCloseTo(6.258, 2); // ~6.3 inches
-            expect(dimensions.diagonalInches).toBeLessThan(7);
-        });
-
-        it('should correctly identify iPad Mini as phone', () => {
-            // iPad Mini: 744x1133 points
-            const dimensions = calculateDeviceDimensions({
+                isPad: true,
                 widthPoints: 744,
                 heightPoints: 1133,
-                pointsPerInch: 163
             });
 
-            const deviceType = determineDeviceType({
-                diagonalInches: dimensions.diagonalInches,
+            expect(result).toBe('tablet');
+        });
+
+        it('treats iOS iPads as phones when the window is narrow (split view)', () => {
+            const result = determineDeviceType({
                 platform: 'ios',
-                isPad: true
+                isPad: true,
+                widthPoints: 390,
+                heightPoints: 1133,
             });
 
-            expect(deviceType).toBe('phone'); // iPad Mini treated as phone
-            expect(dimensions.diagonalInches).toBeCloseTo(8.316, 2); // ~8.3 inches
+            expect(result).toBe('phone');
         });
 
-        it('should handle foldable devices appropriately', () => {
-            // Samsung Galaxy Fold (unfolded): typically around 673x884 dp
-            const dimensions = calculateDeviceDimensions({
-                widthPoints: 673,
-                heightPoints: 884,
-                pointsPerInch: 160
+        it('treats iOS phones as phones', () => {
+            const result = determineDeviceType({
+                platform: 'ios',
+                isPad: false,
+                widthPoints: 390,
+                heightPoints: 844,
             });
 
-            const deviceType = determineDeviceType({
-                diagonalInches: dimensions.diagonalInches,
-                platform: 'android'
-            });
-
-            // Unfolded state diagonal is around 6.9 inches
-            expect(dimensions.diagonalInches).toBeCloseTo(6.944, 2);
-            // With 9" threshold, it's classified as phone
-            expect(deviceType).toBe('phone');
+            expect(result).toBe('phone');
         });
 
-        it('should identify Galaxy Z Fold as phone when unfolded', () => {
-            // Galaxy Z Fold5 unfolded: 7.6" diagonal screen
-            const deviceType = determineDeviceType({
-                diagonalInches: 7.6,
-                platform: 'android'
+        it('uses min edge threshold on Android', () => {
+            const result = determineDeviceType({
+                platform: 'android',
+                widthPoints: 800,
+                heightPoints: 1280,
             });
 
-            expect(deviceType).toBe('phone'); // Foldables are phones
+            expect(result).toBe('tablet');
+        });
+
+        it('treats Android phones as phones', () => {
+            const result = determineDeviceType({
+                platform: 'android',
+                widthPoints: 360,
+                heightPoints: 800,
+            });
+
+            expect(result).toBe('phone');
+        });
+
+        it('uses min edge threshold on web to avoid landscape-phone false positives', () => {
+            expect(determineDeviceType({
+                platform: 'web',
+                widthPoints: 800,
+                heightPoints: 600,
+            })).toBe('tablet');
+
+            expect(determineDeviceType({
+                platform: 'web',
+                widthPoints: 812,
+                heightPoints: 375,
+            })).toBe('phone');
+        });
+
+        it('respects custom min-edge threshold and handles exact edge', () => {
+            const result = determineDeviceType({
+                platform: 'android',
+                widthPoints: 600,
+                heightPoints: 900,
+                tabletMinEdgePoints: 600,
+            });
+
+            expect(result).toBe('tablet');
         });
     });
 

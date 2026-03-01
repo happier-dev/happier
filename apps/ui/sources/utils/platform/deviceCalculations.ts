@@ -1,54 +1,36 @@
-// Pure calculation functions for device dimensions
-// These functions have no dependencies on React Native or platform-specific APIs
+// Pure calculation functions for viewport sizing.
+// These functions have no dependencies on React Native or platform-specific APIs.
 
-// Calculate device dimensions in inches
+import { VIEWPORT_CLASS_MIN_EDGE_BREAKPOINTS_PX } from './viewportClass';
+
 export function calculateDeviceDimensions(params: {
-    widthPoints: number;  // Logical points (what RN Dimensions.get returns)
-    heightPoints: number; // Logical points (what RN Dimensions.get returns)
-    pointsPerInch?: number; // Default is 160 for Android, 163 for iOS
+    widthPoints: number;
+    heightPoints: number;
 }): {
-    widthInches: number;
-    heightInches: number;
-    diagonalInches: number;
+    minEdgePoints: number;
+    maxEdgePoints: number;
+    diagonalPoints: number;
 } {
-    const { widthPoints, heightPoints, pointsPerInch = 160 } = params;
-    
-    // React Native Dimensions are in points, not pixels
-    // Points are density-independent units
-    // On iOS: 1 point = 1/163 inch (Retina displays)
-    // On Android: 1 point = 1/160 inch (dp/dip)
-    // pixelDensity from PixelRatio.get() is the scale factor (e.g., 2x, 3x)
-    // but it doesn't affect the inch calculation since we're already in points
-    
-    const widthInches = widthPoints / pointsPerInch;
-    const heightInches = heightPoints / pointsPerInch;
-    const diagonalInches = Math.sqrt(widthInches * widthInches + heightInches * heightInches);
-    
-    return {
-        widthInches,
-        heightInches,
-        diagonalInches
-    };
+    const width = Number.isFinite(params.widthPoints) ? Math.max(0, Math.abs(params.widthPoints)) : 0;
+    const height = Number.isFinite(params.heightPoints) ? Math.max(0, Math.abs(params.heightPoints)) : 0;
+    const minEdgePoints = Math.min(width, height);
+    const maxEdgePoints = Math.max(width, height);
+    const diagonalPoints = Math.sqrt(width * width + height * height);
+    return { minEdgePoints, maxEdgePoints, diagonalPoints };
 }
 
-// Determine device type based on dimensions and platform
 export function determineDeviceType(params: {
-    diagonalInches: number;
     platform: string;
+    widthPoints: number;
+    heightPoints: number;
     isPad?: boolean;
-    tabletThresholdInches?: number; // Default is 9 inches
+    tabletMinEdgePoints?: number; // Default aligns with viewport-class `tabletMin`
 }): 'phone' | 'tablet' {
-    const { diagonalInches, platform, isPad, tabletThresholdInches = 9 } = params;
-    
-    // iOS-specific check: iPads with diagonal > 9" are tablets
-    // This treats iPad Mini (7.9-8.3") as a phone
-    if (platform === 'ios' && isPad) {
-        return diagonalInches > 9 ? 'tablet' : 'phone';
-    }
-    
-    // General check: devices with diagonal >= threshold are tablets
-    // 9" threshold ensures foldables (typically 7-8") are treated as phones
-    return diagonalInches >= tabletThresholdInches ? 'tablet' : 'phone';
+    const { tabletMinEdgePoints = VIEWPORT_CLASS_MIN_EDGE_BREAKPOINTS_PX.tabletMin } = params;
+
+    const metrics = calculateDeviceDimensions({ widthPoints: params.widthPoints, heightPoints: params.heightPoints });
+    if (!Number.isFinite(metrics.minEdgePoints) || metrics.minEdgePoints <= 0) return 'phone';
+    return metrics.minEdgePoints >= tabletMinEdgePoints ? 'tablet' : 'phone';
 }
 
 // Calculate header height based on platform, device info, and orientation
