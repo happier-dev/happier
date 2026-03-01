@@ -3,12 +3,12 @@ import { describe, expect, it } from "vitest";
 import { resolveConnectedServicesFeature } from "./connectedServicesFeature";
 
 describe("resolveConnectedServicesFeature", () => {
-    it("defaults to connected services enabled (including quotas)", () => {
+    it("defaults to connected services enabled (quotas disabled)", () => {
         const feature = resolveConnectedServicesFeature({} as NodeJS.ProcessEnv);
 
         expect(feature.features?.connectedServices).toEqual({
             enabled: true,
-            quotas: { enabled: true },
+            quotas: { enabled: false },
         });
     });
 
