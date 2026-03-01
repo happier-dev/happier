@@ -56,7 +56,7 @@ export function CommandPaletteProvider({ children }: { children: React.ReactNode
                 execute: (actionId, parameters, ctx) => actionExecutor.execute(actionId as any, parameters, ctx),
             },
             alert: async (title, message) => {
-                await Modal.alert(title, message);
+                await Modal.alertAsync(title, message);
             },
         });
     }, [segments, sessions, executionRunsEnabled, voiceEnabled, memorySearchEnabled, router, navigateToSession, logout, actionExecutor]);
