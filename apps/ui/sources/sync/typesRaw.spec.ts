@@ -45,14 +45,14 @@ describe('Zod Transform - WOLOG Content Normalization', () => {
             const result = RawRecordSchema.safeParse(message);
 
             expect(result.success).toBe(true);
-            if (result.success) {
-                const content = result.data.content;
-                if (content.type === 'output' && content.data.type === 'assistant') {
-                    const firstItem = content.data.message.content[0];
-                    expect(firstItem.type).toBe('tool_use');
-                    if (firstItem.type === 'tool_use') {
-                        expect(firstItem.id).toBe('call_abc123');  // callId → id
-                        expect(firstItem.name).toBe('Bash');
+              if (result.success) {
+                  const content = result.data.content;
+                  if (content.type === 'output' && content.data.type === 'assistant') {
+                      const firstItem = (content.data as any).message.content[0];
+                      expect(firstItem.type).toBe('tool_use');
+                      if (firstItem.type === 'tool_use') {
+                          expect(firstItem.id).toBe('call_abc123');  // callId → id
+                          expect(firstItem.name).toBe('Bash');
                         expect(firstItem.input).toEqual({ command: 'ls -la' });
                     }
                 }
@@ -83,14 +83,14 @@ describe('Zod Transform - WOLOG Content Normalization', () => {
             const result = RawRecordSchema.safeParse(message);
 
             expect(result.success).toBe(true);
-            if (result.success) {
-                const content = result.data.content;
-                if (content.type === 'output' && content.data.type === 'user') {
-                    const msgContent = content.data.message.content;
-                    if (Array.isArray(msgContent) && msgContent[0].type === 'tool_result') {
-                        expect(msgContent[0].type).toBe('tool_result');
-                        expect(msgContent[0].tool_use_id).toBe('call_abc123');  // callId → tool_use_id
-                        expect(msgContent[0].content).toBe('file1.txt\nfile2.txt');  // output → content
+              if (result.success) {
+                  const content = result.data.content;
+                  if (content.type === 'output' && content.data.type === 'user') {
+                      const msgContent = (content.data as any).message.content;
+                      if (Array.isArray(msgContent) && msgContent[0].type === 'tool_result') {
+                          expect(msgContent[0].type).toBe('tool_result');
+                          expect(msgContent[0].tool_use_id).toBe('call_abc123');  // callId → tool_use_id
+                          expect(msgContent[0].content).toBe('file1.txt\nfile2.txt');  // output → content
                         expect(msgContent[0].is_error).toBe(false);
                     }
                 }
@@ -124,14 +124,14 @@ describe('Zod Transform - WOLOG Content Normalization', () => {
             const result = RawRecordSchema.safeParse(message);
 
             expect(result.success).toBe(true);
-            if (result.success) {
-                const content = result.data.content;
-                if (content.type === 'output' && content.data.type === 'assistant') {
-                    const firstItem: any = content.data.message.content[0];
-                    expect(firstItem.type).toBe('tool_use');
-                    expect(firstItem.id).toBe('call_xyz');
-                    // Verify unknown fields are preserved
-                    expect(firstItem.futureField).toBe('some_value');
+              if (result.success) {
+                  const content = result.data.content;
+                  if (content.type === 'output' && content.data.type === 'assistant') {
+                      const firstItem: any = (content.data as any).message.content[0];
+                      expect(firstItem.type).toBe('tool_use');
+                      expect(firstItem.id).toBe('call_xyz');
+                      // Verify unknown fields are preserved
+                      expect(firstItem.futureField).toBe('some_value');
                     expect(firstItem.metadata).toEqual({ timestamp: 123 });
                 }
             }
@@ -195,14 +195,14 @@ describe('Zod Transform - WOLOG Content Normalization', () => {
             const result = RawRecordSchema.safeParse(message);
 
             expect(result.success).toBe(true);
-            if (result.success) {
-                const content = result.data.content;
-                if (content.type === 'output' && content.data.type === 'assistant') {
-                    const firstItem = content.data.message.content[0];
-                    expect(firstItem.type).toBe('tool_use');
-                    if (firstItem.type === 'tool_use') {
-                        expect(firstItem.id).toBe('call_123');
-                        expect(firstItem.name).toBe('Write');
+              if (result.success) {
+                  const content = result.data.content;
+                  if (content.type === 'output' && content.data.type === 'assistant') {
+                      const firstItem = (content.data as any).message.content[0];
+                      expect(firstItem.type).toBe('tool_use');
+                      if (firstItem.type === 'tool_use') {
+                          expect(firstItem.id).toBe('call_123');
+                          expect(firstItem.name).toBe('Write');
                     }
                 }
             }
@@ -232,14 +232,14 @@ describe('Zod Transform - WOLOG Content Normalization', () => {
             const result = RawRecordSchema.safeParse(message);
 
             expect(result.success).toBe(true);
-            if (result.success) {
-                const content = result.data.content;
-                if (content.type === 'output' && content.data.type === 'user') {
-                    const msgContent = content.data.message.content;
-                    if (Array.isArray(msgContent) && msgContent[0].type === 'tool_result') {
-                        expect(msgContent[0].type).toBe('tool_result');
-                        expect(msgContent[0].tool_use_id).toBe('call_123');
-                        expect(msgContent[0].content).toBe('Success');
+              if (result.success) {
+                  const content = result.data.content;
+                  if (content.type === 'output' && content.data.type === 'user') {
+                      const msgContent = (content.data as any).message.content;
+                      if (Array.isArray(msgContent) && msgContent[0].type === 'tool_result') {
+                          expect(msgContent[0].type).toBe('tool_result');
+                          expect(msgContent[0].tool_use_id).toBe('call_123');
+                          expect(msgContent[0].content).toBe('Success');
                     }
                 }
             }
@@ -268,14 +268,14 @@ describe('Zod Transform - WOLOG Content Normalization', () => {
             const result = RawRecordSchema.safeParse(message);
 
             expect(result.success).toBe(true);
-            if (result.success) {
-                const content = result.data.content;
-                if (content.type === 'output' && content.data.type === 'assistant') {
-                    const firstItem = content.data.message.content[0];
-                    expect(firstItem.type).toBe('text');
-                    if (firstItem.type === 'text') {
-                        expect(firstItem.text).toBe('Hello world');
-                    }
+              if (result.success) {
+                  const content = result.data.content;
+                  if (content.type === 'output' && content.data.type === 'assistant') {
+                      const firstItem = (content.data as any).message.content[0];
+                      expect(firstItem.type).toBe('text');
+                      if (firstItem.type === 'text') {
+                          expect(firstItem.text).toBe('Hello world');
+                      }
                 }
             }
         });
@@ -341,13 +341,13 @@ describe('Zod Transform - WOLOG Content Normalization', () => {
             const result = RawRecordSchema.safeParse(message);
 
             expect(result.success).toBe(true);
-            if (result.success) {
-                const content = result.data.content;
-                if (content.type === 'output' && content.data.type === 'assistant') {
-                    const items = content.data.message.content;
+              if (result.success) {
+                  const content = result.data.content;
+                  if (content.type === 'output' && content.data.type === 'assistant') {
+                      const items = (content.data as any).message.content;
 
-                    // Text passes through
-                    expect(items[0].type).toBe('text');
+                      // Text passes through
+                      expect(items[0].type).toBe('text');
 
                     // tool-call transformed to tool_use
                     expect(items[1].type).toBe('tool_use');
@@ -386,13 +386,13 @@ describe('Zod Transform - WOLOG Content Normalization', () => {
             const result = RawRecordSchema.safeParse(message);
 
             expect(result.success).toBe(true);
-            if (result.success) {
-                const content = result.data.content;
-                if (content.type === 'output' && content.data.type === 'user') {
-                    const items = content.data.message.content;
-                    if (Array.isArray(items)) {
-                        // Both normalized to tool_result
-                        expect(items[0].type).toBe('tool_result');
+              if (result.success) {
+                  const content = result.data.content;
+                  if (content.type === 'output' && content.data.type === 'user') {
+                      const items = (content.data as any).message.content;
+                      if (Array.isArray(items)) {
+                          // Both normalized to tool_result
+                          expect(items[0].type).toBe('tool_result');
                         if (items[0].type === 'tool_result') {
                             expect(items[0].tool_use_id).toBe('call_1');
                             expect(items[0].content).toBe('result1');
@@ -432,14 +432,14 @@ describe('Zod Transform - WOLOG Content Normalization', () => {
             const result = RawRecordSchema.safeParse(oldCliMessage);
 
             expect(result.success).toBe(true);
-            if (result.success) {
-                const content = result.data.content;
-                if (content.type === 'output' && content.data.type === 'assistant') {
-                    const firstItem = content.data.message.content[0];
-                    expect(firstItem.type).toBe('tool_use');
-                    if (firstItem.type === 'tool_use') {
-                        expect(firstItem.id).toBe('call_old');
-                    }
+              if (result.success) {
+                  const content = result.data.content;
+                  if (content.type === 'output' && content.data.type === 'assistant') {
+                      const firstItem = (content.data as any).message.content[0];
+                      expect(firstItem.type).toBe('tool_use');
+                      if (firstItem.type === 'tool_use') {
+                          expect(firstItem.id).toBe('call_old');
+                      }
                 }
             }
         });
@@ -556,14 +556,14 @@ describe('Zod Transform - WOLOG Content Normalization', () => {
             const result = RawRecordSchema.safeParse(message);
 
             expect(result.success).toBe(true);
-            if (result.success) {
-                const content = result.data.content;
-                if (content.type === 'output' && content.data.type === 'assistant') {
-                    const firstItem = content.data.message.content[0];
-                    expect(firstItem.type).toBe('tool_use');
-                    if (firstItem.type === 'tool_use') {
-                        // Should use callId as the canonical id
-                        expect(firstItem.id).toBe('primary_id');
+              if (result.success) {
+                  const content = result.data.content;
+                  if (content.type === 'output' && content.data.type === 'assistant') {
+                      const firstItem = (content.data as any).message.content[0];
+                      expect(firstItem.type).toBe('tool_use');
+                      if (firstItem.type === 'tool_use') {
+                          // Should use callId as the canonical id
+                          expect(firstItem.id).toBe('primary_id');
                     }
                 }
             }
@@ -594,14 +594,14 @@ describe('Zod Transform - WOLOG Content Normalization', () => {
             const result = RawRecordSchema.safeParse(message);
 
             expect(result.success).toBe(true);
-            if (result.success) {
-                const content = result.data.content;
-                if (content.type === 'output' && content.data.type === 'user') {
-                    const msgContent = content.data.message.content;
-                    if (Array.isArray(msgContent) && msgContent[0].type === 'tool_result') {
-                        // Should use output as the canonical content
-                        expect(msgContent[0].content).toBe('primary_output');
-                    }
+              if (result.success) {
+                  const content = result.data.content;
+                  if (content.type === 'output' && content.data.type === 'user') {
+                      const msgContent = (content.data as any).message.content;
+                      if (Array.isArray(msgContent) && msgContent[0].type === 'tool_result') {
+                          // Should use output as the canonical content
+                          expect(msgContent[0].content).toBe('primary_output');
+                      }
                 }
             }
         });
@@ -630,14 +630,14 @@ describe('Zod Transform - WOLOG Content Normalization', () => {
             const result = RawRecordSchema.safeParse(message);
 
             expect(result.success).toBe(true);
-            if (result.success) {
-                const content = result.data.content;
-                if (content.type === 'output' && content.data.type === 'user') {
-                    const msgContent = content.data.message.content;
-                    if (Array.isArray(msgContent) && msgContent[0].type === 'tool_result') {
-                        // Should default is_error to false
-                        expect(msgContent[0].is_error).toBe(false);
-                    }
+              if (result.success) {
+                  const content = result.data.content;
+                  if (content.type === 'output' && content.data.type === 'user') {
+                      const msgContent = (content.data as any).message.content;
+                      if (Array.isArray(msgContent) && msgContent[0].type === 'tool_result') {
+                          // Should default is_error to false
+                          expect(msgContent[0].is_error).toBe(false);
+                      }
                 }
             }
         });
@@ -745,16 +745,16 @@ describe('Zod Transform - WOLOG Content Normalization', () => {
             const result = RawRecordSchema.safeParse(realMessage);
 
             expect(result.success).toBe(true);
-            if (result.success) {
-                expect(result.data.role).toBe('agent');
-                expect(result.data.content.type).toBe('output');
-                if (result.data.content.type === 'output' && result.data.content.data.type === 'assistant') {
-                    const content = result.data.content.data.message.content;
-                    expect(content.length).toBe(2);
-                    expect(content[0].type).toBe('text');
-                    expect(content[1].type).toBe('tool_use');
-                    if (content[1].type === 'tool_use') {
-                        expect(content[1].id).toBe('toolu_01ABC123');
+              if (result.success) {
+                  expect(result.data.role).toBe('agent');
+                  expect(result.data.content.type).toBe('output');
+                  if (result.data.content.type === 'output' && result.data.content.data.type === 'assistant') {
+                      const content = (result.data.content.data as any).message.content;
+                      expect(content.length).toBe(2);
+                      expect(content[0].type).toBe('text');
+                      expect(content[1].type).toBe('tool_use');
+                      if (content[1].type === 'tool_use') {
+                          expect(content[1].id).toBe('toolu_01ABC123');
                     }
                 }
             }
@@ -819,15 +819,15 @@ describe('Zod Transform - WOLOG Content Normalization', () => {
                 }
             };
 
-            const result = RawRecordSchema.safeParse(realMessage);
+              const result = RawRecordSchema.safeParse(realMessage);
 
-            expect(result.success).toBe(true);
-            if (result.success && result.data.content.type === 'output' && result.data.content.data.type === 'user') {
-                const content = result.data.content.data.message.content;
-                if (Array.isArray(content) && content[0].type === 'tool_result') {
-                    expect(content[0].type).toBe('tool_result');
-                    expect(content[0].tool_use_id).toBe('toolu_01ABC123');
-                    expect(content[0].permissions).toBeDefined();
+              expect(result.success).toBe(true);
+              if (result.success && result.data.content.type === 'output' && result.data.content.data.type === 'user') {
+                  const content = (result.data.content.data as any).message.content;
+                  if (Array.isArray(content) && content[0].type === 'tool_result') {
+                      expect(content[0].type).toBe('tool_result');
+                      expect(content[0].tool_use_id).toBe('toolu_01ABC123');
+                      expect(content[0].permissions).toBeDefined();
                 }
             }
         });
@@ -894,15 +894,15 @@ describe('Zod Transform - WOLOG Content Normalization', () => {
                 }
             };
 
-            const result = RawRecordSchema.safeParse(futureMessage);
+              const result = RawRecordSchema.safeParse(futureMessage);
 
-            expect(result.success).toBe(true);
-            if (result.success && result.data.content.type === 'output' && result.data.content.data.type === 'assistant') {
-                const item: any = result.data.content.data.message.content[0];
-                expect(item.type).toBe('tool_use');
-                // Unknown fields should be preserved
-                expect(item.priority).toBe('high');
-                expect(item.timeout).toBe(30000);
+              expect(result.success).toBe(true);
+              if (result.success && result.data.content.type === 'output' && result.data.content.data.type === 'assistant') {
+                  const item: any = (result.data.content.data as any).message.content[0];
+                  expect(item.type).toBe('tool_use');
+                  // Unknown fields should be preserved
+                  expect(item.priority).toBe('high');
+                  expect(item.timeout).toBe(30000);
                 expect(item.metadata).toEqual({ version: '2.0' });
             }
         });
@@ -924,13 +924,13 @@ describe('Zod Transform - WOLOG Content Normalization', () => {
                 }
             };
 
-            const result = RawRecordSchema.safeParse(emptyMessage);
+              const result = RawRecordSchema.safeParse(emptyMessage);
 
-            expect(result.success).toBe(true);
-            if (result.success && result.data.content.type === 'output' && result.data.content.data.type === 'assistant') {
-                expect(result.data.content.data.message.content).toEqual([]);
-            }
-        });
+              expect(result.success).toBe(true);
+              if (result.success && result.data.content.type === 'output' && result.data.content.data.type === 'assistant') {
+                  expect((result.data.content.data as any).message.content).toEqual([]);
+              }
+          });
 
         it('handles string content in user messages (not array)', () => {
             const stringContentMessage = {
@@ -948,13 +948,13 @@ describe('Zod Transform - WOLOG Content Normalization', () => {
                 }
             };
 
-            const result = RawRecordSchema.safeParse(stringContentMessage);
+              const result = RawRecordSchema.safeParse(stringContentMessage);
 
-            expect(result.success).toBe(true);
-            if (result.success && result.data.content.type === 'output' && result.data.content.data.type === 'user') {
-                expect(result.data.content.data.message.content).toBe('Plain string message');
-            }
-        });
+              expect(result.success).toBe(true);
+              if (result.success && result.data.content.type === 'output' && result.data.content.data.type === 'user') {
+                  expect((result.data.content.data as any).message.content).toBe('Plain string message');
+              }
+          });
 
         it('handles system messages (no transformation needed)', () => {
             const systemMessage = {
@@ -1067,15 +1067,15 @@ describe('Zod Transform - WOLOG Content Normalization', () => {
                 }
             };
 
-            const result = RawRecordSchema.safeParse(messageWithPermissions);
+              const result = RawRecordSchema.safeParse(messageWithPermissions);
 
-            expect(result.success).toBe(true);
-            if (result.success && result.data.content.type === 'output' && result.data.content.data.type === 'user') {
-                const content = result.data.content.data.message.content;
-                if (Array.isArray(content) && content[0].type === 'tool_result') {
-                    expect(content[0].permissions).toBeDefined();
-                    expect(content[0].permissions?.result).toBe('approved');
-                    expect(content[0].permissions?.mode).toBe('acceptEdits');
+              expect(result.success).toBe(true);
+              if (result.success && result.data.content.type === 'output' && result.data.content.data.type === 'user') {
+                  const content = (result.data.content.data as any).message.content;
+                  if (Array.isArray(content) && content[0].type === 'tool_result') {
+                      expect(content[0].permissions).toBeDefined();
+                      expect(content[0].permissions?.result).toBe('approved');
+                      expect(content[0].permissions?.mode).toBe('acceptEdits');
                     expect(content[0].permissions?.allowedTools).toEqual(['Read', 'Write']);
                 }
             }
@@ -1105,16 +1105,16 @@ describe('Zod Transform - WOLOG Content Normalization', () => {
                 }
             };
 
-            const result = RawRecordSchema.safeParse(messageWithArrayContent);
+              const result = RawRecordSchema.safeParse(messageWithArrayContent);
 
-            expect(result.success).toBe(true);
-            if (result.success && result.data.content.type === 'output' && result.data.content.data.type === 'user') {
-                const content = result.data.content.data.message.content;
-                if (Array.isArray(content) && content[0].type === 'tool_result') {
-                    expect(Array.isArray(content[0].content)).toBe(true);
-                    if (Array.isArray(content[0].content)) {
-                        expect(content[0].content.length).toBe(2);
-                        expect(content[0].content[0].text).toBe('First block');
+              expect(result.success).toBe(true);
+              if (result.success && result.data.content.type === 'output' && result.data.content.data.type === 'user') {
+                  const content = (result.data.content.data as any).message.content;
+                  if (Array.isArray(content) && content[0].type === 'tool_result') {
+                      expect(Array.isArray(content[0].content)).toBe(true);
+                      if (Array.isArray(content[0].content)) {
+                          expect(content[0].content.length).toBe(2);
+                          expect(content[0].content[0].text).toBe('First block');
                     }
                 }
             }
@@ -1174,12 +1174,12 @@ describe('Zod Transform - WOLOG Content Normalization', () => {
 
             const result = RawRecordSchema.safeParse(claudeMessage);
 
-            expect(result.success).toBe(true);
-            // Verify underscore types remain unchanged (idempotent)
-            if (result.success && result.data.content.type === 'output' && result.data.content.data.type === 'assistant') {
-                expect(result.data.content.data.message.content[0].type).toBe('tool_use');
-            }
-        });
+              expect(result.success).toBe(true);
+              // Verify underscore types remain unchanged (idempotent)
+              if (result.success && result.data.content.type === 'output' && result.data.content.data.type === 'assistant') {
+                  expect((result.data.content.data as any).message.content[0].type).toBe('tool_use');
+              }
+          });
 
         it('Codex (hyphenated via codex path) uses native schema', () => {
             const codexMessage = {
@@ -1221,13 +1221,13 @@ describe('Zod Transform - WOLOG Content Normalization', () => {
                 }
             };
 
-            const result = RawRecordSchema.safeParse(geminiMessage);
+              const result = RawRecordSchema.safeParse(geminiMessage);
 
-            expect(result.success).toBe(true);
-            if (result.success && result.data.content.type === 'codex' && result.data.content.data.type === 'message') {
-                expect(result.data.content.data.message).toBe('Gemini reasoning output');
-            }
-        });
+              expect(result.success).toBe(true);
+              if (result.success && result.data.content.type === 'codex' && result.data.content.data.type === 'message') {
+                  expect((result.data.content.data as any).message).toBe('Gemini reasoning output');
+              }
+          });
 
         it('handles hypothetical hyphenated types in output path (defensive)', () => {
             // This tests the defensive nature of the transform
@@ -1253,16 +1253,16 @@ describe('Zod Transform - WOLOG Content Normalization', () => {
                 }
             };
 
-            const result = RawRecordSchema.safeParse(hypotheticalMessage);
+              const result = RawRecordSchema.safeParse(hypotheticalMessage);
 
-            expect(result.success).toBe(true);
-            if (result.success && result.data.content.type === 'output' && result.data.content.data.type === 'assistant') {
-                // Should transform to tool_use
-                const item = result.data.content.data.message.content[0];
-                expect(item.type).toBe('tool_use');
-                if (item.type === 'tool_use') {
-                    expect(item.id).toBe('defensive_test');
-                }
+              expect(result.success).toBe(true);
+              if (result.success && result.data.content.type === 'output' && result.data.content.data.type === 'assistant') {
+                  // Should transform to tool_use
+                  const item = (result.data.content.data as any).message.content[0];
+                  expect(item.type).toBe('tool_use');
+                  if (item.type === 'tool_use') {
+                      expect(item.id).toBe('defensive_test');
+                  }
             }
         });
     });
@@ -1290,14 +1290,14 @@ describe('Zod Transform - WOLOG Content Normalization', () => {
 
             const result = RawRecordSchema.safeParse(canonicalMessage);
 
-            expect(result.success).toBe(true);
-            // Verify output format matches what old preprocessing would produce
-            if (result.success && result.data.content.type === 'output' && result.data.content.data.type === 'assistant') {
-                const content = result.data.content.data.message.content;
-                expect(content[0].type).toBe('text');
-                if (content[0].type === 'text') {
-                    expect(content[0].text).toBe('Hello');
-                }
+              expect(result.success).toBe(true);
+              // Verify output format matches what old preprocessing would produce
+              if (result.success && result.data.content.type === 'output' && result.data.content.data.type === 'assistant') {
+                  const content = (result.data.content.data as any).message.content;
+                  expect(content[0].type).toBe('text');
+                  if (content[0].type === 'text') {
+                      expect(content[0].text).toBe('Hello');
+                  }
                 expect(content[1].type).toBe('tool_use');
                 if (content[1].type === 'tool_use') {
                     expect(content[1].id).toBe('c1');
@@ -1396,16 +1396,16 @@ describe('Zod Transform - WOLOG Content Normalization', () => {
                 }
             };
 
-            const result = RawRecordSchema.safeParse(thinkingWithUnknownFields);
+              const result = RawRecordSchema.safeParse(thinkingWithUnknownFields);
 
-            expect(result.success).toBe(true);
-            if (result.success && result.data.content.type === 'output' && result.data.content.data.type === 'assistant') {
-                const thinkingContent = result.data.content.data.message.content[0];
-                if (thinkingContent.type === 'thinking') {
-                    // Verify unknown fields preserved
-                    expect((thinkingContent as any).signature).toBe('EqkCCkYICxgCKkB...');
-                    expect((thinkingContent as any).futureField).toBe('some_value');
-                }
+              expect(result.success).toBe(true);
+              if (result.success && result.data.content.type === 'output' && result.data.content.data.type === 'assistant') {
+                  const thinkingContent = (result.data.content.data as any).message.content[0];
+                  if (thinkingContent.type === 'thinking') {
+                      // Verify unknown fields preserved
+                      expect((thinkingContent as any).signature).toBe('EqkCCkYICxgCKkB...');
+                      expect((thinkingContent as any).futureField).toBe('some_value');
+                  }
             }
         });
 
@@ -1433,15 +1433,15 @@ describe('Zod Transform - WOLOG Content Normalization', () => {
                 }
             };
 
-            const result = RawRecordSchema.safeParse(toolCallWithUnknownFields);
+              const result = RawRecordSchema.safeParse(toolCallWithUnknownFields);
 
-            expect(result.success).toBe(true);
-            if (result.success && result.data.content.type === 'output' && result.data.content.data.type === 'assistant') {
-                const toolUseContent = result.data.content.data.message.content[0];
-                if (toolUseContent.type === 'tool_use') {
-                    // Verify transform preserved unknown fields
-                    expect(toolUseContent.id).toBe('test-call');
-                    expect((toolUseContent as any).metadata).toEqual({ timestamp: 123 });
+              expect(result.success).toBe(true);
+              if (result.success && result.data.content.type === 'output' && result.data.content.data.type === 'assistant') {
+                  const toolUseContent = (result.data.content.data as any).message.content[0];
+                  if (toolUseContent.type === 'tool_use') {
+                      // Verify transform preserved unknown fields
+                      expect(toolUseContent.id).toBe('test-call');
+                      expect((toolUseContent as any).metadata).toEqual({ timestamp: 123 });
                     expect((toolUseContent as any).customField).toBe('custom_value');
                 }
             }

@@ -178,16 +178,58 @@ const rawAgentContentSchema = z.union([
 ]);
 export type RawAgentContent = z.infer<typeof rawAgentContentSchema>;
 
+const KNOWN_OUTPUT_DATA_TYPES = new Set([
+    'system',
+    'result',
+    'summary',
+    'progress',
+    'assistant',
+    'user',
+] as const);
+
+type UnknownOutputDataType = string & { readonly __happierUnknownOutputDataType: unique symbol };
+
+const rawAgentOutputDataKnownSchema = z.discriminatedUnion('type', [
+    z.object({ type: z.literal('system') }),
+    z.object({ type: z.literal('result') }),
+    z.object({ type: z.literal('summary'), summary: z.string() }),
+    z.object({ type: z.literal('progress') }).passthrough(),
+    z.object({
+        type: z.literal('assistant'),
+        message: z.object({
+            role: z.literal('assistant'),
+            model: z.string(),
+            // Fail-soft: upstream providers occasionally emit malformed `assistant` payloads (e.g. `content: string`).
+            // We accept unknown shapes here and let `normalizeRawMessage` drop them safely.
+            content: z.union([z.array(rawAgentContentSchema), z.any()]),
+            usage: usageDataSchema.optional(),
+        }),
+        parent_tool_use_id: z.string().nullable().optional(),
+    }),
+    z.object({
+        type: z.literal('user'),
+        message: z.object({
+            role: z.literal('user'),
+            content: z.union([z.string(), z.array(rawAgentContentSchema)]),
+        }),
+        parent_tool_use_id: z.string().nullable().optional(),
+        toolUseResult: z.any().nullable().optional(),
+    }),
+]);
+
+const rawAgentOutputDataUnknownSchema = z
+    .object({ type: z.string() })
+    .passthrough()
+    .refine((value) => !KNOWN_OUTPUT_DATA_TYPES.has(value.type as any), {
+        message: 'Unknown output type must not collide with known output types',
+    })
+    .transform((value) => ({ ...value, type: value.type as UnknownOutputDataType }));
+
+const rawAgentOutputDataSchema = z.union([rawAgentOutputDataKnownSchema, rawAgentOutputDataUnknownSchema]);
+
 const rawAgentRecordSchema = z.discriminatedUnion('type', [z.object({
     type: z.literal('output'),
-    data: z.intersection(z.discriminatedUnion('type', [
-        z.object({ type: z.literal('system') }),
-        z.object({ type: z.literal('result') }),
-        z.object({ type: z.literal('summary'), summary: z.string() }),
-        z.object({ type: z.literal('progress') }).passthrough(),
-        z.object({ type: z.literal('assistant'), message: z.object({ role: z.literal('assistant'), model: z.string(), content: z.array(rawAgentContentSchema), usage: usageDataSchema.optional() }), parent_tool_use_id: z.string().nullable().optional() }),
-        z.object({ type: z.literal('user'), message: z.object({ role: z.literal('user'), content: z.union([z.string(), z.array(rawAgentContentSchema)]) }), parent_tool_use_id: z.string().nullable().optional(), toolUseResult: z.any().nullable().optional() }),
-    ]), z.object({
+    data: z.intersection(rawAgentOutputDataSchema, z.object({
         isSidechain: z.boolean().nullish(),
         isCompactSummary: z.boolean().nullish(),
         isMeta: z.boolean().nullish(),

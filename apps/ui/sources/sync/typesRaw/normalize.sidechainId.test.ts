@@ -23,10 +23,11 @@ describe('typesRaw.normalizeRawMessage', () => {
       meta: { source: 'cli' },
     };
 
-    const normalized = normalizeRawMessage('msg1', null, 1000, raw);
+    const normalized = normalizeRawMessage('msg1', null, 1000, raw, { seq: 5 });
     expect(normalized).not.toBeNull();
     expect((normalized as any).isSidechain).toBe(true);
     expect((normalized as any).sidechainId).toBe('tool_task_123');
+    expect((normalized as any).seq).toBe(5);
   });
 
   it('preserves sidechainId for ACP messages and marks them as sidechains', () => {
