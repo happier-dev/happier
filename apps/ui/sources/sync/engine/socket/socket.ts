@@ -6,9 +6,12 @@ import type { Machine } from '@/sync/domains/state/storageTypes';
 import { storage } from '@/sync/domains/state/storage';
 import { projectManager } from '@/sync/runtime/orchestration/projectManager';
 import { scmStatusSync } from '@/scm/scmStatusSync';
+import { ingestWorkspaceMutationMessages } from '@/scm/refresh/workspaceMutationIngestionRuntime';
 import { voiceHooks } from '@/voice/context/voiceHooks';
 import { deriveNewPermissionRequests } from '@/sync/domains/permissions/deriveNewPermissionRequests';
 import { didControlReturnToMobile } from '@/sync/domains/session/control/controlledByUserTransitions';
+import { createSessionMessageApplyCoalescer } from '@/sync/engine/sessions/sessionMessageApplyCoalescer';
+import { settingsDefaults } from '@/sync/domains/settings/settings';
 import {
     buildUpdatedSessionFromSocketUpdate,
     handleDeleteSessionSocketUpdate,
@@ -33,10 +36,60 @@ import { applyAutomationSocketUpdate } from '@/sync/engine/automations/automatio
 import { normalizeRelationshipUpdatedUpdateBody } from '@/sync/engine/social/relationshipUpdate';
 import { parseEphemeralUpdate, parseUpdateContainer } from './socketParse';
 import { FeedBodySchema } from '@/sync/domains/social/feedTypes';
-export { handleSocketReconnected } from './socketReconnect';
 export { parseEphemeralUpdate, parseUpdateContainer } from './socketParse';
 
 type ApplySessions = (sessions: Array<Omit<Session, 'presence'> & { presence?: 'online' | number }>) => void;
+
+function clampInt(value: unknown, fallback: number, min: number, max: number): number {
+    if (typeof value !== 'number' || !Number.isFinite(value)) return fallback;
+    return Math.max(min, Math.min(max, Math.trunc(value)));
+}
+
+type SocketMessageApplyHandlers = Readonly<{
+    applyMessages: (sessionId: string, messages: NormalizedMessage[]) => void;
+    onNormalizedMessagesApplied?: (sessionId: string, messages: NormalizedMessage[]) => void;
+    markSessionMaterializedMaxSeq?: (sessionId: string, seq: number) => void;
+}>;
+
+let socketMessageApplyHandlers: SocketMessageApplyHandlers | null = null;
+
+const socketMessageApplyCoalescer = createSessionMessageApplyCoalescer({
+    getConfig: () => {
+        const settings = storage.getState().settings;
+        return {
+            enabled: settings.transcriptStreamingCoalesceEnabled === true,
+            windowMs: clampInt(
+                settings.transcriptStreamingCoalesceWindowMs,
+                settingsDefaults.transcriptStreamingCoalesceWindowMs,
+                0,
+                200,
+            ),
+            maxBatchSize: clampInt(
+                settings.transcriptStreamingCoalesceMaxBatchSize,
+                settingsDefaults.transcriptStreamingCoalesceMaxBatchSize,
+                1,
+                2000,
+            ),
+        };
+    },
+    applyBatch: (sessionId, messages) => {
+        socketMessageApplyHandlers?.applyMessages(sessionId, messages);
+    },
+    onBatchApplied: (sessionId, messages) => {
+        socketMessageApplyHandlers?.onNormalizedMessagesApplied?.(sessionId, messages);
+
+        let maxSeq: number | null = null;
+        for (const message of messages) {
+            const seq = message.seq;
+            if (typeof seq !== 'number' || !Number.isFinite(seq)) continue;
+            const normalized = Math.trunc(seq);
+            maxSeq = maxSeq === null ? normalized : Math.max(maxSeq, normalized);
+        }
+        if (maxSeq !== null) {
+            socketMessageApplyHandlers?.markSessionMaterializedMaxSeq?.(sessionId, maxSeq);
+        }
+    },
+});
 
 export async function handleSocketUpdate(params: {
     update: unknown;
@@ -49,7 +102,7 @@ export async function handleSocketUpdate(params: {
     isSessionMessagesLoaded: (sessionId: string) => boolean;
     getSessionMaterializedMaxSeq: (sessionId: string) => number;
     markSessionMaterializedMaxSeq: (sessionId: string, seq: number) => void;
-    invalidateMessagesForSession: (sessionId: string) => void;
+    onMessageGapDetected: (sessionId: string, info: { prevMaterializedMaxSeq: number; messageSeq: number | null }) => void;
     assumeUsers: (userIds: string[]) => Promise<void>;
     applyTodoSocketUpdates: (changes: any[]) => Promise<void>;
     invalidateMachines: () => void;
@@ -74,7 +127,7 @@ export async function handleSocketUpdate(params: {
         isSessionMessagesLoaded,
         getSessionMaterializedMaxSeq,
         markSessionMaterializedMaxSeq,
-        invalidateMessagesForSession,
+        onMessageGapDetected,
         assumeUsers,
         applyTodoSocketUpdates,
         invalidateMachines,
@@ -103,7 +156,7 @@ export async function handleSocketUpdate(params: {
         isSessionMessagesLoaded,
         getSessionMaterializedMaxSeq,
         markSessionMaterializedMaxSeq,
-        invalidateMessagesForSession,
+        onMessageGapDetected,
         assumeUsers,
         applyTodoSocketUpdates,
         invalidateMachines,
@@ -130,7 +183,7 @@ export async function handleUpdateContainer(params: {
     isSessionMessagesLoaded: (sessionId: string) => boolean;
     getSessionMaterializedMaxSeq: (sessionId: string) => number;
     markSessionMaterializedMaxSeq: (sessionId: string, seq: number) => void;
-    invalidateMessagesForSession: (sessionId: string) => void;
+    onMessageGapDetected: (sessionId: string, info: { prevMaterializedMaxSeq: number; messageSeq: number | null }) => void;
     assumeUsers: (userIds: string[]) => Promise<void>;
     applyTodoSocketUpdates: (changes: any[]) => Promise<void>;
     invalidateMachines: () => void;
@@ -155,7 +208,7 @@ export async function handleUpdateContainer(params: {
         isSessionMessagesLoaded,
         getSessionMaterializedMaxSeq,
         markSessionMaterializedMaxSeq,
-        invalidateMessagesForSession,
+        onMessageGapDetected,
         assumeUsers,
         applyTodoSocketUpdates,
         invalidateMachines,
@@ -171,6 +224,17 @@ export async function handleUpdateContainer(params: {
     } = params;
 
     if (updateData.body.t === 'new-message') {
+        const getSessionMaterializedMaxSeqForGapDetection = (sessionId: string) =>
+            Math.max(
+                getSessionMaterializedMaxSeq(sessionId),
+                socketMessageApplyCoalescer.getQueuedMaxSeq(sessionId),
+            );
+
+        socketMessageApplyHandlers = {
+            applyMessages,
+            onNormalizedMessagesApplied: ingestWorkspaceMutationMessages,
+            markSessionMaterializedMaxSeq,
+        };
         await handleNewMessageSocketUpdate({
             updateData,
             getSessionEncryption: (sessionId) => encryption.getSessionEncryption(sessionId),
@@ -178,12 +242,13 @@ export async function handleUpdateContainer(params: {
             applySessions: (sessions) => applySessions(sessions),
             fetchSessions,
             applyMessages,
+            enqueueMessages: (sessionId, messages) => socketMessageApplyCoalescer.enqueue(sessionId, messages),
             isMutableToolCall: (sessionId, toolUseId) => storage.getState().isMutableToolCall(sessionId, toolUseId),
             invalidateScmStatus: (sessionId) => scmStatusSync.invalidate(sessionId),
             isSessionMessagesLoaded,
-            getSessionMaterializedMaxSeq,
+            getSessionMaterializedMaxSeq: getSessionMaterializedMaxSeqForGapDetection,
             markSessionMaterializedMaxSeq,
-            invalidateMessagesForSession,
+            onMessageGapDetected,
             onTaskLifecycleEvent,
         });
     } else if (updateData.body.t === 'new-session') {
@@ -276,6 +341,18 @@ export async function handleUpdateContainer(params: {
         const machineUpdate = updateData.body;
         const machineId = machineUpdate.machineId;
 
+        // Initialize machine encryption immediately when possible so the subsequent
+        // update-machine event (emitted for backward compatibility) can be decrypted
+        // without racing a full machines refresh.
+        //
+        // NOTE: When the dataEncryptionKey is null, we still initialize with null so
+        // the machine has a fallback encryptor available (legacy path).
+        const decryptedDataKey =
+            typeof (machineUpdate as any).dataEncryptionKey === 'string' && (machineUpdate as any).dataEncryptionKey.length > 0
+                ? await encryption.decryptEncryptionKey((machineUpdate as any).dataEncryptionKey)
+                : null;
+        await encryption.initializeMachines(new Map([[machineId, decryptedDataKey]]));
+
         // Apply a placeholder immediately so UI state (e.g. onboarding) can react
         // even if machine-activity ephemerals arrive before a full machines refresh.
         storage.getState().applyMachines([{
@@ -298,6 +375,14 @@ export async function handleUpdateContainer(params: {
         const machineUpdate = updateData.body;
         const machineId = machineUpdate.machineId; // Changed from .id to .machineId
         const machine = storage.getState().machines[machineId];
+
+        // Machine encryption is derived from the machine's dataEncryptionKey, which can
+        // arrive slightly later (e.g. after a machines refresh). Fail closed and
+        // trigger a rehydrate instead of logging errors or applying undecryptable updates.
+        if (!encryption.getMachineEncryption(machineId)) {
+            invalidateMachines();
+            return;
+        }
 
         const updatedMachine = await buildUpdatedMachineFromSocketUpdate({
             machineUpdate,

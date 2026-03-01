@@ -1,6 +1,8 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { Session } from '@/sync/domains/state/storageTypes';
 import { handleNewMessageSocketUpdate } from './sessionSocketUpdate';
+import type { NormalizedMessage } from '@/sync/typesRaw';
+import { createSessionMessageApplyCoalescer } from './sessionMessageApplyCoalescer';
 
 function buildUpdate(params: {
     sid?: string;
@@ -65,13 +67,13 @@ function buildHarness(overrides: Partial<Parameters<typeof handleNewMessageSocke
     applyMessages: ReturnType<typeof vi.fn>;
     applySessions: ReturnType<typeof vi.fn>;
     fetchSessions: ReturnType<typeof vi.fn>;
-    invalidateMessagesForSession: ReturnType<typeof vi.fn>;
+    onMessageGapDetected: ReturnType<typeof vi.fn>;
     markSessionMaterializedMaxSeq: ReturnType<typeof vi.fn>;
 } {
     const applyMessages = vi.fn();
     const applySessions = vi.fn();
     const fetchSessions = vi.fn();
-    const invalidateMessagesForSession = vi.fn();
+    const onMessageGapDetected = vi.fn();
     const markSessionMaterializedMaxSeq = vi.fn();
     const params: Parameters<typeof handleNewMessageSocketUpdate>[0] = {
         updateData: buildUpdate({ sid: 's1', messageId: 'm2', messageSeq: 2 }),
@@ -92,15 +94,26 @@ function buildHarness(overrides: Partial<Parameters<typeof handleNewMessageSocke
         isSessionMessagesLoaded: () => true,
         getSessionMaterializedMaxSeq: () => 1,
         markSessionMaterializedMaxSeq,
-        invalidateMessagesForSession,
+        onMessageGapDetected,
         ...overrides,
     };
-    return { params, applyMessages, applySessions, fetchSessions, invalidateMessagesForSession, markSessionMaterializedMaxSeq };
+    return { params, applyMessages, applySessions, fetchSessions, onMessageGapDetected, markSessionMaterializedMaxSeq };
 }
 
 describe('handleNewMessageSocketUpdate', () => {
+    it('preserves update message seq on normalized messages', async () => {
+        const { params, applyMessages } = buildHarness({
+            updateData: buildUpdate({ sid: 's1', messageId: 'm2', messageSeq: 2 }),
+        });
+
+        await handleNewMessageSocketUpdate(params);
+
+        const normalized = applyMessages.mock.calls?.[0]?.[1]?.[0] as NormalizedMessage | undefined;
+        expect(normalized?.seq).toBe(2);
+    });
+
     it('does not trigger catch-up when message seq is contiguous', async () => {
-        const { params, fetchSessions, applyMessages, invalidateMessagesForSession, markSessionMaterializedMaxSeq } = buildHarness({
+        const { params, fetchSessions, applyMessages, onMessageGapDetected, markSessionMaterializedMaxSeq } = buildHarness({
             updateData: buildUpdate({ sid: 's1', messageId: 'm2', messageSeq: 2 }),
             getSessionMaterializedMaxSeq: () => 1,
             isSessionMessagesLoaded: () => true,
@@ -111,11 +124,11 @@ describe('handleNewMessageSocketUpdate', () => {
         expect(fetchSessions).not.toHaveBeenCalled();
         expect(applyMessages).toHaveBeenCalledTimes(1);
         expect(markSessionMaterializedMaxSeq).toHaveBeenCalledWith('s1', 2);
-        expect(invalidateMessagesForSession).not.toHaveBeenCalled();
+        expect(onMessageGapDetected).not.toHaveBeenCalled();
     });
 
     it('triggers catch-up when a gap is detected for a loaded transcript', async () => {
-        const { params, fetchSessions, applyMessages, invalidateMessagesForSession, markSessionMaterializedMaxSeq } = buildHarness({
+        const { params, fetchSessions, applyMessages, onMessageGapDetected, markSessionMaterializedMaxSeq } = buildHarness({
             updateData: buildUpdate({ sid: 's1', messageId: 'm5', messageSeq: 5 }),
             getSessionMaterializedMaxSeq: () => 1,
             isSessionMessagesLoaded: () => true,
@@ -126,11 +139,11 @@ describe('handleNewMessageSocketUpdate', () => {
         expect(fetchSessions).not.toHaveBeenCalled();
         expect(applyMessages).toHaveBeenCalledTimes(1);
         expect(markSessionMaterializedMaxSeq).toHaveBeenCalledWith('s1', 5);
-        expect(invalidateMessagesForSession).toHaveBeenCalledWith('s1');
+        expect(onMessageGapDetected).toHaveBeenCalledWith('s1', { prevMaterializedMaxSeq: 1, messageSeq: 5 });
     });
 
     it('does not trigger catch-up when transcript is not loaded (even if a gap exists)', async () => {
-        const { params, invalidateMessagesForSession } = buildHarness({
+        const { params, onMessageGapDetected } = buildHarness({
             updateData: buildUpdate({ sid: 's1', messageId: 'm5', messageSeq: 5 }),
             getSessionMaterializedMaxSeq: () => 1,
             isSessionMessagesLoaded: () => false,
@@ -138,11 +151,11 @@ describe('handleNewMessageSocketUpdate', () => {
 
         await handleNewMessageSocketUpdate(params);
 
-        expect(invalidateMessagesForSession).not.toHaveBeenCalled();
+        expect(onMessageGapDetected).not.toHaveBeenCalled();
     });
 
     it('does not trigger catch-up when previous materialized seq is unknown (0)', async () => {
-        const { params, invalidateMessagesForSession } = buildHarness({
+        const { params, onMessageGapDetected } = buildHarness({
             updateData: buildUpdate({ sid: 's1', messageId: 'm5', messageSeq: 5 }),
             getSessionMaterializedMaxSeq: () => 0,
             isSessionMessagesLoaded: () => true,
@@ -150,11 +163,11 @@ describe('handleNewMessageSocketUpdate', () => {
 
         await handleNewMessageSocketUpdate(params);
 
-        expect(invalidateMessagesForSession).not.toHaveBeenCalled();
+        expect(onMessageGapDetected).not.toHaveBeenCalled();
     });
 
     it('falls back to invalidate messages when decryption fails for a loaded transcript', async () => {
-        const { params, fetchSessions, invalidateMessagesForSession } = buildHarness({
+        const { params, fetchSessions, onMessageGapDetected } = buildHarness({
             getSessionEncryption: () => ({
                 decryptMessage: async () => null,
             }),
@@ -163,12 +176,12 @@ describe('handleNewMessageSocketUpdate', () => {
 
         await handleNewMessageSocketUpdate(params);
 
-        expect(invalidateMessagesForSession).toHaveBeenCalledWith('s1');
+        expect(onMessageGapDetected).toHaveBeenCalledWith('s1', { prevMaterializedMaxSeq: 1, messageSeq: 2 });
         expect(fetchSessions).not.toHaveBeenCalled();
     });
 
     it('fetches sessions when decryption fails and transcript is not loaded', async () => {
-        const { params, fetchSessions, invalidateMessagesForSession } = buildHarness({
+        const { params, fetchSessions, onMessageGapDetected } = buildHarness({
             getSessionEncryption: () => ({
                 decryptMessage: async () => null,
             }),
@@ -178,7 +191,7 @@ describe('handleNewMessageSocketUpdate', () => {
         await handleNewMessageSocketUpdate(params);
 
         expect(fetchSessions).toHaveBeenCalledTimes(1);
-        expect(invalidateMessagesForSession).not.toHaveBeenCalled();
+        expect(onMessageGapDetected).not.toHaveBeenCalled();
     });
 
     it('fetches sessions when decrypted message arrives for an unknown session', async () => {
@@ -190,6 +203,23 @@ describe('handleNewMessageSocketUpdate', () => {
 
         expect(fetchSessions).toHaveBeenCalledTimes(1);
         expect(applySessions).not.toHaveBeenCalled();
+    });
+
+    it('does not log an error when session encryption is missing for an unknown session (fetches sessions)', async () => {
+        const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+        try {
+            const { params, fetchSessions } = buildHarness({
+                getSessionEncryption: () => null as any,
+                getSession: () => undefined,
+            });
+
+            await handleNewMessageSocketUpdate(params);
+
+            expect(fetchSessions).toHaveBeenCalledTimes(1);
+            expect(consoleError).not.toHaveBeenCalled();
+        } finally {
+            consoleError.mockRestore();
+        }
     });
 
     it('returns early for invalid update payloads without side effects', async () => {
@@ -231,5 +261,91 @@ describe('handleNewMessageSocketUpdate', () => {
             id: 'task_1',
             createdAt: 1_000,
         });
+    });
+
+    it('notifies onNormalizedMessagesApplied after applying a decrypted message', async () => {
+        const onNormalizedMessagesApplied = vi.fn();
+        const { params } = buildHarness({
+            onNormalizedMessagesApplied,
+            getSessionEncryption: () => ({
+                decryptMessage: async () => ({
+                    id: 'm2',
+                    localId: null,
+                    createdAt: 1_000,
+                    content: { role: 'user', content: { type: 'text', text: 'hi' } },
+                }),
+            }),
+        } as any);
+
+        await handleNewMessageSocketUpdate(params);
+
+        expect(onNormalizedMessagesApplied).toHaveBeenCalledTimes(1);
+        expect(onNormalizedMessagesApplied.mock.calls[0]?.[0]).toBe('s1');
+        expect(Array.isArray(onNormalizedMessagesApplied.mock.calls[0]?.[1])).toBe(true);
+        expect(onNormalizedMessagesApplied.mock.calls[0]?.[1]?.[0]?.id).toBe('m2');
+    });
+
+    it('enqueues messages when enqueueMessages is provided (instead of applying immediately)', async () => {
+        const enqueueMessages = vi.fn();
+        const onNormalizedMessagesApplied = vi.fn();
+        const { params, applyMessages } = buildHarness({
+            enqueueMessages,
+            onNormalizedMessagesApplied,
+        } as any);
+
+        await handleNewMessageSocketUpdate(params);
+
+        expect(enqueueMessages).toHaveBeenCalledTimes(1);
+        expect(applyMessages).not.toHaveBeenCalled();
+        expect(onNormalizedMessagesApplied).not.toHaveBeenCalled();
+    });
+
+    it('can coalesce socket message applies by passing a coalescer enqueue function', async () => {
+        vi.useFakeTimers();
+        const applied: Array<{ sessionId: string; ids: string[] }> = [];
+        const applyMessages = vi.fn((sessionId: string, messages: NormalizedMessage[]) => {
+            applied.push({ sessionId, ids: messages.map((m) => m.id) });
+        });
+        const onNormalizedMessagesApplied = vi.fn();
+
+        const coalescer = createSessionMessageApplyCoalescer({
+            getConfig: () => ({ enabled: true, windowMs: 16, maxBatchSize: 200 }),
+            applyBatch: applyMessages,
+            onBatchApplied: onNormalizedMessagesApplied,
+        });
+
+        const baseParams = buildHarness({
+            applyMessages,
+            enqueueMessages: (sessionId: string, messages: NormalizedMessage[]) => coalescer.enqueue(sessionId, messages),
+            onNormalizedMessagesApplied,
+            getSessionEncryption: () => ({
+                decryptMessage: async (encrypted: any) => ({
+                    id: encrypted.id,
+                    localId: null,
+                    createdAt: 1_000,
+                    content: { role: 'user', content: { type: 'text', text: 'hi' } },
+                }),
+            }),
+            getSessionMaterializedMaxSeq: () => 1,
+        } as any).params;
+
+        await handleNewMessageSocketUpdate({
+            ...baseParams,
+            updateData: buildUpdate({ sid: 's1', messageId: 'm2', messageSeq: 2 }),
+        });
+        await handleNewMessageSocketUpdate({
+            ...baseParams,
+            updateData: buildUpdate({ sid: 's1', messageId: 'm3', messageSeq: 3 }),
+        });
+
+        expect(applyMessages).not.toHaveBeenCalled();
+        expect(onNormalizedMessagesApplied).not.toHaveBeenCalled();
+
+        vi.advanceTimersByTime(16);
+
+        expect(applied).toEqual([{ sessionId: 's1', ids: ['m2', 'm3'] }]);
+        expect(onNormalizedMessagesApplied).toHaveBeenCalledTimes(1);
+
+        vi.useRealTimers();
     });
 });

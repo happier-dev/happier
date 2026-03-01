@@ -9,6 +9,8 @@ import { ApiMessage } from './api/types/apiTypes';
 import type { ApiEphemeralActivityUpdate } from './api/types/apiTypes';
 import { Session, Machine, MetadataSchema, type Metadata } from './domains/state/storageTypes';
 import { InvalidateSync } from '@/utils/sessions/sync';
+import { PauseController } from '@/utils/timing/pauseController';
+import { loadSyncTuning, type SyncTuning } from '@/sync/runtime/syncTuning';
 import { ActivityUpdateAccumulator } from './reducer/activityUpdateAccumulator';
 import { randomUUID } from '@/platform/randomUUID';
 import { Platform, AppState } from 'react-native';
@@ -25,6 +27,7 @@ import {
     saveChangesCursor,
 } from './domains/state/persistence';
 import { initializeTracking, tracking } from '@/track';
+import { applyCrashReportsOptOut } from '@/utils/system/sentry';
 import { parseToken } from '@/utils/auth/parseToken';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 import { RevenueCat } from './domains/purchases';
@@ -34,6 +37,7 @@ import { setActiveServerSessionListCache } from './store/sessionListCache';
 import { config } from '@/config';
 import { log } from '@/log';
 import { scmStatusSync } from '@/scm/scmStatusSync';
+import { ingestWorkspaceMutationMessages } from '@/scm/refresh/workspaceMutationIngestionRuntime';
 import { projectManager } from './runtime/orchestration/projectManager';
 import { voiceHooks } from '@/voice/context/voiceHooks';
 import { Message } from './domains/messages/messageTypes';
@@ -73,6 +77,10 @@ import { scheduleDebouncedPendingSettingsFlush } from './engine/pending/pendingS
 import { applySettingsLocalDelta, syncSettings as syncSettingsEngine } from './engine/settings/syncSettings';
 import { getOfferings as getOfferingsEngine, presentPaywall as presentPaywallEngine, purchaseProduct as purchaseProductEngine, syncPurchases as syncPurchasesEngine } from './engine/purchases/syncPurchases';
 import { fetchChanges } from './api/session/apiChanges';
+import { runWithInFlightDedupe } from '@/sync/runtime/orchestration/runWithInFlightDedupe';
+import { runTasksWithLimit } from '@/sync/runtime/orchestration/runTasksWithLimit';
+import { decideMessageCatchUpPolicy } from '@/sync/runtime/orchestration/messageCatchUpPolicy';
+import { applyMessageCatchUpDecision } from '@/sync/runtime/orchestration/applyMessageCatchUpDecision';
 import {
     createArtifactViaApi,
     fetchAndApplyArtifactsList,
@@ -108,6 +116,12 @@ import {
     handleNewMessageSocketUpdate,
     repairInvalidReadStateV1 as repairInvalidReadStateV1Engine,
 } from './engine/sessions/syncSessions';
+import { fetchAndApplySessionById } from './engine/sessions/sessionById';
+import { getForkedTranscriptSnapshotCached } from './domains/sessionFork/forkedTranscriptSnapshot';
+import {
+    computeForkedTranscriptHasMoreOlder,
+    resolveNextForkedTranscriptLoadOlderRequest,
+} from './domains/sessionFork/forkedTranscriptPaging';
 import {
     deleteDiscardedPendingMessageV2,
     deletePendingMessageV2,
@@ -121,7 +135,6 @@ import {
 import {
     flushActivityUpdates as flushActivityUpdatesEngine,
     handleEphemeralSocketUpdate,
-    handleSocketReconnected,
     handleSocketUpdate,
     parseUpdateContainer,
 } from './engine/socket/socket';
@@ -144,25 +157,32 @@ function createDefaultMessageTransport(): SyncMessageTransport {
 class Sync {
     // Spawned agents (especially in spawn mode) can take noticeable time to connect.
     private static readonly SESSION_READY_TIMEOUT_MS = 10000;
-    private static readonly LONG_OFFLINE_SNAPSHOT_MS = 30 * 60 * 1000;
 
-    encryption!: Encryption;
-    serverID!: string;
-    anonID!: string;
-    private credentials!: AuthCredentials;
-    public encryptionCache = new EncryptionCache();
-    private sessionsSync: InvalidateSync;
-    private messagesSync = new Map<string, InvalidateSync>();
+        encryption!: Encryption;
+        serverID!: string;
+        anonID!: string;
+        private credentials!: AuthCredentials;
+        private pauseController = new PauseController();
+        private syncTuning: SyncTuning = loadSyncTuning();
+      private resumeInFlight: Promise<void> | null = null;
+      private isForeground = AppState.currentState === 'active';
+      public encryptionCache = new EncryptionCache();
+      private sessionsSync: InvalidateSync;
+      private messagesSync = new Map<string, InvalidateSync>();
     private activeServerSessionIds = new Set<string>();
     private hasFetchedSessionsSnapshotForActiveServer = false;
-    private sessionReceivedMessages = new Map<string, Set<string>>();
-    private sessionMessagesBeforeSeq = new Map<string, number>();
-    private sessionMessagesHasMoreOlder = new Map<string, boolean>();
-    private sessionMessagesLoadingOlder = new Set<string>();
-    private sessionMessagesPaginationSupported = new Map<string, boolean>();
-    private sessionDataKeys = new Map<string, Uint8Array>(); // Store session data encryption keys internally
-    private machineDataKeys = new Map<string, Uint8Array>(); // Store machine data encryption keys internally
-    private artifactDataKeys = new Map<string, Uint8Array>(); // Store artifact data encryption keys internally
+    private sessionByIdHydrationInFlight = new Map<string, Promise<boolean>>();
+      private sessionReceivedMessages = new Map<string, Set<string>>();
+      private sessionMessagesBeforeSeq = new Map<string, number>();
+      private sessionMessagesHasMoreOlder = new Map<string, boolean>();
+      private sessionMessagesLoadingOlder = new Set<string>();
+      private sessionMessagesLoadingNewer = new Set<string>();
+      private sessionMessagesPaginationSupported = new Map<string, boolean>();
+      private sessionViewport = new Map<string, { isPinned: boolean; offsetY: number; lastUpdatedAt: number }>();
+      private deferredForwardLoadingSessions = new Set<string>();
+      private sessionDataKeys = new Map<string, Uint8Array>(); // Store session data encryption keys internally
+      private machineDataKeys = new Map<string, Uint8Array>(); // Store machine data encryption keys internally
+      private artifactDataKeys = new Map<string, Uint8Array>(); // Store artifact data encryption keys internally
     private readStateV1RepairAttempted = new Set<string>();
     private readStateV1RepairInFlight = new Set<string>();
     private settingsSync: InvalidateSync;
@@ -178,19 +198,18 @@ class Sync {
     private pendingMessageCommitRetryTimers = new Map<string, ReturnType<typeof setTimeout>>();
     private todosSync: InvalidateSync;
     private automationsSync: InvalidateSync;
-    private activityAccumulator: ActivityUpdateAccumulator;
+        private activityAccumulator: ActivityUpdateAccumulator;
     private pendingSettings: Partial<Settings> = loadPendingSettings();
     private pendingSettingsFlushTimer: ReturnType<typeof setTimeout> | null = null;
     private pendingSettingsDirty = false;
     private sessionMaterializedMaxSeqById: Record<string, number> = loadSessionMaterializedMaxSeqById();
     private sessionMaterializedMaxSeqFlushTimer: ReturnType<typeof setTimeout> | null = null;
     private sessionMaterializedMaxSeqDirty = false;
-    private changesCursor: string | null = loadChangesCursor(String(getActiveServerSnapshot().serverId ?? '').trim() || null);
-    private changesCursorFlushTimer: ReturnType<typeof setTimeout> | null = null;
-    private changesCursorDirty = false;
-    private changesSyncInFlight: Promise<void> | null = null;
-    private lastSocketDisconnectedAtMs: number | null = null;
-    revenueCatInitialized = false;
+      private changesCursor: string | null = loadChangesCursor(String(getActiveServerSnapshot().serverId ?? '').trim() || null);
+      private changesCursorFlushTimer: ReturnType<typeof setTimeout> | null = null;
+      private changesCursorDirty = false;
+      private lastSocketDisconnectedAtMs: number | null = null;
+      revenueCatInitialized = false;
     private settingsSecretsKey: Uint8Array | null = null;
     private messageTransport: SyncMessageTransport = createDefaultMessageTransport();
     private updatesSubscribed = false;
@@ -201,7 +220,7 @@ class Sync {
     private machinesRefreshInFlight: Promise<void> | null = null;
     private lastMachinesRefreshAt = 0;
 
-    constructor() {
+        constructor() {
         dbgSettings('Sync.constructor: loaded pendingSettings', {
             pendingKeys: Object.keys(this.pendingSettings).sort(),
         });
@@ -217,59 +236,66 @@ class Sync {
             storage.getState().setSyncError({ message, retryable, kind, at: Date.now() });
         };
 
-        const onRetry = (info: { failuresCount: number; nextDelayMs: number; nextRetryAt: number }) => {
-            const ex = storage.getState().syncError;
-            if (!ex) return;
-            storage.getState().setSyncError({ ...ex, failuresCount: info.failuresCount, nextRetryAt: info.nextRetryAt });
-        };
+          const onRetry = (info: { failuresCount: number; nextDelayMs: number; nextRetryAt: number }) => {
+              const ex = storage.getState().syncError;
+              if (!ex) return;
+              storage.getState().setSyncError({ ...ex, failuresCount: info.failuresCount, nextRetryAt: info.nextRetryAt });
+          };
 
-        this.sessionsSync = new InvalidateSync(this.fetchSessions, { onError, onSuccess, onRetry });
-        this.settingsSync = new InvalidateSync(this.syncSettings, { onError, onSuccess, onRetry });
-        this.profileSync = new InvalidateSync(this.fetchProfile, { onError, onSuccess, onRetry });
-        this.purchasesSync = new InvalidateSync(this.syncPurchases, { onError, onSuccess, onRetry });
-        this.machinesSync = new InvalidateSync(this.fetchMachines, { onError, onSuccess, onRetry });
-        this.nativeUpdateSync = new InvalidateSync(this.fetchNativeUpdate);
-        this.artifactsSync = new InvalidateSync(this.fetchArtifactsList);
-        this.friendsSync = new InvalidateSync(this.fetchFriends);
-        this.friendRequestsSync = new InvalidateSync(this.fetchFriendRequests);
-        this.feedSync = new InvalidateSync(this.fetchFeed);
-        this.todosSync = new InvalidateSync(this.fetchTodos);
-        this.automationsSync = new InvalidateSync(this.fetchAutomations);
+            const pause = this.pauseController;
+            const backoff = {
+                minDelayMs: this.syncTuning.invalidateSyncBackoffMinDelayMs,
+                maxDelayMs: this.syncTuning.invalidateSyncBackoffMaxDelayMs,
+                maxFailureCount: 'infinite' as const,
+            };
 
-        const registerPushToken = async () => {
-            if (__DEV__ && config.enableDevPushTokenRegistration !== true) {
-                return;
-            }
-            await this.registerPushToken();
-        }
-        this.pushTokenSync = new InvalidateSync(registerPushToken);
-        this.activityAccumulator = new ActivityUpdateAccumulator(this.flushActivityUpdates.bind(this), 500);
+            this.sessionsSync = new InvalidateSync(this.fetchSessions, { onError, onSuccess, onRetry, pause, backoff });
+            this.settingsSync = new InvalidateSync(this.syncSettings, { onError, onSuccess, onRetry, pause, backoff });
+            this.profileSync = new InvalidateSync(this.fetchProfile, { onError, onSuccess, onRetry, pause, backoff });
+            this.purchasesSync = new InvalidateSync(this.syncPurchases, { onError, onSuccess, onRetry, pause, backoff });
+            this.machinesSync = new InvalidateSync(this.fetchMachines, { onError, onSuccess, onRetry, pause, backoff });
+            this.nativeUpdateSync = new InvalidateSync(this.fetchNativeUpdate, { pause, backoff });
+            this.artifactsSync = new InvalidateSync(this.fetchArtifactsList, { pause, backoff });
+            this.friendsSync = new InvalidateSync(this.fetchFriends, { pause, backoff });
+            this.friendRequestsSync = new InvalidateSync(this.fetchFriendRequests, { pause, backoff });
+            this.feedSync = new InvalidateSync(this.fetchFeed, { pause, backoff });
+            this.todosSync = new InvalidateSync(this.fetchTodos, { pause, backoff });
+            this.automationsSync = new InvalidateSync(this.fetchAutomations, { pause, backoff });
 
-        // Listen for app state changes to refresh purchases
-        AppState.addEventListener('change', (nextAppState) => {
-            if (nextAppState === 'active') {
-                log.log('📱 App became active');
-                // Many devices/platforms can emit multiple "active" transitions in quick succession.
-                // Coalesce invalidations to avoid redundant double-runs that can spike API load.
-                this.purchasesSync.invalidateCoalesced();
-                this.profileSync.invalidateCoalesced();
-                this.machinesSync.invalidateCoalesced();
-                this.pushTokenSync.invalidateCoalesced();
-                this.sessionsSync.invalidateCoalesced();
-                this.nativeUpdateSync.invalidateCoalesced();
-                log.log('📱 App became active: Invalidating artifacts sync');
-                this.artifactsSync.invalidateCoalesced();
-                this.friendsSync.invalidateCoalesced();
-                this.friendRequestsSync.invalidateCoalesced();
-                this.feedSync.invalidateCoalesced();
-                this.todosSync.invalidateCoalesced();
-                this.automationsSync.invalidateCoalesced();
-            } else {
-                log.log(`📱 App state changed to: ${nextAppState}`);
-                // Reliability: ensure we persist any pending settings immediately when backgrounding.
-                // This avoids losing last-second settings changes if the OS suspends the app.
-                try {
-                    if (this.pendingSettingsFlushTimer) {
+          const registerPushToken = async () => {
+              if (__DEV__ && config.enableDevPushTokenRegistration !== true) {
+                  return;
+              }
+              await this.registerPushToken();
+          }
+            this.pushTokenSync = new InvalidateSync(registerPushToken, { pause, backoff });
+            this.activityAccumulator = new ActivityUpdateAccumulator(this.flushActivityUpdates.bind(this), 500);
+
+          // Listen for app state changes to pause sync + run a single centralized resume pipeline.
+          AppState.addEventListener('change', (nextAppState) => {
+              if (nextAppState === 'active') {
+                  this.isForeground = true;
+                  log.log('📱 App became active');
+                  this.pauseController.resume();
+                  try {
+                      apiSocket.connect();
+                  } catch {
+                      // ignore
+                  }
+                  fireAndForget(this.resumeSync('app-foreground'), { tag: 'Sync.resumeSync.app-foreground' });
+              } else {
+                  this.isForeground = false;
+                  log.log(`📱 App state changed to: ${nextAppState}`);
+                  this.pauseController.pause();
+                  try {
+                      apiSocket.disconnect();
+                  } catch {
+                      // ignore
+                  }
+                  // Reliability: ensure we persist any pending settings immediately when backgrounding.
+                  // This avoids losing last-second settings changes if the OS suspends the app.
+                  try {
+                      if (this.pendingSettingsFlushTimer) {
                         clearTimeout(this.pendingSettingsFlushTimer);
                         this.pendingSettingsFlushTimer = null;
                     }
@@ -277,15 +303,25 @@ class Sync {
                 } catch {
                     // ignore
                 }
-                // Reliability: also flush per-session materialized message cursors.
-                try {
-                    this.flushSessionMaterializedMaxSeq();
-                } catch {
-                    // ignore
-                }
-            }
-        });
-    }
+                  // Reliability: also flush per-session materialized message cursors.
+                  try {
+                      this.flushSessionMaterializedMaxSeq();
+                  } catch {
+                      // ignore
+                  }
+                  // Reliability: flush changes cursor immediately too (avoid losing catch-up position).
+                  try {
+                      this.flushChangesCursorNow();
+                  } catch {
+                      // ignore
+                  }
+              }
+          });
+      }
+
+      public getSyncTuning(): SyncTuning {
+          return this.syncTuning;
+      }
 
     setMessageTransport(transport: SyncMessageTransport): void {
         this.messageTransport = transport;
@@ -392,13 +428,16 @@ class Sync {
             timer.stop();
         }
         this.messagesSync.clear();
-        this.sessionReceivedMessages.clear();
-        this.sessionMessagesBeforeSeq.clear();
-        this.sessionMessagesHasMoreOlder.clear();
-        this.sessionMessagesLoadingOlder.clear();
-        this.sessionMessagesPaginationSupported.clear();
-        this.activeServerSessionIds.clear();
-        this.hasFetchedSessionsSnapshotForActiveServer = false;
+          this.sessionReceivedMessages.clear();
+          this.sessionMessagesBeforeSeq.clear();
+          this.sessionMessagesHasMoreOlder.clear();
+          this.sessionMessagesLoadingOlder.clear();
+          this.sessionMessagesLoadingNewer.clear();
+          this.sessionMessagesPaginationSupported.clear();
+          this.sessionViewport.clear();
+          this.deferredForwardLoadingSessions.clear();
+          this.activeServerSessionIds.clear();
+          this.hasFetchedSessionsSnapshotForActiveServer = false;
         this.sessionDataKeys.clear();
         this.machineDataKeys.clear();
         this.artifactDataKeys.clear();
@@ -496,50 +535,88 @@ class Sync {
                 tracking.optIn();
             }
         }
+        applyCrashReportsOptOut(storage.getState().settings.crashReportsOptOut);
 
-        // Invalidate sync
-        log.log('🔄 #init: Invalidating all syncs');
-        this.sessionsSync.invalidate();
-        this.settingsSync.invalidate();
-        this.profileSync.invalidate();
-        this.purchasesSync.invalidate();
-        this.machinesSync.invalidate();
-        this.pushTokenSync.invalidate();
-        this.nativeUpdateSync.invalidate();
-        this.friendsSync.invalidate();
-        this.friendRequestsSync.invalidate();
-        this.artifactsSync.invalidate();
-        this.feedSync.invalidate();
-        this.todosSync.invalidate();
-        this.automationsSync.invalidate();
-        log.log('🔄 #init: All syncs invalidated, including artifacts and todos');
-
-        // Wait for both sessions and machines to load, then mark as ready
-        Promise.all([
-            this.sessionsSync.awaitQueue(),
-            this.machinesSync.awaitQueue()
-        ]).then(() => {
-            storage.getState().applyReady();
-        }).catch((error) => {
-            console.error('Failed to load initial data:', error);
-        });
+        // Initial bootstrap sync is orchestrated to avoid request storms.
+        fireAndForget(this.bootstrapSync(), { tag: 'Sync.bootstrapSync' });
     }
 
 
-    onSessionVisible = (sessionId: string) => {
-        let ex = this.messagesSync.get(sessionId);
-        if (!ex) {
-            ex = new InvalidateSync(() => this.fetchMessages(sessionId));
-            this.messagesSync.set(sessionId, ex);
-        }
-        ex.invalidate();
+        onSessionVisible = (sessionId: string) => {
+            const prevViewport = this.sessionViewport.get(sessionId);
+            if (prevViewport) {
+                this.sessionViewport.set(sessionId, { ...prevViewport, lastUpdatedAt: Date.now() });
+            } else {
+                this.onSessionViewportChange(sessionId, { isPinned: true, offsetY: 0 });
+            }
+            this.getOrCreateMessagesSync(sessionId).invalidateCoalesced();
 
-        // Notify voice assistant about session visibility
-        const session = storage.getState().sessions[sessionId];
-        if (session) {
-            voiceHooks.onSessionFocus(sessionId, session.metadata || undefined);
+            // Notify voice assistant about session visibility
+            const session = storage.getState().sessions[sessionId];
+            if (session) {
+                voiceHooks.onSessionFocus(sessionId, session.metadata || undefined);
         }
     }
+
+        /**
+         * Hydrate a visible session by id for deep links / hard refreshes.
+         *
+         * @remarks
+         * The sessions list is paginated and bounded. When the user deep-links directly into a session/message,
+         * the active server snapshot may not include that session id yet, which causes message fetch to no-op.
+         * This helper fetches `/v2/sessions/:id` and initializes encryption so messages can be loaded.
+         */
+        ensureSessionVisibleForMessageRoute = async (sessionId: string): Promise<void> => {
+            const normalized = String(sessionId ?? '').trim();
+            if (!normalized) return;
+
+            // Fast-path when we already know the session exists on this server.
+            if (this.isSessionKnownOnActiveServer(normalized) && storage.getState().sessions[normalized]) {
+                return;
+            }
+
+            // Sync might not be fully initialized yet (e.g. very early during app bootstrap).
+            const credentials = this.credentials;
+            if (!credentials) return;
+
+            const existing = this.sessionByIdHydrationInFlight.get(normalized);
+            if (existing) {
+                await existing;
+                return;
+            }
+
+            const inFlight = (async () => {
+                try {
+                    const result = await fetchAndApplySessionById({
+                        sessionId: normalized,
+                        credentials,
+                        encryption: this.encryption,
+                        sessionDataKeys: this.sessionDataKeys,
+                        request: (path, init) => apiSocket.request(path, init),
+                        applySessions: (sessions) => this.applySessions(sessions),
+                        log,
+                    });
+                    if (!result.ok) return false;
+                    this.activeServerSessionIds.add(normalized);
+                    return true;
+                } catch (err) {
+                    log.log(`⚠️ ensureSessionVisibleForMessageRoute failed for ${normalized}: ${err instanceof Error ? err.message : 'unknown error'}`);
+                    return false;
+                }
+            })();
+
+            this.sessionByIdHydrationInFlight.set(normalized, inFlight);
+            inFlight.finally(() => {
+                if (this.sessionByIdHydrationInFlight.get(normalized) === inFlight) {
+                    this.sessionByIdHydrationInFlight.delete(normalized);
+                }
+            });
+
+            const ok = await inFlight;
+            if (ok) {
+                this.getOrCreateMessagesSync(normalized).invalidateCoalesced();
+            }
+        }
 
 
     async sendMessage(sessionId: string, text: string, displayText?: string, metaOverrides?: Record<string, unknown>) {
@@ -658,7 +735,7 @@ class Sync {
             // Message is committed. Remove from pending and insert into the canonical transcript
             // (without waiting for broadcast updates, which can be missed on backgrounded devices).
             storage.getState().removePendingMessage(sessionId, localId);
-            const committed = normalizeRawMessage(ack.id, localId, createdAt, content);
+            const committed = normalizeRawMessage(ack.id, localId, createdAt, content, { seq: ack.seq });
             if (committed) {
                 this.applyMessages(sessionId, [committed]);
             }
@@ -732,11 +809,11 @@ class Sync {
                 return;
             }
 
-	                const sessionEncryption = this.encryption.getSessionEncryption(params.sessionId);
-	                if (!sessionEncryption) {
-	                    // If the session/encryption isn't available (e.g. session list was cleared or the app is mid-rehydrate),
-	                    // don't leave this retry stuck. Ask for a sessions refresh and reschedule with backoff.
-	                    fireAndForget(this.fetchSessions(), { tag: 'Sync.pendingMessageCommitRetry.fetchSessions' });
+                  const sessionEncryption = this.encryption.getSessionEncryption(params.sessionId);
+                  if (!sessionEncryption) {
+                      // If the session/encryption isn't available (e.g. session list was cleared or the app is mid-rehydrate),
+                      // don't leave this retry stuck. Ask for a sessions refresh and reschedule with backoff.
+                      fireAndForget(this.fetchSessions(), { tag: 'Sync.pendingMessageCommitRetry.fetchSessions' });
 
                     const nextAttempt = attempt + 1;
                     if (nextAttempt >= 6) {
@@ -748,14 +825,14 @@ class Sync {
                     return;
                 }
 
-	                const baseDelayMs = Math.min(30_000, 1_000 * Math.pow(2, nextAttempt));
-	                const jitterMs = Math.floor(Math.random() * 250);
-	                const timeout = setTimeout(() => {
-	                    fireAndForget(run(nextAttempt), { tag: `Sync.pendingMessageCommitRetry:${key}` });
-	                }, baseDelayMs + jitterMs);
-	                this.pendingMessageCommitRetryTimers.set(key, timeout);
-	                return;
-	            }
+                  const baseDelayMs = Math.min(30_000, 1_000 * Math.pow(2, nextAttempt));
+                  const jitterMs = Math.floor(Math.random() * 250);
+                  const timeout = setTimeout(() => {
+                      fireAndForget(run(nextAttempt), { tag: `Sync.pendingMessageCommitRetry:${key}` });
+                  }, baseDelayMs + jitterMs);
+                  this.pendingMessageCommitRetryTimers.set(key, timeout);
+                  return;
+              }
 
             const encrypted = await sessionEncryption.encryptRawRecord(pending.rawRecord as RawRecord);
             const payload = {
@@ -780,7 +857,7 @@ class Sync {
 
             if (ack?.success && ack.data.ok === true) {
                 storage.getState().removePendingMessage(params.sessionId, params.localId);
-                const committed = normalizeRawMessage(ack.data.id, params.localId, pending.createdAt, pending.rawRecord as RawRecord);
+                const committed = normalizeRawMessage(ack.data.id, params.localId, pending.createdAt, pending.rawRecord as RawRecord, { seq: ack.data.seq });
                 if (committed) {
                     this.applyMessages(params.sessionId, [committed]);
                 }
@@ -1240,26 +1317,184 @@ class Sync {
         return this.fetchMachines();
     }
 
-    public retryNow = () => {
-        try {
-            storage.getState().clearSyncError();
-            apiSocket.disconnect();
-            apiSocket.connect();
-        } catch {
-            // ignore
-        }
-        this.sessionsSync.invalidate();
-        this.settingsSync.invalidate();
-        this.profileSync.invalidate();
-        this.machinesSync.invalidate();
-        this.purchasesSync.invalidate();
-        this.artifactsSync.invalidate();
-        this.friendsSync.invalidate();
-        this.friendRequestsSync.invalidate();
-        this.feedSync.invalidate();
-        this.todosSync.invalidate();
-        this.automationsSync.invalidate();
-    }
+      public retryNow = () => {
+          try {
+              storage.getState().clearSyncError();
+              apiSocket.disconnect();
+              apiSocket.connect();
+          } catch {
+              // ignore
+          }
+          fireAndForget(this.resumeSync('manual'), { tag: 'Sync.resumeSync.manual' });
+      }
+
+      public resumeSync = (reason: 'app-foreground' | 'socket-reconnect' | 'manual'): Promise<void> => {
+          return runWithInFlightDedupe(
+              {
+                  get: () => this.resumeInFlight,
+                  set: (value) => {
+                      this.resumeInFlight = value;
+                  },
+              },
+              async () => {
+                  if (reason === 'socket-reconnect' && !this.isForeground) {
+                      return;
+                  }
+                  if (this.pauseController.isPaused()) {
+                      return;
+                  }
+                  await this.pauseController.waitUntilResumed();
+                  if (!this.credentials) {
+                      return;
+                  }
+
+                  let accountId = storage.getState().profile?.id ?? null;
+                  if (!accountId) {
+                      this.profileSync.invalidateCoalesced();
+                      await this.profileSync.awaitQueue({ timeoutMs: this.syncTuning.resumeQuickInvalidateTimeoutMs });
+                      accountId = storage.getState().profile?.id ?? null;
+                  }
+
+                  if (!accountId) {
+                      await this.snapshotRefreshOnResume({ mode: 'fallback', reason: 'missing-profile' });
+                      return;
+                  }
+
+                  const status = await this.resumeViaChanges({ accountId });
+                  if (status === 'fallback') {
+                      await this.snapshotRefreshOnResume({ mode: 'fallback', reason: 'changes-fallback' });
+                      return;
+                  }
+
+                  const invalidateBounded = async (syncUnit: InvalidateSync, timeoutMs: number): Promise<void> => {
+                      syncUnit.invalidateCoalesced();
+                      await syncUnit.awaitQueue({ timeoutMs });
+                  };
+
+                    await runTasksWithLimit(
+                        [
+                            () => invalidateBounded(this.purchasesSync, this.syncTuning.resumeQuickInvalidateTimeoutMs),
+                            () => invalidateBounded(this.pushTokenSync, this.syncTuning.resumeQuickInvalidateTimeoutMs),
+                            () => invalidateBounded(this.nativeUpdateSync, this.syncTuning.resumeQuickInvalidateTimeoutMs),
+                        ],
+                        this.syncTuning.resumeConcurrencyLimit
+                    );
+                }
+            );
+        };
+
+      private bootstrapSync = async (): Promise<void> => {
+          if (this.pauseController.isPaused()) {
+              return;
+          }
+          await this.pauseController.waitUntilResumed();
+          if (!this.credentials) {
+              return;
+          }
+
+          const invalidateBounded = async (syncUnit: InvalidateSync, timeoutMs: number): Promise<void> => {
+              syncUnit.invalidateCoalesced();
+              await syncUnit.awaitQueue({ timeoutMs });
+          };
+
+          // Bootstrap concurrency is slightly higher to reduce time-to-first-render.
+          const bootstrapConcurrencyLimit = this.syncTuning.bootstrapConcurrencyLimit;
+
+          // Phase 1: load core UI state (settings/profile) while also loading sessions/machines.
+          await runTasksWithLimit(
+              [
+                  () => invalidateBounded(this.settingsSync, this.syncTuning.invalidateSyncAwaitTimeoutMs),
+                  () => invalidateBounded(this.profileSync, this.syncTuning.invalidateSyncAwaitTimeoutMs),
+                  () => invalidateBounded(this.sessionsSync, this.syncTuning.invalidateSyncAwaitTimeoutMs),
+                  () => invalidateBounded(this.machinesSync, this.syncTuning.invalidateSyncAwaitTimeoutMs),
+                  () => invalidateBounded(this.purchasesSync, this.syncTuning.invalidateSyncAwaitTimeoutMs),
+              ],
+              bootstrapConcurrencyLimit
+          );
+
+          try {
+              storage.getState().applyReady();
+          } catch {
+              // ignore
+          }
+
+          // Phase 2: load non-critical lists.
+          await runTasksWithLimit(
+              [
+                  () => invalidateBounded(this.artifactsSync, this.syncTuning.invalidateSyncAwaitTimeoutMs),
+                  () => invalidateBounded(this.automationsSync, this.syncTuning.invalidateSyncAwaitTimeoutMs),
+                  () => invalidateBounded(this.todosSync, this.syncTuning.invalidateSyncAwaitTimeoutMs),
+                  () => invalidateBounded(this.friendsSync, this.syncTuning.invalidateSyncAwaitTimeoutMs),
+                  () => invalidateBounded(this.friendRequestsSync, this.syncTuning.invalidateSyncAwaitTimeoutMs),
+                  () => invalidateBounded(this.feedSync, this.syncTuning.invalidateSyncAwaitTimeoutMs),
+                  () => invalidateBounded(this.pushTokenSync, this.syncTuning.invalidateSyncAwaitTimeoutMs),
+                  () => invalidateBounded(this.nativeUpdateSync, this.syncTuning.invalidateSyncAwaitTimeoutMs),
+              ],
+              this.syncTuning.resumeConcurrencyLimit
+          );
+        };
+
+      private snapshotRefreshOnResume = async (opts: { mode: 'fallback' | 'long-offline'; reason: string }): Promise<void> => {
+          if (this.pauseController.isPaused()) {
+              return;
+          }
+          await this.pauseController.waitUntilResumed();
+          if (!this.credentials) {
+              return;
+          }
+
+          const invalidateBounded = async (syncUnit: InvalidateSync, timeoutMs: number): Promise<void> => {
+              syncUnit.invalidateCoalesced();
+              await syncUnit.awaitQueue({ timeoutMs });
+          };
+
+          const concurrencyLimit = this.syncTuning.resumeConcurrencyLimit;
+
+          // Rebuild core lists first (sessions drives most downstream state).
+          await runTasksWithLimit(
+              [
+                  () => invalidateBounded(this.sessionsSync, this.syncTuning.invalidateSyncAwaitTimeoutMs),
+                  () => invalidateBounded(this.machinesSync, this.syncTuning.invalidateSyncAwaitTimeoutMs),
+              ],
+              concurrencyLimit
+          );
+
+          // Catch up transcripts only for sessions that are already loaded locally.
+          const loadedSessionIds: string[] = [];
+          try {
+              const sessions = storage.getState().sessionMessages;
+              for (const sessionId of Object.keys(sessions)) {
+                  if (sessions[sessionId]?.isLoaded === true) {
+                      loadedSessionIds.push(sessionId);
+                  }
+              }
+          } catch {
+              // ignore
+          }
+
+          await runTasksWithLimit(
+              loadedSessionIds.map((sessionId) => async () => {
+                  await invalidateBounded(this.getOrCreateMessagesSync(sessionId), this.syncTuning.invalidateSyncAwaitTimeoutMs);
+                  scmStatusSync.invalidate(sessionId);
+              }),
+              this.syncTuning.messageCatchUpConcurrencyLimit
+          );
+
+          // Refresh the rest with bounded concurrency.
+          await runTasksWithLimit(
+              [
+                  () => invalidateBounded(this.artifactsSync, this.syncTuning.invalidateSyncAwaitTimeoutMs),
+                  () => invalidateBounded(this.automationsSync, this.syncTuning.invalidateSyncAwaitTimeoutMs),
+                  () => invalidateBounded(this.todosSync, this.syncTuning.invalidateSyncAwaitTimeoutMs),
+                  () => invalidateBounded(this.friendsSync, this.syncTuning.invalidateSyncAwaitTimeoutMs),
+                  () => invalidateBounded(this.friendRequestsSync, this.syncTuning.invalidateSyncAwaitTimeoutMs),
+                  () => invalidateBounded(this.feedSync, this.syncTuning.invalidateSyncAwaitTimeoutMs),
+                  () => invalidateBounded(this.settingsSync, this.syncTuning.invalidateSyncAwaitTimeoutMs),
+                  () => invalidateBounded(this.profileSync, this.syncTuning.invalidateSyncAwaitTimeoutMs),
+              ],
+              concurrencyLimit
+          );
+      };
 
     public refreshMachinesThrottled = async (params?: { staleMs?: number; force?: boolean }) => {
         if (!this.credentials) return;
@@ -1526,6 +1761,7 @@ class Sync {
             credentials: this.credentials,
             encryption: this.encryption,
             pendingSettings: this.pendingSettings,
+            settingsSecretsKey: this.settingsSecretsKey,
             clearPendingSettings: () => {
                 this.pendingSettings = {};
                 savePendingSettings({});
@@ -1669,69 +1905,109 @@ class Sync {
             return;
         }
 
-        const session = storage.getState().sessions[sessionId] ?? null;
-        const hasLoadedMessages = storage.getState().sessionMessages[sessionId]?.isLoaded === true;
-        // IMPORTANT: `session.seq` is a "latest known session message seq" hint (often coming from `/sessions`),
-        // not necessarily the last message seq that *this device has materialized*. Using it here can cause gaps.
-        const afterSeq = hasLoadedMessages ? (this.sessionMaterializedMaxSeqById[sessionId] ?? 0) : 0;
+          const session = storage.getState().sessions[sessionId] ?? null;
+          const hasLoadedMessages = storage.getState().sessionMessages[sessionId]?.isLoaded === true;
+          // IMPORTANT: `session.seq` is a "latest known session message seq" hint (often coming from `/sessions`),
+          // not necessarily the last message seq that *this device has materialized*. Using it here can cause gaps.
+          const afterSeq = hasLoadedMessages ? (this.sessionMaterializedMaxSeqById[sessionId] ?? 0) : 0;
 
-        // If we already have a transcript snapshot, prefer incremental catch-up.
-        // This avoids refetching the latest page on every visibility ping.
-        if (afterSeq > 0) {
-            let cursor = afterSeq;
-            let pages = 0;
-            while (pages < 50) {
-                pages += 1;
-                const result = await fetchAndApplyNewerMessages({
-                    sessionId,
-                    afterSeq: cursor,
-                    limit: SESSION_MESSAGES_PAGE_SIZE,
-                    getSessionEncryption: (id) => this.encryption.getSessionEncryption(id),
-                    isSessionKnown: (id) => this.isSessionKnownOnActiveServer(id),
-                    request: (path) => apiSocket.request(path),
-                    sessionReceivedMessages: this.sessionReceivedMessages,
-                    applyMessages: (sid, messages) => this.applyMessages(sid, messages),
-                    onTaskLifecycleEvent: (event) => this.applySessionThinkingFromTaskLifecycle(sessionId, event),
-                    onMessagesPage: (page) => {
-                        this.updateSessionMessagesPaginationFromPage(sessionId, page, { allowHasMoreInference: true });
-                    },
-                    log,
-                });
+          const viewport = this.sessionViewport.get(sessionId) ?? null;
+          const isPinned = viewport?.isPinned ?? true;
+          const offlineForMs = this.lastSocketDisconnectedAtMs ? (Date.now() - this.lastSocketDisconnectedAtMs) : 0;
 
-                const next = result.page.nextAfterSeq;
-                if (!next) {
-                    storage.getState().applyMessagesLoaded(sessionId);
-                    return;
-                }
-                cursor = next;
-            }
+          if (!hasLoadedMessages) {
+              this.deferredForwardLoadingSessions.delete(sessionId);
+              await fetchAndApplyMessages({
+                  sessionId,
+                  getSessionEncryption: (id) => this.encryption.getSessionEncryption(id),
+                  isSessionKnown: (id) => this.isSessionKnownOnActiveServer(id),
+                  request: (path) => apiSocket.request(path),
+                  sessionReceivedMessages: this.sessionReceivedMessages,
+                  applyMessages: (sid, messages) => this.applyMessages(sid, messages),
+                  onTaskLifecycleEvent: (event) => this.applySessionThinkingFromTaskLifecycle(sessionId, event),
+                  markMessagesLoaded: (sid) => storage.getState().applyMessagesLoaded(sid),
+                  onMessagesPage: (page) => {
+                      this.updateSessionMessagesPaginationFromPage(sessionId, page, { allowHasMoreInference: true });
+                  },
+                  log,
+              });
+              return;
+          }
 
-            // If we hit the page cap, fall back to snapshot refresh for this session.
-            // This is a slow-path for extreme offline gaps.
-            log.log(`💬 fetchMessages hit catch-up page cap; falling back to snapshot refresh for session ${sessionId}`);
-        }
+            const decision = decideMessageCatchUpPolicy({
+                isForeground: this.isForeground && !this.pauseController.isPaused(),
+                isSessionVisible: true,
+                isPinned,
+                materializedMaxSeq: afterSeq,
+                sessionSeqHint: session?.seq ?? 0,
+                offlineForMs,
+                thresholds: {
+                    largeGapSeq: this.syncTuning.messageLargeGapSeq,
+                    maxIncrementalPagesOnResume: this.syncTuning.messageMaxIncrementalPagesOnResume,
+                    forceSnapshotOfflineMs: this.syncTuning.messageForceSnapshotOfflineMs,
+                },
+            });
 
-        await fetchAndApplyMessages({
-            sessionId,
-            getSessionEncryption: (id) => this.encryption.getSessionEncryption(id),
-            isSessionKnown: (id) => this.isSessionKnownOnActiveServer(id),
-            request: (path) => apiSocket.request(path),
-            sessionReceivedMessages: this.sessionReceivedMessages,
-            applyMessages: (sid, messages) => this.applyMessages(sid, messages),
-            onTaskLifecycleEvent: (event) => this.applySessionThinkingFromTaskLifecycle(sessionId, event),
-            markMessagesLoaded: (sid) => storage.getState().applyMessagesLoaded(sid),
-            onMessagesPage: (page) => {
-                this.updateSessionMessagesPaginationFromPage(sessionId, page, { allowHasMoreInference: true });
-            },
-            log,
-        });
-    }
+          await applyMessageCatchUpDecision({
+              decision,
+              afterSeq,
+              onIncrementalExhausted: isPinned ? 'tail_reset_latest_page' : 'defer_forward_loading',
+              fetchNewerPage: async (cursor) => {
+                  const result = await fetchAndApplyNewerMessages({
+                      sessionId,
+                      afterSeq: cursor,
+                      limit: SESSION_MESSAGES_PAGE_SIZE,
+                      getSessionEncryption: (id) => this.encryption.getSessionEncryption(id),
+                      isSessionKnown: (id) => this.isSessionKnownOnActiveServer(id),
+                      request: (path) => apiSocket.request(path),
+                      sessionReceivedMessages: this.sessionReceivedMessages,
+                      applyMessages: (sid, messages) => this.applyMessages(sid, messages),
+                      onNormalizedMessages: (messages) => ingestWorkspaceMutationMessages(sessionId, messages),
+                      onTaskLifecycleEvent: (event) => this.applySessionThinkingFromTaskLifecycle(sessionId, event),
+                      onMessagesPage: (page) => {
+                          this.updateSessionMessagesPaginationFromPage(sessionId, page, { allowHasMoreInference: true });
+                      },
+                      log,
+                  });
 
-    public async loadOlderMessages(sessionId: string): Promise<{
-        loaded: number;
-        hasMore: boolean;
-        status: 'loaded' | 'no_more' | 'not_ready' | 'in_flight';
-    }> {
+                  return {
+                      messagesCount: result.page.messages.length,
+                      nextAfterSeq: result.page.nextAfterSeq ?? null,
+                  };
+              },
+              fetchSnapshotLatestPage: async () => {
+                  await fetchAndApplyMessages({
+                      sessionId,
+                      getSessionEncryption: (id) => this.encryption.getSessionEncryption(id),
+                      isSessionKnown: (id) => this.isSessionKnownOnActiveServer(id),
+                      request: (path) => apiSocket.request(path),
+                      sessionReceivedMessages: this.sessionReceivedMessages,
+                      applyMessages: (sid, messages) => this.applyMessages(sid, messages),
+                      onTaskLifecycleEvent: (event) => this.applySessionThinkingFromTaskLifecycle(sessionId, event),
+                      markMessagesLoaded: (sid) => storage.getState().applyMessagesLoaded(sid),
+                      onMessagesPage: (page) => {
+                          this.updateSessionMessagesPaginationFromPage(sessionId, page, { allowHasMoreInference: true });
+                      },
+                      log,
+                  });
+              },
+              resetTranscriptState: () => this.resetSessionTranscriptState(sessionId),
+              markLoaded: () => storage.getState().applyMessagesLoaded(sessionId),
+              setDeferredForwardLoading: (deferred) => {
+                  if (deferred) {
+                      this.deferredForwardLoadingSessions.add(sessionId);
+                  } else {
+                      this.deferredForwardLoadingSessions.delete(sessionId);
+                  }
+              },
+          });
+      }
+
+      public async loadOlderMessages(sessionId: string): Promise<{
+          loaded: number;
+          hasMore: boolean;
+          status: 'loaded' | 'no_more' | 'not_ready' | 'in_flight';
+      }> {
         if (this.sessionMessagesLoadingOlder.has(sessionId)) {
             return {
                 loaded: 0,
@@ -1787,14 +2063,203 @@ class Sync {
         } catch (error) {
             console.error('Failed to load older messages:', error);
             return { loaded: 0, hasMore: knownHasMore ?? true, status: 'loaded' };
-        } finally {
-            this.sessionMessagesLoadingOlder.delete(sessionId);
-        }
-    }
+          } finally {
+              this.sessionMessagesLoadingOlder.delete(sessionId);
+          }
+      }
 
-    private registerPushToken = async () => {
-        log.log('registerPushToken');
-        await registerPushTokenIfAvailable({ credentials: this.credentials, log });
+        public async loadOlderMessagesFromCursor(sessionId: string, beforeSeq: number): Promise<{
+            loaded: number;
+            hasMore: boolean;
+            status: 'loaded' | 'no_more' | 'not_ready' | 'in_flight';
+        }> {
+            if (this.sessionMessagesLoadingOlder.has(sessionId)) {
+                return {
+                    loaded: 0,
+                    hasMore: this.sessionMessagesHasMoreOlder.get(sessionId) ?? true,
+                    status: 'in_flight',
+                };
+            }
+
+            const knownHasMore = this.sessionMessagesHasMoreOlder.get(sessionId);
+            if (knownHasMore === false) {
+                return { loaded: 0, hasMore: false, status: 'no_more' };
+            }
+
+            const supported = this.sessionMessagesPaginationSupported.get(sessionId);
+            if (supported === false) {
+                return { loaded: 0, hasMore: false, status: 'no_more' };
+            }
+
+            const normalizedBeforeSeq =
+                typeof beforeSeq === 'number' && Number.isFinite(beforeSeq) ? Math.max(1, Math.trunc(beforeSeq)) : 0;
+            if (normalizedBeforeSeq <= 0) {
+                return { loaded: 0, hasMore: knownHasMore ?? true, status: 'not_ready' };
+            }
+
+            this.sessionMessagesLoadingOlder.add(sessionId);
+            try {
+                const result = await fetchAndApplyOlderMessages({
+                    sessionId,
+                    beforeSeq: normalizedBeforeSeq,
+                    limit: SESSION_MESSAGES_PAGE_SIZE,
+                    getSessionEncryption: (id) => this.encryption.getSessionEncryption(id),
+                    isSessionKnown: (id) => this.isSessionKnownOnActiveServer(id),
+                    request: (path) => apiSocket.request(path),
+                    sessionReceivedMessages: this.sessionReceivedMessages,
+                    applyMessages: (sid, messages) => this.applyMessages(sid, messages, { notifyVoice: false }),
+                    log,
+                });
+
+                if (result.page.messages.length === 0) {
+                    this.sessionMessagesHasMoreOlder.set(sessionId, false);
+                    return { loaded: 0, hasMore: false, status: 'no_more' };
+                }
+
+                this.updateSessionMessagesPaginationFromPage(sessionId, result.page, { allowHasMoreInference: true });
+                const hasMore = this.sessionMessagesHasMoreOlder.get(sessionId) ?? false;
+                if (hasMore === false) {
+                    return { loaded: result.applied, hasMore: false, status: 'no_more' };
+                }
+                return { loaded: result.applied, hasMore, status: 'loaded' };
+            } catch (error) {
+                console.error('Failed to load older messages from cursor:', error);
+                return { loaded: 0, hasMore: knownHasMore ?? true, status: 'loaded' };
+            } finally {
+                this.sessionMessagesLoadingOlder.delete(sessionId);
+            }
+        }
+
+        public async loadOlderMessagesForkAware(childSessionId: string): Promise<{
+            loaded: number;
+            hasMore: boolean;
+            status: 'loaded' | 'no_more' | 'not_ready' | 'in_flight';
+        }> {
+            const fork = getForkedTranscriptSnapshotCached(storage.getState() as any, childSessionId);
+            if (!fork) return this.loadOlderMessages(childSessionId);
+
+            const request = resolveNextForkedTranscriptLoadOlderRequest({
+                fork,
+                getHasMoreOlder: (id) => this.sessionMessagesHasMoreOlder.get(id),
+                getBeforeSeqCursor: (id) => this.sessionMessagesBeforeSeq.get(id),
+            });
+            if (!request) {
+                return { loaded: 0, hasMore: false, status: 'no_more' };
+            }
+
+            const result =
+                request.kind === 'loadOlderFromCursor'
+                    ? await this.loadOlderMessagesFromCursor(request.sessionId, request.beforeSeq)
+                    : await this.loadOlderMessages(request.sessionId);
+
+            const overallHasMore = computeForkedTranscriptHasMoreOlder({
+                fork,
+                getHasMoreOlder: (id) => this.sessionMessagesHasMoreOlder.get(id),
+            });
+
+            if (overallHasMore === false) {
+                return { ...result, hasMore: false, status: 'no_more' };
+            }
+            return { ...result, hasMore: true };
+        }
+
+        /**
+         * Prefetch fork ancestor context so forked transcripts can render immediately after:
+         * - hard refresh / deep link directly into the child session
+         * - storage resets where only the child session transcript has been fetched
+         *
+         * This does NOT materialize/copy messages into the child session. It only loads the relevant
+         * ancestor session pages into the local cache (bounded by each segment's cutoff).
+         */
+        public async prefetchForkedTranscriptContext(childSessionId: string): Promise<void> {
+            const fork = getForkedTranscriptSnapshotCached(storage.getState() as any, childSessionId);
+            if (!fork) return;
+
+            const missingSegments = fork.segments.filter((seg) =>
+                seg.isReadOnlyContext === true &&
+                typeof seg.cutoffSeqInclusive === 'number' &&
+                Number.isFinite(seg.cutoffSeqInclusive) &&
+                seg.cutoffSeqInclusive >= 0 &&
+                (seg.messageIdsOldestFirst?.length ?? 0) === 0
+            );
+            if (missingSegments.length === 0) return;
+
+            for (const seg of missingSegments) {
+                const cutoff = Math.max(0, Math.trunc(seg.cutoffSeqInclusive as number));
+                await this.loadOlderMessagesFromCursor(seg.sessionId, cutoff + 1).catch(() => {});
+            }
+        }
+
+      public onSessionViewportChange(sessionId: string, state: { isPinned: boolean; offsetY: number }): void {
+          if (!sessionId) return;
+          this.sessionViewport.set(sessionId, { isPinned: state.isPinned === true, offsetY: state.offsetY, lastUpdatedAt: Date.now() });
+      }
+
+      public hasDeferredNewerMessages(sessionId: string): boolean {
+          return this.deferredForwardLoadingSessions.has(sessionId);
+      }
+
+      public async loadNewerMessages(sessionId: string): Promise<{
+          loaded: number;
+          hasMore: boolean;
+          status: 'loaded' | 'no_more' | 'not_ready' | 'in_flight';
+      }> {
+          if (this.sessionMessagesLoadingNewer.has(sessionId)) {
+              return { loaded: 0, hasMore: true, status: 'in_flight' };
+          }
+
+          const supported = this.sessionMessagesPaginationSupported.get(sessionId);
+          if (supported === false) {
+              return { loaded: 0, hasMore: false, status: 'no_more' };
+          }
+
+          const afterSeq = this.sessionMaterializedMaxSeqById[sessionId] ?? 0;
+          if (!afterSeq) {
+              return { loaded: 0, hasMore: true, status: 'not_ready' };
+          }
+
+          this.sessionMessagesLoadingNewer.add(sessionId);
+          try {
+              const result = await fetchAndApplyNewerMessages({
+                  sessionId,
+                  afterSeq,
+                  limit: SESSION_MESSAGES_PAGE_SIZE,
+                  getSessionEncryption: (id) => this.encryption.getSessionEncryption(id),
+                  isSessionKnown: (id) => this.isSessionKnownOnActiveServer(id),
+                  request: (path) => apiSocket.request(path),
+                  sessionReceivedMessages: this.sessionReceivedMessages,
+                  applyMessages: (sid, messages) => this.applyMessages(sid, messages, { notifyVoice: false }),
+                  onNormalizedMessages: (messages) => ingestWorkspaceMutationMessages(sessionId, messages),
+                  onTaskLifecycleEvent: (event) => this.applySessionThinkingFromTaskLifecycle(sessionId, event),
+                  onMessagesPage: (page) => {
+                      this.updateSessionMessagesPaginationFromPage(sessionId, page, { allowHasMoreInference: true });
+                  },
+                  log,
+              });
+
+              if (result.page.messages.length === 0) {
+                  this.deferredForwardLoadingSessions.delete(sessionId);
+                  return { loaded: 0, hasMore: false, status: 'no_more' };
+              }
+
+              const hasMore = Boolean(result.page.nextAfterSeq);
+              if (!hasMore) {
+                  this.deferredForwardLoadingSessions.delete(sessionId);
+                  return { loaded: result.applied, hasMore: false, status: 'no_more' };
+              }
+
+              return { loaded: result.applied, hasMore, status: 'loaded' };
+          } catch (error) {
+              console.error('Failed to load newer messages:', error);
+              return { loaded: 0, hasMore: true, status: 'loaded' };
+          } finally {
+              this.sessionMessagesLoadingNewer.delete(sessionId);
+          }
+      }
+
+      private registerPushToken = async () => {
+          log.log('registerPushToken');
+          await registerPushTokenIfAvailable({ credentials: this.credentials, log });
     }
 
     private subscribeToUpdates = () => {
@@ -1804,51 +2269,57 @@ class Sync {
         // Broadcast-safe session events are optional hints; ignore by default.
         apiSocket.onMessage('session', () => {});
 
-        apiSocket.onStatusChange((status) => {
-            if (status === 'disconnected') {
-                this.lastSocketDisconnectedAtMs = Date.now();
+          apiSocket.onStatusChange((status) => {
+              if (status === 'connected') {
+                  this.lastSocketDisconnectedAtMs = null;
+                  return;
+              }
+              if (status === 'disconnected' || status === 'error') {
+                  if (this.lastSocketDisconnectedAtMs == null) {
+                      this.lastSocketDisconnectedAtMs = Date.now();
+                  }
+              }
+          });
+
+          // Subscribe to connection state changes
+          apiSocket.onReconnected(() => {
+              fireAndForget(this.resumeSync('socket-reconnect'), { tag: 'Sync.resumeSync.socket-reconnect' });
+          });
+      }
+
+      private resetSessionTranscriptState(sessionId: string): void {
+          storage.getState().resetSessionMessages(sessionId);
+
+          this.sessionReceivedMessages.delete(sessionId);
+          this.sessionMessagesBeforeSeq.delete(sessionId);
+          this.sessionMessagesHasMoreOlder.delete(sessionId);
+          this.sessionMessagesPaginationSupported.delete(sessionId);
+          this.sessionMessagesLoadingOlder.delete(sessionId);
+          this.sessionMessagesLoadingNewer.delete(sessionId);
+          this.deferredForwardLoadingSessions.delete(sessionId);
+
+          if ((this.sessionMaterializedMaxSeqById[sessionId] ?? 0) !== 0) {
+              this.sessionMaterializedMaxSeqById = { ...this.sessionMaterializedMaxSeqById, [sessionId]: 0 };
+              this.sessionMaterializedMaxSeqDirty = true;
+              this.scheduleSessionMaterializedMaxSeqFlush();
+          }
+      }
+
+        private getOrCreateMessagesSync(sessionId: string): InvalidateSync {
+            let ex = this.messagesSync.get(sessionId);
+            if (!ex) {
+                ex = new InvalidateSync(() => this.fetchMessages(sessionId), {
+                    pause: this.pauseController,
+                    backoff: {
+                        minDelayMs: this.syncTuning.invalidateSyncBackoffMinDelayMs,
+                        maxDelayMs: this.syncTuning.invalidateSyncBackoffMaxDelayMs,
+                        maxFailureCount: 'infinite',
+                    },
+                });
+                this.messagesSync.set(sessionId, ex);
             }
-        });
-
-	        // Subscribe to connection state changes
-	        apiSocket.onReconnected(() => {
-	            fireAndForget(this.handleSocketReconnectedViaChanges({
-	                fallback: () => {
-	                    handleSocketReconnected({
-	                        log,
-	                        invalidateSessions: () => this.sessionsSync.invalidate(),
-	                        invalidateMachines: () => this.machinesSync.invalidate(),
-                        invalidateArtifacts: () => this.artifactsSync.invalidate(),
-                        invalidateFriends: () => this.friendsSync.invalidate(),
-                        invalidateFriendRequests: () => this.friendRequestsSync.invalidate(),
-                        invalidateFeed: () => this.feedSync.invalidate(),
-                        invalidateAutomations: () => this.automationsSync.invalidate(),
-                        getLoadedSessionIdsForMessages: () => {
-                            const loadedSessionIds: string[] = []
-                            const sessions = storage.getState().sessionMessages
-                            for (const sessionId of Object.keys(sessions)) {
-                                if (sessions[sessionId]?.isLoaded === true) {
-                                    loadedSessionIds.push(sessionId)
-                                }
-                            }
-                            return loadedSessionIds
-                        },
-	                        invalidateMessagesForSession: (sessionId) => this.messagesSync.get(sessionId)?.invalidate(),
-	                        invalidateScmStatusForSession: (sessionId) => scmStatusSync.invalidate(sessionId),
-	                    });
-	                },
-	            }), { tag: 'Sync.handleSocketReconnectedViaChanges' });
-	        });
-    }
-
-    private getOrCreateMessagesSync(sessionId: string): InvalidateSync {
-        let ex = this.messagesSync.get(sessionId);
-        if (!ex) {
-            ex = new InvalidateSync(() => this.fetchMessages(sessionId));
-            this.messagesSync.set(sessionId, ex);
+            return ex;
         }
-        return ex;
-    }
 
     private scheduleChangesCursorFlush(): void {
         this.changesCursorDirty = true;
@@ -1875,65 +2346,22 @@ class Sync {
         }
     }
 
-    private async handleSocketReconnectedViaChanges(opts: { fallback: () => void }): Promise<void> {
-        if (!this.credentials) {
-            opts.fallback();
-            return;
-        }
+      private async resumeViaChanges(opts: { accountId: string }): Promise<'ok' | 'fallback'> {
+          const CHANGES_PAGE_LIMIT = this.syncTuning.changesPageLimit;
+          const afterCursor = this.changesCursor ?? '0';
 
-        const accountId = storage.getState().profile?.id;
-        if (!accountId) {
-            opts.fallback();
-            return;
-        }
+          const offlineForMs = this.lastSocketDisconnectedAtMs ? (Date.now() - this.lastSocketDisconnectedAtMs) : 0;
+          const forceSnapshotRefresh = offlineForMs >= this.syncTuning.messageForceSnapshotOfflineMs;
 
-        if (this.changesSyncInFlight) {
-            await this.changesSyncInFlight.catch(() => {});
-            return;
-        }
-
-        const p = (async () => {
-            const CHANGES_PAGE_LIMIT = 200;
-            const afterCursor = this.changesCursor ?? '0';
-
-            const offlineForMs = this.lastSocketDisconnectedAtMs ? (Date.now() - this.lastSocketDisconnectedAtMs) : 0;
-            const forceSnapshotRefresh = offlineForMs >= Sync.LONG_OFFLINE_SNAPSHOT_MS;
-
-            const catchUp = await runSocketReconnectCatchUpViaChanges({
-                credentials: this.credentials,
-                accountId,
-                afterCursor,
-                changesPageLimit: CHANGES_PAGE_LIMIT,
-                forceSnapshotRefresh,
+          const catchUp = await runSocketReconnectCatchUpViaChanges({
+              credentials: this.credentials,
+              accountId: opts.accountId,
+              afterCursor,
+              changesPageLimit: CHANGES_PAGE_LIMIT,
+              forceSnapshotRefresh,
                 fetchChanges,
                 snapshotRefresh: async () => {
-                    // Long-offline snapshot mode: rebuild core lists first, then catch up transcripts.
-                    await this.sessionsSync.invalidateAndAwait();
-
-                    // Catch up messages for sessions that have been materialized locally (avoid fetching full
-                    // transcripts for every session in the list).
-                    const sessionIdsToCatchUp = Array.from(this.messagesSync.keys());
-                    for (const sessionId of sessionIdsToCatchUp) {
-                        await this.getOrCreateMessagesSync(sessionId).invalidateAndAwait();
-                        scmStatusSync.invalidate(sessionId);
-                    }
-
-                    // Refresh artifacts/machines after sessions.
-                    await Promise.all([
-                        this.artifactsSync.invalidateAndAwait(),
-                        this.machinesSync.invalidateAndAwait(),
-                        this.automationsSync.invalidateAndAwait(),
-                    ]);
-
-                    // Refresh kv-backed/UI lists last.
-                    await Promise.all([
-                        this.todosSync.invalidateAndAwait(),
-                        this.friendsSync.invalidateAndAwait(),
-                        this.friendRequestsSync.invalidateAndAwait(),
-                        this.feedSync.invalidateAndAwait(),
-                        this.settingsSync.invalidateAndAwait(),
-                        this.profileSync.invalidateAndAwait(),
-                    ]);
+                    await this.snapshotRefreshOnResume({ mode: 'long-offline', reason: 'snapshot-refresh' });
                 },
                 applyPlanned: async (planned) => {
                     await applyPlannedChangeActions({
@@ -1956,58 +2384,49 @@ class Sync {
                         invalidateScmStatusForSession: (sessionId) => scmStatusSync.invalidate(sessionId),
                         applyTodoSocketUpdates: (changes) => this.applyTodoSocketUpdates(changes),
                         kvBulkGet,
+                        concurrencyLimit: this.syncTuning.resumeConcurrencyLimit,
                     });
                 },
             });
 
-            if (catchUp.status === 'fallback') {
-                opts.fallback();
-                return;
-            }
+          if (catchUp.status === 'fallback') {
+              return 'fallback';
+          }
 
-            if (catchUp.shouldPersistCursor) {
-                this.changesCursor = catchUp.nextCursor;
-                if (catchUp.flushCursorNow) {
-                    this.changesCursorDirty = true;
-                    this.flushChangesCursorNow();
-                } else {
-                    this.scheduleChangesCursorFlush();
-                }
-            }
-        })();
+          if (catchUp.shouldPersistCursor) {
+              this.changesCursor = catchUp.nextCursor;
+              if (catchUp.flushCursorNow) {
+                  this.changesCursorDirty = true;
+                  this.flushChangesCursorNow();
+              } else {
+                  this.scheduleChangesCursorFlush();
+              }
+          }
 
-        this.changesSyncInFlight = p;
-        try {
-            await p;
-        } finally {
-            this.changesSyncInFlight = null;
-        }
-    }
+          return 'ok';
+      }
 
     private handleUpdate = async (update: unknown) => {
-	        await handleSocketUpdate({
-	            update,
-	            encryption: this.encryption,
-	            artifactDataKeys: this.artifactDataKeys,
-	            applySessions: (sessions) => this.applySessions(sessions),
-	            fetchSessions: () => {
-	                fireAndForget(this.fetchSessions(), { tag: 'Sync.handleUpdate.fetchSessions' });
-	            },
-	            applyMessages: (sessionId, messages) => this.applyMessages(sessionId, messages),
-	            onSessionVisible: (sessionId) => this.onSessionVisible(sessionId),
-	            isSessionMessagesLoaded: (sessionId) => storage.getState().sessionMessages[sessionId]?.isLoaded === true,
-	            getSessionMaterializedMaxSeq: (sessionId) => this.sessionMaterializedMaxSeqById[sessionId] ?? 0,
-            markSessionMaterializedMaxSeq: (sessionId, seq) => this.markSessionMaterializedMaxSeq(sessionId, seq),
-            invalidateMessagesForSession: (sessionId) => {
-                const ex = this.messagesSync.get(sessionId);
-                if (ex) {
-                    ex.invalidate();
-                }
-            },
-            assumeUsers: (userIds) => this.assumeUsers(userIds),
-            applyTodoSocketUpdates: (changes) => this.applyTodoSocketUpdates(changes),
-            invalidateMachines: () => this.machinesSync.invalidate(),
-            invalidateSessions: () => this.sessionsSync.invalidate(),
+          await handleSocketUpdate({
+              update,
+              encryption: this.encryption,
+              artifactDataKeys: this.artifactDataKeys,
+              applySessions: (sessions) => this.applySessions(sessions),
+              fetchSessions: () => {
+                  fireAndForget(this.fetchSessions(), { tag: 'Sync.handleUpdate.fetchSessions' });
+              },
+              applyMessages: (sessionId, messages) => this.applyMessages(sessionId, messages),
+                onSessionVisible: (sessionId) => this.onSessionVisible(sessionId),
+                isSessionMessagesLoaded: (sessionId) => storage.getState().sessionMessages[sessionId]?.isLoaded === true,
+                getSessionMaterializedMaxSeq: (sessionId) => this.sessionMaterializedMaxSeqById[sessionId] ?? 0,
+              markSessionMaterializedMaxSeq: (sessionId, seq) => this.markSessionMaterializedMaxSeq(sessionId, seq),
+              onMessageGapDetected: (sessionId, _info) => {
+                  this.getOrCreateMessagesSync(sessionId).invalidateCoalesced();
+              },
+              assumeUsers: (userIds) => this.assumeUsers(userIds),
+              applyTodoSocketUpdates: (changes) => this.applyTodoSocketUpdates(changes),
+              invalidateMachines: () => this.machinesSync.invalidate(),
+              invalidateSessions: () => this.sessionsSync.invalidate(),
             invalidateArtifacts: () => this.artifactsSync.invalidate(),
             invalidateFriends: () => this.friendsSync.invalidate(),
             invalidateFriendRequests: () => this.friendRequestsSync.invalidate(),

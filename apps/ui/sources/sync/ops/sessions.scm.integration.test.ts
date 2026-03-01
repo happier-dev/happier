@@ -32,6 +32,7 @@ import {
     sessionScmRemoteFetch,
     sessionScmRemotePull,
     sessionScmRemotePush,
+    sessionScmChangeDiscard,
     sessionScmChangeInclude,
     sessionScmStatusSnapshot,
 } from './sessions';
@@ -133,6 +134,32 @@ describe('session scm ops integration (git backend)', () => {
         expect(status.success).toBe(true);
         expect(status.snapshot?.totals.includedFiles).toBe(0);
         expect(status.snapshot?.totals.pendingFiles).toBe(0);
+    });
+
+    it('discards file changes through sessionScmChangeDiscard', async () => {
+        const workspace = mkdtempSync(join(tmpdir(), 'happier-ui-git-int-discard-'));
+        initRepo(workspace);
+        writeFileSync(join(workspace, 'a.txt'), 'base\n');
+        git(workspace, ['add', 'a.txt']);
+        git(workspace, ['commit', '-m', 'base']);
+        writeFileSync(join(workspace, 'a.txt'), 'changed\n');
+        writeFileSync(join(workspace, 'b.txt'), 'tmp\n');
+
+        mockSessionRPC.mockImplementation(createGitSessionRpcHarness(workspace));
+
+        const discard = await sessionScmChangeDiscard('session-1', {
+            cwd: '.',
+            entries: [
+                { path: 'a.txt', kind: 'modified' },
+                { path: 'b.txt', kind: 'untracked' },
+            ],
+        } as any);
+        expect(discard.success).toBe(true);
+
+        const status = await sessionScmStatusSnapshot('session-1', { cwd: '.' });
+        expect(status.success).toBe(true);
+        expect(status.snapshot?.totals.pendingFiles).toBe(0);
+        expect(status.snapshot?.totals.untrackedFiles).toBe(0);
     });
 
     it('commits all pending tracked and untracked changes with all-pending scope', async () => {

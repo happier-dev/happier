@@ -234,11 +234,25 @@ export async function fetchAndApplyMessages(params: {
 
     for (let i = 0; i < decryptedMessages.length; i++) {
         const decrypted = decryptedMessages[i];
+        const inputMessage = messagesToDecrypt[i];
+        const inputWasEncrypted = inputMessage?.content?.t === 'encrypted';
         if (decrypted) {
             if (debugDecryptStats && decrypted.content !== null) {
                 debugDecryptStats.decryptedWithContent++;
             }
-            eixstingMessages.add(decrypted.id);
+            // IMPORTANT: Do not mark encrypted messages as "received" when decryption failed.
+            // Otherwise a keyless device (or a device with delayed key init) can permanently
+            // treat encrypted history as empty until runtime state is fully reset.
+            if (decrypted.content !== null || !inputWasEncrypted) {
+                eixstingMessages.add(decrypted.id);
+            }
+
+            // Expected: encrypted history can be present even when this device lacks the secret key.
+            // In that case decryption yields null and we must not attempt to normalize/log it.
+            if (inputWasEncrypted && decrypted.content === null) {
+                continue;
+            }
+
             const lifecycleEvent = getTaskLifecycleEventFromRawContent(decrypted.content, decrypted.createdAt);
             if (lifecycleEvent) {
                 params.onTaskLifecycleEvent?.(lifecycleEvent);
@@ -390,7 +404,14 @@ export async function fetchAndApplyOlderMessages(params: {
     for (let i = 0; i < decryptedMessages.length; i++) {
         const decrypted = decryptedMessages[i];
         if (decrypted) {
-            eixstingMessages.add(decrypted.id);
+            const inputMessage = messagesToDecrypt[i];
+            const inputWasEncrypted = inputMessage?.content?.t === 'encrypted';
+            if (decrypted.content !== null || !inputWasEncrypted) {
+                eixstingMessages.add(decrypted.id);
+            }
+            if (inputWasEncrypted && decrypted.content === null) {
+                continue;
+            }
             // Older pages can include historical lifecycle markers (task_complete/turn_aborted) that
             // should not clobber current in-flight UI state. Lifecycle handling is reserved for
             // newer/socket flows.
@@ -418,6 +439,7 @@ export async function fetchAndApplyNewerMessages(params: {
     applyMessages: (sessionId: string, messages: NormalizedMessage[]) => void;
     onTaskLifecycleEvent?: (event: TaskLifecycleEvent) => void;
     onMessagesPage?: (page: ApiSessionMessagesResponse) => void;
+    onNormalizedMessages?: (messages: NormalizedMessage[]) => void;
     log: { log: (message: string) => void };
 }): Promise<{ applied: number; page: ApiSessionMessagesResponse }> {
     const { sessionId, afterSeq, limit, getSessionEncryption, request, sessionReceivedMessages, applyMessages, log } = params;
@@ -467,7 +489,14 @@ export async function fetchAndApplyNewerMessages(params: {
     for (let i = 0; i < decryptedMessages.length; i++) {
         const decrypted = decryptedMessages[i];
         if (decrypted) {
-            existingMessages.add(decrypted.id);
+            const inputMessage = messagesToDecrypt[i];
+            const inputWasEncrypted = inputMessage?.content?.t === 'encrypted';
+            if (decrypted.content !== null || !inputWasEncrypted) {
+                existingMessages.add(decrypted.id);
+            }
+            if (inputWasEncrypted && decrypted.content === null) {
+                continue;
+            }
             const lifecycleEvent = getTaskLifecycleEventFromRawContent(decrypted.content, decrypted.createdAt);
             if (lifecycleEvent) {
                 params.onTaskLifecycleEvent?.(lifecycleEvent);
@@ -479,6 +508,7 @@ export async function fetchAndApplyNewerMessages(params: {
         }
     }
 
+    params.onNormalizedMessages?.(normalizedMessages);
     applyMessages(sessionId, normalizedMessages);
     log.log(`💬 fetchNewerMessages completed for session ${sessionId} - applied ${normalizedMessages.length} messages`);
     return { applied: normalizedMessages.length, page: data };

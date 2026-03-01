@@ -100,4 +100,45 @@ describe('fetchAndApplyNewerMessages', () => {
     const normalized = applyMessages.mock.calls[0]?.[1]?.[0] as any;
     expect(normalized?.seq).toBe(2);
   });
+
+  it('calls onNormalizedMessages with the normalized messages before applying them', async () => {
+    const applyMessages = vi.fn();
+    const onNormalizedMessages = vi.fn();
+    const request = vi.fn(async () => new Response(
+      JSON.stringify({
+        messages: [buildApiMessage('m1', 2)],
+        nextAfterSeq: null,
+      }),
+      { status: 200, headers: { 'Content-Type': 'application/json' } },
+    ));
+
+    const decryptMessages = vi.fn(async () => [
+      {
+        id: 'm1',
+        seq: 2,
+        localId: null,
+        createdAt: 1_002,
+        content: {
+          role: 'user',
+          content: { type: 'text', text: 'hello' },
+        },
+      },
+    ]);
+
+    await fetchAndApplyNewerMessages({
+      sessionId: 's1',
+      afterSeq: 1,
+      limit: 150,
+      getSessionEncryption: () => ({ decryptMessages }),
+      request,
+      sessionReceivedMessages: new Map(),
+      applyMessages,
+      onNormalizedMessages,
+      log: { log: () => {} },
+    } as any);
+
+    expect(onNormalizedMessages).toHaveBeenCalledTimes(1);
+    expect(onNormalizedMessages.mock.calls[0]?.[0]?.[0]?.id).toBe('m1');
+    expect(applyMessages).toHaveBeenCalledWith('s1', expect.any(Array));
+  });
 });

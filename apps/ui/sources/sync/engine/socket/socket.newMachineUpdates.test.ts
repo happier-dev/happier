@@ -8,11 +8,15 @@ import { handleEphemeralSocketUpdate, handleUpdateContainer } from './socket';
 const initialStorageState = storage.getState();
 
 function buildBaseParams(overrides: Partial<Omit<Parameters<typeof handleUpdateContainer>[0], 'updateData'>> = {}) {
+    const decryptEncryptionKey = vi.fn(async () => null as Uint8Array | null);
+    const initializeMachines = vi.fn(async () => {});
     return {
         encryption: {
             getSessionEncryption: () => null,
             getMachineEncryption: () => null,
             removeSessionEncryption: () => {},
+            decryptEncryptionKey,
+            initializeMachines,
         } as unknown as Parameters<typeof handleUpdateContainer>[0]['encryption'],
         artifactDataKeys: new Map<string, Uint8Array>(),
         applySessions: vi.fn(),
@@ -22,7 +26,7 @@ function buildBaseParams(overrides: Partial<Omit<Parameters<typeof handleUpdateC
         isSessionMessagesLoaded: vi.fn(() => false),
         getSessionMaterializedMaxSeq: vi.fn(() => 0),
         markSessionMaterializedMaxSeq: vi.fn(),
-        invalidateMessagesForSession: vi.fn(),
+        onMessageGapDetected: vi.fn(),
         assumeUsers: vi.fn(async () => {}),
         applyTodoSocketUpdates: vi.fn(async () => {}),
         invalidateMachines: vi.fn(),
@@ -78,6 +82,77 @@ describe('socket update handling: new-machine', () => {
         expect(machine?.metadata).toBeNull();
         expect(machine?.daemonState).toBeNull();
     });
+
+    it('initializes machine encryption when a data encryption key is present', async () => {
+        const invalidateMachines = vi.fn();
+        const decryptEncryptionKey = vi.fn(async () => new Uint8Array([1, 2, 3]));
+        const initializeMachines = vi.fn(async () => {});
+        const params = buildBaseParams({
+            invalidateMachines,
+            encryption: {
+                getSessionEncryption: () => null,
+                getMachineEncryption: () => null,
+                removeSessionEncryption: () => {},
+                decryptEncryptionKey,
+                initializeMachines,
+            } as unknown as Parameters<typeof handleUpdateContainer>[0]['encryption'],
+        });
+
+        const updateData: ApiUpdateContainer = {
+            id: 'u_machine_2',
+            seq: 43,
+            createdAt: 124,
+            body: {
+                t: 'new-machine',
+                machineId: 'm2',
+                seq: 8,
+                metadata: 'AA==',
+                metadataVersion: 1,
+                daemonState: null,
+                daemonStateVersion: 0,
+                dataEncryptionKey: 'base64-envelope',
+                active: true,
+                activeAt: 121,
+                createdAt: 101,
+                updatedAt: 111,
+            },
+        } as ApiUpdateContainer;
+
+        await handleUpdateContainer({ ...params, updateData });
+
+        expect(decryptEncryptionKey).toHaveBeenCalledTimes(1);
+        expect(initializeMachines).toHaveBeenCalledTimes(1);
+        expect(invalidateMachines).toHaveBeenCalledTimes(1);
+    });
+});
+
+describe('socket update handling: update-machine (missing encryption)', () => {
+    beforeEach(() => {
+        storage.setState(initialStorageState, true);
+    });
+
+    it('invalidates machines sync instead of attempting to decrypt', async () => {
+        const invalidateMachines = vi.fn();
+        const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+        const params = buildBaseParams({ invalidateMachines });
+
+        const updateData: ApiUpdateContainer = {
+            id: 'u_machine_up_1',
+            seq: 99,
+            createdAt: 200,
+            body: {
+                t: 'update-machine',
+                machineId: 'm_missing_enc',
+                metadata: { version: 2, value: 'cipher' },
+            },
+        } as ApiUpdateContainer;
+
+        await handleUpdateContainer({ ...params, updateData });
+
+        expect(invalidateMachines).toHaveBeenCalledTimes(1);
+        expect(consoleError).not.toHaveBeenCalled();
+        consoleError.mockRestore();
+    });
 });
 
 describe('socket update handling: machine-activity for unknown machine', () => {
@@ -99,4 +174,3 @@ describe('socket update handling: machine-activity for unknown machine', () => {
         expect(machine?.activeAt).toBe(999);
     });
 });
-
