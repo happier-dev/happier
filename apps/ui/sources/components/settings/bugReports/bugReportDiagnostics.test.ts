@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import type { PreRestartBugReportSnapshotV1 } from '@/utils/system/preRestartBugReportSnapshot';
 
 vi.mock('expo-constants', () => ({
   default: {
@@ -148,9 +149,11 @@ vi.mock('@/sync/ops/machines', () => ({
   ) => machineGetBugReportLogTailMock(machineId, params, options),
 }));
 
-const isMachineOnlineMock = vi.fn((..._args: unknown[]) => true);
+const { isMachineOnlineMock } = vi.hoisted(() => ({
+  isMachineOnlineMock: vi.fn((..._args: unknown[]) => true),
+}));
 vi.mock('@/utils/sessions/machineUtils', () => ({
-  isMachineOnline: (...args: unknown[]) => isMachineOnlineMock(...args),
+  isMachineOnline: isMachineOnlineMock,
 }));
 
 vi.mock('@/utils/system/bugReportActionTrail', () => ({
@@ -159,6 +162,15 @@ vi.mock('@/utils/system/bugReportActionTrail', () => ({
 
 vi.mock('@/utils/system/bugReportLogBuffer', () => ({
   getBugReportLogText: () => '',
+}));
+
+const { peekPreRestartBugReportSnapshotMock } = vi.hoisted(() => ({
+  peekPreRestartBugReportSnapshotMock: vi.fn(
+    async (..._args: unknown[]): Promise<PreRestartBugReportSnapshotV1 | null> => null,
+  ),
+}));
+vi.mock('@/utils/system/preRestartBugReportSnapshot', () => ({
+  peekPreRestartBugReportSnapshot: peekPreRestartBugReportSnapshotMock,
 }));
 
 import { collectBugReportDiagnosticsArtifacts } from './bugReportDiagnostics';
@@ -276,6 +288,35 @@ describe('collectBugReportDiagnosticsArtifacts', () => {
       diagnosticsCollection?: Record<string, { status?: string; detail?: string }>;
     };
     expect(appContextJson.diagnosticsCollection?.machineDiagnostics?.status).toBe('skipped');
+  });
+
+  it('includes pre-restart crash artifacts when a persisted snapshot is available', async () => {
+    peekPreRestartBugReportSnapshotMock.mockResolvedValueOnce({
+      v: 1,
+      createdAtMs: Date.now(),
+      reason: 'crash',
+      platform: 'ios',
+      origin: 'http://localhost',
+      isSecureContext: true,
+      errorDetails: 'boom\nstack: ...',
+      appLogs: '[log] before restart',
+      userActions: [{ timestamp: new Date().toISOString(), action: 'tap', route: '/foo' }],
+    });
+
+    const result = await collectBugReportDiagnosticsArtifacts({
+      machines: [],
+      includeDiagnostics: true,
+      acceptedKinds: ['ui-mobile'],
+      maxArtifactBytes: 128_000,
+    });
+
+    const filenames = result.artifacts.map((artifact) => artifact.filename);
+    expect(filenames).toContain('pre-restart-crash.txt');
+    expect(filenames).toContain('pre-restart-app-console.log');
+    expect(filenames).toContain('pre-restart-user-action-trail.json');
+
+    const crashArtifact = result.artifacts.find((artifact) => artifact.filename === 'pre-restart-crash.txt');
+    expect(String(crashArtifact?.content ?? '')).toContain('boom');
   });
 
   it('does not block forever when a machine diagnostics RPC hangs', async () => {

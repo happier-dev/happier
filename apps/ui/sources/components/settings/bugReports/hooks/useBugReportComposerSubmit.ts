@@ -7,6 +7,7 @@ import type { Machine } from '@/sync/domains/state/storageTypes';
 import { t } from '@/text';
 import { clearBugReportUserActionTrail, recordBugReportUserAction } from '@/utils/system/bugReportActionTrail';
 import { clearBugReportLogBuffer } from '@/utils/system/bugReportLogBuffer';
+import { clearPreRestartBugReportSnapshot } from '@/utils/system/preRestartBugReportSnapshot';
 
 import { collectBugReportDiagnosticsArtifacts } from '../bugReportDiagnostics';
 import type { BugReportsFeature } from '../bugReportFeatureDefaults';
@@ -109,6 +110,7 @@ export function useBugReportComposerSubmit(input: Readonly<{
       void openBugReportIssueUrlSilently(result.issueUrl);
       clearBugReportUserActionTrail();
       clearBugReportLogBuffer();
+      void clearPreRestartBugReportSnapshot();
       router.back();
     } catch (error) {
       const baseMessage =

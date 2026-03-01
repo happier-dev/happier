@@ -24,6 +24,7 @@ import { machineCollectBugReportDiagnostics, machineGetBugReportLogTail } from '
 import { isMachineOnline } from '@/utils/sessions/machineUtils';
 import { getBugReportUserActionTrail } from '@/utils/system/bugReportActionTrail';
 import { getBugReportLogText } from '@/utils/system/bugReportLogBuffer';
+import { peekPreRestartBugReportSnapshot } from '@/utils/system/preRestartBugReportSnapshot';
 
 import type { BugReportDeploymentType } from './bugReportFallback';
 import { resolvePositiveInt, runAbortableWithTimeout, runWithTimeout } from './bugReportAsync';
@@ -108,11 +109,46 @@ export async function collectBugReportDiagnosticsArtifacts(input: {
     const diagnosticsCollection: Record<string, DiagnosticsCollectionEntry> = {
         appLogs: { status: 'skipped', detail: 'no app logs collected' },
         userActions: { status: 'skipped', detail: 'no recent user actions' },
+        preRestartSnapshot: { status: 'skipped', detail: 'no pre-restart snapshot found' },
         latestSession: { status: 'skipped', detail: 'no recent session found' },
         serverDiagnostics: { status: 'skipped', detail: 'source kind not accepted' },
         machineDiagnostics: { status: 'skipped', detail: 'source kind not accepted' },
         pastedCliDoctorSnapshot: { status: 'skipped', detail: 'no pasted snapshot' },
     };
+
+    const preRestart = await peekPreRestartBugReportSnapshot();
+    if (preRestart) {
+        let pushedAny = false;
+        pushedAny = pushArtifact(artifacts, {
+            filename: 'pre-restart-crash.txt',
+            sourceKind: 'ui-mobile',
+            contentType: 'text/plain',
+            content: preRestart.errorDetails,
+        }, input) || pushedAny;
+        pushedAny = pushArtifact(artifacts, {
+            filename: 'pre-restart-app-console.log',
+            sourceKind: 'ui-mobile',
+            contentType: 'text/plain',
+            content: preRestart.appLogs,
+        }, input) || pushedAny;
+        if (preRestart.userActions.length > 0) {
+            pushedAny = pushArtifact(artifacts, {
+                filename: 'pre-restart-user-action-trail.json',
+                sourceKind: 'ui-mobile',
+                contentType: 'application/json',
+                content: JSON.stringify({
+                    capturedAt: new Date(preRestart.createdAtMs).toISOString(),
+                    actionCount: preRestart.userActions.length,
+                    actions: preRestart.userActions,
+                }, null, 2),
+            }, input) || pushedAny;
+        }
+        if (pushedAny) {
+            diagnosticsCollection.preRestartSnapshot = { status: 'collected' };
+        } else {
+            diagnosticsCollection.preRestartSnapshot = { status: 'skipped', detail: 'pre-restart snapshot was empty after trimming/redaction' };
+        }
+    }
 
     const appLogs = getBugReportLogText(input.maxArtifactBytes, { sinceMs });
     if (appLogs.trim()) {
