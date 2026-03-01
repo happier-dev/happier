@@ -2467,6 +2467,7 @@ export const ja: TranslationStructure = {
     activityCollapsedPreviewMore: ({ count }: { count: number }) => `+${count} 件…`,
     forking: {
       dividerTitle: "以前のコンテキストから分岐しました",
+      dividerTitleWithParent: ({ parent }: { parent: string }) => `${parent} から分岐しました`,
       dividerSubtitle: "以前のコンテキスト（読み取り専用）",
       openParent: "開く",
       openParentA11y: "親セッションを開く",

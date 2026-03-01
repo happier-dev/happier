@@ -2229,6 +2229,7 @@ export const pl: TranslationStructure = {
     activityCollapsedPreviewMore: ({ count }: { count: number }) => `+${count} więcej…`,
     forking: {
       dividerTitle: "Rozgałęziono z wcześniejszego kontekstu",
+      dividerTitleWithParent: ({ parent }: { parent: string }) => `Rozgałęziono z ${parent}`,
       dividerSubtitle: "Starszy kontekst (tylko do odczytu)",
       openParent: "Otwórz",
       openParentA11y: "Otwórz sesję nadrzędną",

@@ -1325,6 +1325,7 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
           activity: '活動',
             forking: {
                 dividerTitle: '從較早的內容分支',
+                dividerTitleWithParent: ({ parent }: { parent: string }) => `從${parent}分支`,
                 dividerSubtitle: '較早內容（唯讀）',
                 openParent: '開啟',
                 openParentA11y: '開啟父工作階段',

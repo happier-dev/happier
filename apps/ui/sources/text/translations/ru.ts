@@ -2474,6 +2474,7 @@ export const ru: TranslationStructure = {
     activityCollapsedPreviewMore: ({ count }: { count: number }) => `+${count} ещё…`,
     forking: {
       dividerTitle: "Ветка из предыдущего контекста",
+      dividerTitleWithParent: ({ parent }: { parent: string }) => `Ветка из ${parent}`,
       dividerSubtitle: "Предыдущий контекст (только чтение)",
       openParent: "Открыть",
       openParentA11y: "Открыть родительскую сессию",

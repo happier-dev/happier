@@ -2072,6 +2072,7 @@ export const zhHans: TranslationStructure = {
     activityCollapsedPreviewMore: ({ count }: { count: number }) => `+${count} 更多…`,
     forking: {
       dividerTitle: "从较早的上下文分叉",
+      dividerTitleWithParent: ({ parent }: { parent: string }) => `从${parent}分叉`,
       dividerSubtitle: "较早上下文（只读）",
       openParent: "打开",
       openParentA11y: "打开父会话",

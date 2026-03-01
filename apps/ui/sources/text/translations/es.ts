@@ -2205,6 +2205,7 @@ export const es: TranslationStructure = {
     activityCollapsedPreviewMore: ({ count }: { count: number }) => `+${count} más…`,
     forking: {
       dividerTitle: "Bifurcado desde un contexto anterior",
+      dividerTitleWithParent: ({ parent }: { parent: string }) => `Bifurcado desde ${parent}`,
       dividerSubtitle: "Contexto anterior (solo lectura)",
       openParent: "Abrir",
       openParentA11y: "Abrir sesión padre",

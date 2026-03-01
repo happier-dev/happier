@@ -1979,6 +1979,7 @@ export const en = {
         activityCollapsedPreviewMore: ({ count }: { count: number }) => `+${count} more…`,
         forking: {
             dividerTitle: 'Forked from earlier context',
+            dividerTitleWithParent: ({ parent }: { parent: string }) => `Forked from ${parent}`,
             dividerSubtitle: 'Older context (read-only)',
             openParent: 'Open',
             openParentA11y: 'Open parent session',

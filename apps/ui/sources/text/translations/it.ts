@@ -2528,6 +2528,7 @@ export const it: TranslationStructure = {
     activityCollapsedPreviewMore: ({ count }: { count: number }) => `+${count} in più…`,
     forking: {
       dividerTitle: "Derivato da un contesto precedente",
+      dividerTitleWithParent: ({ parent }: { parent: string }) => `Derivato da ${parent}`,
       dividerSubtitle: "Contesto precedente (sola lettura)",
       openParent: "Apri",
       openParentA11y: "Apri la sessione padre",

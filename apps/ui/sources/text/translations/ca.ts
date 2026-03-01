@@ -1971,6 +1971,7 @@ deps: {
         activityCollapsedPreviewMore: ({ count }: { count: number }) => `+${count} més…`,
         forking: {
             dividerTitle: 'Bifurcat d’un context anterior',
+            dividerTitleWithParent: ({ parent }: { parent: string }) => `Bifurcat de ${parent}`,
             dividerSubtitle: 'Context anterior (només lectura)',
             openParent: 'Obre',
             openParentA11y: 'Obre la sessió mare',
