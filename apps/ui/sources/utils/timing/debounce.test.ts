@@ -358,6 +358,23 @@ describe('debounce utilities', () => {
                 expect(mockFn).toHaveBeenNthCalledWith(3, 'third');
             });
 
+            it('executes immediately when delay is 0 (no timers)', () => {
+                const mockFn = vi.fn();
+                const { debounced } = createAdvancedDebounce(mockFn, { delay: 0, immediateCount: 1 });
+
+                debounced('first');
+                debounced('second');
+                debounced('third');
+
+                expect(mockFn).toHaveBeenCalledTimes(3);
+                expect(mockFn).toHaveBeenNthCalledWith(1, 'first');
+                expect(mockFn).toHaveBeenNthCalledWith(2, 'second');
+                expect(mockFn).toHaveBeenNthCalledWith(3, 'third');
+
+                vi.advanceTimersByTime(10);
+                expect(mockFn).toHaveBeenCalledTimes(3);
+            });
+
             it('should work with reducer', () => {
                 const mockFn = vi.fn();
                 const { debounced } = createAdvancedDebounce(mockFn, {
