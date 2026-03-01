@@ -19,8 +19,14 @@ describe('ApiSessionClient connection handling', () => {
     let consoleSpy: any;
     let mockSession: any;
     let originalArgv: string[];
+    const createdClients: ApiSessionClient[] = [];
     const flushQueuedCommits = async (client: ApiSessionClient): Promise<void> => {
         await (client as any).messageCommitQueueTail;
+    };
+    const createClient = (token: string, session: any): ApiSessionClient => {
+        const client = new ApiSessionClient(token, session);
+        createdClients.push(client);
+        return client;
     };
 
     beforeEach(() => {
@@ -75,12 +81,26 @@ describe('ApiSessionClient connection handling', () => {
         };
     });
 
-    afterEach(() => {
+    afterEach(async () => {
+        for (const client of createdClients.splice(0)) {
+            if ((client as any).closed) {
+                continue;
+            }
+            try {
+                await client.close();
+            } catch {
+                // ignore
+            }
+        }
+
         process.argv = originalArgv;
         delete process.env.HAPPIER_STACK_TOOL_TRACE;
         delete process.env.HAPPIER_STACK_TOOL_TRACE_FILE;
         delete process.env.HAPPIER_DAEMON_INITIAL_PROMPT;
         __resetToolTraceForTests();
+        vi.useRealTimers();
+        vi.unstubAllGlobals();
+        vi.restoreAllMocks();
     });
 
     it('clears accountIdPromise on failure so later calls can retry', async () => {
@@ -92,7 +112,7 @@ describe('ApiSessionClient connection handling', () => {
             .mockRejectedValueOnce(new Error('temporary failure'))
             .mockResolvedValueOnce({ data: { id: 'acc-1' } });
 
-        const client = new ApiSessionClient('token', mockSession);
+        const client = createClient('token', mockSession);
 
         const first = await (client as any).getAccountId();
         expect(first).toBeNull();
@@ -104,7 +124,7 @@ describe('ApiSessionClient connection handling', () => {
     });
 
     it('exposes last observed transcript seq for fork/resume heuristics', () => {
-        const client = new ApiSessionClient('token', mockSession);
+        const client = createClient('token', mockSession);
         expect(client.getLastObservedMessageSeq()).toBe(0);
     });
 
@@ -112,7 +132,7 @@ describe('ApiSessionClient connection handling', () => {
         const previous = process.env.HAPPIER_FEATURE_EXECUTION_RUNS__ENABLED;
         process.env.HAPPIER_FEATURE_EXECUTION_RUNS__ENABLED = '0';
         try {
-            const client = new ApiSessionClient('token', mockSession);
+            const client = createClient('token', mockSession);
 
             expect(client.rpcHandlerManager.hasHandler('execution.run.send')).toBe(true);
 
@@ -158,7 +178,7 @@ describe('ApiSessionClient connection handling', () => {
         mockSession.metadata.startedBy = undefined;
         mockSession.metadata.startedFromDaemon = undefined;
 
-        const client = new ApiSessionClient('token', mockSession);
+        const client = createClient('token', mockSession);
         const onUserMessage = vi.fn();
         client.onUserMessage(onUserMessage);
 
@@ -197,7 +217,7 @@ describe('ApiSessionClient connection handling', () => {
         mockSession.metadata.startedBy = undefined;
         mockSession.metadata.startedFromDaemon = undefined;
 
-        const client = new ApiSessionClient('token', mockSession);
+        const client = createClient('token', mockSession);
         const onUserMessage = vi.fn();
         client.onUserMessage(onUserMessage);
 
@@ -219,7 +239,7 @@ describe('ApiSessionClient connection handling', () => {
 
         mockSession.metadata.startedBy = 'daemon';
 
-        const client = new ApiSessionClient('token', mockSession);
+        const client = createClient('token', mockSession);
         client.onUserMessage(() => {});
 
         await new Promise((r) => setTimeout(r, 0));
@@ -227,7 +247,7 @@ describe('ApiSessionClient connection handling', () => {
     });
 
     it('sends plaintext session messages when session.encryptionMode is plain', async () => {
-        const client = new ApiSessionClient('fake-token', { ...mockSession, encryptionMode: 'plain' as const });
+        const client = createClient('fake-token', { ...mockSession, encryptionMode: 'plain' as const });
 
         client.sendUserTextMessage('hello');
 
@@ -244,7 +264,7 @@ describe('ApiSessionClient connection handling', () => {
     });
 
     it('normalizes outbound ACP tool-call names and inputs to V2 canonical keys', async () => {
-        const client = new ApiSessionClient('fake-token', mockSession);
+        const client = createClient('fake-token', mockSession);
         client.sendAgentMessage('opencode', {
             type: 'tool-call',
             callId: 'call-1',
@@ -286,7 +306,7 @@ describe('ApiSessionClient connection handling', () => {
             .mockReturnValue(fetchPromise as any);
 
         try {
-            const client = new ApiSessionClient('fake-token', mockSession);
+            const client = createClient('fake-token', mockSession);
             const onMetadataUpdated = vi.fn();
             client.on('metadata-updated', onMetadataUpdated);
 
@@ -326,7 +346,7 @@ describe('ApiSessionClient connection handling', () => {
             .mockReturnValue(fetchPromise as any);
 
         try {
-            const client = new ApiSessionClient('fake-token', mockSession);
+            const client = createClient('fake-token', mockSession);
 
             let completed = false;
             const p = client.ensureMetadataSnapshot({ timeoutMs: 10_000 }).then((meta) => {
@@ -354,7 +374,7 @@ describe('ApiSessionClient connection handling', () => {
     });
 
     it('backfills missing Read tool-call input details from permission-request toolCall.rawInput', async () => {
-        const client = new ApiSessionClient('fake-token', mockSession);
+        const client = createClient('fake-token', mockSession);
 
         client.sendAgentMessage('opencode', {
             type: 'permission-request',
@@ -403,7 +423,7 @@ describe('ApiSessionClient connection handling', () => {
     });
 
     it('includes server-createdAt on delivered user messages so permission precedence can be timestamped', () => {
-        const client = new ApiSessionClient('fake-token', mockSession);
+        const client = createClient('fake-token', mockSession);
 
         const received: any[] = [];
         client.onUserMessage((msg: any) => received.push(msg));
@@ -442,7 +462,7 @@ describe('ApiSessionClient connection handling', () => {
     });
 
     it('delivers plaintext new-message updates without decrypting', () => {
-        const client = new ApiSessionClient('fake-token', mockSession);
+        const client = createClient('fake-token', mockSession);
 
         const received: any[] = [];
         client.onUserMessage((msg: any) => received.push(msg));
@@ -482,7 +502,7 @@ describe('ApiSessionClient connection handling', () => {
     it('consumes daemon initial prompt env and seeds one user prompt on callback attach', () => {
         process.env.HAPPIER_DAEMON_INITIAL_PROMPT = '  run nightly health check  ';
 
-        const client = new ApiSessionClient('fake-token', mockSession);
+        const client = createClient('fake-token', mockSession);
         const sendUserTextMessageSpy = vi.spyOn(client, 'sendUserTextMessage');
         const onUserMessage = vi.fn();
 
@@ -534,7 +554,7 @@ describe('ApiSessionClient connection handling', () => {
             ...mockSession.metadata,
             startedBy: 'daemon',
         };
-        const client = new ApiSessionClient('fake-token', mockSession);
+        const client = createClient('fake-token', mockSession);
         const onUserMessage = vi.fn();
 
         client.onUserMessage(onUserMessage);
@@ -592,7 +612,7 @@ describe('ApiSessionClient connection handling', () => {
                 ...mockSession.metadata,
                 startedBy: 'daemon',
             };
-            const client = new ApiSessionClient('fake-token', mockSession);
+            const client = createClient('fake-token', mockSession);
             const onUserMessage = vi.fn();
 
             client.onUserMessage(onUserMessage);
@@ -619,7 +639,7 @@ describe('ApiSessionClient connection handling', () => {
         const axiosMod = await import('axios');
         const axios = axiosMod.default as any;
 
-        const client = new ApiSessionClient('fake-token', mockSession);
+        const client = createClient('fake-token', mockSession);
 
         const newerUser = {
             role: 'user',
@@ -653,7 +673,7 @@ describe('ApiSessionClient connection handling', () => {
     });
 
     it('normalizes outbound ACP permission-request toolName to V2 canonical keys (supports TodoWrite)', async () => {
-        const client = new ApiSessionClient('fake-token', mockSession);
+        const client = createClient('fake-token', mockSession);
 
         client.sendAgentMessage('gemini', {
             type: 'permission-request',
@@ -682,7 +702,7 @@ describe('ApiSessionClient connection handling', () => {
     });
 
     it('backfills missing permission-request input details from nested options.toolCall.content (Gemini ACP)', async () => {
-        const client = new ApiSessionClient('fake-token', mockSession);
+        const client = createClient('fake-token', mockSession);
 
         client.sendAgentMessage('gemini', {
             type: 'permission-request',
@@ -726,7 +746,7 @@ describe('ApiSessionClient connection handling', () => {
     });
 
     it('normalizes outbound ACP tool-result outputs using the canonical tool name for the callId', async () => {
-        const client = new ApiSessionClient('fake-token', mockSession);
+        const client = createClient('fake-token', mockSession);
 
         client.sendAgentMessage('opencode', {
             type: 'tool-call',
@@ -768,7 +788,7 @@ describe('ApiSessionClient connection handling', () => {
     });
 
     it('backfills empty TodoWrite tool-result outputs with the requested todos', async () => {
-        const client = new ApiSessionClient('fake-token', mockSession);
+        const client = createClient('fake-token', mockSession);
 
         client.sendAgentMessage('gemini', {
             type: 'tool-call',
@@ -809,7 +829,7 @@ describe('ApiSessionClient connection handling', () => {
     });
 
     it('normalizes outbound Codex MCP tool-call names to V2 canonical keys', async () => {
-        const client = new ApiSessionClient('fake-token', mockSession);
+        const client = createClient('fake-token', mockSession);
         client.sendCodexMessage({
             type: 'tool-call',
             callId: 'call-1',
@@ -837,7 +857,7 @@ describe('ApiSessionClient connection handling', () => {
     });
 
     it('normalizes outbound Codex MCP tool-call-result outputs using the canonical tool name for the callId', async () => {
-        const client = new ApiSessionClient('fake-token', mockSession);
+        const client = createClient('fake-token', mockSession);
 
         client.sendCodexMessage({
             type: 'tool-call',
@@ -882,12 +902,12 @@ describe('ApiSessionClient connection handling', () => {
         // Should not throw during client creation
         // Note: socket is created with autoConnect: false, so connection happens later
         expect(() => {
-            new ApiSessionClient('fake-token', mockSession);
+            createClient('fake-token', mockSession);
         }).not.toThrow();
     });
 
     it('should emit correct events on socket connection', () => {
-        const client = new ApiSessionClient('fake-token', mockSession);
+        const client = createClient('fake-token', mockSession);
 
         // Should have set up event listeners
         expect(mockSocket.on).toHaveBeenCalledWith('connect', expect.any(Function));
@@ -896,7 +916,7 @@ describe('ApiSessionClient connection handling', () => {
     });
 
     it('close closes both the session-scoped and user-scoped sockets', async () => {
-        const client = new ApiSessionClient('fake-token', mockSession);
+        const client = createClient('fake-token', mockSession);
 
         await client.close();
 
@@ -905,7 +925,7 @@ describe('ApiSessionClient connection handling', () => {
     });
 
     it('waitForMetadataUpdate ensures the user-scoped socket is connected so metadata updates can wake idle agents', async () => {
-        const client = new ApiSessionClient('fake-token', mockSession);
+        const client = createClient('fake-token', mockSession);
 
         const controller = new AbortController();
         const promise = client.waitForMetadataUpdate(controller.signal);
@@ -919,7 +939,7 @@ describe('ApiSessionClient connection handling', () => {
     it('emits messages even when disconnected (socket.io will buffer)', async () => {
         mockSocket.connected = false;
 
-        const client = new ApiSessionClient('fake-token', mockSession);
+        const client = createClient('fake-token', mockSession);
 
         const payload: RawJSONLines = {
             type: 'user',
@@ -944,7 +964,7 @@ describe('ApiSessionClient connection handling', () => {
     });
 
     it('merges optional meta into outbound Claude session messages', async () => {
-        const client = new ApiSessionClient('fake-token', mockSession);
+        const client = createClient('fake-token', mockSession);
 
         const payload: RawJSONLines = {
             type: 'assistant',
@@ -977,7 +997,7 @@ describe('ApiSessionClient connection handling', () => {
     it('sends keepAlive(thinking=true) as a non-volatile emit so UIs that connect mid-turn still receive it', () => {
         mockSocket.volatile = { emit: vi.fn() };
 
-        const client = new ApiSessionClient('fake-token', mockSession);
+        const client = createClient('fake-token', mockSession);
         client.keepAlive(true, 'remote');
 
         expect(mockSocket.emit).toHaveBeenCalledWith(
@@ -990,7 +1010,7 @@ describe('ApiSessionClient connection handling', () => {
     it('sends keepAlive(thinking=false) via volatile emit to avoid backpressure', () => {
         mockSocket.volatile = { emit: vi.fn() };
 
-        const client = new ApiSessionClient('fake-token', mockSession);
+        const client = createClient('fake-token', mockSession);
         client.keepAlive(false, 'remote');
 
         expect(mockSocket.volatile.emit).toHaveBeenCalledWith(
@@ -1000,7 +1020,7 @@ describe('ApiSessionClient connection handling', () => {
     });
 
 		    it('attaches server localId onto decrypted user messages', async () => {
-		        const client = new ApiSessionClient('fake-token', mockSession);
+		        const client = createClient('fake-token', mockSession);
 
 	        const onUserMessage = vi.fn();
 	        client.onUserMessage(onUserMessage);
@@ -1040,7 +1060,7 @@ describe('ApiSessionClient connection handling', () => {
 		    });
 
         it('delivers UI user messages from user-scoped updates even when not materialized locally', async () => {
-            const client = new ApiSessionClient('fake-token', mockSession);
+            const client = createClient('fake-token', mockSession);
 
             const onUserMessage = vi.fn();
             client.onUserMessage(onUserMessage);
@@ -1113,7 +1133,7 @@ describe('ApiSessionClient connection handling', () => {
                 .mockImplementationOnce(() => sessionSocket)
                 .mockImplementationOnce(() => userSocket);
 
-            const client = new ApiSessionClient('fake-token', mockSession);
+            const client = createClient('fake-token', mockSession);
 
             const onUserMessageEvent = vi.fn();
             client.on('user-message', onUserMessageEvent);
@@ -1124,7 +1144,7 @@ describe('ApiSessionClient connection handling', () => {
         });
 
         it('does not deliver self-sent CLI user messages to onUserMessage callback (prevents ACK echo loops)', async () => {
-            const client = new ApiSessionClient('fake-token', mockSession);
+            const client = createClient('fake-token', mockSession);
 
             const onUserMessage = vi.fn();
             client.onUserMessage(onUserMessage);
@@ -1159,7 +1179,7 @@ describe('ApiSessionClient connection handling', () => {
         });
 
 				    it('waitForMetadataUpdate resolves when session metadata updates', async () => {
-				        const client = new ApiSessionClient('fake-token', mockSession);
+				        const client = createClient('fake-token', mockSession);
 
 				        const waitPromise = client.waitForMetadataUpdate();
 
@@ -1187,7 +1207,7 @@ describe('ApiSessionClient connection handling', () => {
 				    });
 
 	                it('waitForMetadataUpdate resolves when the user-scoped socket connects (wakes idle agents)', async () => {
-	                    const client = new ApiSessionClient('fake-token', mockSession);
+	                    const client = createClient('fake-token', mockSession);
 
 	                    const waitPromise = client.waitForMetadataUpdate();
 
@@ -1202,7 +1222,7 @@ describe('ApiSessionClient connection handling', () => {
 	                });
 
                     it('waitForMetadataUpdate syncs a session snapshot on user-scoped connect so missed metadata updates are observed', async () => {
-                        const client = new ApiSessionClient('fake-token', mockSession);
+                        const client = createClient('fake-token', mockSession);
 
                         const syncSpy = vi.fn(async () => {
                             await new Promise((r) => setTimeout(r, 0));
@@ -1228,7 +1248,7 @@ describe('ApiSessionClient connection handling', () => {
                     });
 
             it('waitForMetadataUpdate resolves when session metadata updates (server sends update-session with id)', async () => {
-                const client = new ApiSessionClient('fake-token', mockSession);
+                const client = createClient('fake-token', mockSession);
 
                 const waitPromise = client.waitForMetadataUpdate();
 
@@ -1256,7 +1276,7 @@ describe('ApiSessionClient connection handling', () => {
 	            });
 
 	            it('waitForMetadataUpdate resolves false when user-scoped socket disconnects', async () => {
-	                const client = new ApiSessionClient('fake-token', mockSession);
+	                const client = createClient('fake-token', mockSession);
 
 	                const waitPromise = client.waitForMetadataUpdate();
 
@@ -1271,7 +1291,7 @@ describe('ApiSessionClient connection handling', () => {
 	            });
 
                 it('waitForMetadataUpdate does not miss fast user-scoped update-session wakeups', async () => {
-                    const client = new ApiSessionClient('fake-token', mockSession);
+                    const client = createClient('fake-token', mockSession);
 
                     const updateHandler = (mockUserSocket.on.mock.calls.find((call: any[]) => call[0] === 'update') ?? [])[1];
                     expect(typeof updateHandler).toBe('function');
@@ -1302,7 +1322,7 @@ describe('ApiSessionClient connection handling', () => {
                 });
 
                 it('waitForMetadataUpdate does not miss snapshot sync updates started before handlers attach', async () => {
-                    const client = new ApiSessionClient('fake-token', mockSession);
+                    const client = createClient('fake-token', mockSession);
 
                     (client as any).metadataVersion = -1;
                     (client as any).agentStateVersion = -1;
@@ -1389,7 +1409,7 @@ describe('ApiSessionClient connection handling', () => {
                     },
                 });
 
-                const client = new ApiSessionClient('fake-token', {
+                const client = createClient('fake-token', {
                     ...mockSession,
                     metadataVersion: -1,
                     metadata: {
@@ -1413,8 +1433,4 @@ describe('ApiSessionClient connection handling', () => {
                 });
             });
 
-	    afterEach(() => {
-	        consoleSpy.mockRestore();
-	        vi.restoreAllMocks();
-	    });
 });
