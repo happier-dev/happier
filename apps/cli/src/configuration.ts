@@ -298,6 +298,13 @@ class Configuration {
     this.transcriptRecoveryErrorLogThrottleMs =
       Number.isFinite(transcriptRecoveryLogThrottleRaw) && transcriptRecoveryLogThrottleRaw >= 0 ? transcriptRecoveryLogThrottleRaw : 5_000;
 
+    const startupCatchUpLookbackRaw = Number.parseInt(
+      String(process.env.HAPPIER_STARTUP_TRANSCRIPT_CATCH_UP_LOOKBACK_MS ?? ''),
+      10,
+    );
+    this.startupTranscriptCatchUpLookbackMs =
+      Number.isFinite(startupCatchUpLookbackRaw) && startupCatchUpLookbackRaw >= 0 ? startupCatchUpLookbackRaw : 10_000;
+
     const maxPendingRaw = Number.parseInt(String(process.env.HAPPIER_CLAUDE_TASKOUTPUT_MAX_PENDING_PER_AGENT ?? ''), 10);
     const maxSeenUuidsRaw = Number.parseInt(String(process.env.HAPPIER_CLAUDE_TASKOUTPUT_MAX_SEEN_UUIDS_PER_SIDECHAIN ?? ''), 10);
     const maxToolUseRaw = Number.parseInt(String(process.env.HAPPIER_CLAUDE_TASKOUTPUT_MAX_TOOLUSE_ENTRIES ?? ''), 10);
