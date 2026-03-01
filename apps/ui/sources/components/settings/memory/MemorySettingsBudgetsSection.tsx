@@ -5,6 +5,7 @@ import { useUnistyles } from 'react-native-unistyles';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { Item } from '@/components/ui/lists/Item';
 import { Modal } from '@/modal';
+import { t } from '@/text';
 
 import type { MemorySettingsV1 } from '@happier-dev/protocol';
 
@@ -17,23 +18,23 @@ export const MemorySettingsBudgetsSection = React.memo(function MemorySettingsBu
 
     return (
         <ItemGroup
-            title="Disk budget"
-            footer="Limits how much disk space the local memory index can use (best-effort eviction)."
+            title={t('memorySearchSettings.budgets.groupTitle')}
+            footer={t('memorySearchSettings.budgets.groupFooter')}
         >
             <Item
                 testID="memory-settings-budget-light"
-                title="Light index budget"
-                subtitle={`${settings.budgets.maxDiskMbLight} MB`}
+                title={t('memorySearchSettings.budgets.lightTitle')}
+                subtitle={t('memorySearchSettings.budgets.mbLabel', { mb: settings.budgets.maxDiskMbLight })}
                 icon={<Ionicons name="server-outline" size={29} color={theme.colors.accent.blue} />}
                 onPress={async () => {
                     const next = await Modal.prompt(
-                        'Light index budget',
-                        'Max MB for the light (summary shards) index on this machine.',
+                        t('memorySearchSettings.budgets.lightPromptTitle'),
+                        t('memorySearchSettings.budgets.lightPromptBody'),
                         {
                             defaultValue: String(settings.budgets.maxDiskMbLight),
                             placeholder: '250',
-                            confirmText: 'Save',
-                            cancelText: 'Cancel',
+                            confirmText: t('common.save'),
+                            cancelText: t('common.cancel'),
                         },
                     );
                     const parsed = typeof next === 'string' ? Number.parseInt(next, 10) : NaN;
@@ -47,18 +48,18 @@ export const MemorySettingsBudgetsSection = React.memo(function MemorySettingsBu
             />
             <Item
                 testID="memory-settings-budget-deep"
-                title="Deep index budget"
-                subtitle={`${settings.budgets.maxDiskMbDeep} MB`}
+                title={t('memorySearchSettings.budgets.deepTitle')}
+                subtitle={t('memorySearchSettings.budgets.mbLabel', { mb: settings.budgets.maxDiskMbDeep })}
                 icon={<Ionicons name="server-outline" size={29} color={theme.colors.accent.purple} />}
                 onPress={async () => {
                     const next = await Modal.prompt(
-                        'Deep index budget',
-                        'Max MB for the deep (chunk) index on this machine.',
+                        t('memorySearchSettings.budgets.deepPromptTitle'),
+                        t('memorySearchSettings.budgets.deepPromptBody'),
                         {
                             defaultValue: String(settings.budgets.maxDiskMbDeep),
                             placeholder: '1500',
-                            confirmText: 'Save',
-                            cancelText: 'Cancel',
+                            confirmText: t('common.save'),
+                            cancelText: t('common.cancel'),
                         },
                     );
                     const parsed = typeof next === 'string' ? Number.parseInt(next, 10) : NaN;

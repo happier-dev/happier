@@ -5,6 +5,7 @@ import { useUnistyles } from 'react-native-unistyles';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { Item } from '@/components/ui/lists/Item';
 import { Switch } from '@/components/ui/forms/Switch';
+import { t } from '@/text';
 
 import type { MemorySettingsV1 } from '@happier-dev/protocol';
 
@@ -17,13 +18,13 @@ export const MemorySettingsPrivacySection = React.memo(function MemorySettingsPr
 
     return (
         <ItemGroup
-            title="Privacy"
-            footer="Delete local derived indexes and model caches when disabling memory search."
+            title={t('memorySearchSettings.privacy.groupTitle')}
+            footer={t('memorySearchSettings.privacy.groupFooter')}
         >
             <Item
                 testID="memory-settings-delete-on-disable-item"
-                title="Delete on disable"
-                subtitle="Remove local indexes and caches when memory search is turned off"
+                title={t('memorySearchSettings.privacy.deleteOnDisableTitle')}
+                subtitle={t('memorySearchSettings.privacy.deleteOnDisableSubtitle')}
                 icon={<Ionicons name="trash-outline" size={29} color={theme.colors.warningCritical} />}
                 rightElement={(
                     <Switch
