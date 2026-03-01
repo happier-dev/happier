@@ -78,6 +78,32 @@ function createDelayedBackend(responseText: string, delayMs: number): AgentBacke
   };
 }
 
+function createNeverResolvingBackend(): AgentBackend {
+  let handler: AgentMessageHandler | null = null;
+  const sessionId: SessionId = 'child_session_stuck' as SessionId;
+  let done: Promise<void> | null = null;
+
+  return {
+    async startSession() {
+      return { sessionId };
+    },
+    async sendPrompt(_sessionId: SessionId, _prompt: string) {
+      done = new Promise<void>(() => {
+        // intentionally never resolve/reject
+      });
+      handler?.({ type: 'model-output', fullText: '' } as AgentMessage);
+    },
+    async cancel(_sessionId: SessionId) {},
+    onMessage(next) {
+      handler = next;
+    },
+    async dispose() {},
+    async waitForResponseComplete() {
+      await (done ?? Promise.resolve());
+    },
+  };
+}
+
 function createThrowingBackend(params: { throwAtSendCount: number; message: string }): AgentBackend {
   let handler: AgentMessageHandler | null = null;
   const sessionId: SessionId = 'child_session_1' as SessionId;
@@ -851,6 +877,56 @@ describe('executionRuns session RPC handlers', () => {
     const got = await client.call<any, any>(SESSION_RPC_METHODS.EXECUTION_RUN_GET, { runId: started.runId });
     expect(got.run?.status).toBe('succeeded');
     expect(got.latestToolResult?.summary).toBe('after');
+  });
+
+  it('fails fast when bounded runs cannot acknowledge external send requests', async () => {
+    const previousAckTimeout = process.env.HAPPIER_EXECUTION_RUN_BOUNDED_SEND_ACK_TIMEOUT_MS;
+    process.env.HAPPIER_EXECUTION_RUN_BOUNDED_SEND_ACK_TIMEOUT_MS = '20';
+    try {
+      const client = createEncryptedRpcTestClient({
+        scopePrefix: 'sess_1',
+        registerHandlers: (rpc) => {
+          registerExecutionRunHandlers(rpc, {
+            sessionId: 'sess_1',
+            cwd: process.cwd(),
+            parentProvider: 'claude',
+            createBackend: () => createNeverResolvingBackend(),
+            sendAcp: () => {},
+          });
+        },
+      });
+
+      const started = await client.call<any, any>(SESSION_RPC_METHODS.EXECUTION_RUN_START, {
+        intent: 'review',
+        backendId: 'claude',
+        instructions: 'Review.',
+        permissionMode: 'read_only',
+        retentionPolicy: 'ephemeral',
+        runClass: 'bounded',
+        ioMode: 'request_response',
+      });
+
+      await new Promise((r) => setTimeout(r, 5));
+
+      const sendResult = await Promise.race([
+        client.call<any, any>(SESSION_RPC_METHODS.EXECUTION_RUN_SEND, {
+          runId: started.runId,
+          message: 'ping',
+          delivery: 'steer_if_supported',
+        }),
+        new Promise((resolve) => setTimeout(() => resolve('__timeout__'), 250)),
+      ]);
+
+      expect(sendResult).not.toBe('__timeout__');
+      expect((sendResult as any).ok).toBe(false);
+      expect((sendResult as any).errorCode).toBe('execution_run_busy');
+    } finally {
+      if (previousAckTimeout === undefined) {
+        delete process.env.HAPPIER_EXECUTION_RUN_BOUNDED_SEND_ACK_TIMEOUT_MS;
+      } else {
+        process.env.HAPPIER_EXECUTION_RUN_BOUNDED_SEND_ACK_TIMEOUT_MS = previousAckTimeout;
+      }
+    }
   });
 
   it('rejects bounded run sends after completion', async () => {
