@@ -105,11 +105,8 @@ export const RoundButton = React.memo((props: {
                     borderRadius: 10,
                     backgroundColor: display.backgroundColor,
                     borderColor: display.borderColor,
-                    opacity: props.disabled ? 0.5 : 1,
+                    opacity: props.disabled ? 0.35 : (p.pressed ? 0.9 : 1),
                     overflow: 'hidden',
-                },
-                {
-                    opacity: p.pressed ? 0.9 : 1
                 },
                 props.style])}
             onPress={doAction}
