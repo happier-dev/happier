@@ -4,7 +4,7 @@ import { spawnSync } from 'node:child_process';
 
 import { repoRootDir } from '../paths';
 import { spawnLoggedProcess, type SpawnedProcess } from '../process/spawnProcess';
-import { ensureCliDistBuilt } from '../process/cliDist';
+import { ensureCliDistSnapshotEntrypoint } from '../process/cliDist';
 
 export type DaemonState = {
   pid: number;
@@ -108,14 +108,29 @@ type ProcessInspectionResult =
 
 function inspectProcess(pid: number): ProcessInspectionResult {
   try {
-    const res = spawnSync('ps', ['-o', 'command=', '-p', String(pid)], { encoding: 'utf8' });
+    // Use wide output to avoid truncating long monorepo entrypoint paths. Truncation can cause
+    // false negatives (and then we refuse to hard-kill a leaked daemon).
+    let res = spawnSync('ps', ['-o', 'command=', '-p', String(pid), '-ww'], { encoding: 'utf8' });
+    if (res.status !== 0) {
+      res = spawnSync('ps', ['-o', 'command=', '-p', String(pid)], { encoding: 'utf8' });
+    }
     if (res.status !== 0) return { ok: false, reason: 'inspect_failed' };
-    const command = (res.stdout || '').trim();
+    const command = String(res.stdout || '').trim();
     if (!command) return { ok: false, reason: 'inspect_failed' };
+    const normalized = command.replaceAll('\\', '/');
+    const hasStartSync = normalized.includes('daemon start-sync');
+    const hasCliEntrypoint =
+      normalized.includes('apps/cli/dist/index.mjs') ||
+      normalized.includes('apps/cli/dist/index.js') ||
+      (normalized.includes('apps/cli') && normalized.includes('dist/index.mjs')) ||
+      (normalized.includes('apps/cli') && normalized.includes('dist/index.js')) ||
+      normalized.includes('dist/index.mjs') ||
+      normalized.includes('dist/index.js') ||
+      normalized.includes('happier') && normalized.includes('daemon start-sync') && normalized.includes('dist/index');
     return {
       ok: true,
       command,
-      looksLikeDaemon: command.includes('daemon start-sync') && command.includes('apps/cli/dist/index.mjs'),
+      looksLikeDaemon: hasStartSync && hasCliEntrypoint,
     };
   } catch (e) {
     const err = e as NodeJS.ErrnoException;
@@ -265,7 +280,10 @@ export async function startTestDaemon(params: {
   happyHomeDir: string;
   env: NodeJS.ProcessEnv;
 }): Promise<StartedDaemon> {
-  const cliDistEntrypoint = await ensureCliDistBuilt({ testDir: params.testDir, env: params.env });
+  const cliDistEntrypoint = await ensureCliDistSnapshotEntrypoint(
+    { testDir: params.testDir, env: params.env },
+    { snapshotDir: resolve(params.testDir, 'cli-dist') },
+  );
 
   const proc = spawnLoggedProcess({
     command: process.execPath,
@@ -282,7 +300,19 @@ export async function startTestDaemon(params: {
 
   let state: DaemonState;
   try {
-    state = await waitForDaemonState(params.happyHomeDir, { timeoutMs: 45_000 });
+    state = await Promise.race([
+      waitForDaemonState(params.happyHomeDir, { timeoutMs: 45_000 }),
+      new Promise<never>((_, reject) => {
+        proc.child.once('exit', (code, signal) => {
+          const detail = signal ? `signal=${String(signal)}` : `code=${String(code)}`;
+          reject(
+            new Error(
+              `Daemon exited before writing daemon.state.json (${detail}). See logs: ${resolve(params.testDir, 'daemon.stdout.log')} and ${resolve(params.testDir, 'daemon.stderr.log')}`,
+            ),
+          );
+        });
+      }),
+    ]);
   } catch (e) {
     // If daemon startup fails, make sure we don't leak a background process.
     await stopDaemonFromHomeDir(params.happyHomeDir).catch(() => {});
