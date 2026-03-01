@@ -93,7 +93,7 @@ vi.mock('@/sync/api/capabilities/getReadyServerFeatures', () => ({
 
 describe('RootLayout voice gating', () => {
     it('disables Happier voice mode when server reports voice unsupported', async () => {
-        const RootLayout = (await import('./_layout')).default;
+        const RootLayout = (await import('@/app/(app)/_layout')).default;
 
         await act(async () => {
             renderer.create(React.createElement(RootLayout));

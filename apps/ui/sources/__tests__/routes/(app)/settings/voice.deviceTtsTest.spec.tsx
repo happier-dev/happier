@@ -112,7 +112,7 @@ describe('VoiceSettingsScreen (device TTS)', () => {
             },
         };
 
-        const VoiceSettingsScreen = (await import('./voice')).default;
+        const VoiceSettingsScreen = (await import('@/app/(app)/settings/voice')).default;
 
         let tree!: ReactTestRenderer;
         act(() => {
@@ -154,7 +154,7 @@ describe('VoiceSettingsScreen (device TTS)', () => {
             },
         };
 
-        const VoiceSettingsScreen = (await import('./voice')).default;
+        const VoiceSettingsScreen = (await import('@/app/(app)/settings/voice')).default;
 
         let tree!: ReactTestRenderer;
         act(() => {
@@ -193,7 +193,7 @@ describe('VoiceSettingsScreen (device TTS)', () => {
                 },
             },
         };
-        const VoiceSettingsScreen = (await import('./voice')).default;
+        const VoiceSettingsScreen = (await import('@/app/(app)/settings/voice')).default;
 
         let tree!: ReactTestRenderer;
         act(() => {

@@ -14,7 +14,7 @@ describe('/friends redirect', () => {
             useRouter: () => ({ replace }),
         }));
 
-        const Page = (await import('./index')).default;
+        const Page = (await import('@/app/(app)/friends/index')).default;
 
         await act(async () => {
             renderer.create(React.createElement(Page));

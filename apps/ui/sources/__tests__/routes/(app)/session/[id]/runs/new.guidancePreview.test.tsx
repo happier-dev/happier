@@ -97,7 +97,7 @@ vi.mock('@/sync/ops/actions/defaultActionExecutor', () => ({
 
 describe('Session New Run Screen (guidance preview)', () => {
     it('renders a guidance preview when guidance is enabled and rules exist', async () => {
-        const NewRunScreen = (await import('./new')).default;
+        const NewRunScreen = (await import('@/app/(app)/session/[id]/runs/new')).default;
 
         let tree: renderer.ReactTestRenderer | null = null;
         await act(async () => {

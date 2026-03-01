@@ -79,7 +79,7 @@ describe('TerminalScreen authenticated buttons', () => {
     });
 
     it('exposes stable testIDs for approve/reject buttons on /terminal', async () => {
-        const Screen = (await import('./index')).default;
+        const Screen = (await import('@/app/(app)/terminal/index')).default;
 
         let tree: renderer.ReactTestRenderer | undefined;
         try {

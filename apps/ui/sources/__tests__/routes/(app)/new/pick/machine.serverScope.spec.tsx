@@ -238,7 +238,7 @@ describe('machine picker server scope', () => {
         capturedMachineSelectorProps = null;
         capturedServerScopedMachineSelectorProps = null;
 
-        const Screen = (await import('./machine')).default;
+        const Screen = (await import('@/app/(app)/new/pick/machine')).default;
         await act(async () => {
             renderer.create(React.createElement(Screen));
             await Promise.resolve();
@@ -274,7 +274,7 @@ describe('machine picker server scope', () => {
         prefetchMachineCapabilitiesSpy.mockReset();
         capturedMachineSelectorProps = null;
 
-        const Screen = (await import('./machine')).default;
+        const Screen = (await import('@/app/(app)/new/pick/machine')).default;
         await act(async () => {
             renderer.create(React.createElement(Screen));
             await Promise.resolve();
@@ -314,7 +314,7 @@ describe('machine picker server scope', () => {
             spawnServerId: 'server-b',
         };
 
-        const Screen = (await import('./machine')).default;
+        const Screen = (await import('@/app/(app)/new/pick/machine')).default;
         await act(async () => {
             renderer.create(React.createElement(Screen));
             await Promise.resolve();
@@ -370,7 +370,7 @@ describe('machine picker server scope', () => {
             },
         ] as any;
 
-        const Screen = (await import('./machine')).default;
+        const Screen = (await import('@/app/(app)/new/pick/machine')).default;
         await act(async () => {
             renderer.create(React.createElement(Screen));
             await Promise.resolve();
@@ -417,7 +417,7 @@ describe('machine picker server scope', () => {
             },
         ] as any;
 
-        const Screen = (await import('./machine')).default;
+        const Screen = (await import('@/app/(app)/new/pick/machine')).default;
         await act(async () => {
             renderer.create(React.createElement(Screen));
             await Promise.resolve();
@@ -489,7 +489,7 @@ describe('machine picker server scope', () => {
             },
         ] as any;
 
-        const Screen = (await import('./machine')).default;
+        const Screen = (await import('@/app/(app)/new/pick/machine')).default;
         await act(async () => {
             renderer.create(React.createElement(Screen));
             await Promise.resolve();

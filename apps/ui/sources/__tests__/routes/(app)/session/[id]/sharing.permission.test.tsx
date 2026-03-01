@@ -95,7 +95,7 @@ vi.mock('@/components/sessions/sharing', () => ({
 
 describe('Session Sharing Screen permissions', () => {
     it('does not attempt to load or manage shares when user is not an admin', async () => {
-        const Screen = (await import('./sharing')).default;
+        const Screen = (await import('@/app/(app)/session/[id]/sharing')).default;
 
         await act(async () => {
             renderer.create(<Screen />);

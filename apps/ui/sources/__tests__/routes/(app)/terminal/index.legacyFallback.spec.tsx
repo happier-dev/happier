@@ -85,7 +85,7 @@ describe('TerminalScreen legacy deep-link fallback', () => {
     });
 
     it('does not treat known params like server as a legacy public key', async () => {
-        const Screen = (await import('./index')).default;
+        const Screen = (await import('@/app/(app)/terminal/index')).default;
 
         let tree: renderer.ReactTestRenderer | undefined;
         try {
@@ -110,7 +110,7 @@ describe('TerminalScreen legacy deep-link fallback', () => {
 
     it('uses legacy fallback when exactly one unknown search param key is present', async () => {
         localSearchParamsMock.mockReturnValue({ abcdefghijklmnop: '' });
-        const Screen = (await import('./index')).default;
+        const Screen = (await import('@/app/(app)/terminal/index')).default;
 
         let tree: renderer.ReactTestRenderer | undefined;
         try {

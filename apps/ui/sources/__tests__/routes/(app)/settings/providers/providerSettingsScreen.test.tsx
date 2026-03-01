@@ -171,7 +171,7 @@ vi.mock('@/components/settings/providers/ProviderCliInstallItem', () => ({
 
 describe('ProviderSettingsScreen', () => {
     it('surfaces provider CLI install via capability installer item', async () => {
-        const Screen = (await import('./[providerId]')).default;
+        const Screen = (await import('@/app/(app)/settings/providers/[providerId]')).default;
 
         let tree: renderer.ReactTestRenderer | null = null;
         await act(async () => {
@@ -189,7 +189,7 @@ describe('ProviderSettingsScreen', () => {
     });
 
     it('includes a permissions section to set the default permission mode for this backend', async () => {
-        const Screen = (await import('./[providerId]')).default;
+        const Screen = (await import('@/app/(app)/settings/providers/[providerId]')).default;
 
         let tree: renderer.ReactTestRenderer | null = null;
         await act(async () => {

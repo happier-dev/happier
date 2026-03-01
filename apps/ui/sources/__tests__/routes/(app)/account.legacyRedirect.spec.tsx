@@ -26,7 +26,7 @@ afterEach(() => {
 
 describe('Legacy /account route', () => {
     it('redirects to the canonical account settings route', async () => {
-        const Screen = (await import('./account')).default;
+        const Screen = (await import('@/app/(app)/account')).default;
 
         let tree: ReturnType<typeof renderer.create> | undefined;
         try {
@@ -44,7 +44,7 @@ describe('Legacy /account route', () => {
 
     it('preserves server override query when redirecting', async () => {
         localSearchParams = { server: 'http://localhost:3014' };
-        const Screen = (await import('./account')).default;
+        const Screen = (await import('@/app/(app)/account')).default;
 
         let tree: ReturnType<typeof renderer.create> | undefined;
         try {

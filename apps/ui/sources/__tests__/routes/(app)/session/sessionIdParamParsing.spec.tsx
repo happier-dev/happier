@@ -27,7 +27,7 @@ describe('session/[id] param parsing', () => {
         vi.resetModules();
         searchParams = { id: 'session-123' };
 
-        const Screen = (await import('./[id]')).default;
+        const Screen = (await import('@/app/(app)/session/[id]')).default;
         let tree: renderer.ReactTestRenderer | null = null;
         await act(async () => {
             tree = renderer.create(React.createElement(Screen));
@@ -41,7 +41,7 @@ describe('session/[id] param parsing', () => {
     vi.resetModules();
     searchParams = { id: 'session-123' };
 
-    const Screen = (await import('./[id]')).default;
+    const Screen = (await import('@/app/(app)/session/[id]')).default;
     let tree: renderer.ReactTestRenderer | null = null;
     await act(async () => {
       tree = renderer.create(React.createElement(Screen));
@@ -55,7 +55,7 @@ describe('session/[id] param parsing', () => {
     vi.resetModules();
     searchParams = { id: 'session-123', jumpSeq: '   ' };
 
-    const Screen = (await import('./[id]')).default;
+    const Screen = (await import('@/app/(app)/session/[id]')).default;
     let tree: renderer.ReactTestRenderer | null = null;
     await act(async () => {
       tree = renderer.create(React.createElement(Screen));
@@ -69,7 +69,7 @@ describe('session/[id] param parsing', () => {
     vi.resetModules();
     searchParams = { id: 'session-123', jumpSeq: '42' } as any;
 
-    const Screen = (await import('./[id]')).default;
+    const Screen = (await import('@/app/(app)/session/[id]')).default;
     let tree: renderer.ReactTestRenderer | null = null;
     await act(async () => {
       tree = renderer.create(React.createElement(Screen));
@@ -83,7 +83,7 @@ describe('session/[id] param parsing', () => {
     vi.resetModules();
     searchParams = { id: 'session-123', right: 'files', details: 'file', path: 'src/app.ts' } as any;
 
-    const Screen = (await import('./[id]')).default;
+    const Screen = (await import('@/app/(app)/session/[id]')).default;
     let tree: renderer.ReactTestRenderer | null = null;
     await act(async () => {
       tree = renderer.create(React.createElement(Screen));

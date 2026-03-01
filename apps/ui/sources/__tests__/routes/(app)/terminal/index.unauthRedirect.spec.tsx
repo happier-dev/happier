@@ -81,7 +81,7 @@ describe('TerminalScreen unauthenticated redirect', () => {
     });
 
     it('stores pending connect and redirects to auth screen immediately', async () => {
-        const Screen = (await import('./index')).default;
+        const Screen = (await import('@/app/(app)/terminal/index')).default;
 
         await act(async () => {
             renderer.create(<Screen />);
