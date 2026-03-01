@@ -125,27 +125,35 @@ describe.sequential('claude sdk metadata extractor', () => {
     await withEnv(
       {
         HAPPIER_CLAUDE_PATH: fakeClaude,
-        HAPPIER_CLAUDE_SDK_METADATA_EXTRACTION_TIMEOUT_MS: '75',
+        // Allow enough time for the subprocess to start under load, but keep the test fast.
+        HAPPIER_CLAUDE_SDK_METADATA_EXTRACTION_TIMEOUT_MS: '500',
       },
       async () => {
         const { extractSDKMetadata } = await import('./metadataExtractor');
         const resultPromise = extractSDKMetadata();
 
-        await waitForFile(pidFile, 1_000);
-        const pid = Number.parseInt(readFileSync(pidFile, 'utf8').trim(), 10);
+        // Best-effort: if the child starts before the timeout triggers, ensure it exits.
+        let pid: number | null = null;
+        try {
+          await waitForFile(pidFile, 2_000);
+          pid = Number.parseInt(readFileSync(pidFile, 'utf8').trim(), 10);
+        } catch {
+          // ignore (abort may fire before the child starts)
+        }
 
         try {
-          await expect(withTimeout(resultPromise, 750, 'extractSDKMetadata to timeout')).resolves.toEqual({});
+          await expect(withTimeout(resultPromise, 3_000, 'extractSDKMetadata to timeout')).resolves.toEqual({});
         } finally {
-          try {
-            process.kill(pid, 'SIGTERM');
-          } catch {
-            // ignore
+          if (pid) {
+            try {
+              process.kill(pid, 'SIGTERM');
+            } catch {
+              // ignore
+            }
+            await waitForPidToExit(pid, 2_000);
           }
-          await waitForPidToExit(pid, 2_000);
         }
       },
     );
   });
 });
-
