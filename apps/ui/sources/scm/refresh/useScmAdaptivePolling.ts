@@ -83,7 +83,9 @@ export function useScmAdaptivePolling(input: ScmAdaptivePollingInput) {
             timerRef.current = null;
         }
         cancelledRef.current = false;
-        if (!enabled || !isActive) return;
+        // Treat a non-positive base interval as "disabled" to avoid accidental tight loops
+        // (e.g. callers passing 0 to mean "no auto-refresh").
+        if (!enabled || !isActive || baseIntervalMs <= 0) return;
 
         const runOnce = async () => {
             if (cancelledRef.current) return;

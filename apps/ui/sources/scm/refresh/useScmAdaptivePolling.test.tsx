@@ -12,6 +12,40 @@ vi.mock('react-native', () => ({
 }));
 
 describe('useScmAdaptivePolling', () => {
+    it('does not poll when baseIntervalMs is 0 (prevents tight loops)', async () => {
+        vi.useFakeTimers();
+
+        const { useScmAdaptivePolling } = await import('./useScmAdaptivePolling');
+
+        const invalidateAndAwait = vi.fn(async () => {});
+        const getSignature = vi.fn(() => 'sig1');
+
+        function Test() {
+            useScmAdaptivePolling({
+                enabled: true,
+                baseIntervalMs: 0,
+                stepIntervalMs: 0,
+                maxIntervalMs: 60_000,
+                getSignature,
+                invalidateAndAwait,
+            });
+            return null;
+        }
+
+        await act(async () => {
+            renderer.create(<Test />);
+        });
+
+        expect(invalidateAndAwait).toHaveBeenCalledTimes(0);
+
+        await act(async () => {
+            vi.advanceTimersByTime(10_000);
+        });
+
+        expect(invalidateAndAwait).toHaveBeenCalledTimes(0);
+        vi.useRealTimers();
+    });
+
     it('backs off when signature does not change and resets when it does', async () => {
         vi.useFakeTimers();
 
