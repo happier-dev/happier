@@ -97,7 +97,8 @@ vi.mock('@react-navigation/native', () => ({
 }));
 
 vi.mock('expo-router', () => ({
-  useRouter: () => ({ push: vi.fn(), back: vi.fn() }),
+    useRouter: () => ({ push: vi.fn(), back: vi.fn() }),
+    usePathname: () => '/',
 }));
 
 vi.mock('@/auth/context/AuthContext', () => ({
@@ -175,6 +176,9 @@ vi.mock('@/components/sessions/model/inactiveSessionUi', () => ({
 }));
 vi.mock('@/components/sessions/model/resolveSessionMachineReachability', () => ({
   resolveSessionMachineReachability: () => true,
+}));
+vi.mock('@/components/sessions/model/useSessionMachineReachability', () => ({
+  useSessionMachineReachability: () => ({ machineReachable: true, machineOnline: true }),
 }));
 
 vi.mock('@/sync/domains/server/serverRuntime', () => ({
@@ -441,7 +445,7 @@ describe('SessionView (transcript rendering for seq-only sessions)', () => {
     });
   });
 
-  it('renders a restore prompt for encrypted sessions when credentials are keyless', async () => {
+  it('does not render a restore prompt for encrypted sessions when credentials include dataKey material', async () => {
     authCredentials = { token: 't', encryption: { publicKey: 'pk', machineKey: 'mk' } };
     const { SessionView } = await import('./SessionView');
 
@@ -454,8 +458,8 @@ describe('SessionView (transcript rendering for seq-only sessions)', () => {
       );
     });
 
-    expect(tree!.root.findAllByProps({ testID: 'session-encrypted-locked' }).length).toBe(1);
-    expect(tree!.root.findAllByProps({ testID: 'session-encrypted-locked-restore' }).length).toBe(1);
+    expect(tree!.root.findAllByProps({ testID: 'session-encrypted-locked' }).length).toBe(0);
+    expect(tree!.root.findAllByProps({ testID: 'session-encrypted-locked-restore' }).length).toBe(0);
 
     authCredentials = { token: 't', secret: 's' };
     await act(async () => {

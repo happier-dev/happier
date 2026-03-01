@@ -116,6 +116,7 @@ vi.mock('@react-navigation/native', () => ({
 
 vi.mock('expo-router', () => ({
   useRouter: () => ({ push: vi.fn(), back: vi.fn() }),
+  usePathname: () => '/',
 }));
 
 vi.mock('@/auth/context/AuthContext', () => ({
@@ -176,6 +177,9 @@ vi.mock('@/components/sessions/model/inactiveSessionUi', () => ({
 }));
 vi.mock('@/components/sessions/model/resolveSessionMachineReachability', () => ({
   resolveSessionMachineReachability: () => true,
+}));
+vi.mock('@/components/sessions/model/useSessionMachineReachability', () => ({
+  useSessionMachineReachability: () => ({ machineReachable: true, machineOnline: true }),
 }));
 
 vi.mock('@/sync/domains/server/serverRuntime', () => ({

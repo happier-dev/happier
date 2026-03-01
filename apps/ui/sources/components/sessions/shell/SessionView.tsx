@@ -17,7 +17,7 @@ import { useWarmRepositoryDirectoryCacheOnSessionOpen } from '@/hooks/session/fi
   import { Modal } from '@/modal';
   import { scmStatusSync } from '@/scm/scmStatusSync';
   import { continueSessionWithReplay, sessionAbort, resumeSession } from '@/sync/ops';
-import { storage, useAutomations, useIsDataReady, useLocalSetting, useMachine, useRealtimeStatus, useSessionMessages, useSessionPendingMessages, useSessionReviewCommentsDrafts, useSessionTranscriptIds, useSessionUsage, useSetting, useSettings } from '@/sync/domains/state/storage';
+import { storage, useAutomations, useIsDataReady, useLocalSetting, useRealtimeStatus, useSessionMessages, useSessionPendingMessages, useSessionReviewCommentsDrafts, useSessionTranscriptIds, useSessionUsage, useSetting, useSettings } from '@/sync/domains/state/storage';
 import { canResumeSessionWithOptions, getAgentVendorResumeId } from '@/agents/runtime/resumeCapabilities';
 import { DEFAULT_AGENT_ID, getAgentCore, resolveAgentIdFromFlavor, buildResumeSessionExtrasFromUiState, getAgentResumeExperimentsFromSettings, getResumePreflightIssues, getResumePreflightPrefetchPlan } from '@/agents/catalog/catalog';
 import { useResumeCapabilityOptions } from '@/agents/hooks/useResumeCapabilityOptions';
@@ -56,12 +56,11 @@ import { isExecutionRunNotRunningSendError, sessionExecutionRunSend } from '@/sy
   import { resolveHappierReplayConfig } from '@/sync/domains/session/resume/happierReplayPrompt';
   import { chooseSubmitMode } from '@/sync/domains/session/control/submitMode';
 import { isModelSelectableForSession } from '@/sync/domains/models/modelOptions';
-import { isMachineOnline } from '@/utils/sessions/machineUtils';
 import { getInactiveSessionUiState } from '@/components/sessions/model/inactiveSessionUi';
-import { resolveSessionMachineReachability } from '@/components/sessions/model/resolveSessionMachineReachability';
+import { useSessionMachineReachability } from '@/components/sessions/model/useSessionMachineReachability';
 import { Ionicons } from '@expo/vector-icons';
 import { useFocusEffect } from '@react-navigation/native';
-import { useRouter } from 'expo-router';
+import { usePathname, useRouter } from 'expo-router';
 import * as React from 'react';
 import { useMemo } from 'react';
 import { ActivityIndicator, Platform, Pressable, View, useWindowDimensions } from 'react-native';
@@ -91,7 +90,6 @@ import { useSessionPaneUrlSync } from '@/components/sessions/panes/url/useSessio
 import { SessionResumeProvider } from '@/components/sessions/model/SessionResumeContext';
 import { useSessionResumeRequestListener } from '@/components/sessions/model/sessionResumeRequests';
 import { useAuth } from '@/auth/context/AuthContext';
-import { isLegacyAuthCredentials } from '@/auth/storage/tokenStorage';
 
 
 function formatResumeSupportDetailCode(code: 'cliNotDetected' | 'capabilityProbeFailed' | 'acpProbeFailed' | 'loadSessionFalse'): string {
@@ -110,6 +108,8 @@ function formatResumeSupportDetailCode(code: 'cliNotDetected' | 'capabilityProbe
 export const SessionView = React.memo((props: { id: string; jumpToSeq?: number | null; paneUrlState?: SessionPaneUrlState | null }) => {
     const sessionId = props.id;
     const router = useRouter();
+    const pathname = usePathname();
+    const debugRouterEnabled = process.env.EXPO_PUBLIC_DEBUG === '1';
     const auth = useAuth();
     const session = useSession(sessionId);
     const isDataReady = useIsDataReady();
@@ -125,9 +125,9 @@ export const SessionView = React.memo((props: { id: string; jumpToSeq?: number |
     const realtimeStatus = useRealtimeStatus();
     const isTablet = useIsTablet();
         const voiceSnap = useVoiceSessionSnapshot();
-    const hasLegacySecretCredentials = Boolean(auth.credentials && isLegacyAuthCredentials(auth.credentials));
+    const hasAuthCredentials = Boolean(auth.credentials);
     const sessionEncryptionMode: 'e2ee' | 'plain' = (session?.encryptionMode ?? 'e2ee');
-    const isEncryptedSessionLocked = Boolean(session && sessionEncryptionMode === 'e2ee' && !hasLegacySecretCredentials);
+    const isEncryptedSessionLocked = Boolean(session && sessionEncryptionMode === 'e2ee' && !hasAuthCredentials);
         const showTopHeader = !(isLandscape && deviceType === 'phone' && Platform.OS !== 'web');
 
     // Treat multi-pane panels as enabled unless explicitly disabled. `useLocalSetting` can return
@@ -255,6 +255,14 @@ export const SessionView = React.memo((props: { id: string; jumpToSeq?: number |
 
     return (
         <>
+            {debugRouterEnabled && Platform.OS === 'web' ? (
+                <View
+                    testID="debug-expo-pathname"
+                    style={{ position: 'absolute', top: 0, left: 0, opacity: 0, pointerEvents: 'none' }}
+                >
+                    <Text>{pathname}</Text>
+                </View>
+            ) : null}
             {/* Status bar shadow for landscape mode */}
             {isLandscape && deviceType === 'phone' && (
                 <View style={{
@@ -523,16 +531,12 @@ function SessionViewLoaded({ sessionId, session, isEncryptedSessionLocked, jumpT
     const isResumable = canResumeSessionWithOptions(session.metadata, resumeCapabilityOptions);
     const [isResuming, setIsResuming] = React.useState(false);
 
-    const machine = useMachine(typeof machineId === 'string' ? machineId : '');
-    const isMachineReachable = resolveSessionMachineReachability({
-        machineIsKnown: Boolean(machine),
-        machineIsOnline: machine ? isMachineOnline(machine) : false,
-    });
+    const { machineReachable: isMachineReachable, machineOnline } = useSessionMachineReachability(sessionId);
 
     useWarmRepositoryDirectoryCacheOnSessionOpen({
         sessionId,
         sessionPath: session?.metadata?.path ?? null,
-        machineOnline: machine ? isMachineOnline(machine) : false,
+        machineOnline,
     });
 
     const inactiveUi = React.useMemo(() => {
@@ -677,6 +681,10 @@ function SessionViewLoaded({ sessionId, session, isEncryptedSessionLocked, jumpT
                       try {
                           const permissionOverride = getPermissionModeOverrideForSpawn(session);
                           const modelOverride = getModelOverrideForSpawn(session);
+                          const summaryRunner =
+                              executionRunsEnabled && replayCfg.strategy === 'summary_plus_recent'
+                                  ? (settings.sessionReplaySummaryRunnerV1 ?? null)
+                                  : null;
                           const spawnResult: any = await continueSessionWithReplay({
                               machineId: session.metadata.machineId,
                               serverId: capabilityServerId,
@@ -689,6 +697,7 @@ function SessionViewLoaded({ sessionId, session, isEncryptedSessionLocked, jumpT
                                   previousSessionId: sessionId,
                                   strategy: replayCfg.strategy,
                                   recentMessagesCount: replayCfg.recentMessagesCount,
+                                  ...(summaryRunner ? { summaryRunner } : {}),
                               },
                           });
                           if (spawnResult.type !== 'success' || !spawnResult.sessionId) {
@@ -855,7 +864,7 @@ function SessionViewLoaded({ sessionId, session, isEncryptedSessionLocked, jumpT
     const showInactiveNotResumableNotice = inactiveUi.noticeKind === 'not-resumable';
     const showMachineOfflineNotice = inactiveUi.noticeKind === 'machine-offline';
     const providerName = getAgentCore(agentId).connectedService?.name ?? t('status.unknown');
-    const machineName = machine?.metadata?.displayName ?? machine?.metadata?.host ?? t('status.unknown');
+    const machineName = session.metadata?.host ?? t('status.unknown');
 
     const bottomNotice = React.useMemo(() => {
         if (showInactiveNotResumableNotice) {
