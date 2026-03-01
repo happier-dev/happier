@@ -251,6 +251,7 @@ export const pl: TranslationStructure = {
       "W Happier wystąpił nieoczekiwany błąd. Możesz ponownie uruchomić interfejs aplikacji lub skopiować szczegóły dla pomocy.",
     detailsTitle: "Szczegóły błędu",
     restart: "Uruchom ponownie",
+    restartAndReportIssue: "Uruchom ponownie i zgłoś błąd",
     copyDetails: "Kopiuj szczegóły błędu",
   },
 
@@ -1128,10 +1129,10 @@ export const pl: TranslationStructure = {
     fallbackName: "Połączona usługa",
     serviceNames: {
       claudeSubscription: "Subskrypcja Claude",
-      openaiCodex: "OpenAI Codex",
+      openaiCodex: "Codex od OpenAI",
       openai: "Klucz API OpenAI",
       anthropic: "Klucz API Anthropic",
-      gemini: "Google Gemini",
+      gemini: "Gemini od Google",
     },
     title: "Połączone usługi",
     authChip: {
@@ -2250,8 +2251,8 @@ export const pl: TranslationStructure = {
 
   session: {
     inputPlaceholder: "Wpisz wiadomość...",
-    activity: "Aktywność",
-    activityCollapsedPreviewMore: ({ count }: { count: number }) => `+${count} więcej…`,
+    toolCalls: "Wywołania narzędzi",
+    toolCallsCollapsedPreviewMore: ({ count }: { count: number }) => `+${count} więcej…`,
     forking: {
       dividerTitle: "Rozgałęziono z wcześniejszego kontekstu",
       dividerTitleWithParent: ({ parent }: { parent: string }) => `Rozgałęziono z ${parent}`,
@@ -2657,9 +2658,10 @@ export const pl: TranslationStructure = {
     serverHeader: ({ server }: { server: string }) => `Serwer: ${server}`,
   },
 
-  sessionInfo: {
-    // Used by Session Info screen (app/(app)/session/[id]/info.tsx)
-    killSession: "Zakończ sesję",
+	  sessionInfo: {
+	    // Used by Session Info screen (app/(app)/session/[id]/info.tsx)
+	    title: "Informacje o sesji",
+	    killSession: "Zakończ sesję",
     killSessionConfirm: "Czy na pewno chcesz zakończyć tę sesję?",
     stopSession: "Zatrzymaj sesję",
     stopSessionConfirm: "Czy na pewno chcesz zatrzymać tę sesję?",
@@ -3497,13 +3499,13 @@ export const pl: TranslationStructure = {
             "Kontroluje, ile szczegółów narzędzi jest pokazywanych w osi czasu sesji. To preferencja interfejsu; nie zmienia zachowania agenta.",
           defaultToolDetailLevelTitle: "Domyślny poziom szczegółów narzędzi",
           expandedToolDetailLevelTitle: "Poziom szczegółów po rozwinięciu",
-          cardTapActionTitle: "Akcja dotknięcia (karta)",
+          cardTapActionTitle: "Akcja dotknięcia",
           timelineChrome: {
             title: "Styl narzędzi w osi czasu",
             cardsTitle: "Karty",
           cardsSubtitle:
             "Karty narzędzi z treścią inline (zależnie od poziomu szczegółów).",
-          activityFeedTitle: "Kanał aktywności",
+          activityFeedTitle: "Kanał narzędzi",
           activityFeedSubtitle:
             "Kompaktowe wiersze zoptymalizowane pod dużą liczbę narzędzi.",
         },
@@ -3515,9 +3517,9 @@ export const pl: TranslationStructure = {
           compactSubtitle: "Mniej odstępów i mniejsze nagłówki.",
         },
         activityFeed: {
-          defaultDetailTitle: "Domyślne szczegóły (kanał aktywności)",
-          expandedDetailTitle: "Szczegóły po rozwinięciu (kanał aktywności)",
-          tapActionTitle: "Akcja dotknięcia (kanał aktywności)",
+          defaultDetailTitle: "Domyślne szczegóły (kanał narzędzi)",
+          expandedDetailTitle: "Szczegóły po rozwinięciu (kanał narzędzi)",
+          tapActionTitle: "Akcja dotknięcia (kanał narzędzi)",
           tapAction: {
             expandTitle: "Rozwiń",
             expandSubtitle:
@@ -3527,7 +3529,7 @@ export const pl: TranslationStructure = {
           },
           defaultExpandedTitle: "Domyślnie rozwinięte",
           defaultExpandedSubtitle:
-            "Domyślnie rozwijaj wiersze narzędzi w kanale aktywności.",
+            "Domyślnie rozwijaj wiersze narzędzi w kanale narzędzi.",
         },
         localControlDefaultTitle: "Domyślnie (kontrola lokalna)",
         showDebugByDefaultTitle: "Domyślnie pokazuj debug",
@@ -3544,14 +3546,17 @@ export const pl: TranslationStructure = {
           "Wybierz między prostym transkryptem liniowym a grupowaniem na tury.",
         layoutPickerTitle: "Układ transkryptu",
         layout: {
-          linearTitle: "Liniowy (obecny)",
+          linearTitle: "Liniowy",
           linearSubtitle: "Pokaż wiadomości jako płaską listę.",
           turnsTitle: "Tury",
           turnsSubtitle: "Grupuj wiadomości w tury użytkownik/asystent.",
         },
-        activityGroupTitle: "Grupuj narzędzia w Aktywności",
-        activityGroupSubtitle:
-          "Kompaktuj wywołania narzędzi w sekcję Aktywność w każdej turze.",
+        toolCallsGroupTitle: "Grupuj wywołania narzędzi",
+        toolCallsGroupSubtitle:
+          "Kompaktuj wywołania narzędzi w sekcję wywołań narzędzi w każdej turze.",
+        toolCallsGroupBackgroundTitle: "Tło grup wywołań",
+        toolCallsGroupBackgroundSubtitle:
+          "Pokaż tło za grupami wywołań w trybie feed narzędzi.",
         toolAppearanceTitle: "Wygląd narzędzi",
         toolAppearanceSubtitle:
           "Dostosuj wygląd narzędzi w transkrypcie.",
@@ -3574,7 +3579,7 @@ export const pl: TranslationStructure = {
           "Kontroluj przypięcie do dołu i zachowanie skoku na dół.",
           scrollPinTitle: "Przypnij do dołu",
           scrollPinSubtitle: "Podążaj za nowymi wiadomościami, gdy jesteś na dole.",
-          jumpToBottomTitle: "Przycisk skoku na dół",
+          jumpToBottomTitle: "Skocz na dół",
           jumpToBottomButtonLabel: "Skocz na dół",
           jumpToBottomSubtitle:
             "Pokaż przycisk, gdy przewiniesz w górę i pojawi się nowa aktywność.",
@@ -3585,7 +3590,7 @@ export const pl: TranslationStructure = {
           advanced: {
             turnGroupingTitle: "Grupowanie tur",
             turnGroupingFooter:
-            "Kontroluje, jak powstaje Aktywność w turach.",
+            "Kontroluje, jak powstają grupy wywołań narzędzi w turach.",
             performanceTitle: "Wydajność",
             performanceFooter: "Ustawienia wydajności streamingu i list.",
             coalesceEnabledTitle: "Scalaj aktualizacje streamingu",
@@ -3614,20 +3619,20 @@ export const pl: TranslationStructure = {
               legacyTitle: "Starszy FlatList",
               legacySubtitle: "Alternatywa do debugowania kompatybilności.",
             },
-          activityStrategyTitle: "Strategia grupowania Aktywności",
-          activityStrategy: {
+          toolCallsStrategyTitle: "Strategia grupowania wywołań",
+          toolCallsStrategy: {
             consecutiveTitle: "Kolejne narzędzia (domyślne)",
             consecutiveSubtitle:
-              "Grupuj tylko kolejne wywołania narzędzi w Aktywności.",
+              "Grupuj tylko kolejne wywołania narzędzi w wywołaniach narzędzi.",
             allToolsTitle: "Wszystkie narzędzia w turze",
             allToolsSubtitle:
-              "Grupuj wszystkie wywołania narzędzi w turze w jedną sekcję Aktywność.",
+              "Grupuj wszystkie wywołania narzędzi w turze w jedną sekcję wywołań narzędzi.",
           },
-            activityCollapsedPreviewCountTitle: "Podgląd (zwinięte)",
-            activityCollapsedPreviewCountSubtitle: ({ value }: { value: string }) => `Pokaż ostatnie ${value} narzędzie(-a/-i), gdy Aktywność jest zwinięta.`,
-            activityCollapsedPreviewCount: {
+            toolCallsCollapsedPreviewCountTitle: "Podgląd (zwinięte)",
+            toolCallsCollapsedPreviewCountSubtitle: ({ value }: { value: string }) => `Pokaż ostatnie ${value} narzędzie(-a/-i), gdy Wywołania narzędzi jest zwinięte.`,
+            toolCallsCollapsedPreviewCount: {
               offTitle: "Wyłączone",
-              offSubtitle: "Pokaż tylko nagłówek Aktywności.",
+              offSubtitle: "Pokaż tylko nagłówek wywołań narzędzi.",
               oneTitle: "1 narzędzie",
               oneSubtitle: "Pokaż najnowsze narzędzie jako wiersz podglądu.",
               twoTitle: "2 narzędzia",
@@ -3751,12 +3756,12 @@ export const pl: TranslationStructure = {
             "Dołącz krótkie podsumowanie i ostatnie wiadomości (best-effort).",
         },
         summaryRunner: {
-          title: "Summary runner (on-demand)",
-          backendTitle: "Backend",
-          backendPlaceholder: "claude",
+          title: "Generator podsumowań (na żądanie)",
+          backendTitle: "Silnik",
+          backendPlaceholder: "claude (np.)",
           searchBackendsPlaceholder: "Szukaj backendów…",
-          modelTitle: "Model",
-          modelPlaceholder: "default",
+          modelTitle: "Model (LLM)",
+          modelPlaceholder: "default (np.)",
           searchModelsPlaceholder: "Szukaj modeli…",
           notSet: "Nie ustawiono",
           customTitle: "Własny",
@@ -3779,9 +3784,9 @@ export const pl: TranslationStructure = {
         defaultTitle: "Domyślne",
         defaultSubtitle: "Użyj globalnej wartości domyślnej.",
           styleDefaultTitle: "Domyślne (zalecane)",
-          styleDefaultSubtitle: "Karty: Podsumowanie. Kanał aktywności: Kompaktowy.",
+          styleDefaultSubtitle: "Karty: Podsumowanie. Kanał narzędzi: Kompaktowy.",
           expandedStyleDefaultTitle: "Domyślne (zalecane)",
-          expandedStyleDefaultSubtitle: "Karty: Pełne. Kanał aktywności: Podsumowanie.",
+          expandedStyleDefaultSubtitle: "Karty: Pełne. Kanał narzędzi: Podsumowanie.",
       },
       terminalConnect: {
         title: "Połączenie terminala",

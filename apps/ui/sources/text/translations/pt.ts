@@ -238,6 +238,7 @@ export const pt: TranslationStructure = {
       "O Happier encontrou um erro inesperado. Pode reiniciar a interface da app ou copiar os detalhes para suporte.",
     detailsTitle: "Detalhes do erro",
     restart: "Reiniciar app",
+    restartAndReportIssue: "Reiniciar e abrir relatório de erro",
     copyDetails: "Copiar detalhes do erro",
   },
 
@@ -1117,10 +1118,10 @@ export const pt: TranslationStructure = {
     fallbackName: "Serviço conectado",
     serviceNames: {
       claudeSubscription: "Assinatura Claude",
-      openaiCodex: "OpenAI Codex",
+      openaiCodex: "Codex da OpenAI",
       openai: "Chave de API da OpenAI",
       anthropic: "Chave de API da Anthropic",
-      gemini: "Google Gemini",
+      gemini: "Gemini do Google",
     },
     title: "Serviços conectados",
     authChip: {
@@ -2238,8 +2239,8 @@ export const pt: TranslationStructure = {
 
   session: {
     inputPlaceholder: "Digite uma mensagem ...",
-    activity: "Atividade",
-    activityCollapsedPreviewMore: ({ count }: { count: number }) => `+${count} mais…`,
+    toolCalls: "Chamadas de ferramenta",
+    toolCallsCollapsedPreviewMore: ({ count }: { count: number }) => `+${count} mais…`,
     forking: {
       dividerTitle: "Derivado de um contexto anterior",
       dividerTitleWithParent: ({ parent }: { parent: string }) => `Derivado de ${parent}`,
@@ -2647,9 +2648,10 @@ export const pt: TranslationStructure = {
     serverHeader: ({ server }: { server: string }) => `Servidor: ${server}`,
   },
 
-  sessionInfo: {
-    // Used by Session Info screen (app/(app)/session/[id]/info.tsx)
-    killSession: "Encerrar sessão",
+	  sessionInfo: {
+	    // Used by Session Info screen (app/(app)/session/[id]/info.tsx)
+	    title: "Informações da sessão",
+	    killSession: "Encerrar sessão",
     killSessionConfirm: "Tem certeza de que deseja encerrar esta sessão?",
     stopSession: "Parar sessão",
     stopSessionConfirm: "Tem certeza de que deseja parar esta sessão?",
@@ -3497,13 +3499,13 @@ export const pt: TranslationStructure = {
             "Controla quanto detalhe de ferramenta é mostrado na linha do tempo da sessão. É uma preferência de UI; não altera o comportamento do agente.",
           defaultToolDetailLevelTitle: "Nível de detalhe padrão",
           expandedToolDetailLevelTitle: "Nível de detalhe ao expandir",
-          cardTapActionTitle: "Ação ao tocar (cartão)",
+          cardTapActionTitle: "Ação ao tocar",
           timelineChrome: {
             title: "Estilo de ferramentas na linha do tempo",
             cardsTitle: "Cartões",
           cardsSubtitle:
             "Cartões de ferramentas com conteúdo inline (com base no nível de detalhe).",
-          activityFeedTitle: "Feed de atividade",
+          activityFeedTitle: "Feed de ferramentas",
           activityFeedSubtitle:
             "Linhas compactas otimizadas para alta densidade de ferramentas.",
         },
@@ -3515,9 +3517,9 @@ export const pt: TranslationStructure = {
           compactSubtitle: "Cabeçalhos mais enxutos e menos padding.",
         },
         activityFeed: {
-          defaultDetailTitle: "Detalhe padrão (feed de atividade)",
-          expandedDetailTitle: "Detalhe expandido (feed de atividade)",
-          tapActionTitle: "Ação ao tocar (feed de atividade)",
+          defaultDetailTitle: "Detalhe padrão (feed de ferramentas)",
+          expandedDetailTitle: "Detalhe expandido (feed de ferramentas)",
+          tapActionTitle: "Ação ao tocar (feed de ferramentas)",
           tapAction: {
             expandTitle: "Expandir",
             expandSubtitle: "Toque expande ou recolhe detalhes inline.",
@@ -3526,7 +3528,7 @@ export const pt: TranslationStructure = {
           },
           defaultExpandedTitle: "Expandido por padrão",
           defaultExpandedSubtitle:
-            "Expandir linhas de ferramentas por padrão no feed de atividade.",
+            "Expandir linhas de ferramentas por padrão no feed de ferramentas.",
         },
         localControlDefaultTitle: "Padrão (controle local)",
         showDebugByDefaultTitle: "Mostrar debug por padrão",
@@ -3543,14 +3545,17 @@ export const pt: TranslationStructure = {
           "Escolha entre uma transcrição linear e o agrupamento por turnos.",
         layoutPickerTitle: "Layout da transcrição",
         layout: {
-          linearTitle: "Linear (atual)",
+          linearTitle: "Lista",
           linearSubtitle: "Mostrar mensagens como uma lista plana.",
           turnsTitle: "Turnos",
           turnsSubtitle: "Agrupar mensagens em turnos usuário/assistente.",
         },
-        activityGroupTitle: "Agrupar ferramentas em Atividade",
-        activityGroupSubtitle:
-          "Compactar chamadas de ferramenta em uma seção Atividade dentro de cada turno.",
+        toolCallsGroupTitle: "Agrupar chamadas de ferramenta",
+        toolCallsGroupSubtitle:
+          "Compactar chamadas de ferramenta em uma seção de chamadas de ferramenta dentro de cada turno.",
+        toolCallsGroupBackgroundTitle: "Fundo do grupo de chamadas",
+        toolCallsGroupBackgroundSubtitle:
+          "Mostrar um fundo atrás de grupos de chamadas no modo de feed de ferramentas.",
         toolAppearanceTitle: "Aparência das ferramentas",
         toolAppearanceSubtitle:
           "Personalize como as ferramentas aparecem na transcrição.",
@@ -3573,7 +3578,7 @@ export const pt: TranslationStructure = {
           "Controle o fixar no final e o comportamento de pular para o final.",
           scrollPinTitle: "Fixar no final",
           scrollPinSubtitle: "Seguir novas mensagens enquanto você estiver no final.",
-          jumpToBottomTitle: "Botão de pular para o final",
+          jumpToBottomTitle: "Pular para o final",
           jumpToBottomButtonLabel: "Pular para o final",
           jumpToBottomSubtitle:
             "Mostrar um botão quando você rolar para cima e novas atividades chegarem.",
@@ -3584,7 +3589,7 @@ export const pt: TranslationStructure = {
           advanced: {
             turnGroupingTitle: "Agrupamento por turnos",
             turnGroupingFooter:
-            "Controla como a Atividade é formada dentro dos turnos.",
+            "Controla como os grupos de chamadas de ferramenta são formados dentro dos turnos.",
             performanceTitle: "Desempenho",
             performanceFooter: "Controles de desempenho para streaming e listas.",
             coalesceEnabledTitle: "Agrupar atualizações em streaming",
@@ -3613,20 +3618,20 @@ export const pt: TranslationStructure = {
               legacyTitle: "FlatList legado",
               legacySubtitle: "Alternativa para depuração de compatibilidade.",
             },
-          activityStrategyTitle: "Estratégia de agrupamento de Atividade",
-          activityStrategy: {
+          toolCallsStrategyTitle: "Estratégia de agrupamento de chamadas",
+          toolCallsStrategy: {
             consecutiveTitle: "Ferramentas consecutivas (padrão)",
             consecutiveSubtitle:
-              "Agrupar apenas chamadas consecutivas em Atividade.",
+              "Agrupar apenas chamadas consecutivas em chamadas de ferramenta.",
             allToolsTitle: "Todas as ferramentas no turno",
             allToolsSubtitle:
-              "Agrupar todas as ferramentas de um turno em uma única seção Atividade.",
+              "Agrupar todas as ferramentas de um turno em uma única seção de chamadas de ferramenta.",
           },
-            activityCollapsedPreviewCountTitle: "Prévia (recolhido)",
-            activityCollapsedPreviewCountSubtitle: ({ value }: { value: string }) => `Mostrar as últimas ${value} ferramentas quando a Atividade estiver recolhida.`,
-            activityCollapsedPreviewCount: {
+            toolCallsCollapsedPreviewCountTitle: "Prévia (recolhido)",
+            toolCallsCollapsedPreviewCountSubtitle: ({ value }: { value: string }) => `Mostrar as últimas ${value} ferramentas quando Chamadas de ferramenta estiver recolhida.`,
+            toolCallsCollapsedPreviewCount: {
               offTitle: "Desativado",
-              offSubtitle: "Mostrar apenas o cabeçalho de Atividade.",
+              offSubtitle: "Mostrar apenas o cabeçalho de chamadas de ferramenta.",
               oneTitle: "1 ferramenta",
               oneSubtitle: "Mostrar a ferramenta mais recente como linha de prévia.",
               twoTitle: "2 ferramentas",
@@ -3750,12 +3755,12 @@ export const pt: TranslationStructure = {
             "Incluir um resumo curto e mensagens recentes (melhor esforço).",
         },
         summaryRunner: {
-          title: "Summary runner (on-demand)",
-          backendTitle: "Backend",
-          backendPlaceholder: "claude",
+          title: "Gerador de resumos (sob demanda)",
+          backendTitle: "Motor",
+          backendPlaceholder: "claude (ex.)",
           searchBackendsPlaceholder: "Buscar backends…",
-          modelTitle: "Model",
-          modelPlaceholder: "default",
+          modelTitle: "Modelo (LLM)",
+          modelPlaceholder: "default (ex.)",
           searchModelsPlaceholder: "Buscar modelos…",
           notSet: "Não definido",
           customTitle: "Personalizado",
@@ -3778,9 +3783,9 @@ export const pt: TranslationStructure = {
         defaultTitle: "Padrão",
         defaultSubtitle: "Usar o padrão global.",
           styleDefaultTitle: "Padrão (recomendado)",
-          styleDefaultSubtitle: "Cartões: Resumo. Feed de atividade: Compacto.",
+          styleDefaultSubtitle: "Cartões: Resumo. Feed de ferramentas: Compacto.",
           expandedStyleDefaultTitle: "Padrão (recomendado)",
-          expandedStyleDefaultSubtitle: "Cartões: Completo. Feed de atividade: Resumo.",
+          expandedStyleDefaultSubtitle: "Cartões: Completo. Feed de ferramentas: Resumo.",
       },
       terminalConnect: {
         title: "Conexão do terminal",

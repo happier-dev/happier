@@ -229,6 +229,7 @@ export const en = {
         subtitle: 'Happier hit an unexpected error. You can restart the app UI or copy details for support.',
         detailsTitle: 'Error details',
         restart: 'Restart app',
+        restartAndReportIssue: 'Restart and open bug report',
         copyDetails: 'Copy error details',
     },
 
@@ -1999,8 +2000,8 @@ export const en = {
 
     session: {
         inputPlaceholder: 'What would you like to work on?',
-        activity: 'Activity',
-        activityCollapsedPreviewMore: ({ count }: { count: number }) => `+${count} more…`,
+        toolCalls: 'Tool calls',
+        toolCallsCollapsedPreviewMore: ({ count }: { count: number }) => `+${count} more…`,
         forking: {
             dividerTitle: 'Forked from earlier context',
             dividerTitleWithParent: ({ parent }: { parent: string }) => `Forked from ${parent}`,
@@ -2380,9 +2381,10 @@ export const en = {
         serverHeader: ({ server }: { server: string }) => `Server: ${server}`,
     },
 
-    sessionInfo: {
-        // Used by Session Info screen (app/(app)/session/[id]/info.tsx)
-        killSession: 'Kill Session',
+	    sessionInfo: {
+	        // Used by Session Info screen (app/(app)/session/[id]/info.tsx)
+	        title: 'Session Info',
+	        killSession: 'Kill Session',
         killSessionConfirm: 'Are you sure you want to terminate this session?',
         stopSession: 'Stop Session',
         stopSessionConfirm: 'Are you sure you want to stop this session?',
@@ -3127,25 +3129,25 @@ export const en = {
               footer: 'Controls how much tool detail is shown in the session timeline. This is a UI preference; it does not change agent behavior.',
               defaultToolDetailLevelTitle: 'Default tool detail level',
               expandedToolDetailLevelTitle: 'Expanded tool detail level',
-                cardTapActionTitle: 'Tool card tap action',
+                cardTapActionTitle: 'Tool tap action',
               timelineChrome: {
                   title: 'Timeline tool style',
                   cardsTitle: 'Cards',
                   cardsSubtitle: 'Tool cards with inline content (based on detail level).',
-                  activityFeedTitle: 'Activity feed',
+                  activityFeedTitle: 'Tool feed',
                 activityFeedSubtitle: 'Compact rows optimized for high tool density.',
             },
               cardDensity: {
                   title: 'Tool density',
                   comfortableTitle: 'Comfortable',
-                  comfortableSubtitle: 'More spacing and clearer separation (cards and activity feed).',
+                  comfortableSubtitle: 'More spacing and clearer separation (cards and tool feed).',
                   compactTitle: 'Compact',
-                  compactSubtitle: 'Tighter rows and reduced padding (cards and activity feed).',
+                  compactSubtitle: 'Tighter rows and reduced padding (cards and tool feed).',
               },
             activityFeed: {
-                defaultDetailTitle: 'Activity feed default detail',
-                expandedDetailTitle: 'Activity feed expanded detail',
-                tapActionTitle: 'Activity feed tap action',
+                defaultDetailTitle: 'Tool feed default detail',
+                expandedDetailTitle: 'Tool feed expanded detail',
+                tapActionTitle: 'Tool feed tap action',
                 tapAction: {
                     expandTitle: 'Expand',
                     expandSubtitle: 'Tap expands or collapses inline details.',
@@ -3153,7 +3155,7 @@ export const en = {
                     openSubtitle: 'Tap opens the full tool view screen.',
                 },
                 defaultExpandedTitle: 'Default expanded',
-                defaultExpandedSubtitle: 'Expand tool rows by default in activity feed.',
+                defaultExpandedSubtitle: 'Expand tool rows by default in tool feed.',
             },
             localControlDefaultTitle: 'Local-control default',
             showDebugByDefaultTitle: 'Show debug by default',
@@ -3167,13 +3169,15 @@ export const en = {
             layoutFooter: 'Choose between a simple linear transcript and turn grouping.',
             layoutPickerTitle: 'Transcript layout',
             layout: {
-                linearTitle: 'Linear (current)',
+                linearTitle: 'Linear',
                 linearSubtitle: 'Show messages as a flat list.',
                 turnsTitle: 'Turns',
                 turnsSubtitle: 'Group messages into user/assistant turns.',
             },
-            activityGroupTitle: 'Group tools into Activity',
-            activityGroupSubtitle: 'Compact tool calls into an Activity section inside each turn.',
+            toolCallsGroupTitle: 'Group tool calls',
+            toolCallsGroupSubtitle: 'Compact tool calls into a Tool calls section inside each turn.',
+            toolCallsGroupBackgroundTitle: 'Tool calls group background',
+            toolCallsGroupBackgroundSubtitle: 'Show a background behind Tool calls groups in tool feed mode.',
             toolAppearanceTitle: 'Tool appearance',
             toolAppearanceSubtitle: 'Customize how tools look in the transcript.',
             motionTitle: 'Motion',
@@ -3193,7 +3197,7 @@ export const en = {
             scrollFooter: 'Control pinned scrolling and jump-to-bottom behavior.',
             scrollPinTitle: 'Pin to bottom',
             scrollPinSubtitle: 'Follow new messages while you are at the bottom.',
-            jumpToBottomTitle: 'Jump to bottom button',
+            jumpToBottomTitle: 'Jump to bottom',
             jumpToBottomButtonLabel: 'Jump to bottom',
             jumpToBottomSubtitle: 'Show a button when you scroll up and new activity arrives.',
               advancedScrollTitle: 'Advanced scroll…',
@@ -3202,7 +3206,7 @@ export const en = {
                 advancedSubtitle: 'Performance and debug controls.',
               advanced: {
                   turnGroupingTitle: 'Turn grouping',
-                  turnGroupingFooter: 'Controls how Activity is formed inside turns.',
+                  turnGroupingFooter: 'Controls how Tool calls groups are formed inside turns.',
                     performanceTitle: 'Performance',
                     performanceFooter: 'Streaming and list performance controls.',
                     coalesceEnabledTitle: 'Coalesce streaming updates',
@@ -3227,18 +3231,18 @@ export const en = {
                         legacyTitle: 'Legacy FlatList',
                         legacySubtitle: 'Fallback for compatibility debugging.',
                     },
-                  activityStrategyTitle: 'Activity grouping strategy',
-                activityStrategy: {
+                  toolCallsStrategyTitle: 'Tool calls grouping strategy',
+                toolCallsStrategy: {
                     consecutiveTitle: 'Consecutive tools (default)',
-                    consecutiveSubtitle: 'Group only consecutive tool calls into Activity.',
+                    consecutiveSubtitle: 'Group only consecutive tool calls into Tool calls.',
                     allToolsTitle: 'All tools in turn',
-                    allToolsSubtitle: 'Group all tool calls in a turn into a single Activity section.',
+                    allToolsSubtitle: 'Group all tool calls in a turn into a single Tool calls section.',
                 },
-                activityCollapsedPreviewCountTitle: 'Collapsed preview',
-                activityCollapsedPreviewCountSubtitle: ({ value }: { value: string }) => `Show the last ${value} tool(s) when Activity is collapsed.`,
-                activityCollapsedPreviewCount: {
+                toolCallsCollapsedPreviewCountTitle: 'Collapsed preview',
+                toolCallsCollapsedPreviewCountSubtitle: ({ value }: { value: string }) => `Show the last ${value} tool(s) when Tool calls is collapsed.`,
+                toolCallsCollapsedPreviewCount: {
                     offTitle: 'Off',
-                    offSubtitle: 'Show only the Activity header.',
+                    offSubtitle: 'Show only the Tool calls header.',
                     oneTitle: '1 tool',
                     oneSubtitle: 'Show the most recent tool as a preview row.',
                     twoTitle: '2 tools',
@@ -3362,9 +3366,9 @@ export const en = {
             defaultTitle: 'Default',
             defaultSubtitle: 'Use the global default.',
             styleDefaultTitle: 'Default (recommended)',
-            styleDefaultSubtitle: 'Cards: Summary. Activity feed: Compact.',
+            styleDefaultSubtitle: 'Cards: Summary. Tool feed: Compact.',
             expandedStyleDefaultTitle: 'Default (recommended)',
-            expandedStyleDefaultSubtitle: 'Cards: Full. Activity feed: Summary.',
+            expandedStyleDefaultSubtitle: 'Cards: Full. Tool feed: Summary.',
         },
         terminalConnect: {
             title: 'Terminal connect',

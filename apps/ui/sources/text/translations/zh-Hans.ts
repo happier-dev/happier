@@ -227,6 +227,7 @@ export const zhHans: TranslationStructure = {
     subtitle: "Happier 发生了意外错误。你可以重启应用界面，或复制详细信息以便支持排查。",
     detailsTitle: "错误详情",
     restart: "重启应用",
+    restartAndReportIssue: "重启并提交问题报告",
     copyDetails: "复制错误详情",
   },
 
@@ -1058,10 +1059,10 @@ export const zhHans: TranslationStructure = {
     fallbackName: "已连接服务",
     serviceNames: {
       claudeSubscription: "Claude 订阅",
-      openaiCodex: "OpenAI Codex",
+      openaiCodex: "OpenAI Codex（OpenAI）",
       openai: "OpenAI API 密钥",
       anthropic: "Anthropic API 密钥",
-      gemini: "Google Gemini",
+      gemini: "Google Gemini（谷歌）",
     },
     title: "已连接服务",
     authChip: {
@@ -2093,8 +2094,8 @@ export const zhHans: TranslationStructure = {
 
   session: {
     inputPlaceholder: "输入消息...",
-    activity: "活动",
-    activityCollapsedPreviewMore: ({ count }: { count: number }) => `+${count} 更多…`,
+    toolCalls: "工具调用",
+    toolCallsCollapsedPreviewMore: ({ count }: { count: number }) => `+${count} 更多…`,
     forking: {
       dividerTitle: "从较早的上下文分叉",
       dividerTitleWithParent: ({ parent }: { parent: string }) => `从${parent}分叉`,
@@ -2486,9 +2487,10 @@ export const zhHans: TranslationStructure = {
     serverHeader: ({ server }: { server: string }) => `服务器：${server}`,
   },
 
-  sessionInfo: {
-    // Used by Session Info screen (app/(app)/session/[id]/info.tsx)
-    killSession: "终止会话",
+	  sessionInfo: {
+	    // Used by Session Info screen (app/(app)/session/[id]/info.tsx)
+	    title: "会话信息",
+	    killSession: "终止会话",
     killSessionConfirm: "您确定要终止此会话吗？",
     stopSession: "停止会话",
     stopSessionConfirm: "您确定要停止此会话吗？",
@@ -3298,12 +3300,12 @@ export const zhHans: TranslationStructure = {
         "控制会话时间线中显示多少工具细节。这是 UI 偏好设置，不会改变代理行为。",
       defaultToolDetailLevelTitle: "默认工具细节级别",
       expandedToolDetailLevelTitle: "展开工具细节级别",
-      cardTapActionTitle: "点击动作（卡片）",
+      cardTapActionTitle: "点击动作",
       timelineChrome: {
         title: "时间线工具样式",
         cardsTitle: "卡片",
         cardsSubtitle: "带内联内容的工具卡片（取决于细节级别）。",
-        activityFeedTitle: "活动动态",
+        activityFeedTitle: "工具动态",
         activityFeedSubtitle: "为高工具密度优化的紧凑行。",
       },
       cardDensity: {
@@ -3314,9 +3316,9 @@ export const zhHans: TranslationStructure = {
         compactSubtitle: "更紧凑的标题与更小的内边距。",
       },
       activityFeed: {
-        defaultDetailTitle: "活动动态默认细节",
-        expandedDetailTitle: "活动动态展开细节",
-        tapActionTitle: "点击动作（活动动态）",
+        defaultDetailTitle: "工具动态默认细节",
+        expandedDetailTitle: "工具动态展开细节",
+        tapActionTitle: "点击动作（工具动态）",
         tapAction: {
           expandTitle: "展开",
           expandSubtitle: "点击展开或折叠内联细节。",
@@ -3324,7 +3326,7 @@ export const zhHans: TranslationStructure = {
           openSubtitle: "点击打开完整工具视图屏幕。",
         },
         defaultExpandedTitle: "默认展开",
-        defaultExpandedSubtitle: "在活动动态中默认展开工具行。",
+        defaultExpandedSubtitle: "在工具动态中默认展开工具行。",
       },
       localControlDefaultTitle: "本地控制默认值",
       showDebugByDefaultTitle: "默认显示调试信息",
@@ -3339,13 +3341,15 @@ export const zhHans: TranslationStructure = {
       layoutFooter: "在简单线性记录与按回合分组之间选择。",
       layoutPickerTitle: "会话记录布局",
       layout: {
-        linearTitle: "线性（当前）",
+        linearTitle: "线性",
         linearSubtitle: "以平铺列表显示消息。",
         turnsTitle: "回合",
         turnsSubtitle: "将消息按用户/助手回合分组。",
       },
-      activityGroupTitle: "将工具分组到「活动」",
-      activityGroupSubtitle: "在每个回合内将工具调用压缩为「活动」部分。",
+      toolCallsGroupTitle: "分组工具调用",
+      toolCallsGroupSubtitle: "在每个回合内将工具调用压缩为「工具调用」部分。",
+      toolCallsGroupBackgroundTitle: "工具调用分组背景",
+      toolCallsGroupBackgroundSubtitle: "在工具信息流模式下为工具调用分组显示背景。",
       toolAppearanceTitle: "工具外观",
       toolAppearanceSubtitle: "自定义会话记录中的工具显示样式。",
       motionTitle: "动效",
@@ -3365,7 +3369,7 @@ export const zhHans: TranslationStructure = {
       scrollFooter: "控制底部固定滚动与跳到底部行为。",
         scrollPinTitle: "固定到底部",
         scrollPinSubtitle: "当你在底部时跟随新消息。",
-        jumpToBottomTitle: "跳到底部按钮",
+        jumpToBottomTitle: "跳到底部",
         jumpToBottomButtonLabel: "跳到底部",
         jumpToBottomSubtitle: "当你向上滚动且有新活动到达时显示按钮。",
         advancedScrollTitle: "高级滚动…",
@@ -3374,7 +3378,7 @@ export const zhHans: TranslationStructure = {
       advancedSubtitle: "性能与调试控制。",
       advanced: {
         turnGroupingTitle: "回合分组",
-        turnGroupingFooter: "控制每个回合中「活动」如何形成。",
+        turnGroupingFooter: "控制每个回合中「工具调用」分组如何形成。",
         performanceTitle: "性能",
         performanceFooter: "流式更新与列表的性能控制。",
         coalesceEnabledTitle: "合并流式更新",
@@ -3399,18 +3403,18 @@ export const zhHans: TranslationStructure = {
           legacyTitle: "旧版 FlatList",
           legacySubtitle: "用于兼容性调试的备用方案。",
         },
-        activityStrategyTitle: "活动分组策略",
-        activityStrategy: {
+        toolCallsStrategyTitle: "工具调用分组策略",
+        toolCallsStrategy: {
           consecutiveTitle: "连续工具（默认）",
-          consecutiveSubtitle: "只将连续的工具调用分组到活动中。",
+          consecutiveSubtitle: "只将连续的工具调用分组到工具调用中。",
           allToolsTitle: "回合内所有工具",
-          allToolsSubtitle: "将回合内所有工具调用分组为一个活动部分。",
+          allToolsSubtitle: "将回合内所有工具调用分组为一个工具调用部分。",
         },
-        activityCollapsedPreviewCountTitle: "折叠预览",
-        activityCollapsedPreviewCountSubtitle: ({ value }: { value: string }) => `当活动折叠时显示最近 ${value} 个工具。`,
-        activityCollapsedPreviewCount: {
+        toolCallsCollapsedPreviewCountTitle: "折叠预览",
+        toolCallsCollapsedPreviewCountSubtitle: ({ value }: { value: string }) => `当工具调用折叠时显示最近 ${value} 个工具。`,
+        toolCallsCollapsedPreviewCount: {
           offTitle: "关闭",
-          offSubtitle: "仅显示活动标题。",
+          offSubtitle: "仅显示工具调用标题。",
           oneTitle: "1 个工具",
           oneSubtitle: "显示最近的工具作为预览行。",
           twoTitle: "2 个工具",
@@ -3518,12 +3522,12 @@ export const zhHans: TranslationStructure = {
           "包含简短摘要和最近消息（尽力而为）。",
       },
       summaryRunner: {
-        title: "Summary runner (on-demand)",
-        backendTitle: "Backend",
-        backendPlaceholder: "claude",
+        title: "摘要运行器（按需）",
+        backendTitle: "后端",
+        backendPlaceholder: "claude（示例）",
         searchBackendsPlaceholder: "搜索后端…",
-        modelTitle: "Model",
-        modelPlaceholder: "default",
+        modelTitle: "模型（LLM）",
+        modelPlaceholder: "default（示例）",
         searchModelsPlaceholder: "搜索模型…",
         notSet: "未设置",
         customTitle: "自定义",
@@ -3545,9 +3549,9 @@ export const zhHans: TranslationStructure = {
       defaultTitle: "默认",
       defaultSubtitle: "使用全局默认值。",
       styleDefaultTitle: "默认（推荐）",
-      styleDefaultSubtitle: "卡片：摘要。活动动态：紧凑。",
+      styleDefaultSubtitle: "卡片：摘要。工具动态：紧凑。",
       expandedStyleDefaultTitle: "默认（推荐）",
-      expandedStyleDefaultSubtitle: "卡片：完整。活动动态：摘要。",
+      expandedStyleDefaultSubtitle: "卡片：完整。工具动态：摘要。",
     },
     terminalConnect: {
       title: "终端连接",

@@ -224,6 +224,7 @@ export const ca: TranslationStructure = {
             'Happier ha patit un error inesperat. Pots reiniciar la interfície de l\'app o copiar els detalls per al suport.',
         detailsTitle: 'Detalls de l\'error',
         restart: 'Reinicia l\'app',
+        restartAndReportIssue: 'Reinicia i obre l\'informe d\'error',
         copyDetails: 'Copia els detalls de l\'error',
     },
 
@@ -1034,10 +1035,10 @@ export const ca: TranslationStructure = {
         fallbackName: 'Servei connectat',
         serviceNames: {
             claudeSubscription: 'Subscripció de Claude',
-            openaiCodex: 'OpenAI Codex',
+            openaiCodex: "Codex d'OpenAI",
             openai: 'Clau API d\'OpenAI',
             anthropic: 'Clau API d\'Anthropic',
-            gemini: 'Google Gemini',
+            gemini: 'Gemini de Google',
         },
         title: 'Serveis connectats',
         authChip: {
@@ -1991,8 +1992,8 @@ deps: {
 
     session: {
         inputPlaceholder: 'Escriu un missatge...',
-        activity: 'Activitat',
-        activityCollapsedPreviewMore: ({ count }: { count: number }) => `+${count} més…`,
+        toolCalls: 'Crides d’eines',
+        toolCallsCollapsedPreviewMore: ({ count }: { count: number }) => `+${count} més…`,
         forking: {
             dividerTitle: 'Bifurcat d’un context anterior',
             dividerTitleWithParent: ({ parent }: { parent: string }) => `Bifurcat de ${parent}`,
@@ -2374,9 +2375,10 @@ deps: {
         serverHeader: ({ server }: { server: string }) => `Servidor: ${server}`,
     },
 
-    sessionInfo: {
-        // Used by Session Info screen (app/(app)/session/[id]/info.tsx)
-        killSession: 'Finalitza la sessió',
+	    sessionInfo: {
+	        // Used by Session Info screen (app/(app)/session/[id]/info.tsx)
+	        title: 'Informació de la sessió',
+	        killSession: 'Finalitza la sessió',
         killSessionConfirm: 'Segur que vols finalitzar aquesta sessió?',
         stopSession: 'Atura la sessió',
         stopSessionConfirm: 'Segur que vols aturar aquesta sessió?',
@@ -3118,12 +3120,12 @@ deps: {
                 footer: 'Controla quants detalls d’eina es mostren a la línia de temps de la sessió. És una preferència d’UI; no canvia el comportament de l’agent.',
                 defaultToolDetailLevelTitle: 'Nivell de detall per defecte',
                 expandedToolDetailLevelTitle: 'Nivell de detall expandit',
-                cardTapActionTitle: 'Acció en tocar (targeta)',
+                cardTapActionTitle: 'Acció en tocar',
                 timelineChrome: {
                     title: 'Estil d’eines a la línia de temps',
                     cardsTitle: 'Targetes',
                   cardsSubtitle: 'Targetes d’eina amb contingut en línia (segons el nivell de detall).',
-                  activityFeedTitle: 'Feed d’activitat',
+                  activityFeedTitle: 'Feed d’eines',
                   activityFeedSubtitle: 'Files compactes optimitzades per a alta densitat d’eines.',
               },
               cardDensity: {
@@ -3134,9 +3136,9 @@ deps: {
                   compactSubtitle: 'Capçaleres més ajustades i menys farcit.',
               },
               activityFeed: {
-                  defaultDetailTitle: 'Detall per defecte (feed d’activitat)',
-                  expandedDetailTitle: 'Detall expandit (feed d’activitat)',
-                  tapActionTitle: 'Acció en tocar (feed d’activitat)',
+                  defaultDetailTitle: 'Detall per defecte (feed d’eines)',
+                  expandedDetailTitle: 'Detall expandit (feed d’eines)',
+                  tapActionTitle: 'Acció en tocar (feed d’eines)',
                   tapAction: {
                       expandTitle: 'Expandir',
                       expandSubtitle: 'Tocar expandeix o contreu detalls en línia.',
@@ -3144,7 +3146,7 @@ deps: {
                       openSubtitle: 'Tocar obre la vista completa de l’eina.',
                   },
                   defaultExpandedTitle: 'Expandit per defecte',
-                  defaultExpandedSubtitle: 'Expandir files per defecte al feed d’activitat.',
+                  defaultExpandedSubtitle: 'Expandir files per defecte al feed d’eines.',
               },
               localControlDefaultTitle: 'Per defecte (control local)',
               showDebugByDefaultTitle: 'Mostra depuració per defecte',
@@ -3158,13 +3160,15 @@ deps: {
               layoutFooter: 'Tria entre una transcripció lineal i l’agrupació per torns.',
               layoutPickerTitle: 'Disseny de transcripció',
               layout: {
-                  linearTitle: 'Lineal (actual)',
+                  linearTitle: 'Lineal',
                   linearSubtitle: 'Mostra els missatges com una llista plana.',
                   turnsTitle: 'Torns',
                   turnsSubtitle: 'Agrupa missatges en torns usuari/assistent.',
               },
-              activityGroupTitle: 'Agrupa eines a Activitat',
-              activityGroupSubtitle: 'Compacta crides d’eines en una secció d’Activitat dins de cada torn.',
+              toolCallsGroupTitle: 'Agrupa crides d’eines',
+              toolCallsGroupSubtitle: 'Compacta crides d’eines en una secció de crides d’eines dins de cada torn.',
+              toolCallsGroupBackgroundTitle: 'Fons del grup de crides',
+              toolCallsGroupBackgroundSubtitle: 'Mostra un fons darrere dels grups de crides en mode feed d’eines.',
               toolAppearanceTitle: 'Aparença d’eines',
               toolAppearanceSubtitle: 'Personalitza com es veuen les eines a la transcripció.',
               motionTitle: 'Moviment',
@@ -3184,7 +3188,7 @@ deps: {
               scrollFooter: 'Controla l’ancoratge i el salt al final.',
                 scrollPinTitle: 'Ancorar al final',
                 scrollPinSubtitle: 'Segueix missatges nous mentre ets al final.',
-                jumpToBottomTitle: 'Botó d’anar al final',
+                jumpToBottomTitle: 'Anar al final',
                 jumpToBottomButtonLabel: 'Anar al final',
                   jumpToBottomSubtitle: 'Mostra un botó quan puges i arriba activitat nova.',
                   advancedScrollTitle: 'Desplaçament avançat…',
@@ -3193,7 +3197,7 @@ deps: {
                 advancedSubtitle: 'Controls de rendiment i depuració.',
                 advanced: {
                   turnGroupingTitle: 'Agrupació per torns',
-                  turnGroupingFooter: 'Controla com es forma Activitat dins dels torns.',
+                  turnGroupingFooter: 'Controla com es formen els grups de crides d’eines dins dels torns.',
                     performanceTitle: 'Rendiment',
                     performanceFooter: 'Controls de rendiment per a streaming i llistes.',
                     coalesceEnabledTitle: 'Agrupar actualitzacions en streaming',
@@ -3218,18 +3222,18 @@ deps: {
                         legacyTitle: 'FlatList llegat',
                         legacySubtitle: 'Alternativa per a depuració de compatibilitat.',
                     },
-                  activityStrategyTitle: 'Estratègia d’agrupació d’Activitat',
-                  activityStrategy: {
+                  toolCallsStrategyTitle: 'Estratègia d’agrupació de crides',
+                  toolCallsStrategy: {
                       consecutiveTitle: 'Eines consecutives (per defecte)',
-                      consecutiveSubtitle: 'Agrupa només crides consecutives en Activitat.',
+                      consecutiveSubtitle: 'Agrupa només crides consecutives en crides d’eines.',
                       allToolsTitle: 'Totes les eines del torn',
-                      allToolsSubtitle: 'Agrupa totes les eines d’un torn en una sola secció d’Activitat.',
+                      allToolsSubtitle: 'Agrupa totes les eines d’un torn en una sola secció de crides d’eines.',
                   },
-                    activityCollapsedPreviewCountTitle: 'Previsualització (tancat)',
-                    activityCollapsedPreviewCountSubtitle: ({ value }: { value: string }) => `Mostra les últimes ${value} eines quan Activitat està tancat.`,
-                    activityCollapsedPreviewCount: {
+                    toolCallsCollapsedPreviewCountTitle: 'Previsualització (tancat)',
+                    toolCallsCollapsedPreviewCountSubtitle: ({ value }: { value: string }) => `Mostra les últimes ${value} eines quan Crides d’eines està tancat.`,
+                    toolCallsCollapsedPreviewCount: {
                         offTitle: 'Desactivat',
-                        offSubtitle: 'Mostra només la capçalera d’Activitat.',
+                        offSubtitle: 'Mostra només la capçalera de crides d’eines.',
                         oneTitle: '1 eina',
                         oneSubtitle: 'Mostra l’eina més recent com a fila de previsualització.',
                         twoTitle: '2 eines',
@@ -3320,12 +3324,12 @@ deps: {
                     summaryRecentSubtitle: 'Inclou un resum curt i missatges recents (best-effort).',
                 },
                 summaryRunner: {
-                    title: 'Summary runner (on-demand)',
-                    backendTitle: 'Backend',
-                    backendPlaceholder: 'claude',
+                    title: 'Generador de resums (a demanda)',
+                    backendTitle: 'Motor',
+                    backendPlaceholder: 'claude (ex.)',
                     searchBackendsPlaceholder: 'Cerca backends…',
-                    modelTitle: 'Model',
-                    modelPlaceholder: 'default',
+                    modelTitle: 'Model (LLM)',
+                    modelPlaceholder: 'default (ex.)',
                     searchModelsPlaceholder: 'Cerca models…',
                     notSet: 'No configurat',
                     customTitle: 'Personalitzat',
@@ -3354,9 +3358,9 @@ deps: {
               defaultTitle: 'Per defecte',
               defaultSubtitle: 'Fes servir el valor global per defecte.',
                 styleDefaultTitle: 'Per defecte (recomanat)',
-                styleDefaultSubtitle: 'Targetes: Resum. Feed d’activitat: Compacte.',
+                styleDefaultSubtitle: 'Targetes: Resum. Feed d’eines: Compacte.',
                 expandedStyleDefaultTitle: 'Per defecte (recomanat)',
-                expandedStyleDefaultSubtitle: 'Targetes: Complet. Feed d’activitat: Resum.',
+                expandedStyleDefaultSubtitle: 'Targetes: Complet. Feed d’eines: Resum.',
           },
           terminalConnect: {
               title: 'Connexió del terminal',

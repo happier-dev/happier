@@ -223,6 +223,7 @@ export const ja: TranslationStructure = {
       "Happierで予期しないエラーが発生しました。アプリUIを再起動するか、サポート用に詳細をコピーできます。",
     detailsTitle: "エラーの詳細",
     restart: "アプリを再起動",
+    restartAndReportIssue: "再起動して不具合を報告",
     copyDetails: "エラー詳細をコピー",
   },
 
@@ -1395,10 +1396,10 @@ export const ja: TranslationStructure = {
     fallbackName: "連携サービス",
     serviceNames: {
       claudeSubscription: "Claude サブスクリプション",
-      openaiCodex: "OpenAI Codex",
+      openaiCodex: "OpenAI Codex（OpenAI）",
       openai: "OpenAI API キー",
       anthropic: "Anthropic API キー",
-      gemini: "Google Gemini",
+      gemini: "Google Gemini（Google）",
     },
     title: "接続済みサービス",
     authChip: {
@@ -2488,8 +2489,8 @@ export const ja: TranslationStructure = {
 
   session: {
     inputPlaceholder: "メッセージを入力...",
-    activity: "アクティビティ",
-    activityCollapsedPreviewMore: ({ count }: { count: number }) => `+${count} 件…`,
+    toolCalls: "ツール呼び出し",
+    toolCallsCollapsedPreviewMore: ({ count }: { count: number }) => `+${count} 件…`,
     forking: {
       dividerTitle: "以前のコンテキストから分岐しました",
       dividerTitleWithParent: ({ parent }: { parent: string }) => `${parent} から分岐しました`,
@@ -2892,9 +2893,10 @@ export const ja: TranslationStructure = {
     serverHeader: ({ server }: { server: string }) => `サーバー: ${server}`,
   },
 
-  sessionInfo: {
-    // Used by Session Info screen (app/(app)/session/[id]/info.tsx)
-    killSession: "セッションを終了",
+	  sessionInfo: {
+	    // Used by Session Info screen (app/(app)/session/[id]/info.tsx)
+	    title: "セッション情報",
+	    killSession: "セッションを終了",
     killSessionConfirm: "このセッションを終了してもよろしいですか？",
     stopSession: "セッションを停止",
     stopSessionConfirm: "このセッションを停止してもよろしいですか？",
@@ -3727,13 +3729,13 @@ export const ja: TranslationStructure = {
             "セッションのタイムラインに表示するツールの詳細量を設定します。これはUI設定であり、エージェントの動作は変わりません。",
           defaultToolDetailLevelTitle: "デフォルトのツール詳細レベル",
           expandedToolDetailLevelTitle: "展開時のツール詳細レベル",
-          cardTapActionTitle: "タップ動作（ツールカード）",
+          cardTapActionTitle: "タップ動作",
           timelineChrome: {
             title: "タイムラインのツール表示スタイル",
             cardsTitle: "カード",
           cardsSubtitle:
             "詳細レベルに応じて、ツールカードに内容をインライン表示します。",
-          activityFeedTitle: "アクティビティフィード",
+          activityFeedTitle: "ツールフィード",
           activityFeedSubtitle: "高密度表示に最適化されたコンパクトな行表示。",
         },
         cardDensity: {
@@ -3744,9 +3746,9 @@ export const ja: TranslationStructure = {
           compactSubtitle: "ヘッダーを詰め、パディングを減らします。",
         },
         activityFeed: {
-          defaultDetailTitle: "アクティビティフィードの既定詳細",
-          expandedDetailTitle: "アクティビティフィードの展開時詳細",
-          tapActionTitle: "タップ動作（アクティビティフィード）",
+          defaultDetailTitle: "ツールフィードの既定詳細",
+          expandedDetailTitle: "ツールフィードの展開時詳細",
+          tapActionTitle: "タップ動作（ツールフィード）",
           tapAction: {
             expandTitle: "展開",
             expandSubtitle: "タップでインライン詳細を展開/折りたたみします。",
@@ -3755,7 +3757,7 @@ export const ja: TranslationStructure = {
           },
           defaultExpandedTitle: "既定で展開",
           defaultExpandedSubtitle:
-            "アクティビティフィードでツール行を既定で展開します。",
+            "ツールフィードでツール行を既定で展開します。",
         },
         localControlDefaultTitle: "ローカル制御のデフォルト",
         showDebugByDefaultTitle: "デフォルトでデバッグを表示",
@@ -3772,14 +3774,17 @@ export const ja: TranslationStructure = {
           "シンプルな線形トランスクリプトとターン表示を選べます。",
         layoutPickerTitle: "トランスクリプトレイアウト",
         layout: {
-          linearTitle: "線形（現在）",
+          linearTitle: "線形",
           linearSubtitle: "メッセージをフラットなリストとして表示します。",
           turnsTitle: "ターン",
           turnsSubtitle: "ユーザー/アシスタントのターンにまとめます。",
         },
-        activityGroupTitle: "ツールをアクティビティにまとめる",
-        activityGroupSubtitle:
-          "各ターン内でツール呼び出しを「アクティビティ」セクションにまとめます。",
+        toolCallsGroupTitle: "ツール呼び出しをまとめる",
+        toolCallsGroupSubtitle:
+          "各ターン内でツール呼び出しを「ツール呼び出し」セクションにまとめます。",
+        toolCallsGroupBackgroundTitle: "ツール呼び出しグループの背景",
+        toolCallsGroupBackgroundSubtitle:
+          "ツールフィード表示で、ツール呼び出しグループの背景を表示します。",
         toolAppearanceTitle: "ツールの見た目",
         toolAppearanceSubtitle:
           "トランスクリプト内のツール表示をカスタマイズします。",
@@ -3802,7 +3807,7 @@ export const ja: TranslationStructure = {
           "ピン留めスクロールと最下部ジャンプの挙動を制御します。",
           scrollPinTitle: "最下部にピン留め",
           scrollPinSubtitle: "最下部にいる間、新しいメッセージに追従します。",
-          jumpToBottomTitle: "最下部へジャンプボタン",
+          jumpToBottomTitle: "最下部へジャンプ",
           jumpToBottomButtonLabel: "最下部へ移動",
             jumpToBottomSubtitle:
               "上にスクロールしている間に新しいアクティビティが来たら表示します。",
@@ -3813,7 +3818,7 @@ export const ja: TranslationStructure = {
           advanced: {
             turnGroupingTitle: "ターンのグルーピング",
             turnGroupingFooter:
-            "ターン内でアクティビティをどう形成するかを制御します。",
+            "ターン内でツール呼び出しグループをどう形成するかを制御します。",
             performanceTitle: "パフォーマンス",
             performanceFooter: "ストリーミングとリストのパフォーマンス設定。",
             coalesceEnabledTitle: "ストリーミング更新をまとめる",
@@ -3842,20 +3847,20 @@ export const ja: TranslationStructure = {
               legacyTitle: "従来の FlatList",
               legacySubtitle: "互換性デバッグ用の代替。",
             },
-          activityStrategyTitle: "アクティビティのグルーピング戦略",
-          activityStrategy: {
+          toolCallsStrategyTitle: "ツール呼び出しのグルーピング戦略",
+          toolCallsStrategy: {
             consecutiveTitle: "連続ツール（既定）",
             consecutiveSubtitle:
-              "連続するツール呼び出しのみをアクティビティにまとめます。",
+              "連続するツール呼び出しのみをツール呼び出しにまとめます。",
             allToolsTitle: "ターン内の全ツール",
             allToolsSubtitle:
-              "ターン内の全ツール呼び出しを1つのアクティビティにまとめます。",
+              "ターン内の全ツール呼び出しを1つのツール呼び出しにまとめます。",
           },
-            activityCollapsedPreviewCountTitle: "プレビュー（折りたたみ時）",
-            activityCollapsedPreviewCountSubtitle: ({ value }: { value: string }) => `アクティビティが折りたたまれているとき、最新の ${value} 件のツールを表示します。`,
-            activityCollapsedPreviewCount: {
+            toolCallsCollapsedPreviewCountTitle: "プレビュー（折りたたみ時）",
+            toolCallsCollapsedPreviewCountSubtitle: ({ value }: { value: string }) => `ツール呼び出しが折りたたまれているとき、最新の ${value} 件のツールを表示します。`,
+            toolCallsCollapsedPreviewCount: {
               offTitle: "オフ",
-              offSubtitle: "アクティビティのヘッダーのみ表示します。",
+              offSubtitle: "ツール呼び出しのヘッダーのみ表示します。",
               oneTitle: "1 ツール",
               oneSubtitle: "最新のツールをプレビュー行として表示します。",
               twoTitle: "2 ツール",
@@ -3976,12 +3981,12 @@ export const ja: TranslationStructure = {
             "短い要約と最近のメッセージを含めます（ベストエフォート）。",
         },
         summaryRunner: {
-          title: "Summary runner (on-demand)",
-          backendTitle: "Backend",
-          backendPlaceholder: "claude",
+          title: "要約ランナー（オンデマンド）",
+          backendTitle: "バックエンド",
+          backendPlaceholder: "claude（例）",
           searchBackendsPlaceholder: "バックエンドを検索…",
-          modelTitle: "Model",
-          modelPlaceholder: "default",
+          modelTitle: "モデル（LLM）",
+          modelPlaceholder: "default（例）",
           searchModelsPlaceholder: "モデルを検索…",
           notSet: "未設定",
           customTitle: "カスタム",
@@ -4004,9 +4009,9 @@ export const ja: TranslationStructure = {
         defaultTitle: "デフォルト",
         defaultSubtitle: "グローバルのデフォルトを使用します。",
           styleDefaultTitle: "デフォルト（推奨）",
-          styleDefaultSubtitle: "カード: 要約。アクティビティフィード: コンパクト。",
+          styleDefaultSubtitle: "カード: 要約。ツールフィード: コンパクト。",
           expandedStyleDefaultTitle: "デフォルト（推奨）",
-          expandedStyleDefaultSubtitle: "カード: 詳細。アクティビティフィード: 要約。",
+          expandedStyleDefaultSubtitle: "カード: 詳細。ツールフィード: 要約。",
       },
       terminalConnect: {
         title: "ターミナル接続",

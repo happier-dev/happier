@@ -240,6 +240,7 @@ export const it: TranslationStructure = {
       "Happier ha riscontrato un errore imprevisto. Puoi riavviare l'interfaccia dell'app o copiare i dettagli per l'assistenza.",
     detailsTitle: "Dettagli dell'errore",
     restart: "Riavvia app",
+    restartAndReportIssue: "Riavvia e apri segnalazione",
     copyDetails: "Copia dettagli dell'errore",
   },
 
@@ -1425,10 +1426,10 @@ export const it: TranslationStructure = {
     fallbackName: "Servizio connesso",
     serviceNames: {
       claudeSubscription: "Abbonamento Claude",
-      openaiCodex: "OpenAI Codex",
+      openaiCodex: "Codex di OpenAI",
       openai: "Chiave API OpenAI",
       anthropic: "Chiave API Anthropic",
-      gemini: "Google Gemini",
+      gemini: "Gemini di Google",
     },
     title: "Servizi connessi",
     authChip: {
@@ -2549,8 +2550,8 @@ export const it: TranslationStructure = {
 
   session: {
     inputPlaceholder: "Scrivi un messaggio ...",
-    activity: "Attività",
-    activityCollapsedPreviewMore: ({ count }: { count: number }) => `+${count} in più…`,
+    toolCalls: "Chiamate strumento",
+    toolCallsCollapsedPreviewMore: ({ count }: { count: number }) => `+${count} in più…`,
     forking: {
       dividerTitle: "Derivato da un contesto precedente",
       dividerTitleWithParent: ({ parent }: { parent: string }) => `Derivato da ${parent}`,
@@ -2957,9 +2958,10 @@ export const it: TranslationStructure = {
     serverHeader: ({ server }: { server: string }) => `Server: ${server}`,
   },
 
-  sessionInfo: {
-    // Used by Session Info screen (app/(app)/session/[id]/info.tsx)
-    killSession: "Termina sessione",
+	  sessionInfo: {
+	    // Used by Session Info screen (app/(app)/session/[id]/info.tsx)
+	    title: "Informazioni sulla sessione",
+	    killSession: "Termina sessione",
     killSessionConfirm: "Sei sicuro di voler terminare questa sessione?",
     stopSession: "Ferma sessione",
     stopSessionConfirm: "Sei sicuro di voler fermare questa sessione?",
@@ -3796,13 +3798,13 @@ export const it: TranslationStructure = {
           defaultToolDetailLevelTitle:
             "Livello di dettaglio predefinito degli strumenti",
           expandedToolDetailLevelTitle: "Livello di dettaglio espanso",
-          cardTapActionTitle: "Azione al tocco (scheda)",
+          cardTapActionTitle: "Azione al tocco",
           timelineChrome: {
             title: "Stile strumenti nella timeline",
             cardsTitle: "Schede",
           cardsSubtitle:
             "Schede strumento con contenuto inline (in base al livello di dettaglio).",
-          activityFeedTitle: "Feed attività",
+          activityFeedTitle: "Feed strumenti",
           activityFeedSubtitle:
             "Righe compatte ottimizzate per alta densità di strumenti.",
         },
@@ -3814,9 +3816,9 @@ export const it: TranslationStructure = {
           compactSubtitle: "Intestazioni più strette e padding ridotto.",
         },
         activityFeed: {
-          defaultDetailTitle: "Dettaglio predefinito (feed attività)",
-          expandedDetailTitle: "Dettaglio espanso (feed attività)",
-          tapActionTitle: "Azione al tocco (feed attività)",
+          defaultDetailTitle: "Dettaglio predefinito (feed strumenti)",
+          expandedDetailTitle: "Dettaglio espanso (feed strumenti)",
+          tapActionTitle: "Azione al tocco (feed strumenti)",
           tapAction: {
             expandTitle: "Espandi",
             expandSubtitle: "Tocca per espandere o comprimere i dettagli inline.",
@@ -3825,7 +3827,7 @@ export const it: TranslationStructure = {
           },
           defaultExpandedTitle: "Espanso per impostazione predefinita",
           defaultExpandedSubtitle:
-            "Espandi le righe strumento per impostazione predefinita nel feed attività.",
+            "Espandi le righe strumento per impostazione predefinita nel feed strumenti.",
         },
         localControlDefaultTitle: "Predefinito (controllo locale)",
         showDebugByDefaultTitle: "Mostra debug per impostazione predefinita",
@@ -3842,14 +3844,17 @@ export const it: TranslationStructure = {
           "Scegli tra una trascrizione lineare e il raggruppamento per turni.",
         layoutPickerTitle: "Layout trascrizione",
         layout: {
-          linearTitle: "Lineare (attuale)",
+          linearTitle: "Lineare",
           linearSubtitle: "Mostra i messaggi come lista piatta.",
           turnsTitle: "Turni",
           turnsSubtitle: "Raggruppa i messaggi in turni utente/assistente.",
         },
-        activityGroupTitle: "Raggruppa strumenti in Attività",
-        activityGroupSubtitle:
-          "Compatta le chiamate strumento in una sezione Attività dentro ogni turno.",
+        toolCallsGroupTitle: "Raggruppa chiamate strumento",
+        toolCallsGroupSubtitle:
+          "Compatta le chiamate strumento in una sezione chiamate strumento dentro ogni turno.",
+        toolCallsGroupBackgroundTitle: "Sfondo gruppo chiamate",
+        toolCallsGroupBackgroundSubtitle:
+          "Mostra uno sfondo dietro i gruppi di chiamate in modalità feed strumenti.",
         toolAppearanceTitle: "Aspetto strumenti",
         toolAppearanceSubtitle:
           "Personalizza come appaiono gli strumenti nella trascrizione.",
@@ -3872,7 +3877,7 @@ export const it: TranslationStructure = {
         scrollPinTitle: "Ancora in fondo",
           scrollPinSubtitle:
             "Segui i nuovi messaggi quando sei in fondo.",
-            jumpToBottomTitle: "Pulsante vai in fondo",
+            jumpToBottomTitle: "Vai in fondo",
             jumpToBottomButtonLabel: "Vai in fondo",
             jumpToBottomSubtitle:
               "Mostra un pulsante quando scorri su e arriva nuova attività.",
@@ -3883,7 +3888,7 @@ export const it: TranslationStructure = {
           advanced: {
             turnGroupingTitle: "Raggruppamento per turni",
             turnGroupingFooter:
-            "Controlla come si forma Attività dentro i turni.",
+            "Controlla come si formano i gruppi di chiamate strumento dentro i turni.",
             performanceTitle: "Prestazioni",
             performanceFooter: "Controlli prestazioni per streaming e liste.",
             coalesceEnabledTitle: "Raggruppa aggiornamenti in streaming",
@@ -3912,20 +3917,20 @@ export const it: TranslationStructure = {
               legacyTitle: "FlatList legacy",
               legacySubtitle: "Alternativa per debug compatibilità.",
             },
-          activityStrategyTitle: "Strategia raggruppamento Attività",
-          activityStrategy: {
+          toolCallsStrategyTitle: "Strategia raggruppamento chiamate",
+          toolCallsStrategy: {
             consecutiveTitle: "Strumenti consecutivi (predefinito)",
             consecutiveSubtitle:
-              "Raggruppa solo chiamate strumento consecutive in Attività.",
+              "Raggruppa solo chiamate strumento consecutive in chiamate strumento.",
             allToolsTitle: "Tutti gli strumenti nel turno",
             allToolsSubtitle:
-              "Raggruppa tutte le chiamate strumento del turno in una sola sezione Attività.",
+              "Raggruppa tutte le chiamate strumento del turno in una sola sezione chiamate strumento.",
           },
-            activityCollapsedPreviewCountTitle: "Anteprima (compresso)",
-            activityCollapsedPreviewCountSubtitle: ({ value }: { value: string }) => `Mostra gli ultimi ${value} strumenti quando Attività è compresso.`,
-            activityCollapsedPreviewCount: {
+            toolCallsCollapsedPreviewCountTitle: "Anteprima (compresso)",
+            toolCallsCollapsedPreviewCountSubtitle: ({ value }: { value: string }) => `Mostra gli ultimi ${value} strumenti quando Chiamate strumento è compresso.`,
+            toolCallsCollapsedPreviewCount: {
               offTitle: "Disattivato",
-              offSubtitle: "Mostra solo l'intestazione di Attività.",
+              offSubtitle: "Mostra solo l'intestazione di chiamate strumento.",
               oneTitle: "1 strumento",
               oneSubtitle: "Mostra lo strumento più recente come riga di anteprima.",
               twoTitle: "2 strumenti",
@@ -4044,12 +4049,12 @@ export const it: TranslationStructure = {
             "Includi un breve riepilogo e messaggi recenti (best-effort).",
         },
         summaryRunner: {
-          title: "Summary runner (on-demand)",
-          backendTitle: "Backend",
-          backendPlaceholder: "claude",
+          title: "Generatore di riepiloghi (su richiesta)",
+          backendTitle: "Motore",
+          backendPlaceholder: "claude (es.)",
           searchBackendsPlaceholder: "Cerca backend…",
-          modelTitle: "Model",
-          modelPlaceholder: "default",
+          modelTitle: "Modello (LLM)",
+          modelPlaceholder: "default (es.)",
           searchModelsPlaceholder: "Cerca modelli…",
           notSet: "Non impostato",
           customTitle: "Personalizzato",
@@ -4072,9 +4077,9 @@ export const it: TranslationStructure = {
         defaultTitle: "Predefinito",
         defaultSubtitle: "Usa il predefinito globale.",
           styleDefaultTitle: "Predefinito (consigliato)",
-          styleDefaultSubtitle: "Schede: Riepilogo. Feed attività: Compatto.",
+          styleDefaultSubtitle: "Schede: Riepilogo. Feed strumenti: Compatto.",
           expandedStyleDefaultTitle: "Predefinito (consigliato)",
-          expandedStyleDefaultSubtitle: "Schede: Completo. Feed attività: Riepilogo.",
+          expandedStyleDefaultSubtitle: "Schede: Completo. Feed strumenti: Riepilogo.",
       },
       terminalConnect: {
         title: "Connessione terminale",

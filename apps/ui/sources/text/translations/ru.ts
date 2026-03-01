@@ -251,6 +251,7 @@ export const ru: TranslationStructure = {
       "В Happier произошла непредвиденная ошибка. Можно перезапустить интерфейс приложения или скопировать детали для поддержки.",
     detailsTitle: "Детали ошибки",
     restart: "Перезапустить приложение",
+    restartAndReportIssue: "Перезапустить и отправить отчёт об ошибке",
     copyDetails: "Скопировать детали ошибки",
   },
 
@@ -1086,10 +1087,10 @@ export const ru: TranslationStructure = {
     fallbackName: "Подключённый сервис",
     serviceNames: {
       claudeSubscription: "Подписка Claude",
-      openaiCodex: "OpenAI Codex",
+      openaiCodex: "Codex от OpenAI",
       openai: "Ключ API OpenAI",
       anthropic: "Ключ API Anthropic",
-      gemini: "Google Gemini",
+      gemini: "Gemini от Google",
     },
     title: "Подключённые сервисы",
     authChip: {
@@ -2290,9 +2291,10 @@ export const ru: TranslationStructure = {
     serverHeader: ({ server }: { server: string }) => `Сервер: ${server}`,
   },
 
-  sessionInfo: {
-    // Used by Session Info screen (app/(app)/session/[id]/info.tsx)
-    killSession: "Завершить сессию",
+	  sessionInfo: {
+	    // Used by Session Info screen (app/(app)/session/[id]/info.tsx)
+	    title: "Информация о сессии",
+	    killSession: "Завершить сессию",
     killSessionConfirm: "Вы уверены, что хотите завершить эту сессию?",
     stopSession: "Остановить сессию",
     stopSessionConfirm: "Вы уверены, что хотите остановить эту сессию?",
@@ -2495,8 +2497,8 @@ export const ru: TranslationStructure = {
 
   session: {
     inputPlaceholder: "Введите сообщение...",
-    activity: "Активность",
-    activityCollapsedPreviewMore: ({ count }: { count: number }) => `+${count} ещё…`,
+    toolCalls: "Вызовы инструментов",
+    toolCallsCollapsedPreviewMore: ({ count }: { count: number }) => `+${count} ещё…`,
     forking: {
       dividerTitle: "Ветка из предыдущего контекста",
       dividerTitleWithParent: ({ parent }: { parent: string }) => `Ветка из ${parent}`,
@@ -3487,13 +3489,13 @@ export const ru: TranslationStructure = {
             "Определяет, сколько деталей инструментов показывается на шкале времени сессии. Это настройка интерфейса, не влияет на поведение агента.",
           defaultToolDetailLevelTitle: "Уровень детализации по умолчанию",
           expandedToolDetailLevelTitle: "Уровень деталей при раскрытии",
-          cardTapActionTitle: "Действие по нажатию (карточка)",
+          cardTapActionTitle: "Действие по нажатию",
           timelineChrome: {
             title: "Стиль инструментов в таймлайне",
             cardsTitle: "Карточки",
           cardsSubtitle:
             "Карточки инструментов с содержимым внутри (в зависимости от уровня детализации).",
-          activityFeedTitle: "Лента активности",
+          activityFeedTitle: "Лента инструментов",
           activityFeedSubtitle:
             "Компактные строки, оптимизированные для высокой плотности инструментов.",
         },
@@ -3505,9 +3507,9 @@ export const ru: TranslationStructure = {
           compactSubtitle: "Более плотные заголовки и меньше отступов.",
         },
         activityFeed: {
-          defaultDetailTitle: "Детали по умолчанию (лента активности)",
-          expandedDetailTitle: "Детали при раскрытии (лента активности)",
-          tapActionTitle: "Действие по нажатию (лента активности)",
+          defaultDetailTitle: "Детали по умолчанию (лента инструментов)",
+          expandedDetailTitle: "Детали при раскрытии (лента инструментов)",
+          tapActionTitle: "Действие по нажатию (лента инструментов)",
           tapAction: {
             expandTitle: "Раскрыть",
             expandSubtitle: "Нажатие раскрывает или сворачивает детали внутри.",
@@ -3516,7 +3518,7 @@ export const ru: TranslationStructure = {
           },
           defaultExpandedTitle: "Раскрывать по умолчанию",
           defaultExpandedSubtitle:
-            "Раскрывать строки инструментов по умолчанию в ленте активности.",
+            "Раскрывать строки инструментов по умолчанию в ленте инструментов.",
         },
         localControlDefaultTitle: "По умолчанию для локального управления",
         showDebugByDefaultTitle: "Показывать отладку по умолчанию",
@@ -3533,14 +3535,17 @@ export const ru: TranslationStructure = {
           "Выберите между простой линейной стенограммой и группировкой по ходам.",
         layoutPickerTitle: "Макет стенограммы",
         layout: {
-          linearTitle: "Линейный (текущий)",
+          linearTitle: "Линейный",
           linearSubtitle: "Показывать сообщения как плоский список.",
           turnsTitle: "Ходы",
           turnsSubtitle: "Группировать сообщения в ходы пользователь/ассистент.",
         },
-        activityGroupTitle: "Группировать инструменты в «Активность»",
-        activityGroupSubtitle:
-          "Компактно группировать вызовы инструментов в секцию «Активность» внутри каждого хода.",
+        toolCallsGroupTitle: "Группировать вызовы инструментов",
+        toolCallsGroupSubtitle:
+          "Компактно группировать вызовы инструментов в секцию «Вызовы инструментов» внутри каждого хода.",
+        toolCallsGroupBackgroundTitle: "Фон групп вызовов",
+        toolCallsGroupBackgroundSubtitle:
+          "Показывать фон за группами вызовов в режиме ленты инструментов.",
         toolAppearanceTitle: "Вид инструментов",
         toolAppearanceSubtitle:
           "Настройте, как инструменты выглядят в стенограмме.",
@@ -3564,7 +3569,7 @@ export const ru: TranslationStructure = {
         scrollPinTitle: "Закрепить внизу",
           scrollPinSubtitle:
             "Следовать за новыми сообщениями, когда вы внизу.",
-          jumpToBottomTitle: "Кнопка «вниз»",
+          jumpToBottomTitle: "Перейти вниз",
           jumpToBottomButtonLabel: "К низу",
           jumpToBottomSubtitle:
             "Показывать кнопку, когда вы прокрутили вверх и пришла новая активность.",
@@ -3575,7 +3580,7 @@ export const ru: TranslationStructure = {
           advanced: {
             turnGroupingTitle: "Группировка ходов",
             turnGroupingFooter:
-            "Определяет, как формируется «Активность» внутри ходов.",
+            "Определяет, как формируются группы вызовов инструментов внутри ходов.",
             performanceTitle: "Производительность",
             performanceFooter: "Настройки производительности для стриминга и списка.",
             coalesceEnabledTitle: "Объединять обновления стриминга",
@@ -3604,20 +3609,20 @@ export const ru: TranslationStructure = {
               legacyTitle: "Устаревший FlatList",
               legacySubtitle: "Запасной вариант для отладки совместимости.",
             },
-          activityStrategyTitle: "Стратегия группировки активности",
-          activityStrategy: {
+          toolCallsStrategyTitle: "Стратегия группировки вызовов",
+          toolCallsStrategy: {
             consecutiveTitle: "Последовательные инструменты (по умолчанию)",
             consecutiveSubtitle:
-              "Группировать в «Активность» только последовательные вызовы инструментов.",
+              "Группировать в «Вызовы инструментов» только последовательные вызовы инструментов.",
             allToolsTitle: "Все инструменты в ходе",
             allToolsSubtitle:
-              "Группировать все вызовы инструментов в ходе в одну секцию «Активность».",
+              "Группировать все вызовы инструментов в ходе в одну секцию «Вызовы инструментов».",
           },
-            activityCollapsedPreviewCountTitle: "Предпросмотр (свернуто)",
-            activityCollapsedPreviewCountSubtitle: ({ value }: { value: string }) => `Показывать последние ${value} инструмент(а/ов), когда «Активность» свернута.`,
-            activityCollapsedPreviewCount: {
+            toolCallsCollapsedPreviewCountTitle: "Предпросмотр (свернуто)",
+            toolCallsCollapsedPreviewCountSubtitle: ({ value }: { value: string }) => `Показывать последние ${value} инструмент(а/ов), когда «Вызовы инструментов» свернуты.`,
+            toolCallsCollapsedPreviewCount: {
               offTitle: "Выключено",
-              offSubtitle: "Показывать только заголовок «Активность».",
+              offSubtitle: "Показывать только заголовок «Вызовы инструментов».",
               oneTitle: "1 инструмент",
               oneSubtitle: "Показывать самый последний инструмент в виде строки предпросмотра.",
               twoTitle: "2 инструмента",
@@ -3739,12 +3744,12 @@ export const ru: TranslationStructure = {
             "Включить краткую сводку и недавние сообщения (по возможности).",
         },
         summaryRunner: {
-          title: "Summary runner (on-demand)",
-          backendTitle: "Backend",
-          backendPlaceholder: "claude",
+          title: "Генератор сводок (по запросу)",
+          backendTitle: "Бэкенд",
+          backendPlaceholder: "claude (пример)",
           searchBackendsPlaceholder: "Поиск бэкендов…",
-          modelTitle: "Model",
-          modelPlaceholder: "default",
+          modelTitle: "Модель (LLM)",
+          modelPlaceholder: "default (пример)",
           searchModelsPlaceholder: "Поиск моделей…",
           notSet: "Не задано",
           customTitle: "Пользовательский",
@@ -3766,9 +3771,9 @@ export const ru: TranslationStructure = {
         defaultTitle: "По умолчанию",
         defaultSubtitle: "Использовать глобальную настройку по умолчанию.",
           styleDefaultTitle: "По умолчанию (рекомендуется)",
-          styleDefaultSubtitle: "Карточки: Сводка. Лента активности: Компактно.",
+          styleDefaultSubtitle: "Карточки: Сводка. Лента инструментов: Компактно.",
           expandedStyleDefaultTitle: "По умолчанию (рекомендуется)",
-          expandedStyleDefaultSubtitle: "Карточки: Полное. Лента активности: Сводка.",
+          expandedStyleDefaultSubtitle: "Карточки: Полное. Лента инструментов: Сводка.",
       },
       terminalConnect: {
         title: "Подключение терминала",
