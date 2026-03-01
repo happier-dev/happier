@@ -38,6 +38,7 @@ import { shouldAttemptTuiDaemonAutostart } from './utils/tui/daemon_autostart.mj
 import { reconcileDaemonPaneAfterDaemonStarts } from './utils/tui/daemon_pane_reconcile.mjs';
 import { buildScriptPtyArgs } from './utils/tui/script_pty_command.mjs';
 import { resolveTuiChildTerminationPlan } from './utils/tui/child_termination_plan.mjs';
+import { installTuiStdinErrorGuard } from './utils/tui/stdin_error_guard.mjs';
 
 function nowTs() {
   const d = new Date();
@@ -528,6 +529,16 @@ async function main() {
   const logOrch = (msg) => {
     pushLine(panes[paneIndexById.get('orch')], `[${nowTs()}] ${msg}`);
   };
+
+  // Prevent rare TTY `read EIO` crashes during restart/shutdown transitions.
+  // Without an 'error' listener, Node treats stdin errors as unhandled and aborts the TUI.
+  installTuiStdinErrorGuard({
+    stdin: process.stdin,
+    onError: (err) => {
+      const code = err && typeof err === 'object' ? String(err.code ?? '') : '';
+      logOrch(`stdin error ignored${code ? ` (${code})` : ''}`);
+    },
+  });
 
   // Preflight Yarn/Corepack for this stack before spawning the pty child.
   // This prevents Corepack "download yarn? [Y/n]" prompts from deadlocking the TUI.
