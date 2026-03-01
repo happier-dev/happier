@@ -9,6 +9,7 @@ type ReactActEnvironmentGlobal = typeof globalThis & {
 
 let isAuthenticated = true;
 let segments: string[] = ['(app)'];
+let pathname = '/';
 let platformOs: 'web' | 'ios' = 'web';
 
 const router = { replace: vi.fn(), push: vi.fn() };
@@ -133,6 +134,10 @@ vi.mock('expo-router', () => {
         useSegments: () => {
             React.useMemo(() => 0, [segments.join('|')]);
             return segments;
+        },
+        usePathname: () => {
+            React.useMemo(() => 0, [pathname]);
+            return pathname;
         },
     };
 });

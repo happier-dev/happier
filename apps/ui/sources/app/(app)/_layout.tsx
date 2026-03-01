@@ -1,4 +1,4 @@
-import { Stack, router, useSegments } from 'expo-router';
+import { Stack, router, usePathname, useSegments } from 'expo-router';
 import 'react-native-reanimated';
 import * as React from 'react';
 import * as Notifications from 'expo-notifications';
@@ -28,6 +28,7 @@ import { Text } from '@/components/ui/text/Text';
 import { bootstrapActiveServerFromWebLocation, readWebServerUrlOverrideFromLocation } from '@/sync/domains/server/url/bootstrapActiveServerFromWebLocation';
 import { PUSH_NOTIFICATION_ACTION_IDS } from '@happier-dev/protocol';
 import { buildTerminalConnectWebHref } from '@/utils/path/terminalConnectUrl';
+import { useWebInitialRouteReconcile } from '@/hooks/ui/useWebInitialRouteReconcile';
 
 const bootstrappedWebServerOverride = bootstrapActiveServerFromWebLocation({ scope: 'device' });
 
@@ -91,9 +92,11 @@ function readLegacySessionIdFromWebLocation(): Readonly<{ sessionId: string; cle
 export default function RootLayout() {
     const auth = useAuth();
     const segments = useSegments();
+    const pathname = usePathname();
     const { theme } = useUnistyles();
     const friendsIdentityReadiness = useFriendsIdentityReadiness();
     const friendsIdentityReady = friendsIdentityReadiness.isReady;
+    useWebInitialRouteReconcile({ routerPathname: pathname });
 
     const webServerOverrideHandledRef = React.useRef(false);
     React.useEffect(() => {

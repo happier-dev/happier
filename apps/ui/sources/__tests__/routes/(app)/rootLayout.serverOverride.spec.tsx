@@ -24,6 +24,7 @@ vi.mock('expo-router', () => ({
     ),
     router: { push: routerPushSpy, replace: routerReplaceSpy },
     useSegments: () => ['(app)'],
+    usePathname: () => '/',
 }));
 
 vi.mock('react-native', async () => {

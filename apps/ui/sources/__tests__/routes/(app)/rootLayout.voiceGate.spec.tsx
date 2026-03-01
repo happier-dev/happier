@@ -20,6 +20,7 @@ vi.mock('expo-router', () => ({
     ),
     router: { replace: vi.fn() },
     useSegments: () => ['(app)'],
+    usePathname: () => '/',
 }));
 
 vi.mock('react-native', () => ({
