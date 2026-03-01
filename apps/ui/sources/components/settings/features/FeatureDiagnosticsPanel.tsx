@@ -4,13 +4,17 @@ import type { FeatureId } from '@happier-dev/protocol';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { useFeatureDecision } from '@/hooks/server/useFeatureDecision';
+import { t } from '@/text';
 
 function formatDecisionSubtitle(decision: ReturnType<typeof useFeatureDecision>): string {
-    if (!decision) return 'unknown';
-    if (decision.state === 'enabled') return 'enabled';
+    if (!decision) return t('settingsFeatures.featureDiagnostics.decisionUnknown');
+    if (decision.state === 'enabled') return t('settingsFeatures.featureDiagnostics.decisionEnabled');
 
-    const blockedBy = decision.blockedBy ? `blockedBy=${decision.blockedBy}` : 'blockedBy=null';
-    return `${decision.state} (${blockedBy}, code=${decision.blockerCode})`;
+    return t('settingsFeatures.featureDiagnostics.decisionBlocked', {
+        state: decision.state,
+        blockedBy: decision.blockedBy ?? null,
+        code: decision.blockerCode,
+    });
 }
 
 const FeatureDiagnosticsRow = React.memo(function FeatureDiagnosticsRow(props: { featureId: FeatureId }) {
@@ -27,8 +31,8 @@ const FeatureDiagnosticsRow = React.memo(function FeatureDiagnosticsRow(props: {
 export function FeatureDiagnosticsPanel(props: { featureIds: readonly FeatureId[] }) {
     return (
         <ItemGroup
-            title="Feature diagnostics"
-            footer="Resolved feature decisions (build policy, local policy, daemon/server probes, and scope)."
+            title={t('settingsFeatures.featureDiagnostics.title')}
+            footer={t('settingsFeatures.featureDiagnostics.footer')}
         >
             {props.featureIds.map((featureId) => (
                 <FeatureDiagnosticsRow key={featureId} featureId={featureId} />
@@ -36,4 +40,3 @@ export function FeatureDiagnosticsPanel(props: { featureIds: readonly FeatureId[
         </ItemGroup>
     );
 }
-
