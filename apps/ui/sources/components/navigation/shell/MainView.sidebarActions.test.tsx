@@ -1,6 +1,6 @@
 import React from 'react';
 import renderer, { act } from 'react-test-renderer';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -27,6 +27,7 @@ vi.mock('react-native', async (importOriginal) => {
 
 vi.mock('expo-router', () => ({
     useRouter: () => ({ push: routerPushSpy }),
+    usePathname: () => '/',
 }));
 
 vi.mock('@expo/vector-icons', () => ({
@@ -132,14 +133,18 @@ function findPressableByLabel(tree: renderer.ReactTestRenderer, label: string) {
 }
 
 describe('MainView sidebar actions', () => {
+    let MainView: React.ComponentType<{ variant: 'phone' | 'sidebar' }>;
+
     beforeEach(() => {
         routerPushSpy.mockReset();
         sessionListState.data = [];
     });
 
-    it('does not render sidebar action buttons (automations and new session)', async () => {
-        const { MainView } = await import('./MainView');
+    beforeAll(async () => {
+        MainView = (await import('./MainView')).MainView;
+    });
 
+    it('does not render sidebar action buttons (automations and new session)', async () => {
         let tree: renderer.ReactTestRenderer | null = null;
         act(() => {
             tree = renderer.create(<MainView variant="sidebar" />);
@@ -147,5 +152,14 @@ describe('MainView sidebar actions', () => {
 
         expect(() => findPressableByLabel(tree!, 'New session')).toThrow();
         expect(() => findPressableByLabel(tree!, 'Open automations')).toThrow();
+    });
+
+    it('does not duplicate getting started guidance when primary pane is visible (home route)', async () => {
+        let tree: renderer.ReactTestRenderer | null = null;
+        act(() => {
+            tree = renderer.create(<MainView variant="sidebar" />);
+        });
+
+        expect(() => tree!.root.findByType('SessionGettingStartedGuidance')).toThrow();
     });
 });
