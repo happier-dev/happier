@@ -1,0 +1,103 @@
+---
+title: Connected services
+description: Link provider subscriptions and API keys to Happier (OAuth/device/paste flows, daemon materialization, quotas).
+---
+
+Connected services let you connect provider credentials (subscriptions and API keys) to your Happier account so:
+
+- you can **reuse the same auth** across multiple backends (Codex, Claude, OpenCode, Pi, …)
+- credentials are stored in Happier Cloud **encrypted**, and synced to devices without exposing plaintext to the server
+- the daemon can **materialize** per-backend auth files/env vars when spawning a session
+- (optional) Happier can display **quota/usage** snapshots where supported
+
+## Service identities (important)
+
+Happier models different credential types as distinct connected services:
+
+- `openai-codex`: OpenAI **Codex subscription** auth (OAuth / device code)
+- `openai`: OpenAI **API key** auth (manual token entry)
+- `claude-subscription`: Claude **subscription** auth
+  - setup-token (recommended default)
+  - OAuth (advanced; supported where possible)
+- `anthropic`: Anthropic **API key** auth (manual token entry)
+- `gemini`: Gemini OAuth auth (Google OAuth)
+
+This split avoids mixing “subscription-style” credentials with “API key” credentials (different billing/entitlements and different env wiring).
+
+## Where to manage connected services
+
+In the app:
+
+- Settings → Connected services
+
+In the CLI:
+
+- `happier connect status`
+- `happier connect codex|claude|gemini …`
+
+## OAuth methods (device / paste / embedded)
+
+Connected services supports multiple OAuth capture methods depending on platform:
+
+- **Device code** (OpenAI Codex): best for headless / remote / “no reliable callback”
+- **Paste redirect URL**: works everywhere; user signs in in the browser, then pastes the final redirect URL into Happier
+- **Embedded (native only)**: when supported/reliable, Happier can open an in-app browser view
+
+### OpenAI Codex device auth (note)
+
+OpenAI can require enabling device-code authorization in ChatGPT settings (“Enable device code authorization for Codex”).
+
+Happier will show a warning when device auth is rejected for this reason.
+
+## Server/daemon boundary (security model)
+
+For OAuth-based services, Happier clients do **not** exchange OAuth codes for tokens directly.
+
+Instead:
+
+1. Client receives an OAuth `code` (device/paste/embedded capture).
+2. Client calls Happier server `/v2/connect/<serviceId>/oauth/exchange`.
+3. Server exchanges the code with the provider and returns an **encrypted bundle** (sealed to the client public key).
+4. Client decrypts locally and stores the credential record.
+
+This keeps provider secrets (for example Gemini OAuth `client_secret`) out of the UI bundle.
+
+## Quotas (optional)
+
+Quota/usage surfaces are behind the `connectedServices.quotas` feature gate.
+
+If enabled, the daemon can fetch usage snapshots for compatible connected services and show them in:
+
+- Connected service profile detail views
+- Backend/session pickers (where applicable)
+
+## Environment variables (advanced)
+
+Most users should not need these. They exist to reduce drift and allow self-hosted overrides.
+
+### Server OAuth exchange
+
+- `HAPPIER_CONNECTED_SERVICES_OAUTH_EXCHANGE_TIMEOUT_MS`
+
+OpenAI Codex:
+
+- `HAPPIER_CONNECTED_SERVICES_OPENAI_CODEX_OAUTH_CLIENT_ID`
+- `HAPPIER_CONNECTED_SERVICES_OPENAI_CODEX_OAUTH_TOKEN_URL`
+
+Gemini:
+
+- `HAPPIER_CONNECTED_SERVICES_GEMINI_OAUTH_CLIENT_ID`
+- `HAPPIER_CONNECTED_SERVICES_GEMINI_OAUTH_CLIENT_SECRET`
+- `HAPPIER_CONNECTED_SERVICES_GEMINI_OAUTH_TOKEN_URL`
+
+Claude subscription:
+
+- `HAPPIER_CONNECTED_SERVICES_CLAUDE_SUBSCRIPTION_OAUTH_CLIENT_ID`
+- `HAPPIER_CONNECTED_SERVICES_CLAUDE_SUBSCRIPTION_OAUTH_TOKEN_URL`
+
+### UI build gates
+
+See: [App environment variables (Expo)](/docs/development/app-env) for:
+
+- `EXPO_PUBLIC_HAPPIER_FEATURE_CONNECTED_SERVICES__ENABLED`
+- `EXPO_PUBLIC_HAPPIER_FEATURE_CONNECTED_SERVICES_QUOTAS__ENABLED`

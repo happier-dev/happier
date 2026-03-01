@@ -32,6 +32,19 @@ gemini --version
 happier gemini
 ```
 
+## Authentication (connected services)
+
+Gemini auth is managed through Happier connected services (`gemini`):
+
+- Settings → Connected services → Gemini
+- Or CLI: `happier connect gemini`
+
+For paste/redirect flows, Happier exchanges the OAuth code on the server and returns an encrypted bundle to the client (no Gemini OAuth secrets are bundled into the app UI).
+
+If you are self-hosting and need to override OAuth client settings, see:
+
+- [Connected services](/docs/features/connected-services)
+
 ## Model selection
 
 Model selection is capability-driven and can be set from:

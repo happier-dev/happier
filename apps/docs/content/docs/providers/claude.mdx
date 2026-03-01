@@ -53,6 +53,36 @@ hstack providers install claude
 claude --version
 ```
 
+## Authentication (connected services)
+
+Claude can authenticate through Happier connected services:
+
+- `claude-subscription`: Claude subscription credentials
+  - **Setup-token** (recommended default): generate on any machine with Claude Code installed via `claude setup-token`, then paste into Happier
+  - OAuth (advanced): available where supported; less reliable in headless environments
+- `anthropic`: Anthropic API key (Anthropic Console)
+
+In the app:
+
+- Settings → Connected services → Claude
+
+In the CLI:
+
+```bash
+# Claude subscription (recommended default)
+happier connect claude --setup-token
+
+# Anthropic API key (not subscription)
+happier connect claude --api-key
+
+# Subscription OAuth (advanced)
+happier connect claude --oauth
+```
+
+For more details (service ids, security model, and env overrides), see:
+
+- [Connected services](/docs/features/connected-services)
+
 ## Where to configure Claude in Happier
 
 In the app:

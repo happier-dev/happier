@@ -32,6 +32,17 @@ opencode --version
 happier opencode
 ```
 
+## Authentication (connected services)
+
+OpenCode can reuse connected services profiles when spawned by Happier (for example):
+
+- `openai-codex` (subscription OAuth) or `openai` (API key) for OpenAI-backed usage
+- `claude-subscription` (setup-token/OAuth) or `anthropic` (API key) for Claude/Anthropic-backed usage
+
+If multiple compatible profiles exist, Happier will let you pick one when starting a new session.
+
+See: [Connected services](/docs/features/connected-services)
+
 ## Notes
 
 - Session capabilities (resume/model/mode/permissions) are capability-driven.

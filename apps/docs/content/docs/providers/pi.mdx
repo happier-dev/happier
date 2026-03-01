@@ -27,6 +27,18 @@ pi --version
 happier pi
 ```
 
+## Authentication (connected services)
+
+Pi can reuse connected services profiles when spawned by Happier:
+
+- `claude-subscription` (setup-token) for Claude subscription auth (materialized as `ANTHROPIC_OAUTH_TOKEN`)
+- `anthropic` for Anthropic API key auth (`ANTHROPIC_API_KEY`)
+- `openai` for OpenAI API key auth (where applicable)
+
+If multiple compatible profiles exist, Happier will let you pick one when starting a new session.
+
+See: [Connected services](/docs/features/connected-services)
+
 ## Troubleshooting
 
 If Pi is not detected:
@@ -34,4 +46,3 @@ If Pi is not detected:
 1. Verify `pi --version` works.
 2. Restart Happier.
 3. Set `HAPPIER_PI_PATH` if your binary is not in `PATH`.
-

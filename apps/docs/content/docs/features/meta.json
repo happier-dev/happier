@@ -3,6 +3,7 @@
   "pages": [
     "index",
     "feature-matrix",
+    "connected-services",
     "git",
     "multi-server",
     "friends",
