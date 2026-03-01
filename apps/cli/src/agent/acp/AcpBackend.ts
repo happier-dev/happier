@@ -1314,7 +1314,8 @@ export class AcpBackend implements AgentBackend {
         await this.createConnectionAndInitialize({ operationId: randomUUID() });
       }
       const connection = this.connection;
-      const unstableForkSession = (connection as unknown as { unstable_forkSession?: unknown }).unstable_forkSession;
+      const unstableForkSession = (connection as unknown as { unstable_forkSession?: (req: ForkSessionRequest) => Promise<ForkSessionResponse> })
+        ?.unstable_forkSession;
       if (!connection || typeof unstableForkSession !== 'function') {
         throw new Error(`${this.transport.agentName} does not support ACP session/fork`);
       }
@@ -1325,7 +1326,7 @@ export class AcpBackend implements AgentBackend {
         mcpServers: this.buildAcpMcpServersForSessionRequest() as unknown as ForkSessionRequest['mcpServers'],
       };
 
-      const response = await (unstableForkSession as (req: ForkSessionRequest) => Promise<ForkSessionResponse>)(request);
+      const response = await unstableForkSession.call(connection, request);
       const forkedSessionId = typeof response?.sessionId === 'string' ? response.sessionId.trim() : '';
       if (!forkedSessionId) {
         throw new Error('Fork response did not include a session id');

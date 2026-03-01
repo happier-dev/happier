@@ -11,12 +11,15 @@ describe('AcpBackend forkSession', () => {
     });
 
     const captured: any[] = [];
-    (backend as any).connection = {
-      unstable_forkSession: async (req: unknown) => {
-        captured.push(req);
-        return { sessionId: 'sess_child' };
-      },
+    const connection: any = {};
+    connection.unstable_forkSession = async function unstable_forkSession(req: unknown) {
+      if (this !== connection) {
+        throw new Error('unstable_forkSession called with wrong this');
+      }
+      captured.push(req);
+      return { sessionId: 'sess_child' };
     };
+    (backend as any).connection = connection;
 
     const res = await (backend as any).forkSession({ sessionId: 'sess_parent' });
     expect(res).toEqual({ sessionId: 'sess_child' });
