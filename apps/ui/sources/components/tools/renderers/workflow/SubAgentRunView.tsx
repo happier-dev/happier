@@ -73,6 +73,16 @@ export const SubAgentRunView = React.memo<ToolViewProps>(({ tool, messages, deta
         );
     }
 
+    if (tool.state === 'error' && tool.result) {
+        return (
+            <StructuredResultView
+                tool={{ ...tool, state: 'completed' }}
+                metadata={null}
+                messages={[]}
+            />
+        );
+    }
+
     if (tool.state !== 'completed') return null;
     if (!tool.result) return null;
 

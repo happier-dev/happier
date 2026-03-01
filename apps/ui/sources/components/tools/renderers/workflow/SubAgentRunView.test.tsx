@@ -1,11 +1,16 @@
 import * as React from 'react';
 import renderer from 'react-test-renderer';
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
+const structuredResultViewPropsSpy = vi.fn();
+
 vi.mock('@/components/tools/renderers/system/StructuredResultView', () => ({
-    StructuredResultView: () => React.createElement('StructuredResultView'),
+    StructuredResultView: (props: any) => {
+        structuredResultViewPropsSpy(props);
+        return React.createElement('StructuredResultView');
+    },
 }));
 
 vi.mock('@/text', () => ({
@@ -13,6 +18,10 @@ vi.mock('@/text', () => ({
 }));
 
 describe('SubAgentRunView', () => {
+    beforeEach(() => {
+        structuredResultViewPropsSpy.mockReset();
+    });
+
     it('renders sidechain text messages while running (detailLevel=full)', async () => {
         const { SubAgentRunView } = await import('./SubAgentRunView');
 
@@ -111,5 +120,53 @@ describe('SubAgentRunView', () => {
         const text = tree.root.findAllByType('Text').map((n: any) => String(n.props.children)).join('\\n');
         expect(text).toContain('tools.subAgentRunView.delegateTitle');
         expect(text).toContain('Delegated output.');
+    });
+
+    it('renders structured fallback for error state when result payload exists', async () => {
+        const { SubAgentRunView } = await import('./SubAgentRunView');
+
+        let tree!: renderer.ReactTestRenderer;
+        renderer.act(() => {
+            tree = renderer.create(
+                <SubAgentRunView
+                    tool={{
+                        state: 'error',
+                        input: { intent: 'delegate' },
+                        result: { summary: 'Timed out', status: 'failed', error: { code: 'execution_run_failed' } },
+                    } as any}
+                    metadata={null as any}
+                    messages={[] as any}
+                />,
+            );
+        });
+
+        expect(tree.root.findAllByType('StructuredResultView' as any)).toHaveLength(1);
+    });
+
+    it('coerces error tool state to completed for structured timeout fallback', async () => {
+        const { SubAgentRunView } = await import('./SubAgentRunView');
+
+        let tree!: renderer.ReactTestRenderer;
+        renderer.act(() => {
+            tree = renderer.create(
+                <SubAgentRunView
+                    tool={{
+                        state: 'error',
+                        input: { intent: 'delegate' },
+                        result: {
+                            status: 'timeout',
+                            summary: 'Timed out after 120000ms',
+                            error: { code: 'execution_run_timeout', message: 'Timed out after 120000ms' },
+                        },
+                    } as any}
+                    metadata={null as any}
+                    messages={[] as any}
+                />,
+            );
+        });
+
+        expect(tree.root.findAllByType('StructuredResultView' as any)).toHaveLength(1);
+        const firstCall = structuredResultViewPropsSpy.mock.calls[0]?.[0];
+        expect(firstCall?.tool?.state).toBe('completed');
     });
 });

@@ -10,6 +10,7 @@ import { ToolHeaderActionsContext } from '@/components/tools/shell/presentation/
 import { ToolError } from '@/components/tools/shell/presentation/ToolError';
 import { ToolSectionView } from '@/components/tools/shell/presentation/ToolSectionView';
 import { CodeView } from '@/components/ui/media/CodeView';
+import { maybeParseJson } from '@/components/tools/normalization/parse/parseJson';
 import { TextSelectabilityScope } from '@/components/ui/text/Text';
 import { parseToolUseError } from '@/utils/errors/toolErrorParser';
 import { getAgentCore, resolveAgentIdFromFlavor } from '@/agents/catalog/catalog';
@@ -34,7 +35,22 @@ export const ToolInlineBody = React.memo(function ToolInlineBody(props: {
 }) {
     const { tool, normalizedToolName } = props;
 
+    const isSubAgentRunLikeErrorResult = React.useMemo(() => {
+        const parsed = maybeParseJson(tool.result);
+        if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return false;
+        const record = parsed as Record<string, unknown>;
+        const hasRunId = typeof record.runId === 'string' && record.runId.trim().length > 0;
+        const hasCallRef =
+            (typeof record.callId === 'string' && record.callId.trim().length > 0) ||
+            (typeof record.sidechainId === 'string' && record.sidechainId.trim().length > 0);
+        const status = typeof record.status === 'string' ? record.status : null;
+        const hasError = Boolean(record.error);
+        return hasRunId && hasCallRef && (hasError || status === 'timeout' || status === 'failed');
+    }, [tool.result]);
+
     const knownTool = knownTools[normalizedToolName as keyof typeof knownTools] as any;
+    const isSubAgentRunTool = normalizedToolName === 'SubAgentRun' || tool.name === 'SubAgentRun';
+    const shouldUseSubAgentRunErrorFallback = isSubAgentRunTool || isSubAgentRunLikeErrorResult;
 
     const isToolUseError =
         tool.state === 'error' &&
@@ -46,6 +62,9 @@ export const ToolInlineBody = React.memo(function ToolInlineBody(props: {
 
     if (knownTool && typeof knownTool.hideDefaultError === 'boolean') {
         hideDefaultError = knownTool.hideDefaultError;
+    }
+    if (shouldUseSubAgentRunErrorFallback) {
+        hideDefaultError = true;
     }
 
     const agentId = resolveAgentIdFromFlavor(props.metadata?.flavor);
@@ -135,6 +154,16 @@ export const ToolInlineBody = React.memo(function ToolInlineBody(props: {
 
     // Show error state if present (not a tool-use error)
     if (tool.state === 'error' && tool.result && !isToolUseError) {
+        if (shouldUseSubAgentRunErrorFallback) {
+            return (
+                <StructuredResultView
+                    tool={{ ...tool, state: 'completed' }}
+                    metadata={props.metadata}
+                    messages={props.messages}
+                    sessionId={props.sessionId}
+                />
+            );
+        }
         return (
             <TextSelectabilityScope selectable>
                 <ToolError
