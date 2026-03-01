@@ -142,7 +142,7 @@ describe('ToolTimelineRow (minimal fallback)', () => {
             toolViewExpandedDetailLevelDefault: 'full',
             toolViewExpandedDetailLevelByToolName: {},
             toolViewTimelineFeedDefaultExpanded: true,
-            toolViewTimelineFeedTapAction: 'expand',
+            toolViewTapAction: 'expand',
         };
     });
 

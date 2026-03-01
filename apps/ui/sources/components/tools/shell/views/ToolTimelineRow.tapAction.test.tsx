@@ -146,7 +146,7 @@ describe('ToolTimelineRow (tap action)', () => {
             toolViewExpandedDetailLevelDefault: 'summary',
             toolViewExpandedDetailLevelByToolName: {},
             toolViewTimelineFeedDefaultExpanded: false,
-            toolViewTimelineFeedTapAction: 'expand',
+            toolViewTapAction: 'expand',
         };
     });
 
@@ -217,7 +217,7 @@ describe('ToolTimelineRow (tap action)', () => {
     });
 
     it('opens full view when tap action is open (and canOpen is true)', async () => {
-        settings.toolViewTimelineFeedTapAction = 'open';
+        settings.toolViewTapAction = 'open';
         const { ToolTimelineRow } = await import('./ToolTimelineRow');
         const tool: any = {
             name: 'read',

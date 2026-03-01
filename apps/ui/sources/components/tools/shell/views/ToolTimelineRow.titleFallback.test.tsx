@@ -144,7 +144,7 @@ describe('ToolTimelineRow (title fallback)', () => {
             toolViewExpandedDetailLevelDefault: 'summary',
             toolViewExpandedDetailLevelByToolName: {},
             toolViewTimelineFeedDefaultExpanded: false,
-            toolViewTimelineFeedTapAction: 'expand',
+            toolViewTapAction: 'expand',
         };
         inferred = { normalizedToolName: 'UnknownTool', source: 'original' };
     });

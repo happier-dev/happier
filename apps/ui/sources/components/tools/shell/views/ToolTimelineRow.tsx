@@ -52,7 +52,7 @@ export const ToolTimelineRow = React.memo((props: {
     const toolViewExpandedDetailLevelDefault = useSetting('toolViewExpandedDetailLevelDefault');
     const toolViewExpandedDetailLevelByToolName = useSetting('toolViewExpandedDetailLevelByToolName');
     const toolViewTimelineFeedDefaultExpanded = useSetting('toolViewTimelineFeedDefaultExpanded');
-    const toolViewTimelineFeedTapAction = useSetting('toolViewTimelineFeedTapAction');
+    const toolViewTapAction = useSetting('toolViewTapAction');
 
     const initialIsExpandedRef = React.useRef<boolean>(toolViewTimelineFeedDefaultExpanded === true);
     const [isExpanded, setIsExpanded] = React.useState<boolean>(initialIsExpandedRef.current);
@@ -66,7 +66,7 @@ export const ToolTimelineRow = React.memo((props: {
 
     const canOpen = !!(props.sessionId && props.messageId);
     const primaryTapAction: 'expand' | 'open' =
-        toolViewTimelineFeedTapAction === 'open' && canOpen ? 'open' : 'expand';
+        toolViewTapAction === 'open' && canOpen ? 'open' : 'expand';
 
     const handleToggleExpand = React.useCallback(() => {
         const next = !isExpanded;

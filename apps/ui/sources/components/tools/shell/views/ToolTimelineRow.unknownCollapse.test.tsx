@@ -129,7 +129,7 @@ describe('ToolTimelineRow (unknown tool collapse)', () => {
             toolViewExpandedDetailLevelDefault: 'full',
             toolViewExpandedDetailLevelByToolName: {},
             toolViewTimelineFeedDefaultExpanded: false,
-            toolViewTimelineFeedTapAction: 'expand',
+            toolViewTapAction: 'expand',
         };
     });
 
