@@ -1,11 +1,15 @@
 import * as React from 'react';
-import { Platform, Pressable, ScrollView, View } from 'react-native';
+import { Image, Platform, Pressable, ScrollView, View } from 'react-native';
 import * as Clipboard from 'expo-clipboard';
 import { StyleSheet } from 'react-native-unistyles';
 
 import { t } from '@/text';
 import { darkTheme, lightTheme } from '@/theme';
 import { Typography } from '@/constants/Typography';
+import { getBugReportUserActionTrail } from '@/utils/system/bugReportActionTrail';
+import { getBugReportLogText } from '@/utils/system/bugReportLogBuffer';
+import { persistPreRestartBugReportSnapshot } from '@/utils/system/preRestartBugReportSnapshot';
+import { persistRestartBugReportIntent } from '@/utils/system/restartBugReportIntent';
 
 type AppCrashRecoveryBoundaryProps = Readonly<{
   children: React.ReactNode;
@@ -41,9 +45,26 @@ function formatErrorDetails(error: Error): string {
   return stack ? `${message}\n\n${stack}` : message;
 }
 
+function readOriginForDiagnostics(): string | null {
+  if (typeof window === 'undefined') return null;
+  try {
+    return String(window.location?.href ?? '').trim() || null;
+  } catch {
+    return null;
+  }
+}
+
+function readIsSecureContextForDiagnostics(): boolean | null {
+  if (typeof window === 'undefined') return null;
+  try {
+    return typeof window.isSecureContext === 'boolean' ? window.isSecureContext : null;
+  } catch {
+    return null;
+  }
+}
+
 export function AppBlockingScreen(props: Readonly<{
   testID?: string;
-  header?: React.ReactNode;
   title: string;
   subtitle: string;
   detailsTitle: string;
@@ -62,11 +83,14 @@ export function AppBlockingScreen(props: Readonly<{
         contentContainerStyle={styles.content}
         keyboardShouldPersistTaps="handled"
       >
-        {props.header ? (
-          <View style={styles.blockingHeader}>
-            {props.header}
-          </View>
-        ) : null}
+        <View style={styles.blockingHeader}>
+          <Image
+            testID="app-blocking-logo"
+            source={theme.dark ? require('@/assets/images/logotype-light.png') : require('@/assets/images/logotype-dark.png')}
+            resizeMode="contain"
+            style={styles.logo}
+          />
+        </View>
         <View style={styles.header}>
           <View style={styles.titleRow}>
             <View style={[styles.dot, { backgroundColor: theme.colors.warningCritical }]} />
@@ -175,6 +199,46 @@ export class AppCrashRecoveryBoundary extends React.PureComponent<
       .catch(() => {});
   };
 
+  private readonly onReportBug = () => {
+    const error = this.state.error;
+    if (!error) return;
+
+    const createdAtMs = Date.now();
+    const origin = readOriginForDiagnostics();
+    const isSecureContext = readIsSecureContextForDiagnostics();
+    const errorDetails = formatErrorDetails(error);
+
+    void (async () => {
+      try {
+        await persistPreRestartBugReportSnapshot({
+          v: 1,
+          createdAtMs,
+          reason: 'crash',
+          platform: Platform.OS,
+          origin,
+          isSecureContext,
+          errorDetails,
+          appLogs: getBugReportLogText(),
+          userActions: getBugReportUserActionTrail(),
+        });
+
+        await persistRestartBugReportIntent({
+          v: 1,
+          createdAtMs,
+          reason: 'crash',
+        });
+      } catch {
+        // ignore
+      } finally {
+        try {
+          this.props.onRestart();
+        } catch {
+          // ignore
+        }
+      }
+    })();
+  };
+
   override render(): React.ReactNode {
     const error = this.state.error;
 
@@ -195,13 +259,20 @@ export class AppCrashRecoveryBoundary extends React.PureComponent<
       variant: 'secondary',
     };
 
+    const reportBugAction: AppBlockingScreenAction = {
+      testID: 'app-crash-report-bug',
+      label: t('appCrash.restartAndReportIssue'),
+      onPress: this.onReportBug,
+      variant: 'secondary',
+    };
+
     return (
       <AppBlockingScreen
         title={t('appCrash.title')}
         subtitle={t('appCrash.subtitle')}
         detailsTitle={t('appCrash.detailsTitle')}
         details={formatErrorDetails(error)}
-        actions={[primaryAction, secondaryAction]}
+        actions={[primaryAction, reportBugAction, secondaryAction]}
       />
     );
   }
@@ -232,6 +303,10 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     marginBottom: 4,
+  },
+  logo: {
+    width: 300,
+    height: 90,
   },
   header: {
     gap: 6,
