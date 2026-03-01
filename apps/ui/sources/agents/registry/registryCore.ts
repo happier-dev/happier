@@ -1,5 +1,5 @@
 import type { ModelMode } from '@/sync/domains/permissions/permissionTypes';
-import type { TranslationKey } from '@/text';
+import type { TranslationKey, TranslationKeyNoParams } from '@/text';
 import type { Href } from 'expo-router';
 
 import { AGENT_IDS, DEFAULT_AGENT_ID, type AgentId, type AgentModelConfig } from '@happier-dev/agents';
@@ -108,8 +108,18 @@ export type AgentCoreConfig = Readonly<{
          * - none: do not surface ACP session modes as a first-class control in UI
          * - acpPolicyPresets: ACP modes exist, but represent approval/sandbox presets (not plan/build)
          * - acpAgentModes: ACP modes represent agent-level modes (e.g. plan/build) and should be user-controllable
+         * - staticAgentModes: provider-native modes (e.g. Claude plan/build) that should be user-controllable
          */
-        kind: 'none' | 'acpPolicyPresets' | 'acpAgentModes';
+        kind: 'none' | 'acpPolicyPresets' | 'acpAgentModes' | 'staticAgentModes';
+        /**
+         * Static mode options used when kind === 'staticAgentModes'.
+         * `id: 'default'` represents "no override" / provider default.
+         */
+        staticOptions?: ReadonlyArray<Readonly<{
+            id: string;
+            nameKey: TranslationKeyNoParams;
+            descriptionKey?: TranslationKeyNoParams;
+        }>>;
     }>;
     /**
      * Model selection capabilities and static suggestions.
