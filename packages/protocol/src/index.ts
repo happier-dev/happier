@@ -556,6 +556,11 @@ export {
 } from './ephemeralTasks.js';
 
 export {
+  LlmTaskRunnerConfigV1Schema,
+  type LlmTaskRunnerConfigV1,
+} from './llmTasks/llmTaskRunnerConfigV1.js';
+
+export {
   ReviewFindingSchema,
   type ReviewFinding,
   type ReviewFindingId,

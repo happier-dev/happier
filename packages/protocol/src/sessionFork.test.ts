@@ -22,6 +22,16 @@ describe('SessionForkRpcParamsSchema', () => {
     expect(parsed.success).toBe(true);
   });
 
+  it('accepts an optional replay summary runner config', () => {
+    const parsed = SessionForkRpcParamsSchema.safeParse({
+      v: 1,
+      parentSessionId: 'sess_parent',
+      forkPoint: { type: 'latest' },
+      replaySummaryRunner: { v: 1, backendId: 'claude', modelId: 'default', permissionMode: 'no_tools' },
+    });
+    expect(parsed.success).toBe(true);
+  });
+
   it('rejects unknown top-level fields', () => {
     const parsed = SessionForkRpcParamsSchema.safeParse({
       v: 1,
@@ -32,4 +42,3 @@ describe('SessionForkRpcParamsSchema', () => {
     expect(parsed.success).toBe(false);
   });
 });
-

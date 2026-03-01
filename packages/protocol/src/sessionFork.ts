@@ -1,5 +1,7 @@
 import { z } from 'zod';
 
+import { LlmTaskRunnerConfigV1Schema } from './llmTasks/llmTaskRunnerConfigV1.js';
+
 export const SessionForkStrategySchema = z.enum(['auto', 'provider_native', 'acp_fork_latest', 'replay']);
 export type SessionForkStrategy = z.infer<typeof SessionForkStrategySchema>;
 
@@ -20,6 +22,7 @@ export const SessionForkRpcParamsSchema = z
     parentSessionId: z.string().min(1),
     forkPoint: SessionForkPointSchema,
     strategy: SessionForkStrategySchema.optional(),
+    replaySummaryRunner: LlmTaskRunnerConfigV1Schema.optional(),
   })
   .strict();
 export type SessionForkRpcParams = z.infer<typeof SessionForkRpcParamsSchema>;
@@ -29,4 +32,3 @@ export const SessionForkRpcResultSchema = z.union([
   z.object({ ok: z.literal(false), errorCode: z.string().min(1), errorMessage: z.string().min(1) }).passthrough(),
 ]);
 export type SessionForkRpcResult = z.infer<typeof SessionForkRpcResultSchema>;
-
