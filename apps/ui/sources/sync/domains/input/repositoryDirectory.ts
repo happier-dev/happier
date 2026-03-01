@@ -9,6 +9,57 @@ export type ListRepositoryDirectoryEntriesResult =
     | { ok: true; entries: RepositoryDirectoryEntry[] }
     | { ok: false; error: string };
 
+const repositoryDirectoryCache = new Map<string, RepositoryDirectoryEntry[]>();
+const repositoryDirectoryWarmInFlight = new Map<string, Promise<ListRepositoryDirectoryEntriesResult>>();
+
+function getCacheKey(sessionId: string, directoryPath: string): string {
+    return `${sessionId}:${directoryPath}`;
+}
+
+export function getCachedRepositoryDirectoryEntries(input: {
+    sessionId: string;
+    directoryPath: string;
+}): RepositoryDirectoryEntry[] | null {
+    const key = getCacheKey(input.sessionId, input.directoryPath);
+    const cached = repositoryDirectoryCache.get(key);
+    return cached ? cached.slice() : null;
+}
+
+export function setCachedRepositoryDirectoryEntries(input: {
+    sessionId: string;
+    directoryPath: string;
+    entries: RepositoryDirectoryEntry[];
+}): void {
+    const key = getCacheKey(input.sessionId, input.directoryPath);
+    repositoryDirectoryCache.set(key, input.entries.slice());
+}
+
+export async function warmRepositoryDirectoryCache(input: {
+    sessionId: string;
+    directoryPath: string;
+}): Promise<ListRepositoryDirectoryEntriesResult> {
+    const cached = getCachedRepositoryDirectoryEntries(input);
+    if (cached) {
+        return { ok: true, entries: cached };
+    }
+
+    const key = getCacheKey(input.sessionId, input.directoryPath);
+    const inFlight = repositoryDirectoryWarmInFlight.get(key);
+    if (inFlight) {
+        return await inFlight;
+    }
+
+    const promise = (async () => {
+        try {
+            return await listRepositoryDirectoryEntries(input);
+        } finally {
+            repositoryDirectoryWarmInFlight.delete(key);
+        }
+    })();
+    repositoryDirectoryWarmInFlight.set(key, promise);
+    return await promise;
+}
+
 type SessionListDirectoryLikeResponse = {
     success?: boolean;
     error?: string | null;
@@ -59,5 +110,11 @@ export async function listRepositoryDirectoryEntries(input: {
         entries.push({ name: raw, type: entry.type });
     }
 
-    return { ok: true, entries: sortRepositoryDirectoryEntries(entries) };
+    const sorted = sortRepositoryDirectoryEntries(entries);
+    setCachedRepositoryDirectoryEntries({
+        sessionId: input.sessionId,
+        directoryPath: input.directoryPath,
+        entries: sorted,
+    });
+    return { ok: true, entries: sorted };
 }
