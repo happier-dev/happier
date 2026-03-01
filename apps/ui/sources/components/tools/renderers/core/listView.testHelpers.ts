@@ -24,17 +24,16 @@ export function expectListSummary(params: {
 }) {
     const rawText = collectHostText(params.tree).join('\n');
     const normalizedText = rawText.replace(/\s+/g, ' ');
+    const normalizedPlusText = normalizedText.replace(/\+\s*(\d+)/g, '+$1');
 
     for (const visibleValue of params.visibleValues) {
-        expect(normalizedText).toContain(visibleValue);
+        expect(normalizedPlusText).toContain(visibleValue);
     }
     for (const hiddenValue of params.hiddenValues ?? []) {
-        expect(normalizedText).not.toContain(hiddenValue);
+        expect(normalizedPlusText).not.toContain(hiddenValue.replace(/\+\s*(\d+)/g, '+$1'));
     }
     if (params.moreLabel) {
-        const normalizedMoreLabel = params.moreLabel
-            .replace(/^\+(\d+)/, '+ $1')
-            .replace(/\s+/g, ' ');
-        expect(normalizedText).toContain(normalizedMoreLabel);
+        const normalizedMoreLabel = params.moreLabel.replace(/\s+/g, ' ').replace(/\+\s*(\d+)/g, '+$1');
+        expect(normalizedPlusText).toContain(normalizedMoreLabel);
     }
 }

@@ -5,6 +5,7 @@ import type { ToolViewProps } from '../core/_registry';
 import { ToolSectionView } from '../../shell/presentation/ToolSectionView';
 import { coerceToolResultRecord } from '../../legacy/coerceToolResultRecord';
 import { Text } from '@/components/ui/text/Text';
+import { t } from '@/text';
 
 
 function asRecord(value: unknown): Record<string, unknown> | null {
@@ -55,7 +56,7 @@ export const CodeSearchView = React.memo<ToolViewProps>(({ tool, detailLevel }) 
                         </View>
                     );
                 })}
-                {more > 0 ? <Text style={styles.more}>+{more} more</Text> : null}
+                {more > 0 ? <Text style={styles.more}>{t('tools.structuredResult.more', { count: more })}</Text> : null}
             </View>
         </ToolSectionView>
     );

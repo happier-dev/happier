@@ -38,7 +38,7 @@ describe('CodeSearchView', () => {
         expect(normalized).toContain('/repo/file-5.ts:6');
         expect(normalized).toContain('match-5');
         expect(normalized).not.toContain('/repo/file-6.ts:7');
-        expect(normalized).toContain('+ 4 more');
+        expect(normalized).toContain('+4 more');
     });
 
     it('expands to show more matches when detailLevel=full', async () => {
