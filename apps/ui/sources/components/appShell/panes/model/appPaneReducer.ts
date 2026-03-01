@@ -1,0 +1,236 @@
+export type PaneId = 'right' | 'details';
+
+export type DetailsTabOpenMode = 'preview' | 'pinned';
+
+export type DetailsTab = Readonly<{
+    key: string;
+    kind: string;
+    title: string;
+    resource: unknown;
+}>;
+
+export type DetailsTabState = Readonly<DetailsTab & {
+    isPreview: boolean;
+    isPinned: boolean;
+}>;
+
+export type PaneScopeState = Readonly<{
+    right: {
+        isOpen: boolean;
+        activeTabId: string | null;
+        tabState: Readonly<Record<string, unknown>>;
+    };
+    details: {
+        isOpen: boolean;
+        tabs: ReadonlyArray<DetailsTabState>;
+        activeTabKey: string | null;
+        tabState: Readonly<Record<string, unknown>>;
+    };
+}>;
+
+export type AppPaneState = Readonly<{
+    activeScopeId: string | null;
+    scopes: Readonly<Record<string, PaneScopeState>>;
+    scopeLru: ReadonlyArray<string>;
+    limits: {
+        maxScopesInMemory: number;
+    };
+}>;
+
+export type AppPaneAction =
+    | { type: 'activateScope'; scopeId: string }
+    | { type: 'openRight'; scopeId: string; tabId?: string }
+    | { type: 'closeRight'; scopeId: string }
+    | { type: 'setRightTab'; scopeId: string; tabId: string }
+    | { type: 'setRightTabState'; scopeId: string; tabId: string; nextState: unknown }
+    | { type: 'openDetailsTab'; scopeId: string; tab: DetailsTab; openAs: DetailsTabOpenMode }
+    | { type: 'setDetailsTabState'; scopeId: string; tabKey: string; nextState: unknown }
+    | { type: 'pinDetailsTab'; scopeId: string; tabKey: string }
+    | { type: 'closeDetails'; scopeId: string }
+    | { type: 'closeDetailsTab'; scopeId: string; tabKey: string }
+    | { type: 'setActiveDetailsTab'; scopeId: string; tabKey: string };
+
+export function createAppPaneState(options: Readonly<{ maxScopesInMemory: number }>): AppPaneState {
+    return {
+        activeScopeId: null,
+        scopes: {},
+        scopeLru: [],
+        limits: { maxScopesInMemory: options.maxScopesInMemory },
+    };
+}
+
+function createEmptyScopeState(): PaneScopeState {
+    return {
+        right: { isOpen: false, activeTabId: null, tabState: {} },
+        details: { isOpen: false, tabs: [], activeTabKey: null, tabState: {} },
+    };
+}
+
+function touchScopeLru(scopeLru: ReadonlyArray<string>, scopeId: string): ReadonlyArray<string> {
+    const next = scopeLru.filter((id) => id !== scopeId);
+    return [scopeId, ...next];
+}
+
+function evictScopesIfNeeded(state: AppPaneState): AppPaneState {
+    const max = state.limits.maxScopesInMemory;
+    if (Object.keys(state.scopes).length <= max) return state;
+
+    const keep = new Set(state.scopeLru.slice(0, max));
+    const nextScopes: Record<string, PaneScopeState> = {};
+    for (const [scopeId, scopeState] of Object.entries(state.scopes)) {
+        if (keep.has(scopeId)) nextScopes[scopeId] = scopeState;
+    }
+    const nextLru = state.scopeLru.filter((id) => keep.has(id));
+    const nextActive = state.activeScopeId && keep.has(state.activeScopeId) ? state.activeScopeId : nextLru[0] ?? null;
+    return { ...state, scopes: nextScopes, scopeLru: nextLru, activeScopeId: nextActive };
+}
+
+function upsertScope(state: AppPaneState, scopeId: string, mutate: (prev: PaneScopeState) => PaneScopeState): AppPaneState {
+    const prev = state.scopes[scopeId] ?? createEmptyScopeState();
+    const nextScopes = { ...state.scopes, [scopeId]: mutate(prev) };
+    return { ...state, scopes: nextScopes };
+}
+
+function setDetailsTabs(scope: PaneScopeState, nextTabs: ReadonlyArray<DetailsTabState>, nextActiveKey: string | null): PaneScopeState {
+    return {
+        ...scope,
+        details: {
+            ...scope.details,
+            tabs: nextTabs,
+            activeTabKey: nextActiveKey,
+        },
+    };
+}
+
+export function appPaneReduce(state: AppPaneState, action: AppPaneAction): AppPaneState {
+    switch (action.type) {
+        case 'activateScope': {
+            const next = {
+                ...state,
+                activeScopeId: action.scopeId,
+                scopeLru: touchScopeLru(state.scopeLru, action.scopeId),
+                scopes: state.scopes[action.scopeId] ? state.scopes : { ...state.scopes, [action.scopeId]: createEmptyScopeState() },
+            };
+            return evictScopesIfNeeded(next);
+        }
+        case 'openRight': {
+            return upsertScope(state, action.scopeId, (prev) => ({
+                ...prev,
+                right: {
+                    ...prev.right,
+                    isOpen: true,
+                    activeTabId: action.tabId ?? prev.right.activeTabId,
+                },
+            }));
+        }
+        case 'closeRight': {
+            return upsertScope(state, action.scopeId, (prev) => ({
+                ...prev,
+                right: { ...prev.right, isOpen: false },
+            }));
+        }
+        case 'setRightTab': {
+            return upsertScope(state, action.scopeId, (prev) => ({
+                ...prev,
+                right: { ...prev.right, activeTabId: action.tabId },
+            }));
+        }
+        case 'setRightTabState': {
+            return upsertScope(state, action.scopeId, (prev) => ({
+                ...prev,
+                right: {
+                    ...prev.right,
+                    tabState: {
+                        ...prev.right.tabState,
+                        [action.tabId]: action.nextState,
+                    },
+                },
+            }));
+        }
+        case 'openDetailsTab': {
+            return upsertScope(state, action.scopeId, (prev) => {
+                const existingIndex = prev.details.tabs.findIndex((t) => t.key === action.tab.key);
+                if (existingIndex >= 0) {
+                    const existing = prev.details.tabs[existingIndex]!;
+                    const pinned = action.openAs === 'pinned' ? true : existing.isPinned;
+                    const preview = pinned ? false : existing.isPreview;
+                    const nextTabs = prev.details.tabs.map((t, index) => (index === existingIndex ? { ...t, isPinned: pinned, isPreview: preview } : t));
+                    return {
+                        ...prev,
+                        details: { ...prev.details, isOpen: true, tabs: nextTabs, activeTabKey: action.tab.key },
+                    };
+                }
+
+                let nextTabs = prev.details.tabs;
+                if (action.openAs === 'preview') {
+                    nextTabs = nextTabs.filter((t) => !t.isPreview);
+                }
+
+                const nextTab: DetailsTabState = {
+                    ...action.tab,
+                    isPinned: action.openAs === 'pinned',
+                    isPreview: action.openAs === 'preview',
+                };
+                nextTabs = [...nextTabs, nextTab];
+                return setDetailsTabs({ ...prev, details: { ...prev.details, isOpen: true } }, nextTabs, nextTab.key);
+            });
+        }
+        case 'setDetailsTabState': {
+            return upsertScope(state, action.scopeId, (prev) => {
+                const nextState = action.nextState;
+                if (nextState == null) {
+                    if (!(action.tabKey in prev.details.tabState)) return prev;
+                    const { [action.tabKey]: _deleted, ...rest } = prev.details.tabState;
+                    return { ...prev, details: { ...prev.details, tabState: rest } };
+                }
+                return {
+                    ...prev,
+                    details: {
+                        ...prev.details,
+                        tabState: {
+                            ...prev.details.tabState,
+                            [action.tabKey]: nextState,
+                        },
+                    },
+                };
+            });
+        }
+        case 'pinDetailsTab': {
+            return upsertScope(state, action.scopeId, (prev) => {
+                const index = prev.details.tabs.findIndex((t) => t.key === action.tabKey);
+                if (index < 0) return prev;
+                const nextTabs = prev.details.tabs.map((t, i) => (i === index ? { ...t, isPinned: true, isPreview: false } : t));
+                return { ...prev, details: { ...prev.details, tabs: nextTabs } };
+            });
+        }
+        case 'closeDetails': {
+            return upsertScope(state, action.scopeId, (prev) => ({ ...prev, details: { ...prev.details, isOpen: false } }));
+        }
+        case 'closeDetailsTab': {
+            return upsertScope(state, action.scopeId, (prev) => {
+                const index = prev.details.tabs.findIndex((t) => t.key === action.tabKey);
+                if (index < 0) return prev;
+                const nextTabs = prev.details.tabs.filter((t) => t.key !== action.tabKey);
+                const { [action.tabKey]: _deletedTabState, ...remainingTabState } = prev.details.tabState;
+                const nextActive =
+                    prev.details.activeTabKey === action.tabKey
+                        ? (nextTabs[index - 1]?.key ?? nextTabs[index]?.key ?? nextTabs.at(-1)?.key ?? null)
+                        : prev.details.activeTabKey;
+                const isOpen = nextTabs.length > 0 ? prev.details.isOpen : false;
+                return setDetailsTabs(
+                    { ...prev, details: { ...prev.details, isOpen, tabState: remainingTabState } },
+                    nextTabs,
+                    nextActive
+                );
+            });
+        }
+        case 'setActiveDetailsTab': {
+            return upsertScope(state, action.scopeId, (prev) => {
+                if (!prev.details.tabs.some((t) => t.key === action.tabKey)) return prev;
+                return { ...prev, details: { ...prev.details, activeTabKey: action.tabKey } };
+            });
+        }
+        default:
+            return state;
+    }
+}
