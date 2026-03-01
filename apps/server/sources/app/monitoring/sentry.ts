@@ -31,6 +31,28 @@ function tryLoadNodeProfilingIntegration(): null | (() => Integration) {
     }
 }
 
+type IntegrationSetupOnce = Exclude<Integration["setupOnce"], undefined>;
+
+function createLazyNodeProfilingIntegration(): Integration {
+    let resolvedIntegration: Integration | null | undefined = undefined;
+    const setupOnce: IntegrationSetupOnce = (...args) => {
+        if (resolvedIntegration === undefined) {
+            const factory = tryLoadNodeProfilingIntegration();
+            resolvedIntegration = factory ? factory() : null;
+        }
+
+        const resolvedSetupOnce = resolvedIntegration?.setupOnce;
+        if (resolvedSetupOnce) {
+            (resolvedSetupOnce as IntegrationSetupOnce)(...args);
+        }
+    };
+
+    return {
+        name: "profiling",
+        setupOnce,
+    };
+}
+
 function parseRateEnv(raw: string | undefined, defaultValue: number): number {
     const parsed = Number.parseFloat(String(raw ?? "").trim());
     const value = Number.isFinite(parsed) ? parsed : defaultValue;
@@ -147,10 +169,7 @@ export function initializeServerSentry(env: NodeJS.ProcessEnv): void {
                       }
 
                       if (resolved.profileSessionSampleRate > 0) {
-                          const profiling = tryLoadNodeProfilingIntegration();
-                          if (profiling) {
-                              next.push(profiling());
-                          }
+                          next.push(createLazyNodeProfilingIntegration());
                       }
 
                       if (resolved.enableLogs) {
