@@ -62,6 +62,10 @@ export type TranslationKey = NestedKeys<Translations>;
  */
 export type TranslationParams<K extends TranslationKey> = GetParams<GetValue<Translations, K>>;
 
+export type TranslationKeyNoParams = {
+    [K in TranslationKey]: TranslationParams<K> extends void ? K : never;
+}[TranslationKey];
+
 /**
  * Re-export language types and configuration
  */
@@ -166,19 +170,10 @@ export function t<K extends TranslationKey>(
         : [GetParams<GetValue<Translations, K>>]
 ): string {
     try {
-        // Get current language translations
-        const currentTranslations = translations[currentLanguage];
-
-        // Navigate to the value using dot notation
-        const keys = key.split('.');
-        let value: any = currentTranslations;
-
-        for (const k of keys) {
-            value = value[k];
-            if (value === undefined) {
-                console.warn(`Translation missing: ${key}`);
-                return key;
-            }
+        const value = resolveTranslationValue(key);
+        if (value === undefined) {
+            console.warn(`Translation missing: ${key}`);
+            return key;
         }
 
         // If it's a function, call it with the provided parameters
@@ -193,6 +188,44 @@ export function t<K extends TranslationKey>(
         }
 
         // Fallback for unexpected types
+        console.warn(`Invalid translation value type for key: ${key}`);
+        return key;
+    } catch (error) {
+        console.error(`Translation error for key: ${key}`, error);
+        return key;
+    }
+}
+
+function resolveTranslationValue(key: string): unknown | undefined {
+    const currentTranslations = translations[currentLanguage];
+    const keys = key.split('.');
+    let value: any = currentTranslations;
+
+    for (const k of keys) {
+        value = value[k];
+        if (value === undefined) {
+            return undefined;
+        }
+    }
+    return value;
+}
+
+export function tLoose(key: TranslationKey, params?: unknown): string {
+    try {
+        const value = resolveTranslationValue(key);
+        if (value === undefined) {
+            console.warn(`Translation missing: ${key}`);
+            return key;
+        }
+
+        if (typeof value === 'function') {
+            return value(params);
+        }
+
+        if (typeof value === 'string') {
+            return value;
+        }
+
         console.warn(`Invalid translation value type for key: ${key}`);
         return key;
     } catch (error) {
