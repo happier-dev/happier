@@ -57,9 +57,9 @@ export function canOfferSessionChangedFilesView(input: {
 }
 
 export function buildChangedFilesAttribution(input: {
-    allChangedFiles: ScmFileStatus[];
-    touchedPaths: string[];
-    operationLog: ScmProjectOperationLogEntry[];
+    allChangedFiles: readonly ScmFileStatus[];
+    touchedPaths: readonly string[];
+    operationLog: readonly ScmProjectOperationLogEntry[];
     includeInferred?: boolean;
 }): {
     sessionAttributedFiles: SessionAttributedFile[];
