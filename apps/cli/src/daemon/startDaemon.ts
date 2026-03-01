@@ -1332,6 +1332,15 @@ export async function startDaemon(): Promise<void> {
       if (memoryWorker) {
         memoryWorker.stop();
       }
+
+      // Best-effort cleanup for provider-managed background processes (e.g. shared OpenCode server).
+      try {
+        const { stopSharedManagedOpenCodeServerFromEnvBestEffort } = await import('@/backends/opencode/server/sharedManagedServer');
+        await stopSharedManagedOpenCodeServerFromEnvBestEffort();
+      } catch {
+        // best-effort only
+      }
+
       await stopControlServer();
           await cleanupDaemonState();
           await stopCaffeinate();
