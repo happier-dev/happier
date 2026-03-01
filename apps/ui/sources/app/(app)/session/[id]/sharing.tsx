@@ -104,7 +104,7 @@ function SharingManagementContent({ sessionId }: { sessionId: string }) {
                 sessionEncryptionMode === 'plain'
                     ? undefined
                     : (() => {
-                        if (!friend.contentPublicKey || !friend.contentPublicKeySig) {
+                        if (!friend.publicKey || !friend.contentPublicKey || !friend.contentPublicKeySig) {
                             throw new HappyError(t('session.sharing.recipientMissingKeys'), false);
                         }
                         const isValidBinding = verifyRecipientContentPublicKeyBinding({
