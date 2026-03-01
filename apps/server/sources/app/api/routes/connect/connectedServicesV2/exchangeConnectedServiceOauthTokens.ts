@@ -6,6 +6,7 @@ import {
     encodeBase64,
     BOX_BUNDLE_PUBLIC_KEY_BYTES,
     type ConnectedServiceId,
+    CONNECTED_SERVICE_ERROR_CODES,
 } from "@happier-dev/protocol";
 import { parseIntEnv } from "@/config/env";
 import { assertNonEmptyString } from "./connectValueParsers";
@@ -35,10 +36,10 @@ export class ConnectedServiceOauthStateMismatchError extends Error {
 }
 
 export type ConnectedServiceOauthExchangeErrorCode =
-    | "connect_oauth_exchange_failed"
-    | "connect_oauth_invalid_grant"
-    | "connect_oauth_invalid_client"
-    | "connect_oauth_missing_refresh_token";
+    | typeof CONNECTED_SERVICE_ERROR_CODES.oauthExchangeFailed
+    | typeof CONNECTED_SERVICE_ERROR_CODES.oauthInvalidGrant
+    | typeof CONNECTED_SERVICE_ERROR_CODES.oauthInvalidClient
+    | typeof CONNECTED_SERVICE_ERROR_CODES.oauthMissingRefreshToken;
 
 export class ConnectedServiceOauthExchangeError extends Error {
     constructor(
@@ -186,18 +187,18 @@ async function exchangeGemini(params: Readonly<{
             json && typeof (json as any).error_description === "string" ? String((json as any).error_description) : "";
         if (providerError === "invalid_grant") {
             throw new ConnectedServiceOauthExchangeError(
-                "connect_oauth_invalid_grant",
+                CONNECTED_SERVICE_ERROR_CODES.oauthInvalidGrant,
                 providerDescription || "Gemini OAuth code is invalid or expired.",
             );
         }
         if (providerError === "invalid_client") {
             throw new ConnectedServiceOauthExchangeError(
-                "connect_oauth_invalid_client",
+                CONNECTED_SERVICE_ERROR_CODES.oauthInvalidClient,
                 providerDescription || "Gemini OAuth client credentials are invalid.",
             );
         }
         throw new ConnectedServiceOauthExchangeError(
-            "connect_oauth_exchange_failed",
+            CONNECTED_SERVICE_ERROR_CODES.oauthExchangeFailed,
             `Token exchange failed: ${response.status}`,
         );
     }
@@ -207,7 +208,7 @@ async function exchangeGemini(params: Readonly<{
     const refreshToken = typeof json?.refresh_token === "string" ? json.refresh_token : "";
     if (!refreshToken.trim()) {
         throw new ConnectedServiceOauthExchangeError(
-            "connect_oauth_missing_refresh_token",
+            CONNECTED_SERVICE_ERROR_CODES.oauthMissingRefreshToken,
             "Gemini OAuth did not return a refresh token.",
         );
     }

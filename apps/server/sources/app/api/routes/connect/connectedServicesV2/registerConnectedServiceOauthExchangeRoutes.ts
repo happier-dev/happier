@@ -1,7 +1,12 @@
 import { z } from "zod";
 
 import type { Fastify } from "../../../types";
-import { ConnectedServiceIdSchema, type ConnectedServiceId } from "@happier-dev/protocol";
+import {
+  CONNECTED_SERVICE_ERROR_CODES,
+  ConnectedServiceErrorCodeSchema,
+  ConnectedServiceIdSchema,
+  type ConnectedServiceId,
+} from "@happier-dev/protocol";
 
 import {
   ConnectedServiceOauthExchangeError,
@@ -16,16 +21,18 @@ const CONNECTED_SERVICE_OAUTH_VERIFIER_MAX_LEN = 256;
 const CONNECTED_SERVICE_OAUTH_REDIRECT_URI_MAX_LEN = 2048;
 const CONNECTED_SERVICE_OAUTH_STATE_MAX_LEN = 2048;
 
+const ConnectedServiceOauthExchangeErrorCodeSchema = ConnectedServiceErrorCodeSchema.extract([
+  CONNECTED_SERVICE_ERROR_CODES.oauthStateMismatch,
+  CONNECTED_SERVICE_ERROR_CODES.oauthTimeout,
+  CONNECTED_SERVICE_ERROR_CODES.oauthExchangeFailed,
+  CONNECTED_SERVICE_ERROR_CODES.oauthInvalidGrant,
+  CONNECTED_SERVICE_ERROR_CODES.oauthInvalidClient,
+  CONNECTED_SERVICE_ERROR_CODES.oauthMissingRefreshToken,
+]);
+
 const ConnectedServiceOauthExchangeErrorResponseSchema = z.union([
   z.object({
-    error: z.enum([
-      "connect_oauth_state_mismatch",
-      "connect_oauth_timeout",
-      "connect_oauth_exchange_failed",
-      "connect_oauth_invalid_grant",
-      "connect_oauth_invalid_client",
-      "connect_oauth_missing_refresh_token",
-    ]),
+    error: ConnectedServiceOauthExchangeErrorCodeSchema,
   }),
   // Fastify validation errors can occur before the handler (e.g. max-length checks). When using
   // zod serializerCompiler, ensure we accept the default error shape for 400 responses.
@@ -58,7 +65,7 @@ export function registerConnectedServiceOauthExchangeRoutes(app: Fastify): void 
   }, async (request, reply) => {
     const serviceId = request.params.serviceId satisfies ConnectedServiceId;
     if (serviceId === "anthropic" || serviceId === "openai") {
-      return reply.code(400).send({ error: "connect_oauth_exchange_failed" });
+      return reply.code(400).send({ error: CONNECTED_SERVICE_ERROR_CODES.oauthExchangeFailed });
     }
     try {
       const exchanged = await exchangeConnectedServiceOauthTokens({
@@ -73,15 +80,15 @@ export function registerConnectedServiceOauthExchangeRoutes(app: Fastify): void 
       return reply.send({ bundle: exchanged.bundleB64Url });
     } catch (error) {
       if (error instanceof ConnectedServiceOauthTimeoutError) {
-        return reply.code(400).send({ error: "connect_oauth_timeout" });
+        return reply.code(400).send({ error: CONNECTED_SERVICE_ERROR_CODES.oauthTimeout });
       }
       if (error instanceof ConnectedServiceOauthStateMismatchError) {
-        return reply.code(400).send({ error: "connect_oauth_state_mismatch" });
+        return reply.code(400).send({ error: CONNECTED_SERVICE_ERROR_CODES.oauthStateMismatch });
       }
       if (error instanceof ConnectedServiceOauthExchangeError) {
         return reply.code(400).send({ error: error.errorCode });
       }
-      return reply.code(400).send({ error: "connect_oauth_exchange_failed" });
+      return reply.code(400).send({ error: CONNECTED_SERVICE_ERROR_CODES.oauthExchangeFailed });
     }
   });
 }
