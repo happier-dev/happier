@@ -17,6 +17,12 @@ export type ChatListItem =
         seq: number | null;
     }
     | {
+        kind: 'tool-calls-group';
+        id: string;
+        toolMessageIds: string[];
+        createdAt: number;
+    }
+    | {
         kind: 'fork-divider';
         id: string;
         parentSessionId: string;
@@ -35,11 +41,12 @@ export type ChatListItem =
         discardedMessages: DiscardedPendingMessage[];
     };
 
-type CommittedMessageItem = Extract<ChatListItem, { kind: 'message' }>;
+type CommittedTranscriptItem = Extract<ChatListItem, { kind: 'message' | 'tool-calls-group' }>;
 
 export type ChatListItemsBuildCache = Readonly<{
     messageIdsOldestFirst: readonly string[];
-    committedItems: readonly CommittedMessageItem[];
+    groupConsecutiveToolCalls: boolean;
+    committedItems: readonly CommittedTranscriptItem[];
     localIdsInTranscript: ReadonlySet<string>;
 }>;
 
@@ -62,6 +69,7 @@ export function buildChatListItems(opts: {
     discardedMessages?: DiscardedPendingMessage[] | null;
     actionDrafts?: SessionActionDraft[] | null;
     includeCommittedMessages?: boolean;
+    groupConsecutiveToolCalls?: boolean;
 }): ChatListItem[] {
     const localIdsInTranscript = new Set<string>();
     for (const messageId of opts.messageIdsOldestFirst) {
@@ -78,9 +86,28 @@ export function buildChatListItems(opts: {
 
     const includeCommittedMessages = opts.includeCommittedMessages !== false;
     if (includeCommittedMessages) {
+        const groupConsecutiveToolCalls = opts.groupConsecutiveToolCalls === true;
+        const toolCallsGroupIdForFirstToolMessageId = (messageId: string) => `toolCalls:linear:${messageId}`;
+
         for (const messageId of opts.messageIdsOldestFirst) {
             const m = opts.messagesById[messageId];
             if (!m) continue;
+
+            if (groupConsecutiveToolCalls && m.kind === 'tool-call') {
+                const prev = items[items.length - 1];
+                if (prev?.kind === 'tool-calls-group') {
+                    items[items.length - 1] = { ...prev, toolMessageIds: [...prev.toolMessageIds, m.id] };
+                    continue;
+                }
+                items.push({
+                    kind: 'tool-calls-group',
+                    id: toolCallsGroupIdForFirstToolMessageId(m.id),
+                    toolMessageIds: [m.id],
+                    createdAt: m.createdAt,
+                });
+                continue;
+            }
+
             items.push({
                 kind: 'message',
                 id: `msg:${m.id}`,
@@ -119,13 +146,17 @@ export function buildChatListItemsCached(opts: {
     pendingMessages: PendingMessage[];
     discardedMessages?: DiscardedPendingMessage[] | null;
     actionDrafts?: SessionActionDraft[] | null;
+    groupConsecutiveToolCalls?: boolean;
 }): { cache: ChatListItemsBuildCache; items: ChatListItem[] } {
+    const groupConsecutiveToolCalls = opts.groupConsecutiveToolCalls === true;
     const canReuse =
         opts.cache != null &&
+        opts.cache.groupConsecutiveToolCalls === groupConsecutiveToolCalls &&
         isPrefix({ prefix: opts.cache.messageIdsOldestFirst, full: opts.messageIdsOldestFirst });
 
-    let committedItems: CommittedMessageItem[] = [];
+    let committedItems: CommittedTranscriptItem[] = [];
     let localIdsInTranscript: Set<string> = new Set<string>();
+    const toolCallsGroupIdForFirstToolMessageId = (messageId: string) => `toolCalls:linear:${messageId}`;
 
     if (canReuse) {
         committedItems = opts.cache!.committedItems.slice();
@@ -138,6 +169,22 @@ export function buildChatListItemsCached(opts: {
             if ('localId' in m && m.localId) {
                 localIdsInTranscript.add(m.localId);
             }
+
+            if (groupConsecutiveToolCalls && m.kind === 'tool-call') {
+                const prev = committedItems[committedItems.length - 1];
+                if (prev?.kind === 'tool-calls-group') {
+                    committedItems[committedItems.length - 1] = { ...prev, toolMessageIds: [...prev.toolMessageIds, m.id] };
+                    continue;
+                }
+                committedItems.push({
+                    kind: 'tool-calls-group',
+                    id: toolCallsGroupIdForFirstToolMessageId(m.id),
+                    toolMessageIds: [m.id],
+                    createdAt: m.createdAt,
+                });
+                continue;
+            }
+
             committedItems.push({
                 kind: 'message',
                 id: `msg:${m.id}`,
@@ -155,6 +202,22 @@ export function buildChatListItemsCached(opts: {
             if ('localId' in m && m.localId) {
                 localIdsInTranscript.add(m.localId);
             }
+
+            if (groupConsecutiveToolCalls && m.kind === 'tool-call') {
+                const prev = committedItems[committedItems.length - 1];
+                if (prev?.kind === 'tool-calls-group') {
+                    committedItems[committedItems.length - 1] = { ...prev, toolMessageIds: [...prev.toolMessageIds, m.id] };
+                    continue;
+                }
+                committedItems.push({
+                    kind: 'tool-calls-group',
+                    id: toolCallsGroupIdForFirstToolMessageId(m.id),
+                    toolMessageIds: [m.id],
+                    createdAt: m.createdAt,
+                });
+                continue;
+            }
+
             committedItems.push({
                 kind: 'message',
                 id: `msg:${m.id}`,
@@ -190,6 +253,7 @@ export function buildChatListItemsCached(opts: {
     return {
         cache: {
             messageIdsOldestFirst: opts.messageIdsOldestFirst,
+            groupConsecutiveToolCalls,
             committedItems,
             localIdsInTranscript,
         },

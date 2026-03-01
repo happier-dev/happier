@@ -137,6 +137,8 @@ describe('buildChatListItems', () => {
                     return item.draft.id;
                 case 'fork-divider':
                     return item.id;
+                case 'tool-calls-group':
+                    return item.toolMessageIds;
                 default: {
                     const _exhaustive: never = item;
                     return _exhaustive;
@@ -193,6 +195,31 @@ describe('buildChatListItemsCached', () => {
         expect(r2.items[1]).toBe(r1.items[1]);
     });
 
+    it('groups consecutive tool-call messages into a tool-calls-group item when enabled', () => {
+        const messages: Message[] = [
+            { kind: 'user-text', id: 'u1', localId: null, createdAt: 1, text: 'user' },
+            buildToolCallMessage({ id: 't1', localId: null, createdAt: 2 }),
+            buildToolCallMessage({ id: 't2', localId: null, createdAt: 3 }),
+            { kind: 'agent-text', id: 'a1', localId: null, createdAt: 4, text: 'agent' },
+            buildToolCallMessage({ id: 't3', localId: null, createdAt: 5 }),
+        ];
+        const messagesById = Object.fromEntries(messages.map((m) => [m.id, m]));
+
+        const r1 = buildChatListItemsCached({
+            cache: null,
+            messageIdsOldestFirst: ['u1', 't1', 't2', 'a1', 't3'],
+            messagesById,
+            pendingMessages: [],
+            groupConsecutiveToolCalls: true,
+        });
+
+        expect(r1.items.map((item) => item.kind)).toEqual(['message', 'tool-calls-group', 'message', 'tool-calls-group']);
+        expect(r1.items[0]?.kind === 'message' && r1.items[0].messageId).toBe('u1');
+        expect(r1.items[1]?.kind === 'tool-calls-group' && r1.items[1].toolMessageIds).toEqual(['t1', 't2']);
+        expect(r1.items[2]?.kind === 'message' && r1.items[2].messageId).toBe('a1');
+        expect(r1.items[3]?.kind === 'tool-calls-group' && r1.items[3].toolMessageIds).toEqual(['t3']);
+    });
+
     it('still drops pending messages that are materialized in committed messages after append', () => {
         const messages: Message[] = [
             { kind: 'user-text', id: 'm-user', localId: 'p1', createdAt: 20, text: 'materialized user' },
@@ -221,6 +248,8 @@ describe('buildChatListItemsCached', () => {
                     return item.draft.id;
                 case 'fork-divider':
                     return item.id;
+                case 'tool-calls-group':
+                    return item.toolMessageIds;
                 default: {
                     const _exhaustive: never = item;
                     return _exhaustive;
@@ -250,6 +279,8 @@ describe('buildChatListItemsCached', () => {
                     return item.draft.id;
                 case 'fork-divider':
                     return item.id;
+                case 'tool-calls-group':
+                    return item.toolMessageIds;
                 default: {
                     const _exhaustive: never = item;
                     return _exhaustive;
