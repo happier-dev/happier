@@ -65,3 +65,19 @@ describe('claudeDaemonSpawnHooks.validateSpawn', () => {
     expect(res.ok).toBe(true);
   });
 });
+
+describe('claudeDaemonSpawnHooks.buildAuthEnv', () => {
+  it('maps setup-token strings to CLAUDE_CODE_SETUP_TOKEN', async () => {
+    const { claudeDaemonSpawnHooks } = await import('./spawnHooks');
+    const res = await claudeDaemonSpawnHooks.buildAuthEnv!({ token: 'sk-ant-oat01-123' });
+    expect(res.env).toMatchObject({ CLAUDE_CODE_SETUP_TOKEN: 'sk-ant-oat01-123' });
+    expect(res.env).not.toHaveProperty('CLAUDE_CODE_OAUTH_TOKEN');
+  });
+
+  it('maps non-setup-token strings to CLAUDE_CODE_OAUTH_TOKEN', async () => {
+    const { claudeDaemonSpawnHooks } = await import('./spawnHooks');
+    const res = await claudeDaemonSpawnHooks.buildAuthEnv!({ token: 'oauth-access' });
+    expect(res.env).toMatchObject({ CLAUDE_CODE_OAUTH_TOKEN: 'oauth-access' });
+    expect(res.env).not.toHaveProperty('CLAUDE_CODE_SETUP_TOKEN');
+  });
+});

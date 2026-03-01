@@ -4,11 +4,16 @@ import { access } from 'node:fs/promises';
 import { constants as fsConstants } from 'node:fs';
 
 export const claudeDaemonSpawnHooks: DaemonSpawnHooks = {
-  buildAuthEnv: async ({ token }) => ({
-    env: { CLAUDE_CODE_OAUTH_TOKEN: token },
-    cleanupOnFailure: null,
-    cleanupOnExit: null,
-  }),
+  buildAuthEnv: async ({ token }) => {
+    const env: Record<string, string> = token.startsWith('sk-ant-oat01-')
+      ? { CLAUDE_CODE_SETUP_TOKEN: token }
+      : { CLAUDE_CODE_OAUTH_TOKEN: token };
+    return {
+      env,
+      cleanupOnFailure: null,
+      cleanupOnExit: null,
+    };
+  },
   validateSpawn: async () => {
     const isWindows = process.platform === 'win32';
     const accessMode = isWindows ? fsConstants.F_OK : fsConstants.X_OK;
