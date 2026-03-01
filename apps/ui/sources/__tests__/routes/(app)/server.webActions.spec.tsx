@@ -126,7 +126,7 @@ describe('ServerConfigScreen (web row actions)', () => {
         const company = upsertServerProfile({ serverUrl: 'https://company.example.test', name: 'Company' });
         setActiveServerId(company.id, { scope: 'device' });
 
-        const Screen = (await import('./server')).default;
+        const Screen = (await import('@/app/(app)/server')).default;
         await act(async () => {
             renderer.create(React.createElement(Screen));
         });

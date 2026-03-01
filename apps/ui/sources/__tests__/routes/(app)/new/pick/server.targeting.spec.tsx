@@ -192,7 +192,7 @@ describe('new-session server picker targeting', () => {
         state.settings.serverSelectionActiveTargetKind = 'group';
         state.settings.serverSelectionActiveTargetId = 'grp-dev';
 
-        const Screen = (await import('./server')).default;
+        const Screen = (await import('@/app/(app)/new/pick/server')).default;
         await act(async () => {
             renderer.create(React.createElement(Screen));
             await Promise.resolve();
@@ -217,7 +217,7 @@ describe('new-session server picker targeting', () => {
         // Non-default selection should not affect the global app target selection.
         const before = { ...state.settings };
 
-        const Screen = (await import('./server')).default;
+        const Screen = (await import('@/app/(app)/new/pick/server')).default;
         await act(async () => {
             renderer.create(React.createElement(Screen));
             await Promise.resolve();
@@ -257,7 +257,7 @@ describe('new-session server picker targeting', () => {
         state.settings.serverSelectionActiveTargetKind = 'group';
         state.settings.serverSelectionActiveTargetId = 'grp-dev';
 
-        const Screen = (await import('./server')).default;
+        const Screen = (await import('@/app/(app)/new/pick/server')).default;
         await act(async () => {
             renderer.create(React.createElement(Screen));
             await Promise.resolve();

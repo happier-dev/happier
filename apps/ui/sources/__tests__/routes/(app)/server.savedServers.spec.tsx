@@ -173,7 +173,7 @@ describe('ServerConfigScreen', () => {
         const company = upsertServerProfile({ serverUrl: 'https://company.example.test', name: 'Company' });
         setActiveServerId(company.id, { scope: 'device' });
 
-        const Screen = (await import('./server')).default;
+        const Screen = (await import('@/app/(app)/server')).default;
 
         let tree: renderer.ReactTestRenderer | null = null;
         await act(async () => {
@@ -197,7 +197,7 @@ describe('ServerConfigScreen', () => {
 
         const { getActiveServerId } = await import('@/sync/domains/server/serverProfiles');
 
-        const Screen = (await import('./server')).default;
+        const Screen = (await import('@/app/(app)/server')).default;
 
         await act(async () => {
             renderer.create(React.createElement(Screen));
@@ -229,7 +229,7 @@ describe('ServerConfigScreen', () => {
         });
         (globalThis as any).fetch = fetchSpy;
 
-        const Screen = (await import('./server')).default;
+        const Screen = (await import('@/app/(app)/server')).default;
         await act(async () => {
             renderer.create(React.createElement(Screen));
             await new Promise((r) => setTimeout(r, 0));
@@ -249,7 +249,7 @@ describe('ServerConfigScreen', () => {
         const fetchSpy = vi.fn(async () => ({ ok: true, json: async () => ({}) }));
         (globalThis as any).fetch = fetchSpy;
 
-        const Screen = (await import('./server')).default;
+        const Screen = (await import('@/app/(app)/server')).default;
         await act(async () => {
             renderer.create(React.createElement(Screen));
             await new Promise((r) => setTimeout(r, 0));
@@ -277,7 +277,7 @@ describe('ServerConfigScreen', () => {
         ]);
         vi.resetModules();
 
-        const Screen = (await import('./server')).default;
+        const Screen = (await import('@/app/(app)/server')).default;
         let tree: renderer.ReactTestRenderer | null = null;
         await act(async () => {
             tree = renderer.create(React.createElement(Screen));
@@ -308,7 +308,7 @@ describe('ServerConfigScreen', () => {
             serverSelectionActiveTargetId: 'grp',
         } as any);
 
-        const Screen = (await import('./server')).default;
+        const Screen = (await import('@/app/(app)/server')).default;
         let tree: renderer.ReactTestRenderer | null = null;
         await act(async () => {
             tree = renderer.create(React.createElement(Screen));
@@ -349,7 +349,7 @@ describe('ServerConfigScreen', () => {
             serverSelectionActiveTargetId: 'grp',
         } as any);
 
-        const Screen = (await import('./server')).default;
+        const Screen = (await import('@/app/(app)/server')).default;
         await act(async () => {
             renderer.create(React.createElement(Screen));
             await new Promise((r) => setTimeout(r, 0));
@@ -394,7 +394,7 @@ describe('ServerConfigScreen', () => {
 
         const before = store.getState().settings;
 
-        const Screen = (await import('./server')).default;
+        const Screen = (await import('@/app/(app)/server')).default;
         await act(async () => {
             renderer.create(React.createElement(Screen));
             await new Promise((r) => setTimeout(r, 0));
@@ -426,7 +426,7 @@ describe('ServerConfigScreen', () => {
         const fetchSpy = vi.fn(async () => ({ ok: true, json: async () => ({}) }));
         (globalThis as any).fetch = fetchSpy;
 
-        const Screen = (await import('./server')).default;
+        const Screen = (await import('@/app/(app)/server')).default;
         let tree: renderer.ReactTestRenderer | null = null;
         await act(async () => {
             tree = renderer.create(React.createElement(Screen));
@@ -478,7 +478,7 @@ describe('ServerConfigScreen', () => {
             serverSelectionActiveTargetId: a.id,
         } as any);
 
-        const Screen = (await import('./server')).default;
+        const Screen = (await import('@/app/(app)/server')).default;
         let tree: renderer.ReactTestRenderer | null = null;
         await act(async () => {
             tree = renderer.create(React.createElement(Screen));
