@@ -4,6 +4,7 @@ import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { Typography } from '@/constants/Typography';
 import { Text, TextInput } from '@/components/ui/text/Text';
+import { t } from '@/text';
 
 
 export function ReviewCommentInlineComposer(props: {
@@ -20,7 +21,7 @@ export function ReviewCommentInlineComposer(props: {
             <TextInput
                 value={props.value}
                 onChangeText={props.onChange}
-                placeholder="Add a review comment…"
+                placeholder={t('files.reviewComments.placeholder')}
                 placeholderTextColor={theme.colors.textSecondary}
                 multiline
                 style={styles.input}
@@ -28,15 +29,15 @@ export function ReviewCommentInlineComposer(props: {
             <View style={styles.actions}>
                 {props.onDelete ? (
                     <Pressable onPress={props.onDelete} style={styles.dangerButton}>
-                        <Text style={styles.dangerText}>Delete</Text>
+                        <Text style={styles.dangerText}>{t('common.delete')}</Text>
                     </Pressable>
                 ) : null}
                 <View style={{ flex: 1 }} />
                 <Pressable onPress={props.onCancel} style={styles.secondaryButton}>
-                    <Text style={styles.secondaryText}>Cancel</Text>
+                    <Text style={styles.secondaryText}>{t('common.cancel')}</Text>
                 </Pressable>
                 <Pressable onPress={props.onSave} style={styles.primaryButton}>
-                    <Text style={styles.primaryText}>Save</Text>
+                    <Text style={styles.primaryText}>{t('common.save')}</Text>
                 </Pressable>
             </View>
         </View>

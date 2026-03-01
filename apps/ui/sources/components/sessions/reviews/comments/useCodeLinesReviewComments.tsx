@@ -5,6 +5,7 @@ import { useUnistyles } from 'react-native-unistyles';
 import type { CodeLine } from '@/components/ui/code/model/codeLineTypes';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
+import { t } from '@/text';
 import type { ReviewCommentDraft, ReviewCommentSource } from '@/sync/domains/input/reviewComments/reviewCommentTypes';
 
 import { buildReviewCommentDraftFromCodeLine } from './buildReviewCommentDraftFromCodeLine';
@@ -126,7 +127,7 @@ export function useCodeLinesReviewComments(params: {
                                             color: theme.colors.textDestructive ?? theme.colors.textSecondary,
                                         }}
                                     >
-                                        Delete
+                                        {t('common.delete')}
                                     </Text>
                                 </View>
                             </View>
@@ -152,7 +153,7 @@ export function useCodeLinesReviewComments(params: {
                         onSave={() => {
                             const body = commentBody.trim();
                             if (!body) {
-                                onError?.('Comment cannot be empty');
+                                onError?.(t('files.reviewComments.errors.empty'));
                                 return;
                             }
 
