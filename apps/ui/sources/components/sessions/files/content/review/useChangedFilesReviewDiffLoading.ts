@@ -106,27 +106,16 @@ export function useChangedFilesReviewDiffLoading(input: {
     }, [diffArea, refreshToken, sessionId, snapshotSignature]);
 
     React.useEffect(() => {
-        const normalized = requestedPathsNormalizedRef.current;
-        if (!normalized || normalized.length === 0) return;
-        const allowed = new Set<string>();
-        for (const p of normalized) {
-            allowed.add(p);
-        }
-        if (allowed.size === 0) return;
-
-        // Keep in-flight entries so callers don't flip-flop loading indicators during fast scroll.
-        for (const p of inFlightPathsRef.current) {
-            allowed.add(p);
-        }
-
         setDiffStateByPath((prev) => {
             const keys = Object.keys(prev);
             if (keys.length === 0) return prev;
-
             let changed = false;
             const next: Record<string, DiffState> = {};
             for (const key of keys) {
-                if (!allowed.has(key)) {
+                // Keep loaded/off-screen diffs in memory while the review is open so list row heights
+                // remain stable during virtualized scrolling. Only drop entries for files that no
+                // longer exist in the current review set.
+                if (!fileStatusByPath.has(key) && !inFlightPathsRef.current.has(key)) {
                     changed = true;
                     continue;
                 }
@@ -134,7 +123,7 @@ export function useChangedFilesReviewDiffLoading(input: {
             }
             return changed ? next : prev;
         });
-    }, [requestedPathsKey]);
+    }, [fileStatusByPath]);
 
     React.useEffect(() => {
         if (!sessionId) return;

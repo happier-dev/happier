@@ -250,7 +250,7 @@ describe('useChangedFilesReviewDiffLoading', () => {
         hook.unmount();
     });
 
-    it('prunes diff state when requestedPaths shrink', async () => {
+    it('keeps already loaded diffs when requestedPaths shrink', async () => {
         const { useChangedFilesReviewDiffLoading } = await import('./useChangedFilesReviewDiffLoading');
 
         const reviewFiles = [file('a.ts'), file('b.ts')];
@@ -294,7 +294,7 @@ describe('useChangedFilesReviewDiffLoading', () => {
             await flushAsync(3);
         });
 
-        expect(current!.getDiffState('a.ts').status).toBe('idle');
+        expect(current!.getDiffState('a.ts').status).toBe('loaded');
         expect(current!.getDiffState('b.ts').status).toBe('loaded');
     });
 
