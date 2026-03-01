@@ -732,7 +732,7 @@ export default React.memo(() => {
     if (!isDataReady) {
         // Still loading data
         return (
-            <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
+            <View testID="session-info-screen" style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
                 <Ionicons name="hourglass-outline" size={48} color={theme.colors.textSecondary} />
                 <Text style={{ color: theme.colors.textSecondary, fontSize: 17, marginTop: 16, ...Typography.default('semiBold') }}>{t('common.loading')}</Text>
             </View>
@@ -742,7 +742,7 @@ export default React.memo(() => {
     if (!session) {
         // Session has been deleted or doesn't exist
         return (
-            <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
+            <View testID="session-info-screen" style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
                 <Ionicons name="trash-outline" size={48} color={theme.colors.textSecondary} />
                 <Text style={{ color: theme.colors.text, fontSize: 20, marginTop: 16, ...Typography.default('semiBold') }}>{t('errors.sessionDeleted')}</Text>
                 <Text style={{ color: theme.colors.textSecondary, fontSize: 15, marginTop: 8, textAlign: 'center', paddingHorizontal: 32, ...Typography.default() }}>{t('errors.sessionDeletedDescription')}</Text>
@@ -750,5 +750,9 @@ export default React.memo(() => {
         );
     }
 
-    return <SessionInfoContent session={session} />;
+    return (
+        <View testID="session-info-screen" style={{ flex: 1 }}>
+            <SessionInfoContent session={session} />
+        </View>
+    );
 });
