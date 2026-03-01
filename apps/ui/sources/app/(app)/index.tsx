@@ -5,7 +5,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import * as React from 'react';
 import { encodeBase64 } from "@/encryption/base64";
 import { authGetToken } from "@/auth/flows/getToken";
-import { router, useRouter } from "expo-router";
+import { router, useRouter, useLocalSearchParams } from "expo-router";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { getRandomBytesAsync } from "@/platform/cryptoRandom";
 import { useIsLandscape } from "@/utils/platform/responsive";
@@ -42,6 +42,28 @@ export default function Home() {
 }
 
 function Authenticated() {
+    const params = useLocalSearchParams<{ id?: string | string[]; messageId?: string | string[]; jumpChildId?: string | string[] }>();
+    const router = useRouter();
+
+    const sessionId = typeof params.id === 'string' ? params.id : Array.isArray(params.id) ? (params.id[0] ?? null) : null;
+    const messageId = typeof params.messageId === 'string' ? params.messageId : Array.isArray(params.messageId) ? (params.messageId[0] ?? null) : null;
+    const jumpChildId = typeof params.jumpChildId === 'string' ? params.jumpChildId : Array.isArray(params.jumpChildId) ? (params.jumpChildId[0] ?? null) : null;
+
+    React.useEffect(() => {
+        const sid = String(sessionId ?? '').trim();
+        if (!sid) return;
+
+        const mid = String(messageId ?? '').trim();
+        if (mid) {
+            const child = String(jumpChildId ?? '').trim();
+            const qs = child ? `?jumpChildId=${encodeURIComponent(child)}` : '';
+            router.replace(`/session/${encodeURIComponent(sid)}/message/${encodeURIComponent(mid)}${qs}`);
+            return;
+        }
+
+        router.replace(`/session/${encodeURIComponent(sid)}`);
+    }, [jumpChildId, messageId, router, sessionId]);
+
     return <MainView variant="phone" />;
 }
 

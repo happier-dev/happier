@@ -15,6 +15,14 @@ vi.mock('react-native-typography', () => ({ iOSUIKit: { title3: {} } }));
 vi.mock('@/components/navigation/shell/HomeHeader', () => ({ HomeHeaderNotAuth: () => null }));
 vi.mock('@/components/navigation/shell/MainView', () => ({ MainView: () => null }));
 vi.mock('@shopify/react-native-skia', () => ({}));
+vi.mock('@/encryption/libsodium.lib', () => ({
+    default: {
+        crypto_sign_seed_keypair: () => ({
+            publicKey: new Uint8Array(),
+            privateKey: new Uint8Array(),
+        }),
+    },
+}));
 vi.mock('react-native-safe-area-context', () => ({
     useSafeAreaInsets: () => ({ top: 0, bottom: 0, left: 0, right: 0 }),
 }));
