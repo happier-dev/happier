@@ -3,6 +3,14 @@ import { describe, expect, it } from 'vitest';
 import { localSettingsDefaults, localSettingsParse } from './localSettings';
 
 describe('localSettingsParse', () => {
+    it('includes multi-pane and pane tab defaults', () => {
+        const parsed = localSettingsParse(null);
+        expect(parsed.uiMultiPanePanelsEnabled).toBe(true);
+        expect(parsed.detailsPaneTabsBehavior).toBe('preview');
+        expect(typeof (parsed as any).sidebarWidthPx).toBe('number');
+        expect(typeof (parsed as any).sidebarWidthBasisPx).toBe('number');
+    });
+
     it('returns defaults for non-object input', () => {
         expect(localSettingsParse(null)).toEqual(localSettingsDefaults);
         expect(localSettingsParse(undefined)).toEqual(localSettingsDefaults);
@@ -27,4 +35,3 @@ describe('localSettingsParse', () => {
         expect(tooBig.uiFontScale).toBeLessThanOrEqual(2.5);
     });
 });
-
