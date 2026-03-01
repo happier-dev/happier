@@ -53,6 +53,7 @@ describe('SourceControlUnavailableState', () => {
     });
     const textNodes = tree!.root.findAllByType('Text');
     expect(textNodes.some((node) => node.props.children === RPC_ERROR_MESSAGES.METHOD_NOT_AVAILABLE)).toBe(false);
+    expect(textNodes.some((node) => node.props.children === 'errors.daemonUnavailableBody')).toBe(true);
   });
 
   it('hides method-not-found details (non-actionable)', async () => {

@@ -30,6 +30,8 @@ export function SourceControlUnavailableState(props: {
     onRetry?: () => void;
 }): React.ReactElement {
     const { theme } = useUnistyles();
+    const trimmedDetails = typeof props.details === 'string' ? props.details.trim() : '';
+    const isDaemonUnavailable = trimmedDetails === RPC_ERROR_MESSAGES.METHOD_NOT_AVAILABLE;
     const details = sanitizeDetails(props.details ?? null);
 
     return (
@@ -64,7 +66,7 @@ export function SourceControlUnavailableState(props: {
                     ...Typography.default(),
                 }}
             >
-                {t('errors.tryAgain')}
+                {isDaemonUnavailable ? t('errors.daemonUnavailableBody') : t('errors.tryAgain')}
             </Text>
 
             {details && (
