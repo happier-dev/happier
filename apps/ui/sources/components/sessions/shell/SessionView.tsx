@@ -45,10 +45,12 @@ import { getPendingQueueWakeResumeOptions } from '@/sync/domains/pending/pending
 import { getPermissionModeOverrideForSpawn } from '@/sync/domains/permissions/permissionModeOverride';
 import { getModelOverrideForSpawn } from '@/sync/domains/models/modelOverride';
 import { deriveSessionParticipantTargets } from '@/sync/domains/session/participants/deriveSessionParticipantTargets';
+import { shouldEnableExecutionRunPolling } from '@/sync/domains/session/participants/shouldEnableExecutionRunPolling';
 import { RecipientChip } from '@/components/sessions/agentInput/recipient/RecipientChip';
 import { useSessionRecipientState } from '@/components/sessions/agentInput/recipient/useSessionRecipientState';
 import { resolveParticipantRoutedSend } from '@/sync/domains/input/participants/resolveParticipantRoutedSend';
-import { sessionExecutionRunSend } from '@/sync/ops/sessionExecutionRuns';
+import { useSessionRunningExecutionRuns } from '@/hooks/session/useSessionRunningExecutionRuns';
+import { isExecutionRunNotRunningSendError, sessionExecutionRunSend } from '@/sync/ops/sessionExecutionRuns';
   import { nowServerMs } from '@/sync/runtime/time';
   import { buildResumeSessionBaseOptionsFromSession } from '@/sync/domains/session/resume/resumeSessionBase';
   import { resolveHappierReplayConfig } from '@/sync/domains/session/resume/happierReplayPrompt';
@@ -432,9 +434,25 @@ function SessionViewLoaded({ sessionId, session, isEncryptedSessionLocked, jumpT
         const addPickedAttachments = attachmentDraftManager.addPickedAttachments;
           const [isUploadingAttachments, setIsUploadingAttachments] = React.useState(false);
 
+        const executionRunPollingEnabled = React.useMemo(() => {
+            return shouldEnableExecutionRunPolling({
+                executionRunsFeatureEnabled: executionRunsEnabled,
+                messages: committedMessages,
+            });
+        }, [committedMessages, executionRunsEnabled]);
+
+        const runningExecutionRuns = useSessionRunningExecutionRuns({
+            sessionId,
+            enabled: executionRunPollingEnabled,
+        });
+
         const participantTargets = React.useMemo(() => {
-            return deriveSessionParticipantTargets({ session, messages: committedMessages });
-        }, [committedMessages, session]);
+            return deriveSessionParticipantTargets({
+                session,
+                messages: committedMessages,
+                activeExecutionRuns: runningExecutionRuns,
+            });
+        }, [committedMessages, runningExecutionRuns, session]);
         const recipientState = useSessionRecipientState({ targets: participantTargets, autoRecipient: null });
 
       React.useEffect(() => {
@@ -1351,6 +1369,9 @@ function SessionViewLoaded({ sessionId, session, isEncryptedSessionLocked, jumpT
                                         delivery: routed.delivery,
                                     });
                                     if (!result.ok) {
+                                        if (isExecutionRunNotRunningSendError(result)) {
+                                            recipientState.setManualRecipient(null);
+                                        }
                                         setMessage(previousMessage);
                                         Modal.alert(t('common.error'), result.error ?? t('runs.send.failedToSend'));
                                     }
