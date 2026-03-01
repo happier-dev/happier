@@ -1056,6 +1056,13 @@ export const zhHans: TranslationStructure = {
 
   connectedServices: {
     fallbackName: "已连接服务",
+    serviceNames: {
+      claudeSubscription: "Claude 订阅",
+      openaiCodex: "OpenAI Codex",
+      openai: "OpenAI API 密钥",
+      anthropic: "Anthropic API 密钥",
+      gemini: "Google Gemini",
+    },
     title: "已连接服务",
     authChip: {
       label: "认证",
@@ -1085,8 +1092,22 @@ export const zhHans: TranslationStructure = {
       opensInNewTab: "将在新标签页中打开",
       preparing: "准备中…",
       pasteRedirectUrl: "粘贴重定向 URL",
+      pasteRedirectUrlPlaceholder: "粘贴重定向 URL",
       pasteRedirectUrlPromptBody:
         "完成 OAuth 后，从浏览器地址栏复制最终重定向的 URL 并粘贴到这里。",
+      providerOverrides: {
+        claudeSubscription: {
+          connectWebDescription:
+            "下一步：在打开的页面中登录。Claude 可能会显示一段代码字符串，而不是自动重定向。",
+          pasteRedirectUrlPromptBody:
+            "1) 在打开的页面中登录。2) 复制最终 URL，或 Claude 显示的完整 \"code#state\" 值。3) 粘贴到下方输入框中。",
+          pasteRedirectUrlPlaceholder: "粘贴重定向 URL 或 code#state",
+          errors: {
+            missingState:
+              "缺少 OAuth state。如果 Claude 显示代码，请复制完整的 \"code#state\"，而不只是代码本身。",
+          },
+        },
+      },
       tryDeviceInstead: "改用设备认证",
       tryEmbeddedInstead: "改用应用内浏览器",
       working: "处理中…",
@@ -1096,6 +1117,10 @@ export const zhHans: TranslationStructure = {
           `${serviceId}（${profileId}）已连接。`,
         failedToOpenUrl: "无法打开链接",
         failedToConnect: "连接失败",
+      },
+      errors: {
+        missingState: "重定向 URL 中缺少 OAuth state。",
+        stateMismatch: "OAuth state 不匹配。",
       },
     },
     oauthEmbedded: {
@@ -3491,6 +3516,19 @@ export const zhHans: TranslationStructure = {
         summaryRecentTitle: "摘要 + 最近（实验）",
         summaryRecentSubtitle:
           "包含简短摘要和最近消息（尽力而为）。",
+      },
+      summaryRunner: {
+        title: "Summary runner (on-demand)",
+        backendTitle: "Backend",
+        backendPlaceholder: "claude",
+        searchBackendsPlaceholder: "搜索后端…",
+        modelTitle: "Model",
+        modelPlaceholder: "default",
+        searchModelsPlaceholder: "搜索模型…",
+        notSet: "未设置",
+        customTitle: "自定义",
+        customBackendIdSubtitle: "输入后端 id（例如 claude）。",
+        customModelIdSubtitle: "输入模型 id（例如 default）。",
       },
       recentMessagesTitle: "要包含的最近消息",
       recentMessagesPlaceholder: "16",

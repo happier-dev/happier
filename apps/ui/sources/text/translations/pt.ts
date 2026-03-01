@@ -1115,6 +1115,13 @@ export const pt: TranslationStructure = {
 
   connectedServices: {
     fallbackName: "Serviço conectado",
+    serviceNames: {
+      claudeSubscription: "Assinatura Claude",
+      openaiCodex: "OpenAI Codex",
+      openai: "Chave de API da OpenAI",
+      anthropic: "Chave de API da Anthropic",
+      gemini: "Google Gemini",
+    },
     title: "Serviços conectados",
     authChip: {
       label: "Autenticação",
@@ -1145,8 +1152,22 @@ export const pt: TranslationStructure = {
       opensInNewTab: "Abre em uma nova aba",
       preparing: "Preparando…",
       pasteRedirectUrl: "Colar URL de redirecionamento",
+      pasteRedirectUrlPlaceholder: "Colar URL de redirecionamento",
       pasteRedirectUrlPromptBody:
         "Após concluir o OAuth, copie a URL final redirecionada da barra de endereços do navegador e cole aqui.",
+      providerOverrides: {
+        claudeSubscription: {
+          connectWebDescription:
+            "Próximo passo: faça login na página que abrir. O Claude pode mostrar uma sequência de código em vez de redirecionar automaticamente.",
+          pasteRedirectUrlPromptBody:
+            "1) Faça login na página que abrir. 2) Copie a URL final ou o valor completo \"code#state\" exibido pelo Claude. 3) Cole no campo abaixo.",
+          pasteRedirectUrlPlaceholder: "Colar URL de redirecionamento ou code#state",
+          errors: {
+            missingState:
+              "Falta o estado OAuth. Se o Claude mostrar um código, copie o valor completo \"code#state\", não apenas o código.",
+          },
+        },
+      },
       tryDeviceInstead: "Tentar autenticação do dispositivo",
       tryEmbeddedInstead: "Tentar navegador no app",
       working: "Processando…",
@@ -1156,6 +1177,10 @@ export const pt: TranslationStructure = {
           `${serviceId} (${profileId}) está conectado.`,
         failedToOpenUrl: "Não foi possível abrir a URL",
         failedToConnect: "Falha ao conectar",
+      },
+      errors: {
+        missingState: "Falta o estado OAuth na URL de redirecionamento.",
+        stateMismatch: "O estado OAuth não corresponde.",
       },
     },
     oauthEmbedded: {
@@ -3723,6 +3748,19 @@ export const pt: TranslationStructure = {
           summaryRecentTitle: "Resumo + recentes (experimental)",
           summaryRecentSubtitle:
             "Incluir um resumo curto e mensagens recentes (melhor esforço).",
+        },
+        summaryRunner: {
+          title: "Summary runner (on-demand)",
+          backendTitle: "Backend",
+          backendPlaceholder: "claude",
+          searchBackendsPlaceholder: "Buscar backends…",
+          modelTitle: "Model",
+          modelPlaceholder: "default",
+          searchModelsPlaceholder: "Buscar modelos…",
+          notSet: "Não definido",
+          customTitle: "Personalizado",
+          customBackendIdSubtitle: "Informe um id de backend (ex.: claude).",
+          customModelIdSubtitle: "Informe um id de modelo (ex.: default).",
         },
         recentMessagesTitle: "Mensagens recentes a incluir",
         recentMessagesPlaceholder: "16",

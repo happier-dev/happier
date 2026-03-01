@@ -1126,6 +1126,13 @@ export const pl: TranslationStructure = {
 
   connectedServices: {
     fallbackName: "Połączona usługa",
+    serviceNames: {
+      claudeSubscription: "Subskrypcja Claude",
+      openaiCodex: "OpenAI Codex",
+      openai: "Klucz API OpenAI",
+      anthropic: "Klucz API Anthropic",
+      gemini: "Google Gemini",
+    },
     title: "Połączone usługi",
     authChip: {
       label: "Autoryzacja",
@@ -1156,8 +1163,22 @@ export const pl: TranslationStructure = {
       opensInNewTab: "Otwiera się w nowej karcie",
       preparing: "Przygotowywanie…",
       pasteRedirectUrl: "Wklej URL przekierowania",
+      pasteRedirectUrlPlaceholder: "Wklej URL przekierowania",
       pasteRedirectUrlPromptBody:
         "Po ukończeniu OAuth skopiuj końcowy przekierowany URL z paska adresu przeglądarki i wklej go tutaj.",
+      providerOverrides: {
+        claudeSubscription: {
+          connectWebDescription:
+            "Następny krok: zaloguj się na otwartej stronie. Claude może pokazać ciąg kodu zamiast automatycznego przekierowania.",
+          pasteRedirectUrlPromptBody:
+            "1) Zaloguj się na otwartej stronie. 2) Skopiuj końcowy URL albo pełną wartość \"code#state\" pokazaną przez Claude. 3) Wklej ją w polu poniżej.",
+          pasteRedirectUrlPlaceholder: "Wklej URL przekierowania lub code#state",
+          errors: {
+            missingState:
+              "Brakuje stanu OAuth. Jeśli Claude pokazuje kod, skopiuj pełną wartość \"code#state\", a nie sam kod.",
+          },
+        },
+      },
       tryDeviceInstead: "Spróbuj uwierzytelniania urządzenia",
       tryEmbeddedInstead: "Spróbuj przeglądarki w aplikacji",
       working: "Przetwarzanie…",
@@ -1167,6 +1188,10 @@ export const pl: TranslationStructure = {
           `${serviceId} (${profileId}) jest połączone.`,
         failedToOpenUrl: "Nie udało się otworzyć URL",
         failedToConnect: "Nie udało się połączyć",
+      },
+      errors: {
+        missingState: "Brak stanu OAuth w URL przekierowania.",
+        stateMismatch: "Stan OAuth nie zgadza się.",
       },
     },
     oauthEmbedded: {
@@ -3724,6 +3749,19 @@ export const pl: TranslationStructure = {
           summaryRecentTitle: "Podsumowanie + ostatnie (eksperymentalne)",
           summaryRecentSubtitle:
             "Dołącz krótkie podsumowanie i ostatnie wiadomości (best-effort).",
+        },
+        summaryRunner: {
+          title: "Summary runner (on-demand)",
+          backendTitle: "Backend",
+          backendPlaceholder: "claude",
+          searchBackendsPlaceholder: "Szukaj backendów…",
+          modelTitle: "Model",
+          modelPlaceholder: "default",
+          searchModelsPlaceholder: "Szukaj modeli…",
+          notSet: "Nie ustawiono",
+          customTitle: "Własny",
+          customBackendIdSubtitle: "Wpisz id backendu (np. claude).",
+          customModelIdSubtitle: "Wpisz id modelu (np. default).",
         },
         recentMessagesTitle: "Ostatnie wiadomości do dołączenia",
         recentMessagesPlaceholder: "16",

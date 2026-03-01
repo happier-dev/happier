@@ -1084,6 +1084,13 @@ export const ru: TranslationStructure = {
 
   connectedServices: {
     fallbackName: "Подключённый сервис",
+    serviceNames: {
+      claudeSubscription: "Подписка Claude",
+      openaiCodex: "OpenAI Codex",
+      openai: "Ключ API OpenAI",
+      anthropic: "Ключ API Anthropic",
+      gemini: "Google Gemini",
+    },
     title: "Подключённые сервисы",
     authChip: {
       label: "Авторизация",
@@ -1114,8 +1121,22 @@ export const ru: TranslationStructure = {
       opensInNewTab: "Откроется в новой вкладке",
       preparing: "Подготовка…",
       pasteRedirectUrl: "Вставить URL редиректа",
+      pasteRedirectUrlPlaceholder: "Вставить URL редиректа",
       pasteRedirectUrlPromptBody:
         "После завершения OAuth скопируйте итоговый URL редиректа из адресной строки браузера и вставьте его сюда.",
+      providerOverrides: {
+        claudeSubscription: {
+          connectWebDescription:
+            "Следующий шаг: войдите на открывшейся странице. Claude может показать строку кода вместо автоматического редиректа.",
+          pasteRedirectUrlPromptBody:
+            "1) Войдите на открывшейся странице. 2) Скопируйте итоговый URL или полное значение \"code#state\", показанное Claude. 3) Вставьте его в поле ниже.",
+          pasteRedirectUrlPlaceholder: "Вставьте URL редиректа или code#state",
+          errors: {
+            missingState:
+              "Отсутствует состояние OAuth. Если Claude показывает код, скопируйте полное значение \"code#state\", а не только код.",
+          },
+        },
+      },
       tryDeviceInstead: "Попробовать аутентификацию устройства",
       tryEmbeddedInstead: "Попробовать встроенный браузер",
       working: "Выполняется…",
@@ -1125,6 +1146,10 @@ export const ru: TranslationStructure = {
           `${serviceId} (${profileId}) подключено.`,
         failedToOpenUrl: "Не удалось открыть URL",
         failedToConnect: "Не удалось подключиться",
+      },
+      errors: {
+        missingState: "Отсутствует состояние OAuth в URL редиректа.",
+        stateMismatch: "Состояние OAuth не совпадает.",
       },
     },
     oauthEmbedded: {
@@ -3712,6 +3737,19 @@ export const ru: TranslationStructure = {
           summaryRecentTitle: "Сводка + недавние (экспериментально)",
           summaryRecentSubtitle:
             "Включить краткую сводку и недавние сообщения (по возможности).",
+        },
+        summaryRunner: {
+          title: "Summary runner (on-demand)",
+          backendTitle: "Backend",
+          backendPlaceholder: "claude",
+          searchBackendsPlaceholder: "Поиск бэкендов…",
+          modelTitle: "Model",
+          modelPlaceholder: "default",
+          searchModelsPlaceholder: "Поиск моделей…",
+          notSet: "Не задано",
+          customTitle: "Пользовательский",
+          customBackendIdSubtitle: "Введите id бэкенда (напр. claude).",
+          customModelIdSubtitle: "Введите id модели (напр. default).",
         },
         recentMessagesTitle: "Количество недавних сообщений",
         recentMessagesPlaceholder: "16",

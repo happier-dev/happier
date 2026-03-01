@@ -1038,6 +1038,13 @@ export const en = {
 
     connectedServices: {
         fallbackName: 'Connected service',
+        serviceNames: {
+            claudeSubscription: 'Claude subscription',
+            openaiCodex: 'OpenAI Codex',
+            openai: 'OpenAI API key',
+            anthropic: 'Anthropic API key',
+            gemini: 'Google Gemini',
+        },
         title: 'Connected services',
         authChip: {
             label: 'Auth',
@@ -1061,13 +1068,26 @@ export const en = {
             invalidConfig: 'Invalid connected service configuration.',
             connectWebGroupTitle: 'Connect (web)',
             connectWebDescription:
-                'Open the authorization URL, finish OAuth in your browser, then copy/paste the final redirected URL back into Happier.',
-            openAuthorizationUrl: 'Open authorization URL',
+                'Next step: sign in on the page that opens, copy the final browser URL, then paste it back here.',
+            openAuthorizationUrl: 'Open login page',
             opensInNewTab: 'Opens in a new tab',
             preparing: 'Preparing…',
             pasteRedirectUrl: 'Paste redirect URL',
+            pasteRedirectUrlPlaceholder: 'Paste redirect URL',
             pasteRedirectUrlPromptBody:
-                'After completing OAuth, copy the final redirected URL from your browser address bar and paste it here.',
+                '1) Sign in on the page that opens. 2) Copy the final URL from your browser address bar. 3) Paste it in the field below.',
+            providerOverrides: {
+                claudeSubscription: {
+                    connectWebDescription:
+                        'Next step: sign in on the page that opens. Claude may show a code string instead of redirecting automatically.',
+                    pasteRedirectUrlPromptBody:
+                        '1) Sign in on the page that opens. 2) Copy either the final URL or the full "code#state" value shown by Claude. 3) Paste it in the field below.',
+                    pasteRedirectUrlPlaceholder: 'Paste redirect URL or code#state',
+                    errors: {
+                        missingState: 'Missing OAuth state. If Claude shows a code, copy the full "code#state" value, not only the code.',
+                    },
+                },
+            },
             tryDeviceInstead: 'Try device auth instead',
             tryEmbeddedInstead: 'Try in-app browser instead',
             working: 'Working…',
@@ -1077,6 +1097,10 @@ export const en = {
                     `${serviceId} (${profileId}) is connected.`,
                 failedToOpenUrl: 'Failed to open URL',
                 failedToConnect: 'Failed to connect',
+            },
+            errors: {
+                missingState: 'Missing OAuth state in redirect URL.',
+                stateMismatch: 'OAuth state mismatch.',
             },
         },
         oauthEmbedded: {
@@ -3309,6 +3333,19 @@ export const en = {
                   recentSubtitle: 'Use only the most recent transcript messages.',
                   summaryRecentTitle: 'Summary + recent (experimental)',
                   summaryRecentSubtitle: 'Include a short summary and recent messages (best-effort).',
+              },
+              summaryRunner: {
+                  title: 'Summary runner (on-demand)',
+                  backendTitle: 'Backend',
+                  backendPlaceholder: 'claude',
+                  searchBackendsPlaceholder: 'Search backends…',
+                  modelTitle: 'Model',
+                  modelPlaceholder: 'default',
+                  searchModelsPlaceholder: 'Search models…',
+                  notSet: 'Not set',
+                  customTitle: 'Custom',
+                  customBackendIdSubtitle: 'Enter a backend id (e.g. claude).',
+                  customModelIdSubtitle: 'Enter a model id (e.g. default).',
               },
               recentMessagesTitle: 'Recent messages to include',
               recentMessagesPlaceholder: '16',

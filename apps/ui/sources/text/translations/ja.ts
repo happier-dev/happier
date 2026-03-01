@@ -1393,6 +1393,13 @@ export const ja: TranslationStructure = {
 
   connectedServices: {
     fallbackName: "連携サービス",
+    serviceNames: {
+      claudeSubscription: "Claude サブスクリプション",
+      openaiCodex: "OpenAI Codex",
+      openai: "OpenAI API キー",
+      anthropic: "Anthropic API キー",
+      gemini: "Google Gemini",
+    },
     title: "接続済みサービス",
     authChip: {
       label: "認証",
@@ -1421,8 +1428,22 @@ export const ja: TranslationStructure = {
       opensInNewTab: "新しいタブで開きます",
       preparing: "準備中…",
       pasteRedirectUrl: "リダイレクト URL を貼り付け",
+      pasteRedirectUrlPlaceholder: "リダイレクト URL を貼り付け",
       pasteRedirectUrlPromptBody:
         "OAuth を完了したら、ブラウザのアドレスバーに表示されている最終的なリダイレクト URL をコピーして、ここに貼り付けてください。",
+      providerOverrides: {
+        claudeSubscription: {
+          connectWebDescription:
+            "次の手順: 開いたページでサインインしてください。Claude は自動リダイレクトではなくコード文字列を表示する場合があります。",
+          pasteRedirectUrlPromptBody:
+            "1) 開いたページでサインインします。2) 最終URL または Claude に表示された完全な \"code#state\" をコピーします。3) 下の入力欄に貼り付けます。",
+          pasteRedirectUrlPlaceholder: "リダイレクト URL または code#state を貼り付け",
+          errors: {
+            missingState:
+              "OAuth state がありません。Claude がコードを表示した場合は、コードだけでなく完全な \"code#state\" をコピーしてください。",
+          },
+        },
+      },
       tryDeviceInstead: "デバイス認証を試す",
       tryEmbeddedInstead: "アプリ内ブラウザを試す",
       working: "処理中…",
@@ -1432,6 +1453,10 @@ export const ja: TranslationStructure = {
           `${serviceId}（${profileId}）を接続しました。`,
         failedToOpenUrl: "URL を開けませんでした",
         failedToConnect: "接続に失敗しました",
+      },
+      errors: {
+        missingState: "リダイレクト URL に OAuth state がありません。",
+        stateMismatch: "OAuth state が一致しません。",
       },
     },
     oauthEmbedded: {
@@ -3949,6 +3974,19 @@ export const ja: TranslationStructure = {
           summaryRecentTitle: "要約 + 最近（実験的）",
           summaryRecentSubtitle:
             "短い要約と最近のメッセージを含めます（ベストエフォート）。",
+        },
+        summaryRunner: {
+          title: "Summary runner (on-demand)",
+          backendTitle: "Backend",
+          backendPlaceholder: "claude",
+          searchBackendsPlaceholder: "バックエンドを検索…",
+          modelTitle: "Model",
+          modelPlaceholder: "default",
+          searchModelsPlaceholder: "モデルを検索…",
+          notSet: "未設定",
+          customTitle: "カスタム",
+          customBackendIdSubtitle: "バックエンドIDを入力（例: claude）。",
+          customModelIdSubtitle: "モデルIDを入力（例: default）。",
         },
         recentMessagesTitle: "含める最近メッセージ",
         recentMessagesPlaceholder: "16",

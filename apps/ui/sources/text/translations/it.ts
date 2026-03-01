@@ -1423,6 +1423,13 @@ export const it: TranslationStructure = {
 
   connectedServices: {
     fallbackName: "Servizio connesso",
+    serviceNames: {
+      claudeSubscription: "Abbonamento Claude",
+      openaiCodex: "OpenAI Codex",
+      openai: "Chiave API OpenAI",
+      anthropic: "Chiave API Anthropic",
+      gemini: "Google Gemini",
+    },
     title: "Servizi connessi",
     authChip: {
       label: "Autenticazione",
@@ -1454,8 +1461,22 @@ export const it: TranslationStructure = {
       opensInNewTab: "Si apre in una nuova scheda",
       preparing: "Preparazione…",
       pasteRedirectUrl: "Incolla URL di reindirizzamento",
+      pasteRedirectUrlPlaceholder: "Incolla URL di reindirizzamento",
       pasteRedirectUrlPromptBody:
         "Dopo aver completato OAuth, copia l’URL finale reindirizzato dalla barra degli indirizzi del browser e incollalo qui.",
+      providerOverrides: {
+        claudeSubscription: {
+          connectWebDescription:
+            "Passaggio successivo: accedi nella pagina che si apre. Claude potrebbe mostrare una stringa di codice invece di reindirizzare automaticamente.",
+          pasteRedirectUrlPromptBody:
+            "1) Accedi nella pagina che si apre. 2) Copia l'URL finale oppure il valore completo \"code#state\" mostrato da Claude. 3) Incollalo nel campo qui sotto.",
+          pasteRedirectUrlPlaceholder: "Incolla URL di reindirizzamento o code#state",
+          errors: {
+            missingState:
+              "Manca lo stato OAuth. Se Claude mostra un codice, copia il valore completo \"code#state\", non solo il codice.",
+          },
+        },
+      },
       tryDeviceInstead: "Prova l’autenticazione del dispositivo",
       tryEmbeddedInstead: "Prova il browser integrato",
       working: "Elaborazione…",
@@ -1465,6 +1486,10 @@ export const it: TranslationStructure = {
           `${serviceId} (${profileId}) è connesso.`,
         failedToOpenUrl: "Impossibile aprire l’URL",
         failedToConnect: "Connessione non riuscita",
+      },
+      errors: {
+        missingState: "Stato OAuth mancante nell’URL di reindirizzamento.",
+        stateMismatch: "Stato OAuth non corrispondente.",
       },
     },
     oauthEmbedded: {
@@ -4017,6 +4042,19 @@ export const it: TranslationStructure = {
           summaryRecentTitle: "Riepilogo + recenti (sperimentale)",
           summaryRecentSubtitle:
             "Includi un breve riepilogo e messaggi recenti (best-effort).",
+        },
+        summaryRunner: {
+          title: "Summary runner (on-demand)",
+          backendTitle: "Backend",
+          backendPlaceholder: "claude",
+          searchBackendsPlaceholder: "Cerca backend…",
+          modelTitle: "Model",
+          modelPlaceholder: "default",
+          searchModelsPlaceholder: "Cerca modelli…",
+          notSet: "Non impostato",
+          customTitle: "Personalizzato",
+          customBackendIdSubtitle: "Inserisci un id backend (es. claude).",
+          customModelIdSubtitle: "Inserisci un id modello (es. default).",
         },
         recentMessagesTitle: "Messaggi recenti da includere",
         recentMessagesPlaceholder: "16",

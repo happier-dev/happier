@@ -243,6 +243,14 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
     },
 
     connectedServices: {
+        fallbackName: '已連線服務',
+        serviceNames: {
+            claudeSubscription: 'Claude 訂閱',
+            openaiCodex: 'OpenAI Codex',
+            openai: 'OpenAI API 金鑰',
+            anthropic: 'Anthropic API 金鑰',
+            gemini: 'Google Gemini',
+        },
         title: '已連線服務',
         oauthPaste: {
             invalidConfig: '已連線服務設定無效。',
@@ -253,8 +261,21 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
             opensInNewTab: '將在新分頁中開啟',
             preparing: '準備中…',
             pasteRedirectUrl: '貼上重新導向 URL',
+            pasteRedirectUrlPlaceholder: '貼上重新導向 URL',
             pasteRedirectUrlPromptBody:
                 '完成 OAuth 後，從瀏覽器網址列複製最終重新導向的 URL 並貼上到這裡。',
+            providerOverrides: {
+                claudeSubscription: {
+                    connectWebDescription:
+                        '下一步：在開啟的頁面登入。Claude 可能會顯示一段程式碼字串，而不是自動重新導向。',
+                    pasteRedirectUrlPromptBody:
+                        '1) 在開啟的頁面登入。2) 複製最終 URL，或 Claude 顯示的完整「code#state」值。3) 貼到下方輸入欄。',
+                    pasteRedirectUrlPlaceholder: '貼上重新導向 URL 或 code#state',
+                    errors: {
+                        missingState: '缺少 OAuth state。如果 Claude 顯示程式碼，請複製完整的「code#state」，不要只複製程式碼。',
+                    },
+                },
+            },
             tryDeviceInstead: '改用裝置驗證',
             tryEmbeddedInstead: '改用應用程式內瀏覽器',
             working: '處理中…',
@@ -264,6 +285,10 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
                     `${serviceId}（${profileId}）已連線。`,
                 failedToOpenUrl: '無法開啟連結',
                 failedToConnect: '連線失敗',
+            },
+            errors: {
+                missingState: '重新導向 URL 中缺少 OAuth state。',
+                stateMismatch: 'OAuth state 不相符。',
             },
         },
         oauthEmbedded: {
@@ -2293,6 +2318,19 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
                   recentSubtitle: '僅使用最近的逐字稿訊息。',
                   summaryRecentTitle: '摘要 + 最近（實驗）',
                   summaryRecentSubtitle: '包含簡短摘要與最近訊息（盡力而為）。',
+              },
+              summaryRunner: {
+                  title: 'Summary runner (on-demand)',
+                  backendTitle: 'Backend',
+                  backendPlaceholder: 'claude',
+                  searchBackendsPlaceholder: '搜尋後端…',
+                  modelTitle: 'Model',
+                  modelPlaceholder: 'default',
+                  searchModelsPlaceholder: '搜尋模型…',
+                  notSet: '未設定',
+                  customTitle: '自訂',
+                  customBackendIdSubtitle: '輸入後端 id（例如 claude）。',
+                  customModelIdSubtitle: '輸入模型 id（例如 default）。',
               },
               recentMessagesTitle: '要包含的最近訊息',
               recentMessagesPlaceholder: '16',

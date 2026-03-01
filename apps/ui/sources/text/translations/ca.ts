@@ -1032,6 +1032,13 @@ export const ca: TranslationStructure = {
 
     connectedServices: {
         fallbackName: 'Servei connectat',
+        serviceNames: {
+            claudeSubscription: 'Subscripció de Claude',
+            openaiCodex: 'OpenAI Codex',
+            openai: 'Clau API d\'OpenAI',
+            anthropic: 'Clau API d\'Anthropic',
+            gemini: 'Google Gemini',
+        },
         title: 'Serveis connectats',
         authChip: {
             label: 'Autenticació',
@@ -1060,8 +1067,21 @@ export const ca: TranslationStructure = {
             opensInNewTab: 'S\'obre en una pestanya nova',
             preparing: 'Preparant…',
             pasteRedirectUrl: 'Enganxa l\'URL de redirecció',
+            pasteRedirectUrlPlaceholder: 'Enganxa l\'URL de redirecció',
             pasteRedirectUrlPromptBody:
                 'Després de completar OAuth, copia l\'URL final redirigida de la barra d\'adreces del navegador i enganxa-la aquí.',
+            providerOverrides: {
+                claudeSubscription: {
+                    connectWebDescription:
+                        'Pas següent: inicia sessió a la pàgina que s\'obre. Claude pot mostrar una cadena de codi en lloc de redirigir automàticament.',
+                    pasteRedirectUrlPromptBody:
+                        '1) Inicia sessió a la pàgina que s\'obre. 2) Copia l\'URL final o el valor complet "code#state" mostrat per Claude. 3) Enganxa\'l al camp de sota.',
+                    pasteRedirectUrlPlaceholder: 'Enganxa l\'URL de redirecció o code#state',
+                    errors: {
+                        missingState: 'Falta l\'estat OAuth. Si Claude mostra un codi, copia el valor complet "code#state", no només el codi.',
+                    },
+                },
+            },
             tryDeviceInstead: 'Prova l\'autenticació de dispositiu',
             tryEmbeddedInstead: 'Prova el navegador integrat',
             working: 'Treballant…',
@@ -1071,6 +1091,10 @@ export const ca: TranslationStructure = {
                     `${serviceId} (${profileId}) està connectat.`,
                 failedToOpenUrl: 'No s\'ha pogut obrir l\'URL',
                 failedToConnect: 'No s\'ha pogut connectar',
+            },
+            errors: {
+                missingState: 'Falta l\'estat OAuth a l\'URL de redirecció.',
+                stateMismatch: 'L\'estat OAuth no coincideix.',
             },
         },
         oauthEmbedded: {
@@ -3294,6 +3318,19 @@ deps: {
                     recentSubtitle: 'Fes servir només els missatges més recents de la transcripció.',
                     summaryRecentTitle: 'Resum + recents (experimental)',
                     summaryRecentSubtitle: 'Inclou un resum curt i missatges recents (best-effort).',
+                },
+                summaryRunner: {
+                    title: 'Summary runner (on-demand)',
+                    backendTitle: 'Backend',
+                    backendPlaceholder: 'claude',
+                    searchBackendsPlaceholder: 'Cerca backends…',
+                    modelTitle: 'Model',
+                    modelPlaceholder: 'default',
+                    searchModelsPlaceholder: 'Cerca models…',
+                    notSet: 'No configurat',
+                    customTitle: 'Personalitzat',
+                    customBackendIdSubtitle: 'Introdueix un id de backend (p. ex. claude).',
+                    customModelIdSubtitle: 'Introdueix un id de model (p. ex. default).',
                 },
                 recentMessagesTitle: 'Missatges recents a incloure',
                 recentMessagesPlaceholder: '16',
