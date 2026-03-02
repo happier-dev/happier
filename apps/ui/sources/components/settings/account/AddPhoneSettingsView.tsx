@@ -9,6 +9,7 @@ import { buildAccountLinkResponse } from '@/auth/flows/buildAccountLinkResponse'
 import { usePairingSession } from '@/hooks/auth/usePairingSession';
 import { pairingConsume } from '@/sync/api/account/apiPairingAuth';
 import { decodeBase64 } from '@/encryption/base64';
+import { parsePairingDeepLink } from '@/auth/pairing/pairingUrl';
 import { QRCode } from '@/components/qr/QRCode';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { Text } from '@/components/ui/text/Text';
@@ -16,6 +17,9 @@ import { Modal } from '@/modal';
 import { t } from '@/text';
 import { useFeatureDecision } from '@/hooks/server/useFeatureDecision';
 import { Typography } from '@/constants/Typography';
+import { getActiveServerUrl } from '@/sync/domains/server/serverProfiles';
+import { canonicalizeServerUrl } from '@/sync/domains/server/url/serverUrlCanonical';
+import { isLoopbackServerUrl } from '@/sync/domains/server/url/serverUrlClassification';
 
 const stylesheet = StyleSheet.create((theme) => ({
     scrollView: {
@@ -160,6 +164,15 @@ export const AddPhoneSettingsView = React.memo(function AddPhoneSettingsView() {
 
     const isAuthenticated = auth.isAuthenticated;
     const canRenderPairing = pairingEnabled && isAuthenticated;
+    const showServerUrlNotEmbeddedHint = React.useMemo(() => {
+        if (!deepLink) return false;
+        const parsed = parsePairingDeepLink(deepLink);
+        if (!parsed) return false;
+        if (parsed.serverUrl) return false;
+
+        const active = canonicalizeServerUrl(getActiveServerUrl());
+        return Boolean(active) && isLoopbackServerUrl(active);
+    }, [deepLink]);
 
     return (
         <ScrollView style={styles.scrollView} contentContainerStyle={{ flexGrow: 1 }}>
@@ -221,6 +234,13 @@ export const AddPhoneSettingsView = React.memo(function AddPhoneSettingsView() {
                                         {deepLink}
                                     </Text>
                                 </Pressable>
+                            ) : null}
+
+                            {deepLink && showServerUrlNotEmbeddedHint ? (
+                                <View testID="add-phone-server-url-hint" style={styles.requestCard}>
+                                    <Text style={styles.requestTitle}>{t('connect.serverUrlNotEmbeddedTitle')}</Text>
+                                    <Text style={styles.requestBody}>{t('connect.serverUrlNotEmbeddedBody')}</Text>
+                                </View>
                             ) : null}
 
                             <View style={styles.linkActionsRow}>

@@ -93,6 +93,7 @@ describe.sequential('doAuth (non-interactive)', () => {
     'HAPPIER_NO_BROWSER_OPEN',
     'HAPPIER_AUTH_POLL_INTERVAL_MS',
     'HAPPIER_AUTH_METHOD',
+    'HAPPIER_TAILSCALE_AUTO_PUBLIC_URL',
   ] as const;
 
   it('prints both web + mobile instructions when method is not specified', async () => {
@@ -204,6 +205,42 @@ describe.sequential('doAuth (non-interactive)', () => {
 
       const out = output.logs.join('\n').toLowerCase();
       expect(out).toContain('same lan');
+      expect(displayQRCodeMock).toHaveBeenCalledTimes(1);
+    } finally {
+      output.restore();
+      restoreTty();
+      envScope.restore();
+      await rm(home, { recursive: true, force: true });
+    }
+  }, 15_000);
+
+  it('prints a hint when mobile links cannot embed localhost server URLs', async () => {
+    const home = await mkdtemp(join(tmpdir(), 'happier-cli-auth-noninteractive-loopback-'));
+    const envScope = createEnvKeyScope(envKeys);
+    const restoreTty = setStdioTtyForTest({ stdin: false, stdout: false });
+    const output = captureConsoleLogAndMuteStdout();
+    displayQRCodeMock.mockClear();
+
+    try {
+      envScope.patch({
+        HAPPIER_HOME_DIR: home,
+        HAPPIER_SERVER_URL: 'http://127.0.0.1:53545',
+        HAPPIER_WEBAPP_URL: 'https://webapp.example.test',
+        HAPPIER_PUBLIC_SERVER_URL: undefined,
+        HAPPIER_TAILSCALE_AUTO_PUBLIC_URL: '0',
+        HAPPIER_NO_BROWSER_OPEN: '1',
+        HAPPIER_AUTH_POLL_INTERVAL_MS: '1',
+        HAPPIER_AUTH_METHOD: undefined,
+      });
+
+      vi.resetModules();
+      const { doAuth } = await import('./auth');
+
+      const creds = await doAuth();
+      expect(creds?.token).toBe('tok');
+
+      const out = output.logs.join('\n').toLowerCase();
+      expect(out).toContain('does not include a server url');
       expect(displayQRCodeMock).toHaveBeenCalledTimes(1);
     } finally {
       output.restore();

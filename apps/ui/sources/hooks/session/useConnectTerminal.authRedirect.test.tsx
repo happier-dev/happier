@@ -16,6 +16,7 @@ const authApproveSpy = vi.fn();
 let authCredentials: any = null;
 let contentPrivateKey = new Uint8Array([7, 7, 7]);
 let contentPublicKey = new Uint8Array([9, 9, 9]);
+let activeServerUrl = 'https://api.happier.dev';
 
 vi.mock('react-native', () => ({
     Platform: { OS: 'ios' },
@@ -62,7 +63,7 @@ vi.mock('@/text', () => ({
 }));
 
 vi.mock('@/sync/domains/server/serverProfiles', () => ({
-    getActiveServerUrl: () => 'https://api.happier.dev',
+    getActiveServerUrl: () => activeServerUrl,
 }));
 
 vi.mock('@/sync/domains/server/activeServerSwitch', () => ({
@@ -144,10 +145,7 @@ describe('useConnectTerminal unauthenticated flow', () => {
         modalAlertSpy.mockClear();
         modalConfirmSpy.mockClear();
         upsertActivateAndSwitchServerSpy.mockClear();
-
-        vi.doMock('@/sync/domains/server/serverProfiles', () => ({
-            getActiveServerUrl: () => 'https://api.happier.dev',
-        }));
+        activeServerUrl = 'https://api.happier.dev';
 
         const { useConnectTerminal } = await import('./useConnectTerminal');
 
@@ -176,6 +174,41 @@ describe('useConnectTerminal unauthenticated flow', () => {
                 scope: 'device',
             }),
         );
+        expect(routerReplaceSpy).toHaveBeenCalledWith('/');
+    });
+
+    it('does not switch to a loopback server URL from the link when the active server is already non-loopback', async () => {
+        routerReplaceSpy.mockClear();
+        setPendingTerminalConnectSpy.mockClear();
+        modalAlertSpy.mockClear();
+        upsertActivateAndSwitchServerSpy.mockClear();
+
+        authCredentials = null;
+        activeServerUrl = 'https://lan.example.test:53288';
+
+        const { useConnectTerminal } = await import('./useConnectTerminal');
+
+        let hookApi: ReturnType<typeof useConnectTerminal> | null = null;
+        function Probe() {
+            hookApi = useConnectTerminal();
+            return null;
+        }
+
+        await act(async () => {
+            renderer.create(React.createElement(Probe));
+        });
+
+        let result = true;
+        await act(async () => {
+            result = await hookApi!.processAuthUrl('happier://terminal?key=abc123&server=http%3A%2F%2Flocalhost%3A53288');
+        });
+
+        expect(result).toBe(false);
+        expect(upsertActivateAndSwitchServerSpy).not.toHaveBeenCalled();
+        expect(setPendingTerminalConnectSpy).toHaveBeenCalledWith({
+            publicKeyB64Url: 'abc123',
+            serverUrl: 'https://lan.example.test:53288',
+        });
         expect(routerReplaceSpy).toHaveBeenCalledWith('/');
     });
 

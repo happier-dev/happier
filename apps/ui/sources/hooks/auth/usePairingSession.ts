@@ -2,7 +2,9 @@ import * as React from 'react';
 
 import { createPairingSecret } from '@/auth/pairing/pairingSecret';
 import { buildPairingDeepLink } from '@/auth/pairing/pairingUrl';
-import { getActiveServerUrl } from '@/sync/domains/server/serverProfiles';
+import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
+import { getCachedServerFeaturesSnapshot } from '@/sync/api/capabilities/serverFeaturesClient';
+import { resolvePreferredShareableServerUrl } from '@/sync/domains/server/url/shareableServerUrl';
 import {
     pairingStart,
     pairingStatus,
@@ -72,7 +74,18 @@ export function usePairingSession(params: Readonly<{ enabled: boolean; isAuthent
             }
 
             const data = started.data;
-            const serverUrl = getActiveServerUrl();
+            const active = getActiveServerSnapshot();
+            const cached = getCachedServerFeaturesSnapshot({ serverId: active.serverId });
+            const canonicalRaw =
+                cached?.status === 'ready'
+                    ? cached.features.capabilities?.server?.canonicalServerUrl
+                    : null;
+            const canonical = typeof canonicalRaw === 'string' ? canonicalRaw.trim() : '';
+            const serverUrl = resolvePreferredShareableServerUrl({
+                canonicalServerUrl: canonical || null,
+                activeServerUrl: active.serverUrl,
+            });
+
             const link = buildPairingDeepLink({ pairId: data.pairId, secret, serverUrl });
 
             setPairId(data.pairId);

@@ -11,6 +11,7 @@ import { t } from '@/text';
 import { sync } from '@/sync/sync';
 import { getActiveServerUrl } from '@/sync/domains/server/serverProfiles';
 import { normalizeServerUrl, upsertActivateAndSwitchServer } from '@/sync/domains/server/activeServerSwitch';
+import { resolveEffectiveServerUrlOverride } from '@/sync/domains/server/url/serverUrlOverridePolicy';
 import { clearPendingTerminalConnect, setPendingTerminalConnect } from '@/sync/domains/pending/pendingTerminalConnect';
 import { parseTerminalConnectUrl } from '@/utils/path/terminalConnectUrl';
 import { storage } from '@/sync/domains/state/storageStore';
@@ -37,14 +38,17 @@ export function useConnectTerminal(options?: UseConnectTerminalOptions) {
         setIsLoading(true);
         try {
             let activeCredentials: AuthCredentials | null = auth.credentials;
+            const currentServerUrl = normalizeServerUrl(getActiveServerUrl());
+            const effectiveParsedServerUrl = resolveEffectiveServerUrlOverride({
+                requestedServerUrl: parsed.serverUrl,
+                activeServerUrl: currentServerUrl,
+            });
 
-            if (parsed.serverUrl) {
-                const targetServerUrl = normalizeServerUrl(parsed.serverUrl);
-                const currentServerUrl = normalizeServerUrl(getActiveServerUrl());
-                if (targetServerUrl && currentServerUrl !== targetServerUrl) {
-                    setPendingTerminalConnect({ publicKeyB64Url: parsed.publicKeyB64Url, serverUrl: targetServerUrl });
+            if (effectiveParsedServerUrl) {
+                if (currentServerUrl !== effectiveParsedServerUrl) {
+                    setPendingTerminalConnect({ publicKeyB64Url: parsed.publicKeyB64Url, serverUrl: effectiveParsedServerUrl });
                     await upsertActivateAndSwitchServer({
-                        serverUrl: targetServerUrl,
+                        serverUrl: effectiveParsedServerUrl,
                         source: 'url',
                         scope: 'device',
                         refreshAuth: auth.refreshFromActiveServer,
@@ -60,7 +64,7 @@ export function useConnectTerminal(options?: UseConnectTerminalOptions) {
             if (!activeCredentials) {
                 setPendingTerminalConnect({
                     publicKeyB64Url: parsed.publicKeyB64Url,
-                    serverUrl: normalizeServerUrl(parsed.serverUrl ?? '') || getActiveServerUrl(),
+                    serverUrl: effectiveParsedServerUrl || currentServerUrl || getActiveServerUrl(),
                 });
                 await Modal.alertAsync(t('terminal.connectTerminal'), t('modals.pleaseSignInFirst'), [
                     { text: t('common.continue') },

@@ -85,7 +85,16 @@ vi.mock('@/platform/digest', () => ({
 }));
 
 vi.mock('@/sync/domains/server/serverProfiles', () => ({
-    getActiveServerUrl: () => 'https://stack.example.test',
+    getActiveServerUrl: () => activeServerUrl,
+}));
+
+let activeServerUrl = 'https://stack.example.test';
+vi.mock('@/sync/domains/server/serverRuntime', () => ({
+    getActiveServerSnapshot: () => ({ serverId: 'srv-test', serverUrl: activeServerUrl, generation: 0 }),
+}));
+
+vi.mock('@/sync/api/capabilities/serverFeaturesClient', () => ({
+    getCachedServerFeaturesSnapshot: () => null,
 }));
 
 const serverFetchSpy = vi.fn(async (path: string, _init?: any, _options?: any) => {
@@ -115,6 +124,7 @@ vi.mock('@/sync/http/client', () => ({
 describe('AddPhoneSettingsView', () => {
     it('renders a pairing QR code after starting a session', async () => {
         featureState = 'enabled';
+        activeServerUrl = 'https://stack.example.test';
         pairingStatusResponse = {
             ok: true,
             status: 200,
@@ -135,6 +145,7 @@ describe('AddPhoneSettingsView', () => {
 
     it('clears the QR code when the pairing session expires', async () => {
         featureState = 'enabled';
+        activeServerUrl = 'https://stack.example.test';
         pairingStatusResponse = {
             ok: false,
             status: 404,
@@ -166,6 +177,7 @@ describe('AddPhoneSettingsView', () => {
 
     it('does not show a sign-in prompt when the feature is disabled', async () => {
         featureState = 'disabled';
+        activeServerUrl = 'https://stack.example.test';
         pairingStatusResponse = {
             ok: true,
             status: 200,
@@ -188,5 +200,32 @@ describe('AddPhoneSettingsView', () => {
 
         expect(allText).toContain('common.unavailable');
         expect(allText).not.toContain('modals.pleaseSignInFirst');
+    });
+
+    it('shows a server reachability hint when the QR code cannot embed localhost', async () => {
+        featureState = 'enabled';
+        activeServerUrl = 'http://localhost:53288';
+        pairingStatusResponse = {
+            ok: true,
+            status: 200,
+            json: async () => ({ state: 'pending', pairId: 'pair_123', expiresAt: '2026-02-23T00:00:00.000Z' }),
+        } as any;
+        const { AddPhoneSettingsView } = await import('./AddPhoneSettingsView');
+
+        let tree: ReturnType<typeof renderer.create> | undefined;
+        await act(async () => {
+            tree = renderer.create(<AddPhoneSettingsView />);
+        });
+        if (!tree) throw new Error('Expected renderer');
+
+        const textNodes = tree.root.findAllByType('Text');
+        const allText = textNodes
+            .map((node) => node.props.children)
+            .flat()
+            .filter((row) => typeof row === 'string')
+            .join('\n');
+
+        expect(allText).toContain('connect.serverUrlNotEmbeddedTitle');
+        expect(allText).toContain('connect.serverUrlNotEmbeddedBody');
     });
 });

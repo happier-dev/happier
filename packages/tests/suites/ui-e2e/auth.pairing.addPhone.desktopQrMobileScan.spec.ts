@@ -129,10 +129,12 @@ test.describe('ui e2e: add your phone (desktop QR → mobile scan)', () => {
     const pairingUrl = new URL(pairingLinkRaw);
     const pairId = pairingUrl.searchParams.get('pairId') ?? '';
     const secret = pairingUrl.searchParams.get('secret') ?? '';
-    const serverUrl = pairingUrl.searchParams.get('server') ?? '';
-    if (!pairId || !secret || !serverUrl) {
-      throw new Error(`Pairing link missing params (pairId=${pairId.length}, secret=${secret.length}, server=${serverUrl.length})`);
+    const serverUrl = pairingUrl.searchParams.get('server');
+    if (!pairId || !secret) {
+      throw new Error(`Pairing link missing params (pairId=${pairId.length}, secret=${secret.length})`);
     }
+    // NOTE: `server` is optional when the UI is configured with a loopback-only server URL.
+    // Real devices cannot reach localhost/127.0.0.1, so the app omits it from pairing deep links.
 
     const phoneKp = tweetnacl.box.keyPair();
     const phonePublicKeyBase64 = privacyKit.encodeBase64(toPrivacyKitBytes(phoneKp.publicKey));

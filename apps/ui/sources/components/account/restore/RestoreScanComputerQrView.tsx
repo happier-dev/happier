@@ -15,6 +15,7 @@ import { useFeatureDecision } from '@/hooks/server/useFeatureDecision';
 import { pairingRequest } from '@/sync/api/account/apiPairingAuth';
 import { getActiveServerUrl } from '@/sync/domains/server/serverProfiles';
 import { normalizeServerUrl, upsertActivateAndSwitchServer } from '@/sync/domains/server/activeServerSwitch';
+import { resolveEffectiveServerUrlOverride } from '@/sync/domains/server/url/serverUrlOverridePolicy';
 import { Text } from '@/components/ui/text/Text';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { Typography } from '@/constants/Typography';
@@ -118,8 +119,11 @@ export const RestoreScanComputerQrView = React.memo(function RestoreScanComputer
 
             try {
                 if (parsed.serverUrl) {
-                    const target = normalizeServerUrl(parsed.serverUrl);
                     const current = normalizeServerUrl(getActiveServerUrl());
+                    const target = resolveEffectiveServerUrlOverride({
+                        requestedServerUrl: parsed.serverUrl,
+                        activeServerUrl: current,
+                    });
                     if (target && current !== target) {
                         await upsertActivateAndSwitchServer({
                             serverUrl: target,

@@ -47,6 +47,19 @@ function isLoopbackHttpServerUrl(serverUrl: string): boolean {
     }
 }
 
+function isLoopbackServerHost(serverUrl: string): boolean {
+    try {
+        const url = new URL(serverUrl);
+        const host = String(url.hostname ?? '').trim().toLowerCase();
+        if (!host) return false;
+        if (host === '127.0.0.1' || host === 'localhost' || host === '0.0.0.0' || host === '::1') return true;
+        if (host.endsWith('.localhost')) return true;
+        return false;
+    } catch {
+        return false;
+    }
+}
+
 function shouldAutoInferPublicServerUrl(): boolean {
     const raw = String(process.env.HAPPIER_TAILSCALE_AUTO_PUBLIC_URL ?? '').trim().toLowerCase();
     if (!raw) return true;
@@ -79,6 +92,24 @@ function printServerUrlReachabilityHint(serverUrl: string): void {
         console.log('For remote/phone access, use an HTTPS URL (Tailscale Serve or a reverse proxy) as your server URL.');
         console.log('');
     }
+}
+
+function printMobileLinkMissingServerUrlHint(params: Readonly<{ serverUrl: string; kind: 'terminalConnect' | 'configureServer' }>): void {
+    // eslint-disable-next-line no-console
+    console.log('Note: this mobile link does not include a server URL.');
+    if (isLoopbackServerHost(params.serverUrl)) {
+        // eslint-disable-next-line no-console
+        console.log('Your server URL is set to localhost, which is only reachable on this machine.');
+        // eslint-disable-next-line no-console
+        console.log('On your phone, open Happier → Settings → Servers and add a URL your phone can reach (LAN IP/VPN/Tailscale).');
+        // eslint-disable-next-line no-console
+        console.log('Tip (recommended): set HAPPIER_PUBLIC_SERVER_URL to a shareable https:// URL so future QR codes include it automatically.');
+    } else {
+        // eslint-disable-next-line no-console
+        console.log('Your phone will use its currently configured server (Happier → Settings → Servers).');
+    }
+    // eslint-disable-next-line no-console
+    console.log('');
 }
 
 async function applyAutoPublicServerUrlFromTailscaleServeBestEffort(): Promise<void> {
@@ -207,6 +238,7 @@ async function doBothAuth(params: Readonly<{ keypair: tweetnacl.BoxKeyPair; clai
         serverUrl: configuration.serverUrl,
         publicKeyB64Url,
     });
+    const terminalMobileEmbedsServerUrl = terminalLinks.mobileUrl.includes('server=');
 
     console.log('\nAuthenticate this machine\n');
     console.log(`This terminal is connected to: ${configuration.serverUrl}`);
@@ -219,11 +251,20 @@ async function doBothAuth(params: Readonly<{ keypair: tweetnacl.BoxKeyPair; clai
     console.log('Recommended: use the mobile app first. It makes linking additional devices easier.');
     console.log('');
     console.log('Before you continue:');
-    console.log('- Make sure your phone/browser can reach the server URL embedded in the QR/deep link');
-    console.log('- The app/web UI may prompt you to switch servers automatically (because the link includes server=...)');
+    if (terminalMobileEmbedsServerUrl) {
+        console.log('- Make sure your phone/browser can reach the server URL embedded in the QR/deep link');
+        console.log('- The app/web UI may prompt you to switch servers automatically (because the link includes server=...)');
+    } else {
+        console.log('- Make sure your phone is already configured to the right server (Happier → Settings → Servers)');
+        console.log('- Tip: set HAPPIER_PUBLIC_SERVER_URL to embed a shareable server URL in future QR codes');
+    }
     console.log('- Sign in (or create an account)');
     console.log('- If you already have a Happier account on another device, sign in with that same account');
     console.log('');
+
+    if (!terminalMobileEmbedsServerUrl) {
+        printMobileLinkMissingServerUrlHint({ serverUrl: configuration.serverUrl, kind: 'terminalConnect' });
+    }
 
     const printConfigureLinksRaw = String(process.env.HAPPIER_AUTH_PRINT_CONFIGURE_LINKS ?? '').trim().toLowerCase();
     const printConfigureLinks = ['1', 'true', 'yes', 'on'].includes(printConfigureLinksRaw);
@@ -238,6 +279,9 @@ async function doBothAuth(params: Readonly<{ keypair: tweetnacl.BoxKeyPair; clai
         console.log('Mobile deep link:');
         console.log(configureLinks.mobileUrl);
         console.log('');
+        if (!configureLinks.mobileUrl.includes('url=')) {
+            printMobileLinkMissingServerUrlHint({ serverUrl: configuration.serverUrl, kind: 'configureServer' });
+        }
     }
 
     console.log('Mobile (recommended)');
@@ -344,6 +388,7 @@ async function doMobileAuth(params: Readonly<{ keypair: tweetnacl.BoxKeyPair; cl
         serverUrl: configuration.serverUrl,
         publicKeyB64Url,
     });
+    const terminalMobileEmbedsServerUrl = terminalLinks.mobileUrl.includes('server=');
 
     const printConfigureLinksRaw = String(process.env.HAPPIER_AUTH_PRINT_CONFIGURE_LINKS ?? '').trim().toLowerCase();
     const printConfigureLinks = ['1', 'true', 'yes', 'on'].includes(printConfigureLinksRaw);
@@ -358,6 +403,13 @@ async function doMobileAuth(params: Readonly<{ keypair: tweetnacl.BoxKeyPair; cl
         console.log('Mobile deep link:');
         console.log(configureLinks.mobileUrl);
         console.log('');
+        if (!configureLinks.mobileUrl.includes('url=')) {
+            printMobileLinkMissingServerUrlHint({ serverUrl: configuration.serverUrl, kind: 'configureServer' });
+        }
+    }
+
+    if (!terminalMobileEmbedsServerUrl) {
+        printMobileLinkMissingServerUrlHint({ serverUrl: configuration.serverUrl, kind: 'terminalConnect' });
     }
 
     console.log('Scan this QR code with your Happier mobile app:\n');
@@ -425,6 +477,9 @@ async function doWebAuth(params: Readonly<{ keypair: tweetnacl.BoxKeyPair; claim
     console.log('If you want to use the mobile app instead, manually open this deep link:');
     console.log(terminalLinks.mobileUrl);
     console.log('');
+    if (!terminalLinks.mobileUrl.includes('server=')) {
+        printMobileLinkMissingServerUrlHint({ serverUrl: configuration.serverUrl, kind: 'terminalConnect' });
+    }
 
     return await waitForAuthentication({ keypair: params.keypair, claimSecret: params.claimSecret });
 }
