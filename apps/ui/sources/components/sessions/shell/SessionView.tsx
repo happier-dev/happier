@@ -14,10 +14,11 @@ import { VoiceSurface } from '@/components/voice/surface/VoiceSurface';
 import { useDraft } from '@/hooks/session/useDraft';
 import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
 import { useWarmRepositoryDirectoryCacheOnSessionOpen } from '@/hooks/session/files/useWarmRepositoryDirectoryCacheOnSessionOpen';
-  import { Modal } from '@/modal';
-  import { scmStatusSync } from '@/scm/scmStatusSync';
-  import { continueSessionWithReplay, sessionAbort, resumeSession } from '@/sync/ops';
+import { Modal } from '@/modal';
+import { scmStatusSync } from '@/scm/scmStatusSync';
+import { continueSessionWithReplay, sessionAbort, resumeSession } from '@/sync/ops';
 import { storage, useAutomations, useIsDataReady, useLocalSetting, useRealtimeStatus, useSessionMessages, useSessionPendingMessages, useSessionReviewCommentsDrafts, useSessionTranscriptIds, useSessionUsage, useSetting, useSettings } from '@/sync/domains/state/storage';
+import { setActiveViewingSessionId, clearActiveViewingSessionId } from '@/sync/domains/session/activeViewingSession';
 import { canResumeSessionWithOptions, getAgentVendorResumeId } from '@/agents/runtime/resumeCapabilities';
 import { DEFAULT_AGENT_ID, getAgentCore, resolveAgentIdFromFlavor, buildResumeSessionExtrasFromUiState, getAgentResumeExperimentsFromSettings, getResumePreflightIssues, getResumePreflightPrefetchPlan } from '@/agents/catalog/catalog';
 import { useResumeCapabilityOptions } from '@/agents/hooks/useResumeCapabilityOptions';
@@ -561,6 +562,7 @@ function SessionViewLoaded({ sessionId, session, isEncryptedSessionLocked, jumpT
 
     useFocusEffect(React.useCallback(() => {
         isFocusedRef.current = true;
+        setActiveViewingSessionId(sessionId);
         {
             const current = storage.getState().sessions[sessionId];
             lastMarkedRef.current = {
@@ -570,6 +572,7 @@ function SessionViewLoaded({ sessionId, session, isEncryptedSessionLocked, jumpT
         markSessionViewed();
         return () => {
             isFocusedRef.current = false;
+            clearActiveViewingSessionId(sessionId);
             if (markViewedTimeoutRef.current) {
                 clearTimeout(markViewedTimeoutRef.current);
                 markViewedTimeoutRef.current = null;

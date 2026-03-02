@@ -648,18 +648,18 @@ export async function startDaemon(): Promise<void> {
                     env: process.env,
                   });
 
-                          if (windowsConsoleMode === 'visible') {
-                            const launchSpec = buildHappyCliSubprocessLaunchSpec(args);
-                            const started = await startHappySessionInVisibleWindowsConsole({
-                              filePath: launchSpec.filePath,
-                              args: launchSpec.args,
-                              workingDirectory: directory,
-                              env: {
-                                ...process.env,
-                                ...extraEnvForChildWithMessage,
-                                ...(launchSpec.env ?? {}),
-                              },
-                            });
+                  if (windowsConsoleMode === 'visible') {
+                    const launchSpec = buildHappyCliSubprocessLaunchSpec(args);
+                    const started = await startHappySessionInVisibleWindowsConsole({
+                      filePath: launchSpec.filePath,
+                      args: launchSpec.args,
+                      workingDirectory: directory,
+                      env: {
+                        ...process.env,
+                        ...extraEnvForChildWithMessage,
+                        ...(launchSpec.env ?? {}),
+                      },
+                    });
 
                     if (!started.ok) {
                       logger.debug('[DAEMON RUN] Failed to spawn visible Windows console session', { error: started.errorMessage });

@@ -1595,6 +1595,17 @@ export const pl: TranslationStructure = {
         "Te powiadomienia są wysyłane z Twojego CLI przez Expo, gdy sesja wymaga Twojej uwagi.",
       enabledSubtitle: "Zezwól na powiadomienia push dla tego konta",
     },
+    foregroundBehavior: {
+      title: "Powiadomienia w aplikacji",
+      footer:
+        "Kontroluje powiadomienia podczas korzystania z aplikacji. Powiadomienia dla aktualnie przeglądanej sesji są zawsze wyciszane.",
+      full: "Pełne",
+      fullDescription: "Pokaż baner i odtwórz dźwięk",
+      silent: "Ciche",
+      silentDescription: "Pokaż baner bez dźwięku",
+      off: "Wyłączone",
+      offDescription: "Tylko plakietka, bez banera",
+    },
     types: {
       title: "Typy",
       footer:

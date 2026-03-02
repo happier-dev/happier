@@ -30,7 +30,7 @@ export function createOidcOAuthProvider(instance: OidcAuthProviderInstanceConfig
             });
             return url.toString();
         },
-        exchangeCodeForAccessToken: async ({ code, state, pkceCodeVerifier, expectedNonce }): Promise<OAuthTokenExchangeResult> => {
+        exchangeCodeForAccessToken: async ({ code, state, iss, pkceCodeVerifier, expectedNonce }): Promise<OAuthTokenExchangeResult> => {
             if (!instance.clientId || !instance.clientSecret || !instance.redirectUrl || !instance.issuer) {
                 throw new Error("oauth_not_configured");
             }
@@ -39,6 +39,9 @@ export function createOidcOAuthProvider(instance: OidcAuthProviderInstanceConfig
             callbackUrl.searchParams.set("code", code);
             if (typeof state === "string" && state) {
                 callbackUrl.searchParams.set("state", state);
+            }
+            if (typeof iss === "string" && iss) {
+                callbackUrl.searchParams.set("iss", iss);
             }
 
             const tokens = await oidcClient.authorizationCodeGrant(cfg, callbackUrl, {

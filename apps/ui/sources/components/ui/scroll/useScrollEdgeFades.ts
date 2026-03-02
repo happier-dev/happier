@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { type LayoutChangeEvent, type NativeScrollEvent, type NativeSyntheticEvent } from 'react-native';
 
 export type ScrollEdge = 'top' | 'bottom' | 'left' | 'right';
 
@@ -20,6 +21,11 @@ export type UseScrollEdgeFadesParams = Readonly<{
      * Distance from the edge before we show the fade (px).
      */
     edgeThreshold?: number;
+    /**
+     * Initial visibility state before measurement. Useful for optimistic trailing-edge
+     * fades (e.g., bottom: true for lists that typically have more content below).
+     */
+    initialVisibility?: Partial<ScrollEdgeVisibility>;
 }>;
 
 type Size = Readonly<{ width: number; height: number }>;
@@ -36,6 +42,10 @@ export function useScrollEdgeFades(params: UseScrollEdgeFadesParams) {
     const overflowThreshold = params.overflowThreshold ?? 1;
     const edgeThreshold = params.edgeThreshold ?? 1;
 
+    const initialVisibility = React.useMemo<ScrollEdgeVisibility>(() => {
+        return { ...defaultVisibility, ...params.initialVisibility };
+    }, [params.initialVisibility]);
+
     const enabled = React.useMemo(() => {
         return {
             top: Boolean(params.enabledEdges.top),
@@ -51,8 +61,9 @@ export function useScrollEdgeFades(params: UseScrollEdgeFadesParams) {
 
     const [canScroll, setCanScroll] = React.useState(() => ({ x: false, y: false }));
 
-    const visibilityRef = React.useRef<ScrollEdgeVisibility>(defaultVisibility);
-    const [visibility, setVisibility] = React.useState<ScrollEdgeVisibility>(defaultVisibility);
+    const visibilityRef = React.useRef<ScrollEdgeVisibility>(initialVisibility);
+
+    const [visibility, setVisibility] = React.useState<ScrollEdgeVisibility>(initialVisibility);
 
     const recompute = React.useCallback(() => {
         const viewport = viewportRef.current;
@@ -93,7 +104,7 @@ export function useScrollEdgeFades(params: UseScrollEdgeFadesParams) {
         });
     }, [edgeThreshold, enabled.bottom, enabled.left, enabled.right, enabled.top, overflowThreshold]);
 
-    const onViewportLayout = React.useCallback((e: any) => {
+    const onViewportLayout = React.useCallback((e: LayoutChangeEvent) => {
         const width = e?.nativeEvent?.layout?.width ?? 0;
         const height = e?.nativeEvent?.layout?.height ?? 0;
         viewportRef.current = { width, height };
@@ -105,7 +116,7 @@ export function useScrollEdgeFades(params: UseScrollEdgeFadesParams) {
         recompute();
     }, [recompute]);
 
-    const onScroll = React.useCallback((e: any) => {
+    const onScroll = React.useCallback((e: NativeSyntheticEvent<NativeScrollEvent>) => {
         const ne = e?.nativeEvent;
         if (!ne) return;
 
@@ -131,6 +142,19 @@ export function useScrollEdgeFades(params: UseScrollEdgeFadesParams) {
         recompute();
     }, [recompute]);
 
+    // Ensure final position is captured when momentum scroll ends.
+    // iOS/Android may not fire a final onScroll event at scroll boundaries.
+    const onMomentumScrollEnd = React.useCallback((e: NativeSyntheticEvent<NativeScrollEvent>) => {
+        const ne = e?.nativeEvent;
+        if (!ne) return;
+
+        const x = ne.contentOffset?.x ?? 0;
+        const y = ne.contentOffset?.y ?? 0;
+        offsetRef.current = { x, y };
+
+        recompute();
+    }, [recompute]);
+
     return {
         canScrollX: canScroll.x,
         canScrollY: canScroll.y,
@@ -138,6 +162,7 @@ export function useScrollEdgeFades(params: UseScrollEdgeFadesParams) {
         onViewportLayout,
         onContentSizeChange,
         onScroll,
+        onMomentumScrollEnd,
     } as const;
 }
 

@@ -1457,6 +1457,16 @@ export const en = {
             footer: 'These notifications are sent from your CLI via Expo when your session needs attention.',
             enabledSubtitle: 'Allow push notifications on this account',
         },
+        foregroundBehavior: {
+            title: 'In-app notifications',
+            footer: 'Controls notifications while you are using the app. Notifications for the session you are viewing are always silenced.',
+            full: 'Full',
+            fullDescription: 'Show banner and play sound',
+            silent: 'Silent',
+            silentDescription: 'Show banner without sound',
+            off: 'Off',
+            offDescription: 'Badge only, no banner',
+        },
         types: {
             title: 'Types',
             footer: 'Disable individual types if you only want certain alerts.',

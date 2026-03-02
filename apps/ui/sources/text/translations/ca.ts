@@ -1451,6 +1451,16 @@ export const ca: TranslationStructure = {
             footer: 'Aquestes notificacions s’envien des del teu CLI via Expo quan la teva sessió necessita atenció.',
             enabledSubtitle: 'Permetre notificacions push en aquest compte',
         },
+        foregroundBehavior: {
+            title: "Notificacions a l'app",
+            footer: "Controla les notificacions mentre fas servir l'app. Les notificacions de la sessió que estàs veient sempre se silencien.",
+            full: 'Completes',
+            fullDescription: 'Mostra el banner i reprodueix el so',
+            silent: 'Silencioses',
+            silentDescription: 'Mostra el banner sense so',
+            off: 'Desactivades',
+            offDescription: 'Només la insígnia, sense banner',
+        },
         types: {
             title: 'Tipus',
             footer: 'Desactiva tipus individuals si només vols alguns avisos.',

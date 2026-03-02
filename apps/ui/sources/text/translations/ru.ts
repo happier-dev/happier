@@ -3443,6 +3443,19 @@ export const ru: TranslationStructure = {
     },
   },
 
+  settingsNotifications: {
+    foregroundBehavior: {
+      title: "Уведомления в приложении",
+      footer: "Управляет уведомлениями, пока вы используете приложение. Уведомления для просматриваемой сессии всегда скрываются.",
+      full: "Полные",
+      fullDescription: "Показывать баннер и воспроизводить звук",
+      silent: "Тихие",
+      silentDescription: "Показывать баннер без звука",
+      off: "Выкл.",
+      offDescription: "Только значок, без баннера",
+    },
+  },
+
   settingsSession: {
     messageSending: {
       title: "Отправка сообщений",

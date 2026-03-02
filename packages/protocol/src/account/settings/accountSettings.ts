@@ -4,6 +4,9 @@ import { ActionsSettingsV1Schema, type ActionsSettingsV1 } from '../../actions/a
 
 export const ACCOUNT_SETTINGS_SUPPORTED_SCHEMA_VERSION = 2;
 
+export const ForegroundBehaviorSchema = z.enum(['full', 'silent', 'off']);
+export type ForegroundBehavior = z.infer<typeof ForegroundBehaviorSchema>;
+
 export const NotificationsSettingsV1Schema = z
   .object({
     v: z.literal(1).default(1),
@@ -11,6 +14,7 @@ export const NotificationsSettingsV1Schema = z
     ready: z.boolean().default(true),
     permissionRequest: z.boolean().default(true),
     userActionRequest: z.boolean().default(true),
+    foregroundBehavior: ForegroundBehaviorSchema.default('full'),
   })
   .catch({
     v: 1,
@@ -18,6 +22,7 @@ export const NotificationsSettingsV1Schema = z
     ready: true,
     permissionRequest: true,
     userActionRequest: true,
+    foregroundBehavior: 'full',
   });
 
 export type NotificationsSettingsV1 = z.infer<typeof NotificationsSettingsV1Schema>;

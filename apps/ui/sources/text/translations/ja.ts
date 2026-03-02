@@ -3683,6 +3683,19 @@ export const ja: TranslationStructure = {
     },
   },
 
+  settingsNotifications: {
+    foregroundBehavior: {
+      title: "アプリ内通知",
+      footer: "アプリ使用中の通知を制御します。現在表示中のセッションの通知は常にミュートされます。",
+      full: "フル",
+      fullDescription: "バナーを表示してサウンドを再生",
+      silent: "サイレント",
+      silentDescription: "サウンドなしでバナーを表示",
+      off: "オフ",
+      offDescription: "バッジのみ、バナーなし",
+    },
+  },
+
   settingsSession: {
     messageSending: {
       title: "メッセージ送信",

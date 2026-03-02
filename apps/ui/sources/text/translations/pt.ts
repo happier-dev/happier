@@ -1583,6 +1583,17 @@ export const pt: TranslationStructure = {
         "Essas notificações são enviadas do seu CLI via Expo quando sua sessão precisa de atenção.",
       enabledSubtitle: "Permitir notificações push nesta conta",
     },
+    foregroundBehavior: {
+      title: "Notificações no app",
+      footer:
+        "Controla as notificações enquanto você usa o app. Notificações da sessão que você está visualizando são sempre silenciadas.",
+      full: "Completas",
+      fullDescription: "Mostrar banner e reproduzir som",
+      silent: "Silenciosas",
+      silentDescription: "Mostrar banner sem som",
+      off: "Desativadas",
+      offDescription: "Apenas badge, sem banner",
+    },
     types: {
       title: "Tipos",
       footer: "Desative tipos individuais se quiser apenas certos alertas.",

@@ -26,6 +26,9 @@ import { PostHogProvider } from 'posthog-react-native';
 import * as Sentry from '@sentry/react-native';
 import { tracking } from '@/track/tracking';
 import { syncRestore } from '@/sync/sync';
+import { storage } from '@/sync/domains/state/storage';
+import { getActiveViewingSessionId } from '@/sync/domains/session/activeViewingSession';
+import { NotificationsSettingsV1Schema } from '@happier-dev/protocol';
 import { useTrackScreens } from '@/track/useTrackScreens';
 import { RealtimeProvider } from '@/realtime/RealtimeProvider';
 import { FaviconPermissionIndicator } from '@/components/web/FaviconPermissionIndicator';
@@ -279,15 +282,33 @@ function installReactJsxRuntimeUnexpectedTextNodeCaptureOnce() {
     }
 }
 
-// Configure notification handler for foreground notifications
+// Configure notification handler for foreground notifications.
+// Suppresses same-session notifications and respects the foregroundBehavior setting.
 Notifications.setNotificationHandler({
-    handleNotification: async () => ({
-        shouldShowAlert: true,
-        shouldPlaySound: true,
-        shouldSetBadge: true,
-        shouldShowBanner: true,
-        shouldShowList: true,
-    }),
+    handleNotification: async (notification) => {
+        const { data } = notification.request.content;
+        const notifSessionId = typeof data?.sessionId === 'string' ? data.sessionId : null;
+
+        // Same-session suppression: user already sees real-time updates.
+        if (notifSessionId && notifSessionId === getActiveViewingSessionId()) {
+            return { shouldPlaySound: false, shouldSetBadge: true, shouldShowBanner: false, shouldShowList: false };
+        }
+
+        // NotificationsSettingsV1Schema uses .catch(), so parse always succeeds.
+        const { foregroundBehavior } = NotificationsSettingsV1Schema.parse(
+            storage.getState().settings.notificationsSettingsV1,
+        );
+
+        switch (foregroundBehavior) {
+            case 'off':
+                return { shouldPlaySound: false, shouldSetBadge: true, shouldShowBanner: false, shouldShowList: false };
+            case 'silent':
+                return { shouldPlaySound: false, shouldSetBadge: true, shouldShowBanner: true, shouldShowList: true };
+            case 'full':
+            default:
+                return { shouldPlaySound: true, shouldSetBadge: true, shouldShowBanner: true, shouldShowList: true };
+        }
+    },
 });
 
 // Setup Android notification channel (required for Android 8.0+)

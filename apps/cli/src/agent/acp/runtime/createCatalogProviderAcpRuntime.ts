@@ -7,12 +7,17 @@ import type { ApiSessionClient } from '@/api/session/sessionClient';
 import type { PermissionMode } from '@/api/types';
 import type { MessageBuffer } from '@/ui/ink/messageBuffer';
 import { logger } from '@/ui/logger';
+import {
+  sendPermissionRequestPushNotificationForActiveAccount,
+  type PermissionRequestPushSender,
+} from '@/settings/notifications/permissionRequestPush';
 
 type CatalogAcpProviderRuntimeParams<TBackendOptions extends object> = {
   provider: Parameters<typeof createCatalogAcpBackend>[0];
   loggerLabel: string;
   directory: string;
   session: ApiSessionClient;
+  pushSender?: PermissionRequestPushSender;
   messageBuffer: MessageBuffer;
   mcpServers: Record<string, McpServerConfig>;
   permissionHandler: AcpPermissionHandler;
@@ -31,6 +36,20 @@ type CatalogAcpProviderRuntimeParams<TBackendOptions extends object> = {
 export function createCatalogProviderAcpRuntime<TBackendOptions extends object = Record<string, never>>(
   params: CatalogAcpProviderRuntimeParams<TBackendOptions>,
 ) {
+  const sendPermissionPush = (evt: { permissionId: string; toolName: string }): void => {
+    if (!params.pushSender) return;
+    try {
+      sendPermissionRequestPushNotificationForActiveAccount({
+        pushSender: params.pushSender,
+        sessionId: params.session.sessionId,
+        permissionId: evt.permissionId,
+        toolName: evt.toolName,
+        permissionMode: params.getPermissionMode?.(),
+      });
+    } catch {
+      // best-effort
+    }
+  };
   const hooks = params.hooks
     ? {
         ...params.hooks,
@@ -40,9 +59,14 @@ export function createCatalogProviderAcpRuntime<TBackendOptions extends object =
           } catch {
             // ignore
           }
+          sendPermissionPush(evt);
         },
       }
-    : undefined;
+    : {
+        onPermissionRequest: (evt: { permissionId: string; toolName: string; payload: unknown; reason: string }) => {
+          sendPermissionPush(evt);
+        },
+      };
 
   return createAcpRuntime({
     provider: params.provider,

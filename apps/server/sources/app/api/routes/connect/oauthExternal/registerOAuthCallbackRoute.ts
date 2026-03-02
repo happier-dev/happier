@@ -36,6 +36,7 @@ export function registerOAuthCallbackRoute(app: Fastify) {
                 .object({
                     state: z.string(),
                     code: z.string().optional(),
+                    iss: z.string().optional(),
                     error: z.string().optional(),
                     error_description: z.string().optional(),
                 })
@@ -52,7 +53,7 @@ export function registerOAuthCallbackRoute(app: Fastify) {
             return reply.redirect(buildRedirectUrl(fallbackWebAppUrl, { error: "unsupported-provider" }));
         }
 
-        const { code, state } = request.query;
+        const { code, state, iss } = request.query;
         const oauthError = (request.query as any)?.error?.toString?.().trim?.() || "";
 
         const oauthState = await auth.verifyOauthStateToken(state);
@@ -144,6 +145,7 @@ export function registerOAuthCallbackRoute(app: Fastify) {
                 env: process.env,
                 code,
                 state,
+                iss,
                 pkceCodeVerifier: attemptParsed.data.pkceCodeVerifier,
                 expectedNonce: attemptParsed.data.nonce,
             });

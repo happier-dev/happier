@@ -1,6 +1,6 @@
 import { Ionicons, Octicons } from '@expo/vector-icons';
 import * as React from 'react';
-import { View, Platform, useWindowDimensions, ViewStyle, ActivityIndicator, Pressable, ScrollView } from 'react-native';
+import { View, Platform, useWindowDimensions, ViewStyle, ActivityIndicator, Pressable, ScrollView, type LayoutChangeEvent, type NativeScrollEvent, type NativeSyntheticEvent } from 'react-native';
 import { Image } from 'expo-image';
 import { layout } from '@/components/ui/layout/layout';
 import { MultiTextInput, KeyPressEvent } from '@/components/ui/forms/MultiTextInput';
@@ -1012,7 +1012,10 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
         if (clientWidth === null || scrollWidth === null) return;
 
         // Seed both viewport and content sizes so chevrons/fades can render even before the first scroll event.
-        actionBarFades.onViewportLayout({ nativeEvent: { layout: { width: clientWidth, height: clientHeight ?? 0 } } });
+        const layoutEvent = {
+            nativeEvent: { layout: { x: 0, y: 0, width: clientWidth, height: clientHeight ?? 0 } },
+        } as unknown as LayoutChangeEvent;
+        actionBarFades.onViewportLayout(layoutEvent);
         actionBarFades.onContentSizeChange(
             Math.max(0, scrollWidth - ACTION_BAR_SCROLL_END_GUTTER_WIDTH),
             clientHeight ?? 0
@@ -1030,16 +1033,19 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
         const scrollLeft = typeof node.scrollLeft === 'number' ? node.scrollLeft : 0;
         if (clientWidth === null || scrollWidth === null) return;
 
-        actionBarFades.onScroll({
+        const scrollEvent = {
             nativeEvent: {
+                contentInset: { top: 0, left: 0, bottom: 0, right: 0 },
                 contentOffset: { x: scrollLeft, y: 0 },
                 layoutMeasurement: { width: clientWidth, height: clientHeight },
                 contentSize: {
                     width: Math.max(0, scrollWidth - ACTION_BAR_SCROLL_END_GUTTER_WIDTH),
                     height: clientHeight,
                 },
+                zoomScale: 1,
             },
-        });
+        } as unknown as NativeSyntheticEvent<NativeScrollEvent>;
+        actionBarFades.onScroll(scrollEvent);
     }, [actionBarFades, getActionBarScrollNode]);
 
     React.useEffect(() => {
@@ -1332,20 +1338,21 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
                 )}
 
                 {/* Settings overlay */}
-                    {showSettings && (
-                        <Popover
-                            open={showSettings}
-                            anchorRef={settingsAnchorRef}
-                            boundaryRef={null}
-                            placement="top"
-                            gap={8}
-                            maxHeightCap={400}
-                            portal={{
-                                web: true,
-                                native: true,
-                                matchAnchorWidth: false,
-                                anchorAlign: 'start',
-                            }}
+                {showSettings && (
+                    <Popover
+                        open={showSettings}
+                        anchorRef={settingsAnchorRef}
+                        boundaryRef={null}
+                        placement="top"
+                        gap={8}
+                        maxHeightCap={400}
+                        maxWidthCap={layout.maxWidth}
+                        portal={{
+                            web: true,
+                            native: true,
+                            matchAnchorWidth: false,
+                            anchorAlign: 'start',
+                        }}
                         edgePadding={{
                             horizontal: Platform.OS === 'web' ? (screenWidth > 700 ? 12 : 16) : 0,
                             vertical: 12,
@@ -1359,6 +1366,7 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
                                 keyboardShouldPersistTaps="always"
                                 edgeFades={{ top: true, bottom: true, size: 28 }}
                                 edgeIndicators={true}
+                                initialVisibility={{ bottom: true }}
                             >
                                 {/* Action shortcuts (collapsed layout) */}
                                 {actionMenuActions.length > 0 ? (

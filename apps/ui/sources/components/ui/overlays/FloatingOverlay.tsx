@@ -3,7 +3,7 @@ import { Platform, type StyleProp, type ViewStyle } from 'react-native';
 import Animated from 'react-native-reanimated';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { ScrollEdgeFades } from '@/components/ui/scroll/ScrollEdgeFades';
-import { useScrollEdgeFades } from '@/components/ui/scroll/useScrollEdgeFades';
+import { useScrollEdgeFades, type ScrollEdgeVisibility } from '@/components/ui/scroll/useScrollEdgeFades';
 import { ScrollEdgeIndicators } from '@/components/ui/scroll/ScrollEdgeIndicators';
 
 const stylesheet = StyleSheet.create((theme, runtime) => ({
@@ -59,6 +59,12 @@ interface FloatingOverlayProps {
     edgeIndicators?: boolean | Readonly<{ size?: number; opacity?: number }>;
     /** Optional arrow that points back to the anchor (useful for context menus). */
     arrow?: FloatingOverlayArrow;
+    /**
+     * Initial visibility for scroll edge fades before measurement.
+     * Useful for optimistic trailing-edge fades (e.g., bottom: true for lists
+     * that typically have more content below).
+     */
+    initialVisibility?: Partial<ScrollEdgeVisibility>;
 }
 
 export const FloatingOverlay = React.memo((props: FloatingOverlayProps) => {
@@ -106,6 +112,7 @@ export const FloatingOverlay = React.memo((props: FloatingOverlayProps) => {
         },
         overflowThreshold: 1,
         edgeThreshold: 1,
+        initialVisibility: props.initialVisibility,
     });
 
     const arrowCfg = React.useMemo(() => {
@@ -142,6 +149,7 @@ export const FloatingOverlay = React.memo((props: FloatingOverlayProps) => {
                 onLayout={fadeCfg || indicatorCfg ? fades.onViewportLayout : undefined}
                 onContentSizeChange={fadeCfg || indicatorCfg ? fades.onContentSizeChange : undefined}
                 onScroll={fadeCfg || indicatorCfg ? fades.onScroll : undefined}
+                onMomentumScrollEnd={fadeCfg || indicatorCfg ? fades.onMomentumScrollEnd : undefined}
             >
                 {children}
             </Animated.ScrollView>

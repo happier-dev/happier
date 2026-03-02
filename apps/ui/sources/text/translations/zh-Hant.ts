@@ -1027,6 +1027,16 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
             footer: '當工作階段需要你注意時，這些通知會由你的 CLI 透過 Expo 傳送。',
             enabledSubtitle: '允許此帳戶接收推播通知',
         },
+        foregroundBehavior: {
+            title: '應用程式內通知',
+            footer: '控制您使用應用程式時的通知方式。目前正在檢視的工作階段通知一律會靜音。',
+            full: '完整',
+            fullDescription: '顯示橫幅並播放音效',
+            silent: '靜音',
+            silentDescription: '顯示橫幅但不播放音效',
+            off: '關閉',
+            offDescription: '僅顯示徽章，不顯示橫幅',
+        },
         types: {
             title: '類型',
             footer: '如果你只想要某些提醒，可以停用個別類型。',

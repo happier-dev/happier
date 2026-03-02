@@ -838,6 +838,7 @@ export {
   AccountSettingsV2GetResponseSchema,
   AccountSettingsV2UpdateRequestSchema,
   AccountSettingsV2UpdateResponseSchema,
+  ForegroundBehaviorSchema,
   NotificationsSettingsV1Schema,
   DEFAULT_ACTIONS_SETTINGS_V1,
   DEFAULT_NOTIFICATIONS_SETTINGS_V1,
@@ -848,6 +849,7 @@ export {
   type AccountSettingsV2GetResponse,
   type AccountSettingsV2UpdateRequest,
   type AccountSettingsV2UpdateResponse,
+  type ForegroundBehavior,
   type NotificationsSettingsV1,
 } from './account/settings/index.js';
 

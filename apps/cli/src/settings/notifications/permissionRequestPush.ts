@@ -1,10 +1,11 @@
 import axios from 'axios';
-
 import type { AccountSettings } from '@happier-dev/protocol';
-
+import type { PermissionMode } from '@/api/types';
 import { serializeAxiosErrorForLog } from '@/api/client/serializeAxiosErrorForLog';
+import { isDefaultWriteLikeToolName } from '@/agent/permissions/CodexLikePermissionHandler';
 import type { AgentRequestKind } from '@/agent/permissions/requestKind';
 import { logger } from '@/ui/logger';
+import { getActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 
 import { shouldSendPermissionRequestPushNotification, shouldSendUserActionRequestPushNotification } from './notificationsPolicy';
 
@@ -189,6 +190,21 @@ export async function sendPermissionRequestPushNotificationAsync(params: Readonl
   });
 }
 
+export function sendPermissionRequestPushNotification(params: Readonly<{
+  pushSender: PermissionRequestPushSender;
+  sessionId: string;
+  permissionId: string;
+  toolName: string;
+  settings?: AccountSettings | null;
+  toolInput?: unknown;
+  toolDetails?: string | null;
+}>): void {
+  void sendPermissionRequestPushNotificationAsync({
+    ...params,
+    settings: params.settings ?? null,
+  }).catch(() => {});
+}
+
 export function sendPermissionRequestPushNotificationBestEffort(params: Readonly<{
   pushSender: PermissionRequestPushSender;
   sessionId: string;
@@ -199,4 +215,32 @@ export function sendPermissionRequestPushNotificationBestEffort(params: Readonly
   toolDetails?: string | null;
 }>): void {
   void sendPermissionRequestPushNotificationAsync(params).catch(() => {});
+}
+
+/**
+ * Returns true when the given permission mode would auto-approve the tool,
+ * meaning a push notification would just be noise.
+ */
+function isAutoApprovedByMode(permissionMode: PermissionMode | null | undefined, toolName: string): boolean {
+  if (!permissionMode) return false;
+  if (permissionMode === 'yolo' || permissionMode === 'bypassPermissions') return true;
+  if (permissionMode === 'safe-yolo' && !isDefaultWriteLikeToolName(toolName)) return true;
+  return false;
+}
+
+export function sendPermissionRequestPushNotificationForActiveAccount(params: Readonly<{
+  pushSender: PermissionRequestPushSender;
+  sessionId: string;
+  permissionId: string;
+  toolName: string;
+  permissionMode?: PermissionMode | null;
+  toolInput?: unknown;
+  toolDetails?: string | null;
+}>): void {
+  if (isAutoApprovedByMode(params.permissionMode, params.toolName)) return;
+  const settings = getActiveAccountSettingsSnapshot()?.settings ?? null;
+  sendPermissionRequestPushNotificationBestEffort({
+    ...params,
+    settings,
+  });
 }

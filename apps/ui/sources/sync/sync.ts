@@ -12,6 +12,7 @@ import { InvalidateSync } from '@/utils/sessions/sync';
 import { PauseController } from '@/utils/timing/pauseController';
 import { loadSyncTuning, type SyncTuning } from '@/sync/runtime/syncTuning';
 import { ActivityUpdateAccumulator } from './reducer/activityUpdateAccumulator';
+import { MachineActivityAccumulator, type MachineActivityUpdate } from './reducer/machineActivityAccumulator';
 import { randomUUID } from '@/platform/randomUUID';
 import { Platform, AppState } from 'react-native';
 import { resolveSentFrom } from './domains/messages/sentFrom';
@@ -134,6 +135,7 @@ import {
 } from './engine/pending/pendingQueueV2';
 import {
     flushActivityUpdates as flushActivityUpdatesEngine,
+    flushMachineActivityUpdates as flushMachineActivityUpdatesEngine,
     handleEphemeralSocketUpdate,
     handleSocketUpdate,
     parseUpdateContainer,
@@ -198,7 +200,8 @@ class Sync {
     private pendingMessageCommitRetryTimers = new Map<string, ReturnType<typeof setTimeout>>();
     private todosSync: InvalidateSync;
     private automationsSync: InvalidateSync;
-        private activityAccumulator: ActivityUpdateAccumulator;
+    private activityAccumulator: ActivityUpdateAccumulator;
+    private machineActivityAccumulator: MachineActivityAccumulator;
     private pendingSettings: Partial<Settings> = loadPendingSettings();
     private pendingSettingsFlushTimer: ReturnType<typeof setTimeout> | null = null;
     private pendingSettingsDirty = false;
@@ -270,6 +273,7 @@ class Sync {
           }
             this.pushTokenSync = new InvalidateSync(registerPushToken, { pause, backoff });
             this.activityAccumulator = new ActivityUpdateAccumulator(this.flushActivityUpdates.bind(this), 500);
+            this.machineActivityAccumulator = new MachineActivityAccumulator(this.flushMachineActivityUpdates.bind(this), 300);
 
           // Listen for app state changes to pause sync + run a single centralized resume pipeline.
           AppState.addEventListener('change', (nextAppState) => {
@@ -418,6 +422,7 @@ class Sync {
     private resetServerScopedRuntimeState = () => {
         apiSocket.disconnect();
         this.activityAccumulator.reset();
+        this.machineActivityAccumulator.reset();
 
         for (const timer of this.pendingMessageCommitRetryTimers.values()) {
             clearTimeout(timer);
@@ -2442,11 +2447,18 @@ class Sync {
         flushActivityUpdatesEngine({ updates, applySessions: (sessions) => this.applySessions(sessions) });
     }
 
+    private flushMachineActivityUpdates = (updates: Map<string, MachineActivityUpdate>) => {
+        flushMachineActivityUpdatesEngine({ updates, applyMachines: (machines) => storage.getState().applyMachines(machines) });
+    }
+
     private handleEphemeralUpdate = (update: unknown) => {
         handleEphemeralSocketUpdate({
             update,
             addActivityUpdate: (ephemeralUpdate) => {
                 this.activityAccumulator.addUpdate(ephemeralUpdate);
+            },
+            addMachineActivityUpdate: (machineUpdate) => {
+                this.machineActivityAccumulator.addUpdate(machineUpdate);
             },
         });
     }
