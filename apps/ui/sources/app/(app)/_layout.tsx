@@ -4,7 +4,7 @@ import * as React from 'react';
 import * as Notifications from 'expo-notifications';
 import { Typography } from '@/constants/Typography';
 import { createHeader } from '@/components/navigation/Header';
-import { Platform, TouchableOpacity } from 'react-native';
+import { Platform, TouchableOpacity, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { isRunningOnMac } from '@/utils/platform/platform';
 import { coerceRelativeRoute } from '@/utils/path/routeUtils';
@@ -31,11 +31,6 @@ import { buildTerminalConnectWebHref } from '@/utils/path/terminalConnectUrl';
 import { useWebInitialRouteReconcile } from '@/hooks/ui/useWebInitialRouteReconcile';
 
 const bootstrappedWebServerOverride = bootstrapActiveServerFromWebLocation({ scope: 'device' });
-
-
-export const unstable_settings = {
-    initialRouteName: 'index',
-};
 
 function extractServerUrlFromNotificationData(data: unknown): string | null {
     if (!data || typeof data !== 'object') return null;
@@ -96,6 +91,8 @@ export default function RootLayout() {
     const { theme } = useUnistyles();
     const friendsIdentityReadiness = useFriendsIdentityReadiness();
     const friendsIdentityReady = friendsIdentityReadiness.isReady;
+    const debugRouterEnabled = process.env.EXPO_PUBLIC_DEBUG === '1';
+
     useWebInitialRouteReconcile({ routerPathname: pathname });
 
     const webServerOverrideHandledRef = React.useRef(false);
@@ -509,26 +506,34 @@ export default function RootLayout() {
     const shouldUseCustomHeader = Platform.OS === 'android' || isRunningOnMac() || Platform.OS === 'web';
 
     return (
-        <Stack
-            initialRouteName='index'
-            screenOptions={{
-                header: shouldUseCustomHeader ? createHeader : undefined,
-                headerBackTitle: t('common.back'),
-                headerShadowVisible: false,
-                contentStyle: {
-                    backgroundColor: theme.colors.surface,
-                },
-                headerStyle: {
-                    backgroundColor: theme.colors.header.background,
-                },
-                headerTintColor: theme.colors.header.tint,
-                headerTitleStyle: {
-                    color: theme.colors.header.tint,
-                    ...Typography.default('semiBold'),
-                },
+        <>
+            {debugRouterEnabled && Platform.OS === 'web' ? (
+                <View
+                    testID="debug-router-pathname"
+                    style={{ position: 'absolute', top: 0, left: 0, opacity: 0, pointerEvents: 'none' }}
+                >
+                    <Text>{pathname}</Text>
+                </View>
+            ) : null}
+            <Stack
+                screenOptions={{
+                    header: shouldUseCustomHeader ? createHeader : undefined,
+                    headerBackTitle: t('common.back'),
+                    headerShadowVisible: false,
+                    contentStyle: {
+                        backgroundColor: theme.colors.surface,
+                    },
+                    headerStyle: {
+                        backgroundColor: theme.colors.header.background,
+                    },
+                    headerTintColor: theme.colors.header.tint,
+                    headerTitleStyle: {
+                        color: theme.colors.header.tint,
+                        ...Typography.default('semiBold'),
+                    },
 
-            }}
-        >
+                }}
+            >
             <Stack.Screen
                 name="index"
                 options={{
@@ -591,24 +596,18 @@ export default function RootLayout() {
                 }}
             />
             <Stack.Screen
-                name="session/[id]"
-                options={{
-                    headerShown: false
-                }}
-            />
-            <Stack.Screen
-                name="session/[id]/message/[messageId]"
-                options={{
-                    headerShown: true,
-                    headerBackTitle: t('common.back'),
-                    headerTitle: t('common.message')
-                }}
-            />
-            <Stack.Screen
                 name="session/[id]/info"
                 options={{
                     headerShown: true,
                     headerTitle: '',
+                    headerBackTitle: t('common.back'),
+                }}
+            />
+            <Stack.Screen
+                name="session/[id]/runs"
+                options={{
+                    headerShown: true,
+                    headerTitle: t('runs.title'),
                     headerBackTitle: t('common.back'),
                 }}
             />
@@ -621,18 +620,16 @@ export default function RootLayout() {
                 }}
             />
             <Stack.Screen
-                name="session/[id]/file"
+                name="session/[id]/index"
                 options={{
-                    headerShown: true,
-                    headerTitle: t('common.fileViewer'),
-                    headerBackTitle: t('common.files'),
+                    headerShown: false
                 }}
             />
             <Stack.Screen
-                name="session/[id]/sharing"
+                name="session/recent"
                 options={{
                     headerShown: true,
-                    headerTitle: t('session.sharing.title'),
+                    headerTitle: t('sessionHistory.title'),
                     headerBackTitle: t('common.back'),
                 }}
             />
@@ -865,12 +862,6 @@ export default function RootLayout() {
                 }}
             />
             <Stack.Screen
-                name="dev/masked-progress"
-                options={{
-                    headerTitle: t('navigation.maskedProgress'),
-                }}
-            />
-            <Stack.Screen
                 name="dev/shimmer-demo"
                 options={{
                     headerTitle: t('navigation.shimmerViewDemo'),
@@ -880,14 +871,6 @@ export default function RootLayout() {
                 name="dev/multi-text-input"
                 options={{
                     headerTitle: t('navigation.multiTextInput'),
-                }}
-            />
-            <Stack.Screen
-                name="session/recent"
-                options={{
-                    headerShown: true,
-                    headerTitle: t('sessionHistory.title'),
-                    headerBackTitle: t('common.back'),
                 }}
             />
             <Stack.Screen
@@ -996,6 +979,7 @@ export default function RootLayout() {
                     headerBackTitle: t('common.back'),
                 }}
             />
-        </Stack>
+            </Stack>
+        </>
     );
 }
