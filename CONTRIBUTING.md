@@ -85,7 +85,14 @@ If you want the best chance your PR merges quickly: link the issue/discussion th
 Please open pull requests against `dev` (not `main`).
 
 - `dev` is the integration branch where changes land first.
+- `preview` is the release candidate branch used for preview builds/deploys.
 - `main` is the stable/release branch.
+
+If you’re running from source and want a more stable base than `dev`, check out `preview`:
+
+```bash
+git clone --branch preview https://github.com/happier-dev/happier.git
+```
 
 ### What helps your PR get merged
 
