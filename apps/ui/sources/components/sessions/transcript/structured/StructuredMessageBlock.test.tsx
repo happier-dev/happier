@@ -1,10 +1,14 @@
 import React from 'react';
 import renderer, { act } from 'react-test-renderer';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import { StructuredMessageBlock } from './StructuredMessageBlock';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
+
+vi.mock('@/components/ui/text/Text', () => ({
+    Text: (props: any) => React.createElement('Text', props, props.children),
+}));
 
 describe('StructuredMessageBlock', () => {
     it('returns null for unknown kinds', () => {
@@ -93,5 +97,9 @@ describe('StructuredMessageBlock', () => {
         expect(serialized).toContain('To:');
         expect(serialized).toContain('Alice');
         expect(serialized).toContain('hello there');
+
+        const findTextNode = (text: string) =>
+            tree!.root.findAll((n: any) => n.type === 'Text' && n.props?.children === text)[0]!;
+        expect(findTextNode('hello there').props.selectable).toBe(true);
     });
 });

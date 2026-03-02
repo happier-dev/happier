@@ -112,6 +112,8 @@ vi.mock('@/components/ui/text/Text', () => ({
     Text: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
         React.createElement('Text', props, props.children),
     TextInput: (props: Record<string, unknown>) => React.createElement('TextInput', props, null),
+    TextSelectabilityScope: (props: { selectable: boolean; children: React.ReactNode }) =>
+        React.createElement(React.Fragment, null, props.children),
 }));
 
 vi.mock('@/sync/domains/state/storage', () => ({
@@ -377,7 +379,9 @@ describe('AgentInput (permission requests)', () => {
             );
         });
 
-        const scrolls = tree!.root.findAll((node) => node.type === 'ScrollView' && node.props.testID === 'agentInput.permissionRequests.scroll');
+        const scrolls = tree!.root.findAll(
+            (node) => (node.type as any) === 'ScrollView' && node.props.testID === 'agentInput.permissionRequests.scroll',
+        );
         expect(scrolls).toHaveLength(1);
     });
 });
