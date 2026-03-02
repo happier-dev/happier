@@ -17,6 +17,8 @@ Make sure to star the repo and [subscribe to the announcements channel](https://
 
 You can also [join the Discord](https://discord.gg/W6Pb8KuHfg) channel to ask any questions or report any issues that you might have.
 
+### We want to hear your feedback!
+
 This project exists because we needed it ourselves, and **we want it to evolve through real feedback**. We aim to keep the community welcoming, and contributor-friendly, whether you’re signaling an issue or proposing a larger idea.
 
 If something feels broken, missing, or awkward, **we really want to hear about it**.
@@ -243,6 +245,8 @@ Most-used commands:
 - `yarn mobile`, `yarn mobile:install`, `yarn mobile-dev-client`: mobile workflows
 - `yarn providers`, `yarn eas`, `yarn setup`, `yarn remote`, `yarn self-host`, `yarn menubar`: advanced workflows
 
+[Run from a monorepo clone docs](./apps/docs/content/docs/deployment/repo-local.mdx)
+
 Arguments:
 
 - Forward extra flags/args with `--` (Yarn v1), for example:
@@ -255,9 +259,16 @@ Arguments:
 - To run `hstack`/`happier` from any terminal using this clone, run `yarn cli:activate`.
 - You can run published `hstack` via `npx` (for example `npx --yes -p @happier-dev/stack@latest hstack <command>`), but that is **not** the same as repo-local wrappers from this checkout.
 
-Documentation:
+## Documentation
 
-- Repo-local command reference: [Run from a monorepo clone (repo-local mode)](./apps/docs/content/docs/deployment/repo-local.mdx)
+- [Getting started](https://docs.happier.dev/getting-started/onboarding)
+- [Installing Claude Code, Codex, OpenCode and other providers CLIs](https://docs.happier.dev/providers)
+- [Installing and using the CLI](https://docs.happier.dev/clients/cli)
+- [What is the daemon and how to install it?](https://docs.happier.dev/clients/daemon)
+- [Happier Voice](https://docs.happier.dev/features/voice)
+- [macOS Menubar](https://docs.happier.dev/hstack/menubar)
+- [Configuring authentication on your self-hosted server](https://docs.happier.dev/server/auth)
+- [Configuring encryption on your self-hosted server](https://docs.happier.dev/server/encryption)
 - hstack workflows: [hstack docs index](./apps/docs/content/docs/hstack/index.mdx)
 - Deployment options:
   - [Deployment overview](./apps/docs/content/docs/deployment/index.mdx)
@@ -276,7 +287,7 @@ What that means in practice:
 * **Fast feedback loops** on issues and pull requests
 * A focus on **solving real developer pain**, not chasing hype
 
-If something feels broken, missing, or awkward — we want to hear about it.
+If something feels broken, missing, or awkward, **we want to hear about it**.
 Happier grows through shared experience and collaboration.
 
 ## Project Structure
