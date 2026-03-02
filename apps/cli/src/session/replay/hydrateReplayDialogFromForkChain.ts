@@ -1,6 +1,7 @@
 import type { Credentials } from '@/persistence';
 
 import { openSessionDataEncryptionKey } from '@/api/client/openSessionDataEncryptionKey';
+import { configuration } from '@/configuration';
 import { fetchSessionById } from '@/sessionControl/sessionsHttp';
 import { tryDecryptSessionMetadata } from '@/sessionControl/sessionEncryptionContext';
 
@@ -14,6 +15,12 @@ type ForkV1 = Readonly<{
   parentCutoffSeqInclusive: number;
 }>;
 
+type RawTranscriptRow = Readonly<{
+  seq?: unknown;
+  createdAt?: unknown;
+  content?: unknown;
+}>;
+
 function readForkV1FromMetadata(metadata: Record<string, unknown>): ForkV1 | null {
   const fork = (metadata as any)?.forkV1;
   if (!fork || typeof fork !== 'object') return null;
@@ -24,6 +31,41 @@ function readForkV1FromMetadata(metadata: Record<string, unknown>): ForkV1 | nul
   if (!parentSessionId) return null;
   if (!Number.isFinite(cutoff)) return null;
   return { v: 1, parentSessionId, parentCutoffSeqInclusive: cutoff };
+}
+
+function readMinSeq(rows: readonly { seq?: unknown }[]): number | null {
+  let min = Number.POSITIVE_INFINITY;
+  for (const row of rows) {
+    const seq = typeof row?.seq === 'number' && Number.isFinite(row.seq) ? row.seq : null;
+    if (seq === null) continue;
+    min = Math.min(min, Math.floor(seq));
+  }
+  return Number.isFinite(min) ? Math.max(0, min) : null;
+}
+
+async function scanOlderPagesForSynopsisText(params: Readonly<{
+  token: string;
+  sessionId: string;
+  initialRows: readonly RawTranscriptRow[];
+  maxPages: number;
+  pageSize: number;
+  decryptLatestSynopsisText: (rows: readonly RawTranscriptRow[]) => string | null;
+}>): Promise<string | null> {
+  let cursor = readMinSeq(params.initialRows);
+  for (let page = 0; page < params.maxPages; page += 1) {
+    if (cursor === null || cursor <= 1) break;
+    const older = await fetchEncryptedTranscriptMessages({
+      token: params.token,
+      sessionId: params.sessionId,
+      limit: params.pageSize,
+      beforeSeq: cursor,
+    }).catch(() => null);
+    if (!older || older.length === 0) break;
+    const synopsis = params.decryptLatestSynopsisText(older);
+    if (synopsis) return synopsis;
+    cursor = readMinSeq(older);
+  }
+  return null;
 }
 
 export async function hydrateReplayDialogFromForkChain(params: Readonly<{
@@ -76,6 +118,15 @@ export async function hydrateReplayDialogFromForkChain(params: Readonly<{
   let sourceCutoffSeqInclusive = 0;
   let synopsisText: string | null = null;
 
+  const synopsisScanMaxPages =
+    typeof configuration.replaySynopsisScanMaxPages === 'number' && Number.isFinite(configuration.replaySynopsisScanMaxPages)
+      ? Math.max(0, Math.min(25, Math.floor(configuration.replaySynopsisScanMaxPages)))
+      : 0;
+  const synopsisScanPageSize =
+    typeof configuration.replaySynopsisScanPageSize === 'number' && Number.isFinite(configuration.replaySynopsisScanPageSize)
+      ? Math.max(1, Math.min(500, Math.floor(configuration.replaySynopsisScanPageSize)))
+      : 500;
+
   // Iterate oldest-first so createdAt ordering stays stable before the final sort.
   for (const segment of [...segments].reverse()) {
     const sessionSeq =
@@ -105,6 +156,20 @@ export async function hydrateReplayDialogFromForkChain(params: Readonly<{
         sourceCutoffSeqInclusive = cutoff;
         synopsisText = slice.latestSynopsisText;
       }
+
+      if (segment.sessionId === params.startingSessionId && !synopsisText && synopsisScanMaxPages > 0) {
+        synopsisText = await scanOlderPagesForSynopsisText({
+          token: params.credentials.token,
+          sessionId: segment.sessionId,
+          initialRows: rows,
+          maxPages: synopsisScanMaxPages,
+          pageSize: synopsisScanPageSize,
+          decryptLatestSynopsisText: (rawRows) => {
+            const olderSlice = decryptTranscriptReplaySlice({ rows: rawRows, maxTextChars: params.maxTextChars });
+            return olderSlice.latestSynopsisText;
+          },
+        });
+      }
       continue;
     }
 
@@ -133,6 +198,25 @@ export async function hydrateReplayDialogFromForkChain(params: Readonly<{
     if (segment.sessionId === params.startingSessionId) {
       sourceCutoffSeqInclusive = cutoff;
       synopsisText = slice.latestSynopsisText;
+    }
+
+    if (segment.sessionId === params.startingSessionId && !synopsisText && synopsisScanMaxPages > 0) {
+      synopsisText = await scanOlderPagesForSynopsisText({
+        token: params.credentials.token,
+        sessionId: segment.sessionId,
+        initialRows: rows,
+        maxPages: synopsisScanMaxPages,
+        pageSize: synopsisScanPageSize,
+        decryptLatestSynopsisText: (rawRows) => {
+          const olderSlice = decryptTranscriptReplaySlice({
+            rows: rawRows,
+            encryptionKey: dek,
+            encryptionVariant: 'dataKey',
+            maxTextChars: params.maxTextChars,
+          });
+          return olderSlice.latestSynopsisText;
+        },
+      });
     }
   }
 

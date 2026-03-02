@@ -107,6 +107,10 @@ class Configuration {
   // Memory search (daemon-local indexing) limits.
   public readonly memoryMaxTranscriptWindowMessages: number
 
+  // Replay-fork synopsis lookup (memory artifacts may be older than the most recent replay page).
+  public readonly replaySynopsisScanMaxPages: number
+  public readonly replaySynopsisScanPageSize: number
+
   // Startup coordinator / deferred session buffering (fast-start).
   public readonly startupTimingEnabled: boolean
   public readonly startupDeferredSessionBufferMaxEntries: number
@@ -392,6 +396,23 @@ class Configuration {
       this.memoryMaxTranscriptWindowMessages = Math.min(500, Math.trunc(memoryWindowRaw));
     } else {
       this.memoryMaxTranscriptWindowMessages = 250;
+    }
+
+    const replaySynopsisScanMaxPagesRaw = Number.parseInt(String(process.env.HAPPIER_REPLAY_SYNOPSIS_SCAN_MAX_PAGES ?? ''), 10);
+    // Default: 6 pages (enough to find the latest memory synopsis without scanning arbitrarily far back).
+    // Min 0 disables the scan; max 25 is a hard safety cap.
+    if (Number.isFinite(replaySynopsisScanMaxPagesRaw) && replaySynopsisScanMaxPagesRaw >= 0) {
+      this.replaySynopsisScanMaxPages = Math.min(25, Math.trunc(replaySynopsisScanMaxPagesRaw));
+    } else {
+      this.replaySynopsisScanMaxPages = 6;
+    }
+
+    const replaySynopsisScanPageSizeRaw = Number.parseInt(String(process.env.HAPPIER_REPLAY_SYNOPSIS_SCAN_PAGE_SIZE ?? ''), 10);
+    // Default: 500 (server max). Min 1; max 500 to match server enforcement.
+    if (Number.isFinite(replaySynopsisScanPageSizeRaw) && replaySynopsisScanPageSizeRaw >= 1) {
+      this.replaySynopsisScanPageSize = Math.min(500, Math.trunc(replaySynopsisScanPageSizeRaw));
+    } else {
+      this.replaySynopsisScanPageSize = 500;
     }
 
     const startupTimingRaw = String(process.env.HAPPIER_STARTUP_TIMING_ENABLED ?? '').trim().toLowerCase();
