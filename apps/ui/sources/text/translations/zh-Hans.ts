@@ -395,6 +395,9 @@ export const zhHans: TranslationStructure = {
     waitingForApproval: "等待确认…",
     showQrInstead: "改为显示二维码",
     addPhoneQrInstructions: "用 Happier 手机应用扫描此二维码，在手机上登录。",
+    serverUrlNotEmbeddedTitle: "在手机上设置服务器",
+    serverUrlNotEmbeddedBody:
+      "此二维码无法包含服务器地址，因为服务器被设置为 localhost。请在手机上前往 设置 → 服务器，添加一个手机可访问的 URL（例如局域网 IP 或 Tailscale URL），然后再扫描一次。",
     pairingRequestTitle: "配对请求",
     pairingRequestBody: "确认该验证码与手机上显示的一致，然后批准。",
     pairingAlreadyRequestedTitle: "二维码已被使用",
@@ -3536,6 +3539,8 @@ export const zhHans: TranslationStructure = {
       },
       recentMessagesTitle: "要包含的最近消息",
       recentMessagesPlaceholder: "16",
+      maxSeedCharsTitle: "重放 seed 限制（字符）",
+      maxSeedCharsPlaceholder: "50000",
     },
     toolDetailLevel: {
       titleOnlyTitle: "仅标题",

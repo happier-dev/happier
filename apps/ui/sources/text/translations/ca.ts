@@ -394,6 +394,9 @@ export const ca: TranslationStructure = {
         waitingForApproval: 'Esperant aprovació…',
         showQrInstead: 'Mostra un codi QR en el seu lloc',
         addPhoneQrInstructions: 'Escaneja aquest codi QR amb l’app mòbil de Happier per iniciar sessió al teu telèfon.',
+        serverUrlNotEmbeddedTitle: 'Configura el servidor al teu telèfon',
+        serverUrlNotEmbeddedBody:
+            'Aquest codi QR no pot incloure l’adreça del servidor perquè està configurada com a localhost. Al teu telèfon, ves a Configuració → Servidors i afegeix una URL a la qual el telèfon pugui accedir (IP de la LAN o Tailscale) i després torna a escanejar.',
         pairingRequestTitle: 'Sol·licitud d’enllaç',
         pairingRequestBody: 'Comprova que aquest codi coincideix amb el que veus al telèfon i després aprova.',
         pairingAlreadyRequestedTitle: 'Codi ja utilitzat',
@@ -3338,6 +3341,8 @@ deps: {
                 },
                 recentMessagesTitle: 'Missatges recents a incloure',
                 recentMessagesPlaceholder: '16',
+                maxSeedCharsTitle: 'Límit de mida del seed (chars)',
+                maxSeedCharsPlaceholder: '50000',
             },
           defaultPermissions: {
               title: 'Permisos per defecte',

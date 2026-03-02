@@ -397,6 +397,9 @@ export const en = {
         waitingForApproval: 'Waiting for approval…',
         showQrInstead: 'Show a QR code instead',
         addPhoneQrInstructions: 'Scan this QR code with the Happier mobile app to sign in on your phone.',
+        serverUrlNotEmbeddedTitle: 'Set up your phone’s server',
+        serverUrlNotEmbeddedBody:
+            'This QR code can’t include the server address because it’s set to localhost. On your phone, go to Settings → Servers and add a URL your phone can reach (LAN IP or Tailscale), then scan again.',
         pairingRequestTitle: 'Pairing request',
         pairingRequestBody: 'Verify this code matches what you see on your phone, then approve.',
         pairingAlreadyRequestedTitle: 'Code already used',
@@ -3353,6 +3356,8 @@ export const en = {
               },
               recentMessagesTitle: 'Recent messages to include',
               recentMessagesPlaceholder: '16',
+              maxSeedCharsTitle: 'Replay seed size limit (chars)',
+              maxSeedCharsPlaceholder: '50000',
           },
           toolDetailLevel: {
               titleOnlyTitle: 'Title only',

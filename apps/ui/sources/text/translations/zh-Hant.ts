@@ -522,6 +522,9 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
         waitingForApproval: '等待確認…',
         showQrInstead: '改為顯示 QR 碼',
         addPhoneQrInstructions: '使用 Happier 手機 App 掃描此 QR 碼，在手機上登入。',
+        serverUrlNotEmbeddedTitle: '在手機上設定伺服器',
+        serverUrlNotEmbeddedBody:
+            '此 QR 碼無法包含伺服器位址，因為伺服器被設定為 localhost。請在手機上前往 設定 → 伺服器，新增一個手機可連線的 URL（例如區網 IP 或 Tailscale URL），然後再掃描一次。',
         pairingRequestTitle: '配對請求',
         pairingRequestBody: '確認此驗證碼與手機上顯示的一致，然後批准。',
         pairingAlreadyRequestedTitle: 'QR 碼已被使用',
@@ -2341,6 +2344,8 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
               },
               recentMessagesTitle: '要包含的最近訊息',
               recentMessagesPlaceholder: '16',
+              maxSeedCharsTitle: '重播 seed 限制（字元）',
+              maxSeedCharsPlaceholder: '50000',
           },
           sessionList: {
               title: '會話列表',

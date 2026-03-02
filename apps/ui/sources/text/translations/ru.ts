@@ -381,6 +381,9 @@ export const ru: TranslationStructure = {
     waitingForApproval: "Ожидание подтверждения…",
     showQrInstead: "Показать QR‑код вместо этого",
     addPhoneQrInstructions: "Отсканируйте этот QR‑код в мобильном приложении Happier, чтобы войти на телефоне.",
+    serverUrlNotEmbeddedTitle: "Настройте сервер на телефоне",
+    serverUrlNotEmbeddedBody:
+      "Этот QR‑код не может включать адрес сервера, потому что он настроен на localhost. На телефоне откройте Настройки → Серверы и добавьте URL, доступный с телефона (LAN IP или Tailscale), затем отсканируйте снова.",
     pairingRequestTitle: "Запрос на привязку",
     pairingRequestBody: "Убедитесь, что этот код совпадает с тем, что отображается на телефоне, затем подтвердите.",
     pairingAlreadyRequestedTitle: "Код уже использован",
@@ -3758,6 +3761,8 @@ export const ru: TranslationStructure = {
         },
         recentMessagesTitle: "Количество недавних сообщений",
         recentMessagesPlaceholder: "16",
+        maxSeedCharsTitle: "Лимит seed (символы)",
+        maxSeedCharsPlaceholder: "50000",
       },
       toolDetailLevel: {
         titleOnlyTitle: "Только заголовок",

@@ -424,6 +424,9 @@ export const pl: TranslationStructure = {
     waitingForApproval: "Oczekiwanie na zatwierdzenie…",
     showQrInstead: "Zamiast tego pokaż kod QR",
     addPhoneQrInstructions: "Zeskanuj ten kod QR w aplikacji mobilnej Happier, aby zalogować się na telefonie.",
+    serverUrlNotEmbeddedTitle: "Skonfiguruj serwer na telefonie",
+    serverUrlNotEmbeddedBody:
+      "Ten kod QR nie może zawierać adresu serwera, ponieważ jest ustawiony na localhost. Na telefonie przejdź do Ustawienia → Serwery i dodaj URL, do którego telefon ma dostęp (LAN IP lub Tailscale), a następnie zeskanuj ponownie.",
     pairingRequestTitle: "Prośba o sparowanie",
     pairingRequestBody: "Sprawdź, czy ten kod zgadza się z tym na telefonie, a następnie zatwierdź.",
     pairingAlreadyRequestedTitle: "Kod już użyty",
@@ -3770,6 +3773,8 @@ export const pl: TranslationStructure = {
         },
         recentMessagesTitle: "Ostatnie wiadomości do dołączenia",
         recentMessagesPlaceholder: "16",
+        maxSeedCharsTitle: "Limit seed (znaki)",
+        maxSeedCharsPlaceholder: "50000",
       },
       toolDetailLevel: {
         titleOnlyTitle: "Tylko tytuł",

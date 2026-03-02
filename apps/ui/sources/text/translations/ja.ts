@@ -712,6 +712,9 @@ export const ja: TranslationStructure = {
     waitingForApproval: "承認待ち…",
     showQrInstead: "代わりにQRコードを表示",
     addPhoneQrInstructions: "Happier モバイルアプリでこのQRコードをスキャンして、スマホでサインインします。",
+    serverUrlNotEmbeddedTitle: "スマホでサーバーを設定",
+    serverUrlNotEmbeddedBody:
+      "このQRコードにはサーバーのURLを含められません（localhost に設定されているため）。スマホで「設定 → サーバー」を開き、スマホから到達できるURL（LANのIPやTailscaleのURLなど）を追加してから、もう一度スキャンしてください。",
     pairingRequestTitle: "ペアリング要求",
     pairingRequestBody: "スマホに表示されたコードと一致することを確認してから承認してください。",
     pairingAlreadyRequestedTitle: "コードは使用済みです",
@@ -3995,6 +3998,8 @@ export const ja: TranslationStructure = {
         },
         recentMessagesTitle: "含める最近メッセージ",
         recentMessagesPlaceholder: "16",
+        maxSeedCharsTitle: "リプレイ seed 上限（文字数）",
+        maxSeedCharsPlaceholder: "50000",
       },
       toolDetailLevel: {
         titleOnlyTitle: "タイトルのみ",
