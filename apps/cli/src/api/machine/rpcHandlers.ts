@@ -31,6 +31,7 @@ import type { MemoryWorkerHandle } from '@/daemon/memory/memoryWorker';
 import { registerMachineMemoryRpcHandlers } from './rpcHandlers.memory';
 import { runReplaySummaryForDialog } from '@/session/replay/summary/runReplaySummaryForDialog';
 import { resolveCliFeatureDecision } from '@/features/featureDecisionService';
+import { configuration } from '@/configuration';
 
 export type MachineRpcHandlers = {
   spawnSession: (options: SpawnSessionOptions) => Promise<SpawnSessionResult>;
@@ -265,11 +266,14 @@ export function registerMachineRpcHandlers(params: Readonly<{
       };
     }
 
+    const replayStrategy = (replay.strategy ?? 'recent_messages') === 'summary_plus_recent' ? 'summary_plus_recent' : 'recent_messages';
+
     const hydrated = await hydrateReplayDialogFromForkChain({
       credentials,
       startingSessionId: replay.previousSessionId,
-      limit: 200,
+      limit: configuration.replaySeedCandidateLimit,
       maxTextChars: maxTextChars ?? undefined,
+      wantSynopsisText: replayStrategy === 'summary_plus_recent',
     }).catch(() => null);
     if (!hydrated || hydrated.dialog.length === 0) {
       return {
@@ -280,7 +284,7 @@ export function registerMachineRpcHandlers(params: Readonly<{
     }
 
 	    const summaryText = await (async () => {
-	      if ((replay.strategy ?? 'recent_messages') !== 'summary_plus_recent') return null;
+	      if (replayStrategy !== 'summary_plus_recent') return null;
 	      const hydratedSynopsis = typeof (hydrated as any)?.synopsisText === 'string' ? String((hydrated as any).synopsisText).trim() : '';
 	      if (hydratedSynopsis) return hydratedSynopsis;
 
@@ -311,10 +315,11 @@ export function registerMachineRpcHandlers(params: Readonly<{
 
     const seedDraft = buildHappierReplayPromptFromDialog({
       previousSessionId: replay.previousSessionId,
-      strategy: replay.strategy ?? 'recent_messages',
+      strategy: replayStrategy,
       recentMessagesCount: replay.recentMessagesCount ?? 16,
       summaryText,
       dialog: hydrated.dialog,
+      maxPromptChars: typeof replay.maxSeedChars === 'number' ? replay.maxSeedChars : configuration.replaySeedMaxChars,
     });
 
     if (!seedDraft.trim()) {
@@ -659,8 +664,9 @@ export function registerMachineRpcHandlers(params: Readonly<{
 	    const hydrated = await hydrateReplayDialogFromForkChain({
       credentials,
       startingSessionId: parentSessionId,
-      limit: 200,
+      limit: configuration.replaySeedCandidateLimit,
       maxTextChars: maxTextChars ?? undefined,
+      wantSynopsisText: true,
       ...(forkPoint.type === 'seq' ? { upToSeqInclusive: forkPoint.upToSeqInclusive } : {}),
     }).catch(() => null);
     if (!hydrated || hydrated.dialog.length === 0) {
@@ -707,6 +713,7 @@ export function registerMachineRpcHandlers(params: Readonly<{
 	      recentMessagesCount: hydrated.dialog.length,
 	      summaryText,
 	      dialog: hydrated.dialog,
+        maxPromptChars: typeof parsed.data.replayMaxSeedChars === 'number' ? parsed.data.replayMaxSeedChars : configuration.replaySeedMaxChars,
 	    });
 
     if (!seedDraft.trim()) {

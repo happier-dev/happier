@@ -52,6 +52,7 @@ describe('sessions ops server-scoped routing', () => {
                 previousSessionId: 'sess-prev',
                 strategy: 'summary_plus_recent',
                 recentMessagesCount: 2,
+                maxSeedChars: 12_345,
                 summaryRunner,
             },
             serverId: 'server-b',
@@ -63,7 +64,7 @@ describe('sessions ops server-scoped routing', () => {
             method: 'session.continueWithReplay',
             serverId: 'server-b',
             payload: expect.objectContaining({
-                replay: expect.objectContaining({ summaryRunner }),
+                replay: expect.objectContaining({ summaryRunner, maxSeedChars: 12_345 }),
             }),
         }));
     });
@@ -78,6 +79,7 @@ describe('sessions ops server-scoped routing', () => {
             parentSessionId: 'sess-parent',
             forkPoint: { type: 'seq', upToSeqInclusive: 12 },
             replaySummaryRunner,
+            replayMaxSeedChars: 55_000,
             serverId: 'server-b',
         } as any);
 
@@ -86,7 +88,7 @@ describe('sessions ops server-scoped routing', () => {
             machineId: 'machine-1',
             method: 'session.fork',
             serverId: 'server-b',
-            payload: expect.objectContaining({ replaySummaryRunner }),
+            payload: expect.objectContaining({ replaySummaryRunner, replayMaxSeedChars: 55_000 }),
         }));
     });
 

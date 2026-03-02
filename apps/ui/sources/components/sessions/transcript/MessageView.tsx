@@ -556,6 +556,7 @@ function ForkMessageButton(props: {
   const executionRunsEnabled = useFeatureEnabled('execution.runs');
   const sessionReplayStrategy = useSetting('sessionReplayStrategy');
   const sessionReplaySummaryRunner = useSetting('sessionReplaySummaryRunnerV1');
+  const sessionReplayMaxSeedChars = useSetting('sessionReplayMaxSeedChars');
 
   const handlePress = React.useCallback(async () => {
     if (isForking) return;
@@ -574,6 +575,7 @@ function ForkMessageButton(props: {
         machineId,
         parentSessionId: props.sessionId,
         forkPoint: { type: 'seq', upToSeqInclusive: props.upToSeqInclusive },
+        ...(typeof sessionReplayMaxSeedChars === 'number' ? { replayMaxSeedChars: sessionReplayMaxSeedChars } : {}),
         ...(replaySummaryRunner ? { replaySummaryRunner } : {}),
       } as any);
       if (result.ok !== true) {

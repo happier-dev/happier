@@ -71,6 +71,8 @@ vi.mock('@/configuration', () => ({
     logsDir: '/tmp',
     daemonStateFile: '/tmp/happier-test-home/daemon.state.json',
     isDaemonProcess: false,
+    replaySeedMaxChars: 50_000,
+    replaySeedCandidateLimit: 500,
   },
 }));
 
@@ -353,7 +355,7 @@ describe('registerMachineRpcHandlers', () => {
     });
 
     const encryptedOne = encodeBase64(
-      encrypt(sessionEncryptionKey, 'dataKey', { role: 'user', content: { type: 'text', text: 'one' } }),
+      encrypt(sessionEncryptionKey, 'dataKey', { role: 'user', content: { type: 'text', text: 'one '.repeat(2000) } }),
     );
     const encryptedTwo = encodeBase64(
       encrypt(sessionEncryptionKey, 'dataKey', { role: 'agent', content: { type: 'text', text: 'two' } }),
@@ -423,7 +425,8 @@ describe('registerMachineRpcHandlers', () => {
       replay: {
         previousSessionId: 'sess_prev',
         strategy: 'recent_messages',
-        recentMessagesCount: 2,
+        recentMessagesCount: 3,
+        maxSeedChars: 400,
       },
     });
 
@@ -436,6 +439,11 @@ describe('registerMachineRpcHandlers', () => {
       }),
     );
     expect(getSpy).toHaveBeenCalledTimes(2);
+    const messageFetchCall = ((getSpy as any).mock.calls as any[]).find((call) => {
+      const url = call?.[0];
+      return typeof url === 'string' && url.includes(`/v1/sessions/${'sess_prev'}/messages`);
+    });
+    expect((messageFetchCall?.[1] as any)?.params?.limit).toBe(500);
     expect(result).toMatchObject({ type: 'success', sessionId: 'sess_new' });
     expect((result as any).seedDraft).toBeUndefined();
     expect(updateSessionMetadataWithRetryMock).toHaveBeenCalledTimes(0);
@@ -446,7 +454,7 @@ describe('registerMachineRpcHandlers', () => {
     expect(createdMeta.replaySeedV1).toMatchObject({ v: 1, sourceSessionId: 'sess_prev', sourceCutoffSeqInclusive: 3 });
     expect(String(createdMeta.replaySeedV1.seedText ?? '')).toContain('Assistant: two');
     expect(String(createdMeta.replaySeedV1.seedText ?? '')).toContain('User: three');
-    expect(String(createdMeta.replaySeedV1.seedText ?? '')).not.toContain('User: one');
+    expect(String(createdMeta.replaySeedV1.seedText ?? '')).not.toContain('User: one one one');
   });
 
   it('continues a session with an on-demand summary when summary_plus_recent has no cached summary', async () => {

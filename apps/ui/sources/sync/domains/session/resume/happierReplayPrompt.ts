@@ -6,7 +6,7 @@ function normalizePositiveInt(value: unknown, fallback: number, opts?: { min?: n
   const raw = typeof value === 'number' && Number.isFinite(value) ? value : Number(value);
   const n = Number.isFinite(raw) ? Math.floor(raw) : fallback;
   const min = opts?.min ?? 1;
-  const max = opts?.max ?? 200;
+  const max = opts?.max ?? 500;
   if (!Number.isFinite(n)) return fallback;
   return Math.max(min, Math.min(max, n));
 }
@@ -19,9 +19,11 @@ export function resolveHappierReplayConfig(settings: Settings): Readonly<{
   enabled: boolean;
   strategy: HappierReplayStrategy;
   recentMessagesCount: number;
+  maxSeedChars: number;
 }> {
   const enabled = settings.sessionReplayEnabled === true;
   const strategy = normalizeStrategy(settings.sessionReplayStrategy);
-  const recentMessagesCount = normalizePositiveInt(settings.sessionReplayRecentMessagesCount, 16, { min: 1, max: 100 });
-  return { enabled, strategy, recentMessagesCount };
+  const recentMessagesCount = normalizePositiveInt(settings.sessionReplayRecentMessagesCount, 250, { min: 1, max: 500 });
+  const maxSeedChars = normalizePositiveInt(settings.sessionReplayMaxSeedChars, 50_000, { min: 500, max: 200_000 });
+  return { enabled, strategy, recentMessagesCount, maxSeedChars };
 }

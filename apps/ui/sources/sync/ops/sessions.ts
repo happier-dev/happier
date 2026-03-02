@@ -313,6 +313,7 @@ export type ContinueSessionWithReplayOptions = Readonly<{
         previousSessionId: string;
         strategy?: 'recent_messages' | 'summary_plus_recent';
         recentMessagesCount?: number;
+        maxSeedChars?: number;
         seedMode?: 'draft' | 'daemon_initial_prompt';
         summaryRunner?: LlmTaskRunnerConfigV1;
     }>;
@@ -371,6 +372,7 @@ export type ForkSessionOptions = Readonly<{
     forkPoint: SessionForkPoint;
     strategy?: SessionForkStrategy;
     replaySummaryRunner?: LlmTaskRunnerConfigV1;
+    replayMaxSeedChars?: number;
 }>;
 
 export async function forkSession(options: ForkSessionOptions): Promise<SessionForkRpcResult> {
@@ -385,6 +387,7 @@ export async function forkSession(options: ForkSessionOptions): Promise<SessionF
                 forkPoint: options.forkPoint,
                 strategy: options.strategy,
                 replaySummaryRunner: options.replaySummaryRunner,
+                replayMaxSeedChars: options.replayMaxSeedChars,
             },
             serverId,
         });

@@ -12,6 +12,7 @@ export function decryptTranscriptTextItems(params: Readonly<{
   encryptionKey?: Uint8Array;
   encryptionVariant?: 'dataKey';
   maxTextChars?: number;
+  maxDialogItems?: number;
 }>): HappierReplayDialogItem[] {
   return decryptTranscriptReplayCore(params).dialog;
 }

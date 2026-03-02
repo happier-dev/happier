@@ -71,12 +71,14 @@ export function createDefaultActionExecutor(opts?: Readonly<{
         settings?.sessionReplayStrategy === 'summary_plus_recent'
           ? (settings?.sessionReplaySummaryRunnerV1 ?? null)
           : null;
+      const replayMaxSeedChars = typeof settings?.sessionReplayMaxSeedChars === 'number' ? settings.sessionReplayMaxSeedChars : undefined;
 
       const result = await forkSessionOp({
         machineId,
         serverId,
         parentSessionId: sid,
         forkPoint: { type: 'latest' },
+        ...(typeof replayMaxSeedChars === 'number' ? { replayMaxSeedChars } : {}),
         ...(replaySummaryRunner ? { replaySummaryRunner } : {}),
       } as any);
       if ((result as any)?.ok !== true) return result as any;

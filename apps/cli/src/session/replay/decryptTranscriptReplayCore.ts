@@ -262,8 +262,10 @@ export function decryptTranscriptReplayCore(params: Readonly<{
   encryptionKey?: Uint8Array;
   encryptionVariant?: 'dataKey';
   maxTextChars?: number;
+  maxDialogItems?: number;
 }>): Readonly<{ dialog: HappierReplayDialogItem[]; latestSynopsisText: string | null }> {
   const maxTextChars = params.maxTextChars;
+  const maxDialogItems = normalizePositiveInt(params.maxDialogItems, 200, { min: 1, max: 10_000 });
   const out: Array<{ role: 'User' | 'Assistant'; createdAt: number; seq: number | null; text: string }> = [];
   let bestSynopsis: { synopsis: string; updatedAtMs: number; seqTo: number } | null = null;
 
@@ -379,8 +381,8 @@ export function decryptTranscriptReplayCore(params: Readonly<{
     if (a.seq !== null && b.seq !== null) return a.seq - b.seq;
     return a.createdAt - b.createdAt;
   });
-  // Hard safety bound: keep the most recent 200.
-  const bounded = out.length > 200 ? out.slice(out.length - 200) : out;
+  // Safety bound: keep the most recent items (oldest dropped first).
+  const bounded = out.length > maxDialogItems ? out.slice(out.length - maxDialogItems) : out;
 
   return {
     dialog: bounded.map(({ seq: _seq, ...rest }) => rest),

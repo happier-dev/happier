@@ -23,6 +23,7 @@ export const SessionForkRpcParamsSchema = z
     forkPoint: SessionForkPointSchema,
     strategy: SessionForkStrategySchema.optional(),
     replaySummaryRunner: LlmTaskRunnerConfigV1Schema.optional(),
+    replayMaxSeedChars: z.number().int().min(200).max(200_000).optional(),
   })
   .strict();
 export type SessionForkRpcParams = z.infer<typeof SessionForkRpcParamsSchema>;

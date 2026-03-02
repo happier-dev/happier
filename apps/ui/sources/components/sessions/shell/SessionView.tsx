@@ -697,6 +697,7 @@ function SessionViewLoaded({ sessionId, session, isEncryptedSessionLocked, jumpT
                                   previousSessionId: sessionId,
                                   strategy: replayCfg.strategy,
                                   recentMessagesCount: replayCfg.recentMessagesCount,
+                                  maxSeedChars: replayCfg.maxSeedChars,
                                   ...(summaryRunner ? { summaryRunner } : {}),
                               },
                           });

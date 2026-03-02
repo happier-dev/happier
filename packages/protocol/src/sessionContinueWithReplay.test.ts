@@ -13,6 +13,27 @@ describe('SessionContinueWithReplayRequestSchema', () => {
     expect(parsed.success).toBe(true);
   });
 
+  it('accepts larger recentMessagesCount values (bounded by server/seed budget)', () => {
+    const parsed = SessionContinueWithReplayRequestSchema.safeParse({
+      previousSessionId: 'sess-prev',
+      strategy: 'recent_messages',
+      recentMessagesCount: 500,
+      seedMode: 'draft',
+    });
+    expect(parsed.success).toBe(true);
+  });
+
+  it('accepts an optional maxSeedChars budget hint', () => {
+    const parsed = SessionContinueWithReplayRequestSchema.safeParse({
+      previousSessionId: 'sess-prev',
+      strategy: 'recent_messages',
+      recentMessagesCount: 100,
+      maxSeedChars: 50_000,
+      seedMode: 'draft',
+    });
+    expect(parsed.success).toBe(true);
+  });
+
   it('accepts an optional summary runner config for on-demand replay summary', () => {
     const parsed = SessionContinueWithReplayRequestSchema.safeParse({
       previousSessionId: 'sess-prev',

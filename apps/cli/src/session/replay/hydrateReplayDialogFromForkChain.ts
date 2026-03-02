@@ -1,9 +1,11 @@
 import type { Credentials } from '@/persistence';
 
 import { openSessionDataEncryptionKey } from '@/api/client/openSessionDataEncryptionKey';
+import { findTranscriptEncryptedMessageByLocalId } from '@/api/session/transcriptMessageLookup';
 import { configuration } from '@/configuration';
 import { fetchSessionById } from '@/sessionControl/sessionsHttp';
 import { tryDecryptSessionMetadata } from '@/sessionControl/sessionEncryptionContext';
+import { readMemorySynopsisPointerV1FromSessionMetadata } from '@/session/memoryArtifacts/memorySynopsisPointerV1';
 
 import type { HappierReplayDialogItem } from './types';
 import { fetchEncryptedTranscriptMessages } from './fetchEncryptedTranscriptMessages';
@@ -20,6 +22,36 @@ type RawTranscriptRow = Readonly<{
   createdAt?: unknown;
   content?: unknown;
 }>;
+
+async function tryHydrateSynopsisFromMetadataPointer(params: Readonly<{
+  credentials: Credentials;
+  rawSession: any;
+  sessionId: string;
+  maxTextChars?: number;
+  encryptionKey?: Uint8Array;
+  encryptionVariant?: 'dataKey';
+}>): Promise<string | null> {
+  const metadata = tryDecryptSessionMetadata({ credentials: params.credentials, rawSession: params.rawSession });
+  if (!metadata) return null;
+  const pointer = readMemorySynopsisPointerV1FromSessionMetadata(metadata);
+  if (!pointer) return null;
+
+  const found = await findTranscriptEncryptedMessageByLocalId({
+    token: params.credentials.token,
+    sessionId: params.sessionId,
+    localId: pointer.localId,
+  }).catch(() => null);
+  if (!found) return null;
+
+  const slice = decryptTranscriptReplaySlice({
+    rows: [{ seq: found.seq, createdAt: 0, content: found.content }],
+    encryptionKey: params.encryptionKey,
+    encryptionVariant: params.encryptionVariant,
+    maxTextChars: params.maxTextChars,
+    maxDialogItems: 1,
+  });
+  return slice.latestSynopsisText;
+}
 
 function readForkV1FromMetadata(metadata: Record<string, unknown>): ForkV1 | null {
   const fork = (metadata as any)?.forkV1;
@@ -75,6 +107,14 @@ export async function hydrateReplayDialogFromForkChain(params: Readonly<{
   maxTextChars?: number;
   upToSeqInclusive?: number;
   maxDepth?: number;
+  /**
+   * When false, do not perform multi-page scanning for `session_synopsis.v1` artifacts.
+   * (The newest fetched page may still contain a synopsis, which will be returned.)
+   *
+   * Callers should set this to true only when they will actually use `synopsisText`
+   * (e.g. replay strategy `summary_plus_recent`).
+   */
+  wantSynopsisText?: boolean;
 }>): Promise<{ dialog: HappierReplayDialogItem[]; sourceCutoffSeqInclusive: number; synopsisText?: string | null } | null> {
   const maxDepth =
     typeof params.maxDepth === 'number' && Number.isFinite(params.maxDepth)
@@ -117,6 +157,7 @@ export async function hydrateReplayDialogFromForkChain(params: Readonly<{
   const dialogs: HappierReplayDialogItem[] = [];
   let sourceCutoffSeqInclusive = 0;
   let synopsisText: string | null = null;
+  const wantSynopsisText = params.wantSynopsisText === true;
 
   const synopsisScanMaxPages =
     typeof configuration.replaySynopsisScanMaxPages === 'number' && Number.isFinite(configuration.replaySynopsisScanMaxPages)
@@ -150,14 +191,23 @@ export async function hydrateReplayDialogFromForkChain(params: Readonly<{
 
     const encryptionMode = (segment.rawSession as any)?.encryptionMode === 'plain' ? 'plain' : 'e2ee';
     if (encryptionMode === 'plain') {
-      const slice = decryptTranscriptReplaySlice({ rows, maxTextChars: params.maxTextChars });
+      const slice = decryptTranscriptReplaySlice({ rows, maxTextChars: params.maxTextChars, maxDialogItems: params.limit });
       dialogs.push(...slice.dialog);
       if (segment.sessionId === params.startingSessionId) {
         sourceCutoffSeqInclusive = cutoff;
         synopsisText = slice.latestSynopsisText;
       }
 
-      if (segment.sessionId === params.startingSessionId && !synopsisText && synopsisScanMaxPages > 0) {
+      if (wantSynopsisText && segment.sessionId === params.startingSessionId && !synopsisText) {
+        synopsisText = await tryHydrateSynopsisFromMetadataPointer({
+          credentials: params.credentials,
+          rawSession: segment.rawSession,
+          sessionId: segment.sessionId,
+          maxTextChars: params.maxTextChars,
+        });
+      }
+
+      if (wantSynopsisText && segment.sessionId === params.startingSessionId && !synopsisText && synopsisScanMaxPages > 0) {
         synopsisText = await scanOlderPagesForSynopsisText({
           token: params.credentials.token,
           sessionId: segment.sessionId,
@@ -165,7 +215,7 @@ export async function hydrateReplayDialogFromForkChain(params: Readonly<{
           maxPages: synopsisScanMaxPages,
           pageSize: synopsisScanPageSize,
           decryptLatestSynopsisText: (rawRows) => {
-            const olderSlice = decryptTranscriptReplaySlice({ rows: rawRows, maxTextChars: params.maxTextChars });
+            const olderSlice = decryptTranscriptReplaySlice({ rows: rawRows, maxTextChars: params.maxTextChars, maxDialogItems: params.limit });
             return olderSlice.latestSynopsisText;
           },
         });
@@ -193,6 +243,7 @@ export async function hydrateReplayDialogFromForkChain(params: Readonly<{
       encryptionKey: dek,
       encryptionVariant: 'dataKey',
       maxTextChars: params.maxTextChars,
+      maxDialogItems: params.limit,
     });
     dialogs.push(...slice.dialog);
     if (segment.sessionId === params.startingSessionId) {
@@ -200,7 +251,18 @@ export async function hydrateReplayDialogFromForkChain(params: Readonly<{
       synopsisText = slice.latestSynopsisText;
     }
 
-    if (segment.sessionId === params.startingSessionId && !synopsisText && synopsisScanMaxPages > 0) {
+    if (wantSynopsisText && segment.sessionId === params.startingSessionId && !synopsisText) {
+      synopsisText = await tryHydrateSynopsisFromMetadataPointer({
+        credentials: params.credentials,
+        rawSession: segment.rawSession,
+        sessionId: segment.sessionId,
+        maxTextChars: params.maxTextChars,
+        encryptionKey: dek,
+        encryptionVariant: 'dataKey',
+      });
+    }
+
+    if (wantSynopsisText && segment.sessionId === params.startingSessionId && !synopsisText && synopsisScanMaxPages > 0) {
       synopsisText = await scanOlderPagesForSynopsisText({
         token: params.credentials.token,
         sessionId: segment.sessionId,
@@ -213,6 +275,7 @@ export async function hydrateReplayDialogFromForkChain(params: Readonly<{
             encryptionKey: dek,
             encryptionVariant: 'dataKey',
             maxTextChars: params.maxTextChars,
+            maxDialogItems: params.limit,
           });
           return olderSlice.latestSynopsisText;
         },

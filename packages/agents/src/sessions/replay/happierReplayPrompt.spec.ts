@@ -61,6 +61,26 @@ describe('buildHappierReplayPromptFromDialog', () => {
     expect(prompt).toContain('User: first-unique');
   });
 
+  it('allows requesting more than 200 messages when recentMessagesCount exceeds 200', () => {
+    const dialog = Array.from({ length: 300 }, (_, idx) => {
+      const i = idx + 1;
+      return {
+        role: i % 2 === 0 ? ('Assistant' as const) : ('User' as const),
+        createdAt: i,
+        text: i === 1 ? 'first-unique-over-200' : `m-${i}`,
+      };
+    });
+
+    const prompt = buildHappierReplayPromptFromDialog({
+      previousSessionId: 'sess_prev',
+      strategy: 'recent_messages',
+      recentMessagesCount: 500,
+      dialog,
+    });
+
+    expect(prompt).toContain('User: first-unique-over-200');
+  });
+
   it('includes summary text when strategy is summary_plus_recent', () => {
     const prompt = buildHappierReplayPromptFromDialog({
       previousSessionId: 'sess_prev',
@@ -80,5 +100,26 @@ describe('buildHappierReplayPromptFromDialog', () => {
     expect(prompt).toContain('Assistant: hello');
     expect(prompt).toContain('User: context 1');
     expect(prompt).not.toContain('User: hi');
+  });
+
+  it('shrinks the recent transcript tail to fit maxPromptChars', () => {
+    const prompt = buildHappierReplayPromptFromDialog({
+      previousSessionId: 'sess_prev',
+      strategy: 'recent_messages',
+      recentMessagesCount: 10,
+      maxPromptChars: 340,
+      dialog: [
+        { role: 'User', createdAt: 1, text: 'old-1' },
+        { role: 'Assistant', createdAt: 2, text: 'old-2' },
+        { role: 'User', createdAt: 3, text: 'old-3' },
+        { role: 'Assistant', createdAt: 4, text: 'new-4' },
+        { role: 'User', createdAt: 5, text: 'new-5' },
+      ],
+    });
+
+    expect(prompt).toContain('Recent transcript:');
+    expect(prompt).toContain('User: new-5');
+    expect(prompt).toContain('Assistant: new-4');
+    expect(prompt).not.toContain('User: old-1');
   });
 });

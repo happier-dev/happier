@@ -39,6 +39,7 @@ export default React.memo(function SessionSettingsScreen() {
     const [sessionReplayEnabled, setSessionReplayEnabled] = useSettingMutable('sessionReplayEnabled');
     const [sessionReplayStrategy, setSessionReplayStrategy] = useSettingMutable('sessionReplayStrategy');
     const [sessionReplayRecentMessagesCount, setSessionReplayRecentMessagesCount] = useSettingMutable('sessionReplayRecentMessagesCount');
+    const [sessionReplayMaxSeedChars, setSessionReplayMaxSeedChars] = useSettingMutable('sessionReplayMaxSeedChars');
     const [sessionReplaySummaryRunnerV1, setSessionReplaySummaryRunnerV1] = useSettingMutable('sessionReplaySummaryRunnerV1');
 
     const [sessionTagsEnabled, setSessionTagsEnabled] = useSettingMutable('sessionTagsEnabled');
@@ -282,8 +283,28 @@ export default React.memo(function SessionSettingsScreen() {
                                 onChangeText={(value) => {
                                     const next = Number(String(value).replace(/[^0-9]/g, ''));
                                     if (!Number.isFinite(next)) return;
-                                    const clamped = Math.max(1, Math.min(100, Math.floor(next)));
+                                    const clamped = Math.max(1, Math.min(500, Math.floor(next)));
                                     setSessionReplayRecentMessagesCount(clamped as any);
+                                }}
+                            />
+                        </View>
+
+                        <View style={[styles.inputContainer, { paddingTop: 0 }]}>
+                            <Text style={styles.fieldLabel}>
+                                {t('settingsSession.replayResume.maxSeedCharsTitle')}
+                            </Text>
+                            <TextInput
+                                testID="settings-session-replay-maxSeedChars-input"
+                                style={styles.textInput}
+                                placeholder={t('settingsSession.replayResume.maxSeedCharsPlaceholder')}
+                                placeholderTextColor={theme.colors.input.placeholder}
+                                value={String(sessionReplayMaxSeedChars ?? '')}
+                                keyboardType={Platform.select({ ios: 'number-pad', default: 'numeric' }) as any}
+                                onChangeText={(value) => {
+                                    const next = Number(String(value).replace(/[^0-9]/g, ''));
+                                    if (!Number.isFinite(next)) return;
+                                    const clamped = Math.max(500, Math.min(200_000, Math.floor(next)));
+                                    setSessionReplayMaxSeedChars(clamped as any);
                                 }}
                             />
                         </View>

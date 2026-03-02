@@ -117,6 +117,7 @@ describe('createDefaultActionExecutor (session.fork)', () => {
       settings: {
         sessionReplayStrategy: 'summary_plus_recent',
         sessionReplaySummaryRunnerV1: runner,
+        sessionReplayMaxSeedChars: 54_321,
       },
     });
 
@@ -134,6 +135,7 @@ describe('createDefaultActionExecutor (session.fork)', () => {
       parentSessionId: 'sess_parent',
       forkPoint: { type: 'latest' },
       replaySummaryRunner: runner,
+      replayMaxSeedChars: 54_321,
     }));
-  });
+  }, 60_000);
 });

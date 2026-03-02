@@ -32,6 +32,16 @@ describe('SessionForkRpcParamsSchema', () => {
     expect(parsed.success).toBe(true);
   });
 
+  it('accepts an optional replay maxSeedChars budget hint', () => {
+    const parsed = SessionForkRpcParamsSchema.safeParse({
+      v: 1,
+      parentSessionId: 'sess_parent',
+      forkPoint: { type: 'latest' },
+      replayMaxSeedChars: 40_000,
+    });
+    expect(parsed.success).toBe(true);
+  });
+
   it('rejects unknown top-level fields', () => {
     const parsed = SessionForkRpcParamsSchema.safeParse({
       v: 1,

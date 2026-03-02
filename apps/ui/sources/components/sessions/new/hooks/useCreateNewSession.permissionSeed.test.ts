@@ -586,7 +586,7 @@ describe('useCreateNewSession permission seeding', () => {
             experiments: false,
             sessionReplayEnabled: true,
             sessionReplayStrategy: 'recent_messages',
-            sessionReplayRecentMessagesCount: 16,
+            sessionReplayRecentMessagesCount: 100,
         } as unknown as Settings;
         const machineEnvPresence: UseMachineEnvPresenceResult = {
             isPreviewEnvSupported: false,

@@ -21,7 +21,8 @@ export const SessionContinueWithReplayRequestSchema = z
   .object({
     previousSessionId: z.string().min(1),
     strategy: HappierReplayStrategySchema.optional(),
-    recentMessagesCount: z.number().int().min(1).max(100).optional(),
+    recentMessagesCount: z.number().int().min(1).max(500).optional(),
+    maxSeedChars: z.number().int().min(200).max(200_000).optional(),
     seedMode: HappierReplaySeedModeSchema.optional(),
     summaryRunner: LlmTaskRunnerConfigV1Schema.optional(),
   })

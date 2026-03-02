@@ -7,7 +7,8 @@ import { describe, expect, it, vi } from 'vitest';
 const settingsState: Record<string, any> = {
     sessionReplayEnabled: true,
     sessionReplayStrategy: 'summary_plus_recent',
-    sessionReplayRecentMessagesCount: 16,
+    sessionReplayRecentMessagesCount: 100,
+    sessionReplayMaxSeedChars: 50_000,
     sessionReplaySummaryRunnerV1: null,
 };
 
@@ -122,6 +123,23 @@ vi.mock('@/sync/store/hooks', () => ({
 }));
 
 describe('Session settings (Replay summary runner controls)', () => {
+    it('renders a max seed chars input when replay is enabled', async () => {
+        executionRunsEnabledState.enabled = true;
+        settingsState.sessionReplayEnabled = true;
+
+        const mod = await import('@/app/(app)/settings/session');
+        const SessionSettingsScreen = mod.default;
+
+        let tree!: ReactTestRenderer;
+        await act(async () => {
+            tree = renderer.create(React.createElement(SessionSettingsScreen));
+        });
+
+        const texts = tree.root.findAllByType('Text' as any).map((n: any) => n?.props?.children).flat();
+        expect(texts).toContain('settingsSession.replayResume.maxSeedCharsTitle');
+        expect(tree.root.findAllByProps({ testID: 'settings-session-replay-maxSeedChars-input' }).length).toBe(1);
+    });
+
     it('renders summary runner inputs when replay is enabled, strategy is summary_plus_recent, and execution runs are enabled', async () => {
         executionRunsEnabledState.enabled = true;
         settingsState.sessionReplayEnabled = true;

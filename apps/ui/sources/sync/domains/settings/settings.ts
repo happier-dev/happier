@@ -396,6 +396,7 @@ const SettingsSchemaBase = z.object({
     sessionReplayEnabled: z.boolean().describe('Enable app-level transcript replay for sessions that cannot be vendor-resumed'),
     sessionReplayStrategy: z.enum(['recent_messages', 'summary_plus_recent']).describe('Replay strategy used for app-level transcript replay'),
     sessionReplayRecentMessagesCount: z.number().describe('Number of recent transcript messages included in app-level replay context'),
+    sessionReplayMaxSeedChars: z.number().describe('Maximum character budget for replay seed prompts (best-effort; oldest items dropped first)'),
     sessionReplaySummaryRunnerV1: LlmTaskRunnerConfigV1Schema.nullable().describe('Runner used for on-demand replay summaries (summary_plus_recent)'),
     // Execution runs guidance: optionally inject user-configured "rules" into the session system prompt
     // to help the parent agent decide when/how to use execution runs.
@@ -634,7 +635,8 @@ export type Settings = KnownSettings & Record<string, unknown>;
     sessionPermissionModeApplyTiming: 'immediate',
     sessionReplayEnabled: false,
     sessionReplayStrategy: 'recent_messages',
-    sessionReplayRecentMessagesCount: 16,
+    sessionReplayRecentMessagesCount: 250,
+    sessionReplayMaxSeedChars: 50_000,
     sessionReplaySummaryRunnerV1: null,
     executionRunsGuidanceEnabled: false,
     executionRunsGuidanceMaxChars: 4_000,

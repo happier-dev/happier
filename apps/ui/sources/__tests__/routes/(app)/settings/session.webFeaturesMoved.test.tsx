@@ -73,7 +73,7 @@ vi.mock('@/sync/domains/state/storage', () => ({
         if (key === 'terminalConnectLegacySecretExportEnabled') return [false, vi.fn()] as const;
         if (key === 'sessionReplayEnabled') return [false, vi.fn()] as const;
         if (key === 'sessionReplayStrategy') return ['recent_messages', vi.fn()] as const;
-        if (key === 'sessionReplayRecentMessagesCount') return [16, vi.fn()] as const;
+        if (key === 'sessionReplayRecentMessagesCount') return [100, vi.fn()] as const;
         if (key === 'sessionUseTmux') return [false, vi.fn()] as const;
         if (key === 'sessionTmuxSessionName') return [null, vi.fn()] as const;
         if (key === 'sessionTmuxIsolated') return [false, vi.fn()] as const;

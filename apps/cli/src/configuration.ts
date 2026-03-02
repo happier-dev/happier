@@ -110,6 +110,10 @@ class Configuration {
   // Replay-fork synopsis lookup (memory artifacts may be older than the most recent replay page).
   public readonly replaySynopsisScanMaxPages: number
   public readonly replaySynopsisScanPageSize: number
+  // Replay seed prompt budget (prevents oversized provider prompts).
+  public readonly replaySeedMaxChars: number
+  // Replay transcript fetch size for seed hydration (best-effort; bounded by server /v1/messages limit).
+  public readonly replaySeedCandidateLimit: number
 
   // Startup coordinator / deferred session buffering (fast-start).
   public readonly startupTimingEnabled: boolean
@@ -413,6 +417,23 @@ class Configuration {
       this.replaySynopsisScanPageSize = Math.min(500, Math.trunc(replaySynopsisScanPageSizeRaw));
     } else {
       this.replaySynopsisScanPageSize = 500;
+    }
+
+    const replaySeedMaxCharsRaw = Number.parseInt(String(process.env.HAPPIER_REPLAY_MAX_SEED_CHARS ?? ''), 10);
+    // Default: 50k chars. Hard bounds protect providers from oversized replay seeds.
+    // Min 500 keeps the prompt meaningful; max 200k is a safety cap.
+    if (Number.isFinite(replaySeedMaxCharsRaw) && replaySeedMaxCharsRaw >= 500) {
+      this.replaySeedMaxChars = Math.min(200_000, Math.trunc(replaySeedMaxCharsRaw));
+    } else {
+      this.replaySeedMaxChars = 50_000;
+    }
+
+    const replaySeedCandidateLimitRaw = Number.parseInt(String(process.env.HAPPIER_REPLAY_SEED_CANDIDATE_LIMIT ?? ''), 10);
+    // Default: 500 (server max). Min 50 ensures meaningful context; max 500 matches server enforcement.
+    if (Number.isFinite(replaySeedCandidateLimitRaw) && replaySeedCandidateLimitRaw >= 50) {
+      this.replaySeedCandidateLimit = Math.min(500, Math.trunc(replaySeedCandidateLimitRaw));
+    } else {
+      this.replaySeedCandidateLimit = 500;
     }
 
     const startupTimingRaw = String(process.env.HAPPIER_STARTUP_TIMING_ENABLED ?? '').trim().toLowerCase();
