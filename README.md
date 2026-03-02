@@ -55,7 +55,7 @@ So we started building them for ourselves.
 After weeks of refining, fixing, and extending the foundation, we decided to share Happier so others could try it, use it, and help shape what comes next.
 
 > **Happier is not about replacing Happy**
-> We originally started as contributors to Happy, submitting fixes, improvements, and new features upstream. Over time, we realized that our own needs required faster iteration that we could not comfortably explore within the main project. Happier is about exploring a faster-moving, more collaborative direction — in the open — while remaining deeply grateful for the foundation Happy provided. 
+> We originally started as contributors to Happy, submitting fixes, improvements, and new features upstream. Over time, we realized that our own needs required faster iteration that we could not comfortably explore within the main project. Happier is about exploring a faster-moving, more collaborative direction, while remaining deeply grateful for the foundation Happy provided. 
 
 
 ## Key Features
