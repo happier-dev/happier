@@ -344,12 +344,12 @@ const ChatListInternal = React.memo((props: {
     const transcriptMotionFreshnessMs = useSetting('transcriptMotionFreshnessMs');
     const transcriptAnimateNewItemsEnabled = useSetting('transcriptAnimateNewItemsEnabled');
     const transcriptAnimateToolExpandCollapseEnabled = useSetting('transcriptAnimateToolExpandCollapseEnabled');
-  const transcriptAnimateToolExpandCollapseFreshOnly = useSetting('transcriptAnimateToolExpandCollapseFreshOnly');
+    const transcriptAnimateToolExpandCollapseFreshOnly = useSetting('transcriptAnimateToolExpandCollapseFreshOnly');
   const transcriptAnimateThinkingEnabled = useSetting('transcriptAnimateThinkingEnabled');
   const reducedMotionPreferred = useReducedMotionPreference();
     const sessionThinkingDisplayMode = useSetting('sessionThinkingDisplayMode');
     const sessionThinkingInlinePresentation = useSetting('sessionThinkingInlinePresentation');
-    const toolViewTimelineChromeMode = useSetting('toolViewTimelineChromeMode');
+    const sessionThinkingInlineChrome = useSetting('sessionThinkingInlineChrome');
 
       const stopScrollEventPropagationOnWeb = React.useCallback((event: any) => {
       // Expo Router (Vaul/Radix) modals on web often install document-level scroll-lock listeners
