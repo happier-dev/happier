@@ -251,8 +251,30 @@ test.describe('ui e2e: SCM review scroll + tab state', () => {
       await page.setViewportSize({ width: 1440, height: 900 });
       await gotoDomContentLoadedWithRetries(page, uiBaseUrl);
 
-      await page.getByTestId('welcome-create-account').click();
-      await expect(page.getByTestId('session-getting-started-kind-connect_machine')).not.toHaveCount(0, { timeout: 120_000 });
+      // Depending on persisted state (retries/repeats) or RN-web testID forwarding, the app may
+      // skip the welcome screen or render the button without `data-testid`.
+      await expect
+        .poll(
+          async () =>
+            (await page.getByTestId('session-getting-started-kind-connect_machine').count())
+            + (await page.getByTestId('welcome-create-account').count())
+            + (await page.getByRole('button', { name: 'Create account' }).count()),
+          { timeout: 120_000 },
+        )
+        .toBeGreaterThan(0);
+
+      const createAccountByTestId = page.getByTestId('welcome-create-account');
+      const createAccountByRole = page.getByRole('button', { name: 'Create account' });
+      const createAccount =
+        (await createAccountByTestId.count()) ? createAccountByTestId
+          : (await createAccountByRole.count()) ? createAccountByRole
+            : null;
+      if (createAccount) {
+        await createAccount.click({ timeout: 60_000, force: true });
+        await expect(createAccountByTestId).toHaveCount(0, { timeout: 120_000 });
+        await expect(createAccountByRole).toHaveCount(0, { timeout: 120_000 });
+        await expect(page.getByTestId('session-getting-started-kind-connect_machine')).not.toHaveCount(0, { timeout: 120_000 });
+      }
 
       const testDir = resolve(join(suiteDir, 't1-review-scroll'));
       await mkdir(testDir, { recursive: true });
@@ -365,13 +387,17 @@ test.describe('ui e2e: SCM review scroll + tab state', () => {
     if (await gitTabByTestId.count()) {
       await gitTabByTestId.click();
     } else {
-      await rightPane.getByRole('button', { name: 'Source control' }).click();
+      const sourceControlTab = rightPane.getByRole('button', { name: 'Source control' });
+      await expect(sourceControlTab).toHaveCount(1, { timeout: 60_000 });
+      await sourceControlTab.click({ timeout: 60_000, force: true });
     }
     const openReviewByTestId = rightPane.getByTestId('session-rightpanel-git-open-review');
     if (await openReviewByTestId.count()) {
       await openReviewByTestId.click();
     } else {
-      await rightPane.getByRole('button', { name: 'Review' }).click();
+      const reviewTab = rightPane.getByRole('button', { name: 'Review' });
+      await expect(reviewTab).toHaveCount(1, { timeout: 60_000 });
+      await reviewTab.click({ timeout: 60_000, force: true });
     }
 
     await expect(detailsPaneLocator(page)).toHaveCount(1, { timeout: 60_000 });
@@ -590,18 +616,12 @@ test.describe('ui e2e: SCM review scroll + tab state', () => {
     await page.getByTestId(`session-details-tab-${toTestIdSafeValue(reviewTabKey)}`).click();
     // Ensure we start from the top of the review list so stable-order files like `src/big.txt`
     // are reachable deterministically (the earlier part of this test may have scrolled deep).
-    await reviewList.evaluate((el) => {
-      try {
-        (el as HTMLElement).scrollTop = 0;
-      } catch {
-        // ignore
-      }
-    });
+    await setScrollTopOfNearestScrollableAncestor(page, 'scm-review-list', 0);
+    await page.waitForTimeout(50);
     const bigRow = reviewList.getByTestId(`scm-change-row-${toTestIdSafeValue(bigPath)}`);
     for (let i = 0; i < 30; i += 1) {
       if (await bigRow.count()) break;
-      await reviewList.hover();
-      await page.mouse.wheel(0, 1400);
+      await setScrollTopOfNearestScrollableAncestor(page, 'scm-review-list', (i + 1) * 1400);
       await page.waitForTimeout(50);
     }
     await expect(bigRow).toHaveCount(1, { timeout: 60_000 });

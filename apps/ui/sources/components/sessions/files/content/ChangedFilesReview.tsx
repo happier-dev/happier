@@ -493,70 +493,29 @@ export function ChangedFilesReview(props: ChangedFilesReviewProps) {
                 return;
             }
 
-            const win = (globalThis as any).window as Window | undefined;
-            const isScrollable = (el: HTMLElement | null) => {
-                if (!el) return false;
-                if (!win?.getComputedStyle) return false;
-                const style = win.getComputedStyle(el);
-                const overflowY = style.overflowY;
-                return (overflowY === 'auto' || overflowY === 'scroll') && el.scrollHeight > el.clientHeight + 1;
-            };
-            const findScrollableAncestor = (el: HTMLElement | null): HTMLElement | null => {
-                const boundary = el?.closest?.('[data-testid="session-details-panel-root"]') as HTMLElement | null;
-                let cursor: HTMLElement | null = el;
-                let steps = 0;
-                while (cursor && steps < 40) {
-                    if (isScrollable(cursor)) return cursor;
-                    if (boundary && cursor === boundary) break;
-                    cursor = cursor.parentElement;
-                    steps += 1;
-                }
-                return null;
-            };
-
-            const scrollRoot =
-                findScrollableAncestor(rowBefore)
-                ?? webScrollRootRef.current
-                ?? resolveWebScrollRoot()
-                ?? host;
-            if (!scrollRoot) {
+            const rowIndex = pathToRowIndex.get(path);
+            if (typeof rowIndex !== 'number' || !Number.isFinite(rowIndex)) {
                 toggleOnce();
                 return;
             }
-            webScrollRootRef.current = scrollRoot;
-
-            const scrollTopBefore = typeof (scrollRoot as any).scrollTop === 'number' ? (scrollRoot as any).scrollTop : null;
-            if (scrollTopBefore == null) {
+            if (!host) {
                 toggleOnce();
                 return;
             }
 
-            const scrollRootTopBefore = scrollRoot.getBoundingClientRect?.().top ?? 0;
-            const rowTopBefore = rowBefore.getBoundingClientRect?.().top ?? null;
-            const rowOffsetBefore = rowTopBefore == null ? null : rowTopBefore - scrollRootTopBefore;
-            if (rowOffsetBefore == null) {
+            const hostBox = host.getBoundingClientRect?.() ?? null;
+            const rowBox = rowBefore.getBoundingClientRect?.() ?? null;
+            if (!hostBox || !rowBox || hostBox.height <= 0) {
                 toggleOnce();
                 return;
             }
+            const viewPositionBefore = Math.max(0, Math.min(1, (rowBox.top - hostBox.top) / hostBox.height));
 
             toggleOnce();
 
             const applyCorrection = () => {
-                const rowAfter = queryRow();
-                const scrollRootTop = scrollRoot.getBoundingClientRect?.().top ?? 0;
-                const rowTopAfter = rowAfter?.getBoundingClientRect?.().top ?? null;
-                if (rowTopAfter == null) return;
-                const rowOffsetAfter = rowTopAfter - scrollRootTop;
-                const delta = rowOffsetAfter - rowOffsetBefore;
-                if (!Number.isFinite(delta) || Math.abs(delta) < 0.5) return;
-                const currentOffset =
-                    typeof (scrollRoot as any).scrollTop === 'number'
-                        ? (scrollRoot as any).scrollTop
-                        : scrollTopBefore;
-                if (currentOffset == null) return;
-                const nextOffset = currentOffset + delta;
                 try {
-                    (scrollRoot as any).scrollTop = nextOffset;
+                    listRef.current?.scrollToIndex({ index: rowIndex, animated: false, viewPosition: viewPositionBefore });
                 } catch {
                     // ignore
                 }
@@ -571,7 +530,7 @@ export function ChangedFilesReview(props: ChangedFilesReviewProps) {
             const startedAt = typeof performance !== 'undefined' && typeof performance.now === 'function'
                 ? performance.now()
                 : Date.now();
-            const maxMs = 420;
+            const maxMs = 700;
             const step = () => {
                 applyCorrection();
                 const now = typeof performance !== 'undefined' && typeof performance.now === 'function'
@@ -580,11 +539,13 @@ export function ChangedFilesReview(props: ChangedFilesReviewProps) {
                 if (now - startedAt >= maxMs) return;
                 raf(() => step());
             };
+            // Apply immediately (same tick) and keep enforcing briefly after layout settles.
+            applyCorrection();
             raf(() => step());
         } catch {
             toggleOnce();
         }
-    }, [resolveWebScrollRoot, toggleCollapsed]);
+    }, [pathToRowIndex, toggleCollapsed]);
 
     const prefetch = useChangedFilesReviewPrefetch({
         sessionId,
