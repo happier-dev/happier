@@ -175,6 +175,33 @@ happier qwen
 Code solo, or invite a friend to jump into the session with you.
 Happier acts as a secure bridge between your local development environment and your other devices.
 
+## Running from source
+
+The repo default branch is `dev` and may be unstable. For a more "stable" base, use `preview` or `main`:
+
+```bash
+git clone --branch preview https://github.com/happier-dev/happier.git
+```
+
+You have then a lot of helper commands available using `yarn run`.
+
+The most important are:
+
+- `yarn auth login` - Authenticate the daemon
+- `yarn tui:with-mobile` - Start all the services (UI, server, daemon) in dev mode using an integrated TUI for logs and management
+- `yarn happier` - Run the `happier` CLI from the repo
+- `yarn daemon` - Control the daemon
+- `yarn env` - List & persist env vars that are automatically loaded at startup
+- `yarn menubar` - Install and manage the macOS menubar for managing and monitoring Happier
+- `yarn mobile:install` - Install and manage a custom mobile app on your phone (**only necessary if you have applied changes to the repo**, otherwise simply use the original Happier app and point it to your server)
+- `yarn mobile-dev-client --install` - Install the Expo dev client app on your phone
+- `yarn providers` - Install the providers CLIs on your computer (Claude Code, Codex, OpenCode, etc)
+- `yarn self-host` - 
+- `yarn remote` - 
+- `yarn server` - Start the server in dev mode
+- `yarn menubar` - Install and manage the macOS menubar for managing and monitoring Happier
+- `yarn logs`, `yarn logs:all`, `yarn logs:daemon`, `yarn logs:expo`, `yarn logs:server`, `yarn logs:services`
+
 ## Community-Driven
 
 **Happier** is completely open-source. We built this because we wanted a more powerful, more social way to interact with AI agents - and we want to build it in the open, shaped by the people who actually use it.

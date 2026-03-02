@@ -3560,8 +3560,14 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
           });
 
           const action = String(values.confirm ?? '').trim();
-          if (!action) fail('--confirm is required (e.g. "release preview from dev")');
-          if (action !== 'release preview from dev' && action !== 'release dev to main' && action !== 'reset main from dev') {
+          if (!action) fail('--confirm is required (e.g. "release dev to preview")');
+          if (
+            action !== 'release dev to preview' &&
+            action !== 'release preview to main' &&
+            action !== 'reset main from preview' &&
+            action !== 'release dev to main' &&
+            action !== 'reset main from dev'
+          ) {
             fail(`Unsupported --confirm action: ${action}`);
           }
 
@@ -3572,11 +3578,13 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
           if (!isDeployEnvironment(deployEnvironment)) {
             fail(`--deploy-environment must be 'production' or 'preview' (got: ${deployEnvironment || '<empty>'})`);
           }
-          if (deployEnvironment === 'preview' && action !== 'release preview from dev') {
-            fail('Confirmation mismatch for preview releases. Expected: "release preview from dev"');
+          if (deployEnvironment === 'preview' && action !== 'release dev to preview') {
+            fail('Confirmation mismatch for preview releases. Expected: "release dev to preview"');
           }
-          if (deployEnvironment === 'production' && action === 'release preview from dev') {
-            fail('Confirmation mismatch for production releases. Expected: "release dev to main" or "reset main from dev"');
+          if (deployEnvironment === 'production' && action === 'release dev to preview') {
+            fail(
+              'Confirmation mismatch for production releases. Expected: "release preview to main", "reset main from preview", "release dev to main", or "reset main from dev"',
+            );
           }
 
           const deployTargets = parseCsvList(String(values['deploy-targets'] ?? ''));
@@ -3692,9 +3700,9 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
           }
 
             // Plan: compute changed components (main..dev) and resolve bump/publish plan.
-            console.log('[pipeline] release: fetching origin main/dev for plan');
+            console.log('[pipeline] release: fetching origin main/dev/preview for plan');
             const fetchTagsArg = dryRun ? '--no-tags' : '--tags';
-            execFileSync('git', ['fetch', 'origin', 'main', 'dev', '--prune', fetchTagsArg], {
+            execFileSync('git', ['fetch', 'origin', 'main', 'dev', 'preview', '--prune', fetchTagsArg], {
               cwd: repoRoot,
               env: process.env,
               stdio: 'inherit',
@@ -3728,11 +3736,22 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
             timeout: 10_000,
           }).trim();
 
+          const previewSha = execFileSync('git', ['rev-parse', 'origin/preview'], {
+            cwd: repoRoot,
+            env: process.env,
+            encoding: 'utf8',
+            stdio: ['ignore', 'pipe', 'pipe'],
+            timeout: 10_000,
+          }).trim();
+
+          const planHeadSha =
+            action === 'release preview to main' || action === 'reset main from preview' ? previewSha : devSha;
+
           const changedRaw = runJsonScript({
             repoRoot,
             env: { ...process.env },
             scriptRel: 'scripts/pipeline/release/compute-changed-components.mjs',
-            args: ['--base', mainSha, '--head', devSha],
+            args: ['--base', mainSha, '--head', planHeadSha],
           });
 
           const changed = {
@@ -3858,6 +3877,11 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
             return;
           }
 
+          const isProdFromPreview = deployEnvironment === 'production' && (action === 'release preview to main' || action === 'reset main from preview');
+          if (isProdFromPreview && bumpPlan.should_bump) {
+            fail('Production releases from preview do not support version bumps. Cut a preview release (dev -> preview) first.');
+          }
+
           // Apply bumps (dev commit) if requested.
           if (bumpPlan.should_bump) {
             console.log('[pipeline] release: apply version bumps (dev)');
@@ -3880,32 +3904,33 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
             });
           }
 
-          // Promote main from dev for production.
-          if (deployEnvironment === 'production') {
-            const promoteMode = action === 'reset main from dev' ? 'reset' : 'fast_forward';
-            const allowReset = action === 'reset main from dev' ? 'true' : 'false';
-            const confirmPhrase = action === 'reset main from dev' ? 'reset main from dev' : 'promote main from dev';
-            console.log(`[pipeline] release: promote main from dev (mode=${promoteMode})`);
+          // Preview releases: promote preview from dev so all preview deploy/publish reads from the preview branch.
+          if (deployEnvironment === 'preview') {
+            console.log('[pipeline] release: promote preview from dev (mode=fast_forward)');
             runGithubPromoteBranch({
               repoRoot,
               env: releaseEnv,
               dryRun: false,
-              args: [
-                '--source',
-                'dev',
-                '--target',
-                'main',
-                '--mode',
-                promoteMode,
-                '--allow-reset',
-                allowReset,
-                '--confirm',
-                confirmPhrase,
-              ],
+              args: ['--source', 'dev', '--target', 'preview', '--mode', 'fast_forward', '--allow-reset', 'false', '--confirm', 'promote preview from dev'],
             });
           }
 
-          const releaseSourceRef = deployEnvironment === 'production' ? 'main' : 'dev';
+          // Production releases: promote main from preview (default) or dev (urgent).
+          if (deployEnvironment === 'production') {
+            const source = action === 'release preview to main' || action === 'reset main from preview' ? 'preview' : 'dev';
+            const promoteMode = action === 'reset main from preview' || action === 'reset main from dev' ? 'reset' : 'fast_forward';
+            const allowReset = promoteMode === 'reset' ? 'true' : 'false';
+            const confirmPhrase = promoteMode === 'reset' ? `reset main from ${source}` : `promote main from ${source}`;
+            console.log(`[pipeline] release: promote main from ${source} (mode=${promoteMode})`);
+            runGithubPromoteBranch({
+              repoRoot,
+              env: releaseEnv,
+              dryRun: false,
+              args: ['--source', source, '--target', 'main', '--mode', promoteMode, '--allow-reset', allowReset, '--confirm', confirmPhrase],
+            });
+          }
+
+          const releaseSourceRef = deployEnvironment === 'production' ? 'main' : 'preview';
           const deployPlan = computeDeployPlan(releaseSourceRef);
 
           const execution = computeReleaseExecutionPlan({

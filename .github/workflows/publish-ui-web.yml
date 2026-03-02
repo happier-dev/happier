@@ -12,7 +12,7 @@ on:
           - preview
           - stable
       source_ref:
-        description: "Source ref to publish (auto => preview:dev, stable:main)"
+        description: "Source ref to publish (auto => preview:preview, stable:main)"
         required: true
         default: auto
         type: string
@@ -90,7 +90,7 @@ jobs:
           src="${{ inputs.source_ref }}"
           if [ "$src" = "auto" ]; then
             if [ "$channel" = "preview" ]; then
-              src="dev"
+              src="preview"
             else
               src="main"
             fi

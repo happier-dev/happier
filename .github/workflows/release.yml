@@ -121,7 +121,7 @@ on:
           - build_only
           - build_and_publish
       bump:
-        description: "Version bump (Preset) — Default bump for changed components. Preview bumps commit to dev; production bumps commit to dev then promote dev->main."
+        description: "Version bump (Preset) — Default bump for changed components. Preview releases bump/commit to dev then promote dev→preview. Production releases typically promote preview→main (dev→main is supported for urgencies)."
         required: true
         type: choice
         default: none
@@ -168,7 +168,9 @@ on:
         required: true
         type: choice
         options:
-          - release preview from dev
+          - release dev to preview
+          - release preview to main
+          - reset main from preview
           - release dev to main
           - reset main from dev
       release_message:
@@ -271,20 +273,24 @@ jobs:
           mode=""
 
           if [ "$env_name" = "preview" ]; then
-            if [ "$confirm" != "release preview from dev" ]; then
+            if [ "$confirm" != "release dev to preview" ]; then
               echo "Confirmation mismatch for preview releases." >&2
-              echo "Expected: release preview from dev" >&2
+              echo "Expected: release dev to preview" >&2
               echo "Got:      $confirm" >&2
               exit 1
             fi
             mode="preview_release"
-          elif [ "$confirm" = "release dev to main" ]; then
-            mode="fast_forward"
-          elif [ "$confirm" = "reset main from dev" ]; then
-            mode="reset"
           else
-            echo "Unknown confirmation phrase: $confirm" >&2
-            exit 1
+            case "$confirm" in
+              "release preview to main") mode="promote_main_from_preview_fast_forward" ;;
+              "reset main from preview") mode="promote_main_from_preview_reset" ;;
+              "release dev to main") mode="promote_main_from_dev_fast_forward" ;;
+              "reset main from dev") mode="promote_main_from_dev_reset" ;;
+              *)
+                echo "Unknown confirmation phrase: $confirm" >&2
+                exit 1
+                ;;
+            esac
           fi
 
           # Validate deploy_targets extras (cli/stack are publishable targets).
@@ -311,9 +317,9 @@ jobs:
             exit 0
           fi
           case "${GITHUB_REF_NAME}" in
-            dev|main) ;;
+            dev|preview|main) ;;
             *)
-              echo "Refusing workflow_dispatch from untrusted ref '${GITHUB_REF_NAME}'. Use dev or main." >&2
+              echo "Refusing workflow_dispatch from untrusted ref '${GITHUB_REF_NAME}'. Use dev, preview, or main." >&2
               exit 1
               ;;
           esac
@@ -452,7 +458,7 @@ jobs:
         contains(format(',{0},', inputs.deploy_targets), ',docs,') ||
         (inputs.environment == 'production' && contains(format(',{0},', inputs.deploy_targets), ',ui,'))
       )
-    needs: [plan, bump_versions_dev, promote_main]
+    needs: [plan, bump_versions_dev, promote_preview, promote_main]
     outputs:
       deploy_ui_needed: ${{ steps.plan.outputs.deploy_ui_needed }}
       deploy_server_needed: ${{ steps.plan.outputs.deploy_server_needed }}
@@ -469,7 +475,7 @@ jobs:
       - name: Checkout release source
         uses: actions/checkout@v4
         with:
-          ref: ${{ inputs.environment == 'production' && 'main' || 'dev' }}
+          ref: ${{ inputs.environment == 'production' && 'main' || 'preview' }}
           fetch-depth: 0
           token: ${{ steps.app_token.outputs.token }}
 
@@ -482,7 +488,7 @@ jobs:
         id: plan
         env:
           ENVIRONMENT: ${{ inputs.environment }}
-          SOURCE_REF: ${{ inputs.environment == 'production' && 'main' || 'dev' }}
+          SOURCE_REF: ${{ inputs.environment == 'production' && 'main' || 'preview' }}
           FORCE_DEPLOY: ${{ inputs.force_deploy }}
           DEPLOY_UI: ${{ contains(format(',{0},', inputs.deploy_targets), ',ui,') }}
           DEPLOY_SERVER: ${{ contains(format(',{0},', inputs.deploy_targets), ',server,') }}
@@ -503,21 +509,39 @@ jobs:
   promote_main:
     # GitHub skips dependent jobs when a needed job is skipped unless we use always().
     # In production, bump_versions_dev is frequently skipped (bump=none), but we still
-    # must promote dev -> main so downstream deploy/publish jobs can run.
+    # must promote preview -> main (or dev -> main) so downstream deploy/publish jobs can run.
     if: always() && needs.plan.result == 'success' && (needs.bump_versions_dev.result == 'success' || needs.bump_versions_dev.result == 'skipped') && inputs.dry_run != true && inputs.environment == 'production'
     needs: [plan, bump_versions_dev]
     uses: ./.github/workflows/promote-branch.yml
     secrets: inherit
     with:
-      source: dev
+      source: ${{ (inputs.confirm == 'release preview to main' || inputs.confirm == 'reset main from preview') && 'preview' || 'dev' }}
       target: main
-      mode: ${{ inputs.confirm == 'reset main from dev' && 'reset' || 'fast_forward' }}
+      mode: ${{ (inputs.confirm == 'reset main from preview' || inputs.confirm == 'reset main from dev') && 'reset' || 'fast_forward' }}
       dry_run: ${{ inputs.dry_run }}
-      allow_reset: ${{ inputs.confirm == 'reset main from dev' }}
-      confirm: ${{ inputs.confirm == 'reset main from dev' && 'reset main from dev' || 'promote main from dev' }}
+      allow_reset: ${{ inputs.confirm == 'reset main from preview' || inputs.confirm == 'reset main from dev' }}
+      confirm: >-
+        ${{
+          (inputs.confirm == 'reset main from preview' || inputs.confirm == 'reset main from dev')
+            && format('reset main from {0}', ((inputs.confirm == 'reset main from preview') && 'preview' || 'dev'))
+            || format('promote main from {0}', ((inputs.confirm == 'release preview to main') && 'preview' || 'dev'))
+        }}
+
+  promote_preview:
+    if: always() && needs.plan.result == 'success' && (needs.bump_versions_dev.result == 'success' || needs.bump_versions_dev.result == 'skipped') && inputs.dry_run != true && inputs.environment == 'preview'
+    needs: [plan, bump_versions_dev]
+    uses: ./.github/workflows/promote-branch.yml
+    secrets: inherit
+    with:
+      source: dev
+      target: preview
+      mode: fast_forward
+      dry_run: ${{ inputs.dry_run }}
+      allow_reset: false
+      confirm: promote preview from dev
 
   bump_versions_dev:
-    if: inputs.dry_run != true && needs.plan.outputs.should_bump == 'true'
+    if: inputs.dry_run != true && needs.plan.outputs.should_bump == 'true' && inputs.confirm != 'release preview to main' && inputs.confirm != 'reset main from preview'
     needs: [plan]
     runs-on: ubuntu-latest
     environment: release-shared
@@ -567,8 +591,8 @@ jobs:
             --github-output "$GITHUB_OUTPUT"
 
   deploy_ui:
-    if: always() && needs.plan.result == 'success' && inputs.dry_run != true && contains(format(',{0},', inputs.deploy_targets), ',ui,') && (needs.deploy_plan.outputs.deploy_ui_needed == 'true' || needs.plan.outputs.bump_app != 'none' || inputs.force_deploy == true || inputs.ui_expo_action != 'none') && (needs.bump_versions_dev.result == 'success' || needs.bump_versions_dev.result == 'skipped') && (inputs.environment != 'production' || needs.promote_main.result == 'success')
-    needs: [plan, bump_versions_dev, promote_main, deploy_plan]
+    if: always() && needs.plan.result == 'success' && inputs.dry_run != true && contains(format(',{0},', inputs.deploy_targets), ',ui,') && (needs.deploy_plan.outputs.deploy_ui_needed == 'true' || needs.plan.outputs.bump_app != 'none' || inputs.force_deploy == true || inputs.ui_expo_action != 'none') && (needs.bump_versions_dev.result == 'success' || needs.bump_versions_dev.result == 'skipped') && ((inputs.environment == 'production' && needs.promote_main.result == 'success') || (inputs.environment == 'preview' && needs.promote_preview.result == 'success'))
+    needs: [plan, bump_versions_dev, promote_preview, promote_main, deploy_plan]
     permissions:
       contents: write
       actions: read
@@ -577,7 +601,7 @@ jobs:
     with:
       environment: ${{ inputs.environment }}
       force_deploy: ${{ inputs.force_deploy }}
-      source_ref: ${{ inputs.environment == 'production' && 'main' || 'dev' }}
+      source_ref: ${{ inputs.environment == 'production' && 'main' || 'preview' }}
       allow_cross_promote: false
       bump: none
       deploy_web: ${{ inputs.environment == 'production' }}
@@ -591,8 +615,8 @@ jobs:
       expo_update_message: ${{ inputs.release_message }}
 
   deploy_server:
-    if: always() && needs.plan.result == 'success' && inputs.dry_run != true && contains(format(',{0},', inputs.deploy_targets), ',server,') && (needs.deploy_plan.outputs.deploy_server_needed == 'true' || needs.plan.outputs.bump_server != 'none' || inputs.force_deploy == true) && (needs.bump_versions_dev.result == 'success' || needs.bump_versions_dev.result == 'skipped') && (inputs.environment != 'production' || needs.promote_main.result == 'success')
-    needs: [plan, bump_versions_dev, promote_main, deploy_plan]
+    if: always() && needs.plan.result == 'success' && inputs.dry_run != true && contains(format(',{0},', inputs.deploy_targets), ',server,') && (needs.deploy_plan.outputs.deploy_server_needed == 'true' || needs.plan.outputs.bump_server != 'none' || inputs.force_deploy == true) && (needs.bump_versions_dev.result == 'success' || needs.bump_versions_dev.result == 'skipped') && ((inputs.environment == 'production' && needs.promote_main.result == 'success') || (inputs.environment == 'preview' && needs.promote_preview.result == 'success'))
+    needs: [plan, bump_versions_dev, promote_preview, promote_main, deploy_plan]
     permissions:
       contents: write
       actions: read
@@ -601,55 +625,55 @@ jobs:
     with:
       environment: ${{ inputs.environment }}
       force_deploy: ${{ inputs.force_deploy }}
-      source_ref: ${{ inputs.environment == 'production' && 'main' || 'dev' }}
+      source_ref: ${{ inputs.environment == 'production' && 'main' || 'preview' }}
       allow_cross_promote: false
       bump: none
       publish_runtime_release: false
       run_tests: false
 
   publish_server_runtime:
-    if: always() && needs.plan.result == 'success' && inputs.dry_run != true && inputs.environment == 'preview' && needs.plan.outputs.publish_server == 'true' && (needs.bump_versions_dev.result == 'success' || needs.bump_versions_dev.result == 'skipped')
-    needs: [plan, bump_versions_dev]
+    if: always() && needs.plan.result == 'success' && inputs.dry_run != true && inputs.environment == 'preview' && needs.plan.outputs.publish_server == 'true' && (needs.bump_versions_dev.result == 'success' || needs.bump_versions_dev.result == 'skipped') && needs.promote_preview.result == 'success'
+    needs: [plan, bump_versions_dev, promote_preview]
     permissions:
       contents: write
     uses: ./.github/workflows/publish-server-runtime.yml
     secrets: inherit
     with:
       channel: preview
-      source_ref: dev
+      source_ref: preview
       allow_stable: false
       release_message: ${{ inputs.release_message }}
 
   publish_ui_web:
-    if: always() && needs.plan.result == 'success' && inputs.dry_run != true && inputs.environment == 'preview' && contains(format(',{0},', inputs.deploy_targets), ',ui,') && (needs.bump_versions_dev.result == 'success' || needs.bump_versions_dev.result == 'skipped')
-    needs: [plan, bump_versions_dev]
+    if: always() && needs.plan.result == 'success' && inputs.dry_run != true && inputs.environment == 'preview' && contains(format(',{0},', inputs.deploy_targets), ',ui,') && (needs.bump_versions_dev.result == 'success' || needs.bump_versions_dev.result == 'skipped') && needs.promote_preview.result == 'success'
+    needs: [plan, bump_versions_dev, promote_preview]
     permissions:
       contents: write
     uses: ./.github/workflows/publish-ui-web.yml
     secrets: inherit
     with:
       channel: preview
-      source_ref: dev
+      source_ref: preview
       allow_stable: false
       release_message: ${{ inputs.release_message }}
 
   publish_docker:
-    if: always() && needs.plan.result == 'success' && inputs.dry_run != true && inputs.environment == 'preview' && (inputs.force_deploy == true || needs.plan.outputs.changed_ui == 'true' || needs.plan.outputs.changed_server == 'true' || needs.plan.outputs.changed_cli == 'true' || needs.plan.outputs.changed_stack == 'true' || needs.plan.outputs.changed_shared == 'true') && (needs.bump_versions_dev.result == 'success' || needs.bump_versions_dev.result == 'skipped')
-    needs: [plan, bump_versions_dev]
+    if: always() && needs.plan.result == 'success' && inputs.dry_run != true && inputs.environment == 'preview' && (inputs.force_deploy == true || needs.plan.outputs.changed_ui == 'true' || needs.plan.outputs.changed_server == 'true' || needs.plan.outputs.changed_cli == 'true' || needs.plan.outputs.changed_stack == 'true' || needs.plan.outputs.changed_shared == 'true') && (needs.bump_versions_dev.result == 'success' || needs.bump_versions_dev.result == 'skipped') && needs.promote_preview.result == 'success'
+    needs: [plan, bump_versions_dev, promote_preview]
     permissions:
       contents: read
     uses: ./.github/workflows/publish-docker.yml
     secrets: inherit
     with:
       channel: preview
-      source_ref: dev
+      source_ref: preview
       push_latest: true
       build_relay: ${{ inputs.force_deploy == true || needs.plan.outputs.changed_ui == 'true' || needs.plan.outputs.changed_server == 'true' || needs.plan.outputs.changed_shared == 'true' }}
       build_dev_box: ${{ inputs.force_deploy == true || needs.plan.outputs.changed_cli == 'true' || needs.plan.outputs.changed_stack == 'true' || needs.plan.outputs.changed_shared == 'true' }}
 
   deploy_website:
-    if: always() && needs.plan.result == 'success' && inputs.dry_run != true && contains(format(',{0},', inputs.deploy_targets), ',website,') && (needs.deploy_plan.outputs.deploy_website_needed == 'true' || needs.plan.outputs.bump_website != 'none' || inputs.force_deploy == true) && (needs.bump_versions_dev.result == 'success' || needs.bump_versions_dev.result == 'skipped') && (inputs.environment != 'production' || needs.promote_main.result == 'success')
-    needs: [plan, bump_versions_dev, promote_main, deploy_plan]
+    if: always() && needs.plan.result == 'success' && inputs.dry_run != true && contains(format(',{0},', inputs.deploy_targets), ',website,') && (needs.deploy_plan.outputs.deploy_website_needed == 'true' || needs.plan.outputs.bump_website != 'none' || inputs.force_deploy == true) && (needs.bump_versions_dev.result == 'success' || needs.bump_versions_dev.result == 'skipped') && ((inputs.environment == 'production' && needs.promote_main.result == 'success') || (inputs.environment == 'preview' && needs.promote_preview.result == 'success'))
+    needs: [plan, bump_versions_dev, promote_preview, promote_main, deploy_plan]
     permissions:
       contents: read
       actions: read
@@ -658,14 +682,14 @@ jobs:
     with:
       environment: ${{ inputs.environment }}
       force_deploy: ${{ inputs.force_deploy }}
-      source_ref: ${{ inputs.environment == 'production' && 'main' || 'dev' }}
+      source_ref: ${{ inputs.environment == 'production' && 'main' || 'preview' }}
       allow_cross_promote: false
       bump: none
       run_build: true
 
   deploy_docs:
-    if: always() && needs.plan.result == 'success' && inputs.dry_run != true && contains(format(',{0},', inputs.deploy_targets), ',docs,') && (needs.deploy_plan.outputs.deploy_docs_needed == 'true' || inputs.force_deploy == true) && (needs.bump_versions_dev.result == 'success' || needs.bump_versions_dev.result == 'skipped') && (inputs.environment != 'production' || needs.promote_main.result == 'success')
-    needs: [plan, bump_versions_dev, promote_main, deploy_plan]
+    if: always() && needs.plan.result == 'success' && inputs.dry_run != true && contains(format(',{0},', inputs.deploy_targets), ',docs,') && (needs.deploy_plan.outputs.deploy_docs_needed == 'true' || inputs.force_deploy == true) && (needs.bump_versions_dev.result == 'success' || needs.bump_versions_dev.result == 'skipped') && ((inputs.environment == 'production' && needs.promote_main.result == 'success') || (inputs.environment == 'preview' && needs.promote_preview.result == 'success'))
+    needs: [plan, bump_versions_dev, promote_preview, promote_main, deploy_plan]
     permissions:
       contents: read
       actions: read
@@ -674,13 +698,13 @@ jobs:
     with:
       environment: ${{ inputs.environment }}
       force_deploy: ${{ inputs.force_deploy }}
-      source_ref: ${{ inputs.environment == 'production' && 'main' || 'dev' }}
+      source_ref: ${{ inputs.environment == 'production' && 'main' || 'preview' }}
       allow_cross_promote: false
       run_build: true
 
   publish_npm:
-    if: always() && needs.plan.result == 'success' && inputs.dry_run != true && (needs.plan.outputs.publish_cli == 'true' || needs.plan.outputs.publish_stack == 'true' || needs.plan.outputs.publish_server == 'true') && (needs.bump_versions_dev.result == 'success' || needs.bump_versions_dev.result == 'skipped') && (inputs.environment != 'production' || needs.promote_main.result == 'success')
-    needs: [plan, bump_versions_dev, promote_main]
+    if: always() && needs.plan.result == 'success' && inputs.dry_run != true && (needs.plan.outputs.publish_cli == 'true' || needs.plan.outputs.publish_stack == 'true' || needs.plan.outputs.publish_server == 'true') && (needs.bump_versions_dev.result == 'success' || needs.bump_versions_dev.result == 'skipped') && ((inputs.environment == 'production' && needs.promote_main.result == 'success') || (inputs.environment == 'preview' && needs.promote_preview.result == 'success'))
+    needs: [plan, bump_versions_dev, promote_preview, promote_main]
     permissions:
       contents: write
       id-token: write
@@ -691,7 +715,7 @@ jobs:
       publish_stack: ${{ needs.plan.outputs.publish_stack == 'true' }}
       publish_server: ${{ needs.plan.outputs.publish_server == 'true' }}
       channel: ${{ inputs.environment }}
-      source_ref: ${{ inputs.environment == 'production' && 'main' || 'dev' }}
+      source_ref: ${{ inputs.environment == 'production' && 'main' || 'preview' }}
       npm_tag: ${{ inputs.environment == 'production' && 'latest' || 'next' }}
       run_tests: false
       release_message: ${{ inputs.release_message }}

@@ -277,7 +277,7 @@ export const COMMAND_HELP_RELEASE_INTERNALS = {
     ],
     bullets: ['Used internally to decide whether to promote deploy branches.'],
     examples: [
-      'node scripts/pipeline/run.mjs release-compute-deploy-plan --deploy-environment preview --source-ref dev --force-deploy false --deploy-ui true --deploy-server true --deploy-website true --deploy-docs true',
+      'node scripts/pipeline/run.mjs release-compute-deploy-plan --deploy-environment preview --source-ref preview --force-deploy false --deploy-ui true --deploy-server true --deploy-website true --deploy-docs true',
     ],
   },
 
@@ -301,4 +301,3 @@ export const COMMAND_HELP_RELEASE_INTERNALS = {
     examples: ['node scripts/pipeline/run.mjs release-build-ui-web-bundle --channel preview --skip-build'],
   },
 };
-

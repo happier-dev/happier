@@ -23,7 +23,11 @@ test('pipeline CLI supports --profile for expo-submit (dry-run)', () => {
     ],
     {
       cwd: repoRoot,
-      env: { ...process.env, EXPO_TOKEN: 'expo-token' },
+      env: {
+        ...process.env,
+        EXPO_TOKEN: 'expo-token',
+        APPLE_API_PRIVATE_KEY: '-----BEGIN PRIVATE KEY-----\\nabc\\n-----END PRIVATE KEY-----\\n',
+      },
       encoding: 'utf8',
       stdio: ['ignore', 'pipe', 'pipe'],
       timeout: 30_000,
@@ -34,4 +38,3 @@ test('pipeline CLI supports --profile for expo-submit (dry-run)', () => {
   assert.match(out, /--profile\b/);
   assert.match(out, /\bpreview\b/);
 });
-

@@ -48,8 +48,8 @@ export const COMMAND_HELP_ORCHESTRATORS = {
       'Use --dry-run first; once green, re-run without --dry-run to execute.',
     ],
     examples: [
-      'node scripts/pipeline/run.mjs release --confirm "release preview from dev" --repository happier-dev/happier --deploy-environment preview --dry-run',
-      'node scripts/pipeline/run.mjs release --confirm "release preview from dev" --repository happier-dev/happier --deploy-environment preview',
+      'node scripts/pipeline/run.mjs release --confirm "release dev to preview" --repository happier-dev/happier --deploy-environment preview --dry-run',
+      'node scripts/pipeline/run.mjs release --confirm "release dev to preview" --repository happier-dev/happier --deploy-environment preview',
     ],
   },
 
@@ -115,7 +115,7 @@ export const COMMAND_HELP_ORCHESTRATORS = {
     ],
     bullets: ['Requires GitHub CLI auth (`gh auth status`).'],
     examples: [
-      'node scripts/pipeline/run.mjs promote-deploy-branch --deploy-environment production --component website --source-ref dev',
+      'node scripts/pipeline/run.mjs promote-deploy-branch --deploy-environment production --component website --source-ref main',
     ],
   },
 };
