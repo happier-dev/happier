@@ -112,6 +112,9 @@ export const ChatHeaderView: React.FC<ChatHeaderViewProps> = ({
                         onPress={onAvatarPress}
                         hitSlop={15}
                         style={styles.avatarButton}
+                        testID="session-header-avatar"
+                        accessibilityRole="button"
+                        accessibilityLabel={t('sessionInfo.title')}
                     >
                         <Avatar
                             id={avatarId}
