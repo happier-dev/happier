@@ -249,26 +249,68 @@ function TextFullView(props: { text: string }) {
     );
 }
 
-function ensureExecutionRunAutoRecipientTarget(
+function ensureAutoRecipientTarget(
     targets: readonly SessionParticipantTarget[],
     autoRecipient: ParticipantRecipientV1 | null,
 ): readonly SessionParticipantTarget[] {
-    if (!autoRecipient || autoRecipient.kind !== 'execution_run') return targets;
-    if (
-        targets.some(
-            (target) => target.recipient.kind === 'execution_run' && target.recipient.runId === autoRecipient.runId,
-        )
-    ) {
-        return targets;
-    }
-    const displayLabel = t('session.participants.executionRun', { runId: autoRecipient.runId });
-    const injectedTarget = {
-        key: `execution_run:${autoRecipient.runId}`,
-        displayLabel,
-        recipient: { kind: 'execution_run', runId: autoRecipient.runId, label: displayLabel } satisfies ParticipantRecipientV1,
-    } satisfies SessionParticipantTarget;
+    if (!autoRecipient) return targets;
 
-    return [injectedTarget, ...targets];
+    const alreadyPresent = targets.some((target) => {
+        const recipient = target.recipient;
+        if (autoRecipient.kind === 'execution_run') {
+            return recipient.kind === 'execution_run' && recipient.runId === autoRecipient.runId;
+        }
+        if (autoRecipient.kind === 'agent_team_broadcast') {
+            return recipient.kind === 'agent_team_broadcast' && recipient.teamId === autoRecipient.teamId;
+        }
+        if (autoRecipient.kind === 'agent_team_member') {
+            return (
+                recipient.kind === 'agent_team_member' &&
+                recipient.teamId === autoRecipient.teamId &&
+                recipient.memberId === autoRecipient.memberId
+            );
+        }
+        return false;
+    });
+    if (alreadyPresent) return targets;
+
+    if (autoRecipient.kind === 'execution_run') {
+        const displayLabel = t('session.participants.executionRun', { runId: autoRecipient.runId });
+        const injectedTarget = {
+            key: `execution_run:${autoRecipient.runId}`,
+            displayLabel,
+            recipient: { kind: 'execution_run', runId: autoRecipient.runId, label: displayLabel } satisfies ParticipantRecipientV1,
+        } satisfies SessionParticipantTarget;
+        return [injectedTarget, ...targets];
+    }
+
+    if (autoRecipient.kind === 'agent_team_broadcast') {
+        const displayLabel = t('session.participants.broadcast', { teamId: autoRecipient.teamId });
+        const injectedTarget = {
+            key: `agent_team_broadcast:${autoRecipient.teamId}`,
+            displayLabel,
+            recipient: { kind: 'agent_team_broadcast', teamId: autoRecipient.teamId } satisfies ParticipantRecipientV1,
+        } satisfies SessionParticipantTarget;
+        return [injectedTarget, ...targets];
+    }
+
+    if (autoRecipient.kind === 'agent_team_member') {
+        const displayLabel = autoRecipient.memberLabel ? autoRecipient.memberLabel : autoRecipient.memberId;
+        const injectedTarget = {
+            key: `agent_team_member:${autoRecipient.teamId}:${autoRecipient.memberId}`,
+            displayLabel,
+            recipient: {
+                kind: 'agent_team_member',
+                teamId: autoRecipient.teamId,
+                memberId: autoRecipient.memberId,
+                ...(autoRecipient.memberLabel ? { memberLabel: autoRecipient.memberLabel } : {}),
+            } satisfies ParticipantRecipientV1,
+        } satisfies SessionParticipantTarget;
+
+        return [injectedTarget, ...targets];
+    }
+
+    return targets;
 }
 
 function ToolCallFullView(props: {
@@ -310,7 +352,7 @@ function ToolCallFullView(props: {
     }, [canShowComposer, committedMessages, focusedTool, props.message.children, props.session, runningExecutionRuns]);
 
     const participantTargets = React.useMemo(() => {
-        return ensureExecutionRunAutoRecipientTarget(baseParticipantTargets, autoRecipient);
+        return ensureAutoRecipientTarget(baseParticipantTargets, autoRecipient);
     }, [autoRecipient, baseParticipantTargets]);
 
     const recipientState = useSessionRecipientState({ targets: participantTargets, autoRecipient });
@@ -333,6 +375,8 @@ function ToolCallFullView(props: {
         ];
     }, [canShowComposer, participantTargets, recipientState.recipient, recipientState.setManualRecipient]);
 
+    const shouldShowComposer = canShowComposer && autoRecipient !== null;
+
     return (
         <View style={{ flex: 1 }}>
             <ToolFullView
@@ -344,7 +388,7 @@ function ToolCallFullView(props: {
                 jumpChildId={props.jumpChildId}
             />
 
-            {canShowComposer ? (
+            {shouldShowComposer ? (
                 <AgentInput
                     placeholder={props.interaction.canSendMessages ? t('session.inputPlaceholder') : t('session.sharing.viewOnlyMode')}
                     value={composerText}

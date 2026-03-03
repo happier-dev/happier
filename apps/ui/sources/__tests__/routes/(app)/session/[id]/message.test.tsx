@@ -13,12 +13,7 @@ let mockMessagesLoaded = false;
 let mockMessage: any = null;
 const deriveSessionParticipantTargetsMock = vi.fn<(..._args: unknown[]) => ReadonlyArray<SessionParticipantTarget>>(() => []);
 const deriveAutoRecipientFromFocusedToolTranscriptMock = vi.fn<(..._args: unknown[]) => ParticipantRecipientV1 | null>(() => null);
-type SessionRecipientStateParams = Readonly<{ targets: readonly SessionParticipantTarget[]; autoRecipient: ParticipantRecipientV1 | null }>;
-const useSessionRecipientStateMock = vi.fn((params: SessionRecipientStateParams) => ({
-  recipient: params.autoRecipient,
-  didManualOverride: false,
-  setManualRecipient: () => {},
-}));
+const recipientChipSpy = vi.fn();
 const routerBackSpy = vi.fn();
 const routerReplaceSpy = vi.fn();
 const routerCanGoBackSpy = vi.fn(() => false);
@@ -92,7 +87,16 @@ vi.mock('@/components/tools/shell/presentation/ToolStatusIndicator', () => ({ To
 vi.mock('@/components/ui/text/Text', () => ({ Text: ({ children }: any) => React.createElement('Text', null, children) }));
 vi.mock('@/constants/Typography', () => ({ Typography: { default: () => ({}) } }));
 vi.mock('@/utils/sessions/deriveTranscriptInteraction', () => ({ deriveTranscriptInteraction: () => ({ canSendMessages: true, canApprovePermissions: false }) }));
-vi.mock('@/components/sessions/agentInput', () => ({ AgentInput: () => React.createElement('AgentInput') }));
+vi.mock('@/components/sessions/agentInput', () => ({
+  AgentInput: (props: any) =>
+    React.createElement(
+      'AgentInput',
+      props,
+      (props.extraActionChips ?? []).map((chip: any, idx: number) =>
+        React.createElement(React.Fragment, { key: String(chip?.key ?? idx) }, chip.render({})),
+      ),
+    ),
+}));
 vi.mock('@/components/autocomplete/suggestions', () => ({ getSuggestions: () => [] }));
 vi.mock('@/modal', () => ({ Modal: { alert: () => {} } }));
 vi.mock('@/utils/system/fireAndForget', () => ({ fireAndForget: (fn: Promise<any>) => void fn }));
@@ -100,10 +104,12 @@ vi.mock('@/sync/domains/session/participants/deriveSessionParticipantTargets', (
   deriveAutoRecipientFromFocusedToolTranscript: deriveAutoRecipientFromFocusedToolTranscriptMock,
   deriveSessionParticipantTargets: deriveSessionParticipantTargetsMock,
 }));
-vi.mock('@/components/sessions/agentInput/recipient/useSessionRecipientState', () => ({
-  useSessionRecipientState: useSessionRecipientStateMock,
+vi.mock('@/components/sessions/agentInput/recipient/RecipientChip', () => ({
+  RecipientChip: (props: any) => {
+    recipientChipSpy(props);
+    return React.createElement('RecipientChip', props);
+  },
 }));
-vi.mock('@/components/sessions/agentInput/recipient/RecipientChip', () => ({ RecipientChip: () => React.createElement('RecipientChip') }));
 vi.mock('@/sync/domains/input/participants/resolveParticipantRoutedSend', () => ({ resolveParticipantRoutedSend: () => null }));
 vi.mock('@/sync/ops/sessionExecutionRuns', () => ({
   sessionExecutionRunSend: async () => ({ ok: true }),
@@ -123,12 +129,11 @@ describe('Session message route hydration', () => {
     routerCanGoBackSpy.mockClear();
     syncOnSessionVisibleSpy.mockClear();
     syncLoadOlderMessagesSpy.mockClear();
+    recipientChipSpy.mockClear();
 	    deriveSessionParticipantTargetsMock.mockReset();
 	    deriveAutoRecipientFromFocusedToolTranscriptMock.mockReset();
-	    useSessionRecipientStateMock.mockReset();
 	    deriveSessionParticipantTargetsMock.mockReturnValue([]);
 	    deriveAutoRecipientFromFocusedToolTranscriptMock.mockReturnValue(null);
-	    useSessionRecipientStateMock.mockReturnValue({ recipient: null, didManualOverride: false, setManualRecipient: () => {} });
 	  });
 
   it('does not navigate back until message backfill completes', async () => {
@@ -190,7 +195,7 @@ describe('Session message route hydration', () => {
     });
   });
 
-  it('renders the focused-tool composer for Agent tool messages', async () => {
+  it('does not render the focused-tool composer when there are no participant targets', async () => {
     const { default: MessageScreen } = await import('@/app/(app)/session/[id]/message/[messageId]');
 
     ensureSessionVisibleDeferred = createDeferredPromise<void>();
@@ -201,7 +206,7 @@ describe('Session message route hydration', () => {
       id: 'm1',
       localId: null,
       createdAt: 1,
-      tool: { name: 'Agent', input: {}, result: null, state: 'success' },
+      tool: { name: 'Task', input: {}, result: null, state: 'success' },
       children: [],
     };
 
@@ -211,7 +216,7 @@ describe('Session message route hydration', () => {
       await Promise.resolve();
     });
 
-    expect(tree!.root.findAllByType('AgentInput')).toHaveLength(1);
+    expect(tree!.root.findAllByType('AgentInput')).toHaveLength(0);
   });
 
   it('includes focused execution run target when auto-recipient resolves to execution run', async () => {
@@ -231,19 +236,140 @@ describe('Session message route hydration', () => {
 
 	    deriveAutoRecipientFromFocusedToolTranscriptMock.mockReturnValue({ kind: 'execution_run', runId: 'run_auto_1' } satisfies ParticipantRecipientV1);
 
-	    await act(async () => {
-	      renderer.create(React.createElement(MessageScreen));
-	      await Promise.resolve();
-	    });
+    let tree: renderer.ReactTestRenderer | null = null;
+    await act(async () => {
+      tree = renderer.create(React.createElement(MessageScreen));
+      await Promise.resolve();
+    });
 
-    const firstCall = useSessionRecipientStateMock.mock.calls[0]?.[0];
-    expect(firstCall?.targets).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          key: 'execution_run:run_auto_1',
-          recipient: expect.objectContaining({ kind: 'execution_run', runId: 'run_auto_1' }),
-        }),
-      ]),
+    expect(tree!.root.findAllByType('AgentInput')).toHaveLength(1);
+    expect(recipientChipSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        targets: expect.arrayContaining([
+          expect.objectContaining({
+            key: 'execution_run:run_auto_1',
+            recipient: expect.objectContaining({ kind: 'execution_run', runId: 'run_auto_1' }),
+          }),
+        ]),
+      }),
     );
+  });
+
+  it('includes focused broadcast target when auto-recipient resolves to agent-team broadcast', async () => {
+    const { default: MessageScreen } = await import('@/app/(app)/session/[id]/message/[messageId]');
+
+    ensureSessionVisibleDeferred = createDeferredPromise<void>();
+    ensureSessionVisibleDeferred.resolve();
+
+    mockMessage = {
+      kind: 'tool-call',
+      id: 'm-broadcast',
+      localId: null,
+      createdAt: 1,
+      tool: { name: 'Task', input: {}, result: null, state: 'success' },
+      children: [],
+    };
+
+    deriveAutoRecipientFromFocusedToolTranscriptMock.mockReturnValue({
+      kind: 'agent_team_broadcast',
+      teamId: 'team-1',
+    } satisfies ParticipantRecipientV1);
+
+    let tree: renderer.ReactTestRenderer | null = null;
+    await act(async () => {
+      tree = renderer.create(React.createElement(MessageScreen));
+      await Promise.resolve();
+    });
+
+    expect(tree!.root.findAllByType('AgentInput')).toHaveLength(1);
+    expect(recipientChipSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        targets: expect.arrayContaining([
+          expect.objectContaining({
+            key: 'agent_team_broadcast:team-1',
+            recipient: expect.objectContaining({ kind: 'agent_team_broadcast', teamId: 'team-1' }),
+          }),
+        ]),
+      }),
+    );
+  });
+
+  it('includes focused teammate target when auto-recipient resolves to agent-team member', async () => {
+    const { default: MessageScreen } = await import('@/app/(app)/session/[id]/message/[messageId]');
+
+    ensureSessionVisibleDeferred = createDeferredPromise<void>();
+    ensureSessionVisibleDeferred.resolve();
+
+    mockMessage = {
+      kind: 'tool-call',
+      id: 'm-agent',
+      localId: null,
+      createdAt: 1,
+      tool: { name: 'Task', input: {}, result: null, state: 'success' },
+      children: [],
+    };
+
+    deriveAutoRecipientFromFocusedToolTranscriptMock.mockReturnValue({
+      kind: 'agent_team_member',
+      teamId: 'team-1',
+      memberId: 'alpha@team-1',
+      memberLabel: 'Alpha',
+    } satisfies ParticipantRecipientV1);
+
+    let tree: renderer.ReactTestRenderer | null = null;
+    await act(async () => {
+      tree = renderer.create(React.createElement(MessageScreen));
+      await Promise.resolve();
+    });
+
+    expect(tree!.root.findAllByType('AgentInput')).toHaveLength(1);
+    expect(recipientChipSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        targets: expect.arrayContaining([
+          expect.objectContaining({
+            key: 'agent_team_member:team-1:alpha@team-1',
+            recipient: expect.objectContaining({
+              kind: 'agent_team_member',
+              teamId: 'team-1',
+              memberId: 'alpha@team-1',
+              memberLabel: 'Alpha',
+            }),
+          }),
+        ]),
+      }),
+    );
+  });
+
+  it('does not render the focused-tool composer when the focused tool has no auto-recipient, even if other participant targets exist', async () => {
+    const { default: MessageScreen } = await import('@/app/(app)/session/[id]/message/[messageId]');
+
+    ensureSessionVisibleDeferred = createDeferredPromise<void>();
+    ensureSessionVisibleDeferred.resolve();
+
+    mockMessage = {
+      kind: 'tool-call',
+      id: 'm-tool',
+      localId: null,
+      createdAt: 1,
+      tool: { name: 'SubAgentRun', input: { runId: 'run_ended_1' }, result: { status: 'succeeded' }, state: 'completed' },
+      children: [],
+    };
+
+    deriveSessionParticipantTargetsMock.mockReturnValue([
+      {
+        key: 'agent_team_broadcast:team-1',
+        displayLabel: 'Broadcast: team-1',
+        recipient: { kind: 'agent_team_broadcast', teamId: 'team-1' },
+      } satisfies SessionParticipantTarget,
+    ]);
+    deriveAutoRecipientFromFocusedToolTranscriptMock.mockReturnValue(null);
+
+    let tree: renderer.ReactTestRenderer | null = null;
+    await act(async () => {
+      tree = renderer.create(React.createElement(MessageScreen));
+      await Promise.resolve();
+    });
+
+    expect(tree!.root.findAllByType('AgentInput')).toHaveLength(0);
   });
 });
