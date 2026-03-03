@@ -8,6 +8,22 @@ import { StaleServerGenerationError } from '@/sync/http/client';
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 import { runtimeFetch } from '@/utils/system/runtimeFetch';
 import { resolveSocketIoTransports } from '@/sync/runtime/socketIoTransports';
+import { storage } from '@/sync/domains/state/storage';
+
+function readSessionEncryptionModeFromLocalState(sessionId: string): 'plain' | 'e2ee' | null {
+    const sid = String(sessionId ?? '').trim();
+    if (!sid) return null;
+    try {
+        const state: any = storage.getState();
+        const row = state?.sessions?.[sid] ?? null;
+        if (!row || typeof row !== 'object') return null;
+        if (row.encryptionMode === 'plain') return 'plain';
+        if (row.encryptionMode === 'e2ee') return 'e2ee';
+        return null;
+    } catch {
+        return null;
+    }
+}
 
 //
 // Types
@@ -126,10 +142,10 @@ class ApiSocket {
      * RPC call for sessions - uses session-specific encryption
      */
     async sessionRPC<R, A>(sessionId: string, method: string, params: A): Promise<R> {
-        const sessionEncryption = this.encryption!.getSessionEncryption(sessionId);
-        if (!sessionEncryption) {
-            throw new Error(`Session encryption not found for ${sessionId}`);
-        }
+        const sessionEncryptionMode = readSessionEncryptionModeFromLocalState(sessionId);
+        const usePlaintextParams = sessionEncryptionMode === 'plain';
+        const sessionEncryption = usePlaintextParams ? null : this.encryption!.getSessionEncryption(sessionId);
+        if (!usePlaintextParams && !sessionEncryption) throw new Error(`Session encryption not found for ${sessionId}`);
         const scmDebug =
             __DEV__
             && process.env.EXPO_PUBLIC_HAPPIER_DEBUG_SCM_RPC === 'true'
@@ -139,9 +155,10 @@ class ApiSocket {
             console.log('[SCM_RPC][call]', { sessionId, method });
         }
         
+        const encryptedParams = usePlaintextParams ? params : await sessionEncryption.encryptRaw(params);
         const result: any = await this.socket!.emitWithAck(SOCKET_RPC_EVENTS.CALL, {
             method: `${sessionId}:${method}`,
-            params: await sessionEncryption.encryptRaw(params)
+            params: encryptedParams,
         });
         if (scmDebug) {
             const rawResult = result?.result;
@@ -158,7 +175,7 @@ class ApiSocket {
         }
         
         if (result.ok) {
-            const decrypted = await sessionEncryption.decryptRaw(result.result);
+            const decrypted = usePlaintextParams ? result.result : await sessionEncryption.decryptRaw(result.result);
             if (scmDebug) {
                 // eslint-disable-next-line no-console
                 console.log('[SCM_RPC][decrypt]', {
