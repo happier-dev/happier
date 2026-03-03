@@ -82,8 +82,53 @@ export type OpenCodeServerRuntimeClient = Readonly<{
   dispose: () => Promise<void>;
 }>;
 
+function resolveSseReconnectDelayMs(attempt: number): number {
+  const baseRaw = Number.parseInt(String(process.env.HAPPIER_OPENCODE_SSE_RECONNECT_BASE_DELAY_MS ?? ''), 10);
+  const maxRaw = Number.parseInt(String(process.env.HAPPIER_OPENCODE_SSE_RECONNECT_MAX_DELAY_MS ?? ''), 10);
+  const baseMs = Number.isFinite(baseRaw) && baseRaw > 0 ? Math.trunc(baseRaw) : 250;
+  const maxMs = Number.isFinite(maxRaw) && maxRaw > 0 ? Math.trunc(maxRaw) : 5_000;
+
+  const clampedBase = Math.max(5, Math.min(30_000, baseMs));
+  const clampedMax = Math.max(clampedBase, Math.min(120_000, maxMs));
+
+  const exp = Math.min(20, Math.max(0, Math.trunc(attempt)));
+  const rawDelay = Math.min(clampedMax, clampedBase * (2 ** exp));
+  // Add a small jitter so multiple sessions don't reconnect in lockstep.
+  const jitter = Math.floor(rawDelay * 0.15 * Math.random());
+  return Math.min(clampedMax, rawDelay + jitter);
+}
+
+async function sleepUntilOrAbort(ms: number, signal: AbortSignal): Promise<void> {
+  if (signal.aborted) return;
+  await new Promise<void>((resolve) => {
+    let settled = false;
+    const cleanup = (onAbort: () => void, timer: ReturnType<typeof setTimeout>) => {
+      signal.removeEventListener('abort', onAbort);
+      clearTimeout(timer);
+    };
+
+    const onAbort = () => {
+      if (settled) return;
+      settled = true;
+      cleanup(onAbort, timer);
+      resolve();
+    };
+
+    const timer = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      cleanup(onAbort, timer);
+      resolve();
+    }, ms);
+    timer.unref?.();
+
+    signal.addEventListener('abort', onAbort);
+  });
+}
+
 export async function createOpenCodeServerRuntimeClient(params: Readonly<{ directory: string; messageBuffer: MessageBuffer }>): Promise<OpenCodeServerRuntimeClient> {
   const envUrlRaw = typeof process.env.HAPPIER_OPENCODE_SERVER_URL === 'string' ? process.env.HAPPIER_OPENCODE_SERVER_URL.trim() : '';
+  const usingManagedServer = envUrlRaw.length === 0;
 
   const authHeader = resolveBasicAuthHeader();
   const headers: Record<string, string> = authHeader ? { Authorization: authHeader } : {};
@@ -94,23 +139,38 @@ export async function createOpenCodeServerRuntimeClient(params: Readonly<{ direc
     return normalized;
   };
 
-  const baseUrl = normalizeBaseUrl(
+  const probeHealth = async (candidateBaseUrl: string): Promise<boolean> => {
+    try {
+      await fetchJson<{ healthy: boolean; version: string }>({
+        url: buildUrl(candidateBaseUrl, '/global/health'),
+        method: 'GET',
+        headers,
+      });
+      return true;
+    } catch {
+      return false;
+    }
+  };
+
+  let baseUrl = normalizeBaseUrl(
     envUrlRaw
       || await ensureSharedManagedOpenCodeServerBaseUrl({
-        probeHealth: async (candidateBaseUrl) => {
-          try {
-            await fetchJson<{ healthy: boolean; version: string }>({
-              url: buildUrl(candidateBaseUrl, '/global/health'),
-              method: 'GET',
-              headers,
-            });
-            return true;
-          } catch {
-            return false;
-          }
-        },
+        probeHealth,
       }),
   );
+
+  const refreshBaseUrlIfManagedBestEffort = async (): Promise<void> => {
+    if (!usingManagedServer) return;
+    try {
+      baseUrl = normalizeBaseUrl(
+        await ensureSharedManagedOpenCodeServerBaseUrl({
+          probeHealth,
+        }),
+      );
+    } catch {
+      // Ignore (caller will retry with backoff).
+    }
+  };
 
   // Best-effort health probe (useful for diagnostics if url is stale).
   try {
@@ -124,6 +184,10 @@ export async function createOpenCodeServerRuntimeClient(params: Readonly<{ direc
   }
 
   let subscription: Awaited<ReturnType<typeof subscribeSseJson<OpenCodeGlobalEvent>>> | null = null;
+  let subscriptionLoop: Promise<void> | null = null;
+  let subscriptionLoopAbort: AbortController | null = null;
+  let lastEventId: string | null = null;
+  let disposed = false;
 
   const client: OpenCodeServerRuntimeClient = {
     setDirectoryOverride: (directory) => {
@@ -258,17 +322,72 @@ export async function createOpenCodeServerRuntimeClient(params: Readonly<{ direc
       return Array.isArray(raw) ? raw : [];
     },
     subscribeGlobalEvents: async ({ signal, onEvent }) => {
-      if (subscription) return;
-      subscription = await subscribeSseJson<OpenCodeGlobalEvent>({
-        url: buildUrl(baseUrl, '/global/event'),
-        headers,
-        signal,
-        onMessage: (msg) => onEvent(msg),
-      });
-      // Detach: keep running until caller aborts.
-      void subscription.done.catch(() => {});
+      if (disposed) return;
+      if (subscriptionLoop) return;
+
+      subscriptionLoop = (async () => {
+        const localAbort = new AbortController();
+        subscriptionLoopAbort = localAbort;
+
+        let attempt = 0;
+        while (!disposed && !signal.aborted && !localAbort.signal.aborted) {
+          const combinedAbort = new AbortController();
+          const onAbort = () => {
+            try {
+              combinedAbort.abort();
+            } catch {
+              // ignore
+            }
+          };
+          signal.addEventListener('abort', onAbort, { once: true });
+          localAbort.signal.addEventListener('abort', onAbort, { once: true });
+
+          try {
+            const url = buildUrl(baseUrl, '/global/event');
+            const nextHeaders: Record<string, string> = { ...headers };
+            if (lastEventId) nextHeaders['Last-Event-ID'] = lastEventId;
+            subscription = await subscribeSseJson<OpenCodeGlobalEvent>({
+              url,
+              headers: nextHeaders,
+              signal: combinedAbort.signal,
+              onMessage: (msg, meta) => {
+                if (meta?.id) lastEventId = meta.id;
+                onEvent(msg);
+              },
+            });
+            await subscription.done;
+            attempt = 0;
+          } catch (error) {
+            if (disposed || signal.aborted || localAbort.signal.aborted) break;
+            logger.debug('[OpenCodeServer] SSE stream ended; reconnecting (best-effort)', error);
+            await refreshBaseUrlIfManagedBestEffort();
+            const delayMs = resolveSseReconnectDelayMs(attempt);
+            attempt += 1;
+            await sleepUntilOrAbort(delayMs, combinedAbort.signal);
+          } finally {
+            if (subscription) {
+              try {
+                subscription.close();
+              } catch {
+                // ignore
+              }
+            }
+            subscription = null;
+            signal.removeEventListener('abort', onAbort);
+            localAbort.signal.removeEventListener('abort', onAbort);
+          }
+        }
+      })();
     },
     dispose: async () => {
+      disposed = true;
+      if (subscriptionLoopAbort) {
+        try {
+          subscriptionLoopAbort.abort();
+        } catch {
+          // ignore
+        }
+      }
       if (subscription) {
         try {
           subscription.close();
@@ -278,6 +397,15 @@ export async function createOpenCodeServerRuntimeClient(params: Readonly<{ direc
         }
         subscription = null;
       }
+      if (subscriptionLoop) {
+        try {
+          await subscriptionLoop.catch(() => {});
+        } catch {
+          // ignore
+        }
+        subscriptionLoop = null;
+      }
+      subscriptionLoopAbort = null;
     },
   };
 
