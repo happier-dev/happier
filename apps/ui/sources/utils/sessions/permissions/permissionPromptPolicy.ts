@@ -48,3 +48,14 @@ export function shouldShowGenericPermissionPromptForToolName(toolName: string): 
 export function shouldShowGenericPermissionPromptForRequest(params: Readonly<{ toolName: string; requestKind?: unknown }>): boolean {
     return resolveAgentRequestKind(params) !== 'user_action';
 }
+
+export function isPendingUserActionRequest(params: Readonly<{
+    toolName: string;
+    requestKind?: unknown;
+    permissionStatus?: unknown;
+}>): boolean {
+    return (
+        resolveAgentRequestKind({ toolName: params.toolName, requestKind: params.requestKind }) === 'user_action' &&
+        params.permissionStatus === 'pending'
+    );
+}

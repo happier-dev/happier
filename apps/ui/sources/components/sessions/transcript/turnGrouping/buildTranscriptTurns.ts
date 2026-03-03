@@ -1,4 +1,5 @@
 import type { Message, ToolCallMessage, UserTextMessage } from '@/sync/domains/messages/messageTypes';
+import { isPendingUserActionRequest } from '@/utils/sessions/permissions/permissionPromptPolicy';
 
 export type TranscriptTurnToolCallsGroupStrategy = 'consecutive_tools' | 'all_tools_in_turn';
 
@@ -41,6 +42,15 @@ function isToolMessage(m: Message): m is ToolCallMessage {
     return m.kind === 'tool-call';
 }
 
+function isGroupableToolMessage(m: Message): m is ToolCallMessage {
+    if (!isToolMessage(m)) return false;
+    return !isPendingUserActionRequest({
+        toolName: m.tool.name,
+        requestKind: m.tool.permission?.kind,
+        permissionStatus: m.tool.permission?.status,
+    });
+}
+
 function createEmptyLastTurnState(opts: Readonly<{
     groupToolCalls: boolean;
     toolCallsGroupStrategy: TranscriptTurnToolCallsGroupStrategy;
@@ -77,7 +87,7 @@ function appendNonUserToTurn(params: Readonly<{
     }
 
     if (params.toolCallsGroupStrategy === 'all_tools_in_turn') {
-        if (isToolMessage(params.message)) {
+        if (isGroupableToolMessage(params.message)) {
             const state =
                 params.lastTurnState.kind === 'all_tools_in_turn'
                     ? params.lastTurnState
@@ -121,7 +131,7 @@ function appendNonUserToTurn(params: Readonly<{
             ? params.lastTurnState
             : ({ kind: 'consecutive_tools', openActivityIndex: null } as const);
 
-    if (isToolMessage(params.message)) {
+    if (isGroupableToolMessage(params.message)) {
         if (state.openActivityIndex != null) {
             const prev = content[state.openActivityIndex];
             if (prev?.kind === 'tool_calls') {

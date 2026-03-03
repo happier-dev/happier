@@ -29,6 +29,7 @@ function toolMessage(opts: {
     createdAt: number;
     state: 'running' | 'completed' | 'error';
     name?: string;
+    requestKind?: 'permission' | 'user_action';
 }): ToolCallMessage {
     return {
         kind: 'tool-call',
@@ -45,6 +46,13 @@ function toolMessage(opts: {
             completedAt: opts.state === 'running' ? null : opts.createdAt + 1,
             description: null,
             result: opts.state === 'completed' ? {} : undefined,
+            permission: opts.requestKind
+                ? {
+                    id: `perm:${opts.id}`,
+                    status: opts.state === 'running' ? 'pending' : 'approved',
+                    kind: opts.requestKind,
+                }
+                : undefined,
         },
         children: [],
     };
@@ -170,6 +178,36 @@ describe('buildTranscriptTurns', () => {
         expect(toolCalls?.kind).toBe('tool_calls');
         if (toolCalls?.kind === 'tool_calls') {
             expect(toolCalls.toolMessageIds).toEqual(['t1', 't2']);
+        }
+    });
+
+    it('keeps pending user-action tool calls as standalone rows in consecutive_tools mode', () => {
+        const chronological: Message[] = [
+            userMessage('u1', 1),
+            toolMessage({ id: 't1', createdAt: 2, state: 'completed' }),
+            toolMessage({ id: 'ask', createdAt: 3, state: 'running', requestKind: 'user_action', name: 'AskUserQuestion' }),
+            toolMessage({ id: 't2', createdAt: 4, state: 'completed' }),
+        ];
+        const messagesById = Object.fromEntries(chronological.map((m) => [m.id, m]));
+        const messageIdsOldestFirst = chronological.map((m) => m.id);
+
+        const turns = buildTranscriptTurns({
+            messageIdsOldestFirst,
+            messagesById,
+            groupToolCalls: true,
+            toolCallsGroupStrategy: 'consecutive_tools',
+        });
+
+        expect(turns).toHaveLength(1);
+        expect(turns[0]!.content.map((c) => c.kind)).toEqual(['tool_calls', 'message', 'tool_calls']);
+        if (turns[0]!.content[0]?.kind === 'tool_calls') {
+            expect(turns[0]!.content[0].toolMessageIds).toEqual(['t1']);
+        }
+        if (turns[0]!.content[1]?.kind === 'message') {
+            expect(turns[0]!.content[1].messageId).toBe('ask');
+        }
+        if (turns[0]!.content[2]?.kind === 'tool_calls') {
+            expect(turns[0]!.content[2].toolMessageIds).toEqual(['t2']);
         }
     });
 });
