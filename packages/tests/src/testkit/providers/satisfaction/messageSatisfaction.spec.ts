@@ -19,6 +19,39 @@ describe('scenarioSatisfiedByMessages', () => {
     ).toBe(true);
   });
 
+  it('matches a substring split across streamed message chunks', () => {
+    const decoded = [
+      {
+        role: 'agent',
+        meta: { happierStreamKey: 'stream:1' },
+        content: { type: 'acp', data: { type: 'message', message: 'HELLO_' } },
+      },
+      {
+        role: 'agent',
+        meta: { happierStreamKey: 'stream:1' },
+        content: { type: 'acp', data: { type: 'message', message: 'WORLD' } },
+      },
+    ];
+    expect(
+      scenarioSatisfiedByMessages(
+        { decodedMessages: decoded },
+        { requiredMessageSubstrings: ['HELLO_WORLD'] },
+      ),
+    ).toBe(true);
+  });
+
+  it('does not match a substring that only appears in user messages', () => {
+    const decoded = [
+      { role: 'user', content: { type: 'text', text: 'user says ACP_STUB_RUNNING primary=user' } },
+    ];
+    expect(
+      scenarioSatisfiedByMessages(
+        { decodedMessages: decoded },
+        { requiredMessageSubstrings: ['ACP_STUB_RUNNING primary=user'] },
+      ),
+    ).toBe(false);
+  });
+
   it('returns false when the substring is not present', () => {
     const decoded = [{ role: 'assistant', content: { type: 'text', text: 'nope' } }];
     expect(
