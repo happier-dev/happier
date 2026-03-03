@@ -4,6 +4,7 @@ import type { ExecutionRunManagerStartParams } from '@/agent/executionRuns/runti
 import type { ExecutionRunController, ExecutionRunBackendController } from '@/agent/executionRuns/controllers/types';
 import type { FinishExecutionRun } from '@/agent/executionRuns/runtime/executionRunFinishRun';
 import { isAbortLikeError, normalizeExecutionRunSendDelivery, resolveInFlightDeliveryAction } from '@/agent/executionRuns/runtime/turnDelivery';
+import { logger } from '@/lib';
 
 function stripTrailingJsonObjectFromText(text: string): string {
   const trimmed = String(text ?? '');
@@ -157,13 +158,10 @@ export async function executeBoundedBackendRun(args: Readonly<{
           // best effort
         }
 
-        // Ensure the canceled completion promise is fully settled before starting a new prompt.
-        // This avoids unhandled rejections if the backend signals a cancellation error.
-        try {
-          await completionPromise;
-        } catch (e: any) {
-          if (!isAbortLikeError(e)) throw e;
-        }
+        void completionPromise.catch((error) => {
+          if (isAbortLikeError(error)) return;
+          logger.debug('[ExecutionRuns] canceled turn completion rejected (ignored)', error);
+        });
 
         await sendTurnPrompt(next.message);
         activeEpoch = backendCtrl.turnEpoch;
