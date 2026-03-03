@@ -211,6 +211,13 @@ function main() {
     run({ dryRun }, process.execPath, ['--test', 'apps/stack/scripts/self_host_launchd.real.integration.test.mjs']);
   }
 
+  if (plan.runSelfHostSchtasks) {
+    if (!dryRun) {
+      if (process.platform !== 'win32') fail(`self_host_schtasks is Windows-only (current: ${process.platform})`);
+    }
+    run({ dryRun }, process.execPath, ['--test', 'apps/stack/scripts/self_host_schtasks.real.integration.test.mjs']);
+  }
+
   if (plan.runSelfHostDaemon) {
     if (!dryRun) {
       if (process.platform !== 'linux' && process.platform !== 'darwin') {

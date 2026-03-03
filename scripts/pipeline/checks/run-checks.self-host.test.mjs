@@ -32,3 +32,19 @@ test('pipeline checks runs self-host launchd lane when requested (dry-run)', () 
   assert.match(res.stdout, /runSelfHostLaunchd: true/);
   assert.match(res.stdout, /self_host_launchd\.real\.integration\.test\.mjs/);
 });
+
+test('pipeline checks runs self-host schtasks lane when requested (dry-run)', () => {
+  const res = runChecksDryRun([
+    '--profile',
+    'custom',
+    '--custom-checks',
+    'self_host_schtasks',
+    '--install-deps',
+    'false',
+    '--dry-run',
+  ]);
+
+  assert.equal(res.status, 0, `expected exit 0 (stderr: ${res.stderr.trim()})`);
+  assert.match(res.stdout, /runSelfHostSchtasks: true/);
+  assert.match(res.stdout, /self_host_schtasks\.real\.integration\.test\.mjs/);
+});

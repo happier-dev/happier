@@ -16,6 +16,7 @@
  *   runReleaseAssetsE2e: boolean;
  *   runSelfHostSystemd: boolean;
  *   runSelfHostLaunchd: boolean;
+ *   runSelfHostSchtasks: boolean;
  *   runSelfHostDaemon: boolean;
  * }} ChecksProfilePlan
  */
@@ -82,6 +83,7 @@ export function resolveChecksProfilePlan(input) {
   // Host-mutating self-host E2E suites (explicit opt-in only).
   const runSelfHostSystemd = isCustom && has('self_host_systemd');
   const runSelfHostLaunchd = isCustom && has('self_host_launchd');
+  const runSelfHostSchtasks = isCustom && has('self_host_schtasks');
   const runSelfHostDaemon = isCustom && has('self_host_daemon');
 
   return {
@@ -97,6 +99,7 @@ export function resolveChecksProfilePlan(input) {
     runReleaseAssetsE2e: runCi && runReleaseAssetsE2e,
     runSelfHostSystemd: runCi && runSelfHostSystemd,
     runSelfHostLaunchd: runCi && runSelfHostLaunchd,
+    runSelfHostSchtasks: runCi && runSelfHostSchtasks,
     runSelfHostDaemon: runCi && runSelfHostDaemon,
   };
 }

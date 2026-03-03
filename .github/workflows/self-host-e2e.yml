@@ -3,8 +3,8 @@ name: CI — Self-Host E2E
 on:
   workflow_dispatch:
   schedule:
-    # Nightly (UTC)
-    - cron: "15 3 * * *"
+    # Weekly (UTC)
+    - cron: "15 3 * * 0"
 
 permissions:
   contents: read
@@ -37,6 +37,5 @@ jobs:
       run_binary_smoke: false
       run_self_host_systemd: true
       run_self_host_launchd: true
-      run_self_host_schtasks: false
+      run_self_host_schtasks: true
       run_self_host_daemon: true
-
