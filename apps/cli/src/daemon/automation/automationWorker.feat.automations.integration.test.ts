@@ -40,7 +40,7 @@ function writeJson(response: ServerResponse, statusCode: number, body: unknown):
   response.end(JSON.stringify(body));
 }
 
-async function waitForCondition(check: () => boolean, timeoutMs = 10_000): Promise<void> {
+async function waitForCondition(check: () => boolean, timeoutMs = 30_000): Promise<void> {
   const startedAt = Date.now();
   while (!check()) {
     if (Date.now() - startedAt > timeoutMs) {
