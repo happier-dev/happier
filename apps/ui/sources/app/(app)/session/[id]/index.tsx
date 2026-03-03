@@ -1,7 +1,9 @@
 import * as React from 'react';
 import { useLocalSearchParams } from 'expo-router';
+import { Platform, View } from 'react-native';
 import { SessionView } from '@/components/sessions/shell/SessionView';
 import { parseSessionPaneUrlState } from '@/components/sessions/panes/url/sessionPaneUrlState';
+import { runAfterInteractionsWithFallback } from '@/utils/timing/runAfterInteractionsWithFallback';
 
 export default React.memo(() => {
     const params = useLocalSearchParams<{
@@ -23,5 +25,18 @@ export default React.memo(() => {
     const jumpSeqNum = jumpSeqTrimmed.length > 0 ? Number(jumpSeqTrimmed) : NaN;
     const jumpToSeq = Number.isFinite(jumpSeqNum) && jumpSeqNum >= 0 ? Math.trunc(jumpSeqNum) : null;
     const paneUrlState = React.useMemo(() => parseSessionPaneUrlState(params as any), [params]);
+
+    const shouldDeferMount = Platform.OS !== 'web';
+    const [mounted, setMounted] = React.useState(!shouldDeferMount);
+    React.useEffect(() => {
+        if (!shouldDeferMount) return;
+        setMounted(false);
+        return runAfterInteractionsWithFallback(() => setMounted(true));
+    }, [sessionId, shouldDeferMount]);
+
+    if (!mounted) {
+        return <View style={{ flex: 1 }} />;
+    }
+
     return (<SessionView id={sessionId} jumpToSeq={jumpToSeq} paneUrlState={paneUrlState ?? undefined} />);
 });

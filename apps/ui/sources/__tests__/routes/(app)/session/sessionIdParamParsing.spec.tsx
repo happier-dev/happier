@@ -1,11 +1,20 @@
 import * as React from 'react';
 import renderer, { act } from 'react-test-renderer';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 type SearchParams = { id?: string; jumpSeq?: string };
 let searchParams: SearchParams = {};
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
+
+vi.mock('react-native', async () => {
+    const stub = await import('@/dev/reactNativeStub');
+    return {
+        ...stub,
+        Platform: { ...stub.Platform, OS: 'web' },
+        View: (props: any) => React.createElement('View', props, props.children),
+    };
+});
 
 vi.mock('expo-router', () => ({
     useLocalSearchParams: () => searchParams,
@@ -22,74 +31,55 @@ vi.mock('@/components/sessions/shell/SessionView', () => ({
         React.createElement('SessionView', { id, jumpToSeq, paneUrlState }),
 }));
 
+async function renderSessionScreen() {
+  const Screen = (await import('@/app/(app)/session/[id]')).default;
+
+  let tree: renderer.ReactTestRenderer | null = null;
+  await act(async () => {
+    tree = renderer.create(React.createElement(Screen));
+  });
+
+  const sessionView = tree!.root.findByType('SessionView');
+  return { tree: tree!, sessionView };
+}
+
 describe('session/[id] param parsing', () => {
+  afterEach(() => {
+    vi.resetModules();
+  });
+
   it('renders the session view using expo-router search params', async () => {
         vi.resetModules();
         searchParams = { id: 'session-123' };
-
-        const Screen = (await import('@/app/(app)/session/[id]')).default;
-        let tree: renderer.ReactTestRenderer | null = null;
-        await act(async () => {
-            tree = renderer.create(React.createElement(Screen));
-        });
-
-    const sessionView = tree!.root.findByType('SessionView');
-    expect(sessionView.props.id).toBe('session-123');
+        const { sessionView } = await renderSessionScreen();
+        expect(sessionView.props.id).toBe('session-123');
   });
 
   it('does not pass jumpToSeq when jumpSeq is missing', async () => {
     vi.resetModules();
     searchParams = { id: 'session-123' };
-
-    const Screen = (await import('@/app/(app)/session/[id]')).default;
-    let tree: renderer.ReactTestRenderer | null = null;
-    await act(async () => {
-      tree = renderer.create(React.createElement(Screen));
-    });
-
-    const sessionView = tree!.root.findByType('SessionView');
+    const { sessionView } = await renderSessionScreen();
     expect(sessionView.props.jumpToSeq ?? null).toBeNull();
   });
 
   it('does not pass jumpToSeq when jumpSeq is empty or whitespace', async () => {
     vi.resetModules();
     searchParams = { id: 'session-123', jumpSeq: '   ' };
-
-    const Screen = (await import('@/app/(app)/session/[id]')).default;
-    let tree: renderer.ReactTestRenderer | null = null;
-    await act(async () => {
-      tree = renderer.create(React.createElement(Screen));
-    });
-
-    const sessionView = tree!.root.findByType('SessionView');
+    const { sessionView } = await renderSessionScreen();
     expect(sessionView.props.jumpToSeq ?? null).toBeNull();
   });
 
   it('passes jumpSeq through to SessionView as jumpToSeq', async () => {
     vi.resetModules();
     searchParams = { id: 'session-123', jumpSeq: '42' } as any;
-
-    const Screen = (await import('@/app/(app)/session/[id]')).default;
-    let tree: renderer.ReactTestRenderer | null = null;
-    await act(async () => {
-      tree = renderer.create(React.createElement(Screen));
-    });
-
-    const sessionView = tree!.root.findByType('SessionView');
+    const { sessionView } = await renderSessionScreen();
     expect(sessionView.props.jumpToSeq).toBe(42);
   });
 
   it('passes pane url params through to SessionView as paneUrlState', async () => {
     vi.resetModules();
     searchParams = { id: 'session-123', right: 'files', details: 'file', path: 'src/app.ts' } as any;
-
-    const Screen = (await import('@/app/(app)/session/[id]')).default;
-    let tree: renderer.ReactTestRenderer | null = null;
-    await act(async () => {
-      tree = renderer.create(React.createElement(Screen));
-    });
-
-    const sessionView = tree!.root.findByType('SessionView');
+    const { sessionView } = await renderSessionScreen();
     expect(sessionView.props.paneUrlState).toEqual({
       rightTabId: 'files',
       details: { kind: 'file', path: 'src/app.ts' },
