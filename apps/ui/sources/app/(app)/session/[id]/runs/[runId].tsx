@@ -28,6 +28,14 @@ function normalizeParam(value: unknown): string | null {
     return null;
 }
 
+function isSessionEncryptionNotFoundError(input: unknown): boolean {
+    if (!input || typeof input !== 'object') return false;
+    const code = typeof (input as any).errorCode === 'string' ? String((input as any).errorCode) : '';
+    if (code === 'session_encryption_not_found') return true;
+    const message = typeof (input as any).error === 'string' ? String((input as any).error) : '';
+    return /session encryption not found/i.test(message);
+}
+
 export default function SessionRunDetailsScreen() {
     const { theme } = useUnistyles();
     const params = useLocalSearchParams();
@@ -50,7 +58,11 @@ export default function SessionRunDetailsScreen() {
         }
         setState({ status: 'loading' });
         setDaemonProcessLine(null);
-        const res = await sessionExecutionRunGet(sessionId, { runId, includeStructured: true });
+        const first = await sessionExecutionRunGet(sessionId, { runId, includeStructured: true });
+        const res =
+            (first as any)?.ok === false && isSessionEncryptionNotFoundError(first)
+                ? await sessionExecutionRunGet(sessionId, { runId, includeStructured: true })
+                : first;
         if ((res as any)?.ok === false) {
             setState({ status: 'error', error: String((res as any).error ?? t('runs.runDetails.failedToLoad')) });
             return;

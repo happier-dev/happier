@@ -202,6 +202,43 @@ describe('Session Run Details Screen', () => {
         expect(textNodes.some((n: any) => String(n.props.children).includes('run_1'))).toBe(true);
     });
 
+    it('retries run details load once when session encryption is not yet available', async () => {
+        getRunSpy.mockClear();
+        getRunSpy.mockResolvedValueOnce({
+            ok: false,
+            error: 'Session encryption not found for session-1',
+            errorCode: 'session_encryption_not_found',
+        });
+        getRunSpy.mockResolvedValueOnce({
+            run: {
+                runId: 'run_1',
+                callId: 'call_1',
+                sidechainId: 'side_1',
+                intent: 'review',
+                backendId: 'claude',
+                permissionMode: 'read_only',
+                retentionPolicy: 'ephemeral',
+                runClass: 'bounded',
+                ioMode: 'request_response',
+                status: 'succeeded',
+                startedAtMs: 1,
+                finishedAtMs: 2,
+            },
+        });
+
+        const Screen = (await import('@/app/(app)/session/[id]/runs/[runId]')).default;
+
+        let tree: renderer.ReactTestRenderer | null = null;
+        await act(async () => {
+            tree = renderer.create(React.createElement(Screen));
+            await Promise.resolve();
+        });
+
+        expect(getRunSpy).toHaveBeenCalledTimes(2);
+        const textNodes = tree!.root.findAllByType('Text');
+        expect(textNodes.some((n: any) => String(n.props.children).includes('run_1'))).toBe(true);
+    });
+
     it('renders daemon process stats when machine execution runs list includes the run', async () => {
         getRunSpy.mockClear();
         machineExecutionRunsListSpy.mockClear();
