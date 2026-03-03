@@ -795,7 +795,7 @@ export async function runClaude(credentials: Credentials, options: StartOptions 
         onTerminate: cleanup,
     });
 
-    registerKillSessionHandler(session.rpcHandlerManager, async () => {
+    registerKillSessionHandler(session.rpcHandlerManager, session.sessionId, async () => {
         terminationHandlers.requestTermination({ kind: 'killSession' });
         await terminationHandlers.whenTerminated;
     });
@@ -811,7 +811,7 @@ export async function runClaude(credentials: Credentials, options: StartOptions 
 	        messageQueue,
 	        session,
 	        pushSender: api.push(),
-	        allowedTools: happyServer.toolNames.map(toolName => `mcp__happy__${toolName}`),
+	        allowedTools: happyServer.toolNames.map(toolName => `mcp__happier__${toolName}`),
 	        onModeChange: (newMode) => {
 	            session.sendSessionEvent({ type: 'switch', mode: newMode });
             updateAgentStateBestEffort(
@@ -839,8 +839,8 @@ export async function runClaude(credentials: Credentials, options: StartOptions 
         },
 	        mcpServers: {
 	            ...extractedMcp.mcpServers,
-	            // Keep Happy MCP server last so a user-provided "happy" entry cannot override it.
-	            happy: {
+	            // Keep Happier MCP server last so a user-provided "happier" entry cannot override it.
+	            happier: {
 	                type: 'http' as const,
 	                url: happyServer.url,
 	            },
@@ -1337,7 +1337,7 @@ async function runClaudeLocalFastStart(credentials: Credentials, options: StartO
                     startingMode: options.startingMode,
                     startedBy: options.startedBy,
                     messageQueue,
-                    allowedTools: happyServer.toolNames.map(toolName => `mcp__happy__${toolName}`),
+                    allowedTools: happyServer.toolNames.map(toolName => `mcp__happier__${toolName}`),
                     onModeChange: (newMode) => {
                         artifacts.deferredSession.sendSessionEvent({ type: 'switch', mode: newMode });
                         updateAgentStateBestEffort(
@@ -1369,7 +1369,7 @@ async function runClaudeLocalFastStart(credentials: Credentials, options: StartO
                     },
                     mcpServers: {
                         ...extractedMcp.mcpServers,
-                        happy: {
+                        happier: {
                             type: 'http' as const,
                             url: happyServer.url,
                         },
@@ -1435,7 +1435,7 @@ async function runClaudeLocalFastStart(credentials: Credentials, options: StartO
         },
     });
 
-    registerKillSessionHandler(coordinator.artifacts.deferredSession.rpcHandlerManager, async () => {
+    registerKillSessionHandler(coordinator.artifacts.deferredSession.rpcHandlerManager, coordinator.artifacts.deferredSession.sessionId, async () => {
         terminationHandlers.requestTermination({ kind: 'killSession' });
         await terminationHandlers.whenTerminated;
     });

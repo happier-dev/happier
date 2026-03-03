@@ -27,6 +27,7 @@ import { resolveHasTTY } from '@/ui/tty/resolveHasTTY';
 import { createNonBlockingStdout } from '@/ui/ink/nonBlockingStdout';
 import { updateMetadataBestEffort } from '@/api/session/sessionWritesBestEffort';
 import { sendReadyWithPushNotification } from '@/agent/runtime/sendReadyWithPushNotification';
+import { stopDaemonSession } from '@/daemon/controlClient';
 import { dirname, join } from 'node:path';
 import { getProjectPath } from './utils/path';
 
@@ -151,6 +152,15 @@ export async function claudeRemoteLauncher(session: Session): Promise<'switch' |
                 logger.debug('[remote]: Exiting client via Ctrl-C');
                 if (!exitReason) {
                     exitReason = 'exit';
+                }
+                // Notify daemon to stop respawning this session
+                if (session.sessionId) {
+                    try {
+                        await stopDaemonSession(session.sessionId);
+                        logger.debug('[remote]: Notified daemon to stop session');
+                    } catch (e) {
+                        logger.debug('[remote]: Failed to notify daemon of stop:', e);
+                    }
                 }
                 await abort();
             },

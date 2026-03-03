@@ -498,7 +498,7 @@ export async function runGemini(opts: {
   };
 
   session.rpcHandlerManager.registerHandler('abort', handleAbort);
-  registerKillSessionHandler(session.rpcHandlerManager, handleKillSession);
+  registerKillSessionHandler(session.rpcHandlerManager, session.sessionId, handleKillSession);
 
   // Create permission handler for tool approval (variable declared earlier for onSessionSwap)
   permissionHandler = createProviderEnforcedPermissionHandler({

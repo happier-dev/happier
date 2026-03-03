@@ -186,7 +186,7 @@ export function createGeminiBackend(options: GeminiBackendOptions): GeminiBacken
       return lower.includes('change_title') ||
              lower.includes('change title') ||
              lower.includes('set title') ||
-             lower.includes('mcp__happy__change_title') ||
+             lower.includes('mcp__happier__change_title') ||
              lower.includes('mcp__happier__change_title');
     },
   };

@@ -13,8 +13,8 @@
 export function hasChangeTitleInstruction(prompt: string): boolean {
   const lower = prompt.toLowerCase();
   return lower.includes('change_title') ||
-         lower.includes('happy__change_title') ||
-         lower.includes('mcp__happy__change_title') ||
+         lower.includes('happier__change_title') ||
+         lower.includes('mcp__happier__change_title') ||
          lower.includes('happier__change_title') ||
          lower.includes('mcp__happier__change_title');
 }

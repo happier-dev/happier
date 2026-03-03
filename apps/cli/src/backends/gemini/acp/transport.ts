@@ -64,8 +64,8 @@ const GEMINI_TOOL_PATTERNS: ToolPatternWithInputFields[] = [
     patterns: [
       'change_title',
       'change-title',
-      'happy__change_title',
-      'mcp__happy__change_title',
+      'happier__change_title',
+      'mcp__happier__change_title',
       'happier__change_title',
       'mcp__happier__change_title',
     ],
@@ -280,7 +280,7 @@ export class GeminiTransport implements TransportHandler {
     input: Record<string, unknown>,
     _context: ToolNameContext
   ): string {
-    // 0. Normalize direct legacy aliases (for example happy__change_title) to canonical names.
+    // 0. Normalize direct legacy aliases (for example happier__change_title) to canonical names.
     const directToolName = findToolNameFromId(toolName, GEMINI_TOOL_PATTERNS, { preferLongestMatch: true });
     if (directToolName) return directToolName;
 

@@ -30,7 +30,7 @@ export function resetGeminiTurnMessageStateForPrompt(
   state.taskStartedSent = false;
   state.pendingChangeTitle =
     prompt.includes('change_title') ||
-    prompt.includes('happy__change_title') ||
+    prompt.includes('happier__change_title') ||
     prompt.includes('happier__change_title');
   state.changeTitleCompleted = false;
 }

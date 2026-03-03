@@ -271,14 +271,23 @@ export class TmuxUtilities {
   }
 
   /**
+   * Check if a session exists
+   */
+  async sessionExists(sessionName?: string): Promise<boolean> {
+    const targetSession = sessionName || this.sessionName;
+    const result = await this.executeTmuxCommand(['has-session', '-t', targetSession]);
+    return result !== null && result.returncode === 0;
+  }
+
+  /**
    * Ensure session exists, create if needed
+   * @returns true if session already existed, false if it was created
    */
   async ensureSessionExists(sessionName?: string): Promise<boolean> {
     const targetSession = sessionName || this.sessionName;
 
     // Check if session exists
-    const result = await this.executeTmuxCommand(['has-session', '-t', targetSession]);
-    if (result && result.returncode === 0) {
+    if (await this.sessionExists(targetSession)) {
       return true;
     }
 
@@ -468,6 +477,9 @@ export class TmuxUtilities {
 
       const windowName = options.windowName || `happy-${Date.now()}`;
 
+      // Check if session already exists to avoid creating an extra empty window
+      const sessionAlreadyExisted = await this.sessionExists(sessionName);
+
       // Ensure session exists
       await this.ensureSessionExists(sessionName);
 
@@ -567,6 +579,14 @@ export class TmuxUtilities {
       }
 
       logger.debug(`[TMUX] Spawned command in tmux session ${sessionName}, window ${windowName}, PID ${panePid}`);
+
+      // If session was just created, kill the empty window 0 that new-session created
+      if (!sessionAlreadyExisted) {
+        const killResult = await this.executeTmuxCommand(['kill-window', '-t', `${sessionName}:0`]);
+        if (killResult && killResult.returncode === 0) {
+          logger.debug(`[TMUX] Killed empty window 0 in newly created session ${sessionName}`);
+        }
+      }
 
       // Return tmux session info and PID
       const sessionIdentifier: TmuxSessionIdentifier = {

@@ -21,7 +21,7 @@ export class GeminiPermissionHandler extends CodexLikePermissionHandler {
     super({ session, logPrefix: '[Gemini]', onAbortRequested: opts?.onAbortRequested ?? null });
     // Always-auto-approve safe internal tools that don't perform external side effects.
     this.alwaysAutoApproveToolNameIncludes = [
-      'happy__change_title',
+      'happier__change_title',
       'happier__change_title',
       'geminireasoning',
       'codexreasoning',

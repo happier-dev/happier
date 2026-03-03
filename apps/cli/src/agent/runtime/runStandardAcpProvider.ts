@@ -309,7 +309,7 @@ export async function runStandardAcpProvider(
   };
 
   session.rpcHandlerManager.registerHandler('abort', handleAbort);
-  registerKillSessionHandlerFn(session.rpcHandlerManager, handleKillSession);
+  registerKillSessionHandlerFn(session.rpcHandlerManager, session.sessionId, handleKillSession);
 
   const sendReady = config.createSendReady
     ? config.createSendReady({ session, api })

@@ -130,7 +130,7 @@ export function createGeminiBackendMessageHandler(params: {
       case 'tool-result': {
         if (
           msg.toolName === 'change_title' ||
-          msg.toolName === 'happy__change_title' ||
+          msg.toolName === 'happier__change_title' ||
           msg.callId?.includes('change_title') ||
           msg.toolName === 'happier__change_title'
         ) {
