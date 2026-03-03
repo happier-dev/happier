@@ -41,9 +41,15 @@ describe('PermissionHandler (ExitPlanMode transition)', () => {
     const controller = new AbortController();
     const mode = { permissionMode: 'yolo', agentModeId: 'plan', localId: 'm1' } as EnhancedMode;
 
-    await expect(handler.handleToolCall('Bash', { command: 'pwd' }, mode, { signal: controller.signal })).resolves.toMatchObject({
-      behavior: 'deny',
-    });
+    const bashInPlanPromise = handler.handleToolCall(
+      'Bash',
+      { command: 'pwd' },
+      mode,
+      { signal: controller.signal, toolUseId: 'toolu_bash_plan_1' },
+    );
+    expect(Object.keys(client.agentState.requests)).toContain('toolu_bash_plan_1');
+    await client.rpcHandlerManager.getHandler('permission')?.({ id: 'toolu_bash_plan_1', approved: true } as any);
+    await expect(bashInPlanPromise).resolves.toMatchObject({ behavior: 'allow' });
 
     handler.onMessage(exitPlanToolUseMessage());
 
@@ -84,8 +90,14 @@ describe('PermissionHandler (ExitPlanMode transition)', () => {
 
     handler.reset();
 
-    await expect(handler.handleToolCall('Bash', { command: 'pwd' }, mode, { signal: controller.signal })).resolves.toMatchObject({
-      behavior: 'deny',
-    });
+    const afterResetPromise = handler.handleToolCall(
+      'Bash',
+      { command: 'pwd' },
+      mode,
+      { signal: controller.signal, toolUseId: 'toolu_bash_after_reset_1' },
+    );
+    expect(Object.keys(client.agentState.requests)).toContain('toolu_bash_after_reset_1');
+    await client.rpcHandlerManager.getHandler('permission')?.({ id: 'toolu_bash_after_reset_1', approved: true } as any);
+    await expect(afterResetPromise).resolves.toMatchObject({ behavior: 'allow' });
   });
 });

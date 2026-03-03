@@ -518,14 +518,6 @@ export class PermissionHandler {
             agentModeId,
         });
 
-        if (effectiveMode === 'plan' && !isInteractiveTool(toolName)) {
-            return {
-                behavior: 'deny',
-                message:
-                    'Plan mode is enabled, so tool execution is disabled. Continue by providing a plan, clarifying questions, or ask the user to switch to Build mode before attempting tool use.',
-            };
-        }
-
         if (effectiveMode === 'bypassPermissions' && !isInteractiveTool(toolName)) {
             return { behavior: 'allow', updatedInput: rewrittenInput as Record<string, unknown> };
         }

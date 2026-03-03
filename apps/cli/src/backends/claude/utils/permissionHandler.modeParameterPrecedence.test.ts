@@ -159,17 +159,19 @@ describe('PermissionHandler (mode parameter precedence)', () => {
     ).resolves.toMatchObject({ behavior: 'allow' });
   });
 
-  it('denies non-interactive tool calls when agentModeId is plan (Claude plan mode)', async () => {
-    const { session } = createPermissionHandlerSessionStub();
+  it('requests permission for tool calls when agentModeId is plan (Claude plan mode)', async () => {
+    const { session, client } = createPermissionHandlerSessionStub();
     const { PermissionHandler } = await import('./permissionHandler');
     const handler = new PermissionHandler(session);
 
     const controller = new AbortController();
     const mode = { permissionMode: 'yolo', agentModeId: 'plan' } as EnhancedMode;
 
-    await expect(
-      handler.handleToolCall('Bash', { command: 'pwd' }, mode, { signal: controller.signal }),
-    ).resolves.toMatchObject({ behavior: 'deny' });
+    const promise = handler.handleToolCall('Bash', { command: 'pwd' }, mode, { signal: controller.signal, toolUseId: 'toolu_bash_1' });
+    expect(Object.keys(client.agentState.requests)).toEqual(['toolu_bash_1']);
+
+    await client.rpcHandlerManager.getHandler('permission')?.({ id: 'toolu_bash_1', approved: true } as any);
+    await expect(promise).resolves.toMatchObject({ behavior: 'allow' });
   });
 
   it('reset clears bypassPermissions so default mode requires a permission request', async () => {
