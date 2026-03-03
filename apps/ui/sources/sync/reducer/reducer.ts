@@ -543,17 +543,21 @@ export function reducer(state: ReducerState, messages: NormalizedMessage[], agen
     // Collect changed messages (only root-level messages)
     //
 
-    // Sidechain children should never be emitted as top-level transcript updates.
-    // The owning tool-call is marked as changed by the sidechains phase, and it will re-serialize
-    // updated children for both the main session transcript and the tool/task full view.
-    const sidechainChildIds = new Set<string>();
-    for (const chain of state.sidechains.values()) {
-        for (const m of chain) sidechainChildIds.add(m.id);
+    // Sidechain children should never be emitted as top-level transcript updates when the owning
+    // tool-call exists (they are serialized as nested children of that tool-call instead).
+    //
+    // However, in some provider/import flows (notably ACP history imports), we can receive sidechain
+    // messages without ever receiving the owning tool-call message. In that orphan case, we must
+    // emit the sidechain messages as root transcript entries so the transcript doesn't appear empty.
+    const attachedSidechainChildIds = new Set<string>();
+    for (const [sidechainId, chain] of state.sidechains.entries()) {
+        if (!state.toolIdToMessageId.has(sidechainId)) continue;
+        for (const m of chain) attachedSidechainChildIds.add(m.id);
     }
 
     const filteredSidechainChildIds: string[] = [];
     for (let id of changed) {
-        if (sidechainChildIds.has(id)) {
+        if (attachedSidechainChildIds.has(id)) {
             if (DEBUG_SIDECHAINS) filteredSidechainChildIds.push(id);
             continue;
         }

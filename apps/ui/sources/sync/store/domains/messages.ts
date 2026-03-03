@@ -447,7 +447,7 @@ export function createMessagesDomain<S extends MessagesDomain & MessagesDomainDe
                     }
                 }
 
-                const nextIds = (() => {
+                let nextIds = (() => {
                     const existingIds = existingSession.messageIdsOldestFirst;
                     if (idsToInsert.length === 0 && idsToRemove.size === 0) return existingIds;
 
@@ -464,6 +464,30 @@ export function createMessagesDomain<S extends MessagesDomain & MessagesDomainDe
                         messagesById,
                     });
                 })();
+
+                // If we previously surfaced orphan sidechain messages as root transcript entries,
+                // remove them once their owning tool-call arrives. Root transcript IDs should not
+                // include sidechain children when the owner exists (they are rendered as nested
+                // `children` of the owning tool-call message).
+                const attachedSidechainChildIds = new Set<string>();
+                for (const [sidechainId, chain] of existingSession.reducerState.sidechains.entries()) {
+                    if (!existingSession.reducerState.toolIdToMessageId.has(sidechainId)) continue;
+                    for (const m of chain) attachedSidechainChildIds.add(m.id);
+                }
+                if (attachedSidechainChildIds.size > 0) {
+                    const pruned = nextIds.filter((id) => !attachedSidechainChildIds.has(id));
+                    if (pruned.length !== nextIds.length) {
+                        for (const removedId of nextIds) {
+                            if (!attachedSidechainChildIds.has(removedId)) continue;
+                            delete messagesById[removedId];
+                            idsToRemove.add(removedId);
+                            if (latestThinkingMessageId === removedId) {
+                                shouldRecomputeLatestThinking = true;
+                            }
+                        }
+                        nextIds = pruned;
+                    }
+                }
 
                 if (shouldRecomputeLatestThinking) {
                     latestThinkingMessageId = findLatestThinkingMessageId({ idsOldestFirst: nextIds, messagesById });

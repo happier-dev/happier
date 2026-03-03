@@ -537,4 +537,48 @@ describe('sidechains (provider-agnostic)', () => {
     expect(thinkingChildren).toHaveLength(1);
     expect(thinkingChildren[0]?.text).toBe('Responding');
   });
+
+  it('emits orphan sidechain messages as root transcript when the parent tool-call is missing', () => {
+    const state = createReducer();
+
+    const sidechainRoot: NormalizedMessage = {
+      id: 'msg_sc_root',
+      localId: null,
+      createdAt: 1100,
+      role: 'agent',
+      isSidechain: true,
+      content: [
+        {
+          type: 'sidechain',
+          uuid: 'uuid_sc_root',
+          prompt: 'Search for files',
+        },
+      ],
+    } as any;
+    (sidechainRoot as any).sidechainId = 'tool_task_1';
+
+    const sidechainTool: NormalizedMessage = {
+      id: 'msg_sc_tool',
+      localId: null,
+      createdAt: 1200,
+      role: 'agent',
+      isSidechain: true,
+      content: [
+        {
+          type: 'tool-call',
+          id: 'call_inner_1',
+          name: 'Read',
+          input: { path: 'a.txt' },
+          description: null,
+          uuid: 'uuid_sc_tool',
+          parentUUID: 'uuid_sc_root',
+        },
+      ],
+    } as any;
+    (sidechainTool as any).sidechainId = 'tool_task_1';
+
+    const result = reducer(state, [sidechainRoot, sidechainTool]);
+
+    expect(result.messages.some((m) => m.kind === 'tool-call' && m.tool?.name === 'Read')).toBe(true);
+  });
 });
