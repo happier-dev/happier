@@ -344,15 +344,15 @@ export function SessionsList() {
             ListFooterComponent={VirtualizedFooterComponent as any}
         />
     ) : (
-	        <FlashList
-	            data={listItems as any}
-	            renderItem={renderVirtualizedItem as any}
-	            keyExtractor={listItemKeyExtractor as any}
-	            contentContainerStyle={{ paddingBottom: safeArea.bottom + 128, maxWidth: layout.maxWidth } as any}
-	            ListHeaderComponent={VirtualizedHeaderComponent as any}
-	            ListFooterComponent={VirtualizedFooterComponent as any}
-	        />
-	    );
+        <FlashList
+            data={listItems as any}
+            renderItem={renderVirtualizedItem as any}
+            keyExtractor={listItemKeyExtractor as any}
+            contentContainerStyle={{ paddingBottom: safeArea.bottom + 128, maxWidth: layout.maxWidth } as any}
+            ListHeaderComponent={VirtualizedHeaderComponent as any}
+            ListFooterComponent={VirtualizedFooterComponent as any}
+        />
+    );
 
     const blocks: SessionListBlock[] = React.useMemo(() => {
         if (!reorderMode) return [];
