@@ -87,6 +87,7 @@ async function main() {
         '',
         'env:',
         '  HAPPIER_STACK_EXPO_TAILSCALE=1   # enable Expo Tailscale forwarding via env var',
+        '  HAPPIER_STACK_EXPO_MAX_OLD_SPACE_SIZE_MB=8192  # default: 8192 (8GB) heap for the Expo/Metro Node process',
       ].join('\n'),
     });
     return;
