@@ -524,11 +524,11 @@ describe('settings', () => {
 
         it('defaults transcript grouping settings', () => {
             const parsed = settingsParse({});
-            expect((parsed as any).transcriptGroupingMode).toBe('linear');
-            expect((parsed as any).transcriptGroupToolCalls).toBe(false);
+            expect((parsed as any).transcriptGroupingMode).toBe('turns');
+            expect((parsed as any).transcriptGroupToolCalls).toBe(true);
             expect((parsed as any).transcriptTurnToolCallsGroupStrategy).toBe('consecutive_tools');
             expect((parsed as any).transcriptToolCallsCollapsedPreviewCount).toBe(5);
-            expect((parsed as any).transcriptToolCallsGroupShowBackground).toBe(false);
+            expect((parsed as any).transcriptToolCallsGroupShowBackground).toBe(true);
             expect((parsed as any).transcriptTurnGroupToolCalls).toBeUndefined();
             expect((parsed as any).transcriptTurnToolCallsCollapsedPreviewCount).toBeUndefined();
             expect((parsed as any).transcriptTurnToolCallsGroupShowBackground).toBeUndefined();
@@ -566,7 +566,7 @@ describe('settings', () => {
 
         it('defaults tool timeline chrome settings', () => {
             const parsed = settingsParse({});
-            expect((parsed as any).toolViewTimelineChromeMode).toBe('cards');
+            expect((parsed as any).toolViewTimelineChromeMode).toBe('activity_feed');
             expect((parsed as any).toolViewTimelineFeedDefaultExpanded).toBe(false);
             expect((parsed as any).toolViewTimelineFeedTapAction).toBeUndefined();
             expect((parsed as any).toolViewTimelineDensity).toBeUndefined();
@@ -698,6 +698,7 @@ describe('settings', () => {
                 kilo: true,
             });
             expect(settingsDefaults.codexBackendMode).toBe('mcp');
+            expect(settingsDefaults.sessionReplayMaxSeedChars).toBe(120_000);
             expect(settingsDefaults.sessionDefaultPermissionModeByAgent).toMatchObject({
                 claude: 'default',
                 codex: 'default',
@@ -721,6 +722,7 @@ describe('settings', () => {
                 v: 1,
                 pushEnabled: true,
                 ready: true,
+                foregroundBehavior: 'full',
                 permissionRequest: true,
                 userActionRequest: true,
             });

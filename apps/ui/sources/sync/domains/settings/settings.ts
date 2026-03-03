@@ -636,7 +636,7 @@ export type Settings = KnownSettings & Record<string, unknown>;
     sessionReplayEnabled: false,
     sessionReplayStrategy: 'recent_messages',
     sessionReplayRecentMessagesCount: 250,
-    sessionReplayMaxSeedChars: 50_000,
+    sessionReplayMaxSeedChars: 120_000,
     sessionReplaySummaryRunnerV1: null,
     executionRunsGuidanceEnabled: false,
     executionRunsGuidanceMaxChars: 4_000,
@@ -719,11 +719,11 @@ export type Settings = KnownSettings & Record<string, unknown>;
     toolViewExpandedDetailLevelDefault: 'default',
     toolViewExpandedDetailLevelByToolName: {},
 
-      transcriptGroupingMode: 'linear',
-      transcriptGroupToolCalls: false,
+      transcriptGroupingMode: 'turns',
+      transcriptGroupToolCalls: true,
       transcriptTurnToolCallsGroupStrategy: 'consecutive_tools',
       transcriptToolCallsCollapsedPreviewCount: 5,
-      transcriptToolCallsGroupShowBackground: false,
+      transcriptToolCallsGroupShowBackground: true,
 
         transcriptStreamingCoalesceEnabled: true,
         transcriptStreamingCoalesceWindowMs: 16,
@@ -736,7 +736,7 @@ export type Settings = KnownSettings & Record<string, unknown>;
         transcriptPendingMessageCollapseThresholdChars: 160,
         transcriptPendingMessageCollapsedLines: 2,
 
-      toolViewTimelineChromeMode: 'cards',
+      toolViewTimelineChromeMode: 'activity_feed',
       toolViewTimelineFeedDefaultExpanded: false,
 
     transcriptMotionPreset: 'subtle',
