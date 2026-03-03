@@ -58,6 +58,7 @@ import {
     forwardCodexErrorToUi as forwardCodexErrorToUiShared,
     forwardCodexStatusToUi as forwardCodexStatusToUiShared,
 } from './runtime/mcpMessageHandler';
+import { createCodexRequestUserInputBridge } from './runtime/codexRequestUserInputBridge';
 import { runCodexLocalModePass } from './runtime/localModePass';
 import { resolveCodexQueuedPromptWithReplaySeed } from './runtime/resolveCodexQueuedPromptWithReplaySeed';
 import { cleanupCodexRunResources } from './runtime/cleanupRunResources';
@@ -858,6 +859,14 @@ export async function runCodex(opts: {
     }
 
     if (client) {
+        const requestUserInputBridge = createCodexRequestUserInputBridge({
+            permissionHandler,
+            continueSession: async (prompt) => {
+                await client.continueSession(prompt);
+            },
+            logger,
+        });
+
         const handleMcpMessage = createCodexMcpMessageHandler({
             logger,
             session,
@@ -874,7 +883,10 @@ export async function runCodex(opts: {
                 thinking = next;
             },
         });
-        client.setHandler(handleMcpMessage);
+        client.setHandler((msg) => {
+            handleMcpMessage(msg);
+            void requestUserInputBridge.onCodexEvent(msg);
+        });
     }
 
     let first = true;
