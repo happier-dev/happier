@@ -842,6 +842,58 @@ describe.sequential('claudeRemoteLauncher', () => {
     }
   }, 30_000);
 
+  it('inserts a synthetic sidechain prompt root for Agent tool uses (Claude Agent Teams)', async () => {
+    const { session, client, switchHandlerReady } = createRemoteHarness();
+
+    mockConvert.mockReturnValue(null);
+    mockConvertSidechainUserMessage.mockReturnValue({
+      type: 'user',
+      uuid: 'u_side_1',
+      isSidechain: true,
+      sidechainId: 'tool_agent_1',
+      message: { role: 'user', content: 'Agent prompt' },
+    });
+
+    mockClaudeRemoteDispatch.mockImplementationOnce(async (opts: unknown) => {
+      const dispatchOpts = opts as RemoteDispatchMockOptions & { onMessage?: (m: unknown) => void };
+
+      dispatchOpts.onMessage?.({
+        type: 'assistant',
+        parent_tool_use_id: null,
+        message: {
+          content: [
+            {
+              type: 'tool_use',
+              id: 'tool_agent_1',
+              name: 'Agent',
+              input: { prompt: 'Agent prompt' },
+            },
+          ],
+        },
+      });
+
+      await waitForAbort(dispatchOpts.signal);
+    });
+
+    const { claudeRemoteLauncher } = await import('./claudeRemoteLauncher');
+    const launcherPromise = claudeRemoteLauncher(session);
+
+    await vi.waitFor(() => {
+      expect(mockConvertSidechainUserMessage).toHaveBeenCalledWith('tool_agent_1', 'Agent prompt');
+    });
+
+    await vi.waitFor(() => {
+      expect(client.sendClaudeSessionMessage).toHaveBeenCalledWith(
+        expect.objectContaining({ type: 'user', sidechainId: 'tool_agent_1', isSidechain: true }),
+        undefined,
+      );
+    });
+
+    const switchHandler = await switchHandlerReady;
+    expect(await switchHandler({ to: 'local' })).toBe(true);
+    await expect(launcherPromise).resolves.toBe('switch');
+  }, 30_000);
+
   it('imports Task subagent JSONL from inferred ~/.claude projects path when output_file is missing', async () => {
     const { session, client, switchHandlerReady } = createRemoteHarness();
 

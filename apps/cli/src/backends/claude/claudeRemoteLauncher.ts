@@ -501,7 +501,12 @@ export async function claudeRemoteLauncher(session: Session): Promise<'switch' |
             let umessage = message as SDKAssistantMessage;
             if (umessage.message.content && Array.isArray(umessage.message.content)) {
                 for (let c of umessage.message.content) {
-                    if (c.type === 'tool_use' && c.name === 'Task' && c.input && typeof (c.input as any).prompt === 'string') {
+                    if (
+                        c.type === 'tool_use' &&
+                        (c.name === 'Task' || c.name === 'Agent') &&
+                        c.input &&
+                        typeof (c.input as any).prompt === 'string'
+                    ) {
                         const logMessage2 = sdkToLogConverter.convertSidechainUserMessage(c.id!, (c.input as any).prompt);
                         if (logMessage2) {
                             messageQueue.enqueue(logMessage2);
