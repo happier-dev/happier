@@ -320,6 +320,103 @@ describe('multi-daemon helpers', () => {
     }
   });
 
+  it('sends stopSessions: true when requested', async () => {
+    const home = await mkdtemp(join(tmpdir(), 'happier-multi-daemon-stop-sessions-'));
+    const prevHome = process.env.HAPPIER_HOME_DIR;
+    let pid: number | null = null;
+    let fetchSpy: any = null;
+    try {
+      process.env.HAPPIER_HOME_DIR = home;
+      reloadConfiguration();
+
+      const settings = {
+        schemaVersion: 5,
+        onboardingCompleted: false,
+        activeServerId: 'cloud',
+        servers: {
+          cloud: {
+            id: 'cloud',
+            name: 'Happier Cloud',
+            serverUrl: 'https://api.happier.dev',
+            webappUrl: 'https://app.happier.dev',
+            createdAt: 0,
+            updatedAt: 0,
+            lastUsedAt: 0,
+          },
+          company: {
+            id: 'company',
+            name: 'Company',
+            serverUrl: 'https://company.example.test',
+            webappUrl: 'https://company.example.test',
+            createdAt: 0,
+            updatedAt: 0,
+            lastUsedAt: 0,
+          },
+        },
+        machineIdByServerId: {},
+        machineIdConfirmedByServerByServerId: {},
+        lastChangesCursorByServerIdByAccountId: {},
+      };
+      await writeFile(join(home, 'settings.json'), JSON.stringify(settings, null, 2), 'utf-8');
+
+      const port = await reserveEphemeralPort();
+      const sleepy = spawnSleepyProcess();
+      pid = sleepy.pid;
+      const serverDir = join(home, 'servers', 'company');
+      mkdirSync(serverDir, { recursive: true });
+      const statePath = join(serverDir, 'daemon.state.json');
+      await writeFile(
+        statePath,
+        JSON.stringify(
+          {
+            pid,
+            httpPort: port,
+            startedAt: Date.now(),
+            startedWithCliVersion: '0.0.0-test',
+            controlToken: 'test-token',
+          },
+          null,
+          2,
+        ),
+        'utf-8',
+      );
+
+      const observed: Array<{ url: string; body: unknown; headers: unknown }> = [];
+      fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation(async (url: any, init: any) => {
+        observed.push({ url: String(url), body: init?.body, headers: init?.headers });
+        if (pid !== null) {
+          try {
+            process.kill(pid, 'SIGTERM');
+          } catch {
+            // ignore
+          }
+        }
+        return { ok: true, status: 200, json: async () => ({ ok: true }) } as Response;
+      });
+
+      await stopAllDaemonsBestEffort({ stopSessions: true });
+
+      expect(fetchSpy).toHaveBeenCalledTimes(1);
+      expect(JSON.parse(String(observed[0]?.body ?? ''))).toEqual({ stopSessions: true });
+      expect(String((observed[0]?.headers ?? ({} as any))['x-happier-daemon-token'] ?? '')).toBe('test-token');
+      expect(await waitForExit(pid, 3000)).toBe(true);
+      expect(existsSync(statePath)).toBe(false);
+    } finally {
+      fetchSpy?.mockRestore();
+      if (pid !== null) {
+        try {
+          process.kill(pid, 'SIGKILL');
+        } catch {
+          // ignore
+        }
+      }
+      if (prevHome === undefined) delete process.env.HAPPIER_HOME_DIR;
+      else process.env.HAPPIER_HOME_DIR = prevHome;
+      reloadConfiguration();
+      await rm(home, { recursive: true, force: true });
+    }
+  });
+
   it('falls back to default timeout when HAPPIER_DAEMON_HTTP_TIMEOUT is invalid', async () => {
     const home = await mkdtemp(join(tmpdir(), 'happier-multi-daemon-invalid-timeout-'));
     const prevHome = process.env.HAPPIER_HOME_DIR;

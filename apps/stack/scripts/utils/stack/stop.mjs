@@ -18,13 +18,16 @@ function resolveServerComponentFromStackEnv(env) {
   return v === 'happier-server' ? 'happier-server' : 'happier-server-light';
 }
 
-async function daemonControlPost({ httpPort, path, body = {} }) {
+async function daemonControlPost({ httpPort, path, body = {}, controlToken = '' }) {
   const ctl = new AbortController();
   const t = setTimeout(() => ctl.abort(), 1500);
   try {
+    const headers = { 'content-type': 'application/json' };
+    const token = String(controlToken ?? '').trim();
+    if (token) headers['x-happier-daemon-token'] = token;
     const res = await fetch(`http://127.0.0.1:${httpPort}${path}`, {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers,
       body: JSON.stringify(body),
       signal: ctl.signal,
     });
@@ -54,6 +57,7 @@ async function stopDaemonTrackedSessions({ cliHomeDir, serverUrl, json }) {
 
   const httpPort = Number(state?.httpPort);
   const pid = Number(state?.pid);
+  const controlToken = String(state?.controlToken ?? '').trim();
   if (!Number.isFinite(httpPort) || httpPort <= 0) {
     return { ok: false, skipped: true, reason: 'missing_http_port', stoppedSessionIds: [] };
   }
@@ -66,7 +70,21 @@ async function stopDaemonTrackedSessions({ cliHomeDir, serverUrl, json }) {
     return { ok: true, skipped: true, reason: 'daemon_not_running', stoppedSessionIds: [] };
   }
 
-  const listed = await daemonControlPost({ httpPort, path: '/list' }).catch((e) => {
+  // Prefer a single /stop call with stopSessions, so the daemon can stop *all* tracked sessions
+  // (including PID-fallback sessions) in a centralized, versioned way.
+  const stopOk = await daemonControlPost({ httpPort, path: '/stop', body: { stopSessions: true }, controlToken })
+    .then(() => true)
+    .catch((e) => {
+      if (!json) console.warn(`[stack] failed to stop daemon with sessions: ${e instanceof Error ? e.message : String(e)}`);
+      return false;
+    });
+
+  if (stopOk) {
+    return { ok: true, skipped: false, stoppedSessionIds: [] };
+  }
+
+  // Back-compat fallback: older daemons may not support /stop with stopSessions.
+  const listed = await daemonControlPost({ httpPort, path: '/list', controlToken }).catch((e) => {
     if (!json) console.warn(`[stack] failed to list daemon sessions: ${e instanceof Error ? e.message : String(e)}`);
     return null;
   });
@@ -77,7 +95,7 @@ async function stopDaemonTrackedSessions({ cliHomeDir, serverUrl, json }) {
     const sid = String(child?.happySessionId ?? '').trim();
     if (!sid) continue;
     // eslint-disable-next-line no-await-in-loop
-    const res = await daemonControlPost({ httpPort, path: '/stop-session', body: { sessionId: sid } }).catch(() => null);
+    const res = await daemonControlPost({ httpPort, path: '/stop-session', body: { sessionId: sid }, controlToken }).catch(() => null);
     if (res?.success) {
       stoppedSessionIds.push(sid);
     }

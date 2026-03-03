@@ -14,6 +14,10 @@ type NormalizedDaemonState = Readonly<{
   controlToken?: string;
 }>;
 
+type StopDaemonOptions = Readonly<{
+  stopSessions?: boolean;
+}>;
+
 function parseDaemonStateFromJson(value: unknown): NormalizedDaemonState | null {
   const parsed = DaemonLocallyPersistedStateSchema.safeParse(value);
   if (!parsed.success) return null;
@@ -124,7 +128,7 @@ async function waitForProcessDeath(pid: number, timeoutMs: number): Promise<bool
   return !isPidAlive(pid);
 }
 
-async function stopDaemonViaHttpBestEffort(state: NormalizedDaemonState): Promise<boolean> {
+async function stopDaemonViaHttpBestEffort(state: NormalizedDaemonState, opts: StopDaemonOptions): Promise<boolean> {
   try {
     const rawTimeout = process.env.HAPPIER_DAEMON_HTTP_TIMEOUT;
     const parsedTimeout = typeof rawTimeout === 'string' ? Number.parseInt(rawTimeout, 10) : Number.NaN;
@@ -135,7 +139,7 @@ async function stopDaemonViaHttpBestEffort(state: NormalizedDaemonState): Promis
     const response = await fetch(`http://127.0.0.1:${state.httpPort}/stop`, {
       method: 'POST',
       headers,
-      body: JSON.stringify({}),
+      body: JSON.stringify(opts.stopSessions ? { stopSessions: true } : {}),
       signal: AbortSignal.timeout(timeout),
     });
     return response.ok;
@@ -149,7 +153,7 @@ async function stopDaemonViaHttpBestEffort(state: NormalizedDaemonState): Promis
  * Safety: does not force-kill processes; uses the daemon control HTTP endpoint.
  * Also clears stale state files when the PID is not alive.
  */
-export async function stopAllDaemonsBestEffort(): Promise<void> {
+export async function stopAllDaemonsBestEffort(opts: StopDaemonOptions = {}): Promise<void> {
   const statuses = await listDaemonStatusesForAllKnownServers();
   for (const entry of statuses) {
     const statePath = entry.daemonStatePath;
@@ -165,7 +169,7 @@ export async function stopAllDaemonsBestEffort(): Promise<void> {
       continue;
     }
 
-    const stopped = await stopDaemonViaHttpBestEffort(state);
+    const stopped = await stopDaemonViaHttpBestEffort(state, opts);
     if (!stopped) continue;
 
     const exited = await waitForProcessDeath(state.pid, 2500);

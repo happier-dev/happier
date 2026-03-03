@@ -21,6 +21,33 @@ describe('createStopSession', () => {
     const ok = await stop('sess-1');
 
     expect(ok).toBe(true);
+    expect(killDaemonChild).not.toHaveBeenCalled();
+    expect(killSpy).toHaveBeenCalledWith(-111, 'SIGTERM');
+    expect(killSpy).toHaveBeenCalledWith(222, 'SIGTERM');
+    expect(pidToTrackedSession.size).toBe(0);
+  });
+
+  it('falls back to killing the daemon child pid when process group kill fails', async () => {
+    const { createStopSession } = await import('./stopSession');
+
+    const killDaemonChild = vi.fn();
+    const killSpy = vi.spyOn(process, 'kill').mockImplementation((pid, signal) => {
+      if (typeof pid === 'number' && pid < 0) {
+        throw new Error('no process group');
+      }
+      return true as any;
+    });
+
+    const pidToTrackedSession = new Map<number, any>([
+      [111, { startedBy: 'daemon', pid: 111, happySessionId: 'sess-1', childProcess: { kill: killDaemonChild }, processCommandHash: 'h1' }],
+      [222, { startedBy: 'terminal', pid: 222, happySessionId: 'sess-1', processCommandHash: 'h2' }],
+    ]);
+
+    const stop = createStopSession({ pidToTrackedSession });
+    const ok = await stop('sess-1');
+
+    expect(ok).toBe(true);
+    expect(killSpy).toHaveBeenCalledWith(-111, 'SIGTERM');
     expect(killDaemonChild).toHaveBeenCalledWith('SIGTERM');
     expect(killSpy).toHaveBeenCalledWith(222, 'SIGTERM');
     expect(pidToTrackedSession.size).toBe(0);

@@ -42,6 +42,19 @@ export function createStopSession(params: Readonly<{
 
       if (session.startedBy === 'daemon' && session.childProcess) {
         try {
+          try {
+            // Prefer killing the full process group when the daemon spawned a detached session runner.
+            process.kill(-pid, 'SIGTERM');
+            logger.debug(
+              `[DAEMON RUN] Sent SIGTERM to daemon-spawned session process group ${normalizedSessionId} (pid=${pid})`,
+            );
+            stoppedAny = true;
+            pidToTrackedSession.delete(pid);
+            continue;
+          } catch {
+            // fall through
+          }
+
           session.childProcess.kill('SIGTERM');
           logger.debug(`[DAEMON RUN] Sent SIGTERM to daemon-spawned session ${normalizedSessionId} (pid=${pid})`);
           stoppedAny = true;

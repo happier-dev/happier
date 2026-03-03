@@ -280,6 +280,11 @@ export function createDaemonControlApp({
   // Stop daemon
   typed.post('/stop', {
     schema: {
+      body: z
+        .object({
+          stopSessions: z.boolean().optional(),
+        })
+        .nullish(),
       response: {
         200: z.object({
           status: z.string()
@@ -288,13 +293,41 @@ export function createDaemonControlApp({
       }
     },
     preHandler: requireAuth,
-  }, async () => {
-    logger.debug('[CONTROL SERVER] Stop daemon request received');
+  }, async (request) => {
+    const stopSessions = request.body?.stopSessions === true;
+    logger.debug('[CONTROL SERVER] Stop daemon request received', { stopSessions });
 
     // Give time for response to arrive
     setTimeout(() => {
       logger.debug('[CONTROL SERVER] Triggering daemon shutdown');
-      requestShutdown();
+      if (!stopSessions) {
+        requestShutdown();
+        return;
+      }
+
+      void (async () => {
+        try {
+          const children = getChildren();
+          logger.debug(`[CONTROL SERVER] stopSessions requested: stopping ${children.length} tracked sessions`);
+          for (const child of children) {
+            const sessionId = typeof child.happySessionId === 'string' ? child.happySessionId.trim() : '';
+            const fallbackSessionId =
+              Number.isFinite(child.pid) && child.pid > 1 ? `PID-${Math.trunc(child.pid)}` : '';
+            const id = sessionId || fallbackSessionId;
+            if (!id) continue;
+            try {
+              // eslint-disable-next-line no-await-in-loop
+              await stopSession(id);
+            } catch (error) {
+              logger.debug(`[CONTROL SERVER] Failed to stop session ${id}`, error);
+            }
+          }
+        } catch (error) {
+          logger.debug('[CONTROL SERVER] stopSessions failed', error);
+        } finally {
+          requestShutdown();
+        }
+      })();
     }, 50);
 
     return { status: 'stopping' };
