@@ -163,8 +163,9 @@ export async function startManagedOpenCodeServer(params: Readonly<{
   try {
     proc.stdout?.removeAllListeners('data');
     proc.stderr?.removeAllListeners('data');
-    proc.stdout?.destroy();
-    proc.stderr?.destroy();
+    // Keep the pipe open and drain output so the managed server can keep logging without SIGPIPE/EPIPE crashes.
+    proc.stdout?.resume();
+    proc.stderr?.resume();
   } catch {
     // ignore
   }
