@@ -291,42 +291,40 @@ export function ChangedFilesReview(props: ChangedFilesReviewProps) {
     const resolveWebScrollRoot = React.useCallback((): HTMLElement | null => {
         if (Platform.OS !== 'web') return null;
         const rawList: any = listRef.current as any;
-        const host = (rawList?.getScrollableNode?.() as HTMLElement | null) ?? null;
+        // In the UI app we compile shared RN code without DOM typings; `HTMLElement` can be `never`.
+        // Treat DOM nodes as `any` within the web-only branch.
+        const host = (rawList?.getScrollableNode?.() as any) ?? null;
         if (!host) return null;
 
         const win = (globalThis as any).window as Window | undefined;
-        const isScrollable = (el: HTMLElement | null) => {
+        const isScrollable = (el: any): el is any => {
             if (!el) return false;
             if (!win?.getComputedStyle) return false;
             const style = win.getComputedStyle(el);
             const overflowY = style.overflowY;
-            return (overflowY === 'auto' || overflowY === 'scroll') && el.scrollHeight > el.clientHeight + 1;
+            if (overflowY !== 'auto' && overflowY !== 'scroll' && overflowY !== 'overlay') return false;
+            return el.scrollHeight > el.clientHeight + 1;
         };
-        const candidates: HTMLElement[] = [];
-        if (isScrollable(host)) candidates.push(host);
-        const descendants = Array.from(host.querySelectorAll('*')) as HTMLElement[];
-        for (const child of descendants) {
-            if (isScrollable(child)) candidates.push(child);
-        }
 
-        const boundary = host.closest?.('[data-testid="session-details-panel-root"]') as HTMLElement | null;
-        let cursor: HTMLElement | null = host.parentElement;
+        const boundary = (host.closest?.('[data-testid="session-details-panel-root"]') as any) ?? null;
+        let cursor: any = host;
         let steps = 0;
-        while (cursor && steps < 30) {
-            if (isScrollable(cursor)) candidates.push(cursor);
+        while (cursor && steps < 40) {
+            if (isScrollable(cursor)) {
+                try {
+                    cursor.style.setProperty('overflow-anchor', 'none');
+                } catch {
+                    // ignore
+                }
+                webScrollRootRef.current = cursor as any;
+                return cursor as any;
+            }
             if (boundary && cursor === boundary) break;
-            cursor = cursor.parentElement;
+            cursor = (cursor as any)?.parentElement ?? null;
             steps += 1;
         }
 
-        if (candidates.length === 0) return null;
-        const best = candidates.reduce((prev, next) => {
-            const prevScore = Math.max(prev.clientHeight, 0) * 1_000_000 + Math.max(prev.scrollHeight - prev.clientHeight, 0);
-            const nextScore = Math.max(next.clientHeight, 0) * 1_000_000 + Math.max(next.scrollHeight - next.clientHeight, 0);
-            return nextScore >= prevScore ? next : prev;
-        });
-        webScrollRootRef.current = best;
-        return best;
+        return null;
     }, []);
 
     React.useEffect(() => {
@@ -450,10 +448,10 @@ export function ChangedFilesReview(props: ChangedFilesReviewProps) {
     }, [props.onScrollTopChange]);
 
     const preserveScrollOnToggleCollapsed = React.useCallback((path: string) => {
-        // FlashList caches row measurements. When we expand/collapse diffs, clear the layout cache
-        // up-front so the next layout pass uses updated heights (prevents empty gaps on web and
-        // avoids stale measurement artifacts in virtualization).
         const rawList: any = listRef.current as any;
+        // FlashList caches row measurements; clear before expanding/collapsing highly variable diff rows.
+        // This is especially important on web to avoid stale measurement artifacts, but it's safe to
+        // call on all platforms.
         try {
             const clearLayoutCache = rawList?.clearLayoutCacheOnUpdate;
             if (typeof clearLayoutCache === 'function') {
@@ -463,89 +461,8 @@ export function ChangedFilesReview(props: ChangedFilesReviewProps) {
             // ignore
         }
 
-        if (Platform.OS !== 'web') {
-            toggleCollapsed(path);
-            return;
-        }
-
-        let didToggle = false;
-        const toggleOnce = () => {
-            if (didToggle) return;
-            didToggle = true;
-            toggleCollapsed(path);
-        };
-
-        try {
-            const host = (rawList?.getScrollableNode?.() as HTMLElement | null) ?? null;
-            const safePath = toTestIdSafeValue(path);
-            const rowSelector = `[data-testid="scm-change-row-${safePath}"]`;
-            const doc = (globalThis as any).document as Document | undefined;
-            const queryRow = (): HTMLElement | null => {
-                const fromDoc = doc?.querySelector?.(rowSelector) as HTMLElement | null | undefined;
-                if (fromDoc) return fromDoc;
-                const fromHost = (host as any)?.querySelector?.(rowSelector) as HTMLElement | null | undefined;
-                return fromHost ?? null;
-            };
-
-            const rowBefore = queryRow();
-            if (!rowBefore) {
-                toggleOnce();
-                return;
-            }
-
-            const rowIndex = pathToRowIndex.get(path);
-            if (typeof rowIndex !== 'number' || !Number.isFinite(rowIndex)) {
-                toggleOnce();
-                return;
-            }
-            if (!host) {
-                toggleOnce();
-                return;
-            }
-
-            const hostBox = host.getBoundingClientRect?.() ?? null;
-            const rowBox = rowBefore.getBoundingClientRect?.() ?? null;
-            if (!hostBox || !rowBox || hostBox.height <= 0) {
-                toggleOnce();
-                return;
-            }
-            const viewPositionBefore = Math.max(0, Math.min(1, (rowBox.top - hostBox.top) / hostBox.height));
-
-            toggleOnce();
-
-            const applyCorrection = () => {
-                try {
-                    listRef.current?.scrollToIndex({ index: rowIndex, animated: false, viewPosition: viewPositionBefore });
-                } catch {
-                    // ignore
-                }
-            };
-
-            const raf: (cb: FrameRequestCallback) => number =
-                typeof globalThis.requestAnimationFrame === 'function'
-                    ? globalThis.requestAnimationFrame.bind(globalThis)
-                    : (cb) => globalThis.setTimeout(() => cb(Date.now()), 0);
-
-            // FlashList may apply post-layout scroll adjustments; re-apply correction for a short, bounded window.
-            const startedAt = typeof performance !== 'undefined' && typeof performance.now === 'function'
-                ? performance.now()
-                : Date.now();
-            const maxMs = 700;
-            const step = () => {
-                applyCorrection();
-                const now = typeof performance !== 'undefined' && typeof performance.now === 'function'
-                    ? performance.now()
-                    : Date.now();
-                if (now - startedAt >= maxMs) return;
-                raf(() => step());
-            };
-            // Apply immediately (same tick) and keep enforcing briefly after layout settles.
-            applyCorrection();
-            raf(() => step());
-        } catch {
-            toggleOnce();
-        }
-    }, [pathToRowIndex, toggleCollapsed]);
+        toggleCollapsed(path);
+    }, [toggleCollapsed]);
 
     const prefetch = useChangedFilesReviewPrefetch({
         sessionId,
@@ -805,16 +722,25 @@ export function ChangedFilesReview(props: ChangedFilesReviewProps) {
     ]);
 
       return (
-          <PierreScrollRootVirtualizerProvider>
-                <View style={{ flex: 1, minHeight: 0 }}>
-                <FlashList
-                    ref={listRef}
-                    testID="scm-review-list"
-                    style={{ flex: 1, minHeight: 0 }}
-                    data={rowsWithViewState}
-                    keyExtractor={(item) => item.key}
-                    getItemType={(item) => item.kind}
-                    drawDistance={1200}
+	          <PierreScrollRootVirtualizerProvider>
+	                <View style={{ flex: 1, minHeight: 0 }}>
+	                <FlashList
+	                    ref={listRef}
+	                    testID="scm-review-list"
+	                    style={
+	                        Platform.OS === 'web'
+	                            ? {
+	                                flex: 1,
+	                                minHeight: 0,
+	                                // @ts-expect-error RN style types omit CSS `overflow-anchor`; required to disable browser scroll anchoring on web.
+	                                overflowAnchor: 'none',
+	                            }
+	                            : { flex: 1, minHeight: 0 }
+	                    }
+	                    data={rowsWithViewState}
+	                    keyExtractor={(item) => item.key}
+	                    getItemType={(item) => item.kind}
+	                    drawDistance={1200}
                     // FlashList memoizes row rendering; ensure UI state like collapsed paths triggers visible re-renders.
                     extraData={collapsedPaths}
                     onScroll={handleScroll}
