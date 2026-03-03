@@ -175,3 +175,7 @@ export async function setup() {
   await ensureSharedDepsBuiltOnce(projectRoot)
   await ensureDistBuiltOnce(projectRoot)
 }
+
+export default async function globalSetup() {
+  await setup()
+}
