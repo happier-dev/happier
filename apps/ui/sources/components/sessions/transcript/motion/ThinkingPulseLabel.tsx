@@ -17,12 +17,12 @@ export const ThinkingPulseLabel = React.memo(function ThinkingPulseLabel(props: 
         }
         if (typeof (Animated as any).loop !== 'function') return;
 
-        const durationMs = 2200;
+        const durationMs = 1800;
         const useNativeDriver = Platform.OS !== 'web';
         const animation = (Animated as any).loop(
             (Animated as any).sequence([
                 Animated.timing(opacity, {
-                    toValue: 0.86,
+                    toValue: 0.60,
                     duration: durationMs,
                     easing: Easing.inOut(Easing.quad),
                     useNativeDriver,

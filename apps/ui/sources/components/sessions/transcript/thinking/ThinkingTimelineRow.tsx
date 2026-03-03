@@ -40,6 +40,9 @@ export const ThinkingTimelineRow = React.memo(function ThinkingTimelineRow(props
             >
                 <View style={styles.labelContainer}>
                     <View style={styles.labelRow}>
+                        <View style={styles.labelGutter}>
+                            <Ionicons name="sparkles-outline" size={16} color={theme.colors.textSecondary} />
+                        </View>
                         <ThinkingPulseLabel
                             label={props.label}
                             enabled={props.pulseEnabled}
@@ -107,6 +110,12 @@ const styles = StyleSheet.create((theme) => ({
         flexDirection: 'row',
         alignItems: 'center',
         minWidth: 0,
+        gap: 8,
+    },
+    labelGutter: {
+        width: 18,
+        alignItems: 'center',
+        justifyContent: 'center',
     },
     labelText: {
         fontSize: 13,

@@ -1,5 +1,5 @@
 import * as React from "react";
-import { View, Pressable, Platform } from 'react-native';
+import { View, Pressable, Platform, ActivityIndicator } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import * as Clipboard from 'expo-clipboard';
 import { Modal } from '@/modal';
@@ -208,7 +208,7 @@ function UserTextBlock(props: {
 
   const showCopyButton = shouldShowMessageCopyButton({ platformOS: Platform.OS, isMessageHovered, isCopyButtonHovered });
   const copyText = isStructuredOnly ? props.message.text : (props.message.displayText || props.message.text);
-  const actionPointerEvents = showCopyButton ? 'auto' : 'none';
+  const actionPointerEvents = resolveMessageActionPointerEvents({ isWeb, showCopyButton });
   const sessionReplayEnabled = useSetting('sessionReplayEnabled');
   const session = useSession(props.sessionId);
   const seq =
@@ -283,7 +283,7 @@ function UserTextBlock(props: {
     >
       <View
         style={styles.userMessageWrapper}
-        pointerEvents={isWeb ? 'auto' : 'box-none'}
+        {...(isWeb ? {} : { pointerEvents: 'box-none' as const })}
       >
         <View style={[styles.userMessageBubble, isDiscarded && styles.userMessageBubbleDiscarded]}>
           <StructuredMessageBlock
@@ -426,7 +426,7 @@ function AgentTextBlock(props: {
   }
 
   const showCopyButton = shouldShowMessageCopyButton({ platformOS: Platform.OS, isMessageHovered, isCopyButtonHovered });
-  const actionPointerEvents = showCopyButton ? 'auto' : 'none';
+  const actionPointerEvents = resolveMessageActionPointerEvents({ isWeb, showCopyButton });
   const sessionReplayEnabled = useSetting('sessionReplayEnabled');
   const session = useSession(props.sessionId);
   const seq =
@@ -453,7 +453,7 @@ function AgentTextBlock(props: {
   return (
     <View
       style={[styles.agentMessageContainer, props.message.isThinking === true ? styles.agentMessageContainerThinking : null]}
-      pointerEvents={isWeb ? 'auto' : 'box-none'}
+      {...(isWeb ? {} : { pointerEvents: 'box-none' as const })}
       onPointerEnter={handleHoverIn}
       onPointerLeave={handleHoverOut}
     >
@@ -560,11 +560,6 @@ function ForkMessageButton(props: {
 
   const handlePress = React.useCallback(async () => {
     if (isForking) return;
-    const machineId = session?.metadata?.machineId;
-    if (!machineId) {
-      Modal.alert(t('common.error'), t('errors.failedToForkSession'));
-      return;
-    }
     setIsForking(true);
     try {
       const replaySummaryRunner =
@@ -572,7 +567,7 @@ function ForkMessageButton(props: {
           ? sessionReplaySummaryRunner
           : undefined;
       const result = await forkSession({
-        machineId,
+        machineId: session?.metadata?.machineId,
         parentSessionId: props.sessionId,
         forkPoint: { type: 'seq', upToSeqInclusive: props.upToSeqInclusive },
         ...(typeof sessionReplayMaxSeedChars === 'number' ? { replayMaxSeedChars: sessionReplayMaxSeedChars } : {}),
@@ -605,7 +600,7 @@ function ForkMessageButton(props: {
     } finally {
       setIsForking(false);
     }
-  }, [isForking, props.sessionId, props.upToSeqInclusive, router, session?.metadata?.machineId]);
+  }, [isForking, executionRunsEnabled, props.restoredDraftText, props.sessionId, props.upToSeqInclusive, router, session?.metadata?.machineId, sessionReplayMaxSeedChars, sessionReplayStrategy, sessionReplaySummaryRunner]);
 
   if (!session) return null;
 
@@ -625,11 +620,15 @@ function ForkMessageButton(props: {
         isForking && styles.copyMessageButtonPressed,
       ]}
     >
-      <Ionicons
-        name={isForking ? 'time-outline' : 'git-branch-outline'}
-        size={12}
-        color={theme.colors.textSecondary}
-      />
+      {isForking ? (
+        <ActivityIndicator size="small" color={theme.colors.textSecondary} />
+      ) : (
+        <Ionicons
+          name="git-branch-outline"
+          size={12}
+          color={theme.colors.textSecondary}
+        />
+      )}
     </Pressable>
   );
 }
@@ -696,6 +695,11 @@ function CopyMessageButton(props: { markdown: string; testID?: string; onHoverIn
       />
     </Pressable>
   );
+}
+
+function resolveMessageActionPointerEvents(params: { isWeb: boolean; showCopyButton: boolean }) {
+  const { showCopyButton } = params;
+  return showCopyButton ? ('auto' as const) : ('none' as const);
 }
 
 function AgentEventBlock(props: {
@@ -824,7 +828,7 @@ const styles = StyleSheet.create((theme) => ({
     flexDirection: 'column',
     alignSelf: 'stretch',
     paddingHorizontal: 16,
-    paddingBottom: 18,
+    paddingBottom: 22,
     position: 'relative',
   },
   structuredUserMessageContent: {
@@ -834,7 +838,7 @@ const styles = StyleSheet.create((theme) => ({
       maxWidth: '100%',
       alignSelf: 'flex-end',
       position: 'relative',
-      paddingBottom: 18,
+      paddingBottom: 22,
     },
     userMessageBubble: {
       backgroundColor: theme.colors.userMessageBackground,
@@ -854,14 +858,14 @@ const styles = StyleSheet.create((theme) => ({
     fontSize: 12,
     color: theme.colors.agentEventText,
   },
-      agentMessageContainer: {
-        marginHorizontal: 16,
-        paddingBottom: 18,
-        borderRadius: 16,
-        alignSelf: 'stretch',
-        position: 'relative',
-        maxWidth: '100%',
-      },
+  agentMessageContainer: {
+    marginHorizontal: 16,
+    paddingBottom: 22,
+    borderRadius: 16,
+    alignSelf: 'stretch',
+    position: 'relative',
+    maxWidth: '100%',
+  },
   agentMessageContainerThinking: {
     alignSelf: 'stretch',
   },
@@ -881,7 +885,7 @@ const styles = StyleSheet.create((theme) => ({
     paddingBottom: 0,
   },
   toolContainerFeed: {
-    paddingBottom: 18,
+    paddingBottom: 22,
   },
   messageActionContainer: {
     position: 'absolute',
@@ -889,7 +893,6 @@ const styles = StyleSheet.create((theme) => ({
     bottom: 0,
     flexDirection: 'row',
     justifyContent: 'flex-end',
-    zIndex: 10,
   },
   messageActionContainerHidden: {
     opacity: 0,

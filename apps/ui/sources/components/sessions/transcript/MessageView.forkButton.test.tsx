@@ -8,6 +8,7 @@ const routerPushSpy = vi.fn();
 const forkSessionSpy = vi.fn();
 const ensureSessionVisibleSpy = vi.fn();
 const updateSessionDraftSpy = vi.fn();
+const modalAlertSpy = vi.fn();
 
 let replayEnabled = true;
 let copyButtonsVisible = true;
@@ -19,6 +20,7 @@ vi.mock('react-native', async () => ({
   useWindowDimensions: () => ({ width: 1200, height: 800, scale: 1, fontScale: 1 }),
   View: 'View',
   Text: 'Text',
+  ActivityIndicator: 'ActivityIndicator',
   Pressable: ({ children, ...props }: any) => React.createElement('Pressable', props, children),
 }));
 
@@ -77,7 +79,7 @@ vi.mock('@/text', () => ({
 }));
 
 vi.mock('@/modal', () => ({
-  Modal: { alert: vi.fn() },
+  Modal: { alert: (...args: any[]) => modalAlertSpy(...args) },
 }));
 
 vi.mock('@/sync/ops', () => ({
@@ -179,6 +181,7 @@ describe('MessageView (fork button)', () => {
     forkSessionSpy.mockReset();
     ensureSessionVisibleSpy.mockReset();
     updateSessionDraftSpy.mockReset();
+    modalAlertSpy.mockReset();
     replayEnabled = true;
     copyButtonsVisible = true;
     sessionMetadata = { machineId: 'm1' };
@@ -208,6 +211,51 @@ describe('MessageView (fork button)', () => {
       ? Object.assign({}, ...style.filter(Boolean))
       : style;
     expect(flattened.pointerEvents).toBe('none');
+  });
+
+  it('does not pass pointerEvents prop on web transcript row containers', async () => {
+    const { MessageView } = await import('./MessageView');
+    const message: any = { kind: 'agent-text', id: 'm2', createdAt: 2, text: 'hello', isThinking: false, seq: 6 };
+
+    let tree: renderer.ReactTestRenderer | null = null;
+    await act(async () => {
+      tree = renderer.create(<MessageView message={message} metadata={null} sessionId="s1" />);
+    });
+
+    const webHoverContainers = tree!.root.findAll(
+      (node: any) => node.type === 'View' && typeof node.props.onPointerEnter === 'function',
+    );
+    expect(webHoverContainers.length).toBeGreaterThan(0);
+    for (const container of webHoverContainers) {
+      expect(container.props.pointerEvents).toBeUndefined();
+    }
+  });
+
+  it('keeps visible action controls interactive without forcing global overlay priority', async () => {
+    copyButtonsVisible = true;
+    const { MessageView } = await import('./MessageView');
+
+    const message: any = { kind: 'agent-text', id: 'm1', createdAt: 1, text: 'hi', isThinking: false, seq: 5 };
+
+    let tree: renderer.ReactTestRenderer | null = null;
+    await act(async () => {
+      tree = renderer.create(<MessageView message={message} metadata={null} sessionId="s1" />);
+    });
+
+    const actionContainers = tree!.root.findAll(
+      (node: any) => node.type === 'View' && node.props.accessibilityElementsHidden === false,
+    );
+    expect(actionContainers).toHaveLength(1);
+
+    const actionContainer = actionContainers[0]!;
+    expect(actionContainer.props.pointerEvents).toBeUndefined();
+
+    const style = actionContainer.props.style;
+    const flattened = Array.isArray(style)
+      ? Object.assign({}, ...style.filter(Boolean))
+      : style;
+    expect(flattened.pointerEvents).toBe('auto');
+    expect(flattened.zIndex).toBeUndefined();
   });
 
   it('renders fork button left of copy when replay is enabled and message has seq', async () => {
@@ -297,5 +345,57 @@ describe('MessageView (fork button)', () => {
     const pressables = tree!.root.findAllByType('Pressable' as any);
     const a11y = pressables.map((p) => p.props.accessibilityLabel).filter(Boolean);
     expect(a11y).toContain('session.forking.forkFromMessageA11y');
+  });
+
+  it('still delegates fork when session metadata machineId is missing', async () => {
+    sessionMetadata = {};
+    forkSessionSpy.mockResolvedValueOnce({ ok: true, childSessionId: 'child-1' });
+    const { MessageView } = await import('./MessageView');
+    const message: any = { kind: 'agent-text', id: 'm1', createdAt: 1, text: 'hi', isThinking: false, seq: 5 };
+
+    let tree: renderer.ReactTestRenderer | null = null;
+    await act(async () => {
+      tree = renderer.create(<MessageView message={message} metadata={null} sessionId="s1" />);
+    });
+
+    const forkButton = tree!.root.findByProps({ testID: 'transcript-message-fork:m1' });
+    await act(async () => {
+      await forkButton.props.onPress();
+    });
+
+    expect(modalAlertSpy).not.toHaveBeenCalled();
+    expect(forkSessionSpy).toHaveBeenCalledWith(expect.objectContaining({
+      parentSessionId: 's1',
+      forkPoint: { type: 'seq', upToSeqInclusive: 5 },
+      machineId: undefined,
+    }));
+  });
+
+  it('shows a loader while fork request is in flight', async () => {
+    let resolveFork: ((value: unknown) => void) | null = null;
+    forkSessionSpy.mockReturnValueOnce(new Promise((resolve) => {
+      resolveFork = resolve;
+    }));
+
+    const { MessageView } = await import('./MessageView');
+    const message: any = { kind: 'agent-text', id: 'm1', createdAt: 1, text: 'hi', isThinking: false, seq: 5 };
+
+    let tree: renderer.ReactTestRenderer | null = null;
+    await act(async () => {
+      tree = renderer.create(<MessageView message={message} metadata={null} sessionId="s1" />);
+    });
+
+    const forkButton = tree!.root.findByProps({ testID: 'transcript-message-fork:m1' });
+    act(() => {
+      void forkButton.props.onPress();
+    });
+
+    const loaders = tree!.root.findAllByType('ActivityIndicator' as any);
+    expect(loaders.length).toBeGreaterThan(0);
+
+    await act(async () => {
+      resolveFork?.({ ok: true, childSessionId: 'child-loading' });
+      await Promise.resolve();
+    });
   });
 });

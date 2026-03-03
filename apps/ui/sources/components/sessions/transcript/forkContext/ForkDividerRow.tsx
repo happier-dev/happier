@@ -5,7 +5,7 @@ import { useRouter } from 'expo-router';
 import { Text } from '@/components/ui/text/Text';
 import { t } from '@/text';
 import { TranscriptSeparatorRow } from '@/components/sessions/transcript/separators/TranscriptSeparatorRow';
-import { useSession } from '@/sync/store/hooks';
+import { useSession } from '@/sync/domains/state/storage';
 import { getSessionName } from '@/utils/sessions/sessionUtils';
 
 export function ForkDividerRow(props: Readonly<{
