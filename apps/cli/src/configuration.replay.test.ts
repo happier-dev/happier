@@ -39,5 +39,15 @@ describe('configuration replay', () => {
     configMod.reloadConfiguration();
     expect(configMod.configuration.replaySeedCandidateLimit).toBe(500);
   });
-});
 
+  it('defaults replaySeedMaxChars to 120000', async () => {
+    const homeDir = mkdtempSync(join(tmpdir(), 'happier-cli-config-'));
+    tempDirs.push(homeDir);
+    process.env.HAPPIER_HOME_DIR = homeDir;
+    delete process.env.HAPPIER_REPLAY_MAX_SEED_CHARS;
+
+    const configMod = await import('./configuration');
+    configMod.reloadConfiguration();
+    expect(configMod.configuration.replaySeedMaxChars).toBe(120_000);
+  });
+});

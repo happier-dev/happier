@@ -440,12 +440,12 @@ class Configuration {
     }
 
     const replaySeedMaxCharsRaw = Number.parseInt(String(process.env.HAPPIER_REPLAY_MAX_SEED_CHARS ?? ''), 10);
-    // Default: 50k chars. Hard bounds protect providers from oversized replay seeds.
+    // Default: 120k chars. Hard bounds protect providers from oversized replay seeds.
     // Min 500 keeps the prompt meaningful; max 200k is a safety cap.
     if (Number.isFinite(replaySeedMaxCharsRaw) && replaySeedMaxCharsRaw >= 500) {
       this.replaySeedMaxChars = Math.min(200_000, Math.trunc(replaySeedMaxCharsRaw));
     } else {
-      this.replaySeedMaxChars = 50_000;
+      this.replaySeedMaxChars = 120_000;
     }
 
     const replaySeedCandidateLimitRaw = Number.parseInt(String(process.env.HAPPIER_REPLAY_SEED_CANDIDATE_LIMIT ?? ''), 10);

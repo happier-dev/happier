@@ -317,7 +317,7 @@ export function registerMachineRpcHandlers(params: Readonly<{
     const seedDraft = buildHappierReplayPromptFromDialog({
       previousSessionId: replay.previousSessionId,
       strategy: replayStrategy,
-      recentMessagesCount: replay.recentMessagesCount ?? 16,
+      recentMessagesCount: replay.recentMessagesCount ?? 250,
       summaryText,
       dialog: hydrated.dialog,
       maxPromptChars: typeof replay.maxSeedChars === 'number' ? replay.maxSeedChars : configuration.replaySeedMaxChars,
@@ -348,7 +348,7 @@ export function registerMachineRpcHandlers(params: Readonly<{
       previousSessionId: replay.previousSessionId,
       dialogCount: hydrated.dialog.length,
       strategy: replay.strategy ?? 'recent_messages',
-      recentMessagesCount: replay.recentMessagesCount ?? 16,
+      recentMessagesCount: replay.recentMessagesCount ?? 250,
     });
 
     const nowMs = Date.now();

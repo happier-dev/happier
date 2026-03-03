@@ -457,6 +457,114 @@ describe('registerMachineRpcHandlers', () => {
     expect(String(createdMeta.replaySeedV1.seedText ?? '')).not.toContain('User: one one one');
   });
 
+  it('continues a session with a generous default replay recentMessagesCount when not provided', async () => {
+    const registered = new Map<string, (params: any) => Promise<any>>();
+    const rpcHandlerManager = {
+      registerHandler: (method: string, handler: (params: any) => Promise<any>) => {
+        registered.set(method, handler);
+      },
+    } as any;
+
+    const spawnSession = vi.fn(async (_opts: any) => ({ type: 'success', sessionId: 'sess_new' } as const));
+    registerMachineRpcHandlers({
+      rpcHandlerManager,
+      handlers: {
+        spawnSession,
+        stopSession: async () => true,
+        requestShutdown: () => {},
+      },
+    });
+
+    const handler = registered.get(RPC_METHODS.SESSION_CONTINUE_WITH_REPLAY);
+    expect(handler).toBeDefined();
+
+    const machineKey = new Uint8Array(32).fill(11);
+    const publicKey = tweetnacl.box.keyPair.fromSecretKey(machineKey).publicKey;
+    readCredentialsMock.mockResolvedValueOnce({
+      token: 'token-1',
+      encryption: { type: 'dataKey', machineKey, publicKey },
+    });
+
+    const sessionEncryptionKey = new Uint8Array(32).fill(5);
+    const envelope = sealEncryptedDataKeyEnvelopeV1({
+      dataKey: sessionEncryptionKey,
+      recipientPublicKey: publicKey,
+      randomBytes: (length: number) => new Uint8Array(length).fill(7),
+    });
+
+    const messages = Array.from({ length: 40 }, (_v, i) => {
+      const n = i + 1;
+      const role = n % 2 === 0 ? 'agent' : 'user';
+      const text = role === 'user' ? `u${n}` : `a${n}`;
+      const encrypted = encodeBase64(
+        encrypt(sessionEncryptionKey, 'dataKey', { role, content: { type: 'text', text } }),
+      );
+      return { createdAt: n, content: { t: 'encrypted', c: encrypted } };
+    });
+
+    const getSpy = vi.spyOn(axios, 'get');
+    const postSpy = vi.spyOn(axios, 'post');
+    getSpy
+      .mockResolvedValueOnce({
+        status: 200,
+        data: {
+          session: {
+            id: 'sess_prev',
+            seq: 40,
+            createdAt: 1,
+            updatedAt: 2,
+            active: true,
+            activeAt: 2,
+            metadata: '',
+            metadataVersion: 0,
+            agentState: null,
+            agentStateVersion: 0,
+            dataEncryptionKey: encodeBase64(envelope),
+          },
+        },
+      } as any)
+      .mockResolvedValueOnce({
+        status: 200,
+        data: { messages },
+      } as any);
+
+    postSpy.mockResolvedValueOnce({
+      status: 200,
+      data: {
+        session: {
+          id: 'sess_new',
+          seq: 0,
+          createdAt: 10,
+          updatedAt: 10,
+          active: false,
+          activeAt: 0,
+          encryptionMode: 'plain',
+          metadata: JSON.stringify({ path: '/repo', flavor: 'claude' }),
+          metadataVersion: 0,
+          agentState: null,
+          agentStateVersion: 0,
+          dataEncryptionKey: null,
+        },
+      },
+    } as any);
+
+    const result = await handler!({
+      directory: '/repo',
+      agent: 'claude',
+      approvedNewDirectoryCreation: true,
+      replay: {
+        previousSessionId: 'sess_prev',
+        strategy: 'recent_messages',
+        maxSeedChars: 10_000,
+      },
+    });
+
+    expect(result).toMatchObject({ type: 'success', sessionId: 'sess_new' });
+    const posted = (postSpy as any).mock.calls[0][1] as any;
+    const createdMeta = JSON.parse(String(posted.metadata)) as any;
+    expect(String(createdMeta.replaySeedV1.seedText ?? '')).toContain('User: u1');
+  });
+
   it('continues a session with an on-demand summary when summary_plus_recent has no cached summary', async () => {
     const registered = new Map<string, (params: any) => Promise<any>>();
     const rpcHandlerManager = {
