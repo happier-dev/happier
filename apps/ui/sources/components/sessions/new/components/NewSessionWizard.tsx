@@ -35,6 +35,7 @@ import { useAttachmentDraftManager } from '@/components/sessions/attachments/use
 import { formatAttachmentsBlock, uploadAttachmentDraftsToSession } from '@/components/sessions/attachments/uploadAttachmentDraftsToSession';
 import { sync } from '@/sync/sync';
 import { Text } from '@/components/ui/text/Text';
+import { isMachineOnline } from '@/utils/sessions/machineUtils';
 
 
 export interface NewSessionWizardLayoutProps {
@@ -347,6 +348,10 @@ export const NewSessionWizard = React.memo(function NewSessionWizard(props: NewS
         favoriteDirectories,
         setFavoriteDirectories,
     } = props.machine;
+    const selectedMachineIsOffline = React.useMemo(() => {
+        if (!selectedMachine) return false;
+        return !isMachineOnline(selectedMachine);
+    }, [selectedMachine]);
 
       const {
           sessionPrompt,
@@ -638,6 +643,32 @@ export const NewSessionWizard = React.memo(function NewSessionWizard(props: NewS
                                             }
                                         }}
                                     />
+                                    {selectedMachineIsOffline && (
+                                        <View
+                                            style={{
+                                                marginTop: 12,
+                                                borderRadius: 10,
+                                                padding: 12,
+                                                borderWidth: 1,
+                                                backgroundColor: theme.colors.box.warning.background,
+                                                borderColor: theme.colors.box.warning.border,
+                                            }}
+                                        >
+                                            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 4 }}>
+                                                <Ionicons
+                                                    name="warning-outline"
+                                                    size={16}
+                                                    color={theme.colors.warning ?? theme.colors.textDestructive}
+                                                />
+                                                <Text style={{ color: theme.colors.text, fontWeight: '600', ...Typography.default('semiBold') }}>
+                                                    {t('newSession.machineOfflineInlineTitle')}
+                                                </Text>
+                                            </View>
+                                            <Text style={{ color: theme.colors.textSecondary, ...Typography.default() }}>
+                                                {t('newSession.machineOfflineInlineBody')}
+                                            </Text>
+                                        </View>
+                                    )}
                                 </View>
 
                                 {/* API key selection is now handled inline from the profile list (via the requirements badge). */}

@@ -16,7 +16,7 @@ import {
     sanitizeNewSessionAutomationDraft,
     type NewSessionAutomationDraft,
 } from '@/sync/domains/automations/automationDraft';
-import type { PermissionMode, ModelMode } from '@/sync/domains/permissions/permissionTypes';
+import { isPermissionMode, type PermissionMode, type ModelMode } from '@/sync/domains/permissions/permissionTypes';
 import { normalizePermissionModeForAgentType } from '@/sync/domains/permissions/permissionModeOptions';
 import { readAccountPermissionDefaults, resolveNewSessionDefaultPermissionMode } from '@/sync/domains/permissions/permissionDefaults';
 import { AIBackendProfile, getProfileEnvironmentVariables, isProfileCompatibleWithAgent, type SavedSecret } from '@/sync/domains/settings/settings';
@@ -435,25 +435,69 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
     const emptyAutocompletePrefixes = React.useMemo(() => [], []);
     const emptyAutocompleteSuggestions = React.useCallback(async () => [], []);
 
+    const effectiveMachineIdParam = React.useMemo(() => {
+        const raw = typeof machineIdParam === 'string' ? machineIdParam.trim() : '';
+        if (raw) return raw;
+        const temp = typeof tempSessionData?.machineId === 'string' ? tempSessionData.machineId.trim() : '';
+        if (temp) return temp;
+        const draft = typeof persistedDraft?.selectedMachineId === 'string' ? persistedDraft.selectedMachineId.trim() : '';
+        if (draft) return draft;
+        return null;
+    }, [machineIdParam, persistedDraft?.selectedMachineId, tempSessionData?.machineId]);
+
+    const effectivePathParam = React.useMemo(() => {
+        const raw = typeof pathParam === 'string' ? pathParam.trim() : '';
+        if (raw) return raw;
+        const temp = typeof tempSessionData?.path === 'string' ? tempSessionData.path.trim() : '';
+        if (temp) return temp;
+
+        const draftPath = typeof persistedDraft?.selectedPath === 'string' ? persistedDraft.selectedPath.trim() : '';
+        if (!draftPath) return null;
+
+        // If this navigation explicitly targets a different machine, avoid applying the old draft path (machine-scoped).
+        if (typeof machineIdParam === 'string' && machineIdParam.trim().length > 0) {
+            const draftMachineId = typeof persistedDraft?.selectedMachineId === 'string' ? persistedDraft.selectedMachineId.trim() : '';
+            if (draftMachineId && draftMachineId !== machineIdParam.trim()) {
+                return null;
+            }
+        }
+
+        return draftPath;
+    }, [machineIdParam, pathParam, persistedDraft?.selectedMachineId, persistedDraft?.selectedPath, tempSessionData?.path]);
+
     const { agentType, setAgentType, handleAgentCycle } = useNewSessionAgentTypeState({
         enabledAgentIds,
         lastUsedAgent,
-        tempAgentType: tempSessionData?.agentType,
+        tempAgentType: tempSessionData?.agentType ?? persistedDraft?.agentType,
     });
 
-    const [sessionType, setSessionType] = React.useState<'simple' | 'worktree'>('simple');
+    const [sessionType, setSessionType] = React.useState<'simple' | 'worktree'>(() => {
+        const raw = tempSessionData?.sessionType ?? persistedDraft?.sessionType;
+        return raw === 'worktree' ? 'worktree' : 'simple';
+    });
     const [permissionMode, setPermissionMode] = React.useState<PermissionMode>(() => {
         const accountDefaults = readAccountPermissionDefaults(sessionDefaultPermissionModeByAgent, enabledAgentIds);
 
         // If a profile is pre-selected (e.g. from draft), use its override; otherwise fall back to account defaults.
         const profile = selectedProfileId ? (profileMap.get(selectedProfileId) || getBuiltInProfile(selectedProfileId)) : null;
 
-        return resolveNewSessionDefaultPermissionMode({
+        const resolvedDefault = resolveNewSessionDefaultPermissionMode({
             agentType,
             accountDefaults,
             profileDefaults: profile ? profile.defaultPermissionModeByAgent : null,
             legacyProfileDefaultPermissionMode: (profile?.defaultPermissionMode as PermissionMode | undefined) ?? undefined,
         });
+
+        const draft = persistedDraft?.permissionMode;
+        if (isPermissionMode(draft)) {
+            return normalizePermissionModeForAgentType(draft, agentType);
+        }
+
+        if (isPermissionMode(lastUsedPermissionMode)) {
+            return normalizePermissionModeForAgentType(lastUsedPermissionMode, agentType);
+        }
+
+        return resolvedDefault;
     });
 
     // NOTE: Permission mode reset on agentType change is handled by the validation useEffect below (lines ~670-681)
@@ -469,7 +513,15 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
         }) as ModelMode;
     });
 
-    const [acpSessionModeId, setAcpSessionModeId] = React.useState<string | null>(null);
+    const [acpSessionModeId, setAcpSessionModeId] = React.useState<string | null>(() => {
+        const raw = (persistedDraft as any)?.acpSessionModeId;
+        if (raw === null) return null;
+        if (typeof raw === 'string') {
+            const trimmed = raw.trim();
+            return trimmed.length > 0 ? trimmed : null;
+        }
+        return null;
+    });
 
     const {
         selectedMachineId,
@@ -480,8 +532,8 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
     } = useNewSessionMachinePathState({
         machines,
         recentMachinePaths,
-        machineIdParam,
-        pathParam,
+        machineIdParam: effectiveMachineIdParam,
+        pathParam: effectivePathParam,
     });
     const { preflightModels, modelOptions, probe: modelOptionsProbeState } = useNewSessionPreflightModelsState({
         agentType,
@@ -516,7 +568,12 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
     );
     const refreshMachineEnvPresence = machineEnvPresence.refresh;
 
-    const hasUserSelectedPermissionModeRef = React.useRef(false);
+    const hasUserSelectedPermissionModeRef = React.useRef<boolean>((() => {
+        const draft = persistedDraft?.permissionMode;
+        if (isPermissionMode(draft) && draft !== 'default') return true;
+        if (isPermissionMode(lastUsedPermissionMode) && lastUsedPermissionMode !== 'default') return true;
+        return false;
+    })());
     const permissionModeRef = React.useRef(permissionMode);
     React.useEffect(() => {
         permissionModeRef.current = permissionMode;
@@ -1033,7 +1090,10 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
             agentType,
             permissionMode,
             modelMode,
+            acpSessionModeId,
             sessionType,
+            resumeSessionId,
+            agentNewSessionOptionStateByAgentId,
             automationDraft: effectiveAutomationDraft,
             updatedAt: Date.now(),
         };
@@ -1050,11 +1110,14 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
             saveNewSessionDraft(draft);
         });
     }, [
+        acpSessionModeId,
         agentType,
+        agentNewSessionOptionStateByAgentId,
         getSessionOnlySecretValueEncByProfileIdByEnvVarName,
         modelMode,
         effectiveAutomationDraft,
         permissionMode,
+        resumeSessionId,
         router,
         selectedMachineId,
         selectedPath,
@@ -1612,7 +1675,7 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
         const isOnline = isMachineOnline(selectedMachine);
 
         return {
-            text: isOnline ? 'online' : 'offline',
+            text: isOnline ? t('status.online') : t('newSession.machineOfflineCannotStartStatus'),
             color: isOnline ? theme.colors.success : theme.colors.textDestructive,
             dotColor: isOnline ? theme.colors.success : theme.colors.textDestructive,
             isPulsing: isOnline,
@@ -1784,6 +1847,7 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
             agentType,
             permissionMode,
             modelMode,
+            acpSessionModeId,
             sessionType,
             resumeSessionId,
             agentNewSessionOptionStateByAgentId,
@@ -1792,6 +1856,7 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
         });
     }, [
         agentType,
+        acpSessionModeId,
         agentNewSessionOptionStateByAgentId,
         getSessionOnlySecretValueEncByProfileIdByEnvVarName,
         modelMode,
