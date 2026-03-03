@@ -1,7 +1,7 @@
 import * as React from 'react';
-import { Platform, View } from 'react-native';
+import { View } from 'react-native';
 import Animated, { type SharedValue, useAnimatedStyle, useDerivedValue, useSharedValue, withSpring } from 'react-native-reanimated';
-import { Gesture, GestureDetector } from 'react-native-gesture-handler';
+import { Gesture } from 'react-native-gesture-handler';
 import { scheduleOnRN } from 'react-native-worklets';
 import { StyleSheet } from 'react-native-unistyles';
 
@@ -31,6 +31,7 @@ export type SessionGroupDragListProps = Readonly<{
     compact: boolean;
     compactMinimal?: boolean;
     onReorderKeys?: ((keys: string[]) => void) | null;
+    reorderMode?: boolean;
 }>;
 
 const ROW_HEIGHT_DEFAULT = 88;
@@ -74,6 +75,7 @@ type ReorderableRowProps = Readonly<{
     onReorderKeys?: ((keys: string[]) => void) | null;
     compact: boolean;
     compactMinimal?: boolean;
+    reorderMode?: boolean;
 }>;
 
 const ReorderableRow = React.memo<ReorderableRowProps>((props) => {
@@ -93,7 +95,7 @@ const ReorderableRow = React.memo<ReorderableRowProps>((props) => {
     });
 
     const panGesture = Gesture.Pan()
-        .activateAfterLongPress(Platform.OS === 'web' ? 200 : 500)
+        .minDistance(2)
         .onStart(() => {
             'worklet';
             isDragging.value = true;
@@ -147,39 +149,39 @@ const ReorderableRow = React.memo<ReorderableRowProps>((props) => {
     });
 
     return (
-        <GestureDetector gesture={panGesture}>
-            <Animated.View
-                style={[
-                    {
-                        position: 'absolute',
-                        top: 0,
-                        left: 0,
-                        right: 0,
-                    },
-                    animatedStyle,
-                ]}
-            >
-                <SessionItem
-                    embedded={true}
-                    embeddedIsLast={props.index === props.totalItems - 1}
-                    session={props.row.session}
-                    subtitleOverride={props.row.subtitle ?? null}
-                    serverId={props.row.serverId}
-                    serverName={props.row.serverName}
-                    showServerBadge={props.row.showServerBadge}
-                    pinned={props.row.pinned}
-                    onTogglePinned={props.row.onTogglePinned}
-                    tags={props.row.tags}
-                    allKnownTags={props.row.allKnownTags}
-                    onSetTags={props.row.onSetTags}
-                    tagsEnabled={props.row.tagsEnabled}
-                    selected={props.row.selected}
-                    variant={props.row.variant}
-                    compact={props.compact}
-                    compactMinimal={props.compactMinimal}
-                />
-            </Animated.View>
-        </GestureDetector>
+        <Animated.View
+            style={[
+                {
+                    position: 'absolute',
+                    top: 0,
+                    left: 0,
+                    right: 0,
+                },
+                animatedStyle,
+            ]}
+        >
+            <SessionItem
+                embedded={true}
+                embeddedIsLast={props.index === props.totalItems - 1}
+                session={props.row.session}
+                subtitleOverride={props.row.subtitle ?? null}
+                serverId={props.row.serverId}
+                serverName={props.row.serverName}
+                showServerBadge={props.row.showServerBadge}
+                pinned={props.row.pinned}
+                onTogglePinned={props.row.onTogglePinned}
+                tags={props.row.tags}
+                allKnownTags={props.row.allKnownTags}
+                onSetTags={props.row.onSetTags}
+                tagsEnabled={props.row.tagsEnabled}
+                selected={props.row.selected}
+                variant={props.row.variant}
+                compact={props.compact}
+                compactMinimal={props.compactMinimal}
+                reorderMode={props.reorderMode}
+                reorderHandleGesture={panGesture}
+            />
+        </Animated.View>
     );
 });
 
@@ -215,6 +217,7 @@ export const SessionGroupDragList = React.memo<SessionGroupDragListProps>((props
                     onReorderKeys={props.onReorderKeys}
                     compact={props.compact}
                     compactMinimal={props.compactMinimal}
+                    reorderMode={props.reorderMode}
                 />
             ))}
         </View>

@@ -63,6 +63,7 @@ vi.mock('@/hooks/ui/useHappyAction', () => ({
 vi.mock('@/sync/domains/state/storage', () => ({
     useHasUnreadMessages: () => false,
     useProfile: () => ({ id: 'u1' }),
+    useSession: () => null,
 }));
 
 vi.mock('@/modal', () => ({
@@ -155,4 +156,3 @@ describe('SessionItem tags (layout)', () => {
         expect(texts).toContain('tag-a');
     });
 });
-

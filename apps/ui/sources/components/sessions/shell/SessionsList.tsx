@@ -1,5 +1,6 @@
 import React from 'react';
 import { View, FlatList, Pressable, Platform } from 'react-native';
+import { FlashList } from '@shopify/flash-list';
 import { Text } from '@/components/ui/text/Text';
 import { usePathname, useRouter } from 'expo-router';
 import { SessionListViewItem, useSetting, useSettingMutable } from '@/sync/domains/state/storage';
@@ -8,7 +9,6 @@ import { useVisibleSessionListViewData } from '@/hooks/session/useVisibleSession
 import { Typography } from '@/constants/Typography';
 import { StyleSheet } from 'react-native-unistyles';
 import { useIsTablet } from '@/utils/platform/responsive';
-import { requestReview } from '@/utils/system/requestReview';
 import { UpdateBanner } from '@/components/ui/feedback/UpdateBanner';
 import { RecoveryKeyReminderBanner } from '@/components/account/RecoveryKeyReminderBanner';
 import { layout } from '@/components/ui/layout/layout';
@@ -18,6 +18,7 @@ import { SESSION_LIST_GROUP_ORDER_MAX_KEYS_PER_GROUP } from '@/sync/domains/sess
 import { formatPathRelativeToHome } from '@/utils/sessions/sessionUtils';
 import { getAllKnownTags, getTagsForSession } from './sessionTagUtils';
 import { t } from '@/text';
+import { SessionItem } from './SessionItem';
 
 const stylesheet = StyleSheet.create((theme) => ({
     container: {
@@ -61,15 +62,6 @@ const stylesheet = StyleSheet.create((theme) => ({
         color: theme.colors.textSecondary,
         marginTop: 2,
         ...Typography.default(),
-    },
-    headerActions: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        justifyContent: 'flex-end',
-        paddingHorizontal: 24,
-        paddingTop: 8,
-        paddingBottom: 4,
-        backgroundColor: theme.colors.groupped.background,
     },
     footerContainer: {
         paddingHorizontal: 16,
@@ -123,6 +115,7 @@ export function SessionsList() {
     const pathname = usePathname();
     const router = useRouter();
     const isTablet = useIsTablet();
+    const [reorderMode, setReorderMode] = React.useState(false);
     const [pinnedSessionKeysV1, setPinnedSessionKeysV1] = useSettingMutable('pinnedSessionKeysV1');
     const [sessionListGroupOrderV1, setSessionListGroupOrderV1] = useSettingMutable('sessionListGroupOrderV1');
     const [sessionTagsV1, setSessionTagsV1] = useSettingMutable('sessionTagsV1');
@@ -175,13 +168,6 @@ export function SessionsList() {
         return false;
     }, [dataWithSelected]);
 
-    // Request review
-    React.useEffect(() => {
-        if (data && data.length > 0) {
-            requestReview();
-        }
-    }, [data && data.length > 0]);
-
     // Early return if no data yet
     if (!data) {
         return (
@@ -189,7 +175,188 @@ export function SessionsList() {
         );
     }
 
+    const listItems = (dataWithSelected ?? []) as Array<SessionListViewItem | (SessionListSessionItem & { selected?: boolean })>;
+
+    const listItemKeyExtractor = (item: SessionListViewItem, index: number) => {
+        if (item.type === 'header') {
+            const gk = String(item.groupKey ?? '').trim();
+            const kind = String(item.headerKind ?? '').trim();
+            const sid = String(item.serverId ?? '').trim();
+            if (gk) return `header:${gk}`;
+            if (kind === 'server' && (sid || item.title)) return `server:${sid || item.title}`;
+            return `header:${kind}:${sid}:${item.title}:${index}`;
+        }
+        const sid = String(item.serverId ?? '').trim();
+        const id = String(item.session?.id ?? '').trim();
+        if (sid && id) return `session:${sid}:${id}`;
+        return `session:${index}`;
+    };
+
+    const renderHeaderItem = React.useCallback((item: Extract<SessionListViewItem, { type: 'header' }>) => {
+        if (item.title && item.headerKind === 'project') {
+            return (
+                <View style={styles.groupHeaderSection}>
+                    <Text style={styles.groupHeaderTitle}>{item.title}</Text>
+                    {hasMultipleMachines && item.subtitle ? (
+                        <Text style={styles.groupHeaderSubtitle}>{item.subtitle}</Text>
+                    ) : null}
+                </View>
+            );
+        }
+
+        if (!item.title) return null;
+
+        return (
+            <View style={styles.headerSection}>
+                <Text style={styles.headerText}>
+                    {item.headerKind === 'server'
+                        ? t('sessionsList.serverHeader', { server: item.title })
+                        : item.title}
+                </Text>
+            </View>
+        );
+    }, [hasMultipleMachines, styles]);
+
+    const renderSessionItem = React.useCallback((item: Extract<SessionListViewItem, { type: 'session' }>, index: number) => {
+        const groupKeyForAdjacency = String(item.groupKey ?? '').trim();
+        const prev = index > 0 ? listItems[index - 1] : null;
+        const next = index < listItems.length - 1 ? listItems[index + 1] : null;
+        const prevGroupKey = prev && prev.type === 'session' ? String(prev.groupKey ?? '').trim() : '';
+        const nextGroupKey = next && next.type === 'session' ? String(next.groupKey ?? '').trim() : '';
+        const isFirst = !groupKeyForAdjacency || prevGroupKey !== groupKeyForAdjacency;
+        const isLast = !groupKeyForAdjacency || nextGroupKey !== groupKeyForAdjacency;
+        const isSingle = isFirst && isLast;
+
+        const sessionKey = typeof item.serverId === 'string' ? `${item.serverId}:${item.session.id}` : null;
+        const pinned = item.pinned === true || (sessionKey ? pinnedKeySet.has(sessionKey) : false);
+        const pathSubtitle = item.session?.metadata?.path
+            ? formatPathRelativeToHome(item.session.metadata.path, item.session.metadata.homeDir)
+            : '';
+        const machineLabel = String(item.session?.metadata?.host ?? '').trim();
+        const computedSubtitle = hasMultipleMachines
+            ? (machineLabel && pathSubtitle ? `${machineLabel} · ${pathSubtitle}` : machineLabel || pathSubtitle)
+            : pathSubtitle;
+        const isGroupedByPath = item.groupKind === 'project' && item.variant === 'no-path';
+        const subtitle = isGroupedByPath ? null : computedSubtitle;
+
+        const rowTags = sessionKey ? getTagsForSession(sessionTagsV1, sessionKey) : [];
+        const supportsPin = Boolean(sessionKey);
+        const onTogglePinned = supportsPin
+            ? () => {
+                if (!sessionKey) return;
+                if (pinnedKeySet.has(sessionKey)) {
+                    setPinnedSessionKeysV1(pinnedKeyList.filter((k) => k !== sessionKey));
+                } else {
+                    setPinnedSessionKeysV1([...pinnedKeyList, sessionKey]);
+                }
+            }
+            : null;
+        const onSetTags = sessionKey
+            ? (newTags: string[]) => {
+                const nextTags = { ...sessionTagsV1 };
+                if (newTags.length === 0) {
+                    delete nextTags[sessionKey];
+                } else {
+                    nextTags[sessionKey] = newTags;
+                }
+                setSessionTagsV1(nextTags);
+            }
+            : null;
+
+        return (
+            <SessionItem
+                session={item.session}
+                subtitleOverride={subtitle ?? null}
+                serverId={item.serverId}
+                serverName={item.serverName}
+                showServerBadge={pinned ? showPinnedServerBadge : showServerBadge}
+                pinned={pinned}
+                onTogglePinned={onTogglePinned}
+                tags={rowTags}
+                allKnownTags={allKnownTags}
+                onSetTags={onSetTags}
+                tagsEnabled={sessionTagsEnabled === true}
+                selected={(item as SessionListSessionItem).selected}
+                isFirst={isFirst}
+                isLast={isLast}
+                isSingle={isSingle}
+                variant={item.variant}
+                compact={Boolean(compactSessionView)}
+                compactMinimal={Boolean(compactSessionView && compactSessionViewMinimal)}
+                reorderMode={false}
+                onRequestReorder={() => setReorderMode(true)}
+            />
+        );
+    }, [
+        allKnownTags,
+        compactSessionView,
+        compactSessionViewMinimal,
+        hasMultipleMachines,
+        listItems,
+        pinnedKeyList,
+        pinnedKeySet,
+        sessionTagsEnabled,
+        sessionTagsV1,
+        setPinnedSessionKeysV1,
+        setSessionTagsV1,
+        showPinnedServerBadge,
+        showServerBadge,
+    ]);
+
+    const renderVirtualizedItem = ({ item, index }: { item: SessionListViewItem; index: number }) => {
+        if (item.type === 'header') return renderHeaderItem(item);
+        return renderSessionItem(item, index);
+    };
+
+    const VirtualizedHeaderComponent = () => {
+        return (
+            <View>
+                <RecoveryKeyReminderBanner />
+                <UpdateBanner />
+            </View>
+        );
+    };
+
+    const VirtualizedFooterComponent = () => {
+        return (
+            <View style={styles.footerContainer}>
+                <Pressable
+                    style={styles.footerButton}
+                    onPress={() => router.push('/session/archived')}
+                    accessibilityRole="button"
+                >
+                    <Text style={styles.footerButtonText}>{t('sessionInfo.archivedSessions')}</Text>
+                </Pressable>
+            </View>
+        );
+    };
+
+    const virtualizedListContent = Platform.OS === 'web' ? (
+        <FlatList
+            {...(Platform.OS === 'web'
+                ? ({ onWheel: stopScrollEventPropagationOnWeb, onTouchMove: stopScrollEventPropagationOnWeb } as any)
+                : {})}
+            data={listItems as any}
+            renderItem={renderVirtualizedItem as any}
+            keyExtractor={listItemKeyExtractor as any}
+            contentContainerStyle={{ paddingBottom: safeArea.bottom + 128, maxWidth: layout.maxWidth }}
+            ListHeaderComponent={VirtualizedHeaderComponent as any}
+            ListFooterComponent={VirtualizedFooterComponent as any}
+        />
+    ) : (
+        <FlashList
+            data={listItems as any}
+            renderItem={renderVirtualizedItem as any}
+            keyExtractor={listItemKeyExtractor as any}
+            estimatedItemSize={88}
+            contentContainerStyle={{ paddingBottom: safeArea.bottom + 128, maxWidth: layout.maxWidth } as any}
+            ListHeaderComponent={VirtualizedHeaderComponent as any}
+            ListFooterComponent={VirtualizedFooterComponent as any}
+        />
+    );
+
     const blocks: SessionListBlock[] = React.useMemo(() => {
+        if (!reorderMode) return [];
         const blocks: SessionListBlock[] = [];
         const items = (dataWithSelected ?? []) as Array<SessionListViewItem | (SessionListSessionItem & { selected?: boolean })>;
 
@@ -306,6 +473,7 @@ export function SessionsList() {
         flushGroup();
         return blocks;
     }, [
+        reorderMode,
         dataWithSelected,
         hasMultipleMachines,
         pinnedKeyList,
@@ -319,7 +487,7 @@ export function SessionsList() {
         setSessionTagsV1,
     ]);
 
-    const keyExtractor = React.useCallback((item: SessionListBlock) => item.key, []);
+    const blockKeyExtractor = React.useCallback((item: SessionListBlock) => item.key, []);
 
     const renderItem = React.useCallback(({ item }: { item: SessionListBlock }) => {
         switch (item.type) {
@@ -355,26 +523,27 @@ export function SessionsList() {
                             rows={item.rows}
                             compact={Boolean(compactSessionView)}
                             compactMinimal={Boolean(compactSessionView && compactSessionViewMinimal)}
+                            reorderMode={true}
                             onReorderKeys={(orderedKeys) => {
                                 const trimmed = Array.isArray(orderedKeys) ? orderedKeys.filter(Boolean) : [];
                                 const capped = trimmed.slice(0, SESSION_LIST_GROUP_ORDER_MAX_KEYS_PER_GROUP);
                                 setSessionListGroupOrderV1({ ...(currentGroupOrderMap ?? {}), [item.groupKey]: capped });
+                                setReorderMode(false);
                             }}
                         />
                     </View>
                 );
         }
-    }, [compactSessionView, compactSessionViewMinimal, currentGroupOrderMap, hasMultipleMachines, setSessionListGroupOrderV1, styles]);
+    }, [compactSessionView, compactSessionViewMinimal, currentGroupOrderMap, hasMultipleMachines, setReorderMode, setSessionListGroupOrderV1, styles]);
 
     const HeaderComponent = React.useCallback(() => {
         return (
             <View>
                 <RecoveryKeyReminderBanner />
                 <UpdateBanner />
-                <View style={styles.headerActions} />
             </View>
         );
-    }, [styles]);
+    }, []);
 
     const FooterComponent = React.useCallback(() => {
         return (
@@ -390,20 +559,24 @@ export function SessionsList() {
         );
     }, [router, styles.footerButton, styles.footerButtonText, styles.footerContainer]);
 
+    const reorderListContent = (
+        <FlatList
+            {...(Platform.OS === 'web'
+                ? ({ onWheel: stopScrollEventPropagationOnWeb, onTouchMove: stopScrollEventPropagationOnWeb } as any)
+                : {})}
+            data={blocks}
+            renderItem={renderItem}
+            keyExtractor={blockKeyExtractor}
+            contentContainerStyle={{ paddingBottom: safeArea.bottom + 128, maxWidth: layout.maxWidth }}
+            ListHeaderComponent={HeaderComponent}
+            ListFooterComponent={FooterComponent}
+        />
+    );
+
     return (
         <View style={styles.container}>
             <View style={styles.contentContainer}>
-                <FlatList
-                    {...(Platform.OS === 'web'
-                        ? ({ onWheel: stopScrollEventPropagationOnWeb, onTouchMove: stopScrollEventPropagationOnWeb } as any)
-                        : {})}
-                    data={blocks}
-                    renderItem={renderItem}
-                    keyExtractor={keyExtractor}
-                    contentContainerStyle={{ paddingBottom: safeArea.bottom + 128, maxWidth: layout.maxWidth }}
-                    ListHeaderComponent={HeaderComponent}
-                    ListFooterComponent={FooterComponent}
-                />
+                {reorderMode ? reorderListContent : virtualizedListContent}
             </View>
         </View>
     );

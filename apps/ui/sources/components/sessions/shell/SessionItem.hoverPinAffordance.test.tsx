@@ -68,6 +68,7 @@ vi.mock('@/sync/ops', () => ({
 vi.mock('@/sync/domains/state/storage', () => ({
     useHasUnreadMessages: () => false,
     useProfile: () => ({ id: 'u1' }),
+    useSession: () => null,
 }));
 
 vi.mock('@/text', () => ({
@@ -125,6 +126,27 @@ function resolveOpacity(style: unknown): number | null {
     return null;
 }
 
+function resolvePointerEvents(node: renderer.ReactTestInstance | null | undefined): string | undefined {
+    if (!node) return undefined;
+    const fromProp = node.props?.pointerEvents;
+    if (typeof fromProp === 'string') return fromProp;
+    const style = node.props?.style;
+    if (!style) return undefined;
+    if (Array.isArray(style)) {
+        for (let i = style.length - 1; i >= 0; i--) {
+            const entry = style[i] as any;
+            if (entry && typeof entry === 'object' && typeof entry.pointerEvents === 'string') {
+                return entry.pointerEvents;
+            }
+        }
+        return undefined;
+    }
+    if (typeof style === 'object' && typeof (style as any).pointerEvents === 'string') {
+        return (style as any).pointerEvents;
+    }
+    return undefined;
+}
+
 function triggerHoverEnter(node: renderer.ReactTestInstance) {
     node.props.onMouseEnter?.();
     node.props.onHoverIn?.();
@@ -165,19 +187,20 @@ describe('SessionItem pin hover affordance (web)', () => {
         const row = findRowPressable(tree!);
         const pin = findPinPressable(tree!);
         const overlay = pin.parent;
-        expect(overlay?.props.pointerEvents).toBe('none');
+        expect(overlay?.props.pointerEvents).toBeUndefined();
+        expect(resolvePointerEvents(overlay)).toBe('none');
         expect(resolveOpacity(overlay?.props.style)).toBe(0);
 
         await act(async () => {
             triggerHoverEnter(row);
         });
-        expect(overlay?.props.pointerEvents).toBe('auto');
+        expect(resolvePointerEvents(overlay)).toBe('auto');
         expect(resolveOpacity(overlay?.props.style)).toBe(1);
 
         await act(async () => {
             triggerHoverLeave(row);
         });
-        expect(overlay?.props.pointerEvents).toBe('none');
+        expect(resolvePointerEvents(overlay)).toBe('none');
         expect(resolveOpacity(overlay?.props.style)).toBe(0);
     });
 
@@ -208,13 +231,13 @@ describe('SessionItem pin hover affordance (web)', () => {
         const row = findRowPressable(tree!);
         const pin = findPinPressable(tree!);
         const overlay = pin.parent;
-        expect(overlay?.props.pointerEvents).toBe('none');
+        expect(resolvePointerEvents(overlay)).toBe('none');
         expect(resolveOpacity(overlay?.props.style)).toBe(0);
 
         await act(async () => {
             triggerHoverEnter(row);
         });
-        expect(overlay?.props.pointerEvents).toBe('auto');
+        expect(resolvePointerEvents(overlay)).toBe('auto');
         expect(resolveOpacity(overlay?.props.style)).toBe(1);
 
         // Some web implementations can fire a hover-leave on the row when moving onto nested action buttons.
@@ -223,13 +246,13 @@ describe('SessionItem pin hover affordance (web)', () => {
             triggerHoverLeave(row);
             if (overlay) triggerHoverEnter(overlay);
         });
-        expect(overlay?.props.pointerEvents).toBe('auto');
+        expect(resolvePointerEvents(overlay)).toBe('auto');
         expect(resolveOpacity(overlay?.props.style)).toBe(1);
 
         await act(async () => {
             if (overlay) triggerHoverLeave(overlay);
         });
-        expect(overlay?.props.pointerEvents).toBe('none');
+        expect(resolvePointerEvents(overlay)).toBe('none');
         expect(resolveOpacity(overlay?.props.style)).toBe(0);
     });
 
@@ -264,14 +287,14 @@ describe('SessionItem pin hover affordance (web)', () => {
         await act(async () => {
             triggerHoverEnter(row);
         });
-        expect(overlay?.props.pointerEvents).toBe('auto');
+        expect(resolvePointerEvents(overlay)).toBe('auto');
         expect(resolveOpacity(overlay?.props.style)).toBe(1);
 
         await act(async () => {
             triggerHoverLeave(row);
         });
 
-        expect(overlay?.props.pointerEvents).toBe('none');
+        expect(resolvePointerEvents(overlay)).toBe('none');
         expect(resolveOpacity(overlay?.props.style)).toBe(0);
     });
 });

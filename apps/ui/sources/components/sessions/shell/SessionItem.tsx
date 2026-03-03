@@ -1,6 +1,6 @@
 import React from 'react';
 import { Platform, Pressable, View } from 'react-native';
-import { Swipeable } from 'react-native-gesture-handler';
+import { GestureDetector, Swipeable, type GestureType } from 'react-native-gesture-handler';
 import { Ionicons } from '@expo/vector-icons';
 import { StyleSheet } from 'react-native-unistyles';
 
@@ -16,7 +16,7 @@ import { HappyError } from '@/utils/errors/errors';
 import { Modal } from '@/modal';
 import { t } from '@/text';
 import { sessionArchiveWithServerScope, sessionStopWithServerScope } from '@/sync/ops';
-import { useHasUnreadMessages, useProfile } from '@/sync/domains/state/storage';
+import { useHasUnreadMessages, useProfile, useSession } from '@/sync/domains/state/storage';
 import { Session } from '@/sync/domains/state/storageTypes';
 import { getSessionAvatarId, getSessionName, getSessionSubtitle, useSessionStatus } from '@/utils/sessions/sessionUtils';
 import { PinIcon, PinSlashIcon } from './sessionPinIcons';
@@ -340,6 +340,9 @@ export const SessionItem = React.memo(
         variant,
         compact,
         compactMinimal,
+        reorderMode,
+        onRequestReorder,
+        reorderHandleGesture,
     }: {
         embedded?: boolean;
         embeddedIsLast?: boolean;
@@ -361,34 +364,44 @@ export const SessionItem = React.memo(
         variant?: 'default' | 'no-path';
         compact?: boolean;
         compactMinimal?: boolean;
+        reorderMode?: boolean;
+        onRequestReorder?: (() => void) | null;
+        reorderHandleGesture?: GestureType;
     }) => {
         const styles = stylesheet;
-        const sessionStatus = useSessionStatus(session);
-        const sessionNameResolved = getSessionName(session);
-        const sessionSubtitle = subtitleOverride ?? getSessionSubtitle(session);
+        const inReorderMode = reorderMode === true;
+        const sessionId = String(session?.id ?? '').trim();
+        const sessionFromStore = useSession(sessionId);
+        const resolvedSession = sessionFromStore ?? session;
+        const sessionStatus = useSessionStatus(resolvedSession);
+        const sessionNameResolved = getSessionName(resolvedSession);
+        const sessionSubtitle = subtitleOverride ?? getSessionSubtitle(resolvedSession);
         const navigateToSession = useNavigateToSession();
         const isTablet = useIsTablet();
         const swipeableRef = React.useRef<Swipeable | null>(null);
+        const didRequestReorderRef = React.useRef(false);
         const profile = useProfile();
         const currentUserId = typeof profile?.id === 'string' ? profile.id : null;
-        const sessionOwnerId = typeof session.owner === 'string' ? session.owner : null;
+        const sessionOwnerId = typeof resolvedSession.owner === 'string' ? resolvedSession.owner : null;
         const isOwnedByCurrentUser = !sessionOwnerId || (currentUserId && sessionOwnerId === currentUserId);
-        const hasAdminAccess = isOwnedByCurrentUser || session.accessLevel === 'admin';
-        const isActiveSession = session.active === true;
+        const hasAdminAccess = isOwnedByCurrentUser || resolvedSession.accessLevel === 'admin';
+        const isActiveSession = resolvedSession.active === true;
         const isMinimal = Boolean(compact && compactMinimal);
         const canStopSession = isOwnedByCurrentUser;
         const canArchiveSession = hasAdminAccess && !isActiveSession;
-        const swipeEnabled = Platform.OS !== 'web' && (isActiveSession ? canStopSession : canArchiveSession);
+        const swipeEnabled = !inReorderMode && Platform.OS !== 'web' && (isActiveSession ? canStopSession : canArchiveSession);
         const [isRowHovered, setIsRowHovered] = React.useState(false);
         const [isActionsHovered, setIsActionsHovered] = React.useState(false);
         const [tagMenuOpen, setTagMenuOpen] = React.useState(false);
-        const showRowActions = Platform.OS !== 'web' || isRowHovered || isActionsHovered || tagMenuOpen;
+        const [tagMenuEverOpened, setTagMenuEverOpened] = React.useState(false);
+        const showRowActions = inReorderMode || Platform.OS !== 'web' || isRowHovered || isActionsHovered || tagMenuOpen;
         const rowActionIconColor = String((styles.rowActionIcon as any)?.color ?? '#666');
         const supportsPin = typeof onTogglePinned === 'function';
         const supportsTag = tagsEnabled === true && typeof onSetTags === 'function';
-        const showTagAction = supportsTag && (Platform.OS !== 'web' || showRowActions);
+        const showTagAction = !inReorderMode && supportsTag && (Platform.OS !== 'web' || showRowActions);
         const activeTags = tags ?? [];
         const knownTags = allKnownTags ?? [];
+        const showReorderHandle = Boolean(inReorderMode || typeof onRequestReorder === 'function');
         const handleRowHoverIn = React.useCallback(() => {
             setIsRowHovered(true);
         }, []);
@@ -403,6 +416,12 @@ export const SessionItem = React.memo(
 
         const handleActionsHoverOut = React.useCallback(() => {
             setIsActionsHovered(false);
+        }, []);
+
+        const stopRowPressPropagation = React.useCallback((event: unknown) => {
+            const e = event as any;
+            if (e && typeof e.stopPropagation === 'function') e.stopPropagation();
+            if (e && typeof e.preventDefault === 'function') e.preventDefault();
         }, []);
 
         const tagMenuItems = React.useMemo((): DropdownMenuItem[] => {
@@ -432,8 +451,8 @@ export const SessionItem = React.memo(
 
         const [mutatingSession, performMutation] = useHappyAction(async () => {
             const result = isActiveSession
-                ? await sessionStopWithServerScope(session.id, { serverId: serverId ?? null })
-                : await sessionArchiveWithServerScope(session.id, { serverId: serverId ?? null });
+                ? await sessionStopWithServerScope(resolvedSession.id, { serverId: serverId ?? null })
+                : await sessionArchiveWithServerScope(resolvedSession.id, { serverId: serverId ?? null });
             if (!result.success) {
                 throw new HappyError(
                     result.message || (isActiveSession ? t('sessionInfo.failedToStopSession') : t('sessionInfo.failedToArchiveSession')),
@@ -466,14 +485,15 @@ export const SessionItem = React.memo(
         }, [isActiveSession, performMutation]);
 
         const avatarId = React.useMemo(() => {
-            return getSessionAvatarId(session);
-        }, [session]);
-        const hasUnreadMessages = useHasUnreadMessages(session.id);
-        const pendingCount = session.pendingCount ?? 0;
+            return getSessionAvatarId(resolvedSession);
+        }, [resolvedSession]);
+        const hasUnreadMessages = useHasUnreadMessages(resolvedSession.id);
+        const pendingCount = resolvedSession.pendingCount ?? 0;
         const pendingBadge = formatPendingCountBadge(pendingCount);
 
         const tagChipDensity: 'default' | 'compact' | 'minimal' = isMinimal ? 'minimal' : compact ? 'compact' : 'default';
         const tagLimit = isMinimal ? 1 : compact ? 2 : 3;
+        const isWeb = Platform.OS === 'web';
         const tagChips = React.useMemo(() => {
             if (!tagsEnabled || activeTags.length === 0) return [];
             const slice = activeTags.slice(0, tagLimit);
@@ -487,7 +507,7 @@ export const SessionItem = React.memo(
 
         const itemContent = (
             <Pressable
-                testID={`session-list-item-${session.id}`}
+                testID={`session-list-item-${resolvedSession.id}`}
                 style={[
                     styles.sessionItem,
                     compact ? styles.sessionItemCompact : null,
@@ -498,15 +518,18 @@ export const SessionItem = React.memo(
                 onHoverIn={Platform.OS === 'web' ? handleRowHoverIn : undefined}
                 onHoverOut={Platform.OS === 'web' ? handleRowHoverOut : undefined}
                 onPressIn={() => {
+                    if (inReorderMode) return;
                     if (isTablet) {
-                        navigateToSession(session.id, serverId ? { serverId } : undefined);
+                        navigateToSession(resolvedSession.id, serverId ? { serverId } : undefined);
                     }
                 }}
                 onPress={() => {
+                    if (inReorderMode) return;
                     if (!isTablet) {
-                        navigateToSession(session.id, serverId ? { serverId } : undefined);
+                        navigateToSession(resolvedSession.id, serverId ? { serverId } : undefined);
                     }
                 }}
+                disabled={inReorderMode}
             >
                 {isMinimal ? (
                     <View style={styles.minimalIndicatorColumn}>
@@ -519,7 +542,7 @@ export const SessionItem = React.memo(
                             id={avatarId}
                             size={compact ? 40 : 48}
                             monochrome={!sessionStatus.isConnected}
-                            flavor={session.metadata?.flavor}
+                            flavor={resolvedSession.metadata?.flavor}
                             hasUnreadMessages={hasUnreadMessages}
                         />
                         {pendingBadge ? (
@@ -534,7 +557,7 @@ export const SessionItem = React.memo(
                                 </Text>
                             </View>
                         ) : null}
-                        {session.draft ? (
+                        {resolvedSession.draft ? (
                             <View style={[styles.draftIconContainer, compact ? styles.draftIconContainerCompact : null]}>
                                 <Ionicons name="create-outline" size={compact ? 11 : 12} style={styles.draftIconOverlay} />
                             </View>
@@ -546,7 +569,7 @@ export const SessionItem = React.memo(
                         styles.sessionContent,
                         compact ? styles.sessionContentCompact : null,
                         isMinimal ? styles.sessionContentMinimal : null,
-                        (supportsPin || showTagAction) ? styles.sessionContentWithActions : null,
+                        (showReorderHandle || supportsPin || showTagAction) ? styles.sessionContentWithActions : null,
                     ]}
                 >
                     <View style={styles.sessionTitleRow}>
@@ -619,7 +642,7 @@ export const SessionItem = React.memo(
                         </View>
                     ) : null}
                 </View>
-                {supportsPin || showTagAction ? (
+                {showReorderHandle || supportsPin || showTagAction ? (
                     <View
                         style={[
                             styles.rowActionsOverlay,
@@ -627,61 +650,131 @@ export const SessionItem = React.memo(
                                 top: isMinimal ? 6 : compact ? 8 : 10,
                                 opacity: showRowActions ? 1 : 0,
                             },
+                            isWeb ? { pointerEvents: showRowActions ? 'auto' : 'none' } : null,
                         ]}
-                        pointerEvents={showRowActions ? 'auto' : 'none'}
-                        onPointerEnter={Platform.OS === 'web' ? handleActionsHoverIn : undefined}
-                        onPointerLeave={Platform.OS === 'web' ? handleActionsHoverOut : undefined}
+                        {...(isWeb ? {} : { pointerEvents: showRowActions ? 'auto' as const : 'none' as const })}
+                        onPointerEnter={isWeb ? handleActionsHoverIn : undefined}
+                        onPointerLeave={isWeb ? handleActionsHoverOut : undefined}
                     >
-                        {showTagAction ? (
-                            <DropdownMenu
-                                open={tagMenuOpen}
-                                onOpenChange={(next) => {
-                                    setTagMenuOpen(next);
-                                }}
-                                items={tagMenuItems}
-                                onSelect={handleTagMenuSelect}
-                                onCreateItem={handleTagMenuCreate}
-                                createItemDisplay={(query) => ({
-                                    title: `${t('dropdown.createItem.prefix')} ${query}`,
-                                    leftGap: 8,
-                                    rowContainerStyle: { paddingVertical: 6 },
-                                    titleStyle: { fontSize: 14, lineHeight: 20 },
-                                    titleNode: (
-                                        <>
-                                            {t('dropdown.createItem.prefix')}
-                                            <RNText style={styles.tagChipInlineText} numberOfLines={1}>
-                                                {query}
-                                            </RNText>
-                                        </>
-                                    ),
-                                    icon: <Ionicons name="add" size={16} color={rowActionIconColor} />,
-                                })}
-                                placement="left"
-                                variant="slim"
-                                search={true}
-                                searchPlaceholder={t('sessionTags.searchOrAddPlaceholder')}
-                                emptyLabel={null}
-                                showCategoryTitles={false}
-                                matchTriggerWidth={false}
-                                maxWidthCap={220}
-                                popoverPortalWebTarget="body"
-                                trigger={({ toggle }) => (
-                                    <Pressable
-                                        style={styles.rowActionButton}
-                                        onPress={toggle}
-                                        accessibilityRole="button"
-                                        accessibilityLabel={t('sessionTags.editTagsLabel')}
-                                        hitSlop={8}
+                        {showReorderHandle ? (
+                            inReorderMode ? (
+                                reorderHandleGesture ? (
+                                    <GestureDetector gesture={reorderHandleGesture}>
+                                        <View testID="session-item-reorder-handle" style={styles.rowActionButton}>
+                                            <Ionicons name="reorder-three-outline" size={16} color={rowActionIconColor} />
+                                        </View>
+                                    </GestureDetector>
+                                ) : (
+                                    <View
+                                        testID="session-item-reorder-handle"
+                                        style={[styles.rowActionButton, isWeb ? ({ pointerEvents: 'none' } as const) : null]}
+                                        {...(isWeb ? {} : { pointerEvents: 'none' as const })}
                                     >
-                                        <TagIcon size={14} color={rowActionIconColor} />
-                                    </Pressable>
-                                )}
-                            />
+                                        <Ionicons name="reorder-three-outline" size={16} color={rowActionIconColor} />
+                                    </View>
+                                )
+                            ) : (
+                                <Pressable
+                                    testID="session-item-reorder-handle"
+                                    style={styles.rowActionButton}
+                                    onPressIn={(e) => {
+                                        stopRowPressPropagation(e);
+                                        didRequestReorderRef.current = true;
+                                        onRequestReorder?.();
+                                    }}
+                                    onPress={(e) => {
+                                        stopRowPressPropagation(e);
+                                        if (didRequestReorderRef.current) {
+                                            didRequestReorderRef.current = false;
+                                            return;
+                                        }
+                                        onRequestReorder?.();
+                                    }}
+                                    onPressOut={() => {
+                                        didRequestReorderRef.current = false;
+                                    }}
+                                    accessibilityRole="button"
+                                    accessibilityLabel={t('common.reorder')}
+                                    hitSlop={8}
+                                >
+                                    <Ionicons name="reorder-three-outline" size={16} color={rowActionIconColor} />
+                                </Pressable>
+                            )
                         ) : null}
-                        {supportsPin ? (
+                        {showTagAction ? (
+                            tagMenuEverOpened || Platform.OS === 'web' ? (
+                                <DropdownMenu
+                                    open={tagMenuOpen}
+                                    onOpenChange={(next) => {
+                                        setTagMenuOpen(next);
+                                        if (next) setTagMenuEverOpened(true);
+                                    }}
+                                    items={tagMenuItems}
+                                    onSelect={handleTagMenuSelect}
+                                    onCreateItem={handleTagMenuCreate}
+                                    createItemDisplay={(query) => ({
+                                        title: `${t('dropdown.createItem.prefix')} ${query}`,
+                                        leftGap: 8,
+                                        rowContainerStyle: { paddingVertical: 6 },
+                                        titleStyle: { fontSize: 14, lineHeight: 20 },
+                                        titleNode: (
+                                            <>
+                                                {t('dropdown.createItem.prefix')}
+                                                <RNText style={styles.tagChipInlineText} numberOfLines={1}>
+                                                    {query}
+                                                </RNText>
+                                            </>
+                                        ),
+                                        icon: <Ionicons name="add" size={16} color={rowActionIconColor} />,
+                                    })}
+                                    placement="left"
+                                    variant="slim"
+                                    search={true}
+                                    searchPlaceholder={t('sessionTags.searchOrAddPlaceholder')}
+                                    emptyLabel={null}
+                                    showCategoryTitles={false}
+                                    matchTriggerWidth={false}
+                                    maxWidthCap={220}
+                                    popoverPortalWebTarget="body"
+                                    trigger={({ toggle }) => (
+                                        <Pressable
+                                            style={styles.rowActionButton}
+                                            onPress={(e) => {
+                                                stopRowPressPropagation(e);
+                                                setTagMenuEverOpened(true);
+                                                toggle();
+                                            }}
+                                            accessibilityRole="button"
+                                            accessibilityLabel={t('sessionTags.editTagsLabel')}
+                                            hitSlop={8}
+                                        >
+                                            <TagIcon size={14} color={rowActionIconColor} />
+                                        </Pressable>
+                                    )}
+                                />
+                            ) : (
+                                <Pressable
+                                    style={styles.rowActionButton}
+                                    onPress={(e) => {
+                                        stopRowPressPropagation(e);
+                                        setTagMenuEverOpened(true);
+                                        setTagMenuOpen(true);
+                                    }}
+                                    accessibilityRole="button"
+                                    accessibilityLabel={t('sessionTags.editTagsLabel')}
+                                    hitSlop={8}
+                                >
+                                    <TagIcon size={14} color={rowActionIconColor} />
+                                </Pressable>
+                            )
+                        ) : null}
+                        {!inReorderMode && supportsPin ? (
                             <Pressable
                                 style={styles.rowActionButton}
-                                onPress={onTogglePinned}
+                                onPress={(e) => {
+                                    stopRowPressPropagation(e);
+                                    onTogglePinned?.();
+                                }}
                                 accessibilityRole="button"
                                 accessibilityLabel={pinned ? t('sessionInfo.unpinSession') : t('sessionInfo.pinSession')}
                                 hitSlop={8}

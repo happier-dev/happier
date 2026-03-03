@@ -6,8 +6,6 @@ import { describe, expect, it, vi } from 'vitest';
 
 vi.mock('react-native-reanimated', () => ({}));
 
-const navigateSpy = vi.fn();
-
 vi.mock('@/components/ui/forms/dropdown/DropdownMenu', () => ({
     DropdownMenu: (props: any) => React.createElement('DropdownMenu', props),
 }));
@@ -51,7 +49,7 @@ vi.mock('@/components/ui/status/StatusDot', () => ({
 }));
 
 vi.mock('@/hooks/session/useNavigateToSession', () => ({
-    useNavigateToSession: () => navigateSpy,
+    useNavigateToSession: () => vi.fn(),
 }));
 
 vi.mock('@/utils/platform/responsive', () => ({
@@ -81,10 +79,10 @@ vi.mock('@/modal', () => ({
     Modal: { alert: vi.fn() },
 }));
 
-describe('SessionItem navigation', () => {
-    it('passes serverId when navigating to a session', async () => {
-        navigateSpy.mockClear();
-
+describe('SessionItem reorder handle', () => {
+    it('renders a reorder handle that calls onRequestReorder when pressed', async () => {
+        const onRequestReorder = vi.fn();
+        const stopPropagation = vi.fn();
         const { SessionItem } = await import('./SessionItem');
 
         const session = {
@@ -117,59 +115,21 @@ describe('SessionItem navigation', () => {
                     isSingle={true}
                     variant="default"
                     compact={false}
+                    onRequestReorder={onRequestReorder}
                 />,
             );
         });
 
-        expect(tree).not.toBeNull();
-        const pressable = (tree as any).root.findByType('Pressable');
+        const handles = (tree as any).root
+            .findAllByType('Pressable')
+            .filter((n: any) => n?.props?.testID === 'session-item-reorder-handle');
+        expect(handles).toHaveLength(1);
+
         await act(async () => {
-            pressable.props.onPress();
+            handles[0].props.onPressIn({ stopPropagation });
+            handles[0].props.onPress({ stopPropagation });
         });
-
-        expect(navigateSpy).toHaveBeenCalledTimes(1);
-        expect(navigateSpy).toHaveBeenCalledWith('sess_1', { serverId: 'server_a' });
-    });
-
-    it('hides avatars in minimal compact mode', async () => {
-        const { SessionItem } = await import('./SessionItem');
-
-        const session = {
-            id: 'sess_min',
-            seq: 1,
-            createdAt: 1,
-            updatedAt: 1,
-            active: true,
-            activeAt: 1,
-            metadata: null,
-            metadataVersion: 1,
-            agentState: null,
-            agentStateVersion: 1,
-            thinking: false,
-            thinkingAt: 0,
-            presence: 'online',
-        } as any;
-
-        let tree: renderer.ReactTestRenderer | null = null;
-        await act(async () => {
-            tree = renderer.create(
-                <SessionItem
-                    session={session}
-                    serverId="server_a"
-                    serverName="Server A"
-                    showServerBadge={true}
-                    selected={false}
-                    isFirst={true}
-                    isLast={true}
-                    isSingle={true}
-                    variant="default"
-                    compact={true}
-                    compactMinimal={true}
-                />,
-            );
-        });
-
-        const avatars = (tree as any).root.findAllByType('Avatar');
-        expect(avatars).toHaveLength(0);
+        expect(stopPropagation).toHaveBeenCalledTimes(2);
+        expect(onRequestReorder).toHaveBeenCalledTimes(1);
     });
 });

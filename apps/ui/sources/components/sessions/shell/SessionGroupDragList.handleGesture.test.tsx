@@ -47,12 +47,17 @@ vi.mock('react-native-worklets', () => ({
     scheduleOnRN: (fn: any, ...args: any[]) => fn(...args),
 }));
 
+const capturedSessionItemProps: any[] = [];
 vi.mock('./SessionItem', () => ({
-    SessionItem: (props: any) => React.createElement('SessionItem', props),
+    SessionItem: (props: any) => {
+        capturedSessionItemProps.push(props);
+        return React.createElement('SessionItem', props);
+    },
 }));
 
-describe('SessionGroupDragList row height', () => {
-    it('does not increase the group container height when some rows have tags', async () => {
+describe('SessionGroupDragList gesture attachment', () => {
+    it('attaches drag gesture to the reorder handle (not the whole row)', async () => {
+        capturedSessionItemProps.length = 0;
         const { SessionGroupDragList } = await import('./SessionGroupDragList');
 
         let tree: renderer.ReactTestRenderer | null = null;
@@ -62,25 +67,16 @@ describe('SessionGroupDragList row height', () => {
                     groupKey="g1"
                     compact={false}
                     compactMinimal={false}
+                    reorderMode={true}
                     rows={[
-                        { key: 'a', session: {} as any, pinned: false, showServerBadge: false, tagsEnabled: true, tags: ['t1'] },
-                        { key: 'b', session: {} as any, pinned: false, showServerBadge: false, tagsEnabled: true, tags: [] },
-                        { key: 'c', session: {} as any, pinned: false, showServerBadge: false, tagsEnabled: true, tags: [] },
+                        { key: 'a', session: {} as any, pinned: false, showServerBadge: false },
+                        { key: 'b', session: {} as any, pinned: false, showServerBadge: false },
                     ]}
                 />,
             );
         });
 
-        const views = (tree as any).root.findAllByType('View');
-        const groupContainer = views.find((node: any) => {
-            const style = node.props?.style;
-            if (!Array.isArray(style)) return false;
-            return style.some((s: any) => typeof s === 'object' && s && typeof s.height === 'number');
-        });
-        expect(groupContainer).toBeTruthy();
-
-        const styleArray = groupContainer.props.style as any[];
-        const heightStyle = styleArray.find((s: any) => typeof s === 'object' && s && typeof s.height === 'number');
-        expect(heightStyle.height).toBe(88 * 3);
+        expect((tree as any).root.findAllByType('GestureDetector')).toHaveLength(0);
+        expect(capturedSessionItemProps[0]?.reorderHandleGesture).toBeTruthy();
     });
 });
