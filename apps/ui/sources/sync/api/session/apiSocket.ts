@@ -144,7 +144,7 @@ class ApiSocket {
     async sessionRPC<R, A>(sessionId: string, method: string, params: A): Promise<R> {
         const sessionEncryptionMode = readSessionEncryptionModeFromLocalState(sessionId);
         const usePlaintextParams = sessionEncryptionMode === 'plain';
-        const sessionEncryption = usePlaintextParams ? null : this.encryption!.getSessionEncryption(sessionId);
+        const sessionEncryption = usePlaintextParams ? null : this.encryption?.getSessionEncryption(sessionId);
         if (!usePlaintextParams && !sessionEncryption) throw new Error(`Session encryption not found for ${sessionId}`);
         const scmDebug =
             __DEV__
@@ -154,8 +154,12 @@ class ApiSocket {
             // eslint-disable-next-line no-console
             console.log('[SCM_RPC][call]', { sessionId, method });
         }
-        
-        const encryptedParams = usePlaintextParams ? params : await sessionEncryption.encryptRaw(params);
+
+        let encryptedParams: unknown = params;
+        if (!usePlaintextParams) {
+            if (!sessionEncryption) throw new Error(`Session encryption not found for ${sessionId}`);
+            encryptedParams = await sessionEncryption.encryptRaw(params);
+        }
         const result: any = await this.socket!.emitWithAck(SOCKET_RPC_EVENTS.CALL, {
             method: `${sessionId}:${method}`,
             params: encryptedParams,
@@ -173,9 +177,11 @@ class ApiSocket {
                 resultLength: typeof rawResult === 'string' ? rawResult.length : null,
             });
         }
-        
+
         if (result.ok) {
-            const decrypted = usePlaintextParams ? result.result : await sessionEncryption.decryptRaw(result.result);
+            if (usePlaintextParams) return result.result as R;
+            if (!sessionEncryption) throw new Error(`Session encryption not found for ${sessionId}`);
+            const decrypted = await sessionEncryption.decryptRaw(result.result);
             if (scmDebug) {
                 // eslint-disable-next-line no-console
                 console.log('[SCM_RPC][decrypt]', {
