@@ -115,6 +115,18 @@ describe('ToolCallsGroupView (collapsed preview)', () => {
 
         const moreRows = tree!.root.findAll((node) => (node.props as any).testID === 'transcript-tool-calls-preview-more');
         expect(moreRows).toHaveLength(1);
+
+        const order = tree!.root
+            .findAll((node) =>
+                (node.props as any).testID === 'transcript-tool-calls-preview-more' ||
+                (node.props as any).testID === 'transcript-tool-calls-preview-row',
+            )
+            .map((n) => (n.props as any).testID);
+        expect(order).toEqual([
+            'transcript-tool-calls-preview-more',
+            'transcript-tool-calls-preview-row',
+            'transcript-tool-calls-preview-row',
+        ]);
     });
 
     it('renders no previews when count is 0', async () => {

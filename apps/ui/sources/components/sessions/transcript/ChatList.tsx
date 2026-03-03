@@ -41,6 +41,7 @@ import { useReducedMotionPreference } from '@/hooks/ui/useReducedMotionPreferenc
 import { resolveActiveThinkingMessageId } from '@/components/sessions/transcript/thinking/resolveActiveThinkingMessageId';
 import { settingsDefaults } from '@/sync/domains/settings/settings';
 import { deriveTranscriptInteraction, type TranscriptInteraction } from '@/utils/sessions/deriveTranscriptInteraction';
+import { buildChatListNativeId } from './chatListNativeId';
 
 type ScrollableChatListRef = Readonly<{
     scrollToIndex: (params: { index: number; animated?: boolean; viewPosition?: number }) => void;
@@ -194,11 +195,12 @@ export const ChatList = React.memo((props: {
         return resolveActiveThinkingMessageId({
             sessionThinking: props.session.thinking === true,
             latestThinkingMessageId,
+            latestCommittedMessageId: latestCommittedActivityKey,
             latestThinkingMessageActivityAtMs,
             nowMs: thinkingPulseNow,
             staleMs,
         });
-    }, [latestThinkingMessageActivityAtMs, latestThinkingMessageId, props.session.thinking, staleMs, thinkingPulseNow]);
+    }, [latestCommittedActivityKey, latestThinkingMessageActivityAtMs, latestThinkingMessageId, props.session.thinking, staleMs, thinkingPulseNow]);
 
     const interaction = React.useMemo(() => {
         return deriveTranscriptInteraction({
@@ -332,7 +334,10 @@ const ChatListInternal = React.memo((props: {
     const listContentHeightRef = React.useRef<number>(0);
     const initialFillStatusRef = React.useRef<'idle' | 'in_progress' | 'done'>('idle');
     const initialPinSessionIdRef = React.useRef<string | null>(null);
-    const chatListNativeId = React.useMemo(() => `ChatList.${props.sessionId}`, [props.sessionId]);
+    const didAutoExpandToolCallsGroupsForSessionRef = React.useRef<string | null>(null);
+    const initialFillAbortRef = React.useRef<AbortController | null>(null);
+    const chatListReactId = React.useId();
+    const chatListNativeId = React.useMemo(() => buildChatListNativeId(props.sessionId, chatListReactId), [props.sessionId, chatListReactId]);
     const loadNewerInFlight = React.useRef(false);
     const webScrollContainerRef = React.useRef<HTMLElement | null>(null);
       const wantsPinnedRef = React.useRef(true);
@@ -400,6 +405,7 @@ const ChatListInternal = React.memo((props: {
     const transcriptScrollJumpToBottomMinNewCount = useSetting('transcriptScrollJumpToBottomMinNewCount');
     const transcriptScrollJumpToBottomAnimateScroll = useSetting('transcriptScrollJumpToBottomAnimateScroll');
     const transcriptListImplementation = useSetting('transcriptListImplementation');
+    const transcriptToolCallsCollapsedPreviewCountSetting = useSetting('transcriptToolCallsCollapsedPreviewCount');
 
       const [scrollPin, setScrollPin] = React.useState<TranscriptScrollPinState>({
           isPinned: true,
@@ -407,7 +413,7 @@ const ChatListInternal = React.memo((props: {
           lastActivityKey: null,
       });
       const isPinnedRef = React.useRef(true);
-      const [expandedToolCallsGroupIds, setExpandedToolCallsGroupIds] = React.useState<ReadonlySet<string>>(
+      const [expandedToolCallsAnchorMessageIds, setExpandedToolCallsAnchorMessageIds] = React.useState<ReadonlySet<string>>(
           () => new Set<string>(),
       );
         const thinkingDefaultExpanded =
@@ -416,13 +422,19 @@ const ChatListInternal = React.memo((props: {
             () => new Map<string, boolean>(),
         );
 
-      const setToolCallsGroupExpanded = React.useCallback((toolCallsGroupId: string, expanded: boolean) => {
-          setExpandedToolCallsGroupIds((prev) => {
+      const setToolCallsGroupExpanded = React.useCallback((params: { toolCallsGroupId: string; toolMessageIds: readonly string[]; expanded: boolean }) => {
+          setExpandedToolCallsAnchorMessageIds((prev) => {
               const next = new Set(prev);
-              if (expanded) {
-                  next.add(toolCallsGroupId);
+              if (params.expanded) {
+                  const toolMessageIds = params.toolMessageIds;
+                  const anchor = toolMessageIds.length > 0 ? toolMessageIds[toolMessageIds.length - 1] : null;
+                  if (typeof anchor === 'string' && anchor) {
+                      next.add(anchor);
+                  }
               } else {
-                  next.delete(toolCallsGroupId);
+                  for (const id of params.toolMessageIds) {
+                      next.delete(id);
+                  }
               }
               return next;
           });
@@ -449,6 +461,22 @@ const ChatListInternal = React.memo((props: {
     React.useEffect(() => {
         props.onViewportChange?.({ isPinned: isPinnedRef.current, offsetY: 0 });
     }, [props.onViewportChange]);
+
+    React.useEffect(() => {
+        return () => {
+            initialFillAbortRef.current?.abort();
+            initialFillAbortRef.current = null;
+        };
+    }, []);
+
+    React.useEffect(() => {
+        // Reset per-session state.
+        initialFillAbortRef.current?.abort();
+        initialFillAbortRef.current = null;
+        initialFillStatusRef.current = 'idle';
+        didAutoExpandToolCallsGroupsForSessionRef.current = null;
+        setExpandedToolCallsAnchorMessageIds(new Set());
+    }, [props.sessionId]);
 
     const pinEnabled = transcriptScrollPinEnabled !== false;
     const pinThresholdPx =
@@ -516,6 +544,10 @@ const ChatListInternal = React.memo((props: {
         return props.items;
     }, [listImplementation, props.items]);
 
+    // Keep a synchronous view of the current list items for effects that run between renders
+    // (e.g. initial viewport fill and jump-to-seq resolution).
+    itemsRef.current = listData;
+
     const flashListMaintainVisibleContentPosition = React.useMemo(() => {
         // FlashList/web can throw "index out of bounds, not enough layouts" under heavy append + scroll
         // when `maintainVisibleContentPosition.startRenderingFromBottom` is enabled. On web we already
@@ -529,10 +561,6 @@ const ChatListInternal = React.memo((props: {
             ? { minIndexForVisible: 0, autoscrollToTopThreshold: pinThresholdPx }
             : undefined;
     }, [autoFollowWhenPinned, pinEnabled, pinThresholdPx]);
-
-    React.useEffect(() => {
-        itemsRef.current = listData;
-    }, [listData]);
 
     const resolveCreatedAtForMessageId = React.useCallback((messageId: string): number | null => {
         const state = getStorage().getState() as any;
@@ -595,8 +623,8 @@ const ChatListInternal = React.memo((props: {
                     toolCallsGroupId={item.id}
                     toolMessageIds={item.toolMessageIds}
                     metadata={props.metadata}
-                    expanded={expandedToolCallsGroupIds.has(item.id)}
-                    setExpanded={(expanded) => setToolCallsGroupExpanded(item.id, expanded)}
+                    expanded={item.toolMessageIds.some((id) => expandedToolCallsAnchorMessageIds.has(id))}
+                    onSetExpanded={setToolCallsGroupExpanded}
                     interaction={props.interaction}
                 />
             );
@@ -622,7 +650,7 @@ const ChatListInternal = React.memo((props: {
                           activeThinkingMessageId={props.activeThinkingMessageId}
                             resolveThinkingExpanded={resolveThinkingExpanded}
                             setThinkingExpanded={setThinkingExpanded}
-                          expandedToolCallsGroupIds={expandedToolCallsGroupIds}
+                          expandedToolCallsAnchorMessageIds={expandedToolCallsAnchorMessageIds}
                           setToolCallsGroupExpanded={setToolCallsGroupExpanded}
                       />
                   </TranscriptEnterWrapper>
@@ -658,7 +686,7 @@ const ChatListInternal = React.memo((props: {
             );
         }
         return null;
-      }, [expandedToolCallsGroupIds, listImplementation, props.activeThinkingMessageId, props.interaction, props.metadata, props.sessionId, resolveCreatedAtForMessageId, resolveKindForMessageId, resolveThinkingExpanded, setThinkingExpanded, setToolCallsGroupExpanded, toolTimelineChromeMode]);
+      }, [expandedToolCallsAnchorMessageIds, listImplementation, props.activeThinkingMessageId, props.interaction, props.metadata, props.sessionId, resolveCreatedAtForMessageId, resolveKindForMessageId, resolveThinkingExpanded, setThinkingExpanded, setToolCallsGroupExpanded, toolTimelineChromeMode]);
 
     const loadOlder = useCallback(async (): Promise<{
         loaded: number;
@@ -666,9 +694,6 @@ const ChatListInternal = React.memo((props: {
         status: 'loaded' | 'no_more' | 'not_ready' | 'in_flight';
     } | null> => {
         if (!props.isLoaded) return null;
-        // If the server has never emitted any committed transcript seq, pagination is a no-op.
-        // IMPORTANT: committedMessagesCount can be 0 even when sessionSeq > 0 (e.g. sidechain-only newest page).
-        if (!props.forkedTranscriptEnabled && (props.sessionSeq ?? 0) <= 0) return null;
         if (loadOlderInFlight.current || hasMoreOlder === false) {
             return null;
         }
@@ -977,12 +1002,111 @@ const ChatListInternal = React.memo((props: {
     }, [pinToBottom, props.isLoaded, props.jumpToSeq, props.sessionId]);
 
     const isScrollable = React.useCallback((): boolean => {
+        // On web, list content height can include collapsed/offscreen subtrees (e.g. tool-call group bodies),
+        // which can cause false positives. Prefer DOM scroll metrics when available.
+        if (Platform.OS === 'web') {
+            try {
+                if (typeof document !== 'undefined' && typeof window !== 'undefined' && typeof window.getComputedStyle === 'function') {
+                    const root = (document as any)?.getElementById?.(chatListNativeId) as HTMLElement | null | undefined;
+                    const isScrollableEl = (el: HTMLElement): boolean => {
+                        const cs = window.getComputedStyle(el);
+                        const overflowY = cs?.overflowY;
+                        if (!(overflowY === 'auto' || overflowY === 'scroll')) return false;
+                        const sh = (el as any).scrollHeight;
+                        const ch = (el as any).clientHeight;
+                        if (typeof sh !== 'number' || typeof ch !== 'number') return false;
+                        return sh > ch + 1;
+                    };
+
+                    const cached = webScrollContainerRef.current;
+                    if (root && cached && (cached as any).isConnected !== false && typeof (root as any).contains === 'function' && (root as any).contains(cached)) {
+                        return isScrollableEl(cached);
+                    }
+                    if (root) {
+                        return isScrollableEl(root);
+                    }
+                }
+            } catch {
+                // fall through to measurement-based heuristic
+            }
+        }
+
         const layout = listLayoutHeight;
         const content = listContentHeight;
         if (!Number.isFinite(layout) || layout <= 0) return false;
         if (!Number.isFinite(content) || content <= 0) return false;
         return content > layout + 16;
-    }, [listContentHeight, listLayoutHeight]);
+    }, [chatListNativeId, listContentHeight, listLayoutHeight]);
+
+    const resolveToolCallsCollapsedPreviewCount = React.useCallback((): number => {
+        const raw = typeof transcriptToolCallsCollapsedPreviewCountSetting === 'number'
+            ? transcriptToolCallsCollapsedPreviewCountSetting
+            : 5;
+        if (!Number.isFinite(raw)) return 5;
+        return Math.max(0, Math.min(15, Math.trunc(raw)));
+    }, [transcriptToolCallsCollapsedPreviewCountSetting]);
+
+    const tryAutoExpandNewestToolCallsGroup = React.useCallback((): boolean => {
+        const previewCount = resolveToolCallsCollapsedPreviewCount();
+        const items = itemsRef.current;
+        const newestFirst = listImplementation === 'flatlist_legacy';
+
+        const visitItem = (it: ChatTranscriptListItem | null | undefined): boolean => {
+            if (!it) return false;
+            if (it.kind === 'tool-calls-group') {
+                const toolMessageIds = it.toolMessageIds;
+                if (toolMessageIds.length <= previewCount) return false;
+                if (toolMessageIds.some((id) => expandedToolCallsAnchorMessageIds.has(id))) return false;
+                setToolCallsGroupExpanded({ toolCallsGroupId: it.id, toolMessageIds, expanded: true });
+                return true;
+            }
+            if (it.kind === 'turn') {
+                const content = it.turn?.content;
+                if (!Array.isArray(content) || content.length === 0) return false;
+                for (let j = content.length - 1; j >= 0; j -= 1) {
+                    const c = content[j];
+                    if (c.kind !== 'tool_calls') continue;
+                    const toolMessageIds = c.toolMessageIds;
+                    if (toolMessageIds.length <= previewCount) continue;
+                    if (toolMessageIds.some((id) => expandedToolCallsAnchorMessageIds.has(id))) continue;
+                    setToolCallsGroupExpanded({ toolCallsGroupId: c.id, toolMessageIds, expanded: true });
+                    return true;
+                }
+            }
+            return false;
+        };
+
+        if (newestFirst) {
+            for (let i = 0; i < items.length; i += 1) {
+                if (visitItem(items[i])) return true;
+            }
+            return false;
+        }
+        for (let i = items.length - 1; i >= 0; i -= 1) {
+            if (visitItem(items[i])) return true;
+        }
+        return false;
+    }, [expandedToolCallsAnchorMessageIds, listImplementation, resolveToolCallsCollapsedPreviewCount, setToolCallsGroupExpanded]);
+
+    React.useEffect(() => {
+        // Intentionally runs after every render until the transcript becomes scrollable or we succeed.
+        // The turns/grouping builder can update in-place as message bodies hydrate, so relying on
+        // `items`/`listData` identity is not robust here.
+        if (props.jumpToSeq != null) return;
+        if (!props.sessionId) return;
+        if (didAutoExpandToolCallsGroupsForSessionRef.current === props.sessionId) return;
+        if (isScrollable()) return;
+
+        const expanded = tryAutoExpandNewestToolCallsGroup();
+        if (!expanded) return;
+
+        didAutoExpandToolCallsGroupsForSessionRef.current = props.sessionId;
+        fireAndForget((async () => {
+            await Promise.resolve();
+            await Promise.resolve();
+            pinToBottom();
+        })(), { tag: 'ChatList.autoExpandToolCallsGroup' });
+    });
 
     const resolveJumpIndex = React.useCallback((): number | null => {
         const target = props.jumpToSeq;
@@ -1069,7 +1193,6 @@ const ChatListInternal = React.memo((props: {
 
     React.useEffect(() => {
         if (!props.isLoaded) return;
-        if (!props.forkedTranscriptEnabled && (props.sessionSeq ?? 0) <= 0) return;
         if (props.jumpToSeq != null) return;
         if (!props.sessionId) return;
         if (initialFillStatusRef.current !== 'idle') return;
@@ -1078,14 +1201,17 @@ const ChatListInternal = React.memo((props: {
         if (listLayoutHeight <= 0 || listContentHeight <= 0) return;
 
         initialFillStatusRef.current = 'in_progress';
-        let cancelled = false;
+        initialFillAbortRef.current?.abort();
+        const controller = new AbortController();
+        initialFillAbortRef.current = controller;
+        const signal = controller.signal;
         fireAndForget((async () => {
             // Always pin once up front; this protects against initial layout anchoring quirks on web.
             pinToBottom();
 
             const maxLoads = 10;
             for (let i = 0; i < maxLoads; i++) {
-                if (cancelled) return;
+                if (signal.aborted) return;
                 // If the transcript is scrollable and we have at least one visible committed message,
                 // stop prefetching older pages.
                 if (isScrollable() && props.committedMessagesCount > 0) break;
@@ -1099,12 +1225,10 @@ const ChatListInternal = React.memo((props: {
                 await Promise.resolve();
                 pinToBottom();
             }
-            if (cancelled) return;
+            if (signal.aborted) return;
             initialFillStatusRef.current = 'done';
         })(), { tag: 'ChatList.initialFillOlderMessages' });
-
-        return () => { cancelled = true; };
-    }, [isScrollable, listContentHeight, listLayoutHeight, loadOlder, pinToBottom, props.committedMessagesCount, props.isLoaded, props.jumpToSeq, props.sessionId, props.sessionSeq]);
+    }, [isScrollable, listContentHeight, listLayoutHeight, loadOlder, pinToBottom, props.committedMessagesCount, props.isLoaded, props.jumpToSeq, props.sessionId]);
 
     return (
         <TranscriptMotionProvider sessionKey={props.sessionId} config={motionConfig}>
@@ -1298,6 +1422,16 @@ const ChatListInternal = React.memo((props: {
                                 }
                               const layoutH = listLayoutHeightRef.current;
                               const contentH = listContentHeightRef.current;
+                                const backwardPrefetchThresholdPx = sync.getSyncTuning().transcriptBackwardPrefetchThresholdPx;
+                                const scrollable = layoutH > 0 && contentH > layoutH + 16;
+                                if (
+                                    initialFillStatusRef.current === 'done' &&
+                                    scrollable &&
+                                    backwardPrefetchThresholdPx > 0 &&
+                                    y <= backwardPrefetchThresholdPx
+                                ) {
+                                    void loadOlder();
+                                }
                               const distanceFromBottom =
                                   layoutH > 0 && contentH >= layoutH
                                       ? Math.max(0, Math.trunc(contentH - layoutH - y))

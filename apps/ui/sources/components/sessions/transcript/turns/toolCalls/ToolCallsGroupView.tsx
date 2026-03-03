@@ -41,7 +41,7 @@ export const ToolCallsGroupView = React.memo((props: {
             backgroundColor: theme.colors.input.background,
             overflow: 'hidden' as const,
             paddingHorizontal: 10,
-            paddingVertical: 8,
+            paddingVertical: 6,
         }
         : null;
     const previewCount = (() => {
@@ -104,6 +104,17 @@ export const ToolCallsGroupView = React.memo((props: {
                 <View style={styles.contentBody}>
                     {previewMessages.length > 0 ? (
                         <View style={[styles.preview, normalizedChromeMode === 'activity_feed' ? styles.previewFeed : styles.previewCards]}>
+                            {hiddenCount > 0 ? (
+                                <Pressable
+                                    testID="transcript-tool-calls-preview-more"
+                                    onPress={() => props.setExpanded(true)}
+                                    style={({ pressed }) => [styles.previewMore, pressed && styles.previewMorePressed]}
+                                >
+                                    <Text style={styles.previewMoreText}>
+                                        {t('session.toolCallsCollapsedPreviewMore', { count: hiddenCount })}
+                                    </Text>
+                                </Pressable>
+                            ) : null}
                             {previewMessages.map((m) => (
                                 <View
                                     key={`preview:${m.id}`}
@@ -120,17 +131,6 @@ export const ToolCallsGroupView = React.memo((props: {
                                     />
                                 </View>
                             ))}
-                            {hiddenCount > 0 ? (
-                                <Pressable
-                                    testID="transcript-tool-calls-preview-more"
-                                    onPress={() => props.setExpanded(true)}
-                                    style={({ pressed }) => [styles.previewMore, pressed && styles.previewMorePressed]}
-                                >
-                                    <Text style={styles.previewMoreText}>
-                                        {t('session.toolCallsCollapsedPreviewMore', { count: hiddenCount })}
-                                    </Text>
-                                </Pressable>
-                            ) : null}
                         </View>
                     ) : null}
 
@@ -175,8 +175,7 @@ export const ToolCallsGroupView = React.memo((props: {
 const styles = StyleSheet.create((theme) => ({
     container: {
         marginHorizontal: 16,
-        marginTop: 4,
-        marginBottom: 12,
+        marginBottom: 22,
     },
     containerCards: {
         borderRadius: 14,
@@ -191,7 +190,8 @@ const styles = StyleSheet.create((theme) => ({
     header: {
         flexDirection: 'row',
         alignItems: 'center',
-        paddingVertical: 6,
+        paddingTop: 4,
+        paddingBottom: 6,
         gap: 8,
     },
     headerCardsPressed: {
@@ -242,13 +242,14 @@ const styles = StyleSheet.create((theme) => ({
         flex: 1,
         width: 2,
         borderRadius: 2,
-        backgroundColor: theme.colors.divider,
-        opacity: 0.85,
+        backgroundColor: theme.colors.agentEventText,
+        opacity: 0.42,
+        marginBottom: 7
     },
     contentBody: {
         flex: 1,
         minWidth: 0,
-        paddingLeft: 8,
+        paddingLeft: 6,
     },
     preview: {
         paddingBottom: 6,

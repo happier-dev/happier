@@ -34,17 +34,19 @@ const TurnMessageRow = React.memo(function TurnMessageRow(props: {
         setThinkingExpanded != null;
 
     return (
-        <TranscriptEnterWrapper id={message.id} createdAt={message.createdAt}>
-            <MessageView
-                message={message}
-                metadata={props.metadata}
-                sessionId={props.sessionId}
-                activeThinkingMessageId={props.activeThinkingMessageId}
-                thinkingExpanded={controlledThinking ? resolveThinkingExpanded(message.id) : undefined}
-                onThinkingExpandedChange={controlledThinking ? (next) => setThinkingExpanded(message.id, next) : undefined}
-                interaction={props.interaction}
-            />
-        </TranscriptEnterWrapper>
+        <View testID={`transcript-message-${message.id}`}>
+            <TranscriptEnterWrapper id={message.id} createdAt={message.createdAt}>
+                <MessageView
+                    message={message}
+                    metadata={props.metadata}
+                    sessionId={props.sessionId}
+                    activeThinkingMessageId={props.activeThinkingMessageId}
+                    thinkingExpanded={controlledThinking ? resolveThinkingExpanded(message.id) : undefined}
+                    onThinkingExpandedChange={controlledThinking ? (next) => setThinkingExpanded(message.id, next) : undefined}
+                    interaction={props.interaction}
+                />
+            </TranscriptEnterWrapper>
+        </View>
     );
 });
 
@@ -53,8 +55,8 @@ export const TurnView = React.memo((props: {
     metadata: Metadata | null;
     sessionId: string;
     activeThinkingMessageId: string | null;
-    expandedToolCallsGroupIds: ReadonlySet<string>;
-    setToolCallsGroupExpanded: (toolCallsGroupId: string, expanded: boolean) => void;
+    expandedToolCallsAnchorMessageIds: ReadonlySet<string>;
+    setToolCallsGroupExpanded: (params: { toolCallsGroupId: string; toolMessageIds: readonly string[]; expanded: boolean }) => void;
     resolveThinkingExpanded?: (messageId: string) => boolean;
     setThinkingExpanded?: (messageId: string, expanded: boolean) => void;
     interaction: TranscriptInteraction;
@@ -94,8 +96,8 @@ export const TurnView = React.memo((props: {
                         toolCallsGroupId={c.id}
                         toolMessageIds={c.toolMessageIds}
                         metadata={props.metadata}
-                        expanded={props.expandedToolCallsGroupIds.has(c.id)}
-                        setExpanded={(expanded) => props.setToolCallsGroupExpanded(c.id, expanded)}
+                        expanded={c.toolMessageIds.some((id) => props.expandedToolCallsAnchorMessageIds.has(id))}
+                        onSetExpanded={props.setToolCallsGroupExpanded}
                         interaction={props.interaction}
                     />
                 );
@@ -106,7 +108,5 @@ export const TurnView = React.memo((props: {
 
 const styles = StyleSheet.create((theme) => ({
     container: {
-        paddingTop: 6,
-        paddingBottom: 6,
     },
 }));

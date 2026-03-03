@@ -17,7 +17,7 @@ export const ToolCallsGroupRow = React.memo(function ToolCallsGroupRow(props: {
     toolMessageIds: readonly string[];
     metadata: Metadata | null;
     expanded: boolean;
-    setExpanded: (expanded: boolean) => void;
+    onSetExpanded: (params: { toolCallsGroupId: string; toolMessageIds: readonly string[]; expanded: boolean }) => void;
     interaction: TranscriptInteraction;
 }) {
     const toolMessagesRaw = useMessagesByIds(props.sessionId, props.toolMessageIds);
@@ -36,6 +36,10 @@ export const ToolCallsGroupRow = React.memo(function ToolCallsGroupRow(props: {
 
     const createdAt = toolMessages[0]?.createdAt ?? Date.now();
 
+    const setExpanded = React.useCallback((expanded: boolean) => {
+        props.onSetExpanded({ toolCallsGroupId: props.toolCallsGroupId, toolMessageIds: props.toolMessageIds, expanded });
+    }, [props.onSetExpanded, props.toolCallsGroupId, props.toolMessageIds]);
+
     return (
         <TranscriptEnterWrapper id={props.toolCallsGroupId} createdAt={createdAt}>
             <View style={styles.centered}>
@@ -47,7 +51,7 @@ export const ToolCallsGroupRow = React.memo(function ToolCallsGroupRow(props: {
                         metadata={props.metadata}
                         sessionId={props.sessionId}
                         expanded={props.expanded}
-                        setExpanded={props.setExpanded}
+                        setExpanded={setExpanded}
                         interaction={props.interaction}
                     />
                 </View>
@@ -68,4 +72,3 @@ const styles = StyleSheet.create(() => ({
         maxWidth: layout.maxWidth,
     },
 }));
-

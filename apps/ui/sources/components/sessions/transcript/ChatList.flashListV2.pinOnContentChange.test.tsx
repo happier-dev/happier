@@ -164,6 +164,7 @@ vi.mock('@/sync/sync', () => ({
     hasDeferredNewerMessages: () => false,
     getSyncTuning: () => ({
       transcriptForwardPrefetchThresholdPx: 0,
+      transcriptBackwardPrefetchThresholdPx: 0,
       transcriptFlashListEstimatedItemSize: 120,
       transcriptWebInitialPinStabilizeMs: 3000,
       transcriptWebInitialPinRetryIntervalMs: 250,

@@ -15,7 +15,7 @@ const settingValues: Record<string, any> = {};
 
 const loadNewerMessages = vi.fn(async () => {});
 const hasDeferredNewerMessages = vi.fn(() => true);
-const getSyncTuning = vi.fn(() => ({ transcriptForwardPrefetchThresholdPx: 800 }));
+const getSyncTuning = vi.fn(() => ({ transcriptForwardPrefetchThresholdPx: 800, transcriptBackwardPrefetchThresholdPx: 0 }));
 
 vi.mock('@shopify/flash-list', () => ({
     FlashList: () => null,
@@ -184,7 +184,7 @@ describe('ChatList (forward prefetch)', () => {
         hasDeferredNewerMessages.mockClear();
         hasDeferredNewerMessages.mockReturnValue(true);
         getSyncTuning.mockClear();
-        getSyncTuning.mockReturnValue({ transcriptForwardPrefetchThresholdPx: 800 });
+        getSyncTuning.mockReturnValue({ transcriptForwardPrefetchThresholdPx: 800, transcriptBackwardPrefetchThresholdPx: 0 });
     });
 
     it('loads newer messages when unpinned and near bottom and deferred newer exists', async () => {
@@ -204,7 +204,7 @@ describe('ChatList (forward prefetch)', () => {
     });
 
     it('does not prefetch newer messages when scroll is outside configured threshold', async () => {
-        getSyncTuning.mockReturnValue({ transcriptForwardPrefetchThresholdPx: 100 });
+        getSyncTuning.mockReturnValue({ transcriptForwardPrefetchThresholdPx: 100, transcriptBackwardPrefetchThresholdPx: 0 });
 
         const { ChatList } = await import('./ChatList');
         await act(async () => {

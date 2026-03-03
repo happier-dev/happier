@@ -219,6 +219,7 @@ vi.mock('@/sync/sync', () => ({
     hasDeferredNewerMessages: () => false,
     getSyncTuning: () => ({
       transcriptForwardPrefetchThresholdPx: 0,
+      transcriptBackwardPrefetchThresholdPx: 0,
       transcriptFlashListEstimatedItemSize: 120,
       transcriptWebInitialPinStabilizeMs: 3000,
       transcriptWebInitialPinRetryIntervalMs: 250,
@@ -287,5 +288,32 @@ describe('ChatList (forked transcript)', () => {
         disableToolNavigation: true,
       }),
     );
+  });
+
+  it('loads older messages via fork-aware paging when reaching the start of the list', async () => {
+    const syncMod = await import('@/sync/sync');
+    const loadOlderForkAware = (syncMod as any).sync.loadOlderMessagesForkAware as ReturnType<typeof vi.fn>;
+    loadOlderForkAware.mockResolvedValueOnce({ loaded: 0, hasMore: true, status: 'loaded' });
+
+    const { ChatList } = await import('./ChatList');
+    await act(async () => {
+      renderer.create(<ChatList session={sessionState} />);
+    });
+
+    expect(capturedFlashListProps).toBeTruthy();
+
+    await act(async () => {
+      capturedFlashListProps.onLayout?.({ nativeEvent: { layout: { height: 200 } } });
+      capturedFlashListProps.onContentSizeChange?.(0, 400);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    await act(async () => {
+      capturedFlashListProps.onStartReached?.();
+      await Promise.resolve();
+    });
+
+    expect(loadOlderForkAware).toHaveBeenCalledWith('child-1');
   });
 });

@@ -23,6 +23,22 @@ let sessionState: any = null;
 const settingValues: Record<string, any> = {};
 let platformOs: 'web' | 'ios' = 'web';
 
+type SyncTuningMock = {
+    transcriptForwardPrefetchThresholdPx: number;
+    transcriptBackwardPrefetchThresholdPx: number;
+    transcriptFlashListEstimatedItemSize: number;
+    transcriptWebInitialPinStabilizeMs: number;
+    transcriptWebInitialPinRetryIntervalMs: number;
+};
+
+let syncTuningState: SyncTuningMock = {
+    transcriptForwardPrefetchThresholdPx: 0,
+    transcriptBackwardPrefetchThresholdPx: 0,
+    transcriptFlashListEstimatedItemSize: 120,
+    transcriptWebInitialPinStabilizeMs: 3000,
+    transcriptWebInitialPinRetryIntervalMs: 250,
+};
+
 vi.mock('@shopify/flash-list', () => ({
     FlashList: React.forwardRef((props: any, ref: any) => {
         capturedFlashListProps = props;
@@ -186,12 +202,7 @@ vi.mock('@/sync/sync', () => ({
         loadOlderMessages: vi.fn(),
         loadNewerMessages: vi.fn(),
         hasDeferredNewerMessages: () => false,
-        getSyncTuning: () => ({
-            transcriptForwardPrefetchThresholdPx: 0,
-            transcriptFlashListEstimatedItemSize: 120,
-            transcriptWebInitialPinStabilizeMs: 3000,
-            transcriptWebInitialPinRetryIntervalMs: 250,
-        }),
+        getSyncTuning: () => syncTuningState,
     },
 }));
 
@@ -212,6 +223,13 @@ describe('ChatList (FlashList v2)', () => {
             accessLevel: null,
             canApprovePermissions: true,
             agentState: null,
+        };
+        syncTuningState = {
+            transcriptForwardPrefetchThresholdPx: 0,
+            transcriptBackwardPrefetchThresholdPx: 0,
+            transcriptFlashListEstimatedItemSize: 120,
+            transcriptWebInitialPinStabilizeMs: 3000,
+            transcriptWebInitialPinRetryIntervalMs: 250,
         };
         for (const k of Object.keys(settingValues)) delete settingValues[k];
         settingValues.transcriptGroupingMode = 'linear';
@@ -250,6 +268,79 @@ describe('ChatList (FlashList v2)', () => {
         expect(renderedFlatListCount).toBe(0);
         expect(capturedFlashListProps).not.toBeNull();
         expect(capturedFlashListProps.maintainVisibleContentPosition).toBeUndefined();
+    });
+
+    it('loads older messages when scrolled near the top (without requiring onStartReached)', async () => {
+        sessionState = { ...sessionState, seq: 25 };
+        sessionMessagesState = {
+            isLoaded: true,
+            messages: [{ kind: 'user-text', id: 'u1', localId: null, createdAt: 1, text: 'hi' }],
+        };
+
+        const syncMod = await import('@/sync/sync');
+        const loadOlderMessagesMock = vi.mocked(syncMod.sync.loadOlderMessages);
+        loadOlderMessagesMock.mockResolvedValue({ loaded: 1, hasMore: true, status: 'loaded' as const });
+        loadOlderMessagesMock.mockClear();
+
+        syncTuningState = { ...syncTuningState, transcriptBackwardPrefetchThresholdPx: 800 };
+
+        const { ChatList } = await import('./ChatList');
+        await act(async () => {
+            createTree(<ChatList session={{ ...sessionState }} />);
+        });
+
+        expect(capturedFlashListProps).toBeTruthy();
+        expect(loadOlderMessagesMock).not.toHaveBeenCalled();
+
+        await act(async () => {
+            capturedFlashListProps.onLayout?.({ nativeEvent: { layout: { height: 600 } } });
+            capturedFlashListProps.onContentSizeChange?.(0, 1200);
+            await Promise.resolve();
+        });
+
+        await act(async () => {
+            capturedFlashListProps.onScroll?.({ nativeEvent: { contentOffset: { y: 100 }, isTrusted: true } });
+            await Promise.resolve();
+        });
+
+        expect(loadOlderMessagesMock).toHaveBeenCalledTimes(1);
+    });
+
+    it('loads older messages near the top even when onScroll is not marked isTrusted (web)', async () => {
+        sessionState = { ...sessionState, seq: 25 };
+        sessionMessagesState = {
+            isLoaded: true,
+            messages: [{ kind: 'user-text', id: 'u1', localId: null, createdAt: 1, text: 'hi' }],
+        };
+
+        const syncMod = await import('@/sync/sync');
+        const loadOlderMessagesMock = vi.mocked(syncMod.sync.loadOlderMessages);
+        loadOlderMessagesMock.mockResolvedValue({ loaded: 1, hasMore: true, status: 'loaded' as const });
+        loadOlderMessagesMock.mockClear();
+
+        syncTuningState = { ...syncTuningState, transcriptBackwardPrefetchThresholdPx: 800 };
+
+        const { ChatList } = await import('./ChatList');
+        await act(async () => {
+            createTree(<ChatList session={{ ...sessionState }} />);
+        });
+
+        expect(capturedFlashListProps).toBeTruthy();
+
+        await act(async () => {
+            capturedFlashListProps.onLayout?.({ nativeEvent: { layout: { height: 600 } } });
+            capturedFlashListProps.onContentSizeChange?.(0, 1200);
+            await Promise.resolve();
+        });
+
+        expect(loadOlderMessagesMock).not.toHaveBeenCalled();
+
+        await act(async () => {
+            capturedFlashListProps.onScroll?.({ nativeEvent: { contentOffset: { y: 100 } } });
+            await Promise.resolve();
+        });
+
+        expect(loadOlderMessagesMock).toHaveBeenCalledTimes(1);
     });
 
     it('uses startRenderingFromBottom on native FlashList', async () => {
@@ -637,7 +728,7 @@ describe('ChatList (FlashList v2)', () => {
         try {
             (globalThis as any).document = {
                 querySelector: () => wrongScroller,
-                getElementById: (id: string) => (id === 'ChatList.session-1' ? rightScroller : null),
+                getElementById: (id: string) => (id.startsWith('ChatList.session-1') ? rightScroller : null),
             };
             (globalThis as any).window = {
                 getComputedStyle: () => ({ overflowY: 'auto' }),

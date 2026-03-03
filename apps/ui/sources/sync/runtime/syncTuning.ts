@@ -3,6 +3,7 @@ export type SyncTuning = Readonly<{
     messageMaxIncrementalPagesOnResume: number;
     messageForceSnapshotOfflineMs: number;
     transcriptForwardPrefetchThresholdPx: number;
+    transcriptBackwardPrefetchThresholdPx: number;
     transcriptFlashListEstimatedItemSize: number;
     transcriptWebInitialPinStabilizeMs: number;
     transcriptWebInitialPinRetryIntervalMs: number;
@@ -63,6 +64,7 @@ export function loadSyncTuning(opts?: {
         messageMaxIncrementalPagesOnResume: 3,
         messageForceSnapshotOfflineMs: 30 * 60 * 1000,
         transcriptForwardPrefetchThresholdPx: 800,
+        transcriptBackwardPrefetchThresholdPx: 800,
         transcriptFlashListEstimatedItemSize: 120,
         transcriptWebInitialPinStabilizeMs: 8000,
         transcriptWebInitialPinRetryIntervalMs: 250,
@@ -90,6 +92,7 @@ export function loadSyncTuning(opts?: {
         messageMaxIncrementalPagesOnResume: readNumber(merged, 'messageMaxIncrementalPagesOnResume', { min: 1, max: 100 }) ?? defaults.messageMaxIncrementalPagesOnResume,
         messageForceSnapshotOfflineMs: readNumber(merged, 'messageForceSnapshotOfflineMs', { min: 0, max: 365 * 24 * 60 * 60 * 1000 }) ?? defaults.messageForceSnapshotOfflineMs,
         transcriptForwardPrefetchThresholdPx: readNumber(merged, 'transcriptForwardPrefetchThresholdPx', { min: 0, max: 50_000 }) ?? defaults.transcriptForwardPrefetchThresholdPx,
+        transcriptBackwardPrefetchThresholdPx: readNumber(merged, 'transcriptBackwardPrefetchThresholdPx', { min: 0, max: 50_000 }) ?? defaults.transcriptBackwardPrefetchThresholdPx,
         transcriptFlashListEstimatedItemSize: readNumber(merged, 'transcriptFlashListEstimatedItemSize', { min: 20, max: 2000 }) ?? defaults.transcriptFlashListEstimatedItemSize,
         transcriptWebInitialPinStabilizeMs: readNumber(merged, 'transcriptWebInitialPinStabilizeMs', { min: 0, max: 20_000 }) ?? defaults.transcriptWebInitialPinStabilizeMs,
         transcriptWebInitialPinRetryIntervalMs: readNumber(merged, 'transcriptWebInitialPinRetryIntervalMs', { min: 16, max: 2000 }) ?? defaults.transcriptWebInitialPinRetryIntervalMs,

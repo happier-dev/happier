@@ -148,11 +148,12 @@ vi.mock('@/utils/system/fireAndForget', () => ({
 
 vi.mock('@/sync/sync', () => ({
   sync: {
-    loadOlderMessages: vi.fn(),
+    loadOlderMessages: vi.fn(async () => ({ loaded: 0, hasMore: false, status: 'no_more' as const })),
     loadNewerMessages: vi.fn(),
     hasDeferredNewerMessages: () => false,
     getSyncTuning: () => ({
       transcriptForwardPrefetchThresholdPx: 0,
+      transcriptBackwardPrefetchThresholdPx: 0,
       transcriptFlashListEstimatedItemSize: 120,
       transcriptWebInitialPinStabilizeMs: 3000,
       transcriptWebInitialPinRetryIntervalMs: 250,

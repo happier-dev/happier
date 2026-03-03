@@ -140,6 +140,7 @@ vi.mock('@/utils/system/fireAndForget', () => ({
 	      transcriptWebInitialPinStabilizeMs: 0,
 	      transcriptWebInitialPinRetryIntervalMs: 250,
 	      transcriptForwardPrefetchThresholdPx: 800,
+	      transcriptBackwardPrefetchThresholdPx: 0,
 	      transcriptFlashListEstimatedItemSize: 48,
 	    }),
 	  },
