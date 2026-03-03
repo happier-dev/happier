@@ -19,16 +19,31 @@ function isKeychainNotFoundError(err) {
 }
 
 /**
+ * @param {unknown} err
+ */
+function isKeychainUnavailableError(err) {
+  const anyErr = /** @type {{ code?: unknown; message?: unknown }} */ (err ?? {});
+  const code = typeof anyErr?.code === 'string' ? anyErr.code : '';
+  if (code === 'ENOENT') return true;
+
+  const message = typeof anyErr?.message === 'string' ? anyErr.message : String(err ?? '');
+  return message.toLowerCase().includes('spawnsync security enoent');
+}
+
+/**
  * @param {{ service: string; account?: string }} opts
- * @returns {{ bundle: Record<string, string>; found: boolean }}
+ * @returns {{ bundle: Record<string, string>; found: boolean; unavailable: boolean }}
  */
 function readKeychainBundleSafe(opts) {
   try {
     const bundle = readKeychainBundle({ service: opts.service, account: opts.account });
-    return { bundle, found: Object.keys(bundle).length > 0 };
+    return { bundle, found: Object.keys(bundle).length > 0, unavailable: false };
   } catch (err) {
     if (isKeychainNotFoundError(err)) {
-      return { bundle: {}, found: false };
+      return { bundle: {}, found: false, unavailable: false };
+    }
+    if (isKeychainUnavailableError(err)) {
+      return { bundle: {}, found: false, unavailable: true };
     }
     throw err;
   }
@@ -50,6 +65,19 @@ export function loadSecrets({ baseEnv, secretsSource, keychainService, keychainA
   }
 
   if (secretsSource === 'keychain' || secretsSource === 'auto') {
+    if (process.platform !== 'darwin') {
+      if (secretsSource === 'keychain') {
+        throw new Error(
+          [
+            "[pipeline] secretsSource 'keychain' requires macOS Keychain access (the `security` CLI).",
+            '',
+            "Use '--secrets-source env' in CI, or run the pipeline locally on macOS.",
+          ].join('\n'),
+        );
+      }
+      return { env: baseEnv, usedKeychain: false };
+    }
+
     const { baseAccount, envAccount } = resolveKeychainBundleAccounts({
       accountPrefix: keychainAccount,
       deployEnvironment,
@@ -58,13 +86,29 @@ export function loadSecrets({ baseEnv, secretsSource, keychainService, keychainA
     const legacyAllowed = !String(keychainAccount ?? '').trim();
 
     const baseRead = readKeychainBundleSafe({ service: keychainService, account: baseAccount });
-    const envRead = envAccount ? readKeychainBundleSafe({ service: keychainService, account: envAccount }) : { bundle: {}, found: false };
+    const envRead = envAccount
+      ? readKeychainBundleSafe({ service: keychainService, account: envAccount })
+      : { bundle: {}, found: false, unavailable: false };
 
     // Optional legacy fallback: a single bundle stored without an account.
     const legacyRead =
       legacyAllowed && !baseRead.found && !envRead.found
         ? readKeychainBundleSafe({ service: keychainService, account: undefined })
-        : { bundle: {}, found: false };
+        : { bundle: {}, found: false, unavailable: false };
+
+    const keychainUnavailable = baseRead.unavailable || envRead.unavailable || legacyRead.unavailable;
+    if (keychainUnavailable) {
+      if (secretsSource === 'keychain') {
+        throw new Error(
+          [
+            "[pipeline] secretsSource 'keychain' requires macOS Keychain access (the `security` CLI).",
+            '',
+            "Use '--secrets-source env' in CI, or run the pipeline locally on macOS.",
+          ].join('\n'),
+        );
+      }
+      return { env: baseEnv, usedKeychain: false };
+    }
 
     const foundAny = baseRead.found || envRead.found || legacyRead.found;
     if (!foundAny && secretsSource === 'keychain') {
