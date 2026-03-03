@@ -1,5 +1,4 @@
 import { randomUUID } from 'node:crypto';
-
 import type { McpServerConfig } from '@/agent';
 import type { ProviderEnforcedPermissionHandler } from '@/agent/permissions/ProviderEnforcedPermissionHandler';
 import type { ApiSessionClient } from '@/api/session/sessionClient';
@@ -70,6 +69,14 @@ function extractOpenCodeSessionMessageId(raw: unknown): string | null {
 
 function normalizeEnvVar(value: unknown): string {
   return typeof value === 'string' ? value.trim() : '';
+}
+
+function sanitizeOpenCodeMcpClientName(name: string): string {
+  return name.replace(/[^a-zA-Z0-9_-]/g, '_');
+}
+
+function resolveOpenCodeChangeTitleToolNameForMcpClient(mcpClientName: string): string {
+  return `${sanitizeOpenCodeMcpClientName(mcpClientName)}_change_title`;
 }
 
 function resolveOpenCodeDefaultProviderIdFromModelId(modelId: string): string {
@@ -240,14 +247,22 @@ export function createOpenCodeServerRuntime(params: {
   let selectedAgent: string | null = null;
   let selectedModel: OpenCodeModelRef | null = null;
   const configOverrides: Record<string, unknown> = {};
+  let omitCustomMessageIdOnFirstPromptAfterResume = false;
   let didSendChangeTitleInstructionForSession = false;
+  let ensuredMcpServersForDirectory = false;
+  const ensuredMcpServerNames = new Set<string>();
 
   let turnDeferred: Deferred<void> | null = null;
   let turnInFlight = false;
   let turnPromptActive = false;
   let turnActivitySeen = false;
   let turnUserMessageId: string | null = null;
+  let turnPrePromptMessageIdsAll: ReadonlySet<string> | null = null;
   let turnPreexistingMessageIds: ReadonlySet<string> | null = null;
+  const turnStreamedAssistantMessageIds = new Set<string>();
+  const turnBackfilledAssistantMessageIds = new Set<string>();
+  let turnAssistantBackfillAttempts = 0;
+  let turnAssistantBackfillFirstAttemptAtMs: number | null = null;
   let idleSignalSeen = false;
   let resolveOnIdleInFlight = false;
   let turnControlAbort: AbortController | null = null;
@@ -268,11 +283,9 @@ export function createOpenCodeServerRuntime(params: {
     { permission: 'edit', pattern: '*', action: 'allow' },
   ] as const;
 
-  const partTypeByPartId = new Map<string, string>();
-  const toolCallSentByCallId = new Set<string>();
-  const toolCallHadMeaningfulInputByCallId = new Map<string, boolean>();
-  const bashCommandHintByCallId = new Map<string, string>();
-  const toolResultSentByCallId = new Set<string>();
+	  const partTypeByPartKey = new Map<string, string>();
+	  const toolCallSentByCallId = new Set<string>();
+	  const toolResultSentByCallId = new Set<string>();
 
   const ensureClient = async (): Promise<OpenCodeServerRuntimeClient> => {
     if (client) return client;
@@ -390,19 +403,25 @@ export function createOpenCodeServerRuntime(params: {
   };
 
   const resetTurnEventState = () => {
+    flushAllStreamBuffers();
     turnStreamKey = null;
     turnPromptActive = false;
     turnActivitySeen = false;
     turnUserMessageId = null;
+    turnPrePromptMessageIdsAll = null;
     turnPreexistingMessageIds = null;
+    turnStreamedAssistantMessageIds.clear();
+    turnBackfilledAssistantMessageIds.clear();
+    turnAssistantBackfillAttempts = 0;
+    turnAssistantBackfillFirstAttemptAtMs = null;
     idleSignalSeen = false;
     resolveOnIdleInFlight = false;
+    sidechainIdByRemoteSessionId.clear();
+    sidechainStreamSeenBySidechainId.clear();
     accumulatedTextByPartKey.clear();
-    partTypeByPartId.clear();
-    toolCallSentByCallId.clear();
-    toolCallHadMeaningfulInputByCallId.clear();
-    bashCommandHintByCallId.clear();
-    toolResultSentByCallId.clear();
+	    partTypeByPartKey.clear();
+	    toolCallSentByCallId.clear();
+	    toolResultSentByCallId.clear();
     if (turnControlAbort) {
       try {
         turnControlAbort.abort();
@@ -453,6 +472,35 @@ export function createOpenCodeServerRuntime(params: {
     return Math.max(25, Math.min(30_000, configured));
   })();
 
+  const streamDeltaFlushIntervalMs = (() => {
+    const raw = Number.parseInt(String(process.env.HAPPIER_OPENCODE_SERVER_STREAM_DELTA_FLUSH_MS ?? ''), 10);
+    const configured = Number.isFinite(raw) && raw >= 0 ? Math.trunc(raw) : 50;
+    return Math.max(0, Math.min(2_000, configured));
+  })();
+
+  const streamDeltaMaxChars = (() => {
+    const raw = Number.parseInt(String(process.env.HAPPIER_OPENCODE_SERVER_STREAM_DELTA_MAX_CHARS ?? ''), 10);
+    const configured = Number.isFinite(raw) && raw > 0 ? Math.trunc(raw) : 8_000;
+    return Math.max(256, Math.min(200_000, configured));
+  })();
+
+  const controlPlaneMaxConsecutiveFailures = (() => {
+    const raw = Number.parseInt(String(process.env.HAPPIER_OPENCODE_SERVER_CONTROL_POLL_MAX_CONSECUTIVE_FAILURES ?? ''), 10);
+    const configured = Number.isFinite(raw) && raw > 0 ? Math.trunc(raw) : 3;
+    return Math.max(1, Math.min(100, configured));
+  })();
+
+  const controlPlaneFailureGraceMs = (() => {
+    const raw = Number.parseInt(String(process.env.HAPPIER_OPENCODE_SERVER_CONTROL_POLL_FAILURE_GRACE_MS ?? ''), 10);
+    const configured = Number.isFinite(raw) && raw > 0 ? Math.trunc(raw) : 10_000;
+    return Math.max(250, Math.min(300_000, configured));
+  })();
+
+  const controlPlaneDisconnectMessage = (() => {
+    const raw = normalizeEnvVar(process.env.HAPPIER_OPENCODE_SERVER_CONTROL_POLL_FAILURE_MESSAGE);
+    return raw || 'OpenCode server connection lost. Please restart OpenCode and try again.';
+  })();
+
   const statusPollEnabled = (() => {
     const raw = normalizeEnvVar(process.env.HAPPIER_OPENCODE_SERVER_STATUS_POLL_ENABLED);
     if (!raw) return true;
@@ -460,11 +508,58 @@ export function createOpenCodeServerRuntime(params: {
     return true;
   })();
 
+  const assistantBackfillMaxAttempts = (() => {
+    const raw = Number.parseInt(String(process.env.HAPPIER_OPENCODE_SERVER_ASSISTANT_BACKFILL_MAX_ATTEMPTS ?? ''), 10);
+    const configured = Number.isFinite(raw) && raw > 0 ? Math.trunc(raw) : 60;
+    return Math.max(1, Math.min(100, configured));
+  })();
+
+  const assistantBackfillGraceMs = (() => {
+    const raw = Number.parseInt(String(process.env.HAPPIER_OPENCODE_SERVER_ASSISTANT_BACKFILL_GRACE_MS ?? ''), 10);
+    const configured = Number.isFinite(raw) && raw > 0 ? Math.trunc(raw) : 60_000;
+    return Math.max(100, Math.min(300_000, configured));
+  })();
+
+  let controlPlaneFailureCount = 0;
+  let controlPlaneFirstFailureAtMs: number | null = null;
+
+  const resetControlPlaneFailures = () => {
+    controlPlaneFailureCount = 0;
+    controlPlaneFirstFailureAtMs = null;
+  };
+
+  const maybeAbortTurnOnControlPlaneFailure = (error: unknown) => {
+    if (!turnDeferred) return;
+    if (!turnPromptActive) return;
+
+    const nowMs = Date.now();
+    if (controlPlaneFirstFailureAtMs == null) {
+      controlPlaneFirstFailureAtMs = nowMs;
+      controlPlaneFailureCount = 0;
+    }
+    controlPlaneFailureCount += 1;
+
+    const exceededConsecutive = controlPlaneFailureCount >= controlPlaneMaxConsecutiveFailures;
+    const exceededGrace = Number.isFinite(nowMs) && controlPlaneFirstFailureAtMs != null
+      ? nowMs - controlPlaneFirstFailureAtMs >= controlPlaneFailureGraceMs
+      : false;
+
+    if (!exceededConsecutive && !exceededGrace) return;
+
+    setThinking(false);
+    const detail = extractOpenCodeErrorText(error);
+    const message = detail ? `${controlPlaneDisconnectMessage}\n\nDetails: ${detail}` : controlPlaneDisconnectMessage;
+    params.session.sendAgentMessage(provider, { type: 'message', message });
+    params.session.sendAgentMessage(provider, { type: 'turn_aborted', id: randomUUID() });
+    rejectTurn(error ?? new Error('OpenCode control-plane polling failed'));
+  };
+
   const shouldTreatMessageIdAsTurnActivity = (messageID: string): boolean => {
     if (!turnPromptActive) return false;
     if (!messageID) return false;
     if (turnUserMessageId && messageID === turnUserMessageId) return false;
     if (turnPreexistingMessageIds && turnPreexistingMessageIds.has(messageID)) return false;
+    if (turnBackfilledAssistantMessageIds.has(messageID)) return false;
     return true;
   };
 
@@ -475,7 +570,7 @@ export function createOpenCodeServerRuntime(params: {
     return raw
       .map((item) => parsePermissionRequest(item))
       .filter((item): item is OpenCodePermissionRequest => Boolean(item))
-      .filter((item) => item.sessionID === sessionId);
+      .filter((item) => item.sessionID === sessionId || sidechainIdByRemoteSessionId.has(item.sessionID));
   };
 
   const listPendingQuestionRequests = async (): Promise<OpenCodeQuestionRequest[]> => {
@@ -485,7 +580,7 @@ export function createOpenCodeServerRuntime(params: {
     return raw
       .map((item) => parseQuestionRequest(item))
       .filter((item): item is OpenCodeQuestionRequest => Boolean(item))
-      .filter((item) => item.sessionID === sessionId);
+      .filter((item) => item.sessionID === sessionId || sidechainIdByRemoteSessionId.has(item.sessionID));
   };
 
   const pollIdleStatusFromControlPlaneBestEffort = async (): Promise<void> => {
@@ -494,7 +589,14 @@ export function createOpenCodeServerRuntime(params: {
     if (!turnPromptActive) return;
     if (idleSignalSeen) return;
     const c = await ensureClient();
-    const statuses = await c.sessionStatusList().catch(() => ({}));
+    let statuses: unknown;
+    try {
+      statuses = await c.sessionStatusList();
+      resetControlPlaneFailures();
+    } catch (error) {
+      maybeAbortTurnOnControlPlaneFailure(error);
+      return;
+    }
     const rec = statuses && typeof statuses === 'object' && !Array.isArray(statuses) ? (statuses as any)[sessionId] : null;
     const statusType = normalizeString(asRecord(rec)?.type);
     if (statusType !== 'idle') return;
@@ -535,6 +637,15 @@ export function createOpenCodeServerRuntime(params: {
     return turnStreamKey;
   };
 
+  const sidechainIdByRemoteSessionId = new Map<string, string>();
+  const sidechainStreamSeenBySidechainId = new Set<string>();
+
+  const resolveSidechainIdForRemoteSession = (remoteSessionId: string): string | null => {
+    if (!remoteSessionId) return null;
+    if (remoteSessionId === sessionId) return null;
+    return sidechainIdByRemoteSessionId.get(remoteSessionId) ?? null;
+  };
+
   const resolveOrCreateUserMessageId = async (localIdRaw: string | null | undefined): Promise<string | null> => {
     const localId = typeof localIdRaw === 'string' ? localIdRaw.trim() : '';
     if (!localId) return null;
@@ -571,79 +682,353 @@ export function createOpenCodeServerRuntime(params: {
     return resolveOpenCodeUserMessageIdFromMetadata(params.session.getMetadataSnapshot(), localId) ?? created;
   };
 
-  const getStreamKeyForMessage = (messageID: string): string => {
+  const backfillVendorAssignedUserMessageIdBestEffort = async (paramsForBackfill: {
+    localIdRaw: string | null | undefined;
+    promptText: string;
+    prePromptMessageIds: ReadonlySet<string> | null;
+  }): Promise<void> => {
+    const localId = typeof paramsForBackfill.localIdRaw === 'string' ? paramsForBackfill.localIdRaw.trim() : '';
+    if (!localId) return;
+    if (!sessionId) return;
+    if (resolveOpenCodeUserMessageIdFromMetadata(params.session.getMetadataSnapshot(), localId)) return;
+
+    let raw: unknown;
+    try {
+      const c = await ensureClient();
+      raw = await c.sessionMessagesList({ sessionId });
+    } catch {
+      return;
+    }
+
+    const items = extractOpenCodeTextHistoryItems(Array.isArray(raw) ? raw : []);
+    if (items.length === 0) return;
+
+    const unseenUserItems = items.filter((item) => {
+      if (item.role !== 'user') return false;
+      return !paramsForBackfill.prePromptMessageIds || !paramsForBackfill.prePromptMessageIds.has(item.messageId);
+    });
+    if (unseenUserItems.length === 0) return;
+
+    const normalizedPromptText = paramsForBackfill.promptText.trim();
+    let candidateMessageId: string | null = null;
+    for (let index = unseenUserItems.length - 1; index >= 0; index -= 1) {
+      const item = unseenUserItems[index]!;
+      if (item.text.trim() === normalizedPromptText) {
+        candidateMessageId = item.messageId;
+        break;
+      }
+    }
+    if (!candidateMessageId) {
+      candidateMessageId = unseenUserItems[unseenUserItems.length - 1]!.messageId;
+    }
+    if (!candidateMessageId) return;
+
+    try {
+      await params.session.updateMetadata((prev) => {
+        const base = prev && typeof prev === 'object' ? (prev as any as Record<string, unknown>) : {};
+        return upsertOpenCodeUserMessageIdInMetadata({ metadata: base, localId, messageId: candidateMessageId! }) as any;
+      });
+    } catch {
+      // Best-effort: do not block prompt completion on metadata persistence.
+    }
+  };
+
+  const getStreamKeyForMessage = (remoteSessionId: string, messageID: string): string => {
     const normalized = typeof messageID === 'string' ? messageID.trim() : '';
     if (!normalized) return ensureTurnStreamKey();
-    return `${ensureTurnStreamKey()}:msg:${normalized}`;
+    const sessionPart = remoteSessionId ? `:ses:${remoteSessionId}` : '';
+    return `${ensureTurnStreamKey()}${sessionPart}:msg:${normalized}`;
   };
 
-  const getThinkingStreamKeyForMessage = (messageID: string): string => {
-    return `${getStreamKeyForMessage(messageID)}:thinking`;
+  const getThinkingStreamKeyForMessage = (remoteSessionId: string, messageID: string): string => {
+    return `${getStreamKeyForMessage(remoteSessionId, messageID)}:thinking`;
   };
 
-  const sendDelta = (delta: string, messageID: string) => {
-    if (shouldTreatMessageIdAsTurnActivity(messageID)) {
+  const splitBackfilledTextIntoChunks = (text: string): string[] => {
+    if (!text) return [];
+    if (text.length === 1) return [text];
+
+    const maxChunkChars = Math.max(256, Math.min(32_000, Math.floor(streamDeltaMaxChars / 2)));
+    if (text.length > maxChunkChars) {
+      const chunks: string[] = [];
+      for (let idx = 0; idx < text.length; idx += maxChunkChars) {
+        chunks.push(text.slice(idx, idx + maxChunkChars));
+      }
+      if (chunks.length >= 2) return chunks;
+      if (chunks.length === 1 && chunks[0]!.length > 1) {
+        const mid = Math.floor(chunks[0]!.length / 2);
+        return [chunks[0]!.slice(0, mid), chunks[0]!.slice(mid)];
+      }
+      return chunks;
+    }
+
+    const mid = Math.floor(text.length / 2);
+    const windowSize = 256;
+    const windowStart = Math.max(0, mid - windowSize);
+    const windowEnd = Math.min(text.length - 1, mid + windowSize);
+    const window = text.slice(windowStart, windowEnd);
+    const newlineIndex = window.lastIndexOf('\n');
+    const splitIndex = newlineIndex >= 0 ? windowStart + newlineIndex + 1 : mid;
+    const first = text.slice(0, splitIndex);
+    const second = text.slice(splitIndex);
+    if (!second) return [text.slice(0, mid), text.slice(mid)];
+    return [first, second];
+  };
+
+  const backfillAssistantTextFromControlPlaneBestEffort = async (): Promise<void> => {
+    if (!turnDeferred) return;
+    if (!turnPromptActive) return;
+    if (!sessionId) return;
+    if (turnStreamedAssistantMessageIds.size > 0 && !idleSignalSeen) return;
+
+    const nowMs = Date.now();
+    if (turnAssistantBackfillFirstAttemptAtMs == null) {
+      turnAssistantBackfillFirstAttemptAtMs = nowMs;
+    }
+    if (turnAssistantBackfillAttempts >= assistantBackfillMaxAttempts) return;
+    if (nowMs - turnAssistantBackfillFirstAttemptAtMs > assistantBackfillGraceMs) return;
+    turnAssistantBackfillAttempts += 1;
+
+    const c = await ensureClient();
+    let raw: unknown;
+    try {
+      raw = await c.sessionMessagesList({ sessionId });
+    } catch (error) {
+      maybeAbortTurnOnControlPlaneFailure(error);
+      return;
+    }
+
+    const items = extractOpenCodeTextHistoryItems(Array.isArray(raw) ? raw : []);
+    if (items.length === 0) return;
+
+    const prePrompt = turnPrePromptMessageIdsAll;
+    const unseenAssistants = items.filter((item) => {
+      if (item.role !== 'assistant') return false;
+      if (turnBackfilledAssistantMessageIds.has(item.messageId)) return false;
+      if (turnStreamedAssistantMessageIds.has(item.messageId)) return false;
+      if (prePrompt && prePrompt.has(item.messageId)) return false;
+      if (turnPreexistingMessageIds && turnPreexistingMessageIds.has(item.messageId)) return false;
+      return true;
+    });
+    if (unseenAssistants.length === 0) return;
+
+    for (const item of unseenAssistants) {
+      const messageID = item.messageId;
+      if (!messageID) continue;
+      const text = item.text ?? '';
+      if (!text) continue;
+      const streamKey = getStreamKeyForMessage(sessionId, messageID);
+      const meta = { happierStreamKey: streamKey, opencodeMessageId: messageID, opencodeRemoteSessionId: sessionId } satisfies Record<
+        string,
+        unknown
+      >;
+
+      const chunks = splitBackfilledTextIntoChunks(text);
+      if (chunks.length === 0) continue;
+
+      turnBackfilledAssistantMessageIds.add(messageID);
+      turnStreamedAssistantMessageIds.add(messageID);
+      for (const chunk of chunks) {
+        if (!chunk) continue;
+        params.session.sendAgentMessage(provider, { type: 'message', message: chunk }, { meta });
+      }
       turnActivitySeen = true;
     }
-    const streamKey = getStreamKeyForMessage(messageID);
-    params.session.sendAgentMessage(
-      provider,
-      { type: 'message', message: delta },
-      { meta: { happierStreamKey: streamKey, opencodeMessageId: messageID } },
-    );
   };
 
-  const sendThinkingDelta = (delta: string, messageID: string) => {
-    if (!delta) return;
-    if (!shouldTreatMessageIdAsTurnActivity(messageID)) return;
-    turnActivitySeen = true;
-    const streamKey = getThinkingStreamKeyForMessage(messageID);
-    params.session.sendAgentMessage(
-      provider,
-      { type: 'thinking', text: delta },
-      { meta: { happierStreamKey: streamKey, opencodeMessageId: messageID } },
-    );
+  const buildSidechainMeta = (
+    meta: Record<string, unknown>,
+    remoteSessionId: string,
+    sidechainId: string | null,
+  ): Record<string, unknown> => {
+    if (!sidechainId) return meta;
+    const streamKey = typeof (meta as any).happierStreamKey === 'string' ? String((meta as any).happierStreamKey) : '';
+    return {
+      ...meta,
+      importedFrom: 'acp-sidechain',
+      remoteSessionId,
+      sidechainId,
+      ...(streamKey ? { happierSidechainStreamKey: streamKey } : null),
+    };
   };
 
-  const sendToolFromPart = (part: ReturnType<typeof parseOpenCodeToolPart>) => {
-    if (!part) return;
-    if (part.sessionID !== sessionId) return;
-    if (!shouldTreatMessageIdAsTurnActivity(part.messageID)) return;
-    turnActivitySeen = true;
+	  type StreamBufferEntry = {
+	    buffer: string;
+	    flushTimer: ReturnType<typeof setTimeout> | null;
+	    type: 'message' | 'thinking';
+	    sidechainId: string | null;
+	    meta: Record<string, unknown>;
+	  };
 
-    const status = normalizeString(part.state.status);
-    const callId = part.callID;
-    const messageID = part.messageID;
-    const toolRaw = normalizeString(part.tool).trim();
-    const toolLower = toolRaw.toLowerCase();
-    // OpenCode server surfaces search operations via the tool `grep`, but Happier's ACP dialect (and
-    // provider contract tests) treat this as the provider raw tool `search` (canonical CodeSearch/Grep).
-    // Alias here so downstream tool normalization attaches `_happier.rawToolName="search"` consistently.
-    const toolNameForAcp = toolLower === 'grep' ? 'search' : toolRaw;
-    const meta = { opencodeMessageId: messageID };
-    const rawInput = (part.state as any).input ?? {};
-    const hasMeaningfulInput = hasAnyMeaningfulInputFields(rawInput);
-    const isBashLike = part.tool === 'bash' || part.tool === 'Bash' || part.tool === 'execute' || part.tool === 'Terminal';
-    const commandHint = isBashLike ? extractBashCommandHint(rawInput) : '';
-    const prevHadMeaningfulInput = toolCallHadMeaningfulInputByCallId.get(callId) ?? false;
-    const prevCommandHint = bashCommandHintByCallId.get(callId) ?? '';
-    const shouldEmitToolCallUpdate =
-      toolCallSentByCallId.has(callId) &&
-      ((!prevHadMeaningfulInput && hasMeaningfulInput) || (!prevCommandHint && Boolean(commandHint)));
+  const streamBuffersByKey = new Map<string, StreamBufferEntry>();
 
-    if (!toolCallSentByCallId.has(callId) || shouldEmitToolCallUpdate) {
-      toolCallSentByCallId.add(callId);
-      if (hasMeaningfulInput) toolCallHadMeaningfulInputByCallId.set(callId, true);
-      if (commandHint) bashCommandHintByCallId.set(callId, commandHint);
+	  const flushStreamBufferKey = (streamKey: string) => {
+	    const entry = streamBuffersByKey.get(streamKey);
+	    if (!entry) return;
+	    if (entry.flushTimer) {
+	      clearTimeout(entry.flushTimer);
+	      entry.flushTimer = null;
+	    }
+	    streamBuffersByKey.delete(streamKey);
+	    const buffered = entry.buffer;
+	    if (!buffered) return;
+
+    if (entry.type === 'thinking') {
       params.session.sendAgentMessage(
         provider,
-        { type: 'tool-call', callId, name: toolNameForAcp, input: rawInput, id: randomUUID() },
-        { meta },
+        { type: 'thinking', text: buffered, ...(entry.sidechainId ? { sidechainId: entry.sidechainId } : null) },
+        { meta: entry.meta },
       );
+      return;
     }
 
-    if ((status === 'completed' || status === 'error') && !toolResultSentByCallId.has(callId)) {
-      toolResultSentByCallId.add(callId);
+    params.session.sendAgentMessage(
+      provider,
+      { type: 'message', message: buffered, ...(entry.sidechainId ? { sidechainId: entry.sidechainId } : null) },
+      { meta: entry.meta },
+    );
+  };
+
+	  const flushAllStreamBuffers = () => {
+	    for (const key of Array.from(streamBuffersByKey.keys())) {
+	      flushStreamBufferKey(key);
+	    }
+	  };
+
+	  const sendDelta = (delta: string, remoteSessionId: string, messageID: string, sidechainId: string | null) => {
+    turnActivitySeen = true;
+    if (sidechainId) sidechainStreamSeenBySidechainId.add(sidechainId);
+    if (!sidechainId && sessionId && remoteSessionId === sessionId) {
+      turnStreamedAssistantMessageIds.add(messageID);
+    }
+    const streamKey = getStreamKeyForMessage(remoteSessionId, messageID);
+    const meta = buildSidechainMeta(
+      { happierStreamKey: streamKey, opencodeMessageId: messageID, opencodeRemoteSessionId: remoteSessionId },
+      remoteSessionId,
+      sidechainId,
+    );
+
+    if (streamDeltaFlushIntervalMs === 0) {
+      params.session.sendAgentMessage(
+        provider,
+        { type: 'message', message: delta, ...(sidechainId ? { sidechainId } : null) },
+        { meta },
+      );
+      return;
+    }
+
+	    const existing = streamBuffersByKey.get(streamKey);
+	    if (existing) {
+	      existing.type = 'message';
+	      existing.sidechainId = sidechainId;
+	      existing.meta = meta;
+	      existing.buffer = existing.buffer + delta;
+	      if (existing.buffer.length >= streamDeltaMaxChars) flushStreamBufferKey(streamKey);
+	      return;
+	    }
+
+    const flushTimer = setTimeout(() => flushStreamBufferKey(streamKey), streamDeltaFlushIntervalMs);
+    flushTimer.unref?.();
+	    streamBuffersByKey.set(streamKey, {
+	      buffer: delta,
+	      flushTimer,
+	      type: 'message',
+	      sidechainId,
+	      meta,
+	    });
+    if (delta.length >= streamDeltaMaxChars) flushStreamBufferKey(streamKey);
+  };
+
+	  const sendThinkingDelta = (delta: string, remoteSessionId: string, messageID: string, sidechainId: string | null) => {
+    if (!delta) return;
+    turnActivitySeen = true;
+    if (sidechainId) sidechainStreamSeenBySidechainId.add(sidechainId);
+    const streamKey = getThinkingStreamKeyForMessage(remoteSessionId, messageID);
+    const meta = buildSidechainMeta(
+      { happierStreamKey: streamKey, opencodeMessageId: messageID, opencodeRemoteSessionId: remoteSessionId },
+      remoteSessionId,
+      sidechainId,
+    );
+
+    if (streamDeltaFlushIntervalMs === 0) {
+      params.session.sendAgentMessage(
+        provider,
+        { type: 'thinking', text: delta, ...(sidechainId ? { sidechainId } : null) },
+        { meta },
+      );
+      return;
+    }
+
+	    const existing = streamBuffersByKey.get(streamKey);
+	    if (existing) {
+	      existing.type = 'thinking';
+	      existing.sidechainId = sidechainId;
+	      existing.meta = meta;
+	      existing.buffer = existing.buffer + delta;
+	      if (existing.buffer.length >= streamDeltaMaxChars) flushStreamBufferKey(streamKey);
+	      return;
+	    }
+
+    const flushTimer = setTimeout(() => flushStreamBufferKey(streamKey), streamDeltaFlushIntervalMs);
+    flushTimer.unref?.();
+	    streamBuffersByKey.set(streamKey, {
+	      buffer: delta,
+	      flushTimer,
+	      type: 'thinking',
+	      sidechainId,
+	      meta,
+	    });
+    if (delta.length >= streamDeltaMaxChars) flushStreamBufferKey(streamKey);
+  };
+
+  const sendToolFromPart = (part: ReturnType<typeof parseOpenCodeToolPart>, sidechainId: string | null) => {
+    if (!part) return;
+    turnActivitySeen = true;
+    if (sidechainId) sidechainStreamSeenBySidechainId.add(sidechainId);
+
+    const status = normalizeString(part.state.status);
+	    const callId = part.callID;
+	    const callKey = `${part.sessionID}:${callId}`;
+	    const messageID = part.messageID;
+	    const toolRaw = normalizeString(part.tool).trim();
+	    const toolLower = toolRaw.toLowerCase();
+	    const isChangeTitleTool =
+	      toolLower === preferredOpenCodeChangeTitleToolName.toLowerCase() || isChangeTitleToolNameAlias(toolLower);
+	    if (isChangeTitleTool) return;
+	    const toolNameForAcp = toolLower === 'grep' ? 'search' : toolRaw;
+	    const meta = buildSidechainMeta(
+	      { opencodeMessageId: messageID, opencodeRemoteSessionId: part.sessionID },
+	      part.sessionID,
+	      sidechainId,
+	    );
+	    const rawInput = (part.state as any).input ?? {};
+	    const hasMeaningfulInput = hasAnyMeaningfulInputFields(rawInput);
+	    const isBashLike = part.tool === 'bash' || part.tool === 'Bash' || part.tool === 'execute' || part.tool === 'Terminal';
+	    const commandHint = isBashLike ? extractBashCommandHint(rawInput) : '';
+	    const shouldEmitToolCallNow =
+	      !toolCallSentByCallId.has(callKey) &&
+	      (hasMeaningfulInput || Boolean(commandHint) || status === 'completed' || status === 'error');
+
+		    if (shouldEmitToolCallNow) {
+		      toolCallSentByCallId.add(callKey);
+		      params.session.sendAgentMessage(
+		        provider,
+		        { type: 'tool-call', callId, name: toolNameForAcp, input: rawInput, id: randomUUID(), ...(sidechainId ? { sidechainId } : null) },
+		        { meta },
+		      );
+		    }
+
+    if (toolLower === 'task') {
+      const metadata = asRecord(part.state.metadata) ?? {};
+      const outputText = normalizeString(part.state.output);
+      const remoteSessionId = extractOpenCodeTaskChildSessionId({ output: outputText, metadata });
+      if (remoteSessionId && remoteSessionId !== sessionId) {
+        sidechainIdByRemoteSessionId.set(remoteSessionId, callId);
+      }
+    }
+
+    if ((status === 'completed' || status === 'error') && !toolResultSentByCallId.has(callKey)) {
+      toolResultSentByCallId.add(callKey);
       if (status === 'completed') {
         const output = {
           output: normalizeString(part.state.output),
@@ -651,12 +1036,17 @@ export function createOpenCodeServerRuntime(params: {
           metadata: asRecord(part.state.metadata) ?? {},
           attachments: Array.isArray((part.state as any).attachments) ? (part.state as any).attachments : undefined,
         };
-        params.session.sendAgentMessage(provider, { type: 'tool-result', callId, output, id: randomUUID() }, { meta });
+        params.session.sendAgentMessage(
+          provider,
+          { type: 'tool-result', callId, output, id: randomUUID(), ...(sidechainId ? { sidechainId } : null) },
+          { meta },
+        );
 
         if (toolLower === 'task') {
           const remoteSessionId = extractOpenCodeTaskChildSessionId({ output: output.output, metadata: output.metadata });
           if (remoteSessionId) {
             void (async () => {
+              if (sidechainStreamSeenBySidechainId.has(callId)) return;
               const c = await ensureClient();
               const imported = await importOpenCodeTaskSidechainBestEffort({
                 client: c,
@@ -685,13 +1075,17 @@ export function createOpenCodeServerRuntime(params: {
           error: normalizeString(part.state.error),
           ...(metadata && Object.keys(metadata).length > 0 ? { metadata } : null),
         };
-        params.session.sendAgentMessage(provider, { type: 'tool-result', callId, output, id: randomUUID(), isError: true }, { meta });
+        params.session.sendAgentMessage(
+          provider,
+          { type: 'tool-result', callId, output, id: randomUUID(), isError: true, ...(sidechainId ? { sidechainId } : null) },
+          { meta },
+        );
       }
     }
   };
 
   const handleQuestionAsked = async (req: OpenCodeQuestionRequest) => {
-    if (req.sessionID !== sessionId) return;
+    if (req.sessionID !== sessionId && !sidechainIdByRemoteSessionId.has(req.sessionID)) return;
 
     setThinking(false);
     idleSignalSeen = false;
@@ -764,7 +1158,7 @@ export function createOpenCodeServerRuntime(params: {
   };
 
   const handlePermissionAsked = async (req: OpenCodePermissionRequest) => {
-    if (req.sessionID !== sessionId) return;
+    if (req.sessionID !== sessionId && !sidechainIdByRemoteSessionId.has(req.sessionID)) return;
     setThinking(false);
     idleSignalSeen = false;
     if (turnPromptActive) turnActivitySeen = true;
@@ -812,7 +1206,7 @@ export function createOpenCodeServerRuntime(params: {
   };
 
   const handleQuestionAskedBestEffort = (req: OpenCodeQuestionRequest) => {
-    if (req.sessionID !== sessionId) return;
+    if (req.sessionID !== sessionId && !sidechainIdByRemoteSessionId.has(req.sessionID)) return;
     const handled = ensureHandledQuestionIds();
     const inFlight = ensureInFlightQuestionIds();
     if (handled.has(req.id) || inFlight.has(req.id)) return;
@@ -830,7 +1224,7 @@ export function createOpenCodeServerRuntime(params: {
   };
 
   const handlePermissionAskedBestEffort = (req: OpenCodePermissionRequest) => {
-    if (req.sessionID !== sessionId) return;
+    if (req.sessionID !== sessionId && !sidechainIdByRemoteSessionId.has(req.sessionID)) return;
     const handled = ensureHandledPermissionIds();
     const inFlight = ensureInFlightPermissionIds();
     if (handled.has(req.id) || inFlight.has(req.id)) return;
@@ -852,17 +1246,19 @@ export function createOpenCodeServerRuntime(params: {
     const type = normalizeString(payload.type);
     const props = payload.properties;
 
-    if (type === 'message.part.updated') {
+    if (type === 'message.part.updated' || type === 'message.part.created') {
       const part = asRecord(asRecord(props)?.part);
       if (!part) return;
       const sessionID = normalizeString(part.sessionID);
-      if (!sessionID || sessionID !== sessionId) return;
+      if (!sessionID) return;
+      const sidechainId = sessionID === sessionId ? null : resolveSidechainIdForRemoteSession(sessionID);
+      if (sessionID !== sessionId && !sidechainId) return;
       const partID = normalizeString(part.id);
       const partType = normalizeString(part.type);
-      if (partID && partType) partTypeByPartId.set(partID, partType);
+      if (partID && partType) partTypeByPartKey.set(`${sessionID}:${partID}`, partType);
 
       const maybeTool = parseOpenCodeToolPart(part);
-      if (maybeTool) sendToolFromPart(maybeTool);
+      if (maybeTool) sendToolFromPart(maybeTool, sidechainId);
       return;
     }
 
@@ -870,25 +1266,30 @@ export function createOpenCodeServerRuntime(params: {
       const rec = asRecord(props);
       if (!rec) return;
       const sessionID = normalizeString(rec.sessionID);
-      if (!sessionID || sessionID !== sessionId) return;
+      if (!sessionID) return;
+      const sidechainId = sessionID === sessionId ? null : resolveSidechainIdForRemoteSession(sessionID);
+      if (sessionID !== sessionId && !sidechainId) return;
       const messageID = normalizeString(rec.messageID);
       const partID = normalizeString(rec.partID);
       const delta = normalizeString(rec.delta);
       if (!messageID || !partID || !delta) return;
-      if (!shouldTreatMessageIdAsTurnActivity(messageID)) return;
-      const partType = partTypeByPartId.get(partID) ?? '';
-      const accumulationKey = `${messageID}:${partType === 'reasoning' ? 'reasoning' : 'text'}`;
-      const accumulated = accumulatedTextByPartKey.get(accumulationKey) ?? '';
-      const deltaOut = delta.startsWith(accumulated) ? delta.slice(accumulated.length) : delta;
-      accumulatedTextByPartKey.set(
-        accumulationKey,
-        delta.startsWith(accumulated) ? delta : accumulated + delta,
-      );
-      if (!deltaOut) return;
-      if (partType === 'reasoning') {
-        sendThinkingDelta(deltaOut, messageID);
+      if (sessionID === sessionId) {
+        if (!shouldTreatMessageIdAsTurnActivity(messageID)) return;
       } else {
-        sendDelta(deltaOut, messageID);
+        if (!turnPromptActive) return;
+      }
+      const partType = partTypeByPartKey.get(`${sessionID}:${partID}`) ?? '';
+      const accumulationKey = `${sessionID}:${messageID}:${partType === 'reasoning' ? 'reasoning' : 'text'}`;
+      const accumulated = accumulatedTextByPartKey.get(accumulationKey) ?? '';
+      const nextAccumulated = delta.startsWith(accumulated) ? delta : accumulated + delta;
+      accumulatedTextByPartKey.set(accumulationKey, nextAccumulated);
+
+	      const deltaOut = delta.startsWith(accumulated) ? delta.slice(accumulated.length) : delta;
+	      if (!deltaOut) return;
+      if (partType === 'reasoning') {
+        sendThinkingDelta(deltaOut, sessionID, messageID, sidechainId);
+      } else {
+        sendDelta(deltaOut, sessionID, messageID, sidechainId);
       }
       return;
     }
@@ -962,6 +1363,43 @@ export function createOpenCodeServerRuntime(params: {
     resetTurnEventState();
   };
 
+  const ensureMcpServersForCurrentDirectoryBestEffort = async (): Promise<void> => {
+    if (ensuredMcpServersForDirectory) return;
+    if (!params.mcpServers || Object.keys(params.mcpServers).length === 0) return;
+    const c = await ensureClient();
+    try {
+      for (const [name, cfg] of Object.entries(params.mcpServers)) {
+        const serverName = typeof name === 'string' ? name.trim() : '';
+        if (!serverName) continue;
+        const cmd = typeof cfg?.command === 'string' ? cfg.command.trim() : '';
+        if (!cmd) continue;
+        const args = Array.isArray(cfg.args) ? cfg.args.filter((v) => typeof v === 'string' && v.trim().length > 0).map((v) => v.trim()) : [];
+        const env = cfg.env && typeof cfg.env === 'object' && !Array.isArray(cfg.env)
+          ? Object.fromEntries(
+              Object.entries(cfg.env).filter(([k, v]) => typeof k === 'string' && k.length > 0 && typeof v === 'string'),
+            )
+          : undefined;
+
+        await c.mcpAdd({
+          name: serverName,
+          config: {
+            type: 'local',
+            enabled: true,
+            command: [cmd, ...args],
+            ...(env && Object.keys(env).length > 0 ? { environment: env } : {}),
+          },
+        });
+        ensuredMcpServerNames.add(serverName);
+      }
+      ensuredMcpServersForDirectory = true;
+    } catch (error) {
+      logger.debug('[OpenCodeServer] Failed to register MCP servers (non-fatal)', error);
+    }
+  };
+
+  const preferredOpenCodeChangeTitleToolName = resolveOpenCodeChangeTitleToolNameForMcpClient('happier');
+  const changeTitleInstruction = buildChangeTitleInstruction({ preferredToolName: preferredOpenCodeChangeTitleToolName });
+
   return {
     getSessionId: () => sessionId,
     supportsInFlightSteer: () => false,
@@ -977,13 +1415,18 @@ export function createOpenCodeServerRuntime(params: {
     },
 
     async startOrLoad(opts: { resumeId?: string | null } = {}): Promise<string> {
+      didSendChangeTitleInstructionForSession = false;
+      ensuredMcpServersForDirectory = false;
       await attachSubscriptionIfNeeded();
       const c = await ensureClient();
+
+      await ensureMcpServersForCurrentDirectoryBestEffort();
 
       const resumeId = typeof opts.resumeId === 'string' ? opts.resumeId.trim() : '';
       if (resumeId) {
         const existing = await c.sessionGet({ sessionId: resumeId });
         sessionId = existing.id ?? resumeId;
+        omitCustomMessageIdOnFirstPromptAfterResume = true;
         const sessionDirectory = normalizeString((existing as any)?.directory).trim();
         if (sessionDirectory) {
           try {
@@ -991,6 +1434,8 @@ export function createOpenCodeServerRuntime(params: {
           } catch {
             // non-fatal
           }
+          ensuredMcpServersForDirectory = false;
+          await ensureMcpServersForCurrentDirectoryBestEffort();
         }
         publishDynamicSessionOptionsBestEffort();
 
@@ -1036,6 +1481,7 @@ export function createOpenCodeServerRuntime(params: {
 
       const created: OpenCodeSession = await c.sessionCreate({ permission: [...sessionPermissionRuleset] as unknown[] });
       sessionId = created.id;
+      omitCustomMessageIdOnFirstPromptAfterResume = false;
       const createdDirectory = normalizeString((created as any)?.directory).trim();
       if (createdDirectory) {
         try {
@@ -1043,6 +1489,8 @@ export function createOpenCodeServerRuntime(params: {
         } catch {
           // non-fatal
         }
+        ensuredMcpServersForDirectory = false;
+        await ensureMcpServersForCurrentDirectoryBestEffort();
       }
       publishDynamicSessionOptionsBestEffort();
       return sessionId!;
@@ -1068,6 +1516,11 @@ export function createOpenCodeServerRuntime(params: {
         if (alreadyMentionsChangeTitle) return raw;
         return `${raw}\n\n${changeTitleInstruction}`;
       })();
+
+      const shouldOmitCustomMessageId = omitCustomMessageIdOnFirstPromptAfterResume === true;
+      const messageID = shouldOmitCustomMessageId
+        ? undefined
+        : (await resolveOrCreateUserMessageId(paramsWithMeta.localId ?? null)) ?? undefined;
       const agent = selectedAgent ?? undefined;
       const model = selectedModel ?? undefined;
       const config = Object.keys(configOverrides).length > 0 ? { ...configOverrides } : undefined;
@@ -1077,6 +1530,7 @@ export function createOpenCodeServerRuntime(params: {
       turnActivitySeen = false;
       idleSignalSeen = false;
       turnUserMessageId = messageID ?? null;
+      turnPrePromptMessageIdsAll = null;
       turnPreexistingMessageIds = null;
       handledPermissionIds = new Set<string>();
       handledQuestionIds = new Set<string>();
@@ -1084,6 +1538,7 @@ export function createOpenCodeServerRuntime(params: {
       inFlightQuestionIds = new Set<string>();
       const controlAbort = new AbortController();
       turnControlAbort = controlAbort;
+      let prePromptMessageIdsForBackfill: Set<string> | null = null;
 
       try {
         const raw = await c.sessionMessagesList({ sessionId });
@@ -1094,12 +1549,15 @@ export function createOpenCodeServerRuntime(params: {
           if (id) ids.push(id);
         }
         if (ids.length > 0) {
+          prePromptMessageIdsForBackfill = new Set<string>(ids);
+          turnPrePromptMessageIdsAll = prePromptMessageIdsForBackfill;
           const tail = ids.length > turnPreexistingSnapshotLimit ? ids.slice(ids.length - turnPreexistingSnapshotLimit) : ids;
           turnPreexistingMessageIds = new Set<string>(tail);
         }
       } catch {
         // Best-effort: fall back to turnPromptActive-only gating.
         turnPreexistingMessageIds = null;
+        turnPrePromptMessageIdsAll = null;
       }
 
       try {
@@ -1111,6 +1569,9 @@ export function createOpenCodeServerRuntime(params: {
           config,
           parts: [{ type: 'text', text: effectiveText }],
         });
+        if (shouldOmitCustomMessageId) {
+          omitCustomMessageIdOnFirstPromptAfterResume = false;
+        }
       } catch (error) {
         setThinking(false);
         const detail = extractOpenCodeErrorText(error);
@@ -1127,6 +1588,7 @@ export function createOpenCodeServerRuntime(params: {
         const perms = await listPendingPermissionRequests();
         const qs = await listPendingQuestionRequests();
         await pollIdleStatusFromControlPlaneBestEffort();
+        await backfillAssistantTextFromControlPlaneBestEffort();
         const permIds = handledPermissionIds ?? new Set<string>();
         const qIds = handledQuestionIds ?? new Set<string>();
         const permInFlight = inFlightPermissionIds ?? new Set<string>();
@@ -1192,6 +1654,13 @@ export function createOpenCodeServerRuntime(params: {
 
       try {
         await thisTurnDeferred.promise;
+        if (shouldOmitCustomMessageId) {
+          await backfillVendorAssignedUserMessageIdBestEffort({
+            localIdRaw: paramsWithMeta.localId ?? null,
+            promptText: paramsWithMeta.text,
+            prePromptMessageIds: prePromptMessageIdsForBackfill,
+          });
+        }
       } finally {
         try {
           controlAbort.abort();
@@ -1235,7 +1704,19 @@ export function createOpenCodeServerRuntime(params: {
       sessionId = null;
       selectedAgent = null;
       selectedModel = null;
+      omitCustomMessageIdOnFirstPromptAfterResume = false;
       for (const key of Object.keys(configOverrides)) delete configOverrides[key];
+      ensuredMcpServersForDirectory = false;
+      if (ensuredMcpServerNames.size > 0) {
+        try {
+          const c = await ensureClient();
+          const names = [...ensuredMcpServerNames];
+          ensuredMcpServerNames.clear();
+          await Promise.all(names.map(async (name) => await c.mcpDisconnect({ name }).catch(() => {})));
+        } catch {
+          ensuredMcpServerNames.clear();
+        }
+      }
       if (subscriptionAbort) {
         try {
           subscriptionAbort.abort();

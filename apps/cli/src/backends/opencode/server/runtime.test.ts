@@ -32,6 +32,8 @@ function createFakeClient() {
         },
       },
     ])),
+    mcpAdd: vi.fn(async () => ({})),
+    mcpDisconnect: vi.fn(async () => true),
     questionReply: vi.fn(async () => true),
     questionReject: vi.fn(async () => true),
     questionList: vi.fn(async () => ([] as unknown[])),
@@ -845,6 +847,62 @@ describe('createOpenCodeServerRuntime', () => {
     );
   });
 
+  it('handles question.asked for Task child sessions (prevents sub-agent stalls)', async () => {
+    const client = createFakeClient();
+    const session = createFakeSession();
+    const permissionHandler = {
+      handleToolCall: vi.fn(async () => ({ decision: 'approved', answers: { q1: 'answer' } })),
+    };
+
+    const runtime = createOpenCodeServerRuntime({
+      directory: '/tmp',
+      session,
+      messageBuffer: new MessageBuffer(),
+      mcpServers: {},
+      permissionHandler: permissionHandler as any,
+      onThinkingChange: vi.fn(),
+    }, {
+      createClient: async () => client as any,
+    });
+
+    await runtime.startOrLoad({});
+
+    // Register a child session via a Task tool part emitted from the parent session.
+    client.__emit({
+      directory: '/tmp',
+      payload: {
+        type: 'message.part.updated',
+        properties: {
+          part: {
+            id: 'part_tool_task_child_reg',
+            type: 'tool',
+            sessionID: 'ses_1',
+            messageID: 'msg_tool_task_reg',
+            callID: 'call_task_reg',
+            tool: 'task',
+            state: { status: 'running', input: { description: 'Run child' }, metadata: { sessionId: 'ses_child_1' } },
+          },
+        },
+      },
+    });
+
+    client.__emit({
+      directory: '/tmp',
+      payload: {
+        type: 'question.asked',
+        properties: {
+          id: 'que_child_1',
+          sessionID: 'ses_child_1',
+          questions: [{ question: 'q1', header: 'Q1', options: [], multiple: false }],
+        },
+      },
+    });
+
+    await expect.poll(() => client.questionReply.mock.calls.length).toBe(1);
+    expect(permissionHandler.handleToolCall).toHaveBeenCalledTimes(1);
+    expect(client.questionReply).toHaveBeenCalledWith({ requestId: 'que_child_1', answers: [['answer']] });
+  });
+
   it('treats location-based OpenCode questions as freeform (options are a UI hint, not a real choice)', async () => {
     const client = createFakeClient();
     const session = createFakeSession();
@@ -1027,136 +1085,306 @@ describe('createOpenCodeServerRuntime', () => {
   });
 
   it('dedupes cumulative text deltas and streams with a stable happierStreamKey per OpenCode message', async () => {
-    const client = createFakeClient();
-    const session = createFakeSession();
-    const runtime = createOpenCodeServerRuntime({
-      directory: '/tmp',
-      session,
-      messageBuffer: new MessageBuffer(),
-      mcpServers: {},
-      permissionHandler: { handleToolCall: vi.fn(async () => ({ decision: 'approved' })) } as any,
-      onThinkingChange: vi.fn(),
-    }, {
-      createClient: async () => client as any,
-    });
+    const prevFlush = process.env.HAPPIER_OPENCODE_SERVER_STREAM_DELTA_FLUSH_MS;
+    process.env.HAPPIER_OPENCODE_SERVER_STREAM_DELTA_FLUSH_MS = '0';
+    try {
+      const client = createFakeClient();
+      const session = createFakeSession();
+      const runtime = createOpenCodeServerRuntime({
+        directory: '/tmp',
+        session,
+        messageBuffer: new MessageBuffer(),
+        mcpServers: {},
+        permissionHandler: { handleToolCall: vi.fn(async () => ({ decision: 'approved' })) } as any,
+        onThinkingChange: vi.fn(),
+      }, {
+        createClient: async () => client as any,
+      });
 
-    await runtime.startOrLoad({});
-    runtime.beginTurn();
+      await runtime.startOrLoad({});
+      runtime.beginTurn();
 
-    const promptPromise = (runtime as any).sendPromptWithMeta({ text: 'hello', localId: 'local-dedupe' });
-    await expect.poll(() => client.sessionPromptAsync.mock.calls.length).toBe(1);
+      const promptPromise = (runtime as any).sendPromptWithMeta({ text: 'hello', localId: 'local-dedupe' });
+      await expect.poll(() => client.sessionPromptAsync.mock.calls.length).toBe(1);
 
-    client.__emit({
-      directory: '/tmp',
-      payload: {
-        type: 'message.part.updated',
-        properties: { part: { id: 'part_1', type: 'text', sessionID: 'ses_1' } },
-      },
-    });
+      client.__emit({
+        directory: '/tmp',
+        payload: {
+          type: 'message.part.updated',
+          properties: { part: { id: 'part_1', type: 'text', sessionID: 'ses_1' } },
+        },
+      });
 
-    client.__emit({
-      directory: '/tmp',
-      payload: {
-        type: 'message.part.delta',
-        properties: { sessionID: 'ses_1', messageID: 'msg_asst_1', partID: 'part_1', delta: 'Hello' },
-      },
-    });
-    client.__emit({
-      directory: '/tmp',
-      payload: {
-        type: 'message.part.delta',
-        properties: { sessionID: 'ses_1', messageID: 'msg_asst_1', partID: 'part_1', delta: 'Hello.' },
-      },
-    });
-    client.__emit({
-      directory: '/tmp',
-      payload: {
-        type: 'message.part.delta',
-        properties: { sessionID: 'ses_1', messageID: 'msg_asst_1', partID: 'part_1', delta: 'Hello.' },
-      },
-    });
+      client.__emit({
+        directory: '/tmp',
+        payload: {
+          type: 'message.part.delta',
+          properties: { sessionID: 'ses_1', messageID: 'msg_asst_1', partID: 'part_1', delta: 'Hello' },
+        },
+      });
+      client.__emit({
+        directory: '/tmp',
+        payload: {
+          type: 'message.part.delta',
+          properties: { sessionID: 'ses_1', messageID: 'msg_asst_1', partID: 'part_1', delta: 'Hello.' },
+        },
+      });
+      client.__emit({
+        directory: '/tmp',
+        payload: {
+          type: 'message.part.delta',
+          properties: { sessionID: 'ses_1', messageID: 'msg_asst_1', partID: 'part_1', delta: 'Hello.' },
+        },
+      });
 
-    client.__emit({
-      directory: '/tmp',
-      payload: { type: 'session.idle', properties: { sessionID: 'ses_1' } },
-    });
+      client.__emit({
+        directory: '/tmp',
+        payload: { type: 'session.idle', properties: { sessionID: 'ses_1' } },
+      });
 
-    await expect(promptPromise).resolves.toBeUndefined();
+      await expect(promptPromise).resolves.toBeUndefined();
 
-    const messageCalls: Array<{ message: string; streamKey: string | undefined }> = session.sendAgentMessage.mock.calls
-      .filter((call: any[]) => call?.[0] === 'opencode' && call?.[1]?.type === 'message')
-      .map((call: any[]) => ({
-        message: call[1]?.message,
-        streamKey: call[2]?.meta?.happierStreamKey,
-      }));
+      const messageCalls: Array<{ message: string; streamKey: string | undefined }> = session.sendAgentMessage.mock.calls
+        .filter((call: any[]) => call?.[0] === 'opencode' && call?.[1]?.type === 'message')
+        .map((call: any[]) => ({
+          message: call[1]?.message,
+          streamKey: call[2]?.meta?.happierStreamKey,
+        }));
 
-    expect(messageCalls.map((c) => c.message)).toEqual(['Hello', '.']);
-    expect(messageCalls[0]?.streamKey).toBeTruthy();
-    expect(messageCalls[1]?.streamKey).toBe(messageCalls[0]?.streamKey);
+      expect(messageCalls.map((c) => c.message)).toEqual(['Hello', '.']);
+      expect(messageCalls[0]?.streamKey).toBeTruthy();
+      expect(messageCalls[1]?.streamKey).toBe(messageCalls[0]?.streamKey);
+    } finally {
+      if (typeof prevFlush === 'string') process.env.HAPPIER_OPENCODE_SERVER_STREAM_DELTA_FLUSH_MS = prevFlush;
+      else delete process.env.HAPPIER_OPENCODE_SERVER_STREAM_DELTA_FLUSH_MS;
+    }
+  });
+
+  it('buffers tiny text deltas into fewer transcript messages by default (prevents per-token transcript spam)', async () => {
+    const prevFlush = process.env.HAPPIER_OPENCODE_SERVER_STREAM_DELTA_FLUSH_MS;
+    delete process.env.HAPPIER_OPENCODE_SERVER_STREAM_DELTA_FLUSH_MS;
+    vi.useFakeTimers();
+    try {
+      const client = createFakeClient();
+      const session = createFakeSession();
+      const runtime = createOpenCodeServerRuntime({
+        directory: '/tmp',
+        session,
+        messageBuffer: new MessageBuffer(),
+        mcpServers: {},
+        permissionHandler: { handleToolCall: vi.fn(async () => ({ decision: 'approved' })) } as any,
+        onThinkingChange: vi.fn(),
+      }, {
+        createClient: async () => client as any,
+      });
+
+      await runtime.startOrLoad({});
+      runtime.beginTurn();
+
+      const promptPromise = (runtime as any).sendPromptWithMeta({ text: 'hello', localId: 'local-buffer-default' });
+      // Avoid expect.poll under fake timers; let the async prompt setup yield once.
+      for (let i = 0; i < 10; i += 1) {
+        // eslint-disable-next-line no-await-in-loop
+        await Promise.resolve();
+      }
+      expect(client.sessionPromptAsync).toHaveBeenCalledTimes(1);
+
+      client.__emit({
+        directory: '/tmp',
+        payload: {
+          type: 'message.part.updated',
+          properties: { part: { id: 'part_1', type: 'text', sessionID: 'ses_1' } },
+        },
+      });
+
+      for (const ch of ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j']) {
+        client.__emit({
+          directory: '/tmp',
+          payload: {
+            type: 'message.part.delta',
+            properties: { sessionID: 'ses_1', messageID: 'msg_asst_1', partID: 'part_1', delta: ch },
+          },
+        });
+      }
+
+      const messageCallsBeforeFlush = session.sendAgentMessage.mock.calls
+        .filter((call: any[]) => call?.[0] === 'opencode' && call?.[1]?.type === 'message');
+      expect(messageCallsBeforeFlush.length).toBe(0);
+
+      await vi.advanceTimersByTimeAsync(60);
+
+      const messageCallsAfterFlush: Array<{ message: string; streamKey: string | undefined }> = session.sendAgentMessage.mock.calls
+        .filter((call: any[]) => call?.[0] === 'opencode' && call?.[1]?.type === 'message')
+        .map((call: any[]) => ({
+          message: call[1]?.message,
+          streamKey: call[2]?.meta?.happierStreamKey,
+        }));
+
+      expect(messageCallsAfterFlush.map((c) => c.message)).toEqual(['abcdefghij']);
+      expect(typeof messageCallsAfterFlush[0]?.streamKey).toBe('string');
+
+      client.__emit({
+        directory: '/tmp',
+        payload: { type: 'session.idle', properties: { sessionID: 'ses_1' } },
+      });
+
+      await expect(promptPromise).resolves.toBeUndefined();
+    } finally {
+      vi.useRealTimers();
+      if (typeof prevFlush === 'string') process.env.HAPPIER_OPENCODE_SERVER_STREAM_DELTA_FLUSH_MS = prevFlush;
+      else delete process.env.HAPPIER_OPENCODE_SERVER_STREAM_DELTA_FLUSH_MS;
+    }
+  });
+
+  it('flushes buffered text chunks repeatedly while a turn is streaming (does not stall after the first flush)', async () => {
+    const prevFlush = process.env.HAPPIER_OPENCODE_SERVER_STREAM_DELTA_FLUSH_MS;
+    process.env.HAPPIER_OPENCODE_SERVER_STREAM_DELTA_FLUSH_MS = '50';
+    vi.useFakeTimers();
+    try {
+      const client = createFakeClient();
+      const session = createFakeSession();
+      const runtime = createOpenCodeServerRuntime(
+        {
+          directory: '/tmp',
+          session,
+          messageBuffer: new MessageBuffer(),
+          mcpServers: {},
+          permissionHandler: { handleToolCall: vi.fn(async () => ({ decision: 'approved' })) } as any,
+          onThinkingChange: vi.fn(),
+        },
+        {
+          createClient: async () => client as any,
+        },
+      );
+
+      await runtime.startOrLoad({});
+      runtime.beginTurn();
+
+      const promptPromise = (runtime as any).sendPromptWithMeta({ text: 'hello', localId: 'local-buffer-multi-flush' });
+      await expect.poll(() => client.sessionPromptAsync.mock.calls.length).toBe(1);
+
+      client.__emit({
+        directory: '/tmp',
+        payload: {
+          type: 'message.part.updated',
+          properties: { part: { id: 'part_1', type: 'text', sessionID: 'ses_1' } },
+        },
+      });
+
+      for (const ch of ['a', 'b', 'c', 'd', 'e']) {
+        client.__emit({
+          directory: '/tmp',
+          payload: {
+            type: 'message.part.delta',
+            properties: { sessionID: 'ses_1', messageID: 'msg_asst_1', partID: 'part_1', delta: ch },
+          },
+        });
+      }
+
+      await vi.advanceTimersByTimeAsync(60);
+      const firstFlushCalls = session.sendAgentMessage.mock.calls
+        .filter((call: any[]) => call?.[0] === 'opencode' && call?.[1]?.type === 'message')
+        .map((call: any[]) => call?.[1]?.message);
+      expect(firstFlushCalls).toEqual(['abcde']);
+
+      for (const ch of ['f', 'g', 'h', 'i', 'j']) {
+        client.__emit({
+          directory: '/tmp',
+          payload: {
+            type: 'message.part.delta',
+            properties: { sessionID: 'ses_1', messageID: 'msg_asst_1', partID: 'part_1', delta: ch },
+          },
+        });
+      }
+
+      await vi.advanceTimersByTimeAsync(60);
+      const secondFlushCalls = session.sendAgentMessage.mock.calls
+        .filter((call: any[]) => call?.[0] === 'opencode' && call?.[1]?.type === 'message')
+        .map((call: any[]) => call?.[1]?.message);
+      expect(secondFlushCalls).toEqual(['abcde', 'fghij']);
+
+      client.__emit({
+        directory: '/tmp',
+        payload: { type: 'session.idle', properties: { sessionID: 'ses_1' } },
+      });
+
+      await expect(promptPromise).resolves.toBeUndefined();
+    } finally {
+      vi.useRealTimers();
+      if (typeof prevFlush === 'string') process.env.HAPPIER_OPENCODE_SERVER_STREAM_DELTA_FLUSH_MS = prevFlush;
+      else delete process.env.HAPPIER_OPENCODE_SERVER_STREAM_DELTA_FLUSH_MS;
+    }
   });
 
   it('does not mix streaming keys across different OpenCode messageIDs in the same turn', async () => {
-    const client = createFakeClient();
-    const session = createFakeSession();
-    const runtime = createOpenCodeServerRuntime({
-      directory: '/tmp',
-      session,
-      messageBuffer: new MessageBuffer(),
-      mcpServers: {},
-      permissionHandler: { handleToolCall: vi.fn(async () => ({ decision: 'approved' })) } as any,
-      onThinkingChange: vi.fn(),
-    }, {
-      createClient: async () => client as any,
-    });
+    const prevFlush = process.env.HAPPIER_OPENCODE_SERVER_STREAM_DELTA_FLUSH_MS;
+    process.env.HAPPIER_OPENCODE_SERVER_STREAM_DELTA_FLUSH_MS = '0';
+    try {
+      const client = createFakeClient();
+      const session = createFakeSession();
+      const runtime = createOpenCodeServerRuntime({
+        directory: '/tmp',
+        session,
+        messageBuffer: new MessageBuffer(),
+        mcpServers: {},
+        permissionHandler: { handleToolCall: vi.fn(async () => ({ decision: 'approved' })) } as any,
+        onThinkingChange: vi.fn(),
+      }, {
+        createClient: async () => client as any,
+      });
 
-    await runtime.startOrLoad({});
-    runtime.beginTurn();
+      await runtime.startOrLoad({});
+      runtime.beginTurn();
 
-    const promptPromise = (runtime as any).sendPromptWithMeta({ text: 'hello', localId: 'local-multi-msg' });
-    await expect.poll(() => client.sessionPromptAsync.mock.calls.length).toBe(1);
+      const promptPromise = (runtime as any).sendPromptWithMeta({ text: 'hello', localId: 'local-multi-msg' });
+      await expect.poll(() => client.sessionPromptAsync.mock.calls.length).toBe(1);
 
-    client.__emit({
-      directory: '/tmp',
-      payload: {
-        type: 'message.part.updated',
-        properties: { part: { id: 'part_1', type: 'text', sessionID: 'ses_1' } },
-      },
-    });
+      client.__emit({
+        directory: '/tmp',
+        payload: {
+          type: 'message.part.updated',
+          properties: { part: { id: 'part_1', type: 'text', sessionID: 'ses_1' } },
+        },
+      });
 
-    client.__emit({
-      directory: '/tmp',
-      payload: {
-        type: 'message.part.delta',
-        properties: { sessionID: 'ses_1', messageID: 'msg_asst_1', partID: 'part_1', delta: 'A' },
-      },
-    });
-    client.__emit({
-      directory: '/tmp',
-      payload: {
-        type: 'message.part.delta',
-        properties: { sessionID: 'ses_1', messageID: 'msg_asst_2', partID: 'part_1', delta: 'B' },
-      },
-    });
+      client.__emit({
+        directory: '/tmp',
+        payload: {
+          type: 'message.part.delta',
+          properties: { sessionID: 'ses_1', messageID: 'msg_asst_1', partID: 'part_1', delta: 'A' },
+        },
+      });
+      client.__emit({
+        directory: '/tmp',
+        payload: {
+          type: 'message.part.delta',
+          properties: { sessionID: 'ses_1', messageID: 'msg_asst_2', partID: 'part_1', delta: 'B' },
+        },
+      });
 
-    client.__emit({
-      directory: '/tmp',
-      payload: { type: 'session.idle', properties: { sessionID: 'ses_1' } },
-    });
+      client.__emit({
+        directory: '/tmp',
+        payload: { type: 'session.idle', properties: { sessionID: 'ses_1' } },
+      });
 
-    await expect(promptPromise).resolves.toBeUndefined();
+      await expect(promptPromise).resolves.toBeUndefined();
 
-    const messageCalls: Array<{ message: string; streamKey: string | undefined }> = session.sendAgentMessage.mock.calls
-      .filter((call: any[]) => call?.[0] === 'opencode' && call?.[1]?.type === 'message')
-      .map((call: any[]) => ({
-        message: call[1]?.message,
-        streamKey: call[2]?.meta?.happierStreamKey,
-      }))
-      .filter((c: { message: string; streamKey: string | undefined }) => c.message === 'A' || c.message === 'B');
+      const messageCalls: Array<{ message: string; streamKey: string | undefined }> = session.sendAgentMessage.mock.calls
+        .filter((call: any[]) => call?.[0] === 'opencode' && call?.[1]?.type === 'message')
+        .map((call: any[]) => ({
+          message: call[1]?.message,
+          streamKey: call[2]?.meta?.happierStreamKey,
+        }))
+        .filter((c: { message: string; streamKey: string | undefined }) => c.message === 'A' || c.message === 'B');
 
-    expect(messageCalls).toHaveLength(2);
-    expect(messageCalls[0]?.streamKey).toBeTruthy();
-    expect(messageCalls[1]?.streamKey).toBeTruthy();
-    expect(messageCalls[1]?.streamKey).not.toBe(messageCalls[0]?.streamKey);
+      expect(messageCalls).toHaveLength(2);
+      expect(messageCalls[0]?.streamKey).toBeTruthy();
+      expect(messageCalls[1]?.streamKey).toBeTruthy();
+      expect(messageCalls[1]?.streamKey).not.toBe(messageCalls[0]?.streamKey);
+    } finally {
+      if (typeof prevFlush === 'string') process.env.HAPPIER_OPENCODE_SERVER_STREAM_DELTA_FLUSH_MS = prevFlush;
+      else delete process.env.HAPPIER_OPENCODE_SERVER_STREAM_DELTA_FLUSH_MS;
+    }
   });
 
   it('dedupes repeated cumulative text deltas across partIDs for the same OpenCode messageID', async () => {
@@ -1225,65 +1453,72 @@ describe('createOpenCodeServerRuntime', () => {
   });
 
   it('streams reasoning deltas as a single thinking message with a stable happierStreamKey', async () => {
-    const client = createFakeClient();
-    const session = createFakeSession();
-    const runtime = createOpenCodeServerRuntime({
-      directory: '/tmp',
-      session,
-      messageBuffer: new MessageBuffer(),
-      mcpServers: {},
-      permissionHandler: { handleToolCall: vi.fn(async () => ({ decision: 'approved' })) } as any,
-      onThinkingChange: vi.fn(),
-    }, {
-      createClient: async () => client as any,
-    });
+    const prevFlush = process.env.HAPPIER_OPENCODE_SERVER_STREAM_DELTA_FLUSH_MS;
+    process.env.HAPPIER_OPENCODE_SERVER_STREAM_DELTA_FLUSH_MS = '0';
+    try {
+      const client = createFakeClient();
+      const session = createFakeSession();
+      const runtime = createOpenCodeServerRuntime({
+        directory: '/tmp',
+        session,
+        messageBuffer: new MessageBuffer(),
+        mcpServers: {},
+        permissionHandler: { handleToolCall: vi.fn(async () => ({ decision: 'approved' })) } as any,
+        onThinkingChange: vi.fn(),
+      }, {
+        createClient: async () => client as any,
+      });
 
-    await runtime.startOrLoad({});
-    runtime.beginTurn();
+      await runtime.startOrLoad({});
+      runtime.beginTurn();
 
-    const promptPromise = (runtime as any).sendPromptWithMeta({ text: 'hello', localId: 'local-thinking-stream' });
-    await expect.poll(() => client.sessionPromptAsync.mock.calls.length).toBe(1);
+      const promptPromise = (runtime as any).sendPromptWithMeta({ text: 'hello', localId: 'local-thinking-stream' });
+      await expect.poll(() => client.sessionPromptAsync.mock.calls.length).toBe(1);
 
-    client.__emit({
-      directory: '/tmp',
-      payload: {
-        type: 'message.part.updated',
-        properties: { part: { id: 'reason_1', type: 'reasoning', sessionID: 'ses_1' } },
-      },
-    });
+      client.__emit({
+        directory: '/tmp',
+        payload: {
+          type: 'message.part.updated',
+          properties: { part: { id: 'reason_1', type: 'reasoning', sessionID: 'ses_1' } },
+        },
+      });
 
-    client.__emit({
-      directory: '/tmp',
-      payload: {
-        type: 'message.part.delta',
-        properties: { sessionID: 'ses_1', messageID: 'msg_asst_1', partID: 'reason_1', delta: 'A' },
-      },
-    });
-    client.__emit({
-      directory: '/tmp',
-      payload: {
-        type: 'message.part.delta',
-        properties: { sessionID: 'ses_1', messageID: 'msg_asst_1', partID: 'reason_1', delta: 'AB' },
-      },
-    });
+      client.__emit({
+        directory: '/tmp',
+        payload: {
+          type: 'message.part.delta',
+          properties: { sessionID: 'ses_1', messageID: 'msg_asst_1', partID: 'reason_1', delta: 'A' },
+        },
+      });
+      client.__emit({
+        directory: '/tmp',
+        payload: {
+          type: 'message.part.delta',
+          properties: { sessionID: 'ses_1', messageID: 'msg_asst_1', partID: 'reason_1', delta: 'AB' },
+        },
+      });
 
-    client.__emit({
-      directory: '/tmp',
-      payload: { type: 'session.idle', properties: { sessionID: 'ses_1' } },
-    });
+      client.__emit({
+        directory: '/tmp',
+        payload: { type: 'session.idle', properties: { sessionID: 'ses_1' } },
+      });
 
-    await expect(promptPromise).resolves.toBeUndefined();
+      await expect(promptPromise).resolves.toBeUndefined();
 
-    const thinkingCalls: Array<{ text: string; streamKey: string | undefined }> = session.sendAgentMessage.mock.calls
-      .filter((call: any[]) => call?.[0] === 'opencode' && call?.[1]?.type === 'thinking')
-      .map((call: any[]) => ({
-        text: call[1]?.text,
-        streamKey: call[2]?.meta?.happierStreamKey,
-      }));
+      const thinkingCalls: Array<{ text: string; streamKey: string | undefined }> = session.sendAgentMessage.mock.calls
+        .filter((call: any[]) => call?.[0] === 'opencode' && call?.[1]?.type === 'thinking')
+        .map((call: any[]) => ({
+          text: call[1]?.text,
+          streamKey: call[2]?.meta?.happierStreamKey,
+        }));
 
-    expect(thinkingCalls.map((c) => c.text)).toEqual(['A', 'B']);
-    expect(thinkingCalls[0]?.streamKey).toBeTruthy();
-    expect(thinkingCalls[1]?.streamKey).toBe(thinkingCalls[0]?.streamKey);
+      expect(thinkingCalls.map((c) => c.text)).toEqual(['A', 'B']);
+      expect(thinkingCalls[0]?.streamKey).toBeTruthy();
+      expect(thinkingCalls[1]?.streamKey).toBe(thinkingCalls[0]?.streamKey);
+    } finally {
+      if (typeof prevFlush === 'string') process.env.HAPPIER_OPENCODE_SERVER_STREAM_DELTA_FLUSH_MS = prevFlush;
+      else delete process.env.HAPPIER_OPENCODE_SERVER_STREAM_DELTA_FLUSH_MS;
+    }
   });
 
   it('resolves turns when OpenCode emits session.status idle without a session.idle event', async () => {
@@ -1371,6 +1606,251 @@ describe('createOpenCodeServerRuntime', () => {
         delete process.env.HAPPIER_OPENCODE_SERVER_STATUS_POLL_ENABLED;
       } else {
         process.env.HAPPIER_OPENCODE_SERVER_STATUS_POLL_ENABLED = prevStatusPoll;
+      }
+    }
+  });
+
+  it('backfills assistant text from the control plane when idle is observed but SSE deltas were missed (streams with happierStreamKey)', async () => {
+    const prevPollInterval = process.env.HAPPIER_OPENCODE_SERVER_CONTROL_POLL_INTERVAL_MS;
+    const prevStatusPoll = process.env.HAPPIER_OPENCODE_SERVER_STATUS_POLL_ENABLED;
+    process.env.HAPPIER_OPENCODE_SERVER_CONTROL_POLL_INTERVAL_MS = '25';
+    process.env.HAPPIER_OPENCODE_SERVER_STATUS_POLL_ENABLED = '1';
+    try {
+      const client = createFakeClient() as any;
+      const session = createFakeSession();
+
+      let promptSent = false;
+      client.sessionPromptAsync = vi.fn(async () => {
+        promptSent = true;
+        client.__setStatusType('idle');
+      });
+      client.sessionMessagesList = vi.fn(async () => {
+        if (!promptSent) return [];
+        return [
+          {
+            info: { id: 'msg_asst_backfill_1', role: 'assistant', time: { created: 2 } },
+            parts: [{ type: 'text', text: '| col_a | col_b |\\n| --- | --- |\\n| a | b |\\n\\nSTREAM_TABLE_E2E_OK' }],
+          },
+        ];
+      });
+
+      const runtime = createOpenCodeServerRuntime({
+        directory: '/tmp',
+        session,
+        messageBuffer: new MessageBuffer(),
+        mcpServers: {},
+        permissionHandler: { handleToolCall: vi.fn(async () => ({ decision: 'approved' })) } as any,
+        onThinkingChange: vi.fn(),
+      }, {
+        createClient: async () => client as any,
+      });
+
+      await runtime.startOrLoad({});
+      runtime.beginTurn();
+
+      const promptPromise = (runtime as any).sendPromptWithMeta({ text: 'please stream a table', localId: 'local-backfill-1' });
+      await expect(promptPromise).resolves.toBeUndefined();
+
+      const calls = (session.sendAgentMessage as any).mock.calls as any[];
+      const streamed = calls
+        .map((c) => ({ body: c?.[1], meta: c?.[2]?.meta }))
+        .filter((row) => row?.body?.type === 'message' && typeof row?.body?.message === 'string')
+        .filter((row) => typeof row?.meta?.happierStreamKey === 'string' && row.meta.happierStreamKey.length > 0);
+
+      const byKey = new Map<string, string[]>();
+      for (const row of streamed) {
+        const key = String(row.meta.happierStreamKey);
+        const list = byKey.get(key) ?? [];
+        list.push(String(row.body.message));
+        byKey.set(key, list);
+      }
+
+      const entries = [...byKey.entries()];
+      expect(entries.length).toBeGreaterThan(0);
+      const [key, chunks] = entries[0]!;
+      expect(key).toContain('msg_asst_backfill_1');
+      expect(chunks.length).toBeGreaterThanOrEqual(2);
+      expect(chunks.join('')).toContain('STREAM_TABLE_E2E_OK');
+    } finally {
+      if (prevPollInterval === undefined) {
+        delete process.env.HAPPIER_OPENCODE_SERVER_CONTROL_POLL_INTERVAL_MS;
+      } else {
+        process.env.HAPPIER_OPENCODE_SERVER_CONTROL_POLL_INTERVAL_MS = prevPollInterval;
+      }
+      if (prevStatusPoll === undefined) {
+        delete process.env.HAPPIER_OPENCODE_SERVER_STATUS_POLL_ENABLED;
+      } else {
+        process.env.HAPPIER_OPENCODE_SERVER_STATUS_POLL_ENABLED = prevStatusPoll;
+      }
+    }
+  });
+
+  it('backfills assistant text from the control plane even when the turn had tool/thinking activity but no assistant text chunks were streamed', async () => {
+    const prevPollInterval = process.env.HAPPIER_OPENCODE_SERVER_CONTROL_POLL_INTERVAL_MS;
+    const prevStatusPoll = process.env.HAPPIER_OPENCODE_SERVER_STATUS_POLL_ENABLED;
+    process.env.HAPPIER_OPENCODE_SERVER_CONTROL_POLL_INTERVAL_MS = '25';
+    process.env.HAPPIER_OPENCODE_SERVER_STATUS_POLL_ENABLED = '1';
+    try {
+      const client = createFakeClient() as any;
+      const session = createFakeSession();
+
+      let promptSent = false;
+      let releasePrompt!: () => void;
+      const gate = new Promise<void>((resolve) => {
+        releasePrompt = () => resolve();
+      });
+
+      client.sessionPromptAsync = vi.fn(async () => {
+        await gate;
+        promptSent = true;
+        client.__setStatusType('idle');
+      });
+
+      client.sessionMessagesList = vi.fn(async () => {
+        if (!promptSent) return [];
+        return [
+          {
+            info: { id: 'msg_asst_backfill_2', role: 'assistant', time: { created: 2 } },
+            parts: [{ type: 'text', text: '| col_a | col_b |\\n| --- | --- |\\n| a | b |\\n\\nSTREAM_TABLE_E2E_OK' }],
+          },
+        ];
+      });
+
+      const runtime = createOpenCodeServerRuntime(
+        {
+          directory: '/tmp',
+          session,
+          messageBuffer: new MessageBuffer(),
+          mcpServers: {},
+          permissionHandler: { handleToolCall: vi.fn(async () => ({ decision: 'approved' })) } as any,
+          onThinkingChange: vi.fn(),
+        },
+        {
+          createClient: async () => client as any,
+        },
+      );
+
+      await runtime.startOrLoad({});
+      runtime.beginTurn();
+
+      const promptPromise = (runtime as any).sendPromptWithMeta({ text: 'please stream a table', localId: 'local-backfill-2' });
+      await expect.poll(() => client.sessionPromptAsync.mock.calls.length).toBe(1);
+
+      // Simulate turn activity (reasoning deltas), but never stream assistant text deltas.
+      client.__emit({
+        directory: '/tmp',
+        payload: { type: 'message.part.updated', properties: { part: { id: 'part_reason_1', type: 'reasoning', sessionID: 'ses_1' } } },
+      });
+      client.__emit({
+        directory: '/tmp',
+        payload: {
+          type: 'message.part.delta',
+          properties: { sessionID: 'ses_1', messageID: 'msg_asst_backfill_2', partID: 'part_reason_1', delta: 'thinking...' },
+        },
+      });
+
+      releasePrompt();
+      await expect(promptPromise).resolves.toBeUndefined();
+
+      const calls = (session.sendAgentMessage as any).mock.calls as any[];
+      const streamed = calls
+        .map((c) => ({ body: c?.[1], meta: c?.[2]?.meta }))
+        .filter((row) => row?.body?.type === 'message' && typeof row?.body?.message === 'string')
+        .filter((row) => typeof row?.meta?.happierStreamKey === 'string' && row.meta.happierStreamKey.length > 0);
+
+      const byKey = new Map<string, string[]>();
+      for (const row of streamed) {
+        const key = String(row.meta.happierStreamKey);
+        const list = byKey.get(key) ?? [];
+        list.push(String(row.body.message));
+        byKey.set(key, list);
+      }
+
+      const matching = [...byKey.entries()].filter(([, chunks]) => chunks.join('').includes('STREAM_TABLE_E2E_OK'));
+      expect(matching.length).toBeGreaterThan(0);
+      const [streamKey, chunks] = matching[0]!;
+      expect(streamKey).toContain('msg_asst_backfill_2');
+      expect(chunks.length).toBeGreaterThanOrEqual(2);
+    } finally {
+      if (prevPollInterval === undefined) {
+        delete process.env.HAPPIER_OPENCODE_SERVER_CONTROL_POLL_INTERVAL_MS;
+      } else {
+        process.env.HAPPIER_OPENCODE_SERVER_CONTROL_POLL_INTERVAL_MS = prevPollInterval;
+      }
+      if (prevStatusPoll === undefined) {
+        delete process.env.HAPPIER_OPENCODE_SERVER_STATUS_POLL_ENABLED;
+      } else {
+        process.env.HAPPIER_OPENCODE_SERVER_STATUS_POLL_ENABLED = prevStatusPoll;
+      }
+    }
+  });
+
+  it('aborts turns when control-plane status polling repeatedly fails (prevents wedged thinking)', async () => {
+    const prevPollInterval = process.env.HAPPIER_OPENCODE_SERVER_CONTROL_POLL_INTERVAL_MS;
+    const prevStatusPoll = process.env.HAPPIER_OPENCODE_SERVER_STATUS_POLL_ENABLED;
+    const prevMaxFailures = process.env.HAPPIER_OPENCODE_SERVER_CONTROL_POLL_MAX_CONSECUTIVE_FAILURES;
+    const prevGraceMs = process.env.HAPPIER_OPENCODE_SERVER_CONTROL_POLL_FAILURE_GRACE_MS;
+
+    process.env.HAPPIER_OPENCODE_SERVER_CONTROL_POLL_INTERVAL_MS = '25';
+    process.env.HAPPIER_OPENCODE_SERVER_STATUS_POLL_ENABLED = '1';
+    process.env.HAPPIER_OPENCODE_SERVER_CONTROL_POLL_MAX_CONSECUTIVE_FAILURES = '2';
+    process.env.HAPPIER_OPENCODE_SERVER_CONTROL_POLL_FAILURE_GRACE_MS = '1000';
+    try {
+      const client = createFakeClient() as any;
+      client.sessionStatusList = vi.fn(async () => {
+        throw new Error('connect ECONNREFUSED 127.0.0.1:1234');
+      });
+
+      const session = createFakeSession();
+      const runtime = createOpenCodeServerRuntime({
+        directory: '/tmp',
+        session,
+        messageBuffer: new MessageBuffer(),
+        mcpServers: {},
+        permissionHandler: { handleToolCall: vi.fn(async () => ({ decision: 'approved' })) } as any,
+        onThinkingChange: vi.fn(),
+      }, {
+        createClient: async () => client as any,
+      });
+
+      await runtime.startOrLoad({});
+      runtime.beginTurn();
+
+      const promptPromise = (runtime as any).sendPromptWithMeta({ text: 'hello', localId: 'local-control-plane-fail' });
+      // Avoid unhandled rejections in the RED phase (turn may be canceled in finally).
+      void promptPromise.catch(() => {});
+      await expect.poll(() => client.sessionPromptAsync.mock.calls.length).toBe(1);
+
+      try {
+        await expect.poll(() =>
+          session.sendAgentMessage.mock.calls.some((call: any[]) => call?.[0] === 'opencode' && call?.[1]?.type === 'turn_aborted'),
+        ).toBe(true);
+      } finally {
+        await runtime.cancel().catch(() => {});
+        await runtime.reset().catch(() => {});
+      }
+
+      await expect(promptPromise).rejects.toBeTruthy();
+    } finally {
+      if (prevPollInterval === undefined) {
+        delete process.env.HAPPIER_OPENCODE_SERVER_CONTROL_POLL_INTERVAL_MS;
+      } else {
+        process.env.HAPPIER_OPENCODE_SERVER_CONTROL_POLL_INTERVAL_MS = prevPollInterval;
+      }
+      if (prevStatusPoll === undefined) {
+        delete process.env.HAPPIER_OPENCODE_SERVER_STATUS_POLL_ENABLED;
+      } else {
+        process.env.HAPPIER_OPENCODE_SERVER_STATUS_POLL_ENABLED = prevStatusPoll;
+      }
+      if (prevMaxFailures === undefined) {
+        delete process.env.HAPPIER_OPENCODE_SERVER_CONTROL_POLL_MAX_CONSECUTIVE_FAILURES;
+      } else {
+        process.env.HAPPIER_OPENCODE_SERVER_CONTROL_POLL_MAX_CONSECUTIVE_FAILURES = prevMaxFailures;
+      }
+      if (prevGraceMs === undefined) {
+        delete process.env.HAPPIER_OPENCODE_SERVER_CONTROL_POLL_FAILURE_GRACE_MS;
+      } else {
+        process.env.HAPPIER_OPENCODE_SERVER_CONTROL_POLL_FAILURE_GRACE_MS = prevGraceMs;
       }
     }
   });
@@ -1579,11 +2059,11 @@ describe('createOpenCodeServerRuntime', () => {
     await expect(promptPromise).resolves.toBeUndefined();
   });
 
-  it('re-emits tool-call when a tool update gains additional input fields (e.g. command)', async () => {
-    const client = createFakeClient();
-    const session = createFakeSession();
-    const runtime = createOpenCodeServerRuntime({
-      directory: '/tmp',
+	  it('emits a single tool-call when tool updates gain additional input fields (e.g. command)', async () => {
+	    const client = createFakeClient();
+	    const session = createFakeSession();
+	    const runtime = createOpenCodeServerRuntime({
+	      directory: '/tmp',
       session,
       messageBuffer: new MessageBuffer(),
       mcpServers: {},
@@ -1619,21 +2099,83 @@ describe('createOpenCodeServerRuntime', () => {
       });
     };
 
-    emitToolUpdate({});
-    emitToolUpdate({ command: 'echo hi' });
+	    emitToolUpdate({});
+	    emitToolUpdate({ command: 'echo hi' });
 
     client.__emit({
       directory: '/tmp',
       payload: { type: 'session.idle', properties: { sessionID: 'ses_1' } },
     });
+	    await expect(promptPromise).resolves.toBeUndefined();
+
+	    const calls = session.sendAgentMessage.mock.calls
+	      .filter((c: any[]) => c?.[0] === 'opencode' && c?.[1]?.type === 'tool-call' && c?.[1]?.callId === 'call_1');
+	    expect(calls.length).toBe(1);
+	    expect((calls[0]?.[1] as any)?.input?.command).toBe('echo hi');
+	  });
+
+  it('emits tool-call for tool parts on message.part.created (reduces perceived batching)', async () => {
+    const client = createFakeClient();
+    const session = createFakeSession();
+    const runtime = createOpenCodeServerRuntime({
+      directory: '/tmp',
+      session,
+      messageBuffer: new MessageBuffer(),
+      mcpServers: {},
+      permissionHandler: { handleToolCall: vi.fn(async () => ({ decision: 'approved' })) } as any,
+      onThinkingChange: vi.fn(),
+    }, {
+      createClient: async () => client as any,
+    });
+
+    await runtime.startOrLoad({});
+    runtime.beginTurn();
+
+    const promptPromise = (runtime as any).sendPromptWithMeta({ text: 'hello', localId: 'local-tool-created' });
+    await expect.poll(() => client.sessionPromptAsync.mock.calls.length).toBe(1);
+
+    client.__emit({
+      directory: '/tmp',
+      payload: {
+        type: 'message.part.created',
+        properties: {
+          part: {
+            id: 'part_tool_created_1',
+            type: 'tool',
+            sessionID: 'ses_1',
+            messageID: 'msg_tool_1',
+            callID: 'call_created_1',
+            tool: 'bash',
+            state: { status: 'running', input: { command: 'echo hi' } },
+          },
+        },
+      },
+    });
+
+    // Ensure turn completion still proceeds even if tool activity is missed.
+    client.__emit({
+      directory: '/tmp',
+      payload: { type: 'message.part.updated', properties: { part: { id: 'part_1', type: 'text', sessionID: 'ses_1' } } },
+    });
+    client.__emit({
+      directory: '/tmp',
+      payload: { type: 'message.part.delta', properties: { sessionID: 'ses_1', messageID: 'msg_asst_1', partID: 'part_1', delta: 'hi' } },
+    });
+    client.__emit({
+      directory: '/tmp',
+      payload: { type: 'session.idle', properties: { sessionID: 'ses_1' } },
+    });
+
     await expect(promptPromise).resolves.toBeUndefined();
 
-    const calls = session.sendAgentMessage.mock.calls
-      .filter((c: any[]) => c?.[0] === 'opencode' && c?.[1]?.type === 'tool-call' && c?.[1]?.callId === 'call_1');
-    expect(calls.length).toBe(2);
+    const toolCalls = session.sendAgentMessage.mock.calls.filter(
+      (c: any[]) => c?.[0] === 'opencode' && c?.[1]?.type === 'tool-call' && c?.[1]?.callId === 'call_created_1',
+    );
+    expect(toolCalls.length).toBe(1);
+    expect(toolCalls[0]?.[1]?.name).toBe('bash');
   });
 
-  it('aliases OpenCode grep tool events as search so search normalization is stable', async () => {
+  it('aliases OpenCode grep tool to search (normalizes downstream to CodeSearch)', async () => {
     const client = createFakeClient();
     const session = createFakeSession();
     const runtime = createOpenCodeServerRuntime({
@@ -1754,6 +2296,216 @@ describe('createOpenCodeServerRuntime', () => {
     expect(client.sessionMessagesList).not.toHaveBeenCalled();
     expect(session.sendAgentMessageCommitted).not.toHaveBeenCalled();
     expect(session.sendUserTextMessageCommitted).not.toHaveBeenCalled();
+  });
+
+  it('streams Task child session deltas and tool calls into a sidechain (during the turn)', async () => {
+    const client = createFakeClient() as any;
+    client.sessionMessagesList = vi.fn(async () => ([] as unknown[]));
+
+    const session = createFakeSession();
+
+    const runtime = createOpenCodeServerRuntime({
+      directory: '/tmp',
+      session,
+      messageBuffer: new MessageBuffer(),
+      mcpServers: {},
+      permissionHandler: { handleToolCall: vi.fn(async () => ({ decision: 'approved' })) } as any,
+      onThinkingChange: vi.fn(),
+    }, {
+      createClient: async () => client as any,
+    });
+
+    await runtime.startOrLoad({});
+    runtime.beginTurn();
+
+    const promptPromise = (runtime as any).sendPromptWithMeta({ text: 'hello', localId: 'local-task-sidechain-stream' });
+    await expect.poll(() => client.sessionPromptAsync.mock.calls.length).toBe(1);
+
+    // Parent Task tool part references a child session early via metadata.
+    client.__emit({
+      directory: '/tmp',
+      payload: {
+        type: 'message.part.updated',
+        properties: {
+          part: {
+            id: 'part_tool_task_1',
+            type: 'tool',
+            sessionID: 'ses_1',
+            messageID: 'msg_tool_task_1',
+            callID: 'call_task_1',
+            tool: 'task',
+            state: {
+              status: 'running',
+              input: { description: 'Run child' },
+              metadata: { sessionId: 'ses_child_1' },
+            },
+          },
+        },
+      },
+    });
+
+    // Child session streams text.
+    client.__emit({
+      directory: '/tmp',
+      payload: { type: 'message.part.updated', properties: { part: { id: 'part_child_text_1', type: 'text', sessionID: 'ses_child_1' } } },
+    });
+    client.__emit({
+      directory: '/tmp',
+      payload: { type: 'message.part.delta', properties: { sessionID: 'ses_child_1', messageID: 'msg_child_asst_1', partID: 'part_child_text_1', delta: 'CH' } },
+    });
+    client.__emit({
+      directory: '/tmp',
+      payload: { type: 'message.part.delta', properties: { sessionID: 'ses_child_1', messageID: 'msg_child_asst_1', partID: 'part_child_text_1', delta: 'CHILD_OK' } },
+    });
+
+    // Child session streams tools.
+    client.__emit({
+      directory: '/tmp',
+      payload: {
+        type: 'message.part.created',
+        properties: {
+          part: {
+            id: 'part_child_tool_1',
+            type: 'tool',
+            sessionID: 'ses_child_1',
+            messageID: 'msg_child_tool_1',
+            callID: 'call_child_tool_1',
+            tool: 'bash',
+            state: { status: 'running', input: { command: 'echo child' } },
+          },
+        },
+      },
+    });
+
+    // Parent assistant activity so the turn can resolve even if sidechain routing is broken.
+    client.__emit({
+      directory: '/tmp',
+      payload: { type: 'message.part.updated', properties: { part: { id: 'part_parent_text_1', type: 'text', sessionID: 'ses_1' } } },
+    });
+    client.__emit({
+      directory: '/tmp',
+      payload: { type: 'message.part.delta', properties: { sessionID: 'ses_1', messageID: 'msg_parent_asst_1', partID: 'part_parent_text_1', delta: 'PARENT_OK' } },
+    });
+    client.__emit({
+      directory: '/tmp',
+      payload: { type: 'session.idle', properties: { sessionID: 'ses_1' } },
+    });
+
+    await expect(promptPromise).resolves.toBeUndefined();
+
+    const sidechainText = session.sendAgentMessage.mock.calls.find(
+      (c: any[]) => c?.[0] === 'opencode' && c?.[1]?.type === 'message' && c?.[1]?.sidechainId === 'call_task_1' && c?.[1]?.message === 'CHILD_OK',
+    );
+    expect(sidechainText).toBeTruthy();
+    expect(sidechainText?.[2]?.meta).toMatchObject({
+      importedFrom: 'acp-sidechain',
+      remoteSessionId: 'ses_child_1',
+      sidechainId: 'call_task_1',
+    });
+    expect(typeof sidechainText?.[2]?.meta?.happierStreamKey).toBe('string');
+    expect(sidechainText?.[2]?.meta?.happierSidechainStreamKey).toBe(sidechainText?.[2]?.meta?.happierStreamKey);
+
+    const sidechainToolCall = session.sendAgentMessage.mock.calls.find(
+      (c: any[]) => c?.[0] === 'opencode' && c?.[1]?.type === 'tool-call' && c?.[1]?.sidechainId === 'call_task_1' && c?.[1]?.callId === 'call_child_tool_1',
+    );
+    expect(sidechainToolCall).toBeTruthy();
+    expect(sidechainToolCall?.[2]?.meta).toMatchObject({
+      importedFrom: 'acp-sidechain',
+      remoteSessionId: 'ses_child_1',
+      sidechainId: 'call_task_1',
+    });
+  });
+
+  it('streams sidechain text as incremental deltas (avoids duplicate prefixes when OpenCode emits cumulative deltas)', async () => {
+    const prevFlush = process.env.HAPPIER_OPENCODE_SERVER_STREAM_DELTA_FLUSH_MS;
+    process.env.HAPPIER_OPENCODE_SERVER_STREAM_DELTA_FLUSH_MS = '50';
+    vi.useFakeTimers();
+    try {
+      const client = createFakeClient() as any;
+      client.sessionMessagesList = vi.fn(async () => ([] as unknown[]));
+
+      const session = createFakeSession();
+
+      const runtime = createOpenCodeServerRuntime(
+        {
+          directory: '/tmp',
+          session,
+          messageBuffer: new MessageBuffer(),
+          mcpServers: {},
+          permissionHandler: { handleToolCall: vi.fn(async () => ({ decision: 'approved' })) } as any,
+          onThinkingChange: vi.fn(),
+        },
+        {
+          createClient: async () => client as any,
+        },
+      );
+
+      await runtime.startOrLoad({});
+      runtime.beginTurn();
+
+      const promptPromise = (runtime as any).sendPromptWithMeta({ text: 'hello', localId: 'local-sidechain-incremental' });
+      await expect.poll(() => client.sessionPromptAsync.mock.calls.length).toBe(1);
+
+      client.__emit({
+        directory: '/tmp',
+        payload: {
+          type: 'message.part.updated',
+          properties: {
+            part: {
+              id: 'part_tool_task_1',
+              type: 'tool',
+              sessionID: 'ses_1',
+              messageID: 'msg_tool_task_1',
+              callID: 'call_task_1',
+              tool: 'task',
+              state: { status: 'running', input: { description: 'Run child' }, metadata: { sessionId: 'ses_child_1' } },
+            },
+          },
+        },
+      });
+
+      client.__emit({
+        directory: '/tmp',
+        payload: { type: 'message.part.updated', properties: { part: { id: 'part_child_text_1', type: 'text', sessionID: 'ses_child_1' } } },
+      });
+
+      client.__emit({
+        directory: '/tmp',
+        payload: { type: 'message.part.delta', properties: { sessionID: 'ses_child_1', messageID: 'msg_child_asst_1', partID: 'part_child_text_1', delta: 'H' } },
+      });
+      await vi.advanceTimersByTimeAsync(60);
+
+      client.__emit({
+        directory: '/tmp',
+        payload: { type: 'message.part.delta', properties: { sessionID: 'ses_child_1', messageID: 'msg_child_asst_1', partID: 'part_child_text_1', delta: 'HE' } },
+      });
+      await vi.advanceTimersByTimeAsync(60);
+
+      const sidechainChunks = session.sendAgentMessage.mock.calls
+        .filter((c: any[]) => c?.[0] === 'opencode' && c?.[1]?.type === 'message' && c?.[1]?.sidechainId === 'call_task_1')
+        .map((c: any[]) => String(c?.[1]?.message ?? ''));
+
+      expect(sidechainChunks).toEqual(['H', 'E']);
+
+      client.__emit({
+        directory: '/tmp',
+        payload: { type: 'message.part.updated', properties: { part: { id: 'part_parent_text_1', type: 'text', sessionID: 'ses_1' } } },
+      });
+      client.__emit({
+        directory: '/tmp',
+        payload: { type: 'message.part.delta', properties: { sessionID: 'ses_1', messageID: 'msg_parent_asst_1', partID: 'part_parent_text_1', delta: 'PARENT_OK' } },
+      });
+      client.__emit({
+        directory: '/tmp',
+        payload: { type: 'session.idle', properties: { sessionID: 'ses_1' } },
+      });
+
+      await expect(promptPromise).resolves.toBeUndefined();
+    } finally {
+      vi.useRealTimers();
+      if (typeof prevFlush === 'string') process.env.HAPPIER_OPENCODE_SERVER_STREAM_DELTA_FLUSH_MS = prevFlush;
+      else delete process.env.HAPPIER_OPENCODE_SERVER_STREAM_DELTA_FLUSH_MS;
+    }
   });
 
   it('imports Task child session messages as a sidechain (meta.importedFrom="acp-sidechain")', async () => {
