@@ -23,6 +23,7 @@ import { computeHasUnreadActivity } from '../domains/messages/unread';
 import { sync } from '../sync';
 import type { ReviewCommentDraft } from '../domains/input/reviewComments/reviewCommentTypes';
 import type { SessionActionDraft } from '../domains/sessionActions/sessionActionDraftTypes';
+import { getActiveServerSnapshot } from '../domains/server/serverRuntime';
 
 import { getStorage } from '../domains/state/storageStore';
 import type { KnownEntitlements } from '../domains/state/storageStore';
@@ -41,6 +42,11 @@ const emptyArray: unknown[] = [];
 const emptyRecord: Record<string, any> = {};
 const emptyReviewCommentDrafts: ReviewCommentDraft[] = [];
 const emptyActionDrafts: SessionActionDraft[] = [];
+
+function isVisibleMachine(machine: Machine): boolean {
+  const revokedAt = machine.revokedAt;
+  return !(typeof revokedAt === 'number' && Number.isFinite(revokedAt) && revokedAt > 0);
+}
 
 export function useSessionMessages(
   sessionId: string
@@ -234,7 +240,13 @@ export function useAllMachines(): Machine[] {
   return getStorage()(
     useShallow((state) => {
       if (!state.isDataReady) return [];
-      return Object.values(state.machines).sort((a, b) => {
+      const activeServerId = String(getActiveServerSnapshot().serverId ?? '').trim();
+      const activeServerMachines = activeServerId ? state.machineListByServerId[activeServerId] : null;
+      const sourceMachines = Array.isArray(activeServerMachines)
+        ? activeServerMachines
+        : Object.values(state.machines);
+
+      return sourceMachines.filter(isVisibleMachine).sort((a, b) => {
         // Keep offline machines visible (reduces confusion + avoids flicker when presence flaps).
         if (a.active !== b.active) return a.active ? -1 : 1;
         if (b.createdAt !== a.createdAt) return b.createdAt - a.createdAt;
@@ -245,7 +257,29 @@ export function useAllMachines(): Machine[] {
 }
 
 export function useMachineListByServerId(): Record<string, Machine[] | null> {
-  return getStorage()(useShallow((state) => state.machineListByServerId));
+  const machineListByServerId = getStorage()(useShallow((state) => state.machineListByServerId));
+  return React.useMemo(() => {
+    let hasChanges = false;
+    const nextByServerId: Record<string, Machine[] | null> = {};
+
+    for (const [serverId, machines] of Object.entries(machineListByServerId)) {
+      if (!Array.isArray(machines)) {
+        nextByServerId[serverId] = machines;
+        continue;
+      }
+
+      const visibleMachines = machines.filter(isVisibleMachine);
+      if (visibleMachines.length !== machines.length) {
+        hasChanges = true;
+        nextByServerId[serverId] = visibleMachines;
+        continue;
+      }
+
+      nextByServerId[serverId] = machines;
+    }
+
+    return hasChanges ? nextByServerId : machineListByServerId;
+  }, [machineListByServerId]);
 }
 
 export function useMachineListStatusByServerId(): Record<string, 'idle' | 'loading' | 'signedOut' | 'error'> {
