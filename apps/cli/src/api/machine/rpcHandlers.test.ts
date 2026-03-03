@@ -1092,6 +1092,7 @@ describe('registerMachineRpcHandlers', () => {
       parentSessionId: 'sess_parent',
       forkPoint: { type: 'latest' },
       strategy: 'replay',
+      replaySummaryRunner: { v: 1, backendId: 'claude', modelId: 'default', permissionMode: 'no_tools' },
     });
 
     expect(result).toMatchObject({ ok: true, childSessionId: 'sess_child' });
@@ -1103,7 +1104,145 @@ describe('registerMachineRpcHandlers', () => {
     expect(String(createdMeta.replaySeedV1?.seedText ?? '')).toContain('SUMMARY_OK');
   });
 
-  it('includes session synopsis artifacts in replay seed when available (summary_plus_recent)', async () => {
+  it('includes session synopsis artifacts in replay seed when replay summary is requested', async () => {
+    const registered = new Map<string, (params: any) => Promise<any>>();
+    const rpcHandlerManager = {
+      registerHandler: (method: string, handler: (params: any) => Promise<any>) => {
+        registered.set(method, handler);
+      },
+    } as any;
+
+    const spawnSession = vi.fn(async (_opts: any) => ({ type: 'success', sessionId: 'sess_child' } as const));
+    registerMachineRpcHandlers({
+      rpcHandlerManager,
+      handlers: {
+        spawnSession,
+        stopSession: async () => true,
+        requestShutdown: () => {},
+      },
+    });
+
+    const handler = registered.get((RPC_METHODS as any).SESSION_FORK);
+    expect(handler).toBeDefined();
+
+    const machineKey = new Uint8Array(32).fill(11);
+    const publicKey = tweetnacl.box.keyPair.fromSecretKey(machineKey).publicKey;
+    readCredentialsMock.mockResolvedValueOnce({
+      token: 'token-1',
+      encryption: { type: 'dataKey', machineKey, publicKey },
+    });
+
+    const getSpy = vi.spyOn(axios, 'get');
+    const postSpy = vi.spyOn(axios, 'post');
+    getSpy
+      // fetch parent session record (for fork handler)
+      .mockResolvedValueOnce({
+        status: 200,
+        data: {
+          session: {
+            id: 'sess_parent',
+            seq: 3,
+            createdAt: 1,
+            updatedAt: 2,
+            active: true,
+            activeAt: 2,
+            encryptionMode: 'plain',
+            metadata: JSON.stringify({ path: '/repo', flavor: 'claude' }),
+            metadataVersion: 7,
+            agentState: null,
+            agentStateVersion: 0,
+            dataEncryptionKey: null,
+          },
+        },
+      } as any)
+      // hydrateReplayDialogFromForkChain -> fetchSessionById(startingSessionId)
+      .mockResolvedValueOnce({
+        status: 200,
+        data: {
+          session: {
+            id: 'sess_parent',
+            seq: 3,
+            createdAt: 1,
+            updatedAt: 2,
+            active: true,
+            activeAt: 2,
+            encryptionMode: 'plain',
+            metadata: JSON.stringify({ path: '/repo', flavor: 'claude' }),
+            metadataVersion: 7,
+            agentState: null,
+            agentStateVersion: 0,
+            dataEncryptionKey: null,
+          },
+        },
+      } as any)
+      // hydrateReplayDialogFromForkChain -> fetchEncryptedTranscriptMessages
+      .mockResolvedValueOnce({
+        status: 200,
+        data: {
+          messages: [
+            {
+              seq: 1,
+              createdAt: 1,
+              content: { t: 'plain', v: { role: 'user', content: { type: 'text', text: 'msg-1' } } },
+            },
+            {
+              seq: 2,
+              createdAt: 2,
+              content: {
+                t: 'plain',
+                v: {
+                  role: 'agent',
+                  content: { type: 'text', text: '[memory]' },
+                  meta: { happier: { kind: 'session_synopsis.v1', payload: { v: 1, seqTo: 2, updatedAtMs: 3, synopsis: 'SYNOPSIS_OK' } } },
+                },
+              },
+            },
+            {
+              seq: 3,
+              createdAt: 3,
+              content: { t: 'plain', v: { role: 'agent', content: { type: 'text', text: 'msg-2' } } },
+            },
+          ],
+        },
+      } as any);
+
+    postSpy.mockResolvedValueOnce({
+      status: 200,
+      data: {
+        session: {
+          id: 'sess_child',
+          seq: 0,
+          createdAt: 10,
+          updatedAt: 11,
+          active: false,
+          activeAt: 0,
+          encryptionMode: 'plain',
+          metadata: JSON.stringify({ path: '/repo', flavor: 'claude' }),
+          metadataVersion: 0,
+          agentState: null,
+          agentStateVersion: 0,
+          dataEncryptionKey: null,
+        },
+      },
+    } as any);
+
+    const result = await handler!({
+      v: 1,
+      parentSessionId: 'sess_parent',
+      forkPoint: { type: 'latest' },
+      strategy: 'replay',
+      replaySummaryRunner: { v: 1, backendId: 'claude', modelId: 'default', permissionMode: 'no_tools' },
+    });
+
+    expect(result).toMatchObject({ ok: true, childSessionId: 'sess_child' });
+    expect(postSpy).toHaveBeenCalledTimes(1);
+    const posted = (postSpy as any).mock.calls[0][1] as any;
+    const createdMeta = JSON.parse(String(posted.metadata)) as any;
+    expect(String(createdMeta.replaySeedV1?.seedText ?? '')).toContain('Summary:');
+    expect(String(createdMeta.replaySeedV1?.seedText ?? '')).toContain('SYNOPSIS_OK');
+  });
+
+  it('does not include session synopsis artifacts in replay seed when replay summary is not requested', async () => {
     const registered = new Map<string, (params: any) => Promise<any>>();
     const rpcHandlerManager = {
       registerHandler: (method: string, handler: (params: any) => Promise<any>) => {
@@ -1236,11 +1375,11 @@ describe('registerMachineRpcHandlers', () => {
     expect(postSpy).toHaveBeenCalledTimes(1);
     const posted = (postSpy as any).mock.calls[0][1] as any;
     const createdMeta = JSON.parse(String(posted.metadata)) as any;
-    expect(String(createdMeta.replaySeedV1?.seedText ?? '')).toContain('Summary:');
-    expect(String(createdMeta.replaySeedV1?.seedText ?? '')).toContain('SYNOPSIS_OK');
+    expect(String(createdMeta.replaySeedV1?.seedText ?? '')).not.toContain('Summary:');
+    expect(String(createdMeta.replaySeedV1?.seedText ?? '')).not.toContain('SYNOPSIS_OK');
   });
 
-  it('forks latest session via ACP session/fork when supported (no replay seed)', async () => {
+  it('forks latest session via ACP session/fork when supported and parent metadata indicates ACP transport (no replay seed)', async () => {
     const registered = new Map<string, (params: any) => Promise<any>>();
     const rpcHandlerManager = {
       registerHandler: (method: string, handler: (params: any) => Promise<any>) => {
@@ -1280,6 +1419,13 @@ describe('registerMachineRpcHandlers', () => {
         path: '/repo',
         flavor: 'codex',
         codexSessionId: 'codex_parent',
+        acpSessionModelsV1: {
+          v: 1,
+          provider: 'codex',
+          updatedAt: 1,
+          currentModelId: 'model-1',
+          availableModels: [{ id: 'model-1', name: 'Model 1' }],
+        },
         permissionMode: { v: 1, mode: 'default', updatedAt: 1 },
       }),
     );
@@ -1359,6 +1505,132 @@ describe('registerMachineRpcHandlers', () => {
     const updated = updater({ path: '/repo', flavor: 'codex' });
     expect(updated.forkV1).toMatchObject({ v: 1, parentSessionId: 'sess_parent', strategy: 'acp_fork_latest' });
     expect(updated.replaySeedV1).toBeUndefined();
+  });
+
+  it('falls back to replay fork when parent metadata does not indicate ACP transport (even if provider has a vendor session id)', async () => {
+    const registered = new Map<string, (params: any) => Promise<any>>();
+    const rpcHandlerManager = {
+      registerHandler: (method: string, handler: (params: any) => Promise<any>) => {
+        registered.set(method, handler);
+      },
+    } as any;
+
+    const spawnSession = vi.fn(async (_opts: any) => ({ type: 'success', sessionId: 'sess_child' } as const));
+    registerMachineRpcHandlers({
+      rpcHandlerManager,
+      handlers: {
+        spawnSession,
+        stopSession: async () => true,
+        requestShutdown: () => {},
+      },
+    });
+
+    const handler = registered.get((RPC_METHODS as any).SESSION_FORK);
+    expect(handler).toBeDefined();
+
+    const machineKey = new Uint8Array(32).fill(11);
+    const publicKey = tweetnacl.box.keyPair.fromSecretKey(machineKey).publicKey;
+    readCredentialsMock.mockResolvedValueOnce({
+      token: 'token-1',
+      encryption: { type: 'dataKey', machineKey, publicKey },
+    });
+
+    const getSpy = vi.spyOn(axios, 'get');
+    const postSpy = vi.spyOn(axios, 'post');
+
+    getSpy
+      // fetch parent session record
+      .mockResolvedValueOnce({
+        status: 200,
+        data: {
+          session: {
+            id: 'sess_parent',
+            seq: 3,
+            createdAt: 1,
+            updatedAt: 2,
+            active: true,
+            activeAt: 2,
+            encryptionMode: 'plain',
+            metadata: JSON.stringify({ path: '/repo', flavor: 'codex', codexSessionId: 'codex_parent' }),
+            metadataVersion: 7,
+            agentState: null,
+            agentStateVersion: 0,
+            dataEncryptionKey: null,
+          },
+        },
+      } as any)
+      // hydrateReplayDialogFromForkChain -> fetchSessionById(startingSessionId)
+      .mockResolvedValueOnce({
+        status: 200,
+        data: {
+          session: {
+            id: 'sess_parent',
+            seq: 3,
+            createdAt: 1,
+            updatedAt: 2,
+            active: true,
+            activeAt: 2,
+            encryptionMode: 'plain',
+            metadata: JSON.stringify({ path: '/repo', flavor: 'codex', codexSessionId: 'codex_parent' }),
+            metadataVersion: 7,
+            agentState: null,
+            agentStateVersion: 0,
+            dataEncryptionKey: null,
+          },
+        },
+      } as any)
+      // hydrateReplayDialogFromForkChain -> fetchEncryptedTranscriptMessages
+      .mockResolvedValueOnce({
+        status: 200,
+        data: {
+          messages: [
+            {
+              seq: 1,
+              createdAt: 1,
+              content: { t: 'plain', v: { role: 'user', content: { type: 'text', text: 'msg-1' } } },
+            },
+            {
+              seq: 2,
+              createdAt: 2,
+              content: { t: 'plain', v: { role: 'agent', content: { type: 'text', text: 'msg-2' } } },
+            },
+          ],
+        },
+      } as any);
+
+    postSpy.mockResolvedValueOnce({
+      status: 200,
+      data: {
+        session: {
+          id: 'sess_child',
+          seq: 0,
+          createdAt: 10,
+          updatedAt: 11,
+          active: false,
+          activeAt: 0,
+          encryptionMode: 'plain',
+          metadata: JSON.stringify({ path: '/repo', flavor: 'codex' }),
+          metadataVersion: 0,
+          agentState: null,
+          agentStateVersion: 0,
+          dataEncryptionKey: null,
+        },
+      },
+    } as any);
+
+    const result = await handler!({
+      v: 1,
+      parentSessionId: 'sess_parent',
+      forkPoint: { type: 'latest' },
+      strategy: 'auto',
+    });
+
+    expect(result).toMatchObject({ ok: true, childSessionId: 'sess_child' });
+    expect(createCatalogAcpBackendMock).not.toHaveBeenCalled();
+    expect(postSpy).toHaveBeenCalledTimes(1);
+    const posted = (postSpy as any).mock.calls[0][1] as any;
+    const createdMeta = JSON.parse(String(posted.metadata)) as any;
+    expect(String(createdMeta.replaySeedV1?.seedText ?? '')).toContain('msg-1');
   });
 
   it('includes fork-chain ancestor transcript in replaySeedV1 when forking a forked session', async () => {

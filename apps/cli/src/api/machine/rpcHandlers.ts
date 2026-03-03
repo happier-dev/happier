@@ -662,12 +662,15 @@ export function registerMachineRpcHandlers(params: Readonly<{
       };
     }
 
+    const replaySummaryRunner = parsed.data.replaySummaryRunner;
+    const summaryRequested = Boolean(replaySummaryRunner);
+
 	    const hydrated = await hydrateReplayDialogFromForkChain({
       credentials,
       startingSessionId: parentSessionId,
       limit: configuration.replaySeedCandidateLimit,
       maxTextChars: maxTextChars ?? undefined,
-      wantSynopsisText: true,
+      wantSynopsisText: summaryRequested,
       ...(forkPoint.type === 'seq' ? { upToSeqInclusive: forkPoint.upToSeqInclusive } : {}),
     }).catch(() => null);
     if (!hydrated || hydrated.dialog.length === 0) {
@@ -678,20 +681,20 @@ export function registerMachineRpcHandlers(params: Readonly<{
       };
     }
 
-	    const summaryText = await (async () => {
+	    const summaryText = summaryRequested
+      ? await (async () => {
 	      const hydratedSynopsis = typeof (hydrated as any)?.synopsisText === 'string'
 	        ? String((hydrated as any).synopsisText).trim()
 	        : '';
 	      if (hydratedSynopsis) return hydratedSynopsis;
 
-	      const summaryRunner = parsed.data.replaySummaryRunner;
-	      if (summaryRunner && resolveCliFeatureDecision({ featureId: 'execution.runs', env: process.env }).state === 'enabled') {
+	      if (replaySummaryRunner && resolveCliFeatureDecision({ featureId: 'execution.runs', env: process.env }).state === 'enabled') {
 	        try {
 	          const fn = params.deps?.runReplaySummaryForDialog ?? runReplaySummaryForDialog;
 	          const generated = await fn({
 	            cwd: directory,
 	            parentSessionId,
-	            runner: summaryRunner,
+	            runner: replaySummaryRunner,
 	            dialog: hydrated.dialog,
 	          });
 	          const trimmed = typeof generated === 'string' ? generated.trim() : '';
@@ -706,7 +709,8 @@ export function registerMachineRpcHandlers(params: Readonly<{
 	        : '';
 	      const trimmed = metaSummary.trim();
 	      return trimmed.length > 0 ? trimmed : null;
-	    })();
+	    })()
+      : null;
 
 	    const seedDraft = buildHappierReplayPromptFromDialog({
 	      previousSessionId: parentSessionId,
