@@ -15,46 +15,48 @@ import {
 
 export const coreFileTools = {
     'Read': {
-        title: (opts: { metadata: Metadata | null, tool: ToolCall }) => {
-            if (typeof opts.tool.input.file_path === 'string') {
-                const path = resolvePath(opts.tool.input.file_path, opts.metadata);
-                return path;
-            }
-            // Gemini uses 'locations' array with 'path' field
-            if (Array.isArray(opts.tool.input.locations)) {
-                const maybePath = opts.tool.input.locations[0]?.path;
-                if (typeof maybePath === 'string' && maybePath.length > 0) {
-                    const path = resolvePath(maybePath, opts.metadata);
-                    return path;
-                }
-            }
-            return t('tools.names.readFile');
-        },
+        title: () => t('tools.names.readFile'),
         minimal: true,
         icon: ICON_READ,
         input: ReadInputV2Schema,
         result: ReadResultV2Schema,
-    },
-    // Gemini uses lowercase 'read'
-    'read': {
-        title: (opts: { metadata: Metadata | null, tool: ToolCall }) => {
+        extractSubtitle: (opts: { metadata: Metadata | null, tool: ToolCall }) => {
+            if (typeof opts.tool.input.file_path === 'string') {
+                const path = resolvePath(opts.tool.input.file_path, opts.metadata);
+                return path.trim().length > 0 ? path : null;
+            }
             // Gemini uses 'locations' array with 'path' field
             if (Array.isArray(opts.tool.input.locations)) {
                 const maybePath = opts.tool.input.locations[0]?.path;
                 if (typeof maybePath === 'string' && maybePath.length > 0) {
                     const path = resolvePath(maybePath, opts.metadata);
-                    return path;
+                    return path.trim().length > 0 ? path : null;
+                }
+            }
+            return null;
+        },
+    },
+    // Gemini uses lowercase 'read'
+    'read': {
+        title: () => t('tools.names.readFile'),
+        minimal: true,
+        icon: ICON_READ,
+        input: ReadInputV2Schema,
+        extractSubtitle: (opts: { metadata: Metadata | null, tool: ToolCall }) => {
+            // Gemini uses 'locations' array with 'path' field
+            if (Array.isArray(opts.tool.input.locations)) {
+                const maybePath = opts.tool.input.locations[0]?.path;
+                if (typeof maybePath === 'string' && maybePath.length > 0) {
+                    const path = resolvePath(maybePath, opts.metadata);
+                    return path.trim().length > 0 ? path : null;
                 }
             }
             if (typeof opts.tool.input.file_path === 'string') {
                 const path = resolvePath(opts.tool.input.file_path, opts.metadata);
-                return path;
+                return path.trim().length > 0 ? path : null;
             }
-            return t('tools.names.readFile');
+            return null;
         },
-        minimal: true,
-        icon: ICON_READ,
-        input: ReadInputV2Schema,
     },
     'Edit': {
         title: (opts: { metadata: Metadata | null, tool: ToolCall }) => {
