@@ -1,6 +1,6 @@
 import type { PermissionMode } from '@/api/types';
 import type { AcpPermissionHandler } from '@/agent/acp/AcpBackend';
-import { isDefaultWriteLikeToolName } from '@/agent/permissions/CodexLikePermissionHandler';
+import { isDefaultWriteLikeToolName } from '@/agent/permissions/writeLikeToolNameHeuristics';
 
 export type VoiceAgentPermissionPolicy = 'no_tools' | 'read_only';
 

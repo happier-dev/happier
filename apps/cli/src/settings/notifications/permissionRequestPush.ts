@@ -2,7 +2,7 @@ import axios from 'axios';
 import type { AccountSettings } from '@happier-dev/protocol';
 import type { PermissionMode } from '@/api/types';
 import { serializeAxiosErrorForLog } from '@/api/client/serializeAxiosErrorForLog';
-import { isDefaultWriteLikeToolName } from '@/agent/permissions/CodexLikePermissionHandler';
+import { isDefaultWriteLikeToolName } from '@/agent/permissions/writeLikeToolNameHeuristics';
 import type { AgentRequestKind } from '@/agent/permissions/requestKind';
 import { logger } from '@/ui/logger';
 import { getActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';

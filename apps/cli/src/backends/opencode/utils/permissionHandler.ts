@@ -15,8 +15,8 @@ import {
   CodexLikePermissionHandler,
   type PermissionResult,
   type PendingRequest,
-  isDefaultWriteLikeToolName,
 } from '@/agent/permissions/CodexLikePermissionHandler';
+import { isDefaultWriteLikeToolName } from '@/agent/permissions/writeLikeToolNameHeuristics';
 
 export type { PermissionResult, PendingRequest };
 

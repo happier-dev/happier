@@ -20,35 +20,12 @@ import {
 import { resolvePermissionIntentFromMetadataSnapshot } from '@/agent/runtime/permission/permissionModeFromMetadata';
 import type { ToolTraceProtocol } from '@/agent/tools/trace/toolTrace';
 import type { AccountSettings } from '@happier-dev/protocol';
+import { isDefaultWriteLikeToolName } from './writeLikeToolNameHeuristics';
 
 export type { PermissionResult, PendingRequest };
 
 const ALWAYS_AUTO_APPROVE_TOKENS = ['change_title', 'save_memory', 'think'] as const;
-
-export function isDefaultWriteLikeToolName(toolName: string): boolean {
-  const lower = toolName.toLowerCase();
-  // Safety: when a provider reports an unknown tool name, treat it as write-like.
-  if (lower === 'other' || lower === 'unknown tool' || lower === 'unknown') return true;
-
-  const writeish = [
-    'edit',
-    'write',
-    'patch',
-    'delete',
-    'remove',
-    'create',
-    'mkdir',
-    'rename',
-    'move',
-    'copy',
-    'exec',
-    'bash',
-    'shell',
-    'run',
-    'terminal',
-  ];
-  return writeish.some((k) => lower === k || lower.includes(k));
-}
+export { isDefaultWriteLikeToolName };
 
 export class CodexLikePermissionHandler extends BasePermissionHandler {
   private readonly logPrefix: string;

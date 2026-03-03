@@ -4,12 +4,13 @@ import type { BackendIsolationBundle, BackendIsolationRequest } from '@/backends
 import { configuration } from '@/configuration';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { resolveClaudeExecutionRunPermissionPolicy } from './resolveClaudeExecutionRunPermissionPolicy';
 
 export const executionRunBackendFactory: ExecutionRunBackendFactory = (opts) => {
   return new ClaudeSdkAgentBackend({
     cwd: opts.cwd,
     modelId: opts.modelId ?? 'default',
-    permissionPolicy: opts.permissionMode as any,
+    permissionPolicy: resolveClaudeExecutionRunPermissionPolicy(opts.permissionMode),
     settingsPath: opts.isolation?.settingsPath,
     env: opts.isolation?.env,
   });
