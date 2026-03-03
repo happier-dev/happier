@@ -900,6 +900,8 @@ export const pl: TranslationStructure = {
     reportIssue: "Zgłoś problem",
     privacyPolicy: "Polityka prywatności",
     termsOfService: "Warunki użytkowania",
+    rateUs: "Oceń Happier",
+    rateUsSubtitle: "Jeśli podoba Ci się aplikacja, krótka ocena bardzo nam pomaga",
     eula: "EULA",
     supportUs: "Wesprzyj nas",
     supportUsSubtitlePro: "Dziękujemy za wsparcie!",
@@ -2121,18 +2123,22 @@ export const pl: TranslationStructure = {
       "Określ, jak ściśle akcje wymagają zatwierdzenia.",
     selectModelTitle: "Wybierz model AI",
     selectModelDescription: "Wybierz model używany przez tę sesję.",
-    selectSessionTypeTitle: "Wybierz typ sesji",
-    selectSessionTypeDescription:
-      "Wybierz sesję prostą lub powiązaną z Git worktree.",
-    searchPathsPlaceholder: "Szukaj ścieżek...",
-    noMachinesFound:
-      "Nie znaleziono maszyn. Najpierw uruchom sesję Happier na swoim komputerze.",
-    allMachinesOffline: "Wszystkie maszyny są poza siecią",
-    machineDetails: "Zobacz szczegóły maszyny →",
-    directoryDoesNotExist: "Katalog nie został znaleziony",
-    createDirectoryConfirm: ({ directory }: { directory: string }) =>
-      `Katalog ${directory} nie istnieje. Czy chcesz go utworzyć?`,
-    sessionStarted: "Sesja rozpoczęta",
+	    selectSessionTypeTitle: "Wybierz typ sesji",
+	    selectSessionTypeDescription:
+	      "Wybierz sesję prostą lub powiązaną z Git worktree.",
+	    searchPathsPlaceholder: "Szukaj ścieżek...",
+	    noMachinesFound:
+	      "Nie znaleziono maszyn. Najpierw uruchom sesję Happier na swoim komputerze.",
+	    allMachinesOffline: "Wszystkie maszyny są poza siecią",
+	    machineOfflineInlineTitle: "Maszyna jest offline",
+	    machineOfflineInlineBody:
+	      "Uruchom demona na tej maszynie lub wybierz inną maszynę przed utworzeniem sesji.",
+	    machineOfflineCannotStartStatus: "offline (nie można rozpocząć sesji)",
+	    machineDetails: "Zobacz szczegóły maszyny →",
+	    directoryDoesNotExist: "Katalog nie został znaleziony",
+	    createDirectoryConfirm: ({ directory }: { directory: string }) =>
+	      `Katalog ${directory} nie istnieje. Czy chcesz go utworzyć?`,
+	    sessionStarted: "Sesja rozpoczęta",
     sessionStartedMessage: "Sesja została pomyślnie rozpoczęta.",
     sessionSpawningFailed:
       "Tworzenie sesji nie powiodło się - nie zwrócono ID sesji.",
@@ -3041,16 +3047,31 @@ export const pl: TranslationStructure = {
       hide: "Ukryj",
       rawJsonDevMode: "Surowy JSON (tryb deweloperski)",
     },
-    taskView: {
-      initializing: "Inicjalizacja agenta...",
-      moreTools: ({ count }: { count: number }) =>
-        `+${count} ${plural({ count, one: "więcej narzędzie", few: "więcej narzędzia", many: "więcej narzędzi" })}`,
-    },
-    subAgentRunView: {
-      planTitle: "Plan działania",
-      delegateTitle: "Delegowanie",
-      reviewDigestTitle: "Skrót przeglądu",
-    },
+	    taskView: {
+	      initializing: "Inicjalizacja agenta...",
+	      moreTools: ({ count }: { count: number }) =>
+	        `+${count} ${plural({ count, one: "więcej narzędzie", few: "więcej narzędzia", many: "więcej narzędzi" })}`,
+	    },
+	    taskLikeSummary: {
+	      createTask: "Utwórz zadanie",
+	      createTaskWithSubject: ({ subject }: { subject: string }) =>
+	        `Utwórz zadanie: ${subject}`,
+	      listTasks: "Wyświetl zadania",
+	      updateTask: "Aktualizuj zadanie",
+	      updateTaskWithId: ({ id }: { id: string }) => `Aktualizuj zadanie ${id}`,
+	      updateTaskWithIdStatus: ({
+	        id,
+	        status,
+	      }: {
+	        id: string;
+	        status: string;
+	      }) => `Aktualizuj zadanie ${id}: ${status}`,
+	    },
+	    subAgentRunView: {
+	      planTitle: "Plan działania",
+	      delegateTitle: "Delegowanie",
+	      reviewDigestTitle: "Skrót przeglądu",
+	    },
     changeTitleView: {
       titleLabel: "Tytuł",
     },
@@ -3102,6 +3123,7 @@ export const pl: TranslationStructure = {
     },
     names: {
       task: "Zadanie",
+      subAgent: "Podagent",
       terminal: "Konsola",
       searchFiles: "Wyszukaj pliki",
       search: "Wyszukaj",

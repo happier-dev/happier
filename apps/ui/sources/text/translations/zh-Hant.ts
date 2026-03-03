@@ -583,6 +583,8 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
         reportIssue: '回報問題',
         privacyPolicy: '隱私權政策',
         termsOfService: '服務條款',
+        rateUs: '為 Happier 評分',
+        rateUsSubtitle: '如果你喜歡這個 app，歡迎給我們一個簡短評分',
         eula: '終端使用者授權協議',
         supportUs: '支援我們',
         supportUsSubtitlePro: '感謝您的支援！',
@@ -1314,15 +1316,18 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
         failedToSwitchControl: '切換控制模式失敗',
     },
 
-    newSession: {
-        // Used by new-session screen and launch flows
-        title: '啟動新工作階段',
-        noMachinesFound: '未找到裝置。請先在您的電腦上啟動 Happier 工作階段。',
-        allMachinesOffline: '所有裝置似乎都已離線',
-        machineDetails: '查看裝置詳情 →',
-        directoryDoesNotExist: '目錄不存在',
-        createDirectoryConfirm: ({ directory }: { directory: string }) => `目錄 ${directory} 不存在。您要建立它嗎？`,
-        sessionStarted: '工作階段已啟動',
+	    newSession: {
+	        // Used by new-session screen and launch flows
+	        title: '啟動新工作階段',
+	        noMachinesFound: '未找到裝置。請先在您的電腦上啟動 Happier 工作階段。',
+	        allMachinesOffline: '所有裝置似乎都已離線',
+	        machineOfflineInlineTitle: '機器離線',
+	        machineOfflineInlineBody: '請在此機器上啟動守護程序，或在建立會話前選擇另一台機器。',
+	        machineOfflineCannotStartStatus: '離線（無法啟動工作階段）',
+	        machineDetails: '查看裝置詳情 →',
+	        directoryDoesNotExist: '目錄不存在',
+	        createDirectoryConfirm: ({ directory }: { directory: string }) => `目錄 ${directory} 不存在。您要建立它嗎？`,
+	        sessionStarted: '工作階段已啟動',
         sessionStartedMessage: '工作階段已成功啟動。',
         sessionSpawningFailed: '工作階段生成失敗 - 未返回工作階段 ID。',
         startingSession: '正在啟動工作階段...',
@@ -1781,15 +1786,23 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
             running: '工具正在執行...',
             rawJsonDevMode: '原始 JSON（開發模式）',
         },
-          taskView: {
-              initializing: '正在初始化 agent...',
-              moreTools: ({ count }: { count: number }) => `+${count} 個更多${plural({ count, singular: '工具', plural: '工具' })}`,
-          },
-          subAgentRunView: {
-              planTitle: '計畫',
-              delegateTitle: '委派',
-              reviewDigestTitle: '審查摘要',
-          },
+	          taskView: {
+	              initializing: '正在初始化 agent...',
+	              moreTools: ({ count }: { count: number }) => `+${count} 個更多${plural({ count, singular: '工具', plural: '工具' })}`,
+	          },
+	          taskLikeSummary: {
+	              createTask: '建立任務',
+	              createTaskWithSubject: ({ subject }: { subject: string }) => `建立任務：${subject}`,
+	              listTasks: '列出任務',
+	              updateTask: '更新任務',
+	              updateTaskWithId: ({ id }: { id: string }) => `更新任務 ${id}`,
+	              updateTaskWithIdStatus: ({ id, status }: { id: string; status: string }) => `更新任務 ${id}：${status}`,
+	          },
+	          subAgentRunView: {
+	              planTitle: '計畫',
+	              delegateTitle: '委派',
+	              reviewDigestTitle: '審查摘要',
+	          },
           structuredResult: {
               exit: '結束碼',
               stdout: '標準輸出',
@@ -1828,6 +1841,7 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
         },
         names: {
             task: '任務',
+            subAgent: '子代理',
             terminal: '終端機',
             searchFiles: '搜尋檔案',
             search: '搜尋',

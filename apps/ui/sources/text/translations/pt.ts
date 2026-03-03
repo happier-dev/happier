@@ -889,6 +889,8 @@ export const pt: TranslationStructure = {
     reportIssue: "Relatar um problema",
     privacyPolicy: "Política de privacidade",
     termsOfService: "Termos de serviço",
+    rateUs: "Avalie o Happier",
+    rateUsSubtitle: "Se você gosta do app, uma avaliação rápida ajuda muito",
     eula: "EULA",
     supportUs: "Nos apoie",
     supportUsSubtitlePro: "Obrigado pelo seu apoio!",
@@ -2114,6 +2116,10 @@ export const pt: TranslationStructure = {
     noMachinesFound:
       "Nenhuma máquina encontrada. Inicie uma sessão Happier no seu computador primeiro.",
     allMachinesOffline: "Todas as máquinas estão offline",
+    machineOfflineInlineTitle: "A máquina está offline",
+    machineOfflineInlineBody:
+      "Inicie o daemon nesta máquina ou escolha outra antes de criar uma sessão.",
+    machineOfflineCannotStartStatus: "offline (não é possível iniciar a sessão)",
     machineDetails: "Ver detalhes da máquina →",
     directoryDoesNotExist: "Diretório não encontrado",
     createDirectoryConfirm: ({ directory }: { directory: string }) =>
@@ -3044,6 +3050,21 @@ export const pt: TranslationStructure = {
       moreTools: ({ count }: { count: number }) =>
         `+${count} mais ${plural({ count, singular: "ferramenta", plural: "ferramentas" })}`,
     },
+    taskLikeSummary: {
+      createTask: "Criar tarefa",
+      createTaskWithSubject: ({ subject }: { subject: string }) =>
+        `Criar tarefa: ${subject}`,
+      listTasks: "Listar tarefas",
+      updateTask: "Atualizar tarefa",
+      updateTaskWithId: ({ id }: { id: string }) => `Atualizar tarefa ${id}`,
+      updateTaskWithIdStatus: ({
+        id,
+        status,
+      }: {
+        id: string;
+        status: string;
+      }) => `Atualizar tarefa ${id}: ${status}`,
+    },
     subAgentRunView: {
       planTitle: "Plano",
       delegateTitle: "Delegação",
@@ -3100,6 +3121,7 @@ export const pt: TranslationStructure = {
     },
     names: {
       task: "Tarefa",
+      subAgent: "Subagente",
       terminal: "Console",
       searchFiles: "Buscar arquivos",
       search: "Buscar",

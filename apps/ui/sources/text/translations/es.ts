@@ -878,6 +878,8 @@ export const es: TranslationStructure = {
     reportIssue: "Reportar un problema",
     privacyPolicy: "Política de privacidad",
     termsOfService: "Términos de servicio",
+    rateUs: "Califica Happier",
+    rateUsSubtitle: "Si te gusta la app, una calificación rápida nos ayuda mucho",
     eula: "EULA",
     supportUs: "Apóyanos",
     supportUsSubtitlePro: "¡Gracias por su apoyo!",
@@ -2101,6 +2103,11 @@ export const es: TranslationStructure = {
     noMachinesFound:
       "No se encontraron máquinas. Inicia una sesión de Happier en tu computadora primero.",
     allMachinesOffline: "Todas las máquinas están desconectadas",
+    machineOfflineInlineTitle: "La máquina está sin conexión",
+    machineOfflineInlineBody:
+      "Inicia el daemon en esta máquina o elige otra antes de crear una sesión.",
+    machineOfflineCannotStartStatus:
+      "sin conexión (no se puede iniciar la sesión)",
     machineDetails: "Ver detalles de la máquina →",
     directoryDoesNotExist: "Directorio no encontrado",
     createDirectoryConfirm: ({ directory }: { directory: string }) =>
@@ -3025,6 +3032,21 @@ export const es: TranslationStructure = {
       moreTools: ({ count }: { count: number }) =>
         `+${count} más ${plural({ count, singular: "herramienta", plural: "herramientas" })}`,
     },
+    taskLikeSummary: {
+      createTask: "Crear tarea",
+      createTaskWithSubject: ({ subject }: { subject: string }) =>
+        `Crear tarea: ${subject}`,
+      listTasks: "Listar tareas",
+      updateTask: "Actualizar tarea",
+      updateTaskWithId: ({ id }: { id: string }) => `Actualizar tarea ${id}`,
+      updateTaskWithIdStatus: ({
+        id,
+        status,
+      }: {
+        id: string;
+        status: string;
+      }) => `Actualizar tarea ${id}: ${status}`,
+    },
     subAgentRunView: {
       planTitle: "Plan de trabajo",
       delegateTitle: "Delegación",
@@ -3081,6 +3103,7 @@ export const es: TranslationStructure = {
     },
     names: {
       task: "Tarea",
+      subAgent: "Subagente",
       terminal: "Consola",
       searchFiles: "Buscar archivos",
       search: "Buscar",

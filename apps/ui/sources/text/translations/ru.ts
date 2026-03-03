@@ -858,6 +858,8 @@ export const ru: TranslationStructure = {
     reportIssue: "Сообщить о проблеме",
     privacyPolicy: "Политика конфиденциальности",
     termsOfService: "Условия использования",
+    rateUs: "Оценить Happier",
+    rateUsSubtitle: "Если вам нравится приложение, быстрая оценка очень поможет нам",
     eula: "EULA",
     supportUs: "Поддержите нас",
     supportUsSubtitlePro: "Спасибо за вашу поддержку!",
@@ -1552,6 +1554,17 @@ export const ru: TranslationStructure = {
         "Эти уведомления отправляются вашим CLI через Expo, когда вашей сессии требуется внимание.",
       enabledSubtitle: "Разрешить push-уведомления для этого аккаунта",
     },
+    foregroundBehavior: {
+      title: "Уведомления в приложении",
+      footer:
+        "Управляет уведомлениями, пока вы используете приложение. Уведомления для просматриваемой сессии всегда скрываются.",
+      full: "Полные",
+      fullDescription: "Показывать баннер и воспроизводить звук",
+      silent: "Тихие",
+      silentDescription: "Показывать баннер без звука",
+      off: "Выкл.",
+      offDescription: "Только значок, без баннера",
+    },
     types: {
       title: "Типы",
       footer: "Отключите отдельные типы, если вам нужны не все уведомления.",
@@ -2056,18 +2069,22 @@ export const ru: TranslationStructure = {
       "Настройте, насколько строго действия требуют подтверждения.",
     selectModelTitle: "Выбрать модель ИИ",
     selectModelDescription: "Выберите модель, используемую этой сессией.",
-    selectSessionTypeTitle: "Выбрать тип сессии",
-    selectSessionTypeDescription:
-      "Выберите простую сессию или сессию, привязанную к Git worktree.",
-    searchPathsPlaceholder: "Поиск путей...",
-    noMachinesFound:
-      "Машины не найдены. Сначала запустите сессию Happier на вашем компьютере.",
-    allMachinesOffline: "Все машины не в сети",
-    machineDetails: "Посмотреть детали машины →",
-    directoryDoesNotExist: "Директория не найдена",
-    createDirectoryConfirm: ({ directory }: { directory: string }) =>
-      `Директория ${directory} не существует. Хотите создать её?`,
-    sessionStarted: "Сессия запущена",
+	    selectSessionTypeTitle: "Выбрать тип сессии",
+	    selectSessionTypeDescription:
+	      "Выберите простую сессию или сессию, привязанную к Git worktree.",
+	    searchPathsPlaceholder: "Поиск путей...",
+	    noMachinesFound:
+	      "Машины не найдены. Сначала запустите сессию Happier на вашем компьютере.",
+	    allMachinesOffline: "Все машины не в сети",
+	    machineOfflineInlineTitle: "Машина офлайн",
+	    machineOfflineInlineBody:
+	      "Запустите демон на этой машине или выберите другую перед созданием сессии.",
+	    machineOfflineCannotStartStatus: "не в сети (нельзя начать сессию)",
+	    machineDetails: "Посмотреть детали машины →",
+	    directoryDoesNotExist: "Директория не найдена",
+	    createDirectoryConfirm: ({ directory }: { directory: string }) =>
+	      `Директория ${directory} не существует. Хотите создать её?`,
+	    sessionStarted: "Сессия запущена",
     sessionStartedMessage: "Сессия успешно запущена.",
     sessionSpawningFailed: "Ошибка создания сессии - ID сессии не получен.",
     failedToStart:
@@ -3025,6 +3042,21 @@ export const ru: TranslationStructure = {
       moreTools: ({ count }: { count: number }) =>
         `+${count} ещё ${plural({ count, one: "инструмент", few: "инструмента", many: "инструментов" })}`,
     },
+    taskLikeSummary: {
+      createTask: "Создать задачу",
+      createTaskWithSubject: ({ subject }: { subject: string }) =>
+        `Создать задачу: ${subject}`,
+      listTasks: "Список задач",
+      updateTask: "Обновить задачу",
+      updateTaskWithId: ({ id }: { id: string }) => `Обновить задачу ${id}`,
+      updateTaskWithIdStatus: ({
+        id,
+        status,
+      }: {
+        id: string;
+        status: string;
+      }) => `Обновить задачу ${id}: ${status}`,
+    },
     subAgentRunView: {
       planTitle: "План",
       delegateTitle: "Делегирование",
@@ -3081,6 +3113,7 @@ export const ru: TranslationStructure = {
     },
     names: {
       task: "Задача",
+      subAgent: "Субагент",
       terminal: "Терминал",
       searchFiles: "Поиск файлов",
       search: "Поиск",
@@ -3440,19 +3473,6 @@ export const ru: TranslationStructure = {
         started: "Начато",
         finished: "Завершено",
       },
-    },
-  },
-
-  settingsNotifications: {
-    foregroundBehavior: {
-      title: "Уведомления в приложении",
-      footer: "Управляет уведомлениями, пока вы используете приложение. Уведомления для просматриваемой сессии всегда скрываются.",
-      full: "Полные",
-      fullDescription: "Показывать баннер и воспроизводить звук",
-      silent: "Тихие",
-      silentDescription: "Показывать баннер без звука",
-      off: "Выкл.",
-      offDescription: "Только значок, без баннера",
     },
   },
 

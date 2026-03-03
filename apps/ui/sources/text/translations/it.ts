@@ -1196,6 +1196,8 @@ export const it: TranslationStructure = {
     reportIssue: "Segnala un problema",
     privacyPolicy: "Informativa sulla privacy",
     termsOfService: "Termini di servizio",
+    rateUs: "Valuta Happier",
+    rateUsSubtitle: "Se l'app ti piace, una valutazione rapida ci aiuta molto",
     eula: "EULA",
     supportUs: "Sostienici",
     supportUsSubtitlePro: "Grazie per il tuo supporto!",
@@ -2425,6 +2427,10 @@ export const it: TranslationStructure = {
     noMachinesFound:
       "Nessuna macchina trovata. Avvia prima una sessione Happier sul tuo computer.",
     allMachinesOffline: "Tutte le macchine sembrano offline",
+    machineOfflineInlineTitle: "La macchina è offline",
+    machineOfflineInlineBody:
+      "Avvia il daemon su questa macchina o scegli un’altra macchina prima di creare una sessione.",
+    machineOfflineCannotStartStatus: "offline (impossibile avviare la sessione)",
     machineDetails: "Visualizza dettagli macchina →",
     directoryDoesNotExist: "Directory non trovata",
     createDirectoryConfirm: ({ directory }: { directory: string }) =>
@@ -3343,6 +3349,21 @@ export const it: TranslationStructure = {
       moreTools: ({ count }: { count: number }) =>
         `+${count} altri ${plural({ count, singular: "strumento", plural: "strumenti" })}`,
     },
+    taskLikeSummary: {
+      createTask: "Crea attività",
+      createTaskWithSubject: ({ subject }: { subject: string }) =>
+        `Crea attività: ${subject}`,
+      listTasks: "Elenca attività",
+      updateTask: "Aggiorna attività",
+      updateTaskWithId: ({ id }: { id: string }) => `Aggiorna attività ${id}`,
+      updateTaskWithIdStatus: ({
+        id,
+        status,
+      }: {
+        id: string;
+        status: string;
+      }) => `Aggiorna attività ${id}: ${status}`,
+    },
     subAgentRunView: {
       planTitle: "Piano",
       delegateTitle: "Delega",
@@ -3424,6 +3445,7 @@ export const it: TranslationStructure = {
     },
     names: {
       task: "Attività",
+      subAgent: "Sub-agente",
       terminal: "Terminale",
       searchFiles: "Cerca file",
       search: "Cerca",

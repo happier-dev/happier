@@ -1169,6 +1169,8 @@ export const ja: TranslationStructure = {
     reportIssue: "問題を報告",
     privacyPolicy: "プライバシーポリシー",
     termsOfService: "利用規約",
+    rateUs: "Happier を評価する",
+    rateUsSubtitle: "アプリを気に入っていただけたら、短い評価で応援してください",
     eula: "EULA",
     supportUs: "開発を支援",
     supportUsSubtitlePro: "ご支援ありがとうございます！",
@@ -1851,6 +1853,17 @@ export const ja: TranslationStructure = {
         "これらの通知は、セッションに注意が必要なときに CLI から Expo 経由で送信されます。",
       enabledSubtitle: "このアカウントでプッシュ通知を許可します",
     },
+    foregroundBehavior: {
+      title: "アプリ内通知",
+      footer:
+        "アプリ使用中の通知を制御します。現在表示中のセッションの通知は常にミュートされます。",
+      full: "フル",
+      fullDescription: "バナーを表示してサウンドを再生",
+      silent: "サイレント",
+      silentDescription: "サウンドなしでバナーを表示",
+      off: "オフ",
+      offDescription: "バッジのみ、バナーなし",
+    },
     types: {
       title: "種類",
       footer: "必要な通知だけ受け取りたい場合は種類ごとに無効化できます。",
@@ -2355,6 +2368,10 @@ export const ja: TranslationStructure = {
     noMachinesFound:
       "マシンが見つかりません。まずコンピューターでHappierセッションを起動してください。",
     allMachinesOffline: "すべてのマシンがオフラインです",
+    machineOfflineInlineTitle: "マシンがオフラインです",
+    machineOfflineInlineBody:
+      "このマシンでデーモンを起動するか、別のマシンを選んでからセッションを作成してください。",
+    machineOfflineCannotStartStatus: "オフライン（セッションを開始できません）",
     machineDetails: "マシンの詳細を表示 →",
     directoryDoesNotExist: "ディレクトリが見つかりません",
     createDirectoryConfirm: ({ directory }: { directory: string }) =>
@@ -3273,6 +3290,21 @@ export const ja: TranslationStructure = {
       initializing: "エージェントを初期化中...",
       moreTools: ({ count }: { count: number }) => `+${count} 個のツール`,
     },
+    taskLikeSummary: {
+      createTask: "タスクを作成",
+      createTaskWithSubject: ({ subject }: { subject: string }) =>
+        `タスクを作成: ${subject}`,
+      listTasks: "タスク一覧",
+      updateTask: "タスクを更新",
+      updateTaskWithId: ({ id }: { id: string }) => `タスク ${id} を更新`,
+      updateTaskWithIdStatus: ({
+        id,
+        status,
+      }: {
+        id: string;
+        status: string;
+      }) => `タスク ${id} を更新: ${status}`,
+    },
     subAgentRunView: {
       planTitle: "計画",
       delegateTitle: "委任",
@@ -3352,6 +3384,7 @@ export const ja: TranslationStructure = {
     },
     names: {
       task: "タスク",
+      subAgent: "サブエージェント",
       terminal: "ターミナル",
       searchFiles: "ファイル検索",
       search: "検索",
@@ -3680,19 +3713,6 @@ export const ja: TranslationStructure = {
         started: "開始",
         finished: "完了",
       },
-    },
-  },
-
-  settingsNotifications: {
-    foregroundBehavior: {
-      title: "アプリ内通知",
-      footer: "アプリ使用中の通知を制御します。現在表示中のセッションの通知は常にミュートされます。",
-      full: "フル",
-      fullDescription: "バナーを表示してサウンドを再生",
-      silent: "サイレント",
-      silentDescription: "サウンドなしでバナーを表示",
-      off: "オフ",
-      offDescription: "バッジのみ、バナーなし",
     },
   },
 

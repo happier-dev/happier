@@ -832,6 +832,8 @@ export const zhHans: TranslationStructure = {
     reportIssue: "报告问题",
     privacyPolicy: "隐私政策",
     termsOfService: "服务条款",
+    rateUs: "给 Happier 评分",
+    rateUsSubtitle: "如果你喜欢这款应用，欢迎给我们一个简短评分",
     eula: "最终用户许可协议",
     supportUs: "支持我们",
     supportUsSubtitlePro: "感谢您的支持！",
@@ -1499,6 +1501,17 @@ export const zhHans: TranslationStructure = {
         "当会话需要你关注时，这些通知会由你的 CLI 通过 Expo 发送。",
       enabledSubtitle: "允许此账户接收推送通知",
     },
+    foregroundBehavior: {
+      title: "应用内通知",
+      footer:
+        "控制您使用应用时的通知方式。当前正在查看的会话的通知始终会被静音。",
+      full: "完整",
+      fullDescription: "显示横幅并播放声音",
+      silent: "静音",
+      silentDescription: "显示横幅但不播放声音",
+      off: "关闭",
+      offDescription: "仅显示角标，不显示横幅",
+    },
     types: {
       title: "类型",
       footer: "如果你只想要某些提醒，可以禁用单独的类型。",
@@ -1970,6 +1983,10 @@ export const zhHans: TranslationStructure = {
     searchPathsPlaceholder: "搜索路径...",
     noMachinesFound: "未找到设备。请先在您的计算机上启动 Happier 会话。",
     allMachinesOffline: "所有设备似乎都已离线",
+    machineOfflineInlineTitle: "机器离线",
+    machineOfflineInlineBody:
+      "请在此机器上启动守护进程，或在创建会话前选择另一台机器。",
+    machineOfflineCannotStartStatus: "离线（无法启动会话）",
     machineDetails: "查看设备详情 →",
     directoryDoesNotExist: "目录不存在",
     createDirectoryConfirm: ({ directory }: { directory: string }) =>
@@ -2856,6 +2873,21 @@ export const zhHans: TranslationStructure = {
       moreTools: ({ count }: { count: number }) =>
         `+${count} 个更多${plural({ count, singular: "工具", plural: "工具" })}`,
     },
+    taskLikeSummary: {
+      createTask: "创建任务",
+      createTaskWithSubject: ({ subject }: { subject: string }) =>
+        `创建任务：${subject}`,
+      listTasks: "列出任务",
+      updateTask: "更新任务",
+      updateTaskWithId: ({ id }: { id: string }) => `更新任务 ${id}`,
+      updateTaskWithIdStatus: ({
+        id,
+        status,
+      }: {
+        id: string;
+        status: string;
+      }) => `更新任务 ${id}：${status}`,
+    },
     subAgentRunView: {
       planTitle: "计划",
       delegateTitle: "委派",
@@ -2911,6 +2943,7 @@ export const zhHans: TranslationStructure = {
     },
     names: {
       task: "任务",
+      subAgent: "子代理",
       terminal: "终端",
       searchFiles: "搜索文件",
       search: "搜索",
@@ -3251,19 +3284,6 @@ export const zhHans: TranslationStructure = {
         started: "开始",
         finished: "完成",
       },
-    },
-  },
-
-  settingsNotifications: {
-    foregroundBehavior: {
-      title: "应用内通知",
-      footer: "控制您使用应用时的通知方式。当前正在查看的会话的通知始终会被静音。",
-      full: "完整",
-      fullDescription: "显示横幅并播放声音",
-      silent: "静音",
-      silentDescription: "显示横幅但不播放声音",
-      off: "关闭",
-      offDescription: "仅显示角标，不显示横幅",
     },
   },
 
