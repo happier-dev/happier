@@ -271,9 +271,16 @@ describe('app/_layout init resilience', () => {
     });
 
     it('wraps the root layout with Sentry.wrap', async () => {
+        process.env.EXPO_PUBLIC_SENTRY_DSN = 'https://examplePublicKey@o0.ingest.sentry.io/0';
         await import('@/app/_layout');
         expect(sentryWrapMock).toHaveBeenCalledTimes(1);
         expect(typeof sentryWrapMock.mock.calls[0]?.[0]).toBe('function');
+    });
+
+    it('does not wrap the root layout with Sentry.wrap when EXPO_PUBLIC_SENTRY_DSN is unset', async () => {
+        delete process.env.EXPO_PUBLIC_SENTRY_DSN;
+        await import('@/app/_layout');
+        expect(sentryWrapMock).toHaveBeenCalledTimes(0);
     });
 
     it('configures separate Android notification channels for permission/action request pushes', async () => {

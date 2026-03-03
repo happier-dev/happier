@@ -44,7 +44,7 @@ import { useUnistyles } from 'react-native-unistyles';
 import { AsyncLock } from '@/utils/system/lock';
 import { useWebUiFontScale } from '@/components/ui/text/useWebUiFontScale';
 import { usePierreDiffWorkerPoolWarmup } from '@/components/ui/code/diff/pierre/usePierreDiffWorkerPoolWarmup';
-import { initializeSentryOnce } from '@/utils/system/sentry';
+import { initializeSentryOnce, wrapWithSentryIfEnabled } from '@/utils/system/sentry';
 import { t } from '@/text';
 import { AppCrashRecoveryBoundary } from '@/components/appShell/AppCrashRecoveryBoundary';
 import { WebCryptoStartupGate } from '@/components/web/WebCryptoStartupGate';
@@ -787,4 +787,4 @@ function AppBoot(props: {
     );
 }
 
-export default Sentry.wrap(RootLayout);
+export default wrapWithSentryIfEnabled(RootLayout);
