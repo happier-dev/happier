@@ -33,6 +33,19 @@ function readTokenFromAccessKeyFile(path) {
   return raw;
 }
 
+function createTestJwt({ sub, jti }) {
+  const headerJson = JSON.stringify({ alg: 'none', typ: 'JWT' });
+  const payloadJson = JSON.stringify({ sub, ...(jti ? { jti } : {}) });
+  const toB64Url = (s) =>
+    Buffer.from(s, 'utf8')
+      .toString('base64')
+      .replace(/=/g, '')
+      .replace(/\+/g, '-')
+      .replace(/\//g, '_');
+  // Signature is irrelevant for decodeJwtPayloadUnsafe (and our local test server only does string equality).
+  return `${toB64Url(headerJson)}.${toB64Url(payloadJson)}.`;
+}
+
 async function withAuthServer({ goodToken }, fn) {
   const server = http.createServer((req, res) => {
     if (!req.url || !req.method) {
@@ -74,6 +87,7 @@ test('ensureActiveAccessKeyValid repairs server-scoped access key from url-hash 
       const env = { HAPPIER_ACTIVE_SERVER_ID: 'stack_test__id_default' };
       const resolved = resolveStackCredentialPaths({ cliHomeDir: home, serverUrl, env });
       assert.ok(resolved.urlHashServerScopedPath, 'expected url-hash server scoped path');
+      assert.ok(resolved.hostPortServerScopedPath, 'expected host-port server scoped path');
 
       writeAccessKeyFile(resolved.serverScopedPath, 'bad-token');
       writeAccessKeyFile(resolved.urlHashServerScopedPath, 'good-token');
@@ -81,6 +95,27 @@ test('ensureActiveAccessKeyValid repairs server-scoped access key from url-hash 
       const result = await ensureActiveAccessKeyValid({ cliHomeDir: home, serverUrl, env, timeoutMs: 2_500 });
       assert.equal(result.kind, 'repaired');
       assert.equal(result.sourcePath, resolved.urlHashServerScopedPath);
+      assert.equal(readTokenFromAccessKeyFile(resolved.serverScopedPath), 'good-token');
+    });
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test('ensureActiveAccessKeyValid repairs server-scoped access key from host-port key when active key is unauthorized', async () => {
+  const home = mkdtempSync(join(tmpdir(), 'happier-stack-cred-repair-hostport-'));
+  try {
+    await withAuthServer({ goodToken: 'good-token' }, async ({ serverUrl }) => {
+      const env = { HAPPIER_ACTIVE_SERVER_ID: 'stack_test__id_default' };
+      const resolved = resolveStackCredentialPaths({ cliHomeDir: home, serverUrl, env });
+      assert.ok(resolved.hostPortServerScopedPath, 'expected host-port server scoped path');
+
+      writeAccessKeyFile(resolved.serverScopedPath, 'bad-token');
+      writeAccessKeyFile(resolved.hostPortServerScopedPath, 'good-token');
+
+      const result = await ensureActiveAccessKeyValid({ cliHomeDir: home, serverUrl, env, timeoutMs: 2_500 });
+      assert.equal(result.kind, 'repaired');
+      assert.equal(result.sourcePath, resolved.hostPortServerScopedPath);
       assert.equal(readTokenFromAccessKeyFile(resolved.serverScopedPath), 'good-token');
     });
   } finally {
@@ -122,6 +157,50 @@ test('ensureActiveAccessKeyValid seeds missing server-scoped access key from leg
       assert.equal(result.kind, 'repaired');
       assert.equal(result.sourcePath, resolved.legacyPath);
       assert.equal(readTokenFromAccessKeyFile(resolved.serverScopedPath), 'good-token');
+    });
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test('ensureActiveAccessKeyValid does not switch accounts when the active key is a JWT for a different sub', async () => {
+  const home = mkdtempSync(join(tmpdir(), 'happier-stack-cred-repair-sub-guard-'));
+  try {
+    const goodToken = createTestJwt({ sub: 'account-b' });
+    await withAuthServer({ goodToken }, async ({ serverUrl }) => {
+      const env = { HAPPIER_ACTIVE_SERVER_ID: 'stack_test__id_default' };
+      const resolved = resolveStackCredentialPaths({ cliHomeDir: home, serverUrl, env });
+      assert.ok(resolved.urlHashServerScopedPath, 'expected url-hash server scoped path');
+
+      const activeToken = createTestJwt({ sub: 'account-a' });
+      writeAccessKeyFile(resolved.serverScopedPath, activeToken);
+      writeAccessKeyFile(resolved.urlHashServerScopedPath, goodToken);
+
+      const result = await ensureActiveAccessKeyValid({ cliHomeDir: home, serverUrl, env, timeoutMs: 2_500 });
+      assert.equal(result.kind, 'unresolved');
+      assert.equal(readTokenFromAccessKeyFile(resolved.serverScopedPath), activeToken);
+    });
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test('ensureActiveAccessKeyValid repairs server-scoped key when both active and fallback keys share the same JWT sub', async () => {
+  const home = mkdtempSync(join(tmpdir(), 'happier-stack-cred-repair-sub-match-'));
+  try {
+    const goodToken = createTestJwt({ sub: 'account-a', jti: 'good' });
+    await withAuthServer({ goodToken }, async ({ serverUrl }) => {
+      const env = { HAPPIER_ACTIVE_SERVER_ID: 'stack_test__id_default' };
+      const resolved = resolveStackCredentialPaths({ cliHomeDir: home, serverUrl, env });
+      assert.ok(resolved.urlHashServerScopedPath, 'expected url-hash server scoped path');
+
+      const activeToken = createTestJwt({ sub: 'account-a', jti: 'active' });
+      writeAccessKeyFile(resolved.serverScopedPath, activeToken);
+      writeAccessKeyFile(resolved.urlHashServerScopedPath, goodToken);
+
+      const result = await ensureActiveAccessKeyValid({ cliHomeDir: home, serverUrl, env, timeoutMs: 2_500 });
+      assert.equal(result.kind, 'repaired');
+      assert.equal(readTokenFromAccessKeyFile(resolved.serverScopedPath), goodToken);
     });
   } finally {
     rmSync(home, { recursive: true, force: true });

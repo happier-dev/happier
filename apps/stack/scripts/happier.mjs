@@ -38,6 +38,38 @@ function hasExplicitServerSelectionArg(argv) {
   );
 }
 
+function readArgValue(argv, flagName) {
+  const args = Array.isArray(argv) ? argv.map((a) => String(a ?? '')) : [];
+  for (let i = args.length - 1; i >= 0; i -= 1) {
+    const arg = args[i];
+    if (arg === flagName) {
+      const next = args[i + 1];
+      const value = String(next ?? '').trim();
+      return value || null;
+    }
+    if (arg.startsWith(`${flagName}=`)) {
+      const value = arg.slice(flagName.length + 1).trim();
+      return value || null;
+    }
+  }
+  return null;
+}
+
+function normalizeServerUrl(url) {
+  return String(url ?? '').trim().replace(/\/+$/, '');
+}
+
+function deriveEnvServerIdFromUrl(url) {
+  const normalized = normalizeServerUrl(url);
+  if (!normalized) return null;
+  let h = 2166136261;
+  for (let i = 0; i < normalized.length; i += 1) {
+    h ^= normalized.charCodeAt(i);
+    h = Math.imul(h, 16777619);
+  }
+  return `env_${(h >>> 0).toString(16)}`;
+}
+
 async function main() {
   const argv = process.argv.slice(2);
   const { flags } = parseArgs(argv);
@@ -77,7 +109,16 @@ async function main() {
   if (hasExplicitServerSelectionArg(argv)) {
     // If the user explicitly selects a server/profile, do not force a stack-stable active server id.
     // Otherwise credentials can be resolved from the wrong per-server directory, causing 401s.
-    delete env.HAPPIER_ACTIVE_SERVER_ID;
+    const explicitServerUrl =
+      readArgValue(argv, '--server-url')
+      || readArgValue(argv, '--public-server-url')
+      || null;
+    const derived = explicitServerUrl ? deriveEnvServerIdFromUrl(explicitServerUrl) : null;
+    if (derived) {
+      env.HAPPIER_ACTIVE_SERVER_ID = derived;
+    } else {
+      delete env.HAPPIER_ACTIVE_SERVER_ID;
+    }
   } else {
     env = applyStackActiveServerScopeEnv({
       env,

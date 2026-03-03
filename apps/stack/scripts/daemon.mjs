@@ -13,6 +13,7 @@ import {
 } from './utils/auth/credentials_paths.mjs';
 import { ensureActiveAccessKeyValid } from './utils/auth/ensure_active_access_key_valid.mjs';
 import { decodeJwtPayloadUnsafe } from './utils/auth/decode_jwt_payload_unsafe.mjs';
+import { formatDaemonAuthScopeDiagnostic } from './utils/auth/format_daemon_auth_scope_diagnostic.mjs';
 import { applyStackActiveServerScopeEnv } from './utils/auth/stable_scope_id.mjs';
 import { existsSync, readdirSync, readFileSync, unlinkSync } from 'node:fs';
 import { chmod, copyFile, mkdir } from 'node:fs/promises';
@@ -879,14 +880,29 @@ export async function startLocalDaemonWithAuth({
   }
   // Repair: if the active server-scoped access key is stale/unauthorized (common when switching server scope ids),
   // copy a valid fallback credential (url-hash scoped or legacy) into the active server scope before daemon start.
+  let credentialRepair = null;
   try {
     const timeoutMs = parseNonNegativeInt(baseEnv.HAPPIER_STACK_CREDENTIAL_VALIDATE_TIMEOUT_MS, 2_500);
-    const repaired = await ensureActiveAccessKeyValid({ cliHomeDir, serverUrl: internalServerUrl, env: baseEnv, timeoutMs });
-    if (repaired.kind === 'repaired') {
-      console.log(`[local] repaired daemon credentials: ${repaired.sourcePath} -> ${repaired.activePath}`);
+    credentialRepair = await ensureActiveAccessKeyValid({ cliHomeDir, serverUrl: internalServerUrl, env: baseEnv, timeoutMs });
+    if (credentialRepair.kind === 'repaired') {
+      console.log(`[local] repaired daemon credentials: ${credentialRepair.sourcePath} -> ${credentialRepair.activePath}`);
     }
   } catch {
     // best-effort only; daemon start can still proceed and surface auth errors if any remain.
+  }
+  try {
+    const token = readAuthTokenFromCredentialFile(credentialPaths.serverScopedPath);
+    const tokenSub = token ? decodeJwtPayloadUnsafe(token)?.sub ?? null : null;
+    console.log(
+      formatDaemonAuthScopeDiagnostic({
+        activeServerId: baseEnv.HAPPIER_ACTIVE_SERVER_ID,
+        activeCredentialPath: credentialPaths.serverScopedPath,
+        tokenSub: tokenSub ? String(tokenSub) : null,
+        repairedFromPath: credentialRepair?.kind === 'repaired' ? credentialRepair.sourcePath : null,
+      })
+    );
+  } catch {
+    // best-effort only
   }
 
   const existing = checkDaemonState(cliHomeDir, { serverUrl: internalServerUrl, env: daemonEnv });

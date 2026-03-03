@@ -63,7 +63,20 @@ test('hstack happier --server-url clears stack-scoped HAPPIER_ACTIVE_SERVER_ID',
     const res = await runNodeCapture([hstackBinPath(rootDir), 'happier', '--server-url=http://localhost:3014'], { cwd: rootDir, env });
     assert.equal(res.code, 0, `expected exit 0, got ${res.code}\nstderr:\n${res.stderr}\nstdout:\n${res.stdout}`);
     const parsed = JSON.parse(res.stdout.trim());
-    assert.equal(parsed.activeServerId, null, `expected HAPPIER_ACTIVE_SERVER_ID to be cleared\nstdout:\n${res.stdout}`);
+    function deriveEnvServerId(url) {
+      let h = 2166136261;
+      const text = String(url ?? '');
+      for (let i = 0; i < text.length; i += 1) {
+        h ^= text.charCodeAt(i);
+        h = Math.imul(h, 16777619);
+      }
+      return `env_${(h >>> 0).toString(16)}`;
+    }
+    assert.equal(
+      parsed.activeServerId,
+      deriveEnvServerId('http://localhost:3014'),
+      `expected HAPPIER_ACTIVE_SERVER_ID to be derived from --server-url\nstdout:\n${res.stdout}`,
+    );
   } finally {
     await fixture.cleanup();
   }

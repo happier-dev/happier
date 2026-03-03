@@ -19,7 +19,9 @@ test('resolveStackCredentialPaths returns legacy + server-scoped paths', async (
   assert.equal(out.legacyPath, join(dir, 'access.key'));
   assert.ok(out.serverScopedPath.startsWith(join(dir, 'servers', 'env_')));
   assert.ok(out.serverScopedPath.endsWith('/access.key'));
-  assert.deepEqual(out.paths, [out.serverScopedPath, out.legacyPath]);
+  assert.equal(out.hostPortServerId, 'localhost-3009');
+  assert.ok(out.hostPortServerScopedPath.endsWith('/servers/localhost-3009/access.key'));
+  assert.deepEqual(out.paths, [out.serverScopedPath, out.hostPortServerScopedPath, out.legacyPath]);
 });
 
 test('resolveStackCredentialPaths uses a neutral default server id when serverUrl is empty', async () => {
@@ -132,6 +134,8 @@ test('resolveStackDaemonStatePaths returns legacy + server-scoped state and lock
   assert.ok(out.serverScopedStatePath.startsWith(join(dir, 'servers', 'env_')));
   assert.ok(out.serverScopedStatePath.endsWith('/daemon.state.json'));
   assert.ok(out.serverScopedLockPath.endsWith('/daemon.state.json.lock'));
+  assert.ok(out.hostPortServerScopedStatePath.endsWith('/servers/localhost-3009/daemon.state.json'));
+  assert.ok(out.hostPortServerScopedLockPath.endsWith('/servers/localhost-3009/daemon.state.json.lock'));
 });
 
 test('resolvePreferredStackDaemonStatePaths prefers server-scoped paths when present', async () => {
