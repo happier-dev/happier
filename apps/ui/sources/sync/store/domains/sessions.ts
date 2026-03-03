@@ -168,6 +168,58 @@ function isSessionActive(session: { active: boolean; activeAt: number }): boolea
     return session.active;
 }
 
+function didSessionListStructuralFieldsChange(previous: Session | undefined, next: Session): boolean {
+    if (!previous) return true;
+    if (previous.active !== next.active) return true;
+    if (previous.createdAt !== next.createdAt) return true;
+    if ((previous.archivedAt ?? null) !== (next.archivedAt ?? null)) return true;
+
+    const prevMeta: any = previous.metadata ?? null;
+    const nextMeta: any = next.metadata ?? null;
+
+    const prevMachineId = String(prevMeta?.machineId ?? '');
+    const nextMachineId = String(nextMeta?.machineId ?? '');
+    if (prevMachineId !== nextMachineId) return true;
+
+    const prevPath = String(prevMeta?.path ?? '');
+    const nextPath = String(nextMeta?.path ?? '');
+    if (prevPath !== nextPath) return true;
+
+    const prevHomeDir = String(prevMeta?.homeDir ?? '');
+    const nextHomeDir = String(nextMeta?.homeDir ?? '');
+    if (prevHomeDir !== nextHomeDir) return true;
+
+    const prevHidden = prevMeta?.systemSessionV1?.hidden === true;
+    const nextHidden = nextMeta?.systemSessionV1?.hidden === true;
+    if (prevHidden !== nextHidden) return true;
+
+    return false;
+}
+
+function resolveProjectMachineScopeIdFromSessionMetadata(metadata: any): string {
+    const machineId = typeof metadata?.machineId === 'string' ? metadata.machineId.trim() : '';
+    if (machineId) return machineId;
+    const host = typeof metadata?.host === 'string' ? metadata.host.trim() : '';
+    if (host) return `host:${host}`;
+    return 'unknown';
+}
+
+function didSessionProjectGroupingFieldsChange(previous: Session | undefined, next: Session): boolean {
+    if (!previous) return true;
+    const prevMeta: any = previous.metadata ?? null;
+    const nextMeta: any = next.metadata ?? null;
+
+    const prevPath = String(prevMeta?.path ?? '');
+    const nextPath = String(nextMeta?.path ?? '');
+    if (prevPath !== nextPath) return true;
+
+    const prevScopeId = resolveProjectMachineScopeIdFromSessionMetadata(prevMeta);
+    const nextScopeId = resolveProjectMachineScopeIdFromSessionMetadata(nextMeta);
+    if (prevScopeId !== nextScopeId) return true;
+
+    return false;
+}
+
 export function createSessionsDomain<S extends SessionsDomain & SessionsDomainDependencies>({
     set,
     get,
@@ -228,6 +280,8 @@ export function createSessionsDomain<S extends SessionsDomain & SessionsDomainDe
 
             // Merge new sessions with existing ones
             const mergedSessions: Record<string, Session> = { ...state.sessions };
+            let needsSessionListViewDataRebuild = state.sessionListViewData === null;
+            let needsProjectManagerUpdate = Object.keys(state.sessions).length === 0;
 
             // Update sessions with calculated presence using centralized resolver
             sessions.forEach(session => {
@@ -322,6 +376,22 @@ export function createSessionsDomain<S extends SessionsDomain & SessionsDomainDe
                     modelMode: mergedModelMode,
                     modelModeUpdatedAt: mergedModelModeUpdatedAt,
                 };
+
+                if (!needsSessionListViewDataRebuild) {
+                    const previous = state.sessions[session.id];
+                    const nextSession = mergedSessions[session.id]!;
+                    if (didSessionListStructuralFieldsChange(previous, nextSession)) {
+                        needsSessionListViewDataRebuild = true;
+                    }
+                }
+
+                if (!needsProjectManagerUpdate) {
+                    const previous = state.sessions[session.id];
+                    const nextSession = mergedSessions[session.id]!;
+                    if (didSessionProjectGroupingFieldsChange(previous, nextSession)) {
+                        needsProjectManagerUpdate = true;
+                    }
+                }
             });
 
             // Build active set from all sessions (including existing ones)
@@ -399,33 +469,37 @@ export function createSessionsDomain<S extends SessionsDomain & SessionsDomainDe
                 }
             });
 
-            // Build new unified list view data
-            const sessionListViewData = buildSessionListViewDataWithServerScope({
-                sessions: mergedSessions,
-                machines: state.machines,
-                groupInactiveSessionsByProject: state.settings.groupInactiveSessionsByProject === true,
-                activeGroupingV1: state.settings.sessionListActiveGroupingV1,
-                inactiveGroupingV1: state.settings.sessionListInactiveGroupingV1,
-            });
+            const sessionListViewData = needsSessionListViewDataRebuild
+                ? buildSessionListViewDataWithServerScope({
+                    sessions: mergedSessions,
+                    machines: state.machines,
+                    groupInactiveSessionsByProject: state.settings.groupInactiveSessionsByProject === true,
+                    activeGroupingV1: state.settings.sessionListActiveGroupingV1,
+                    inactiveGroupingV1: state.settings.sessionListInactiveGroupingV1,
+                })
+                : state.sessionListViewData;
 
-            // Update project manager with current sessions and machines
-            const machineMetadataMap = new Map<string, any>();
-            Object.values(state.machines).forEach(machine => {
-                if (machine.metadata) {
-                    machineMetadataMap.set(machine.id, machine.metadata);
-                }
-            });
-            projectManager.updateSessions(Object.values(mergedSessions), machineMetadataMap);
+            if (needsProjectManagerUpdate) {
+                const machineMetadataMap = new Map<string, any>();
+                Object.values(state.machines).forEach(machine => {
+                    if (machine.metadata) {
+                        machineMetadataMap.set(machine.id, machine.metadata);
+                    }
+                });
+                projectManager.updateSessions(Object.values(mergedSessions), machineMetadataMap);
+            }
 
             return {
                 ...state,
                 sessions: mergedSessions,
                 sessionsData: listData,  // Legacy - to be removed
                 sessionListViewData,
-                sessionListViewDataByServerId: setActiveServerSessionListCache(
-                    state.sessionListViewDataByServerId,
-                    sessionListViewData,
-                ),
+                sessionListViewDataByServerId: needsSessionListViewDataRebuild && sessionListViewData
+                    ? setActiveServerSessionListCache(
+                        state.sessionListViewDataByServerId,
+                        sessionListViewData,
+                    )
+                    : state.sessionListViewDataByServerId,
                 sessionMessages: updatedSessionMessages
             };
         }),
@@ -483,23 +557,9 @@ export function createSessionsDomain<S extends SessionsDomain & SessionsDomainDe
                 }
             };
 
-            // Rebuild sessionListViewData to update the UI immediately
-            const sessionListViewData = buildSessionListViewDataWithServerScope({
-                sessions: updatedSessions,
-                machines: state.machines,
-                groupInactiveSessionsByProject: state.settings.groupInactiveSessionsByProject === true,
-                activeGroupingV1: state.settings.sessionListActiveGroupingV1,
-                inactiveGroupingV1: state.settings.sessionListInactiveGroupingV1,
-            });
-
             return {
                 ...state,
                 sessions: updatedSessions,
-                sessionListViewData,
-                sessionListViewDataByServerId: setActiveServerSessionListCache(
-                    state.sessionListViewDataByServerId,
-                    sessionListViewData,
-                ),
             };
         }),
         upsertSessionReviewCommentDraft: (sessionId: string, draft: ReviewCommentDraft) => set((state) => {
@@ -617,13 +677,6 @@ export function createSessionsDomain<S extends SessionsDomain & SessionsDomainDe
                     optimisticThinkingAt: Date.now(),
                 },
             };
-            const sessionListViewData = buildSessionListViewDataWithServerScope({
-                sessions: nextSessions,
-                machines: state.machines,
-                groupInactiveSessionsByProject: state.settings.groupInactiveSessionsByProject === true,
-                activeGroupingV1: state.settings.sessionListActiveGroupingV1,
-                inactiveGroupingV1: state.settings.sessionListInactiveGroupingV1,
-            });
 
             const existingTimeout = optimisticThinkingTimeoutBySessionId.get(sessionId);
             if (existingTimeout) {
@@ -643,21 +696,9 @@ export function createSessionsDomain<S extends SessionsDomain & SessionsDomainDe
                             optimisticThinkingAt: null,
                         },
                     };
-                    const nextSessionListViewData = buildSessionListViewDataWithServerScope({
-                        sessions: next,
-                        machines: s.machines,
-                        groupInactiveSessionsByProject: s.settings.groupInactiveSessionsByProject === true,
-                        activeGroupingV1: s.settings.sessionListActiveGroupingV1,
-                        inactiveGroupingV1: s.settings.sessionListInactiveGroupingV1,
-                    });
                     return {
                         ...s,
                         sessions: next,
-                        sessionListViewData: nextSessionListViewData,
-                        sessionListViewDataByServerId: setActiveServerSessionListCache(
-                            s.sessionListViewDataByServerId,
-                            nextSessionListViewData,
-                        ),
                     };
                 });
             }, OPTIMISTIC_SESSION_THINKING_TIMEOUT_MS);
@@ -666,11 +707,6 @@ export function createSessionsDomain<S extends SessionsDomain & SessionsDomainDe
             return {
                 ...state,
                 sessions: nextSessions,
-                sessionListViewData,
-                sessionListViewDataByServerId: setActiveServerSessionListCache(
-                    state.sessionListViewDataByServerId,
-                    sessionListViewData,
-                ),
             };
         }),
         clearSessionOptimisticThinking: (sessionId: string) => set((state) => {
@@ -691,22 +727,10 @@ export function createSessionsDomain<S extends SessionsDomain & SessionsDomainDe
                     optimisticThinkingAt: null,
                 },
             };
-            const nextSessionListViewData = buildSessionListViewDataWithServerScope({
-                sessions: nextSessions,
-                machines: state.machines,
-                groupInactiveSessionsByProject: state.settings.groupInactiveSessionsByProject === true,
-                activeGroupingV1: state.settings.sessionListActiveGroupingV1,
-                inactiveGroupingV1: state.settings.sessionListInactiveGroupingV1,
-            });
 
             return {
                 ...state,
                 sessions: nextSessions,
-                sessionListViewData: nextSessionListViewData,
-                sessionListViewDataByServerId: setActiveServerSessionListCache(
-                    state.sessionListViewDataByServerId,
-                    nextSessionListViewData,
-                ),
             };
         }),
         markSessionViewed: (sessionId: string) => {
