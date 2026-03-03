@@ -109,7 +109,7 @@ export async function executeSessionComposerResolution(args: Readonly<{
           sessionId: args.sessionId,
           defaultBackendId: args.agentId,
           instructions: '',
-          extra: { permissionMode: args.permissionMode ?? (actionId === 'delegate.start' ? 'default' : 'read_only') },
+          extra: { permissionMode: args.permissionMode ?? (actionId === 'delegate.start' ? 'safe-yolo' : 'read_only') },
         }),
       });
       return true;
@@ -126,7 +126,7 @@ export async function executeSessionComposerResolution(args: Readonly<{
         sessionId: args.sessionId,
         backendIds: [args.agentId],
         instructions,
-        permissionMode: args.permissionMode ?? (actionId === 'delegate.start' ? 'default' : 'read_only'),
+        permissionMode: args.permissionMode ?? (actionId === 'delegate.start' ? 'safe-yolo' : 'read_only'),
       },
       ctx,
     );
