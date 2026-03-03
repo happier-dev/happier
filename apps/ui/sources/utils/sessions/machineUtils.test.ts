@@ -57,6 +57,27 @@ describe('isMachineOnline', () => {
     });
   });
 
+  it('treats machines as offline when activeAt is stale even if active=true', () => {
+    withGraceMs('10000', () => {
+      const nowMs = 100_000;
+      const machine = {
+        id: 'm1',
+        seq: 1,
+        createdAt: 0,
+        updatedAt: 0,
+        active: true,
+        activeAt: nowMs - 15_000,
+        revokedAt: null,
+        metadata: null,
+        metadataVersion: 0,
+        daemonState: null,
+        daemonStateVersion: 0,
+      };
+
+      expect(isMachineOnline(machine as any, nowMs)).toBe(false);
+    });
+  });
+
   it('treats revoked machines as offline', () => {
     const nowMs = 123;
     const machine = {

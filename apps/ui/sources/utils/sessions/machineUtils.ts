@@ -15,13 +15,10 @@ export function isMachineOnline(machine: Machine, nowMs: number = Date.now()): b
         return false;
     }
 
-    // If the server reports the machine as active, prefer that signal.
-    if (machine.active) return true;
-
     const graceMs = readMachineOnlineGraceMsFromEnv();
-    if (graceMs <= 0) return false;
+    if (graceMs <= 0) return machine.active === true;
     const activeAt = typeof machine.activeAt === 'number' ? machine.activeAt : 0;
-    if (!activeAt || !Number.isFinite(activeAt)) return false;
+    if (!activeAt || !Number.isFinite(activeAt)) return machine.active === true;
     const ageMs = Math.max(0, nowMs - activeAt);
     return ageMs <= graceMs;
 }
