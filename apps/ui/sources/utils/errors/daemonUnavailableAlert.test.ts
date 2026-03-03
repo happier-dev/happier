@@ -70,6 +70,48 @@ describe('daemonUnavailableAlert', () => {
         expect(onRetry).not.toHaveBeenCalled();
     });
 
+    it('reports "unknown" when activeAt is not a valid timestamp and active=false', async () => {
+        modalAlertSpy.mockClear();
+        vi.resetModules();
+        const { showDaemonUnavailableAlert } = await import('./daemonUnavailableAlert');
+
+        showDaemonUnavailableAlert({
+            titleKey: 'errors.daemonUnavailableTitle',
+            bodyKey: 'errors.daemonUnavailableBody',
+            machine: {
+                active: false,
+                activeAt: 0,
+                metadata: { host: 'devbox' },
+            },
+            onRetry: vi.fn(),
+        });
+
+        expect(modalAlertSpy).toHaveBeenCalled();
+        const args = modalAlertSpy.mock.calls[0] ?? [];
+        expect(String(args[1] ?? '')).toContain('status.unknown');
+    });
+
+    it('reports last-seen time instead of "online" for stale machines even when active=true', async () => {
+        modalAlertSpy.mockClear();
+        vi.resetModules();
+        const { showDaemonUnavailableAlert } = await import('./daemonUnavailableAlert');
+
+        showDaemonUnavailableAlert({
+            titleKey: 'errors.daemonUnavailableTitle',
+            bodyKey: 'errors.daemonUnavailableBody',
+            machine: {
+                active: true,
+                activeAt: Date.now() - 60 * 60_000,
+                metadata: { host: 'devbox' },
+            },
+            onRetry: vi.fn(),
+        });
+
+        expect(modalAlertSpy).toHaveBeenCalled();
+        const args = modalAlertSpy.mock.calls[0] ?? [];
+        expect(String(args[1] ?? '')).toContain('status.lastSeen:time.hoursAgo:1');
+    });
+
     it('shows an alert for RPC method-not-available failure objects (code/message)', async () => {
         modalAlertSpy.mockClear();
         vi.resetModules();
