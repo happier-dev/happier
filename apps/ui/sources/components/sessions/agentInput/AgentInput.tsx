@@ -2262,10 +2262,10 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
                                         ? [permissionOrControlsChip].filter(Boolean)
                                         : [
                                             permissionOrControlsChip,
+                                            agentChip,
                                             modeChip,
                                             profileChip,
                                             envVarsChip,
-                                            agentChip,
                                             ...extraChips,
                                             machineChip,
                                             ...(actionBarShouldScroll ? [pathChip, resumeChip] : []),

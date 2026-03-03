@@ -298,6 +298,7 @@ vi.mock('./components/PermissionModePicker', () => ({
 
 describe('AgentInput (settings popover props)', () => {
     it('anchors the settings popover to the gear button and sizes relative to the agent input', async () => {
+        vi.resetModules();
         const { AgentInput } = await import('./AgentInput');
 
         let tree: renderer.ReactTestRenderer;

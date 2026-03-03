@@ -62,6 +62,28 @@ vi.mock('@/components/sessions/agentInput/components/AgentInputPopoverSurface', 
 }));
 
 describe('RecipientChip', () => {
+    it('does not render when there are no non-lead targets', async () => {
+        capturedPopoverProps = null;
+        const { RecipientChip } = await import('./RecipientChip');
+        const ctx = {
+            chipStyle: () => ({ padding: 4 }),
+            iconColor: '#000',
+            showLabel: true,
+            textStyle: {},
+            popoverAnchorRef: null,
+        } as any;
+
+        let tree: renderer.ReactTestRenderer | null = null;
+        act(() => {
+            tree = renderer.create(
+                <RecipientChip ctx={ctx} targets={[]} recipient={null} onRecipientChange={() => {}} />,
+            );
+        });
+
+        expect(tree!.toJSON()).toBeNull();
+        expect(capturedPopoverProps).toBeNull();
+    });
+
     it('renders popover via portal so it is not clipped on web', async () => {
         const { RecipientChip } = await import('./RecipientChip');
         const ctx = {

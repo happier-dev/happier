@@ -49,6 +49,7 @@ export type RecipientChipProps = Readonly<{
 }>;
 
 export const RecipientChip = React.memo(function RecipientChip(props: RecipientChipProps) {
+    if (props.targets.length === 0) return null;
     const [open, setOpen] = React.useState(false);
     const anchorRef = React.useRef<View | null>(null);
     const popoverAnchorRef = props.ctx.popoverAnchorRef ?? anchorRef;
