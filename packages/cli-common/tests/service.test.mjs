@@ -40,6 +40,35 @@ test('renderSystemdServiceUnit includes User= when runAsUser is set', () => {
   assert.match(unit, /WantedBy=multi-user\.target/);
 });
 
+test('renderSystemdServiceUnit rejects newline injection in header fields', () => {
+  assert.throws(
+    () =>
+      renderSystemdServiceUnit({
+        description: 'Happier Test\nInjected',
+        execStart: '/bin/true',
+      }),
+    /newline|newlines|must not/i,
+  );
+
+  assert.throws(
+    () =>
+      renderSystemdServiceUnit({
+        description: 'Happier Test',
+        execStart: '/bin/true',
+        wantedBy: 'default.target\nInjected',
+      }),
+    /newline|newlines|must not/i,
+  );
+});
+
+test('renderSystemdServiceUnit escapes percent signs in ExecStart args', () => {
+  const unit = renderSystemdServiceUnit({
+    description: 'Happier Test',
+    execStart: ['/bin/echo', '100%'],
+  });
+  assert.match(unit, /ExecStart=.*\s100%%\n/);
+});
+
 test('renderWindowsScheduledTaskWrapperPs1 sets env and runs program args', () => {
   const ps1 = renderWindowsScheduledTaskWrapperPs1({
     workingDirectory: 'C:\\\\Users\\\\me\\\\.happier\\\\self-host',

@@ -1,5 +1,5 @@
 import { buildLaunchdPath } from '@/daemon/service/darwin';
-import { buildSystemdPath } from '@/daemon/service/systemdUser';
+import { buildServicePath } from '@/daemon/service/servicePath';
 
 export function ensureDaemonPath(params: Readonly<{
   env: NodeJS.ProcessEnv;
@@ -14,7 +14,7 @@ export function ensureDaemonPath(params: Readonly<{
       return buildLaunchdPath({ execPath: params.execPath, basePath: current, homeDir });
     }
     if (params.platform === 'linux') {
-      return buildSystemdPath({ execPath: params.execPath, basePath: current, homeDir });
+      return buildServicePath({ execPath: params.execPath, basePath: current, homeDir });
     }
     return current;
   })();

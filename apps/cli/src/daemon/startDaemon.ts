@@ -1334,11 +1334,17 @@ export async function startDaemon(): Promise<void> {
       }
 
       // Best-effort cleanup for provider-managed background processes (e.g. shared OpenCode server).
-      try {
-        const { stopSharedManagedOpenCodeServerFromEnvBestEffort } = await import('@/backends/opencode/server/sharedManagedServer');
-        await stopSharedManagedOpenCodeServerFromEnvBestEffort();
-      } catch {
-        // best-effort only
+      // Important: do not tear down shared provider background processes while session runners are still
+      // tracked by this daemon. Some harnesses stop the daemon while externally-started sessions are
+      // still live (e.g. in-flight provider tests). Killing the shared OpenCode server in that state
+      // can wedge or abort those sessions mid-turn.
+      if (pidToTrackedSession.size === 0) {
+        try {
+          const { stopSharedManagedOpenCodeServerFromEnvBestEffort } = await import('@/backends/opencode/server/sharedManagedServer');
+          await stopSharedManagedOpenCodeServerFromEnvBestEffort();
+        } catch {
+          // best-effort only
+        }
       }
 
       await stopControlServer();

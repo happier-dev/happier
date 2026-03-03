@@ -6,6 +6,8 @@ const SCOPED_ENV_KEYS = [
   'HAPPIER_DAEMON_SERVICE_PLATFORM',
   'HAPPIER_DAEMON_SERVICE_USER_HOME_DIR',
   'HAPPIER_DAEMON_SERVICE_HAPPIER_HOME_DIR',
+  'HAPPIER_DAEMON_SERVICE_MODE',
+  'HAPPIER_DAEMON_SERVICE_SYSTEM_USER',
 ] as const;
 
 type ScopedEnvKey = (typeof SCOPED_ENV_KEYS)[number];
@@ -83,5 +85,24 @@ describe('runDaemonServiceCliCommand', () => {
     expect(payload.ok).toBe(true);
     expect(payload.commands).toContain('install');
     expect(payload.flags).toContain('--json');
+  });
+
+  it('treats --mode system as a flag (not as a subcommand) and reports systemd system paths (linux)', async () => {
+    process.env.HAPPIER_DAEMON_SERVICE_PLATFORM = 'linux';
+    process.env.HAPPIER_DAEMON_SERVICE_USER_HOME_DIR = '/tmp';
+    process.env.HAPPIER_DAEMON_SERVICE_HAPPIER_HOME_DIR = '/tmp/happier';
+
+    const { stdout } = captureStdIo();
+    await runDaemonServiceCliCommand({ argv: ['paths', '--json', '--mode', 'system', '--system-user', 'happier'] });
+
+    const payload = JSON.parse(stdout.join('').trim()) as {
+      ok: boolean;
+      platform: string;
+      paths: { unitPath?: string; unitName?: string };
+    };
+    expect(payload.ok).toBe(true);
+    expect(payload.platform).toBe('linux');
+    expect(payload.paths.unitPath).toContain('/etc/systemd/system/');
+    expect(payload.paths.unitName).toContain('happier-daemon.');
   });
 });

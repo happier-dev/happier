@@ -1,10 +1,11 @@
 import { join, win32 as win32Path } from 'node:path';
 
 import { buildLaunchAgentPlistXml, buildLaunchdPath } from './darwin';
-import { buildSystemdPath, buildSystemdUserUnit, escapeSystemdValue } from './systemdUser';
-import { planServiceAction, renderWindowsScheduledTaskWrapperPs1 } from '@happier-dev/cli-common/service';
+import { buildServicePath } from './servicePath';
+import { planServiceAction, renderSystemdServiceUnit, renderWindowsScheduledTaskWrapperPs1 } from '@happier-dev/cli-common/service';
 
 export type DaemonServicePlatform = 'darwin' | 'linux' | 'win32';
+export type DaemonServiceMode = 'user' | 'system';
 
 export type DaemonServicePlannedFile = Readonly<{
   path: string;
@@ -72,6 +73,11 @@ export function resolveSystemdUserUnitPath(params: Readonly<{ userHomeDir: strin
   return join(params.userHomeDir, '.config', 'systemd', 'user', unitName);
 }
 
+export function resolveSystemdSystemUnitPath(params: Readonly<{ instanceId: string }>): string {
+  const unitName = resolveDaemonServiceSystemdUnitName(params.instanceId);
+  return join('/etc', 'systemd', 'system', unitName);
+}
+
 export function resolveWindowsDaemonTaskName(params: Readonly<{ instanceId: string }>): string {
   const label = resolveDaemonServiceSystemdUnitLabel(params.instanceId);
   return `Happier\\${label}`;
@@ -92,6 +98,8 @@ function buildDaemonServiceProgramArgs(params: Readonly<{ nodePath: string; entr
 
 export function planDaemonServiceInstall(params: Readonly<{
   platform: DaemonServicePlatform;
+  mode?: DaemonServiceMode;
+  systemUser?: string;
   instanceId: string;
   userHomeDir: string;
   happierHomeDir: string;
@@ -116,6 +124,7 @@ export function planDaemonServiceInstall(params: Readonly<{
     const env: Record<string, string> = {
       PATH: buildLaunchdPath({ execPath: params.nodePath, homeDir: params.userHomeDir }),
       HAPPIER_HOME_DIR: params.happierHomeDir,
+      HAPPIER_ACTIVE_SERVER_ID: instanceId,
       HAPPIER_SERVER_URL: params.serverUrl,
       HAPPIER_WEBAPP_URL: params.webappUrl,
       HAPPIER_PUBLIC_SERVER_URL: params.publicServerUrl,
@@ -165,6 +174,7 @@ export function planDaemonServiceInstall(params: Readonly<{
       programArgs,
       env: {
         HAPPIER_HOME_DIR: params.happierHomeDir,
+        HAPPIER_ACTIVE_SERVER_ID: instanceId,
         HAPPIER_SERVER_URL: params.serverUrl,
         HAPPIER_WEBAPP_URL: params.webappUrl,
         HAPPIER_PUBLIC_SERVER_URL: params.publicServerUrl,
@@ -203,14 +213,25 @@ export function planDaemonServiceInstall(params: Readonly<{
     };
   }
 
-  const unitPath = resolveSystemdUserUnitPath({ userHomeDir: params.userHomeDir, instanceId });
-  const unit = buildSystemdUserUnit({
+  const mode: DaemonServiceMode = params.mode === 'system' ? 'system' : 'user';
+  const prefix = mode === 'system' ? [] : ['--user'];
+  const systemUser = String(params.systemUser ?? '').trim();
+  if (mode === 'system' && !systemUser) {
+    throw new Error('systemUser is required');
+  }
+
+  const unitPath = mode === 'system'
+    ? resolveSystemdSystemUnitPath({ instanceId })
+    : resolveSystemdUserUnitPath({ userHomeDir: params.userHomeDir, instanceId });
+
+  const unit = renderSystemdServiceUnit({
     description: `Happier CLI daemon (${instanceId})`,
-    execStart: programArgs.map(escapeSystemdValue).join(' '),
-    workingDirectory: '%h',
+    execStart: programArgs,
+    workingDirectory: mode === 'system' ? params.userHomeDir : '%h',
     env: {
-      PATH: buildSystemdPath({ execPath: params.nodePath, homeDir: params.userHomeDir }),
+      PATH: buildServicePath({ execPath: params.nodePath, homeDir: params.userHomeDir }),
       HAPPIER_HOME_DIR: params.happierHomeDir,
+      HAPPIER_ACTIVE_SERVER_ID: instanceId,
       HAPPIER_SERVER_URL: params.serverUrl,
       HAPPIER_WEBAPP_URL: params.webappUrl,
       HAPPIER_PUBLIC_SERVER_URL: params.publicServerUrl,
@@ -218,15 +239,16 @@ export function planDaemonServiceInstall(params: Readonly<{
       HAPPIER_DAEMON_WAIT_FOR_AUTH: '1',
       HAPPIER_DAEMON_WAIT_FOR_AUTH_TIMEOUT_MS: '0',
     },
+    restart: 'on-failure',
+    runAsUser: mode === 'system' ? systemUser : '',
+    wantedBy: mode === 'system' ? 'multi-user.target' : 'default.target',
   });
 
-  const commands: DaemonServicePlannedCommand[] = [
-    { cmd: 'systemctl', args: ['--user', 'daemon-reload'] },
-  ];
+  const commands: DaemonServicePlannedCommand[] = [{ cmd: 'systemctl', args: [...prefix, 'daemon-reload'] }];
   if (instanceId === 'cloud') {
-    commands.push({ cmd: 'systemctl', args: ['--user', 'disable', '--now', LEGACY_DAEMON_SERVICE_SYSTEMD_UNIT_NAME] });
+    commands.push({ cmd: 'systemctl', args: [...prefix, 'disable', '--now', LEGACY_DAEMON_SERVICE_SYSTEMD_UNIT_NAME] });
   }
-  commands.push({ cmd: 'systemctl', args: ['--user', 'enable', '--now', unitName] });
+  commands.push({ cmd: 'systemctl', args: [...prefix, 'enable', '--now', unitName] });
 
   return {
     platform: 'linux',
@@ -237,6 +259,7 @@ export function planDaemonServiceInstall(params: Readonly<{
 
 export function planDaemonServiceUninstall(params: Readonly<{
   platform: DaemonServicePlatform;
+  mode?: DaemonServiceMode;
   instanceId: string;
   userHomeDir: string;
   happierHomeDir?: string;
@@ -301,25 +324,32 @@ export function planDaemonServiceUninstall(params: Readonly<{
     };
   }
 
-  const unitPath = resolveSystemdUserUnitPath({ userHomeDir: params.userHomeDir, instanceId });
+  const mode: DaemonServiceMode = params.mode === 'system' ? 'system' : 'user';
+  const prefix = mode === 'system' ? [] : ['--user'];
+  const unitPath = mode === 'system'
+    ? resolveSystemdSystemUnitPath({ instanceId })
+    : resolveSystemdUserUnitPath({ userHomeDir: params.userHomeDir, instanceId });
+  const legacyUnitPath = mode === 'system'
+    ? join('/etc', 'systemd', 'system', LEGACY_DAEMON_SERVICE_SYSTEMD_UNIT_NAME)
+    : join(params.userHomeDir, '.config', 'systemd', 'user', LEGACY_DAEMON_SERVICE_SYSTEMD_UNIT_NAME);
   return {
     platform: 'linux',
     filesToRemove: [
       unitPath,
       ...(instanceId === 'cloud'
-        ? [join(params.userHomeDir, '.config', 'systemd', 'user', LEGACY_DAEMON_SERVICE_SYSTEMD_UNIT_NAME)]
+        ? [legacyUnitPath]
         : []),
     ],
     commands: [
-      { cmd: 'systemctl', args: ['--user', 'disable', '--now', unitName] },
-      { cmd: 'systemctl', args: ['--user', 'stop', unitName] },
+      { cmd: 'systemctl', args: [...prefix, 'disable', '--now', unitName] },
+      { cmd: 'systemctl', args: [...prefix, 'stop', unitName] },
       ...(instanceId === 'cloud'
         ? [
-            { cmd: 'systemctl', args: ['--user', 'disable', '--now', LEGACY_DAEMON_SERVICE_SYSTEMD_UNIT_NAME] },
-            { cmd: 'systemctl', args: ['--user', 'stop', LEGACY_DAEMON_SERVICE_SYSTEMD_UNIT_NAME] },
+            { cmd: 'systemctl', args: [...prefix, 'disable', '--now', LEGACY_DAEMON_SERVICE_SYSTEMD_UNIT_NAME] },
+            { cmd: 'systemctl', args: [...prefix, 'stop', LEGACY_DAEMON_SERVICE_SYSTEMD_UNIT_NAME] },
           ]
         : []),
-      { cmd: 'systemctl', args: ['--user', 'daemon-reload'] },
+      { cmd: 'systemctl', args: [...prefix, 'daemon-reload'] },
     ],
   };
 }
@@ -329,6 +359,7 @@ export type DaemonServiceLifecycleAction = 'start' | 'stop' | 'restart' | 'statu
 export function planDaemonServiceLifecycle(params: Readonly<{
   platform: DaemonServicePlatform;
   action: DaemonServiceLifecycleAction;
+  mode?: DaemonServiceMode;
   instanceId: string;
   userHomeDir: string;
   happierHomeDir?: string;
@@ -383,17 +414,20 @@ export function planDaemonServiceLifecycle(params: Readonly<{
     return { platform: 'win32', commands: plan.commands.map((c) => ({ cmd: c.cmd, args: c.args })) };
   }
 
+  const mode: DaemonServiceMode = params.mode === 'system' ? 'system' : 'user';
+  const prefix = mode === 'system' ? [] : ['--user'];
+
   if (params.action === 'start') {
-    return { platform: 'linux', commands: [{ cmd: 'systemctl', args: ['--user', 'start', unitName] }] };
+    return { platform: 'linux', commands: [{ cmd: 'systemctl', args: [...prefix, 'start', unitName] }] };
   }
   if (params.action === 'stop') {
-    return { platform: 'linux', commands: [{ cmd: 'systemctl', args: ['--user', 'stop', unitName] }] };
+    return { platform: 'linux', commands: [{ cmd: 'systemctl', args: [...prefix, 'stop', unitName] }] };
   }
   if (params.action === 'restart') {
-    return { platform: 'linux', commands: [{ cmd: 'systemctl', args: ['--user', 'restart', unitName] }] };
+    return { platform: 'linux', commands: [{ cmd: 'systemctl', args: [...prefix, 'restart', unitName] }] };
   }
   return {
     platform: 'linux',
-    commands: [{ cmd: 'systemctl', args: ['--user', 'status', unitName, '--no-pager'] }],
+    commands: [{ cmd: 'systemctl', args: [...prefix, 'status', unitName, '--no-pager'] }],
   };
 }
