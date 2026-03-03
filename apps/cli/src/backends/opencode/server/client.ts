@@ -3,7 +3,7 @@ import type { MessageBuffer } from '@/ui/ink/messageBuffer';
 
 import { subscribeSseJson } from './openCodeSse';
 import type { OpenCodeGlobalEvent, OpenCodeModelRef, OpenCodeSession } from './types';
-import { ensureSharedManagedOpenCodeServerBaseUrl } from './sharedManagedServer';
+import { ensureSharedManagedOpenCodeServerBaseUrl, readSharedManagedOpenCodeServerStateBestEffort } from './sharedManagedServer';
 
 type PermissionReply = 'once' | 'always' | 'reject';
 
@@ -63,6 +63,8 @@ export type OpenCodeServerRuntimeClient = Readonly<{
   globalConfigGet: () => Promise<{ model?: string }>;
   agentsList: () => Promise<ReadonlyArray<{ name: string; description?: string }>>;
   providersList: () => Promise<ReadonlyArray<{ id: string; env?: readonly string[]; models?: Record<string, unknown> }>>;
+  mcpAdd: (opts: { name: string; config: unknown }) => Promise<void>;
+  mcpDisconnect: (opts: { name: string }) => Promise<void>;
   sessionPromptAsync: (opts: {
     sessionId: string;
     messageId?: string;
@@ -141,12 +143,12 @@ export async function createOpenCodeServerRuntimeClient(params: Readonly<{ direc
 
   const probeHealth = async (candidateBaseUrl: string): Promise<boolean> => {
     try {
-      await fetchJson<{ healthy: boolean; version: string }>({
-        url: buildUrl(candidateBaseUrl, '/global/health'),
-        method: 'GET',
-        headers,
-      });
-      return true;
+      const ctrl = new AbortController();
+      const timer = setTimeout(() => ctrl.abort(), 900);
+      timer.unref?.();
+      const res = await fetch(buildUrl(candidateBaseUrl, '/global/health'), { method: 'GET', headers, signal: ctrl.signal }).catch(() => null);
+      clearTimeout(timer);
+      return Boolean(res?.ok);
     } catch {
       return false;
     }
@@ -161,6 +163,35 @@ export async function createOpenCodeServerRuntimeClient(params: Readonly<{ direc
 
   const refreshBaseUrlIfManagedBestEffort = async (): Promise<void> => {
     if (!usingManagedServer) return;
+
+    const state = await readSharedManagedOpenCodeServerStateBestEffort().catch(() => null);
+    if (state?.baseUrl && state.baseUrl.trim()) {
+      const normalized = normalizeBaseUrl(state.baseUrl);
+      if (normalized && normalized !== baseUrl) {
+        baseUrl = normalized;
+      }
+    }
+
+    // Avoid spawning/killing a managed server on the first sign of an SSE disconnect.
+    // Prefer using the existing baseUrl when it still looks healthy.
+    if (!state) {
+      const healthy = await probeHealth(baseUrl).catch(() => false);
+      if (healthy) return;
+    } else {
+      const pidAlive = (() => {
+        try {
+          process.kill(state.pid, 0);
+          return true;
+        } catch {
+          return false;
+        }
+      })();
+      if (pidAlive) {
+        const healthy = await probeHealth(baseUrl).catch(() => false);
+        if (healthy) return;
+      }
+    }
+
     try {
       baseUrl = normalizeBaseUrl(
         await ensureSharedManagedOpenCodeServerBaseUrl({
@@ -250,6 +281,29 @@ export async function createOpenCodeServerRuntimeClient(params: Readonly<{ direc
       });
       const all = providers && typeof providers === 'object' && !Array.isArray(providers) ? (providers as any).all : null;
       return Array.isArray(all) ? all as any : [];
+    },
+    mcpAdd: async ({ name, config }) => {
+      const serverName = typeof name === 'string' ? name.trim() : '';
+      if (!serverName) return;
+      await fetchJson<void>({
+        url: buildUrl(baseUrl, '/mcp', { directory: resolveDirectory() }),
+        method: 'POST',
+        headers,
+        body: {
+          name: serverName,
+          config,
+        },
+      });
+    },
+    mcpDisconnect: async ({ name }) => {
+      const serverName = typeof name === 'string' ? name.trim() : '';
+      if (!serverName) return;
+      await fetchJson<void>({
+        url: buildUrl(baseUrl, `/mcp/${encodeURIComponent(serverName)}/disconnect`, { directory: resolveDirectory() }),
+        method: 'POST',
+        headers,
+        body: {},
+      });
     },
     sessionPromptAsync: async ({ sessionId, messageId, parts, agent, model, config }) => {
       await fetchJson<void>({

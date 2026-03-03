@@ -100,6 +100,11 @@ async function writeStateFile(statePath: string, state: SharedManagedOpenCodeSer
   await rename(tmp, statePath);
 }
 
+export async function readSharedManagedOpenCodeServerStateBestEffort(): Promise<SharedManagedOpenCodeServerState | null> {
+  const statePath = resolveStatePathFromEnv();
+  return await readStateFile(statePath);
+}
+
 export async function ensureSharedManagedOpenCodeServerBaseUrl(params: Readonly<{
   probeHealth: (baseUrl: string) => Promise<boolean>;
 }>): Promise<string> {
