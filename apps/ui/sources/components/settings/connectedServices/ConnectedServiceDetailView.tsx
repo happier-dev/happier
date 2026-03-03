@@ -96,9 +96,17 @@ export const ConnectedServiceDetailView = React.memo(function ConnectedServiceDe
       { confirmText: t('modals.disconnect'), cancelText: t('common.cancel') },
     );
     if (!ok) return;
-    const credentials = ensureCredentials();
-    await deleteConnectedServiceCredentialForAccount(credentials, { serviceId: serviceId!, profileId });
-    await sync.refreshProfile();
+    try {
+      const credentials = ensureCredentials();
+      await deleteConnectedServiceCredentialForAccount(credentials, { serviceId: serviceId!, profileId });
+      await sync.refreshProfile();
+    } catch (e: unknown) {
+      const message = e instanceof Error && e.message ? e.message : t('common.error');
+      await Modal.alert(
+        t('common.error'),
+        message,
+      );
+    }
   };
 
   const handleConnectOauth = async (profileId: string, method: 'device' | 'paste' | 'browser' | null = null) => {
