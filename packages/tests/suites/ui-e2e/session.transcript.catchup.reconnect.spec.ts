@@ -403,8 +403,8 @@ test.describe('ui e2e: transcript reconnect catch-up', () => {
 
     const transcript = page.getByTestId('transcript-chat-list');
     await expect(transcript).toHaveCount(1, { timeout: 60_000 });
-    const transcriptRoot = page.locator(`[id="ChatList.${sessionMidId}"]`);
-    await expect(transcriptRoot).toHaveCount(1, { timeout: 60_000 });
+    // Avoid relying on RNW DOM `id` forwarding for the underlying ChatList root; `testID` is our stable UI-e2e API.
+    const transcriptRoot = transcript;
 
     // Scroll to mid-history (unpinned). Use direct scrollTop mutation + a dispatched scroll event so RNW/FlashList
     // updates pinned state in sync, then verify we didn't immediately auto-repin.
