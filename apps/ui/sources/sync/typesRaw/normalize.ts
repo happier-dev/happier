@@ -312,7 +312,7 @@ export function normalizeRawMessage(
                         } as NormalizedAgentContent);
                     }
                 }
-                    const sidechainId = getOutputSidechainId(raw.content.data) ?? (metaSidechainId ?? claudeParentToolUseId);
+                    const sidechainId = metaSidechainId ?? getOutputSidechainId(raw.content.data) ?? claudeParentToolUseId;
                     const legacyIsSidechain = getOutputIsSidechain(raw.content.data);
                       return {
                         id,
@@ -335,7 +335,7 @@ export function normalizeRawMessage(
                     typeof (raw.content.data as any).parent_tool_use_id === 'string'
                         ? String((raw.content.data as any).parent_tool_use_id)
                         : undefined;
-                  const sidechainId = getOutputSidechainId(raw.content.data) ?? (metaSidechainId ?? claudeParentToolUseId);
+                  const sidechainId = metaSidechainId ?? getOutputSidechainId(raw.content.data) ?? claudeParentToolUseId;
                 const isSidechain = Boolean(sidechainId) || getOutputIsSidechain(raw.content.data) || metaIsSidechain;
 
                 // Handle sidechain user messages
@@ -514,11 +514,12 @@ export function normalizeRawMessage(
           // ACP (Agent Communication Protocol) - unified format for all agent providers
           if (raw.content.type === 'acp') {
               const sidechainIdRaw =
-                  typeof (raw.content.data as any).sidechainId === 'string'
+                  metaSidechainId
+                  ?? (typeof (raw.content.data as any).sidechainId === 'string'
                       ? String((raw.content.data as any).sidechainId)
                       : (typeof (raw.content.data as any).sidechain_id === 'string'
                           ? String((raw.content.data as any).sidechain_id)
-                          : metaSidechainId);
+                          : undefined));
               const sidechainId = typeof sidechainIdRaw === 'string' && sidechainIdRaw.trim().length > 0 ? sidechainIdRaw.trim() : undefined;
               const legacyIsSidechain =
                   typeof (raw.content.data as any).isSidechain === 'boolean'

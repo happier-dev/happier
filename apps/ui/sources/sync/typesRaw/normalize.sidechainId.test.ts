@@ -131,6 +131,34 @@ describe('typesRaw.normalizeRawMessage', () => {
     expect((normalized as any).sidechainId).toBe('tool_task_meta_1');
   });
 
+  it('prefers meta.sidechainId over output sidechainId when both are present', () => {
+    const raw: any = {
+      role: 'agent',
+      content: {
+        type: 'output',
+        data: {
+          type: 'assistant',
+          message: {
+            role: 'assistant',
+            model: 'test',
+            content: [{ type: 'text', text: 'hello from nested tool' }],
+          },
+          // Some providers emit a leaf/nested tool-call sidechain id here (e.g. call_*)
+          // while the outer/root tool-call sidechain id is carried in message meta.
+          sidechainId: 'call_leaf_1',
+          uuid: 'uuid_leaf_1',
+          parentUuid: null,
+        },
+      },
+      meta: { source: 'cli', sidechainId: 'subagent_run_root_1' },
+    };
+
+    const normalized = normalizeRawMessage('msg_leaf_1', null, 1008, raw);
+    expect(normalized).not.toBeNull();
+    expect((normalized as any).isSidechain).toBe(true);
+    expect((normalized as any).sidechainId).toBe('subagent_run_root_1');
+  });
+
   it('reads output.data.sidechain_id and output.data.is_sidechain for sidechain detection (snake_case)', () => {
     const raw: any = {
       role: 'agent',
