@@ -1,7 +1,8 @@
 import * as React from 'react';
-import { View, ActivityIndicator, Platform } from 'react-native';
+import { View, ActivityIndicator, Platform, Pressable } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { Ionicons } from '@expo/vector-icons';
+import { useRouter } from 'expo-router';
 
 import { ToolSectionView } from '@/components/tools/shell/presentation/ToolSectionView';
 import type { Message, ToolCall } from '@/sync/domains/messages/messageTypes';
@@ -27,15 +28,17 @@ function formatTaskLikeSummary(tool: ToolCall): string | null {
     const op = inferOperation(input);
     if (op === 'create') {
         const subject = typeof input?.subject === 'string' ? input.subject : null;
-        return subject ? `Create task: ${subject}` : 'Create task';
+        return subject
+            ? t('tools.taskLikeSummary.createTaskWithSubject', { subject })
+            : t('tools.taskLikeSummary.createTask');
     }
-    if (op === 'list') return 'List tasks';
+    if (op === 'list') return t('tools.taskLikeSummary.listTasks');
     if (op === 'update') {
         const id = typeof input?.taskId === 'string' || typeof input?.taskId === 'number' ? String(input.taskId) : null;
         const status = typeof input?.status === 'string' ? input.status : null;
-        if (id && status) return `Update task ${id}: ${status}`;
-        if (id) return `Update task ${id}`;
-        return 'Update task';
+        if (id && status) return t('tools.taskLikeSummary.updateTaskWithIdStatus', { id, status });
+        if (id) return t('tools.taskLikeSummary.updateTaskWithId', { id });
+        return t('tools.taskLikeSummary.updateTask');
     }
     if (op === 'run') {
         const desc = typeof input?.description === 'string' ? input.description : null;
@@ -72,11 +75,14 @@ export const TaskLikeSummarySection = React.memo<{
     metadata: Metadata | null;
     messages: readonly Message[];
     detailLevel?: 'title' | 'summary' | 'full';
+    sessionId?: string;
+    messageId?: string;
     opts?: Readonly<{
         hideResultInlineWhenBackgroundRun?: boolean;
     }>;
-}>(function TaskLikeSummarySection({ tool, metadata, messages, detailLevel = 'summary', opts }) {
+}>(function TaskLikeSummarySection({ tool, metadata, messages, detailLevel = 'summary', sessionId, messageId, opts }) {
     const { theme } = useUnistyles();
+    const router = useRouter();
     if (detailLevel === 'title') return null;
 
     const filtered = React.useMemo(
@@ -144,6 +150,12 @@ export const TaskLikeSummarySection = React.memo<{
         },
     });
 
+    const canOpenDetails = Boolean(sessionId && messageId) && !isFullView;
+    const handleOpenDetails = React.useCallback(() => {
+        if (!sessionId || !messageId) return;
+        router.push(`/session/${sessionId}/message/${messageId}`);
+    }, [messageId, router, sessionId]);
+
     return (
         <ToolSectionView>
             <View style={styles.container}>
@@ -161,8 +173,28 @@ export const TaskLikeSummarySection = React.memo<{
                         </Text>
                     </View>
                 ) : null}
+                {remainingCount > 0 ? (
+                    canOpenDetails ? (
+                        <Pressable
+                            testID="task-like-summary-more-tools"
+                            accessibilityRole="button"
+                            onPress={handleOpenDetails}
+                            style={({ pressed }) => [styles.moreToolsItem, pressed && { opacity: 0.8 }]}
+                        >
+                            <Text style={styles.moreToolsText}>
+                                {t('tools.taskView.moreTools', { count: remainingCount })}
+                            </Text>
+                        </Pressable>
+                    ) : (
+                        <View testID="task-like-summary-more-tools" style={styles.moreToolsItem}>
+                            <Text style={styles.moreToolsText}>
+                                {t('tools.taskView.moreTools', { count: remainingCount })}
+                            </Text>
+                        </View>
+                    )
+                ) : null}
                 {visibleTools.map((item, index) => (
-                    <View key={`${item.tool.name}-${index}`} style={styles.toolItem}>
+                    <View key={`${item.tool.name}-${index}`} testID="task-like-summary-tool-item" style={styles.toolItem}>
                         <Text style={styles.toolTitle}>{item.title}</Text>
                         <View style={styles.statusContainer}>
                             {item.state === 'running' && (
@@ -177,13 +209,6 @@ export const TaskLikeSummarySection = React.memo<{
                         </View>
                     </View>
                 ))}
-                {remainingCount > 0 && (
-                    <View style={styles.moreToolsItem}>
-                        <Text style={styles.moreToolsText}>
-                            {t('tools.taskView.moreTools', { count: remainingCount })}
-                        </Text>
-                    </View>
-                )}
                 {threadTextMessages.length > 0 && (
                     <View style={styles.summaryItem}>
                         {threadTextMessages.map((m, idx) => (

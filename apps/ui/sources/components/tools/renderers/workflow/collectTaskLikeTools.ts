@@ -39,5 +39,15 @@ export function collectTaskLikeTools(params: Readonly<{
         }
     }
 
+    filtered.sort((a, b) => {
+        const aCreatedAt = typeof a.tool.createdAt === 'number' ? a.tool.createdAt : Number.POSITIVE_INFINITY;
+        const bCreatedAt = typeof b.tool.createdAt === 'number' ? b.tool.createdAt : Number.POSITIVE_INFINITY;
+        if (aCreatedAt !== bCreatedAt) return aCreatedAt - bCreatedAt;
+        // Stable-ish tie-breaker for deterministic ordering
+        const aName = typeof a.tool.name === 'string' ? a.tool.name : '';
+        const bName = typeof b.tool.name === 'string' ? b.tool.name : '';
+        return aName.localeCompare(bName);
+    });
+
     return filtered;
 }

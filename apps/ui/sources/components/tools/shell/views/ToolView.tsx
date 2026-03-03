@@ -318,6 +318,7 @@ export const ToolView = React.memo<ToolViewProps>((props) => {
                         metadata={props.metadata}
                         messages={props.messages ?? []}
                         sessionId={sessionId}
+                        messageId={messageId}
                         interaction={props.interaction}
                         detailLevel={renderBodyDetailLevel}
                         setHeaderActions={setHeaderActions}

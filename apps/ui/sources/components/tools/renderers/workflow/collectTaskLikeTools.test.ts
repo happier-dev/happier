@@ -55,4 +55,41 @@ describe('collectTaskLikeTools', () => {
         expect(tools).toHaveLength(1);
         expect(tools[0]!.title).toBe('Fancy Tool Title');
     });
+
+    it('returns task tool calls sorted by createdAt (oldest first)', async () => {
+        const { collectTaskLikeTools } = await import('./collectTaskLikeTools');
+
+        const taskTool: any = {
+            name: 'Task',
+            state: 'running',
+            input: {},
+            createdAt: 10,
+            startedAt: 10,
+            completedAt: null,
+            description: null,
+            result: null,
+        };
+
+        const messages: Message[] = [
+            {
+                kind: 'tool-call',
+                id: 'm2',
+                localId: null,
+                createdAt: 12,
+                tool: { name: 'ToolB', state: 'completed', input: {}, createdAt: 12, startedAt: 12, completedAt: 13, description: null, result: {} } as any,
+                children: [],
+            } as any,
+            {
+                kind: 'tool-call',
+                id: 'm1',
+                localId: null,
+                createdAt: 11,
+                tool: { name: 'ToolA', state: 'completed', input: {}, createdAt: 11, startedAt: 11, completedAt: 12, description: null, result: {} } as any,
+                children: [],
+            } as any,
+        ];
+
+        const tools = collectTaskLikeTools({ tool: taskTool, messages, metadata: null });
+        expect(tools.map((t) => t.tool.createdAt)).toEqual([11, 12]);
+    });
 });

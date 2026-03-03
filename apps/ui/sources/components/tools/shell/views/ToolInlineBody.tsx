@@ -25,6 +25,7 @@ export const ToolInlineBody = React.memo(function ToolInlineBody(props: {
     metadata: Metadata | null;
     messages: Message[];
     sessionId?: string;
+    messageId?: string;
     interaction?: {
         canSendMessages: boolean;
         canApprovePermissions: boolean;
@@ -120,6 +121,7 @@ export const ToolInlineBody = React.memo(function ToolInlineBody(props: {
                         metadata={props.metadata}
                         messages={props.messages}
                         sessionId={props.sessionId}
+                        messageId={props.messageId}
                         detailLevel={props.detailLevel}
                         interaction={props.interaction}
                     />

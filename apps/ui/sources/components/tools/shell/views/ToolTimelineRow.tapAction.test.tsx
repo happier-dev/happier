@@ -9,6 +9,7 @@ vi.mock('react-native', async () => ({
     View: 'View',
     Text: 'Text',
     Pressable: ({ children, ...props }: any) => React.createElement('Pressable', props, children),
+    ActivityIndicator: (props: any) => React.createElement('ActivityIndicator', props),
     Animated: {
         Value: class {
             constructor(_v: any) {}
@@ -242,5 +243,55 @@ describe('ToolTimelineRow (tap action)', () => {
 
         expect(pushSpy).toHaveBeenCalledTimes(1);
         expect(tree!.root.findAllByType('SpecificToolView' as any)).toHaveLength(0);
+    });
+
+    it('auto-expands and shows action-required status for pending user-action tools', async () => {
+        settings.toolViewTapAction = 'expand';
+        const { ToolTimelineRow } = await import('./ToolTimelineRow');
+        const tool: any = {
+            name: 'AskUserQuestion',
+            state: 'running',
+            input: {},
+            createdAt: 1,
+            startedAt: 1,
+            completedAt: null,
+            description: null,
+            permission: {
+                id: 'perm-1',
+                status: 'pending',
+                kind: 'user_action',
+            },
+        };
+
+        let tree: renderer.ReactTestRenderer | null = null;
+        await act(async () => {
+            tree = renderer.create(<ToolTimelineRow tool={tool} metadata={null} sessionId="s1" messageId="m1" />);
+        });
+
+        expect(tree!.root.findAllByType('SpecificToolView' as any)).toHaveLength(1);
+        const hostText = tree!.root.findAllByType('Text' as any).map((n: any) => String(n.props?.children ?? '')).join(' ');
+        expect(hostText).toContain('status.actionRequired');
+    });
+
+    it('shows a running indicator in the header for Task tools', async () => {
+        const { ToolTimelineRow } = await import('./ToolTimelineRow');
+        const tool: any = {
+            name: 'Task',
+            state: 'running',
+            input: { description: 'Do stuff' },
+            createdAt: 1,
+            startedAt: 1,
+            completedAt: null,
+            description: null,
+            result: null,
+        };
+
+        let tree: renderer.ReactTestRenderer | null = null;
+        await act(async () => {
+            tree = renderer.create(<ToolTimelineRow tool={tool} metadata={null} sessionId="s1" messageId="m1" />);
+        });
+
+        const indicators = tree!.root.findAllByType('ActivityIndicator' as any);
+        expect(indicators.length).toBeGreaterThan(0);
     });
 });

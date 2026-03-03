@@ -37,6 +37,7 @@ export type ToolViewProps = {
     metadata: Metadata | null;
     messages: Message[];
     sessionId?: string;
+    messageId?: string;
     detailLevel?: ToolViewDetailLevel;
     interaction?: {
         canSendMessages: boolean;

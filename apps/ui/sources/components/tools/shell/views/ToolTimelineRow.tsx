@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { View } from 'react-native';
+import { ActivityIndicator, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { useRouter } from 'expo-router';
 
@@ -12,6 +12,8 @@ import { ToolInlineBody } from '@/components/tools/shell/views/ToolInlineBody';
 import { TranscriptCollapsible } from '@/components/sessions/transcript/motion/TranscriptCollapsible';
 import { buildToolHeaderModel } from '@/components/tools/shell/presentation/buildToolHeaderModel';
 import { deriveToolTimelineDensity } from '@/components/tools/normalization/policy/deriveToolTimelineDensity';
+import { isPendingUserActionRequest } from '@/utils/sessions/permissions/permissionPromptPolicy';
+import { t } from '@/text';
 import {
     resolveToolViewDetailLevelDefaultForChromeMode,
     resolveToolViewExpandedDetailLevelDefaultForChromeMode,
@@ -53,10 +55,21 @@ export const ToolTimelineRow = React.memo((props: {
     const toolViewExpandedDetailLevelByToolName = useSetting('toolViewExpandedDetailLevelByToolName');
     const toolViewTimelineFeedDefaultExpanded = useSetting('toolViewTimelineFeedDefaultExpanded');
     const toolViewTapAction = useSetting('toolViewTapAction');
+    const isPendingUserAction = isPendingUserActionRequest({
+        toolName: toolForRendering.name,
+        requestKind: toolForRendering.permission?.kind,
+        permissionStatus: toolForRendering.permission?.status,
+    });
+    const forceExpandedForPendingUserAction = isPendingUserAction;
 
-    const initialIsExpandedRef = React.useRef<boolean>(toolViewTimelineFeedDefaultExpanded === true);
+    const initialIsExpandedRef = React.useRef<boolean>(toolViewTimelineFeedDefaultExpanded === true || forceExpandedForPendingUserAction);
     const [isExpanded, setIsExpanded] = React.useState<boolean>(initialIsExpandedRef.current);
     const [expandedByUser, setExpandedByUser] = React.useState<boolean>(false);
+
+    React.useEffect(() => {
+        if (!forceExpandedForPendingUserAction) return;
+        setIsExpanded(true);
+    }, [forceExpandedForPendingUserAction]);
 
     const handleOpen = React.useCallback(() => {
         if (props.sessionId && props.messageId) {
@@ -69,6 +82,7 @@ export const ToolTimelineRow = React.memo((props: {
         toolViewTapAction === 'open' && canOpen ? 'open' : 'expand';
 
     const handleToggleExpand = React.useCallback(() => {
+        if (forceExpandedForPendingUserAction) return;
         const next = !isExpanded;
         setIsExpanded(next);
         // Only show the persistent "expanded" chevron when the tool started collapsed and the user expanded it.
@@ -77,7 +91,7 @@ export const ToolTimelineRow = React.memo((props: {
         } else {
             setExpandedByUser(false);
         }
-    }, [isExpanded]);
+    }, [forceExpandedForPendingUserAction, isExpanded]);
 
     const onPress = primaryTapAction === 'open' ? handleOpen : handleToggleExpand;
 
@@ -127,7 +141,8 @@ export const ToolTimelineRow = React.memo((props: {
     const expandedDetailLevel: 'summary' | 'full' =
         (toolViewExpandedDetailLevelByToolName as any)?.[normalizedToolName] ?? resolvedExpandedDetailLevelDefault;
 
-    const effectiveDetailLevel = isExpanded ? expandedDetailLevel : collapsedDetailLevel;
+    const effectiveIsExpanded = forceExpandedForPendingUserAction ? true : isExpanded;
+    const effectiveDetailLevel = effectiveIsExpanded ? expandedDetailLevel : collapsedDetailLevel;
     const inlineDetailLevel =
         normalizedToolName === 'Task' && effectiveDetailLevel === 'full'
             ? 'summary'
@@ -148,6 +163,10 @@ export const ToolTimelineRow = React.memo((props: {
     }, [headerModel.icon, iconSize, props.metadata, props.tool, theme.colors.text, theme.colors.textSecondary]);
 
     const [headerActions, setHeaderActions] = React.useState<React.ReactNode | null>(null);
+    const showTaskRunningIndicator = normalizedToolName === 'Task' || normalizedToolName === 'SubAgentRun';
+    const headerRightElement =
+        headerActions ??
+        (showTaskRunningIndicator && toolForRendering.state === 'running' ? <ActivityIndicator size="small" /> : null);
 
     const isBodyVisible = inlineDetailLevel !== 'title' && inlineDetailLevel !== 'compact';
     const bodyDetailLevel: 'summary' | 'full' = inlineDetailLevel === 'full' ? 'full' : 'summary';
@@ -163,15 +182,17 @@ export const ToolTimelineRow = React.memo((props: {
         `${props.sessionId ?? 'no-session'}:${normalizedToolName}:${toolForRendering.createdAt}`;
 
     const headerSubtitle = effectiveDetailLevel === 'title' ? null : subtitle;
-    const headerStatusText = effectiveDetailLevel === 'title' ? null : statusText;
     const disclosure =
-        primaryTapAction === 'expand'
+        primaryTapAction === 'expand' && !forceExpandedForPendingUserAction
             ? expandedByUser && isExpanded
                 ? ({ behavior: 'persistent', state: 'expanded' } as const)
                 : !isExpanded
                     ? ({ behavior: 'hover', state: 'collapsed' } as const)
                     : null
             : null;
+
+    const actionRequiredStatusText = isPendingUserAction ? t('status.actionRequired') : null;
+    const headerStatusText = effectiveDetailLevel === 'title' ? null : (actionRequiredStatusText ?? statusText);
 
     return (
         <View style={styles.container}>
@@ -185,7 +206,7 @@ export const ToolTimelineRow = React.memo((props: {
                 onPress={onPress}
                 canOpen={canOpen}
                 onOpen={handleOpen}
-                rightElement={headerActions}
+                rightElement={headerRightElement}
                 disclosure={disclosure}
             />
 
@@ -199,6 +220,7 @@ export const ToolTimelineRow = React.memo((props: {
                             metadata={props.metadata}
                             messages={props.messages ?? []}
                             sessionId={props.sessionId}
+                            messageId={props.messageId}
                             interaction={props.interaction}
                             detailLevel={renderBodyDetailLevel}
                             setHeaderActions={setHeaderActions}
@@ -215,7 +237,7 @@ const styles = StyleSheet.create((theme) => ({
         marginVertical: 0,
     },
     body: {
-        paddingLeft: 38,
+        paddingLeft: 24,
         paddingRight: 10,
         paddingBottom: 12,
         paddingTop: 2,
