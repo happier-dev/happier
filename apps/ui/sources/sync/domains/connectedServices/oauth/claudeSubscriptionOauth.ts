@@ -2,7 +2,7 @@ export const CLAUDE_SUBSCRIPTION_OAUTH = Object.freeze({
   clientId: '9d1c250a-e61b-44d9-88ed-5944d1962f5e',
   authBaseUrl: 'https://claude.ai',
   defaultRedirectUri: 'https://platform.claude.com/oauth/code/callback',
-  scope: 'user:inference',
+  scope: 'user:inference user:profile',
 });
 
 export function buildClaudeSubscriptionAuthorizationUrl(params: Readonly<{

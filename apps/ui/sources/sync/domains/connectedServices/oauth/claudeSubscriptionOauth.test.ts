@@ -10,6 +10,8 @@ describe('claudeSubscriptionOauth', () => {
       challenge: 'ch1',
     });
 
-    expect(url).toContain(`redirect_uri=${encodeURIComponent('https://platform.claude.com/oauth/code/callback')}`);
+    const parsed = new URL(url);
+    expect(parsed.searchParams.get('redirect_uri')).toBe('https://platform.claude.com/oauth/code/callback');
+    expect(parsed.searchParams.get('scope')).toBe('user:inference user:profile');
   });
 });
