@@ -82,12 +82,22 @@ function createNeverResolvingBackend(): AgentBackend {
   let handler: AgentMessageHandler | null = null;
   const sessionId: SessionId = 'child_session_stuck' as SessionId;
   let done: Promise<void> | null = null;
+  let sendCount = 0;
 
   return {
     async startSession() {
       return { sessionId };
     },
     async sendPrompt(_sessionId: SessionId, _prompt: string) {
+      sendCount += 1;
+      // First prompt returns immediately but never completes, simulating a stuck in-flight turn.
+      // The second prompt never resolves, simulating a backend that cannot acknowledge a cancel+send.
+      if (sendCount >= 2) {
+        await new Promise<void>(() => {
+          // intentionally never resolve/reject
+        });
+        return;
+      }
       done = new Promise<void>(() => {
         // intentionally never resolve/reject
       });
