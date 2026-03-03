@@ -1,6 +1,7 @@
 import type { DiscardedPendingMessage, PendingMessage } from '@/sync/domains/state/storageTypes';
 import type { Message } from '@/sync/domains/messages/messageTypes';
 import type { SessionActionDraft } from '@/sync/domains/sessionActions/sessionActionDraftTypes';
+import { isPendingUserActionRequest } from '@/utils/sessions/permissions/permissionPromptPolicy';
 
 export type ChatListItem =
     | {
@@ -62,6 +63,15 @@ function isPrefix(params: Readonly<{ prefix: readonly string[]; full: readonly s
     return true;
 }
 
+function canGroupToolCallMessage(message: Message): boolean {
+    if (message.kind !== 'tool-call') return false;
+    return !isPendingUserActionRequest({
+        toolName: message.tool.name,
+        requestKind: message.tool.permission?.kind,
+        permissionStatus: message.tool.permission?.status,
+    });
+}
+
 export function buildChatListItems(opts: {
     messageIdsOldestFirst: string[];
     messagesById: Record<string, Message>;
@@ -93,7 +103,7 @@ export function buildChatListItems(opts: {
             const m = opts.messagesById[messageId];
             if (!m) continue;
 
-            if (groupConsecutiveToolCalls && m.kind === 'tool-call') {
+            if (groupConsecutiveToolCalls && canGroupToolCallMessage(m)) {
                 const prev = items[items.length - 1];
                 if (prev?.kind === 'tool-calls-group') {
                     items[items.length - 1] = { ...prev, toolMessageIds: [...prev.toolMessageIds, m.id] };
@@ -170,7 +180,7 @@ export function buildChatListItemsCached(opts: {
                 localIdsInTranscript.add(m.localId);
             }
 
-            if (groupConsecutiveToolCalls && m.kind === 'tool-call') {
+            if (groupConsecutiveToolCalls && canGroupToolCallMessage(m)) {
                 const prev = committedItems[committedItems.length - 1];
                 if (prev?.kind === 'tool-calls-group') {
                     committedItems[committedItems.length - 1] = { ...prev, toolMessageIds: [...prev.toolMessageIds, m.id] };
@@ -203,7 +213,7 @@ export function buildChatListItemsCached(opts: {
                 localIdsInTranscript.add(m.localId);
             }
 
-            if (groupConsecutiveToolCalls && m.kind === 'tool-call') {
+            if (groupConsecutiveToolCalls && canGroupToolCallMessage(m)) {
                 const prev = committedItems[committedItems.length - 1];
                 if (prev?.kind === 'tool-calls-group') {
                     committedItems[committedItems.length - 1] = { ...prev, toolMessageIds: [...prev.toolMessageIds, m.id] };

@@ -23,16 +23,26 @@ function buildToolCallMessage(params: {
     id: string;
     localId: string | null;
     createdAt: number;
+    state?: 'running' | 'completed' | 'error';
+    requestKind?: 'permission' | 'user_action';
 }): Message {
+    const state = params.state ?? 'completed';
     const tool: ToolCall = {
         name: 'read',
-        state: 'completed',
+        state,
         input: {},
         createdAt: params.createdAt,
         startedAt: params.createdAt,
-        completedAt: params.createdAt + 1,
+        completedAt: state === 'running' ? null : params.createdAt + 1,
         description: null,
         result: {},
+        permission: params.requestKind
+            ? {
+                id: `perm:${params.id}`,
+                status: state === 'running' ? 'pending' : 'approved',
+                kind: params.requestKind,
+            }
+            : undefined,
     };
     return {
         kind: 'tool-call',
@@ -218,6 +228,29 @@ describe('buildChatListItemsCached', () => {
         expect(r1.items[1]?.kind === 'tool-calls-group' && r1.items[1].toolMessageIds).toEqual(['t1', 't2']);
         expect(r1.items[2]?.kind === 'message' && r1.items[2].messageId).toBe('a1');
         expect(r1.items[3]?.kind === 'tool-calls-group' && r1.items[3].toolMessageIds).toEqual(['t3']);
+    });
+
+    it('does not group pending user-action tool-call messages when grouping is enabled', () => {
+        const messages: Message[] = [
+            { kind: 'user-text', id: 'u1', localId: null, createdAt: 1, text: 'user' },
+            buildToolCallMessage({ id: 't1', localId: null, createdAt: 2 }),
+            buildToolCallMessage({ id: 'ask', localId: null, createdAt: 3, state: 'running', requestKind: 'user_action' }),
+            buildToolCallMessage({ id: 't2', localId: null, createdAt: 4 }),
+        ];
+        const messagesById = Object.fromEntries(messages.map((m) => [m.id, m]));
+
+        const r1 = buildChatListItemsCached({
+            cache: null,
+            messageIdsOldestFirst: ['u1', 't1', 'ask', 't2'],
+            messagesById,
+            pendingMessages: [],
+            groupConsecutiveToolCalls: true,
+        });
+
+        expect(r1.items.map((item) => item.kind)).toEqual(['message', 'tool-calls-group', 'message', 'tool-calls-group']);
+        expect(r1.items[1]?.kind === 'tool-calls-group' && r1.items[1].toolMessageIds).toEqual(['t1']);
+        expect(r1.items[2]?.kind === 'message' && r1.items[2].messageId).toBe('ask');
+        expect(r1.items[3]?.kind === 'tool-calls-group' && r1.items[3].toolMessageIds).toEqual(['t2']);
     });
 
     it('still drops pending messages that are materialized in committed messages after append', () => {
