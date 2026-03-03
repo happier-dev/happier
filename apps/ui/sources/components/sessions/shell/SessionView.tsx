@@ -37,6 +37,7 @@ import { randomUUID } from '@/platform/randomUUID';
 import { useDeviceType, useHeaderHeight, useIsLandscape, useIsTablet } from '@/utils/platform/responsive';
 import { formatPathRelativeToHome, getSessionAvatarId, getSessionName, listPendingPermissionRequests, shouldShowAbortButtonForSessionState, useSessionStatus } from '@/utils/sessions/sessionUtils';
 import { deriveTranscriptInteraction } from '@/utils/sessions/deriveTranscriptInteraction';
+import { runAfterInteractionsWithFallback } from '@/utils/timing/runAfterInteractionsWithFallback';
 import { isVersionSupported, MINIMUM_CLI_VERSION } from '@/utils/system/versionUtils';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 import { getMachineCapabilitiesSnapshot, prefetchMachineCapabilities, useMachineCapabilitiesCache } from '@/hooks/server/useMachineCapabilitiesCache';
@@ -569,15 +570,16 @@ function SessionViewLoaded({ sessionId, session, isEncryptedSessionLocked, jumpT
                 sessionSeq: current?.seq ?? 0,
             };
         }
-        markSessionViewed();
+        const cancelMarkViewed = runAfterInteractionsWithFallback(markSessionViewed);
         return () => {
             isFocusedRef.current = false;
             clearActiveViewingSessionId(sessionId);
+            cancelMarkViewed();
             if (markViewedTimeoutRef.current) {
                 clearTimeout(markViewedTimeoutRef.current);
                 markViewedTimeoutRef.current = null;
             }
-            markSessionViewed();
+            runAfterInteractionsWithFallback(markSessionViewed);
         };
     }, [markSessionViewed, sessionId]));
 
@@ -603,7 +605,9 @@ function SessionViewLoaded({ sessionId, session, isEncryptedSessionLocked, jumpT
     }, [markSessionViewed, session.seq]);
 
     React.useEffect(() => {
-        fireAndForget(sync.fetchPendingMessages(sessionId), { tag: 'SessionView.fetchPendingMessages' });
+        return runAfterInteractionsWithFallback(() => {
+            fireAndForget(sync.fetchPendingMessages(sessionId), { tag: 'SessionView.fetchPendingMessages' });
+        });
     }, [sessionId, session.pendingVersion]);
 
     // Handle dismissing CLI version warning

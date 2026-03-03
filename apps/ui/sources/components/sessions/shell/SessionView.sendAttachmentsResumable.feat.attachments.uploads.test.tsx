@@ -340,8 +340,13 @@ vi.mock('@/utils/platform/platform', () => ({
     isRunningOnMac: () => false,
 }));
 vi.mock('@/utils/system/fireAndForget', () => ({
-    fireAndForget: (p: any) => {
-        pendingFireAndForget.push(p);
+    fireAndForget: (p: any, opts?: { tag?: string }) => {
+        const tag = typeof opts?.tag === 'string' ? opts.tag : '';
+        // This test is validating the resumable attachment send flow; ignore unrelated
+        // fire-and-forget work (analytics, mount-time prefetch, etc).
+        if (tag.startsWith('SessionView.sendMessage')) {
+            pendingFireAndForget.push(p);
+        }
         return p;
     },
 }));
