@@ -50,7 +50,9 @@ If you select **Tailscale** during install, the stack typically binds to `loopba
    - `happier server add --server-url https://<your-server-url> --use`
    - `happier auth login --method=mobile`
 4. On your phone, scan the QR code (or open the deep link). The app will prompt to switch servers (if needed), then you can sign in/create an account and approve the terminal connection.
-5. If you installed **Dev box**, follow the printed “connect daemon” step and restart the stack/service.
+5. If you installed **Dev box**, SSH into the container and run:
+   - `sudo -u happier -H happier auth login`
+   - (If needed) `systemctl restart 'happier-daemon.*.service'`
 
 ## After install: recommended onboarding flow
 
@@ -72,9 +74,10 @@ For remote access (phone / outside your LAN), the web UI requires **HTTPS** (sec
 
 If you use a reverse proxy, the Proxmox installer will ask you for your public HTTPS URL and persist it in:
 
-- `/home/happier/.happier/stacks/main/env` as `HAPPIER_PUBLIC_SERVER_URL=https://<your-domain>` (canonical/share URL used in QR/deep links)
-  - If you serve the web UI from the same origin, it may also set `HAPPIER_WEBAPP_URL=https://<your-domain>`
-  - (Legacy) some stacks may still use `HAPPIER_STACK_SERVER_URL` for compatibility
+- Default (recommended installers): `/etc/happier/server.env` as:
+  - `HAPPIER_PUBLIC_SERVER_URL=https://<your-domain>` (canonical/share URL used in QR/deep links)
+  - `HAPPIER_WEBAPP_URL=https://<your-domain>` (when you serve the web UI from the container)
+- From-source installs (`HAPPIER_PVE_INSTALL_METHOD=from_source`): `/home/happier/.happier/stacks/main/env`
 
 If you need to change it later, edit the same file and restart the stack/service.
 
@@ -93,12 +96,15 @@ Make sure your proxy supports **WebSockets** and forwards the usual “real URL�
 
 Also make sure the stack knows its public URL (for correct deep links/QR codes):
 
-- `HAPPIER_PUBLIC_SERVER_URL=https://<your-domain>` in `/home/happier/.happier/stacks/main/env`
+- Default (recommended installers): `HAPPIER_PUBLIC_SERVER_URL=https://<your-domain>` in `/etc/happier/server.env`
+- From-source installs: `HAPPIER_PUBLIC_SERVER_URL=https://<your-domain>` in `/home/happier/.happier/stacks/main/env`
 
 Then restart:
 
-- `su - happier -c "/home/happier/.happier-stack/bin/hstack service restart --mode=system"` (if autostart enabled)
-- `su - happier -c "/home/happier/.happier-stack/bin/hstack start --restart"` (manual start)
+- Default (recommended installers): `systemctl restart happier-server`
+- From-source installs:
+  - `su - happier -c "/home/happier/.happier-stack/bin/hstack service restart --mode=system"` (if autostart enabled)
+  - `su - happier -c "/home/happier/.happier-stack/bin/hstack start --restart"` (manual start)
 
 **Caddy** (recommended for simplest HTTPS)
 
@@ -156,7 +162,7 @@ If you chose **not** to serve the web UI from your Proxmox container, use:
 
 ### 3) Connect the terminal/daemon
 
-Continue following the same `hstack auth login` output:
+Continue following the `happier auth login` output:
 
 - If you’re using the mobile app: scan the QR code / open the mobile deep link
 - If you’re using the web app: open the URL in a browser where you’re signed in
@@ -169,9 +175,13 @@ If you installed **Dev box (server-light + daemon)**, the daemon is configured t
 
 After login completes:
 
-- If autostart is enabled, the service will start the daemon automatically after credentials exist.
-- Otherwise (manual start), restart so the daemon can start with the new credentials:
-  - `/home/happier/.happier-stack/bin/hstack start --restart`
+- Default (recommended installers):
+  - If autostart is enabled, the daemon runs as a systemd system service inside the container.
+  - If needed, restart it: `systemctl restart 'happier-daemon.*.service'`
+- From-source installs:
+  - If autostart is enabled, the service will start the daemon automatically after credentials exist.
+  - Otherwise (manual start), restart so the daemon can start with the new credentials:
+    - `/home/happier/.happier-stack/bin/hstack start --restart`
 
 ## Using Happier from another machine (common setup)
 
@@ -233,22 +243,21 @@ Manual enrollment commands (inside the container):
 ```bash
 tailscale up
 tailscale set --operator=happier
-su - happier -c "/home/happier/.happier-stack/bin/hstack tailscale enable"
-su - happier -c "/home/happier/.happier-stack/bin/hstack tailscale url"
+tailscale serve --bg http://127.0.0.1:3005
+tailscale serve status
 ```
 
 ### HStack release channel
 
-The installer runs `hstack setup` via `npx` (npm). (`hstack setup` is a deprecated alias for `hstack setup-from-source`.) You can choose which HStack build you want:
+By default, the Proxmox helper script installs Happier using the official **self-host runtime** installers (`hstack self-host` under the hood), which support stable/preview channels and in-place updates.
 
-- **Stable** (recommended): installs `@happier-dev/stack@latest`
-- **Preview**: installs `@happier-dev/stack@next`
-- **Custom**: pin a version (or a different npm spec)
+If you prefer an install that builds from source using `npx ... hstack setup-from-source` you can opt into it via an env var (see below).
 
 Non-interactive overrides:
 
+- `HAPPIER_PVE_INSTALL_METHOD=installers|from_source` (default: `installers`)
 - `HAPPIER_PVE_HSTACK_CHANNEL=stable|preview` (`preview` maps to npm `@next`)
-- `HAPPIER_PVE_HSTACK_PACKAGE='@happier-dev/stack@<tag-or-version>'` (takes precedence)
+- `HAPPIER_PVE_HSTACK_PACKAGE='@happier-dev/stack@<tag-or-version>'` (from-source only; takes precedence)
 
 ## HTTPS guidance (important)
 
@@ -263,7 +272,16 @@ Enter the container from the Proxmox host:
 
 - `pct enter <CTID>`
 
-Service management (if you enabled autostart):
+Service management (recommended installers):
+
+- Server:
+  - `systemctl status happier-server`
+  - `journalctl -u happier-server -f`
+- Dev box daemon (if installed):
+  - `systemctl status 'happier-daemon.*.service'`
+  - `journalctl -u 'happier-daemon.*.service' -f`
+
+Service management (from-source installs):
 
 - `su - happier -c "/home/happier/.happier-stack/bin/hstack service status --mode=system"`
 - `su - happier -c "/home/happier/.happier-stack/bin/hstack service logs --mode=system"`
@@ -275,30 +293,40 @@ If you chose **Dev box (server-light + daemon)**, the server/UI can run before t
 
 1. Enter the container:
    - `pct enter <CTID>`
-2. Switch to the `happier` user:
-   - `su - happier`
-3. Run mobile login (recommended):
-   - `/home/happier/.happier-stack/bin/hstack auth login --no-open --method=mobile`
+2. Run login as the `happier` user (recommended: mobile):
+   - `sudo -u happier -H happier auth login`
 
 After login succeeds:
 
-- If autostart is enabled, the service will detect the new credentials and start the daemon automatically (usually within a few seconds).
-- If you started the stack manually (no service), restart so it can start the daemon with the new credentials:
-  - `/home/happier/.happier-stack/bin/hstack start --restart`
+- Recommended installers:
+  - If you installed the daemon system service, it will keep retrying and will connect once credentials exist.
+  - If needed, restart it: `systemctl restart 'happier-daemon.*.service'`
+- From-source installs:
+  - If autostart is enabled, the service will detect the new credentials and start the daemon automatically (usually within a few seconds).
+  - If you started the stack manually (no service), restart so it can start the daemon with the new credentials:
+    - `/home/happier/.happier-stack/bin/hstack start --restart`
 
 You can verify status with:
 
-- `/home/happier/.happier-stack/bin/hstack auth status`
+- Recommended installers: `sudo -u happier -H happier auth status`
+- From-source installs: `/home/happier/.happier-stack/bin/hstack auth status`
 
 If you enabled Tailscale but skipped the key, enroll later:
 
 - `tailscale up`
-- `su - happier -c "/home/happier/.happier-stack/bin/hstack tailscale enable"`
-- `su - happier -c "/home/happier/.happier-stack/bin/hstack tailscale url"`
+- `tailscale set --operator=happier`
+- `tailscale serve --bg http://127.0.0.1:3005`
+- `tailscale serve status`
 
 ## Updating
 
-At the moment the Proxmox helper script does not provide an in-place updater. The safest update paths are:
+Recommended installers:
 
-- Re-run the installer in a fresh container, then migrate your data.
-- Or, update from inside the container using `hstack` (advanced; follow the `hstack` documentation for your deployment).
+- Use the Proxmox helper script “Update” action (it runs `hstack self-host update` and also updates the Happier CLI if installed).
+- Or update from inside the container:
+  - `hstack self-host update --mode system --channel stable` (or `preview`)
+  - `happier self update --channel stable` (or `preview`) (Dev box only)
+
+From-source installs:
+
+- There is no fully supported in-place updater. Re-run the installer in a fresh container, or update the checked-out workspace manually (advanced).
