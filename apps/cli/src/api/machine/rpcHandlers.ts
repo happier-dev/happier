@@ -32,6 +32,7 @@ import { registerMachineMemoryRpcHandlers } from './rpcHandlers.memory';
 import { runReplaySummaryForDialog } from '@/session/replay/summary/runReplaySummaryForDialog';
 import { resolveCliFeatureDecision } from '@/features/featureDecisionService';
 import { configuration } from '@/configuration';
+import { isAcpForkEligibleForProvider } from '@/agent/acp/acpForkEligibility';
 
 export type MachineRpcHandlers = {
   spawnSession: (options: SpawnSessionOptions) => Promise<SpawnSessionResult>;
@@ -575,7 +576,7 @@ export function registerMachineRpcHandlers(params: Readonly<{
     const shouldAttemptAcpForkLatest =
       (requestedStrategy === 'auto' || requestedStrategy === 'acp_fork_latest') &&
       (forkPoint.type === 'latest') &&
-      (agentRaw !== 'opencode' || opencodeBackendModeFromParent === 'acp');
+      isAcpForkEligibleForProvider({ providerId: agentRaw, metadata: parentMetadata });
 
     if (shouldAttemptAcpForkLatest) {
       // Best-effort ACP fork: only applies when the parent session can be resumed as an ACP session.
