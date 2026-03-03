@@ -60,6 +60,19 @@ describe('PermissionHandler (mode parameter precedence)', () => {
     ).resolves.toMatchObject({ behavior: 'allow' });
   });
 
+  it('auto-allows tool calls when mode.permissionMode is yolo (mapped to bypassPermissions)', async () => {
+    const { session } = createPermissionHandlerSessionStub();
+    const { PermissionHandler } = await import('./permissionHandler');
+    const handler = new PermissionHandler(session);
+
+    const controller = new AbortController();
+    const mode = { permissionMode: 'yolo' } as EnhancedMode;
+
+    await expect(
+      handler.handleToolCall('Read', { file_path: '/tmp/file.txt' }, mode, { signal: controller.signal }),
+    ).resolves.toMatchObject({ behavior: 'allow' });
+  });
+
   it('does not auto-allow AskUserQuestion when mode.permissionMode is bypassPermissions', async () => {
     const { session, client } = createPermissionHandlerSessionStub();
     const { PermissionHandler } = await import('./permissionHandler');
@@ -126,6 +139,37 @@ describe('PermissionHandler (mode parameter precedence)', () => {
         { signal: controller.signal },
       ),
     ).resolves.toMatchObject({ behavior: 'allow' });
+  });
+
+  it('auto-allows edit tools when mode.permissionMode is safe-yolo (mapped to acceptEdits)', async () => {
+    const { session } = createPermissionHandlerSessionStub();
+    const { PermissionHandler } = await import('./permissionHandler');
+    const handler = new PermissionHandler(session);
+
+    const controller = new AbortController();
+    const mode = { permissionMode: 'safe-yolo' } as EnhancedMode;
+
+    await expect(
+      handler.handleToolCall(
+        'Edit',
+        { file_path: '/tmp/file.txt', old_string: 'a', new_string: 'b' },
+        mode,
+        { signal: controller.signal },
+      ),
+    ).resolves.toMatchObject({ behavior: 'allow' });
+  });
+
+  it('denies non-interactive tool calls when agentModeId is plan (Claude plan mode)', async () => {
+    const { session } = createPermissionHandlerSessionStub();
+    const { PermissionHandler } = await import('./permissionHandler');
+    const handler = new PermissionHandler(session);
+
+    const controller = new AbortController();
+    const mode = { permissionMode: 'yolo', agentModeId: 'plan' } as EnhancedMode;
+
+    await expect(
+      handler.handleToolCall('Bash', { command: 'pwd' }, mode, { signal: controller.signal }),
+    ).resolves.toMatchObject({ behavior: 'deny' });
   });
 
   it('reset clears bypassPermissions so default mode requires a permission request', async () => {

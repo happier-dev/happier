@@ -89,6 +89,14 @@ class Configuration {
    * the CLI treats that specific error as non-fatal so the session runner does not crash and respawn.
    */
   public readonly claudeAbortUnhandledRejectionIgnoreWindowMs: number
+  /**
+   * When a user approves ExitPlanMode, the UI/metadata update that clears plan mode may arrive slightly
+   * after Claude resumes tool execution. This latch window ensures same-turn tool calls are not denied
+   * as "still in plan mode" while the metadata update propagates.
+   */
+  public readonly claudeExitPlanModeLatchMs: number
+  /** Max number of per-message localIds remembered for ExitPlanMode latch. */
+  public readonly claudeExitPlanModeLatchMaxEntries: number
 
   // Permission-request push notifications (best-effort; bounded retries).
   public readonly permissionRequestPushRetryDelaysMs: readonly number[]
@@ -348,6 +356,18 @@ class Configuration {
     // Default: 10s. Set to 0 to disable suppression.
     this.claudeAbortUnhandledRejectionIgnoreWindowMs =
       Number.isFinite(abortIgnoreWindowRaw) && abortIgnoreWindowRaw >= 0 ? Math.min(abortIgnoreWindowRaw, 60_000) : 10_000;
+
+    const exitPlanLatchRaw = Number.parseInt(String(process.env.HAPPIER_CLAUDE_EXIT_PLAN_MODE_LATCH_MS ?? ''), 10);
+    // Default: 15s. Needs to be long enough to cover same-turn tool calls while metadata update propagates.
+    this.claudeExitPlanModeLatchMs =
+      Number.isFinite(exitPlanLatchRaw) && exitPlanLatchRaw >= 0 ? Math.min(exitPlanLatchRaw, 5 * 60_000) : 15_000;
+
+    const exitPlanMaxEntriesRaw = Number.parseInt(
+      String(process.env.HAPPIER_CLAUDE_EXIT_PLAN_MODE_LATCH_MAX_ENTRIES ?? ''),
+      10,
+    );
+    this.claudeExitPlanModeLatchMaxEntries =
+      Number.isFinite(exitPlanMaxEntriesRaw) && exitPlanMaxEntriesRaw >= 1 ? Math.min(exitPlanMaxEntriesRaw, 2_000) : 100;
 
     const maxConcurrentRunsRaw = Number.parseInt(String(process.env.HAPPIER_EXECUTION_RUNS_MAX_CONCURRENT_PER_SESSION ?? ''), 10);
     const maxConcurrentTasksRaw = Number.parseInt(String(process.env.HAPPIER_EPHEMERAL_TASKS_MAX_CONCURRENT_PER_SESSION ?? ''), 10);

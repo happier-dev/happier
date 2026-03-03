@@ -16,15 +16,17 @@ import { getToolDescriptor } from "./getToolDescriptor";
 import { delay } from "@/utils/time";
 import { recordToolTraceEvent } from '@/agent/tools/trace/toolTrace';
 import { extractAgentIdFromTaskResultText } from '@/backends/claude/remote/sidechains/extractAgentIdFromTaskResult';
+import { resolveClaudeSdkPermissionModeFromEnhancedMode } from '@/backends/claude/utils/permissionMode';
 import type { PermissionRpcPayload } from './permissionRpc';
-import { updateAgentStateBestEffort } from '@/api/session/sessionWritesBestEffort';
+import { updateAgentStateBestEffort, updateMetadataBestEffort } from '@/api/session/sessionWritesBestEffort';
 import { configuration } from '@/configuration';
 import { PermissionRequestPushNotifier } from '@/settings/notifications/permissionRequestPushNotifier';
 import { applyAgentStateRequestPushNotifiedAt, clonePlainObjectToNullProto, cloneStringKeyedRecordToNullProto } from '@/api/session/agentStateRecords';
-import type { AgentState } from '@/api/types';
+import type { AgentState, Metadata } from '@/api/types';
 import { resolveAgentRequestKind } from '@/agent/permissions/requestKind';
 import { isToolAllowedForSession } from '@/agent/permissions/permissionToolIdentifier';
 import { applyAllowedToolsToAllowlist, applyUpdatedPermissionsToAllowlist, seedAllowlistFromCompletedRequests } from '@/agent/permissions/applyPermissionAllowlistUpdates';
+import { computeNextMetadataStringOverrideV1 } from '@happier-dev/agents';
 
 type PermissionResponse = PermissionRpcPayload;
 
@@ -44,6 +46,7 @@ interface PendingRequest {
     reject: (error: Error) => void;
     toolName: string;
     input: unknown;
+    sourceLocalId: string | null;
 }
 
 export class PermissionHandler {
@@ -56,6 +59,8 @@ export class PermissionHandler {
     private permissionMode: PermissionMode = 'default';
     private onPermissionRequestCallback?: (toolCallId: string) => void;
     private agentIdByTaskId = new Map<string, string>();
+    private exitedPlanModeLocalIds = new Map<string, number>();
+    private exitedPlanModeFallbackUntilMs: number = 0;
 
     constructor(session: Session) {
         this.session = session;
@@ -91,6 +96,69 @@ export class PermissionHandler {
 
     private applyUpdatedPermissionsAllowlist(updatedPermissions: unknown): void {
         applyUpdatedPermissionsToAllowlist(this.allowedToolIdentifiers, updatedPermissions);
+    }
+
+    private pruneExitPlanModeLocalIds(nowMs: number): void {
+        const ttlMs = configuration.claudeExitPlanModeLatchMs;
+        for (const [localId, approvedAt] of this.exitedPlanModeLocalIds.entries()) {
+            if (nowMs - approvedAt > ttlMs) {
+                this.exitedPlanModeLocalIds.delete(localId);
+            }
+        }
+
+        const maxEntries = configuration.claudeExitPlanModeLatchMaxEntries;
+        if (this.exitedPlanModeLocalIds.size <= maxEntries) return;
+
+        const entries = Array.from(this.exitedPlanModeLocalIds.entries());
+        entries.sort((a, b) => a[1] - b[1]);
+        const overflow = entries.length - maxEntries;
+        for (let i = 0; i < overflow; i++) {
+            this.exitedPlanModeLocalIds.delete(entries[i]![0]);
+        }
+    }
+
+    private noteExitPlanModeApproved(sourceLocalId: string | null): void {
+        const nowMs = Date.now();
+        const localId = typeof sourceLocalId === 'string' ? sourceLocalId.trim() : '';
+        if (localId.length > 0) {
+            this.exitedPlanModeLocalIds.set(localId, nowMs);
+            this.pruneExitPlanModeLocalIds(nowMs);
+            return;
+        }
+
+        const ttlMs = configuration.claudeExitPlanModeLatchMs;
+        this.exitedPlanModeFallbackUntilMs = Math.max(this.exitedPlanModeFallbackUntilMs, nowMs + ttlMs);
+    }
+
+    private shouldIgnorePlanModeForCall(localId: string | null): boolean {
+        const nowMs = Date.now();
+        this.pruneExitPlanModeLocalIds(nowMs);
+
+        const normalized = typeof localId === 'string' ? localId.trim() : '';
+        if (normalized.length > 0) {
+            const approvedAt = this.exitedPlanModeLocalIds.get(normalized);
+            if (!approvedAt) return false;
+            return nowMs - approvedAt <= configuration.claudeExitPlanModeLatchMs;
+        }
+
+        return nowMs <= this.exitedPlanModeFallbackUntilMs;
+    }
+
+    private clearAcpSessionModeOverrideBestEffort(): void {
+        const updatedAt = Date.now();
+        updateMetadataBestEffort(
+            this.session.client,
+            (metadata): Metadata =>
+                computeNextMetadataStringOverrideV1({
+                    metadata: cloneStringKeyedRecordToNullProto(metadata),
+                    overrideKey: 'acpSessionModeOverrideV1',
+                    valueKey: 'modeId',
+                    value: '',
+                    updatedAt,
+                }) as unknown as Metadata,
+            '[Claude]',
+            'exit_plan_mode_clear_session_mode_override',
+        );
     }
 
     private getOrCreatePermissionRequestPushNotifier(): PermissionRequestPushNotifier | null {
@@ -364,6 +432,11 @@ export class PermissionHandler {
             this.tryAutoApprovePendingRequests();
         }
 
+        if (pending.toolName === 'ExitPlanMode' && response.approved) {
+            this.noteExitPlanModeApproved(pending.sourceLocalId);
+            this.clearAcpSessionModeOverrideBestEffort();
+        }
+
         // Handle default case for all tools
         if (pending.toolName === 'AskUserQuestion' && response.approved && response.answers) {
             const baseInput =
@@ -436,7 +509,22 @@ export class PermissionHandler {
 
         // Use the per-message mode to avoid races where the handler's instance mode
         // hasn't been updated yet (e.g. metadata update arrives slightly later).
-        const effectiveMode: PermissionMode = mode?.permissionMode ?? this.permissionMode;
+        const agentModeId =
+            mode?.agentModeId === 'plan' && this.shouldIgnorePlanModeForCall(mode?.localId ?? null)
+                ? null
+                : mode?.agentModeId;
+        const effectiveMode = resolveClaudeSdkPermissionModeFromEnhancedMode({
+            permissionMode: mode?.permissionMode ?? this.permissionMode,
+            agentModeId,
+        });
+
+        if (effectiveMode === 'plan' && !isInteractiveTool(toolName)) {
+            return {
+                behavior: 'deny',
+                message:
+                    'Plan mode is enabled, so tool execution is disabled. Continue by providing a plan, clarifying questions, or ask the user to switch to Build mode before attempting tool use.',
+            };
+        }
 
         if (effectiveMode === 'bypassPermissions' && !isInteractiveTool(toolName)) {
             return { behavior: 'allow', updatedInput: rewrittenInput as Record<string, unknown> };
@@ -461,6 +549,7 @@ export class PermissionHandler {
         }
         return this.handlePermissionRequest(toolCallId, toolName, rewrittenInput, options.signal, {
             suggestions: options.suggestions,
+            sourceLocalId: mode?.localId ?? null,
         });
     }
 
@@ -524,7 +613,7 @@ export class PermissionHandler {
         toolName: string,
         input: unknown,
         signal: AbortSignal,
-        opts?: { suggestions?: unknown }
+        opts?: { suggestions?: unknown; sourceLocalId?: string | null }
     ): Promise<PermissionResult> {
         return new Promise<PermissionResult>((resolve, reject) => {
             // Set up abort signal handling
@@ -545,7 +634,8 @@ export class PermissionHandler {
                     reject(error);
                 },
                 toolName,
-                input
+                input,
+                sourceLocalId: typeof opts?.sourceLocalId === 'string' ? opts.sourceLocalId : null,
             });
 
             // Trigger callback to send delayed messages immediately
@@ -719,6 +809,8 @@ export class PermissionHandler {
         this.permissionRequestPushNotifier?.dispose();
         this.permissionRequestPushNotifier = null;
         this.permissionMode = 'default';
+        this.exitedPlanModeLocalIds.clear();
+        this.exitedPlanModeFallbackUntilMs = 0;
 
         // Cancel all pending requests
         for (const [, pending] of this.pendingRequests.entries()) {
