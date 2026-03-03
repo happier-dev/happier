@@ -28,6 +28,16 @@ describe('serverUrlCanonical', () => {
         const b = createServerUrlComparableKey('http://localhost:3012/path/');
         expect(a).toBe(b);
     });
+
+    it('normalizes explicit default ports for comparable identity keys', () => {
+        const httpsA = createServerUrlComparableKey('https://example.com/path');
+        const httpsB = createServerUrlComparableKey('https://example.com:443/path/');
+        expect(httpsA).toBe(httpsB);
+
+        const httpA = createServerUrlComparableKey('http://example.com/path');
+        const httpB = createServerUrlComparableKey('http://example.com:80/path/');
+        expect(httpA).toBe(httpB);
+    });
 });
 
 describe('serverUrlDisplay', () => {

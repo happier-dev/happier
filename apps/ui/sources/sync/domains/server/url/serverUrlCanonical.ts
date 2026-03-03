@@ -26,7 +26,13 @@ export function createServerUrlComparableKey(raw: string): string {
         const parsed = new URL(canonical);
         const protocol = parsed.protocol.toLowerCase();
         const host = normalizeLoopbackHost(parsed.hostname);
-        const port = parsed.port ? `:${parsed.port}` : '';
+        const explicitPort = parsed.port;
+        const port = (() => {
+            if (!explicitPort) return '';
+            if (protocol === 'https:' && explicitPort === '443') return '';
+            if (protocol === 'http:' && explicitPort === '80') return '';
+            return `:${explicitPort}`;
+        })();
         const path = parsed.pathname.replace(/\/+$/, '');
         return `${protocol}//${host}${port}${path}`;
     } catch {
