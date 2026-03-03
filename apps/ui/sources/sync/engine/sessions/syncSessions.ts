@@ -286,14 +286,16 @@ export async function fetchAndApplyMessages(params: {
     // Apply to storage
     applyMessages(sessionId, normalizedMessages);
 
-    // Backfill parents for sidechain-only pages.
-    // If we only fetched sidechain child messages (common when the latest page contains subagent/tool
-    // chatter), the main/root tool-call messages that own those sidechains can be outside the page
-    // window. In that case we must fetch older pages until we see at least one non-sidechain message,
-    // otherwise the reducer will correctly hide sidechain children and the transcript will look empty.
-    const initialHasNonSidechain = normalizedMessages.some((m) => !m.isSidechain);
-    const hasSidechainMessages = normalizedMessages.some((m) => m.isSidechain);
-    if (!initialHasNonSidechain && hasSidechainMessages) {
+    // Backfill missing sidechain parents.
+    //
+    // Sidechain child messages reference an owning tool-call via `sidechainId`. When the latest page
+    // contains sub-agent/tool chatter, the owning tool-call can fall outside the first page window.
+    // Without the owner, we can still surface sidechain children as orphan transcript rows, but that
+    // view is degraded. To attach children to their owning tool-call (and preserve the expected turn
+    // structure), fetch older pages until we encounter the owning tool-call(s), bounded to avoid
+    // unbounded paging.
+    const initialSidechainParentIds = collectMissingSidechainParentToolIds(normalizedMessages);
+    if (initialSidechainParentIds.size > 0) {
         const MAX_PARENT_BACKFILL_PAGES = 8;
         const PAGE_LIMIT = 150;
         let beforeSeq: number | null =
@@ -301,8 +303,7 @@ export async function fetchAndApplyMessages(params: {
                 ? (data as any).nextBeforeSeq
                 : null;
 
-        for (let page = 0; page < MAX_PARENT_BACKFILL_PAGES && beforeSeq !== null; page++) {
-            let pageHasNonSidechain = false;
+        for (let page = 0; page < MAX_PARENT_BACKFILL_PAGES && beforeSeq !== null && initialSidechainParentIds.size > 0; page++) {
             const result = await fetchAndApplyOlderMessages({
                 sessionId,
                 beforeSeq,
@@ -314,21 +315,16 @@ export async function fetchAndApplyMessages(params: {
                 applyMessages,
                 log,
                 onNormalizedMessages: (msgs) => {
-                    if (msgs.some((m) => !m.isSidechain)) {
-                        pageHasNonSidechain = true;
+                    for (const toolId of collectToolCallIdsFromMessages(msgs)) {
+                        initialSidechainParentIds.delete(toolId);
                     }
                 },
             });
 
-            // Continue paging using server cursor when available.
             const nextBeforeSeq =
                 typeof (result.page as any)?.nextBeforeSeq === 'number' && Number.isFinite((result.page as any).nextBeforeSeq)
                     ? (result.page as any).nextBeforeSeq
                     : null;
-
-            if (pageHasNonSidechain) {
-                break;
-            }
 
             // Stop if server indicates no more pages or cursor doesn't move.
             if (nextBeforeSeq === null || nextBeforeSeq === beforeSeq) {
@@ -340,6 +336,41 @@ export async function fetchAndApplyMessages(params: {
 
     markMessagesLoaded(sessionId);
     log.log(`💬 fetchMessages completed for session ${sessionId} - processed ${normalizedMessages.length} messages`);
+}
+
+function collectToolCallIdsFromMessages(messages: NormalizedMessage[]): Set<string> {
+    const toolIds = new Set<string>();
+    for (const msg of messages) {
+        if (!msg || (msg as any).role !== 'agent') continue;
+        const content = (msg as any).content;
+        if (!Array.isArray(content)) continue;
+        for (const c of content) {
+            if (!c || typeof c !== 'object') continue;
+            if ((c as any).type === 'tool-call' && typeof (c as any).id === 'string') {
+                toolIds.add((c as any).id);
+            }
+            if ((c as any).type === 'tool-result' && typeof (c as any).tool_use_id === 'string') {
+                toolIds.add((c as any).tool_use_id);
+            }
+        }
+    }
+    return toolIds;
+}
+
+function collectMissingSidechainParentToolIds(messages: NormalizedMessage[]): Set<string> {
+    const sidechainIds = new Set<string>();
+    for (const msg of messages) {
+        if (msg?.isSidechain !== true) continue;
+        if (typeof msg.sidechainId === 'string' && msg.sidechainId.length > 0) {
+            sidechainIds.add(msg.sidechainId);
+        }
+    }
+
+    const toolIds = collectToolCallIdsFromMessages(messages);
+    for (const toolId of toolIds) {
+        sidechainIds.delete(toolId);
+    }
+    return sidechainIds;
 }
 
 export async function fetchAndApplyOlderMessages(params: {
