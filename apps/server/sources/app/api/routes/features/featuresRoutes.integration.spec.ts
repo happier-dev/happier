@@ -374,9 +374,9 @@ describe("featuresRoutes", () => {
             expect(payload.features.connectedServices.enabled).toBe(false);
         });
 
-        it("defaults connectedServices.quotas.enabled to false", async () => {
+        it("defaults connectedServices.quotas.enabled to true", async () => {
             const payload = await getFeaturesPayload();
-            expect(payload.features.connectedServices.quotas.enabled).toBe(false);
+            expect(payload.features.connectedServices.quotas.enabled).toBe(true);
         });
 
         it("returns connectedServices.quotas.enabled=false when HAPPIER_FEATURE_CONNECTED_SERVICES_QUOTAS__ENABLED is off", async () => {
