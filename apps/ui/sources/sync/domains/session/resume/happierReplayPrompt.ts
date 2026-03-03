@@ -1,4 +1,4 @@
-import type { Settings } from '@/sync/domains/settings/settings';
+import { settingsDefaults, type Settings } from '@/sync/domains/settings/settings';
 
 export type HappierReplayStrategy = 'recent_messages' | 'summary_plus_recent';
 
@@ -23,7 +23,7 @@ export function resolveHappierReplayConfig(settings: Settings): Readonly<{
 }> {
   const enabled = settings.sessionReplayEnabled === true;
   const strategy = normalizeStrategy(settings.sessionReplayStrategy);
-  const recentMessagesCount = normalizePositiveInt(settings.sessionReplayRecentMessagesCount, 250, { min: 1, max: 500 });
-  const maxSeedChars = normalizePositiveInt(settings.sessionReplayMaxSeedChars, 50_000, { min: 500, max: 200_000 });
+  const recentMessagesCount = normalizePositiveInt(settings.sessionReplayRecentMessagesCount, settingsDefaults.sessionReplayRecentMessagesCount, { min: 1, max: 500 });
+  const maxSeedChars = normalizePositiveInt(settings.sessionReplayMaxSeedChars, settingsDefaults.sessionReplayMaxSeedChars, { min: 500, max: 200_000 });
   return { enabled, strategy, recentMessagesCount, maxSeedChars };
 }
