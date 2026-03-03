@@ -7,11 +7,15 @@ import { describe, expect, it, vi } from 'vitest';
 const rightPanelModuleLoaded = vi.fn();
 const detailsPanelModuleLoaded = vi.fn();
 
-vi.mock('@/components/appShell/panes/AppPaneProvider', () => ({
-    useAppPaneContext: () => ({
+vi.mock('@/components/appShell/panes/AppPaneProvider', () => {
+    const ctx = {
         registerDriver: () => () => {},
-    }),
-}));
+    };
+    return {
+        useAppPaneContext: () => ctx,
+        useOptionalAppPaneContext: () => ctx,
+    };
+});
 
 vi.mock('./SessionRightPanel', () => {
     rightPanelModuleLoaded();

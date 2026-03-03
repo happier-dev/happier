@@ -4,21 +4,6 @@ import { describe, expect, it, vi } from 'vitest';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
-let capturedDriver: any = null;
-
-vi.mock('@/components/appShell/panes/AppPaneProvider', () => {
-    const ctx = {
-        registerDriver: (driver: any) => {
-            capturedDriver = driver;
-            return () => {};
-        },
-    };
-    return {
-        useAppPaneContext: () => ctx,
-        useOptionalAppPaneContext: () => ctx,
-    };
-});
-
 vi.mock('react-native', () => ({
     Platform: { OS: 'web', select: (value: any) => value?.default ?? null },
     View: (props: any) => React.createElement('View', props, props.children),
@@ -37,30 +22,21 @@ vi.mock('@/text', () => ({
     t: (key: string) => key,
 }));
 
-describe('useRegisterSessionPaneDriver (lazy loading)', () => {
-    it('renders a loading fallback while the session pane module is loading', async () => {
-        capturedDriver = null;
+describe('useRegisterSessionPaneDriver (no provider fallback)', () => {
+    it('does not throw when AppPaneProvider is missing', async () => {
         const { useRegisterSessionPaneDriver } = await import('./useRegisterSessionPaneDriver');
 
+        let capturedScopeId: string | null = null;
         const Probe = () => {
-            useRegisterSessionPaneDriver('s1');
+            capturedScopeId = useRegisterSessionPaneDriver('s1');
             return React.createElement('Probe');
         };
 
-        act(() => {
+        await act(async () => {
             renderer.create(<Probe />);
         });
 
-        expect(capturedDriver).toBeTruthy();
-        const rightNode = capturedDriver.renderRightPane();
-        expect(rightNode).toBeTruthy();
-
-        let tree: renderer.ReactTestRenderer | null = null;
-        act(() => {
-            tree = renderer.create(rightNode);
-        });
-
-        const json = JSON.stringify(tree!.toJSON());
-        expect(json).toContain('common.loading');
+        expect(capturedScopeId).toBe('session:s1');
     });
 });
+

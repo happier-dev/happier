@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { useAppPaneContext } from '@/components/appShell/panes/AppPaneProvider';
+import { useOptionalAppPaneContext } from '@/components/appShell/panes/AppPaneProvider';
 import type { PaneDriver } from '@/components/appShell/panes/types';
 import { SessionPaneLazyLoader, type SessionPaneLazyLoaderProps } from './SessionPaneLazyLoader';
 
@@ -67,13 +67,17 @@ const LazySessionDetailsPanel = React.memo((props: SessionPaneScopedProps) => {
 
 export function useRegisterSessionPaneDriver(sessionId: string): string {
     const scopeId = React.useMemo(() => `session:${sessionId}`, [sessionId]);
-    const { registerDriver } = useAppPaneContext();
+    const paneCtx = useOptionalAppPaneContext();
+    const registerDriver = paneCtx?.registerDriver ?? null;
+    const canRegister = Boolean(registerDriver);
 
     React.useEffect(() => {
+        if (!canRegister) return;
         prefetchSessionPaneModules();
-    }, []);
+    }, [canRegister]);
 
     React.useEffect(() => {
+        if (!registerDriver) return;
         const driver: PaneDriver = {
             scopeId,
             renderRightPane: () => React.createElement(LazySessionRightPanel, { sessionId, scopeId }),
