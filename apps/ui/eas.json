@@ -74,6 +74,19 @@
         "APP_ENV": "production"
       }
     },
+    "production-preview": {
+      "extends": "base",
+      "environment": "production",
+      "autoIncrement": true,
+      "distribution": "store",
+      "channel": "preview",
+      "env": {
+        "APP_ENV": "production",
+        "HAPPIER_APP_VARIANT_OVERRIDE": "preview",
+        "EXPO_UPDATES_CHANNEL": "preview",
+        "EXPO_APP_BUNDLE_ID": "dev.happier.app"
+      }
+    },
     "production-apk": {
       "extends": "base",
       "environment": "production",
@@ -86,6 +99,23 @@
       },
       "env": {
         "APP_ENV": "production"
+      }
+    },
+    "production-preview-apk": {
+      "extends": "base",
+      "environment": "production",
+      "autoIncrement": true,
+      "distribution": "internal",
+      "channel": "preview",
+      "android": {
+        "buildType": "apk",
+        "gradleCommand": ":app:assembleRelease -x lintVitalRelease -x lintVitalAnalyzeRelease"
+      },
+      "env": {
+        "APP_ENV": "production",
+        "HAPPIER_APP_VARIANT_OVERRIDE": "preview",
+        "EXPO_UPDATES_CHANNEL": "preview",
+        "EXPO_APP_BUNDLE_ID": "dev.happier.app"
       }
     }
   },

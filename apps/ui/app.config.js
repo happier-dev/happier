@@ -1,5 +1,14 @@
 const variant = process.env.APP_ENV || 'development';
 
+function normalizeVariantOverride(raw) {
+    const value = String(raw ?? '').trim().toLowerCase();
+    if (!value) return '';
+    if (value === 'preview' || value.includes('preview')) return 'preview';
+    if (value === 'development' || value === 'dev' || value.includes('development')) return 'development';
+    if (value === 'production' || value === 'prod' || value === 'stable' || value.includes('production')) return 'production';
+    return '';
+}
+
 function resolveOptionalAppLocalConfigModule() {
     const explicitPath = (process.env.EXPO_APP_LOCAL_CONFIG_PATH || '').trim();
     const candidates = explicitPath ? [explicitPath] : ['./app.local.js'];
@@ -46,6 +55,19 @@ const nameOverride = (process.env.EXPO_APP_NAME || process.env.HAPPY_STACKS_IOS_
 const bundleIdOverride = (process.env.EXPO_APP_BUNDLE_ID || process.env.HAPPY_STACKS_IOS_BUNDLE_ID || '').trim();
 const ownerOverride = (process.env.EXPO_APP_OWNER || '').trim();
 const slugOverride = (process.env.EXPO_APP_SLUG || '').trim();
+const versionOverride = (process.env.EXPO_APP_VERSION || '').trim();
+const appVariantOverride = normalizeVariantOverride(process.env.HAPPIER_APP_VARIANT_OVERRIDE);
+// eslint-disable-next-line @typescript-eslint/no-var-requires
+const packageJsonVersion = (() => {
+    try {
+        // eslint-disable-next-line @typescript-eslint/no-var-requires
+        const pkg = require('./package.json');
+        const v = pkg && typeof pkg.version === 'string' ? pkg.version.trim() : '';
+        return v;
+    } catch {
+        return '';
+    }
+})();
 
 const namesByVariant = {
     development: "Happier (dev)",
@@ -162,7 +184,7 @@ if (!process.env.EXPO_PUBLIC_HAPPIER_MODEL_PACK_MANIFESTS) {
 const baseExpoConfig = {
         name,
         slug,
-        version: "0.1.0",
+        version: versionOverride || packageJsonVersion || "0.1.0",
         runtimeVersion: "18",
         orientation: "default",
         icon: "./sources/assets/images/icon.png",
@@ -317,7 +339,11 @@ const baseExpoConfig = {
             },
             eas: { projectId: easProjectId },
             app: {
-                variant: appVariant,
+                // `variant` is used by the JS app runtime for environment-specific guidance and lanes.
+                // Keep the native identity (`APP_ENV`) separate so we can ship preview-lane behavior to
+                // production bundle IDs without disabling production-only native configuration.
+                variant: appVariantOverride || appVariant,
+                identityVariant: appVariant,
                 postHogKey: process.env.EXPO_PUBLIC_POSTHOG_KEY || process.env.EXPO_PUBLIC_POSTHOG_API_KEY,
                 revenueCatAppleKey: process.env.EXPO_PUBLIC_REVENUE_CAT_APPLE,
                 revenueCatGoogleKey: process.env.EXPO_PUBLIC_REVENUE_CAT_GOOGLE,
