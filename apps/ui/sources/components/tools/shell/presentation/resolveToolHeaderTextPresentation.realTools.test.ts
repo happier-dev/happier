@@ -67,6 +67,14 @@ describe('resolveToolHeaderTextPresentation (real known tools)', () => {
         expect(model.subtitle).toBe('Summarize third run');
     });
 
+    it('normalizes TaskCreate to Task for rendering', () => {
+        const tool = makeToolCall({ name: 'TaskCreate', input: { description: 'Summarize third run' } });
+        const model = resolveToolHeaderTextPresentation({ tool, metadata: null });
+        expect(model.normalizedToolName).toBe('Task');
+        expect(model.title).toBe('tools.names.subAgent');
+        expect(model.subtitle).toBe('Summarize third run');
+    });
+
     it('renders AskUserQuestion with Question title and header subtitle', () => {
         const tool = makeToolCall({
             name: 'AskUserQuestion',

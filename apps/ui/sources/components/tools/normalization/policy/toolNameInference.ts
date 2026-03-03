@@ -1,3 +1,5 @@
+import { normalizeToolNameForView } from './normalizeToolNameForView';
+
 type UnknownRecord = Record<string, unknown>;
 
 function asRecord(value: unknown): UnknownRecord | null {
@@ -36,7 +38,8 @@ export function inferToolNameForRendering(params: {
     toolDescription?: string | null;
     knownToolKeys: readonly string[];
 }): InferToolNameResult {
-    const normalizedOriginal = normalizeByKnownKeys(params.toolName, params.knownToolKeys);
+    const legacyNormalized = normalizeToolNameForView(params.toolName);
+    const normalizedOriginal = normalizeByKnownKeys(legacyNormalized, params.knownToolKeys);
     if (normalizedOriginal !== params.toolName || params.knownToolKeys.includes(params.toolName)) {
         return { normalizedToolName: normalizedOriginal, source: 'original' };
     }
@@ -77,4 +80,3 @@ export function inferToolNameForRendering(params: {
 
     return { normalizedToolName: params.toolName, source: 'original' };
 }
-
