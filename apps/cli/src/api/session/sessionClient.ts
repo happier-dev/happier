@@ -346,6 +346,7 @@ export class ApiSessionClient extends EventEmitter {
 
     private maybeScheduleUserSocketDisconnect(): void {
         if (this.closed) return;
+        if (this.pendingMessageCallback) return;
         if (this.pendingMaterializedLocalIds.size > 0) return;
         if (this.pendingQueueMaterializedLocalIds.size > 0) return;
         if (!this.userSocket.connected) return;
@@ -623,6 +624,11 @@ export class ApiSessionClient extends EventEmitter {
         if (this.userMessageCallbackAttachedAtMs === null) {
             this.userMessageCallbackAttachedAtMs = Date.now();
         }
+        if (this.userSocketDisconnectTimer) {
+            clearTimeout(this.userSocketDisconnectTimer);
+            this.userSocketDisconnectTimer = null;
+        }
+        this.kickUserSocketConnect();
         while (this.pendingMessages.length > 0) {
             callback(this.pendingMessages.shift()!);
         }
