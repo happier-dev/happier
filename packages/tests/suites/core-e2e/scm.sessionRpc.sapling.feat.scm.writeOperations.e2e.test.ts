@@ -1,7 +1,7 @@
 import { afterAll, describe, expect, it } from 'vitest';
 import { randomBytes } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
-import { mkdir, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 
 import {
@@ -20,9 +20,10 @@ import { createTestAuth } from '../../src/testkit/auth';
 import { createUserScopedSocketCollector } from '../../src/testkit/socketClient';
 import { encryptLegacyBase64, decryptLegacyBase64 } from '../../src/testkit/messageCrypto';
 import { startTestDaemon, type StartedDaemon } from '../../src/testkit/daemon/daemon';
-import { daemonControlPostJson } from '../../src/testkit/daemon/controlServerClient';
 import { waitFor } from '../../src/testkit/timing';
 import { seedCliAuthForServer } from '../../src/testkit/cliAuth';
+import { fetchJson } from '../../src/testkit/http';
+import { decryptDataKeyBase64, encryptDataKeyBase64 } from '../../src/testkit/rpcCrypto';
 
 const run = createRunDirs({ runLabel: 'core' });
 
@@ -38,36 +39,93 @@ function runSapling(cwd: string, args: string[]): string {
   }).trim();
 }
 
-async function callSessionRpc<TReq, TRes>(params: {
+async function resolveDaemonMachineIdFromSettings(params: { daemonHomeDir: string }): Promise<string> {
+  const raw = await readFile(resolve(join(params.daemonHomeDir, 'settings.json')), 'utf8').catch(() => '');
+  const parsed = raw ? (JSON.parse(raw) as any) : null;
+  const activeServerId = parsed && typeof parsed.activeServerId === 'string' ? String(parsed.activeServerId) : '';
+  const machineIdByServerId = parsed && typeof parsed.machineIdByServerId === 'object' ? parsed.machineIdByServerId : null;
+  const machineId =
+    activeServerId && machineIdByServerId && typeof machineIdByServerId[activeServerId] === 'string'
+      ? String(machineIdByServerId[activeServerId])
+      : '';
+  if (!machineId) throw new Error('Missing machineIdByServerId[activeServerId] in seeded settings.json');
+  return machineId;
+}
+
+type MachineListRow = { id?: unknown; dataEncryptionKey?: unknown };
+
+async function resolveMachineDataEncryptionKeyBase64(params: {
+  baseUrl: string;
+  token: string;
+  machineId: string;
+}): Promise<string | null> {
+  let out: string | null = null;
+  await waitFor(
+    async () => {
+      const res = await fetchJson<MachineListRow[]>(`${params.baseUrl}/v1/machines`, {
+        headers: { Authorization: `Bearer ${params.token}` },
+        timeoutMs: 10_000,
+      });
+      if (res.status !== 200 || !Array.isArray(res.data)) {
+        throw new Error(`Failed to fetch /v1/machines (status=${res.status})`);
+      }
+      const row = res.data.find((m) => m && typeof m === 'object' && (m as any).id === params.machineId) ?? null;
+      if (!row) return false;
+      const dek = (row as any).dataEncryptionKey;
+      out = typeof dek === 'string' && dek.length > 0 ? dek : null;
+      return true;
+    },
+    { timeoutMs: 20_000, context: `machine registered: ${params.machineId}` },
+  );
+  return out;
+}
+
+function truncate(value: string, max = 220): string {
+  const raw = String(value ?? '');
+  if (raw.length <= max) return raw;
+  return `${raw.slice(0, max)}…`;
+}
+
+async function callMachineRpc<TReq, TRes>(params: {
   ui: ReturnType<typeof createUserScopedSocketCollector>;
-  sessionId: string;
+  machineId: string;
   method: string;
   req: TReq;
-  secret: Uint8Array;
+  encryptParams: (value: unknown) => string;
+  decryptResult: (value: string) => unknown | null;
   schema: ParseSchema<TRes>;
   timeoutMs?: number;
 }): Promise<TRes> {
   let out: TRes | null = null;
-  const encryptedParams = encryptLegacyBase64(params.req, params.secret);
+  const encryptedParams = params.encryptParams(params.req);
+  const fullMethod = `${params.machineId}:${params.method}`;
 
   await waitFor(
     async () => {
-      const res = await params.ui.rpcCall<RpcAck>(`${params.sessionId}:${params.method}`, encryptedParams);
-      if (!res || res.ok !== true || typeof res.result !== 'string') return false;
-      const decrypted = decryptLegacyBase64(res.result, params.secret);
+      const res = await params.ui.rpcCall<RpcAck>(fullMethod, encryptedParams);
+      if (!res) throw new Error('rpcCall returned null/undefined');
+      if (res.ok !== true || typeof res.result !== 'string') {
+        const errorCode = typeof res.errorCode === 'string' ? res.errorCode : '';
+        const error = typeof res.error === 'string' ? res.error : '';
+        throw new Error(`rpc ack not ok (errorCode=${errorCode || 'none'} error=${truncate(error) || 'none'})`);
+      }
+      const decrypted = params.decryptResult(res.result);
+      if (!decrypted) throw new Error('failed to decrypt rpc result');
       const parsed = params.schema.safeParse(decrypted);
-      if (!parsed.success) return false;
+      if (!parsed.success) {
+        throw new Error(`failed to parse rpc result as ${params.method} response`);
+      }
       out = parsed.data;
       return true;
     },
-    { timeoutMs: params.timeoutMs ?? 25_000 },
+    { timeoutMs: params.timeoutMs ?? 25_000, context: fullMethod },
   );
 
   if (!out) throw new Error(`RPC call did not return a valid response: ${params.method}`);
   return out;
 }
 
-describe('core e2e: scm sapling session RPC', () => {
+describe('core e2e: scm sapling machine RPC', () => {
   let server: StartedServer | null = null;
   let daemon: StartedDaemon | null = null;
 
@@ -76,7 +134,7 @@ describe('core e2e: scm sapling session RPC', () => {
     await server?.stop();
   });
 
-  it('returns live sapling backend snapshot/diff/log over encrypted session RPC', async () => {
+  it('returns live sapling backend snapshot/diff/log over encrypted machine RPC', async () => {
     const testDir = run.testDir('scm-session-rpc-sapling');
     server = await startServerLight({ testDir });
     const serverBaseUrl = server.baseUrl;
@@ -109,41 +167,27 @@ describe('core e2e: scm sapling session RPC', () => {
         HAPPIER_WEBAPP_URL: serverBaseUrl,
       },
     });
-    const controlToken = (daemon.state as any)?.controlToken as string | undefined;
-
-    const spawnRes = await daemonControlPostJson<{ success: boolean; sessionId?: string }>({
-      port: daemon.state.httpPort,
-      path: '/spawn-session',
-      controlToken,
-      body: {
-        directory: workspaceDir,
-        terminal: { mode: 'plain' },
-        environmentVariables: {
-          HAPPIER_HOME_DIR: daemonHomeDir,
-          HAPPIER_SERVER_URL: serverBaseUrl,
-          HAPPIER_WEBAPP_URL: serverBaseUrl,
-          HAPPIER_VARIANT: 'dev',
-          HAPPIER_DISABLE_CAFFEINATE: '1',
-        },
-      },
+    const machineId = await resolveDaemonMachineIdFromSettings({ daemonHomeDir });
+    const machineDekBase64 = await resolveMachineDataEncryptionKeyBase64({
+      baseUrl: serverBaseUrl,
+      token: auth.token,
+      machineId,
     });
-
-    expect(spawnRes.status).toBe(200);
-    expect(spawnRes.data.success).toBe(true);
-    const sessionId = spawnRes.data.sessionId;
-    expect(typeof sessionId).toBe('string');
-    if (typeof sessionId !== 'string' || sessionId.length === 0) throw new Error('Missing sessionId from daemon spawn-session');
+    const machineDek = machineDekBase64 ? new Uint8Array(Buffer.from(machineDekBase64, 'base64')) : null;
+    const encryptParams = (value: unknown) => (machineDek ? encryptDataKeyBase64(value, machineDek) : encryptLegacyBase64(value, secret));
+    const decryptResult = (value: string) => (machineDek ? decryptDataKeyBase64(value, machineDek) : decryptLegacyBase64(value, secret));
 
     const ui = createUserScopedSocketCollector(serverBaseUrl, auth.token);
     ui.connect();
     await waitFor(() => ui.isConnected(), { timeoutMs: 20_000 });
 
-    const describeRes = await callSessionRpc({
+    const describeRes = await callMachineRpc({
       ui,
-      sessionId,
+      machineId,
       method: RPC_METHODS.SCM_BACKEND_DESCRIBE,
       req: { cwd: workspaceDir },
-      secret,
+      encryptParams,
+      decryptResult,
       schema: ScmBackendDescribeResponseSchema,
     });
     expect(describeRes.success).toBe(true);
@@ -151,12 +195,13 @@ describe('core e2e: scm sapling session RPC', () => {
       expect(describeRes.backendId).toBe('sapling');
     }
 
-    const snapshotRes = await callSessionRpc({
+    const snapshotRes = await callMachineRpc({
       ui,
-      sessionId,
+      machineId,
       method: RPC_METHODS.SCM_STATUS_SNAPSHOT,
       req: { cwd: workspaceDir },
-      secret,
+      encryptParams,
+      decryptResult,
       schema: ScmStatusSnapshotResponseSchema,
     });
     expect(snapshotRes.success).toBe(true);
@@ -169,12 +214,13 @@ describe('core e2e: scm sapling session RPC', () => {
       expect(snapshot.totals.pendingFiles).toBeGreaterThanOrEqual(1);
     }
 
-    const diffRes = await callSessionRpc({
+    const diffRes = await callMachineRpc({
       ui,
-      sessionId,
+      machineId,
       method: RPC_METHODS.SCM_DIFF_FILE,
       req: { cwd: workspaceDir, path: 'README.md', area: 'pending' },
-      secret,
+      encryptParams,
+      decryptResult,
       schema: ScmDiffFileResponseSchema,
     });
     expect(diffRes.success).toBe(true);
@@ -184,26 +230,28 @@ describe('core e2e: scm sapling session RPC', () => {
 
     await writeFile(join(workspaceDir, 'NOTES.md'), 'leftover file\n', 'utf8');
 
-    const pathScopedCommitRes = await callSessionRpc({
+    const pathScopedCommitRes = await callMachineRpc({
       ui,
-      sessionId,
+      machineId,
       method: RPC_METHODS.SCM_COMMIT_CREATE,
       req: {
         cwd: workspaceDir,
         message: 'e2e path-scoped commit',
         scope: { kind: 'paths', include: ['README.md'] },
       },
-      secret,
+      encryptParams,
+      decryptResult,
       schema: ScmCommitCreateResponseSchema,
     });
     expect(pathScopedCommitRes.success).toBe(true);
 
-    const snapshotAfterPathScopedCommitRes = await callSessionRpc({
+    const snapshotAfterPathScopedCommitRes = await callMachineRpc({
       ui,
-      sessionId,
+      machineId,
       method: RPC_METHODS.SCM_STATUS_SNAPSHOT,
       req: { cwd: workspaceDir },
-      secret,
+      encryptParams,
+      decryptResult,
       schema: ScmStatusSnapshotResponseSchema,
     });
     expect(snapshotAfterPathScopedCommitRes.success).toBe(true);
@@ -212,26 +260,28 @@ describe('core e2e: scm sapling session RPC', () => {
       expect(snapshot?.totals.untrackedFiles).toBeGreaterThanOrEqual(1);
     }
 
-    const commitRes = await callSessionRpc({
+    const commitRes = await callMachineRpc({
       ui,
-      sessionId,
+      machineId,
       method: RPC_METHODS.SCM_COMMIT_CREATE,
       req: {
         cwd: workspaceDir,
         message: 'e2e atomic commit',
         scope: { kind: 'all-pending' },
       },
-      secret,
+      encryptParams,
+      decryptResult,
       schema: ScmCommitCreateResponseSchema,
     });
     expect(commitRes.success).toBe(true);
 
-    const snapshotAfterCommitRes = await callSessionRpc({
+    const snapshotAfterCommitRes = await callMachineRpc({
       ui,
-      sessionId,
+      machineId,
       method: RPC_METHODS.SCM_STATUS_SNAPSHOT,
       req: { cwd: workspaceDir },
-      secret,
+      encryptParams,
+      decryptResult,
       schema: ScmStatusSnapshotResponseSchema,
     });
     expect(snapshotAfterCommitRes.success).toBe(true);
@@ -242,12 +292,13 @@ describe('core e2e: scm sapling session RPC', () => {
       expect(snapshot?.totals.untrackedFiles).toBe(0);
     }
 
-    const logRes = await callSessionRpc({
+    const logRes = await callMachineRpc({
       ui,
-      sessionId,
+      machineId,
       method: RPC_METHODS.SCM_LOG_LIST,
       req: { cwd: workspaceDir, limit: 10, skip: 0 },
-      secret,
+      encryptParams,
+      decryptResult,
       schema: ScmLogListResponseSchema,
     });
     expect(logRes.success).toBe(true);
@@ -256,12 +307,13 @@ describe('core e2e: scm sapling session RPC', () => {
     }
     expect(logRes.entries[0]?.subject).toBe('e2e atomic commit');
 
-    const commitDiffRes = await callSessionRpc({
+    const commitDiffRes = await callMachineRpc({
       ui,
-      sessionId,
+      machineId,
       method: RPC_METHODS.SCM_DIFF_COMMIT,
       req: { cwd: workspaceDir, commit: logRes.entries[0]!.sha },
-      secret,
+      encryptParams,
+      decryptResult,
       schema: ScmDiffCommitResponseSchema,
     });
     expect(commitDiffRes.success).toBe(true);
