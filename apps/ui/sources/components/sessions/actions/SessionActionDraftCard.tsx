@@ -182,14 +182,14 @@ export function SessionActionDraftCard(props: Readonly<{ sessionId: string; draf
         { defaultSessionId: props.sessionId, surface: 'ui_button', placement: 'session_action_menu' } as any,
       );
       if (!res.ok) {
-        setStatus('failed', res.error ?? 'Failed to start');
+        setStatus('editing', res.error ?? 'Failed to start');
         return;
       }
       const inner: any = res.result;
       const results: any[] = Array.isArray(inner?.results) ? inner.results : [];
       if (results.some((r) => r && r.ok === false)) {
         const first = results.find((r) => r && r.ok === false);
-        setStatus('failed', String(first?.error ?? 'Failed to start'));
+        setStatus('editing', String(first?.error ?? 'Failed to start'));
         return;
       }
       setStatus('succeeded', null);
@@ -197,7 +197,7 @@ export function SessionActionDraftCard(props: Readonly<{ sessionId: string; draf
       // successfully, remove the draft card so the transcript doesn't stay cluttered.
       cancel();
     } catch (e) {
-      setStatus('failed', e instanceof Error ? e.message : 'Failed to start');
+      setStatus('editing', e instanceof Error ? e.message : 'Failed to start');
     }
   }, [cancel, executor, input, props.draft.actionId, props.draft.input, props.sessionId, setStatus, validate]);
 
@@ -232,7 +232,7 @@ export function SessionActionDraftCard(props: Readonly<{ sessionId: string; draf
 
                 const label = typeof field?.title === 'string' ? field.title : path;
                 const value = getValueAtPath(input, path);
-                const editable = props.draft.status === 'editing';
+                const editable = props.draft.status !== 'running';
                 const disabled = (field as any)?.disabled === true;
 
                 if (widget === 'multiselect') {
@@ -400,13 +400,13 @@ export function SessionActionDraftCard(props: Readonly<{ sessionId: string; draf
             <Pressable
               accessibilityRole="button"
               onPress={() => void submit()}
-              disabled={props.draft.status !== 'editing'}
+              disabled={props.draft.status === 'running'}
               style={({ pressed }) => ({
                 paddingVertical: 10,
                 paddingHorizontal: 12,
                 borderRadius: 10,
                 backgroundColor: theme.colors.button.primary.background,
-                opacity: props.draft.status !== 'editing' ? 0.5 : pressed ? 0.8 : 1,
+                opacity: props.draft.status === 'running' ? 0.5 : pressed ? 0.8 : 1,
               })}
             >
               <Text style={{ color: theme.colors.button.primary.tint, fontWeight: '600' }}>{t('common.start')}</Text>

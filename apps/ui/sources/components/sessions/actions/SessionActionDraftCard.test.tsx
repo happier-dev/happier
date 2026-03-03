@@ -1,11 +1,12 @@
 import * as React from 'react';
 import renderer, { act } from 'react-test-renderer';
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { getActionSpec, resolveEffectiveActionInputFields } from '@happier-dev/protocol';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
-const executeSpy = vi.fn(async () => ({ ok: true as const, result: {} }));
+type ExecuteResult = { ok: true; result: unknown } | { ok: false; error: string };
+const executeSpy = vi.fn<() => Promise<ExecuteResult>>(async () => ({ ok: true, result: {} }));
 const updateSessionActionDraftInput = vi.fn();
 const setSessionActionDraftStatus = vi.fn();
 const deleteSessionActionDraft = vi.fn();
@@ -96,11 +97,15 @@ function findPressableByText(tree: renderer.ReactTestRenderer, label: string) {
 }
 
 describe('SessionActionDraftCard', () => {
-  it('submits a valid plan.start draft via the default action executor', async () => {
+  beforeEach(() => {
+    vi.resetModules();
     executeSpy.mockClear();
+    updateSessionActionDraftInput.mockClear();
     setSessionActionDraftStatus.mockClear();
     deleteSessionActionDraft.mockClear();
+  });
 
+  it('submits a valid plan.start draft via the default action executor', async () => {
     const { SessionActionDraftCard } = await import('./SessionActionDraftCard');
 
     const draft = {
@@ -134,6 +139,60 @@ describe('SessionActionDraftCard', () => {
     expect(setSessionActionDraftStatus).toHaveBeenCalledWith('s1', 'd1', 'running', null);
     expect(setSessionActionDraftStatus).toHaveBeenCalledWith('s1', 'd1', 'succeeded', null);
     expect(deleteSessionActionDraft).toHaveBeenCalledWith('s1', 'd1');
+  });
+
+  it('keeps the draft editable when the action execution fails', async () => {
+    executeSpy.mockResolvedValueOnce({ ok: false as const, error: 'RPC method not available' });
+
+    const { SessionActionDraftCard } = await import('./SessionActionDraftCard');
+
+    const draft = {
+      id: 'd1',
+      sessionId: 's1',
+      actionId: 'delegate.start',
+      createdAt: 1,
+      status: 'editing',
+      input: { backendIds: ['claude'], instructions: 'Delegate this.' },
+    } as const;
+
+    let tree: renderer.ReactTestRenderer | null = null;
+    await act(async () => {
+      tree = renderer.create(React.createElement(SessionActionDraftCard, { sessionId: 's1', draft: draft as any }));
+    });
+
+    const start = findPressableByText(tree!, 'common.start');
+    expect(start).toBeTruthy();
+
+    await act(async () => {
+      await start!.props.onPress?.();
+    });
+
+    expect(setSessionActionDraftStatus).toHaveBeenCalledWith('s1', 'd1', 'running', null);
+    expect(setSessionActionDraftStatus).toHaveBeenCalledWith('s1', 'd1', 'editing', 'RPC method not available');
+    expect(deleteSessionActionDraft).not.toHaveBeenCalled();
+  });
+
+  it('allows retrying a failed draft without recreating it', async () => {
+    const { SessionActionDraftCard } = await import('./SessionActionDraftCard');
+
+    const draft = {
+      id: 'd1',
+      sessionId: 's1',
+      actionId: 'delegate.start',
+      createdAt: 1,
+      status: 'failed',
+      error: 'RPC method not available',
+      input: { backendIds: ['claude'], instructions: 'Delegate this.' },
+    } as const;
+
+    let tree: renderer.ReactTestRenderer | null = null;
+    await act(async () => {
+      tree = renderer.create(React.createElement(SessionActionDraftCard, { sessionId: 's1', draft: draft as any }));
+    });
+
+    const start = findPressableByText(tree!, 'common.start');
+    expect(start).toBeTruthy();
+    expect(start!.props.disabled).toBe(false);
   });
 
   it('shows a validation error and does not execute when required inputs are missing', async () => {
