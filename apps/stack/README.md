@@ -102,7 +102,7 @@ If you want to **develop Happier** (worktrees, multiple stacks, upstream PR work
 ### Setup (guided)
 
 ```bash
-npx --yes -p @happier-dev/stack hstack setup --profile=dev
+npx --yes -p @happier-dev/stack hstack setup-from-source --profile=dev
 ```
 
 During setup, you’ll be guided through:
@@ -127,12 +127,12 @@ hstack stack wt dev -- use dev
 You can also set it non-interactively:
 
 ```bash
-npx --yes -p @happier-dev/stack hstack setup --profile=dev --workspace-dir=~/Documents/Development/happier
+npx --yes -p @happier-dev/stack hstack setup-from-source --profile=dev --workspace-dir=~/Documents/Development/happier
 ```
 
 ### Why this exists
 
-- **Automated setup**: `hstack setup` + `hstack start` gets the whole stack up and running.
+- **Automated setup (from source)**: `hstack setup-from-source` + `hstack start` gets the whole stack up and running.
 - **No hosted dependency**: run the full stack on your own computer.
 - **Lower latency**: localhost/LAN is typically much faster than remote hosted servers.
 - **Custom forks**: easily use forks while still contributing upstream to `happier-dev/happier`.
@@ -180,7 +180,7 @@ More details + automation: `[docs/remote-access.md](docs/remote-access.md)`.
 
 - **Scripts**: `scripts/*.mjs` (bootstrap/dev/start/build/stacks/worktrees/service/tailscale/mobile)
 - **Stable checkout**: `<workspace>/main` (the monorepo clone; treated as read-only)
-- **Dev checkout**: `<workspace>/dev` (created by `hstack setup --profile=dev`)
+- **Dev checkout**: `<workspace>/dev` (created by `hstack setup-from-source --profile=dev`)
 - **Worktrees**:
   - PRs: `<workspace>/pr/...`
   - locals: `<workspace>/local/<owner>/...`
@@ -383,7 +383,8 @@ Details: `[docs/tauri.md](docs/tauri.md)`.
 ### Commands (high-signal)
 
 - **Setup**:
-  - `hstack setup` (guided; selfhost or dev)
+  - `hstack setup-from-source` (guided; selfhost or dev)
+  - (deprecated alias) `hstack setup`
   - (advanced) `hstack init` (plumbing: shims/runtime/pointer env)
   - (advanced) `hstack bootstrap --interactive` (workspace bootstrap wizard)
 - **Run**:
@@ -450,7 +451,7 @@ Notes:
 
 ### Breaking changes (vs “Happy Stacks”)
 
-- No compatibility/migration for previous installs: uninstall old setups and run `hstack setup` again.
+- No compatibility/migration for previous installs: uninstall old setups and run `hstack setup-from-source` again.
 - Env prefix is now `HAPPIER_STACK_*` (no legacy aliases like `HAPPY_STACKS_*` / `HAPPY_LOCAL_*`).
 - Workspace/worktrees are monorepo-first (default workspace: `~/.happier-stack/workspace`, with `main/`, `dev/`, `pr/`, `local/`, `tmp/`).
 - Yarn-only (no pnpm support).

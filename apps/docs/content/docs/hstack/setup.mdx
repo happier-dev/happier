@@ -23,7 +23,7 @@ hstack can be run either:
 Development profile (recommended for contributors):
 
 ```bash
-hstack setup --profile=dev
+hstack setup-from-source --profile=dev
 ```
 
 Self-host profile (stable / production-ish):
@@ -53,8 +53,19 @@ hstack self-host config set --auto-update --auto-update-at=03:15
 Legacy alias (still supported):
 
 ```bash
-hstack setup --profile=selfhost
+hstack setup --profile=selfhost # deprecated; use setup-from-source or self-host install
+hstack setup-from-source --profile=selfhost
 ```
+
+### Use a different stable branch
+
+By default, `setup-from-source` uses `main` for the stable `main/` workspace checkout. To target a different branch (for example `preview`):
+
+```bash
+hstack setup-from-source --profile=selfhost --stable-branch=preview
+```
+
+This persists `HAPPIER_STACK_STABLE_BRANCH` in your user config so future bootstrap/review flows keep using the same branch.
 
 ### Choose a workspace directory
 
@@ -70,7 +81,7 @@ The workspace is where hstack stores:
 You can set it explicitly:
 
 ```bash
-hstack setup --profile=dev --workspace-dir=~/Documents/Development/happier
+hstack setup-from-source --profile=dev --workspace-dir=~/Documents/Development/happier
 ```
 
 Or by env var:

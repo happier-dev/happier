@@ -24,6 +24,12 @@ This section describes how to deploy **your own Happier Server** (the sync backe
   - Remote daemon bootstrap over SSH: `/docs/hstack/remote-daemon`
   - Remote self-host server install over SSH: `/docs/hstack/remote-server`
 
+## Quick decision (recommended)
+
+- Want a **managed service** on a host/VPS (plus rollback + optional auto-update): use **Self-host runtime** (`hstack self-host install`).
+- Already using a supervisor (Docker/Compose/k8s/Nomad/systemd): use **Docker** or the **runner** (`@happier-dev/relay-server`) and update on restart.
+- Developing or customizing from source: use **repo-local mode** (or `hstack setup-from-source` for stack-based local workflows).
+
 ## Server flavors (high level)
 
 Happier Server supports two “flavors” that share the same API + internal logic; the difference is which storage backends are used:

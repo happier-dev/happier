@@ -22,7 +22,7 @@ hstack is **monorepo-only**: UI/CLI/server all live in the same Happier git repo
 Default paths (see `hstack where` for your actual values):
 
 - Stable checkout: `<workspace>/main`
-- Dev checkout: `<workspace>/dev` (created by `hstack setup --profile=dev`)
+- Dev checkout: `<workspace>/dev` (created by `hstack setup-from-source --profile=dev`)
 - Worktrees:
   - PRs: `<workspace>/pr/...`
   - locals: `<workspace>/local/<owner>/...`

@@ -59,7 +59,7 @@ export async function ensureDevCheckout({ rootDir, env = process.env, remote = '
   const devBranch = resolveDevBranchName(env);
 
   if (!existsSync(mainDir) || !existsSync(join(mainDir, '.git'))) {
-    throw new Error(`[dev] missing main checkout at ${mainDir}\nFix: run \`hstack bootstrap --clone\` (or \`hstack setup\`).`);
+    throw new Error(`[dev] missing main checkout at ${mainDir}\nFix: run \`hstack bootstrap --clone\` (or \`hstack setup-from-source\`).`);
   }
 
   const syncRemote = await resolveDevSyncRemote({ repoDir: mainDir, env, preferred: remote });

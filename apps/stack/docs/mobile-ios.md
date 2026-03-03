@@ -21,7 +21,7 @@ see the “Using Happier from your phone” section in the main README.
 
 ## Shared dev-client app (install once)
 
-If you ran `hstack setup --profile=dev`, the setup wizard can optionally offer to install the dev-client for you.
+If you ran `hstack setup-from-source --profile=dev`, the setup wizard can optionally offer to install the dev-client for you.
 
 Install the dedicated hstack dev-client app on your iPhone (USB).
 

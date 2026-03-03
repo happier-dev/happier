@@ -1181,7 +1181,7 @@ async function main() {
           // eslint-disable-next-line no-console
           console.log(
             `${yellow('!')} No monorepo checkout detected in your hstack workspace yet.\n` +
-              dim(`Fix: run ${cmdFmt('hstack setup --profile=dev')} (or ${cmdFmt('hstack bootstrap')}) first, then re-run import.`)
+              dim(`Fix: run ${cmdFmt('hstack setup-from-source --profile=dev')} (or ${cmdFmt('hstack bootstrap')}) first, then re-run import.`)
           );
           const raw = await prompt(rl, `Monorepo target path (Happier monorepo root): `, { defaultValue: '' });
           monorepoRepoRoot = raw.trim() ? await gitRoot(raw.trim()) : '';

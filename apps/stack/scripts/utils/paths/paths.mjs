@@ -148,7 +148,7 @@ export function getRepoDir(rootDir, env = process.env) {
 }
 
 export function getDevRepoDir(rootDir, env = process.env) {
-  // The "dev" checkout is a first-class worktree created by `hstack setup --profile=dev`.
+  // The "dev" checkout is a first-class worktree created by `hstack setup-from-source --profile=dev`.
   // It is not treated as the default repo dir (that is always <workspace>/main).
   const workspaceDir = getWorkspaceDir(rootDir, env);
   return join(workspaceDir, 'dev');

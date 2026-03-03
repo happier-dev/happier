@@ -470,17 +470,17 @@ async function main() {
 
   if (wantBootstrap && alreadyBootstrapped && !bootstrapExplicit) {
     console.log(`${green('✓')} bootstrap already set up; skipping`);
-    console.log(`${dim('Tip: for guided onboarding run:')} ${cmd('hstack setup')}`);
+    console.log(`${dim('Tip: for guided onboarding run:')} ${cmd('hstack setup-from-source')}`);
     console.log('');
   }
 
-  // When `hstack setup` drives init, avoid printing confusing “next steps”.
+  // When `hstack setup-from-source` drives init, avoid printing confusing “next steps”.
   if (invokedBySetup) {
     return;
   }
 
   console.log(sectionTitle('Next steps'));
-  console.log(bullets([cmd(`export PATH="${join(homeDir, 'bin')}:$PATH"`), cmd('hstack setup')]));
+  console.log(bullets([cmd(`export PATH="${join(homeDir, 'bin')}:$PATH"`), cmd('hstack setup-from-source')]));
 }
 
 main().catch((err) => {

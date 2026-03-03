@@ -26,8 +26,16 @@ export function gethstackRegistry() {
       name: 'setup',
       kind: 'node',
       scriptRelPath: 'scripts/setup.mjs',
-      rootUsage: 'hstack setup [--profile=selfhost|dev] [--json]',
-      description: 'Guided setup (selfhost or dev)',
+      rootUsage: 'hstack setup [--profile=selfhost|dev|local-repo] [--json]',
+      description: 'DEPRECATED: use setup-from-source (or self-host)',
+    },
+    {
+      name: 'setup-from-source',
+      aliases: ['setup-fromsource', 'setupFromSource'],
+      kind: 'node',
+      scriptRelPath: 'scripts/setup.mjs',
+      rootUsage: 'hstack setup-from-source [--profile=selfhost|dev|local-repo] [--stable-branch=<name>] [--json]',
+      description: 'Guided from-source setup (workspace + deps)',
     },
     {
       name: 'contrib',

@@ -23,7 +23,7 @@
     "providers": "node ./apps/stack/scripts/repo_local.mjs providers",
     "self-host": "node ./apps/stack/scripts/repo_local.mjs self-host",
     "remote": "node ./apps/stack/scripts/repo_local.mjs remote",
-    "setup": "node ./apps/stack/scripts/repo_local.mjs setup",
+    "setup": "node ./apps/stack/scripts/repo_local.mjs setup-from-source",
     "service": "node ./apps/stack/scripts/repo_local.mjs service",
     "service:status": "node ./apps/stack/scripts/repo_local.mjs service status",
     "service:logs": "node ./apps/stack/scripts/repo_local.mjs service logs",

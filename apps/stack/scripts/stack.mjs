@@ -334,7 +334,7 @@ async function cmdNew({ rootDir, argv, emit = true }) {
       throw new Error(
         `[stack] repo checkout does not exist: ${resolved || '(empty)'}\n` +
           `Fix:\n` +
-          `- run: hstack setup --profile=dev (clones the monorepo into the workspace)\n` +
+          `- run: hstack setup-from-source --profile=dev (clones the monorepo into the workspace)\n` +
           `- or pass an explicit --repo=<path|worktreeSpec>\n`
       );
     }

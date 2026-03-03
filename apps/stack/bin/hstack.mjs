@@ -278,6 +278,21 @@ function runNodeScript(cliRootDir, scriptRelPath, args) {
   process.exit(res.status ?? 1);
 }
 
+function hasJsonFlag(args) {
+  const argv = Array.isArray(args) ? args : [];
+  return argv.some((a) => a === '--json' || String(a).startsWith('--json='));
+}
+
+function maybeWarnDeprecatedSetup(cmd, rest) {
+  if (cmd !== 'setup') return;
+  if (hasJsonFlag(rest)) return;
+  // Keep this on stderr so stdout remains script-friendly (especially when piping output).
+  console.error('[hstack] DEPRECATED: `hstack setup` is deprecated and will be removed in a future release.');
+  console.error('[hstack] Use `hstack setup-from-source` for from-source setup (workspace + deps).');
+  console.error('[hstack] For managed self-hosting (service + rollback), use `hstack self-host install`.');
+  console.error('');
+}
+
 function main() {
   const cliRootDir = getCliRootDir();
   const initialArgv = process.argv.slice(2);
@@ -368,6 +383,8 @@ function main() {
     console.error(usage());
     process.exit(1);
   }
+
+  maybeWarnDeprecatedSetup(cmd, rest);
 
   if (resolved.kind === 'external') {
     const args = resolved.external?.argsFromRest ? resolved.external.argsFromRest(rest) : rest;

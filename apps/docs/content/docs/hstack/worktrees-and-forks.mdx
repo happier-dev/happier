@@ -28,7 +28,7 @@ hstack is monorepo-first: UI/CLI/server all live in the same Happier git repo.
 Default paths (see `hstack where` for your actual values):
 
 - Stable checkout: `<workspace>/main`
-- Dev checkout: `<workspace>/dev` (created by `hstack setup --profile=dev`)
+- Dev checkout: `<workspace>/dev` (created by `hstack setup-from-source --profile=dev`)
 - Worktrees:
   - PRs: `<workspace>/pr/...`
   - locals: `<workspace>/local/<owner>/...`
@@ -304,13 +304,13 @@ For contributor workflows, hstack expects:
 - `upstream` → the canonical repo you PR into
 - `origin` → your fork (where you push branches)
 
-If you run `hstack setup --profile=dev` and `origin` still points to `upstream` (and you can’t push there), setup will guide you to configure a fork URL for `origin`.
+If you run `hstack setup-from-source --profile=dev` and `origin` still points to `upstream` (and you can’t push there), setup will guide you to configure a fork URL for `origin`.
 
 Non-interactive option:
 
 ```bash
 export HAPPIER_STACK_FORK_URL="https://github.com/<you>/happier.git"
-hstack setup --profile=dev
+hstack setup-from-source --profile=dev
 ```
 
 Once configured, a common PR flow is:

@@ -192,7 +192,7 @@ export async function requireDir(label, dir) {
   }
   throw new Error(
     `[local] missing ${label} at ${dir}\n` +
-      `Run: hstack setup (or hstack bootstrap) to clone the Happier monorepo into your workspace.`
+      `Run: hstack setup-from-source (or hstack bootstrap) to clone the Happier monorepo into your workspace.`
   );
 }
 

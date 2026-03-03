@@ -142,7 +142,7 @@ async function maybeConfigureForkRemoteForDevProfile({ rootDir, interactive, env
     // eslint-disable-next-line no-console
     console.log(
       `${yellow('!')} Dev setup: origin points to upstream (${upstream.owner}/${upstream.repo}), but you don't have push access.\n` +
-        `${dim('Fix:')} re-run ${cyan('hstack setup --profile=dev')} in a TTY to configure a fork, or set ${cyan('HAPPIER_STACK_FORK_URL')} to your fork repo URL.`
+        `${dim('Fix:')} re-run ${cyan('hstack setup-from-source --profile=dev')} in a TTY to configure a fork, or set ${cyan('HAPPIER_STACK_FORK_URL')} to your fork repo URL.`
     );
     return;
   }
@@ -300,11 +300,17 @@ async function ensureLocalRepoStack({ rootDir, repoDir, serverComponent, env, st
   return stackName;
 }
 
-async function ensureSetupConfigPersisted({ rootDir, profile, serverComponent, tailscaleWanted, menubarMode, happierRepoUrl }) {
+async function ensureSetupConfigPersisted({ rootDir, profile, serverComponent, tailscaleWanted, menubarMode, happierRepoUrl, stableBranch }) {
   // Repo source here describes where we clone the Happier monorepo from (apps/ui + apps/cli + apps/server).
   const repoSourceForProfile = profile === 'selfhost' ? 'upstream' : null;
   const monoRepo = String(happierRepoUrl ?? '').trim();
+  const stable = String(stableBranch ?? '').trim();
   const updates = [
+    ...(stable
+      ? [
+          { key: 'HAPPIER_STACK_STABLE_BRANCH', value: stable },
+        ]
+      : []),
     { key: 'HAPPIER_STACK_SERVER_COMPONENT', value: serverComponent },
     // Default for selfhost:
     // - monorepo: upstream (Happier)
@@ -639,12 +645,14 @@ async function cmdSetup({ rootDir, argv }) {
 	      data: {
 	        profiles: ['selfhost', 'dev', 'local-repo'],
 	        flags: [
-	          '--profile=selfhost|dev',
+	          '--profile=selfhost|dev|local-repo',
 	          '--server=happier-server-light|happier-server',
 	          '--server-flavor=light|full',
             '--non-interactive',
             '--repo-dir=/abs/path/to/happier   # local-repo profile only',
             '--stack=<name>                   # local-repo profile only (default: local)',
+            '--stable-branch=<name>           # git branch for the stable (workspace/main) checkout',
+            '--branch=<name>                  # alias for --stable-branch',
 	          '--happier-repo=<owner/repo|url>     # override the monorepo clone source',
 	          '--workspace-dir=/absolute/path   # dev profile only',
             '--no-ui-deps                  # bootstrap: skip UI deps',
@@ -663,15 +671,18 @@ async function cmdSetup({ rootDir, argv }) {
       },
 	      text: [
 	        '[setup] usage:',
-	        '  hstack setup',
-	        '  hstack setup --profile=selfhost',
-	        '  hstack setup --profile=dev',
-	        '  hstack setup --profile=dev --workspace-dir=~/Development/happier',
-          '  hstack setup --profile=local-repo --repo-dir=~/Development/happier',
-	        '  hstack setup --happier-repo=happier-dev/happier',
+	        '  hstack setup-from-source',
+	        '  hstack setup-from-source --profile=selfhost',
+	        '  hstack setup-from-source --profile=dev',
+	        '  hstack setup-from-source --profile=dev --workspace-dir=~/Development/happier',
+          '  hstack setup-from-source --profile=local-repo --repo-dir=~/Development/happier',
+	        '  hstack setup-from-source --happier-repo=happier-dev/happier',
 	        '  hstack tools setup-pr --repo=<pr-url|number>',
-	        '  hstack setup --auth',
-	        '  hstack setup --no-auth',
+	        '  hstack setup-from-source --auth',
+	        '  hstack setup-from-source --no-auth',
+          '',
+          'deprecated:',
+          '  hstack setup   # use setup-from-source instead',
 	        '',
 	        'notes:',
 	        '  - selfhost profile is a guided installer for running Happier locally (optionally with Tailscale + autostart).',
@@ -909,6 +920,22 @@ async function cmdSetup({ rootDir, argv }) {
     localRepoDir = root || localRepoDir;
     // eslint-disable-next-line no-console
     console.log(`${dim('Repo:')} ${cyan(localRepoDir)}`);
+  }
+
+  const stableBranchFlagRaw = (kv.get('--stable-branch') ?? '').toString().trim();
+  const stableBranchAliasRaw = (kv.get('--branch') ?? '').toString().trim();
+  if (stableBranchFlagRaw && stableBranchAliasRaw && stableBranchFlagRaw !== stableBranchAliasRaw) {
+    throw new Error('[setup] conflicting stable branch args: pass only one of --stable-branch=... or --branch=...');
+  }
+  const stableBranchWanted = stableBranchFlagRaw || stableBranchAliasRaw;
+  if (stableBranchWanted) {
+    if (/\s/.test(stableBranchWanted)) {
+      throw new Error('[setup] --stable-branch must not contain whitespace');
+    }
+    if (stableBranchWanted.startsWith('-')) {
+      throw new Error('[setup] --stable-branch must not start with "-"');
+    }
+    process.env.HAPPIER_STACK_STABLE_BRANCH = stableBranchWanted;
   }
 
   const setupChildEnv = buildSetupChildEnv({
@@ -1209,6 +1236,7 @@ async function cmdSetup({ rootDir, argv }) {
     tailscaleWanted,
     menubarMode,
     happierRepoUrl,
+    stableBranch: stableBranchWanted,
   });
 
   // Apply repo override to this process too (so the immediately-following install step sees it),
