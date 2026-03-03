@@ -1,6 +1,7 @@
 import React from 'react';
 import renderer, { act } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
+import { ScrollView } from 'react-native';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -63,6 +64,28 @@ describe('AppCrashRecoveryBoundary', () => {
     expect(tree!.root.findAllByProps({ testID: 'app-crash-restart' })).toHaveLength(1);
     expect(tree!.root.findAllByProps({ testID: 'app-crash-report-bug' })).toHaveLength(1);
     expect(tree!.root.findAllByProps({ testID: 'app-crash-copy-details' })).toHaveLength(1);
+  });
+
+  it('renders the crash fallback inside a full-height scroll view', async () => {
+    const { AppCrashRecoveryBoundary } = await import('@/components/appShell/AppCrashRecoveryBoundary');
+    const Thrower = () => {
+      throw new Error('boom');
+    };
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    let tree: renderer.ReactTestRenderer | null = null;
+    await act(async () => {
+      tree = renderer.create(
+        <AppCrashRecoveryBoundary onRestart={() => {}}>
+          <Thrower />
+        </AppCrashRecoveryBoundary>,
+      );
+    });
+    consoleError.mockRestore();
+
+    const scrollView = tree!.root.findByType(ScrollView);
+    expect(scrollView.props.style).toEqual(expect.objectContaining({ flex: 1 }));
+    expect(scrollView.props.contentContainerStyle).toEqual(expect.objectContaining({ flexGrow: 1 }));
   });
 
   it('invokes onRestart when the restart button is pressed', async () => {

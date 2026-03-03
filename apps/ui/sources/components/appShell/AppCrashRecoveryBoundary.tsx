@@ -80,6 +80,7 @@ export function AppBlockingScreen(props: Readonly<{
   return (
     <View testID={props.testID} style={[styles.container, { backgroundColor: theme.colors.surface }]}>
       <ScrollView
+        style={styles.scrollView}
         contentContainerStyle={styles.content}
         keyboardShouldPersistTaps="handled"
       >
@@ -292,8 +293,13 @@ function TextBlock(props: { text: string; style: any; selectable?: boolean }) {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
+    minHeight: 0,
+  },
+  scrollView: {
+    flex: 1,
   },
   content: {
+    flexGrow: 1,
     paddingHorizontal: 16,
     paddingTop: Platform.OS === 'web' ? 24 : 40,
     paddingBottom: 40,
