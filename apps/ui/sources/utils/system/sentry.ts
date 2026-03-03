@@ -1,4 +1,5 @@
 import * as Sentry from '@sentry/react-native';
+import type { ComponentType } from 'react';
 import { parseOptionalBooleanEnv, type FeatureId } from '@happier-dev/protocol';
 import { config } from '@/config';
 import { getFeatureBuildPolicyDecision } from '@/sync/domains/features/featureBuildPolicy';
@@ -157,6 +158,16 @@ export function applyCrashReportsOptOut(optOut: boolean): void {
     }
 
     initializeSentryOnce();
+}
+
+export function wrapWithSentryIfEnabled<T extends ComponentType<any>>(Component: T): T {
+    if (getFeatureBuildPolicyDecision(CRASH_REPORTS_FEATURE_ID) === 'deny') return Component;
+    if (resolveCrashReportsOptOut()) return Component;
+    if (!resolveSentryEnv()) return Component;
+
+    // Ensure init happens before wrap to avoid Sentry "App Start Span" warnings.
+    initializeSentryOnce();
+    return Sentry.wrap(Component) as unknown as T;
 }
 
 export type BugReportSentryEventInfo = {

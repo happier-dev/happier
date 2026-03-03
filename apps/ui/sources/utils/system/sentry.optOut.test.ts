@@ -2,12 +2,17 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const sentryInitSpy = vi.fn((..._args: unknown[]) => {});
 const sentryCloseSpy = vi.fn(async (..._args: unknown[]) => {});
+const sentryWrapSpy = vi.fn((Component: any) => {
+    const Wrapped = (...args: any[]) => Component(...args);
+    return Wrapped;
+});
 
 vi.mock('@sentry/react-native', () => ({
     init: (...args: unknown[]) => sentryInitSpy(...args),
     close: (...args: unknown[]) => sentryCloseSpy(...args),
     mobileReplayIntegration: () => ({ name: 'mobileReplayIntegration' }),
     captureMessage: () => 'sentry-test-event-id',
+    wrap: (Component: any) => sentryWrapSpy(Component),
 }));
 
 vi.mock('@/config', () => ({
@@ -55,5 +60,13 @@ describe('utils/system/sentry (crash reports opt-out)', () => {
         // Re-enabling should allow init again (guard cleared on close).
         applyCrashReportsOptOut(false);
         expect(sentryInitSpy).toHaveBeenCalledTimes(2);
+    });
+
+    it('wraps components when crash reports are enabled', async () => {
+        const { wrapWithSentryIfEnabled } = await import('./sentry');
+        const Root = () => null;
+        const wrapped = wrapWithSentryIfEnabled(Root);
+        expect(wrapped).not.toBe(Root);
+        expect(sentryInitSpy).toHaveBeenCalledTimes(1);
     });
 });
