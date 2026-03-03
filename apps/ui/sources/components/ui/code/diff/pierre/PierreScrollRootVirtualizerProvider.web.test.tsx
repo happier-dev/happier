@@ -34,6 +34,80 @@ function defineSizeProperty(node: Element, property: 'clientHeight' | 'scrollHei
 }
 
 describe('PierreScrollRootVirtualizerProvider (web)', () => {
+    it('patches element scrollTo to support ScrollToOptions objects when missing', async () => {
+        vi.resetModules();
+        setupSpy.mockClear();
+        cleanUpSpy.mockClear();
+
+        (globalThis as any).IntersectionObserver = class {};
+        (globalThis as any).ResizeObserver = class {};
+
+        const { PierreScrollRootVirtualizerProvider } = await import('./PierreScrollRootVirtualizerProvider.web');
+
+        const container = document.createElement('div');
+        document.body.appendChild(container);
+        const root = createRoot(container);
+
+        let scrollRoot: HTMLDivElement | null = null;
+        let scrollTop = 0;
+        let scrollLeft = 0;
+
+        await act(async () => {
+            root.render(
+                React.createElement(
+                    PierreScrollRootVirtualizerProvider,
+                    null,
+                    React.createElement(
+                        'div',
+                        null,
+                        React.createElement('div', {
+                            'data-testid': 'nested-scroll-root',
+                            ref: (node: HTMLDivElement | null) => {
+                                if (!node || node === scrollRoot) return;
+                                scrollRoot = node;
+                                node.style.overflowY = 'auto';
+                                defineSizeProperty(node, 'clientHeight', 120);
+                                defineSizeProperty(node, 'scrollHeight', 560);
+
+                                // Simulate a browser environment where element.scrollTo only supports numeric args
+                                // and ignores ScrollToOptions objects (this breaks Pierre's scrollFix calls unless we patch).
+                                Object.defineProperty(node, 'scrollTop', {
+                                    configurable: true,
+                                    get: () => scrollTop,
+                                    set: (value: number) => {
+                                        scrollTop = Number.isFinite(value) ? value : 0;
+                                    },
+                                });
+                                Object.defineProperty(node, 'scrollLeft', {
+                                    configurable: true,
+                                    get: () => scrollLeft,
+                                    set: (value: number) => {
+                                        scrollLeft = Number.isFinite(value) ? value : 0;
+                                    },
+                                });
+                                (node as any).scrollTo = (x: unknown, y?: unknown) => {
+                                    if (typeof x === 'number') scrollLeft = x;
+                                    if (typeof y === 'number') scrollTop = y;
+                                };
+                            },
+                        }),
+                    ),
+                ),
+            );
+        });
+
+        expect(scrollRoot).not.toBeNull();
+        expect(setupSpy).toHaveBeenCalled();
+
+        // Without the provider patch, this call would be a no-op (our stub ignores object args).
+        scrollRoot!.scrollTo({ top: 150, left: 0, behavior: 'instant' } as any);
+        expect(scrollRoot!.scrollTop).toBe(150);
+
+        await act(async () => {
+            root.unmount();
+        });
+    });
+
     it('binds virtualization to a nested scroll container when present', async () => {
         vi.resetModules();
         setupSpy.mockClear();

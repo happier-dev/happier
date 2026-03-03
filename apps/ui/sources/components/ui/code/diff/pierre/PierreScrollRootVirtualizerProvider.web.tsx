@@ -3,6 +3,12 @@ import * as React from 'react';
 import { Virtualizer as PierreVirtualizer } from '@pierre/diffs';
 import { VirtualizerContext } from '@pierre/diffs/react';
 
+type ScrollToPatchRecord = Readonly<{
+    original: ((...args: any[]) => any) | null;
+}>;
+
+const HAPPIER_SCROLL_TO_PATCH_KEY = '__happierScrollToOptionsPatch' as const;
+
 function isElementScrollable(el: HTMLElement): boolean {
     if (typeof window === 'undefined' || typeof window.getComputedStyle !== 'function') return false;
     const style = window.getComputedStyle(el);
@@ -79,6 +85,94 @@ function findNearestScrollRoot(anchor: HTMLElement): HTMLElement | Document {
     return typeof document !== 'undefined' ? document : (anchor.ownerDocument ?? document);
 }
 
+function patchElementScrollToOptionsIfNeeded(el: HTMLElement): void {
+    const anyEl = el as any;
+    const existing: ScrollToPatchRecord | undefined = anyEl[HAPPIER_SCROLL_TO_PATCH_KEY] as any;
+    if (existing) return;
+
+    const nativeScrollTo: ((...args: any[]) => any) | null = typeof (el as any).scrollTo === 'function'
+        ? (el as any).scrollTo.bind(el)
+        : null;
+    if (!nativeScrollTo) {
+        anyEl[HAPPIER_SCROLL_TO_PATCH_KEY] = { original: null } satisfies ScrollToPatchRecord;
+        return;
+    }
+
+    // Detect whether this browser supports Element.scrollTo(ScrollToOptions). Some RN-web stacks
+    // expose `scrollTo` but ignore object arguments (no-op, no throw). Pierre uses object args
+    // for its scroll-fix logic; when ignored, the scroll position can "snap" back to the top
+    // during virtualization.
+    const maxTop = Math.max(0, el.scrollHeight - el.clientHeight);
+    const maxLeft = Math.max(0, el.scrollWidth - el.clientWidth);
+
+    let supportsOptions = false;
+    if (maxTop > 0 || maxLeft > 0) {
+        const beforeTop = el.scrollTop;
+        const beforeLeft = el.scrollLeft;
+        const probeTop = maxTop > 0
+            ? (beforeTop < maxTop ? beforeTop + 1 : Math.max(0, beforeTop - 1))
+            : beforeTop;
+        const probeLeft = maxLeft > 0
+            ? (beforeLeft < maxLeft ? beforeLeft + 1 : Math.max(0, beforeLeft - 1))
+            : beforeLeft;
+
+        try {
+            nativeScrollTo({ top: probeTop, left: probeLeft });
+            supportsOptions = el.scrollTop !== beforeTop || el.scrollLeft !== beforeLeft;
+        } catch {
+            supportsOptions = false;
+        } finally {
+            // Restore any probe movement immediately (best-effort, assignment is most reliable).
+            try {
+                el.scrollLeft = beforeLeft;
+                el.scrollTop = beforeTop;
+            } catch {
+                // ignore
+            }
+        }
+    }
+
+    if (supportsOptions) {
+        anyEl[HAPPIER_SCROLL_TO_PATCH_KEY] = { original: nativeScrollTo } satisfies ScrollToPatchRecord;
+        return;
+    }
+
+    const patched = (...args: any[]) => {
+        const first = args[0];
+        if (first && typeof first === 'object') {
+            const top = typeof first.top === 'number' && Number.isFinite(first.top) ? first.top : el.scrollTop;
+            const left = typeof first.left === 'number' && Number.isFinite(first.left) ? first.left : el.scrollLeft;
+            // Ignore non-standard `behavior: 'instant'` and other behavior hints. Pierre uses these
+            // primarily as "not smooth"; numeric scrolling is deterministic across browsers.
+            try {
+                nativeScrollTo(left, top);
+            } catch {
+                // ignore (we'll fall back to direct assignment below)
+            }
+            // Some environments expose Element.scrollTo but implement it as a no-op (especially
+            // in RN-web wrappers). Ensure the scroll position actually updates.
+            if (el.scrollTop !== top || el.scrollLeft !== left) {
+                try {
+                    el.scrollLeft = left;
+                    el.scrollTop = top;
+                } catch {
+                    // ignore
+                }
+            }
+            return;
+        }
+        // Numeric signature: (x, y)
+        return nativeScrollTo(...args);
+    };
+
+    try {
+        (el as any).scrollTo = patched;
+    } catch {
+        // ignore
+    }
+    anyEl[HAPPIER_SCROLL_TO_PATCH_KEY] = { original: nativeScrollTo } satisfies ScrollToPatchRecord;
+}
+
 export function PierreScrollRootVirtualizerProvider(props: Readonly<{ children: React.ReactNode }>) {
     const anchorRef = React.useRef<HTMLDivElement | null>(null);
 
@@ -104,32 +198,33 @@ export function PierreScrollRootVirtualizerProvider(props: Readonly<{ children: 
         const maxAttempts = 30;
         let lastRoot: HTMLElement | Document | null = null;
 
-            const bindToCurrentRoot = () => {
-                if (cancelled) return;
-                const root = findNearestScrollRoot(anchor);
-                if (root !== lastRoot) {
-                    try {
-                        instance.cleanUp();
-                    } catch {
-                        // ignore
-                    }
-
-                    try {
-                        // IMPORTANT:
-                        // - When binding to an *element* scroll root (common with nested list scrollers on web),
-                        //   we must NOT pass an external content container that lives *outside* that scroll root.
-                        //   Pierre will infer the correct content container from the scroll root itself.
-                        // - For document root, the 2nd argument is ignored.
-                        if (root instanceof Document) {
-                            instance.setup(root as any, anchor);
-                        } else {
-                            instance.setup(root as any);
-                        }
-                        lastRoot = root;
-                    } catch {
-                        // Fail closed: virtualization is best-effort, never crash the UI.
-                    }
+        const bindToCurrentRoot = () => {
+            if (cancelled) return;
+            const root = findNearestScrollRoot(anchor);
+            if (root !== lastRoot) {
+                try {
+                    instance.cleanUp();
+                } catch {
+                    // ignore
                 }
+
+                try {
+                    // IMPORTANT:
+                    // - When binding to an *element* scroll root (common with nested list scrollers on web),
+                    //   we must NOT pass an external content container that lives *outside* that scroll root.
+                    //   Pierre will infer the correct content container from the scroll root itself.
+                    // - For document root, the 2nd argument is ignored.
+                    if (root instanceof Document) {
+                        instance.setup(root as any, anchor);
+                    } else {
+                        patchElementScrollToOptionsIfNeeded(root);
+                        instance.setup(root as any);
+                    }
+                    lastRoot = root;
+                } catch {
+                    // Fail closed: virtualization is best-effort, never crash the UI.
+                }
+            }
 
             attempts += 1;
             // FlashList web can mount its internal scroll root after the first effect pass.
