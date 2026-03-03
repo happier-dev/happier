@@ -20,6 +20,8 @@ import { createCatalogAcpBackend } from '@/agent/acp/createCatalogAcpBackend';
 import type { AcpRuntimeSessionClient } from '@/agent/acp/sessionClient';
 import { getAgentModelConfig, type AgentId } from '@happier-dev/agents';
 import { updateMetadataBestEffort } from '@/api/session/sessionWritesBestEffort';
+import { CHANGE_TITLE_INSTRUCTION } from '@/agent/runtime/changeTitleInstruction';
+import { CHANGE_TITLE_TOOL_NAME_ALIASES } from '@happier-dev/protocol/tools/v2';
 
 const DEFAULT_STREAM_DELTA_FLUSH_INTERVAL_MS = 50;
 const DEFAULT_SESSION_CONTROL_TIMEOUT_MS = 15_000;
@@ -217,6 +219,7 @@ export function createAcpRuntime(params: {
   let backend: AcpRuntimeBackend | null = null;
   let backendPromise: Promise<AcpRuntimeBackend> | null = null;
   let sessionId: string | null = null;
+  let didSendChangeTitleInstructionForSession = false;
 
   let accumulatedResponse = '';
   let isResponseInProgress = false;
@@ -1011,6 +1014,7 @@ export function createAcpRuntime(params: {
 
     async reset(): Promise<void> {
       sessionId = null;
+      didSendChangeTitleInstructionForSession = false;
       turnInFlight = false;
       resetTurnState();
       loadingSession = false;
@@ -1032,6 +1036,7 @@ export function createAcpRuntime(params: {
 
     async startOrLoad(opts: { resumeId?: string | null; importHistory?: boolean } = {}): Promise<string> {
       const b = await ensureBackend();
+      didSendChangeTitleInstructionForSession = false;
 
       const resumeId = typeof opts.resumeId === 'string' ? opts.resumeId.trim() : '';
       const importHistory = opts.importHistory !== false;
@@ -1204,8 +1209,21 @@ export function createAcpRuntime(params: {
         throw new Error(`${params.provider} ACP session was not started`);
       }
 
+      const effectivePrompt = (() => {
+        const raw = typeof prompt === 'string' ? prompt : '';
+        if (!raw.trim()) return raw;
+
+        if (didSendChangeTitleInstructionForSession) return raw;
+
+        const lower = raw.toLowerCase();
+        const alreadyMentionsChangeTitle = CHANGE_TITLE_TOOL_NAME_ALIASES.some((alias) => lower.includes(alias));
+        didSendChangeTitleInstructionForSession = true;
+        if (alreadyMentionsChangeTitle) return raw;
+        return `${raw}\n\n${CHANGE_TITLE_INSTRUCTION}`;
+      })();
+
       const b = await ensureBackend();
-      await b.sendPrompt(sessionId, prompt);
+      await b.sendPrompt(sessionId, effectivePrompt);
       if (b.waitForResponseComplete) {
         await b.waitForResponseComplete(120_000);
       }

@@ -7,4 +7,8 @@ describe('systemPrompt', () => {
         expect(systemPrompt).toContain('`@path`');
         expect(systemPrompt).toContain('Read tool');
     });
+
+    it('instructs the agent to set a session title via change_title', () => {
+        expect(systemPrompt).toContain('change_title');
+    });
 });

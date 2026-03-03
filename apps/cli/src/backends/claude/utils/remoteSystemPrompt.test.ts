@@ -4,9 +4,9 @@ import { systemPrompt } from '@/backends/claude/utils/systemPrompt';
 import { getClaudeRemoteSystemPrompt } from './remoteSystemPrompt';
 
 describe('getClaudeRemoteSystemPrompt', () => {
-  it('does not reference Happier-only MCP tools (Claude is responsible for loading MCP from its own config)', () => {
+  it('includes the session-title tool instruction (so Claude renames sessions at start)', () => {
     process.env.HAPPIER_SCM_INCLUDE_CO_AUTHORED_BY = '0';
-    expect(systemPrompt()).not.toContain('mcp__happier__change_title');
+    expect(systemPrompt()).toContain('change-title tool');
   });
 
   it('returns the base prompt unchanged when disableTodos is false', () => {

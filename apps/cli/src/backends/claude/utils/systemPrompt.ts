@@ -1,5 +1,6 @@
 import { trimIdent } from "@/utils/trimIdent";
 import { shouldIncludeCoAuthoredBy } from "./claudeSettings";
+import { CHANGE_TITLE_INSTRUCTION } from "@/agent/runtime/changeTitleInstruction";
 
 /**
  * Base system prompt shared across all configurations
@@ -36,10 +37,11 @@ const CO_AUTHORED_CREDITS = (() => trimIdent(`
  */
 export function getClaudeSystemPrompt(): string {
   const includeCoAuthored = shouldIncludeCoAuthoredBy();
+  const base = BASE_SYSTEM_PROMPT + '\n\n' + CHANGE_TITLE_INSTRUCTION;
   if (includeCoAuthored) {
-    return BASE_SYSTEM_PROMPT + '\n\n' + CO_AUTHORED_CREDITS;
+    return base + '\n\n' + CO_AUTHORED_CREDITS;
   }
-  return BASE_SYSTEM_PROMPT;
+  return base;
 }
 
 // Backwards-compatible export name, but evaluated at call time (not module init).

@@ -8,6 +8,8 @@ import type { ACPProvider } from '@/api/session/sessionMessageTypes';
 import { configuration } from '@/configuration';
 import { MessageBuffer } from '@/ui/ink/messageBuffer';
 import { logger } from '@/ui/logger';
+import { buildChangeTitleInstruction } from '@/agent/runtime/changeTitleInstruction';
+import { CHANGE_TITLE_TOOL_NAME_ALIASES, isChangeTitleToolNameAlias } from '@happier-dev/protocol/tools/v2';
 
 import type { OpenCodeGlobalEvent, OpenCodeModelRef, OpenCodePermissionRequest, OpenCodeQuestionRequest, OpenCodeSession } from './types';
 import { createOpenCodeServerRuntimeClient, type OpenCodeServerRuntimeClient } from './client';
@@ -238,6 +240,7 @@ export function createOpenCodeServerRuntime(params: {
   let selectedAgent: string | null = null;
   let selectedModel: OpenCodeModelRef | null = null;
   const configOverrides: Record<string, unknown> = {};
+  let didSendChangeTitleInstructionForSession = false;
 
   let turnDeferred: Deferred<void> | null = null;
   let turnInFlight = false;
@@ -1053,7 +1056,18 @@ export function createOpenCodeServerRuntime(params: {
       if (!sessionId) throw new Error('OpenCode server session was not started');
       const c = await ensureClient();
 
-      const messageID = (await resolveOrCreateUserMessageId(paramsWithMeta.localId ?? null)) ?? undefined;
+      const effectiveText = (() => {
+        const raw = typeof paramsWithMeta.text === 'string' ? paramsWithMeta.text : '';
+        if (!raw.trim()) return raw;
+        if (didSendChangeTitleInstructionForSession) return raw;
+        const lower = raw.toLowerCase();
+        const alreadyMentionsChangeTitle =
+          lower.includes(preferredOpenCodeChangeTitleToolName.toLowerCase()) ||
+          CHANGE_TITLE_TOOL_NAME_ALIASES.some((alias) => lower.includes(alias));
+        didSendChangeTitleInstructionForSession = true;
+        if (alreadyMentionsChangeTitle) return raw;
+        return `${raw}\n\n${changeTitleInstruction}`;
+      })();
       const agent = selectedAgent ?? undefined;
       const model = selectedModel ?? undefined;
       const config = Object.keys(configOverrides).length > 0 ? { ...configOverrides } : undefined;
@@ -1095,7 +1109,7 @@ export function createOpenCodeServerRuntime(params: {
           agent,
           model,
           config,
-          parts: [{ type: 'text', text: paramsWithMeta.text }],
+          parts: [{ type: 'text', text: effectiveText }],
         });
       } catch (error) {
         setThinking(false);

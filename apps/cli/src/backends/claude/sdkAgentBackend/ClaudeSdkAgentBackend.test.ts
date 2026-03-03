@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { afterEach, describe, expect, it } from 'vitest';
+import { CHANGE_TITLE_INSTRUCTION } from '@/agent/runtime/changeTitleInstruction';
 
 function createFakeClaudeEntrypointSource(): string {
   return `
@@ -294,6 +295,33 @@ describe('ClaudeSdkAgentBackend', () => {
       if (previousState === undefined) delete process.env.XDG_STATE_HOME;
       else process.env.XDG_STATE_HOME = previousState;
     }
+  });
+
+  it('appends CHANGE_TITLE_INSTRUCTION to the first prompt only', async () => {
+    delete process.env.DEBUG;
+
+    await withFakeClaudeBackend(
+      {
+        dirPrefix: 'happier-claude-sdk-title-',
+        permissionPolicy: 'no_tools',
+      },
+      async ({ backend, logPath }) => {
+        const { sessionId } = await backend.startSession();
+        await backend.sendPrompt(sessionId, 'hello');
+        await (backend as any).waitForResponseComplete?.();
+        await backend.sendPrompt(sessionId, 'again');
+        await (backend as any).waitForResponseComplete?.();
+
+        const raw = await (await import('node:fs/promises')).readFile(logPath, 'utf8');
+        const lines = raw.trim().split('\n').map((l) => l.trim()).filter(Boolean);
+        const second = JSON.parse(lines[1] ?? 'null') as any;
+        const third = JSON.parse(lines[2] ?? 'null') as any;
+        expect(second).toMatchObject({ kind: 'user', turn: 1 });
+        expect(String(second?.content ?? '')).toContain(`hello\n\n${CHANGE_TITLE_INSTRUCTION}`);
+        expect(third).toMatchObject({ kind: 'user', turn: 2 });
+        expect(String(third?.content ?? '')).toBe('again');
+      },
+    );
   });
 
   it('emits token-count telemetry when Claude result includes usage and cost', async () => {

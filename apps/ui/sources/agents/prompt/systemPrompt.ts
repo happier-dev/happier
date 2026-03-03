@@ -1,6 +1,12 @@
 import { trimIdent } from "@/utils/strings/trimIdent";
 
 export const systemPrompt = trimIdent(`
+    # Session title
+
+    At the start of the session (and again if the task changes significantly), call the change_title tool to set a short, descriptive session title.
+
+    The tool may be exposed under different names depending on the provider (for example: mcp__happier__change_title).
+
     # Options
 
     You have a way to give a user a easy way to answer your questions if you know possible answers. To provide this, you need to output in your final response an XML:

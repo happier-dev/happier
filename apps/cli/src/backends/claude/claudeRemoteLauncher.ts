@@ -37,6 +37,8 @@ import { resolveClaudeConfigDirOverride } from './utils/resolveClaudeConfigDirOv
 import { tryReadTextFileTail } from '@/agent/runtime/readTextFileTail';
 import { readClaudeSessionJsonlMessages } from './utils/readClaudeSessionJsonlMessages';
 import { normalizeClaudeToolUseNamesInRawJsonLines } from './utils/normalizeClaudeToolUseNames';
+import { CHANGE_TITLE_INSTRUCTION } from '@/agent/runtime/changeTitleInstruction';
+import { CHANGE_TITLE_TOOL_NAME_ALIASES } from '@happier-dev/protocol/tools/v2';
 
 interface PermissionsField {
     date: number;
@@ -226,6 +228,7 @@ export async function claudeRemoteLauncher(session: Session): Promise<'switch' |
     let exitReason: 'switch' | 'exit' | null = null;
     let abortController: AbortController | null = null;
     let abortFuture: Future<void> | null = null;
+    let didSendChangeTitleInstructionForSession = false;
 
     async function abort() {
         if (abortController && !abortController.signal.aborted) {
@@ -533,6 +536,7 @@ export async function claudeRemoteLauncher(session: Session): Promise<'switch' |
                 permissionHandler.reset(); // Reset permissions before starting new session
                 sdkToLogConverter.resetParentChain(); // Reset parent chain for new conversation
                 subagentFileCollector.cleanup(); // Stop any watchers from prior sessions (subagent JSONL lives under session id).
+                didSendChangeTitleInstructionForSession = false;
                 logger.debug(`[remote]: New session detected (previous: ${previousSessionId}, current: ${session.sessionId})`);
                 forceNewSession = false;
             } else {
@@ -625,8 +629,30 @@ export async function claudeRemoteLauncher(session: Session): Promise<'switch' |
                                 didBootstrap: didReplaySeedBootstrap,
                             });
                             didReplaySeedBootstrap = replaySeedResolution.didBootstrap;
+
+                            const effectiveMessage = (() => {
+                                const raw = typeof replaySeedResolution.message === 'string' ? replaySeedResolution.message : '';
+                                if (!raw.trim()) return raw;
+                                if (didSendChangeTitleInstructionForSession) return raw;
+
+                                const lower = raw.toLowerCase();
+                                const appendLower =
+                                    typeof msg.mode.appendSystemPrompt === 'string' ? msg.mode.appendSystemPrompt.toLowerCase() : '';
+                                const customLower =
+                                    typeof msg.mode.customSystemPrompt === 'string' ? msg.mode.customSystemPrompt.toLowerCase() : '';
+
+                                const alreadyMentionsChangeTitle =
+                                    CHANGE_TITLE_TOOL_NAME_ALIASES.some((alias) => lower.includes(alias)) ||
+                                    CHANGE_TITLE_TOOL_NAME_ALIASES.some((alias) => appendLower.includes(alias)) ||
+                                    CHANGE_TITLE_TOOL_NAME_ALIASES.some((alias) => customLower.includes(alias));
+
+                                didSendChangeTitleInstructionForSession = true;
+                                if (alreadyMentionsChangeTitle) return raw;
+                                return `${raw}\n\n${CHANGE_TITLE_INSTRUCTION}`;
+                            })();
+
                             return {
-                                message: replaySeedResolution.message,
+                                message: effectiveMessage,
                                 mode: msg.mode,
                             }
                         }

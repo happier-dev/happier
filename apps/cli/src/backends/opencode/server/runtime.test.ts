@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import { MessageBuffer } from '@/ui/ink/messageBuffer';
+import { buildChangeTitleInstruction } from '@/agent/runtime/changeTitleInstruction';
 
 import { createOpenCodeServerRuntime } from './runtime';
 import type { OpenCodeGlobalEvent } from './types';
@@ -72,6 +73,41 @@ function createFakeSession() {
 }
 
 describe('createOpenCodeServerRuntime', () => {
+  const OPENCODE_CHANGE_TITLE_INSTRUCTION = buildChangeTitleInstruction({ preferredToolName: 'happier_change_title' });
+
+  it('registers local MCP servers via the OpenCode /mcp API for the session directory', async () => {
+    const client = createFakeClient();
+    const session = createFakeSession();
+    const runtime = createOpenCodeServerRuntime({
+      directory: '/tmp',
+      session,
+      messageBuffer: new MessageBuffer(),
+      mcpServers: {
+        happier: {
+          command: process.execPath,
+          args: ['--version'],
+          env: { HAPPIER_TEST_MCP: '1' },
+        },
+      },
+      permissionHandler: { handleToolCall: vi.fn(async () => ({ decision: 'approved' })) } as any,
+      onThinkingChange: vi.fn(),
+    }, {
+      createClient: async () => client as any,
+    });
+
+    await runtime.startOrLoad({});
+
+    expect(client.mcpAdd).toHaveBeenCalledWith({
+      name: 'happier',
+      config: {
+        type: 'local',
+        enabled: true,
+        command: [process.execPath, '--version'],
+        environment: { HAPPIER_TEST_MCP: '1' },
+      },
+    });
+  });
+
   it('publishes session mode/model lists into metadata on start (best-effort)', async () => {
     const client = createFakeClient();
     const session = createFakeSession();
@@ -205,7 +241,7 @@ describe('createOpenCodeServerRuntime', () => {
       agent: 'build',
       model: { providerID: 'openai', modelID: 'gpt-5.2' },
       config: { telemetry: true },
-      parts: [{ type: 'text', text: 'hello' }],
+      parts: [{ type: 'text', text: `hello\n\n${OPENCODE_CHANGE_TITLE_INSTRUCTION}` }],
     });
     expect(firstCall.messageId).toMatch(/^msg_[0-9a-f]{12}[0-9A-Za-z]{14}$/);
     expect(session.__getMetadata()?.opencodeUserMessageIdMapV1?.byLocalId?.['local-1']).toBe(firstCall.messageId);
@@ -224,6 +260,242 @@ describe('createOpenCodeServerRuntime', () => {
     });
 
     await expect(promptPromise).resolves.toBeUndefined();
+  });
+
+  it('appends CHANGE_TITLE_INSTRUCTION to the first prompt only', async () => {
+    const client = createFakeClient();
+    const session = createFakeSession();
+    const runtime = createOpenCodeServerRuntime({
+      directory: '/tmp',
+      session,
+      messageBuffer: new MessageBuffer(),
+      mcpServers: {},
+      permissionHandler: { handleToolCall: vi.fn(async () => ({ decision: 'approved' })) } as any,
+      onThinkingChange: vi.fn(),
+    }, {
+      createClient: async () => client as any,
+    });
+
+    await runtime.startOrLoad({});
+
+    runtime.beginTurn();
+    const firstPromptPromise = (runtime as any).sendPromptWithMeta({ text: 'hello' });
+    await expect.poll(() => client.sessionPromptAsync.mock.calls.length).toBe(1);
+    const firstCall = (client.sessionPromptAsync as any).mock.calls[0]?.[0] as any;
+    expect(firstCall).toMatchObject({
+      sessionId: 'ses_1',
+      parts: [{ type: 'text', text: `hello\n\n${OPENCODE_CHANGE_TITLE_INSTRUCTION}` }],
+    });
+
+    client.__emit({
+      directory: '/tmp',
+      payload: { type: 'message.part.updated', properties: { part: { id: 'part_1', type: 'text', sessionID: 'ses_1' } } },
+    });
+    client.__emit({
+      directory: '/tmp',
+      payload: { type: 'message.part.delta', properties: { sessionID: 'ses_1', messageID: 'msg_asst_1', partID: 'part_1', delta: 'ok' } },
+    });
+    client.__emit({
+      directory: '/tmp',
+      payload: { type: 'session.idle', properties: { sessionID: 'ses_1' } },
+    });
+    await expect(firstPromptPromise).resolves.toBeUndefined();
+
+    runtime.beginTurn();
+    const secondPromptPromise = (runtime as any).sendPromptWithMeta({ text: 'again' });
+    await expect.poll(() => client.sessionPromptAsync.mock.calls.length).toBe(2);
+    const secondCall = (client.sessionPromptAsync as any).mock.calls[1]?.[0] as any;
+    expect(secondCall).toMatchObject({
+      sessionId: 'ses_1',
+      parts: [{ type: 'text', text: 'again' }],
+    });
+
+    client.__emit({
+      directory: '/tmp',
+      payload: { type: 'message.part.updated', properties: { part: { id: 'part_2', type: 'text', sessionID: 'ses_1' } } },
+    });
+    client.__emit({
+      directory: '/tmp',
+      payload: { type: 'message.part.delta', properties: { sessionID: 'ses_1', messageID: 'msg_asst_2', partID: 'part_2', delta: 'ok' } },
+    });
+    client.__emit({
+      directory: '/tmp',
+      payload: { type: 'session.idle', properties: { sessionID: 'ses_1' } },
+    });
+    await expect(secondPromptPromise).resolves.toBeUndefined();
+  });
+
+  it('does not transcribe change_title tool parts as tool-call/tool-result messages', async () => {
+    const client = createFakeClient();
+    const session = createFakeSession();
+    const runtime = createOpenCodeServerRuntime({
+      directory: '/tmp',
+      session,
+      messageBuffer: new MessageBuffer(),
+      mcpServers: {},
+      permissionHandler: { handleToolCall: vi.fn(async () => ({ decision: 'approved' })) } as any,
+      onThinkingChange: vi.fn(),
+    }, {
+      createClient: async () => client as any,
+    });
+
+    await runtime.startOrLoad({});
+    (session.sendAgentMessage as any).mockClear();
+
+    client.__emit({
+      directory: '/tmp',
+      payload: {
+        type: 'message.part.updated',
+        properties: {
+          part: {
+            id: 'part_title_1',
+            type: 'tool',
+            sessionID: 'ses_1',
+            messageID: 'msg_tool_1',
+            callID: 'call_title_1',
+            tool: 'happier_change_title',
+            state: {
+              status: 'completed',
+              input: { title: 'My Title' },
+              output: 'ok',
+            },
+          },
+        },
+      },
+    });
+
+    expect(session.sendAgentMessage).not.toHaveBeenCalled();
+  });
+
+  it('omits custom messageID for the first prompt after resume and restores it on later prompts', async () => {
+    const client = createFakeClient();
+    const session = createFakeSession();
+    const runtime = createOpenCodeServerRuntime({
+      directory: '/tmp',
+      session,
+      messageBuffer: new MessageBuffer(),
+      mcpServers: {},
+      permissionHandler: { handleToolCall: vi.fn(async () => ({ decision: 'approved' })) } as any,
+      onThinkingChange: vi.fn(),
+    }, {
+      createClient: async () => client as any,
+    });
+
+    await runtime.startOrLoad({ resumeId: 'ses_remote' });
+
+    runtime.beginTurn();
+    const firstPromptPromise = (runtime as any).sendPromptWithMeta({ text: 'first after resume', localId: 'resume-local-1' });
+    await expect.poll(() => client.sessionPromptAsync.mock.calls.length).toBe(1);
+    const firstCall = (client.sessionPromptAsync as any).mock.calls[0]?.[0] as any;
+    expect(firstCall).toMatchObject({
+      sessionId: 'ses_remote',
+      parts: [{ type: 'text', text: `first after resume\n\n${OPENCODE_CHANGE_TITLE_INSTRUCTION}` }],
+    });
+    expect(firstCall.messageId).toBeUndefined();
+
+    client.__emit({
+      directory: '/tmp',
+      payload: { type: 'message.part.updated', properties: { part: { id: 'part_first', type: 'text', sessionID: 'ses_remote' } } },
+    });
+    client.__emit({
+      directory: '/tmp',
+      payload: { type: 'message.part.delta', properties: { sessionID: 'ses_remote', messageID: 'msg_asst_first', partID: 'part_first', delta: 'ok' } },
+    });
+    client.__emit({
+      directory: '/tmp',
+      payload: { type: 'session.idle', properties: { sessionID: 'ses_remote' } },
+    });
+    await expect(firstPromptPromise).resolves.toBeUndefined();
+
+    runtime.beginTurn();
+    const secondPromptPromise = (runtime as any).sendPromptWithMeta({ text: 'second after resume', localId: 'resume-local-2' });
+    await expect.poll(() => client.sessionPromptAsync.mock.calls.length).toBe(2);
+    const secondCall = (client.sessionPromptAsync as any).mock.calls[1]?.[0] as any;
+    expect(secondCall).toMatchObject({
+      sessionId: 'ses_remote',
+      parts: [{ type: 'text', text: 'second after resume' }],
+    });
+    expect(secondCall.messageId).toMatch(/^msg_[0-9a-f]{12}[0-9A-Za-z]{14}$/);
+
+    client.__emit({
+      directory: '/tmp',
+      payload: { type: 'message.part.updated', properties: { part: { id: 'part_second', type: 'text', sessionID: 'ses_remote' } } },
+    });
+    client.__emit({
+      directory: '/tmp',
+      payload: { type: 'message.part.delta', properties: { sessionID: 'ses_remote', messageID: 'msg_asst_second', partID: 'part_second', delta: 'ok' } },
+    });
+    client.__emit({
+      directory: '/tmp',
+      payload: { type: 'session.idle', properties: { sessionID: 'ses_remote' } },
+    });
+    await expect(secondPromptPromise).resolves.toBeUndefined();
+  });
+
+  it('backfills vendor-assigned user messageID for the first prompt after resume', async () => {
+    const client = createFakeClient() as any;
+    const session = createFakeSession();
+    session.__getMetadata().opencodeSessionId = 'ses_remote';
+
+    let promptSent = false;
+    client.sessionPromptAsync = vi.fn(async () => {
+      promptSent = true;
+    });
+    client.sessionMessagesList = vi.fn(async () => {
+      if (!promptSent) {
+        return [
+          {
+            info: { id: 'msg_existing_1', role: 'assistant', time: { created: 1 } },
+            parts: [{ type: 'text', text: 'existing' }],
+          },
+        ];
+      }
+      return [
+        {
+          info: { id: 'msg_existing_1', role: 'assistant', time: { created: 1 } },
+          parts: [{ type: 'text', text: 'existing' }],
+        },
+        {
+          info: { id: 'msg_vendor_user_1', role: 'user', time: { created: 2 } },
+          parts: [{ type: 'text', text: 'first after resume' }],
+        },
+      ];
+    });
+
+    const runtime = createOpenCodeServerRuntime({
+      directory: '/tmp',
+      session,
+      messageBuffer: new MessageBuffer(),
+      mcpServers: {},
+      permissionHandler: { handleToolCall: vi.fn(async () => ({ decision: 'approved' })) } as any,
+      onThinkingChange: vi.fn(),
+    }, {
+      createClient: async () => client as any,
+    });
+
+    await runtime.startOrLoad({ resumeId: 'ses_remote' });
+
+    runtime.beginTurn();
+    const promptPromise = (runtime as any).sendPromptWithMeta({ text: 'first after resume', localId: 'resume-local-1' });
+    await expect.poll(() => client.sessionPromptAsync.mock.calls.length).toBe(1);
+    const firstCall = (client.sessionPromptAsync as any).mock.calls[0]?.[0] as any;
+    expect(firstCall.messageId).toBeUndefined();
+
+    client.__emit({
+      directory: '/tmp',
+      payload: { type: 'message.part.updated', properties: { part: { id: 'part_first', type: 'text', sessionID: 'ses_remote' } } },
+    });
+    client.__emit({
+      directory: '/tmp',
+      payload: { type: 'message.part.delta', properties: { sessionID: 'ses_remote', messageID: 'msg_asst_first', partID: 'part_first', delta: 'ok' } },
+    });
+    client.__emit({
+      directory: '/tmp',
+      payload: { type: 'session.idle', properties: { sessionID: 'ses_remote' } },
+    });
+    await expect(promptPromise).resolves.toBeUndefined();
+
+    expect(session.__getMetadata()?.opencodeUserMessageIdMapV1?.byLocalId?.['resume-local-1']).toBe('msg_vendor_user_1');
   });
 
   it('does not resolve a turn on a stale idle event that arrived before prompt_async', async () => {

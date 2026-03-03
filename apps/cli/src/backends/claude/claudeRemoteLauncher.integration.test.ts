@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import type { SessionClientPort } from '@/api/session/sessionClientPort';
 import { MessageQueue2 } from '@/agent/runtime/modeMessageQueue';
+import { CHANGE_TITLE_INSTRUCTION } from '@/agent/runtime/changeTitleInstruction';
 import { Session } from './session';
 import type { EnhancedMode } from './loop';
 import { readFile } from 'node:fs/promises';
@@ -587,6 +588,40 @@ describe.sequential('claudeRemoteLauncher', () => {
     const switchHandler = await switchHandlerReady;
 
     expect(await switchHandler({ to: 'remote' })).toBe(false);
+    expect(await switchHandler({ to: 'local' })).toBe(true);
+    await expect(launcherPromise).resolves.toBe('switch');
+  });
+
+  it('appends CHANGE_TITLE_INSTRUCTION to the first queued prompt only', async () => {
+    const { session, switchHandlerReady } = createRemoteHarness({ sessionId: 'sess_0' });
+
+    const firstSeen = createDeferred<any>();
+    const secondSeen = createDeferred<any>();
+
+    mockClaudeRemoteDispatch.mockImplementationOnce(async (opts: unknown) => {
+      const dispatchOpts = opts as any;
+      const first = await dispatchOpts.nextMessage?.();
+      firstSeen.resolve(first);
+      const second = await dispatchOpts.nextMessage?.();
+      secondSeen.resolve(second);
+      await waitForAbort(dispatchOpts.signal);
+    });
+
+    // Push one message at a time so MessageQueue2 doesn't batch both into a single prompt.
+    session.queue.push('hello', { permissionMode: 'default' } satisfies EnhancedMode);
+
+    const { claudeRemoteLauncher } = await import('./claudeRemoteLauncher');
+    const launcherPromise = claudeRemoteLauncher(session);
+
+    const first = await firstSeen.promise;
+    expect(first?.message).toContain(CHANGE_TITLE_INSTRUCTION);
+
+    session.queue.push('again', { permissionMode: 'default' } satisfies EnhancedMode);
+
+    const second = await secondSeen.promise;
+    expect(second?.message).not.toContain(CHANGE_TITLE_INSTRUCTION);
+
+    const switchHandler = await switchHandlerReady;
     expect(await switchHandler({ to: 'local' })).toBe(true);
     await expect(launcherPromise).resolves.toBe('switch');
   });
