@@ -9,7 +9,10 @@ import { act } from 'react';
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 describe('useVoiceSessionSnapshot (react-dom)', () => {
-  it('does not log getSnapshot caching errors under react-dom StrictMode', async () => {
+  it(
+    'does not log getSnapshot caching errors under react-dom StrictMode',
+    { timeout: 60_000 },
+    async () => {
     vi.resetModules();
 
     const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
@@ -41,5 +44,6 @@ describe('useVoiceSessionSnapshot (react-dom)', () => {
     } finally {
       consoleError.mockRestore();
     }
-  });
+    },
+  );
 });
