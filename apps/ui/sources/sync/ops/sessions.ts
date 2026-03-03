@@ -366,7 +366,7 @@ export async function continueSessionWithReplay(options: ContinueSessionWithRepl
 }
 
 export type ForkSessionOptions = Readonly<{
-    machineId: string;
+    machineId?: string | null;
     serverId?: string | null;
     parentSessionId: string;
     forkPoint: SessionForkPoint;
@@ -377,9 +377,19 @@ export type ForkSessionOptions = Readonly<{
 
 export async function forkSession(options: ForkSessionOptions): Promise<SessionForkRpcResult> {
     const serverId = typeof options.serverId === 'string' ? options.serverId.trim() : null;
+    const parentTarget = readMachineTargetForSession(options.parentSessionId);
+    const explicitMachineId = typeof options.machineId === 'string' ? options.machineId.trim() : '';
+    const machineId = parentTarget?.machineId ?? explicitMachineId;
+    if (!machineId) {
+        return {
+            ok: false,
+            errorCode: 'machine_not_found',
+            errorMessage: 'No reachable machine target found for session fork',
+        };
+    }
     try {
         const raw = await machineRpcWithServerScope<unknown, unknown>({
-            machineId: options.machineId,
+            machineId,
             method: RPC_METHODS.SESSION_FORK,
             payload: {
                 v: 1,

@@ -64,7 +64,6 @@ export function createDefaultActionExecutor(opts?: Readonly<{
       const stateAny: any = storage.getState();
       const session = stateAny?.sessions?.[sid] ?? null;
       const machineId = typeof session?.metadata?.machineId === 'string' ? String(session.metadata.machineId).trim() : '';
-      if (!machineId) return { ok: false, errorCode: 'machine_not_found', errorMessage: 'machine_not_found' };
 
       const settings = stateAny?.settings ?? null;
       const replaySummaryRunner =
@@ -74,7 +73,7 @@ export function createDefaultActionExecutor(opts?: Readonly<{
       const replayMaxSeedChars = typeof settings?.sessionReplayMaxSeedChars === 'number' ? settings.sessionReplayMaxSeedChars : undefined;
 
       const result = await forkSessionOp({
-        machineId,
+        ...(machineId ? { machineId } : {}),
         serverId,
         parentSessionId: sid,
         forkPoint: { type: 'latest' },

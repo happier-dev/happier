@@ -1,10 +1,19 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const machineRpcWithServerScopeMock = vi.hoisted(() => vi.fn());
+const readMachineTargetForSessionMock = vi.hoisted(() => vi.fn());
 
 vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', () => ({
     machineRpcWithServerScope: machineRpcWithServerScopeMock,
 }));
+
+vi.mock('./sessionMachineTarget', async () => {
+    const actual = await vi.importActual<typeof import('./sessionMachineTarget')>('./sessionMachineTarget');
+    return {
+        ...actual,
+        readMachineTargetForSession: readMachineTargetForSessionMock,
+    };
+});
 
 vi.mock('../api/session/apiSocket', () => ({
     apiSocket: {
@@ -16,6 +25,8 @@ vi.mock('../api/session/apiSocket', () => ({
 describe('sessions ops server-scoped routing', () => {
     beforeEach(() => {
         machineRpcWithServerScopeMock.mockReset();
+        readMachineTargetForSessionMock.mockReset();
+        readMachineTargetForSessionMock.mockReturnValue(null);
     });
 
     it('routes resume session spawn through server-scoped rpc with requested server id', async () => {
@@ -89,6 +100,26 @@ describe('sessions ops server-scoped routing', () => {
             method: 'session.fork',
             serverId: 'server-b',
             payload: expect.objectContaining({ replaySummaryRunner, replayMaxSeedChars: 55_000 }),
+        }));
+    });
+
+    it('prefers reachable machine target from parent session for forkSession', async () => {
+        machineRpcWithServerScopeMock.mockResolvedValueOnce({ ok: true, childSessionId: 'sess-child' });
+        readMachineTargetForSessionMock.mockReturnValueOnce({ machineId: 'reachable-machine', basePath: '/tmp' });
+        const { forkSession } = await import('./sessions');
+
+        const result = await forkSession({
+            machineId: 'stale-machine',
+            parentSessionId: 'sess-parent',
+            forkPoint: { type: 'latest' },
+            serverId: 'server-b',
+        } as any);
+
+        expect(result).toEqual({ ok: true, childSessionId: 'sess-child' });
+        expect(machineRpcWithServerScopeMock).toHaveBeenCalledWith(expect.objectContaining({
+            machineId: 'reachable-machine',
+            method: 'session.fork',
+            serverId: 'server-b',
         }));
     });
 

@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const forkSessionOpMock = vi.hoisted(() => vi.fn());
 const openSessionForVoiceToolMock = vi.hoisted(() => vi.fn());
@@ -90,6 +90,12 @@ vi.mock('@/sync/domains/state/storage', () => ({
 }));
 
 describe('createDefaultActionExecutor (session.fork)', () => {
+  beforeEach(() => {
+    forkSessionOpMock.mockReset();
+    openSessionForVoiceToolMock.mockReset();
+    storageGetStateMock.mockReset();
+  });
+
   it('passes replaySummaryRunner when session replay strategy is summary_plus_recent and a runner is configured', async () => {
     forkSessionOpMock.mockResolvedValueOnce({ ok: true, childSessionId: 'sess_child' });
     openSessionForVoiceToolMock.mockResolvedValueOnce({});
@@ -138,4 +144,46 @@ describe('createDefaultActionExecutor (session.fork)', () => {
       replayMaxSeedChars: 54_321,
     }));
   }, 60_000);
+
+  it('delegates session fork even when session metadata machineId is missing', async () => {
+    forkSessionOpMock.mockResolvedValueOnce({ ok: true, childSessionId: 'sess_child' });
+    openSessionForVoiceToolMock.mockResolvedValueOnce({});
+
+    storageGetStateMock.mockReturnValue({
+      sessions: {
+        sess_parent: {
+          id: 'sess_parent',
+          seq: 1,
+          createdAt: 1,
+          updatedAt: 1,
+          active: false,
+          activeAt: 0,
+          metadataVersion: 0,
+          agentStateVersion: 0,
+          thinking: false,
+          thinkingAt: 0,
+          presence: 0,
+          metadata: {},
+        },
+      },
+      settings: {},
+    });
+
+    const { createDefaultActionExecutor } = await import('./defaultActionExecutor');
+    const executor = createDefaultActionExecutor();
+
+    const res = await executor.execute(
+      'session.fork' as any,
+      { sessionId: 'sess_parent' },
+      { surface: 'ui_button', placement: 'session_action_menu' } as any,
+    );
+
+    expect(res.ok).toBe(true);
+    const forkArgs = forkSessionOpMock.mock.calls[0]?.[0] as any;
+    expect(forkArgs?.machineId).toBeUndefined();
+    expect(forkArgs).toMatchObject({
+      parentSessionId: 'sess_parent',
+      forkPoint: { type: 'latest' },
+    });
+  });
 });
