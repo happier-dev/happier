@@ -1,0 +1,42 @@
+name: CI — Self-Host E2E
+
+on:
+  workflow_dispatch:
+  schedule:
+    # Nightly (UTC)
+    - cron: "15 3 * * *"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  self_host:
+    if: ${{ github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' }}
+    uses: ./.github/workflows/tests.yml
+    with:
+      run_ui_e2e: false
+      run_ui: false
+      run_server: false
+      run_server_db_contract: false
+      run_cli: false
+      run_stack: false
+      run_typecheck: false
+      run_cli_daemon_e2e: false
+      run_e2e_core: false
+      run_e2e_core_slow: false
+      run_providers: false
+      providers_preset: all
+      providers_tier: smoke
+      run_stress: false
+      run_release_contracts: false
+      run_installers_smoke: false
+      run_binary_smoke: false
+      run_self_host_systemd: true
+      run_self_host_launchd: true
+      run_self_host_schtasks: false
+      run_self_host_daemon: true
+

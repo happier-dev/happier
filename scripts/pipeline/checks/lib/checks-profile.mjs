@@ -14,6 +14,9 @@
  *   runBuildDocs: boolean;
  *   runCliSmokeLinux: boolean;
  *   runReleaseAssetsE2e: boolean;
+ *   runSelfHostSystemd: boolean;
+ *   runSelfHostLaunchd: boolean;
+ *   runSelfHostDaemon: boolean;
  * }} ChecksProfilePlan
  */
 
@@ -76,6 +79,11 @@ export function resolveChecksProfilePlan(input) {
 
   const runReleaseAssetsE2e = isReleaseAssets || (isCustom && has('release_assets_e2e'));
 
+  // Host-mutating self-host E2E suites (explicit opt-in only).
+  const runSelfHostSystemd = isCustom && has('self_host_systemd');
+  const runSelfHostLaunchd = isCustom && has('self_host_launchd');
+  const runSelfHostDaemon = isCustom && has('self_host_daemon');
+
   return {
     runCi,
     runUiE2e: runCi && runUiE2e,
@@ -87,5 +95,8 @@ export function resolveChecksProfilePlan(input) {
     runBuildDocs: runCi && runBuildDocs,
     runCliSmokeLinux: runCi && runCliSmokeLinux,
     runReleaseAssetsE2e: runCi && runReleaseAssetsE2e,
+    runSelfHostSystemd: runCi && runSelfHostSystemd,
+    runSelfHostLaunchd: runCi && runSelfHostLaunchd,
+    runSelfHostDaemon: runCi && runSelfHostDaemon,
   };
 }

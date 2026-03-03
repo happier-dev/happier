@@ -188,6 +188,44 @@ function main() {
       withRelayUpgrade ? '--with-relay-upgrade' : '--no-relay-upgrade',
     ]);
   }
+
+  if (plan.runSelfHostSystemd) {
+    if (!dryRun) {
+      if (process.platform !== 'linux') fail(`self_host_systemd is linux-only (current: ${process.platform})`);
+      if (process.arch !== 'x64') fail(`self_host_systemd requires linux-x64 (current: ${process.platform}-${process.arch})`);
+      if (!commandExists('systemctl')) fail('self_host_systemd requires systemctl');
+      if (!commandExists('bun')) fail('self_host_systemd requires bun (needed to build compiled binaries)');
+      if (typeof process.getuid === 'function' && process.getuid() !== 0 && !commandExists('sudo')) {
+        fail('self_host_systemd requires sudo/root access');
+      }
+    }
+    run({ dryRun }, process.execPath, ['--test', 'apps/stack/scripts/self_host_systemd.real.integration.test.mjs']);
+  }
+
+  if (plan.runSelfHostLaunchd) {
+    if (!dryRun) {
+      if (process.platform !== 'darwin') fail(`self_host_launchd is macOS-only (current: ${process.platform})`);
+      if (!commandExists('launchctl')) fail('self_host_launchd requires launchctl');
+      if (!commandExists('bun')) fail('self_host_launchd requires bun (needed to build compiled binaries)');
+    }
+    run({ dryRun }, process.execPath, ['--test', 'apps/stack/scripts/self_host_launchd.real.integration.test.mjs']);
+  }
+
+  if (plan.runSelfHostDaemon) {
+    if (!dryRun) {
+      if (process.platform !== 'linux' && process.platform !== 'darwin') {
+        fail(`self_host_daemon supports linux and macOS only (current: ${process.platform})`);
+      }
+      if (!commandExists('bun')) fail('self_host_daemon requires bun (needed to build compiled binaries)');
+      if (process.platform === 'linux') {
+        if (!commandExists('systemctl')) fail('self_host_daemon requires systemctl on linux');
+        if (typeof process.getuid === 'function' && process.getuid() !== 0 && !commandExists('sudo')) {
+          fail('self_host_daemon requires sudo/root access on linux');
+        }
+      }
+    }
+    run({ dryRun }, process.execPath, ['--test', 'apps/stack/scripts/self_host_daemon.real.integration.test.mjs']);
+  }
 }
 
 main();
