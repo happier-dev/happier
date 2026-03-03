@@ -432,16 +432,40 @@ test.describe('ui e2e: SCM review scroll + tab state', () => {
     await expect(reviewList.getByTestId(`scm-review-diff-${toTestIdSafeValue(laterPath)}`)).toHaveCount(1, { timeout: 60_000 });
 
     // Collapse a diff and ensure its block disappears without a big scroll jump.
-    const midRow = reviewList.getByTestId(`scm-change-row-${toTestIdSafeValue(midPath)}`);
+    const midRow = reviewList.locator(`[data-testid="scm-change-row-${toTestIdSafeValue(midPath)}"]:visible`);
+    await expect(midRow).toHaveCount(1, { timeout: 60_000 });
     await midRow.scrollIntoViewIfNeeded();
+    const scrollTopBeforeCollapse = await readScrollTopOfNearestScrollableAncestor(page, 'scm-review-list');
     const beforeBox = await midRow.boundingBox();
     await midRow.click();
     await expect(reviewList.getByTestId(`scm-review-diff-${toTestIdSafeValue(midPath)}`)).toHaveCount(0, { timeout: 60_000 });
-    // Allow the scroll-preservation correction (requestAnimationFrame) to settle before measuring.
-    await page.waitForTimeout(120);
-    const afterBox = await midRow.boundingBox();
+    const scrollTopAfterCollapse = await readScrollTopOfNearestScrollableAncestor(page, 'scm-review-list');
+    // ChangedFilesReview preserves scroll position on web, but FlashList can apply post-layout
+    // corrections asynchronously (RAF + virtualization). Poll briefly for the row's viewport
+    // position to settle to avoid flakiness across machines.
+    let afterBox = await midRow.boundingBox();
     if (beforeBox && afterBox) {
-      expect(Math.abs(afterBox.y - beforeBox.y)).toBeLessThanOrEqual(60);
+      const startedAt = Date.now();
+      const maxMs = 1200;
+      while (afterBox && Date.now() - startedAt < maxMs) {
+        const delta = Math.abs(afterBox.y - beforeBox.y);
+        if (delta <= 60) break;
+        await page.waitForTimeout(50);
+        afterBox = await midRow.boundingBox();
+      }
+      expect(
+        afterBox,
+        `midRow boundingBox became null (scrollTopBefore=${scrollTopBeforeCollapse} scrollTopAfter=${scrollTopAfterCollapse})`
+      ).not.toBeNull();
+      if (!afterBox) {
+        throw new Error(
+          `midRow boundingBox became null (scrollTopBefore=${scrollTopBeforeCollapse} scrollTopAfter=${scrollTopAfterCollapse})`
+        );
+      }
+      expect(
+        Math.abs(afterBox.y - beforeBox.y),
+        `scrollTopBefore=${scrollTopBeforeCollapse} scrollTopAfter=${scrollTopAfterCollapse}`
+      ).toBeLessThanOrEqual(60);
     }
 
     // Scroll away and back; the diff should remain collapsed.
