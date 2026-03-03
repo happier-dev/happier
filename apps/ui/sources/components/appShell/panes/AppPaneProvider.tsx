@@ -50,3 +50,7 @@ export function useAppPaneContext(): AppPaneContextValue {
     if (!ctx) throw new Error('useAppPaneContext must be used within <AppPaneProvider>');
     return ctx;
 }
+
+export function useOptionalAppPaneContext(): AppPaneContextValue | null {
+    return useContext(AppPaneContext);
+}

@@ -21,7 +21,7 @@ import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { SidebarNavigator } from '@/components/navigation/shell/SidebarNavigator';
 import sodium from '@/encryption/libsodium.lib';
 import { View, Platform } from 'react-native';
-import { ModalProvider } from '@/modal';
+import { AppPaneModalProvider } from '@/components/appShell/providers/AppPaneModalProvider';
 import { PostHogProvider } from 'posthog-react-native';
 import * as Sentry from '@sentry/react-native';
 import { tracking } from '@/track/tracking';
@@ -35,7 +35,6 @@ import { FaviconPermissionIndicator } from '@/components/web/FaviconPermissionIn
 import { CommandPaletteProvider } from '@/components/CommandPalette/CommandPaletteProvider';
 import { StatusBarProvider } from '@/components/ui/layout/StatusBarProvider';
 import { DesktopUpdateBanner } from '@/components/ui/feedback/DesktopUpdateBanner';
-import { AppPaneProvider } from '@/components/appShell/panes/AppPaneProvider';
 // import * as SystemUI from 'expo-system-ui';
 import { monkeyPatchConsoleForRemoteLoggingForFasterAiAutoDebuggingOnlyInLocalBuilds } from '@/utils/system/remoteLogger';
 import { installBugReportConsoleCapture } from '@/utils/system/bugReportLogBuffer';
@@ -740,20 +739,18 @@ function AppBoot(props: {
                     <AuthProvider initialCredentials={initState.credentials}>
                         <ThemeProvider value={props.navigationTheme}>
                             <StatusBarProvider />
-                            <ModalProvider>
+                            <AppPaneModalProvider>
                                 <CommandPaletteProvider>
                                     <RealtimeProvider>
-                                        <AppPaneProvider>
-                                            <HorizontalSafeAreaWrapper>
-                                                <DesktopUpdateBanner />
-                                                <View style={{ flex: 1 }}>
-                                                    <SidebarNavigator />
-                                                </View>
-                                            </HorizontalSafeAreaWrapper>
-                                        </AppPaneProvider>
+                                        <HorizontalSafeAreaWrapper>
+                                            <DesktopUpdateBanner />
+                                            <View style={{ flex: 1 }}>
+                                                <SidebarNavigator />
+                                            </View>
+                                        </HorizontalSafeAreaWrapper>
                                     </RealtimeProvider>
                                 </CommandPaletteProvider>
-                            </ModalProvider>
+                            </AppPaneModalProvider>
                         </ThemeProvider>
                     </AuthProvider>
                 </GestureHandlerRootView>
