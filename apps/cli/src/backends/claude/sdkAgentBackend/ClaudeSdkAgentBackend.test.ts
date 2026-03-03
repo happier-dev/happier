@@ -35,11 +35,11 @@ process.stdout.write(JSON.stringify({ type: 'system', subtype: 'init', session_i
 didInit = true;
 
 const rl = readline.createInterface({ input: process.stdin });
-  rl.on('line', (line) => {
-    const trimmed = String(line || '').trim();
-    if (!trimmed) return;
-    let msg;
-    try { msg = JSON.parse(trimmed); } catch { return; }
+	rl.on('line', (line) => {
+	    const trimmed = String(line || '').trim();
+	    if (!trimmed) return;
+	    let msg;
+	    try { msg = JSON.parse(trimmed); } catch { return; }
     if (msg && msg.type === 'control_request' && msg.request && msg.request.subtype === 'interrupt') {
       // Acknowledge the interrupt so the query wrapper unblocks, then emit a non-success result
       // to signal turn cancellation (mirrors real Claude Code behavior closely enough for tests).
@@ -48,12 +48,19 @@ const rl = readline.createInterface({ input: process.stdin });
         process.stdout.write(JSON.stringify({ type: 'result', subtype: 'error', result: 'INTERRUPTED', num_turns: turn, total_cost_usd: 0, usage: undefined, duration_ms: 1, duration_api_ms: 1, is_error: true, session_id: sessionId }) + '\\n');
       }
       return;
-    }
-    if (!msg || msg.type !== 'user') return;
-    turn += 1;
-    if (toolName && turn === 1) {
-      // Request permission for a tool call; the parent will reply with a control_response.
-      const reqId = 'req-1';
+	    }
+	    if (!msg || msg.type !== 'user') return;
+	    turn += 1;
+	    if (logPath) {
+	      fs.appendFileSync(
+	        logPath,
+	        JSON.stringify({ kind: 'user', turn, content: msg.message && msg.message.content }) + '\\n',
+	        'utf8',
+	      );
+	    }
+	    if (toolName && turn === 1) {
+	      // Request permission for a tool call; the parent will reply with a control_response.
+	      const reqId = 'req-1';
     process.stdout.write(JSON.stringify({ type: 'control_request', request_id: reqId, request: { subtype: 'can_use_tool', tool_name: toolName, input: {} } }) + '\\n');
     const onControl = (line2) => {
       const t2 = String(line2 || '').trim();
@@ -99,6 +106,7 @@ type BackendRunContext = {
     onMessage: (handler: (msg: unknown) => void) => void;
     startSession: () => Promise<{ sessionId: string }>;
     sendPrompt: (sessionId: string, prompt: string) => Promise<void>;
+    sendSteerPrompt: (sessionId: string, prompt: string) => Promise<void>;
     cancel: (sessionId: string) => Promise<void>;
     dispose: () => Promise<void>;
   };
@@ -494,6 +502,38 @@ describe('ClaudeSdkAgentBackend', () => {
 
         expect(settled.startsWith('rejected:')).toBe(true);
         expect(seen.join(' ')).toContain('FAKE_ASSIST_2');
+      },
+    );
+  });
+
+  it('sendSteerPrompt does not surface an interrupt-style error when a turn is in-flight', async () => {
+    delete process.env.DEBUG;
+
+    await withFakeClaudeBackend(
+      {
+        dirPrefix: 'happier-claude-sdk-steer-',
+        permissionPolicy: 'no_tools',
+        hangTurn: true,
+      },
+      async ({ backend }) => {
+        const { sessionId } = await backend.startSession();
+        await backend.sendPrompt(sessionId, 'this will hang');
+        expect(typeof (backend as any).waitForResponseComplete).toBe('function');
+
+        const pending = (backend as any).waitForResponseComplete().then(
+          () => 'resolved',
+          (error: unknown) => `rejected:${error instanceof Error ? error.message : String(error)}`,
+        );
+
+        await new Promise((resolve) => setTimeout(resolve, 30));
+        await backend.sendSteerPrompt(sessionId, 'steer message');
+
+        const settled = await Promise.race([
+          pending,
+          new Promise<string>((resolve) => setTimeout(() => resolve('timeout'), 250)),
+        ]);
+
+        expect(settled.startsWith('rejected:')).toBe(false);
       },
     );
   });

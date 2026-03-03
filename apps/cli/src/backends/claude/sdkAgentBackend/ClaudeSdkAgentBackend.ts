@@ -213,6 +213,27 @@ export class ClaudeSdkAgentBackend implements AgentBackend {
     }
   }
 
+  async sendSteerPrompt(sessionId: SessionId, prompt: string): Promise<void> {
+    if (!this.acceptedSessionIds.has(sessionId)) {
+      throw new Error(`Unknown sessionId: ${sessionId}`);
+    }
+    if (this.disposed) throw new Error('Backend disposed');
+    if (!this.started) {
+      await this.startSession();
+    }
+
+    // If there's no active turn, treat steer as a normal prompt.
+    if (!this.pendingTurn) {
+      await this.sendPrompt(sessionId, prompt);
+      return;
+    }
+
+    this.promptStream.push({
+      type: 'user',
+      message: { role: 'user', content: prompt },
+    });
+  }
+
   async cancel(sessionId: SessionId): Promise<void> {
     if (!this.acceptedSessionIds.has(sessionId)) {
       throw new Error(`Unknown sessionId: ${sessionId}`);
