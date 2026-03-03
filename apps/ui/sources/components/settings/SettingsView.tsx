@@ -24,6 +24,7 @@ import { disconnectVendorToken } from '@/sync/api/account/apiVendorTokens';
 import { getDisplayName, getAvatarUrl, getBio } from '@/sync/domains/profiles/profile';
 import { Avatar } from '@/components/ui/avatar/Avatar';
 import { t } from '@/text';
+import { canRequestReview, requestReview } from '@/utils/system/requestReview';
 import { DEFAULT_AGENT_ID, getAgentCore, getAgentIconSource, getAgentIconTintColor, resolveAgentIdFromConnectedServiceId } from '@/agents/catalog/catalog';
 import { resolveSupportUsAction } from '@/components/settings/supportUsBehavior';
 import { recordBugReportUserAction } from '@/utils/system/bugReportActionTrail';
@@ -56,6 +57,7 @@ export const SettingsView = React.memo(function SettingsView() {
     const sourceControlEnabled = useFeatureEnabled('scm.writeOperations');
     const attachmentsUploadsEnabled = useFeatureEnabled('attachments.uploads');
     const showChangelog = getFeatureBuildPolicyDecision('app.ui.changelog' as const satisfies FeatureId) !== 'deny';
+    const [showRateUs, setShowRateUs] = React.useState(false);
     const useProfiles = useSetting('useProfiles');
     const terminalUseTmux = useSetting('sessionUseTmux');
     const automationsSupport = useAutomationsSupport();
@@ -110,6 +112,28 @@ export const SettingsView = React.memo(function SettingsView() {
             fireAndForget(sync.refreshMachinesThrottled({ staleMs: 30_000 }), { tag: 'SettingsView.refreshMachinesThrottled' });
         }, [])
     );
+
+    React.useEffect(() => {
+        let cancelled = false;
+
+        const refreshRateUsAvailability = async () => {
+            let available = false;
+            try {
+                available = await canRequestReview();
+            } catch {
+                available = false;
+            }
+            if (!cancelled) {
+                setShowRateUs(available);
+            }
+        };
+
+        void refreshRateUsAvailability();
+
+        return () => {
+            cancelled = true;
+        };
+    }, []);
 
     const machinesTitle = React.useMemo(() => {
         const headerTextStyle = [
@@ -532,10 +556,20 @@ export const SettingsView = React.memo(function SettingsView() {
                         }}
                     />
                 ) : null}
+                {showRateUs ? (
+                    <Item
+                        title={t('settings.rateUs')}
+                        subtitle={t('settings.rateUsSubtitle')}
+                        icon={<Ionicons name="star-outline" size={29} color={theme.colors.accent.orange} />}
+                        onPress={() => {
+                            void requestReview();
+                        }}
+                    />
+                ) : null}
                 <Item
                     title={t('settings.github')}
                     icon={<Ionicons name="logo-github" size={29} color={theme.colors.text} />}
-                    detail="happier-dev/happier"
+                    subtitle="happier-dev/happier"
                     onPress={handleGitHub}
                 />
                 <Item

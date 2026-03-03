@@ -7,6 +7,14 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 const routerPushSpy = vi.fn();
 const linkingCanOpenURLSpy = vi.fn(async () => false);
 const linkingOpenURLSpy = vi.fn(async () => {});
+const requestReviewSpy = vi.fn();
+const canRequestReviewSpy = vi.fn(async () => true);
+
+async function flushMicrotasks(iterations: number = 5): Promise<void> {
+    for (let i = 0; i < iterations; i += 1) {
+        await Promise.resolve();
+    }
+}
 
 vi.mock('react-native', () => ({
     View: 'View',
@@ -184,10 +192,18 @@ vi.mock('@/sync/domains/server/serverProfiles', () => ({
     listServerProfiles: () => [],
 }));
 
+vi.mock('@/utils/system/requestReview', () => ({
+    requestReview: requestReviewSpy,
+    canRequestReview: canRequestReviewSpy,
+}));
+
 afterEach(() => {
     routerPushSpy.mockClear();
     linkingCanOpenURLSpy.mockClear();
     linkingOpenURLSpy.mockClear();
+    requestReviewSpy.mockClear();
+    canRequestReviewSpy.mockReset();
+    canRequestReviewSpy.mockResolvedValue(true);
 });
 
 describe('SettingsView', () => {
@@ -307,5 +323,61 @@ describe('SettingsView', () => {
             if (previousUrl === undefined) delete process.env.EXPO_PUBLIC_HAPPIER_REPORT_ISSUE_URL;
             else process.env.EXPO_PUBLIC_HAPPIER_REPORT_ISSUE_URL = previousUrl;
         }
+    });
+
+    it('renders the GitHub repository as subtitle, not right-side detail', async () => {
+        const { SettingsView } = await import('./SettingsView');
+
+        let tree!: ReactTestRenderer;
+        await act(async () => {
+            tree = renderer.create(React.createElement(SettingsView));
+        });
+
+        const items = tree.root.findAllByType('Item' as any);
+        const githubItem = items.find((item: any) => item?.props?.title === 'settings.github');
+        expect(githubItem).toBeTruthy();
+        expect(githubItem?.props?.subtitle).toBe('happier-dev/happier');
+        expect(githubItem?.props?.detail).toBeUndefined();
+    });
+
+    it('shows Rate us right below What’s New and triggers store review only when pressed', async () => {
+        canRequestReviewSpy.mockResolvedValue(true);
+        const { SettingsView } = await import('./SettingsView');
+
+        let tree!: ReactTestRenderer;
+        await act(async () => {
+            tree = renderer.create(React.createElement(SettingsView));
+            await flushMicrotasks();
+        });
+
+        const items = tree.root.findAllByType('Item' as any);
+        const whatsNewIndex = items.findIndex((item: any) => item?.props?.title === 'settings.whatsNew');
+        const rateUsIndex = items.findIndex((item: any) => item?.props?.title === 'settings.rateUs');
+        const rateUsItem = items.find((item: any) => item?.props?.title === 'settings.rateUs');
+        expect(rateUsItem).toBeTruthy();
+        expect(whatsNewIndex).toBeGreaterThanOrEqual(0);
+        expect(rateUsIndex).toBe(whatsNewIndex + 1);
+        expect(requestReviewSpy).not.toHaveBeenCalled();
+
+        await act(async () => {
+            await rateUsItem!.props.onPress();
+        });
+
+        expect(requestReviewSpy).toHaveBeenCalledTimes(1);
+    });
+
+    it('hides Rate us when store-review action is unavailable', async () => {
+        canRequestReviewSpy.mockResolvedValue(false);
+        const { SettingsView } = await import('./SettingsView');
+
+        let tree!: ReactTestRenderer;
+        await act(async () => {
+            tree = renderer.create(React.createElement(SettingsView));
+            await flushMicrotasks();
+        });
+
+        const items = tree.root.findAllByType('Item' as any);
+        const rateUsItem = items.find((item: any) => item?.props?.title === 'settings.rateUs');
+        expect(rateUsItem).toBeUndefined();
     });
 });
