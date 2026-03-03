@@ -100,7 +100,7 @@ function RenderHeaderBlock(props: { level: 1 | 2 | 3 | 4 | 5 | 6, spans: Markdow
 function RenderListBlock(props: { items: MarkdownSpan[][], first: boolean, last: boolean, selectable: boolean, textStyle?: StyleProp<TextStyle>, variant: 'default' | 'thinking' }) {
     const listStyle = [style.text, style.list, props.textStyle];
     return (
-        <View style={{ flexDirection: 'column', marginBottom: 8, gap: 1 }}>
+        <View style={{ flexDirection: 'column', marginBottom: 14, gap: 2 }}>
             {props.items.map((item, index) => (
                 <Text selectable={props.selectable} style={listStyle} key={index}>
                     -{' '}
@@ -122,7 +122,7 @@ function RenderListBlock(props: { items: MarkdownSpan[][], first: boolean, last:
 function RenderNumberedListBlock(props: { items: { number: number, spans: MarkdownSpan[] }[], first: boolean, last: boolean, selectable: boolean, textStyle?: StyleProp<TextStyle>, variant: 'default' | 'thinking' }) {
     const listStyle = [style.text, style.list, props.textStyle];
     return (
-        <View style={{ flexDirection: 'column', marginBottom: 8, gap: 1 }}>
+        <View style={{ flexDirection: 'column', marginBottom: 14, gap: 2 }}>
             {props.items.map((item, index) => (
                 <Text selectable={props.selectable} style={listStyle} key={index}>
                     {item.number.toString()}.{' '}
@@ -377,10 +377,10 @@ const style = StyleSheet.create((theme) => ({
     //
 
     first: {
-        // marginTop: 0
+        marginTop: 0
     },
     last: {
-        // marginBottom: 0
+        marginBottom: 0
     },
 
     //
