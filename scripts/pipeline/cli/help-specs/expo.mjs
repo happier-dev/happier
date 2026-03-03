@@ -29,6 +29,9 @@ export const COMMAND_HELP_EXPO = {
       '--eas-cli-version <ver>            Optional; pins EAS CLI.',
       '--dump-view <bool>                 Optional; debug EAS build view.',
       '--release-message <text>           Optional; passed to APK release publish.',
+      '--ui-version-bump <patch|minor|major> Optional; bump apps/ui marketing version before builds.',
+      '--ui-version <x.y.z>               Optional; set apps/ui marketing version before builds.',
+      '--allow-dirty <true|false>         (default: false). Only affects version bump flags.',
       '--dry-run',
       '--secrets-source <auto|env|keychain>',
       '--keychain-service <name>           (default: happier/pipeline).',
@@ -162,4 +165,3 @@ export const COMMAND_HELP_EXPO = {
     ],
   },
 };
-

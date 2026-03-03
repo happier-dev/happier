@@ -42,7 +42,7 @@ test('pipeline CLI can orchestrate UI mobile native preview-apk release in dry-r
 
   assert.match(out, /\[pipeline\] ui-mobile release: environment=preview action=native/);
   assert.match(out, /scripts\/pipeline\/expo\/native-build\.mjs/);
+  assert.match(out, /--dump-view"?\s+"?true\b/);
   assert.match(out, /scripts\/pipeline\/expo\/download-android-apk\.mjs/);
   assert.match(out, /scripts\/pipeline\/expo\/publish-apk-release\.mjs/);
 });
-

@@ -2,7 +2,7 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawn } from 'node:child_process';
 import { parseArgs } from 'node:util';
 
 import { stageRepoForDagger } from './stage-repo-for-dagger.mjs';
@@ -149,6 +149,87 @@ function run(opts, cmd, args, extra) {
     stdio: extra?.stdio ?? 'inherit',
     // Android local builds (especially inside Dagger) can exceed an hour on real projects.
     timeout: extra?.timeoutMs ?? 4 * 60 * 60_000,
+  });
+}
+
+/**
+ * @param {{ dryRun: boolean }} opts
+ * @param {string} cmd
+ * @param {string[]} args
+ * @param {{ cwd?: string; env?: Record<string, string>; timeoutMs?: number; heartbeatLabel?: string }} [extra]
+ * @returns {Promise<string>}
+ */
+function runCaptureWithHeartbeat(opts, cmd, args, extra) {
+  const cwd = extra?.cwd ? path.resolve(extra.cwd) : process.cwd();
+  const printable = `${cmd} ${args.map((a) => (a.includes(' ') ? JSON.stringify(a) : a)).join(' ')}`;
+  if (opts.dryRun) {
+    console.log(`[dry-run] (cwd: ${cwd}) ${printable}`);
+    return Promise.resolve('');
+  }
+
+  const env = { ...process.env, ...(extra?.env ?? {}) };
+  const timeoutMs = extra?.timeoutMs ?? 4 * 60 * 60_000;
+  const rawHeartbeatMs = Number.parseInt(String(process.env.HAPPIER_PIPELINE_HEARTBEAT_MS ?? ''), 10);
+  const heartbeatMs = Number.isFinite(rawHeartbeatMs) && rawHeartbeatMs > 0 ? rawHeartbeatMs : 20_000;
+  const heartbeatLabel = String(extra?.heartbeatLabel ?? `${cmd} process`);
+
+  return new Promise((resolve, reject) => {
+    const child = spawn(cmd, args, { cwd, env, stdio: ['ignore', 'pipe', 'pipe'] });
+    const startedAt = Date.now();
+    let lastOutputAt = Date.now();
+    let stdout = '';
+    let stderr = '';
+
+    const timeoutId = setTimeout(() => {
+      child.kill('SIGTERM');
+      reject(new Error(`Command timed out after ${timeoutMs}ms: ${printable}`));
+    }, timeoutMs);
+
+    const heartbeatId = setInterval(() => {
+      const elapsedSeconds = Math.floor((Date.now() - startedAt) / 1000);
+      const idleSeconds = Math.floor((Date.now() - lastOutputAt) / 1000);
+      console.log(`[pipeline] waiting on ${heartbeatLabel} (${elapsedSeconds}s elapsed, ${idleSeconds}s since last output)`);
+    }, heartbeatMs);
+
+    child.stdout.on('data', (chunk) => {
+      const text = String(chunk);
+      stdout += text;
+      lastOutputAt = Date.now();
+      process.stdout.write(text);
+    });
+
+    child.stderr.on('data', (chunk) => {
+      const text = String(chunk);
+      stderr += text;
+      lastOutputAt = Date.now();
+      process.stderr.write(text);
+    });
+
+    child.on('error', (error) => {
+      clearTimeout(timeoutId);
+      clearInterval(heartbeatId);
+      reject(error);
+    });
+
+    child.on('close', (code, signal) => {
+      clearTimeout(timeoutId);
+      clearInterval(heartbeatId);
+      if (code === 0) {
+        resolve(stdout);
+        return;
+      }
+
+      const commandError = new Error(
+        signal
+          ? `Command failed with signal ${signal}: ${printable}`
+          : `Command failed with exit code ${code}: ${printable}`,
+      );
+      // @ts-expect-error - attaching debug fields to improve failure diagnosis.
+      commandError.stdout = stdout;
+      // @ts-expect-error - attaching debug fields to improve failure diagnosis.
+      commandError.stderr = stderr;
+      reject(commandError);
+    });
   });
 }
 
@@ -415,11 +496,16 @@ async function main() {
     return;
   }
 
-  const easJson = run(
-    opts,
-    'npx',
-    ['--yes', `eas-cli@${easCliVersion}`, 'build', '--platform', platform, '--profile', profile, '--non-interactive', '--json'],
-    { cwd: uiDir, stdio: 'pipe' },
+  console.log(
+    '[pipeline] expo native build (cloud): waiting for EAS to schedule builds (output is quiet until build IDs are returned; this can take several minutes on large uploads).',
+  );
+  const easJson = (
+    await runCaptureWithHeartbeat(
+      opts,
+      'npx',
+      ['--yes', `eas-cli@${easCliVersion}`, 'build', '--platform', platform, '--profile', profile, '--non-interactive', '--json'],
+      { cwd: uiDir, heartbeatLabel: 'Expo cloud build scheduling' },
+    )
   ).trim();
 
   if (!dryRun) {

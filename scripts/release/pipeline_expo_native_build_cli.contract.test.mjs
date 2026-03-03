@@ -37,4 +37,5 @@ test('pipeline CLI can run Expo native build in dry-run', async () => {
 
   assert.match(out, /scripts\/pipeline\/expo\/native-build\.mjs/);
   assert.match(out, /\[pipeline\] expo native build: mode=cloud platform=android profile=preview-apk/);
+  assert.match(out, /\[pipeline\] expo native build \(cloud\): waiting for EAS to schedule builds/);
 });

@@ -614,6 +614,22 @@ function runExpoPublishApkRelease({ repoRoot, env, args, dryRun }) {
 /**
  * @param {{ repoRoot: string; env: Record<string, string>; args: string[]; dryRun: boolean }} opts
  */
+function runExpoBumpUiVersion({ repoRoot, env, args, dryRun }) {
+  const scriptPath = path.join(repoRoot, 'scripts', 'pipeline', 'expo', 'bump-ui-version.mjs');
+  const fullArgs = [scriptPath, ...args];
+  if (dryRun) {
+    console.log(`[pipeline] exec: node ${fullArgs.map((a) => JSON.stringify(a)).join(' ')}`);
+  }
+  execFileSync(process.execPath, fullArgs, {
+    cwd: repoRoot,
+    env,
+    stdio: 'inherit',
+  });
+}
+
+/**
+ * @param {{ repoRoot: string; env: Record<string, string>; args: string[]; dryRun: boolean }} opts
+ */
 function runTauriPreparePublishAssets({ repoRoot, env, args, dryRun }) {
   const scriptPath = path.join(repoRoot, 'scripts', 'pipeline', 'tauri', 'prepare-publish-assets.mjs');
   const fullArgs = [scriptPath, ...args];
@@ -2269,22 +2285,25 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
     return;
   }
 
-    if (subcommand === 'ui-mobile-release') {
-      const { values } = parseArgs({
-        args: rest,
-        options: {
-          environment: { type: 'string' },
-          action: { type: 'string' },
-          platform: { type: 'string' },
-          profile: { type: 'string', default: '' },
-          'publish-apk-release': { type: 'string', default: 'auto' },
-          'native-build-mode': { type: 'string', default: 'cloud' },
-          'native-local-runtime': { type: 'string', default: 'host' },
-          'build-json': { type: 'string', default: '/tmp/eas_build.json' },
-          'out-dir': { type: 'string', default: 'dist/ui-mobile' },
-          'eas-cli-version': { type: 'string', default: '' },
-          'dump-view': { type: 'string', default: '' },
-          'release-message': { type: 'string', default: '' },
+  if (subcommand === 'ui-mobile-release') {
+    const { values } = parseArgs({
+      args: rest,
+      options: {
+        environment: { type: 'string' },
+        action: { type: 'string' },
+        platform: { type: 'string' },
+        profile: { type: 'string', default: '' },
+        'publish-apk-release': { type: 'string', default: 'auto' },
+        'native-build-mode': { type: 'string', default: 'cloud' },
+        'native-local-runtime': { type: 'string', default: 'host' },
+        'build-json': { type: 'string', default: '/tmp/eas_build.json' },
+        'out-dir': { type: 'string', default: 'dist/ui-mobile' },
+        'eas-cli-version': { type: 'string', default: '' },
+        'dump-view': { type: 'string', default: 'true' },
+        'release-message': { type: 'string', default: '' },
+        'ui-version-bump': { type: 'string', default: '' },
+        'ui-version': { type: 'string', default: '' },
+        'allow-dirty': { type: 'string', default: 'false' },
         'dry-run': { type: 'boolean', default: false },
         'secrets-source': { type: 'string', default: 'auto' },
         'keychain-service': { type: 'string', default: 'happier/pipeline' },
@@ -2310,43 +2329,73 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
       fail(`--platform must be 'ios', 'android', or 'all' (got: ${platform})`);
     }
 
-      const profile = String(values.profile ?? '').trim();
-      if ((action === 'native' || action === 'native_submit') && !profile) {
-        fail('--profile is required for native actions');
+    const profile = String(values.profile ?? '').trim();
+    if ((action === 'native' || action === 'native_submit') && !profile) {
+      fail('--profile is required for native actions');
+    }
+    if (action === 'native' || action === 'native_submit') {
+      const expectedPrefix = environment === 'production' ? 'production' : 'preview';
+      if (!profile.startsWith(expectedPrefix)) {
+        fail(`--profile must start with '${expectedPrefix}' for --environment '${environment}' (got: ${profile || '<empty>'}).`);
       }
-      if (action === 'native' || action === 'native_submit') {
-        const expectedPrefix = environment === 'production' ? 'production' : 'preview';
-        if (!profile.startsWith(expectedPrefix)) {
-          fail(
-            `--profile must start with '${expectedPrefix}' for --environment '${environment}' (got: ${profile || '<empty>'}).`,
-          );
-        }
-      }
-      const publishApkReleaseMode = String(values['publish-apk-release'] ?? '').trim().toLowerCase() || 'auto';
-      if (publishApkReleaseMode !== 'auto' && publishApkReleaseMode !== 'true' && publishApkReleaseMode !== 'false') {
-        fail(`--publish-apk-release must be 'auto', 'true', or 'false' (got: ${values['publish-apk-release']})`);
-      }
+    }
 
-      const buildJson = String(values['build-json'] ?? '').trim() || '/tmp/eas_build.json';
-      const outDir = String(values['out-dir'] ?? '').trim() || 'dist/ui-mobile';
-      const easCliVersion = String(values['eas-cli-version'] ?? '').trim();
-      const dumpView = String(values['dump-view'] ?? '').trim();
-      const releaseMessage = String(values['release-message'] ?? '').trim();
-      const nativeBuildModeRaw = String(values['native-build-mode'] ?? '').trim().toLowerCase() || 'cloud';
-      if (nativeBuildModeRaw !== 'cloud' && nativeBuildModeRaw !== 'local') {
-        fail(`--native-build-mode must be 'cloud' or 'local' (got: ${nativeBuildModeRaw})`);
-      }
-      /** @type {'cloud' | 'local'} */
-      const nativeBuildMode = nativeBuildModeRaw;
-      const nativeLocalRuntimeRaw = String(values['native-local-runtime'] ?? '').trim().toLowerCase() || 'host';
-      if (nativeLocalRuntimeRaw !== 'host' && nativeLocalRuntimeRaw !== 'dagger') {
-        fail(`--native-local-runtime must be 'host' or 'dagger' (got: ${nativeLocalRuntimeRaw})`);
-      }
-      /** @type {'host' | 'dagger'} */
-      const nativeLocalRuntime = nativeLocalRuntimeRaw;
-      const dryRun = values['dry-run'] === true;
+    const publishApkReleaseMode = String(values['publish-apk-release'] ?? '').trim().toLowerCase() || 'auto';
+    if (publishApkReleaseMode !== 'auto' && publishApkReleaseMode !== 'true' && publishApkReleaseMode !== 'false') {
+      fail(`--publish-apk-release must be 'auto', 'true', or 'false' (got: ${values['publish-apk-release']})`);
+    }
 
-      const { env, sources } = loadPipelineEnv({ repoRoot, deployEnvironment: environment });
+    const buildJson = String(values['build-json'] ?? '').trim() || '/tmp/eas_build.json';
+    const outDir = String(values['out-dir'] ?? '').trim() || 'dist/ui-mobile';
+    const easCliVersion = String(values['eas-cli-version'] ?? '').trim();
+    const dumpView = String(values['dump-view'] ?? '').trim();
+    const releaseMessage = String(values['release-message'] ?? '').trim();
+
+    const uiVersionBump = String(values['ui-version-bump'] ?? '').trim().toLowerCase();
+    const uiVersion = String(values['ui-version'] ?? '').trim();
+    const allowDirty = parseBoolString(values['allow-dirty'], '--allow-dirty');
+
+    if (uiVersionBump && uiVersion) {
+      fail('Pass only one of --ui-version or --ui-version-bump (not both).');
+    }
+    if (uiVersionBump && uiVersionBump !== 'patch' && uiVersionBump !== 'minor' && uiVersionBump !== 'major') {
+      fail(`--ui-version-bump must be 'patch', 'minor', or 'major' (got: ${values['ui-version-bump']})`);
+    }
+    if ((uiVersionBump || uiVersion) && environment !== 'production') {
+      fail('--ui-version / --ui-version-bump is supported only for --environment production.');
+    }
+
+    const nativeBuildModeRaw = String(values['native-build-mode'] ?? '').trim().toLowerCase() || 'cloud';
+    if (nativeBuildModeRaw !== 'cloud' && nativeBuildModeRaw !== 'local') {
+      fail(`--native-build-mode must be 'cloud' or 'local' (got: ${nativeBuildModeRaw})`);
+    }
+    /** @type {'cloud' | 'local'} */
+    const nativeBuildMode = nativeBuildModeRaw;
+    const nativeLocalRuntimeRaw = String(values['native-local-runtime'] ?? '').trim().toLowerCase() || 'host';
+    if (nativeLocalRuntimeRaw !== 'host' && nativeLocalRuntimeRaw !== 'dagger') {
+      fail(`--native-local-runtime must be 'host' or 'dagger' (got: ${nativeLocalRuntimeRaw})`);
+    }
+    /** @type {'host' | 'dagger'} */
+    const nativeLocalRuntime = nativeLocalRuntimeRaw;
+    const dryRun = values['dry-run'] === true;
+
+    const { env, sources } = loadPipelineEnv({ repoRoot, deployEnvironment: environment });
+
+    if (uiVersionBump || uiVersion) {
+      if (!dryRun) assertCleanWorktree({ cwd: repoRoot, allowDirty });
+      runExpoBumpUiVersion({
+        repoRoot,
+        env,
+        dryRun,
+        args: [
+          ...(uiVersionBump ? ['--bump', uiVersionBump] : []),
+          ...(uiVersion ? ['--version', uiVersion] : []),
+          '--package-json',
+          'apps/ui/package.json',
+          ...(dryRun ? ['--dry-run'] : []),
+        ],
+      });
+    }
     const secretsSourceRaw = String(values['secrets-source'] ?? '').trim();
     const secretsSource =
       secretsSourceRaw === 'auto' || secretsSourceRaw === 'env' || secretsSourceRaw === 'keychain'
