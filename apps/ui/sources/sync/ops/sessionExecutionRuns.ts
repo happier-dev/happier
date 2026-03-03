@@ -105,11 +105,15 @@ export async function sessionExecutionRunSend(
 ): Promise<SessionExecutionRunSendResult> {
     try {
         const serverId = opts?.serverId ?? resolveServerIdForSessionIdFromLocalCache(sessionId);
+        const payload: ExecutionRunSendRequest =
+            request.delivery === undefined
+                ? { ...request, delivery: 'steer_if_supported' }
+                : request;
         const response = await sessionRpcWithServerScope<ExecutionRunSendResponse, ExecutionRunSendRequest>({
             sessionId,
             serverId,
             method: SESSION_RPC_METHODS.EXECUTION_RUN_SEND,
-            payload: request,
+            payload,
         });
         const okFalse = readOkFalseErrorShape(response);
         if (okFalse) return okFalse;

@@ -94,7 +94,7 @@ describe('sessionExecutionRuns', () => {
         expect(sessionRpcMock).toHaveBeenCalledWith(
             'session-1',
             SESSION_RPC_METHODS.EXECUTION_RUN_SEND,
-            { runId: 'run_1', message: 'hello' },
+            { runId: 'run_1', message: 'hello', delivery: 'steer_if_supported' },
         );
         expect(response.ok).toBe(true);
     });
