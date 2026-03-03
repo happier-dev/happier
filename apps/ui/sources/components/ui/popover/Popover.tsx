@@ -314,10 +314,20 @@ export function Popover(props: PopoverWithBackdrop | PopoverWithoutBackdrop) {
                         ? availableLeft
                         : effectiveBoundaryRect.width - gap * 2;
 
+            const nextMaxHeight = Math.max(0, Math.min(maxHeightCap, Math.floor(maxHeightAvailable)));
+            const nextMaxWidth = Math.max(0, Math.min(maxWidthCap, Math.floor(maxWidthAvailable)));
+            // Treat "no available space" as an invalid transient measurement. On native (especially Android),
+            // early measurements can occasionally report temporary boundary/anchor geometry that would yield
+            // maxHeight/maxWidth = 0, which makes popovers appear collapsed. Retrying a couple frames later
+            // avoids getting stuck at 0-height.
+            if (nextMaxHeight < 1 || nextMaxWidth < 1) {
+                return false;
+            }
+
             setComputed({
                 placement: resolvedPlacement,
-                maxHeight: Math.max(0, Math.min(maxHeightCap, Math.floor(maxHeightAvailable))),
-                maxWidth: Math.max(0, Math.min(maxWidthCap, Math.floor(maxWidthAvailable))),
+                maxHeight: nextMaxHeight,
+                maxWidth: nextMaxWidth,
             });
             setAnchorRectState(anchorRect);
             setBoundaryRectState(effectiveBoundaryRect);
@@ -337,12 +347,6 @@ export function Popover(props: PopoverWithBackdrop | PopoverWithoutBackdrop) {
             }
             setTimeout(cb, 0);
         };
-
-        const shouldRetry = Platform.OS === 'web' || shouldPortalNative;
-        if (!shouldRetry) {
-            void measureOnce();
-            return;
-        }
 
         // On web and native portal overlays, layout can "settle" a frame later (especially when opening).
         // If the initial measurement returns invalid values, retry a couple times so we don't get stuck
