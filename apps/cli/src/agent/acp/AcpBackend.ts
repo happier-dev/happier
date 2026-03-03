@@ -86,6 +86,32 @@ function makeAbortError(message: string): Error {
   return err;
 }
 
+const DEFAULT_POST_PROMPT_NO_UPDATES_TIMEOUT_MS = 30_000;
+
+function readPositiveIntEnv(name: string): number | null {
+  const raw = typeof process.env[name] === 'string' ? process.env[name]!.trim() : '';
+  if (!raw) return null;
+  const n = Number(raw);
+  if (!Number.isFinite(n)) return null;
+  if (!Number.isInteger(n)) return null;
+  if (n <= 0) return null;
+  return n;
+}
+
+function resolvePostPromptNoUpdatesTimeoutMs(transport: TransportHandler): number {
+  const transportValue = transport.getPostPromptNoUpdatesTimeoutMs?.();
+  if (typeof transportValue === 'number' && Number.isFinite(transportValue) && transportValue > 0) {
+    return Math.trunc(transportValue);
+  }
+
+  const envValue =
+    readPositiveIntEnv('HAPPIER_ACP_POST_PROMPT_NO_UPDATES_TIMEOUT_MS') ??
+    readPositiveIntEnv('HAPPY_ACP_POST_PROMPT_NO_UPDATES_TIMEOUT_MS');
+  if (envValue != null) return envValue;
+
+  return DEFAULT_POST_PROMPT_NO_UPDATES_TIMEOUT_MS;
+}
+
 /**
  * Retry configuration for ACP operations
  */
@@ -1431,6 +1457,14 @@ export class AcpBackend implements AgentBackend {
       return;
     }
 
+    if (this.waitingForResponse) {
+      this.sawSessionUpdateSincePrompt = true;
+      if (this.postPromptCompletionIdleTimeout) {
+        clearTimeout(this.postPromptCompletionIdleTimeout);
+        this.postPromptCompletionIdleTimeout = null;
+      }
+    }
+
     const isGeminiAcpDebugEnabled = (() => {
       const flag = process.env.HAPPIER_STACK_GEMINI_ACP_DEBUG;
       return flag === '1' || flag === 'true';
@@ -1876,6 +1910,7 @@ export class AcpBackend implements AgentBackend {
   private waitingForResponse = false;
   private responseCompletionError: Error | null = null;
   private postPromptCompletionIdleTimeout: NodeJS.Timeout | null = null;
+  private sawSessionUpdateSincePrompt = false;
 
   private failPendingResponseWait(error: Error): void {
     // Multiple sources can surface the same underlying failure (stderr parsing, transport errors, process exit).
@@ -1919,6 +1954,11 @@ export class AcpBackend implements AgentBackend {
     this.emit({ type: 'status', status: 'running' });
     this.waitingForResponse = true;
     this.responseCompletionError = null;
+    this.sawSessionUpdateSincePrompt = false;
+    if (this.postPromptCompletionIdleTimeout) {
+      clearTimeout(this.postPromptCompletionIdleTimeout);
+      this.postPromptCompletionIdleTimeout = null;
+    }
 
     try {
       // Never log prompt contents (can include secrets).
@@ -1986,23 +2026,22 @@ export class AcpBackend implements AgentBackend {
       // events (no message chunks, no tool calls). In that case, we must still unblock
       // `waitForResponseComplete()` so callers don't degrade into a generic timeout.
       //
-      // Guard: only emit when we are still waiting (i.e. no idle was already observed) and
-      // there are no active tool calls left to wait on.
-      if (this.waitingForResponse && this.activeToolCalls.size === 0) {
+      // Guard: only emit when we are still waiting (i.e. no idle was already observed), there are
+      // no active tool calls, and we have *not yet observed any session/update traffic* for this prompt.
+      if (this.waitingForResponse && this.activeToolCalls.size === 0 && this.sawSessionUpdateSincePrompt === false) {
         // Don't resolve immediately: give stderr/process-exit handlers a chance to surface errors
         // before we declare the turn complete (prevents swallowing "exit non-zero" or auth errors).
-        const transportIdleTimeoutMs = this.transport.getIdleTimeout?.() ?? DEFAULT_IDLE_TIMEOUT_MS;
+        const noUpdatesTimeoutMs = resolvePostPromptNoUpdatesTimeoutMs(this.transport);
         // NOTE: When an ACP agent crashes/exits shortly after responding to session/prompt, the
         // subprocess exit can race with our "no updates" idle fallback. Use a small minimum grace
         // to reduce flakes and avoid incorrectly treating a failed turn as complete.
-        const graceMs = Math.max(100, transportIdleTimeoutMs);
-        if (this.postPromptCompletionIdleTimeout) {
-          clearTimeout(this.postPromptCompletionIdleTimeout);
-        }
+        const graceMs = Math.max(100, noUpdatesTimeoutMs);
+
         this.postPromptCompletionIdleTimeout = setTimeout(() => {
           this.postPromptCompletionIdleTimeout = null;
           if (this.responseCompletionError) return;
           if (!this.waitingForResponse) return;
+          if (this.sawSessionUpdateSincePrompt) return;
           if (this.activeToolCalls.size > 0) return;
           // If the subprocess has already exited (but the exit handler hasn't run yet),
           // prefer surfacing the exit as a response completion error instead of declaring
@@ -2238,6 +2277,10 @@ export class AcpBackend implements AgentBackend {
    * Helper to emit idle status and resolve any waiting promises
    */
   private emitIdleStatus(): void {
+    if (this.postPromptCompletionIdleTimeout) {
+      clearTimeout(this.postPromptCompletionIdleTimeout);
+      this.postPromptCompletionIdleTimeout = null;
+    }
     this.emit({ type: 'status', status: 'idle' });
     // Avoid races where the idle signal arrives before `waitForResponseComplete()` starts waiting.
     // In that case, `idleResolver` is still null, so we must also clear `waitingForResponse` here.

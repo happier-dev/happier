@@ -13,6 +13,7 @@ function writeFakeAcpAgentScript(params: {
   stderrAfterPromptText?: string;
   stdoutAfterPromptText?: string;
   emitMessageChunkAfterPrompt?: boolean;
+  messageChunkDelayMs?: number;
   selfTerminateSignalAfterPrompt?: NodeJS.Signals;
 }): string {
   const scriptPath = join(params.dir, 'fake-acp-agent.mjs');
@@ -21,6 +22,7 @@ function writeFakeAcpAgentScript(params: {
   const stderrAfterPromptText = params.stderrAfterPromptText ? JSON.stringify(params.stderrAfterPromptText) : 'null';
   const stdoutAfterPromptText = params.stdoutAfterPromptText ? JSON.stringify(params.stdoutAfterPromptText) : 'null';
   const emitMessageChunkAfterPrompt = params.emitMessageChunkAfterPrompt ?? true;
+  const messageChunkDelayMs = Number.isFinite(params.messageChunkDelayMs) ? params.messageChunkDelayMs : 0;
   const selfTerminateSignalAfterPrompt =
     typeof params.selfTerminateSignalAfterPrompt === 'string' ? params.selfTerminateSignalAfterPrompt : null;
   const src = `
@@ -83,17 +85,19 @@ function writeFakeAcpAgentScript(params: {
           } else {
             if (${emitMessageChunkAfterPrompt ? 'true' : 'false'}) {
               // Emit a single message chunk. The backend should follow with an idle status shortly after.
-              send({
-                jsonrpc: '2.0',
-                method: 'session/update',
-                params: {
-                  sessionId: 'test-session',
-                  update: {
-                    sessionUpdate: 'agent_message_chunk',
-                    content: { type: 'text', text: 'hello' },
+              setTimeout(() => {
+                send({
+                  jsonrpc: '2.0',
+                  method: 'session/update',
+                  params: {
+                    sessionId: 'test-session',
+                    update: {
+                      sessionUpdate: 'agent_message_chunk',
+                      content: { type: 'text', text: 'hello' },
+                    },
                   },
-                },
-              });
+                });
+              }, ${messageChunkDelayMs});
             }
           }
           continue;
@@ -231,6 +235,7 @@ describe('AcpBackend.waitForResponseComplete', () => {
           getInitTimeout: () => 5_000,
           getToolPatterns: () => [] as ToolPattern[],
           getIdleTimeout: () => 1,
+          getPostPromptNoUpdatesTimeoutMs: () => 1,
         } satisfies TransportHandler,
       });
       backendForCleanup = backend;
@@ -239,6 +244,56 @@ describe('AcpBackend.waitForResponseComplete', () => {
       await backend.sendPrompt(started.sessionId, 'hi');
 
       await expect(backend.waitForResponseComplete(250)).resolves.toBeUndefined();
+    } finally {
+      await backendForCleanup?.dispose().catch(() => {});
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }, 20_000);
+
+  it('does not resolve before the first session/update arrives (delayed first chunk)', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'happier-acp-delayed-first-chunk-'));
+    const scriptPath = writeFakeAcpAgentScript({
+      dir,
+      emitMessageChunkAfterPrompt: true,
+      messageChunkDelayMs: 200,
+    });
+    let backendForCleanup: AcpBackend | undefined;
+
+    try {
+      const backend = new AcpBackend({
+        agentName: 'test',
+        cwd: dir,
+        command: process.execPath,
+        args: [scriptPath],
+        transportHandler: {
+          agentName: 'test',
+          getInitTimeout: () => 5_000,
+          getToolPatterns: () => [] as ToolPattern[],
+          // Minimal idle timeout after the chunk so the test finishes quickly.
+          getIdleTimeout: () => 1,
+          // The "no updates" fallback must not fire before the first update arrives.
+          getPostPromptNoUpdatesTimeoutMs: () => 500,
+        } satisfies TransportHandler,
+      });
+      backendForCleanup = backend;
+
+      const firstChunkSeen = new Promise<void>((resolve) => {
+        backend.onMessage((msg) => {
+          if (msg.type !== 'model-output') return;
+          resolve();
+        });
+      });
+
+      const started = await backend.startSession();
+      await backend.sendPrompt(started.sessionId, 'hi');
+
+      const first = await Promise.race([
+        backend.waitForResponseComplete(5_000).then(() => 'wait' as const),
+        firstChunkSeen.then(() => 'chunk' as const),
+      ]);
+
+      expect(first).toBe('chunk');
+      await expect(backend.waitForResponseComplete(5_000)).resolves.toBeUndefined();
     } finally {
       await backendForCleanup?.dispose().catch(() => {});
       rmSync(dir, { recursive: true, force: true });

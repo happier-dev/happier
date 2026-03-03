@@ -185,4 +185,16 @@ export interface TransportHandler {
    * @returns Timeout in milliseconds (default: 500)
    */
   getIdleTimeout?(): number;
+
+  /**
+   * Get the maximum time to wait for the *first* session/update after a prompt.
+   *
+   * ACP agents commonly ACK `session/prompt` immediately while the model is still working.
+   * The real "turn boundary" is inferred from subsequent session/update traffic (chunks/tool calls)
+   * and idle detection after the last update.
+   *
+   * This timeout is a conservative fallback to avoid hanging forever on providers that ACK prompts
+   * but never emit any `session/update` events for a turn.
+   */
+  getPostPromptNoUpdatesTimeoutMs?(): number;
 }
