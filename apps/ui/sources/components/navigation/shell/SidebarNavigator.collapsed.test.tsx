@@ -255,6 +255,23 @@ describe('SidebarNavigator (collapsed sidebar)', () => {
     expect(collapseButton.findByType('SidebarExpandIcon' as any)).toBeDefined();
   });
 
+  it('keeps the desktop collapse button inside the sidebar hit area', async () => {
+    const { SidebarNavigator } = await import('./SidebarNavigator');
+    let tree!: renderer.ReactTestRenderer;
+
+    await act(async () => {
+      tree = renderer.create(<SidebarNavigator />);
+    });
+
+    const collapseButton = tree.root.findByProps({ testID: 'sidebar-collapse-button' });
+    const right = Number((collapseButton.props.style ?? {}).right);
+    const top = Number((collapseButton.props.style ?? {}).top);
+    expect(Number.isFinite(right)).toBe(true);
+    expect(right).toBeGreaterThanOrEqual(0);
+    expect(Number.isFinite(top)).toBe(true);
+    expect(top).toBeGreaterThanOrEqual(48);
+  });
+
   it('does not render collapse button on mobile', async () => {
     platformOS = 'ios';
     const { SidebarNavigator } = await import('./SidebarNavigator');
