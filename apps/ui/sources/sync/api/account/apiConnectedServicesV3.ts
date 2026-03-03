@@ -72,11 +72,15 @@ export async function deleteConnectedServiceCredentialV3(
         method: 'DELETE',
         headers: {
           Authorization: `Bearer ${credentials.token}`,
-          'Content-Type': 'application/json',
         },
       },
       { includeAuth: false },
     );
+
+    // Disconnect should be idempotent: if the credential is already gone, treat it as disconnected.
+    if (response.status === 404) {
+      return;
+    }
 
     if (!response.ok) {
       if (response.status >= 400 && response.status < 500 && response.status !== 408 && response.status !== 429) {

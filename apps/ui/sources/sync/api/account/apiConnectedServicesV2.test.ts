@@ -90,24 +90,25 @@ describe('apiConnectedServicesV2', () => {
     expect((init.headers as Headers).get('Authorization')).toBe('Bearer t');
   });
 
-  it('throws HappyError when disconnect receives 404 not found', async () => {
+  it('treats 404 not found as a successful disconnect (idempotent)', async () => {
     mockServerConfig();
-    vi.stubGlobal(
-      'fetch',
-      vi.fn(async () => ({
-        ok: false,
-        status: 404,
-        json: async () => ({ error: 'connect_credential_not_found' }),
-      })) as unknown as typeof fetch,
-    );
+    const fetchMock = vi.fn(async (_input: unknown, init?: RequestInit) => ({
+      ok: false,
+      status: 404,
+      json: async () => ({ error: 'connect_credential_not_found' }),
+    }));
+    vi.stubGlobal('fetch', fetchMock as unknown as typeof fetch);
 
     const { deleteConnectedServiceCredential } = await import('./apiConnectedServicesV2');
-    await expect(deleteConnectedServiceCredential(credentials, { serviceId: 'anthropic', profileId: 'work' })).rejects.toMatchObject({
-      name: 'HappyError',
-      message: 'connect_credential_not_found',
-      status: 404,
-      canTryAgain: false,
-    } satisfies Partial<HappyError>);
+    await expect(deleteConnectedServiceCredential(credentials, { serviceId: 'anthropic', profileId: 'work' })).resolves.toBeUndefined();
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      'https://api.example.test/v2/connect/anthropic/profiles/work/credential',
+      expect.objectContaining({ method: 'DELETE', headers: expect.any(Headers) }),
+    );
+    const init = fetchMock.mock.calls[0]?.[1];
+    if (!init) throw new Error('Expected fetch init');
+    expect((init.headers as Headers).get('Content-Type')).toBeNull();
   });
 
   it('posts OAuth exchange params to the proxy endpoint and returns bundle', async () => {
