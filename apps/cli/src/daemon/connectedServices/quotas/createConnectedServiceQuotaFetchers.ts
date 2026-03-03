@@ -18,7 +18,7 @@ function parseNonEmptyStringEnv(raw: string | undefined): string | undefined {
 }
 
 export function createConnectedServiceQuotaFetchers(env: NodeJS.ProcessEnv): Array<ConnectedServiceQuotaFetcher> {
-  const staleAfterMs = parsePositiveIntEnv(env.HAPPIER_CONNECTED_SERVICES_QUOTAS_STALE_AFTER_MS, 5 * 60_000, {
+  const staleAfterMs = parsePositiveIntEnv(env.HAPPIER_CONNECTED_SERVICES_QUOTAS_STALE_AFTER_MS, 30 * 60_000, {
     min: 5_000,
     max: 24 * 60 * 60_000,
   });

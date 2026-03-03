@@ -23,7 +23,7 @@ const CLIENT_ID = '9d1c250a-e61b-44d9-88ed-5944d1962f5e';
 const AUTHORIZE_URL = 'https://claude.ai/oauth/authorize';
 const TOKEN_URL = 'https://console.anthropic.com/v1/oauth/token';
 const REDIRECT_URI = 'https://platform.claude.com/oauth/code/callback';
-const SCOPE = 'user:inference';
+const SCOPE = 'user:inference user:profile';
 
 function generateState(): string {
   return randomBytes(32).toString('hex');

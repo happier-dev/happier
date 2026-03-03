@@ -15,7 +15,9 @@ describe('authenticateClaudeSubscriptionOauth', () => {
 
     expect(openBrowserSpy).toHaveBeenCalledTimes(1);
     const url = String(openBrowserSpy.mock.calls[0]?.[0] ?? '');
-    expect(url).toContain(`redirect_uri=${encodeURIComponent('https://platform.claude.com/oauth/code/callback')}`);
+    const parsed = new URL(url);
+    expect(parsed.searchParams.get('redirect_uri')).toBe('https://platform.claude.com/oauth/code/callback');
+    expect(parsed.searchParams.get('scope')).toBe('user:inference user:profile');
 
     stdoutSpy.mockRestore();
   });

@@ -287,7 +287,7 @@ export class ConnectedServiceQuotasCoordinator {
           })();
 
           const failureState = this.failureStateByBindingKey.get(bindingKey);
-          if (!forcedRefresh && failureState && now < failureState.nextAllowedAt) {
+          if (failureState && now < failureState.nextAllowedAt) {
             continue;
           }
 

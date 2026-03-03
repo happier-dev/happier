@@ -44,7 +44,7 @@ export function resolveConnectedServiceQuotasDaemonOptions(env: NodeJS.ProcessEn
   const discoveryEnabled = parseBoolean(env.HAPPIER_CONNECTED_SERVICES_QUOTAS_DISCOVERY_ENABLED);
   const discoveryIntervalParsed = parsePositiveInt(env.HAPPIER_CONNECTED_SERVICES_QUOTAS_DISCOVERY_INTERVAL_MS);
   const discoveryIntervalMs =
-    discoveryIntervalParsed === null ? 60_000 : Math.max(5_000, Math.min(30 * 60_000, Math.trunc(discoveryIntervalParsed)));
+    discoveryIntervalParsed === null ? 15 * 60_000 : Math.max(5_000, Math.min(30 * 60_000, Math.trunc(discoveryIntervalParsed)));
 
   const failureMinParsed = parsePositiveInt(env.HAPPIER_CONNECTED_SERVICES_QUOTAS_FAILURE_BACKOFF_MIN_MS);
   const failureBackoffMinMs = failureMinParsed === null ? 30_000 : Math.max(1_000, Math.min(30 * 60_000, Math.trunc(failureMinParsed)));
