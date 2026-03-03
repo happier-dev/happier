@@ -24,7 +24,12 @@ function toSessionDataKeyCacheKey(serverId: string, sessionId: string, token: st
   return `${serverId}::${sessionId}::${getOrCreateTokenCacheKey(token)}`;
 }
 
-const sessionDataKeyCache = new Map<string, Uint8Array | null>();
+export type ScopedSessionCryptoContext =
+  | Readonly<{ encryptionMode: 'plain'; sessionDataKey: null }>
+  | Readonly<{ encryptionMode: 'e2ee'; sessionDataKey: Uint8Array }>
+  | Readonly<{ encryptionMode: 'unknown'; sessionDataKey: null }>;
+
+const sessionCryptoContextCache = new Map<string, ScopedSessionCryptoContext>();
 const tokenCacheKeyByToken = new Map<string, string>();
 
 function readMaxSessionKeyCacheEntriesFromEnv(): number {
@@ -35,33 +40,33 @@ function readMaxSessionKeyCacheEntriesFromEnv(): number {
   return Math.max(1, Math.min(10_000, parsed));
 }
 
-function getSessionDataKeyFromCache(cacheKey: string): Uint8Array | null | undefined {
-  const existing = sessionDataKeyCache.get(cacheKey);
+function getSessionCryptoContextFromCache(cacheKey: string): ScopedSessionCryptoContext | undefined {
+  const existing = sessionCryptoContextCache.get(cacheKey);
   if (existing === undefined) return undefined;
   // Refresh LRU ordering.
-  sessionDataKeyCache.delete(cacheKey);
-  sessionDataKeyCache.set(cacheKey, existing);
+  sessionCryptoContextCache.delete(cacheKey);
+  sessionCryptoContextCache.set(cacheKey, existing);
   return existing;
 }
 
-function setSessionDataKeyCache(cacheKey: string, value: Uint8Array | null): void {
-  sessionDataKeyCache.set(cacheKey, value);
+function setSessionCryptoContextCache(cacheKey: string, value: ScopedSessionCryptoContext): void {
+  sessionCryptoContextCache.set(cacheKey, value);
 
   const max = readMaxSessionKeyCacheEntriesFromEnv();
-  while (sessionDataKeyCache.size > max) {
-    const oldest = sessionDataKeyCache.keys().next();
+  while (sessionCryptoContextCache.size > max) {
+    const oldest = sessionCryptoContextCache.keys().next();
     if (oldest.done) break;
-    sessionDataKeyCache.delete(oldest.value);
+    sessionCryptoContextCache.delete(oldest.value);
   }
 }
 
-async function fetchSessionDataKey(params: Readonly<{
+async function fetchSessionCryptoContext(params: Readonly<{
   serverUrl: string;
   token: string;
   sessionId: string;
   decryptEncryptionKey: (value: string) => Promise<Uint8Array | null>;
   timeoutMs: number;
-}>): Promise<Uint8Array | null> {
+}>): Promise<ScopedSessionCryptoContext> {
   const controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
   const timeoutId = controller ? setTimeout(() => controller.abort(), Math.max(1, params.timeoutMs)) : null;
 
@@ -74,23 +79,62 @@ async function fetchSessionDataKey(params: Readonly<{
       },
       ...(controller ? { signal: controller.signal } : {}),
     });
-    if (!response.ok) return null;
+    if (!response.ok) return { encryptionMode: 'unknown', sessionDataKey: null };
 
     const body = (await response.json()) as unknown;
     const parsed = V2SessionByIdResponseSchema.safeParse(body);
-    if (!parsed.success) return null;
+    if (!parsed.success) return { encryptionMode: 'unknown', sessionDataKey: null };
     const session: V2SessionByIdResponse['session'] = parsed.data.session;
-    if (!session) return null;
-    if (normalizeId(session.id) !== params.sessionId) return null;
-    const dek = typeof session.dataEncryptionKey === 'string' ? session.dataEncryptionKey : null;
-    if (!dek) return null;
+    if (!session) return { encryptionMode: 'unknown', sessionDataKey: null };
+    if (normalizeId(session.id) !== params.sessionId) return { encryptionMode: 'unknown', sessionDataKey: null };
 
-    return await params.decryptEncryptionKey(dek);
+    if (session.encryptionMode === 'plain') {
+      return { encryptionMode: 'plain', sessionDataKey: null };
+    }
+
+    const dek = typeof session.dataEncryptionKey === 'string' ? session.dataEncryptionKey : null;
+    if (!dek) return { encryptionMode: 'unknown', sessionDataKey: null };
+
+    const sessionDataKey = await params.decryptEncryptionKey(dek);
+    if (!sessionDataKey) return { encryptionMode: 'unknown', sessionDataKey: null };
+    return { encryptionMode: 'e2ee', sessionDataKey };
   } catch {
-    return null;
+    return { encryptionMode: 'unknown', sessionDataKey: null };
   } finally {
     if (timeoutId) clearTimeout(timeoutId);
   }
+}
+
+export async function resolveScopedSessionCryptoContext(params: Readonly<{
+  serverId: string;
+  serverUrl: string;
+  token: string;
+  sessionId: string;
+  decryptEncryptionKey: (value: string) => Promise<Uint8Array | null>;
+  timeoutMs?: number;
+}>): Promise<ScopedSessionCryptoContext> {
+  const sessionId = normalizeId(params.sessionId);
+  const serverId = normalizeId(params.serverId);
+  const token = String(params.token ?? '');
+  const timeoutMs = typeof params.timeoutMs === 'number' && params.timeoutMs > 0 ? params.timeoutMs : 30_000;
+  const keyCacheKey = toSessionDataKeyCacheKey(serverId, sessionId, token);
+
+  let context = getSessionCryptoContextFromCache(keyCacheKey);
+  if (context === undefined) {
+    context = await fetchSessionCryptoContext({
+      serverUrl: params.serverUrl,
+      token,
+      sessionId,
+      decryptEncryptionKey: params.decryptEncryptionKey,
+      timeoutMs,
+    });
+    // Cache only stable outcomes; transient fetch failures should be retried.
+    if (context.encryptionMode !== 'unknown') {
+      setSessionCryptoContextCache(keyCacheKey, context);
+    }
+  }
+
+  return context;
 }
 
 export async function resolveScopedSessionDataKey(params: Readonly<{
@@ -101,28 +145,11 @@ export async function resolveScopedSessionDataKey(params: Readonly<{
   decryptEncryptionKey: (value: string) => Promise<Uint8Array | null>;
   timeoutMs?: number;
 }>): Promise<Uint8Array | null> {
-  const sessionId = normalizeId(params.sessionId);
-  const serverId = normalizeId(params.serverId);
-  const token = String(params.token ?? '');
-  const timeoutMs = typeof params.timeoutMs === 'number' && params.timeoutMs > 0 ? params.timeoutMs : 30_000;
-  const keyCacheKey = toSessionDataKeyCacheKey(serverId, sessionId, token);
-
-  let sessionDataKey = getSessionDataKeyFromCache(keyCacheKey);
-  if (sessionDataKey === undefined) {
-    sessionDataKey = await fetchSessionDataKey({
-      serverUrl: params.serverUrl,
-      token,
-      sessionId,
-      decryptEncryptionKey: params.decryptEncryptionKey,
-      timeoutMs,
-    });
-    setSessionDataKeyCache(keyCacheKey, sessionDataKey ?? null);
-  }
-
-  return sessionDataKey ?? null;
+  const context = await resolveScopedSessionCryptoContext(params);
+  return context.encryptionMode === 'e2ee' ? context.sessionDataKey : null;
 }
 
 export function resetScopedSessionDataKeyCacheForTests(): void {
-  sessionDataKeyCache.clear();
+  sessionCryptoContextCache.clear();
   tokenCacheKeyByToken.clear();
 }
