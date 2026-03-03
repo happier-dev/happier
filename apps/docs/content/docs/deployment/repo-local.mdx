@@ -5,6 +5,8 @@ description: Use yarn commands from the Happier monorepo root to run a stackless
 
 If you cloned the Happier monorepo, you can run most day-to-day workflows directly from the repo root using `yarn` scripts.
 
+Note: the GitHub repo default branch is `dev` and may be unstable. If you want a more stable base when running from source, check out `preview`.
+
 This mode is **repo-local** (stackless): it creates an isolated per-checkout stack under `~/.happier/stacks/<repo-stack>/...` and does **not** require you to pick a stack name.
 
 ## Prerequisites
@@ -29,6 +31,48 @@ With mobile (starts the dev stack with `--mobile` so the Expo dev-client QR flow
 
 ```bash
 yarn tui:with-mobile
+```
+
+## Command Model (How Repo-Local Works)
+
+All repo-root runtime scripts use this wrapper shape:
+
+```text
+node ./apps/stack/scripts/repo_local.mjs <hstack-subcommand> [args...]
+```
+
+The wrapper does a few important things automatically:
+
+- Forces execution from this monorepo checkout (no re-exec to a global install).
+- Uses an isolated per-checkout stack name (`repo-<repo>-<id>`).
+- Sets a stack-scoped env file and CLI home under `~/.happier/stacks/<repo-stack>/...`.
+- Uses stackless stable port ranges by default:
+  - server range base `52005`
+  - expo range base `18081`
+- Auto-installs dependencies when needed before most runtime commands.
+
+Wrapper defaults/convenience rewrites:
+
+- `yarn tui` becomes `hstack tui dev` (when no extra args are passed).
+- `yarn stop` becomes `hstack stack stop <repo-stack>`.
+- `yarn mobile:install` becomes `hstack stack mobile:install <repo-stack> --name="Happier (Local)"` unless you pass your own `--name`.
+
+## Passing Arguments And Getting Help
+
+Use Yarn v1 arg forwarding with `--`:
+
+```bash
+yarn logs -- --component=daemon --lines 200 --no-follow
+yarn auth login -- --method=mobile --no-open
+yarn service:enable -- --auth-now -- --method=web --webapp=hosted
+```
+
+Show help:
+
+```bash
+yarn <script> -- --help
+yarn service -- --help
+yarn remote -- --help
 ```
 
 ## Run The Happier CLI From Anywhere (Use This Repo Checkout)
@@ -184,13 +228,119 @@ yarn mobile
 yarn mobile-dev-client
 ```
 
-## Full Command List (Repo Root)
+## Command Reference (Repo-Local Runtime Scripts)
 
-The monorepo root `package.json` exposes these entrypoints (all repo-local):
+This section documents runtime commands exposed at monorepo root. It intentionally excludes test/build/release maintainer scripts.
 
-- `yarn dev`, `yarn start`, `yarn stop`, `yarn build`, `yarn tui`
-- `yarn logs`, `yarn env`, `yarn auth`, `yarn daemon`
-- `yarn service` (and `yarn service:*` convenience scripts)
-- `yarn tailscale` (and `yarn tailscale:*` convenience scripts)
-- `yarn mobile`, `yarn mobile:install`, `yarn mobile-dev-client`
-- `yarn providers`, `yarn eas`, `yarn happier`, `yarn setup`, `yarn remote`, `yarn self-host`, `yarn menubar`
+### Core Lifecycle
+
+| Yarn script | Underlying command | Purpose | Common args |
+| --- | --- | --- | --- |
+| `yarn dev` | `hstack dev` | Start local stack in dev mode (server + ui + daemon orchestration). | `--restart`, `--mobile`, `--no-ui` |
+| `yarn tui` | `hstack tui dev` (default) | Run dev stack in split-pane TUI (or pass explicit `hstack` args). | `--restart`, `--mobile`, `--no-browser` |
+| `yarn tui:with-mobile` | `hstack tui dev --mobile` | TUI + mobile dev-client ready flow. | add extra TUI flags after `--` |
+| `yarn build` | `hstack build` | Build/export UI assets for prod-like start/service. | `--tauri`, `--no-ui`, `--json` |
+| `yarn start` | `hstack start` | Start prod-like local stack. | `--restart`, `--mobile`, `--no-ui` |
+| `yarn stop` | `hstack stack stop <repo-stack>` | Stop this repo-local stack without manually passing stack name. | stack stop flags after `--` |
+
+### Auth, Daemon, CLI Entry
+
+| Yarn script | Underlying command | Purpose | Common args |
+| --- | --- | --- | --- |
+| `yarn auth` | `hstack auth ...` | Login/status/dev-key auth helpers for this repo-local stack. | `status`, `login`, `seed`, `--method=mobile|web`, `--no-open` |
+| `yarn daemon` | `hstack daemon ...` | Manage daemon process (`start`, `stop`, `restart`, `status`) in stack scope. | `status`, `restart`, `--identity=<name>`, `--json` |
+| `yarn happier` | `hstack happier ...` | Run Happier CLI against this repo-local stack context. | provider/CLI args passthrough |
+| `yarn cli:activate` | `hstack init --cli-root-dir=<this-repo>/apps/stack --no-runtime --no-bootstrap` | Point global `hstack`/`happier` shims to this clone. | `--home-dir=...` |
+| `yarn cli:activate:path` | same as above + `--install-path` | Same as `cli:activate` and also update shell PATH. | none (forwards extra args) |
+
+### Logs
+
+| Yarn script | Underlying command | Purpose | Common args |
+| --- | --- | --- | --- |
+| `yarn logs` | `hstack logs --follow` | Follow auto-selected log stream(s). | `--component=<name>`, `--lines N`, `--no-follow` |
+| `yarn logs:all` | `hstack logs --follow --component=all` | Follow all component logs (runner preferred when available). | `--lines N` |
+| `yarn logs:server` | `hstack logs --follow --component=server` | Server logs only. | `--lines N`, `--no-follow` |
+| `yarn logs:expo` | `hstack logs --follow --component=expo` | Expo/Metro logs only. | `--lines N`, `--no-follow` |
+| `yarn logs:ui` | `hstack logs --follow --component=ui` | UI gateway logs only. | `--lines N`, `--no-follow` |
+| `yarn logs:daemon` | `hstack logs --follow --component=daemon` | Daemon logs only. | `--lines N`, `--no-follow` |
+| `yarn logs:service` | `hstack logs --follow --component=service` | OS service logs (launchd/systemd output). | `--lines N`, `--no-follow` |
+
+Valid `--component` values: `auto`, `all`, `runner`, `server`, `expo`, `ui`, `daemon`, `service`.
+
+### Environment Variables
+
+| Yarn script | Underlying command | Purpose | Common args |
+| --- | --- | --- | --- |
+| `yarn env list` | `hstack env list` | Print effective persisted env for this repo-local stack. | `--json` |
+| `yarn env set KEY=VALUE` | `hstack env set KEY=VALUE` | Set/update persisted env key(s). | multiple `KEY=VALUE` pairs |
+| `yarn env unset KEY` | `hstack env unset KEY` | Remove persisted env key(s). | multiple keys |
+| `yarn env get KEY` | `hstack env get KEY` | Read one persisted env key. | key name |
+| `yarn env path` | `hstack env path` | Show stack env file path. | `--json` |
+
+### Service (Autostart)
+
+| Yarn script | Underlying command | Purpose | Common args |
+| --- | --- | --- | --- |
+| `yarn service` | `hstack service ...` | Generic service entrypoint. | `install`, `enable`, `status`, `logs`, `tail`, `restart` |
+| `yarn service:install` | `yarn build && hstack service install` | Build UI first, then install service unit/plist. | none (`yarn service install -- ...` for custom flags) |
+| `yarn service:install:user` | `yarn build && hstack service install --mode=user` | Explicit user-mode service install. | none |
+| `yarn service:install:system` | `yarn build && hstack service install --mode=system` | Linux system-mode install. | `yarn service install -- --mode=system --system-user=<name>` |
+| `yarn service:enable` | `hstack service enable` | Enable/start service persistently. | `--auth-now -- --method=...` |
+| `yarn service:disable` | `hstack service disable` | Disable/stop persistent service. | none |
+| `yarn service:status` | `hstack service status` | Show current service status. | `--json` |
+| `yarn service:logs` | `hstack service logs` | Print recent service logs (non-follow). | `--mode=system|user` |
+| `yarn service:tail` | `hstack service tail` | Follow service logs continuously. | none |
+| `yarn service:restart` | `hstack service restart` | Restart managed service. | none |
+| `yarn service:uninstall` | `hstack service uninstall` | Remove service unit/plist. | none |
+
+Service log line count defaults to `120`; override with `HAPPIER_STACK_LOG_LINES=<N>`.
+
+### Tailscale
+
+| Yarn script | Underlying command | Purpose | Common args |
+| --- | --- | --- | --- |
+| `yarn tailscale` | `hstack tailscale ...` | Generic Tailscale Serve command entrypoint. | `status`, `enable`, `disable`, `url` |
+| `yarn tailscale:status` | `hstack tailscale status` | Show current `tailscale serve` status. | none |
+| `yarn tailscale:enable` | `hstack tailscale enable` | Configure `tailscale serve` for repo-local stack URL. | `--json` |
+| `yarn tailscale:disable` | `hstack tailscale disable` | Reset/disable `tailscale serve` config. | none |
+| `yarn tailscale:url` | `hstack tailscale url` | Print resolved HTTPS Serve URL if configured. | none |
+
+### Mobile
+
+| Yarn script | Underlying command | Purpose | Common args |
+| --- | --- | --- | --- |
+| `yarn mobile` | `hstack mobile` | iOS mobile helper against repo-local stack context. | command-specific flags |
+| `yarn mobile:install` | `hstack stack mobile:install <repo-stack> --name=Happier (Local)` | Full install flow for a stack-scoped app build; no stack name needed. | `--name=...`, `--device=...`, `--configuration=...` |
+| `yarn mobile-dev-client` | `hstack mobile-dev-client` | Install/manage shared hstack iOS dev-client app. | `--install`, `--device=...`, `--clean` |
+
+### Advanced Workflows
+
+| Yarn script | Underlying command | Purpose | Common args |
+| --- | --- | --- | --- |
+| `yarn providers` | `hstack providers ...` | List/install provider CLIs. | `list`, `install --providers=...` |
+| `yarn eas` | `hstack eas ...` | EAS build wrapper with stack env context. | `build --platform=ios|android|all --profile=production` |
+| `yarn setup` | `hstack setup ...` | Guided setup profiles (`selfhost`, `dev`, `local-repo`). | `--profile=dev`, `--profile=local-repo`, `--json` |
+| `yarn remote` | `hstack remote ...` | Remote setup helpers for daemon/server via SSH. | `daemon setup --ssh user@host`, `server setup ...` |
+| `yarn self-host` | `hstack self-host ...` | Self-host install/lifecycle management. | `install`, `status`, `update`, `rollback`, `uninstall` |
+| `yarn menubar` | `hstack menubar ...` | SwiftBar menu bar integration. | `install`, `uninstall`, `open`, `mode`, `status` |
+
+## `hstack` And `npx` Equivalence
+
+Yes, users can run many flows with direct `hstack` or `npx`, but there is one important distinction:
+
+- `yarn <repo-local-script>` applies repo-local wrapper semantics automatically.
+- `hstack ...` / `npx ... hstack ...` runs plain `hstack` behavior unless you set equivalent env/stack args yourself.
+
+Examples:
+
+```bash
+# Published CLI (works, but not repo-local wrapper semantics by default)
+npx --yes -p @happier-dev/stack@latest hstack dev
+
+# Equivalent to repo-local wrapper behavior from this checkout
+node ./apps/stack/scripts/repo_local.mjs dev
+
+# Recommended for contributors: activate this clone, then use hstack everywhere
+yarn cli:activate
+hstack dev
+```
