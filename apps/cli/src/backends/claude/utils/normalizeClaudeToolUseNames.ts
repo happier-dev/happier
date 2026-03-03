@@ -8,6 +8,10 @@ export function normalizeClaudeToolNameToCanonicalToolNameV2(rawName: string): s
       return 'AgentTeamCreate';
     case 'TeamDelete':
       return 'AgentTeamDelete';
+    case 'Agent':
+      // Claude Code Agent Teams uses `Agent` tool_use blocks for teammate lifecycles. Canonicalize it
+      // to the provider-agnostic Task tool so UI renderers and sidechain transcript handling apply.
+      return 'Task';
     case 'SendMessage':
     case 'sendMessage':
       return 'AgentTeamSendMessage';

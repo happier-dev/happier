@@ -14,6 +14,47 @@ function makeJsonlFirstLine(content: string): string {
 }
 
 describe('resolveClaudeSubagentJsonlPath', () => {
+    it('resolves agent teams JSONL by scanning subagent headers when the first line is a teammate spawn notification (summary="Spawn <Name> agent")', async () => {
+        const dir = await mkdtemp(join(tmpdir(), 'happy-claude-subagent-resolve-'));
+        const projectDir = join(dir, 'project');
+        const claudeSessionId = 'sess_1';
+        const subagentsDir = join(projectDir, claudeSessionId, 'subagents');
+        await mkdir(subagentsDir, { recursive: true });
+
+        const alphaPath = join(subagentsDir, 'agent-hash-alpha.jsonl');
+        const betaPath = join(subagentsDir, 'agent-hash-beta.jsonl');
+
+        await writeFile(
+            alphaPath,
+            makeJsonlFirstLine('<teammate-message teammate_id="team-lead" summary="Spawn Alpha agent">'),
+            'utf8',
+        );
+        await writeFile(
+            betaPath,
+            makeJsonlFirstLine('<teammate-message teammate_id="team-lead" summary="Spawn Beta agent">'),
+            'utf8',
+        );
+
+        try {
+            expect(
+                resolveClaudeSubagentJsonlPath({
+                    projectDir,
+                    claudeSessionId,
+                    agentId: 'Alpha@happier-ui-e2e',
+                }),
+            ).toBe(alphaPath);
+            expect(
+                resolveClaudeSubagentJsonlPath({
+                    projectDir,
+                    claudeSessionId,
+                    agentId: 'Beta@happier-ui-e2e',
+                }),
+            ).toBe(betaPath);
+        } finally {
+            await rm(dir, { recursive: true, force: true });
+        }
+    });
+
     it('resolves agent teams JSONL by scanning subagent headers when agent_id is display-like (name@team)', async () => {
         const dir = await mkdtemp(join(tmpdir(), 'happy-claude-subagent-resolve-'));
         const projectDir = join(dir, 'project');

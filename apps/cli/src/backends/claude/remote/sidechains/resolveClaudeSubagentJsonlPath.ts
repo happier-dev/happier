@@ -76,6 +76,13 @@ export function resolveClaudeSubagentJsonlPath(params: Readonly<{
 
   const youAreRe = new RegExp(`\\bYou\\s+are\\s+${escapeRegExp(nameGuess)}\\b`, 'i');
   const summaryRe = new RegExp(`summary\\s*=\\s*\"\\s*${escapeRegExp(nameGuess)}`, 'i');
+  // Newer Claude Agent Teams subagent JSONL headers may start with a teammate-message like:
+  //   <teammate-message teammate_id="team-lead" summary="Spawn Alpha agent">
+  // Match any summary attribute value that contains the agent name as a word boundary.
+  const summaryContainsNameRe = new RegExp(
+    `summary\\s*=\\s*["'][^"']*\\b${escapeRegExp(nameGuess)}\\b[^"']*["']`,
+    'i',
+  );
 
   for (const fileName of entries) {
     if (!fileName.startsWith('agent-') || !fileName.endsWith('.jsonl')) continue;
@@ -90,7 +97,7 @@ export function resolveClaudeSubagentJsonlPath(params: Readonly<{
     }
     const content = coerceStringContentFromJsonlRecord(parsed);
     if (!content) continue;
-    if (youAreRe.test(content) || summaryRe.test(content)) return candidate;
+    if (youAreRe.test(content) || summaryRe.test(content) || summaryContainsNameRe.test(content)) return candidate;
   }
 
   return null;

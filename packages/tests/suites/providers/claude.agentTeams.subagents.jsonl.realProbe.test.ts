@@ -65,7 +65,9 @@ describe('real Claude Agent Teams subagent JSONL probe', () => {
       });
 
       expect(result.toolUseNames).toContain('TeamCreate');
-      expect(result.toolUseNames).toContain('Task');
+      // Teammate spawn metadata has been observed to arrive via `Task` tool_result in some versions,
+      // but Claude may also only emit `Agent` tool uses for teammate creation. Accept either.
+      expect(result.toolUseNames.some((n) => n === 'Task' || n === 'Agent')).toBe(true);
       expect(typeof result.sessionId === 'string' && result.sessionId.trim().length > 0).toBe(true);
       expect(result.agentIds.length).toBeGreaterThan(0);
 
