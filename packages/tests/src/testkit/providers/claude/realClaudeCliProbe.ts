@@ -4,7 +4,7 @@ import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createInterface } from 'node:readline';
 
-export type RealClaudeToolUseBlock = { name: string; input: unknown };
+export type RealClaudeToolUseBlock = { toolUseId: string | null; name: string; input: unknown };
 export type RealClaudeToolResultBlock = { toolUseId: string | null; result: unknown };
 
 export type RealClaudeStreamJsonProbeResult = {
@@ -76,9 +76,15 @@ export function extractToolUseBlocksFromStreamJsonLine(obj: unknown): RealClaude
     if (!block || typeof block !== 'object' || Array.isArray(block)) continue;
     const b = block as Record<string, unknown>;
     if (b.type !== 'tool_use') continue;
+    const toolUseId =
+      typeof (b as any).id === 'string'
+        ? String((b as any).id).trim() || null
+        : typeof (b as any).tool_use_id === 'string'
+          ? String((b as any).tool_use_id).trim() || null
+          : null;
     const name = typeof b.name === 'string' ? b.name.trim() : '';
     if (!name) continue;
-    out.push({ name, input: (b as any).input });
+    out.push({ toolUseId, name, input: (b as any).input });
   }
   return out;
 }
@@ -208,6 +214,10 @@ export function findClaudeSubagentJsonlPath(params: { sessionId: string; agentId
     }
     const youAreRe = new RegExp(`\\bYou\\s+are\\s+${escapeRegExp(nameGuess)}\\b`, 'i');
     const summaryRe = new RegExp(`summary\\s*=\\s*\"\\s*${escapeRegExp(nameGuess)}`, 'i');
+    const summaryContainsNameRe = new RegExp(
+      `summary\\s*=\\s*["'][^"']*\\b${escapeRegExp(nameGuess)}\\b[^"']*["']`,
+      'i',
+    );
     for (const fileName of entries) {
       if (!fileName.startsWith('agent-') || !fileName.endsWith('.jsonl')) continue;
       const filePath = join(subagentsDir, fileName);
@@ -221,7 +231,7 @@ export function findClaudeSubagentJsonlPath(params: { sessionId: string; agentId
       }
       const content = coerceStringContentFromJsonlRecord(parsed);
       if (!content) continue;
-      if (youAreRe.test(content) || summaryRe.test(content)) return filePath;
+      if (youAreRe.test(content) || summaryRe.test(content) || summaryContainsNameRe.test(content)) return filePath;
     }
   }
   return null;
