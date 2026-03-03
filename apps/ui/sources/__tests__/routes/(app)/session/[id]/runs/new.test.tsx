@@ -55,8 +55,10 @@ vi.mock('@/text', () => ({
         if (key === 'executionRuns.newRun.intents.review') return 'review';
         if (key === 'executionRuns.newRun.intents.plan') return 'plan';
         if (key === 'executionRuns.newRun.intents.delegate') return 'delegate';
-        if (key === 'executionRuns.newRun.permissionModes.readOnly') return 'read_only';
-        if (key === 'executionRuns.newRun.permissionModes.default') return 'default';
+        if (key === 'agentInput.permissionMode.default') return 'default';
+        if (key === 'agentInput.permissionMode.readOnly') return 'read-only';
+        if (key === 'agentInput.permissionMode.safeYolo') return 'safe-yolo';
+        if (key === 'agentInput.permissionMode.yolo') return 'yolo';
         if (key === 'executionRuns.newRun.instructionsPlaceholder') return 'What should the sub-agent do?';
         if (key === 'executionRuns.newRun.actions.start') return 'Start';
         if (key === 'executionRuns.newRun.guidancePreview') return 'Guidance preview';
@@ -199,7 +201,7 @@ describe('Session New Run Screen', () => {
                 intent: 'review',
                 backendId: 'claude',
                 instructions: 'please review this',
-                permissionMode: 'read_only',
+                permissionMode: 'read-only',
                 changeType: 'committed',
             }),
         );
@@ -277,6 +279,7 @@ describe('Session New Run Screen', () => {
                 intent: 'delegate',
                 backendId: 'claude',
                 instructions: 'do the task',
+                permissionMode: 'safe-yolo',
             }),
         );
     });
@@ -292,11 +295,11 @@ describe('Session New Run Screen', () => {
         });
 
         const buttons = tree!.root.findAllByType('Pressable');
-        const selectDefault = buttons.find((b: any) => b.props.accessibilityLabel === 'Select permissionMode default');
-        expect(selectDefault).toBeDefined();
+        const selectYolo = buttons.find((b: any) => b.props.accessibilityLabel === 'Select permissionMode yolo');
+        expect(selectYolo).toBeDefined();
 
         await act(async () => {
-            selectDefault!.props.onPress?.();
+            selectYolo!.props.onPress?.();
         });
 
         const input = tree!.root.findByType('TextInput');
@@ -312,7 +315,7 @@ describe('Session New Run Screen', () => {
         expect(startRunSpy).toHaveBeenCalledWith(
             'session-1',
             expect.objectContaining({
-                permissionMode: 'default',
+                permissionMode: 'yolo',
             }),
         );
     });

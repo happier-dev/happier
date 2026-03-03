@@ -10,6 +10,8 @@ import { useExecutionRunsBackendsForSession } from '@/hooks/server/useExecutionR
 import { t } from '@/text';
 import { buildExecutionRunsGuidanceBlock, coerceExecutionRunsGuidanceEntries } from '@/sync/domains/settings/executionRunsGuidance';
 import { buildAvailableReviewEngineOptions } from '@/sync/domains/reviews/reviewEngineCatalog';
+import type { PermissionMode } from '@/sync/domains/permissions/permissionTypes';
+import { getPermissionModeOptionsForAgentType } from '@/sync/domains/permissions/permissionModeOptions';
 import { ConstrainedScreenContent } from '@/components/ui/layout/ConstrainedScreenContent';
 import { Text, TextInput } from '@/components/ui/text/Text';
 
@@ -28,9 +30,10 @@ function normalizeIntent(value: unknown): ExecutionRunIntent {
     return 'review';
 }
 
-function defaultPermissionModeForIntent(intent: ExecutionRunIntent): string {
-    if (intent === 'review') return 'read_only';
-    if (intent === 'plan') return 'read_only';
+function defaultPermissionModeForIntent(intent: ExecutionRunIntent): PermissionMode {
+    if (intent === 'review') return 'read-only';
+    if (intent === 'plan') return 'read-only';
+    if (intent === 'delegate') return 'safe-yolo';
     return 'default';
 }
 
@@ -42,7 +45,7 @@ export default function SessionNewRunScreen() {
     const sessionId = normalizeSessionId((params as any)?.id);
     const initialIntent = normalizeIntent((params as any)?.intent);
     const [intent, setIntent] = React.useState<ExecutionRunIntent>(initialIntent);
-    const [permissionMode, setPermissionMode] = React.useState<string>(() => defaultPermissionModeForIntent(initialIntent));
+    const [permissionMode, setPermissionMode] = React.useState<PermissionMode>(() => defaultPermissionModeForIntent(initialIntent));
     const session = useSession(sessionId ?? '');
     const settings = useSettings();
     const enabledAgentIds = useEnabledAgentIds();
@@ -69,6 +72,12 @@ export default function SessionNewRunScreen() {
     const [instructions, setInstructions] = React.useState('');
     const [isStarting, setIsStarting] = React.useState(false);
     const canStart = Boolean(sessionId && selectedBackends.length > 0 && instructions.trim().length > 0 && !isStarting);
+
+    const permissionModeOptions = React.useMemo(() => {
+        const rawAgentType = selectedBackends[0] ?? (session as any)?.metadata?.agent ?? enabledAgentIds[0] ?? null;
+        const agentType = typeof rawAgentType === 'string' ? rawAgentType : 'claude';
+        return getPermissionModeOptionsForAgentType(agentType as any);
+    }, [enabledAgentIds, selectedBackends, session]);
 
     const actionExecutor = React.useMemo(() => createDefaultActionExecutor(), []);
 
@@ -194,11 +203,10 @@ export default function SessionNewRunScreen() {
                 <View style={{ gap: 8 }}>
                     <Text style={{ color: theme.colors.textSecondary }}>{t('executionRuns.newRun.sections.permissions')}</Text>
                     <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 10 }}>
-                        {(['read_only', 'default'] as const).map((next) => {
+                        {permissionModeOptions.map((option) => {
+                            const next = option.value;
                             const selected = permissionMode === next;
-                            const permissionLabel = next === 'read_only'
-                                ? t('executionRuns.newRun.permissionModes.readOnly')
-                                : t('executionRuns.newRun.permissionModes.default');
+                            const permissionLabel = option.label;
                             return (
                                 <Pressable
                                     key={next}
