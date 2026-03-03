@@ -39,7 +39,6 @@ export const SessionLinkFileAction = React.memo((props: SessionLinkFileActionPro
         if (!shouldMatchAnchorWidthOnPortal) return layout.maxWidth;
         return Number.isFinite(windowWidth) && windowWidth > 0 ? windowWidth : layout.maxWidth;
     }, [shouldMatchAnchorWidthOnPortal, windowWidth]);
-    const recentlyClosedRef = React.useRef(false);
 
     const handleOpen = React.useCallback(() => {
         if (props.disabled) return;
@@ -55,27 +54,11 @@ export const SessionLinkFileAction = React.memo((props: SessionLinkFileActionPro
             });
             return;
         }
-        if (!open && recentlyClosedRef.current) {
-            // On web, Popover can close itself via pointerdown-capture handlers (outside click) before this chip's
-            // press handler runs. Avoid re-opening immediately when this onPress fires after a close in the same tick.
-            return;
-        }
-        // On web, Popover can close itself via document-level pointerdown capture handlers. If the
-        // chip's press handler runs after that close, a functional toggle update can re-open the
-        // popover immediately. Use explicit open-state transitions to guarantee toggle behavior.
-        if (open) {
-            setOpen(false);
-        } else {
-            setOpen(true);
-        }
-    }, [open, props.disabled, props.onPickPath, props.sessionId]);
+        setOpen((prev) => !prev);
+    }, [props.disabled, props.onPickPath, props.sessionId]);
 
     const handleClose = React.useCallback(() => {
         setOpen(false);
-        recentlyClosedRef.current = true;
-        setTimeout(() => {
-            recentlyClosedRef.current = false;
-        }, 0);
     }, []);
 
     return (
@@ -110,7 +93,10 @@ export const SessionLinkFileAction = React.memo((props: SessionLinkFileActionPro
                     // still being bounded by the viewport). In portal mode we disable anchor-width
                     // matching so the popover can be full-width even when the trigger chip is narrow.
                     maxWidthCap={maxWidthCap}
-                    closeOnAnchorPress={true}
+                    // IMPORTANT: keep this off for a true toggle UX.
+                    // Popover's web outside-click handler runs on `pointerdown` capture. If we also close on
+                    // anchor press there, the chip's `onPress` (fires on pointerup) can re-open immediately.
+                    closeOnAnchorPress={false}
                     portal={{
                         // Portal to `body` so the popover isn't constrained by any modal/root container width.
                         // This matches the @ suggestions behavior (full composer width) while still escaping

@@ -122,7 +122,7 @@ describe('SessionLinkFileAction', () => {
         expect(tree!.root.findAllByType('Popover')).toHaveLength(0);
     });
 
-    it('does not re-open when the popover is closed before the chip press fires (web pointerdown ordering)', () => {
+    it('disables Popover close-on-anchor-press so the chip can act as a true toggle', () => {
         const onPickPath = vi.fn<(path: string) => void>();
         const popoverAnchorRef = { current: { nodeType: 'View' } } as any;
 
@@ -147,15 +147,7 @@ describe('SessionLinkFileAction', () => {
         act(() => {
             linkChip.props.onPress();
         });
-        expect(tree!.root.findAllByType('Popover')).toHaveLength(1);
-
-        // Simulate pointerdown-capture close (Popover's outside-click handler) firing
-        // before the chip's onPress handler runs in the same tick.
         const popover = tree!.root.findByType('Popover');
-        act(() => {
-            popover.props.onRequestClose();
-            linkChip.props.onPress();
-        });
-        expect(tree!.root.findAllByType('Popover')).toHaveLength(0);
+        expect(popover.props.closeOnAnchorPress).toBe(false);
     });
 });
