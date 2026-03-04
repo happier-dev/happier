@@ -10,6 +10,11 @@ export const buildNewMessageUpdate = vi.fn((_message: any, _sessionId: string, s
     seq,
     body: { t: "new-message" },
 }));
+export const buildMessageUpdatedUpdate = vi.fn((_message: any, _sessionId: string, seq: number, updateId: string) => ({
+    id: updateId,
+    seq,
+    body: { t: "message-updated" },
+}));
 export const buildNewSessionUpdate = vi.fn((_session: any, seq: number, updateId: string) => ({
     id: updateId,
     seq,
@@ -62,6 +67,7 @@ export const catchupReturnedInc = vi.fn();
 vi.mock("@/app/events/eventRouter", () => ({
     eventRouter: { emitUpdate },
     buildNewMessageUpdate,
+    buildMessageUpdatedUpdate,
     buildNewSessionUpdate,
     buildUpdateSessionUpdate,
 }));
@@ -154,8 +160,24 @@ export function resetSessionRouteMocks(): void {
     });
 }
 
+let sessionRoutesModulePromise: Promise<typeof import("./sessionRoutes")> | null = null;
+
+async function importSessionRoutesModule(): Promise<typeof import("./sessionRoutes")> {
+    if (!sessionRoutesModulePromise) {
+        sessionRoutesModulePromise = import("./sessionRoutes").catch((error) => {
+            sessionRoutesModulePromise = null;
+            throw error;
+        });
+    }
+    return await sessionRoutesModulePromise;
+}
+
+export async function preloadSessionRoutes(): Promise<void> {
+    await importSessionRoutesModule();
+}
+
 export async function registerSessionRoutesAndGetHandler(method: RouteMethod, path: string) {
-    const { sessionRoutes } = await import("./sessionRoutes");
+    const { sessionRoutes } = await importSessionRoutesModule();
     const app = createFakeRouteApp();
     sessionRoutes(app as any);
     return {

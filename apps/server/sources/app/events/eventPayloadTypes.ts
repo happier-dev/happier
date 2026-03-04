@@ -48,6 +48,19 @@ export type UpdateEvent = {
         seq: number;
         content: any;
         localId: string | null;
+        sidechainId?: string | null;
+        createdAt: number;
+        updatedAt: number;
+    }
+} | {
+    type: 'message-updated';
+    sessionId: string;
+    message: {
+        id: string;
+        seq: number;
+        content: any;
+        localId: string | null;
+        sidechainId?: string | null;
         createdAt: number;
         updatedAt: number;
     }
@@ -242,6 +255,14 @@ export type EphemeralEvent = {
     active: boolean;
     activeAt: number;
     thinking?: boolean;
+} | {
+    type: 'transcript-draft';
+    sessionId: string;
+    localId: string;
+    segmentKind: 'assistant' | 'thinking';
+    sidechainId?: string | null;
+    delta: any;
+    createdAt: number;
 } | {
     type: 'machine-activity';
     id: string;

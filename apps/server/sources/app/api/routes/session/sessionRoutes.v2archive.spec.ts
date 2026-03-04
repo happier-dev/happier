@@ -1,7 +1,8 @@
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeAll, beforeEach, describe, expect, it } from "vitest";
 
 import {
     createSessionRouteReply,
+    preloadSessionRoutes,
     registerSessionRoutesAndGetHandler,
     resetSessionRouteMocks,
     checkSessionAccess,
@@ -12,6 +13,10 @@ import {
 } from "./sessionRoutes.testkit";
 
 describe("sessionRoutes v2 archive", () => {
+    beforeAll(async () => {
+        await preloadSessionRoutes();
+    }, 120_000);
+
     beforeEach(() => {
         resetSessionRouteMocks();
     });
@@ -98,4 +103,3 @@ describe("sessionRoutes v2 archive", () => {
         expect(markAccountChanged).toHaveBeenCalledTimes(1);
     });
 });
-

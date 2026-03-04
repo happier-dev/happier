@@ -1,8 +1,12 @@
-import { describe, expect, it } from "vitest";
+import { beforeAll, describe, expect, it } from "vitest";
 
-import { registerSessionRoutesAndGetHandler } from "./sessionRoutes.testkit";
+import { preloadSessionRoutes, registerSessionRoutesAndGetHandler } from "./sessionRoutes.testkit";
 
 describe("sessionRoutes listing rate limits", () => {
+    beforeAll(async () => {
+        await preloadSessionRoutes();
+    }, 120_000);
+
     it("registers session listing routes with explicit rate limits", async () => {
         const { app: v1App } = await registerSessionRoutesAndGetHandler("GET", "/v1/sessions");
         const v1Route = v1App.routes.get("GET /v1/sessions");
@@ -17,4 +21,3 @@ describe("sessionRoutes listing rate limits", () => {
         );
     });
 });
-

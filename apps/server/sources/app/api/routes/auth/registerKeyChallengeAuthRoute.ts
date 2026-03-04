@@ -65,6 +65,11 @@ export function registerKeyChallengeAuthRoute(app: Fastify): void {
             return reply.code(401).send({ error: 'Invalid signature' });
         }
 
+        // Defensive: /v1/auth is often the first route hit on a fresh server, and some
+        // dev/test entrypoints may register routes without going through startServer().
+        // Ensure auth is initialized before issuing tokens.
+        await auth.init();
+
         const authPolicy = resolveAuthPolicyFromEnv(process.env);
 
         let contentPublicKey: Uint8Array | null = null;
@@ -125,20 +130,26 @@ export function registerKeyChallengeAuthRoute(app: Fastify): void {
             }
         }
 
-        const user = await db.account.upsert({
-            where: { publicKey: publicKeyHex },
-            update: {
-                updatedAt: new Date(),
-                ...(contentPublicKey ? { contentPublicKey: new Uint8Array(contentPublicKey) } : {}),
-                ...(contentPublicKeySig ? { contentPublicKeySig: new Uint8Array(contentPublicKeySig) } : {}),
-            },
-            create: {
-                publicKey: publicKeyHex,
-                encryptionMode: effectiveDefaultEncryptionMode,
-                ...(contentPublicKey ? { contentPublicKey: new Uint8Array(contentPublicKey) } : {}),
-                ...(contentPublicKeySig ? { contentPublicKeySig: new Uint8Array(contentPublicKeySig) } : {}),
-            }
-        });
+        // Important: avoid unnecessary writes during authentication. This route is hit on token refresh and during
+        // reconnect flows; a write here can amplify SQLite lock contention and wedge the UI.
+        const wantsContentKeyUpdate = Boolean(contentPublicKey && contentPublicKeySig);
+        const user =
+            existingAccount && !wantsContentKeyUpdate
+                ? existingAccount
+                : await db.account.upsert({
+                      where: { publicKey: publicKeyHex },
+                      update: {
+                          ...(wantsContentKeyUpdate ? { updatedAt: new Date() } : {}),
+                          ...(contentPublicKey ? { contentPublicKey: new Uint8Array(contentPublicKey) } : {}),
+                          ...(contentPublicKeySig ? { contentPublicKeySig: new Uint8Array(contentPublicKeySig) } : {}),
+                      },
+                      create: {
+                          publicKey: publicKeyHex,
+                          encryptionMode: effectiveDefaultEncryptionMode,
+                          ...(contentPublicKey ? { contentPublicKey: new Uint8Array(contentPublicKey) } : {}),
+                          ...(contentPublicKeySig ? { contentPublicKeySig: new Uint8Array(contentPublicKeySig) } : {}),
+                      },
+                  });
 
         return reply.send({
             success: true,

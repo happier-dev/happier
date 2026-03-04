@@ -1,15 +1,20 @@
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeAll, beforeEach, describe, expect, it } from "vitest";
 
 import { encodeV2SessionListCursorV1 } from "@happier-dev/protocol";
 
 import {
     createSessionRouteReply,
+    preloadSessionRoutes,
     registerSessionRoutesAndGetHandler,
     resetSessionRouteMocks,
     sessionFindMany,
 } from "./sessionRoutes.testkit";
 
 describe("sessionRoutes v2 sessions snapshot", () => {
+    beforeAll(async () => {
+        await preloadSessionRoutes();
+    }, 120_000);
+
     beforeEach(() => {
         resetSessionRouteMocks();
         sessionFindMany.mockReset();

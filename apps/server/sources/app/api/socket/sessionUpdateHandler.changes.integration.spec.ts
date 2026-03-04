@@ -12,10 +12,16 @@ const buildNewMessageUpdate = vi.fn((_created: any, _sid: string, updSeq: number
     seq: updSeq,
     body: { t: "new-message" },
 }));
+const buildMessageUpdatedUpdate = vi.fn((_created: any, _sid: string, updSeq: number, updId: string) => ({
+    id: updId,
+    seq: updSeq,
+    body: { t: "message-updated" },
+}));
 
 vi.mock("@/app/events/eventRouter", () => ({
     eventRouter: { emitUpdate },
     buildNewMessageUpdate,
+    buildMessageUpdatedUpdate,
     buildSessionActivityEphemeral: vi.fn(() => ({ t: "session-activity" })),
     buildUpdateSessionUpdate: vi.fn(() => ({ t: "update-session" })),
 }));
@@ -64,6 +70,40 @@ vi.mock("@/storage/db", () => ({
     },
 }));
 
+type TestSessionMessageContent =
+    | { t: "encrypted"; c: string }
+    | { t: "plain"; v: unknown };
+
+type TestSessionMessageRow = Readonly<{
+    id: string;
+    seq: number;
+    localId: string | null;
+    sidechainId: string | null;
+    content: TestSessionMessageContent;
+    createdAt: Date;
+    updatedAt: Date;
+}>;
+
+const txSessionMessageFindUnique = vi.fn<(args: any) => Promise<TestSessionMessageRow | null>>(async () => null);
+const txSessionMessageCreate = vi.fn<(args: any) => Promise<TestSessionMessageRow>>(async () => ({
+    id: "m1",
+    seq: 55,
+    localId: "l1",
+    sidechainId: null,
+    content: { t: "encrypted", c: "enc" },
+    createdAt: new Date(1),
+    updatedAt: new Date(1),
+}));
+const txSessionMessageUpdate = vi.fn<(args: any) => Promise<TestSessionMessageRow>>(async () => ({
+    id: "m1",
+    seq: 55,
+    localId: "l1",
+    sidechainId: null,
+    content: { t: "encrypted", c: "enc" },
+    createdAt: new Date(1),
+    updatedAt: new Date(1),
+}));
+
 vi.mock("@/storage/inTx", () => {
     const afterTx = (tx: any, callback: () => void) => {
         tx.__afterTxCallbacks.push(callback);
@@ -85,16 +125,10 @@ vi.mock("@/storage/inTx", () => {
                 update: vi.fn(async () => ({ seq: 55 })),
             },
             sessionMessage: {
-                findUnique: vi.fn(async () => null),
+                findUnique: txSessionMessageFindUnique,
                 findFirst: vi.fn(async () => null),
-                create: vi.fn(async () => ({
-                    id: "m1",
-                    seq: 55,
-                    localId: "l1",
-                    content: { t: "encrypted", c: "enc" },
-                    createdAt: new Date(1),
-                    updatedAt: new Date(1),
-                })),
+                create: txSessionMessageCreate,
+                update: txSessionMessageUpdate,
             },
         };
 
@@ -113,9 +147,33 @@ describe("sessionUpdateHandler (AccountChange integration)", () => {
         keyCounter = 0;
         emitUpdate.mockClear();
         buildNewMessageUpdate.mockClear();
+        buildMessageUpdatedUpdate.mockClear();
         randomKeyNaked.mockClear();
         markAccountChanged.mockClear();
         socketMessageAckInc.mockClear();
+        txSessionMessageFindUnique.mockReset();
+        txSessionMessageCreate.mockReset();
+        txSessionMessageUpdate.mockReset();
+
+        txSessionMessageFindUnique.mockResolvedValue(null);
+        txSessionMessageCreate.mockResolvedValue({
+            id: "m1",
+            seq: 55,
+            localId: "l1",
+            sidechainId: null,
+            content: { t: "encrypted", c: "enc" },
+            createdAt: new Date(1),
+            updatedAt: new Date(1),
+        });
+        txSessionMessageUpdate.mockResolvedValue({
+            id: "m1",
+            seq: 55,
+            localId: "l1",
+            sidechainId: null,
+            content: { t: "encrypted", c: "enc" },
+            createdAt: new Date(1),
+            updatedAt: new Date(1),
+        });
     });
 
     it("marks a session change for all participants and emits updates using the returned cursors", async () => {
@@ -158,6 +216,78 @@ describe("sessionUpdateHandler (AccountChange integration)", () => {
         expect(emitUpdate).toHaveBeenCalledTimes(2);
         expect(socketMessageAckInc).toHaveBeenCalledWith({ result: "ok", error: "none" });
         expect(callback).toHaveBeenCalledWith({ ok: true, id: "m1", seq: 55, localId: "l1", didWrite: true });
+    });
+
+    it("emits message-updated when upserting an existing message row", async () => {
+        const { sessionUpdateHandler } = await import("./sessionUpdateHandler");
+
+        txSessionMessageFindUnique.mockResolvedValue({
+            id: "m1",
+            seq: 55,
+            localId: "l1",
+            sidechainId: null,
+            content: { t: "encrypted", c: "prev" },
+            createdAt: new Date(1),
+            updatedAt: new Date(1),
+        });
+        txSessionMessageUpdate.mockResolvedValue({
+            id: "m1",
+            seq: 55,
+            localId: "l1",
+            sidechainId: null,
+            content: { t: "encrypted", c: "next" },
+            createdAt: new Date(1),
+            updatedAt: new Date(2),
+        });
+
+        const socket = createFakeSocket();
+        sessionUpdateHandler(
+            "owner",
+            socket as any,
+            { connectionType: "session-scoped", socket: socket as any, userId: "owner", sessionId: "s1" } as any,
+        );
+
+        const handler = getSocketHandler(socket, "message");
+
+        const callback = vi.fn();
+        await handler({ sid: "s1", message: "next", localId: "l1" }, callback);
+
+        expect(buildNewMessageUpdate).not.toHaveBeenCalled();
+        expect(buildMessageUpdatedUpdate).toHaveBeenNthCalledWith(1, expect.anything(), "s1", 101, "upd-1");
+        expect(buildMessageUpdatedUpdate).toHaveBeenNthCalledWith(2, expect.anything(), "s1", 102, "upd-2");
+        expect(emitUpdate).toHaveBeenCalledTimes(2);
+        expect(callback).toHaveBeenCalledWith({ ok: true, id: "m1", seq: 55, localId: "l1", didWrite: false, didUpdate: true });
+    });
+
+    it("forwards sidechainId to session message writes", async () => {
+        const { sessionUpdateHandler } = await import("./sessionUpdateHandler");
+
+        txSessionMessageCreate.mockResolvedValueOnce({
+            id: "m1",
+            seq: 55,
+            localId: "l1",
+            sidechainId: "sc-1",
+            content: { t: "encrypted", c: "enc" },
+            createdAt: new Date(1),
+            updatedAt: new Date(1),
+        });
+
+        const socket = createFakeSocket();
+        sessionUpdateHandler(
+            "owner",
+            socket as any,
+            { connectionType: "session-scoped", socket: socket as any, userId: "owner", sessionId: "s1" } as any,
+        );
+
+        const handler = getSocketHandler(socket, "message");
+
+        await handler({ sid: "s1", message: "enc", localId: "l1", sidechainId: "sc-1" });
+
+        expect(txSessionMessageCreate).toHaveBeenCalledWith(
+            expect.objectContaining({
+                data: expect.objectContaining({ sidechainId: "sc-1" }),
+            }),
+        );
     });
 
     it("does not skip sender connection when echoToSender is requested (opt-in)", async () => {

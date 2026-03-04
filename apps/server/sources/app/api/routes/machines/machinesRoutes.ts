@@ -10,6 +10,9 @@ import { afterTx, inTx } from "@/storage/inTx";
 import { markAccountChanged } from "@/app/changes/markAccountChanged";
 import { timingSafeEqual } from "node:crypto";
 import { resolveApiHotEndpointRateLimit } from "@/app/api/utils/apiRateLimitCatalog";
+import tweetnacl from "tweetnacl";
+import * as privacyKit from "privacy-kit";
+import { parseBooleanEnv } from "@/config/env";
 
 function bytesEqual(a: Uint8Array | null, b: Uint8Array | null) {
     if (a === b) return true;
@@ -62,12 +65,176 @@ export function machinesRoutes(app: Fastify) {
                 id: z.string(),
                 metadata: z.string(), // Encrypted metadata
                 daemonState: z.string().optional(), // Encrypted daemon state
-                dataEncryptionKey: z.string().nullish()
+                dataEncryptionKey: z.string().nullish(),
+                /**
+                 * When `dataEncryptionKey` is provided, the client must also provide its account content public key.
+                 * This allows the server to reject token/key mismatches that would otherwise create "poisoned" machine rows.
+                 */
+                contentPublicKey: z.string().optional(),
+                // Optional signature binding `contentPublicKey` to the account's signing key (recommended).
+                // When the account has not yet stored its `contentPublicKey`, providing this signature allows the
+                // server to persist the key safely without requiring a full /v1/auth key-proof flow.
+                contentPublicKeySig: z.string().optional(),
             })
         }
     }, async (request, reply) => {
         const userId = request.userId;
-        const { id, metadata, daemonState, dataEncryptionKey } = request.body;
+        const {
+            id,
+            metadata,
+            daemonState,
+            dataEncryptionKey,
+            contentPublicKey: contentPublicKeyB64,
+            contentPublicKeySig: contentPublicKeySigB64,
+        } = request.body;
+
+        // Guardrail: for E2EE accounts, reject machine writes that include a DEK envelope but whose
+        // claimed content public key does not match the account. Without this, a token/key mismatch
+        // can create machine rows that permanently fail DEK decryption for the actual account key.
+        if (typeof dataEncryptionKey === "string") {
+            const requireContentPublicKeyForDek = parseBooleanEnv(
+                process.env.HAPPIER_MACHINES_REQUIRE_CONTENT_PUBLIC_KEY_FOR_DEK,
+                false,
+            );
+
+            const contentPublicKeyTrimmed = typeof contentPublicKeyB64 === "string" ? contentPublicKeyB64.trim() : "";
+            const contentPublicKeySigTrimmed = typeof contentPublicKeySigB64 === "string" ? contentPublicKeySigB64.trim() : "";
+
+            if (!contentPublicKeyTrimmed) {
+                if (requireContentPublicKeyForDek) {
+                    log(
+                        { module: "machines", machineId: id, userId, reason: "content_public_key_required" },
+                        "Machine registration rejected (missing contentPublicKey)",
+                    );
+                    return reply.code(400).send({ error: "invalid-params", reason: "content_public_key_required" });
+                }
+
+                // Backward compatibility: older clients may not send `contentPublicKey`. Accept the write,
+                // but skip the token/key mismatch guardrail (we cannot validate without a claimed key).
+                log(
+                    { module: "machines", machineId: id, userId, reason: "content_public_key_missing" },
+                    "Machine registration accepted without contentPublicKey (compat mode)",
+                );
+            } else {
+                let decoded: Uint8Array;
+                try {
+                    decoded = privacyKit.decodeBase64(contentPublicKeyTrimmed);
+                } catch {
+                    log(
+                        { module: "machines", machineId: id, userId, reason: "content_public_key_invalid" },
+                        "Machine registration rejected (invalid contentPublicKey)",
+                    );
+                    return reply.code(400).send({ error: "invalid-params", reason: "content_public_key_invalid" });
+                }
+
+                if (decoded.length !== tweetnacl.box.publicKeyLength) {
+                    log(
+                        { module: "machines", machineId: id, userId, reason: "content_public_key_invalid" },
+                        "Machine registration rejected (invalid contentPublicKey length)",
+                    );
+                    return reply.code(400).send({ error: "invalid-params", reason: "content_public_key_invalid" });
+                }
+
+                const account = await db.account.findUnique({
+                    where: { id: userId },
+                    select: { contentPublicKey: true, publicKey: true },
+                });
+
+                let accountContentPublicKey: Uint8Array | null = account?.contentPublicKey ?? null;
+                if (!accountContentPublicKey) {
+                    if (contentPublicKeySigTrimmed) {
+                        let decodedSig: Uint8Array;
+                        try {
+                            decodedSig = privacyKit.decodeBase64(contentPublicKeySigTrimmed);
+                        } catch {
+                            log(
+                                { module: "machines", machineId: id, userId, reason: "content_public_key_invalid" },
+                                "Machine registration rejected (invalid contentPublicKeySig)",
+                            );
+                            return reply.code(400).send({ error: "invalid-params", reason: "content_public_key_invalid" });
+                        }
+
+                        if (decodedSig.length !== tweetnacl.sign.signatureLength) {
+                            log(
+                                { module: "machines", machineId: id, userId, reason: "content_public_key_invalid" },
+                                "Machine registration rejected (invalid contentPublicKeySig length)",
+                            );
+                            return reply.code(400).send({ error: "invalid-params", reason: "content_public_key_invalid" });
+                        }
+
+                        const publicKeyHex = typeof account?.publicKey === "string" ? account.publicKey : "";
+                        const expectedHexLength = tweetnacl.sign.publicKeyLength * 2;
+                        if (!publicKeyHex || publicKeyHex.length !== expectedHexLength || !/^[0-9a-f]+$/i.test(publicKeyHex)) {
+                            log(
+                                { module: "machines", machineId: id, userId, reason: "account_missing_public_key" },
+                                "Machine registration rejected (account publicKey invalid/missing)",
+                            );
+                            return reply.code(500).send({ error: "internal" });
+                        }
+
+                        const publicKeyBytes = Uint8Array.from(Buffer.from(publicKeyHex, "hex"));
+
+                        const binding = Buffer.concat([
+                            Buffer.from("Happy content key v1\u0000", "utf8"),
+                            Buffer.from(decoded),
+                        ]);
+                        const contentSigOk = tweetnacl.sign.detached.verify(binding, decodedSig, publicKeyBytes);
+                        if (!contentSigOk) {
+                            log(
+                                { module: "machines", machineId: id, userId, reason: "content_public_key_invalid" },
+                                "Machine registration rejected (invalid contentPublicKeySig binding)",
+                            );
+                            return reply.code(400).send({ error: "invalid-params", reason: "content_public_key_invalid" });
+                        }
+
+                        // Prisma bytes fields require ArrayBuffer-backed Uint8Array (not SharedArrayBuffer).
+                        const contentPublicKeyCopy = new Uint8Array(decoded.byteLength);
+                        contentPublicKeyCopy.set(decoded);
+                        const contentPublicKeySigCopy = new Uint8Array(decodedSig.byteLength);
+                        contentPublicKeySigCopy.set(decodedSig);
+
+                        const updated = await db.account.updateMany({
+                            where: { id: userId, contentPublicKey: null },
+                            data: { contentPublicKey: contentPublicKeyCopy, contentPublicKeySig: contentPublicKeySigCopy },
+                        });
+                        if (updated.count > 0) {
+                            accountContentPublicKey = contentPublicKeyCopy;
+                        } else {
+                            const refetched = await db.account.findUnique({
+                                where: { id: userId },
+                                select: { contentPublicKey: true },
+                            });
+                            accountContentPublicKey = refetched?.contentPublicKey ?? null;
+                        }
+                    }
+                }
+
+                if (!accountContentPublicKey) {
+                    if (requireContentPublicKeyForDek) {
+                        log(
+                            { module: "machines", machineId: id, userId, reason: "account_missing_content_public_key" },
+                            "Machine registration rejected (account missing contentPublicKey)",
+                        );
+                        return reply.code(400).send({ error: "invalid-params", reason: "account_missing_content_public_key" });
+                    }
+
+                    log(
+                        { module: "machines", machineId: id, userId, reason: "account_missing_content_public_key" },
+                        "Machine registration accepted without account contentPublicKey (compat mode)",
+                    );
+                    // Backward compatibility: some older accounts may not have stored their content public key yet.
+                    // Without it, we cannot validate token/key mismatches for DEK-bearing machine registrations.
+                }
+
+                if (accountContentPublicKey && !bytesEqual(accountContentPublicKey, decoded)) {
+                    log(
+                        { module: "machines", machineId: id, userId, reason: "content_public_key_mismatch" },
+                        "Machine registration rejected (contentPublicKey mismatch)",
+                    );
+                    return reply.code(400).send({ error: "invalid-params", reason: "content_public_key_mismatch" });
+                }
+            }
+        }
 
         // Check if machine exists (like sessions do)
         const machine = await db.machine.findFirst({
