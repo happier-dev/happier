@@ -119,6 +119,75 @@ function createCountingKvClient(): Readonly<{
   };
 }
 
+function createConflictPayloadKvClient(): Readonly<{
+  kv: ChannelBridgeKvClient;
+  mutateCallCount: () => number;
+}> {
+  let mutateCalls = 0;
+  let currentVersion = -1;
+  let storedValue: string | null = null;
+
+  const kv: ChannelBridgeKvClient = {
+    get: async (key) => {
+      if (storedValue === null) {
+        return { status: 404, body: { error: 'Key not found' } };
+      }
+      return {
+        status: 200,
+        body: {
+          key,
+          value: storedValue,
+          version: currentVersion,
+        },
+      };
+    },
+    mutate: async (mutations) => {
+      mutateCalls += 1;
+      const [mutation] = mutations;
+      if (!mutation) {
+        return { status: 400, body: { success: false, errors: [{ key: 'missing', error: 'version-mismatch', version: currentVersion, value: storedValue }] } };
+      }
+
+      if (mutateCalls === 1) {
+        return {
+          status: 409,
+          body: {
+            success: false,
+            errors: [
+              {
+                key: mutation.key,
+                error: 'version-mismatch',
+                version: currentVersion,
+                value: 'this-is-not-valid-base64',
+              },
+            ],
+          },
+        };
+      }
+
+      currentVersion += 1;
+      storedValue = mutation.value;
+      return {
+        status: 200,
+        body: {
+          success: true,
+          results: [
+            {
+              key: mutation.key,
+              version: currentVersion,
+            },
+          ],
+        },
+      };
+    },
+  };
+
+  return {
+    kv,
+    mutateCallCount: () => mutateCalls,
+  };
+}
+
 describe('createServerBackedChannelBindingStore', () => {
   it('persists bindings to server KV and reloads them', async () => {
     const kv = createInMemoryKvClient();
@@ -227,5 +296,31 @@ describe('createServerBackedChannelBindingStore', () => {
 
     expect(missingRemoved).toBe(false);
     expect(counting.mutateCallCount()).toBe(initialMutations);
+  });
+
+  it('recovers from invalid conflict payloads and retries writes', async () => {
+    const conflict = createConflictPayloadKvClient();
+    const store = createServerBackedChannelBindingStore({
+      kv: conflict.kv,
+      serverId: 'local-3005',
+      maxWriteRetries: 3,
+    });
+
+    await store.upsertBinding({
+      providerId: 'telegram',
+      conversationId: '-100333',
+      threadId: null,
+      sessionId: 'sess-3',
+      lastForwardedSeq: 4,
+    });
+
+    const binding = await store.getBinding({
+      providerId: 'telegram',
+      conversationId: '-100333',
+      threadId: null,
+    });
+
+    expect(binding?.sessionId).toBe('sess-3');
+    expect(conflict.mutateCallCount()).toBe(2);
   });
 });

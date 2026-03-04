@@ -247,14 +247,6 @@ async function cmdTelegramSet(args: string[]): Promise<void> {
   }
 
   const split = splitScopedTelegramBridgeUpdate({ update });
-  if (hasSharedTelegramBridgeUpdate({ update: split.sharedUpdate })) {
-    const kv = createAxiosChannelBridgeKvClient({ token: auth.token });
-    await upsertChannelBridgeTelegramConfigInKv({
-      kv,
-      serverId,
-      update: split.sharedUpdate,
-    });
-  }
 
   await updateSettings(async (current) =>
     upsertScopedTelegramBridgeConfig({
@@ -264,6 +256,15 @@ async function cmdTelegramSet(args: string[]): Promise<void> {
       update: split.localUpdate,
     }),
   );
+
+  if (hasSharedTelegramBridgeUpdate({ update: split.sharedUpdate })) {
+    const kv = createAxiosChannelBridgeKvClient({ token: auth.token });
+    await upsertChannelBridgeTelegramConfigInKv({
+      kv,
+      serverId,
+      update: split.sharedUpdate,
+    });
+  }
 
   console.log(chalk.green('✓ Saved Telegram bridge config for active account scope'));
   console.log(`  Server:  ${serverId}`);

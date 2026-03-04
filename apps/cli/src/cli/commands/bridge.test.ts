@@ -98,6 +98,7 @@ describe('happier bridge command', () => {
       },
     });
     expect(updateSettingsMock).toHaveBeenCalledTimes(1);
+    expect(updateSettingsMock.mock.invocationCallOrder[0]).toBeLessThan(upsertKvConfigMock.mock.invocationCallOrder[0]);
     expect(process.exitCode).toBeUndefined();
   });
 

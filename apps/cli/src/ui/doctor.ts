@@ -368,10 +368,16 @@ export async function runDoctorCommand(filter?: 'all' | 'daemon'): Promise<void>
                 const webhookEnabled = runtimeBridge.telegram.webhookEnabled;
                 const webhookHost = runtimeBridge.telegram.webhookHost || '(default)';
                 const webhookPort = String(runtimeBridge.telegram.webhookPort);
-                const webhookHostForValidation = runtimeBridge.telegram.webhookHost.trim();
-                const webhookPortForValidation = runtimeBridge.telegram.webhookPort > 0
-                    ? runtimeBridge.telegram.webhookPort
-                    : null;
+                const webhookHostForValidation =
+                    typeof process.env.HAPPIER_TELEGRAM_WEBHOOK_HOST === 'string'
+                        ? process.env.HAPPIER_TELEGRAM_WEBHOOK_HOST.trim()
+                        : typeof webhookConfig?.host === 'string'
+                            ? webhookConfig.host.trim()
+                            : '';
+                const webhookPortForValidation =
+                    typeof process.env.HAPPIER_TELEGRAM_WEBHOOK_PORT === 'string'
+                        ? parseStrictWebhookPort(process.env.HAPPIER_TELEGRAM_WEBHOOK_PORT)
+                        : parseStrictWebhookPort(webhookConfig?.port);
                 const tokenMissing = token.trim().length === 0;
                 const webhookIssues = collectMissingRequiredWebhookFields({
                     webhookEnabled,

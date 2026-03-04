@@ -7,6 +7,7 @@ import {
   type ChannelBridgeServerBindingsDocument,
   writeChannelBridgeBindingsToKv,
 } from './channelBridgeServerKv';
+import { logger } from '@/ui/logger';
 
 type BindingCache = Readonly<{
   version: number;
@@ -127,7 +128,16 @@ export function createServerBackedChannelBindingStore(params: Readonly<{
           throw error;
         }
 
-        const doc = decodeChannelBridgeBindingsDocFromBase64(error.currentValueBase64);
+        let doc: ChannelBridgeServerBindingsDocument;
+        try {
+          doc = decodeChannelBridgeBindingsDocFromBase64(error.currentValueBase64);
+        } catch (decodeError) {
+          logger.warn('[channelBindingStore] Failed to decode conflict payload; resetting cache to empty bindings document', decodeError);
+          doc = {
+            schemaVersion: 1,
+            bindings: [],
+          };
+        }
         setCache(error.currentVersion, fromServerDocument(doc));
       }
     }
