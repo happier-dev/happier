@@ -113,7 +113,7 @@ Happier is designed with privacy as a foundation, not an afterthought.
   Your code is encrypted on your devices before it ever hits the wire.  
   Servers cannot read your data. Encryption keys never leave your devices.
 
-- **Built in Switzerland**  
+- **Built with love from Switzerland**  
   Developed in Switzerland, with a strong focus on data protection and developer transparency.
 
 
