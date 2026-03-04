@@ -9,6 +9,8 @@ import { stageRepoForDagger } from './stage-repo-for-dagger.mjs';
 import { rewriteEasLocalBuildArtifactPath } from './rewrite-eas-local-build-artifact-path.mjs';
 import { assertDockerCanRunLinuxAmd64 } from '../docker/assert-docker-can-run-linux-amd64.mjs';
 import { createEasLocalBuildEnv } from './eas-local-build-env.mjs';
+import { ensureStagedGitRepo } from '../git/ensure-staged-git-repo.mjs';
+import { shouldStageRepoForEasLocalBuild } from './should-stage-eas-local-build-repo.mjs';
 
 function fail(message) {
   console.error(message);
@@ -44,34 +46,6 @@ function commandExists(cmd, env) {
   } catch {
     return false;
   }
-}
-
-/**
- * EAS expects the project to be inside a git repository, even for local builds.
- * When staging outside the working tree, we create a lightweight repo so EAS can proceed
- * without mutating the real checkout.
- *
- * @param {{ repoDir: string; env: Record<string, string>; dryRun: boolean }} opts
- */
-function ensureStagedGitRepo({ repoDir, env, dryRun }) {
-  const gitDir = path.join(repoDir, '.git');
-  if (fs.existsSync(gitDir)) return;
-
-  if (dryRun) {
-    console.log(`[dry-run] (cwd: ${repoDir}) git init`);
-    return;
-  }
-
-  execFileSync('git', ['init', '-q'], { cwd: repoDir, env, stdio: 'ignore', timeout: 60_000 });
-  execFileSync('git', ['config', 'user.email', 'pipeline@local'], { cwd: repoDir, env, stdio: 'ignore', timeout: 10_000 });
-  execFileSync('git', ['config', 'user.name', 'Happier Pipeline'], { cwd: repoDir, env, stdio: 'ignore', timeout: 10_000 });
-  // Avoid `git add -A` on a staged monorepo (can be extremely slow) — EAS only needs a repo + a commit.
-  execFileSync('git', ['commit', '--allow-empty', '-m', 'eas local build', '--no-gpg-sign'], {
-    cwd: repoDir,
-    env,
-    stdio: 'ignore',
-    timeout: 60_000,
-  });
 }
 
 /**
@@ -304,7 +278,8 @@ async function main() {
 	      if (platform !== 'android') {
 	        fail("--local-runtime dagger is currently supported only for --platform android.");
 	      }
-	      if (!dryRun) {
+        const daggerContainerPlatform = String(process.env.HAPPIER_EXPO_ANDROID_DAGGER_CONTAINER_PLATFORM ?? '').trim();
+	      if (!dryRun && daggerContainerPlatform.includes('amd64')) {
 	        assertDockerCanRunLinuxAmd64();
 	      }
 
@@ -356,6 +331,7 @@ async function main() {
             ...(sentryAuthToken ? ['--sentry-auth-token', 'env://SENTRY_AUTH_TOKEN'] : []),
             '--eas-cli-version',
             easCliVersion,
+            ...(daggerContainerPlatform ? ['--container-platform', daggerContainerPlatform] : []),
             ...(expoAppSlug ? ['--expo-app-slug', expoAppSlug] : []),
             ...(expoAppScheme ? ['--expo-app-scheme', expoAppScheme] : []),
             ...(expoAppName ? ['--expo-app-name', expoAppName] : []),
@@ -435,12 +411,16 @@ async function main() {
       }
     }
 
+    const stageForEas = shouldStageRepoForEasLocalBuild({ env: baseEnv, dryRun });
     // Stage the repo for EAS local builds so:
     // - autoIncrement/build-number changes don't touch the real working tree
     // - git ignorecase/casing and dirty-tree checks don't block local iteration
     // - local-only files like `.env*` don't leak into build contexts
-    const staged = dryRun ? null : stageRepoForDagger({ repoRoot });
-    const effectiveRepoDir = dryRun ? repoRoot : staged?.stagedRepoDir ?? repoRoot;
+    //
+    // When running inside Dagger, the mounted repo is already ephemeral and staging can explode
+    // Dagger's engine cache (millions of inodes under /tmp). Prefer building in-place.
+    const staged = stageForEas ? stageRepoForDagger({ repoRoot }) : null;
+    const effectiveRepoDir = staged?.stagedRepoDir ?? repoRoot;
     const effectiveUiDir = path.join(effectiveRepoDir, 'apps', 'ui');
 
     const pipelineInteractive =
