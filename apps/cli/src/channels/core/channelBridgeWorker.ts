@@ -247,8 +247,11 @@ export function createInMemoryChannelBindingStore(now: () => number = () => Date
   const byKey = new Map<string, ChannelSessionBinding>();
 
   return {
-    listBindings: async () => Array.from(byKey.values()),
-    getBinding: async (ref) => byKey.get(bindingKey(ref)) ?? null,
+    listBindings: async () => Array.from(byKey.values()).map((binding) => ({ ...binding })),
+    getBinding: async (ref) => {
+      const found = byKey.get(bindingKey(ref));
+      return found ? { ...found } : null;
+    },
     upsertBinding: async (binding) => {
       const key = bindingKey(binding);
       const existing = byKey.get(key);
@@ -262,8 +265,8 @@ export function createInMemoryChannelBindingStore(now: () => number = () => Date
         createdAtMs: existing?.createdAtMs ?? now(),
         updatedAtMs: now(),
       };
-      byKey.set(key, next);
-      return next;
+      byKey.set(key, { ...next });
+      return { ...next };
     },
     updateLastForwardedSeq: async (ref, seq) => {
       const key = bindingKey(ref);
@@ -295,7 +298,7 @@ function parseSlashCommand(text: string): Readonly<{ name: string; args: string[
 
 function formatSessionsMessage(rows: Array<Readonly<{ sessionId: string; label: string | null }>>): string {
   if (rows.length === 0) {
-    return 'No active sessions found.';
+    return 'No sessions found.';
   }
   const limit = 20;
   const truncated = rows.length > limit;
@@ -402,7 +405,7 @@ async function handleCommand(params: Readonly<{
       ref,
       [
         'Happier bridge commands:',
-        '/sessions - list active sessions',
+        '/sessions - list recent sessions',
         '/attach <session-id-or-prefix> - bind this DM/topic',
         '/detach - unbind this DM/topic',
         '/session - show current binding',
@@ -483,8 +486,7 @@ async function handleCommand(params: Readonly<{
         await replyToConversation(adapter, ref, 'Attaching by session ID or prefix is not supported in this environment.');
         return true;
       }
-
-      await replyToConversation(adapter, ref, 'Session not found. Use /sessions to list active sessions.');
+      await replyToConversation(adapter, ref, 'Session not found. Use /sessions to list recent sessions.');
       return true;
     }
 

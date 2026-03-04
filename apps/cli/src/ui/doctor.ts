@@ -8,9 +8,13 @@
 import chalk from 'chalk'
 import { configuration } from '@/configuration'
 import { readSettings, readCredentials } from '@/persistence'
+import { decodeJwtPayload } from '@/cloud/decodeJwtPayload';
 import { checkIfDaemonRunningAndCleanupStaleState } from '@/daemon/controlClient'
 import { findRunawayHappyProcesses, findAllHappyProcesses } from '@/daemon/doctor'
 import { readDaemonState, type DaemonLocallyPersistedState } from '@/persistence'
+import { resolveChannelBridgeRuntimeConfig } from '@/channels/channelBridgeConfig';
+import { createAxiosChannelBridgeKvClient, readChannelBridgeTelegramConfigFromKv } from '@/channels/channelBridgeServerKv';
+import { overlayServerKvTelegramConfigInSettings } from '@/channels/channelBridgeServerConfigOverlay';
 import { existsSync, readdirSync, statSync } from 'node:fs'
 import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
@@ -37,6 +41,57 @@ export function maskValue(value: string | undefined): string | undefined {
     }
 
     return `<${value.length} chars>`;
+}
+
+export function isMissingRequiredTelegramWebhookSecret(params: Readonly<{
+    webhookEnabled: boolean;
+    webhookSecret: string;
+}>): boolean {
+    return params.webhookEnabled && params.webhookSecret.trim().length === 0;
+}
+
+export function collectMissingRequiredWebhookFields(params: Readonly<{
+    webhookEnabled: boolean;
+    webhookSecret: string;
+    webhookHost: string;
+    webhookPort: number | null;
+}>): string[] {
+    if (!params.webhookEnabled) return [];
+    const issues: string[] = [];
+    if (params.webhookSecret.trim().length === 0) {
+        issues.push('webhook.secret: <empty> (required when webhook.enabled=true)');
+    }
+    if (params.webhookHost.trim().length === 0) {
+        issues.push('webhook.host: <empty> (required when webhook.enabled=true)');
+    }
+    if (
+        !Number.isFinite(params.webhookPort)
+        || params.webhookPort === null
+        || !Number.isInteger(params.webhookPort)
+        || params.webhookPort <= 0
+        || params.webhookPort > 65_535
+    ) {
+        issues.push('webhook.port: <empty/invalid> (required when webhook.enabled=true)');
+    }
+    return issues;
+}
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+    return value as Record<string, unknown>;
+}
+
+function parseStrictWebhookPort(value: unknown): number | null {
+    if (typeof value === 'number' && Number.isFinite(value)) {
+        return Math.trunc(value);
+    }
+    if (typeof value === 'string') {
+        const trimmed = value.trim();
+        if (!/^[-]?\d+$/.test(trimmed)) return null;
+        const parsed = Number.parseInt(trimmed, 10);
+        return Number.isFinite(parsed) ? parsed : null;
+    }
+    return null;
 }
 
 type SettingsForDisplay = Awaited<ReturnType<typeof readSettings>>;
@@ -124,6 +179,8 @@ export async function runDoctorCommand(filter?: 'all' | 'daemon'): Promise<void>
     if (!filter) {
         filter = 'all';
     }
+
+    let hasCriticalFailures = false;
     
     console.log(chalk.bold.cyan('\n🩺 Happier CLI Doctor\n'));
 
@@ -148,12 +205,18 @@ export async function runDoctorCommand(filter?: 'all' | 'daemon'): Promise<void>
         const projectRoot = projectPath();
         const wrapperPath = join(projectRoot, 'bin', 'happier.mjs');
         const cliEntrypoint = join(projectRoot, 'dist', 'index.mjs');
+        const wrapperExists = existsSync(wrapperPath);
+        const cliEntrypointExists = existsSync(cliEntrypoint);
+
+        if (!wrapperExists || !cliEntrypointExists) {
+            hasCriticalFailures = true;
+        }
         
         console.log(`Project Root: ${chalk.blue(projectRoot)}`);
         console.log(`Wrapper Script: ${chalk.blue(wrapperPath)}`);
         console.log(`CLI Entrypoint: ${chalk.blue(cliEntrypoint)}`);
-        console.log(`Wrapper Exists: ${existsSync(wrapperPath) ? chalk.green('✓ Yes') : chalk.red('❌ No')}`);
-        console.log(`CLI Exists: ${existsSync(cliEntrypoint) ? chalk.green('✓ Yes') : chalk.red('❌ No')}`);
+        console.log(`Wrapper Exists: ${wrapperExists ? chalk.green('✓ Yes') : chalk.red('❌ No')}`);
+        console.log(`CLI Exists: ${cliEntrypointExists ? chalk.green('✓ Yes') : chalk.red('❌ No')}`);
         console.log('');
 
         // Configuration
@@ -201,19 +264,22 @@ export async function runDoctorCommand(filter?: 'all' | 'daemon'): Promise<void>
         }
 
         // Settings
+        let settingsSnapshot: unknown = null;
         try {
-            const settings = await readSettings();
+            settingsSnapshot = await readSettings();
             console.log(chalk.bold('\n📄 Settings (settings.json):'));
-            console.log(chalk.gray(JSON.stringify(redactSettingsForDisplay(settings), null, 2)));
+            console.log(chalk.gray(JSON.stringify(redactSettingsForDisplay(settingsSnapshot), null, 2)));
         } catch (error) {
             console.log(chalk.bold('\n📄 Settings:'));
             console.log(chalk.red('❌ Failed to read settings'));
+            hasCriticalFailures = true;
         }
 
         // Authentication status
+        let credentials: Awaited<ReturnType<typeof readCredentials>> | null = null;
         console.log(chalk.bold('\n🔐 Authentication'));
         try {
-            const credentials = await readCredentials();
+            credentials = await readCredentials();
             if (credentials) {
                 console.log(chalk.green('✓ Authenticated (credentials found)'));
                 if (snapshot?.accountId) {
@@ -224,6 +290,158 @@ export async function runDoctorCommand(filter?: 'all' | 'daemon'): Promise<void>
             }
         } catch (error) {
             console.log(chalk.red('❌ Error reading credentials'));
+            hasCriticalFailures = true;
+        }
+
+        try {
+            const authCredentials = credentials ?? await readCredentials().catch(() => null);
+            const payload = authCredentials?.token ? decodeJwtPayload(authCredentials.token) : null;
+            const accountId = payload && typeof payload.sub === 'string' ? payload.sub.trim() : '';
+            const settings = settingsSnapshot ?? await readSettings();
+            const serverId = String(configuration.activeServerId ?? '').trim();
+            let runtimeSettings: unknown = settings;
+            let runtimeConfigSource = 'local settings';
+            let serverKvReadFailure: string | null = null;
+
+            if (serverId.length > 0 && authCredentials?.token) {
+                try {
+                    const kv = createAxiosChannelBridgeKvClient({ token: authCredentials.token });
+                    const serverRecord = await readChannelBridgeTelegramConfigFromKv({
+                        kv,
+                        serverId,
+                    });
+                    runtimeSettings = overlayServerKvTelegramConfigInSettings({
+                        settings,
+                        serverId,
+                        accountId,
+                        record: serverRecord.record,
+                    });
+                    if (serverRecord.record != null) {
+                        runtimeConfigSource = 'server KV overlay + local settings';
+                    }
+                } catch (error) {
+                    const message = error instanceof Error ? error.message : String(error);
+                    serverKvReadFailure = message;
+                }
+            }
+
+            const runtimeSettingsRecord = asRecord(runtimeSettings);
+            const channelBridgeRoot = asRecord(runtimeSettingsRecord?.channelBridge);
+            const byServerId = asRecord(channelBridgeRoot?.byServerId);
+            const serverScope = serverId ? asRecord(byServerId?.[serverId]) : null;
+            const byAccountId = asRecord(serverScope?.byAccountId);
+            const accountScope = accountId ? asRecord(byAccountId?.[accountId]) : null;
+            const providers = asRecord(accountScope?.providers);
+            const telegram = asRecord(providers?.telegram);
+            const providerEntries = providers
+                ? Object.entries(providers)
+                : [];
+
+            const runtimeBridge = resolveChannelBridgeRuntimeConfig({
+                env: process.env,
+                settings: runtimeSettings,
+                serverId,
+                accountId,
+            });
+
+            console.log(chalk.bold('\n🔌 Channel Bridges'));
+            console.log(`Server scope: ${serverId || '(unknown)'}`);
+            console.log(`Account scope: ${accountId || '(unknown)'}`);
+            console.log(`Runtime source: ${runtimeConfigSource}`);
+            if (serverKvReadFailure) {
+                console.log(chalk.yellow(`⚠️  Unable to read channel bridge server KV: ${serverKvReadFailure}`));
+            }
+            const telegramConfigured =
+                telegram !== null
+                || runtimeBridge.telegram.botToken.trim().length > 0
+                || runtimeBridge.telegram.webhookEnabled
+                || runtimeBridge.telegram.webhookSecret.trim().length > 0
+                || runtimeBridge.telegram.allowedChatIds.length > 0
+                || runtimeBridge.telegram.requireTopics;
+
+            if (telegramConfigured) {
+                const webhookConfig = asRecord(telegram?.webhook);
+                const token = runtimeBridge.telegram.botToken;
+                const webhookSecret = runtimeBridge.telegram.webhookSecret;
+                const allowedChatIds = runtimeBridge.telegram.allowedChatIds;
+                const requireTopics = runtimeBridge.telegram.requireTopics;
+                const webhookEnabled = runtimeBridge.telegram.webhookEnabled;
+                const webhookHost = runtimeBridge.telegram.webhookHost || '(default)';
+                const webhookPort = String(runtimeBridge.telegram.webhookPort);
+                const webhookHostForValidation = runtimeBridge.telegram.webhookHost.trim();
+                const webhookPortForValidation = runtimeBridge.telegram.webhookPort > 0
+                    ? runtimeBridge.telegram.webhookPort
+                    : null;
+                const tokenMissing = token.trim().length === 0;
+                const webhookIssues = collectMissingRequiredWebhookFields({
+                    webhookEnabled,
+                    webhookSecret,
+                    webhookHost: webhookHostForValidation,
+                    webhookPort: webhookPortForValidation,
+                });
+                const hasTelegramCriticalIssue = tokenMissing || webhookIssues.length > 0;
+                if (hasTelegramCriticalIssue) {
+                    console.log(chalk.red('❌ Telegram bridge configured with critical issues'));
+                    hasCriticalFailures = true;
+                } else {
+                    console.log(chalk.green('✓ Telegram bridge configured in scoped settings'));
+                }
+                if (tokenMissing) {
+                    console.log(chalk.red('  botToken: <empty> (required)'));
+                } else {
+                    console.log(`  botToken: ${maskValue(token) ?? '<empty>'}`);
+                }
+                if (webhookIssues.length > 0) {
+                    for (const issue of webhookIssues) {
+                        console.log(chalk.red(`  ${issue}`));
+                    }
+                } else {
+                    console.log(`  webhook.secret: ${maskValue(webhookSecret) ?? '<empty>'}`);
+                }
+                console.log(`  webhook.enabled: ${webhookEnabled ? 'true' : 'false'}`);
+                console.log(`  webhook.host: ${webhookHost}`);
+                console.log(`  webhook.port: ${webhookPort}`);
+                console.log(`  allowedChatIds: ${allowedChatIds.length > 0 ? allowedChatIds.join(', ') : '(allow all)'}`);
+                console.log(`  requireTopics: ${requireTopics ? 'true' : 'false'}`);
+                console.log('  secret policy: local-only (not synced to server KV)');
+            } else {
+                console.log(chalk.gray('Telegram bridge not configured for active server/account scope'));
+            }
+
+            for (const [providerId, providerConfig] of providerEntries) {
+                if (providerId === 'telegram') continue;
+                if (!providerConfig || typeof providerConfig !== 'object' || Array.isArray(providerConfig)) continue;
+
+                const providerRecord = providerConfig as Record<string, unknown>;
+                const webhook = asRecord(providerRecord.webhook);
+                const secrets = asRecord(providerRecord.secrets);
+                const webhookEnabled = webhook?.enabled === true;
+                const webhookSecret = typeof secrets?.webhookSecret === 'string'
+                    ? secrets.webhookSecret
+                    : typeof webhook?.secret === 'string'
+                        ? webhook.secret
+                        : '';
+                const webhookHostRaw = typeof webhook?.host === 'string' ? webhook.host : '';
+                const webhookPortRaw = parseStrictWebhookPort(webhook?.port);
+                const issues = collectMissingRequiredWebhookFields({
+                    webhookEnabled,
+                    webhookSecret,
+                    webhookHost: webhookHostRaw,
+                    webhookPort: webhookPortRaw,
+                });
+                if (issues.length > 0) {
+                    console.log(chalk.red(`❌ ${providerId} bridge configured with critical issues`));
+                    for (const issue of issues) {
+                        console.log(chalk.red(`  ${issue}`));
+                    }
+                    hasCriticalFailures = true;
+                }
+            }
+            console.log(chalk.gray('Apply changes with daemon restart: happier daemon stop && happier daemon start'));
+        } catch (error) {
+            hasCriticalFailures = true;
+            const message = error instanceof Error ? error.message : String(error);
+            console.log(chalk.red(`❌ Failed to evaluate channel bridge diagnostics: ${message}`));
         }
     }
 
@@ -244,7 +462,7 @@ export async function runDoctorCommand(filter?: 'all' | 'daemon'): Promise<void>
         } else if (state && !isRunning) {
             console.log(chalk.yellow('⚠️  Daemon state exists but process not running (stale)'));
         } else {
-            console.log(chalk.red('❌ Daemon is not running'));
+            console.log(chalk.yellow('⚠️  Daemon is not running'));
         }
 
         // Show daemon state file
@@ -294,6 +512,7 @@ export async function runDoctorCommand(filter?: 'all' | 'daemon'): Promise<void>
                 });
             } else {
                 console.log(chalk.red('❌ No happier processes found'));
+                hasCriticalFailures = true;
             }
 
             if (allProcesses.length > 1) { // More than just current process
@@ -303,6 +522,7 @@ export async function runDoctorCommand(filter?: 'all' | 'daemon'): Promise<void>
         }
     } catch (error) {
         console.log(chalk.red('❌ Error checking daemon status'));
+        hasCriticalFailures = true;
     }
 
     // Log files - only show for 'all' filter
@@ -354,5 +574,9 @@ export async function runDoctorCommand(filter?: 'all' | 'daemon'): Promise<void>
         console.log(`Documentation: ${chalk.blue('https://app.happier.dev')}`);
     }
 
-    console.log(chalk.green('\n✅ Doctor diagnosis complete!\n'));
+    if (hasCriticalFailures) {
+        console.log(chalk.red('\n❌ Doctor diagnosis complete!\n'));
+    } else {
+        console.log(chalk.green('\n✅ Doctor diagnosis complete!\n'));
+    }
 }

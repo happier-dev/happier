@@ -1,0 +1,209 @@
+import type { ChannelBindingStore, ChannelBridgeConversationRef, ChannelSessionBinding } from './core/channelBridgeWorker';
+import {
+  ChannelBridgeKvVersionMismatchError,
+  decodeChannelBridgeBindingsDocFromBase64,
+  readChannelBridgeBindingsFromKv,
+  type ChannelBridgeKvClient,
+  type ChannelBridgeServerBindingsDocument,
+  writeChannelBridgeBindingsToKv,
+} from './channelBridgeServerKv';
+
+type BindingCache = Readonly<{
+  version: number;
+  bindings: ChannelSessionBinding[];
+  fetchedAtMs: number;
+}>;
+
+function bindingKey(ref: ChannelBridgeConversationRef): string {
+  return JSON.stringify([ref.providerId, ref.conversationId, ref.threadId]);
+}
+
+function cloneBinding(binding: ChannelSessionBinding): ChannelSessionBinding {
+  return {
+    providerId: binding.providerId,
+    conversationId: binding.conversationId,
+    threadId: binding.threadId,
+    sessionId: binding.sessionId,
+    lastForwardedSeq: binding.lastForwardedSeq,
+    createdAtMs: binding.createdAtMs,
+    updatedAtMs: binding.updatedAtMs,
+  };
+}
+
+function cloneBindings(bindings: readonly ChannelSessionBinding[]): ChannelSessionBinding[] {
+  return bindings.map((binding) => cloneBinding(binding));
+}
+
+function toServerDocument(bindings: readonly ChannelSessionBinding[]): ChannelBridgeServerBindingsDocument {
+  return {
+    schemaVersion: 1,
+    bindings: bindings.map((binding) => ({
+      providerId: binding.providerId,
+      conversationId: binding.conversationId,
+      threadId: binding.threadId,
+      sessionId: binding.sessionId,
+      lastForwardedSeq: binding.lastForwardedSeq,
+      createdAtMs: binding.createdAtMs,
+      updatedAtMs: binding.updatedAtMs,
+    })),
+  };
+}
+
+function fromServerDocument(doc: ChannelBridgeServerBindingsDocument): ChannelSessionBinding[] {
+  return doc.bindings.map((binding) => ({
+    providerId: binding.providerId,
+    conversationId: binding.conversationId,
+    threadId: binding.threadId,
+    sessionId: binding.sessionId,
+    lastForwardedSeq: Math.max(0, Math.trunc(binding.lastForwardedSeq)),
+    createdAtMs: Math.trunc(binding.createdAtMs),
+    updatedAtMs: Math.trunc(binding.updatedAtMs),
+  }));
+}
+
+export function createServerBackedChannelBindingStore(params: Readonly<{
+  kv: ChannelBridgeKvClient;
+  serverId: string;
+  cacheTtlMs?: number;
+  maxWriteRetries?: number;
+}>): ChannelBindingStore {
+  const cacheTtlMs = typeof params.cacheTtlMs === 'number' ? Math.max(0, Math.trunc(params.cacheTtlMs)) : 1_000;
+  const maxWriteRetries = typeof params.maxWriteRetries === 'number' ? Math.max(1, Math.trunc(params.maxWriteRetries)) : 4;
+
+  let cache: BindingCache | null = null;
+
+  async function load(forceRefresh: boolean): Promise<BindingCache> {
+    if (!forceRefresh && cache && Date.now() - cache.fetchedAtMs <= cacheTtlMs) {
+      return cache;
+    }
+
+    const fetched = await readChannelBridgeBindingsFromKv({
+      kv: params.kv,
+      serverId: params.serverId,
+    });
+    const next: BindingCache = {
+      version: fetched.version,
+      bindings: fromServerDocument(fetched.doc),
+      fetchedAtMs: Date.now(),
+    };
+    cache = next;
+    return next;
+  }
+
+  function setCache(version: number, bindings: readonly ChannelSessionBinding[]): void {
+    cache = {
+      version,
+      bindings: cloneBindings(bindings),
+      fetchedAtMs: Date.now(),
+    };
+  }
+
+  async function withOptimisticWrite<T>(operation: (currentBindings: ChannelSessionBinding[]) => Readonly<{
+    nextBindings: ChannelSessionBinding[];
+    result: T;
+    changed?: boolean;
+  }>): Promise<T> {
+    for (let attempt = 0; attempt < maxWriteRetries; attempt += 1) {
+      const current = await load(true);
+      const op = operation(cloneBindings(current.bindings));
+      const changed = op.changed ?? true;
+      if (!changed) {
+        setCache(current.version, current.bindings);
+        return op.result;
+      }
+
+      try {
+        const version = await writeChannelBridgeBindingsToKv({
+          kv: params.kv,
+          serverId: params.serverId,
+          expectedVersion: current.version,
+          doc: toServerDocument(op.nextBindings),
+        });
+
+        setCache(version, op.nextBindings);
+        return op.result;
+      } catch (error) {
+        if (!(error instanceof ChannelBridgeKvVersionMismatchError)) {
+          throw error;
+        }
+
+        const doc = decodeChannelBridgeBindingsDocFromBase64(error.currentValueBase64);
+        setCache(error.currentVersion, fromServerDocument(doc));
+      }
+    }
+
+    throw new Error('Failed to persist channel bridge bindings after retries');
+  }
+
+  return {
+    listBindings: async () => {
+      const current = await load(false);
+      return cloneBindings(current.bindings);
+    },
+    getBinding: async (ref) => {
+      const current = await load(false);
+      const key = bindingKey(ref);
+      const found = current.bindings.find((binding) => bindingKey(binding) === key);
+      return found ? cloneBinding(found) : null;
+    },
+    upsertBinding: async (binding) => {
+      return await withOptimisticWrite((currentBindings) => {
+        const nowMs = Date.now();
+        const key = bindingKey(binding);
+        const existing = currentBindings.find((row) => bindingKey(row) === key) ?? null;
+
+        const nextBinding: ChannelSessionBinding = {
+          providerId: binding.providerId,
+          conversationId: binding.conversationId,
+          threadId: binding.threadId,
+          sessionId: binding.sessionId,
+          lastForwardedSeq: Math.max(0, Math.trunc(binding.lastForwardedSeq)),
+          createdAtMs: existing?.createdAtMs ?? nowMs,
+          updatedAtMs: nowMs,
+        };
+
+        const nextBindings = currentBindings
+          .filter((row) => bindingKey(row) !== key)
+          .concat([nextBinding]);
+
+        return {
+          nextBindings,
+          result: cloneBinding(nextBinding),
+        };
+      });
+    },
+    updateLastForwardedSeq: async (ref, seq) => {
+      await withOptimisticWrite((currentBindings) => {
+        const key = bindingKey(ref);
+        const nextSeq = Math.max(0, Math.trunc(seq));
+        let changed = false;
+        const nextBindings = currentBindings.map((binding) => {
+          if (bindingKey(binding) !== key) return binding;
+          if (nextSeq <= binding.lastForwardedSeq) return binding;
+          changed = true;
+          return {
+            ...binding,
+            lastForwardedSeq: nextSeq,
+            updatedAtMs: Date.now(),
+          };
+        });
+        return {
+          nextBindings,
+          result: undefined,
+          changed,
+        };
+      });
+    },
+    removeBinding: async (ref) => {
+      return await withOptimisticWrite((currentBindings) => {
+        const key = bindingKey(ref);
+        const nextBindings = currentBindings.filter((binding) => bindingKey(binding) !== key);
+        return {
+          nextBindings,
+          result: nextBindings.length !== currentBindings.length,
+          changed: nextBindings.length !== currentBindings.length,
+        };
+      });
+    },
+  };
+}

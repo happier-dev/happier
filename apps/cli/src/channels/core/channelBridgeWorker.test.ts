@@ -170,6 +170,36 @@ describe('createInMemoryChannelBindingStore', () => {
 });
 
 describe('executeChannelBridgeTick', () => {
+  it('returns defensive copies from in-memory binding store reads', async () => {
+    const store = createInMemoryChannelBindingStore(() => 1_000);
+    await store.upsertBinding({
+      providerId: 'telegram',
+      conversationId: 'room-copy',
+      threadId: null,
+      sessionId: 'sess-copy',
+      lastForwardedSeq: 5,
+    });
+
+    const firstRead = await store.getBinding({
+      providerId: 'telegram',
+      conversationId: 'room-copy',
+      threadId: null,
+    });
+    expect(firstRead).not.toBeNull();
+    (firstRead as { sessionId: string }).sessionId = 'mutated-first-read';
+
+    const listed = await store.listBindings();
+    (listed[0] as { sessionId: string }).sessionId = 'mutated-list-read';
+
+    const secondRead = await store.getBinding({
+      providerId: 'telegram',
+      conversationId: 'room-copy',
+      threadId: null,
+    });
+
+    expect(secondRead?.sessionId).toBe('sess-copy');
+  });
+
   it('supports /attach then forwards inbound user messages into the bound session', async () => {
     const store = createInMemoryChannelBindingStore();
     const harness = createAdapterHarness();
@@ -1630,7 +1660,6 @@ describe('executeChannelBridgeTick', () => {
     expect(warnings.some((row) => row.message.includes('Failed to list bindings for outbound forwarding'))).toBe(true);
   });
 });
-
 describe('startChannelBridgeWorker', () => {
   it('runs the first tick on startup', async () => {
     const store = createInMemoryChannelBindingStore();
