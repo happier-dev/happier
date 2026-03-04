@@ -1,13 +1,12 @@
+import { assertSessionAttachFilePathWithinBaseDir, resolveSessionAttachBaseDir } from '@/agent/runtime/sessionAttachPaths';
 import { configuration } from '@/configuration';
 import { logger } from '@/ui/logger';
+import type { SessionAttachFilePayload } from '@/agent/runtime/sessionAttachPayload';
 import { randomUUID } from 'node:crypto';
-import { mkdir, unlink, writeFile } from 'node:fs/promises';
-import { isAbsolute, join, relative, resolve, sep } from 'node:path';
+import { lstat, mkdir, readdir, unlink, writeFile } from 'node:fs/promises';
+import { join, resolve } from 'node:path';
 
-export type SessionAttachFilePayload = {
-  encryptionKeyBase64: string;
-  encryptionVariant: 'dataKey';
-};
+export type { SessionAttachFilePayload } from '@/agent/runtime/sessionAttachPayload';
 
 function sanitizeHappySessionIdForFilename(happySessionId: string): string {
   const safe = happySessionId.replace(/[^A-Za-z0-9._-]+/g, '_');
@@ -20,10 +19,29 @@ function sanitizeHappySessionIdForFilename(happySessionId: string): string {
   return normalized.length > 96 ? normalized.slice(0, 96) : normalized;
 }
 
-function assertPathWithinBaseDir(baseDir: string, filePath: string): void {
-  const rel = relative(baseDir, filePath);
-  if (rel === '..' || rel.startsWith(`..${sep}`) || isAbsolute(rel)) {
-    throw new Error('Invalid session attach file path');
+async function pruneStaleSessionAttachFiles(baseDir: string): Promise<void> {
+  const maxAgeMs = configuration.sessionAttachFileMaxAgeMs;
+  if (maxAgeMs <= 0) return;
+
+  try {
+    const entries = await readdir(baseDir, { withFileTypes: true, encoding: 'utf8' });
+    const nowMs = Date.now();
+    for (const entry of entries) {
+      if (!entry.name.endsWith('.json')) continue;
+      if (!(entry.isFile() || entry.isSymbolicLink())) continue;
+
+      const candidate = resolve(join(baseDir, entry.name));
+      try {
+        assertSessionAttachFilePathWithinBaseDir(baseDir, candidate);
+        const s = await lstat(candidate);
+        if (nowMs - s.mtimeMs <= maxAgeMs) continue;
+        await unlink(candidate);
+      } catch {
+        // ignore: best-effort only
+      }
+    }
+  } catch {
+    return;
   }
 }
 
@@ -31,12 +49,13 @@ export async function createSessionAttachFile(params: {
   happySessionId: string;
   payload: SessionAttachFilePayload;
 }): Promise<{ filePath: string; cleanup: () => Promise<void> }> {
-  const baseDir = resolve(join(configuration.happyHomeDir, 'tmp', 'session-attach'));
+  const baseDir = resolveSessionAttachBaseDir(configuration.happyHomeDir);
   await mkdir(baseDir, { recursive: true });
+  await pruneStaleSessionAttachFiles(baseDir);
 
   const safeSessionId = sanitizeHappySessionIdForFilename(params.happySessionId);
   const filePath = resolve(join(baseDir, `${safeSessionId}-${randomUUID()}.json`));
-  assertPathWithinBaseDir(baseDir, filePath);
+  assertSessionAttachFilePathWithinBaseDir(baseDir, filePath);
 
   const payloadJson = JSON.stringify(params.payload);
   await writeFile(filePath, payloadJson, { mode: 0o600 });

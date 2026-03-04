@@ -37,6 +37,7 @@ export type VendorResumeSupportLevel = 'supported' | 'unsupported' | 'experiment
 export type ResumeRuntimeGate = 'acpLoadSession' | null;
 
 export type VendorResumeIdField =
+    | 'claudeSessionId'
     | 'codexSessionId'
     | 'geminiSessionId'
     | 'opencodeSessionId'

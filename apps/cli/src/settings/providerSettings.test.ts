@@ -5,10 +5,8 @@ import { applyProviderSpawnExtrasToProcessEnv, resolveProviderOutgoingMessageMet
 describe('providerSettings', () => {
   it('sets Codex ACP env when account settings request ACP and env is unset', () => {
     const prevAcp = process.env.HAPPIER_EXPERIMENTAL_CODEX_ACP;
-    const prevResume = process.env.HAPPIER_EXPERIMENTAL_CODEX_RESUME;
     try {
       delete process.env.HAPPIER_EXPERIMENTAL_CODEX_ACP;
-      delete process.env.HAPPIER_EXPERIMENTAL_CODEX_RESUME;
 
       applyProviderSpawnExtrasToProcessEnv({
         agentId: 'codex',
@@ -16,17 +14,11 @@ describe('providerSettings', () => {
       });
 
       expect(process.env.HAPPIER_EXPERIMENTAL_CODEX_ACP).toBe('1');
-      expect(process.env.HAPPIER_EXPERIMENTAL_CODEX_RESUME).toBeUndefined();
     } finally {
       if (prevAcp === undefined) {
         delete process.env.HAPPIER_EXPERIMENTAL_CODEX_ACP;
       } else {
         process.env.HAPPIER_EXPERIMENTAL_CODEX_ACP = prevAcp;
-      }
-      if (prevResume === undefined) {
-        delete process.env.HAPPIER_EXPERIMENTAL_CODEX_RESUME;
-      } else {
-        process.env.HAPPIER_EXPERIMENTAL_CODEX_RESUME = prevResume;
       }
     }
   });

@@ -34,6 +34,16 @@ export type AccountSettingsContext = Readonly<{
   whenRefreshed: Promise<AccountSettingsContext> | null;
 }>;
 
+function migrateAccountSettingsForCodexAcpDefault(settings: AccountSettings): AccountSettings {
+  const schemaVersion = settings.schemaVersion;
+  if (!Number.isFinite(schemaVersion) || schemaVersion >= 6) return settings;
+  return {
+    ...settings,
+    schemaVersion: 6,
+    codexBackendMode: 'acp',
+  };
+}
+
 type BootstrapDeps = Readonly<{
   resolveCachePath: () => string;
   readCache: (path: string) => Promise<AccountSettingsCache | null>;
@@ -181,12 +191,12 @@ export async function bootstrapAccountSettingsContext(params: Readonly<{
   const cache = await deps.readCache(cachePath);
 
   const parseFromContent = async (content: AccountSettingsContentEnvelope | null): Promise<AccountSettings> => {
-    if (!content) return accountSettingsParse({});
-    if (content.t === 'plain') return accountSettingsParse(content.v);
+    if (!content) return migrateAccountSettingsForCodexAcpDefault(accountSettingsParse({}));
+    if (content.t === 'plain') return migrateAccountSettingsForCodexAcpDefault(accountSettingsParse(content.v));
     const ciphertext = typeof content.c === 'string' ? content.c : '';
-    if (!ciphertext) return accountSettingsParse({});
+    if (!ciphertext) return migrateAccountSettingsForCodexAcpDefault(accountSettingsParse({}));
     const decrypted = await deps.decryptCiphertext({ credentials: params.credentials, ciphertext });
-    return accountSettingsParse(decrypted ?? {});
+    return migrateAccountSettingsForCodexAcpDefault(accountSettingsParse(decrypted ?? {}));
   };
 
   const cacheContent: AccountSettingsContentEnvelope | null =

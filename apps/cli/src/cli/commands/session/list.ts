@@ -5,6 +5,9 @@ import { fetchSessionsPage } from '@/sessionControl/sessionsHttp';
 import { readIntFlagValue, readFlagValue, hasFlag } from '@/sessionControl/argvFlags';
 import { wantsJson, printJsonEnvelope } from '@/sessionControl/jsonOutput';
 import { summarizeSessionRow } from '@/sessionControl/sessionSummary';
+import { buildCliSessionRowModel } from '@/sessionControl/buildCliSessionRowModel';
+import { renderSessionListTable } from '@/ui/renderSessionListTable';
+import { bootstrapAccountSettingsContext } from '@/settings/accountSettings/bootstrapAccountSettingsContext';
 
 export async function cmdSessionList(
   argv: string[],
@@ -14,12 +17,14 @@ export async function cmdSessionList(
   const activeOnly = hasFlag(argv, '--active');
   const archivedOnly = hasFlag(argv, '--archived');
   const includeSystem = hasFlag(argv, '--include-system');
+  const plain = hasFlag(argv, '--plain');
+  const resumableOnly = hasFlag(argv, '--resumable');
   const limitRaw = readIntFlagValue(argv, '--limit');
   const limit = typeof limitRaw === 'number' && Number.isFinite(limitRaw) && limitRaw > 0 ? Math.min(limitRaw, 200) : undefined;
   const cursor = readFlagValue(argv, '--cursor') ?? '';
 
   if (activeOnly && archivedOnly) {
-    throw new Error('Usage: happier session list [--active] [--archived] [--limit N] [--cursor C] [--include-system] [--json]');
+    throw new Error('Usage: happier session list [--active] [--archived] [--limit N] [--cursor C] [--include-system] [--resumable] [--plain] [--json]');
   }
 
   const credentials = await deps.readCredentialsFn();
@@ -40,16 +45,36 @@ export async function cmdSessionList(
     archivedOnly,
   });
 
-  const sessions = page.sessions
-    .map((row) => summarizeSessionRow({ credentials, row }))
-    .filter((session) => includeSystem || session.isSystem !== true);
+  const accountSettingsContext = await bootstrapAccountSettingsContext({ credentials, mode: 'fast' });
+  const rowModels = page.sessions
+    .map((row) => buildCliSessionRowModel({ credentials, rawSession: row, accountSettings: accountSettingsContext.settings }))
+    .filter((row) => includeSystem || row.isSystem !== true);
+
+  const filteredRows = resumableOnly
+    ? rowModels.filter((row) => row.vendorResume.eligible === true && row.archivedAt === null && row.active !== true)
+    : rowModels;
 
   if (json) {
+    const allowedSessionIds = resumableOnly ? new Set(filteredRows.map((row) => row.id)) : null;
+    const sessions = page.sessions
+      .map((row) => summarizeSessionRow({ credentials, row }))
+      .filter((session) => includeSystem || session.isSystem !== true)
+      .filter((session) => !allowedSessionIds || allowedSessionIds.has(session.id));
+    const rowById = new Map(filteredRows.map((row) => [row.id, row] as const));
     printJsonEnvelope({
       ok: true,
       kind: 'session_list',
       data: {
-        sessions,
+        sessions: sessions.map((session) => {
+          const row = rowById.get(session.id);
+          if (!row) return session;
+          return {
+            ...session,
+            agentId: row.agentId,
+            vendorResumeEligible: row.vendorResume.eligible,
+            ...(row.vendorResume.eligible ? {} : { vendorResumeReasonCode: row.vendorResume.reasonCode }),
+          };
+        }),
         nextCursor: page.nextCursor,
         hasNext: page.hasNext,
       },
@@ -57,11 +82,18 @@ export async function cmdSessionList(
     return;
   }
 
-  for (const s of sessions) {
-    const systemSuffix =
-      includeSystem && s.isSystem
-        ? ` ${chalk.yellow(`[system${s.systemPurpose ? `:${s.systemPurpose}` : ''}]`)}`
-        : '';
-    console.log(`${s.id}${systemSuffix}${s.tag ? ` ${chalk.gray(s.tag)}` : ''}${s.path ? ` ${chalk.gray(s.path)}` : ''}`);
+  if (plain) {
+    for (const row of filteredRows) {
+      const systemSuffix =
+        includeSystem && row.isSystem
+          ? ` ${chalk.yellow(`[system${row.systemPurpose ? `:${row.systemPurpose}` : ''}]`)}`
+          : '';
+      console.log(`${row.id}${systemSuffix}${row.tag ? ` ${chalk.gray(row.tag)}` : ''}${row.path ? ` ${chalk.gray(row.path)}` : ''}`);
+    }
+    return;
+  }
+
+  for (const line of renderSessionListTable({ rows: filteredRows })) {
+    console.log(line);
   }
 }

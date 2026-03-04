@@ -1,10 +1,11 @@
 import { afterEach, describe, expect, test, vi } from 'vitest';
-import { mkdtemp, readFile, rm, stat } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, stat, utimes, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { basename, join, resolve, sep } from 'node:path';
 
 describe('createSessionAttachFile', () => {
   const originalHappyHomeDir = process.env.HAPPIER_HOME_DIR;
+  const originalAttachMaxAgeMs = process.env.HAPPIER_SESSION_ATTACH_FILE_MAX_AGE_MS;
   const tempDirs: string[] = [];
 
   afterEach(async () => {
@@ -15,6 +16,11 @@ describe('createSessionAttachFile', () => {
       delete process.env.HAPPIER_HOME_DIR;
     } else {
       process.env.HAPPIER_HOME_DIR = originalHappyHomeDir;
+    }
+    if (originalAttachMaxAgeMs === undefined) {
+      delete process.env.HAPPIER_SESSION_ATTACH_FILE_MAX_AGE_MS;
+    } else {
+      process.env.HAPPIER_SESSION_ATTACH_FILE_MAX_AGE_MS = originalAttachMaxAgeMs;
     }
     vi.resetModules();
   });
@@ -40,13 +46,15 @@ describe('createSessionAttachFile', () => {
     const key = encodeBase64(new Uint8Array(32).fill(5), 'base64');
     const { filePath, cleanup } = await createSessionAttachFile({
       happySessionId: 'happy-session-1',
-      payload: { encryptionKeyBase64: key, encryptionVariant: 'dataKey' },
+      payload: { v: 2, encryptionMode: 'e2ee', encryptionKeyBase64: key, encryptionVariant: 'dataKey' },
     });
 
     expect(resolve(filePath).startsWith(baseDir + sep)).toBe(true);
 
     const raw = await readFile(filePath, 'utf-8');
     expect(JSON.parse(raw)).toEqual({
+      v: 2,
+      encryptionMode: 'e2ee',
       encryptionKeyBase64: key,
       encryptionVariant: 'dataKey',
     });
@@ -71,7 +79,7 @@ describe('createSessionAttachFile', () => {
 
     const { filePath, cleanup } = await createSessionAttachFile({
       happySessionId: '../evil',
-      payload: { encryptionKeyBase64: key, encryptionVariant: 'dataKey' },
+      payload: { v: 2, encryptionMode: 'e2ee', encryptionKeyBase64: key, encryptionVariant: 'dataKey' },
     });
 
     expect(resolve(filePath).startsWith(baseDir + sep)).toBe(true);
@@ -82,5 +90,33 @@ describe('createSessionAttachFile', () => {
 
     // Ensure the base directory still exists (we didn't clobber parent dirs).
     await expect(stat(join(dir, 'tmp', 'session-attach'))).resolves.toBeTruthy();
+  });
+
+  test('prunes stale attach files in the base dir (best-effort)', async () => {
+    const { dir, baseDir } = await createHappyHomeFixture();
+    process.env.HAPPIER_SESSION_ATTACH_FILE_MAX_AGE_MS = '1';
+
+    vi.resetModules();
+
+    const { encodeBase64 } = await import('@/api/encryption');
+    const { createSessionAttachFile } = await import('./sessionAttachFile');
+
+    // Create a stale file under the base directory.
+    const stalePath = join(baseDir, 'stale.json');
+    await mkdir(baseDir, { recursive: true });
+    await writeFile(stalePath, JSON.stringify({ v: 2, encryptionMode: 'plain' }), { mode: 0o600 });
+    const old = Date.now() - 10_000;
+    await utimes(stalePath, old / 1000, old / 1000);
+
+    const key = encodeBase64(new Uint8Array(32).fill(5), 'base64');
+    const { filePath, cleanup } = await createSessionAttachFile({
+      happySessionId: 'happy-session-2',
+      payload: { v: 2, encryptionMode: 'e2ee', encryptionKeyBase64: key, encryptionVariant: 'dataKey' },
+    });
+
+    await expect(stat(filePath)).resolves.toBeTruthy();
+    await expect(stat(stalePath)).rejects.toMatchObject({ code: 'ENOENT' });
+
+    await cleanup();
   });
 });

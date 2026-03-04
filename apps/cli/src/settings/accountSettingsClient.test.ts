@@ -32,7 +32,7 @@ describe('accountSettingsClient', () => {
 
   it('decrypts protocol account-scoped v1 ciphertext for dataKey credentials', async () => {
     const machineKey = new Uint8Array(32).fill(9);
-    const settings = { codexBackendMode: 'mcp_resume', claudeRemoteSettingSources: 'none' };
+    const settings = { codexBackendMode: 'mcp', claudeRemoteSettingSources: 'none' };
     const ciphertext = sealAccountScopedBlobCiphertext({
       kind: 'account_settings',
       material: { type: 'dataKey', machineKey },
@@ -63,7 +63,7 @@ describe('accountSettingsClient', () => {
 
   it('decrypts account settings ciphertext for dataKey credentials', async () => {
     const machineKey = new Uint8Array(32).fill(9);
-    const settings = { codexBackendMode: 'mcp_resume', claudeRemoteSettingSources: 'none' };
+    const settings = { codexBackendMode: 'mcp', claudeRemoteSettingSources: 'none' };
     const ciphertext = encodeBase64(encrypt(machineKey, 'dataKey', settings));
 
     const decrypted = await decryptAccountSettingsCiphertext({

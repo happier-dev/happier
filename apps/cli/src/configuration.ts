@@ -40,6 +40,12 @@ class Configuration {
   public readonly privateKeyFile: string
   public readonly daemonStateFile: string
   public readonly daemonLockFile: string
+  // Session attach file pruning (best-effort; defense-in-depth for crash-before-read scenarios).
+  public readonly sessionAttachFileMaxAgeMs: number
+  // Session control HTTP timeouts (v2 sessions endpoints; archive/unarchive, list, etc).
+  public readonly sessionControlHttpTimeoutMs: number
+  // Vendor CLI `--help` invocation timeout (defense-in-depth against hung vendor CLIs).
+  public readonly vendorCliHelpTimeoutMs: number
   public readonly currentCliVersion: string
 
   public readonly isExperimentalEnabled: boolean
@@ -80,6 +86,9 @@ class Configuration {
 
   // Claude subagent local JSONL follower (used in remote mode when Task returns output_file).
   public readonly claudeSubagentJsonlPollIntervalMs: number
+
+  // Claude permission handler metadata watcher (prevents tight loops when metadata updates are unavailable).
+  public readonly claudeMetadataWatcherIdleBackoffMs: number
 
   // Claude Task tool policy (remote mode).
   public readonly claudeTaskAllowRunInBackground: boolean
@@ -177,6 +186,32 @@ class Configuration {
     this.privateKeyFile = join(this.activeServerDir, 'access.key')
     this.daemonStateFile = join(this.activeServerDir, 'daemon.state.json')
     this.daemonLockFile = join(this.activeServerDir, 'daemon.state.json.lock')
+
+    const attachMaxAgeRaw = String(process.env.HAPPIER_SESSION_ATTACH_FILE_MAX_AGE_MS ?? '').trim();
+    const attachMaxAgeMs = Number.parseInt(attachMaxAgeRaw, 10);
+    // Default: 10 minutes. Set to 0 to disable pruning.
+    this.sessionAttachFileMaxAgeMs =
+      attachMaxAgeRaw === '0'
+        ? 0
+        : Number.isFinite(attachMaxAgeMs) && attachMaxAgeMs >= 1
+          ? attachMaxAgeMs
+          : 10 * 60_000;
+
+    const sessionControlTimeoutRaw = String(process.env.HAPPIER_SESSION_CONTROL_HTTP_TIMEOUT_MS ?? '').trim();
+    const sessionControlTimeoutMs = Number.parseInt(sessionControlTimeoutRaw, 10);
+    // Default: 60s. Defensive minimum: 1s.
+    this.sessionControlHttpTimeoutMs =
+      Number.isFinite(sessionControlTimeoutMs) && sessionControlTimeoutMs >= 1000 ? sessionControlTimeoutMs : 60_000;
+
+    const vendorHelpTimeoutRaw = String(process.env.HAPPIER_VENDOR_CLI_HELP_TIMEOUT_MS ?? '').trim();
+    const vendorHelpTimeoutMs = Number.parseInt(vendorHelpTimeoutRaw, 10);
+    // Default: 5s. Set to 0 to disable timeouts.
+    this.vendorCliHelpTimeoutMs =
+      vendorHelpTimeoutRaw === '0'
+        ? 0
+        : Number.isFinite(vendorHelpTimeoutMs) && vendorHelpTimeoutMs >= 250
+          ? Math.min(vendorHelpTimeoutMs, 60_000)
+          : 5_000;
 
     this.isExperimentalEnabled = ['true', '1', 'yes'].includes(process.env.HAPPIER_EXPERIMENTAL?.toLowerCase() || '');
     this.disableCaffeinate = ['true', '1', 'yes'].includes(process.env.HAPPIER_DISABLE_CAFFEINATE?.toLowerCase() || '');
@@ -345,6 +380,16 @@ class Configuration {
     // Default: 250ms. Most imports will be watcher-driven; this is a safety net if fs watch misses events.
     this.claudeSubagentJsonlPollIntervalMs =
       Number.isFinite(subagentPollRaw) && subagentPollRaw >= 25 ? subagentPollRaw : 250;
+
+    const metadataWatcherBackoffRaw = Number.parseInt(
+      String(process.env.HAPPIER_CLAUDE_METADATA_WATCHER_IDLE_BACKOFF_MS ?? ''),
+      10,
+    );
+    // Default: 250ms. Prevents tight loops when waitForMetadataUpdate returns false (e.g. detached session client).
+    this.claudeMetadataWatcherIdleBackoffMs =
+      Number.isFinite(metadataWatcherBackoffRaw) && metadataWatcherBackoffRaw >= 25
+        ? Math.min(metadataWatcherBackoffRaw, 60_000)
+        : 250;
 
     const allowTaskBackgroundRaw = String(process.env.HAPPIER_CLAUDE_TASK_ALLOW_RUN_IN_BACKGROUND ?? '').trim().toLowerCase();
     this.claudeTaskAllowRunInBackground = ['1', 'true', 'yes', 'on'].includes(allowTaskBackgroundRaw);
