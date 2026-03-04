@@ -13,7 +13,7 @@ import {
 } from './utils/auth/credentials_paths.mjs';
 import { ensureActiveAccessKeyValid } from './utils/auth/ensure_active_access_key_valid.mjs';
 import { decodeJwtPayloadUnsafe } from './utils/auth/decode_jwt_payload_unsafe.mjs';
-import { formatDaemonAuthScopeDiagnostic } from './utils/auth/format_daemon_auth_scope_diagnostic.mjs';
+import { formatDaemonAuthScopeDiagnostic, formatDaemonCredentialsTokenSubChangedWarning } from './utils/auth/format_daemon_auth_scope_diagnostic.mjs';
 import { applyStackActiveServerScopeEnv } from './utils/auth/stable_scope_id.mjs';
 import { existsSync, readdirSync, readFileSync, unlinkSync } from 'node:fs';
 import { chmod, copyFile, mkdir } from 'node:fs/promises';
@@ -880,6 +880,13 @@ export async function startLocalDaemonWithAuth({
   }
   // Repair: if the active server-scoped access key is stale/unauthorized (common when switching server scope ids),
   // copy a valid fallback credential (url-hash scoped or legacy) into the active server scope before daemon start.
+  let tokenSubBeforeRepair = null;
+  try {
+    const tokenBefore = readAuthTokenFromCredentialFile(credentialPaths.serverScopedPath);
+    tokenSubBeforeRepair = tokenBefore ? decodeJwtPayloadUnsafe(tokenBefore)?.sub ?? null : null;
+  } catch {
+    // best-effort only
+  }
   let credentialRepair = null;
   try {
     const timeoutMs = parseNonNegativeInt(baseEnv.HAPPIER_STACK_CREDENTIAL_VALIDATE_TIMEOUT_MS, 2_500);
@@ -893,14 +900,28 @@ export async function startLocalDaemonWithAuth({
   try {
     const token = readAuthTokenFromCredentialFile(credentialPaths.serverScopedPath);
     const tokenSub = token ? decodeJwtPayloadUnsafe(token)?.sub ?? null : null;
+    const repairedFromSub =
+      credentialRepair?.kind === 'repaired'
+        ? (decodeJwtPayloadUnsafe(readAuthTokenFromCredentialFile(credentialRepair.sourcePath) ?? '')?.sub ?? null)
+        : null;
     console.log(
       formatDaemonAuthScopeDiagnostic({
         activeServerId: baseEnv.HAPPIER_ACTIVE_SERVER_ID,
         activeCredentialPath: credentialPaths.serverScopedPath,
         tokenSub: tokenSub ? String(tokenSub) : null,
+        tokenSubBeforeRepair: tokenSubBeforeRepair ? String(tokenSubBeforeRepair) : null,
         repairedFromPath: credentialRepair?.kind === 'repaired' ? credentialRepair.sourcePath : null,
+        repairedFromSub: repairedFromSub ? String(repairedFromSub) : null,
       })
     );
+    if (
+      tokenSub &&
+      tokenSubBeforeRepair &&
+      String(tokenSubBeforeRepair) !== String(tokenSub)
+    ) {
+      const warn = formatDaemonCredentialsTokenSubChangedWarning({ tokenSubBeforeRepair, tokenSub });
+      if (warn) console.warn(warn);
+    }
   } catch {
     // best-effort only
   }
