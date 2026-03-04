@@ -6,7 +6,7 @@ import { SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc';
 
 import { fetchSessionById } from '@/sessionControl/sessionsHttp';
 import { wantsJson, printJsonEnvelope } from '@/sessionControl/jsonOutput';
-import { resolveSessionEncryptionContextFromCredentials } from '@/sessionControl/sessionEncryptionContext';
+import { resolveSessionEncryptionContextFromCredentials, resolveSessionStoredContentEncryptionMode } from '@/sessionControl/sessionEncryptionContext';
 import { callSessionRpc } from '@/sessionControl/sessionRpc';
 import { resolveSessionIdOrPrefix } from '@/sessionControl/resolveSessionId';
 
@@ -58,9 +58,10 @@ export async function cmdSessionRunSend(
   }
 
   const ctx = resolveSessionEncryptionContextFromCredentials(credentials, rawSession);
+  const mode = resolveSessionStoredContentEncryptionMode(rawSession);
   const request = ExecutionRunSendRequestSchema.parse({ runId, message });
   const method = `${sessionId}:${SESSION_RPC_METHODS.EXECUTION_RUN_SEND}`;
-  await callSessionRpc({ token: credentials.token, sessionId, ctx, method, request });
+  await callSessionRpc({ token: credentials.token, sessionId, mode, ctx, method, request });
 
   if (json) {
     printJsonEnvelope({ ok: true, kind: 'session_run_send', data: { sessionId, runId, sent: true } });

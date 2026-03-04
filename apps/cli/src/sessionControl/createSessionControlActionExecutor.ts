@@ -1,7 +1,7 @@
 import { createActionExecutor, getActionSpec, type ActionExecutorDeps, type ActionId } from '@happier-dev/protocol';
 import { SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc';
 
-import type { SessionEncryptionContext } from './sessionEncryptionContext';
+import type { SessionEncryptionContext, SessionStoredContentEncryptionMode } from './sessionEncryptionContext';
 import { callSessionRpc } from './sessionRpc';
 
 function notSupported(): never {
@@ -12,11 +12,13 @@ export function createSessionControlActionExecutor(params: Readonly<{
   token: string;
   sessionId: string;
   ctx: SessionEncryptionContext;
+  mode?: SessionStoredContentEncryptionMode;
 }>): ReturnType<typeof createActionExecutor> {
   const callExecutionRunRpc = async (methodSuffix: string, request: unknown): Promise<unknown> => {
     return await callSessionRpc({
       token: params.token,
       sessionId: params.sessionId,
+      mode: params.mode,
       ctx: params.ctx,
       method: `${params.sessionId}:${methodSuffix}`,
       request,

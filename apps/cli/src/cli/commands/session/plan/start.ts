@@ -5,7 +5,7 @@ import { createSessionControlActionExecutor } from '@/sessionControl/createSessi
 
 import { fetchSessionById } from '@/sessionControl/sessionsHttp';
 import { wantsJson, printJsonEnvelope } from '@/sessionControl/jsonOutput';
-import { resolveSessionEncryptionContextFromCredentials } from '@/sessionControl/sessionEncryptionContext';
+import { resolveSessionEncryptionContextFromCredentials, resolveSessionStoredContentEncryptionMode } from '@/sessionControl/sessionEncryptionContext';
 import { readFlagValue } from '@/sessionControl/argvFlags';
 import { resolveSessionIdOrPrefix } from '@/sessionControl/resolveSessionId';
 
@@ -84,8 +84,9 @@ export async function cmdSessionPlanStart(
   }
 
   const ctx = resolveSessionEncryptionContextFromCredentials(credentials, rawSession);
+  const mode = resolveSessionStoredContentEncryptionMode(rawSession);
 
-  const executor = createSessionControlActionExecutor({ token: credentials.token, sessionId, ctx });
+  const executor = createSessionControlActionExecutor({ token: credentials.token, sessionId, mode, ctx });
   const started = await executor.execute('plan.start', input, { defaultSessionId: sessionId });
 
   if (!started.ok) {

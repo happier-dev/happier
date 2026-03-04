@@ -6,7 +6,7 @@ import { SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc';
 
 import { fetchSessionById } from '@/sessionControl/sessionsHttp';
 import { wantsJson, printJsonEnvelope } from '@/sessionControl/jsonOutput';
-import { resolveSessionEncryptionContextFromCredentials } from '@/sessionControl/sessionEncryptionContext';
+import { resolveSessionEncryptionContextFromCredentials, resolveSessionStoredContentEncryptionMode } from '@/sessionControl/sessionEncryptionContext';
 import { callSessionRpc } from '@/sessionControl/sessionRpc';
 import { hasFlag } from '@/sessionControl/argvFlags';
 import { resolveSessionIdOrPrefix } from '@/sessionControl/resolveSessionId';
@@ -59,6 +59,7 @@ export async function cmdSessionRunGet(
   }
 
   const ctx = resolveSessionEncryptionContextFromCredentials(credentials, rawSession);
+  const mode = resolveSessionStoredContentEncryptionMode(rawSession);
   const request = ExecutionRunGetRequestSchema.parse({
     runId,
     ...(includeStructured ? { includeStructured: true } : {}),
@@ -68,6 +69,7 @@ export async function cmdSessionRunGet(
   const result = await callSessionRpc({
     token: credentials.token,
     sessionId,
+    mode,
     ctx,
     method,
     request,
