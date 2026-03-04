@@ -13,12 +13,14 @@ import {
 import { pickExpoDevMetroPort } from '../expo/metro_ports.mjs';
 import { ensureEnvFileUpdated } from '../env/env_file.mjs';
 import { isPidAlive, recordStackRuntimeUpdate } from '../stack/runtime_state.mjs';
-import { killProcessGroupOwnedByStack } from '../proc/ownership.mjs';
+import { getProcessGroupId, getPsEnvLine, killProcessGroupOwnedByStack, listPidsWithEnvNeedle } from '../proc/ownership.mjs';
+import { terminateProcessGroup } from '../proc/terminate.mjs';
 import { expoSpawn } from '../expo/command.mjs';
 import { resolveMobileExpoConfig } from '../mobile/config.mjs';
 import { resolveMobileReachableServerUrl } from '../server/mobile_api_url.mjs';
 import { getTailscaleStatus } from '../tailscale/ip.mjs';
 import { pickLanIpv4 } from '../net/lan_ip.mjs';
+import { isTcpPortFree } from '../net/ports.mjs';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -322,6 +324,10 @@ export async function ensureDevExpoServer({
   const running = await isStateProcessRunning(paths.statePath);
   const alreadyRunning = Boolean(running.running);
   const desiredApiServerUrl = normalizeApiServerUrl(apiServerUrl);
+  const cliHomeDir = (baseEnv?.HAPPIER_STACK_CLI_HOME_DIR ?? '').toString().trim();
+  const stablePortMode =
+    stackMode &&
+    ((baseEnv?.HAPPIER_STACK_EXPO_DEV_PORT_STRATEGY ?? 'ephemeral').toString().trim() || 'ephemeral') === 'stable';
 
   // Resolve Tailscale forwarding preference
   const wantTailscale = resolveExpoTailscaleEnabled({ env: baseEnv, expoTailscale });
@@ -412,16 +418,56 @@ export async function ensureDevExpoServer({
   if (restart && running.state?.pid) {
     const prevPid = Number(running.state.pid);
     const prevPort = Number(running.state?.port);
-    const res = await killProcessGroupOwnedByStack(prevPid, { stackName, envPath, label: 'expo', json: true });
-    if (!res.killed) {
-      // eslint-disable-next-line no-console
-      console.warn(
-        `[local] expo: not stopping existing Expo pid=${prevPid} because it does not look stack-owned.\n` +
-          `[local] expo: continuing by starting a new Expo process on a free port.`
-      );
-      if (Number.isFinite(prevPort) && prevPort > 0) {
-        reservedMetroPorts.add(prevPort);
+    const prevPidAlive = Number.isFinite(prevPid) && prevPid > 1 && isPidAlive(prevPid);
+    if (prevPidAlive) {
+      const res = await killProcessGroupOwnedByStack(prevPid, { stackName, envPath, cliHomeDir, label: 'expo', json: true });
+      if (!res.killed) {
+        const portInUse =
+          Number.isFinite(prevPort) && prevPort > 0 ? !(await isTcpPortFree(prevPort, { host: '127.0.0.1' })) : false;
+        // eslint-disable-next-line no-console
+        console.warn(
+          `[local] expo: not stopping existing Expo pid=${prevPid} because it does not look stack-owned.\n` +
+            `[local] expo: continuing by starting a new Expo process on a free port.`
+        );
+        if (portInUse && !stablePortMode) {
+          reservedMetroPorts.add(prevPort);
+        }
       }
+    }
+  }
+
+  const forcedPortRaw = (baseEnv?.HAPPIER_STACK_EXPO_DEV_PORT ?? '').toString().trim();
+  const forcedPortNum = Number(forcedPortRaw);
+  if (stablePortMode && forcedPortRaw && Number.isFinite(forcedPortNum) && forcedPortNum > 0) {
+    if (reservedMetroPorts.has(forcedPortNum)) {
+      throw new Error(
+        `[expo] stable expo port ${forcedPortNum} is reserved due to an existing process; refusing to bump the expo port.`
+      );
+    }
+    let free = await isTcpPortFree(forcedPortNum, { host: '127.0.0.1' });
+    if (!free) {
+      const needle = `__UNSAFE_EXPO_HOME_DIRECTORY=${paths.expoHomeDir}`;
+      const candidates = await listPidsWithEnvNeedle(needle);
+      const selfPgid = await getProcessGroupId(process.pid);
+      for (const pid of candidates) {
+        // eslint-disable-next-line no-await-in-loop
+        const line = await getPsEnvLine(pid);
+        if (!line) continue;
+        if (stackName && !line.includes(`HAPPIER_STACK_STACK=${stackName}`)) continue;
+        // eslint-disable-next-line no-await-in-loop
+        const pgid = await getProcessGroupId(pid);
+        if (!pgid) continue;
+        if (selfPgid && pgid === selfPgid) continue;
+        // eslint-disable-next-line no-await-in-loop
+        await terminateProcessGroup(pgid, { graceMs: 800, signal: 'SIGTERM' }).catch(() => {});
+      }
+      free = await isTcpPortFree(forcedPortNum, { host: '127.0.0.1' });
+    }
+    if (!free) {
+      throw new Error(
+        `[expo] stable expo port ${forcedPortNum} is already in use; refusing to bump the expo port. ` +
+          `Stop the process using it or run with --restart after ensuring the previous stack process is stopped.`
+      );
     }
   }
 
@@ -431,8 +477,6 @@ export async function ensureDevExpoServer({
     stackName,
     reservedPorts: reservedMetroPorts,
   });
-  const forcedPortRaw = (baseEnv?.HAPPIER_STACK_EXPO_DEV_PORT ?? '').toString().trim();
-  const forcedPortNum = Number(forcedPortRaw);
   if (
     stackMode &&
     envPath &&
@@ -441,6 +485,11 @@ export async function ensureDevExpoServer({
     forcedPortNum > 0 &&
     forcedPortNum !== metroPort
   ) {
+    if (stablePortMode) {
+      throw new Error(
+        `[expo] stable expo port requested ${forcedPortNum} but selected ${metroPort}; refusing to bump the expo port.`
+      );
+    }
     if (!quiet) {
       // eslint-disable-next-line no-console
       console.warn(

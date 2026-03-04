@@ -68,7 +68,7 @@ function listenMetroStatusServer() {
   });
 }
 
-test('ensureDevExpoServer reserves prior metro port when restart cannot kill previous pid', async () => {
+test('ensureDevExpoServer does not reserve prior metro port when restart cannot kill previous pid but the port is free', async () => {
   const tmp = await mkdtemp(join(tmpdir(), 'hstack-expo-reserve-port-'));
   const children = [];
   let foreignPid = null;
@@ -135,7 +135,7 @@ test('ensureDevExpoServer reserves prior metro port when restart cannot kill pre
     });
 
     assert.equal(result.ok, true);
-    assert.notEqual(result.port, priorPort);
+    assert.equal(result.port, priorPort);
   } finally {
     for (const child of children) {
       killProcessTreeByPid(child?.pid);
@@ -298,7 +298,7 @@ test('ensureDevExpoServer in stack mode does not adopt port-only fallback as alr
   }
 });
 
-test('ensureDevExpoServer updates envPath when forced expo port is occupied', async () => {
+test('ensureDevExpoServer fails closed in stable port mode when forced expo port is occupied (does not rewrite envPath)', async () => {
   const tmp = await mkdtemp(join(tmpdir(), 'hstack-expo-update-env-port-'));
   const children = [];
   let metro = null;
@@ -323,6 +323,103 @@ test('ensureDevExpoServer updates envPath when forced expo port is occupied', as
     const envPath = join(tmp, 'stack.env');
     await writeFile(envPath, `CUSTOM_KEY=1\nHAPPIER_STACK_EXPO_DEV_PORT=${occupiedPort}\n`, 'utf-8');
 
+    await assert.rejects(
+      () =>
+        ensureDevExpoServer({
+          startUi: true,
+          startMobile: false,
+          uiDir,
+          autostart: { baseDir: tmp },
+          baseEnv: {
+            ...process.env,
+            HAPPIER_STACK_EXPO_DEV_PORT: String(occupiedPort),
+            HAPPIER_STACK_EXPO_DEV_PORT_STRATEGY: 'stable',
+            HAPPIER_STACK_EXPO_DEV_PORT_BASE: '51000',
+            HAPPIER_STACK_EXPO_DEV_PORT_RANGE: '2000',
+          },
+          apiServerUrl: 'http://127.0.0.1:1',
+          restart: false,
+          stackMode: true,
+          runtimeStatePath: null,
+          stackName: 'qa-agent-update-env',
+          envPath,
+          children,
+          quiet: true,
+        }),
+      /expo port/i
+    );
+
+    const updated = await readFile(envPath, 'utf-8');
+    assert.match(updated, /\bCUSTOM_KEY=1\b/);
+    assert.match(updated, new RegExp(`\\bHAPPIER_STACK_EXPO_DEV_PORT=${occupiedPort}\\b`));
+  } finally {
+    for (const child of children) {
+      killProcessTreeByPid(child?.pid);
+    }
+    await new Promise((resolve) => metro?.close(() => resolve())).catch(() => {});
+    await rm(tmp, { recursive: true, force: true });
+  }
+});
+
+test('ensureDevExpoServer in stable port mode stops stack-owned leftover Expo processes holding the forced port (no bump)', async () => {
+  const tmp = await mkdtemp(join(tmpdir(), 'hstack-expo-stable-stop-leftovers-'));
+  const children = [];
+  let holderPid = null;
+  try {
+    const uiDir = join(tmp, 'ui');
+    await mkdir(join(uiDir, 'node_modules', '.bin'), { recursive: true });
+    await mkdir(join(uiDir, 'node_modules'), { recursive: true });
+    await writeFile(join(uiDir, 'package.json'), JSON.stringify({ name: 'fake-ui', private: true }) + '\n', 'utf-8');
+
+    const expoBin = join(uiDir, 'node_modules', '.bin', 'expo');
+    await writeFile(expoBin, ['#!/usr/bin/env node', "setInterval(() => {}, 1000);"].join('\n') + '\n', 'utf-8');
+    await chmod(expoBin, 0o755);
+
+    const occupiedPort = await listenEphemeralPort();
+    const projectDir = uiDir;
+    const paths = getExpoStatePaths({
+      baseDir: tmp,
+      kind: 'expo-dev',
+      projectDir,
+      stateFileName: 'expo.state.json',
+    });
+
+    const stackName = 'qa-owned-expo-leftover';
+    const cliHomeDir = join(tmp, 'cli');
+    await mkdir(cliHomeDir, { recursive: true });
+
+    // Spawn a process that (1) holds the port and (2) carries the same Expo isolation env marker,
+    // so ensureDevExpoServer can identify and stop it without bumping the stable port.
+    const holder = spawn(
+      process.execPath,
+      [
+        '-e',
+        [
+          "const net = require('net');",
+          'const port = Number(process.env.TEST_PORT);',
+          "const srv = net.createServer(() => {});",
+          "srv.listen(port, '127.0.0.1');",
+          "setInterval(() => {}, 1000);",
+        ].join(''),
+      ],
+      {
+        detached: true,
+        stdio: 'ignore',
+        env: {
+          ...process.env,
+          TEST_PORT: String(occupiedPort),
+          __UNSAFE_EXPO_HOME_DIRECTORY: paths.expoHomeDir,
+          HAPPIER_STACK_STACK: stackName,
+          HAPPIER_STACK_CLI_HOME_DIR: cliHomeDir,
+        },
+      }
+    );
+    holder.unref();
+    holderPid = holder.pid;
+
+    const envPath = join(tmp, 'stack.env');
+    await writeFile(envPath, `HAPPIER_STACK_EXPO_DEV_PORT=${occupiedPort}\n`, 'utf-8');
+
     const result = await ensureDevExpoServer({
       startUi: true,
       startMobile: false,
@@ -332,30 +429,25 @@ test('ensureDevExpoServer updates envPath when forced expo port is occupied', as
         ...process.env,
         HAPPIER_STACK_EXPO_DEV_PORT: String(occupiedPort),
         HAPPIER_STACK_EXPO_DEV_PORT_STRATEGY: 'stable',
-        HAPPIER_STACK_EXPO_DEV_PORT_BASE: '51000',
-        HAPPIER_STACK_EXPO_DEV_PORT_RANGE: '2000',
+        HAPPIER_STACK_CLI_HOME_DIR: cliHomeDir,
       },
       apiServerUrl: 'http://127.0.0.1:1',
       restart: false,
       stackMode: true,
       runtimeStatePath: null,
-      stackName: 'qa-agent-update-env',
+      stackName,
       envPath,
       children,
       quiet: true,
     });
 
     assert.equal(result.ok, true);
-    assert.notEqual(result.port, occupiedPort);
-
-    const updated = await readFile(envPath, 'utf-8');
-    assert.match(updated, /\bCUSTOM_KEY=1\b/);
-    assert.match(updated, new RegExp(`\\bHAPPIER_STACK_EXPO_DEV_PORT=${result.port}\\b`));
+    assert.equal(result.port, occupiedPort);
   } finally {
     for (const child of children) {
       killProcessTreeByPid(child?.pid);
     }
-    await new Promise((resolve) => metro?.close(() => resolve())).catch(() => {});
+    killProcessTreeByPid(holderPid);
     await rm(tmp, { recursive: true, force: true });
   }
 });
