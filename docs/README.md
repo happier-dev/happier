@@ -9,6 +9,7 @@ This folder documents how Happier works internally, with a focus on protocol, ba
 - backend-architecture.md: Internal backend structure, data flow, and key subsystems.
 - deployment.md: How to deploy the backend and required infrastructure.
 - cli-architecture.md: CLI and daemon architecture and how they interact with the server.
+- channel-bridge.md: Provider-agnostic bridge architecture and adapter contract.
 - issue-triage.md: How the GitHub issue triage workflows are wired to maintainer tooling.
 
 ## Conventions
