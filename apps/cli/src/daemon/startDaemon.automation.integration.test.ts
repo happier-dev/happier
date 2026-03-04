@@ -8,6 +8,7 @@ const harness = vi.hoisted(() => {
 
   const automationWorkerStop = vi.fn();
   const automationWorkerRefreshAssignments = vi.fn(async () => {});
+  const startChannelBridgeFromEnv = vi.fn(async () => null);
   const startAutomationWorker = vi.fn(() => {
     if (requestShutdownRef) {
       setTimeout(() => requestShutdownRef?.('happier-cli'), 0);
@@ -56,9 +57,14 @@ const harness = vi.hoisted(() => {
     apiMachine,
     lockHandle,
     createDaemonShutdownController,
+    startChannelBridgeFromEnv,
     requestShutdown: (source: ShutdownSource) => requestShutdownRef?.(source),
   };
 });
+
+vi.mock('@/channels/startChannelBridgeWorker', () => ({
+  startChannelBridgeFromEnv: harness.startChannelBridgeFromEnv,
+}));
 
 vi.mock('@/api/api', () => ({
   ApiClient: {
@@ -129,6 +135,7 @@ vi.mock('@/persistence', () => ({
   writeDaemonState: vi.fn(),
   acquireDaemonLock: vi.fn(async () => harness.lockHandle),
   releaseDaemonLock: vi.fn(async () => {}),
+  readSettings: vi.fn(async () => ({})),
   readCredentials: vi.fn(async () => null),
 }));
 
@@ -306,6 +313,7 @@ describe('startDaemon automation wiring (integration)', () => {
       });
 
       const { logger } = await import('@/ui/logger');
+      const { startChannelBridgeFromEnv } = await import('@/channels/startChannelBridgeWorker');
       const { startDaemon } = await import('./startDaemon');
 
       const run = startDaemon();
@@ -317,6 +325,7 @@ describe('startDaemon automation wiring (integration)', () => {
       const debugMock = (logger as any).debug as any;
       const serialized = JSON.stringify([...warnMock.mock.calls, ...debugMock.mock.calls]);
       expect(serialized).not.toContain(leakedBearer);
+      expect(startChannelBridgeFromEnv).toHaveBeenCalledTimes(1);
     } finally {
       exitSpy.mockRestore();
     }

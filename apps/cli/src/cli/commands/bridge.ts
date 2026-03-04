@@ -286,12 +286,6 @@ async function cmdTelegramClear(): Promise<void> {
   const auth = await resolveActiveAuthContext();
   const accountId = auth.accountId;
 
-  const kv = createAxiosChannelBridgeKvClient({ token: auth.token });
-  await clearChannelBridgeTelegramConfigInKv({
-    kv,
-    serverId,
-  });
-
   await updateSettings(async (current) =>
     removeScopedTelegramBridgeConfig({
       settings: current,
@@ -299,6 +293,12 @@ async function cmdTelegramClear(): Promise<void> {
       accountId,
     }),
   );
+
+  const kv = createAxiosChannelBridgeKvClient({ token: auth.token });
+  await clearChannelBridgeTelegramConfigInKv({
+    kv,
+    serverId,
+  });
 
   console.log(chalk.green('✓ Cleared Telegram bridge config for active account scope'));
   console.log(`  Server:  ${serverId}`);

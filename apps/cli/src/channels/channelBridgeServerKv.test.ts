@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest';
+import { reloadConfiguration } from '@/configuration';
 
 import {
   type ChannelBridgeKvClient,
+  createAxiosChannelBridgeKvClient,
   clearChannelBridgeTelegramConfigInKv,
   readChannelBridgeBindingsFromKv,
   readChannelBridgeTelegramConfigFromKv,
@@ -63,6 +65,42 @@ function createInMemoryKvClient(): ChannelBridgeKvClient {
 }
 
 describe('channelBridgeServerKv', () => {
+  it('rejects insecure non-loopback http KV base URLs', () => {
+    const prevServerUrl = process.env.HAPPIER_SERVER_URL;
+    try {
+      process.env.HAPPIER_SERVER_URL = 'http://example.com:3005';
+      reloadConfiguration();
+
+      expect(() => createAxiosChannelBridgeKvClient({ token: 'token-1' })).toThrow(
+        'Insecure channel bridge KV base URL',
+      );
+    } finally {
+      if (prevServerUrl === undefined) {
+        delete process.env.HAPPIER_SERVER_URL;
+      } else {
+        process.env.HAPPIER_SERVER_URL = prevServerUrl;
+      }
+      reloadConfiguration();
+    }
+  });
+
+  it('allows loopback http KV base URLs for local development', () => {
+    const prevServerUrl = process.env.HAPPIER_SERVER_URL;
+    try {
+      process.env.HAPPIER_SERVER_URL = 'http://127.0.0.1:3005';
+      reloadConfiguration();
+
+      expect(() => createAxiosChannelBridgeKvClient({ token: 'token-1' })).not.toThrow();
+    } finally {
+      if (prevServerUrl === undefined) {
+        delete process.env.HAPPIER_SERVER_URL;
+      } else {
+        process.env.HAPPIER_SERVER_URL = prevServerUrl;
+      }
+      reloadConfiguration();
+    }
+  });
+
   it('upserts and reads scoped telegram non-secret config from KV', async () => {
     const kv = createInMemoryKvClient();
 

@@ -1,3 +1,12 @@
+/**
+ * Channel bridge server-KV transport and schema helpers.
+ *
+ * Responsibilities:
+ * - encode/decode scoped bridge documents stored in server KV
+ * - validate supported schema versions for telegram config and binding docs
+ * - provide optimistic-write friendly KV client helpers and conflict parsing
+ * - keep bridge server payloads free of local-only secret fields
+ */
 import axios from 'axios';
 
 import { resolveServerHttpBaseUrl } from '@/sessionControl/serverHttpBaseUrl';
@@ -110,6 +119,27 @@ function parseVersionMismatchError(value: unknown): Readonly<{ currentVersion: n
     currentVersion: Math.trunc(first.version),
     currentValueBase64,
   };
+}
+
+function isLoopbackHost(hostname: string): boolean {
+  const normalized = hostname.trim().toLowerCase();
+  return normalized === 'localhost' || normalized === '127.0.0.1' || normalized === '::1';
+}
+
+function assertSecureChannelBridgeKvBaseUrl(baseUrl: string): void {
+  let parsed: URL;
+  try {
+    parsed = new URL(baseUrl);
+  } catch {
+    throw new Error(`Invalid channel bridge KV base URL: ${baseUrl}`);
+  }
+
+  if (parsed.protocol === 'https:') return;
+  if (parsed.protocol === 'http:' && isLoopbackHost(parsed.hostname)) return;
+
+  throw new Error(
+    `Insecure channel bridge KV base URL: ${baseUrl}. Use https or explicit loopback http for local development.`,
+  );
 }
 
 function parseTelegramConfigRecord(value: unknown): ChannelBridgeServerTelegramConfigRecord | null {
@@ -323,6 +353,7 @@ export function decodeChannelBridgeBindingsDocFromBase64(valueBase64: string | n
 export function createAxiosChannelBridgeKvClient(params: Readonly<{ token: string }>): ChannelBridgeKvClient {
   const token = params.token;
   const baseUrl = resolveServerHttpBaseUrl();
+  assertSecureChannelBridgeKvBaseUrl(baseUrl);
 
   return {
     get: async (key) => {

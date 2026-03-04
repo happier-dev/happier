@@ -1,3 +1,13 @@
+/**
+ * Scoped channel bridge account configuration helpers.
+ *
+ * Responsibilities:
+ * - split bridge updates into local-secret and shared KV-safe payloads
+ * - read normalized account-scoped bridge config from settings
+ * - upsert/remove account-scoped bridge config trees under server/account scope
+ *
+ * Secrets remain local-only and are never emitted into shared payload helpers.
+ */
 type RecordLike = Record<string, unknown>;
 
 function asRecord(value: unknown): RecordLike | null {
@@ -54,7 +64,7 @@ export type SharedTelegramBridgeUpdate = Readonly<{
 }>;
 
 function hasAnyUpdateValue(update: Record<string, unknown>): boolean {
-  return Object.keys(update).length > 0;
+  return Object.values(update).some((value) => value !== undefined);
 }
 
 export function splitScopedTelegramBridgeUpdate(params: Readonly<{
@@ -230,7 +240,7 @@ export function upsertScopedTelegramBridgeConfig(params: Readonly<{
   const telegram = ensureRecord(providers, 'telegram');
 
   if (Array.isArray(params.update.allowedChatIds)) {
-    telegram.allowedChatIds = [...params.update.allowedChatIds];
+    telegram.allowedChatIds = parseStringArray(params.update.allowedChatIds);
   }
   if (typeof params.update.requireTopics === 'boolean') {
     telegram.requireTopics = params.update.requireTopics;

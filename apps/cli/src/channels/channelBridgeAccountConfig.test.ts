@@ -89,6 +89,25 @@ describe('channelBridgeAccountConfig', () => {
     expect(split.sharedUpdate.allowedChatIds).toEqual(['-100111']);
   });
 
+  it('normalizes allowedChatIds when writing scoped config', () => {
+    const next = upsertScopedTelegramBridgeConfig({
+      settings: {},
+      serverId: 'local-3005',
+      accountId: 'acct-1',
+      update: {
+        allowedChatIds: [' -100111 ', '', '   ', '-100222'],
+      },
+    });
+
+    const telegram = readScopedTelegramBridgeConfig({
+      settings: next,
+      serverId: 'local-3005',
+      accountId: 'acct-1',
+    });
+
+    expect(telegram?.allowedChatIds).toEqual(['-100111', '-100222']);
+  });
+
   it('reports no shared update when only secrets are provided', () => {
     const split = splitScopedTelegramBridgeUpdate({
       update: {
@@ -99,6 +118,15 @@ describe('channelBridgeAccountConfig', () => {
 
     expect(split.sharedUpdate).toEqual({});
     expect(hasSharedTelegramBridgeUpdate({ update: split.sharedUpdate })).toBe(false);
+  });
+
+  it('ignores undefined-valued shared fields when checking for shared updates', () => {
+    const update = {
+      webhookPort: undefined,
+    } as unknown as Parameters<typeof hasSharedTelegramBridgeUpdate>[0]['update'];
+
+    expect(hasSharedTelegramBridgeUpdate({ update })).toBe(false);
+    expect(hasSharedTelegramBridgeUpdate({ update: { allowedChatIds: [] } })).toBe(true);
   });
 
   it('preserves webhook secret when only webhook host/port settings are updated', () => {

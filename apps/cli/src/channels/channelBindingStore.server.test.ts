@@ -3,60 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { createServerBackedChannelBindingStore } from './channelBindingStore.server';
 import type { ChannelBridgeKvClient } from './channelBridgeServerKv';
 
-function createInMemoryKvClient(): ChannelBridgeKvClient {
-  const byKey = new Map<string, { value: string | null; version: number }>();
-
-  return {
-    get: async (key) => {
-      const row = byKey.get(key);
-      if (!row || row.value === null) {
-        return { status: 404, body: { error: 'Key not found' } };
-      }
-      return {
-        status: 200,
-        body: {
-          key,
-          value: row.value,
-          version: row.version,
-        },
-      };
-    },
-    mutate: async (mutations) => {
-      const errors: Array<{ key: string; error: 'version-mismatch'; version: number; value: string | null }> = [];
-      for (const mutation of mutations) {
-        const row = byKey.get(mutation.key);
-        const currentVersion = row?.version ?? -1;
-        if (currentVersion !== mutation.version) {
-          errors.push({
-            key: mutation.key,
-            error: 'version-mismatch',
-            version: currentVersion,
-            value: row?.value ?? null,
-          });
-        }
-      }
-
-      if (errors.length > 0) {
-        return { status: 409, body: { success: false, errors } };
-      }
-
-      const results: Array<{ key: string; version: number }> = [];
-      for (const mutation of mutations) {
-        const row = byKey.get(mutation.key);
-        const nextVersion = (row?.version ?? -1) + 1;
-        byKey.set(mutation.key, {
-          value: mutation.value,
-          version: nextVersion,
-        });
-        results.push({ key: mutation.key, version: nextVersion });
-      }
-
-      return { status: 200, body: { success: true, results } };
-    },
-  };
-}
-
-function createCountingKvClient(): Readonly<{
+function createStandardInMemoryKvState(): Readonly<{
   kv: ChannelBridgeKvClient;
   mutateCallCount: () => number;
 }> {
@@ -117,6 +64,17 @@ function createCountingKvClient(): Readonly<{
     kv,
     mutateCallCount: () => mutateCalls,
   };
+}
+
+function createInMemoryKvClient(): ChannelBridgeKvClient {
+  return createStandardInMemoryKvState().kv;
+}
+
+function createCountingKvClient(): Readonly<{
+  kv: ChannelBridgeKvClient;
+  mutateCallCount: () => number;
+}> {
+  return createStandardInMemoryKvState();
 }
 
 function createConflictPayloadKvClient(): Readonly<{

@@ -132,6 +132,7 @@ describe('happier bridge command', () => {
       serverId: configuration.activeServerId,
     });
     expect(updateSettingsMock).toHaveBeenCalledTimes(1);
+    expect(updateSettingsMock.mock.invocationCallOrder[0]).toBeLessThan(clearKvConfigMock.mock.invocationCallOrder[0]);
     expect(process.exitCode).toBeUndefined();
   });
 });

@@ -1151,6 +1151,58 @@ export async function startDaemon(): Promise<void> {
 
       // Do machine bootstrap in the background so shutdown requests are not blocked by /v1/machines latency.
       void (async () => {
+        const bridgeSettings = await readSettings().catch((error) => {
+          logger.warn(
+            '[DAEMON RUN] Failed to read settings for channel bridge startup; using env-only defaults',
+            error instanceof Error ? error.message : String(error),
+          );
+          return null;
+        });
+
+        const tokenPayload = decodeJwtPayload(credentials.token);
+        const channelBridgeAccountId =
+          tokenPayload && typeof tokenPayload.sub === 'string'
+            ? tokenPayload.sub.trim()
+            : null;
+        const channelBridgeServerId = (configuration.activeServerId ?? '').trim() || null;
+
+        let channelBridgeRuntimeSettings: unknown = bridgeSettings;
+        if (channelBridgeServerId && channelBridgeAccountId) {
+          try {
+            const kv = createAxiosChannelBridgeKvClient({ token: credentials.token });
+            const fetched = await readChannelBridgeTelegramConfigFromKv({
+              kv,
+              serverId: channelBridgeServerId,
+            });
+            channelBridgeRuntimeSettings = overlayServerKvTelegramConfigInSettings({
+              settings: bridgeSettings,
+              serverId: channelBridgeServerId,
+              accountId: channelBridgeAccountId,
+              record: fetched.record,
+            });
+          } catch (error) {
+            logger.warn(
+              '[DAEMON RUN] Failed to read channel bridge config from server KV; using local/env configuration',
+              serializeAxiosErrorForLog(error),
+            );
+          }
+        }
+
+        if (!shutdownInitiated) {
+          channelBridgeWorker = await startChannelBridgeFromEnv({
+            credentials,
+            ...(channelBridgeRuntimeSettings ? { settings: channelBridgeRuntimeSettings } : {}),
+            ...(channelBridgeServerId ? { serverId: channelBridgeServerId } : {}),
+            ...(channelBridgeAccountId ? { accountId: channelBridgeAccountId } : {}),
+          }).catch((error) => {
+            logger.warn(
+              '[DAEMON RUN] Failed to start channel bridge worker (best-effort)',
+              serializeAxiosErrorForLog(error),
+            );
+            return null;
+          });
+        }
+
           try {
             const metadataForRegistration: MachineMetadata = { ...initialMachineMetadata, host: preferredHost };
             const ensured = await ensureMachineRegistered({
@@ -1193,57 +1245,6 @@ export async function startDaemon(): Promise<void> {
                   return null;
                 }
               })();
-
-              const bridgeSettings = await readSettings().catch((error) => {
-                logger.warn(
-                  '[DAEMON RUN] Failed to read settings for channel bridge startup; using env-only defaults',
-                  error instanceof Error ? error.message : String(error),
-                );
-                return null;
-              });
-
-              const tokenPayload = decodeJwtPayload(credentials.token);
-              const channelBridgeAccountId =
-                tokenPayload && typeof tokenPayload.sub === 'string'
-                  ? tokenPayload.sub.trim()
-                  : null;
-              const channelBridgeServerId = (configuration.activeServerId ?? '').trim() || null;
-
-              let channelBridgeRuntimeSettings: unknown = bridgeSettings;
-              if (channelBridgeServerId && channelBridgeAccountId) {
-                try {
-                  const kv = createAxiosChannelBridgeKvClient({ token: credentials.token });
-                  const fetched = await readChannelBridgeTelegramConfigFromKv({
-                    kv,
-                    serverId: channelBridgeServerId,
-                  });
-                  channelBridgeRuntimeSettings = overlayServerKvTelegramConfigInSettings({
-                    settings: bridgeSettings,
-                    serverId: channelBridgeServerId,
-                    accountId: channelBridgeAccountId,
-                    record: fetched.record,
-                  });
-                } catch (error) {
-                  logger.warn(
-                    '[DAEMON RUN] Failed to read channel bridge config from server KV; using local/env configuration',
-                    serializeAxiosErrorForLog(error),
-                  );
-                }
-              }
-
-              channelBridgeWorker = await startChannelBridgeFromEnv({
-                credentials,
-                ...(channelBridgeRuntimeSettings ? { settings: channelBridgeRuntimeSettings } : {}),
-                ...(channelBridgeServerId ? { serverId: channelBridgeServerId } : {}),
-                ...(channelBridgeAccountId ? { accountId: channelBridgeAccountId } : {}),
-              }).catch((error) => {
-                logger.warn(
-                  '[DAEMON RUN] Failed to start channel bridge worker (best-effort)',
-                  serializeAxiosErrorForLog(error),
-                );
-                return null;
-              });
-
             connectedApiMachine.setRPCHandlers({
               spawnSession,
               stopSession,
@@ -1394,14 +1395,20 @@ export async function startDaemon(): Promise<void> {
           5_000,
           { min: 250, max: 60_000 },
         );
+        let channelBridgeStopTimeoutHandle: NodeJS.Timeout | null = null;
         try {
           const stopResult = await Promise.race<'stopped' | 'timeout'>([
             channelBridgeWorker.stop().then(() => 'stopped' as const),
             new Promise<'timeout'>((resolve) => {
-              const timeoutHandle = setTimeout(() => resolve('timeout'), channelBridgeStopTimeoutMs);
-              timeoutHandle.unref?.();
+              channelBridgeStopTimeoutHandle = setTimeout(() => resolve('timeout'), channelBridgeStopTimeoutMs);
+              channelBridgeStopTimeoutHandle.unref?.();
             }),
           ]);
+
+          if (channelBridgeStopTimeoutHandle) {
+            clearTimeout(channelBridgeStopTimeoutHandle);
+            channelBridgeStopTimeoutHandle = null;
+          }
 
           if (stopResult === 'timeout') {
             logger.warn(
