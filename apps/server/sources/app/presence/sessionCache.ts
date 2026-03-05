@@ -25,6 +25,8 @@ class ActivityCache {
     private machineCache = new Map<string, MachineCacheEntry>();
     private batchTimer: NodeJS.Timeout | null = null;
     private dbFlushEnabled = false;
+    private flushInFlight: Promise<void> | null = null;
+    private dbFlushBackoffUntil = 0;
     private nextCleanupAt = 0;
     
     // Cache TTL (30 seconds)
@@ -36,6 +38,7 @@ class ActivityCache {
     // Batch update interval (5 seconds)
     private readonly BATCH_INTERVAL = 5 * 1000;
     private readonly CLEANUP_INTERVAL = 5 * 60 * 1000;
+    private readonly DB_FLUSH_BACKOFF_INTERVAL = 30 * 1000;
 
     constructor() {}
 
@@ -59,6 +62,15 @@ class ActivityCache {
 
     invalidateMachine(machineId: string): void {
         this.machineCache.delete(machineId);
+    }
+
+    private shouldBackoffDbFlush(error: unknown): boolean {
+        const message = error instanceof Error ? error.message : String(error);
+        return (
+            message.includes("Socket timeout") ||
+            message.includes("database failed to respond") ||
+            message.includes("SQLITE_BUSY")
+        );
     }
 
     private maybeCleanup(now: number): void {
@@ -233,7 +245,26 @@ class ActivityCache {
         cached.active = true;
     }
 
-    private async flushPendingUpdates(): Promise<void> {
+    private flushPendingUpdates(): Promise<void> {
+        // Avoid overlapping flushes (interval ticks, shutdown-triggered flush, etc.). On SQLite, overlapping
+        // presence writes can cause lock contention that delays control-plane requests (e.g. machine registration).
+        if (this.flushInFlight) {
+            return this.flushInFlight;
+        }
+
+        const flushPromise = this.flushPendingUpdatesInternal().finally(() => {
+            if (this.flushInFlight === flushPromise) {
+                this.flushInFlight = null;
+            }
+        });
+        this.flushInFlight = flushPromise;
+        return flushPromise;
+    }
+
+    private async flushPendingUpdatesInternal(): Promise<void> {
+        const now = Date.now();
+        if (now < this.dbFlushBackoffUntil) return;
+
         const sessionUpdatesById = new Map<string, { timestamp: number; entries: SessionCacheEntry[] }>();
         const machineUpdates: { machineId: string; timestamp: number; entry: MachineCacheEntry }[] = [];
         
@@ -290,6 +321,10 @@ class ActivityCache {
                         { module: 'session-cache', level: 'error', sessionId },
                         `Error updating session: ${error}`,
                     );
+                    if (this.shouldBackoffDbFlush(error)) {
+                        this.dbFlushBackoffUntil = Date.now() + this.DB_FLUSH_BACKOFF_INTERVAL;
+                        break;
+                    }
                 }
             }
 
@@ -322,6 +357,10 @@ class ActivityCache {
                         { module: 'session-cache', level: 'error', machineId: update.machineId },
                         `Error updating machine: ${error}`,
                     );
+                    if (this.shouldBackoffDbFlush(error)) {
+                        this.dbFlushBackoffUntil = Date.now() + this.DB_FLUSH_BACKOFF_INTERVAL;
+                        break;
+                    }
                 }
             }
 
@@ -351,9 +390,13 @@ class ActivityCache {
             clearInterval(this.batchTimer);
             this.batchTimer = null;
         }
+        const shouldFlush = this.dbFlushEnabled;
+        this.dbFlushEnabled = false;
+        this.dbFlushBackoffUntil = 0;
+        this.nextCleanupAt = 0;
         
         // Flush any remaining updates
-        if (this.dbFlushEnabled) {
+        if (shouldFlush) {
             this.flushPendingUpdates().catch(error => {
                 log({ module: 'session-cache', level: 'error' }, `Error flushing final updates: ${error}`);
             });

@@ -163,4 +163,65 @@ describe("ActivityCache session presence", () => {
         await (activityCache as any).flushPendingUpdates();
         expect(sessionUpdateMany).toHaveBeenCalledTimes(3);
     });
+
+	    it("does not start an overlapping timer-driven flush while a previous flush is still in-flight", async () => {
+	        let resolveFirstWrite: () => void = () => {
+	            throw new Error("resolveFirstWrite not initialized");
+	        };
+	        const firstWriteBarrier = new Promise<void>(resolve => {
+	            resolveFirstWrite = () => resolve();
+	        });
+
+	        let callCount = 0;
+	        sessionUpdateMany.mockImplementation(async () => {
+	            callCount += 1;
+            if (callCount === 1) {
+                await firstWriteBarrier;
+            }
+            return { count: 1 };
+        });
+
+        ({ activityCache } = await import("./sessionCache"));
+        activityCache.enableDbFlush();
+
+        await activityCache.isSessionValid("s1", "u1");
+        expect(activityCache.queueSessionUpdate("s1", "u1", Date.now())).toBe(true);
+
+        // Tick the flush interval twice without letting the first write resolve.
+        await vi.advanceTimersByTimeAsync(5_000);
+        await vi.advanceTimersByTimeAsync(5_000);
+
+	        // The second timer tick should not start a new flush (no overlapping DB queries).
+	        expect(sessionUpdateMany).toHaveBeenCalledTimes(1);
+
+	        resolveFirstWrite();
+	        await Promise.resolve();
+	    });
+
+    it("backs off on socket timeouts to avoid hammering the DB with repeated presence writes", async () => {
+        let callCount = 0;
+        sessionUpdateMany.mockImplementation(async () => {
+            callCount += 1;
+            if (callCount === 1) {
+                throw new Error("Socket timeout (the database failed to respond to a query within the configured timeout)");
+            }
+            return { count: 1 };
+        });
+
+        ({ activityCache } = await import("./sessionCache"));
+
+        await activityCache.isSessionValid("s1", "u1");
+        expect(activityCache.queueSessionUpdate("s1", "u1", Date.now())).toBe(true);
+
+        await (activityCache as any).flushPendingUpdates();
+        expect(sessionUpdateMany).toHaveBeenCalledTimes(1);
+
+        await (activityCache as any).flushPendingUpdates();
+        expect(sessionUpdateMany).toHaveBeenCalledTimes(1);
+
+        await vi.advanceTimersByTimeAsync(30_000);
+
+        await (activityCache as any).flushPendingUpdates();
+        expect(sessionUpdateMany).toHaveBeenCalledTimes(2);
+    });
 });
