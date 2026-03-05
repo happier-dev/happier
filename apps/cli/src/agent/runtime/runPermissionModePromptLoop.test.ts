@@ -300,7 +300,7 @@ describe('runPermissionModePromptLoop', () => {
     expect(runtime.sendPrompt).toHaveBeenNthCalledWith(2, 'second');
     expect(runtime.reset).toHaveBeenCalledTimes(1);
     expect(runtime.startOrLoad).toHaveBeenNthCalledWith(1, {});
-    expect(runtime.startOrLoad).toHaveBeenNthCalledWith(2, { resumeId: 'resume-from-runtime' });
+    expect(runtime.startOrLoad).toHaveBeenNthCalledWith(2, { resumeId: 'resume-from-runtime', importHistory: false });
   });
 
   it('falls back to fresh start when resume fails', async () => {
@@ -311,7 +311,7 @@ describe('runPermissionModePromptLoop', () => {
     // A subsequent fresh start must reset the runtime before retrying, otherwise it would
     // error like "ACP backend is already initialized".
     let initialized = false;
-    runtime.startOrLoad = vi.fn(async (opts: { resumeId?: string }) => {
+    runtime.startOrLoad = vi.fn(async (opts: { resumeId?: string; importHistory?: boolean }) => {
       if (opts.resumeId) {
         initialized = true;
         throw new Error('resume failed');
@@ -356,10 +356,109 @@ describe('runPermissionModePromptLoop', () => {
       formatPromptErrorMessage: (error) => `Error: ${String(error)}`,
     });
 
-    expect(runtime.startOrLoad).toHaveBeenNthCalledWith(1, { resumeId: 'resume-id' });
+    expect(runtime.startOrLoad).toHaveBeenNthCalledWith(1, { resumeId: 'resume-id', importHistory: false });
     expect(runtime.reset).toHaveBeenCalledTimes(1);
     expect(runtime.startOrLoad).toHaveBeenNthCalledWith(2, {});
     expect(session.sendAgentMessage).toHaveBeenCalledWith('qwen', { type: 'message', message: 'Resume failed; starting a new session.' });
     expect(runtime.sendPrompt).toHaveBeenCalledWith('hello');
   });
+
+  it('disables ACP replay history import when resuming a forked session (acp_fork_latest)', async () => {
+    const session = createTestSession();
+    session.__setMetadata({
+      forkV1: {
+        v: 1,
+        parentSessionId: 'sess_parent',
+        parentCutoffSeqInclusive: 19,
+        createdAtMs: 1,
+        strategy: 'acp_fork_latest',
+      },
+    });
+    const queue = createModeQueue();
+    const runtime = createRuntime();
+    const messageBuffer = new MessageBuffer();
+    const permissionHandler = {
+      setPermissionMode: vi.fn(),
+      reset: vi.fn(),
+    } as any;
+
+    queue.push({ text: 'hello', localId: 'local-fork' }, { permissionMode: 'default' });
+
+    let shouldExit = false;
+    await runPermissionModePromptLoop({
+      providerName: 'Test Provider',
+      agentMessageType: 'qwen',
+      explicitPermissionMode: undefined,
+      session,
+      messageQueue: queue,
+      permissionHandler,
+      runtime,
+      createOverrideSynchronizer: () => ({ syncFromMetadata: () => {}, flushPendingAfterStart: async () => {} }),
+      messageBuffer,
+      shouldExit: () => shouldExit,
+      getAbortSignal: () => new AbortController().signal,
+      keepAlive: () => {},
+      setThinking: () => {},
+      sendReady: () => {
+        shouldExit = true;
+      },
+      currentPermissionModeUpdatedAt: 0,
+      setCurrentPermissionMode: () => {},
+      setCurrentPermissionModeUpdatedAt: () => {},
+      initialResumeId: 'resume-id',
+      formatPromptErrorMessage: (error) => `Error: ${String(error)}`,
+    });
+
+    expect(runtime.startOrLoad).toHaveBeenCalledWith({ resumeId: 'resume-id', importHistory: false });
+  });
+
+	  it('fails closed when strictInitialResume is enabled and the initial resume attempt fails', async () => {
+	    const session = createTestSession();
+	    const queue = createModeQueue();
+	    const runtime = createRuntime();
+	    runtime.startOrLoad = vi.fn(async (opts: { resumeId?: string; importHistory?: boolean }) => {
+	      if (opts.resumeId) {
+	        throw new Error('resume failed');
+	      }
+	    });
+	    const messageBuffer = new MessageBuffer();
+	    const permissionHandler = {
+	      setPermissionMode: vi.fn(),
+	      reset: vi.fn(),
+	    } as any;
+
+    queue.push({ text: 'hello', localId: 'local-6' }, { permissionMode: 'default' });
+
+    let shouldExit = false;
+    await expect(
+      (runPermissionModePromptLoop as unknown as (params: any) => Promise<void>)({
+        providerName: 'Test Provider',
+        agentMessageType: 'qwen',
+        explicitPermissionMode: undefined,
+        session,
+        messageQueue: queue,
+        permissionHandler,
+        runtime,
+        createOverrideSynchronizer: () => ({ syncFromMetadata: () => {}, flushPendingAfterStart: async () => {} }),
+        messageBuffer,
+        shouldExit: () => shouldExit,
+        getAbortSignal: () => new AbortController().signal,
+        keepAlive: () => {},
+        setThinking: () => {},
+        sendReady: () => {
+          shouldExit = true;
+        },
+        currentPermissionModeUpdatedAt: 0,
+        setCurrentPermissionMode: () => {},
+        setCurrentPermissionModeUpdatedAt: () => {},
+        initialResumeId: 'resume-id',
+        strictInitialResume: true,
+        formatPromptErrorMessage: (error: unknown) => `Error: ${String(error)}`,
+      }),
+	    ).rejects.toThrow('resume failed');
+
+	    expect(runtime.startOrLoad).toHaveBeenCalledWith({ resumeId: 'resume-id', importHistory: false });
+	    expect(runtime.sendPrompt).not.toHaveBeenCalled();
+	    expect(runtime.reset).toHaveBeenCalledTimes(1);
+	  });
 });

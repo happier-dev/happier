@@ -7,7 +7,7 @@ describe('buildResumeSessionBaseOptionsFromSession', () => {
         expect(buildResumeSessionBaseOptionsFromSession({
             sessionId: 's1',
             session: { metadata: null } as any,
-            resumeCapabilityOptions: {},
+            resumeCapabilityOptions: { accountSettings: {} },
         })).toBeNull();
     });
 
@@ -15,7 +15,7 @@ describe('buildResumeSessionBaseOptionsFromSession', () => {
         expect(buildResumeSessionBaseOptionsFromSession({
             sessionId: 's1',
             session: { metadata: { machineId: 'm1', path: '/tmp', flavor: 'openai', codexSessionId: 'x1' } } as any,
-            resumeCapabilityOptions: {}, // codex not enabled
+            resumeCapabilityOptions: { accountSettings: { codexBackendMode: 'mcp' } }, // codex not enabled
         })).toBeNull();
     });
 
@@ -23,7 +23,7 @@ describe('buildResumeSessionBaseOptionsFromSession', () => {
         expect(buildResumeSessionBaseOptionsFromSession({
             sessionId: 's1',
             session: { metadata: { machineId: 'm1', path: '/tmp', flavor: 'openai', codexSessionId: 'x1' } } as any,
-            resumeCapabilityOptions: { allowExperimentalResumeByAgentId: { codex: true } },
+            resumeCapabilityOptions: { accountSettings: { codexBackendMode: 'acp' } },
         })).toEqual({
             sessionId: 's1',
             machineId: 'm1',
@@ -37,7 +37,7 @@ describe('buildResumeSessionBaseOptionsFromSession', () => {
         expect(buildResumeSessionBaseOptionsFromSession({
             sessionId: 's1',
             session: { metadata: { machineId: 'm1', path: '/tmp', flavor: 'claude', claudeSessionId: 'c1' } } as any,
-            resumeCapabilityOptions: {},
+            resumeCapabilityOptions: { accountSettings: {} },
             permissionOverride: { permissionMode: 'plan', permissionModeUpdatedAt: 123 },
         })).toEqual({
             sessionId: 's1',

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { CODEX_ACP_DEP_ID, CODEX_MCP_RESUME_DEP_ID, INSTALLABLE_KEYS } from '@happier-dev/protocol/installables';
+import { CODEX_ACP_DEP_ID, INSTALLABLE_KEYS } from '@happier-dev/protocol/installables';
 
 import {
     getAgentResumeExperimentsFromSettings,
@@ -10,19 +10,6 @@ import { makeResults, makeSettings, okCapability } from './registryUiBehavior.te
 
 describe('getNewSessionRelevantInstallableDepKeys', () => {
     it('returns codex installable deps based on codex backend mode', () => {
-        const mcpResume = makeSettings({ codexBackendMode: 'mcp_resume' });
-        expect(getNewSessionRelevantInstallableDepKeys({
-            agentId: 'codex',
-            experiments: getAgentResumeExperimentsFromSettings('codex', mcpResume),
-            resumeSessionId: 'x1',
-        })).toEqual([INSTALLABLE_KEYS.CODEX_MCP_RESUME]);
-
-        expect(getNewSessionRelevantInstallableDepKeys({
-            agentId: 'codex',
-            experiments: getAgentResumeExperimentsFromSettings('codex', mcpResume),
-            resumeSessionId: '',
-        })).toEqual([]);
-
         const acp = makeSettings({ codexBackendMode: 'acp' });
         expect(getNewSessionRelevantInstallableDepKeys({
             agentId: 'codex',
@@ -56,7 +43,6 @@ describe('getNewSessionPreflightIssues', () => {
             experiments: getAgentResumeExperimentsFromSettings('codex', settings),
             resumeSessionId: 'x1',
             results: makeResults({
-                [CODEX_MCP_RESUME_DEP_ID]: okCapability({ installed: false }),
                 [CODEX_ACP_DEP_ID]: okCapability({ installed: false }),
             }),
         });

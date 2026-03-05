@@ -26,9 +26,19 @@ export default function TerminalConnectScreen() {
     const [hashProcessed, setHashProcessed] = useState(false);
     const auth = useAuth();
     const authRedirectTriggeredRef = React.useRef(false);
+
+    const navigateBackOrToTerminal = React.useCallback(() => {
+        const canGoBack = typeof (router as any)?.canGoBack === 'function' ? (router as any).canGoBack() : false;
+        if (canGoBack) {
+            router.back();
+            return;
+        }
+        router.replace('/terminal');
+    }, [router]);
+
     const { processAuthUrl, isLoading } = useConnectTerminal({
         onSuccess: () => {
-            router.back();
+            navigateBackOrToTerminal();
         }
     });
 
@@ -108,7 +118,7 @@ export default function TerminalConnectScreen() {
 
     const handleReject = () => {
         clearPendingTerminalConnect();
-        router.back();
+        navigateBackOrToTerminal();
     };
 
     // Show placeholder for mobile platforms

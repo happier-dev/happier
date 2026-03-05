@@ -134,4 +134,42 @@ describe('sessionRegistry', () => {
     expect(markers[0].pid).toBe(777);
     expect(markers[0].flavor).toBe('opencode');
   });
+
+  it('tolerates older respawn markers with experimentalCodexResume', async () => {
+    const { configuration } = await import('@/configuration');
+    const { listSessionMarkers } = await import('./sessionRegistry');
+
+    const dir = join(configuration.happyHomeDir, 'tmp', 'daemon-sessions');
+    mkdirSync(dir, { recursive: true });
+
+    writeFileSync(
+      join(dir, 'pid-333.json'),
+      JSON.stringify(
+        {
+          pid: 333,
+          happySessionId: 'sess-333',
+          happyHomeDir: configuration.happyHomeDir,
+          createdAt: 1,
+          updatedAt: 2,
+          respawn: {
+            version: 1,
+            directory: '/tmp',
+            experimentalCodexResume: true,
+          },
+        },
+        null,
+        2,
+      ),
+      'utf-8',
+    );
+
+    const markers = await listSessionMarkers();
+    expect(markers).toHaveLength(1);
+    expect(markers[0].pid).toBe(333);
+    expect(markers[0].respawn).toMatchObject({
+      version: 1,
+      directory: '/tmp',
+      experimentalCodexResume: true,
+    });
+  });
 });

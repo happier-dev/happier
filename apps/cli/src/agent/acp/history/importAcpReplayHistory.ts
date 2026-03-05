@@ -6,6 +6,7 @@ import { logger } from '@/ui/logger';
 import { updateMetadataBestEffort } from '@/api/session/sessionWritesBestEffort';
 import type { AcpReplayHistorySessionClient } from '@/agent/acp/sessionClient';
 import { extractThinkingTextFromThinkToolInput, isThinkingToolName } from '@/agent/acp/bridge/thinkingToolCall';
+import { CHANGE_TITLE_INSTRUCTION } from '@/agent/runtime/changeTitleInstruction';
 
 type TranscriptTextItem = { role: 'user' | 'agent'; text: string };
 
@@ -15,7 +16,15 @@ function asRecord(value: unknown): Record<string, unknown> | null {
 }
 
 function normalizeTextForMatch(text: string): string {
-  return text.replace(/\r\n/g, '\n').replace(/\s+/g, ' ').trim();
+  // Providers may see internal prompt suffixes that are intentionally not persisted in the Happy transcript.
+  // Strip these so overlap detection compares user-visible text only.
+  const withoutInternalSuffixes = (() => {
+    const raw = typeof text === 'string' ? text : '';
+    const idx = raw.indexOf(CHANGE_TITLE_INSTRUCTION);
+    if (idx === -1) return raw;
+    return raw.slice(0, idx);
+  })();
+  return withoutInternalSuffixes.replace(/\r\n/g, '\n').replace(/\s+/g, ' ').trim();
 }
 
 function fingerprintItem(item: TranscriptTextItem): string {

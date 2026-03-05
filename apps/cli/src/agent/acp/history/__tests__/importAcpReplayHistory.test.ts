@@ -3,6 +3,7 @@ import { describe, it, expect } from 'vitest';
 import { importAcpReplayHistoryV1 } from '../importAcpReplayHistory';
 import type { AcpReplayHistorySessionClient } from '@/agent/acp/sessionClient';
 import type { Metadata } from '@/api/types';
+import { CHANGE_TITLE_INSTRUCTION } from '@/agent/runtime/changeTitleInstruction';
 
 function createFakeSession(params?: {
   existing?: Array<{ role: 'user' | 'agent'; text: string }>;
@@ -49,6 +50,35 @@ function createFakeSession(params?: {
 }
 
 describe('importAcpReplayHistoryV1', () => {
+  it('does not prompt when the only divergence is the internal change-title instruction suffix', async () => {
+    const { session, calls } = createFakeSession({
+      existing: [
+        { role: 'user', text: 'hi' },
+        { role: 'agent', text: 'hello' },
+      ],
+    });
+
+    await importAcpReplayHistoryV1({
+      session,
+      provider: 'opencode',
+      remoteSessionId: 'session-123',
+      replay: [
+        { type: 'message', role: 'user', text: `hi\n\n${CHANGE_TITLE_INSTRUCTION}` },
+        { type: 'message', role: 'agent', text: 'hello' },
+      ] as any,
+      permissionHandler: {
+        handleToolCall: () => {
+          throw new Error('permission handler should not be called for change-title divergence');
+        },
+      } as any,
+    });
+
+    expect(calls.fetch).toBe(1);
+    expect(calls.sendUser).toBe(0);
+    expect(calls.sendAgent).toBe(0);
+    expect(calls.updateMetadata).toBe(0);
+  });
+
   it('fails closed when remoteSessionId contains path separators', async () => {
     const { session, calls } = createFakeSession();
 

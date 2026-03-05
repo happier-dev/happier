@@ -23,6 +23,10 @@ function normalizeSessionId(raw: unknown): string {
   return typeof raw === 'string' ? raw.trim() : '';
 }
 
+function normalizeOptionalString(raw: unknown): string {
+  return typeof raw === 'string' ? raw.trim() : '';
+}
+
 function toTerminationEvent(exit: DaemonChildExit): TerminationEvent {
   if (typeof exit.signal === 'string' && exit.signal.trim().length > 0) {
     return { type: 'signaled', signal: exit.signal as NodeJS.Signals };
@@ -37,13 +41,20 @@ function toTerminationEvent(exit: DaemonChildExit): TerminationEvent {
   return { type: 'exited', code: 1 };
 }
 
-function buildRespawnOptions(params: Readonly<{ spawnOptions: SpawnSessionOptions; sessionId: string }>): SpawnSessionOptions {
+function buildRespawnOptions(params: Readonly<{
+  spawnOptions: SpawnSessionOptions;
+  sessionId: string;
+  vendorResumeId: string;
+}>): SpawnSessionOptions {
+  const resumeFromOptions = normalizeOptionalString(params.spawnOptions.resume);
+  const resumeFromTracked = normalizeOptionalString(params.vendorResumeId);
+  const effectiveResume = resumeFromOptions || resumeFromTracked;
   return {
     ...params.spawnOptions,
+    ...(effectiveResume ? { resume: effectiveResume } : {}),
     existingSessionId: params.sessionId,
     sessionId: undefined,
     initialPrompt: undefined,
-    resume: undefined,
     approvedNewDirectoryCreation: true,
   };
 }
@@ -95,7 +106,14 @@ export function createSessionRunnerRespawnManager(params: Readonly<{
     stateBySessionId.set(sessionId, { controller: existing.controller, timer: null });
   };
 
-  const scheduleSpawn = (sessionId: string, spawnOptions: SpawnSessionOptions, delayMs: number, attempt: number, event: TerminationEvent) => {
+  const scheduleSpawn = (
+    sessionId: string,
+    spawnOptions: SpawnSessionOptions,
+    vendorResumeId: string,
+    delayMs: number,
+    attempt: number,
+    event: TerminationEvent,
+  ) => {
     clearTimer(sessionId);
     const existing = stateBySessionId.get(sessionId);
     if (!existing) return;
@@ -107,7 +125,7 @@ export function createSessionRunnerRespawnManager(params: Readonly<{
         const stopRequest = stopRequestedBySessionId.get(sessionId);
         if (stopRequest) return;
 
-        const respawnOptions = buildRespawnOptions({ spawnOptions, sessionId });
+        const respawnOptions = buildRespawnOptions({ spawnOptions, sessionId, vendorResumeId });
         params.logDebug(
           `[DAEMON RUN] Respawning runner for session ${sessionId} after ${delayMs}ms (attempt ${attempt})`,
           { exit: event },
@@ -149,7 +167,7 @@ export function createSessionRunnerRespawnManager(params: Readonly<{
               return;
             }
 
-            scheduleSpawn(sessionId, spawnOptions, decision.delayMs, decision.attempt, retryEvent);
+            scheduleSpawn(sessionId, spawnOptions, vendorResumeId, decision.delayMs, decision.attempt, retryEvent);
           })
           .catch((error) => {
             params.logDebug(`[DAEMON RUN] Failed to respawn runner for session ${sessionId}`, error);
@@ -169,7 +187,7 @@ export function createSessionRunnerRespawnManager(params: Readonly<{
               stateBySessionId.delete(sessionId);
               return;
             }
-            scheduleSpawn(sessionId, spawnOptions, decision.delayMs, decision.attempt, retryEvent);
+            scheduleSpawn(sessionId, spawnOptions, vendorResumeId, decision.delayMs, decision.attempt, retryEvent);
           });
       })().catch((error) => {
         params.logDebug(`[DAEMON RUN] Failed to evaluate respawn preflight for session ${sessionId}`, error);
@@ -211,6 +229,7 @@ export function createSessionRunnerRespawnManager(params: Readonly<{
         return;
       }
 
+      const vendorResumeId = normalizeOptionalString(trackedSession.vendorResumeId);
       const controller = getOrCreateController(sessionId);
       const event = toTerminationEvent(exit);
       const decision = controller.nextDecisionForTermination(event);
@@ -222,7 +241,7 @@ export function createSessionRunnerRespawnManager(params: Readonly<{
         return;
       }
 
-      scheduleSpawn(sessionId, spawnOptions, decision.delayMs, decision.attempt, event);
+      scheduleSpawn(sessionId, spawnOptions, vendorResumeId, decision.delayMs, decision.attempt, event);
     },
   };
 }

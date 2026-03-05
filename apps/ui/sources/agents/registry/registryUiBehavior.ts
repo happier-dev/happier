@@ -1,10 +1,9 @@
 import type { AgentId } from './registryCore';
-import { AGENT_IDS, getAgentCore } from './registryCore';
-import type { CapabilitiesDetectRequest, CapabilityDetectResult, CapabilityId } from '@/sync/api/capabilities/capabilitiesProtocol';
+import { AGENT_IDS } from './registryCore';
+import type { CapabilityDetectResult, CapabilityId } from '@/sync/api/capabilities/capabilitiesProtocol';
 import type { ResumeCapabilityOptions } from '@/agents/runtime/resumeCapabilities';
 import type { TranslationKey } from '@/text';
 import type { Settings } from '@/sync/domains/settings/settings';
-import { buildAcpLoadSessionPrefetchRequest, readAcpLoadSessionSupport, shouldPrefetchAcpCapabilities } from '@/agents/runtime/acpRuntimeResume';
 import { CODEX_UI_BEHAVIOR_OVERRIDE } from '@/agents/providers/codex/uiBehavior';
 import { AUGGIE_UI_BEHAVIOR_OVERRIDE } from '@/agents/providers/auggie/uiBehavior';
 import { OPENCODE_UI_BEHAVIOR_OVERRIDE } from '@/agents/providers/opencode/uiBehavior';
@@ -27,26 +26,9 @@ export type AgentExperimentSwitchDef = Readonly<{
     getValue?: (settings: Settings) => boolean;
 }>;
 
-export type ResumeRuntimeSupportPrefetchPlan = Readonly<{
-    request: CapabilitiesDetectRequest;
-    timeoutMs: number;
-}>;
-
 export type AgentUiBehavior = Readonly<{
     resume?: Readonly<{
         experimentSwitches?: readonly AgentExperimentSwitchDef[];
-        getAllowExperimentalVendorResume?: (opts: { experiments: AgentResumeExperiments }) => boolean;
-        getExperimentalVendorResumeRequiresRuntime?: (opts: { experiments: AgentResumeExperiments }) => boolean;
-        getAllowRuntimeResume?: (opts: { experiments: AgentResumeExperiments; results: CapabilityResults | undefined }) => boolean;
-        getRuntimeResumePrefetchPlan?: (opts: {
-            experiments: AgentResumeExperiments;
-            results: CapabilityResults | undefined;
-        }) => ResumeRuntimeSupportPrefetchPlan | null;
-        getPreflightPrefetchPlan?: (opts: {
-            experiments: AgentResumeExperiments;
-            results: CapabilityResults | undefined;
-        }) => ResumeRuntimeSupportPrefetchPlan | null;
-        getPreflightIssues?: (ctx: ResumePreflightContext) => readonly NewSessionPreflightIssue[];
     }>;
     newSession?: Readonly<{
         buildNewSessionOptions?: (ctx: {
@@ -106,12 +88,6 @@ export type NewSessionPreflightIssue = Readonly<{
     action: 'openMachine';
 }>;
 
-export type ResumePreflightContext = Readonly<{
-    agentId: AgentId;
-    experiments: AgentResumeExperiments;
-    results: CapabilityResults | undefined;
-}>;
-
 function mergeAgentUiBehavior(a: AgentUiBehavior, b: AgentUiBehavior): AgentUiBehavior {
     return {
         ...(a.resume || b.resume ? { resume: { ...(a.resume ?? {}), ...(b.resume ?? {}) } } : {}),
@@ -122,19 +98,6 @@ function mergeAgentUiBehavior(a: AgentUiBehavior, b: AgentUiBehavior): AgentUiBe
 }
 
 function buildDefaultAgentUiBehavior(agentId: AgentId): AgentUiBehavior {
-    const core = getAgentCore(agentId);
-    const runtimeGate = core.resume.runtimeGate;
-    if (runtimeGate === 'acpLoadSession') {
-        return {
-            resume: {
-                getAllowRuntimeResume: ({ results }) => readAcpLoadSessionSupport(agentId, results),
-                getRuntimeResumePrefetchPlan: ({ results }) => {
-                    if (!shouldPrefetchAcpCapabilities(agentId, results)) return null;
-                    return { request: buildAcpLoadSessionPrefetchRequest(agentId), timeoutMs: 8_000 };
-                },
-            },
-        };
-    }
     return {};
 }
 
@@ -178,101 +141,17 @@ export function getAgentResumeExperimentsFromSettings(agentId: AgentId, settings
     return { enabled, switches };
 }
 
-export function getAllowExperimentalResumeByAgentIdFromUiState(settings: Settings): Partial<Record<AgentId, boolean>> {
-    const out: Partial<Record<AgentId, boolean>> = {};
-    for (const id of AGENT_IDS) {
-        const fn = AGENTS_UI_BEHAVIOR[id].resume?.getAllowExperimentalVendorResume;
-        if (!fn) continue;
-        const experiments = getAgentResumeExperimentsFromSettings(id, settings);
-        if (fn({ experiments }) === true) out[id] = true;
-    }
-    return out;
-}
-
-export function getAllowRuntimeResumeByAgentIdFromResults(opts: {
-    settings: Settings;
-    results: CapabilityResults | undefined;
-}): Partial<Record<AgentId, boolean>> {
-    const out: Partial<Record<AgentId, boolean>> = {};
-    for (const id of AGENT_IDS) {
-        const fn = AGENTS_UI_BEHAVIOR[id].resume?.getAllowRuntimeResume;
-        if (!fn) continue;
-        const experiments = getAgentResumeExperimentsFromSettings(id, opts.settings);
-        if (fn({ experiments, results: opts.results }) === true) out[id] = true;
-    }
-    return out;
-}
-
 export function buildResumeCapabilityOptionsFromUiState(opts: {
     settings: Settings;
     results: CapabilityResults | undefined;
 }): ResumeCapabilityOptions {
-    const allowExperimental = getAllowExperimentalResumeByAgentIdFromUiState(opts.settings);
-    const allowRuntime = getAllowRuntimeResumeByAgentIdFromResults({ settings: opts.settings, results: opts.results });
-
-    // Generic rule: some agents may expose an experimental resume path that still requires runtime gating
-    // (e.g. ACP loadSession probing). Fail closed until runtime support is confirmed.
-    for (const id of AGENT_IDS) {
-        if (allowExperimental[id] !== true) continue;
-        const fn = AGENTS_UI_BEHAVIOR[id].resume?.getExperimentalVendorResumeRequiresRuntime;
-        if (!fn) continue;
-        const experiments = getAgentResumeExperimentsFromSettings(id, opts.settings);
-        if (fn({ experiments }) === true && allowRuntime[id] !== true) {
-            delete allowExperimental[id];
-        }
-    }
-
-    return buildResumeCapabilityOptionsFromMaps({
-        allowExperimentalResumeByAgentId: allowExperimental,
-        allowRuntimeResumeByAgentId: allowRuntime,
-    });
-}
-
-export function buildResumeCapabilityOptionsFromMaps(opts: {
-    allowExperimentalResumeByAgentId?: Partial<Record<AgentId, boolean>>;
-    allowRuntimeResumeByAgentId?: Partial<Record<AgentId, boolean>>;
-}): ResumeCapabilityOptions {
-    const allowExperimental = opts.allowExperimentalResumeByAgentId ?? {};
-    const allowRuntime = opts.allowRuntimeResumeByAgentId ?? {};
     return {
-        ...(Object.keys(allowExperimental).length > 0 ? { allowExperimentalResumeByAgentId: allowExperimental } : {}),
-        ...(Object.keys(allowRuntime).length > 0 ? { allowRuntimeResumeByAgentId: allowRuntime } : {}),
+        accountSettings: opts.settings as any,
     };
-}
-
-export function getResumeRuntimeSupportPrefetchPlan(
-    opts: {
-        agentId: AgentId;
-        settings: Settings;
-        results: CapabilityResults | undefined;
-    },
-): ResumeRuntimeSupportPrefetchPlan | null {
-    const fn = AGENTS_UI_BEHAVIOR[opts.agentId].resume?.getRuntimeResumePrefetchPlan;
-    if (!fn) return null;
-    const experiments = getAgentResumeExperimentsFromSettings(opts.agentId, opts.settings);
-    return fn({ experiments, results: opts.results });
-}
-
-export function getResumePreflightPrefetchPlan(
-    opts: {
-        agentId: AgentId;
-        settings: Settings;
-        results: CapabilityResults | undefined;
-    },
-): ResumeRuntimeSupportPrefetchPlan | null {
-    const fn = AGENTS_UI_BEHAVIOR[opts.agentId].resume?.getPreflightPrefetchPlan;
-    if (!fn) return null;
-    const experiments = getAgentResumeExperimentsFromSettings(opts.agentId, opts.settings);
-    return fn({ experiments, results: opts.results });
 }
 
 export function getNewSessionPreflightIssues(ctx: NewSessionPreflightContext): readonly NewSessionPreflightIssue[] {
     const fn = AGENTS_UI_BEHAVIOR[ctx.agentId].newSession?.getPreflightIssues;
-    return fn ? fn(ctx) : [];
-}
-
-export function getResumePreflightIssues(ctx: ResumePreflightContext): readonly NewSessionPreflightIssue[] {
-    const fn = AGENTS_UI_BEHAVIOR[ctx.agentId].resume?.getPreflightIssues;
     return fn ? fn(ctx) : [];
 }
 

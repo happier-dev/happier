@@ -12,7 +12,6 @@ export type ResumeHappySessionRpcParams = {
     permissionModeUpdatedAt?: number;
     modelId?: string;
     modelUpdatedAt?: number;
-    experimentalCodexResume?: boolean;
     experimentalCodexAcp?: boolean;
 };
 
@@ -26,7 +25,6 @@ const ResumeHappySessionRpcParamsSchema = z.object({
     permissionModeUpdatedAt: z.number().optional(),
     modelId: z.string().min(1).optional(),
     modelUpdatedAt: z.number().optional(),
-    experimentalCodexResume: z.boolean().optional(),
     experimentalCodexAcp: z.boolean().optional(),
 });
 

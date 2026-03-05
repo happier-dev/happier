@@ -74,6 +74,15 @@ vi.mock('react-native-unistyles', () => ({
                 surface: '#fff',
                 surfaceHigh: '#f5f5f5',
                 divider: '#ddd',
+                accent: {
+                    blue: '#007AFF',
+                    green: '#34C759',
+                    orange: '#FF9500',
+                    yellow: '#FFCC00',
+                    red: '#FF3B30',
+                    indigo: '#5856D6',
+                    purple: '#AF52DE',
+                },
                 input: { background: '#f5f5f5' },
                 header: { tint: '#000' },
                 modal: { border: '#ddd' },
@@ -95,6 +104,15 @@ vi.mock('react-native-unistyles', () => ({
                               surface: '#fff',
                               surfaceHigh: '#f5f5f5',
                               divider: '#ddd',
+                              accent: {
+                                  blue: '#007AFF',
+                                  green: '#34C759',
+                                  orange: '#FF9500',
+                                  yellow: '#FFCC00',
+                                  red: '#FF3B30',
+                                  indigo: '#5856D6',
+                                  purple: '#AF52DE',
+                              },
                               input: { background: '#f5f5f5' },
                               header: { tint: '#000' },
                               modal: { border: '#ddd' },
@@ -213,6 +231,7 @@ vi.mock('@/sync/ops', () => ({
     sessionAbort: vi.fn(),
     resumeSession: (...args: any[]) => resumeSessionSpy(...args),
     sessionAttachmentsUploadFile: (...args: any[]) => uploadSpy(...args),
+    machineCapabilitiesInvoke: vi.fn(async () => ({ type: 'success' })),
 }));
 
 vi.mock('@/sync/ops/sessionAttachmentsUpload', () => ({
@@ -313,7 +332,7 @@ vi.mock('@/agents/catalog/catalog', async (importOriginal) => {
 });
 
 vi.mock('@/agents/hooks/useResumeCapabilityOptions', () => ({
-    useResumeCapabilityOptions: () => ({ resumeCapabilityOptions: { allowExperimentalResumeByAgentId: { codex: true } } }),
+    useResumeCapabilityOptions: () => ({ resumeCapabilityOptions: { accountSettings: { codexBackendMode: 'acp' } } }),
 }));
 vi.mock('@/agents/runtime/resumeCapabilities', async (importOriginal) => {
     return await importOriginal<any>();
@@ -360,6 +379,7 @@ vi.mock('@/sync/domains/session/control/submitMode', () => ({
     chooseSubmitMode: () => 'server_pending',
 }));
 vi.mock('@/sync/domains/session/control/localControlSwitch', () => ({
+    getSwitchToLocalControlDisabledReason: () => null,
     shouldRenderChatTimelineForSession: () => true,
     shouldRequestRemoteControlAfterPendingEnqueue: () => false,
 }));

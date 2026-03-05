@@ -14,6 +14,7 @@ import type { AgentId } from '@/agents/catalog/catalog';
 import { DEFAULT_AGENT_ID, getAgentCore, isAgentId } from '@/agents/catalog/catalog';
 import { getClipboardStringTrimmedSafe } from '@/utils/ui/clipboard';
 import { Text } from '@/components/ui/text/Text';
+import { safeRouterBack } from '@/utils/navigation/safeRouterBack';
 
 
 const stylesheet = StyleSheet.create((theme) => ({
@@ -109,7 +110,7 @@ export default function ResumePickerScreen() {
         const trimmed = inputValue.trim();
         const state = navigation.getState();
         if (!state) {
-            router.back();
+            safeRouterBack({ router, navigation, fallbackHref: '/new' });
             return;
         }
         const previousRoute = state.routes[state.index - 1];
@@ -119,13 +120,13 @@ export default function ResumePickerScreen() {
                 source: previousRoute.key,
             } as never);
         }
-        router.back();
+        safeRouterBack({ router, navigation, fallbackHref: '/new' });
     };
 
     const handleClear = () => {
         const state = navigation.getState();
         if (!state) {
-            router.back();
+            safeRouterBack({ router, navigation, fallbackHref: '/new' });
             return;
         }
         const previousRoute = state.routes[state.index - 1];
@@ -135,7 +136,7 @@ export default function ResumePickerScreen() {
                 source: previousRoute.key,
             } as never);
         }
-        router.back();
+        safeRouterBack({ router, navigation, fallbackHref: '/new' });
     };
 
     const handlePaste = async () => {

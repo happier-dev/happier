@@ -6,7 +6,7 @@ import * as persistence from '@/sync/domains/state/persistence';
 import { storage } from '@/sync/domains/state/storage';
 import { flushActivityUpdates, handleUpdateContainer } from './socket';
 
-const initialStorageState = storage.getState();
+const initialStorageState = storage.getInitialState();
 
 function buildSession(sessionId: string): Session {
     return {
@@ -131,5 +131,31 @@ describe('socket update handling cursor isolation', () => {
         flushActivityUpdates({ updates, applySessions });
 
         expect(applySessions).not.toHaveBeenCalled();
+    });
+
+    it('applies activity active=false updates even if activeAt < updatedAt', async () => {
+        const sessionId = 's_inactive_turnoff';
+        storage.getState().applySessions([{
+            ...buildSession(sessionId),
+            active: true,
+            activeAt: 100,
+            updatedAt: 200,
+            thinking: false,
+            thinkingAt: 200,
+        }]);
+
+        const updates = new Map<string, any>([
+            [sessionId, { type: 'activity', id: sessionId, active: false, activeAt: 150, thinking: false }],
+        ]);
+        const applySessions = vi.fn();
+
+        flushActivityUpdates({ updates, applySessions });
+
+        await expect.poll(() => applySessions.mock.calls.length).toBe(1);
+        const updatedSession = applySessions.mock.calls[0]?.[0]?.[0] as Session;
+        expect(updatedSession.active).toBe(false);
+        expect(updatedSession.activeAt).toBe(150);
+        expect(updatedSession.thinking).toBe(false);
+        expect(updatedSession.thinkingAt).toBe(150);
     });
 });

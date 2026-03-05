@@ -26,7 +26,7 @@ describe('createSessionRunnerRespawnManager', () => {
       startedBy: 'daemon',
       pid: 111,
       happySessionId: 'sess-1',
-      spawnOptions: { directory: '/tmp', agent: 'claude' } as any,
+      spawnOptions: { directory: '/tmp', agent: 'claude', resume: 'vendor-sess-1' } as any,
     };
 
     manager.handleUnexpectedExit(tracked, { reason: 'process-missing', code: null, signal: null });
@@ -36,6 +36,45 @@ describe('createSessionRunnerRespawnManager', () => {
     expect(spawnSession).toHaveBeenCalledWith(
       expect.objectContaining({
         existingSessionId: 'sess-1',
+        resume: 'vendor-sess-1',
+        approvedNewDirectoryCreation: true,
+      }),
+    );
+  });
+
+  it('uses tracked vendorResumeId when spawnOptions has no resume', async () => {
+    vi.useFakeTimers();
+    const spawnSession = vi.fn(async (_opts: unknown) => ({ type: 'success' as const, pid: 123 }));
+
+    const manager = createSessionRunnerRespawnManager({
+      enabled: true,
+      maxRestarts: 1,
+      baseDelayMs: 50,
+      maxDelayMs: 50,
+      jitterMs: 0,
+      isSessionAlreadyRunning: async () => false,
+      spawnSession: (opts) => spawnSession(opts),
+      random: () => 0,
+      logDebug: () => {},
+      logWarn: () => {},
+    });
+
+    const tracked: TrackedSession = {
+      startedBy: 'daemon',
+      pid: 111,
+      happySessionId: 'sess-2',
+      vendorResumeId: 'vendor-sess-2',
+      spawnOptions: { directory: '/tmp', agent: 'codex' } as any,
+    };
+
+    manager.handleUnexpectedExit(tracked, { reason: 'process-missing', code: null, signal: null });
+
+    await vi.advanceTimersByTimeAsync(50);
+    expect(spawnSession).toHaveBeenCalledTimes(1);
+    expect(spawnSession).toHaveBeenCalledWith(
+      expect.objectContaining({
+        existingSessionId: 'sess-2',
+        resume: 'vendor-sess-2',
         approvedNewDirectoryCreation: true,
       }),
     );

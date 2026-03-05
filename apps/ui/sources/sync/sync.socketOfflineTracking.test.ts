@@ -23,6 +23,14 @@ vi.mock('react-native-mmkv', () => {
 
 const statusListeners = vi.hoisted(() => new Set<(status: 'disconnected' | 'connecting' | 'connected' | 'error') => void>());
 
+vi.mock('./api/session/apiChanges', () => ({
+  fetchChanges: vi.fn(async () => ({
+    status: 'ok' as const,
+    changes: [],
+    nextCursor: '0',
+  })),
+}));
+
 const appStateAddListener = vi.hoisted(() => vi.fn(() => ({ remove: vi.fn() })));
 vi.mock('react-native', async () => {
   const actual = await vi.importActual<any>('react-native');
@@ -68,12 +76,18 @@ vi.mock('@/voice/context/voiceHooks', () => ({
 }));
 
 import { sync } from './sync';
+import { storage } from './domains/state/storage';
+import { upsertAndActivateServer } from '@/sync/domains/server/serverRuntime';
 
 describe('sync socket offline tracking', () => {
+  const initialStorageState = storage.getState();
+
   beforeEach(() => {
+    storage.setState(initialStorageState, true);
     kvStore.clear();
     statusListeners.clear();
     appStateAddListener.mockClear();
+    vi.unstubAllGlobals();
   });
 
   it('clears lastSocketDisconnectedAtMs when socket becomes connected again', async () => {
@@ -90,5 +104,42 @@ describe('sync socket offline tracking', () => {
     }
 
     expect((sync as any).lastSocketDisconnectedAtMs ?? null).toBeNull();
+  }, 60_000);
+
+  it('refreshes sessions on socket reconnect (recovers missed activity ephemerals)', async () => {
+    // Ensure serverFetch has an active server target.
+    upsertAndActivateServer({ serverUrl: 'http://localhost:53288', scope: 'tab' });
+
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = typeof input === 'string' ? input : input.toString();
+      if (url.includes('/v2/sessions')) {
+        return new Response(
+          JSON.stringify({ sessions: [], nextCursor: null, hasNext: false }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } },
+        );
+      }
+      if (url.includes('/v1/machines')) {
+        return new Response(JSON.stringify([]), { status: 200, headers: { 'Content-Type': 'application/json' } });
+      }
+      return new Response(JSON.stringify({}), { status: 200, headers: { 'Content-Type': 'application/json' } });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    // Minimal Sync prerequisites to allow resumeSync to proceed.
+    storage.setState((state) => ({ ...state, profile: { ...(state.profile ?? {}), id: 'test-account' } as any }), true);
+    (sync as any).credentials = { token: 'hdr.eyJzdWIiOiJ0ZXN0In0.sig', secret: 'secret' };
+    (sync as any).encryption = {
+      decryptEncryptionKey: async () => null,
+      initializeSessions: async () => {},
+      getSessionEncryption: () => null,
+    };
+    (sync as any).isForeground = true;
+    (sync as any).lastSocketDisconnectedAtMs = Date.now() - 1000;
+
+    await (sync as any).resumeSync('socket-reconnect');
+
+    expect(fetchMock.mock.calls.map((call) => String(call[0]))).toEqual(
+      expect.arrayContaining([expect.stringContaining('/v2/sessions')]),
+    );
   }, 60_000);
 });

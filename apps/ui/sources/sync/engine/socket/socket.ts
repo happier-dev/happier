@@ -1,11 +1,13 @@
 import type { ApiEphemeralActivityUpdate, ApiUpdateContainer } from '@/sync/api/types/apiTypes';
 import type { Encryption } from '@/sync/encryption/encryption';
 import type { NormalizedMessage } from '@/sync/typesRaw';
+import type { EphemeralUpdate } from '@happier-dev/protocol/updates';
 import type { Session } from '@/sync/domains/state/storageTypes';
 import type { Machine } from '@/sync/domains/state/storageTypes';
 import type { MachineActivityUpdate } from '@/sync/reducer/machineActivityAccumulator';
 import { storage } from '@/sync/domains/state/storage';
 import { projectManager } from '@/sync/runtime/orchestration/projectManager';
+import { notifyExecutionRunActivity } from '@/sync/runtime/executionRuns/executionRunActivityBus';
 import { scmStatusSync } from '@/scm/scmStatusSync';
 import { ingestWorkspaceMutationMessages } from '@/scm/refresh/workspaceMutationIngestionRuntime';
 import { voiceHooks } from '@/voice/context/voiceHooks';
@@ -16,6 +18,7 @@ import { settingsDefaults } from '@/sync/domains/settings/settings';
 import {
     buildUpdatedSessionFromSocketUpdate,
     handleDeleteSessionSocketUpdate,
+    handleMessageUpdatedSocketUpdate,
     handleNewMessageSocketUpdate,
 } from '@/sync/engine/sessions/syncSessions';
 import {
@@ -244,6 +247,29 @@ export async function handleUpdateContainer(params: {
             fetchSessions,
             applyMessages,
             enqueueMessages: (sessionId, messages) => socketMessageApplyCoalescer.enqueue(sessionId, messages),
+            isMutableToolCall: (sessionId, toolUseId) => storage.getState().isMutableToolCall(sessionId, toolUseId),
+            invalidateScmStatus: (sessionId) => scmStatusSync.invalidate(sessionId),
+            isSessionMessagesLoaded,
+            getSessionMaterializedMaxSeq: getSessionMaterializedMaxSeqForGapDetection,
+            markSessionMaterializedMaxSeq,
+            onMessageGapDetected,
+            onTaskLifecycleEvent,
+        });
+    } else if (updateData.body.t === 'message-updated') {
+        const getSessionMaterializedMaxSeqForGapDetection = (sessionId: string) =>
+            Math.max(
+                getSessionMaterializedMaxSeq(sessionId),
+                socketMessageApplyCoalescer.getQueuedMaxSeq(sessionId),
+            );
+
+        await handleMessageUpdatedSocketUpdate({
+            updateData,
+            getSessionEncryption: (sessionId) => encryption.getSessionEncryption(sessionId),
+            getSession: (sessionId) => storage.getState().sessions[sessionId],
+            applySessions: (sessions) => applySessions(sessions),
+            fetchSessions,
+            applyMessages,
+            onNormalizedMessagesApplied: ingestWorkspaceMutationMessages,
             isMutableToolCall: (sessionId, toolUseId) => storage.getState().isMutableToolCall(sessionId, toolUseId),
             invalidateScmStatus: (sessionId) => scmStatusSync.invalidate(sessionId),
             isSessionMessagesLoaded,
@@ -519,17 +545,27 @@ export function flushActivityUpdates(params: { updates: Map<string, ApiEphemeral
     for (const [sessionId, update] of updates) {
         const session = storage.getState().sessions[sessionId];
         if (session) {
-            // Ignore stale activity updates that predate a newer durable/lifecycle update
-            // (for example a recent turn_aborted/task_complete clear). Otherwise old
-            // "thinking=true" ephemerals can resurrect a completed session into a stuck state.
-            if (update.activeAt < session.updatedAt) {
-                continue;
+            const nextThinking = update.thinking ?? false;
+            const isTurningOff = update.active === false && nextThinking === false;
+
+            // Most activity ephemerals should be ignored when they predate a newer durable/lifecycle update
+            // (for example a recent turn_aborted/task_complete clear). Otherwise old "thinking=true" ephemerals
+            // can resurrect a completed session into a stuck state.
+            //
+            // Exception: when we receive a "turn off" activity update (active=false, thinking=false), apply it
+            // even if it predates session.updatedAt, as long as it is not older than the session's last-known
+            // activity timestamp. This prevents "session ended" updates from being dropped when a terminal
+            // shutdown message (or similar durable update) bumps updatedAt slightly after activeAt.
+            if (isTurningOff) {
+                if (update.activeAt < session.activeAt) continue;
+            } else {
+                if (update.activeAt < session.updatedAt) continue;
             }
             sessions.push({
                 ...session,
                 active: update.active,
                 activeAt: update.activeAt,
-                thinking: update.thinking ?? false,
+                thinking: nextThinking,
                 thinkingAt: update.activeAt, // Always use activeAt for consistency
             });
         }
@@ -574,8 +610,9 @@ export function handleEphemeralSocketUpdate(params: {
     update: unknown;
     addActivityUpdate: (update: ApiEphemeralActivityUpdate) => void;
     addMachineActivityUpdate: (update: MachineActivityUpdate) => void;
+    onTranscriptDraftUpdate?: (update: Extract<EphemeralUpdate, { type: 'transcript-draft' }>) => void;
 }): void {
-    const { update, addActivityUpdate, addMachineActivityUpdate } = params;
+    const { update, addActivityUpdate, addMachineActivityUpdate, onTranscriptDraftUpdate } = params;
 
     const updateData = parseEphemeralUpdate(update);
     if (!updateData) return;
@@ -586,6 +623,10 @@ export function handleEphemeralSocketUpdate(params: {
     } else if (updateData.type === 'machine-activity') {
         // Handle machine activity updates through batching accumulator
         addMachineActivityUpdate({ id: updateData.id, active: updateData.active, activeAt: updateData.activeAt });
+    } else if (updateData.type === 'transcript-draft') {
+        onTranscriptDraftUpdate?.(updateData);
+    } else if (updateData.type === 'execution-run-updated') {
+        notifyExecutionRunActivity(updateData.sessionId);
     }
 
     // daemon-status ephemeral updates are deprecated, machine status is handled via machine-activity

@@ -23,6 +23,7 @@ export const SessionRunnerRespawnDescriptorV1Schema = z
     version: z.literal(1),
     directory: z.string(),
     agent: z.enum(CATALOG_AGENT_IDS).optional(),
+    resume: z.string().optional(),
     terminal: TerminalSpawnOptionsSchema.optional(),
     windowsRemoteSessionConsole: z.enum(['hidden', 'visible']).optional(),
     profileId: z.string().optional(),
@@ -30,8 +31,9 @@ export const SessionRunnerRespawnDescriptorV1Schema = z
     permissionModeUpdatedAt: z.number().int().optional(),
     modelId: z.string().optional(),
     modelUpdatedAt: z.number().int().optional(),
-    experimentalCodexResume: z.boolean().optional(),
     experimentalCodexAcp: z.boolean().optional(),
+    // Back-compat: older marker payloads used this flag name.
+    experimentalCodexResume: z.boolean().optional(),
   })
   .strict();
 
@@ -48,11 +50,13 @@ export function buildSessionRunnerRespawnDescriptorV1FromSpawnOptions(
 ): SessionRunnerRespawnDescriptorV1 | null {
   const directory = normalizeOptionalString(spawnOptions.directory);
   if (!directory) return null;
+  const resume = normalizeOptionalString(spawnOptions.resume);
 
   const descriptor: SessionRunnerRespawnDescriptorV1 = {
     version: 1,
     directory,
     ...(typeof spawnOptions.agent === 'string' ? { agent: spawnOptions.agent as any } : {}),
+    ...(resume ? { resume } : {}),
     ...(spawnOptions.terminal ? { terminal: spawnOptions.terminal as TerminalSpawnOptions } : {}),
     ...(spawnOptions.windowsRemoteSessionConsole ? { windowsRemoteSessionConsole: spawnOptions.windowsRemoteSessionConsole } : {}),
     ...(typeof spawnOptions.profileId === 'string' ? { profileId: spawnOptions.profileId } : {}),
@@ -60,7 +64,6 @@ export function buildSessionRunnerRespawnDescriptorV1FromSpawnOptions(
     ...(typeof spawnOptions.permissionModeUpdatedAt === 'number' ? { permissionModeUpdatedAt: spawnOptions.permissionModeUpdatedAt } : {}),
     ...(typeof spawnOptions.modelId === 'string' ? { modelId: spawnOptions.modelId } : {}),
     ...(typeof spawnOptions.modelUpdatedAt === 'number' ? { modelUpdatedAt: spawnOptions.modelUpdatedAt } : {}),
-    ...(spawnOptions.experimentalCodexResume === true ? { experimentalCodexResume: true } : {}),
     ...(spawnOptions.experimentalCodexAcp === true ? { experimentalCodexAcp: true } : {}),
   };
 
@@ -74,6 +77,7 @@ export function buildSpawnSessionOptionsFromRespawnDescriptorV1(
   return {
     directory: descriptor.directory,
     ...(descriptor.agent ? { agent: descriptor.agent as any } : {}),
+    ...(typeof descriptor.resume === 'string' ? { resume: descriptor.resume } : {}),
     ...(descriptor.terminal ? { terminal: descriptor.terminal as any } : {}),
     ...(descriptor.windowsRemoteSessionConsole ? { windowsRemoteSessionConsole: descriptor.windowsRemoteSessionConsole } : {}),
     ...(typeof descriptor.profileId === 'string' ? { profileId: descriptor.profileId } : {}),
@@ -81,9 +85,7 @@ export function buildSpawnSessionOptionsFromRespawnDescriptorV1(
     ...(typeof descriptor.permissionModeUpdatedAt === 'number' ? { permissionModeUpdatedAt: descriptor.permissionModeUpdatedAt } : {}),
     ...(typeof descriptor.modelId === 'string' ? { modelId: descriptor.modelId } : {}),
     ...(typeof descriptor.modelUpdatedAt === 'number' ? { modelUpdatedAt: descriptor.modelUpdatedAt } : {}),
-    ...(descriptor.experimentalCodexResume === true ? { experimentalCodexResume: true } : {}),
     ...(descriptor.experimentalCodexAcp === true ? { experimentalCodexAcp: true } : {}),
     approvedNewDirectoryCreation: true,
   };
 }
-

@@ -2,7 +2,15 @@ import type { ModelMode } from '@/sync/domains/permissions/permissionTypes';
 import type { TranslationKey, TranslationKeyNoParams } from '@/text';
 import type { Href } from 'expo-router';
 
-import { AGENT_IDS, DEFAULT_AGENT_ID, type AgentId, type AgentModelConfig } from '@happier-dev/agents';
+import {
+    AGENT_IDS,
+    DEFAULT_AGENT_ID,
+    resolveAgentIdFromFlavor as resolveAgentIdFromFlavorShared,
+    type AgentId,
+    type AgentModelConfig,
+    type ResumeRuntimeGate,
+    type VendorResumeIdField,
+} from '@happier-dev/agents';
 
 import { CLAUDE_CORE } from '@/agents/providers/claude/core';
 import { CODEX_CORE } from '@/agents/providers/codex/core';
@@ -21,10 +29,7 @@ export type { AgentId };
 export type PermissionModeGroupId = 'claude' | 'codexLike';
 export type PermissionPromptProtocol = 'claude' | 'codexDecision';
 
-export type VendorResumeIdField = string;
 export type MachineLoginKey = string;
-
-export type ResumeRuntimeGate = 'acpLoadSession' | null;
 
 export type AgentCoreConfig = Readonly<{
     id: AgentId;
@@ -207,15 +212,7 @@ export function getAgentCore(id: AgentId): AgentCoreConfig {
 }
 
 export function resolveAgentIdFromFlavor(flavor: string | null | undefined): AgentId | null {
-    if (typeof flavor !== 'string') return null;
-    const normalized = flavor.trim().toLowerCase();
-    if (!normalized) return null;
-
-    for (const id of AGENT_IDS) {
-        const cfg = AGENTS_CORE[id];
-        if (cfg.flavorAliases.includes(normalized)) return id;
-    }
-    return null;
+    return resolveAgentIdFromFlavorShared(flavor);
 }
 
 export function resolveAgentIdFromCliDetectKey(detectKey: string | null | undefined): AgentId | null {

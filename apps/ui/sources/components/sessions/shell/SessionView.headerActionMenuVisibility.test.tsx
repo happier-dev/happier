@@ -48,6 +48,15 @@ vi.mock('react-native-unistyles', () => ({
         divider: '#ddd',
         border: '#ddd',
         indigo: '#5856D6',
+        accent: {
+          blue: '#007AFF',
+          green: '#34C759',
+          orange: '#FF9500',
+          yellow: '#FFCC00',
+          red: '#FF3B30',
+          indigo: '#5856D6',
+          purple: '#AF52DE',
+        },
         modal: { border: '#ddd' },
         input: { background: '#f5f5f5' },
         header: { tint: '#000' },
@@ -71,6 +80,15 @@ vi.mock('react-native-unistyles', () => ({
                 divider: '#ddd',
                 border: '#ddd',
                 indigo: '#5856D6',
+                accent: {
+                  blue: '#007AFF',
+                  green: '#34C759',
+                  orange: '#FF9500',
+                  yellow: '#FFCC00',
+                  red: '#FF3B30',
+                  indigo: '#5856D6',
+                  purple: '#AF52DE',
+                },
                 modal: { border: '#ddd' },
                 input: { background: '#f5f5f5' },
                 header: { tint: '#000' },
@@ -243,6 +261,7 @@ vi.mock('@/sync/domains/state/storage', () => {
 });
 
 vi.mock('@/sync/domains/session/control/localControlSwitch', () => ({
+  getSwitchToLocalControlDisabledReason: () => null,
   shouldRenderChatTimelineForSession: () => true,
   shouldRequestRemoteControlAfterPendingEnqueue: () => false,
 }));
