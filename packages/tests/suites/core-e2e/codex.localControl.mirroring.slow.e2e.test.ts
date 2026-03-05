@@ -132,9 +132,8 @@ setInterval(() => {}, 1000);
       HAPPIER_CODEX_TUI_BIN: fakeCodexPath,
       HAPPIER_CODEX_SESSIONS_DIR: codexSessionsDir,
       HAPPIER_E2E_CODEX_SESSION_ID: codexSessionId,
-      // Ensure vendor resume gating doesn't block local-control in dev tests.
-      HAPPIER_EXPERIMENTAL_CODEX_RESUME: '1',
-      HAPPIER_CODEX_RESUME_MCP_SERVER_BIN: fakeCodexPath,
+      // Ensure Codex local-control gating doesn't block local-control in dev tests.
+      HAPPIER_EXPERIMENTAL_CODEX_ACP: '1',
     };
 
     await ensureCliSharedDepsBuilt({ testDir, env: cliEnv });

@@ -108,8 +108,8 @@ setInterval(() => {}, 1000);
       HAPPIER_CODEX_TUI_BIN: fakeCodexPath,
       HAPPIER_CODEX_SESSIONS_DIR: codexSessionsDir,
       HAPPIER_E2E_CODEX_SESSION_ID: codexSessionId,
-      // Enable local-control so `--happy-starting-mode local` uses the local launcher.
-      HAPPIER_EXPERIMENTAL_CODEX_RESUME: '1',
+      // Enable Codex local-control so `--happy-starting-mode local` uses the local launcher.
+      HAPPIER_EXPERIMENTAL_CODEX_ACP: '1',
       // Make server session creation slow enough that we can verify local spawn happens first.
       HAPPIER_E2E_DELAY_CREATE_SESSION_MS: '10000',
     };
@@ -144,4 +144,3 @@ setInterval(() => {}, 1000);
     expect(existsSync(rolloutPath)).toBe(true);
   });
 });
-

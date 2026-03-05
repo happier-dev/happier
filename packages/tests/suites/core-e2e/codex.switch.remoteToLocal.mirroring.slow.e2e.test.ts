@@ -143,8 +143,7 @@ setInterval(() => {}, 1000);
       HAPPIER_CODEX_SESSIONS_DIR: codexSessionsDir,
       HAPPIER_E2E_CODEX_SESSION_ID: codexSessionId,
       HAPPIER_E2E_FAKE_CODEX_LOG: fakeCodexLog,
-      HAPPIER_EXPERIMENTAL_CODEX_RESUME: '1',
-      HAPPIER_CODEX_RESUME_MCP_SERVER_BIN: fakeCodexPath,
+      HAPPIER_EXPERIMENTAL_CODEX_ACP: '1',
     };
 
     await ensureCliDistBuilt({ testDir, env: cliEnv });
