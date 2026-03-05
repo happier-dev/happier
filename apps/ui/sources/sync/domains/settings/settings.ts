@@ -287,7 +287,7 @@ export function isProfileVersionCompatible(profileVersion: string, requiredVersi
 // Current schema version for backward compatibility
 // NOTE: This schemaVersion is for the Happy app's settings blob (synced via the server).
 // happy-cli maintains its own local settings schemaVersion separately.
-export const SUPPORTED_SCHEMA_VERSION = 5;
+export const SUPPORTED_SCHEMA_VERSION = 6;
 
 const PROVIDER_SETTINGS_SHAPE: z.ZodRawShape = Object.assign(
     {},
@@ -998,6 +998,15 @@ export function settingsParse(settings: unknown): Settings {
     }
 
     // Voice settings intentionally do not migrate legacy flat voice keys.
+
+    // Migration: force Codex ACP default (override everyone).
+    //
+    // Codex ACP enables vendor resume, local/remote switching, and local TUI flows.
+    // Users can still opt out after upgrading by explicitly setting codexBackendMode='mcp'
+    // once their settings schemaVersion matches current.
+    if (inputSchemaVersion < 6) {
+        result.codexBackendMode = 'acp';
+    }
 
     // Migration: thinking inline presentation default changed in schema v4.
     // Preserve existing users' "inline full" behavior unless they explicitly opted into summary mode.

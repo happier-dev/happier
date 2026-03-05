@@ -19,9 +19,18 @@ describe('settingsParse provider plugin defaults', () => {
         expect((settings as any).claudeRemoteStrictMcpServerConfig).toBe(false);
         expect((settings as any).claudeRemoteAdvancedOptionsJson).toBe('');
         expect((settings as any).claudeCodeExperimentalAgentTeamsEnabled).toBe(false);
-        expect((settings as any).codexBackendMode).toBe('mcp');
-        expect((settings as any).codexMcpResumeInstallSpec).toBe('');
+        expect((settings as any).codexBackendMode).toBe('acp');
         expect((settings as any).codexAcpInstallSpec).toBe('');
+    });
+
+    it('forces Codex ACP when migrating settings from schema v5', () => {
+        const settings = settingsParse({
+            schemaVersion: 5,
+            codexBackendMode: 'mcp',
+        } as any);
+
+        expect((settings as any).schemaVersion).toBe(6);
+        expect((settings as any).codexBackendMode).toBe('acp');
     });
 
     it('respects persisted Claude provider settings (can disable Agent SDK)', () => {
