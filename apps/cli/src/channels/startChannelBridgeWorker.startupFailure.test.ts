@@ -9,7 +9,7 @@ const credentials = {
 };
 
 describe('startChannelBridgeFromEnv startup failures', () => {
-  it('stops relay and disposes defaults if worker creation throws', async () => {
+  it('stops relay if worker creation throws', async () => {
     vi.resetModules();
 
     const relayStop = vi.fn(async () => undefined);

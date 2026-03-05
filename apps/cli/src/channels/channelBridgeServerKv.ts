@@ -81,6 +81,13 @@ export class ChannelBridgeKvVersionMismatchError extends Error {
   }
 }
 
+export class ChannelBridgeBadPayloadError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'ChannelBridgeBadPayloadError';
+  }
+}
+
 function encodeJsonToBase64(value: unknown): string {
   return Buffer.from(JSON.stringify(value), 'utf8').toString('base64');
 }
@@ -206,32 +213,32 @@ function parseBindingsDocument(value: unknown): ChannelBridgeServerBindingsDocum
   for (let index = 0; index < rawBindings.length; index += 1) {
     const item = asRecord(rawBindings[index]);
     if (!item) {
-      throw new Error(`Invalid channel bridge binding entry at index ${index}`);
+      throw new ChannelBridgeBadPayloadError(`Invalid channel bridge binding entry at index ${index}`);
     }
     const providerId = typeof item.providerId === 'string' ? item.providerId.trim() : '';
     const conversationId = typeof item.conversationId === 'string' ? item.conversationId.trim() : '';
     const sessionId = typeof item.sessionId === 'string' ? item.sessionId.trim() : '';
     if (!providerId || !conversationId || !sessionId) {
-      throw new Error(`Invalid channel bridge binding identity fields at index ${index}`);
+      throw new ChannelBridgeBadPayloadError(`Invalid channel bridge binding identity fields at index ${index}`);
     }
 
     if (
       item.lastForwardedSeq !== undefined
       && (typeof item.lastForwardedSeq !== 'number' || !Number.isFinite(item.lastForwardedSeq))
     ) {
-      throw new Error(`Invalid channel bridge binding lastForwardedSeq at index ${index}`);
+      throw new ChannelBridgeBadPayloadError(`Invalid channel bridge binding lastForwardedSeq at index ${index}`);
     }
     if (
       item.createdAtMs !== undefined
       && (typeof item.createdAtMs !== 'number' || !Number.isFinite(item.createdAtMs))
     ) {
-      throw new Error(`Invalid channel bridge binding createdAtMs at index ${index}`);
+      throw new ChannelBridgeBadPayloadError(`Invalid channel bridge binding createdAtMs at index ${index}`);
     }
     if (
       item.updatedAtMs !== undefined
       && (typeof item.updatedAtMs !== 'number' || !Number.isFinite(item.updatedAtMs))
     ) {
-      throw new Error(`Invalid channel bridge binding updatedAtMs at index ${index}`);
+      throw new ChannelBridgeBadPayloadError(`Invalid channel bridge binding updatedAtMs at index ${index}`);
     }
 
     if (
@@ -239,7 +246,7 @@ function parseBindingsDocument(value: unknown): ChannelBridgeServerBindingsDocum
       && item.threadId !== null
       && typeof item.threadId !== 'string'
     ) {
-      throw new Error(`Invalid channel bridge binding threadId at index ${index}`);
+      throw new ChannelBridgeBadPayloadError(`Invalid channel bridge binding threadId at index ${index}`);
     }
 
     const threadIdRaw = typeof item.threadId === 'string' ? item.threadId.trim() : '';
@@ -345,7 +352,7 @@ export function decodeChannelBridgeBindingsDocFromBase64(valueBase64: string | n
   }
   const parsed = parseBindingsDocument(decodeBase64ToJson(valueBase64));
   if (!parsed) {
-    throw new Error('Invalid or unsupported channel bridge bindings payload in KV');
+    throw new ChannelBridgeBadPayloadError('Invalid or unsupported channel bridge bindings payload in KV');
   }
   return parsed;
 }

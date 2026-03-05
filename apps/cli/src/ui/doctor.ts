@@ -96,13 +96,52 @@ function parseStrictWebhookPort(value: unknown): number | null {
 
 type SettingsForDisplay = Awaited<ReturnType<typeof readSettings>>;
 
-function redactSettingsForDisplay(settings: SettingsForDisplay): SettingsForDisplay {
+export function redactSettingsForDisplay(settings: SettingsForDisplay): SettingsForDisplay {
     const redacted = JSON.parse(JSON.stringify(settings ?? {})) as SettingsForDisplay;
     const redactedRecord = redacted as unknown as Record<string, unknown>;
 
     // Remove any legacy CLI-local env cache; it may contain secrets.
     if (Object.prototype.hasOwnProperty.call(redactedRecord, 'localEnvironmentVariables')) {
         delete redactedRecord.localEnvironmentVariables;
+    }
+
+    const channelBridge = asRecord(redactedRecord.channelBridge);
+    const byServerId = asRecord(channelBridge?.byServerId);
+    if (byServerId) {
+        for (const serverScope of Object.values(byServerId)) {
+            const serverRecord = asRecord(serverScope);
+            const byAccountId = asRecord(serverRecord?.byAccountId);
+            if (!byAccountId) continue;
+
+            for (const accountScope of Object.values(byAccountId)) {
+                const accountRecord = asRecord(accountScope);
+                const providers = asRecord(accountRecord?.providers);
+                if (!providers) continue;
+
+                for (const providerScope of Object.values(providers)) {
+                    const providerRecord = asRecord(providerScope);
+                    if (!providerRecord) continue;
+
+                    const secrets = asRecord(providerRecord.secrets);
+                    if (secrets) {
+                        for (const [key, value] of Object.entries(secrets)) {
+                            if (typeof value === 'string' && value.trim().length > 0) {
+                                secrets[key] = '<redacted>';
+                            }
+                        }
+                    }
+
+                    if (typeof providerRecord.botToken === 'string' && providerRecord.botToken.trim().length > 0) {
+                        providerRecord.botToken = '<redacted>';
+                    }
+
+                    const webhook = asRecord(providerRecord.webhook);
+                    if (webhook && typeof webhook.secret === 'string' && webhook.secret.trim().length > 0) {
+                        webhook.secret = '<redacted>';
+                    }
+                }
+            }
+        }
     }
 
     return redacted;
@@ -366,7 +405,7 @@ export async function runDoctorCommand(filter?: 'all' | 'daemon'): Promise<void>
                 const allowedChatIds = runtimeBridge.telegram.allowedChatIds;
                 const requireTopics = runtimeBridge.telegram.requireTopics;
                 const webhookEnabled = runtimeBridge.telegram.webhookEnabled;
-                const webhookHost = runtimeBridge.telegram.webhookHost || '(default)';
+                const webhookHost = runtimeBridge.telegram.webhookHost;
                 const webhookPort = String(runtimeBridge.telegram.webhookPort);
                 const webhookHostForValidation =
                     typeof process.env.HAPPIER_TELEGRAM_WEBHOOK_HOST === 'string'

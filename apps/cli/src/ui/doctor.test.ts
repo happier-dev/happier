@@ -3,6 +3,7 @@ import {
   collectMissingRequiredWebhookFields,
   isMissingRequiredTelegramWebhookSecret,
   maskValue,
+  redactSettingsForDisplay,
   redactDaemonStateForDisplay,
   shouldShowGlobalProcessInventory,
 } from './doctor';
@@ -60,6 +61,47 @@ describe('doctor redaction', () => {
         })).toMatchObject({
             controlToken: '',
         });
+    });
+
+    it('redacts channel bridge secret fields from settings output', () => {
+        const input = {
+            channelBridge: {
+                byServerId: {
+                    'local-3005': {
+                        byAccountId: {
+                            acct1: {
+                                providers: {
+                                    telegram: {
+                                        botToken: 'bot-token-123',
+                                        webhook: {
+                                            enabled: true,
+                                            host: '127.0.0.1',
+                                            port: 8787,
+                                            secret: 'legacy-webhook-secret',
+                                        },
+                                        secrets: {
+                                            botToken: 'bot-token-123',
+                                            webhookSecret: 'webhook-secret-123',
+                                            extraSecret: 'extra-secret',
+                                        },
+                                    },
+                                },
+                            },
+                        },
+                    },
+                },
+            },
+        };
+
+        const redacted = redactSettingsForDisplay(input as never) as any;
+        const telegram = redacted.channelBridge.byServerId['local-3005'].byAccountId.acct1.providers.telegram;
+        expect(telegram.botToken).toBe('<redacted>');
+        expect(telegram.webhook.secret).toBe('<redacted>');
+        expect(telegram.secrets.botToken).toBe('<redacted>');
+        expect(telegram.secrets.webhookSecret).toBe('<redacted>');
+        expect(telegram.secrets.extraSecret).toBe('<redacted>');
+        expect(telegram.webhook.host).toBe('127.0.0.1');
+        expect(telegram.webhook.port).toBe(8787);
     });
 });
 

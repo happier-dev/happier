@@ -1,5 +1,6 @@
 import type { ChannelBindingStore, ChannelBridgeConversationRef, ChannelSessionBinding } from './core/channelBridgeWorker';
 import {
+  ChannelBridgeBadPayloadError,
   ChannelBridgeKvVersionMismatchError,
   decodeChannelBridgeBindingsDocFromBase64,
   readChannelBridgeBindingsFromKv,
@@ -63,12 +64,8 @@ function fromServerDocument(doc: ChannelBridgeServerBindingsDocument): ChannelSe
 }
 
 function isRecoverableBindingsReadError(error: unknown): boolean {
-  if (!(error instanceof Error)) return false;
   if (error instanceof SyntaxError) return true;
-  return (
-    error.message.includes('Invalid or unsupported channel bridge bindings payload in KV')
-    || error.message.includes('Invalid channel bridge binding')
-  );
+  return error instanceof ChannelBridgeBadPayloadError;
 }
 
 export function createServerBackedChannelBindingStore(params: Readonly<{

@@ -262,9 +262,6 @@ export function upsertScopedTelegramBridgeConfig(params: Readonly<{
     if (typeof params.update.webhookPort === 'number' && Number.isFinite(params.update.webhookPort)) {
       webhook.port = Math.trunc(params.update.webhookPort);
     }
-    if (isEmptyRecord(webhook)) {
-      delete telegram.webhook;
-    }
   }
 
   const hasSecretUpdate =
