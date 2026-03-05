@@ -66,6 +66,11 @@ vi.mock('react-native-unistyles', () => ({
                 text: '#000',
                 textSecondary: '#666',
                 button: { primary: { background: '#00f', tint: '#fff' } },
+                groupped: { sectionTitle: '#999', background: '#fff' },
+                divider: '#ddd',
+                surface: '#fff',
+                surfacePressedOverlay: '#eee',
+                textDestructive: '#c00',
             },
         },
         rt: { themeName: 'light' },
@@ -77,6 +82,11 @@ vi.mock('react-native-unistyles', () => ({
                     text: '#000',
                     textSecondary: '#666',
                     button: { primary: { background: '#00f', tint: '#fff' } },
+                    groupped: { sectionTitle: '#999', background: '#fff' },
+                    divider: '#ddd',
+                    surface: '#fff',
+                    surfacePressedOverlay: '#eee',
+                    textDestructive: '#c00',
                 },
             };
             const runtime = { themeName: 'light' };
@@ -145,13 +155,11 @@ vi.mock('@/agents/catalog/catalog', async (importOriginal) => {
             resume: { supportsVendorResume: false, runtimeGate: null, experimental: false },
             cli: { detectKey: String(_agentId) },
         }),
-        buildResumeCapabilityOptionsFromUiState: () => ({}),
+        buildResumeCapabilityOptionsFromUiState: ({ settings }: any) => ({ accountSettings: settings }),
         getAgentResumeExperimentsFromSettings: () => ({}),
-        getAllowExperimentalResumeByAgentIdFromUiState: () => ({}),
         buildNewSessionOptionsFromUiState: () => ({}),
         getNewSessionAgentInputExtraActionChips: () => [],
         getNewSessionRelevantInstallableDepKeys: () => [],
-        getResumeRuntimeSupportPrefetchPlan: () => null,
     };
 });
 

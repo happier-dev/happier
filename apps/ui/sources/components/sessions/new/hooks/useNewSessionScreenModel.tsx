@@ -25,6 +25,7 @@ import { useCLIDetection } from '@/hooks/auth/useCLIDetection';
 import { DEFAULT_AGENT_ID, getAgentCore, isAgentId, resolveAgentIdFromCliDetectKey, type AgentId } from '@/agents/catalog/catalog';
 import { useEnabledAgentIds } from '@/agents/hooks/useEnabledAgentIds';
 import { applyCliWarningDismissal, isCliWarningDismissed } from '@/agents/runtime/cliWarnings';
+import { canAgentResume } from '@/agents/runtime/resumeCapabilities';
 
 import { isMachineOnline } from '@/utils/sessions/machineUtils';
 import { loadNewSessionDraft, saveNewSessionDraft } from '@/sync/domains/state/persistence';
@@ -34,22 +35,19 @@ import { useFocusEffect } from '@react-navigation/native';
 import { getRecentPathsForMachine } from '@/utils/sessions/recentPaths';
 import { useMachineEnvPresence } from '@/hooks/machine/useMachineEnvPresence';
 import { InteractionManager } from 'react-native';
+import { runAfterInteractionsWithFallback } from '@/utils/timing/runAfterInteractionsWithFallback';
 import { getMachineCapabilitiesSnapshot, prefetchMachineCapabilities, prefetchMachineCapabilitiesIfStale, useMachineCapabilitiesCache } from '@/hooks/server/useMachineCapabilitiesCache';
 import { CAPABILITIES_REQUEST_NEW_SESSION } from '@/capabilities/requests';
 import { getInstallablesRegistryEntries } from '@/capabilities/installablesRegistry';
-import { planInstallablesBackgroundActions } from '@/capabilities/installablesBackgroundPlan';
 import { resolveTerminalSpawnOptions } from '@/sync/domains/settings/terminalSettings';
 import type { CapabilityId } from '@/sync/api/capabilities/capabilitiesProtocol';
-import { machineCapabilitiesInvoke } from '@/sync/ops';
-import { resolveInstallablePolicy } from '@/sync/domains/settings/installablesPolicy';
+import { ensureAgentInstallablesBackground } from '@/capabilities/ensureAgentInstallablesBackground';
 import {
     buildResumeCapabilityOptionsFromUiState,
     getAgentResumeExperimentsFromSettings,
-    getAllowExperimentalResumeByAgentIdFromUiState,
     buildNewSessionOptionsFromUiState,
     getNewSessionAgentInputExtraActionChips,
     getNewSessionRelevantInstallableDepKeys,
-    getResumeRuntimeSupportPrefetchPlan,
 } from '@/agents/catalog/catalog';
 import type { SecretChoiceByProfileIdByEnvVarName } from '@/utils/secrets/secretRequirementApply';
 import { getSecretSatisfaction } from '@/utils/secrets/secretSatisfaction';
@@ -67,10 +65,18 @@ import { getAutomationChipLabel } from '@/components/sessions/new/modules/automa
 import { canCreateNewSession } from '@/components/sessions/new/modules/canCreateNewSession';
 import { resolveNewSessionCapabilityServerId } from '@/components/sessions/new/modules/resolveNewSessionCapabilityServerId';
 import { resolveEffectiveAutomationDraft, shouldShowAutomationActionChips } from '@/components/sessions/new/modules/automationFeatureGate';
+import {
+    getSelectableAgentIdsForNewSession,
+    isAgentSelectableForNewSession,
+    resolveNextSelectableAgentForNewSession,
+    resolveProfileAvailabilityForNewSession,
+} from '@/components/sessions/new/modules/newSessionAgentSelection';
 import { listAgentInputActionChipActionIds } from '@/components/sessions/agentInput/actionChips/listAgentInputActionChipActionIds';
 import { useAutomationPickerAutoOpen } from '@/components/sessions/new/modules/useAutomationPickerAutoOpen';
 import { buildMachinePickerRouteParams, buildProfilePickerRouteParams, buildServerPickerRouteParams } from '@/components/sessions/new/navigation/newSessionRouteParams';
 import type { AgentInputExtraActionChip } from '@/components/sessions/agentInput/AgentInput';
+import { DEFAULT_OPTION_CHIP_CYCLE_MAX_OPTIONS, resolveChipOptionInteraction } from '@/components/sessions/agentInput/chipOptionInteraction';
+import { ChipOptionPickerModal } from '@/components/sessions/agentInput/components/ChipOptionPickerModal';
 import { getActiveServerSnapshot, subscribeActiveServer } from '@/sync/domains/server/serverRuntime';
 import { useAutomationsSupport } from '@/hooks/server/useAutomationsSupport';
 import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
@@ -465,7 +471,7 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
         return draftPath;
     }, [machineIdParam, pathParam, persistedDraft?.selectedMachineId, persistedDraft?.selectedPath, tempSessionData?.path]);
 
-    const { agentType, setAgentType, handleAgentCycle } = useNewSessionAgentTypeState({
+    const { agentType, setAgentType } = useNewSessionAgentTypeState({
         enabledAgentIds,
         lastUsedAgent,
         tempAgentType: tempSessionData?.agentType ?? persistedDraft?.agentType,
@@ -707,18 +713,11 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
     }, [selectedMachineCapabilitiesSnapshot, settings]);
 
     const showResumePicker = React.useMemo(() => {
-        const core = getAgentCore(agentType);
-        if (core.resume.supportsVendorResume !== true) {
-            return core.resume.runtimeGate !== null;
-        }
-        if (core.resume.experimental !== true) return true;
-        const allowExperimental = getAllowExperimentalResumeByAgentIdFromUiState(settings);
-        return allowExperimental[agentType] === true;
-    }, [agentType, settings]);
+        return canAgentResume(agentType, resumeCapabilityOptionsResolved);
+    }, [agentType, resumeCapabilityOptionsResolved]);
 
     const wizardInstallableDeps = React.useMemo(() => {
         if (!selectedMachineId) return [];
-        if (cliAvailability.available[agentType] !== true) return [];
 
         const experiments = getAgentResumeExperimentsFromSettings(agentType, settings);
         const relevantKeys = getNewSessionRelevantInstallableDepKeys({
@@ -737,114 +736,55 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
         });
     }, [
         agentType,
-        cliAvailability.available,
         settings,
         resumeSessionId,
         selectedMachineCapabilitiesSnapshot,
         selectedMachineId,
     ]);
 
-    React.useEffect(() => {
-        if (!selectedMachineId) return;
-        if (wizardInstallableDeps.length === 0) return;
-
-        const machine = machines.find((m) => m.id === selectedMachineId);
-        if (!machine || !isMachineOnline(machine)) return;
-
-        const requests = wizardInstallableDeps
-            .filter((d) =>
-                d.entry.shouldPrefetchRegistry({ requireExistingResult: true, result: d.detectResult, data: d.depStatus }),
-            )
-            .flatMap((d) => d.entry.buildRegistryDetectRequest().requests ?? []);
-
-        if (requests.length === 0) return;
-
-        InteractionManager.runAfterInteractions(() => {
-            void prefetchMachineCapabilities({
-                machineId: selectedMachineId,
-                serverId: capabilityServerId,
-                request: { requests },
-                timeoutMs: 12_000,
+    const installableDepKeyCountByAgentId = React.useMemo(() => {
+        const out: Partial<Record<AgentId, number>> = {};
+        for (const id of enabledAgentIds) {
+            const experiments = getAgentResumeExperimentsFromSettings(id, settings);
+            const relevantKeys = getNewSessionRelevantInstallableDepKeys({
+                agentId: id,
+                experiments,
+                resumeSessionId,
             });
-        });
-    }, [capabilityServerId, machines, selectedMachineId, wizardInstallableDeps]);
-
-    const requestedInstallableBackgroundActionsRef = React.useRef<Record<string, true>>({});
-
-    React.useEffect(() => {
-        if (!selectedMachineId) return;
-        if (wizardInstallableDeps.length === 0) return;
-
-        const machine = machines.find((m) => m.id === selectedMachineId);
-        if (!machine || !isMachineOnline(machine)) return;
-
-        const planned = planInstallablesBackgroundActions({
-            installables: wizardInstallableDeps.map(({ entry, depStatus }) => ({
-                entry,
-                status: depStatus,
-                policy: resolveInstallablePolicy({
-                    settings: settings as any,
-                    machineId: selectedMachineId,
-                    installableKey: entry.key,
-                    defaults: entry.defaultPolicy,
-                }),
-                installSpec: (() => {
-                    const raw = (settings as any)?.[entry.installSpecSettingKey];
-                    return typeof raw === 'string' ? raw : null;
-                })(),
-            })),
-        });
-
-        const actions = planned.filter((a) => {
-            const key = `${selectedMachineId}:${a.installableKey}:${a.request.method}`;
-            return requestedInstallableBackgroundActionsRef.current[key] !== true;
-        });
-
-        if (actions.length === 0) return;
-
-        for (const action of actions) {
-            requestedInstallableBackgroundActionsRef.current[`${selectedMachineId}:${action.installableKey}:${action.request.method}`] = true;
+            out[id] = relevantKeys.length;
         }
+        return out;
+    }, [enabledAgentIds, settings, resumeSessionId]);
 
-        InteractionManager.runAfterInteractions(() => {
-            for (const action of actions) {
-                fireAndForget((async () => {
-                    try {
-                        await machineCapabilitiesInvoke(
-                            selectedMachineId,
-                            action.request,
-                            { serverId: capabilityServerId, timeoutMs: 5 * 60_000 },
-                        );
-                        await prefetchMachineCapabilities({
-                            machineId: selectedMachineId,
-                            serverId: capabilityServerId,
-                            request: CAPABILITIES_REQUEST_NEW_SESSION,
-                        });
-                    } catch {
-                        // Best-effort: avoid surfacing errors for background installs/updates.
-                    }
-                })(), { tag: `NewSessionScreenModel.installables.background.${action.installableKey}.${action.request.method}` });
-            }
+    const isAgentSelectable = React.useCallback((agentId: AgentId): boolean => {
+        return isAgentSelectableForNewSession({
+            agentId,
+            detectionTimestamp: cliAvailability.timestamp,
+            availabilityById: cliAvailability.available,
+            installableDepKeyCountByAgentId,
         });
-    }, [capabilityServerId, machines, selectedMachineId, settings, wizardInstallableDeps]);
+    }, [cliAvailability.available, cliAvailability.timestamp, installableDepKeyCountByAgentId]);
 
     React.useEffect(() => {
-        const results = selectedMachineCapabilitiesSnapshot?.response.results as any;
-        const plan = getResumeRuntimeSupportPrefetchPlan({ agentId: agentType, settings, results });
-        if (!plan) return;
         if (!selectedMachineId) return;
+        if (wizardInstallableDeps.length === 0) return;
+
         const machine = machines.find((m) => m.id === selectedMachineId);
         if (!machine || !isMachineOnline(machine)) return;
 
-        InteractionManager.runAfterInteractions(() => {
-            void prefetchMachineCapabilities({
-                machineId: selectedMachineId,
-                serverId: capabilityServerId,
-                request: plan.request,
-                timeoutMs: plan.timeoutMs,
-            });
+        return runAfterInteractionsWithFallback(() => {
+            fireAndForget(
+                ensureAgentInstallablesBackground({
+                    agentId: agentType,
+                    machineId: selectedMachineId,
+                    serverId: capabilityServerId,
+                    settings,
+                    resumeSessionId,
+                }),
+                { tag: `NewSessionScreenModel.installables.ensure.${agentType}` },
+            );
         });
-    }, [agentType, capabilityServerId, machines, selectedMachineCapabilitiesSnapshot, selectedMachineId, settings]);
+    }, [agentType, capabilityServerId, machines, resumeSessionId, selectedMachineId, settings, wizardInstallableDeps.length]);
 
     // Auto-correct invalid agent selection after CLI detection completes
     // This handles the case where lastUsedAgent was 'codex' but codex is not installed
@@ -852,19 +792,27 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
         // Only act when detection has completed (timestamp > 0)
         if (cliAvailability.timestamp === 0) return;
 
-        const agentAvailable = cliAvailability.available[agentType];
+        const agentSelectable = isAgentSelectable(agentType);
+        if (agentSelectable) return;
 
-        if (agentAvailable !== false) return;
-
-        const firstInstalled = enabledAgentIds.find((id) => cliAvailability.available[id] === true);
-        const fallback = enabledAgentIds[0] ?? DEFAULT_AGENT_ID;
-        const nextAgent = firstInstalled ?? fallback;
-        setAgentType(nextAgent);
+        const nextAgent = resolveNextSelectableAgentForNewSession({
+            candidateAgentIds: enabledAgentIds,
+            currentAgentId: agentType,
+            detectionTimestamp: cliAvailability.timestamp,
+            availabilityById: cliAvailability.available,
+            installableDepKeyCountByAgentId,
+        });
+        if (nextAgent) {
+            setAgentType(nextAgent);
+            return;
+        }
     }, [
         cliAvailability.timestamp,
         cliAvailability.available,
         agentType,
         enabledAgentIds,
+        isAgentSelectable,
+        installableDepKeyCountByAgentId,
     ]);
 
     const [hiddenCliWarningKeys, setHiddenCliWarningKeys] = React.useState<Record<string, boolean>>({});
@@ -894,36 +842,13 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
     // Helper to check if profile is available (CLI detected + experiments gating)
     const isProfileAvailable = React.useCallback((profile: AIBackendProfile): { available: boolean; reason?: string } => {
         const allowedCLIs = getProfileSupportedAgentIds(profile).filter((agentId) => enabledAgentIds.includes(agentId));
-
-        if (allowedCLIs.length === 0) {
-            return {
-                available: false,
-                reason: 'no-supported-cli',
-            };
-        }
-
-        // If a profile requires exactly one CLI, enforce that one.
-        if (allowedCLIs.length === 1) {
-            const requiredCLI = allowedCLIs[0];
-            if (cliAvailability.available[requiredCLI] === false) {
-                return {
-                    available: false,
-                    reason: `cli-not-detected:${requiredCLI}`,
-                };
-            }
-            return { available: true };
-        }
-
-        // Multi-CLI profiles: available if *any* supported CLI is available (or detection not finished).
-        const anyAvailable = allowedCLIs.some((cli) => cliAvailability.available[cli] !== false);
-        if (!anyAvailable) {
-            return {
-                available: false,
-                reason: 'cli-not-detected:any',
-            };
-        }
-        return { available: true };
-    }, [cliAvailability, enabledAgentIds]);
+        return resolveProfileAvailabilityForNewSession({
+            supportedAgentIds: allowedCLIs,
+            detectionTimestamp: cliAvailability.timestamp,
+            availabilityById: cliAvailability.available,
+            installableDepKeyCountByAgentId,
+        });
+    }, [cliAvailability.available, cliAvailability.timestamp, enabledAgentIds, installableDepKeyCountByAgentId]);
 
     const profileAvailabilityById = React.useMemo(() => {
         const map = new Map<string, { available: boolean; reason?: string }>();
@@ -1244,7 +1169,16 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
             const supportedAgents = getProfileSupportedAgentIds(profile).filter((agentId) => enabledAgentIds.includes(agentId));
 
             if (supportedAgents.length > 0 && !supportedAgents.includes(agentType)) {
-                setAgentType(supportedAgents[0] ?? (enabledAgentIds[0] ?? agentType));
+                const nextSupportedAgent = resolveNextSelectableAgentForNewSession({
+                    candidateAgentIds: supportedAgents,
+                    currentAgentId: agentType,
+                    detectionTimestamp: cliAvailability.timestamp,
+                    availabilityById: cliAvailability.available,
+                    installableDepKeyCountByAgentId,
+                });
+                if (nextSupportedAgent) {
+                    setAgentType(nextSupportedAgent);
+                }
             }
 
             if (profile.defaultSessionType) {
@@ -1265,6 +1199,10 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
     }, [
         agentType,
         applyPermissionMode,
+        cliAvailability.available,
+        cliAvailability.timestamp,
+        enabledAgentIds,
+        installableDepKeyCountByAgentId,
         profileMap,
         selectedProfileId,
         sessionDefaultPermissionModeByAgent,
@@ -1492,36 +1430,80 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
     }, [router, selectedMachineId, selectedProfileId, targetServerId]);
 
     const handleAgentClick = React.useCallback(() => {
-        if (useProfiles && selectedProfileId !== null) {
-            const profile = profileMap.get(selectedProfileId) || getBuiltInProfile(selectedProfileId);
-            const supportedAgents = profile
-                ? getProfileSupportedAgentIds(profile).filter((agentId) => enabledAgentIds.includes(agentId))
-                : [];
+        const profile = useProfiles && selectedProfileId !== null
+            ? (profileMap.get(selectedProfileId) || getBuiltInProfile(selectedProfileId))
+            : null;
+        const candidateAgentIds = profile
+            ? getProfileSupportedAgentIds(profile).filter((candidateId) => enabledAgentIds.includes(candidateId))
+            : enabledAgentIds;
 
-            if (supportedAgents.length <= 1) {
-                Modal.alert(
-                    t('profiles.aiBackend.title'),
-                    t('newSession.aiBackendSelectedByProfile'),
-                    [
-                        { text: t('common.ok'), style: 'cancel' },
-                        { text: t('newSession.changeProfile'), onPress: handleProfileClick },
-                    ],
-                );
-                return;
-            }
-
-            const currentIndex = supportedAgents.indexOf(agentType);
-            const nextIndex = (currentIndex + 1) % supportedAgents.length;
-            setAgentType(supportedAgents[nextIndex] ?? supportedAgents[0] ?? DEFAULT_AGENT_ID);
+        if (profile && candidateAgentIds.length <= 1) {
+            Modal.alert(
+                t('profiles.aiBackend.title'),
+                t('newSession.aiBackendSelectedByProfile'),
+                [
+                    { text: t('common.ok'), style: 'cancel' },
+                    { text: t('newSession.changeProfile'), onPress: handleProfileClick },
+                ],
+            );
             return;
         }
 
-        handleAgentCycle();
+        const selectableAgentIds = getSelectableAgentIdsForNewSession({
+            candidateAgentIds,
+            detectionTimestamp: cliAvailability.timestamp,
+            availabilityById: cliAvailability.available,
+            installableDepKeyCountByAgentId,
+        });
+        const interaction = resolveChipOptionInteraction({
+            currentOptionId: agentType,
+            selectableOptionIds: selectableAgentIds,
+            cycleMaxOptions: DEFAULT_OPTION_CHIP_CYCLE_MAX_OPTIONS,
+        });
+        if (interaction.kind === 'cycle') {
+            setAgentType(interaction.nextOptionId);
+            return;
+        }
+        if (interaction.kind === 'picker') {
+            Modal.show({
+                component: ChipOptionPickerModal,
+                props: {
+                    title: t('newSession.selectAiBackendTitle'),
+                    options: interaction.selectableOptionIds.map((id) => ({
+                        id,
+                        label: t(getAgentCore(id).displayNameKey),
+                    })),
+                    selectedOptionId: agentType,
+                    onSelect: (selectedId) => setAgentType(selectedId as AgentId),
+                },
+            });
+            return;
+        }
+
+        if (profile && selectedProfileId !== null) {
+            Modal.alert(
+                t('profiles.aiBackend.title'),
+                t('newSession.aiBackendSelectedByProfile'),
+                [
+                    { text: t('common.ok'), style: 'cancel' },
+                    { text: t('newSession.changeProfile'), onPress: handleProfileClick },
+                ],
+            );
+            return;
+        }
+
+        Modal.alert(
+            t('profiles.aiBackend.title'),
+            t('newSession.aiBackendCliNotDetectedOnMachine', { cli: t(getAgentCore(agentType).displayNameKey) }),
+            [{ text: t('common.ok'), style: 'cancel' }],
+        );
     }, [
         agentType,
+        cliAvailability.available,
+        cliAvailability.timestamp,
         enabledAgentIds,
-        handleAgentCycle,
         handleProfileClick,
+        installableDepKeyCountByAgentId,
         profileMap,
         selectedProfileId,
         setAgentType,
@@ -1993,6 +1975,7 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
         cliAvailability,
         tmuxRequested,
         enabledAgentIds,
+        isAgentSelectable,
         isCliBannerDismissed,
         dismissCliBanner,
         agentType,

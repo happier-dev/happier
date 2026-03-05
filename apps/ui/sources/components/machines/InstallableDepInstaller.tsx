@@ -11,6 +11,7 @@ import { useSettingMutable } from '@/sync/domains/state/storage';
 import type { CapabilityId } from '@/sync/api/capabilities/capabilitiesProtocol';
 import type { InstallSpecSettingKey } from '@/capabilities/installablesRegistry';
 import { isInstallableDepUpdateAvailable } from '@/capabilities/installablesUpdateAvailable';
+import { normalizeInstallSpecSettingValue } from '@/capabilities/normalizeInstallSpecSettingValue';
 import { useUnistyles } from 'react-native-unistyles';
 
 type InstallableDepData = {
@@ -95,7 +96,7 @@ export function InstallableDepInstaller(props: InstallableDepInstallerProps) {
     const runInstall = async () => {
         const isInstalled = props.depStatus?.installed === true;
         const method = isInstalled ? (updateAvailable ? 'upgrade' : 'install') : 'install';
-        const spec = typeof installSpec === 'string' && installSpec.trim().length > 0 ? installSpec.trim() : undefined;
+        const spec = normalizeInstallSpecSettingValue(installSpec) ?? undefined;
 
         try {
             await invokeWithAlerts({

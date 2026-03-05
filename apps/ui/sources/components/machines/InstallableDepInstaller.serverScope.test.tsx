@@ -6,7 +6,10 @@ import { describe, expect, it, vi } from 'vitest';
 
 const alertMock = vi.fn();
 const promptMock = vi.fn(async () => null);
-const machineCapabilitiesInvokeMock = vi.fn(async () => ({ supported: false, reason: 'not-supported' }));
+const machineCapabilitiesInvokeMock = vi.fn(
+    async (_machineId: string, _request: unknown, _options: unknown) => ({ supported: false, reason: 'not-supported' }),
+);
+const installSpecState = vi.hoisted(() => ({ value: null as string | null }));
 
 vi.mock('react-native', () => ({
     ActivityIndicator: 'ActivityIndicator',
@@ -38,7 +41,7 @@ vi.mock('@/modal', () => ({
 }));
 
 vi.mock('@/sync/domains/state/storage', () => ({
-    useSettingMutable: () => [null, vi.fn()],
+    useSettingMutable: () => [installSpecState.value, vi.fn()],
 }));
 
 vi.mock('@/sync/ops', () => ({
@@ -115,5 +118,73 @@ describe('InstallableDepInstaller', () => {
             expect.objectContaining({ id: 'dep.codexAcp', method: 'install' }),
             expect.objectContaining({ timeoutMs: 5 * 60_000, serverId: 'server-b' }),
         );
+    });
+
+    it('drops whitespace-containing install specs when invoking installs', async () => {
+        installSpecState.value = "not-a-valid-install-spec\\nwith whitespace";
+
+        const { InstallableDepInstaller } = await import('./InstallableDepInstaller');
+
+        let tree!: ReactTestRenderer;
+        await act(async () => {
+            tree = renderer.create(
+                <InstallableDepInstaller
+                    machineId="machine-1"
+                    serverId="server-b"
+                    enabled
+                    groupTitle="Dependencies"
+                    depId="dep.codexAcp"
+                    depTitle="Codex ACP"
+                    depIconName="construct-outline"
+                    depStatus={{
+                        installed: false,
+                        installedVersion: null,
+                        distTag: 'latest',
+                        lastInstallLogPath: null,
+                    }}
+                    capabilitiesStatus="loaded"
+                    installSpecSettingKey="codexAcpInstallSpec"
+                    installSpecTitle="Install source"
+                    installSpecDescription="Install source details"
+                    installLabels={{
+                        install: 'Install now',
+                        update: 'Update now',
+                        reinstall: 'Reinstall now',
+                    }}
+                    installModal={{
+                        installTitle: 'Install dependency',
+                        updateTitle: 'Update dependency',
+                        reinstallTitle: 'Reinstall dependency',
+                        description: 'Confirm install',
+                    }}
+                    refreshStatus={() => {}}
+                />,
+            );
+        });
+
+        const installAction = tree.root.findAllByType('Item' as any).find((item) => item.props.title === 'Install now');
+        if (!installAction) throw new Error('Expected install action item');
+
+        await act(async () => {
+            installAction.props.onPress();
+        });
+
+        const confirmButtons = alertMock.mock.calls.at(-1)?.[2];
+        if (!Array.isArray(confirmButtons) || typeof confirmButtons[1]?.onPress !== 'function') {
+            throw new Error('Expected confirmation buttons with install callback');
+        }
+
+        await act(async () => {
+            await confirmButtons[1].onPress();
+        });
+
+        const lastCall = machineCapabilitiesInvokeMock.mock.calls.at(-1);
+        expect(lastCall).toBeTruthy();
+        expect(lastCall?.[0]).toBe('machine-1');
+        expect(lastCall?.[2]).toMatchObject({ timeoutMs: 5 * 60_000, serverId: 'server-b' });
+
+        const request = lastCall?.[1] as Record<string, unknown> | undefined;
+        expect(request).toMatchObject({ id: 'dep.codexAcp', method: 'install' });
+        expect(request).not.toHaveProperty('params');
     });
 });
