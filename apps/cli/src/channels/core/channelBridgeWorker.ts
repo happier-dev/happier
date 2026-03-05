@@ -446,6 +446,9 @@ async function handleCommand(params: Readonly<{
     try {
       const resolvedSeq = toNonNegativeInt(await deps.resolveLatestSessionSeq(resolved.sessionId));
       if (resolvedSeq === null) {
+        deps.onWarning?.(
+          `resolveLatestSessionSeq returned an invalid value for session ${resolved.sessionId}; expected a non-negative integer`,
+        );
         await replyToConversation(
           adapter,
           ref,
@@ -530,6 +533,12 @@ async function handleCommand(params: Readonly<{
  * Deduper behavior:
  * - `inboundDeduper` is required to make dedupe-state ownership explicit.
  * - Use `createChannelBridgeInboundDeduper()` to construct per-worker dedupe state.
+ *
+ * Missing-adapter warning deduplication:
+ * - `warnedMissingAdapterBindings` is optional. When omitted, missing-adapter
+ *   warnings are emitted per binding on each call.
+ * - Pass a stable `Set<string>` across calls to dedupe warning spam in
+ *   long-running loops (as `startChannelBridgeWorker` does).
  */
 export async function executeChannelBridgeTick(params: Readonly<{
   store: ChannelBindingStore;
@@ -818,6 +827,8 @@ export function startChannelBridgeWorker(params: Readonly<{
         const activeLoop = loop;
         loop = null;
         activeLoop?.stop();
+
+        await Promise.resolve();
 
         const currentTick = inFlightTick;
         if (currentTick) {

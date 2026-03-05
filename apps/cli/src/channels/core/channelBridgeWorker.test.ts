@@ -742,7 +742,7 @@ describe('executeChannelBridgeTick', () => {
     const store = createInMemoryChannelBindingStore();
     const harness = createAdapterHarness();
 
-    const { deps } = createDepsHarness({
+    const { deps, warnings } = createDepsHarness({
       resolveSessionIdOrPrefix: async () => ({ ok: true as const, sessionId: 'sess-invalid-seq-value' }),
       resolveLatestSessionSeq: async () => Number.NaN,
     });
@@ -764,6 +764,7 @@ describe('executeChannelBridgeTick', () => {
 
     expect(await store.listBindings()).toHaveLength(0);
     expect(harness.sent.some((row) => row.text.includes('Failed to attach'))).toBe(true);
+    expect(warnings.some((row) => row.message.includes('resolveLatestSessionSeq returned an invalid value'))).toBe(true);
   });
 
   it('does not attach when binding persistence fails', async () => {
@@ -1650,6 +1651,50 @@ describe('startChannelBridgeWorker', () => {
       await stopSecond;
 
       expect(harness.stopCalls()).toBe(1);
+    } finally {
+      gate.resolve();
+      await worker.stop();
+    }
+  });
+
+  it('waits for startup-triggered tick when stop is called immediately', async () => {
+    const store = createInMemoryChannelBindingStore();
+    const gate = createDeferredPromise<void>();
+    let startedTick = false;
+    let stopCallCount = 0;
+
+    const adapter: ChannelBridgeAdapter = {
+      providerId: 'telegram',
+      pullInboundMessages: async () => {
+        startedTick = true;
+        await gate.promise;
+        return [];
+      },
+      sendMessage: async () => {},
+      stop: async () => {
+        stopCallCount += 1;
+      },
+    };
+
+    const { deps } = createDepsHarness();
+    const worker = startChannelBridgeWorker({
+      store,
+      adapters: [adapter],
+      deps,
+      tickMs: 60_000,
+    });
+
+    try {
+      const stopPromise = worker.stop();
+
+      await Promise.resolve();
+      await waitFor(() => startedTick);
+      expect(stopCallCount).toBe(0);
+
+      gate.resolve();
+      await stopPromise;
+
+      expect(stopCallCount).toBe(1);
     } finally {
       gate.resolve();
       await worker.stop();
