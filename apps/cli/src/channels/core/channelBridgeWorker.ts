@@ -52,6 +52,8 @@ export type ChannelBridgeActorContext = Readonly<{
  * - `pullInboundMessages` should return available inbound items without throwing for
  *   normal empty states (return `[]` instead).
  * - `sendMessage` should deliver text into a target conversation/thread.
+ * - `sendMessage` should tolerate at-least-once delivery attempts. Timeout races may
+ *   trigger retries, so provider adapters should be idempotent when possible.
  * - `stop` is optional and should tear down adapter resources.
  */
 export type ChannelBridgeAdapter = Readonly<{
@@ -148,6 +150,10 @@ function toNonNegativeInt(value: unknown): number | null {
 const EXTERNAL_IO_TIMEOUT_MS = 30_000;
 
 async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, label: string): Promise<T> {
+  // Promise.race does not cancel the underlying operation. Attach a no-op rejection
+  // handler so late failures do not surface as unhandled rejections after timeout.
+  void promise.catch(() => undefined);
+
   let timeoutHandle: ReturnType<typeof setTimeout> | null = null;
   try {
     return await Promise.race([
