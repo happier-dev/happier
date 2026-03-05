@@ -147,7 +147,23 @@ function toNonNegativeInt(value: unknown): number | null {
   return parsed;
 }
 
-const EXTERNAL_IO_TIMEOUT_MS = 30_000;
+const DEFAULT_EXTERNAL_IO_TIMEOUT_MS = 30_000;
+
+function resolveExternalIoTimeoutMs(): number {
+  const raw = (process.env.HAPPIER_CHANNEL_BRIDGE_IO_TIMEOUT_MS ?? '').trim();
+  if (!raw) {
+    return DEFAULT_EXTERNAL_IO_TIMEOUT_MS;
+  }
+
+  const parsed = Number.parseInt(raw, 10);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    return DEFAULT_EXTERNAL_IO_TIMEOUT_MS;
+  }
+
+  return parsed;
+}
+
+const EXTERNAL_IO_TIMEOUT_MS = resolveExternalIoTimeoutMs();
 
 async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, label: string): Promise<T> {
   // Promise.race does not cancel the underlying operation. Attach a no-op rejection
