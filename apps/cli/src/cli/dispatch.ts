@@ -37,6 +37,17 @@ export async function dispatchCli(params: Readonly<{
   // Check if first argument is a subcommand
   const subcommand = args[0];
 
+  // Codex should prefer local TUI when invoked directly in a real terminal.
+  // The daemon always forces `--started-by daemon`, so this only affects direct `happier codex` usage.
+  if (subcommand === 'codex') {
+    const current = (process.env.HAPPIER_SESSION_AUTOSTART_DAEMON ?? '').toString().trim();
+    const startedByIdx = args.indexOf('--started-by');
+    const startedByDaemon = startedByIdx !== -1 && args[startedByIdx + 1] === 'daemon';
+    if (!current && !startedByDaemon && process.stdin.isTTY && process.stdout.isTTY) {
+      process.env.HAPPIER_SESSION_AUTOSTART_DAEMON = '0';
+    }
+  }
+
   applyDaemonAutostartEnvForInvocation({ args, env: process.env });
 
   // Headless tmux launcher (CLI flow)

@@ -43,8 +43,15 @@ export async function resolveSpawnChildEnvironment(params: {
   const connectedCleanupOnFailure = params.connectedServiceAuth?.cleanupOnFailure ?? null;
   const connectedCleanupOnExit = params.connectedServiceAuth?.cleanupOnExit ?? null;
 
+  const agentId = typeof params.options.agent === 'string' ? params.options.agent : null;
+  const explicitResumeId = typeof params.options.resume === 'string' && params.options.resume.trim().length > 0
+    ? params.options.resume.trim()
+    : null;
+
   let cleanupOnFailure: (() => void) | null = null;
   let cleanupOnExit: (() => void) | null = null;
+  let effectiveExperimentalCodexAcp = params.options.experimentalCodexAcp;
+  let codexAcpFallbackMessage: string | null = null;
 
   const chainCleanup = (first: (() => void) | null, second: (() => void) | null) => {
     if (!first) return second;
@@ -121,17 +128,40 @@ export async function resolveSpawnChildEnvironment(params: {
 
   if (params.daemonSpawnHooks?.validateSpawn) {
     const validation = await params.daemonSpawnHooks.validateSpawn({
-      experimentalCodexResume: params.options.experimentalCodexResume,
-      experimentalCodexAcp: params.options.experimentalCodexAcp,
+      experimentalCodexAcp: effectiveExperimentalCodexAcp,
     });
     if (!validation.ok) {
-      return {
-        ok: false,
-        errorCode: SPAWN_SESSION_ERROR_CODES.SPAWN_VALIDATION_FAILED,
-        errorMessage: validation.errorMessage,
-        cleanupOnFailure,
-        cleanupOnExit,
-      };
+      const shouldFallbackToMcp =
+        agentId === 'codex' &&
+        effectiveExperimentalCodexAcp === true &&
+        explicitResumeId === null;
+
+      if (!shouldFallbackToMcp) {
+        return {
+          ok: false,
+          errorCode: SPAWN_SESSION_ERROR_CODES.SPAWN_VALIDATION_FAILED,
+          errorMessage: validation.errorMessage,
+          cleanupOnFailure,
+          cleanupOnExit,
+        };
+      }
+
+      effectiveExperimentalCodexAcp = false;
+      codexAcpFallbackMessage = `Codex ACP could not start (${validation.errorMessage}). Falling back to MCP for this new session.`;
+      params.logWarn(`[DAEMON RUN] ${codexAcpFallbackMessage}`);
+
+      const validationAfterFallback = await params.daemonSpawnHooks.validateSpawn({
+        experimentalCodexAcp: effectiveExperimentalCodexAcp,
+      });
+      if (!validationAfterFallback.ok) {
+        return {
+          ok: false,
+          errorCode: SPAWN_SESSION_ERROR_CODES.SPAWN_VALIDATION_FAILED,
+          errorMessage: validationAfterFallback.errorMessage,
+          cleanupOnFailure,
+          cleanupOnExit,
+        };
+      }
     }
   }
 
@@ -145,10 +175,12 @@ export async function resolveSpawnChildEnvironment(params: {
     Object.assign(
       extraEnvForChild,
       params.daemonSpawnHooks.buildExtraEnvForChild({
-        experimentalCodexResume: params.options.experimentalCodexResume,
-        experimentalCodexAcp: params.options.experimentalCodexAcp,
+        experimentalCodexAcp: effectiveExperimentalCodexAcp,
       }),
     );
+  }
+  if (codexAcpFallbackMessage) {
+    extraEnvForChild.HAPPIER_CODEX_ACP_FALLBACK_TO_MCP_MESSAGE = codexAcpFallbackMessage;
   }
 
   return {

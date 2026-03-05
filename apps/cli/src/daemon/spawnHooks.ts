@@ -16,7 +16,6 @@ export type DaemonSpawnAuthEnvResult = Readonly<{
 
 export type DaemonSpawnHooks = Readonly<{
   buildAuthEnv?: (params: Readonly<{ token: string }>) => Promise<DaemonSpawnAuthEnvResult>;
-  validateSpawn?: (params: Readonly<{ experimentalCodexResume?: boolean; experimentalCodexAcp?: boolean }>) => Promise<DaemonSpawnValidationResult>;
-  buildExtraEnvForChild?: (params: Readonly<{ experimentalCodexResume?: boolean; experimentalCodexAcp?: boolean }>) => Record<string, string>;
+  validateSpawn?: (params: Readonly<{ experimentalCodexAcp?: boolean }>) => Promise<DaemonSpawnValidationResult>;
+  buildExtraEnvForChild?: (params: Readonly<{ experimentalCodexAcp?: boolean }>) => Record<string, string>;
 }>;
-
