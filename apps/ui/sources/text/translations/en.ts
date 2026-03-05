@@ -2030,6 +2030,8 @@ export const en = {
         },
         resuming: 'Resuming...',
         resumeFailed: 'Failed to resume session',
+        pendingQueuedResumeFailedTitle: 'Message queued',
+        pendingQueuedResumeFailedBody: 'Your message was saved in the pending queue, but Happier couldn’t resume this session. Retry to start it.',
         resumeSupportNoteChecking: 'Note: Happier is still checking whether this machine can resume the provider session.',
         resumeSupportNoteUnverified: 'Note: Happier couldn’t verify resume support for this machine.',
         resumeSupportDetails: {

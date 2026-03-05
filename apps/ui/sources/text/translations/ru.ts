@@ -2529,6 +2529,8 @@ export const ru: TranslationStructure = {
     },
     resuming: "Возобновление...",
     resumeFailed: "Не удалось возобновить сессию",
+    pendingQueuedResumeFailedTitle: "Сообщение поставлено в очередь",
+    pendingQueuedResumeFailedBody: "Ваше сообщение сохранено в очереди ожидания, но Happier не смог возобновить эту сессию. Нажмите «Повторить», чтобы запустить её.",
     resumeSupportNoteChecking:
       "Примечание: Happier всё ещё проверяет, может ли эта машина возобновить сессию провайдера.",
     resumeSupportNoteUnverified:

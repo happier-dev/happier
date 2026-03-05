@@ -2283,6 +2283,8 @@ export const pl: TranslationStructure = {
     },
     resuming: "Wznawianie...",
     resumeFailed: "Nie udało się wznowić sesji",
+    pendingQueuedResumeFailedTitle: "Wiadomość w kolejce",
+    pendingQueuedResumeFailedBody: "Twoja wiadomość została zapisana w kolejce oczekujących, ale Happier nie mógł wznowić tej sesji. Spróbuj ponownie, aby ją uruchomić.",
     resumeSupportNoteChecking:
       "Uwaga: Happier wciąż sprawdza, czy ta maszyna może wznowić sesję dostawcy.",
     resumeSupportNoteUnverified:

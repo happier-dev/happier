@@ -2022,6 +2022,8 @@ deps: {
         },
         resuming: 'Reprenent...',
         resumeFailed: 'No s’ha pogut reprendre la sessió',
+        pendingQueuedResumeFailedTitle: 'Missatge en cua',
+        pendingQueuedResumeFailedBody: 'El teu missatge s’ha desat a la cua pendent, però Happier no ha pogut reprendre aquesta sessió. Torna-ho a provar per iniciar-la.',
         resumeSupportNoteChecking: 'Nota: Happier encara està comprovant si aquesta màquina pot reprendre la sessió del proveïdor.',
         resumeSupportNoteUnverified: 'Nota: Happier no ha pogut verificar la compatibilitat de represa en aquesta màquina.',
         resumeSupportDetails: {

@@ -2521,6 +2521,8 @@ export const ja: TranslationStructure = {
     },
     resuming: "再開中...",
     resumeFailed: "セッションの再開に失敗しました",
+    pendingQueuedResumeFailedTitle: "メッセージはキューに保存されました",
+    pendingQueuedResumeFailedBody: "メッセージは保留キューに保存されましたが、Happier はこのセッションを再開できませんでした。再試行して開始してください。",
     resumeSupportNoteChecking:
       "注: Happier はこのマシンでプロバイダーのセッションを再開できるか確認中です。",
     resumeSupportNoteUnverified:

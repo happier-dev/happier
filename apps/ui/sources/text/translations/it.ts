@@ -2582,6 +2582,8 @@ export const it: TranslationStructure = {
     },
     resuming: "Ripresa in corso...",
     resumeFailed: "Impossibile riprendere la sessione",
+    pendingQueuedResumeFailedTitle: "Messaggio in coda",
+    pendingQueuedResumeFailedBody: "Il tuo messaggio è stato salvato nella coda dei messaggi in sospeso, ma Happier non è riuscito a riprendere questa sessione. Riprova per avviarla.",
     resumeSupportNoteChecking:
       "Nota: Happier sta ancora verificando se questa macchina può riprendere la sessione del provider.",
     resumeSupportNoteUnverified:

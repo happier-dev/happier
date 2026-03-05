@@ -1376,6 +1376,11 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
                 openParentA11y: '開啟父工作階段',
                 forkFromMessageA11y: '從此訊息分支',
             },
+            resuming: '正在恢復...',
+            resumeFailed: '無法恢復工作階段',
+            pendingQueuedResumeFailedTitle: '訊息已排入佇列',
+            pendingQueuedResumeFailedBody:
+                '你的訊息已儲存到待傳送佇列，但 Happier 無法恢復此工作階段。請重試以啟動它。',
             openRuns: '開啟工作階段執行',
             openAutomations: '開啟工作階段自動化',
             participants: {

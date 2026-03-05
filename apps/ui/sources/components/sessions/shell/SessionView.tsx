@@ -20,8 +20,8 @@ import { scmStatusSync } from '@/scm/scmStatusSync';
 import { continueSessionWithReplay, sessionAbort, resumeSession } from '@/sync/ops';
 import { storage, useAutomations, useIsDataReady, useLocalSetting, useRealtimeStatus, useSessionMessages, useSessionPendingMessages, useSessionReviewCommentsDrafts, useSessionTranscriptIds, useSessionUsage, useSetting, useSettings } from '@/sync/domains/state/storage';
 import { setActiveViewingSessionId, clearActiveViewingSessionId } from '@/sync/domains/session/activeViewingSession';
-import { canResumeSessionWithOptions, getAgentVendorResumeId } from '@/agents/runtime/resumeCapabilities';
-import { DEFAULT_AGENT_ID, getAgentCore, resolveAgentIdFromFlavor, buildResumeSessionExtrasFromUiState, getAgentResumeExperimentsFromSettings, getResumePreflightIssues, getResumePreflightPrefetchPlan } from '@/agents/catalog/catalog';
+import { canResumeSessionWithOptions } from '@/agents/runtime/resumeCapabilities';
+import { DEFAULT_AGENT_ID, getAgentCore, resolveAgentIdFromFlavor, buildResumeSessionExtrasFromUiState } from '@/agents/catalog/catalog';
 import { useResumeCapabilityOptions } from '@/agents/hooks/useResumeCapabilityOptions';
 import { useSession } from '@/sync/domains/state/storage';
 import { Session } from '@/sync/domains/state/storageTypes';
@@ -41,8 +41,7 @@ import { deriveTranscriptInteraction } from '@/utils/sessions/deriveTranscriptIn
 import { runAfterInteractionsWithFallback } from '@/utils/timing/runAfterInteractionsWithFallback';
 import { isVersionSupported, MINIMUM_CLI_VERSION } from '@/utils/system/versionUtils';
 import { fireAndForget } from '@/utils/system/fireAndForget';
-import { getMachineCapabilitiesSnapshot, prefetchMachineCapabilities, useMachineCapabilitiesCache } from '@/hooks/server/useMachineCapabilitiesCache';
-import { describeAcpLoadSessionSupport } from '@/agents/runtime/acpRuntimeResume';
+import { ensureAgentInstallablesBackground } from '@/capabilities/ensureAgentInstallablesBackground';
 import type { ModelMode, PermissionMode } from '@/sync/domains/permissions/permissionTypes';
 import { getPendingQueueWakeResumeOptions } from '@/sync/domains/pending/pendingQueueWake';
 import { getPermissionModeOverrideForSpawn } from '@/sync/domains/permissions/permissionModeOverride';
@@ -94,20 +93,6 @@ import { useSessionPaneUrlSync } from '@/components/sessions/panes/url/useSessio
 import { SessionResumeProvider } from '@/components/sessions/model/SessionResumeContext';
 import { useSessionResumeRequestListener } from '@/components/sessions/model/sessionResumeRequests';
 import { useAuth } from '@/auth/context/AuthContext';
-
-
-function formatResumeSupportDetailCode(code: 'cliNotDetected' | 'capabilityProbeFailed' | 'acpProbeFailed' | 'loadSessionFalse'): string {
-    switch (code) {
-        case 'cliNotDetected':
-            return t('session.resumeSupportDetails.cliNotDetected');
-        case 'capabilityProbeFailed':
-            return t('session.resumeSupportDetails.capabilityProbeFailed');
-        case 'acpProbeFailed':
-            return t('session.resumeSupportDetails.acpProbeFailed');
-        case 'loadSessionFalse':
-            return t('session.resumeSupportDetails.loadSessionFalse');
-    }
-}
 
 export const SessionView = React.memo((props: { id: string; jumpToSeq?: number | null; paneUrlState?: SessionPaneUrlState | null }) => {
     const sessionId = props.id;
@@ -509,30 +494,6 @@ function SessionViewLoaded({ sessionId, session, isEncryptedSessionLocked, jumpT
         enabled: !isSessionActive || supportsLocalControl,
     });
 
-    const { state: machineCapabilitiesState } = useMachineCapabilitiesCache({
-        machineId: typeof machineId === 'string' ? machineId : null,
-        serverId: capabilityServerId,
-        enabled: false,
-        request: { requests: [] },
-    });
-    const machineCapabilitiesResults = React.useMemo(() => {
-        if (machineCapabilitiesState.status !== 'loaded' && machineCapabilitiesState.status !== 'loading') return undefined;
-        return machineCapabilitiesState.snapshot?.response.results as any;
-    }, [machineCapabilitiesState]);
-
-    const vendorResumeId = React.useMemo(() => {
-        const field = getAgentCore(agentId).resume.vendorResumeIdField;
-        if (!field) return '';
-        const raw = (session.metadata as any)?.[field];
-        return typeof raw === 'string' ? raw.trim() : '';
-    }, [agentId, session.metadata]);
-
-    const acpLoadSessionSupport = React.useMemo(() => {
-        if (!vendorResumeId) return null;
-        if (getAgentCore(agentId).resume.runtimeGate !== 'acpLoadSession') return null;
-        return describeAcpLoadSessionSupport(agentId, machineCapabilitiesResults);
-    }, [agentId, machineCapabilitiesResults, vendorResumeId]);
-
     const isResumable = canResumeSessionWithOptions(session.metadata, resumeCapabilityOptions);
     const [isResuming, setIsResuming] = React.useState(false);
 
@@ -669,80 +630,77 @@ function SessionViewLoaded({ sessionId, session, isEncryptedSessionLocked, jumpT
     }, [agentId, sessionId, session.metadata]);
 
     // Handle resuming an inactive session
-      const handleResumeSession = React.useCallback(async (): Promise<boolean> => {
-          if (!session.metadata?.machineId || !session.metadata?.path || !session.metadata?.flavor) {
-              Modal.alert(t('common.error'), t('session.resumeFailed'));
-              return false;
-          }
-          if (!canResumeSessionWithOptions(session.metadata, resumeCapabilityOptions)) {
-                const replayCfg = resolveHappierReplayConfig(settings);
-              if (replayCfg.enabled) {
-                  if (!isMachineReachable) {
-                      Modal.alert(t('common.error'), t('session.machineOfflineCannotResume'));
-                      return false;
-                  }
+    const handleResumeSession = React.useCallback(async (opts?: { silent?: boolean }): Promise<boolean> => {
+        const silent = opts?.silent === true;
 
-                  const wantsReplay = await Modal.confirm(
-                      t('session.resumeFailed'),
-                      t('settingsSession.replayResume.footer'),
-                      { confirmText: t('common.continue') },
-                  );
-                  if (wantsReplay) {
-                      try {
-                          const permissionOverride = getPermissionModeOverrideForSpawn(session);
-                          const modelOverride = getModelOverrideForSpawn(session);
-                          const summaryRunner =
-                              executionRunsEnabled && replayCfg.strategy === 'summary_plus_recent'
-                                  ? (settings.sessionReplaySummaryRunnerV1 ?? null)
-                                  : null;
-                          const spawnResult: any = await continueSessionWithReplay({
-                              machineId: session.metadata.machineId,
-                              serverId: capabilityServerId,
-                              directory: session.metadata.path,
-                              approvedNewDirectoryCreation: true,
-                              agent: agentId,
-                              ...(permissionOverride ? permissionOverride : {}),
-                              ...(modelOverride ? modelOverride : {}),
-                              replay: {
-                                  previousSessionId: sessionId,
-                                  strategy: replayCfg.strategy,
-                                  recentMessagesCount: replayCfg.recentMessagesCount,
-                                  maxSeedChars: replayCfg.maxSeedChars,
-                                  ...(summaryRunner ? { summaryRunner } : {}),
-                              },
-                          });
-                          if (spawnResult.type !== 'success' || !spawnResult.sessionId) {
-                              Modal.alert(t('common.error'), t('session.resumeFailed'));
-                              return false;
-                          }
+        const maybeAlert = (message: string) => {
+            if (silent) return;
+            Modal.alert(t('common.error'), message);
+        };
 
-                          await sync.refreshSessions();
-                          router.push(`/session/${spawnResult.sessionId}` as any);
-                          return true;
-                      } catch (e) {
-                          Modal.alert(t('common.error'), e instanceof Error ? e.message : t('session.resumeFailed'));
-                          return false;
-                      }
-                  }
-              }
+        if (!session.metadata?.machineId || !session.metadata?.path || !session.metadata?.flavor) {
+            maybeAlert(t('session.resumeFailed'));
+            return false;
+        }
+        if (!canResumeSessionWithOptions(session.metadata, resumeCapabilityOptions)) {
+            if (silent) return false;
 
-              if (acpLoadSessionSupport?.kind === 'error' || acpLoadSessionSupport?.kind === 'unknown') {
-                  const detailLines: string[] = [];
-                  if (acpLoadSessionSupport?.code) {
-                      detailLines.push(formatResumeSupportDetailCode(acpLoadSessionSupport.code));
-                  }
-                if (acpLoadSessionSupport?.rawMessage) {
-                    detailLines.push(acpLoadSessionSupport.rawMessage);
+            const replayCfg = resolveHappierReplayConfig(settings);
+            if (replayCfg.enabled) {
+                if (!isMachineReachable) {
+                    maybeAlert(t('session.machineOfflineCannotResume'));
+                    return false;
                 }
-                const detail = detailLines.length > 0 ? `\n\n${t('common.details')}: ${detailLines.join('\n')}` : '';
-                Modal.alert(t('common.error'), `${t('session.resumeFailed')}${detail}`);
-            } else {
-                Modal.alert(t('common.error'), t('session.resumeFailed'));
+
+                const wantsReplay = await Modal.confirm(
+                    t('session.resumeFailed'),
+                    t('settingsSession.replayResume.footer'),
+                    { confirmText: t('common.continue') },
+                );
+                if (wantsReplay) {
+                    try {
+                        const permissionOverride = getPermissionModeOverrideForSpawn(session);
+                        const modelOverride = getModelOverrideForSpawn(session);
+                        const summaryRunner =
+                            executionRunsEnabled && replayCfg.strategy === 'summary_plus_recent'
+                                ? (settings.sessionReplaySummaryRunnerV1 ?? null)
+                                : null;
+                        const spawnResult: any = await continueSessionWithReplay({
+                            machineId: session.metadata.machineId,
+                            serverId: capabilityServerId,
+                            directory: session.metadata.path,
+                            approvedNewDirectoryCreation: true,
+                            agent: agentId,
+                            ...(permissionOverride ? permissionOverride : {}),
+                            ...(modelOverride ? modelOverride : {}),
+                            replay: {
+                                previousSessionId: sessionId,
+                                strategy: replayCfg.strategy,
+                                recentMessagesCount: replayCfg.recentMessagesCount,
+                                maxSeedChars: replayCfg.maxSeedChars,
+                                ...(summaryRunner ? { summaryRunner } : {}),
+                            },
+                        });
+                        if (spawnResult.type !== 'success' || !spawnResult.sessionId) {
+                            maybeAlert(t('session.resumeFailed'));
+                            return false;
+                        }
+
+                        await sync.refreshSessions();
+                        router.push(`/session/${spawnResult.sessionId}` as any);
+                        return true;
+                    } catch (e) {
+                        maybeAlert(e instanceof Error ? e.message : t('session.resumeFailed'));
+                        return false;
+                    }
+                }
             }
+
+            maybeAlert(t('session.resumeFailed'));
             return false;
         }
         if (!isMachineReachable) {
-            Modal.alert(t('common.error'), t('session.machineOfflineCannotResume'));
+            maybeAlert(t('session.machineOfflineCannotResume'));
             return false;
         }
 
@@ -758,46 +716,20 @@ function SessionViewLoaded({ sessionId, session, isEncryptedSessionLocked, jumpT
                 modelOverride,
             });
             if (!base) {
-                Modal.alert(t('common.error'), t('session.resumeFailed'));
+                maybeAlert(t('session.resumeFailed'));
                 return false;
             }
 
-            const snapshotBefore = getMachineCapabilitiesSnapshot(base.machineId, capabilityServerId);
-            const resultsBefore = snapshotBefore?.response.results as any;
-            const preflightPlan = getResumePreflightPrefetchPlan({ agentId, settings, results: resultsBefore });
-            if (preflightPlan) {
-                try {
-                    await prefetchMachineCapabilities({
-                        machineId: base.machineId,
-                        serverId: capabilityServerId,
-                        request: preflightPlan.request,
-                        timeoutMs: preflightPlan.timeoutMs,
-                    });
-                } catch {
-                    // Non-blocking; fall back to attempting resume (pending queue preserves user message).
-                }
-            }
-
-            const snapshot = getMachineCapabilitiesSnapshot(base.machineId, capabilityServerId);
-            const results = snapshot?.response.results as any;
-            const issues = getResumePreflightIssues({
-                agentId,
-                experiments: getAgentResumeExperimentsFromSettings(agentId, settings),
-                results,
-            });
-
-            const blockingIssue = issues[0] ?? null;
-            if (blockingIssue) {
-                const openMachine = await Modal.confirm(
-                    t(blockingIssue.titleKey),
-                    t(blockingIssue.messageKey),
-                    { confirmText: t(blockingIssue.confirmTextKey) }
-                );
-                if (openMachine && blockingIssue.action === 'openMachine') {
-                    router.push(`/machine/${base.machineId}` as any);
-                }
-                return false;
-            }
+            fireAndForget(
+                ensureAgentInstallablesBackground({
+                    agentId,
+                    machineId: base.machineId,
+                    serverId: capabilityServerId,
+                    settings,
+                    resumeSessionId: base.resume ?? '',
+                }),
+                { tag: `SessionView.installables.ensure.${agentId}` },
+            );
 
             const result = await resumeSession({
                 ...base,
@@ -809,18 +741,18 @@ function SessionViewLoaded({ sessionId, session, isEncryptedSessionLocked, jumpT
             });
 
             if (result.type === 'error') {
-                Modal.alert(t('common.error'), result.errorMessage);
+                maybeAlert(result.errorMessage);
                 return false;
             }
             // On success, the session will become active and UI will update automatically
             return true;
-        } catch (error) {
-            Modal.alert(t('common.error'), t('session.resumeFailed'));
+        } catch {
+            maybeAlert(t('session.resumeFailed'));
             return false;
         } finally {
             setIsResuming(false);
         }
-    }, [agentId, capabilityServerId, resumeCapabilityOptions, router, session, sessionId, settings]);
+    }, [agentId, capabilityServerId, executionRunsEnabled, isMachineReachable, resumeCapabilityOptions, router, session, sessionId, settings]);
 
     useSessionResumeRequestListener(React.useCallback((requestedSessionId) => {
         if (requestedSessionId !== sessionId) return;
@@ -879,26 +811,9 @@ function SessionViewLoaded({ sessionId, session, isEncryptedSessionLocked, jumpT
 
     const bottomNotice = React.useMemo(() => {
         if (showInactiveNotResumableNotice) {
-            const extra = (() => {
-                if (!acpLoadSessionSupport) return '';
-                if (acpLoadSessionSupport.kind === 'supported') return '';
-                const note = acpLoadSessionSupport.kind === 'unknown'
-                    ? `\n\n${t('session.resumeSupportNoteChecking')}`
-                    : `\n\n${t('session.resumeSupportNoteUnverified')}`;
-
-                const detailLines: string[] = [];
-                if (acpLoadSessionSupport.code) {
-                    detailLines.push(formatResumeSupportDetailCode(acpLoadSessionSupport.code));
-                }
-                if (acpLoadSessionSupport.rawMessage) {
-                    detailLines.push(acpLoadSessionSupport.rawMessage);
-                }
-                const detail = detailLines.length > 0 ? `\n\n${t('common.details')}: ${detailLines.join('\n')}` : '';
-                return `${note}${detail}`;
-            })();
             return {
                 title: t('session.inactiveNotResumableNoticeTitle'),
-                body: `${t('session.inactiveNotResumableNoticeBody', { provider: providerName })}${extra}`,
+                body: t('session.inactiveNotResumableNoticeBody', { provider: providerName }),
             };
         }
         if (showMachineOfflineNotice) {
@@ -908,7 +823,7 @@ function SessionViewLoaded({ sessionId, session, isEncryptedSessionLocked, jumpT
             };
         }
         return null;
-    }, [acpLoadSessionSupport, machineName, providerName, showInactiveNotResumableNotice, showMachineOfflineNotice]);
+    }, [machineName, providerName, showInactiveNotResumableNotice, showMachineOfflineNotice]);
 
     const hasWriteAccess = !session.accessLevel || session.accessLevel === 'edit' || session.accessLevel === 'admin';
     const isReadOnly = session.accessLevel === 'view';
@@ -1247,6 +1162,58 @@ function SessionViewLoaded({ sessionId, session, isEncryptedSessionLocked, jumpT
     const input = shouldShowInput ? (
         <View>
             {voiceEnabled && voiceProviderId !== 'off' ? <VoiceSurface variant="session" sessionId={sessionId} /> : null}
+            {pendingQueueResumeFailed ? (
+                <View
+                    testID="session-pendingQueue-resumeFailed"
+                    style={{
+                        flexDirection: 'row',
+                        alignItems: 'center',
+                        flexWrap: 'wrap',
+                        paddingHorizontal: 12,
+                        paddingVertical: 8,
+                        backgroundColor: theme.colors.box.warning.background,
+                        borderWidth: 1,
+                        borderColor: theme.colors.box.warning.border,
+                        borderRadius: 10,
+                        marginTop: 8,
+                        marginHorizontal: 8,
+                        gap: 8,
+                    }}
+                >
+                    <Ionicons name="warning-outline" size={16} color={theme.colors.box.warning.text} />
+                    <View style={{ flexBasis: 0, flexGrow: 1 }}>
+                        <Text style={{ fontSize: 13, color: theme.colors.box.warning.text, fontWeight: '700' }}>
+                            {t('session.pendingQueuedResumeFailedTitle')}
+                        </Text>
+                        <Text style={{ fontSize: 12, color: theme.colors.box.warning.text, lineHeight: 16 }}>
+                            {t('session.pendingQueuedResumeFailedBody')}
+                        </Text>
+                    </View>
+                    <Pressable
+                        testID="session-pendingQueue-resumeFailed-retry"
+                        accessibilityLabel={t('common.retry')}
+                        disabled={isResuming}
+                        onPress={async () => {
+                            const ok = await handleResumeSession({ silent: true });
+                            if (ok) {
+                                setPendingQueueResumeFailed(false);
+                            }
+                        }}
+                        style={({ pressed }) => ({
+                            flexShrink: 0,
+                            paddingHorizontal: 10,
+                            paddingVertical: 6,
+                            borderRadius: 8,
+                            backgroundColor: theme.colors.box.warning.text,
+                            opacity: pressed || isResuming ? 0.7 : 1,
+                        })}
+                    >
+                        <Text style={{ fontSize: 12, color: theme.colors.box.warning.background, fontWeight: '700' }}>
+                            {t('common.retry')}
+                        </Text>
+                    </Pressable>
+                </View>
+            ) : null}
             <AgentInput
                 placeholder={isReadOnly ? t('session.sharing.viewOnlyMode') : t('session.inputPlaceholder')}
                 value={message}
@@ -1504,10 +1471,10 @@ function SessionViewLoaded({ sessionId, session, isEncryptedSessionLocked, jumpT
                                     serverId: capabilityServerId,
                                 });
                                 if (result.type === 'error') {
-                                    Modal.alert(t('common.error'), result.errorMessage);
+                                    // Non-fatal: message is already persisted in the pending queue.
                                 }
                             } catch {
-                                Modal.alert(t('common.error'), t('session.resumeFailed'));
+                                // Non-fatal: message is already persisted in the pending queue.
                             }
 
                             if (shouldRequestRemoteControlAfterPendingEnqueue(session)) {
@@ -1533,7 +1500,10 @@ function SessionViewLoaded({ sessionId, session, isEncryptedSessionLocked, jumpT
                                     if (shouldSendReviewComments) {
                                         storage.getState().clearSessionReviewCommentDrafts(sessionId);
                                     }
-                                    await handleResumeSession();
+                                    const resumed = await handleResumeSession({ silent: true });
+                                    if (!resumed) {
+                                        setPendingQueueResumeFailed(true);
+                                    }
                                     return;
                                 }
 

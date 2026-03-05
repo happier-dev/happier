@@ -2260,6 +2260,8 @@ export const es: TranslationStructure = {
     },
     resuming: "Reanudando...",
     resumeFailed: "No se pudo reanudar la sesión",
+    pendingQueuedResumeFailedTitle: "Mensaje en cola",
+    pendingQueuedResumeFailedBody: "Tu mensaje se guardó en la cola de pendientes, pero Happier no pudo reanudar esta sesión. Reintenta para iniciarla.",
     resumeSupportNoteChecking:
       "Nota: Happier todavía está comprobando si esta máquina puede reanudar la sesión del proveedor.",
     resumeSupportNoteUnverified:

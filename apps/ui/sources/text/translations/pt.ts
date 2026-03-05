@@ -2271,6 +2271,8 @@ export const pt: TranslationStructure = {
     },
     resuming: "Retomando...",
     resumeFailed: "Falha ao retomar a sessão",
+    pendingQueuedResumeFailedTitle: "Mensagem na fila",
+    pendingQueuedResumeFailedBody: "Sua mensagem foi salva na fila de pendentes, mas o Happier não conseguiu retomar esta sessão. Tente novamente para iniciá-la.",
     resumeSupportNoteChecking:
       "Nota: o Happier ainda está verificando se esta máquina pode retomar a sessão do provedor.",
     resumeSupportNoteUnverified:

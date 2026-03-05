@@ -2126,6 +2126,8 @@ export const zhHans: TranslationStructure = {
     },
     resuming: "正在恢复...",
     resumeFailed: "恢复会话失败",
+    pendingQueuedResumeFailedTitle: "消息已排队",
+    pendingQueuedResumeFailedBody: "你的消息已保存到待处理队列，但 Happier 无法恢复此会话。请重试以启动它。",
     resumeSupportNoteChecking:
       "注意：Happier 仍在检查此机器是否可以恢复提供方会话。",
     resumeSupportNoteUnverified: "注意：Happier 无法验证此机器的恢复支持情况。",

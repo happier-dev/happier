@@ -12,7 +12,7 @@ describe('getPendingQueueWakeResumeOptions', () => {
         const res = getPendingQueueWakeResumeOptions({
             sessionId: 's1',
             session,
-            resumeCapabilityOptions: {},
+            resumeCapabilityOptions: { accountSettings: {} },
         });
 
         expect(res).toEqual({
@@ -31,7 +31,7 @@ describe('getPendingQueueWakeResumeOptions', () => {
             presence: 'online',
             metadata: { machineId: 'm1', path: '/tmp', flavor: 'claude' },
         };
-        expect(getPendingQueueWakeResumeOptions({ sessionId: 's1', session, resumeCapabilityOptions: {} })).toBeNull();
+        expect(getPendingQueueWakeResumeOptions({ sessionId: 's1', session, resumeCapabilityOptions: { accountSettings: {} } })).toBeNull();
     });
 
     it('returns null when permission is required', () => {
@@ -41,7 +41,7 @@ describe('getPendingQueueWakeResumeOptions', () => {
             presence: 'online',
             metadata: { machineId: 'm1', path: '/tmp', flavor: 'claude' },
         };
-        expect(getPendingQueueWakeResumeOptions({ sessionId: 's1', session, resumeCapabilityOptions: {} })).toBeNull();
+        expect(getPendingQueueWakeResumeOptions({ sessionId: 's1', session, resumeCapabilityOptions: { accountSettings: {} } })).toBeNull();
     });
 
     it('returns null when the caller cannot wake the target machine', () => {
@@ -55,7 +55,7 @@ describe('getPendingQueueWakeResumeOptions', () => {
         expect(getPendingQueueWakeResumeOptions({
             sessionId: 's1',
             session,
-            resumeCapabilityOptions: {},
+            resumeCapabilityOptions: { accountSettings: {} },
             canWakeMachineId: () => false,
         } as any)).toBeNull();
     });
@@ -68,7 +68,7 @@ describe('getPendingQueueWakeResumeOptions', () => {
             metadata: { machineId: 'm1', path: '/tmp', flavor: 'claude', claudeSessionId: 'c1' },
         };
 
-        expect(getPendingQueueWakeResumeOptions({ sessionId: 's1', session, resumeCapabilityOptions: {} })).toEqual({
+        expect(getPendingQueueWakeResumeOptions({ sessionId: 's1', session, resumeCapabilityOptions: { accountSettings: {} } })).toEqual({
             sessionId: 's1',
             machineId: 'm1',
             directory: '/tmp',
@@ -85,7 +85,7 @@ describe('getPendingQueueWakeResumeOptions', () => {
             metadata: { machineId: 'm1', path: '/tmp', flavor: 'claude', claudeSessionId: 'c1' },
         };
 
-        expect(getPendingQueueWakeResumeOptions({ sessionId: 's1', session, resumeCapabilityOptions: {} })).toEqual({
+        expect(getPendingQueueWakeResumeOptions({ sessionId: 's1', session, resumeCapabilityOptions: { accountSettings: {} } })).toEqual({
             sessionId: 's1',
             machineId: 'm1',
             directory: '/tmp',
@@ -96,7 +96,7 @@ describe('getPendingQueueWakeResumeOptions', () => {
 
     it('returns null when metadata is missing', () => {
         const session: any = { thinking: false, agentState: null, metadata: null };
-        expect(getPendingQueueWakeResumeOptions({ sessionId: 's1', session, resumeCapabilityOptions: {} })).toBeNull();
+        expect(getPendingQueueWakeResumeOptions({ sessionId: 's1', session, resumeCapabilityOptions: { accountSettings: {} } })).toBeNull();
     });
 
     it('returns null when flavor is unsupported', () => {
@@ -105,7 +105,7 @@ describe('getPendingQueueWakeResumeOptions', () => {
             agentState: null,
             metadata: { machineId: 'm1', path: '/tmp', flavor: 'unknown' },
         };
-        expect(getPendingQueueWakeResumeOptions({ sessionId: 's1', session, resumeCapabilityOptions: {} })).toBeNull();
+        expect(getPendingQueueWakeResumeOptions({ sessionId: 's1', session, resumeCapabilityOptions: { accountSettings: {} } })).toBeNull();
     });
 
     it('returns null when codex vendor resume is disabled', () => {
@@ -114,7 +114,7 @@ describe('getPendingQueueWakeResumeOptions', () => {
             agentState: null,
             metadata: { machineId: 'm1', path: '/tmp', flavor: 'codex', codexSessionId: 'x1' },
         };
-        expect(getPendingQueueWakeResumeOptions({ sessionId: 's1', session, resumeCapabilityOptions: {} })).toBeNull();
+        expect(getPendingQueueWakeResumeOptions({ sessionId: 's1', session, resumeCapabilityOptions: { accountSettings: { codexBackendMode: 'mcp' } } })).toBeNull();
     });
 
     it('returns codex options when codex resume is enabled', () => {
@@ -126,14 +126,14 @@ describe('getPendingQueueWakeResumeOptions', () => {
         expect(getPendingQueueWakeResumeOptions({
             sessionId: 's1',
             session,
-            resumeCapabilityOptions: { allowExperimentalResumeByAgentId: { codex: true } },
+            resumeCapabilityOptions: { accountSettings: { codexBackendMode: 'acp' } },
         })).toEqual({
             sessionId: 's1',
             machineId: 'm1',
             directory: '/tmp',
             agent: 'codex',
             resume: 'x1',
-            experimentalCodexResume: true,
+            experimentalCodexAcp: true,
         });
     });
 
@@ -146,27 +146,18 @@ describe('getPendingQueueWakeResumeOptions', () => {
         expect(getPendingQueueWakeResumeOptions({
             sessionId: 's1',
             session,
-            resumeCapabilityOptions: { allowExperimentalResumeByAgentId: { codex: true } },
+            resumeCapabilityOptions: { accountSettings: { codexBackendMode: 'acp' } },
         })).toEqual({
             sessionId: 's1',
             machineId: 'm1',
             directory: '/tmp',
             agent: 'codex',
             resume: 'x1',
-            experimentalCodexResume: true,
+            experimentalCodexAcp: true,
         });
     });
 
-    it('returns null when gemini vendor resume is not enabled', () => {
-        const session: any = {
-            thinking: false,
-            agentState: null,
-            metadata: { machineId: 'm1', path: '/tmp', flavor: 'gemini', geminiSessionId: 'g1' },
-        };
-        expect(getPendingQueueWakeResumeOptions({ sessionId: 's1', session, resumeCapabilityOptions: {} })).toBeNull();
-    });
-
-    it('includes gemini resume id only when runtime resume is enabled', () => {
+    it('returns gemini options when metadata contains a gemini resume id', () => {
         const session: any = {
             thinking: false,
             agentState: null,
@@ -175,7 +166,7 @@ describe('getPendingQueueWakeResumeOptions', () => {
         expect(getPendingQueueWakeResumeOptions({
             sessionId: 's1',
             session,
-            resumeCapabilityOptions: { allowRuntimeResumeByAgentId: { gemini: true } },
+            resumeCapabilityOptions: { accountSettings: {} },
         })).toEqual({
             sessionId: 's1',
             machineId: 'm1',
@@ -194,7 +185,7 @@ describe('getPendingQueueWakeResumeOptions', () => {
         expect(getPendingQueueWakeResumeOptions({
             sessionId: 's1',
             session,
-            resumeCapabilityOptions: {},
+            resumeCapabilityOptions: { accountSettings: {} },
             permissionOverride: { permissionMode: 'plan', permissionModeUpdatedAt: 123 },
         })).toEqual({
             sessionId: 's1',
