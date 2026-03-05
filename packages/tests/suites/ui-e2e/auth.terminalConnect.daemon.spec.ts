@@ -328,6 +328,18 @@ test.describe('ui e2e: auth + terminal connect', () => {
     }
   });
 
+  test('defaults codex backend mode to ACP in account settings', async ({ page }) => {
+    test.setTimeout(240_000);
+    if (!server) throw new Error('missing server fixture');
+    if (!uiBaseUrl) throw new Error('missing ui base url');
+    if (!accountSecretKeyFormatted) throw new Error('missing account secret key from prior test');
+
+    await restoreAccountUsingSecretKey(page, uiBaseUrl, accountSecretKeyFormatted, { postRestorePath: '/settings/providers/codex' });
+    const backendModeRow = page.getByTestId('settings-provider-field-codexBackendMode');
+    await expect(backendModeRow).toHaveCount(1, { timeout: 60_000 });
+    await expect(backendModeRow).toContainText('ACP', { timeout: 60_000 });
+  });
+
   test('daemon can reconnect and UI reflects offline → online', async ({ page }, testInfo) => {
     test.setTimeout(420_000);
     if (!ui) throw new Error('missing ui fixture');
