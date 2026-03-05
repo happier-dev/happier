@@ -210,12 +210,13 @@ export function createInMemoryChannelBindingStore(now: () => number = () => Date
     upsertBinding: async (binding) => {
       const key = bindingKey(binding);
       const existing = byKey.get(key);
+      const normalizedLastForwardedSeq = toNonNegativeInt(binding.lastForwardedSeq) ?? 0;
       const next: ChannelSessionBinding = {
         providerId: binding.providerId,
         conversationId: binding.conversationId,
         threadId: binding.threadId,
         sessionId: binding.sessionId,
-        lastForwardedSeq: Math.max(0, Math.trunc(binding.lastForwardedSeq)),
+        lastForwardedSeq: normalizedLastForwardedSeq,
         createdAtMs: existing?.createdAtMs ?? now(),
         updatedAtMs: now(),
       };
@@ -226,7 +227,9 @@ export function createInMemoryChannelBindingStore(now: () => number = () => Date
       const key = bindingKey(ref);
       const existing = byKey.get(key);
       if (!existing) return;
-      const nextSeq = Math.max(existing.lastForwardedSeq, Math.max(0, Math.trunc(seq)));
+      const parsedSeq = toNonNegativeInt(seq);
+      if (parsedSeq === null) return;
+      const nextSeq = Math.max(existing.lastForwardedSeq, parsedSeq);
       byKey.set(key, {
         ...existing,
         lastForwardedSeq: nextSeq,

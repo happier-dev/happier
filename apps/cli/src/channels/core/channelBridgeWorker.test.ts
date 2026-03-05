@@ -143,6 +143,32 @@ async function waitFor(condition: () => boolean, timeoutMs: number = 2_000): Pro
   }
 }
 
+describe('createInMemoryChannelBindingStore', () => {
+  it('normalizes non-finite cursor values and ignores invalid cursor updates', async () => {
+    const store = createInMemoryChannelBindingStore();
+    const ref = {
+      providerId: 'telegram',
+      conversationId: '-100-cursor',
+      threadId: null,
+    } as const;
+
+    await store.upsertBinding({
+      ...ref,
+      sessionId: 'sess-cursor',
+      lastForwardedSeq: Number.NaN,
+    });
+
+    const created = await store.getBinding(ref);
+    expect(created?.lastForwardedSeq).toBe(0);
+
+    await store.updateLastForwardedSeq(ref, 7);
+    await store.updateLastForwardedSeq(ref, Number.NaN);
+
+    const updated = await store.getBinding(ref);
+    expect(updated?.lastForwardedSeq).toBe(7);
+  });
+});
+
 describe('executeChannelBridgeTick', () => {
   it('supports /attach then forwards inbound user messages into the bound session', async () => {
     const store = createInMemoryChannelBindingStore();
