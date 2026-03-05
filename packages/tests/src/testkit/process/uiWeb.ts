@@ -31,7 +31,11 @@ function extractHttpUrls(text: string): string[] {
 
 async function looksLikeUiWebEntryPage(url: string): Promise<boolean> {
   try {
-    const res = await fetch(url, { method: 'GET', signal: AbortSignal.timeout(2_000) });
+    const rawTimeout = (process.env.HAPPIER_E2E_UI_WEB_ENTRY_FETCH_TIMEOUT_MS ?? '').toString().trim();
+    const parsedTimeout = Number.parseInt(rawTimeout, 10);
+    const timeoutMs = Number.isFinite(parsedTimeout) && parsedTimeout > 0 ? parsedTimeout : 10_000;
+
+    const res = await fetch(url, { method: 'GET', signal: AbortSignal.timeout(timeoutMs) });
     if (!res.ok) return false;
     const text = await res.text().catch(() => '');
     if (!text.includes('<html') && !text.toLowerCase().includes('<!doctype html')) return false;
@@ -110,9 +114,16 @@ async function isMetroPackagerReady(baseUrl: string): Promise<boolean> {
 
 async function isScriptReady(url: string): Promise<boolean> {
   try {
-    // Metro holds the response open while bundling; short timeouts can repeatedly abort the build and
-    // keep the progress stuck at 0%. Allow enough time for a cold build to complete.
-    const res = await fetch(url, { method: 'GET', signal: AbortSignal.timeout(30_000) });
+    const rawTimeout = (process.env.HAPPIER_E2E_UI_WEB_SCRIPT_FETCH_TIMEOUT_MS ?? '').toString().trim();
+    const parsedTimeout = Number.parseInt(rawTimeout, 10);
+    // Expo web cold-start bundles can exceed 2 minutes on developer machines. Avoid aborting the
+    // initial bundle request too aggressively, which can reset Metro's build and keep readiness
+    // polling stuck in a loop.
+    const timeoutMs = Number.isFinite(parsedTimeout) && parsedTimeout > 0 ? parsedTimeout : 240_000;
+
+    // Metro holds the response open while bundling; aborting the bundle request too aggressively can
+    // reset the build repeatedly and keep the progress stuck. Use a generous timeout by default.
+    const res = await fetch(url, { method: 'GET', signal: AbortSignal.timeout(timeoutMs) });
     if (!res.ok) return false;
     const contentType = (res.headers.get('content-type') ?? '').toLowerCase();
     if (contentType.includes('javascript')) return true;
@@ -153,6 +164,8 @@ export async function startUiWeb(params: {
 
   const clearRaw = (params.env.HAPPIER_E2E_EXPO_CLEAR ?? '').toString().trim().toLowerCase();
   const clearCache = clearRaw === '1' || clearRaw === 'true' || clearRaw === 'yes' || clearRaw === 'y';
+  const noDevRaw = (params.env.HAPPIER_E2E_UI_WEB_NO_DEV ?? '1').toString().trim().toLowerCase();
+  const noDev = noDevRaw === '1' || noDevRaw === 'true' || noDevRaw === 'yes' || noDevRaw === 'y';
 
   const expoCliPath = resolvePath(repoRootDir(), 'node_modules', 'expo', 'bin', 'cli');
   const uiWorkspaceDir = resolvePath(repoRootDir(), 'apps', 'ui');
@@ -171,6 +184,7 @@ export async function startUiWeb(params: {
       'localhost',
       '--port',
       String(metroPort),
+      ...(noDev ? ['--no-dev'] : []),
       ...(clearCache ? ['--clear'] : []),
     ],
     command: process.execPath,
@@ -222,7 +236,11 @@ export async function startUiWeb(params: {
     // Metro can serve HTML before the initial app bundle is ready. Parse the web entry HTML and wait for
     // the primary script to be fetchable so Playwright navigation doesn't hang on DOMContentLoaded.
     await waitFor(async () => {
-      const html = await fetch(baseUrl, { method: 'GET', signal: AbortSignal.timeout(2_000) })
+      const rawEntryTimeout = (process.env.HAPPIER_E2E_UI_WEB_ENTRY_FETCH_TIMEOUT_MS ?? '').toString().trim();
+      const parsedEntryTimeout = Number.parseInt(rawEntryTimeout, 10);
+      const entryTimeoutMs = Number.isFinite(parsedEntryTimeout) && parsedEntryTimeout > 0 ? parsedEntryTimeout : 10_000;
+
+      const html = await fetch(baseUrl, { method: 'GET', signal: AbortSignal.timeout(entryTimeoutMs) })
         .then((r) => r.ok ? r.text() : '')
         .catch(() => '');
       const scripts = resolveScriptUrlsFromHtml(html, baseUrl);

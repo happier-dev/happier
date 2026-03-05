@@ -224,6 +224,10 @@ export async function startServerLight(params: {
     CI: '1',
     // Avoid global port conflicts during test runs.
     METRICS_ENABLED: 'false',
+    // Auth token seed compatibility derivation can be surprisingly expensive on some machines.
+    // In UI e2e we always generate a fresh HANDY_MASTER_SECRET, so the first (or second) attempt
+    // should succeed; keep the attempt budget tight to avoid stalling server boot past /health timeouts.
+    HAPPIER_AUTH_SEED_COMPAT_ATTEMPTS: mergedEnv.HAPPIER_AUTH_SEED_COMPAT_ATTEMPTS ?? '2',
     // Core E2E assumes a fresh auth key can always mint an account token unless a test explicitly disables it.
     AUTH_ANONYMOUS_SIGNUP_ENABLED: mergedEnv.AUTH_ANONYMOUS_SIGNUP_ENABLED ?? 'true',
     // Core E2E suite expects public file storage to work without extra services (Minio/S3).
