@@ -3,10 +3,13 @@ import chalk from 'chalk';
 import type { AgentId } from '@happier-dev/agents';
 
 import type { Credentials } from '@/persistence';
-import { readCredentials, readSettings } from '@/persistence';
-import { authAndSetupMachineIfNeeded, ensureMachineIdInSettings } from '@/ui/auth';
+import { readCredentials } from '@/persistence';
+import { authAndSetupMachineIfNeeded, ensureMachineIdForCredentials } from '@/ui/auth';
 import type { CommandContext } from '@/cli/commandRegistry';
 import { bootstrapAccountSettingsContext, type AccountSettingsContext } from '@/settings/accountSettings/bootstrapAccountSettingsContext';
+import { resolveSessionStartAccountSettingsContext } from '@/settings/accountSettings/resolveSessionStartAccountSettingsContext';
+import { resolveSessionStartAccountSettingsRefreshMode } from '@/settings/accountSettings/resolveSessionStartAccountSettingsRefreshMode';
+import { resolveProviderSpawnExtras } from '@/settings/providerSettings';
 import { ensureDaemonRunningForSessionCommand, shouldAutoStartDaemonAfterAuth } from '@/daemon/ensureDaemon';
 import { configuration } from '@/configuration';
 import { logger } from '@/ui/logger';
@@ -24,6 +27,7 @@ type CommonBackendRunOptions = ParsedSessionStartArgs & {
   existingSessionId: string | undefined;
   resume: string | undefined;
   accountSettingsContext: AccountSettingsContext | null;
+  experimentalCodexAcp?: boolean;
 };
 
 export async function runBackendSessionCliCommand<Extra extends Record<string, unknown>>(params: {
@@ -50,6 +54,7 @@ export async function runBackendSessionCliCommand<Extra extends Record<string, u
     const existingSessionId = readOptionalFlagValue(params.context.args, '--existing-session');
     const resume = readOptionalFlagValue(params.context.args, '--resume');
     const extraOptions = params.resolveExtraOptions ? params.resolveExtraOptions(params.context.args) : ({} as Extra);
+    const startedBy = resolved.startedBy ?? 'terminal';
 
     const normalizedExistingSessionId = typeof existingSessionId === 'string' ? existingSessionId.trim() : '';
     if (normalizedExistingSessionId) {
@@ -72,10 +77,7 @@ export async function runBackendSessionCliCommand<Extra extends Record<string, u
       const auth = await authAndSetupMachineIfNeeded();
       credentials = auth.credentials;
     } else {
-      const settings = await readSettings();
-      if (!settings.machineId) {
-        await ensureMachineIdInSettings();
-      }
+      await ensureMachineIdForCredentials(credentials);
       if (shouldAutoStartDaemonAfterAuth({ env: process.env, isDaemonProcess: configuration.isDaemonProcess })) {
         void ensureDaemonRunningForSessionCommand().catch((error) => {
           logger.debug('[session] Failed to auto-start daemon (non-fatal)', error);
@@ -87,23 +89,31 @@ export async function runBackendSessionCliCommand<Extra extends Record<string, u
 
     let accountSettingsContext: AccountSettingsContext | null = null;
     if (params.agentIdForAccountSettings) {
+      const accountSettingsBootstrapMode = startedBy === 'daemon' ? 'blocking' : 'fast';
       const snapshot = await bootstrapAccountSettingsContext({
         agentId: params.agentIdForAccountSettings,
         credentials,
-        mode: resolved.startedBy === 'daemon' ? 'blocking' : 'fast',
-        refresh: refreshSettings ? 'force' : 'auto',
+        mode: accountSettingsBootstrapMode,
+        refresh: resolveSessionStartAccountSettingsRefreshMode({
+          mode: accountSettingsBootstrapMode,
+          refreshRequested: refreshSettings,
+        }),
       });
-      accountSettingsContext = snapshot;
-
-      if (params.agentIdForAccountSettings === 'codex' && resolved.startedBy !== 'daemon' && snapshot.whenRefreshed) {
-        await snapshot.whenRefreshed;
-      }
+      accountSettingsContext = await resolveSessionStartAccountSettingsContext({
+        startedBy,
+        snapshot,
+      });
     }
+
+    const providerSpawnExtras =
+      params.agentIdForAccountSettings && accountSettingsContext
+        ? resolveProviderSpawnExtras({ agentId: params.agentIdForAccountSettings, settings: accountSettingsContext.settings })
+        : {};
 
     await run({
       credentials,
       terminalRuntime: params.context.terminalRuntime,
-      startedBy: resolved.startedBy,
+      startedBy,
       permissionMode: resolved.permissionMode,
       permissionModeUpdatedAt: resolved.permissionModeUpdatedAt,
       agentModeId: resolved.agentModeId,
@@ -113,6 +123,7 @@ export async function runBackendSessionCliCommand<Extra extends Record<string, u
       existingSessionId: normalizedExistingSessionId || undefined,
       resume,
       accountSettingsContext,
+      ...providerSpawnExtras,
       ...extraOptions,
     });
   } catch (error) {

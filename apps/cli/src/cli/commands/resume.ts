@@ -13,7 +13,6 @@ import { encodeBase64 } from '@/api/encryption';
 import { bootstrapAccountSettingsContext } from '@/settings/accountSettings/bootstrapAccountSettingsContext';
 import type { AccountSettings } from '@happier-dev/protocol';
 import { accountSettingsParse } from '@happier-dev/protocol';
-import { applyProviderSpawnExtrasToProcessEnv } from '@/settings/providerSettings';
 import { cleanupStdinAfterInk } from '@/ui/ink/cleanupStdinAfterInk';
 import { createNonBlockingStdout } from '@/ui/ink/nonBlockingStdout';
 import { restoreStdinBestEffort } from '@/ui/ink/restoreStdinBestEffort';
@@ -245,9 +244,6 @@ export async function handleResumeCommand(
   if (!vendorResume.eligible) {
     throw new Error(`Session is not vendor-resumable (${vendorResume.reasonCode}).`);
   }
-
-  // Ensure provider spawn routing env vars are applied even if downstream bootstrap returns from cache.
-  applyProviderSpawnExtrasToProcessEnv({ agentId, settings: accountSettings });
 
   const attach = await createSessionAttachFile({
     happySessionId: rawSession.id,

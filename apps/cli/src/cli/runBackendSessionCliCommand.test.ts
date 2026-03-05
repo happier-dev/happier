@@ -10,6 +10,12 @@ afterEach(() => {
 });
 
 describe('runBackendSessionCliCommand', () => {
+  function makeJwtWithSub(sub: string): string {
+    const header = Buffer.from(JSON.stringify({ alg: 'none', typ: 'JWT' })).toString('base64url');
+    const payload = Buffer.from(JSON.stringify({ sub })).toString('base64url');
+    return `${header}.${payload}.signature`;
+  }
+
   it('fast-paths terminal starts by avoiding auth/setup and using fast account settings bootstrap', async () => {
     const credentials = { token: 'x' } as any;
 
@@ -46,13 +52,14 @@ describe('runBackendSessionCliCommand', () => {
     expect(run).toHaveBeenCalledWith(expect.objectContaining({ credentials }));
   });
 
-  it('waits for Codex account settings refresh before starting when fast bootstrap returns whenRefreshed', async () => {
+  it('waits for refreshed account settings and passes the refreshed snapshot into the run', async () => {
     const credentials = { token: 'x' } as any;
 
 	    vi.spyOn(persistenceModule, 'readCredentials').mockResolvedValue(credentials);
 	    vi.spyOn(persistenceModule, 'readSettings').mockResolvedValue({ machineId: 'machine-1' } as any);
 
 	    let refreshed = false;
+      const refreshedSettings = { schemaVersion: 6, marker: 'fresh' } as any;
 	    let releaseRefresh: () => void = () => {
 	      throw new Error('releaseRefresh called before being initialized');
 	    };
@@ -61,13 +68,13 @@ describe('runBackendSessionCliCommand', () => {
 	        refreshed = true;
 	        resolve({
 	          source: 'network',
-          settings: {} as any,
-          settingsVersion: 1,
-          loadedAtMs: Date.now(),
-          whenRefreshed: null,
-        });
-      };
-    });
+          settings: refreshedSettings,
+	          settingsVersion: 1,
+	          loadedAtMs: Date.now(),
+	          whenRefreshed: null,
+	        });
+	      };
+	    });
 
     vi.spyOn(accountSettingsModule, 'bootstrapAccountSettingsContext').mockResolvedValue({
       source: 'none',
@@ -77,16 +84,17 @@ describe('runBackendSessionCliCommand', () => {
       whenRefreshed,
     } as any);
 
-    const run = vi.fn(async () => {
-      expect(refreshed).toBe(true);
-    });
-    const loadRun = vi.fn().mockResolvedValue(run);
+	    const run = vi.fn(async (params: any) => {
+	      expect(refreshed).toBe(true);
+        expect(params.accountSettingsContext?.settings).toBe(refreshedSettings);
+	    });
+	    const loadRun = vi.fn().mockResolvedValue(run);
 
-    const commandPromise = runBackendSessionCliCommand({
-      context: { args: ['codex'], terminalRuntime: null } as any,
-      loadRun,
-      agentIdForAccountSettings: 'codex' as any,
-    });
+	    const commandPromise = runBackendSessionCliCommand({
+	      context: { args: ['gemini'], terminalRuntime: null } as any,
+	      loadRun,
+	      agentIdForAccountSettings: 'gemini' as any,
+	    });
 
 	    // Allow the command to reach the potential wait point.
 	    await Promise.resolve();
@@ -97,7 +105,7 @@ describe('runBackendSessionCliCommand', () => {
 	    expect(run).toHaveBeenCalled();
 	  });
 
-  it('keeps blocking account settings bootstrap for daemon-started sessions', async () => {
+  it('forces a fresh blocking account settings bootstrap for daemon-started sessions', async () => {
     const credentials = { token: 'x' } as any;
 
     const authSpy = vi.spyOn(authModule, 'authAndSetupMachineIfNeeded').mockResolvedValue({ credentials } as any);
@@ -124,6 +132,7 @@ describe('runBackendSessionCliCommand', () => {
     expect(bootstrapSpy).toHaveBeenCalledWith(
       expect.objectContaining({
         mode: 'blocking',
+        refresh: 'force',
       }),
     );
   });
@@ -171,4 +180,57 @@ describe('runBackendSessionCliCommand', () => {
     );
     expect(run).toHaveBeenCalled();
   });
+
+  it('binds machine id selection to decoded token sub when credentials already exist', async () => {
+    const credentials = { token: makeJwtWithSub('acct-b') } as any;
+
+    const authSpy = vi.spyOn(authModule, 'authAndSetupMachineIfNeeded').mockResolvedValue({ credentials } as any);
+    vi.spyOn(persistenceModule, 'readCredentials').mockResolvedValue(credentials);
+    const ensureMachineSpy = vi.spyOn(authModule, 'ensureMachineIdForCredentials').mockResolvedValue({ machineId: 'machine-acct-b' } as any);
+    vi.spyOn(accountSettingsModule, 'bootstrapAccountSettingsContext').mockResolvedValue({
+      source: 'none',
+      settings: {} as any,
+      settingsVersion: 0,
+      loadedAtMs: Date.now(),
+      whenRefreshed: null,
+    } as any);
+
+    const run = vi.fn().mockResolvedValue(undefined);
+    const loadRun = vi.fn().mockResolvedValue(run);
+
+    await runBackendSessionCliCommand({
+      context: { args: ['codex'], terminalRuntime: null } as any,
+      loadRun,
+      agentIdForAccountSettings: 'codex' as any,
+    });
+
+    expect(authSpy).not.toHaveBeenCalled();
+    expect(ensureMachineSpy).toHaveBeenCalledWith(credentials);
+  });
+
+  it('passes provider spawn extras from account settings into the backend run', async () => {
+    const credentials = { token: 'x' } as any;
+
+    vi.spyOn(persistenceModule, 'readCredentials').mockResolvedValue(credentials);
+    vi.spyOn(authModule, 'ensureMachineIdForCredentials').mockResolvedValue({ machineId: 'machine-1' } as any);
+    vi.spyOn(accountSettingsModule, 'bootstrapAccountSettingsContext').mockResolvedValue({
+      source: 'network',
+      settings: { codexBackendMode: 'acp' } as any,
+      settingsVersion: 1,
+      loadedAtMs: Date.now(),
+      whenRefreshed: null,
+    } as any);
+
+    const run = vi.fn().mockResolvedValue(undefined);
+    const loadRun = vi.fn().mockResolvedValue(run);
+
+    await runBackendSessionCliCommand({
+      context: { args: ['codex'], terminalRuntime: null } as any,
+      loadRun,
+      agentIdForAccountSettings: 'codex' as any,
+    });
+
+    expect(run).toHaveBeenCalledWith(expect.objectContaining({ experimentalCodexAcp: true }));
+  });
+
 });

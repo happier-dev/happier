@@ -1,19 +1,20 @@
 import { describe, expect, it } from 'vitest';
 
-import { applyProviderSpawnExtrasToProcessEnv, resolveProviderOutgoingMessageMetaExtras } from './providerSettings';
+import { resolveProviderOutgoingMessageMetaExtras, resolveProviderSpawnExtras } from './providerSettings';
 
 describe('providerSettings', () => {
-  it('sets Codex ACP env when account settings request ACP and env is unset', () => {
+  it('resolves Codex ACP spawn extras from account settings without mutating process env', () => {
     const prevAcp = process.env.HAPPIER_EXPERIMENTAL_CODEX_ACP;
+    process.env.HAPPIER_EXPERIMENTAL_CODEX_ACP = '0';
+
     try {
-      delete process.env.HAPPIER_EXPERIMENTAL_CODEX_ACP;
-
-      applyProviderSpawnExtrasToProcessEnv({
-        agentId: 'codex',
-        settings: { codexBackendMode: 'acp' },
-      });
-
-      expect(process.env.HAPPIER_EXPERIMENTAL_CODEX_ACP).toBe('1');
+      expect(
+        resolveProviderSpawnExtras({
+          agentId: 'codex',
+          settings: { codexBackendMode: 'acp' },
+        }),
+      ).toEqual({ experimentalCodexAcp: true });
+      expect(process.env.HAPPIER_EXPERIMENTAL_CODEX_ACP).toBe('0');
     } finally {
       if (prevAcp === undefined) {
         delete process.env.HAPPIER_EXPERIMENTAL_CODEX_ACP;
@@ -23,20 +24,13 @@ describe('providerSettings', () => {
     }
   });
 
-  it('does not override existing env overrides', () => {
-    const prevAcp = process.env.HAPPIER_EXPERIMENTAL_CODEX_ACP;
-    try {
-      process.env.HAPPIER_EXPERIMENTAL_CODEX_ACP = '1';
-
-      applyProviderSpawnExtrasToProcessEnv({
+  it('resolves Codex MCP spawn extras when account settings disable ACP', () => {
+    expect(
+      resolveProviderSpawnExtras({
         agentId: 'codex',
         settings: { codexBackendMode: 'mcp' },
-      });
-
-      expect(process.env.HAPPIER_EXPERIMENTAL_CODEX_ACP).toBe('1');
-    } finally {
-      process.env.HAPPIER_EXPERIMENTAL_CODEX_ACP = prevAcp;
-    }
+      }),
+    ).toEqual({ experimentalCodexAcp: false });
   });
 
   it('builds Claude outgoing meta defaults from account settings', () => {

@@ -66,6 +66,31 @@ describe('handleClaudeCliCommand --version', () => {
     expect(runSpy).toHaveBeenCalledWith(credentials, expect.any(Object));
   });
 
+  it('binds existing credentials through the token-aware machine id helper', async () => {
+    const credentials = { token: 'x' } as any;
+
+    vi.spyOn(persistenceModule, 'readCredentials').mockResolvedValue(credentials);
+    vi.spyOn(persistenceModule, 'readSettings').mockResolvedValue({ chromeMode: false, machineId: 'machine-1' } as any);
+    vi.spyOn(providerSettingsModule, 'resolveProviderOutgoingMessageMetaExtras').mockReturnValue({});
+    vi.spyOn(accountSettingsModule, 'bootstrapAccountSettingsContext').mockResolvedValue({
+      source: 'none',
+      settings: {} as any,
+      settingsVersion: 0,
+      loadedAtMs: Date.now(),
+      whenRefreshed: null,
+    } as any);
+    const ensureMachineSpy = vi.spyOn(authModule, 'ensureMachineIdForCredentials').mockResolvedValue({ machineId: 'machine-1' } as any);
+    vi.spyOn(runClaudeModule, 'runClaude').mockResolvedValue(undefined);
+
+    await handleClaudeCliCommand({
+      args: [],
+      terminalRuntime: null,
+      rawArgv: ['happier'],
+    } as any);
+
+    expect(ensureMachineSpy).toHaveBeenCalledWith(credentials);
+  });
+
   it('uses fast account settings bootstrap even when forcing refresh', async () => {
     const credentials = { token: 'x' } as any;
 

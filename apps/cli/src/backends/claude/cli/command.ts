@@ -8,7 +8,7 @@ import { runClaude, type StartOptions } from '@/backends/claude/runClaude';
 import { claudeCliPath } from '@/backends/claude/claudeLocal';
 import { readCredentials, readSettings } from '@/persistence';
 import { logger } from '@/ui/logger';
-import { authAndSetupMachineIfNeeded, ensureMachineIdInSettings } from '@/ui/auth';
+import { authAndSetupMachineIfNeeded, ensureMachineIdForCredentials } from '@/ui/auth';
 import { bootstrapAccountSettingsContext } from '@/settings/accountSettings/bootstrapAccountSettingsContext';
 import { resolveProviderOutgoingMessageMetaExtras } from '@/settings/providerSettings';
 import { ensureDaemonRunningForSessionCommand, shouldAutoStartDaemonAfterAuth } from '@/daemon/ensureDaemon';
@@ -235,9 +235,7 @@ ${chalk.bold.cyan('Claude Code Options (from `claude --help`):')}
     const auth = await authAndSetupMachineIfNeeded();
     credentials = auth.credentials;
   } else {
-    if (!settings.machineId) {
-      await ensureMachineIdInSettings();
-    }
+    await ensureMachineIdForCredentials(credentials);
     if (shouldAutoStartDaemonAfterAuth({ env: process.env, isDaemonProcess: configuration.isDaemonProcess })) {
       void ensureDaemonRunningForSessionCommand().catch((error) => {
         logger.debug('[claude] Failed to auto-start daemon (non-fatal)', error);

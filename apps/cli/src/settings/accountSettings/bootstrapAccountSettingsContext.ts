@@ -11,7 +11,6 @@ import { logger } from '@/ui/logger';
 import { decryptAccountSettingsCiphertext } from '@/settings/accountSettingsClient';
 import { assertBackendEnabledByAccountSettings } from '@/settings/backendEnabled';
 import { applyAccountSettingsToProcessEnv } from '@/settings/applyAccountSettingsToProcessEnv';
-import { applyProviderSpawnExtrasToProcessEnv } from '@/settings/providerSettings';
 
 import {
   type AccountSettingsCache,
@@ -165,7 +164,6 @@ export async function bootstrapAccountSettingsContext(params: Readonly<{
       setActiveAccountSettingsSnapshot({ source, settings, settingsVersion, loadedAtMs });
       if (agentId) {
         assertBackendEnabledByAccountSettings({ agentId, settings });
-        applyProviderSpawnExtrasToProcessEnv({ agentId, settings });
       }
       applyAccountSettingsToProcessEnv({ settings });
     }),

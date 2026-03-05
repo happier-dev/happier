@@ -193,7 +193,7 @@ vi.mock('@/agent/runtime/initializeBackendRunSession', () => ({
 }));
 
 describe('runCodex CodexACP resume behavior', () => {
-  beforeEach(() => {
+  beforeEach(async () => {
     probeCodexAcpLoadSessionSupportSpy.mockReset();
     resolveRunnerMcpServersSpy.mockReset();
     createCodexAcpRuntimeSpy.mockClear();
@@ -202,6 +202,8 @@ describe('runCodex CodexACP resume behavior', () => {
     codexLocalLauncherSpy.mockClear();
     codexLocalLauncherImpl = null;
     lastOnSwitchToLocal = null;
+    const experiments = await import('@/backends/codex/experiments');
+    (experiments.isExperimentalCodexAcpEnabled as unknown as ReturnType<typeof vi.fn>).mockReturnValue(true);
   });
 
   it('does not probe Codex ACP capabilities during startup for --resume sessions', async () => {
@@ -262,6 +264,41 @@ describe('runCodex CodexACP resume behavior', () => {
     expect(startOrLoad?.mock.calls[0]?.[0]).toMatchObject({ resumeId: 'resume-123', importHistory: false });
     await expect(startOrLoad?.mock.results?.[0]?.value).rejects.toThrow(/startOrLoad-called/);
 
+    expect(outcome.ok).toBe(false);
+  });
+
+  it('honors explicit experimentalCodexAcp when the env-backed experiment flag is off', async () => {
+    const experiments = await import('@/backends/codex/experiments');
+    (experiments.isExperimentalCodexAcpEnabled as unknown as ReturnType<typeof vi.fn>).mockReturnValue(false);
+
+    resolveRunnerMcpServersSpy.mockImplementationOnce(async () => ({
+      happierMcpServer: { url: 'http://127.0.0.1:0', stop: vi.fn() },
+      mcpServers: {},
+    }));
+
+    waitForMessagesOrPendingImpl = async () => {
+      throw new Error('wait-called');
+    };
+
+    const { runCodex } = await import('./runCodex');
+
+    const credentials = { token: 'test' } as Credentials;
+    const outcome = await runCodex({
+      credentials,
+      startedBy: 'terminal',
+      startingMode: 'remote',
+      resume: 'resume-123',
+      permissionMode: 'default',
+      permissionModeUpdatedAt: 1,
+      experimentalCodexAcp: true,
+    } as any)
+      .then(() => ({ ok: true as const }))
+      .catch((error: unknown) => ({ ok: false as const, error }));
+
+    expect(createCodexAcpRuntimeSpy).toHaveBeenCalled();
+    const createdRuntime = createCodexAcpRuntimeSpy.mock.results[0]?.value as any;
+    const startOrLoad = createdRuntime?.startOrLoad as ReturnType<typeof vi.fn> | undefined;
+    expect(startOrLoad?.mock.calls[0]?.[0]).toMatchObject({ resumeId: 'resume-123', importHistory: false });
     expect(outcome.ok).toBe(false);
   });
 

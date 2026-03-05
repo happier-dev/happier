@@ -103,6 +103,7 @@ export async function runCodex(opts: {
     existingSessionId?: string;
     resume?: string;
     startingMode?: 'local' | 'remote';
+    experimentalCodexAcp?: boolean;
     accountSettingsContext?: import('@/settings/accountSettings/bootstrapAccountSettingsContext').AccountSettingsContext | null;
 }): Promise<void> {
     // Use shared PermissionMode type for cross-agent compatibility
@@ -224,7 +225,7 @@ export async function runCodex(opts: {
 
     const hasTtyForLocal = Boolean(process.stdin.isTTY && process.stdout.isTTY);
     const startedByForLocalControl = opts.startedBy === 'daemon' ? 'daemon' : 'cli';
-    const experimentalCodexAcpEnabled = isExperimentalCodexAcpEnabled();
+    const experimentalCodexAcpEnabled = opts.experimentalCodexAcp ?? isExperimentalCodexAcpEnabled();
     const localControlEnabled = experimentalCodexAcpEnabled;
 
     const resolveLocalControlSupport = createCodexLocalControlSupportResolver({
@@ -417,7 +418,7 @@ export async function runCodex(opts: {
             // If we are attaching using the MCP engine, strip any stale ACP session *state* metadata.
             // This prevents the UI from mis-detecting ACP capabilities based on previous runs.
             // Note: we intentionally keep user-configured overrides (permissionMode/modelOverride/acpSessionModeOverride).
-            if (!isExperimentalCodexAcpEnabled()) {
+            if (!experimentalCodexAcpEnabled) {
                 updateMetadataBestEffort(
                     attachSession,
                     (current) => {
@@ -650,7 +651,7 @@ export async function runCodex(opts: {
         logger.debug('[Codex] Resume requested via --resume:', storedSessionIdForResume);
     }
 
-    let useCodexAcp = isExperimentalCodexAcpEnabled();
+    let useCodexAcp = experimentalCodexAcpEnabled;
     const resumeRequested = typeof opts.resume === 'string' && opts.resume.trim().length > 0;
     if (useCodexAcp) {
         try {
