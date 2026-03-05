@@ -11,6 +11,19 @@ export {
 } from './crypto/accountScopedCipher.js';
 
 export {
+  EncryptedStringV1Schema,
+  SecretStringV1Schema,
+  decryptSecretStringV1,
+  decryptSecretValueV1,
+  deriveSettingsSecretsKeyV1,
+  encryptSecretStringV1,
+  sealSecretsDeepV1,
+  unsealSecretsDeepV1,
+  type EncryptedStringV1,
+  type SecretStringV1,
+} from './crypto/settingsSecretStringsV1.js';
+
+export {
   ConnectedServiceCredentialFormatSchema,
   ConnectedServiceCredentialKindSchema,
   ConnectedServiceCredentialRecordV1Schema,
