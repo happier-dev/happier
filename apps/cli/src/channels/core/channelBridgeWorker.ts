@@ -803,7 +803,7 @@ export async function executeChannelBridgeTick(params: Readonly<{
         }
 
         const nextSeq = parsedSeq;
-        const text = String(row.text ?? '').trim();
+        const text = String(row.text).trim();
         if (!text) {
           const persisted = await persistCursor(nextSeq);
           if (!persisted) {
