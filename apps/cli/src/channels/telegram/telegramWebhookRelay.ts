@@ -29,9 +29,6 @@ export async function startTelegramWebhookRelay(params: Readonly<{
   if (!/^[A-Za-z0-9_-]+$/.test(secretPathToken)) {
     throw new Error('Webhook secret token must match [A-Za-z0-9_-]');
   }
-  if (secretPathToken.includes('/')) {
-    throw new Error('Webhook secret token must not contain "/"');
-  }
 
   const secretHeaderToken = String(params.secretHeaderToken ?? secretPathToken).trim();
   if (!secretHeaderToken) {

@@ -349,7 +349,9 @@ export async function startChannelBridgeFromEnv(params: Readonly<{
       } finally {
         try {
           if (relayHandle) {
-            await relayHandle.stop();
+            await relayHandle.stop().catch((error: unknown) => {
+              logger.warn('[channelBridge] Error stopping webhook relay during shutdown', error);
+            });
           }
         } finally {
           defaultDepsHandle?.dispose();
