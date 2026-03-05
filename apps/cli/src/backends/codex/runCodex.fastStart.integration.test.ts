@@ -1,4 +1,7 @@
 import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { randomUUID } from 'node:crypto';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 import type { Credentials } from '@/persistence';
 
@@ -82,7 +85,6 @@ vi.mock('@/agent/runtime/initializeBackendRunSession', () => ({ initializeBacken
 
 vi.mock('@/backends/codex/experiments', () => ({
   isExperimentalCodexAcpEnabled: vi.fn(() => true),
-  isExperimentalCodexVendorResumeEnabled: vi.fn(() => false),
 }));
 
 vi.mock('@/backends/codex/utils/resolveCodexStartingMode', () => ({
@@ -121,6 +123,86 @@ describe('runCodex fast-start', () => {
     void code;
     return undefined as never;
   }) as any);
+
+  it('forwards Codex ACP fallback messages to the session', async () => {
+    const prev = process.env.HAPPIER_CODEX_ACP_FALLBACK_TO_MCP_MESSAGE;
+    process.env.HAPPIER_CODEX_ACP_FALLBACK_TO_MCP_MESSAGE = 'codex-acp missing; falling back to mcp';
+
+    const { runCodex } = await import('./runCodex');
+    const credentials = { token: 'test' } as Credentials;
+
+    let sessionRef: any = null;
+    initializeBackendRunSessionImpl = async (opts: any) => {
+      sessionRef = opts.api.sessionSyncClient({ id: 'sess_1', metadataVersion: 1 });
+      return {
+        session: sessionRef,
+        reconnectionHandle: null,
+        reportedSessionId: 'sess_1',
+        attachedToExistingSession: false,
+      };
+    };
+
+    const runPromise = runCodex({ credentials, startedBy: 'terminal', startingMode: 'local' }).catch(() => {});
+    try {
+      await expect(waitFor(localStarted.promise, 75)).resolves.toBeUndefined();
+    } finally {
+      localExit.resolve({ type: 'exit', code: 0 });
+      await runPromise;
+      if (prev === undefined) delete process.env.HAPPIER_CODEX_ACP_FALLBACK_TO_MCP_MESSAGE;
+      else process.env.HAPPIER_CODEX_ACP_FALLBACK_TO_MCP_MESSAGE = prev;
+    }
+
+    expect(sessionRef?.sendSessionEvent).toHaveBeenCalledWith({
+      type: 'message',
+      message: 'codex-acp missing; falling back to mcp',
+    });
+  });
+
+  it('falls back to MCP when Codex ACP is enabled but the configured binary is missing on disk', async () => {
+    const prevAcpBin = process.env.HAPPIER_CODEX_ACP_BIN;
+    const prevFallbackMessage = process.env.HAPPIER_CODEX_ACP_FALLBACK_TO_MCP_MESSAGE;
+    delete process.env.HAPPIER_CODEX_ACP_FALLBACK_TO_MCP_MESSAGE;
+
+    process.env.HAPPIER_CODEX_ACP_BIN = join(tmpdir(), `happier-missing-codex-acp-${randomUUID()}`);
+
+    const { runCodex } = await import('./runCodex');
+    const credentials = { token: 'test' } as Credentials;
+
+    let sessionRef: any = null;
+    initializeBackendRunSessionImpl = async (opts: any) => {
+      sessionRef = opts.api.sessionSyncClient({ id: 'sess_1', metadataVersion: 1 });
+      return {
+        session: sessionRef,
+        reconnectionHandle: null,
+        reportedSessionId: 'sess_1',
+        attachedToExistingSession: false,
+      };
+    };
+
+    const runPromise = runCodex({ credentials, startedBy: 'terminal', startingMode: 'local' }).catch(() => {});
+    try {
+      await expect(waitFor(localStarted.promise, 75)).resolves.toBeUndefined();
+    } finally {
+      localExit.resolve({ type: 'exit', code: 0 });
+      await runPromise;
+
+      if (prevAcpBin === undefined) delete process.env.HAPPIER_CODEX_ACP_BIN;
+      else process.env.HAPPIER_CODEX_ACP_BIN = prevAcpBin;
+
+      if (prevFallbackMessage === undefined) delete process.env.HAPPIER_CODEX_ACP_FALLBACK_TO_MCP_MESSAGE;
+      else process.env.HAPPIER_CODEX_ACP_FALLBACK_TO_MCP_MESSAGE = prevFallbackMessage;
+    }
+
+    const messageCalls = (sessionRef?.sendSessionEvent as any)?.mock?.calls ?? [];
+    const messages = messageCalls
+      .map((call: any[]) => call?.[0])
+      .filter((event: any) => event?.type === 'message')
+      .map((event: any) => event?.message)
+      .filter((message: unknown) => typeof message === 'string') as string[];
+
+    expect(messages.join('\n')).toContain('Falling back to MCP');
+    expect(messages.join('\n')).toContain('HAPPIER_CODEX_ACP_BIN');
+  });
 
   beforeEach(() => {
     localStarted = createDeferred<void>();

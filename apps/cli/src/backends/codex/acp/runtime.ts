@@ -38,6 +38,7 @@ export function createCodexAcpRuntime(params: {
     mcpServers: params.mcpServers,
     permissionHandler: params.permissionHandler,
     onThinkingChange: params.onThinkingChange,
+    changeTitleInstruction: { enabled: false },
     hooks: {
       onPermissionRequest: ({ permissionId, toolName }) => {
         if (!params.pushSender) return;

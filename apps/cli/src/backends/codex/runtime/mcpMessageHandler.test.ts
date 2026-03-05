@@ -58,6 +58,8 @@ describe('createCodexMcpMessageHandler', () => {
     let currentTaskId: string | null = null;
     const session = {
       sendAgentMessage: vi.fn(),
+      sendAgentMessageCommitted: vi.fn(async () => {}),
+      sendTranscriptDraftDelta: vi.fn(),
       sendCodexMessage: vi.fn(),
       sendSessionEvent: vi.fn(),
       keepAlive: vi.fn(),
@@ -97,6 +99,8 @@ describe('createCodexMcpMessageHandler', () => {
     const sendReady = vi.fn();
     const session = {
       sendAgentMessage: vi.fn(),
+      sendAgentMessageCommitted: vi.fn(async () => {}),
+      sendTranscriptDraftDelta: vi.fn(),
       sendCodexMessage: vi.fn(),
       sendSessionEvent: vi.fn(),
       keepAlive,
@@ -134,42 +138,75 @@ describe('createCodexMcpMessageHandler', () => {
   });
 
   it('streams agent_reasoning deltas as ACP thinking messages (not tool calls)', () => {
-    let thinking = false;
-    let currentTaskId: string | null = null;
-    const keepAlive = vi.fn();
-    const sendReady = vi.fn();
-    const session = {
-      sendAgentMessage: vi.fn(),
-      sendCodexMessage: vi.fn(),
-      sendSessionEvent: vi.fn(),
-      keepAlive,
-    };
-    const messageBuffer = { addMessage: vi.fn() };
-    const logger = { debug: vi.fn() };
-    const diffProcessor = { processDiff: vi.fn() };
+    const prevDraftFlush = process.env.HAPPIER_STREAM_DRAFT_FLUSH_MS;
+    const prevCheckpointMs = process.env.HAPPIER_STREAM_CHECKPOINT_MS;
+    const prevMinChars = process.env.HAPPIER_STREAM_CHECKPOINT_MIN_CHARS;
+    process.env.HAPPIER_STREAM_DRAFT_FLUSH_MS = '0';
+    process.env.HAPPIER_STREAM_CHECKPOINT_MS = '1000000';
+    process.env.HAPPIER_STREAM_CHECKPOINT_MIN_CHARS = '1000000';
 
-    const handler = createCodexMcpMessageHandler({
-      logger,
-      session,
-      messageBuffer,
-      sendReady,
-      publishCodexThreadIdToMetadata: vi.fn(),
-      diffProcessor,
-      getCurrentTaskId: () => currentTaskId,
-      setCurrentTaskId: (next: string | null) => {
-        currentTaskId = next;
-      },
-      getThinking: () => thinking,
-      setThinking: (next: boolean) => {
-        thinking = next;
-      },
-    });
+    try {
+      let thinking = false;
+      let currentTaskId: string | null = null;
+      const keepAlive = vi.fn();
+      const sendReady = vi.fn();
+      const session = {
+        sendAgentMessage: vi.fn(),
+        sendAgentMessageCommitted: vi.fn(async () => {}),
+        sendTranscriptDraftDelta: vi.fn(),
+        sendCodexMessage: vi.fn(),
+        sendSessionEvent: vi.fn(),
+        keepAlive,
+      };
+      const messageBuffer = { addMessage: vi.fn() };
+      const logger = { debug: vi.fn() };
+      const diffProcessor = { processDiff: vi.fn() };
 
-    handler({ type: 'agent_reasoning_delta', delta: '**Title**\n\nHello' });
-    expect(session.sendAgentMessage).toHaveBeenCalledWith('codex', {
-      type: 'thinking',
-      text: '**Title**\n\nHello',
-    });
-    expect(session.sendCodexMessage).not.toHaveBeenCalled();
+      const handler = createCodexMcpMessageHandler({
+        logger,
+        session,
+        messageBuffer,
+        sendReady,
+        publishCodexThreadIdToMetadata: vi.fn(),
+        diffProcessor,
+        getCurrentTaskId: () => currentTaskId,
+        setCurrentTaskId: (next: string | null) => {
+          currentTaskId = next;
+        },
+        getThinking: () => thinking,
+        setThinking: (next: boolean) => {
+          thinking = next;
+        },
+      });
+
+      handler({ type: 'agent_reasoning_delta', delta: '**Title**\n\nHello' });
+      expect(session.sendAgentMessage).not.toHaveBeenCalled();
+      expect(session.sendAgentMessageCommitted).toHaveBeenCalledWith(
+        'codex',
+        { type: 'thinking', text: '**Title**\n\nHello' },
+        expect.objectContaining({
+          localId: expect.any(String),
+          meta: expect.objectContaining({
+            happierStreamSegmentV1: expect.objectContaining({
+              v: 1,
+              segmentKind: 'thinking',
+              segmentState: 'streaming',
+            }),
+          }),
+        }),
+      );
+      expect(session.sendTranscriptDraftDelta).toHaveBeenCalledWith(
+        'codex',
+        expect.objectContaining({
+          segmentKind: 'thinking',
+          deltaText: '**Title**\n\nHello',
+        }),
+      );
+      expect(session.sendCodexMessage).not.toHaveBeenCalled();
+    } finally {
+      process.env.HAPPIER_STREAM_DRAFT_FLUSH_MS = prevDraftFlush;
+      process.env.HAPPIER_STREAM_CHECKPOINT_MS = prevCheckpointMs;
+      process.env.HAPPIER_STREAM_CHECKPOINT_MIN_CHARS = prevMinChars;
+    }
   });
 });

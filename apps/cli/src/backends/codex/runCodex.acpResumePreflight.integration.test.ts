@@ -9,11 +9,11 @@ vi.mock('@/backends/codex/acp/probeLoadSessionSupport', () => ({
   probeCodexAcpLoadSessionSupport: (...args: any[]) => probeCodexAcpLoadSessionSupportSpy(...args),
 }));
 
-const createHappierMcpBridgeSpy = vi.fn<(...args: any[]) => Promise<any>>(async (..._args) => {
+const resolveRunnerMcpServersSpy = vi.fn<(...args: any[]) => Promise<any>>(async (..._args) => {
   throw new Error('bridge-called');
 });
-vi.mock('@/agent/runtime/createHappierMcpBridge', () => ({
-  createHappierMcpBridge: (...args: any[]) => createHappierMcpBridgeSpy(...args),
+vi.mock('@/mcp/runtime/resolveRunnerMcpServers', () => ({
+  resolveRunnerMcpServers: (...args: any[]) => resolveRunnerMcpServersSpy(...args),
 }));
 
 const createCodexAcpRuntimeSpy = vi.fn<(...args: any[]) => any>((..._args) => ({
@@ -67,12 +67,17 @@ vi.mock('@/agent/runtime/startup/startupOverridesCache', () => ({
   writeStartupOverridesCacheForBackend: vi.fn(() => {}),
 }));
 
+let lastOnSwitchToLocal: (() => Promise<void>) | null = null;
+
 vi.mock('./runtime/createCodexRemoteTerminalUi', () => ({
-  createCodexRemoteTerminalUi: vi.fn(() => ({
-    mount: vi.fn(),
-    unmount: vi.fn(async () => {}),
-    setAllowSwitchToLocal: vi.fn(),
-  })),
+  createCodexRemoteTerminalUi: vi.fn((opts: any) => {
+    lastOnSwitchToLocal = typeof opts?.onSwitchToLocal === 'function' ? opts.onSwitchToLocal : null;
+    return {
+      mount: vi.fn(),
+      unmount: vi.fn(async () => {}),
+      setAllowSwitchToLocal: vi.fn(),
+    };
+  }),
 }));
 
 vi.mock('@/ui/tty/resolveHasTTY', () => ({
@@ -81,7 +86,6 @@ vi.mock('@/ui/tty/resolveHasTTY', () => ({
 
 vi.mock('@/backends/codex/experiments', () => ({
   isExperimentalCodexAcpEnabled: vi.fn(() => true),
-  isExperimentalCodexVendorResumeEnabled: vi.fn(() => false),
 }));
 
 vi.mock('./utils/resolveCodexStartingMode', () => ({
@@ -131,6 +135,15 @@ vi.mock('./localControl/createLocalControlSupportResolver', () => ({
   createCodexLocalControlSupportResolver: vi.fn(() => async () => ({ ok: false as const, reason: 'test' })),
 }));
 
+let codexLocalLauncherImpl: ((opts: any) => Promise<any>) | null = null;
+const codexLocalLauncherSpy = vi.fn<(...args: any[]) => Promise<any>>(async (opts: any) => {
+  if (codexLocalLauncherImpl) return await codexLocalLauncherImpl(opts);
+  throw new Error('codexLocalLauncher-called');
+});
+vi.mock('./codexLocalLauncher', () => ({
+  codexLocalLauncher: (opts: any) => codexLocalLauncherSpy(opts),
+}));
+
 vi.mock('@/agent/runtime/initializeBackendApiContext', () => ({
   initializeBackendApiContext: vi.fn(async () => ({
     api: {
@@ -148,6 +161,9 @@ vi.mock('@/agent/runtime/initializeBackendApiContext', () => ({
         sendSessionDeath: vi.fn(),
         flush: vi.fn(async () => {}),
         close: vi.fn(async () => {}),
+        listPendingMessageQueueV2LocalIds: vi.fn(async () => []),
+        discardPendingMessageQueueV2All: vi.fn(async () => {}),
+        discardCommittedMessageLocalIds: vi.fn(async () => {}),
         popPendingMessage: vi.fn(async () => false),
         waitForMetadataUpdate: vi.fn(async () => false),
       })),
@@ -179,17 +195,20 @@ vi.mock('@/agent/runtime/initializeBackendRunSession', () => ({
 describe('runCodex CodexACP resume behavior', () => {
   beforeEach(() => {
     probeCodexAcpLoadSessionSupportSpy.mockReset();
-    createHappierMcpBridgeSpy.mockReset();
+    resolveRunnerMcpServersSpy.mockReset();
     createCodexAcpRuntimeSpy.mockClear();
     waitForMessagesOrPendingSpy.mockClear();
     waitForMessagesOrPendingImpl = null;
+    codexLocalLauncherSpy.mockClear();
+    codexLocalLauncherImpl = null;
+    lastOnSwitchToLocal = null;
   });
 
   it('does not probe Codex ACP capabilities during startup for --resume sessions', async () => {
     probeCodexAcpLoadSessionSupportSpy.mockImplementationOnce(async () => {
       throw new Error('probe-called');
     });
-    createHappierMcpBridgeSpy.mockImplementationOnce(async () => {
+    resolveRunnerMcpServersSpy.mockImplementationOnce(async () => {
       throw new Error('bridge-called');
     });
 
@@ -210,22 +229,15 @@ describe('runCodex CodexACP resume behavior', () => {
 
   it('fails closed for explicit --resume when Codex ACP loadSession fails', async () => {
     probeCodexAcpLoadSessionSupportSpy.mockImplementationOnce(async () => ({ ok: true, checkedAt: Date.now(), loadSession: true, agentCapabilities: { loadSession: true, sessionCapabilities: {}, promptCapabilities: { image: false, audio: false, embeddedContext: false }, mcpCapabilities: { http: false, sse: false } } } as any));
-    createHappierMcpBridgeSpy.mockImplementationOnce(async () => ({
+    resolveRunnerMcpServersSpy.mockImplementationOnce(async () => ({
       happierMcpServer: { url: 'http://127.0.0.1:0', stop: vi.fn() },
       mcpServers: {},
     }));
 
-    // Feed a single message so the runner attempts to start/load the ACP session.
-    let delivered = false;
+    // If the resume attempt does not happen eagerly, the runner would otherwise wait for messages.
+    // Throw if we ever reach the wait loop so the test fails fast instead of hanging.
     waitForMessagesOrPendingImpl = async () => {
-      if (delivered) return null;
-      delivered = true;
-      return {
-        message: 'hello',
-        mode: { permissionMode: 'default', permissionModeUpdatedAt: 1, localId: null, model: null },
-        isolate: false,
-        hash: 'hash',
-      };
+      throw new Error('wait-called');
     };
 
     const { runCodex } = await import('./runCodex');
@@ -243,14 +255,136 @@ describe('runCodex CodexACP resume behavior', () => {
       .catch((error: unknown) => ({ ok: false as const, error }));
 
     expect(createCodexAcpRuntimeSpy).toHaveBeenCalled();
-    expect(waitForMessagesOrPendingSpy).toHaveBeenCalled();
     const createdRuntime = createCodexAcpRuntimeSpy.mock.results[0]?.value as any;
     const startOrLoad = createdRuntime?.startOrLoad as ReturnType<typeof vi.fn> | undefined;
     expect(startOrLoad).toBeTruthy();
     expect(startOrLoad?.mock.calls.length).toBe(1);
-    expect(startOrLoad?.mock.calls[0]?.[0]).toMatchObject({ resumeId: 'resume-123' });
+    expect(startOrLoad?.mock.calls[0]?.[0]).toMatchObject({ resumeId: 'resume-123', importHistory: false });
     await expect(startOrLoad?.mock.results?.[0]?.value).rejects.toThrow(/startOrLoad-called/);
 
     expect(outcome.ok).toBe(false);
+  });
+
+  it('fails closed when switching local→remote and Codex ACP loadSession fails', async () => {
+    probeCodexAcpLoadSessionSupportSpy.mockImplementationOnce(async () => {
+      throw new Error('probe-called');
+    });
+    resolveRunnerMcpServersSpy.mockImplementationOnce(async () => ({
+      happierMcpServer: { url: 'http://127.0.0.1:0', stop: vi.fn() },
+      mcpServers: {},
+    }));
+
+    const { createCodexLocalControlSupportResolver } = await import('./localControl/createLocalControlSupportResolver');
+    (createCodexLocalControlSupportResolver as unknown as ReturnType<typeof vi.fn>).mockImplementation(
+      () => async () => ({ ok: true as const, backend: 'acp' }),
+    );
+
+    codexLocalLauncherImpl = async () => ({ type: 'switch', resumeId: 'resume-from-local' });
+
+    const { resolveCodexStartingMode } = await import('./utils/resolveCodexStartingMode');
+    (resolveCodexStartingMode as unknown as ReturnType<typeof vi.fn>).mockReturnValue('local');
+
+    // If the local→remote resume attempt does not happen eagerly, the runner would otherwise wait for messages.
+    // Throw if we ever reach the wait loop so the test fails fast instead of hanging.
+    waitForMessagesOrPendingImpl = async () => {
+      throw new Error('wait-called');
+    };
+
+    const { runCodex } = await import('./runCodex');
+
+    const credentials = { token: 'test' } as Credentials;
+    const outcome = await runCodex({
+      credentials,
+      startedBy: 'terminal',
+      startingMode: 'remote',
+      resume: null,
+      permissionMode: 'default',
+      permissionModeUpdatedAt: 1,
+    } as any)
+      .then(() => ({ ok: true as const }))
+      .catch((error: unknown) => ({ ok: false as const, error }));
+
+    expect(createCodexAcpRuntimeSpy).toHaveBeenCalled();
+    expect(codexLocalLauncherSpy).toHaveBeenCalled();
+
+    const createdRuntime = createCodexAcpRuntimeSpy.mock.results[0]?.value as any;
+    const startOrLoad = createdRuntime?.startOrLoad as ReturnType<typeof vi.fn> | undefined;
+    expect(startOrLoad).toBeTruthy();
+    expect(startOrLoad?.mock.calls.length).toBe(1);
+    expect(startOrLoad?.mock.calls[0]?.[0]).toMatchObject({ resumeId: 'resume-from-local', importHistory: false });
+
+    expect(outcome.ok).toBe(false);
+  });
+
+  it('can switch remote→local while Codex ACP resume is still in progress', async () => {
+    resolveRunnerMcpServersSpy.mockImplementationOnce(async () => ({
+      happierMcpServer: { url: 'http://127.0.0.1:0', stop: vi.fn() },
+      mcpServers: {},
+    }));
+
+    const { createCodexLocalControlSupportResolver } = await import('./localControl/createLocalControlSupportResolver');
+    (createCodexLocalControlSupportResolver as unknown as ReturnType<typeof vi.fn>).mockImplementation(
+      () => async () => ({ ok: true as const, backend: 'acp' }),
+    );
+
+    const { resolveCodexStartingMode } = await import('./utils/resolveCodexStartingMode');
+    (resolveCodexStartingMode as unknown as ReturnType<typeof vi.fn>).mockReturnValue('local');
+
+    // First local pass switches to remote with a resume id, second local pass exits.
+    let localLauncherCalls = 0;
+    codexLocalLauncherImpl = async () => {
+      localLauncherCalls += 1;
+      if (localLauncherCalls === 1) return { type: 'switch', resumeId: 'resume-from-local' };
+      return { type: 'exit', code: 0 };
+    };
+
+    // The runtime will begin a loadSession that never resolves. The switch-to-local request should abort it.
+    const never = new Promise<void>(() => {});
+    createCodexAcpRuntimeSpy.mockImplementationOnce(() => ({
+      getSessionId: () => null,
+      supportsInFlightSteer: () => false,
+      isTurnInFlight: () => false,
+      beginTurn: vi.fn(),
+      cancel: vi.fn(async () => {}),
+      reset: vi.fn(async () => {}),
+      startOrLoad: vi.fn(() => never),
+      setSessionMode: vi.fn(async () => {}),
+      setSessionModel: vi.fn(async () => {}),
+      setSessionConfigOption: vi.fn(async () => {}),
+      steerPrompt: vi.fn(async () => {}),
+      sendPrompt: vi.fn(async () => {}),
+      flushTurn: vi.fn(),
+    }));
+
+    // If we ever reach the message wait loop, return null so the runner can proceed.
+    waitForMessagesOrPendingImpl = async () => null;
+
+    const { runCodex } = await import('./runCodex');
+
+    const credentials = { token: 'test' } as Credentials;
+    const runPromise = runCodex({
+      credentials,
+      startedBy: 'terminal',
+      startingMode: 'remote',
+      resume: null,
+      permissionMode: 'default',
+      permissionModeUpdatedAt: 1,
+    } as any);
+
+    await expect.poll(() => createCodexAcpRuntimeSpy.mock.calls.length, { timeout: 1_000 }).toBe(1);
+    await expect.poll(() => typeof lastOnSwitchToLocal, { timeout: 1_000 }).toBe('function');
+
+    const createdRuntime = createCodexAcpRuntimeSpy.mock.results[0]?.value as any;
+    expect(createdRuntime?.startOrLoad).toBeTruthy();
+
+    await expect
+      .poll(() => (createdRuntime.startOrLoad as ReturnType<typeof vi.fn>).mock.calls.length, { timeout: 1_000 })
+      .toBe(1);
+
+    await lastOnSwitchToLocal?.();
+
+    await expect.poll(() => codexLocalLauncherSpy.mock.calls.length, { timeout: 1_000 }).toBe(2);
+
+    await expect(runPromise).resolves.toBeUndefined();
   });
 });

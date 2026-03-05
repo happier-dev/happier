@@ -92,6 +92,7 @@ describe('createCodexAcpBackend', () => {
       await withEnv({
         HAPPIER_VARIANT: 'stable',
         HAPPIER_HOME_DIR: dir,
+        CODEX_HOME: dir,
         HAPPIER_CODEX_ACP_BIN: wrapper,
         OPENAI_API_KEY: 'sk-test',
       }, async () => {
@@ -113,17 +114,22 @@ describe('createCodexAcpBackend', () => {
       await withEnv({
         HAPPIER_VARIANT: 'stable',
         HAPPIER_HOME_DIR: homeDir,
+        CODEX_HOME: homeDir,
         HAPPIER_CODEX_ACP_NPX_MODE: 'force',
       }, async () => {
-        const mod = await import('./backend');
-        const created = mod.createCodexAcpBackend({ cwd: homeDir, env: {} });
-        expect(created.spawn.command).toBe('npx');
-        expect(created.spawn.args).toEqual(['--prefer-offline', '-y', '@zed-industries/codex-acp']);
-      });
-    } finally {
-      await rm(homeDir, { recursive: true, force: true });
-    }
-  });
+	        const mod = await import('./backend');
+	        const created = mod.createCodexAcpBackend({ cwd: homeDir, env: {} });
+	        expect(created.spawn.command).toBe('npx');
+	        expect(created.spawn.args).toEqual([
+	          '--prefer-offline',
+	          '-y',
+	          '@zed-industries/codex-acp',
+	        ]);
+	      });
+	    } finally {
+	      await rm(homeDir, { recursive: true, force: true });
+	    }
+	  });
 
   it('passes permission-mode-derived overrides to the codex-acp spawn spec', async () => {
     const homeDir = await mkdtemp(join(tmpdir(), 'happier-home-'));
@@ -131,21 +137,22 @@ describe('createCodexAcpBackend', () => {
       await withEnv({
         HAPPIER_VARIANT: 'stable',
         HAPPIER_HOME_DIR: homeDir,
+        CODEX_HOME: homeDir,
         HAPPIER_CODEX_ACP_NPX_MODE: 'force',
         HAPPIER_CODEX_ACP_CONFIG_OVERRIDES: undefined,
       }, async () => {
         const mod = await import('./backend');
-        const created = mod.createCodexAcpBackend({ cwd: homeDir, env: {}, permissionMode: 'yolo' });
-        expect(created.spawn.command).toBe('npx');
-        expect(created.spawn.args).toEqual([
-          '--prefer-offline',
-          '-y',
-          '@zed-industries/codex-acp',
-          '-c',
-          'approval_policy=\"never\"',
-          '-c',
-          'sandbox_mode=\"danger-full-access\"',
-        ]);
+	        const created = mod.createCodexAcpBackend({ cwd: homeDir, env: {}, permissionMode: 'yolo' });
+	        expect(created.spawn.command).toBe('npx');
+	        expect(created.spawn.args).toEqual([
+	          '--prefer-offline',
+	          '-y',
+	          '@zed-industries/codex-acp',
+	          '-c',
+	          'approval_policy=\"never\"',
+	          '-c',
+	          'sandbox_mode=\"danger-full-access\"',
+	        ]);
       });
     } finally {
       await rm(homeDir, { recursive: true, force: true });
@@ -176,6 +183,45 @@ describe('createCodexAcpBackend', () => {
         expect(captured[0].command).toBe('npx');
         expect(captured[0].transportHandler?.getInitTimeout?.()).toBeGreaterThan(60_000);
       });
+    } finally {
+      await rm(homeDir, { recursive: true, force: true });
+    }
+  });
+
+  it('uses a longer init timeout when codex ACP is resolved via a direct binary path', async () => {
+    const homeDir = await mkdtemp(join(tmpdir(), 'happier-home-'));
+    const captured: Array<any> = [];
+    const fakeBin = join(homeDir, 'codex-acp');
+    try {
+      writeFileSync(fakeBin, '#!/bin/sh\necho ok\n', 'utf8');
+      await (await import('node:fs/promises')).chmod(fakeBin, 0o755);
+
+      await withEnv(
+        {
+          HAPPIER_VARIANT: 'stable',
+          HAPPIER_HOME_DIR: homeDir,
+          CODEX_HOME: homeDir,
+          HAPPIER_CODEX_ACP_BIN: fakeBin,
+          HAPPIER_CODEX_ACP_INIT_TIMEOUT_MS: undefined,
+          HAPPIER_CODEX_ACP_NPX_INIT_TIMEOUT_MS: undefined,
+        },
+        async () => {
+          vi.doMock('@/agent/acp/AcpBackend', () => ({
+            AcpBackend: class {
+              constructor(opts: any) {
+                captured.push(opts);
+              }
+            },
+          }));
+
+          const mod = await import('./backend');
+          mod.createCodexAcpBackend({ cwd: homeDir, env: {} });
+
+          expect(captured).toHaveLength(1);
+          expect(captured[0].command).toBe(fakeBin);
+          expect(captured[0].transportHandler?.getInitTimeout?.()).toBe(180_000);
+        },
+      );
     } finally {
       await rm(homeDir, { recursive: true, force: true });
     }

@@ -280,10 +280,6 @@ export class CodexMcpClient {
         logger.debug('[CodexMCP] Session seeded for resume:', this.threadId);
     }
 
-    setSessionIdForResume(sessionId: string): void {
-        this.setThreadIdForResume(sessionId);
-    }
-
     hasActiveSession(): boolean {
         return this.threadId !== null;
     }
@@ -293,11 +289,6 @@ export class CodexMcpClient {
         this.threadId = null;
         this.conversationId = null;
         logger.debug('[CodexMCP] Session cleared, previous sessionId:', previousSessionId);
-    }
-
-    storeSessionForResume(): string | null {
-        logger.debug('[CodexMCP] Storing session for potential resume:', this.threadId);
-        return this.threadId;
     }
 
     async forceCloseSession(): Promise<void> {

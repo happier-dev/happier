@@ -10,13 +10,21 @@ export type LocalLauncherMode = Readonly<{ permissionMode: PermissionMode }>;
 type SessionMetadataState = { codexSessionId: string | null };
 type CodexBody = { type?: string; message?: string; id?: string; callId?: string };
 type SessionEvent = { type?: string; message?: string };
+type RpcHandler = (params: unknown) => Promise<boolean>;
 
 const TRACKED_ENV_KEYS = [
   'HAPPIER_CODEX_SESSIONS_DIR',
   'HAPPIER_CODEX_TUI_BIN',
+  'CODEX_HOME',
+  'CODEX_THREAD_ID',
+  'CODEX_CI',
+  'CODEX_SHELL',
+  'CODEX_INTERNAL_ORIGINATOR_OVERRIDE',
   'TEST_CODEX_SESSION_ID',
   'TEST_CODEX_TIMESTAMP',
   'TEST_CODEX_ARGV_PATH',
+  'TEST_CODEX_THREAD_ID_PATH',
+  'TEST_CODEX_ENV_DUMP_PATH',
 ] as const;
 
 export type LocalSessionHarness = {
@@ -25,6 +33,7 @@ export type LocalSessionHarness = {
   sessionEvents: SessionEvent[];
   metadataUpdates: SessionMetadataState[];
   agentStateUpdates: Array<Record<string, unknown>>;
+  rpcHandlers: Record<string, RpcHandler>;
 };
 
 export async function waitFor(assertion: () => void, opts?: { timeoutMs?: number; intervalMs?: number }): Promise<void> {
@@ -65,9 +74,16 @@ export function applyCodexLauncherEnv(vars: Partial<Record<(typeof TRACKED_ENV_K
   const previous: Record<(typeof TRACKED_ENV_KEYS)[number], string | undefined> = {
     HAPPIER_CODEX_SESSIONS_DIR: process.env.HAPPIER_CODEX_SESSIONS_DIR,
     HAPPIER_CODEX_TUI_BIN: process.env.HAPPIER_CODEX_TUI_BIN,
+    CODEX_HOME: process.env.CODEX_HOME,
+    CODEX_THREAD_ID: process.env.CODEX_THREAD_ID,
+    CODEX_CI: process.env.CODEX_CI,
+    CODEX_SHELL: process.env.CODEX_SHELL,
+    CODEX_INTERNAL_ORIGINATOR_OVERRIDE: process.env.CODEX_INTERNAL_ORIGINATOR_OVERRIDE,
     TEST_CODEX_SESSION_ID: process.env.TEST_CODEX_SESSION_ID,
     TEST_CODEX_TIMESTAMP: process.env.TEST_CODEX_TIMESTAMP,
     TEST_CODEX_ARGV_PATH: process.env.TEST_CODEX_ARGV_PATH,
+    TEST_CODEX_THREAD_ID_PATH: process.env.TEST_CODEX_THREAD_ID_PATH,
+    TEST_CODEX_ENV_DUMP_PATH: process.env.TEST_CODEX_ENV_DUMP_PATH,
   };
 
   for (const key of TRACKED_ENV_KEYS) {
@@ -96,6 +112,8 @@ export async function writeFakeCodexScript(path: string, opts: {
   sessionMetaDelayMs?: number;
   assistantText?: string;
   recordArgv: boolean;
+  recordThreadId?: boolean;
+  recordCodexEnv?: boolean;
   exitAfterMs?: number;
   handleSigint?: boolean;
   handleSigterm?: boolean;
@@ -107,15 +125,21 @@ export async function writeFakeCodexScript(path: string, opts: {
   const exitAfterMs = typeof opts.exitAfterMs === 'number' ? opts.exitAfterMs : null;
   const handleSigint = opts.handleSigint !== false;
   const handleSigterm = opts.handleSigterm !== false;
+  const recordThreadId = opts.recordThreadId === true;
+  const recordCodexEnv = opts.recordCodexEnv === true;
   const selfTerminateSignal = typeof opts.selfTerminateSignal === 'string' ? opts.selfTerminateSignal : null;
   const selfTerminateAfterMs = typeof opts.selfTerminateAfterMs === 'number' ? opts.selfTerminateAfterMs : null;
 
-  const script = `#!/usr/bin/env node
+const script = `#!/usr/bin/env node
 const fs = require('node:fs');
 const path = require('node:path');
 
-const root = process.env.HAPPIER_CODEX_SESSIONS_DIR;
-if (!root) throw new Error('Missing HAPPIER_CODEX_SESSIONS_DIR');
+const root = process.env.HAPPIER_CODEX_SESSIONS_DIR
+  ? process.env.HAPPIER_CODEX_SESSIONS_DIR
+  : process.env.CODEX_HOME
+    ? path.join(process.env.CODEX_HOME, 'sessions')
+    : '';
+if (!root) throw new Error('Missing HAPPIER_CODEX_SESSIONS_DIR or CODEX_HOME');
 fs.mkdirSync(root, { recursive: true });
 const filePath = path.join(root, 'rollout-test.jsonl');
 const id = process.env.TEST_CODEX_SESSION_ID || 'sid';
@@ -129,6 +153,26 @@ if (${opts.recordArgv ? 'true' : 'false'}) {
   const argvPath = process.env.TEST_CODEX_ARGV_PATH;
   if (argvPath) {
     fs.writeFileSync(argvPath, JSON.stringify(process.argv), 'utf8');
+  }
+}
+
+if (${recordThreadId ? 'true' : 'false'}) {
+  const outPath = process.env.TEST_CODEX_THREAD_ID_PATH;
+  if (outPath) {
+    const value = typeof process.env.CODEX_THREAD_ID === 'string' ? process.env.CODEX_THREAD_ID : '';
+    fs.writeFileSync(outPath, value, 'utf8');
+  }
+}
+
+if (${recordCodexEnv ? 'true' : 'false'}) {
+  const outPath = process.env.TEST_CODEX_ENV_DUMP_PATH;
+  if (outPath) {
+    const dump = {};
+    for (const [key, value] of Object.entries(process.env)) {
+      if (!key.startsWith('CODEX_')) continue;
+      dump[key] = value;
+    }
+    fs.writeFileSync(outPath, JSON.stringify(dump), 'utf8');
   }
 }
 
@@ -167,6 +211,7 @@ export function createLocalSessionHarness(): LocalSessionHarness {
   const sessionEvents: SessionEvent[] = [];
   const metadataUpdates: SessionMetadataState[] = [];
   const agentStateUpdates: Array<Record<string, unknown>> = [];
+  const rpcHandlers: Record<string, RpcHandler> = {};
   let agentStateSnapshot: Record<string, unknown> = {};
 
   const session = {
@@ -185,14 +230,16 @@ export function createLocalSessionHarness(): LocalSessionHarness {
       agentStateUpdates.push(agentStateSnapshot);
     },
     rpcHandlerManager: {
-      registerHandler: (_name: string, _handler: unknown) => {},
+      registerHandler: (name: string, handler: RpcHandler) => {
+        rpcHandlers[name] = handler;
+      },
     },
     peekPendingMessageQueueV2Count: async () => 0,
     discardPendingMessageQueueV2All: async () => 0,
     discardCommittedMessageLocalIds: async (_ids: string[]) => {},
   } as unknown as ApiSessionClient;
 
-  return { session, codexMessages, sessionEvents, metadataUpdates, agentStateUpdates };
+  return { session, codexMessages, sessionEvents, metadataUpdates, agentStateUpdates, rpcHandlers };
 }
 
 export function createLocalMessageQueue(): MessageQueue2<LocalLauncherMode> {

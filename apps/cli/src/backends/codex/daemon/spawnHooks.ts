@@ -100,15 +100,8 @@ export const codexDaemonSpawnHooks: DaemonSpawnHooks = {
     };
   },
 
-  validateSpawn: async ({ experimentalCodexResume, experimentalCodexAcp }) => {
+  validateSpawn: async ({ experimentalCodexAcp }) => {
     if (experimentalCodexAcp !== true) return { ok: true };
-
-    if (experimentalCodexResume === true) {
-      return {
-        ok: false,
-        errorMessage: 'Invalid spawn options: Codex ACP and Codex resume MCP cannot both be enabled.',
-      };
-    }
 
     let resolved: { command: string; args: string[] };
     try {
@@ -158,8 +151,7 @@ export const codexDaemonSpawnHooks: DaemonSpawnHooks = {
     return { ok: true };
   },
 
-  buildExtraEnvForChild: ({ experimentalCodexResume, experimentalCodexAcp }) => ({
-    ...(experimentalCodexResume === true ? { HAPPIER_EXPERIMENTAL_CODEX_RESUME: '1' } : {}),
+  buildExtraEnvForChild: ({ experimentalCodexAcp }) => ({
     ...(experimentalCodexAcp === true ? { HAPPIER_EXPERIMENTAL_CODEX_ACP: '1' } : {}),
   }),
 };

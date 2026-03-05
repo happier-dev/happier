@@ -3,6 +3,7 @@ import { applyPermissionModeToCodexPermissionHandler } from './utils/applyPermis
 import { createCodexPermissionHandler, type CodexRuntimePermissionHandler } from './utils/createCodexPermissionHandler';
 import { DiffProcessor } from './utils/diffProcessor';
 import { randomUUID } from 'node:crypto';
+import { existsSync } from 'node:fs';
 import { logger } from '@/ui/logger';
 import { resolveHasTTY } from '@/ui/tty/resolveHasTTY';
 import { Credentials } from '@/persistence';
@@ -12,7 +13,7 @@ import { MessageQueue2 } from '@/agent/runtime/modeMessageQueue';
 import { hashObject } from '@/utils/deterministicJson';
 import { resolve, join } from 'node:path';
 import { createSessionMetadata } from '@/agent/runtime/createSessionMetadata';
-import { createHappierMcpBridge } from '@/agent/runtime/createHappierMcpBridge';
+import { resolveRunnerMcpServers } from '@/mcp/runtime/resolveRunnerMcpServers';
 import { MessageBuffer } from "@/ui/ink/messageBuffer";
 import { trimIdent } from "@/utils/trimIdent";
 import type { CodexSessionConfig } from './types';
@@ -27,7 +28,7 @@ import { connectionState } from '@/api/offline/serverConnectionErrors';
 import type { ApiSessionClient } from '@/api/session/sessionClient';
 import { DeferredApiSessionClient } from '@/agent/runtime/startup/DeferredApiSessionClient';
 import { configuration } from '@/configuration';
-import { isExperimentalCodexAcpEnabled, isExperimentalCodexVendorResumeEnabled } from '@/backends/codex/experiments';
+import { isExperimentalCodexAcpEnabled } from '@/backends/codex/experiments';
 import { maybeUpdatePermissionModeMetadata } from '@/agent/runtime/permission/permissionModeMetadata';
 import { parseSpecialCommand } from '@/cli/parsers/specialCommands';
 import { pushMessageToQueueWithSpecialCommands } from '@/agent/runtime/queueSpecialCommands';
@@ -48,7 +49,9 @@ import {
     formatCodexLocalControlSwitchDeniedMessage,
 } from './localControl/localControlSupport';
 import { createCodexLocalControlSupportResolver } from './localControl/createLocalControlSupportResolver';
-import { resolveCodexMcpServerSpawn } from './resume/resolveCodexMcpServer';
+import { resolveCodexMcpServerSpawn } from './mcp/resolveCodexMcpServerSpawn';
+import { resolveCodexAcpSpawn } from './acp/resolveCommand';
+import { validateCodexAcpSpawnAvailability } from './acp/spawnAvailability';
 import { resolveCodexMessageModel } from './utils/resolveCodexMessageModel';
 import { buildCodexMcpStartConfigForMessage } from './utils/buildCodexMcpStartConfigForMessage';
 import { createModelOverrideSynchronizer } from '@/agent/runtime/modelOverrideSync';
@@ -124,6 +127,40 @@ export async function runCodex(opts: {
     // Set backend for offline warnings (before any API calls)
     connectionState.setBackend('Codex');
 
+    const makeAbortError = (message: string): Error => {
+        const err = new Error(message);
+        err.name = 'AbortError';
+        return err;
+    };
+
+    const isAbortError = (error: unknown): boolean => error instanceof Error && error.name === 'AbortError';
+
+    const awaitWithAbortSignal = async <T>(
+        promise: Promise<T>,
+        signal: AbortSignal,
+        extraAbort?: Promise<never>,
+    ): Promise<T> => {
+        let onAbort: (() => void) | null = null;
+        const abortPromise = new Promise<never>((_resolve, reject) => {
+            const abortError = makeAbortError('Aborted by user');
+            if (signal.aborted) {
+                reject(abortError);
+                return;
+            }
+            onAbort = () => reject(abortError);
+            signal.addEventListener('abort', onAbort, { once: true });
+        });
+
+        try {
+            return await Promise.race(extraAbort ? [promise, abortPromise, extraAbort] : [promise, abortPromise]);
+        } finally {
+            if (onAbort) {
+                signal.removeEventListener('abort', onAbort);
+                onAbort = null;
+            }
+        }
+    };
+
     const explicitPermissionMode = opts.permissionMode;
     const hasResumeArg = typeof opts.resume === 'string' && opts.resume.trim().length > 0;
     const accountSettings = hasResumeArg ? null : (opts.accountSettingsContext?.settings ?? null);
@@ -188,13 +225,12 @@ export async function runCodex(opts: {
     const hasTtyForLocal = Boolean(process.stdin.isTTY && process.stdout.isTTY);
     const startedByForLocalControl = opts.startedBy === 'daemon' ? 'daemon' : 'cli';
     const experimentalCodexAcpEnabled = isExperimentalCodexAcpEnabled();
-    const experimentalCodexResumeEnabled = isExperimentalCodexVendorResumeEnabled();
-    const localControlEnabled = experimentalCodexAcpEnabled || experimentalCodexResumeEnabled;
+    const localControlEnabled = experimentalCodexAcpEnabled;
 
     const resolveLocalControlSupport = createCodexLocalControlSupportResolver({
         startedBy: startedByForLocalControl,
         experimentalCodexAcpEnabled,
-        experimentalCodexResumeEnabled,
+        hasTtyForLocal,
     });
 
     let mode: 'local' | 'remote' = resolveCodexStartingMode({
@@ -202,15 +238,36 @@ export async function runCodex(opts: {
         startedBy: startedByForLocalControl,
         hasTtyForLocal,
         localControlEnabled,
-    });
-    let localModeFallbackMessage: string | null = null;
+	    });
+	    let localModeFallbackMessage: string | null = null;
+	    let codexAcpFallbackToMcpMessage: string | null = (() => {
+	        const raw = typeof process.env.HAPPIER_CODEX_ACP_FALLBACK_TO_MCP_MESSAGE === 'string'
+	            ? process.env.HAPPIER_CODEX_ACP_FALLBACK_TO_MCP_MESSAGE.trim()
+	            : '';
+	        return raw ? raw : null;
+	    })();
+	    if (!codexAcpFallbackToMcpMessage && experimentalCodexAcpEnabled && !resumeIdFromArgs) {
+	        const envOverride = typeof process.env.HAPPIER_CODEX_ACP_BIN === 'string'
+	            ? process.env.HAPPIER_CODEX_ACP_BIN.trim()
+	            : '';
+	        if (envOverride) {
+	            const resolved = resolve(process.cwd(), envOverride);
+	            if (!existsSync(resolved)) {
+	                const reason = `Codex ACP is enabled but HAPPIER_CODEX_ACP_BIN does not exist: ${resolved}`;
+	                codexAcpFallbackToMcpMessage =
+	                    codexAcpFallbackToMcpMessage ??
+	                    `Codex ACP could not start (${reason}). Falling back to MCP for this new session.`;
+	            }
+	        }
+	    }
+	    const initialCodexAcpFallbackToMcpMessage = codexAcpFallbackToMcpMessage;
+
 
     logger.debug('[codex] Starting mode resolved', {
         explicitStartingMode: opts.startingMode ?? null,
         startedBy: startedByForLocalControl,
         hasTtyForLocal,
         experimentalCodexAcpEnabled,
-        experimentalCodexResumeEnabled,
         localControlEnabled,
         mode,
     });
@@ -516,8 +573,9 @@ export async function runCodex(opts: {
     let thinking = false;
     let currentTaskId: string | null = null;
     let didReplaySeedBootstrap = false;
-    if (localModeFallbackMessage) {
-        session.sendSessionEvent({ type: 'message', message: localModeFallbackMessage });
+    for (const message of [localModeFallbackMessage, codexAcpFallbackToMcpMessage]) {
+        if (!message) continue;
+        session.sendSessionEvent({ type: 'message', message });
     }
 
     session.keepAlive(thinking, mode);
@@ -592,7 +650,36 @@ export async function runCodex(opts: {
         logger.debug('[Codex] Resume requested via --resume:', storedSessionIdForResume);
     }
 
-    const useCodexAcp = isExperimentalCodexAcpEnabled();
+    let useCodexAcp = isExperimentalCodexAcpEnabled();
+    const resumeRequested = typeof opts.resume === 'string' && opts.resume.trim().length > 0;
+    if (useCodexAcp) {
+        try {
+            const resolved = resolveCodexAcpSpawn();
+            const availability = validateCodexAcpSpawnAvailability(resolved);
+            if (!availability.ok) throw new Error(availability.errorMessage);
+        } catch (e) {
+            const reason = formatErrorForUi(e);
+            if (resumeRequested) {
+                throw new Error(
+                    `Codex ACP is required to resume sessions, but it cannot start on this machine.\n` +
+                    `Reason: ${reason}\n` +
+                    `Fix: install codex-acp via Happier → Machine Details → Installables, or install Node.js/npm so the npx fallback works.`,
+                );
+            }
+            useCodexAcp = false;
+            codexAcpFallbackToMcpMessage =
+                codexAcpFallbackToMcpMessage ??
+                `Codex ACP could not start (${reason}). Falling back to MCP for this new session.`;
+        }
+    }
+    if (!useCodexAcp && resumeRequested) {
+        throw new Error('Codex resume is only supported via ACP. Switch Codex to ACP mode to resume sessions.');
+    }
+
+	    if (codexAcpFallbackToMcpMessage && codexAcpFallbackToMcpMessage !== initialCodexAcpFallbackToMcpMessage) {
+	        session.sendSessionEvent({ type: 'message', message: codexAcpFallbackToMcpMessage });
+	        messageBuffer.addMessage(codexAcpFallbackToMcpMessage, 'status');
+	    }
     const shouldLogAcpDebug = Boolean(process.env.DEBUG) || process.env.HAPPIER_E2E_PROVIDERS === '1';
     if (shouldLogAcpDebug) {
         logger.debug(`[Codex] Remote engine selected: ${useCodexAcp ? 'acp' : 'mcp'}`);
@@ -601,6 +688,10 @@ export async function runCodex(opts: {
     let client: CodexMcpClient | null = null;
     let remoteTerminalUi: ReturnType<typeof createCodexRemoteTerminalUi> | null = null;
     // codexAcpRuntime is declared above to allow the onUserMessage binding to steer mid-turn.
+    // Codex ACP `startOrLoad` (especially `loadSession`) can be slow and is not cancellable at the protocol
+    // level today. Local-control switching and abort must still unblock immediately, so we race `startOrLoad`
+    // awaits against this signal.
+    let startOrLoadAbortController = new AbortController();
 
     /**
      * Handles aborting the current task/inference without exiting the process.
@@ -610,13 +701,9 @@ export async function runCodex(opts: {
     async function handleAbort() {
         logger.debug('[Codex] Abort requested - stopping current task');
         try {
+            startOrLoadAbortController.abort();
             // Store the current session ID before aborting for potential resume
-            const mcpClient = client;
-            if (mcpClient && mcpClient.hasActiveSession()) {
-                storedSessionIdForResume = mcpClient.storeSessionForResume();
-                storedSessionIdFromLocalControl = false;
-                logger.debug('[Codex] Stored session for resume:', storedSessionIdForResume);
-            } else if (useCodexAcp) {
+            if (useCodexAcp) {
                 const currentAcpSessionId = codexAcpRuntime?.getSessionId();
                 if (currentAcpSessionId) {
                     storedSessionIdForResume = currentAcpSessionId;
@@ -639,6 +726,7 @@ export async function runCodex(opts: {
             logger.debug('[Codex] Error during abort:', error);
         } finally {
             abortController = new AbortController();
+            startOrLoadAbortController = new AbortController();
         }
     }
 
@@ -708,12 +796,18 @@ export async function runCodex(opts: {
         startedBy: opts.startedBy,
     });
     let requestedSwitchToLocal = false;
+    const createSwitchToLocalBarrier = (): { promise: Promise<void>; resolve: () => void } => {
+        let resolve!: () => void;
+        const promise = new Promise<void>((r) => {
+            resolve = r;
+        });
+        return { promise, resolve };
+    };
+    let switchToLocalBarrier = createSwitchToLocalBarrier();
 
     const resolveLocalSwitchAvailability = async (): Promise<
         { ok: true } | { ok: false; reason: import('./localControl/localControlSupport').CodexLocalControlUnsupportedReason }
     > => {
-        // Daemon-spawned sessions cannot safely switch to an interactive local TUI.
-        if (opts.startedBy === 'daemon') return { ok: false, reason: 'started-by-daemon' };
         const support = await resolveLocalControlSupport({ includeAcpProbe: false });
         const gated = applyLocalControlLaunchGating({ startingMode: 'local', support });
         if (gated.mode === 'local') return { ok: true };
@@ -723,6 +817,8 @@ export async function runCodex(opts: {
     const requestSwitchToLocal = async (): Promise<void> => {
         if (requestedSwitchToLocal) return;
         requestedSwitchToLocal = true;
+        switchToLocalBarrier.resolve();
+        startOrLoadAbortController.abort();
         await handleAbort();
     };
 
@@ -757,8 +853,9 @@ export async function runCodex(opts: {
         },
     });
 
-    if (localModeFallbackMessage) {
-        messageBuffer.addMessage(localModeFallbackMessage, 'status');
+    for (const message of [localModeFallbackMessage, codexAcpFallbackToMcpMessage]) {
+        if (!message) continue;
+        messageBuffer.addMessage(message, 'status');
     }
 
     //
@@ -773,24 +870,19 @@ export async function runCodex(opts: {
     // session load attempt will throw and we will not silently start a new session.
 
     // Start Happier MCP server (HTTP) and prepare STDIO bridge config for Codex
-    const happierBridge = await createHappierMcpBridge(session, { commandMode: 'current-process' });
-    happierMcpServer = happierBridge.happierMcpServer;
     const directory = workspaceDirFromMetadata ?? process.cwd();
+    const happierBridge = await resolveRunnerMcpServers({
+        session,
+        credentials: opts.credentials,
+        accountSettings: opts.accountSettingsContext?.settings ?? null,
+        machineId,
+        directory,
+        commandMode: 'current-process',
+    });
+    happierMcpServer = happierBridge.happierMcpServer;
     const mcpServers = happierBridge.mcpServers;
 
-    const localControlSupportedForMcp = !useCodexAcp
-        ? (await resolveLocalControlSupport({ includeAcpProbe: false })).ok
-        : false;
-    const vendorResumeIdForSpawn = typeof storedSessionIdForResume === 'string' && storedSessionIdForResume.trim().length > 0
-        ? storedSessionIdForResume.trim()
-        : null;
-
-    const codexMcpServer = await resolveCodexMcpServerSpawn({
-        useCodexAcp,
-        experimentalCodexResumeEnabled,
-        vendorResumeId: vendorResumeIdForSpawn,
-        localControlSupported: localControlSupportedForMcp,
-    });
+    const codexMcpServer = await resolveCodexMcpServerSpawn();
 
         client = useCodexAcp ? null : new CodexMcpClient({ mode: codexMcpServer.mode, command: codexMcpServer.command });
 
@@ -1020,7 +1112,88 @@ export async function runCodex(opts: {
 
             await localRemoteSwitchController.publishModeState('remote');
             requestedSwitchToLocal = false;
+            startOrLoadAbortController = new AbortController();
+            switchToLocalBarrier = createSwitchToLocalBarrier();
+            const switchToLocalAbort: Promise<never> = switchToLocalBarrier.promise.then(() => {
+                throw makeAbortError('Switched to local');
+            });
             localRemoteSwitchController.registerRemoteSwitchHandler();
+
+            // For strict resume flows, start (or load) the Codex ACP session eagerly. Otherwise, remote mode
+            // can remain idle (and even switch back to local) without spawning the Codex backend until the
+            // first prompt is processed.
+            if (useCodexAcp && !wasCreated) {
+                const codexAcp = codexAcpRuntime;
+                if (!codexAcp) {
+                    throw new Error('Codex ACP runtime was not initialized');
+                }
+
+                const resumeId = storedSessionIdForResume?.trim();
+                const isStrictExplicit = Boolean(strictResumeIdForRun && resumeId && resumeId === strictResumeIdForRun);
+                const isStrictLocalControl = storedSessionIdFromLocalControl === true && Boolean(resumeId);
+
+                if (resumeId && (isStrictExplicit || isStrictLocalControl)) {
+                    messageBuffer.addMessage('Resuming previous context…', 'status');
+                    const resumeSignal = startOrLoadAbortController.signal;
+                    const startOrLoadPromise = codexAcp.startOrLoad({
+                        resumeId,
+                        // Avoid importing ACP replay history into Happier on resume; Happier transcript is the source of truth.
+                        importHistory: false,
+                    });
+                    let resumeAborted = false;
+                    try {
+                        await awaitWithAbortSignal(startOrLoadPromise, resumeSignal, switchToLocalAbort);
+                    } catch (e) {
+                        if (isAbortError(e) || resumeSignal.aborted) {
+                            resumeAborted = true;
+                            // Ensure any late rejection from the in-flight resume attempt is handled.
+                            void startOrLoadPromise.catch(() => undefined);
+                        } else {
+                            const reason = formatErrorForUi(e);
+                            const message = isStrictLocalControl
+                                ? `Failed to switch this Codex session from local → remote.\n` +
+                                  `Reason: could not resume the remote Codex ACP session (${resumeId}).\n` +
+                                  `Details: ${reason}\n` +
+                                  `Fix: ensure Codex ACP can run reliably on this machine (install codex-acp via Happier → Machine Details → Installables, or install Node.js/npm so the npx fallback works), then retry switching to remote.\n` +
+                                  `Note: Happier refuses to start a new remote Codex session during a local→remote switch, because it would fork the conversation.`
+                                : `Failed to resume this Codex ACP session (${resumeId}).\n` +
+                                  `Reason: ${reason}\n` +
+                                  `Fix: ensure Codex ACP can run on this machine (install codex-acp via Happier → Machine Details → Installables, or install Node.js/npm so the npx fallback works), then retry.\n` +
+                                  `Note: Happier refuses to start a new Codex session when --resume was requested.`;
+                            messageBuffer.addMessage(message, 'status');
+                            session.sendSessionEvent({ type: 'message', message });
+                            const err = new Error(message);
+                            err.name = 'CodexAcpResumeError';
+                            throw err;
+                        }
+                    }
+
+                    if (!resumeAborted) {
+                        if (strictResumeIdForRun && resumeId === strictResumeIdForRun) {
+                            strictResumeIdForRun = null;
+                        }
+                        storedSessionIdForResume = nextStoredSessionIdForResumeAfterAttempt(storedSessionIdForResume, {
+                            attempted: true,
+                            success: true,
+                        });
+                        storedSessionIdFromLocalControl = false;
+
+                        try {
+                            await syncCodexAcpSessionModeFromPermissionMode({
+                                runtime: codexAcp,
+                                permissionMode: currentPermissionMode ?? initialPermissionMode,
+                                metadata: session.getMetadataSnapshot(),
+                            });
+                        } catch (e) {
+                            logger.debug('[CodexACP] Failed to sync session mode after startOrLoad (non-fatal)', e);
+                        }
+
+                        wasCreated = true;
+                        first = false;
+                        await modelSync?.flushPendingAfterStart();
+                    }
+                }
+            }
 
         while (!shouldExit && !requestedSwitchToLocal) {
             logActiveHandles('loop-top');
@@ -1125,8 +1298,14 @@ export async function runCodex(opts: {
                         const resumeId = storedSessionIdForResume?.trim();
                         if (resumeId) {
                             messageBuffer.addMessage('Resuming previous context…', 'status');
+                            const resumeSignal = startOrLoadAbortController.signal;
+                            const startOrLoadPromise = codexAcp.startOrLoad({
+                                resumeId,
+                                // Avoid importing ACP replay history into Happier on resume; Happier transcript is the source of truth.
+                                importHistory: false,
+                            });
                             try {
-                                await codexAcp.startOrLoad({ resumeId, importHistory: storedSessionIdFromLocalControl !== true });
+                                await awaitWithAbortSignal(startOrLoadPromise, resumeSignal, switchToLocalAbort);
                                 if (strictResumeIdForRun && resumeId === strictResumeIdForRun) {
                                     strictResumeIdForRun = null;
                                 }
@@ -1136,14 +1315,26 @@ export async function runCodex(opts: {
                                 });
                                 storedSessionIdFromLocalControl = false;
                             } catch (e) {
-                                const isStrict = Boolean(strictResumeIdForRun && resumeId === strictResumeIdForRun);
+                                if (isAbortError(e) || resumeSignal.aborted) {
+                                    // Ensure any late rejection from the in-flight resume attempt is handled.
+                                    void startOrLoadPromise.catch(() => undefined);
+                                    throw e;
+                                }
+                                const isStrictExplicit = Boolean(strictResumeIdForRun && resumeId === strictResumeIdForRun);
+                                const isStrictLocalControl = storedSessionIdFromLocalControl === true;
+                                const isStrict = isStrictExplicit || isStrictLocalControl;
                                 if (isStrict) {
                                     const reason = formatErrorForUi(e);
-                                    const message =
-                                        `Failed to resume this Codex ACP session (${resumeId}).\n` +
-                                        `Reason: ${reason}\n` +
-                                        `Fix: install/enable a Codex ACP build that supports resume (loadSession), or disable Codex ACP and use Codex MCP resume.\n` +
-                                        `Note: Happier refuses to start a new Codex session when --resume was requested.`;
+                                    const message = isStrictLocalControl
+                                        ? `Failed to switch this Codex session from local → remote.\n` +
+                                          `Reason: could not resume the remote Codex ACP session (${resumeId}).\n` +
+                                          `Details: ${reason}\n` +
+                                          `Fix: ensure Codex ACP can run reliably on this machine (install codex-acp via Happier → Machine Details → Installables, or install Node.js/npm so the npx fallback works), then retry switching to remote.\n` +
+                                          `Note: Happier refuses to start a new remote Codex session during a local→remote switch, because it would fork the conversation.`
+                                        : `Failed to resume this Codex ACP session (${resumeId}).\n` +
+                                          `Reason: ${reason}\n` +
+                                          `Fix: ensure Codex ACP can run on this machine (install codex-acp via Happier → Machine Details → Installables, or install Node.js/npm so the npx fallback works), then retry.\n` +
+                                          `Note: Happier refuses to start a new Codex session when --resume was requested.`;
                                     messageBuffer.addMessage(message, 'status');
                                     session.sendSessionEvent({ type: 'message', message });
                                     const err = new Error(message);
@@ -1154,7 +1345,17 @@ export async function runCodex(opts: {
                                 logger.debug('[Codex ACP] Resume failed; starting a new session instead', e);
                                 messageBuffer.addMessage('Resume failed; starting a new session.', 'status');
                                 session.sendSessionEvent({ type: 'message', message: 'Resume failed; starting a new session.' });
-                                await codexAcp.startOrLoad({});
+                                const startSignal = startOrLoadAbortController.signal;
+                                const fallbackPromise = codexAcp.startOrLoad({});
+                                try {
+                                    await awaitWithAbortSignal(fallbackPromise, startSignal, switchToLocalAbort);
+                                } catch (fallbackError) {
+                                    if (isAbortError(fallbackError) || startSignal.aborted) {
+                                        // Ensure any late rejection from the in-flight start attempt is handled.
+                                        void fallbackPromise.catch(() => undefined);
+                                    }
+                                    throw fallbackError;
+                                }
                                 storedSessionIdForResume = nextStoredSessionIdForResumeAfterAttempt(storedSessionIdForResume, {
                                     attempted: true,
                                     success: false,
@@ -1162,7 +1363,17 @@ export async function runCodex(opts: {
                                 storedSessionIdFromLocalControl = false;
                             }
                         } else {
-                            await codexAcp.startOrLoad({});
+                            const startSignal = startOrLoadAbortController.signal;
+                            const startOrLoadPromise = codexAcp.startOrLoad({});
+                            try {
+                                await awaitWithAbortSignal(startOrLoadPromise, startSignal, switchToLocalAbort);
+                            } catch (e) {
+                                if (isAbortError(e) || startSignal.aborted) {
+                                    // Ensure any late rejection from the in-flight start attempt is handled.
+                                    void startOrLoadPromise.catch(() => undefined);
+                                }
+                                throw e;
+                            }
                         }
                         if (shouldLogAcpDebug) {
                             logger.debug('[CodexACP] startOrLoad complete');
@@ -1223,38 +1434,18 @@ export async function runCodex(opts: {
                         mode: message.mode,
                     });
 
-                    // Resume-by-session-id path (fork): seed codex-reply with the previous session id.
-                    if (storedSessionIdForResume) {
-                        const resumeId = storedSessionIdForResume;
-                        messageBuffer.addMessage('Resuming previous context…', 'status');
-                        mcpClient.setSessionIdForResume(resumeId);
-                        const resumeResponse = await mcpClient.continueSession(providerPromptText, { signal: abortController.signal });
-                        const resumeError = extractCodexToolErrorText(resumeResponse);
-                        if (resumeError) {
-                            forwardCodexErrorToUi(resumeError);
-                            mcpClient.clearSession();
-                            wasCreated = false;
-                            continue;
-                        }
-                        storedSessionIdForResume = nextStoredSessionIdForResumeAfterAttempt(storedSessionIdForResume, {
-                            attempted: true,
-                            success: true,
-                        });
-                        publishCodexThreadIdToMetadata();
-                    } else {
-                        const startResponse = await mcpClient.startSession(
-                            startConfig,
-                            { signal: abortController.signal }
-                        );
-                        const startError = extractCodexToolErrorText(startResponse);
-                        if (startError) {
-                            forwardCodexErrorToUi(startError);
-                            mcpClient.clearSession();
-                            wasCreated = false;
-                            continue;
-                        }
-                        publishCodexThreadIdToMetadata();
+                    const startResponse = await mcpClient.startSession(
+                        startConfig,
+                        { signal: abortController.signal }
+                    );
+                    const startError = extractCodexToolErrorText(startResponse);
+                    if (startError) {
+                        forwardCodexErrorToUi(startError);
+                        mcpClient.clearSession();
+                        wasCreated = false;
+                        continue;
                     }
+                    publishCodexThreadIdToMetadata();
 
                     wasCreated = true;
                     first = false;
@@ -1294,11 +1485,14 @@ export async function runCodex(opts: {
                     const messageText = `Codex process error: ${details}`;
                     messageBuffer.addMessage(messageText, 'status');
                     session.sendSessionEvent({ type: 'message', message: messageText });
-                    // For unexpected exits, try to store session for potential recovery
-                    const mcpClient = client;
-                    if (mcpClient && mcpClient.hasActiveSession()) {
-                        storedSessionIdForResume = mcpClient.storeSessionForResume();
-                        logger.debug('[Codex] Stored session after unexpected error:', storedSessionIdForResume);
+                    // For unexpected errors, keep the ACP session id (best-effort) so a subsequent start can attempt resume.
+                    if (useCodexAcp) {
+                        const currentAcpSessionId = codexAcpRuntime?.getSessionId();
+                        if (currentAcpSessionId) {
+                            storedSessionIdForResume = currentAcpSessionId;
+                            storedSessionIdFromLocalControl = false;
+                            logger.debug('[CodexACP] Stored session after unexpected error:', storedSessionIdForResume);
+                        }
                     }
                 }
             } finally {

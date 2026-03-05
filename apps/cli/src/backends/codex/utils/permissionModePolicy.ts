@@ -16,11 +16,11 @@ export function resolveCodexMcpPolicyForPermissionMode(permissionMode: Permissio
     case 'read-only':
       return { approvalPolicy: 'never', sandbox: 'read-only' };
     case 'safe-yolo':
-      return { approvalPolicy: 'on-failure', sandbox: 'workspace-write' };
+      return { approvalPolicy: 'never', sandbox: 'workspace-write' };
     case 'yolo':
-      return { approvalPolicy: 'on-failure', sandbox: 'danger-full-access' };
+      return { approvalPolicy: 'never', sandbox: 'danger-full-access' };
     case 'bypassPermissions':
-      return { approvalPolicy: 'on-failure', sandbox: 'danger-full-access' };
+      return { approvalPolicy: 'never', sandbox: 'danger-full-access' };
     case 'acceptEdits':
       return { approvalPolicy: 'on-request', sandbox: 'workspace-write' };
     case 'plan':

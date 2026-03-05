@@ -8,9 +8,9 @@ describe('resolveCodexMcpPolicyForPermissionMode', () => {
   it.each([
     ['default', { approvalPolicy: 'untrusted', sandbox: 'workspace-write' }],
     ['read-only', { approvalPolicy: 'never', sandbox: 'read-only' }],
-    ['safe-yolo', { approvalPolicy: 'on-failure', sandbox: 'workspace-write' }],
-    ['yolo', { approvalPolicy: 'on-failure', sandbox: 'danger-full-access' }],
-    ['bypassPermissions', { approvalPolicy: 'on-failure', sandbox: 'danger-full-access' }],
+    ['safe-yolo', { approvalPolicy: 'never', sandbox: 'workspace-write' }],
+    ['yolo', { approvalPolicy: 'never', sandbox: 'danger-full-access' }],
+    ['bypassPermissions', { approvalPolicy: 'never', sandbox: 'danger-full-access' }],
     ['acceptEdits', { approvalPolicy: 'on-request', sandbox: 'workspace-write' }],
     ['plan', { approvalPolicy: 'untrusted', sandbox: 'workspace-write' }],
   ] satisfies Array<[PermissionMode, { approvalPolicy: string; sandbox: string }]>)(

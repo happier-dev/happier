@@ -237,18 +237,18 @@ describe('CodexMcpClient command detection', () => {
             const transportInstances = await getTransportInstances();
             transportInstances.length = 0;
 
-            const resumeCmdPath = 'C:\\Users\\herbz\\AppData\\Local\\Happier\\codex-mcp-resume.CMD';
+            const mcpServerCmdPath = 'C:\\Users\\herbz\\AppData\\Local\\Happier\\some-mcp-server.CMD';
             const mod = await import('./codexMcpClient');
             const client = new mod.CodexMcpClient({
                 mode: 'mcp-server',
-                command: resumeCmdPath,
+                command: mcpServerCmdPath,
                 args: ['--stdio'],
             });
             await expect(client.connect()).resolves.toBeUndefined();
 
             expect(execFileSync).not.toHaveBeenCalled();
             expect(transportInstances).toHaveLength(1);
-            expect(transportInstances[0]?.command).toBe(resumeCmdPath);
+            expect(transportInstances[0]?.command).toBe(mcpServerCmdPath);
             expect(transportInstances[0]?.args).toEqual(['--stdio']);
         });
     });
@@ -263,16 +263,12 @@ describe('CodexMcpClient command detection', () => {
         transportInstances.length = 0;
 
         const mod = await import('./codexMcpClient');
-        const client = new mod.CodexMcpClient({
-            mode: 'mcp-server',
-            command: '/tmp/codex-mcp-resume',
-            args: ['--stdio'],
-        });
+        const client = new mod.CodexMcpClient({ mode: 'mcp-server', command: '/tmp/some-mcp-server', args: ['--stdio'] });
         await expect(client.connect()).resolves.toBeUndefined();
 
         expect(execFileSync).not.toHaveBeenCalled();
         expect(transportInstances).toHaveLength(1);
-        expect(transportInstances[0]?.command).toBe('/tmp/codex-mcp-resume');
+        expect(transportInstances[0]?.command).toBe('/tmp/some-mcp-server');
         expect(transportInstances[0]?.args).toEqual(['--stdio']);
     });
 });

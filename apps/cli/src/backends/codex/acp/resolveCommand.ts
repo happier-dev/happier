@@ -1,4 +1,5 @@
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
+import { homedir } from 'node:os';
 import { isAbsolute, join, resolve as resolvePath } from 'node:path';
 import { delimiter as pathDelimiter } from 'node:path';
 
@@ -51,12 +52,65 @@ function readCodexAcpConfigOverrides(): string[] {
     .filter((l) => l.length > 0);
 }
 
+function resolveCodexConfigTomlPath(): string {
+  const codexHome = typeof process.env.CODEX_HOME === 'string' ? process.env.CODEX_HOME.trim() : '';
+  if (codexHome) return join(codexHome, 'config.toml');
+  return join(homedir(), '.codex', 'config.toml');
+}
+
+function normalizeCodexMcpServerKeyFromConfigSection(raw: string): string | null {
+  const trimmed = raw.trim();
+  if (!trimmed) return null;
+
+  const firstChar = trimmed[0];
+  if (firstChar === '"' || firstChar === "'") {
+    const end = trimmed.indexOf(firstChar, 1);
+    if (end === -1) return null;
+    return trimmed.slice(0, end + 1);
+  }
+
+  const firstSegment = trimmed.split('.')[0]?.trim() ?? '';
+  return firstSegment ? firstSegment : null;
+}
+
+function readCodexMcpServerKeysFromConfigToml(): string[] {
+  const configPath = resolveCodexConfigTomlPath();
+  let text: string;
+  try {
+    text = readFileSync(configPath, 'utf8');
+  } catch {
+    return [];
+  }
+
+  const keys = new Set<string>();
+  const re = /^\s*\[mcp_servers\.([^\]]+)\]\s*$/gm;
+  for (;;) {
+    const match = re.exec(text);
+    if (!match) break;
+    const key = normalizeCodexMcpServerKeyFromConfigSection(match[1] ?? '');
+    if (!key) continue;
+    keys.add(key);
+  }
+
+  return Array.from(keys).sort((a, b) => a.localeCompare(b));
+}
+
 function appendConfigOverridesArgs(spec: SpawnSpec): SpawnSpec {
+  // Happier-managed Codex ACP sessions should not inherit arbitrary user-configured MCP servers.
+  // Codex can block responding to `loadSession` while it attempts to start all configured MCP servers,
+  // which makes resume and local↔remote switching unreliable.
+  //
+  // Users can re-enable MCP servers by adding explicit overrides in HAPPIER_CODEX_ACP_CONFIG_OVERRIDES
+  // (these are appended after this default).
+  const baseOverrides: string[] = readCodexMcpServerKeysFromConfigToml().map(
+    (key) => `mcp_servers.${key}.enabled=false`,
+  );
+
   const overrides = readCodexAcpConfigOverrides();
-  if (overrides.length === 0) return spec;
+  if (baseOverrides.length === 0 && overrides.length === 0) return spec;
   return {
     command: spec.command,
-    args: [...spec.args, ...overrides.flatMap((o) => ['-c', o])],
+    args: [...spec.args, ...baseOverrides.flatMap((o) => ['-c', o]), ...overrides.flatMap((o) => ['-c', o])],
   };
 }
 

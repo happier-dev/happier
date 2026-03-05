@@ -22,7 +22,8 @@ describe('buildCodexMcpStartConfigForMessage', () => {
     });
 
     expect(config).toMatchObject({
-      prompt: `Hello\n\n${CHANGE_TITLE_INSTRUCTION}\n\n${EXEC_SEQUENCING_INSTRUCTION}`,
+      prompt: 'Hello',
+      'base-instructions': `${CHANGE_TITLE_INSTRUCTION}\n\n${EXEC_SEQUENCING_INSTRUCTION}`,
       model: 'gpt-5-codex-high',
     });
   });
@@ -38,6 +39,7 @@ describe('buildCodexMcpStartConfigForMessage', () => {
     });
 
     expect(config.prompt).toBe('Hello');
+    expect(config['base-instructions']).toBeUndefined();
   });
 
   it('omits model when mode.model is nullish or whitespace', () => {

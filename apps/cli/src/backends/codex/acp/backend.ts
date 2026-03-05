@@ -42,7 +42,7 @@ function resolveCodexAcpInitTimeoutMs(spawn: SpawnSpec): number {
   if (spawn.command === 'npx') {
     return npx ?? base ?? 180_000;
   }
-  return base ?? 60_000;
+  return base ?? 180_000;
 }
 
 class CodexAcpTransport extends DefaultTransport {
@@ -74,9 +74,7 @@ export function createCodexAcpBackend(options: CodexAcpBackendOptions): CodexAcp
     env: options.env,
     mcpServers: options.mcpServers,
     permissionHandler: options.permissionHandler,
-    transportHandler: spawn.command === 'npx'
-      ? new CodexAcpTransport(resolveCodexAcpInitTimeoutMs(spawn))
-      : undefined,
+    transportHandler: new CodexAcpTransport(resolveCodexAcpInitTimeoutMs(spawn)),
     authMethodId,
   };
 

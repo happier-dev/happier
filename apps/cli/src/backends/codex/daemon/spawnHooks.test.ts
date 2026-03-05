@@ -50,7 +50,6 @@ describe('codexDaemonSpawnHooks.validateSpawn', () => {
     const { codexDaemonSpawnHooks } = await import('./spawnHooks');
     const res = await codexDaemonSpawnHooks.validateSpawn!({
       experimentalCodexAcp: true,
-      experimentalCodexResume: false,
     } as any);
     expect(res.ok).toBe(false);
     if (res.ok) throw new Error('expected ACP spawn validation to fail');
@@ -67,7 +66,6 @@ describe('codexDaemonSpawnHooks.validateSpawn', () => {
     const { codexDaemonSpawnHooks } = await import('./spawnHooks');
     const res = await codexDaemonSpawnHooks.validateSpawn!({
       experimentalCodexAcp: true,
-      experimentalCodexResume: false,
     } as any);
     expect(res.ok).toBe(true);
   });
@@ -83,7 +81,6 @@ describe('codexDaemonSpawnHooks.validateSpawn', () => {
     const { codexDaemonSpawnHooks } = await import('./spawnHooks');
     const res = await codexDaemonSpawnHooks.validateSpawn!({
       experimentalCodexAcp: true,
-      experimentalCodexResume: false,
     } as any);
     expect(res.ok).toBe(false);
   });

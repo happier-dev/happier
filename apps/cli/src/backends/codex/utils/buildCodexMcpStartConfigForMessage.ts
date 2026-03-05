@@ -12,12 +12,13 @@ export function buildCodexMcpStartConfigForMessage(opts: Readonly<{
   mcpServers: unknown;
   mode: { model?: string | null | undefined };
 }>): CodexSessionConfig {
-  const prompt = opts.first
-    ? `${opts.message}\n\n${CHANGE_TITLE_INSTRUCTION}\n\n${EXEC_SEQUENCING_INSTRUCTION}`
-    : opts.message;
+  const baseInstructions = opts.first
+    ? `${CHANGE_TITLE_INSTRUCTION}\n\n${EXEC_SEQUENCING_INSTRUCTION}`
+    : null;
 
   return buildCodexMcpStartConfig({
-    prompt,
+    prompt: opts.message,
+    baseInstructions,
     sandbox: opts.sandbox,
     approvalPolicy: opts.approvalPolicy,
     mcpServers: opts.mcpServers,
