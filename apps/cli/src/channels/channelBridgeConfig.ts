@@ -181,10 +181,10 @@ export function resolveChannelBridgeRuntimeConfig(params: Readonly<{
       : null;
   const webhookHost = envWebhookHostRaw ? envWebhookHostRaw : settingsWebhookHost;
 
-  const settingsWebhookPort = parseInteger(webhook?.port, 0, 65_535) ?? 8_787;
+  const settingsWebhookPort = parseInteger(webhook?.port, 1, 65_535) ?? 8_787;
   const envWebhookPort =
     typeof env.HAPPIER_TELEGRAM_WEBHOOK_PORT === 'string'
-      ? parseStrictInteger(env.HAPPIER_TELEGRAM_WEBHOOK_PORT, 0, 65_535)
+      ? parseStrictInteger(env.HAPPIER_TELEGRAM_WEBHOOK_PORT, 1, 65_535)
       : null;
   const webhookPort = envWebhookPort ?? settingsWebhookPort;
 

@@ -62,6 +62,15 @@ function fromServerDocument(doc: ChannelBridgeServerBindingsDocument): ChannelSe
   }));
 }
 
+function isRecoverableBindingsReadError(error: unknown): boolean {
+  if (!(error instanceof Error)) return false;
+  if (error instanceof SyntaxError) return true;
+  return (
+    error.message.includes('Invalid or unsupported channel bridge bindings payload in KV')
+    || error.message.includes('Invalid channel bridge binding')
+  );
+}
+
 export function createServerBackedChannelBindingStore(params: Readonly<{
   kv: ChannelBridgeKvClient;
   serverId: string;
@@ -78,17 +87,33 @@ export function createServerBackedChannelBindingStore(params: Readonly<{
       return cache;
     }
 
-    const fetched = await readChannelBridgeBindingsFromKv({
-      kv: params.kv,
-      serverId: params.serverId,
-    });
-    const next: BindingCache = {
-      version: fetched.version,
-      bindings: fromServerDocument(fetched.doc),
-      fetchedAtMs: Date.now(),
-    };
-    cache = next;
-    return next;
+    try {
+      const fetched = await readChannelBridgeBindingsFromKv({
+        kv: params.kv,
+        serverId: params.serverId,
+      });
+      const next: BindingCache = {
+        version: fetched.version,
+        bindings: fromServerDocument(fetched.doc),
+        fetchedAtMs: Date.now(),
+      };
+      cache = next;
+      return next;
+    } catch (error) {
+      if (!isRecoverableBindingsReadError(error)) {
+        throw error;
+      }
+
+      logger.warn('[channelBindingStore] Failed to decode primary KV payload; using empty bindings fallback', error);
+
+      const next: BindingCache = {
+        version: cache?.version ?? -1,
+        bindings: [],
+        fetchedAtMs: Date.now(),
+      };
+      cache = next;
+      return next;
+    }
   }
 
   function setCache(version: number, bindings: readonly ChannelSessionBinding[]): void {

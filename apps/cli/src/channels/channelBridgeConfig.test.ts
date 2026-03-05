@@ -129,6 +129,27 @@ describe('resolveChannelBridgeRuntimeConfig', () => {
     expect(config.telegram.webhookPort).toBe(8_877);
   });
 
+  it('rejects webhook port zero and falls back to default', () => {
+    const config = resolveChannelBridgeRuntimeConfig({
+      env: {
+        HAPPIER_TELEGRAM_WEBHOOK_PORT: '0',
+      },
+      settings: {
+        channelBridge: {
+          providers: {
+            telegram: {
+              webhook: {
+                port: 0,
+              },
+            },
+          },
+        },
+      },
+    });
+
+    expect(config.telegram.webhookPort).toBe(8_787);
+  });
+
   it('resolves account-scoped bridge config with server/global fallback', () => {
     const config = resolveChannelBridgeRuntimeConfig({
       env: {},

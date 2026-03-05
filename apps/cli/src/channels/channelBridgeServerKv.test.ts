@@ -178,6 +178,93 @@ describe('channelBridgeServerKv', () => {
     expect(config.record).toBeNull();
   });
 
+  it('upsert replaces unsupported telegram config schema instead of failing', async () => {
+    const unknownSchemaValueBase64 = Buffer.from(JSON.stringify({
+      schemaVersion: 999,
+      telegram: {
+        allowedChatIds: ['-100legacy'],
+      },
+      updatedAtMs: 111,
+    }), 'utf8').toString('base64');
+
+    const key = 'happier:channel-bridge:v1:server:local-3005:telegram-config';
+    const byKey = new Map<string, { value: string | null; version: number }>();
+    byKey.set(key, {
+      value: unknownSchemaValueBase64,
+      version: 4,
+    });
+
+    const kv: ChannelBridgeKvClient = {
+      get: async (requestedKey) => {
+        const row = byKey.get(requestedKey);
+        if (!row || row.value === null) {
+          return { status: 404, body: { error: 'Key not found' } };
+        }
+        return {
+          status: 200,
+          body: {
+            key: requestedKey,
+            value: row.value,
+            version: row.version,
+          },
+        };
+      },
+      mutate: async (mutations) => {
+        const errors: Array<{ key: string; error: 'version-mismatch'; version: number; value: string | null }> = [];
+        for (const mutation of mutations) {
+          const row = byKey.get(mutation.key);
+          const currentVersion = row?.version ?? -1;
+          if (currentVersion !== mutation.version) {
+            errors.push({
+              key: mutation.key,
+              error: 'version-mismatch',
+              version: currentVersion,
+              value: row?.value ?? null,
+            });
+          }
+        }
+
+        if (errors.length > 0) {
+          return { status: 409, body: { success: false, errors } };
+        }
+
+        const results: Array<{ key: string; version: number }> = [];
+        for (const mutation of mutations) {
+          const row = byKey.get(mutation.key);
+          const nextVersion = (row?.version ?? -1) + 1;
+          byKey.set(mutation.key, {
+            value: mutation.value,
+            version: nextVersion,
+          });
+          results.push({ key: mutation.key, version: nextVersion });
+        }
+
+        return { status: 200, body: { success: true, results } };
+      },
+    };
+
+    await expect(upsertChannelBridgeTelegramConfigInKv({
+      kv,
+      serverId: 'local-3005',
+      update: {
+        allowedChatIds: ['-100111'],
+      },
+    })).resolves.toBeUndefined();
+
+    const config = await readChannelBridgeTelegramConfigFromKv({
+      kv,
+      serverId: 'local-3005',
+    });
+
+    expect(config.record).toMatchObject({
+      schemaVersion: 1,
+      telegram: {
+        allowedChatIds: ['-100111'],
+      },
+    });
+    expect(config.version).toBe(5);
+  });
+
   it('writes and reads bindings document from KV', async () => {
     const kv = createInMemoryKvClient();
 

@@ -146,6 +146,79 @@ function createConflictPayloadKvClient(): Readonly<{
   };
 }
 
+function createMalformedPrimaryReadKvClient(): ChannelBridgeKvClient {
+  const keySuffix = ':bindings';
+  const malformedValue = Buffer.from(JSON.stringify({
+    schemaVersion: 1,
+    bindings: [
+      {
+        providerId: 'telegram',
+        conversationId: '-100bad',
+        sessionId: 'sess-bad',
+        lastForwardedSeq: 'oops',
+      },
+    ],
+  }), 'utf8').toString('base64');
+
+  const byKey = new Map<string, { value: string | null; version: number }>();
+
+  const kv: ChannelBridgeKvClient = {
+    get: async (key) => {
+      if (!byKey.has(key)) {
+        byKey.set(key, { value: malformedValue, version: 6 });
+      }
+      const row = byKey.get(key);
+      if (!row || row.value === null) {
+        return { status: 404, body: { error: 'Key not found' } };
+      }
+
+      return {
+        status: 200,
+        body: {
+          key,
+          value: row.value,
+          version: row.version,
+        },
+      };
+    },
+    mutate: async (mutations) => {
+      const errors: Array<{ key: string; error: 'version-mismatch'; version: number; value: string | null }> = [];
+      for (const mutation of mutations) {
+        const row = byKey.get(mutation.key);
+        const currentVersion = row?.version ?? -1;
+        if (currentVersion !== mutation.version) {
+          errors.push({
+            key: mutation.key,
+            error: 'version-mismatch',
+            version: currentVersion,
+            value: row?.value ?? null,
+          });
+        }
+      }
+
+      if (errors.length > 0) {
+        return { status: 409, body: { success: false, errors } };
+      }
+
+      const results: Array<{ key: string; version: number }> = [];
+      for (const mutation of mutations) {
+        if (!mutation.key.endsWith(keySuffix)) continue;
+        const row = byKey.get(mutation.key);
+        const nextVersion = (row?.version ?? -1) + 1;
+        byKey.set(mutation.key, {
+          value: mutation.value,
+          version: nextVersion,
+        });
+        results.push({ key: mutation.key, version: nextVersion });
+      }
+
+      return { status: 200, body: { success: true, results } };
+    },
+  };
+
+  return kv;
+}
+
 describe('createServerBackedChannelBindingStore', () => {
   it('persists bindings to server KV and reloads them', async () => {
     const kv = createInMemoryKvClient();
@@ -280,5 +353,32 @@ describe('createServerBackedChannelBindingStore', () => {
 
     expect(binding?.sessionId).toBe('sess-3');
     expect(conflict.mutateCallCount()).toBe(2);
+  });
+
+  it('recovers from malformed primary KV payloads and allows writes', async () => {
+    const kv = createMalformedPrimaryReadKvClient();
+    const store = createServerBackedChannelBindingStore({
+      kv,
+      serverId: 'local-3005',
+      maxWriteRetries: 3,
+    });
+
+    await expect(store.listBindings()).resolves.toEqual([]);
+
+    await store.upsertBinding({
+      providerId: 'telegram',
+      conversationId: '-100444',
+      threadId: null,
+      sessionId: 'sess-4',
+      lastForwardedSeq: 1,
+    });
+
+    const binding = await store.getBinding({
+      providerId: 'telegram',
+      conversationId: '-100444',
+      threadId: null,
+    });
+
+    expect(binding?.sessionId).toBe('sess-4');
   });
 });

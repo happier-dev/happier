@@ -393,6 +393,7 @@ export function createAxiosChannelBridgeKvClient(params: Readonly<{ token: strin
 export async function readChannelBridgeTelegramConfigFromKv(params: Readonly<{
   kv: ChannelBridgeKvClient;
   serverId: string;
+  allowUnsupportedSchema?: boolean;
 }>): Promise<Readonly<{ record: ChannelBridgeServerTelegramConfigRecord | null; version: number }>> {
   const key = telegramConfigKvKey(params.serverId);
   const row = await readJsonValue({ kv: params.kv, key });
@@ -402,6 +403,9 @@ export async function readChannelBridgeTelegramConfigFromKv(params: Readonly<{
 
   const parsed = parseTelegramConfigRecord(decodeBase64ToJson(row.valueBase64));
   if (!parsed) {
+    if (params.allowUnsupportedSchema) {
+      return { record: null, version: row.version };
+    }
     throw new Error(`Invalid or unsupported Telegram config schema for key ${key}`);
   }
 
@@ -496,6 +500,7 @@ export async function upsertChannelBridgeTelegramConfigInKv(params: Readonly<{
     const current = await readChannelBridgeTelegramConfigFromKv({
       kv: params.kv,
       serverId: params.serverId,
+      allowUnsupportedSchema: true,
     });
 
     const nextRecord = applyTelegramConfigUpdate(current.record, params.update);
@@ -528,6 +533,7 @@ export async function clearChannelBridgeTelegramConfigInKv(params: Readonly<{
     const current = await readChannelBridgeTelegramConfigFromKv({
       kv: params.kv,
       serverId: params.serverId,
+      allowUnsupportedSchema: true,
     });
     if (current.version < 0) return;
 
