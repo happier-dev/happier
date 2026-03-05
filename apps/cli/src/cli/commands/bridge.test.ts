@@ -135,4 +135,28 @@ describe('happier bridge command', () => {
     expect(updateSettingsMock.mock.invocationCallOrder[0]).toBeLessThan(clearKvConfigMock.mock.invocationCallOrder[0]);
     expect(process.exitCode).toBeUndefined();
   });
+
+  it('rejects webhook secrets that do not match Telegram-safe token charset', async () => {
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    try {
+      const { handleBridgeCliCommand } = await import('./bridge');
+
+      await handleBridgeCliCommand({
+        args: ['bridge', 'telegram', 'set', '--webhook-secret', 'bad$secret'],
+        rawArgv: [],
+        terminalRuntime: null,
+      });
+
+      expect(updateSettingsMock).not.toHaveBeenCalled();
+      expect(createKvClientMock).not.toHaveBeenCalled();
+      expect(upsertKvConfigMock).not.toHaveBeenCalled();
+      expect(process.exitCode).toBe(1);
+      expect(errorSpy).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.stringContaining('Invalid --webhook-secret value'),
+      );
+    } finally {
+      errorSpy.mockRestore();
+    }
+  });
 });

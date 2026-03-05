@@ -154,11 +154,10 @@ export function createServerBackedChannelBindingStore(params: Readonly<{
         try {
           doc = decodeChannelBridgeBindingsDocFromBase64(error.currentValueBase64);
         } catch (decodeError) {
-          logger.warn('[channelBindingStore] Failed to decode conflict payload; resetting cache to empty bindings document', decodeError);
-          doc = {
-            schemaVersion: 1,
-            bindings: [],
-          };
+          logger.warn('[channelBindingStore] Failed to decode conflict payload; aborting optimistic retry to avoid clobbering remote bindings', decodeError);
+          throw new Error(
+            '[channelBindingStore] Conflict payload decode failed; aborting optimistic retry to avoid clobbering remote bindings',
+          );
         }
         setCache(error.currentVersion, fromServerDocument(doc));
       }

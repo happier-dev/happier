@@ -76,30 +76,43 @@ function extractAssistantText(content: unknown): string | null {
 }
 
 function createDefaultChannelBridgeDeps(credentials: Credentials): DefaultChannelBridgeDepsHandle {
-  const sessionCtxCache = new Map<string, SessionEncryptionContext>();
+  type CachedSessionRuntime = Readonly<{
+    ctx: SessionEncryptionContext;
+    mode: ReturnType<typeof resolveSessionStoredContentEncryptionMode>;
+  }>;
+
+  const sessionRuntimeCache = new Map<string, CachedSessionRuntime>();
   const SESSION_CTX_CACHE_MAX_ENTRIES = 200;
 
-  const rememberSessionContext = (sessionId: string, ctx: SessionEncryptionContext): SessionEncryptionContext => {
-    if (sessionCtxCache.has(sessionId)) {
-      sessionCtxCache.delete(sessionId);
+  const rememberSessionRuntime = (sessionId: string, runtime: CachedSessionRuntime): CachedSessionRuntime => {
+    if (sessionRuntimeCache.has(sessionId)) {
+      sessionRuntimeCache.delete(sessionId);
     }
-    sessionCtxCache.set(sessionId, ctx);
-    while (sessionCtxCache.size > SESSION_CTX_CACHE_MAX_ENTRIES) {
-      const oldestKey = sessionCtxCache.keys().next().value;
+    sessionRuntimeCache.set(sessionId, runtime);
+    while (sessionRuntimeCache.size > SESSION_CTX_CACHE_MAX_ENTRIES) {
+      const oldestKey = sessionRuntimeCache.keys().next().value;
       if (!oldestKey) break;
-      sessionCtxCache.delete(oldestKey);
+      sessionRuntimeCache.delete(oldestKey);
     }
-    return ctx;
+    return runtime;
   };
 
-  async function resolveSessionContext(sessionId: string): Promise<SessionEncryptionContext | null> {
-    const cached = sessionCtxCache.get(sessionId);
+  async function resolveSessionRuntime(sessionId: string): Promise<CachedSessionRuntime | null> {
+    const cached = sessionRuntimeCache.get(sessionId);
     if (cached) return cached;
 
     const rawSession = await fetchSessionById({ token: credentials.token, sessionId });
     if (!rawSession) return null;
-    const ctx = resolveSessionEncryptionContextFromCredentials(credentials, rawSession);
-    return rememberSessionContext(sessionId, ctx);
+    const runtime: CachedSessionRuntime = {
+      ctx: resolveSessionEncryptionContextFromCredentials(credentials, rawSession),
+      mode: resolveSessionStoredContentEncryptionMode(rawSession),
+    };
+    return rememberSessionRuntime(sessionId, runtime);
+  }
+
+  async function resolveSessionContext(sessionId: string): Promise<SessionEncryptionContext | null> {
+    const runtime = await resolveSessionRuntime(sessionId);
+    return runtime?.ctx ?? null;
   }
 
   return {
@@ -146,13 +159,13 @@ function createDefaultChannelBridgeDeps(credentials: Credentials): DefaultChanne
       });
     },
     sendUserMessageToSession: async (params) => {
-      const rawSession = await fetchSessionById({ token: credentials.token, sessionId: params.sessionId });
-      if (!rawSession) {
+      const runtime = await resolveSessionRuntime(params.sessionId);
+      if (!runtime) {
         throw new Error(`Session not found: ${params.sessionId}`);
       }
 
-      const ctx = resolveSessionEncryptionContextFromCredentials(credentials, rawSession);
-      const mode = resolveSessionStoredContentEncryptionMode(rawSession);
+      const ctx = runtime.ctx;
+      const mode = runtime.mode;
       const record = {
         role: 'user',
         content: { type: 'text', text: params.text },
@@ -214,7 +227,7 @@ function createDefaultChannelBridgeDeps(credentials: Credentials): DefaultChanne
     },
     },
     dispose: () => {
-      sessionCtxCache.clear();
+      sessionRuntimeCache.clear();
     },
   };
 }

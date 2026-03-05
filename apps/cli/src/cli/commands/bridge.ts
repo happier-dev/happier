@@ -48,6 +48,12 @@ function parseCsvList(raw: string): string[] {
     .filter((value) => value.length > 0);
 }
 
+function validateTelegramWebhookSecretToken(raw: string, flagName: string): void {
+  if (!/^[A-Za-z0-9_-]+$/.test(raw)) {
+    throw new Error(`Invalid ${flagName} value: must match [A-Za-z0-9_-] (Telegram webhook token restriction)`);
+  }
+}
+
 function maskSecret(value: string): string {
   if (!value.trim()) return '<empty>';
   return `<${value.length} chars>`;
@@ -232,6 +238,7 @@ async function cmdTelegramSet(args: string[]): Promise<void> {
     update.webhookEnabled = parseBooleanInput(webhookEnabledRaw, '--webhook-enabled');
   }
   if (webhookSecret) {
+    validateTelegramWebhookSecretToken(webhookSecret, '--webhook-secret');
     update.webhookSecret = webhookSecret;
   }
   if (webhookHost) {

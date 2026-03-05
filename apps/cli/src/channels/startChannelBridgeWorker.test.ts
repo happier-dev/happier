@@ -145,6 +145,117 @@ describe('startChannelBridgeFromEnv', () => {
     await handle?.stop();
   });
 
+  it('reuses cached session context between send and transcript fetch calls', async () => {
+    vi.resetModules();
+
+    const fetchSessionById = vi.fn(async () => ({
+      id: 'sess-ctx-1',
+      encryptionMode: 'plain',
+      metadata: null,
+      dataEncryptionKey: null,
+    }));
+    const fetchAfterSeq = vi.fn(async () => []);
+    const sendCommitted = vi.fn(async () => undefined);
+
+    let capturedDeps: {
+      sendUserMessageToSession: (params: {
+        sessionId: string;
+        text: string;
+        sentFrom: string;
+        providerId: string;
+        conversationId: string;
+        threadId: string | null;
+      }) => Promise<void>;
+      fetchAgentMessagesAfterSeq: (params: { sessionId: string; afterSeq: number }) => Promise<Array<{ seq: number; text: string }>>;
+    } | null = null;
+
+    vi.doMock('@/sessionControl/sessionsHttp', async (importOriginal) => {
+      const actual = await importOriginal<typeof import('@/sessionControl/sessionsHttp')>();
+      return {
+        ...actual,
+        fetchSessionById,
+      };
+    });
+
+    vi.doMock('@/api/session/fetchEncryptedTranscriptWindow', async (importOriginal) => {
+      const actual = await importOriginal<typeof import('@/api/session/fetchEncryptedTranscriptWindow')>();
+      return {
+        ...actual,
+        fetchEncryptedTranscriptPageAfterSeq: fetchAfterSeq,
+      };
+    });
+
+    vi.doMock('@/sessionControl/sessionSocketSendMessage', () => ({
+      sendSessionMessageViaSocketCommitted: sendCommitted,
+    }));
+
+    vi.doMock('./core/channelBridgeWorker', () => ({
+      createInMemoryChannelBindingStore: vi.fn(() => ({
+        listBindings: async () => [],
+        getBinding: async () => null,
+        upsertBinding: async () => ({
+          providerId: 'telegram',
+          conversationId: 'conv-1',
+          threadId: null,
+          sessionId: 'sess-1',
+          lastForwardedSeq: 0,
+          createdAtMs: Date.now(),
+          updatedAtMs: Date.now(),
+        }),
+        updateLastForwardedSeq: async () => undefined,
+        removeBinding: async () => false,
+      })),
+      startChannelBridgeWorker: vi.fn((params: { deps: typeof capturedDeps }) => {
+        capturedDeps = params.deps as typeof capturedDeps;
+        return {
+          trigger: vi.fn(),
+          stop: vi.fn(async () => undefined),
+        };
+      }),
+    }));
+
+    vi.doMock('./telegram/telegramAdapter', () => ({
+      createTelegramChannelAdapter: vi.fn(() => ({
+        providerId: 'telegram',
+        pullInboundMessages: async () => [],
+        sendMessage: async () => undefined,
+        enqueueWebhookUpdate: vi.fn(),
+        stop: async () => undefined,
+      })),
+    }));
+
+    const { startChannelBridgeFromEnv } = await import('./startChannelBridgeWorker');
+
+    const handle = await startChannelBridgeFromEnv({
+      credentials,
+      env: {
+        HAPPIER_TELEGRAM_BOT_TOKEN: 'bot-token',
+      } as NodeJS.ProcessEnv,
+    });
+
+    expect(handle).not.toBeNull();
+    expect(capturedDeps).not.toBeNull();
+
+    await capturedDeps!.sendUserMessageToSession({
+      sessionId: 'sess-ctx-1',
+      text: 'hello from channel',
+      sentFrom: 'channel-bridge',
+      providerId: 'telegram',
+      conversationId: '-100111',
+      threadId: null,
+    });
+    await capturedDeps!.fetchAgentMessagesAfterSeq({
+      sessionId: 'sess-ctx-1',
+      afterSeq: 0,
+    });
+
+    expect(fetchSessionById).toHaveBeenCalledTimes(1);
+    expect(sendCommitted).toHaveBeenCalledTimes(1);
+    expect(fetchAfterSeq).toHaveBeenCalledTimes(1);
+
+    await handle?.stop();
+  });
+
   it('warns when webhook mode is enabled without webhook secret', async () => {
     vi.resetModules();
 

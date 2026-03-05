@@ -265,6 +265,94 @@ describe('channelBridgeServerKv', () => {
     expect(config.version).toBe(5);
   });
 
+  it('retries upsert after version mismatch using conflict payload without extra read', async () => {
+    const key = 'happier:channel-bridge:v1:server:local-3005:telegram-config';
+    const initialValueBase64 = Buffer.from(JSON.stringify({
+      schemaVersion: 1,
+      telegram: {
+        allowedChatIds: ['-100111'],
+      },
+      updatedAtMs: 101,
+    }), 'utf8').toString('base64');
+    const conflictValueBase64 = Buffer.from(JSON.stringify({
+      schemaVersion: 1,
+      telegram: {
+        allowedChatIds: ['-100111'],
+        requireTopics: false,
+      },
+      updatedAtMs: 202,
+    }), 'utf8').toString('base64');
+
+    let storedVersion = 0;
+    let storedValue = initialValueBase64;
+    let getCalls = 0;
+    let mutateCalls = 0;
+
+    const kv: ChannelBridgeKvClient = {
+      get: async (requestedKey) => {
+        getCalls += 1;
+        return {
+          status: 200,
+          body: {
+            key: requestedKey,
+            value: storedValue,
+            version: storedVersion,
+          },
+        };
+      },
+      mutate: async (mutations) => {
+        mutateCalls += 1;
+        const [mutation] = mutations;
+        if (!mutation) {
+          return {
+            status: 400,
+            body: {
+              success: false,
+              errors: [{ key, error: 'version-mismatch', version: storedVersion, value: storedValue }],
+            },
+          };
+        }
+
+        if (mutateCalls === 1) {
+          storedVersion = 1;
+          storedValue = conflictValueBase64;
+          return {
+            status: 409,
+            body: {
+              success: false,
+              errors: [{ key: mutation.key, error: 'version-mismatch', version: storedVersion, value: storedValue }],
+            },
+          };
+        }
+
+        storedVersion += 1;
+        storedValue = mutation.value ?? '';
+        return {
+          status: 200,
+          body: {
+            success: true,
+            results: [{ key: mutation.key, version: storedVersion }],
+          },
+        };
+      },
+    };
+
+    await upsertChannelBridgeTelegramConfigInKv({
+      kv,
+      serverId: 'local-3005',
+      update: {
+        requireTopics: true,
+      },
+    });
+
+    expect(getCalls).toBe(1);
+    expect(mutateCalls).toBe(2);
+    const finalParsed = JSON.parse(Buffer.from(storedValue, 'base64').toString('utf8')) as {
+      telegram?: { requireTopics?: boolean };
+    };
+    expect(finalParsed.telegram?.requireTopics).toBe(true);
+  });
+
   it('writes and reads bindings document from KV', async () => {
     const kv = createInMemoryKvClient();
 

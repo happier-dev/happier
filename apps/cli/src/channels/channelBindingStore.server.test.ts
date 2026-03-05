@@ -329,7 +329,7 @@ describe('createServerBackedChannelBindingStore', () => {
     expect(counting.mutateCallCount()).toBe(initialMutations);
   });
 
-  it('recovers from invalid conflict payloads and retries writes', async () => {
+  it('fails fast when conflict payload cannot be decoded', async () => {
     const conflict = createConflictPayloadKvClient();
     const store = createServerBackedChannelBindingStore({
       kv: conflict.kv,
@@ -337,13 +337,13 @@ describe('createServerBackedChannelBindingStore', () => {
       maxWriteRetries: 3,
     });
 
-    await store.upsertBinding({
+    await expect(store.upsertBinding({
       providerId: 'telegram',
       conversationId: '-100333',
       threadId: null,
       sessionId: 'sess-3',
       lastForwardedSeq: 4,
-    });
+    })).rejects.toThrow('Conflict payload decode failed');
 
     const binding = await store.getBinding({
       providerId: 'telegram',
@@ -351,11 +351,11 @@ describe('createServerBackedChannelBindingStore', () => {
       threadId: null,
     });
 
-    expect(binding?.sessionId).toBe('sess-3');
-    expect(conflict.mutateCallCount()).toBe(2);
+    expect(binding).toBeNull();
+    expect(conflict.mutateCallCount()).toBe(1);
   });
 
-  it('recovers from malformed primary KV payloads and allows writes', async () => {
+  it('surfaces malformed primary KV payload conflicts instead of clobbering remote state', async () => {
     const kv = createMalformedPrimaryReadKvClient();
     const store = createServerBackedChannelBindingStore({
       kv,
@@ -365,13 +365,13 @@ describe('createServerBackedChannelBindingStore', () => {
 
     await expect(store.listBindings()).resolves.toEqual([]);
 
-    await store.upsertBinding({
+    await expect(store.upsertBinding({
       providerId: 'telegram',
       conversationId: '-100444',
       threadId: null,
       sessionId: 'sess-4',
       lastForwardedSeq: 1,
-    });
+    })).rejects.toThrow('Conflict payload decode failed');
 
     const binding = await store.getBinding({
       providerId: 'telegram',
@@ -379,6 +379,6 @@ describe('createServerBackedChannelBindingStore', () => {
       threadId: null,
     });
 
-    expect(binding?.sessionId).toBe('sess-4');
+    expect(binding).toBeNull();
   });
 });

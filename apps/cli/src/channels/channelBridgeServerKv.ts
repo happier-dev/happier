@@ -503,12 +503,18 @@ export async function upsertChannelBridgeTelegramConfigInKv(params: Readonly<{
   }
 
   const key = telegramConfigKvKey(params.serverId);
+  let current: Readonly<{
+    record: ChannelBridgeServerTelegramConfigRecord | null;
+    version: number;
+  }> | null = null;
   for (let attempt = 0; attempt < 4; attempt += 1) {
-    const current = await readChannelBridgeTelegramConfigFromKv({
-      kv: params.kv,
-      serverId: params.serverId,
-      allowUnsupportedSchema: true,
-    });
+    if (current === null) {
+      current = await readChannelBridgeTelegramConfigFromKv({
+        kv: params.kv,
+        serverId: params.serverId,
+        allowUnsupportedSchema: true,
+      });
+    }
 
     const nextRecord = applyTelegramConfigUpdate(current.record, params.update);
     const nextValueBase64 = encodeJsonToBase64(nextRecord);
@@ -523,6 +529,17 @@ export async function upsertChannelBridgeTelegramConfigInKv(params: Readonly<{
       return;
     } catch (error) {
       if (error instanceof ChannelBridgeKvVersionMismatchError) {
+        try {
+          const conflictRecord = error.currentValueBase64 === null
+            ? null
+            : parseTelegramConfigRecord(decodeBase64ToJson(error.currentValueBase64));
+          current = {
+            record: conflictRecord,
+            version: error.currentVersion,
+          };
+        } catch {
+          current = null;
+        }
         continue;
       }
       throw error;
