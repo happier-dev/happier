@@ -1173,6 +1173,7 @@ export async function startDaemon(): Promise<void> {
             const fetched = await readChannelBridgeTelegramConfigFromKv({
               kv,
               serverId: channelBridgeServerId,
+              allowUnsupportedSchema: true,
             });
             channelBridgeRuntimeSettings = overlayServerKvTelegramConfigInSettings({
               settings: bridgeSettings,
