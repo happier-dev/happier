@@ -170,6 +170,34 @@ describe('createInMemoryChannelBindingStore', () => {
 });
 
 describe('executeChannelBridgeTick', () => {
+  it('sanitizes non-finite in-memory cursor values in binding writes', async () => {
+    const store = createInMemoryChannelBindingStore();
+
+    const upserted = await store.upsertBinding({
+      providerId: 'telegram',
+      conversationId: '-100sanity',
+      threadId: null,
+      sessionId: 'sess-sanity',
+      lastForwardedSeq: Number.NaN,
+    });
+
+    expect(upserted.lastForwardedSeq).toBe(0);
+
+    await store.updateLastForwardedSeq({
+      providerId: 'telegram',
+      conversationId: '-100sanity',
+      threadId: null,
+    }, Number.POSITIVE_INFINITY);
+
+    const afterInvalidUpdate = await store.getBinding({
+      providerId: 'telegram',
+      conversationId: '-100sanity',
+      threadId: null,
+    });
+
+    expect(afterInvalidUpdate?.lastForwardedSeq).toBe(0);
+  });
+
   it('returns defensive copies from in-memory binding store reads', async () => {
     const store = createInMemoryChannelBindingStore(() => 1_000);
     await store.upsertBinding({

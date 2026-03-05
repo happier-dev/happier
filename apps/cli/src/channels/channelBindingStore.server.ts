@@ -36,6 +36,13 @@ function cloneBindings(bindings: readonly ChannelSessionBinding[]): ChannelSessi
   return bindings.map((binding) => cloneBinding(binding));
 }
 
+function toNonNegativeInt(value: unknown): number | null {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return null;
+  const truncated = Math.trunc(value);
+  if (truncated < 0) return null;
+  return truncated;
+}
+
 function toServerDocument(bindings: readonly ChannelSessionBinding[]): ChannelBridgeServerBindingsDocument {
   return {
     schemaVersion: 1,
@@ -57,7 +64,7 @@ function fromServerDocument(doc: ChannelBridgeServerBindingsDocument): ChannelSe
     conversationId: binding.conversationId,
     threadId: binding.threadId,
     sessionId: binding.sessionId,
-    lastForwardedSeq: Math.max(0, Math.trunc(binding.lastForwardedSeq)),
+    lastForwardedSeq: toNonNegativeInt(binding.lastForwardedSeq) ?? 0,
     createdAtMs: Math.trunc(binding.createdAtMs),
     updatedAtMs: Math.trunc(binding.updatedAtMs),
   }));
@@ -192,12 +199,13 @@ export function createServerBackedChannelBindingStore(params: Readonly<{
         const key = bindingKey(binding);
         const existing = currentBindings.find((row) => bindingKey(row) === key) ?? null;
 
+        const normalizedLastForwardedSeq = toNonNegativeInt(binding.lastForwardedSeq) ?? 0;
         const nextBinding: ChannelSessionBinding = {
           providerId: binding.providerId,
           conversationId: binding.conversationId,
           threadId: binding.threadId,
           sessionId: binding.sessionId,
-          lastForwardedSeq: Math.max(0, Math.trunc(binding.lastForwardedSeq)),
+          lastForwardedSeq: normalizedLastForwardedSeq,
           createdAtMs: existing?.createdAtMs ?? nowMs,
           updatedAtMs: nowMs,
         };
@@ -215,15 +223,22 @@ export function createServerBackedChannelBindingStore(params: Readonly<{
     updateLastForwardedSeq: async (ref, seq) => {
       await withOptimisticWrite((currentBindings) => {
         const key = bindingKey(ref);
-        const nextSeq = Math.max(0, Math.trunc(seq));
+        const parsedSeq = toNonNegativeInt(seq);
+        if (parsedSeq === null) {
+          return {
+            nextBindings: currentBindings,
+            result: undefined,
+            changed: false,
+          };
+        }
         let changed = false;
         const nextBindings = currentBindings.map((binding) => {
           if (bindingKey(binding) !== key) return binding;
-          if (nextSeq <= binding.lastForwardedSeq) return binding;
+          if (parsedSeq <= binding.lastForwardedSeq) return binding;
           changed = true;
           return {
             ...binding,
-            lastForwardedSeq: nextSeq,
+            lastForwardedSeq: parsedSeq,
             updatedAtMs: Date.now(),
           };
         });

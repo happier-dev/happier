@@ -407,6 +407,52 @@ describe('createServerBackedChannelBindingStore', () => {
     expect(counting.mutateCallCount()).toBe(initialMutations);
   });
 
+  it('normalizes non-finite seq values and skips invalid seq writes', async () => {
+    const counting = createCountingKvClient();
+    const store = createServerBackedChannelBindingStore({
+      kv: counting.kv,
+      serverId: 'local-3005',
+    });
+
+    await store.upsertBinding({
+      providerId: 'telegram',
+      conversationId: '-100nf',
+      threadId: null,
+      sessionId: 'sess-nf',
+      lastForwardedSeq: Number.NaN,
+    });
+
+    const saved = await store.getBinding({
+      providerId: 'telegram',
+      conversationId: '-100nf',
+      threadId: null,
+    });
+    expect(saved?.lastForwardedSeq).toBe(0);
+
+    const initialMutations = counting.mutateCallCount();
+
+    await store.updateLastForwardedSeq({
+      providerId: 'telegram',
+      conversationId: '-100nf',
+      threadId: null,
+    }, Number.POSITIVE_INFINITY);
+
+    await store.updateLastForwardedSeq({
+      providerId: 'telegram',
+      conversationId: '-100nf',
+      threadId: null,
+    }, Number.NaN);
+
+    expect(counting.mutateCallCount()).toBe(initialMutations);
+
+    const afterInvalidUpdates = await store.getBinding({
+      providerId: 'telegram',
+      conversationId: '-100nf',
+      threadId: null,
+    });
+    expect(afterInvalidUpdates?.lastForwardedSeq).toBe(0);
+  });
+
   it('fails fast when conflict payload cannot be decoded', async () => {
     const conflict = createConflictPayloadKvClient();
     const store = createServerBackedChannelBindingStore({
