@@ -1724,7 +1724,7 @@ describe('startChannelBridgeWorker', () => {
       },
     };
 
-    const { deps } = createDepsHarness();
+    const { deps, warnings } = createDepsHarness();
     const worker = startChannelBridgeWorker({
       store,
       adapters: [sharedAdapter, sharedAdapter],
@@ -1735,6 +1735,7 @@ describe('startChannelBridgeWorker', () => {
     try {
       await worker.stop();
       expect(stopCounter.calls).toBe(1);
+      expect(warnings.some((row) => row.message.includes('Duplicate adapter providerId detected: telegram'))).toBe(true);
     } finally {
       await worker.stop();
     }
