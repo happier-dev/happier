@@ -9,7 +9,7 @@ import {
   type ChannelBindingStore,
   type ChannelBridgeDeps,
   type ChannelBridgeInboundMessage,
-} from './channelBridgeWorker';
+} from '@/channels/core/channelBridgeWorker';
 
 interface SentConversationMessage {
   conversationId: string;
@@ -348,7 +348,7 @@ describe('executeChannelBridgeTick', () => {
     expect(harness.sent.some((row) => row.text.includes('Failed to retrieve sessions'))).toBe(true);
   });
 
-  it('supports /session command for attached and non-attached conversations', async () => {
+  it('supports /session command for attached conversations', async () => {
     const store = createInMemoryChannelBindingStore();
     const harness = createAdapterHarness();
     const { deps } = createDepsHarness();
@@ -368,6 +368,21 @@ describe('executeChannelBridgeTick', () => {
       text: '/session',
       messageId: 'm-session-bound',
     });
+    await executeChannelBridgeTick({
+      store,
+      adapters: [harness.adapter],
+      deps,
+      inboundDeduper: createChannelBridgeInboundDeduper(),
+    });
+
+    expect(harness.sent.some((row) => row.text.includes('Attached session: sess-bound'))).toBe(true);
+  });
+
+  it('supports /session command for non-attached conversations', async () => {
+    const store = createInMemoryChannelBindingStore();
+    const harness = createAdapterHarness();
+    const { deps } = createDepsHarness();
+
     harness.pushInbound({
       providerId: 'telegram',
       conversationId: '-1001',
@@ -383,7 +398,6 @@ describe('executeChannelBridgeTick', () => {
       inboundDeduper: createChannelBridgeInboundDeduper(),
     });
 
-    expect(harness.sent.some((row) => row.text.includes('Attached session: sess-bound'))).toBe(true);
     expect(harness.sent.some((row) => row.text.includes('No session is attached here'))).toBe(true);
   });
 
