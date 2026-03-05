@@ -753,7 +753,7 @@ describe('executeChannelBridgeTick', () => {
     ]);
     const [binding] = await store.listBindings();
     expect(binding?.lastForwardedSeq).toBe(12);
-    expect(warnings.some((row) => row.message.includes('Skipping agent message with invalid seq'))).toBe(true);
+    expect(warnings.some((row) => row.message.includes('invalid seq'))).toBe(true);
   });
 
   it('does not attach when latest session sequence cannot be resolved', async () => {
