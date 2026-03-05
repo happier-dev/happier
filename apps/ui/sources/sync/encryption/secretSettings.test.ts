@@ -1,13 +1,7 @@
-import { beforeAll, describe, expect, it } from 'vitest';
-
-import sodium from '@/encryption/libsodium.lib';
+import { describe, expect, it } from 'vitest';
 import { decryptSecretValue, sealSecretsDeep, unsealSecretsDeep } from './secretSettings';
 
 describe('secretSettings', () => {
-    beforeAll(async () => {
-        await sodium.ready;
-    });
-
     it('sealSecretsDeep encrypts SecretString.value into SecretString.encryptedValue and drops SecretString.value', () => {
         const key = new Uint8Array(32).fill(7);
         const delta = {
