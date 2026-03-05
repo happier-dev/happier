@@ -1515,6 +1515,65 @@ describe('executeChannelBridgeTick', () => {
     expect(missingAdapterWarnings).toHaveLength(1);
   });
 
+  it('prunes stale missing-adapter warning keys when bindings are removed', async () => {
+    const store = createInMemoryChannelBindingStore();
+    const harness = createAdapterHarness('discord');
+
+    const bindingRef = {
+      providerId: 'telegram',
+      conversationId: 'orphaned-room',
+      threadId: null,
+    } as const;
+
+    await store.upsertBinding({
+      ...bindingRef,
+      sessionId: 'sess-orphaned',
+      lastForwardedSeq: 0,
+    });
+
+    const { deps, warnings } = createDepsHarness({
+      fetchAgentMessagesAfterSeq: async () => [{ seq: 1, text: 'ignored' }],
+    });
+    const warnedMissingAdapterBindings = new Set<string>();
+
+    await executeChannelBridgeTick({
+      store,
+      adapters: [harness.adapter],
+      deps,
+      inboundDeduper: createChannelBridgeInboundDeduper(),
+      warnedMissingAdapterBindings,
+    });
+
+    await store.removeBinding(bindingRef);
+
+    await executeChannelBridgeTick({
+      store,
+      adapters: [harness.adapter],
+      deps,
+      inboundDeduper: createChannelBridgeInboundDeduper(),
+      warnedMissingAdapterBindings,
+    });
+
+    await store.upsertBinding({
+      ...bindingRef,
+      sessionId: 'sess-orphaned-2',
+      lastForwardedSeq: 0,
+    });
+
+    await executeChannelBridgeTick({
+      store,
+      adapters: [harness.adapter],
+      deps,
+      inboundDeduper: createChannelBridgeInboundDeduper(),
+      warnedMissingAdapterBindings,
+    });
+
+    const missingAdapterWarnings = warnings.filter((row) =>
+      row.message.includes('No adapter registered for binding providerId=telegram'),
+    );
+    expect(missingAdapterWarnings).toHaveLength(2);
+  });
+
   it('warns and exits tick when listing bindings fails', async () => {
     const baseStore = createInMemoryChannelBindingStore();
     const store: ChannelBindingStore = {

@@ -145,6 +145,26 @@ function toNonNegativeInt(value: unknown): number | null {
   return parsed;
 }
 
+const EXTERNAL_IO_TIMEOUT_MS = 30_000;
+
+async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, label: string): Promise<T> {
+  let timeoutHandle: ReturnType<typeof setTimeout> | null = null;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<T>((_, reject) => {
+        timeoutHandle = setTimeout(() => {
+          reject(new Error(`${label} timed out after ${timeoutMs}ms`));
+        }, timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timeoutHandle) {
+      clearTimeout(timeoutHandle);
+    }
+  }
+}
+
 type ChannelBridgeInboundDeduper = Readonly<{
   isDuplicate: (message: ChannelBridgeInboundMessage) => boolean;
 }>;
@@ -244,7 +264,7 @@ function parseSlashCommand(text: string): Readonly<{ name: string; args: string[
   const trimmed = text.trim();
   if (!trimmed.startsWith('/')) return null;
   const [rawName, ...args] = trimmed.slice(1).split(/\s+/g);
-  const normalized = String(rawName ?? '').trim().toLowerCase();
+  const normalized = String(rawName).trim().toLowerCase();
   if (!normalized) return null;
   const name = normalized.split('@')[0]!.trim();
   if (!name) return null;
@@ -565,7 +585,11 @@ export async function executeChannelBridgeTick(params: Readonly<{
   for (const adapter of activeAdapters) {
     let inbound: ChannelBridgeInboundMessage[];
     try {
-      inbound = await adapter.pullInboundMessages();
+      inbound = await withTimeout(
+        adapter.pullInboundMessages(),
+        EXTERNAL_IO_TIMEOUT_MS,
+        `pullInboundMessages(${adapter.providerId})`,
+      );
     } catch (error) {
       params.deps.onWarning?.(`Failed to pull inbound messages for adapter ${adapter.providerId}`, error);
       continue;
@@ -642,14 +666,18 @@ export async function executeChannelBridgeTick(params: Readonly<{
         }
 
         try {
-          await params.deps.sendUserMessageToSession({
-            sessionId: binding.sessionId,
-            text: event.text,
-            sentFrom: adapter.providerId,
-            providerId: adapter.providerId,
-            conversationId: event.conversationId,
-            threadId: event.threadId,
-          });
+          await withTimeout(
+            params.deps.sendUserMessageToSession({
+              sessionId: binding.sessionId,
+              text: event.text,
+              sentFrom: adapter.providerId,
+              providerId: adapter.providerId,
+              conversationId: event.conversationId,
+              threadId: event.threadId,
+            }),
+            EXTERNAL_IO_TIMEOUT_MS,
+            `sendUserMessageToSession(${binding.sessionId})`,
+          );
         } catch (error) {
           params.deps.onWarning?.(
             `Failed to forward channel message into session ${binding.sessionId} (provider=${adapter.providerId} conversation=${event.conversationId} thread=${event.threadId ?? 'null'} messageId=${event.messageId})`,
@@ -676,6 +704,15 @@ export async function executeChannelBridgeTick(params: Readonly<{
   }
 
   const warnedMissingAdapterBindings = params.warnedMissingAdapterBindings;
+  if (warnedMissingAdapterBindings) {
+    const activeBindingKeys = new Set(bindings.map((binding) => bindingKey(binding)));
+    for (const warnedKey of warnedMissingAdapterBindings) {
+      if (!activeBindingKeys.has(warnedKey)) {
+        warnedMissingAdapterBindings.delete(warnedKey);
+      }
+    }
+  }
+
   for (const binding of bindings) {
     const missingBindingWarningKey = bindingKey(binding);
     const adapter = adapterByProvider.get(binding.providerId);
@@ -692,10 +729,14 @@ export async function executeChannelBridgeTick(params: Readonly<{
     warnedMissingAdapterBindings?.delete(missingBindingWarningKey);
 
     try {
-      const messages = await params.deps.fetchAgentMessagesAfterSeq({
-        sessionId: binding.sessionId,
-        afterSeq: binding.lastForwardedSeq,
-      });
+      const messages = await withTimeout(
+        params.deps.fetchAgentMessagesAfterSeq({
+          sessionId: binding.sessionId,
+          afterSeq: binding.lastForwardedSeq,
+        }),
+        EXTERNAL_IO_TIMEOUT_MS,
+        `fetchAgentMessagesAfterSeq(${binding.sessionId})`,
+      );
 
       const orderedMessages: Array<Readonly<{ seq: number; text: string }>> = [];
       for (const row of messages) {
@@ -744,11 +785,15 @@ export async function executeChannelBridgeTick(params: Readonly<{
           }
           continue;
         }
-        await adapter.sendMessage({
-          conversationId: binding.conversationId,
-          threadId: binding.threadId,
-          text,
-        });
+        await withTimeout(
+          adapter.sendMessage({
+            conversationId: binding.conversationId,
+            threadId: binding.threadId,
+            text,
+          }),
+          EXTERNAL_IO_TIMEOUT_MS,
+          `sendMessage(${adapter.providerId})`,
+        );
         const persisted = await persistCursor(nextSeq);
         if (!persisted) {
           break;
