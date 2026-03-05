@@ -37,11 +37,29 @@ export class ArtifactEncryption {
             }
             // Validate structure
             const header = decrypted[0] as any;
-            if (typeof header !== 'object' || header === null) {
+            if (typeof header !== 'object' || header === null || Array.isArray(header)) {
                 return null;
             }
+            const title = typeof header.title === 'string' ? header.title : null;
+            const vRaw = (header as any).v;
+            const v = typeof vRaw === 'number' && Number.isFinite(vRaw) ? Math.floor(vRaw) : 1;
+            const kindRaw = typeof (header as any).kind === 'string' ? String((header as any).kind).trim() : '';
+            const kind = kindRaw || 'artifact.legacy';
+
+            const sessionsRaw = (header as any).sessions;
+            const sessions = Array.isArray(sessionsRaw)
+                ? sessionsRaw.map((v: unknown) => String(v ?? '').trim()).filter(Boolean)
+                : undefined;
+            const draftRaw = (header as any).draft;
+            const draft = typeof draftRaw === 'boolean' ? draftRaw : undefined;
+
             return {
-                title: typeof header.title === 'string' ? header.title : null
+                ...header,
+                v,
+                kind,
+                title,
+                sessions,
+                draft,
             };
         } catch (error) {
             console.error('Failed to decrypt artifact header:', error);
