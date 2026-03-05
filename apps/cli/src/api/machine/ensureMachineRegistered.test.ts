@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { DaemonState, Machine, MachineMetadata } from '@/api/types';
@@ -192,6 +192,98 @@ describe('ensureMachineRegistered', () => {
       expect(settings.machineId).toBe(alreadyRotated);
       // Another process may have already confirmed the rotated id; do not clobber that state.
       expect(settings.machineIdConfirmedByServer).toBe(true);
+    } finally {
+      rmSync(homeDir, { recursive: true, force: true });
+    }
+  });
+
+  it('persists the rotated machine id under the active account id when provided', async () => {
+    vi.useRealTimers();
+
+    const homeDir = mkdtempSync(join(tmpdir(), 'happier-cli-machine-conflict-account-binding-'));
+    process.env.HAPPIER_HOME_DIR = homeDir;
+    process.env.HAPPIER_ACTIVE_SERVER_ID = 'cloud';
+
+    try {
+      const oldMachineId = 'machine-old';
+      writeFileSync(
+        join(homeDir, 'settings.json'),
+        JSON.stringify(
+          {
+            schemaVersion: 6,
+            onboardingCompleted: true,
+            activeServerId: 'cloud',
+            servers: {
+              cloud: {
+                id: 'cloud',
+                name: 'cloud',
+                serverUrl: 'https://api.happier.dev',
+                webappUrl: 'https://app.happier.dev',
+                createdAt: 0,
+                updatedAt: 0,
+                lastUsedAt: 0,
+              },
+            },
+            machineIdByServerId: {
+              cloud: oldMachineId,
+            },
+            machineIdConfirmedByServerByServerId: {
+              cloud: true,
+            },
+            lastTokenSubByServerId: {
+              cloud: 'acct-a',
+            },
+            machineIdByServerIdByAccountId: {
+              cloud: {
+                'acct-a': oldMachineId,
+              },
+            },
+            lastChangesCursorByServerIdByAccountId: {},
+          },
+          null,
+          2,
+        ),
+        'utf8',
+      );
+
+      vi.resetModules();
+      const { readSettings } = await import('@/persistence');
+      const { ensureMachineRegistered } = await import('./ensureMachineRegistered');
+
+      const calls: string[] = [];
+      const api = {
+        getOrCreateMachine: async (opts: { machineId: string; metadata: MachineMetadata; daemonState?: DaemonState }): Promise<Machine> => {
+          calls.push(opts.machineId);
+          if (calls.length === 1) {
+            throw new MachineIdConflictError(opts.machineId);
+          }
+          return {
+            id: opts.machineId,
+            encryptionKey: new Uint8Array(),
+            encryptionVariant: 'legacy',
+            metadata: opts.metadata,
+            metadataVersion: 0,
+            daemonState: opts.daemonState ?? null,
+            daemonStateVersion: 0,
+          };
+        },
+      };
+
+      const { machineId } = await ensureMachineRegistered({
+        api: api as any,
+        machineId: oldMachineId,
+        metadata: { host: 'host1' } as any,
+      });
+
+      expect(calls).toHaveLength(2);
+      expect(machineId).toBe(calls[1]);
+
+      const settings = await readSettings();
+      expect(settings.machineId).toBe(calls[1]);
+
+      const raw = JSON.parse(readFileSync(join(homeDir, 'settings.json'), 'utf8'));
+      expect(raw.machineIdByServerId.cloud).toBe(calls[1]);
+      expect(raw.machineIdConfirmedByServerByServerId?.cloud).toBeUndefined();
     } finally {
       rmSync(homeDir, { recursive: true, force: true });
     }

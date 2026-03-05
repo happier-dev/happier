@@ -16,6 +16,7 @@ describe('changes cursor persistence', () => {
     const previousHomeDir = process.env.HAPPIER_HOME_DIR;
     const previousServerUrl = process.env.HAPPIER_SERVER_URL;
     const previousWebappUrl = process.env.HAPPIER_WEBAPP_URL;
+    const previousActiveServerId = process.env.HAPPIER_ACTIVE_SERVER_ID;
 
     afterEach(() => {
         if (previousHomeDir === undefined) {
@@ -33,6 +34,11 @@ describe('changes cursor persistence', () => {
         } else {
             process.env.HAPPIER_WEBAPP_URL = previousWebappUrl;
         }
+        if (previousActiveServerId === undefined) {
+            delete process.env.HAPPIER_ACTIVE_SERVER_ID;
+        } else {
+            process.env.HAPPIER_ACTIVE_SERVER_ID = previousActiveServerId;
+        }
     });
 
     it('roundtrips lastChangesCursorByServerIdByAccountId via settings file', async () => {
@@ -42,6 +48,7 @@ describe('changes cursor persistence', () => {
         process.env.HAPPIER_HOME_DIR = homeDir;
         delete process.env.HAPPIER_SERVER_URL;
         delete process.env.HAPPIER_WEBAPP_URL;
+        delete process.env.HAPPIER_ACTIVE_SERVER_ID;
 
         try {
             const [{ configuration }, { readLastChangesCursor, writeLastChangesCursor }] = await Promise.all([
@@ -74,6 +81,7 @@ describe('changes cursor persistence', () => {
         process.env.HAPPIER_HOME_DIR = homeDir;
         process.env.HAPPIER_SERVER_URL = serverUrl;
         process.env.HAPPIER_WEBAPP_URL = serverUrl;
+        delete process.env.HAPPIER_ACTIVE_SERVER_ID;
 
         try {
             const settingsPath = join(homeDir, 'settings.json');

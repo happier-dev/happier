@@ -11,6 +11,7 @@ import {
 import { configuration } from '@/configuration';
 import { stopDaemon } from '@/daemon/controlClient';
 import { stopAllDaemonsBestEffort } from '@/daemon/multiDaemon';
+import { clearServerScopedAuthStateInSettings } from './clearServerScopedAuthState';
 
 export async function handleAuthLogout(args: string[]): Promise<void> {
   const logoutAll = args.includes('--all');
@@ -71,20 +72,7 @@ export async function handleAuthLogout(args: string[]): Promise<void> {
         await clearDaemonState().catch(() => {});
 
         await updateSettings((settings) => {
-          const nextMachineIds = { ...(settings.machineIdByServerId ?? {}) };
-          const nextMachineConfirmed = { ...(settings.machineIdConfirmedByServerByServerId ?? {}) };
-          const nextCursors = { ...(settings.lastChangesCursorByServerIdByAccountId ?? {}) };
-
-          if (targetServerId in nextMachineIds) delete nextMachineIds[targetServerId];
-          if (targetServerId in nextMachineConfirmed) delete nextMachineConfirmed[targetServerId];
-          if (targetServerId in nextCursors) delete nextCursors[targetServerId];
-
-          return {
-            ...settings,
-            machineIdByServerId: Object.keys(nextMachineIds).length ? nextMachineIds : {},
-            machineIdConfirmedByServerByServerId: Object.keys(nextMachineConfirmed).length ? nextMachineConfirmed : {},
-            lastChangesCursorByServerIdByAccountId: Object.keys(nextCursors).length ? nextCursors : {},
-          };
+          return clearServerScopedAuthStateInSettings(settings, targetServerId);
         });
       }
 

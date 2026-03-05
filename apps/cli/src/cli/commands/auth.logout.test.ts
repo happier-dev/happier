@@ -22,11 +22,13 @@ describe('happier auth logout', () => {
     const prevHome = process.env.HAPPIER_HOME_DIR;
     const prevServerUrl = process.env.HAPPIER_SERVER_URL;
     const prevWebappUrl = process.env.HAPPIER_WEBAPP_URL;
+    const prevActiveServerId = process.env.HAPPIER_ACTIVE_SERVER_ID;
 
     try {
       process.env.HAPPIER_HOME_DIR = home;
       delete process.env.HAPPIER_SERVER_URL;
       delete process.env.HAPPIER_WEBAPP_URL;
+      delete process.env.HAPPIER_ACTIVE_SERVER_ID;
 
       mkdirSync(join(home, 'servers', 'cloud'), { recursive: true });
       mkdirSync(join(home, 'servers', 'company'), { recursive: true });
@@ -94,6 +96,8 @@ describe('happier auth logout', () => {
       else process.env.HAPPIER_SERVER_URL = prevServerUrl;
       if (prevWebappUrl === undefined) delete process.env.HAPPIER_WEBAPP_URL;
       else process.env.HAPPIER_WEBAPP_URL = prevWebappUrl;
+      if (prevActiveServerId === undefined) delete process.env.HAPPIER_ACTIVE_SERVER_ID;
+      else process.env.HAPPIER_ACTIVE_SERVER_ID = prevActiveServerId;
       reloadConfiguration();
       await rm(home, { recursive: true, force: true });
     }

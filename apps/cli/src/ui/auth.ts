@@ -5,7 +5,7 @@ import tweetnacl from 'tweetnacl';
 import axios from 'axios';
 import { displayQRCode } from "./qrcode";
 import { delay } from "@/utils/time";
-import { writeCredentialsLegacy, readCredentials, updateSettings, Credentials, writeCredentialsDataKey } from "@/persistence";
+import { writeCredentialsLegacy, readCredentials, readSettings, updateSettings, Credentials, writeCredentialsDataKey } from "@/persistence";
 import { generateWebAuthUrl } from "@/api/webAuth";
 import { sanitizeServerIdForFilesystem } from "@/server/serverId";
 import { openBrowser } from '@/ui/openBrowser';
@@ -18,6 +18,7 @@ import { ensureDaemonRunningForSessionCommand, shouldAutoStartDaemonAfterAuth } 
 import { buildConfigureServerLinks, buildTerminalConnectLinks } from '@happier-dev/cli-common/links';
 import { tailscaleServeHttpsUrlForInternalServerUrl } from '@/integrations/tailscale/tailscaleServe';
 import { isInsecureRemoteHttpServerUrl, isLocalishServerUrl } from '@/server/serverUrlClassification';
+import { decodeJwtPayload } from '@/cloud/decodeJwtPayload';
 
 export type PostTerminalAuthRequestCompatibleResponse =
     | { state: 'requested' }
@@ -659,33 +660,125 @@ export function decryptWithEphemeralKey(encryptedBundle: Uint8Array, recipientSe
     return decrypted;
 }
 
-export async function ensureMachineIdInSettings(opts?: { forceNew?: boolean }): Promise<{ machineId: string }> {
+export async function ensureMachineIdInSettings(opts?: {
+    forceNew?: boolean;
+    accountId?: string | null;
+}): Promise<{ machineId: string }> {
     const forceNew = opts?.forceNew ?? false;
+    const accountId = typeof opts?.accountId === 'string' ? opts.accountId.trim() : '';
+
     const settings = await updateSettings(async s => {
         const activeServerId = sanitizeServerIdForFilesystem(
             configuration.activeServerId ?? s.activeServerId ?? 'cloud',
             'cloud',
         );
-        const currentMap = { ...(s.machineIdByServerId ?? {}) };
-        const current = currentMap[activeServerId];
 
-        if (forceNew || !current) {
-            const machineId = randomUUID();
-            currentMap[activeServerId] = machineId;
-            return {
-                ...s,
-                machineIdByServerId: currentMap,
-                // derived (not persisted in v5+)
-                machineId,
-            };
+        const nextMachineIdByServerId = { ...(s.machineIdByServerId ?? {}) };
+        const prevMachineIdForServer = nextMachineIdByServerId[activeServerId];
+
+        if (!accountId) {
+            const current = prevMachineIdForServer;
+            if (forceNew || !current) {
+                const machineId = randomUUID();
+                nextMachineIdByServerId[activeServerId] = machineId;
+                return {
+                    ...s,
+                    machineIdByServerId: nextMachineIdByServerId,
+                    // derived (not persisted in v5+)
+                    machineId,
+                };
+            }
+            return s;
         }
-        return s;
+
+        const nextLastSubByServerId = { ...(s.lastTokenSubByServerId ?? {}) };
+        const previousAccountId = typeof nextLastSubByServerId[activeServerId] === 'string'
+            ? String(nextLastSubByServerId[activeServerId]).trim()
+            : '';
+
+        const nextMachineIdByServerIdByAccountId = { ...(s.machineIdByServerIdByAccountId ?? {}) };
+        const currentPerAccount = { ...(nextMachineIdByServerIdByAccountId[activeServerId] ?? {}) };
+        const perAccountMachineId = typeof currentPerAccount[accountId] === 'string' ? String(currentPerAccount[accountId]).trim() : '';
+
+        const didAccountSwap = Boolean(previousAccountId && previousAccountId !== accountId);
+
+        let machineId: string | null = null;
+        if (!forceNew && perAccountMachineId) {
+            machineId = perAccountMachineId;
+        } else if (!forceNew && !didAccountSwap && prevMachineIdForServer && typeof prevMachineIdForServer === 'string' && prevMachineIdForServer.trim()) {
+            // Backfill mapping for older CLIs that only stored machineIdByServerId.
+            machineId = prevMachineIdForServer.trim();
+        }
+
+        if (!machineId) {
+            machineId = randomUUID();
+        }
+
+        const normalizedPrevMachineId = typeof prevMachineIdForServer === 'string' && prevMachineIdForServer.trim()
+            ? prevMachineIdForServer.trim()
+            : null;
+        const needsServerMachineIdUpdate = normalizedPrevMachineId !== machineId;
+        const needsLastSubUpdate = previousAccountId !== accountId;
+        const needsPerAccountUpdate = perAccountMachineId !== machineId;
+
+        const nextConfirmed = { ...(s.machineIdConfirmedByServerByServerId ?? {}) };
+        const needsConfirmedUpdate = needsServerMachineIdUpdate && activeServerId in nextConfirmed;
+
+        if (!needsServerMachineIdUpdate && !needsLastSubUpdate && !needsPerAccountUpdate && !needsConfirmedUpdate) {
+            return s;
+        }
+
+        nextMachineIdByServerId[activeServerId] = machineId;
+        nextLastSubByServerId[activeServerId] = accountId;
+        currentPerAccount[accountId] = machineId;
+        nextMachineIdByServerIdByAccountId[activeServerId] = currentPerAccount;
+
+        if (needsConfirmedUpdate) delete nextConfirmed[activeServerId];
+
+        return {
+            ...s,
+            machineIdByServerId: nextMachineIdByServerId,
+            lastTokenSubByServerId: nextLastSubByServerId,
+            machineIdByServerIdByAccountId: nextMachineIdByServerIdByAccountId,
+            machineIdConfirmedByServerByServerId: nextConfirmed,
+            // derived (not persisted in v5+)
+            machineId,
+        };
     });
 
-    if (!settings.machineId) {
-        throw new Error('Failed to ensure machine id in settings');
-    }
+    if (!settings.machineId) throw new Error('Failed to ensure machine id in settings');
     return { machineId: settings.machineId };
+}
+
+export async function ensureMachineIdForCredentials(credentials: Credentials): Promise<{ machineId: string }> {
+    const tokenPayload = decodeJwtPayload(credentials.token);
+    const accountId = typeof tokenPayload?.sub === 'string' ? tokenPayload.sub.trim() : null;
+
+    let previousAccountId: string | null = null;
+    let activeServerIdForLog: string | null = null;
+    if (accountId) {
+        try {
+            const settings = await readSettings();
+            const activeServerId = sanitizeServerIdForFilesystem(
+                configuration.activeServerId ?? settings.activeServerId ?? 'cloud',
+                'cloud',
+            );
+            activeServerIdForLog = activeServerId;
+            const prev = settings.lastTokenSubByServerId?.[activeServerId];
+            previousAccountId = typeof prev === 'string' ? prev.trim() : null;
+        } catch {
+            // best-effort only
+        }
+    }
+
+    const ensured = await ensureMachineIdInSettings({ accountId });
+    if (accountId && previousAccountId && previousAccountId !== accountId) {
+        logger.info(
+            `[AUTH] tokenSub changed for server=${activeServerIdForLog ?? 'unknown'} ${previousAccountId} -> ${accountId} machineId=${ensured.machineId}`,
+        );
+    }
+
+    return ensured;
 }
 
 
@@ -717,7 +810,7 @@ export async function authAndSetupMachineIfNeeded(): Promise<{
 
     // Make sure we have a machine ID.
     // Server machine entity will be created either by the daemon or by the CLI.
-    const { machineId } = await ensureMachineIdInSettings({ forceNew: newAuth });
+    const { machineId } = await ensureMachineIdForCredentials(credentials);
 
     logger.debug(`[AUTH] Machine ID: ${machineId}`);
 

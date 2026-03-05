@@ -36,6 +36,7 @@ describe('readSettings (active server override)', () => {
     process.env.HAPPIER_HOME_DIR = homeDir;
     process.env.HAPPIER_SERVER_URL = 'http://127.0.0.1:12345';
     process.env.HAPPIER_WEBAPP_URL = 'http://127.0.0.1:12345';
+    delete process.env.HAPPIER_ACTIVE_SERVER_ID;
 
     try {
       const envServerId = deriveServerIdFromUrl(process.env.HAPPIER_SERVER_URL);
@@ -83,6 +84,7 @@ describe('readSettings (active server override)', () => {
     process.env.HAPPIER_HOME_DIR = homeDir;
     process.env.HAPPIER_SERVER_URL = 'http://127.0.0.1:23456';
     process.env.HAPPIER_WEBAPP_URL = 'http://127.0.0.1:23456';
+    delete process.env.HAPPIER_ACTIVE_SERVER_ID;
 
     try {
       const envServerId = deriveServerIdFromUrl(process.env.HAPPIER_SERVER_URL);

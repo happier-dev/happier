@@ -27,12 +27,27 @@ async function rotateMachineIdForActiveServer(opts: Readonly<{ expectedCurrentMa
     }
     nextByServerId[activeServerId] = nextMachineId;
 
+    const normalizedTokenSub = typeof settings.lastTokenSubByServerId?.[activeServerId] === 'string'
+      ? (settings.lastTokenSubByServerId?.[activeServerId] ?? '').trim()
+      : '';
+
+    const nextByServerIdByAccountId = (() => {
+      if (!normalizedTokenSub) return settings.machineIdByServerIdByAccountId;
+
+      const next = { ...(settings.machineIdByServerIdByAccountId ?? {}) };
+      const nextForServer = { ...(next[activeServerId] ?? {}) };
+      nextForServer[normalizedTokenSub] = nextMachineId;
+      next[activeServerId] = nextForServer;
+      return next;
+    })();
+
     const nextConfirmed = { ...(settings.machineIdConfirmedByServerByServerId ?? {}) };
     if (activeServerId in nextConfirmed) delete nextConfirmed[activeServerId];
 
     return {
       ...settings,
       machineIdByServerId: nextByServerId,
+      ...(nextByServerIdByAccountId ? { machineIdByServerIdByAccountId: nextByServerIdByAccountId } : {}),
       machineIdConfirmedByServerByServerId: nextConfirmed,
       // derived (not persisted in v5+)
       machineId: nextMachineId,

@@ -5,10 +5,10 @@
  */
 
 import { FileHandle } from 'node:fs/promises'
-import { readFile, writeFile, mkdir, open, unlink, rename, stat, chmod } from 'node:fs/promises'
+import { readFile, writeFile, mkdir, open, unlink, rename, stat, chmod, readdir } from 'node:fs/promises'
 import { chmodSync, existsSync, mkdirSync, writeFileSync, readFileSync, unlinkSync, renameSync } from 'node:fs'
 import { constants } from 'node:fs'
-import { dirname } from 'node:path'
+import { dirname, join } from 'node:path'
 import { configuration } from '@/configuration'
 import { sanitizeServerIdForFilesystem } from '@/server/serverId';
 import { isLocalishServerUrl } from '@/server/serverUrlClassification';
@@ -38,7 +38,7 @@ function bestEffortChmodSync(path: string, mode: number): void {
 // Incremented when Settings structure changes.
 export const SUPPORTED_SCHEMA_VERSION = 6;
 
-interface Settings {
+export interface Settings {
   // Schema version for backwards compatibility
   schemaVersion: number
   onboardingCompleted: boolean
@@ -68,6 +68,19 @@ interface Settings {
    * Per-server machine IDs (schema v5+).
    */
   machineIdByServerId?: Record<string, string | undefined>
+  /**
+   * Per-server, per-account machine IDs (schema v6+; best-effort backfill).
+   *
+   * This prevents a single stack home from reusing a machine id that belongs to a different account
+   * when credentials are swapped (e.g. due to credential repair/migration or manual re-auth).
+   */
+  machineIdByServerIdByAccountId?: Record<string, Record<string, string | undefined> | undefined>
+  /**
+   * Last observed JWT `sub` (account id) per server id (schema v6+; best-effort).
+   *
+   * Used to bind machineId selection to an account even when call sites only have Settings.
+   */
+  lastTokenSubByServerId?: Record<string, string | undefined>
   machineIdConfirmedByServerByServerId?: Record<string, boolean | undefined>
   daemonAutoStartWhenRunningHappy?: boolean
   chromeMode?: boolean
@@ -113,6 +126,8 @@ const defaultSettings: Settings = {
     },
   },
   machineIdByServerId: {},
+  machineIdByServerIdByAccountId: {},
+  lastTokenSubByServerId: {},
   machineIdConfirmedByServerByServerId: {},
   lastChangesCursorByServerIdByAccountId: {},
 }
@@ -262,7 +277,7 @@ function parseDateToEpochMs(value: string): number | null {
 
 function normalizeDaemonState(
   value: z.infer<typeof DaemonLocallyPersistedStateSchema>,
-): DaemonLocallyPersistedState | null {
+): DaemonLocallyPersistedState {
   if ('startedAt' in value) {
     return value as DaemonLocallyPersistedState;
   }
@@ -314,7 +329,20 @@ export async function readSettings(): Promise<Settings> {
       configuration.activeServerId ?? merged.activeServerId ?? 'cloud',
       'cloud',
     );
-    if (merged.machineIdByServerId && typeof merged.machineIdByServerId === 'object') {
+    const lastTokenSub =
+      merged.lastTokenSubByServerId && typeof merged.lastTokenSubByServerId === 'object'
+        ? merged.lastTokenSubByServerId[activeServerId]
+        : undefined;
+    const perAccount =
+      merged.machineIdByServerIdByAccountId && typeof merged.machineIdByServerIdByAccountId === 'object'
+        ? merged.machineIdByServerIdByAccountId[activeServerId]
+        : undefined;
+
+    if (typeof lastTokenSub === 'string' && lastTokenSub.trim() && perAccount && typeof perAccount === 'object') {
+      const mid = (perAccount as Record<string, unknown>)[lastTokenSub.trim()];
+      if (typeof mid === 'string' && mid.trim()) merged.machineId = mid.trim();
+    }
+    if (!merged.machineId && merged.machineIdByServerId && typeof merged.machineIdByServerId === 'object') {
       const mid = merged.machineIdByServerId[activeServerId];
       if (typeof mid === 'string' && mid.trim()) merged.machineId = mid.trim();
     }
@@ -547,13 +575,18 @@ export async function clearMachineId(): Promise<void> {
       'cloud',
     );
     const nextMap = { ...(settings.machineIdByServerId ?? {}) };
-    if (!(activeServerId in nextMap)) return settings;
-    delete nextMap[activeServerId];
+    const nextPerAccount = { ...(settings.machineIdByServerIdByAccountId ?? {}) };
+    if (activeServerId in nextPerAccount) delete nextPerAccount[activeServerId];
+    const nextLastSub = { ...(settings.lastTokenSubByServerId ?? {}) };
+    if (activeServerId in nextLastSub) delete nextLastSub[activeServerId];
+    if (activeServerId in nextMap) delete nextMap[activeServerId];
     const nextConfirmed = { ...(settings.machineIdConfirmedByServerByServerId ?? {}) };
     if (activeServerId in nextConfirmed) delete nextConfirmed[activeServerId];
     return {
       ...settings,
       machineIdByServerId: Object.keys(nextMap).length ? nextMap : {},
+      machineIdByServerIdByAccountId: Object.keys(nextPerAccount).length ? nextPerAccount : {},
+      lastTokenSubByServerId: Object.keys(nextLastSub).length ? nextLastSub : {},
       machineIdConfirmedByServerByServerId: Object.keys(nextConfirmed).length ? nextConfirmed : {},
     };
   });
@@ -604,6 +637,42 @@ export async function writeLastChangesCursor(accountId: string, cursor: number):
 /**
  * Read daemon state from local file
  */
+async function readDaemonStateFallbackFromServersDir(): Promise<DaemonLocallyPersistedState | null> {
+  try {
+    const dirents = await readdir(configuration.serversDir, { withFileTypes: true });
+    const candidates: DaemonLocallyPersistedState[] = [];
+    for (const dirent of dirents) {
+      if (!dirent.isDirectory()) continue;
+      const candidatePath = join(configuration.serversDir, dirent.name, 'daemon.state.json');
+      try {
+        const content = await readFile(candidatePath, 'utf-8');
+        const parsed = DaemonLocallyPersistedStateSchema.safeParse(JSON.parse(content));
+        if (!parsed.success) continue;
+        candidates.push(normalizeDaemonState(parsed.data));
+      } catch {
+        continue;
+      }
+    }
+
+    if (candidates.length === 0) return null;
+    if (candidates.length === 1) return candidates[0];
+
+    // Prefer "alive" daemons when multiple stale files exist (we still fail closed if ambiguous).
+    const alive = candidates.filter((state) => {
+      try {
+        process.kill(state.pid, 0);
+        return true;
+      } catch {
+        return false;
+      }
+    });
+    if (alive.length === 1) return alive[0];
+    return null;
+  } catch {
+    return null;
+  }
+}
+
 export async function readDaemonState(): Promise<DaemonLocallyPersistedState | null> {
   for (let attempt = 1; attempt <= 3; attempt++) {
     try {
@@ -624,7 +693,7 @@ export async function readDaemonState(): Promise<DaemonLocallyPersistedState | n
       }
       const err = error as NodeJS.ErrnoException;
       if (err?.code === 'ENOENT') {
-        if (attempt === 3) return null;
+        if (attempt === 3) return await readDaemonStateFallbackFromServersDir();
         await new Promise((resolve) => setTimeout(resolve, 15));
         continue;
       }
