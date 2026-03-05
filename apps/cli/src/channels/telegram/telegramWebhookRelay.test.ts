@@ -4,6 +4,17 @@ import { describe, expect, it } from 'vitest';
 import { startTelegramWebhookRelay } from './telegramWebhookRelay';
 
 describe('startTelegramWebhookRelay', () => {
+  it('rejects webhook secret path tokens outside Telegram-safe charset', async () => {
+    await expect(startTelegramWebhookRelay({
+      port: 0,
+      host: '127.0.0.1',
+      secretPathToken: 'bad$token',
+      onUpdate: () => {
+        throw new Error('should not be called');
+      },
+    })).rejects.toThrow('Webhook secret token must match [A-Za-z0-9_-]');
+  });
+
   it('accepts webhook updates on the configured secret path', async () => {
     const received: unknown[] = [];
 

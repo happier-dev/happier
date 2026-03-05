@@ -174,6 +174,14 @@ export function createTelegramChannelAdapter(params: Readonly<{
   };
 
   let selfBotId: number | null = null;
+  /**
+   * Telegram polling cursor (`getUpdates` offset).
+   *
+   * This cursor is intentionally process-local today and is not persisted across
+   * daemon restarts. Polling mode therefore provides at-least-once delivery:
+   * after restart, Telegram may replay unacknowledged updates from the retention
+   * window, and downstream dedupe is expected to absorb duplicates.
+   */
   let updateOffset: number | null = null;
   const queuedWebhookUpdates: QueuedWebhookUpdate[] = [];
   let nextQueuedWebhookId = 1;

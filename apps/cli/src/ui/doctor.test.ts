@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   collectMissingRequiredWebhookFields,
+  resolveTelegramWebhookValidationInputs,
   isMissingRequiredTelegramWebhookSecret,
   maskValue,
   redactSettingsForDisplay,
@@ -160,5 +161,31 @@ describe('generic webhook field requirements', () => {
                 webhookPort: 8787,
             }),
         ).toEqual([]);
+    });
+});
+
+describe('telegram webhook validation inputs', () => {
+    it('uses resolved runtime defaults for host and port validation', () => {
+        expect(
+            resolveTelegramWebhookValidationInputs({
+                runtimeWebhookHost: '127.0.0.1',
+                runtimeWebhookPort: 8787,
+            }),
+        ).toEqual({
+            webhookHost: '127.0.0.1',
+            webhookPort: 8787,
+        });
+    });
+
+    it('flags invalid runtime values so critical checks can fail loudly', () => {
+        expect(
+            resolveTelegramWebhookValidationInputs({
+                runtimeWebhookHost: '   ',
+                runtimeWebhookPort: Number.NaN,
+            }),
+        ).toEqual({
+            webhookHost: '',
+            webhookPort: null,
+        });
     });
 });

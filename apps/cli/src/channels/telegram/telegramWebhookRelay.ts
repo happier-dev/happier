@@ -26,6 +26,9 @@ export async function startTelegramWebhookRelay(params: Readonly<{
   if (!secretPathToken) {
     throw new Error('Webhook secret token is required');
   }
+  if (!/^[A-Za-z0-9_-]+$/.test(secretPathToken)) {
+    throw new Error('Webhook secret token must match [A-Za-z0-9_-]');
+  }
   if (secretPathToken.includes('/')) {
     throw new Error('Webhook secret token must not contain "/"');
   }
@@ -40,7 +43,7 @@ export async function startTelegramWebhookRelay(params: Readonly<{
   if (requestedPort < 0 || requestedPort > 65_535) {
     throw new Error('Webhook port must be between 0 and 65535');
   }
-  const path = `/telegram/webhook/${encodeURIComponent(secretPathToken)}`;
+  const path = `/telegram/webhook/${secretPathToken}`;
 
   const app = fastify({ logger: false });
   app.post(path, async (request, reply) => {

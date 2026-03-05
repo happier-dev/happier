@@ -94,6 +94,28 @@ function parseStrictWebhookPort(value: unknown): number | null {
     return null;
 }
 
+export function resolveTelegramWebhookValidationInputs(params: Readonly<{
+    runtimeWebhookHost: string;
+    runtimeWebhookPort: number;
+}>): Readonly<{
+    webhookHost: string;
+    webhookPort: number | null;
+}> {
+    const webhookHost = String(params.runtimeWebhookHost ?? '').trim();
+    const webhookPort =
+        Number.isFinite(params.runtimeWebhookPort)
+        && Number.isInteger(params.runtimeWebhookPort)
+        && params.runtimeWebhookPort > 0
+        && params.runtimeWebhookPort <= 65_535
+            ? params.runtimeWebhookPort
+            : null;
+
+    return {
+        webhookHost,
+        webhookPort,
+    };
+}
+
 type SettingsForDisplay = Awaited<ReturnType<typeof readSettings>>;
 
 export function redactSettingsForDisplay(settings: SettingsForDisplay): SettingsForDisplay {
@@ -400,7 +422,6 @@ export async function runDoctorCommand(filter?: 'all' | 'daemon'): Promise<void>
                 || runtimeBridge.telegram.requireTopics;
 
             if (telegramConfigured) {
-                const webhookConfig = asRecord(telegram?.webhook);
                 const token = runtimeBridge.telegram.botToken;
                 const webhookSecret = runtimeBridge.telegram.webhookSecret;
                 const allowedChatIds = runtimeBridge.telegram.allowedChatIds;
@@ -408,16 +429,11 @@ export async function runDoctorCommand(filter?: 'all' | 'daemon'): Promise<void>
                 const webhookEnabled = runtimeBridge.telegram.webhookEnabled;
                 const webhookHost = runtimeBridge.telegram.webhookHost;
                 const webhookPort = String(runtimeBridge.telegram.webhookPort);
-                const webhookHostForValidation =
-                    typeof process.env.HAPPIER_TELEGRAM_WEBHOOK_HOST === 'string'
-                        ? process.env.HAPPIER_TELEGRAM_WEBHOOK_HOST.trim()
-                        : typeof webhookConfig?.host === 'string'
-                            ? webhookConfig.host.trim()
-                            : '';
-                const webhookPortForValidation =
-                    typeof process.env.HAPPIER_TELEGRAM_WEBHOOK_PORT === 'string'
-                        ? parseStrictWebhookPort(process.env.HAPPIER_TELEGRAM_WEBHOOK_PORT)
-                        : parseStrictWebhookPort(webhookConfig?.port);
+                const { webhookHost: webhookHostForValidation, webhookPort: webhookPortForValidation } =
+                    resolveTelegramWebhookValidationInputs({
+                        runtimeWebhookHost: runtimeBridge.telegram.webhookHost,
+                        runtimeWebhookPort: runtimeBridge.telegram.webhookPort,
+                    });
                 const tokenMissing = token.trim().length === 0;
                 const webhookIssues = collectMissingRequiredWebhookFields({
                     webhookEnabled,
