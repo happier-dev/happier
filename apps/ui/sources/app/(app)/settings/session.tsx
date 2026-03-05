@@ -353,6 +353,7 @@ export default React.memo(function SessionSettingsScreen() {
 
             <ItemGroup title={t('profiles.tmux.title')}>
                 <Item
+                    testID="settings-session-tmux-enabled-item"
                     title={t('profiles.tmux.spawnSessionsTitle')}
                     subtitle={useTmux ? t('profiles.tmux.spawnSessionsEnabledSubtitle') : t('profiles.tmux.spawnSessionsDisabledSubtitle')}
                     icon={<Ionicons name="terminal-outline" size={29} color={theme.colors.accent.indigo} />}
@@ -368,6 +369,7 @@ export default React.memo(function SessionSettingsScreen() {
                                 {t('profiles.tmuxSession')} ({t('common.optional')})
                             </Text>
                             <TextInput
+                                testID="settings-session-tmux-sessionName-input"
                                 style={styles.textInput}
                                 placeholder={t('profiles.tmux.sessionNamePlaceholder')}
                                 placeholderTextColor={theme.colors.input.placeholder}
@@ -377,6 +379,7 @@ export default React.memo(function SessionSettingsScreen() {
                         </View>
 
                         <Item
+                            testID="settings-session-tmux-isolated-item"
                             title={t('profiles.tmux.isolatedServerTitle')}
                             subtitle={tmuxIsolated ? t('profiles.tmux.isolatedServerEnabledSubtitle') : t('profiles.tmux.isolatedServerDisabledSubtitle')}
                             icon={<Ionicons name="albums-outline" size={29} color={theme.colors.accent.indigo} />}
@@ -391,6 +394,7 @@ export default React.memo(function SessionSettingsScreen() {
                                     {t('profiles.tmuxTempDir')} ({t('common.optional')})
                                 </Text>
                                 <TextInput
+                                    testID="settings-session-tmux-tmpDir-input"
                                     style={styles.textInput}
                                     placeholder={t('profiles.tmux.tempDirPlaceholder')}
                                     placeholderTextColor={theme.colors.input.placeholder}

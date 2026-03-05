@@ -13,7 +13,7 @@ type LocalControlMetadata = NonNullable<Session['metadata']> & {
 };
 
 const resumeOptions: ResumeCapabilityOptions = {
-  allowExperimentalResumeByAgentId: { codex: true, gemini: true },
+  accountSettings: { codexBackendMode: 'acp' },
 };
 
 function buildSession(overrides: Partial<Session> = {}): Session {
@@ -87,8 +87,20 @@ describe('localControlSwitch', () => {
     ).toBe(true);
   });
 
-  it('offers switch-to-local only when the session is resumable, machine is online, and agent supports local control', () => {
-    const session = buildSession();
+  it('offers switch-to-local when the session is active even if the machine is offline', () => {
+    const session = buildSession({ presence: 'online' });
+
+    expect(
+      shouldOfferSwitchToLocalControl({
+        session,
+        isMachineOnline: false,
+        resumeCapabilityOptions: resumeOptions,
+      }),
+    ).toBe(true);
+  });
+
+  it('requires the machine to be online when the session is inactive', () => {
+    const session = buildSession({ presence: Date.now() - 60_000, active: false });
 
     expect(
       shouldOfferSwitchToLocalControl({
@@ -107,17 +119,17 @@ describe('localControlSwitch', () => {
     ).toBe(true);
   });
 
-  it('returns a disabled reason for supported agents when machine is offline', () => {
+  it('returns a disabled reason for supported agents when machine is offline and the session is inactive', () => {
     expect(
       getSwitchToLocalControlDisabledReason({
-        session: buildSession(),
+        session: buildSession({ presence: Date.now() - 60_000, active: false }),
         isMachineOnline: false,
         resumeCapabilityOptions: resumeOptions,
       }),
     ).toBe('machineOffline');
   });
 
-  it('returns a disabled reason for supported agents when session was started by daemon', () => {
+  it('returns a disabled reason for supported agents when session was started by daemon without a tmux terminal', () => {
     const session = buildSession({
       metadata: {
         ...(buildSession().metadata as LocalControlMetadata),
@@ -132,6 +144,32 @@ describe('localControlSwitch', () => {
         resumeCapabilityOptions: resumeOptions,
       }),
     ).toBe('daemonStarted');
+  });
+
+  it('does not disable local-control when session was started by daemon with a tmux terminal', () => {
+    const session = buildSession({
+      metadata: {
+        ...(buildSession().metadata as LocalControlMetadata),
+        startedFromDaemon: true,
+        terminal: { mode: 'tmux', tmux: { target: 'happy:happy-123' } },
+      } as Session['metadata'],
+    });
+
+    expect(
+      getSwitchToLocalControlDisabledReason({
+        session,
+        isMachineOnline: true,
+        resumeCapabilityOptions: resumeOptions,
+      }),
+    ).toBeNull();
+
+    expect(
+      shouldOfferSwitchToLocalControl({
+        session,
+        isMachineOnline: true,
+        resumeCapabilityOptions: resumeOptions,
+      }),
+    ).toBe(true);
   });
 
   it('returns a disabled reason for supported agents when resume support is missing', () => {

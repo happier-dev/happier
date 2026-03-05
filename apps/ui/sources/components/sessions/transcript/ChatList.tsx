@@ -11,15 +11,16 @@ import {
     useSessionPendingMessages,
     useSessionTranscriptIds,
     useSetting,
-} from "@/sync/domains/state/storage";
+} from '@/sync/domains/state/storage';
 import { ActivityIndicator, FlatList, Platform, View } from 'react-native';
 import { FlashList } from '@shopify/flash-list';
 import { useCallback } from 'react';
+import { isWebElementScrollable, resolveWebScrollableElement } from '@/components/ui/scroll/resolveWebScrollableElement';
 import { useHeaderHeight } from '@/utils/platform/responsive';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { MessageView } from './MessageView';
 import { Metadata, Session } from '@/sync/domains/state/storageTypes';
-import { ChatFooter } from './ChatFooter';
+import { ChatFooter, type ChatFooterLocalControlState } from './ChatFooter';
 import { buildChatListItems, buildChatListItemsCached, type ChatListItem, type ChatListItemsBuildCache } from '@/components/sessions/chatListItems';
 import { injectForkContextRows } from '@/components/sessions/transcript/forkContext/injectForkContextRows';
 import { ForkDividerRow } from '@/components/sessions/transcript/forkContext/ForkDividerRow';
@@ -42,6 +43,7 @@ import { resolveActiveThinkingMessageId } from '@/components/sessions/transcript
 import { settingsDefaults } from '@/sync/domains/settings/settings';
 import { deriveTranscriptInteraction, type TranscriptInteraction } from '@/utils/sessions/deriveTranscriptInteraction';
 import { buildChatListNativeId } from './chatListNativeId';
+import { useWebFlashListCrashFallback } from '@/components/ui/lists/useWebFlashListCrashFallback';
 
 type ScrollableChatListRef = Readonly<{
     scrollToIndex: (params: { index: number; animated?: boolean; viewPosition?: number }) => void;
@@ -64,7 +66,9 @@ export type ChatListBottomNotice = {
 export const ChatList = React.memo((props: {
     session: Session;
     bottomNotice?: ChatListBottomNotice | null;
+    controlSwitchTo?: 'local' | 'remote' | null;
     onRequestSwitchToRemote?: () => void;
+    localControlFooter?: ChatFooterLocalControlState;
     jumpToSeq?: number | null;
     onViewportChange?: (state: { isPinned: boolean; offsetY: number }) => void;
 }) => {
@@ -223,7 +227,9 @@ export const ChatList = React.memo((props: {
             activeThinkingMessageId={activeThinkingMessageId}
             isLoaded={isLoaded}
             bottomNotice={props.bottomNotice}
+            controlSwitchTo={props.controlSwitchTo ?? null}
             onRequestSwitchToRemote={props.onRequestSwitchToRemote}
+            localControlFooter={props.localControlFooter}
             interaction={interaction}
             jumpToSeq={props.jumpToSeq ?? null}
             onViewportChange={props.onViewportChange}
@@ -249,7 +255,9 @@ const ListHeader = React.memo((props: { isLoadingOlder: boolean }) => {
 const ListFooter = React.memo((props: {
     sessionId: string;
     bottomNotice?: ChatListBottomNotice | null;
+    controlSwitchTo?: 'local' | 'remote' | null;
     onRequestSwitchToRemote?: () => void;
+    localControl?: ChatFooterLocalControlState;
 }) => {
     const session = useSession(props.sessionId);
     if (!session) {
@@ -261,7 +269,9 @@ const ListFooter = React.memo((props: {
             controlledByUser={session.agentState?.controlledByUser || false}
             permissionsInUiWhileLocal={permissionsInUiWhileLocal}
             notice={props.bottomNotice ?? null}
+            controlSwitchTo={props.controlSwitchTo ?? null}
             onRequestSwitchToRemote={props.onRequestSwitchToRemote}
+            localControl={props.localControl ?? null}
         />
     )
 });
@@ -317,7 +327,9 @@ const ChatListInternal = React.memo((props: {
     activeThinkingMessageId: string | null,
     isLoaded: boolean,
     bottomNotice?: ChatListBottomNotice | null,
+    controlSwitchTo?: 'local' | 'remote' | null;
     onRequestSwitchToRemote?: () => void,
+    localControlFooter?: ChatFooterLocalControlState;
     interaction: TranscriptInteraction;
     jumpToSeq?: number | null;
     onViewportChange?: (state: { isPinned: boolean; offsetY: number }) => void;
@@ -492,50 +504,14 @@ const ChatListInternal = React.memo((props: {
     const jumpAnimateScroll = transcriptScrollJumpToBottomAnimateScroll !== false;
 
     const preferredListImplementation = transcriptListImplementation === 'flatlist_legacy' ? 'flatlist_legacy' : 'flash_v2';
-    const [webFlashListCrashed, setWebFlashListCrashed] = React.useState(false);
+    const webFlashListCrashed = useWebFlashListCrashFallback({
+        enabled: Platform.OS === 'web' && preferredListImplementation === 'flash_v2',
+    });
     const listImplementation =
         Platform.OS === 'web' && preferredListImplementation === 'flash_v2' && webFlashListCrashed
             ? 'flatlist_legacy'
             : preferredListImplementation;
 
-    React.useEffect(() => {
-        if (Platform.OS !== 'web') return;
-        if (preferredListImplementation !== 'flash_v2') return;
-        if (webFlashListCrashed) return;
-        const win = (globalThis as any)?.window as undefined | { addEventListener?: any; removeEventListener?: any };
-        if (!win || typeof win.addEventListener !== 'function' || typeof win.removeEventListener !== 'function') return;
-
-        const shouldFallback = (message: string): boolean => {
-            const text = (message ?? '').toLowerCase();
-            if (!text) return false;
-            return text.includes('not enough layouts') || text.includes('index out of bounds');
-        };
-
-        const onError = (event: any) => {
-            const message = String(event?.error?.message ?? event?.message ?? '');
-            if (!shouldFallback(message)) return;
-            try {
-                event?.preventDefault?.();
-            } catch {
-                // ignore
-            }
-            try {
-                event?.stopImmediatePropagation?.();
-            } catch {
-                // ignore
-            }
-            setWebFlashListCrashed(true);
-        };
-
-        win.addEventListener('error', onError, true);
-        return () => {
-            try {
-                win.removeEventListener('error', onError, true);
-            } catch {
-                // ignore
-            }
-        };
-    }, [preferredListImplementation, webFlashListCrashed]);
     const listData = React.useMemo(() => {
         if (listImplementation === 'flatlist_legacy') {
             // Legacy: inverted lists expect newest-first input.
@@ -693,7 +669,7 @@ const ChatListInternal = React.memo((props: {
         hasMore: boolean;
         status: 'loaded' | 'no_more' | 'not_ready' | 'in_flight';
     } | null> => {
-        if (!props.isLoaded) return null;
+        if (!props.isLoaded && props.forkedTranscriptEnabled !== true) return null;
         if (loadOlderInFlight.current || hasMoreOlder === false) {
             return null;
         }
@@ -725,17 +701,7 @@ const ChatListInternal = React.memo((props: {
         if (typeof window === 'undefined' || typeof window.getComputedStyle !== 'function') return false;
 
         const isScrollable = (el: HTMLElement): boolean => {
-            try {
-                const cs = window.getComputedStyle(el);
-                const overflowY = cs?.overflowY;
-                if (!(overflowY === 'auto' || overflowY === 'scroll')) return false;
-                const sh = (el as any).scrollHeight;
-                const ch = (el as any).clientHeight;
-                if (typeof sh !== 'number' || typeof ch !== 'number') return false;
-                return sh > ch + 50;
-            } catch {
-                return false;
-            }
+            return isWebElementScrollable({ el, win: window, minOverflowPx: 50 });
         };
 
         const root = (document as any)?.getElementById?.(chatListNativeId) as HTMLElement | null | undefined;
@@ -774,38 +740,17 @@ const ChatListInternal = React.memo((props: {
             }
         }
 
-        const candidates: HTMLElement[] = [root];
-        try {
-            const desc = root.querySelectorAll?.('*') as NodeListOf<HTMLElement> | undefined;
-            if (desc) candidates.push(...Array.from(desc));
-        } catch {
-            // ignore
-        }
-
-        let best: HTMLElement | null = null;
-        let bestScrollHeight = 0;
-        for (const el of candidates) {
-            if (!isScrollable(el)) continue;
-            const sh = (el as any).scrollHeight as number;
-            if (!best || sh > bestScrollHeight) {
-                best = el;
-                bestScrollHeight = sh;
-            }
-        }
-
-        // If we couldn't find a scroll container inside the root, fall back to ancestors.
-        if (!best) {
-            let el: HTMLElement | null = root.parentElement;
-            let steps = 0;
-            while (el && steps < 30) {
-                if (isScrollable(el)) {
-                    best = el;
-                    break;
-                }
-                el = el.parentElement;
-                steps++;
-            }
-        }
+        const best = resolveWebScrollableElement(root, {
+            win: window,
+            pick: 'best',
+            maxDescendants: 1800,
+            maxAncestors: 30,
+            minOverflowPx: 50,
+            score: (el) => {
+                const sh = (el as any).scrollHeight;
+                return typeof sh === 'number' && Number.isFinite(sh) ? sh : 0;
+            },
+        });
 
         if (!best) return false;
         webScrollContainerRef.current = best;
@@ -1367,7 +1312,9 @@ const ChatListInternal = React.memo((props: {
                         <ListFooter
                             sessionId={props.sessionId}
                             bottomNotice={props.bottomNotice}
+                            controlSwitchTo={props.controlSwitchTo ?? null}
                             onRequestSwitchToRemote={props.onRequestSwitchToRemote}
+                            localControl={props.localControlFooter}
                         />
                     }
               />
@@ -1384,7 +1331,7 @@ const ChatListInternal = React.memo((props: {
                                         onMouseDown: markUserScrollIntentOnWeb,
                                   } as any)
                             : {})}
-                      testID="transcript-chat-list"
+                        testID="transcript-chat-list"
                       data={listData}
                       nativeID={chatListNativeId}
                       keyExtractor={keyExtractor}
@@ -1511,7 +1458,9 @@ const ChatListInternal = React.memo((props: {
                             <ListFooter
                                 sessionId={props.sessionId}
                                 bottomNotice={props.bottomNotice}
+                                controlSwitchTo={props.controlSwitchTo ?? null}
                                 onRequestSwitchToRemote={props.onRequestSwitchToRemote}
+                                localControl={props.localControlFooter}
                             />
                         }
                   />

@@ -7,6 +7,7 @@ import { buildSessionAgentInputActionChips } from '@/components/sessions/agentIn
 import { getSuggestions } from '@/components/autocomplete/suggestions';
 import { ChatHeaderView } from '@/components/sessions/transcript/ChatHeaderView';
 import { SessionHeaderActionMenu } from '@/components/sessions/actions/SessionHeaderActionMenu';
+import { SessionHeaderTerminalButton } from '@/components/sessions/actions/SessionHeaderTerminalButton';
 import { ChatList } from '@/components/sessions/transcript/ChatList';
 import { Deferred } from '@/components/ui/forms/Deferred';
 import { EmptyMessages } from '@/components/ui/empty/EmptyMessages';
@@ -69,7 +70,8 @@ import { ActivityIndicator, Platform, Pressable, View, useWindowDimensions } fro
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useUnistyles } from 'react-native-unistyles';
 import { sessionSwitch } from '@/sync/ops';
-import { shouldRenderChatTimelineForSession, shouldRequestRemoteControlAfterPendingEnqueue } from '@/sync/domains/session/control/localControlSwitch';
+import { getSwitchToLocalControlDisabledReason, shouldRenderChatTimelineForSession, shouldRequestRemoteControlAfterPendingEnqueue } from '@/sync/domains/session/control/localControlSwitch';
+import { readControlSwitchUiTimeoutMsFromEnv } from '@/sync/domains/session/control/controlSwitchUiTimeout';
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 import { useVoiceSessionSnapshot, voiceSessionManager } from '@/voice/session/voiceSession';
 import { countEnabledAutomationsLinkedToSession } from '@/sync/domains/automations/automationSessionLink';
@@ -183,6 +185,7 @@ export const SessionView = React.memo((props: { id: string; jumpToSeq?: number |
         const rightElement = (
             <View style={{ flexDirection: 'row', alignItems: 'center' }}>
                 <SessionHeaderActionMenu sessionId={sessionId} session={session} />
+                <SessionHeaderTerminalButton sessionId={sessionId} scopeId={paneScopeId} />
                 {executionRunsEnabled ? (
                     <Pressable
                         onPress={() => router.push(`/session/${sessionId}/runs` as any)}
@@ -253,7 +256,7 @@ export const SessionView = React.memo((props: { id: string; jumpToSeq?: number |
             flavor: session.metadata?.flavor || null,
             tintColor: isConnected ? '#000' : '#8E8E93'
         };
-    }, [executionRunsEnabled, isDataReady, router, session, sessionAutomationsEnabledCount, sessionId, showAutomations, theme.colors.header.tint, theme.colors.status.error]);
+    }, [executionRunsEnabled, isDataReady, paneScopeId, router, session, sessionAutomationsEnabledCount, sessionId, showAutomations, theme.colors.header.tint, theme.colors.status.error]);
 
     return (
         <>
@@ -918,22 +921,90 @@ function SessionViewLoaded({ sessionId, session, isEncryptedSessionLocked, jumpT
         });
     }, [isSessionActive, session.accessLevel, session.canApprovePermissions]);
 
+    const [pendingQueueResumeFailed, setPendingQueueResumeFailed] = React.useState(false);
+    React.useEffect(() => {
+        if (!pendingQueueResumeFailed) return;
+        if (!isSessionActive) return;
+        setPendingQueueResumeFailed(false);
+    }, [isSessionActive, pendingQueueResumeFailed]);
+
+    const [controlSwitchTo, setControlSwitchTo] = React.useState<'local' | 'remote' | null>(null);
+    React.useEffect(() => {
+        if (controlSwitchTo === 'local' && session.agentState?.controlledByUser === true) {
+            setControlSwitchTo(null);
+        }
+        if (controlSwitchTo === 'remote' && session.agentState?.controlledByUser !== true) {
+            setControlSwitchTo(null);
+        }
+    }, [controlSwitchTo, session.agentState?.controlledByUser]);
+
+    React.useEffect(() => {
+        if (!controlSwitchTo) return;
+        const timeoutMs = readControlSwitchUiTimeoutMsFromEnv();
+        if (timeoutMs <= 0) return;
+        const timeoutId = setTimeout(() => {
+            setControlSwitchTo(null);
+            Modal.alert(t('common.error'), t('errors.failedToSwitchControl'));
+        }, timeoutMs);
+        return () => clearTimeout(timeoutId);
+    }, [controlSwitchTo]);
+
+    const handleRequestSwitchToLocal = React.useCallback(() => {
+        if (!hasWriteAccess) {
+            Modal.alert(t('common.error'), t('session.sharing.noEditPermission'));
+            return;
+        }
+        setControlSwitchTo('local');
+        fireAndForget((async () => {
+            try {
+                const ok = await sessionSwitch(sessionId, 'local');
+                if (ok !== true) {
+                    setControlSwitchTo(null);
+                    Modal.alert(t('common.error'), t('errors.failedToSwitchControl'));
+                }
+            } catch {
+                setControlSwitchTo(null);
+                Modal.alert(t('common.error'), t('errors.failedToSwitchControl'));
+            }
+        })(), { tag: 'SessionView.requestSwitchToLocal' });
+    }, [hasWriteAccess, sessionId]);
+
     const handleRequestSwitchToRemote = React.useCallback(() => {
         if (!hasWriteAccess) {
             Modal.alert(t('common.error'), t('session.sharing.noEditPermission'));
             return;
         }
+        setControlSwitchTo('remote');
         fireAndForget((async () => {
             try {
                 const ok = await sessionSwitch(sessionId, 'remote');
                 if (ok !== true) {
+                    setControlSwitchTo(null);
                     Modal.alert(t('common.error'), t('errors.failedToSwitchControl'));
                 }
             } catch {
+                setControlSwitchTo(null);
                 Modal.alert(t('common.error'), t('errors.failedToSwitchControl'));
             }
         })(), { tag: 'SessionView.requestSwitchToRemote' });
     }, [hasWriteAccess, sessionId]);
+
+    const localControlDisabledReason = React.useMemo(() => {
+        if (!supportsLocalControl) return null;
+        return getSwitchToLocalControlDisabledReason({
+            session,
+            isMachineOnline: isMachineReachable,
+            resumeCapabilityOptions,
+        });
+    }, [isMachineReachable, resumeCapabilityOptions, session, supportsLocalControl]);
+
+    const localControlFooter = React.useMemo(() => {
+        if (!supportsLocalControl) return null;
+        return {
+            disabledReason: localControlDisabledReason,
+            onRequestSwitchToLocal: localControlDisabledReason == null ? handleRequestSwitchToLocal : undefined,
+        };
+    }, [handleRequestSwitchToLocal, localControlDisabledReason, supportsLocalControl]);
 
     const shouldRenderChatTimeline = React.useMemo(() => {
         if (isEncryptedSessionLocked) return false;
@@ -955,7 +1026,9 @@ function SessionViewLoaded({ sessionId, session, isEncryptedSessionLocked, jumpT
                       <ChatList
                           session={session}
                           bottomNotice={bottomNotice}
+                          controlSwitchTo={controlSwitchTo}
                           onRequestSwitchToRemote={handleRequestSwitchToRemote}
+                          localControlFooter={localControlFooter}
                           jumpToSeq={jumpToSeq}
                           onViewportChange={(state) => {
                               sync.onSessionViewportChange(sessionId, state);

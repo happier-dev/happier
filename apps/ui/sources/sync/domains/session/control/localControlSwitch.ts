@@ -31,11 +31,16 @@ export function getSwitchToLocalControlDisabledReason(opts: {
     const session = resolved.session;
     if (session.agentState?.controlledByUser === true) return null;
 
-    // Fail closed for daemon-started sessions (no interactive TUI).
     const startedFromDaemon = Boolean((session.metadata as any)?.startedFromDaemon);
-    if (startedFromDaemon) return 'daemonStarted';
+    if (startedFromDaemon) {
+        const terminal = (session.metadata as any)?.terminal;
+        const tmuxTarget = terminal?.mode === 'tmux' ? terminal?.tmux?.target : null;
+        const hasTmuxTarget = typeof tmuxTarget === 'string' && tmuxTarget.trim().length > 0;
+        if (!hasTmuxTarget) return 'daemonStarted';
+    }
 
-    if (!opts.isMachineOnline) return 'machineOffline';
+    const isSessionActive = session.presence === 'online';
+    if (!opts.isMachineOnline && !isSessionActive) return 'machineOffline';
 
     if (!canResumeSessionWithOptions(session.metadata as any, opts.resumeCapabilityOptions)) {
         return 'resumeUnsupported';

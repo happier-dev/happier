@@ -104,7 +104,7 @@ describe('ChatFooter (local control)', () => {
         });
     });
 
-    it('does not render switch-to-local controls while remote-controlled', async () => {
+    it('does not render switch-to-local controls when localControl is not provided', async () => {
         const tree = await renderFooter({
             controlledByUser: false,
         });
@@ -112,6 +112,84 @@ describe('ChatFooter (local control)', () => {
         const textNodes = tree.root.findAllByType('Text');
         expect(textNodes.some((node) => node.props.children === 'chatFooter.localModeAvailable')).toBe(false);
         expect(textNodes.some((node) => node.props.children === 'chatFooter.localModeUnavailableNeedsResume')).toBe(false);
+
+        const pressables = tree.root.findAllByType('Pressable');
+        expect(pressables.some((node) => node.props.accessibilityLabel === 'chatFooter.switchToLocal')).toBe(false);
+
+        await act(async () => {
+            tree.unmount();
+        });
+    });
+
+    it('renders switch-to-local controls when local mode is available', async () => {
+        const onRequestSwitchToLocal = vi.fn();
+        const tree = await renderFooter({
+            controlledByUser: false,
+            localControl: { disabledReason: null, onRequestSwitchToLocal },
+        });
+
+        const textNodes = tree.root.findAllByType('Text');
+        expect(textNodes.some((node) => node.props.children === 'chatFooter.localModeAvailable')).toBe(true);
+
+        const pressables = tree.root.findAllByType('Pressable');
+        const switchToLocal = pressables.find((node) => node.props.accessibilityLabel === 'chatFooter.switchToLocal');
+        expect(Boolean(switchToLocal)).toBe(true);
+
+        await act(async () => {
+            switchToLocal!.props.onPress();
+        });
+        expect(onRequestSwitchToLocal).toHaveBeenCalledTimes(1);
+
+        await act(async () => {
+            tree.unmount();
+        });
+    });
+
+    it('renders a switching-to-local message and hides the action while a control switch is in flight', async () => {
+        const onRequestSwitchToLocal = vi.fn();
+        const tree = await renderFooter({
+            controlledByUser: false,
+            controlSwitchTo: 'local',
+            localControl: { disabledReason: null, onRequestSwitchToLocal },
+        });
+
+        const textNodes = tree.root.findAllByType('Text');
+        expect(textNodes.some((node) => node.props.children === 'chatFooter.switchingToLocal')).toBe(true);
+
+        const pressables = tree.root.findAllByType('Pressable');
+        expect(pressables.some((node) => node.props.accessibilityLabel === 'chatFooter.switchToLocal')).toBe(false);
+
+        await act(async () => {
+            tree.unmount();
+        });
+    });
+
+    it('renders a switching-to-remote message and hides the action while a control switch is in flight', async () => {
+        const tree = await renderFooter({
+            controlledByUser: true,
+            controlSwitchTo: 'remote',
+            onRequestSwitchToRemote: vi.fn(),
+        });
+
+        const textNodes = tree.root.findAllByType('Text');
+        expect(textNodes.some((node) => node.props.children === 'chatFooter.switchingToRemote')).toBe(true);
+
+        const pressables = tree.root.findAllByType('Pressable');
+        expect(pressables.some((node) => node.props.accessibilityLabel === 'chatFooter.switchToRemote')).toBe(false);
+
+        await act(async () => {
+            tree.unmount();
+        });
+    });
+
+    it('renders an unavailable message and no action when local mode is disabled', async () => {
+        const tree = await renderFooter({
+            controlledByUser: false,
+            localControl: { disabledReason: 'machineOffline' },
+        });
+
+        const textNodes = tree.root.findAllByType('Text');
+        expect(textNodes.some((node) => node.props.children === 'chatFooter.localModeUnavailableMachineOffline')).toBe(true);
 
         const pressables = tree.root.findAllByType('Pressable');
         expect(pressables.some((node) => node.props.accessibilityLabel === 'chatFooter.switchToLocal')).toBe(false);
