@@ -13,7 +13,7 @@ import {
   type SessionEncryptionContext,
 } from '@/sessionControl/sessionEncryptionContext';
 import { sendSessionMessageViaSocketCommitted } from '@/sessionControl/sessionSocketSendMessage';
-import { fetchSessionById, fetchSessionsPage } from '@/sessionControl/sessionsHttp';
+import { fetchSessionById, fetchSessionsPage, type RawSessionListRow } from '@/sessionControl/sessionsHttp';
 import { logger } from '@/ui/logger';
 
 import {
@@ -105,8 +105,31 @@ function createDefaultChannelBridgeDeps(credentials: Credentials): DefaultChanne
   return {
     deps: {
     listSessions: async () => {
-      const page = await fetchSessionsPage({ token: credentials.token, activeOnly: false, limit: 100 });
-      return page.sessions.map((row) => {
+      const pageSize = 100;
+      const maxPages = 50;
+      const sessions: RawSessionListRow[] = [];
+      let cursor: string | undefined;
+
+      for (let pageIndex = 0; pageIndex < maxPages; pageIndex += 1) {
+        const page = await fetchSessionsPage({
+          token: credentials.token,
+          activeOnly: false,
+          limit: pageSize,
+          cursor,
+        });
+        sessions.push(...page.sessions);
+        if (!page.hasNext || !page.nextCursor) {
+          cursor = undefined;
+          break;
+        }
+        cursor = page.nextCursor;
+      }
+
+      if (cursor) {
+        logger.warn(`[channelBridge] Session list pagination stopped after ${maxPages} pages; truncating /sessions results`);
+      }
+
+      return sessions.map((row) => {
         const meta = tryDecryptSessionMetadata({ credentials, rawSession: row });
         const tagRaw = meta?.tag;
         const tag = typeof tagRaw === 'string' ? tagRaw.trim() : '';
@@ -227,6 +250,10 @@ export async function startChannelBridgeFromEnv(params: Readonly<{
     const webhookEnabled = runtimeConfig.telegram.webhookEnabled;
     const webhookSecret = runtimeConfig.telegram.webhookSecret;
     const requireTopics = runtimeConfig.telegram.requireTopics;
+
+    if (webhookEnabled && webhookSecret.length === 0) {
+      logger.warn('[channelBridge] Telegram webhook.enabled=true but webhook.secret is missing; falling back to polling mode');
+    }
 
     const webhookModeRequested = webhookEnabled && webhookSecret.length > 0;
     let telegramAdapter = createTelegramChannelAdapter({
