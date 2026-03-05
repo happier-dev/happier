@@ -1,4 +1,5 @@
 import type { AgentCoreConfig } from '@/agents/registry/registryCore';
+import { buildAgentResumeUiConfig } from '@/agents/registry/buildAgentResumeUiConfig';
 import { getAgentModelConfig, getAgentSessionModesKind } from '@happier-dev/agents';
 
 export const AUGGIE_CORE: AgentCoreConfig = {
@@ -29,14 +30,11 @@ export const AUGGIE_CORE: AgentCoreConfig = {
         kind: getAgentSessionModesKind('auggie'),
     },
     model: getAgentModelConfig('auggie'),
-    resume: {
-        vendorResumeIdField: 'auggieSessionId',
+    resume: buildAgentResumeUiConfig({
+        agentId: 'auggie',
         uiVendorResumeIdLabelKey: 'sessionInfo.auggieSessionId',
         uiVendorResumeIdCopiedKey: 'sessionInfo.auggieSessionIdCopied',
-        supportsVendorResume: false,
-        runtimeGate: 'acpLoadSession',
-        experimental: false,
-    },
+    }),
     toolRendering: {
         hideUnknownToolsByDefault: false,
     },

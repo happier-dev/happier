@@ -1,4 +1,5 @@
 import type { AgentCoreConfig } from '@/agents/registry/registryCore';
+import { buildAgentResumeUiConfig } from '@/agents/registry/buildAgentResumeUiConfig';
 import { getAgentModelConfig, getAgentSessionModesKind } from '@happier-dev/agents';
 
 export const GEMINI_CORE: AgentCoreConfig = {
@@ -30,15 +31,11 @@ export const GEMINI_CORE: AgentCoreConfig = {
         kind: getAgentSessionModesKind('gemini'),
     },
     model: getAgentModelConfig('gemini'),
-    resume: {
-        // Runtime-gated via ACP capability probing (loadSession).
-        vendorResumeIdField: 'geminiSessionId',
+    resume: buildAgentResumeUiConfig({
+        agentId: 'gemini',
         uiVendorResumeIdLabelKey: 'sessionInfo.geminiSessionId',
         uiVendorResumeIdCopiedKey: 'sessionInfo.geminiSessionIdCopied',
-        supportsVendorResume: false,
-        runtimeGate: 'acpLoadSession',
-        experimental: false,
-    },
+    }),
     toolRendering: {
         hideUnknownToolsByDefault: true,
     },

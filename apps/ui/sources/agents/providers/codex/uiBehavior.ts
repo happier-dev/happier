@@ -1,10 +1,6 @@
-import { buildAcpLoadSessionPrefetchRequest, readAcpLoadSessionSupport, shouldPrefetchAcpCapabilities } from '@/agents/runtime/acpRuntimeResume';
 import type { ResumeCapabilityOptions } from '@/agents/runtime/resumeCapabilities';
-import { getCodexAcpDepData } from '@/capabilities/codexAcpDep';
-import { getCodexMcpResumeDepData } from '@/capabilities/codexMcpResume';
-import { resumeChecklistId } from '@happier-dev/protocol/checklists';
 import { INSTALLABLE_KEYS } from '@happier-dev/protocol/installables';
-import type { CapabilitiesDetectRequest } from '@/sync/api/capabilities/capabilitiesProtocol';
+import { resolveCodexSpawnExtrasFromSettings } from '@happier-dev/agents';
 
 import type {
     AgentResumeExperiments,
@@ -12,10 +8,8 @@ import type {
     NewSessionPreflightContext,
     NewSessionPreflightIssue,
     NewSessionRelevantInstallableDepsContext,
-    ResumePreflightContext,
 } from '@/agents/registry/registryUiBehavior';
 
-const CODEX_SWITCH_RESUME_MCP = 'resumeMcp';
 const CODEX_SWITCH_RESUME_ACP = 'resumeAcp';
 
 function getSwitch(experiments: AgentResumeExperiments, id: string): boolean {
@@ -23,12 +17,10 @@ function getSwitch(experiments: AgentResumeExperiments, id: string): boolean {
 }
 
 export type CodexSpawnSessionExtras = Readonly<{
-    experimentalCodexResume: boolean;
     experimentalCodexAcp: boolean;
 }>;
 
 export type CodexResumeSessionExtras = Readonly<{
-    experimentalCodexResume: boolean;
     experimentalCodexAcp: boolean;
 }>;
 
@@ -40,7 +32,6 @@ export function computeCodexSpawnSessionExtras(opts: {
     if (opts.agentId !== 'codex') return null;
     if (opts.experiments.enabled !== true) return null;
     return {
-        experimentalCodexResume: getSwitch(opts.experiments, CODEX_SWITCH_RESUME_MCP) === true && opts.resumeSessionId.trim().length > 0,
         experimentalCodexAcp: getSwitch(opts.experiments, CODEX_SWITCH_RESUME_ACP) === true,
     };
 }
@@ -52,38 +43,14 @@ export function computeCodexResumeSessionExtras(opts: {
     if (opts.agentId !== 'codex') return null;
     if (opts.experiments.enabled !== true) return null;
     return {
-        experimentalCodexResume: getSwitch(opts.experiments, CODEX_SWITCH_RESUME_MCP) === true,
         experimentalCodexAcp: getSwitch(opts.experiments, CODEX_SWITCH_RESUME_ACP) === true,
     };
 }
 
 export function getCodexNewSessionPreflightIssues(ctx: NewSessionPreflightContext): readonly NewSessionPreflightIssue[] {
     if (ctx.agentId !== 'codex') return [];
-    const extras = computeCodexSpawnSessionExtras({
-        agentId: 'codex',
-        experiments: ctx.experiments,
-        resumeSessionId: ctx.resumeSessionId,
-    });
-
-    const codexAcpDep = getCodexAcpDepData(ctx.results);
-    const codexMcpResumeDep = getCodexMcpResumeDepData(ctx.results);
-    const deps = {
-        codexAcpInstalled: typeof codexAcpDep?.installed === 'boolean' ? codexAcpDep.installed : null,
-        codexMcpResumeInstalled: typeof codexMcpResumeDep?.installed === 'boolean' ? codexMcpResumeDep.installed : null,
-    };
-
-    const issues: NewSessionPreflightIssue[] = [];
     // Codex ACP can run via npx fallback; do not block new sessions when the optional dep isn't installed.
-    if (extras?.experimentalCodexResume === true && deps.codexMcpResumeInstalled === false) {
-        issues.push({
-            id: 'codex-mcp-resume-not-installed',
-            titleKey: 'errors.codexResumeNotInstalledTitle',
-            messageKey: 'errors.codexResumeNotInstalledMessage',
-            confirmTextKey: 'connect.openMachine',
-            action: 'openMachine',
-        });
-    }
-    return issues;
+    return [];
 }
 
 export function getCodexNewSessionRelevantInstallableDepKeys(ctx: NewSessionRelevantInstallableDepsContext): readonly string[] {
@@ -97,73 +64,15 @@ export function getCodexNewSessionRelevantInstallableDepKeys(ctx: NewSessionRele
     });
 
     const keys: string[] = [];
-    if (extras?.experimentalCodexResume === true) keys.push(INSTALLABLE_KEYS.CODEX_MCP_RESUME);
     if (extras?.experimentalCodexAcp === true) keys.push(INSTALLABLE_KEYS.CODEX_ACP);
     return keys;
-}
-
-export function getCodexResumePreflightIssues(ctx: ResumePreflightContext): readonly NewSessionPreflightIssue[] {
-    const extras = computeCodexResumeSessionExtras({
-        agentId: 'codex',
-        experiments: ctx.experiments,
-    });
-    if (!extras) return [];
-
-    const codexAcpDep = getCodexAcpDepData(ctx.results);
-    const codexMcpResumeDep = getCodexMcpResumeDepData(ctx.results);
-    const deps = {
-        codexAcpInstalled: typeof codexAcpDep?.installed === 'boolean' ? codexAcpDep.installed : null,
-        codexMcpResumeInstalled: typeof codexMcpResumeDep?.installed === 'boolean' ? codexMcpResumeDep.installed : null,
-    };
-
-    const issues: NewSessionPreflightIssue[] = [];
-    // Codex ACP can run via npx fallback; do not block resume when the optional dep isn't installed.
-    if (extras.experimentalCodexResume === true && deps.codexMcpResumeInstalled === false) {
-        issues.push({
-            id: 'codex-mcp-resume-not-installed',
-            titleKey: 'errors.codexResumeNotInstalledTitle',
-            messageKey: 'errors.codexResumeNotInstalledMessage',
-            confirmTextKey: 'connect.openMachine',
-            action: 'openMachine',
-        });
-    }
-    return issues;
 }
 
 export const CODEX_UI_BEHAVIOR_OVERRIDE: AgentUiBehavior = {
     resume: {
         experimentSwitches: [
-            { id: CODEX_SWITCH_RESUME_MCP, getValue: (settings) => settings.codexBackendMode === 'mcp_resume' },
             { id: CODEX_SWITCH_RESUME_ACP, getValue: (settings) => settings.codexBackendMode === 'acp' },
         ],
-        getAllowExperimentalVendorResume: ({ experiments }) => {
-            return experiments.enabled === true && (getSwitch(experiments, CODEX_SWITCH_RESUME_MCP) || getSwitch(experiments, CODEX_SWITCH_RESUME_ACP));
-        },
-        getExperimentalVendorResumeRequiresRuntime: ({ experiments }) => {
-            if (experiments.enabled !== true) return false;
-            // ACP-only mode must fail closed until ACP loadSession support is confirmed.
-            return getSwitch(experiments, CODEX_SWITCH_RESUME_ACP) === true && getSwitch(experiments, CODEX_SWITCH_RESUME_MCP) !== true;
-        },
-        // Codex ACP mode can support vendor-resume via ACP `loadSession`.
-        // We probe this dynamically (same as Gemini/OpenCode) and only enforce it when Codex mode is ACP.
-        getAllowRuntimeResume: ({ experiments, results }) => {
-            if (experiments.enabled !== true) return false;
-            if (getSwitch(experiments, CODEX_SWITCH_RESUME_ACP) !== true) return false;
-            return readAcpLoadSessionSupport('codex', results);
-        },
-        getRuntimeResumePrefetchPlan: ({ experiments, results }) => {
-            if (experiments.enabled !== true) return null;
-            if (getSwitch(experiments, CODEX_SWITCH_RESUME_ACP) !== true) return null;
-            if (!shouldPrefetchAcpCapabilities('codex', results)) return null;
-            return { request: buildAcpLoadSessionPrefetchRequest('codex'), timeoutMs: 20_000 };
-        },
-        getPreflightPrefetchPlan: ({ experiments }) => {
-            if (experiments.enabled !== true) return null;
-            if (!(getSwitch(experiments, CODEX_SWITCH_RESUME_MCP) || getSwitch(experiments, CODEX_SWITCH_RESUME_ACP))) return null;
-            const request: CapabilitiesDetectRequest = { checklistId: resumeChecklistId('codex') };
-            return { request, timeoutMs: 12_000 };
-        },
-        getPreflightIssues: getCodexResumePreflightIssues,
     },
     newSession: {
         getPreflightIssues: getCodexNewSessionPreflightIssues,
@@ -186,8 +95,9 @@ export const CODEX_UI_BEHAVIOR_OVERRIDE: AgentUiBehavior = {
             return extras ?? {};
         },
         buildWakeResumeExtras: ({ resumeCapabilityOptions }: { resumeCapabilityOptions: ResumeCapabilityOptions }) => {
-            const allowCodexResume = resumeCapabilityOptions.allowExperimentalResumeByAgentId?.codex === true;
-            return allowCodexResume ? { experimentalCodexResume: true } : {};
+            const settings = resumeCapabilityOptions.accountSettings ?? {};
+            const extras = resolveCodexSpawnExtrasFromSettings(settings);
+            return extras.experimentalCodexAcp === true ? { experimentalCodexAcp: true } : {};
         },
     },
 };

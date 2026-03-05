@@ -1,4 +1,5 @@
 import type { AgentCoreConfig } from '@/agents/registry/registryCore';
+import { buildAgentResumeUiConfig } from '@/agents/registry/buildAgentResumeUiConfig';
 import { getAgentModelConfig, getAgentSessionModesKind } from '@happier-dev/agents';
 
 export const QWEN_CORE: AgentCoreConfig = {
@@ -31,14 +32,11 @@ export const QWEN_CORE: AgentCoreConfig = {
         kind: getAgentSessionModesKind('qwen'),
     },
     model: getAgentModelConfig('qwen'),
-    resume: {
-        vendorResumeIdField: 'qwenSessionId',
+    resume: buildAgentResumeUiConfig({
+        agentId: 'qwen',
         uiVendorResumeIdLabelKey: 'sessionInfo.qwenSessionId',
         uiVendorResumeIdCopiedKey: 'sessionInfo.qwenSessionIdCopied',
-        supportsVendorResume: false,
-        runtimeGate: 'acpLoadSession',
-        experimental: false,
-    },
+    }),
     toolRendering: {
         hideUnknownToolsByDefault: true,
     },

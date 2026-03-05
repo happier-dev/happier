@@ -1,4 +1,5 @@
 import type { AgentCoreConfig } from '@/agents/registry/registryCore';
+import { buildAgentResumeUiConfig } from '@/agents/registry/buildAgentResumeUiConfig';
 import { getAgentModelConfig, getAgentSessionModesKind } from '@happier-dev/agents';
 
 export const CODEX_CORE: AgentCoreConfig = {
@@ -32,14 +33,11 @@ export const CODEX_CORE: AgentCoreConfig = {
         kind: getAgentSessionModesKind('codex'),
     },
     model: getAgentModelConfig('codex'),
-    resume: {
-        vendorResumeIdField: 'codexSessionId',
+    resume: buildAgentResumeUiConfig({
+        agentId: 'codex',
         uiVendorResumeIdLabelKey: 'sessionInfo.codexSessionId',
         uiVendorResumeIdCopiedKey: 'sessionInfo.codexSessionIdCopied',
-        supportsVendorResume: true,
-        runtimeGate: null,
-        experimental: true,
-    },
+    }),
     localControl: {
         supported: true,
     },

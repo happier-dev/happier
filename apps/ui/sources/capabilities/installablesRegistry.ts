@@ -1,18 +1,12 @@
 import type { CapabilitiesDetectRequest, CapabilityDetectResult, CapabilityId } from '@/sync/api/capabilities/capabilitiesProtocol';
 import type { KnownSettings } from '@/sync/domains/settings/settings';
 import type { TranslationKey } from '@/text';
-import type { CodexAcpDepData, CodexMcpResumeDepData } from '@/sync/api/capabilities/capabilitiesProtocol';
+import type { CodexAcpDepData } from '@/sync/api/capabilities/capabilitiesProtocol';
 import { t } from '@/text';
 import { INSTALLABLES_CATALOG, INSTALLABLE_KEYS, type InstallableAutoUpdateMode, type InstallableDefaultPolicy, type InstallableKey } from '@happier-dev/protocol/installables';
 
 export type { InstallableAutoUpdateMode, InstallableDefaultPolicy };
 
-import {
-    buildCodexMcpResumeRegistryDetectRequest,
-    getCodexMcpResumeDepData,
-    getCodexMcpResumeDetectResult,
-    shouldPrefetchCodexMcpResumeRegistry,
-} from './codexMcpResume';
 import {
     buildCodexAcpRegistryDetectRequest,
     getCodexAcpDepData,
@@ -24,7 +18,7 @@ type SettingsKey = Extract<keyof KnownSettings, string>;
 
 export type InstallSpecSettingKey = {
     [K in SettingsKey]: KnownSettings[K] extends string | null ? K : never;
-}[SettingsKey] | 'codexMcpResumeInstallSpec' | 'codexAcpInstallSpec';
+}[SettingsKey] | 'codexAcpInstallSpec';
 
 export type InstallableDepDataLike = {
     installed: boolean;
@@ -66,35 +60,6 @@ export type InstallableRegistryEntry = Readonly<{
 
 export function getInstallablesRegistryEntries(): readonly InstallableRegistryEntry[] {
     const uiByKey: Readonly<Record<InstallableKey, Omit<InstallableRegistryEntry, 'key' | 'kind' | 'experimental' | 'capabilityId' | 'defaultPolicy'>>> = {
-        [INSTALLABLE_KEYS.CODEX_MCP_RESUME]: {
-            enabledWhen: () => true,
-            title: t('deps.installable.codexResume.title'),
-            iconName: 'refresh-circle-outline',
-            groupTitleKey: 'newSession.codexResumeBanner.title',
-            installSpecSettingKey: 'codexMcpResumeInstallSpec',
-            installSpecTitle: t('deps.installable.codexResume.installSpecTitle'),
-            installSpecDescription: t('deps.installable.installSpecDescription'),
-            installLabels: {
-                installKey: 'newSession.codexResumeBanner.install',
-                updateKey: 'newSession.codexResumeBanner.update',
-                reinstallKey: 'newSession.codexResumeBanner.reinstall',
-            },
-            installModal: {
-                installTitleKey: 'newSession.codexResumeInstallModal.installTitle',
-                updateTitleKey: 'newSession.codexResumeInstallModal.updateTitle',
-                reinstallTitleKey: 'newSession.codexResumeInstallModal.reinstallTitle',
-                descriptionKey: 'newSession.codexResumeInstallModal.description',
-            },
-            getStatus: (results) => getCodexMcpResumeDepData(results) as unknown as CodexMcpResumeDepData | null,
-            getDetectResult: (results) => getCodexMcpResumeDetectResult(results),
-            shouldPrefetchRegistry: ({ requireExistingResult, result, data }) =>
-                shouldPrefetchCodexMcpResumeRegistry({
-                    requireExistingResult,
-                    result,
-                    data: data as any,
-                }),
-            buildRegistryDetectRequest: buildCodexMcpResumeRegistryDetectRequest,
-        },
         [INSTALLABLE_KEYS.CODEX_ACP]: {
             enabledWhen: () => true,
             title: t('deps.installable.codexAcp.title'),

@@ -1,4 +1,5 @@
 import type { AgentCoreConfig } from '@/agents/registry/registryCore';
+import { buildAgentResumeUiConfig } from '@/agents/registry/buildAgentResumeUiConfig';
 import { getAgentModelConfig, getAgentSessionModesKind } from '@happier-dev/agents';
 
 export const KIMI_CORE: AgentCoreConfig = {
@@ -30,14 +31,11 @@ export const KIMI_CORE: AgentCoreConfig = {
         kind: getAgentSessionModesKind('kimi'),
     },
     model: getAgentModelConfig('kimi'),
-    resume: {
-        vendorResumeIdField: 'kimiSessionId',
+    resume: buildAgentResumeUiConfig({
+        agentId: 'kimi',
         uiVendorResumeIdLabelKey: 'sessionInfo.kimiSessionId',
         uiVendorResumeIdCopiedKey: 'sessionInfo.kimiSessionIdCopied',
-        supportsVendorResume: false,
-        runtimeGate: 'acpLoadSession',
-        experimental: false,
-    },
+    }),
     toolRendering: {
         hideUnknownToolsByDefault: true,
     },

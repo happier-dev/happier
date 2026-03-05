@@ -1,4 +1,5 @@
 import type { AgentCoreConfig } from '@/agents/registry/registryCore';
+import { buildAgentResumeUiConfig } from '@/agents/registry/buildAgentResumeUiConfig';
 import { getAgentModelConfig, getAgentSessionModesKind } from '@happier-dev/agents';
 
 export const OPENCODE_CORE: AgentCoreConfig = {
@@ -31,14 +32,11 @@ export const OPENCODE_CORE: AgentCoreConfig = {
         kind: getAgentSessionModesKind('opencode'),
     },
     model: getAgentModelConfig('opencode'),
-    resume: {
-        vendorResumeIdField: 'opencodeSessionId',
+    resume: buildAgentResumeUiConfig({
+        agentId: 'opencode',
         uiVendorResumeIdLabelKey: 'sessionInfo.opencodeSessionId',
         uiVendorResumeIdCopiedKey: 'sessionInfo.opencodeSessionIdCopied',
-        supportsVendorResume: false,
-        runtimeGate: 'acpLoadSession',
-        experimental: false,
-    },
+    }),
     toolRendering: {
         hideUnknownToolsByDefault: false,
     },

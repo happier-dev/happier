@@ -1,4 +1,5 @@
 import type { AgentCoreConfig } from '@/agents/registry/registryCore';
+import { buildAgentResumeUiConfig } from '@/agents/registry/buildAgentResumeUiConfig';
 import { getAgentModelConfig, getAgentSessionModesKind } from '@happier-dev/agents';
 
 export const COPILOT_CORE: AgentCoreConfig = {
@@ -30,14 +31,11 @@ export const COPILOT_CORE: AgentCoreConfig = {
         kind: getAgentSessionModesKind('copilot'),
     },
     model: getAgentModelConfig('copilot'),
-    resume: {
-        vendorResumeIdField: 'copilotSessionId',
+    resume: buildAgentResumeUiConfig({
+        agentId: 'copilot',
         uiVendorResumeIdLabelKey: 'sessionInfo.copilotSessionId',
         uiVendorResumeIdCopiedKey: 'sessionInfo.copilotSessionIdCopied',
-        supportsVendorResume: false,
-        runtimeGate: 'acpLoadSession',
-        experimental: false,
-    },
+    }),
     toolRendering: {
         hideUnknownToolsByDefault: true,
     },

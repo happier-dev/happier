@@ -15,7 +15,6 @@ describe('providerDetailsInfo', () => {
     it('classifies resume support kinds', () => {
         expect(describeResumeSupportKind({ supportsVendorResume: true, experimental: false, runtimeGate: null })).toBe('supported');
         expect(describeResumeSupportKind({ supportsVendorResume: true, experimental: true, runtimeGate: null })).toBe('supportedExperimental');
-        expect(describeResumeSupportKind({ supportsVendorResume: false, experimental: false, runtimeGate: 'acpLoadSession' })).toBe('runtimeGatedAcpLoadSession');
         expect(describeResumeSupportKind({ supportsVendorResume: false, experimental: false, runtimeGate: null })).toBe('notSupported');
     });
 

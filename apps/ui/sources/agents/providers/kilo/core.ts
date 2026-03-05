@@ -1,4 +1,5 @@
 import type { AgentCoreConfig } from '@/agents/registry/registryCore';
+import { buildAgentResumeUiConfig } from '@/agents/registry/buildAgentResumeUiConfig';
 import { getAgentModelConfig, getAgentSessionModesKind } from '@happier-dev/agents';
 
 export const KILO_CORE: AgentCoreConfig = {
@@ -30,14 +31,11 @@ export const KILO_CORE: AgentCoreConfig = {
         kind: getAgentSessionModesKind('kilo'),
     },
     model: getAgentModelConfig('kilo'),
-    resume: {
-        vendorResumeIdField: 'kiloSessionId',
+    resume: buildAgentResumeUiConfig({
+        agentId: 'kilo',
         uiVendorResumeIdLabelKey: 'sessionInfo.kiloSessionId',
         uiVendorResumeIdCopiedKey: 'sessionInfo.kiloSessionIdCopied',
-        supportsVendorResume: false,
-        runtimeGate: 'acpLoadSession',
-        experimental: false,
-    },
+    }),
     toolRendering: {
         hideUnknownToolsByDefault: true,
     },

@@ -17,28 +17,23 @@ export const CODEX_PROVIDER_SETTINGS_PLUGIN = {
         {
             id: 'codexMode',
             title: 'Backend mode',
-            footer: 'Choose how Codex is routed. ACP and MCP resume require additional installs on your machine.',
+            footer: 'Choose how Codex is routed. ACP may require additional installs on your machine.',
             fields: [
                 {
                     key: 'codexBackendMode',
                     kind: 'enum',
                     title: 'Codex backend mode',
-                    subtitle: 'Select MCP, MCP + resume, or ACP.',
+                    subtitle: 'Select ACP or MCP.',
                     enumOptions: [
-                        {
-                            id: 'mcp',
-                            title: 'MCP',
-                            subtitle: 'Default Codex MCP mode',
-                        },
-                        {
-                            id: 'mcp_resume',
-                            title: 'MCP + resume',
-                            subtitle: 'Enable Codex resume MCP dependency for vendor resume flows',
-                        },
                         {
                             id: 'acp',
                             title: 'ACP',
                             subtitle: 'Route Codex through ACP (codex-acp)',
+                        },
+                        {
+                            id: 'mcp',
+                            title: 'MCP',
+                            subtitle: 'Use the built-in Codex MCP flow',
                         },
                     ],
                 },
@@ -49,12 +44,6 @@ export const CODEX_PROVIDER_SETTINGS_PLUGIN = {
             title: 'Install source overrides',
             footer: 'Optional. Leave empty to use default install sources.',
             fields: [
-                {
-                    key: 'codexMcpResumeInstallSpec',
-                    kind: 'text',
-                    title: 'Codex MCP resume install source',
-                    subtitle: 'npm package, git URL, or local file path',
-                },
                 {
                     key: 'codexAcpInstallSpec',
                     kind: 'text',

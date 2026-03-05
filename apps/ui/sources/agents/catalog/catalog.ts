@@ -16,7 +16,6 @@ type AgentIconTintTheme = Parameters<RegistryUiModule['getAgentIconTintColor']>[
 import type { AgentUiBehavior } from '@/agents/registry/registryUiBehavior';
 import {
     AGENTS_UI_BEHAVIOR,
-    buildResumeCapabilityOptionsFromMaps,
     buildResumeCapabilityOptionsFromUiState,
     buildNewSessionOptionsFromUiState,
     getNewSessionAgentInputExtraActionChips,
@@ -25,13 +24,8 @@ import {
     buildSpawnSessionExtrasFromUiState,
     buildWakeResumeExtras,
     getAgentResumeExperimentsFromSettings,
-    getAllowExperimentalResumeByAgentIdFromUiState,
-    getAllowRuntimeResumeByAgentIdFromResults,
     getNewSessionPreflightIssues,
     getNewSessionRelevantInstallableDepKeys,
-    getResumePreflightIssues,
-    getResumePreflightPrefetchPlan,
-    getResumeRuntimeSupportPrefetchPlan,
 } from '@/agents/registry/registryUiBehavior';
 
 export { AGENT_IDS, DEFAULT_AGENT_ID };
@@ -99,14 +93,8 @@ export {
     resolveAgentIdFromCliDetectKey,
     resolveAgentIdFromConnectedServiceId,
     getAgentResumeExperimentsFromSettings,
-    getAllowExperimentalResumeByAgentIdFromUiState,
-    getAllowRuntimeResumeByAgentIdFromResults,
     buildResumeCapabilityOptionsFromUiState,
-    buildResumeCapabilityOptionsFromMaps,
-    getResumeRuntimeSupportPrefetchPlan,
-    getResumePreflightPrefetchPlan,
     getNewSessionPreflightIssues,
-    getResumePreflightIssues,
     buildNewSessionOptionsFromUiState,
     getNewSessionAgentInputExtraActionChips,
     getNewSessionRelevantInstallableDepKeys,

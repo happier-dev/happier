@@ -1,6 +1,7 @@
 import { getAgentModelConfig, getAgentSessionModesKind } from '@happier-dev/agents';
 
 import type { AgentCoreConfig } from '@/agents/registry/registryCore';
+import { buildAgentResumeUiConfig } from '@/agents/registry/buildAgentResumeUiConfig';
 
 export const PI_CORE: AgentCoreConfig = {
     id: 'pi',
@@ -32,14 +33,11 @@ export const PI_CORE: AgentCoreConfig = {
         kind: getAgentSessionModesKind('pi'),
     },
     model: getAgentModelConfig('pi'),
-    resume: {
-        vendorResumeIdField: 'piSessionId',
+    resume: buildAgentResumeUiConfig({
+        agentId: 'pi',
         uiVendorResumeIdLabelKey: 'sessionInfo.piSessionId',
         uiVendorResumeIdCopiedKey: 'sessionInfo.piSessionIdCopied',
-        supportsVendorResume: false,
-        runtimeGate: null,
-        experimental: false,
-    },
+    }),
     toolRendering: {
         hideUnknownToolsByDefault: true,
     },
