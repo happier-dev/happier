@@ -816,6 +816,41 @@ describe('executeChannelBridgeTick', () => {
     expect(harness.sent.some((row) => row.text.includes('unable to persist binding'))).toBe(true);
   });
 
+  it('does not attach when reading an existing binding fails before persistence', async () => {
+    const baseStore = createInMemoryChannelBindingStore();
+    const store: ChannelBindingStore = {
+      ...baseStore,
+      getBinding: async () => {
+        throw new Error('prior binding read failed');
+      },
+    };
+    const harness = createAdapterHarness();
+
+    const { deps, warnings } = createDepsHarness({
+      resolveSessionIdOrPrefix: async () => ({ ok: true as const, sessionId: 'sess-prior-fail' }),
+      resolveLatestSessionSeq: async () => 10,
+    });
+
+    harness.pushInbound({
+      providerId: 'telegram',
+      conversationId: '-1007',
+      threadId: null,
+      text: '/attach sess-prior-fail',
+      messageId: 'attach-getbinding-throws',
+    });
+
+    await executeChannelBridgeTick({
+      store,
+      adapters: [harness.adapter],
+      deps,
+      inboundDeduper: createChannelBridgeInboundDeduper(),
+    });
+
+    expect(await baseStore.listBindings()).toHaveLength(0);
+    expect(warnings.some((row) => row.message.includes('Failed to read existing binding during /attach'))).toBe(true);
+    expect(harness.sent.some((row) => row.text.includes('Failed to read current binding before attach'))).toBe(true);
+  });
+
   it('returns ambiguous attach message even when resolver omits candidate ids', async () => {
     const store = createInMemoryChannelBindingStore();
     const harness = createAdapterHarness();
