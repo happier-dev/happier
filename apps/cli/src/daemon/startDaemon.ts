@@ -54,7 +54,7 @@ import { resolveWindowsRemoteSessionConsoleMode } from './platform/windows/windo
 import { startHappySessionInVisibleWindowsConsole } from './platform/windows/spawnHappyCliVisibleConsole';
 import { SPAWN_SESSION_ERROR_CODES } from '@/rpc/handlers/registerSessionHandlers';
 import { buildHappySessionControlArgs } from './sessionSpawnArgs';
-import { resolveExistingSessionEncryptionKeyBase64 } from './sessionEncryption/resolveExistingSessionEncryptionKeyBase64';
+import { resolveExistingSessionAttachContext } from './sessionEncryption/resolveExistingSessionAttachContext';
 import { resolveWaitForAuthConfig } from './startup/waitForAuthConfig';
 import { ensureSessionDirectory } from './startup/ensureSessionDirectory';
 import { waitForInitialCredentials } from './startup/waitForInitialCredentials';
@@ -263,6 +263,7 @@ export async function startDaemon(): Promise<void> {
                     directory,
                     sessionId,
                     machineId,
+                    token,
                     approvedNewDirectoryCreation = true,
                     resume,
                     existingSessionId,
@@ -280,48 +281,56 @@ export async function startDaemon(): Promise<void> {
               const normalizedInitialPrompt = normalizeDaemonInitialPrompt(initialPrompt);
 
           // NOTE: existing-session idempotency is handled before entering the spawn concurrency gate.
-                  const effectiveResume = normalizedResume;
+              let effectiveResume = normalizedResume;
               const catalogAgentId = resolveCatalogAgentId(options.agent ?? null);
+
+              let sessionAttachPayload: import('@/agent/runtime/sessionAttachPayload').SessionAttachFilePayload | null = null;
+              if (normalizedExistingSessionId) {
+                const credentials = await readCredentials().catch(() => null);
+                const tokenForFetch = typeof token === 'string' && token.trim().length > 0
+                  ? token
+                  : (credentials?.token ?? '');
+
+                const attachContext = await resolveExistingSessionAttachContext({
+                  token: tokenForFetch,
+                  sessionId: normalizedExistingSessionId,
+                  agent: options.agent,
+                  credentials,
+                }).catch(() => null);
+
+                if (!attachContext) {
+                  const missingCredentials = !credentials;
+                  return {
+                    type: 'error',
+                    errorCode: SPAWN_SESSION_ERROR_CODES.RESUME_MISSING_ENCRYPTION_KEY,
+                    errorMessage: missingCredentials
+                      ? 'Missing credentials to open the session encryption key for resume.'
+                      : 'Failed to open session encryption key for resume.',
+                  };
+                }
+
+                sessionAttachPayload = attachContext.attachPayload;
+                if (!effectiveResume) {
+                  const derivedResume = typeof attachContext.vendorResumeId === 'string' ? attachContext.vendorResumeId.trim() : '';
+                  if (derivedResume) {
+                    effectiveResume = derivedResume;
+                  }
+                }
+              }
 
               // Only gate vendor resume. Happy-session reconnect (existingSessionId) is supported for all agents.
               if (effectiveResume) {
-            const vendorResumeSupport = await getVendorResumeSupport(options.agent ?? null);
-            const ok = vendorResumeSupport({ experimentalCodexResume, experimentalCodexAcp });
-            if (!ok) {
-              const supportLevel = AGENTS[catalogAgentId].vendorResumeSupport;
-              const qualifier = supportLevel === 'experimental' ? ' (experimental and not enabled)' : '';
-                return {
-                  type: 'error',
-              errorCode: SPAWN_SESSION_ERROR_CODES.RESUME_NOT_SUPPORTED,
-                  errorMessage: `Resume is not supported for agent '${catalogAgentId}'${qualifier}.`,
-                };
-            }
-              }
-
-              let normalizedSessionEncryptionKeyBase64 = '';
-              if (normalizedExistingSessionId) {
-            const credentials = await readCredentials().catch(() => null);
-            if (!credentials || credentials.encryption.type !== 'dataKey') {
-              return {
-                type: 'error',
-                errorCode: SPAWN_SESSION_ERROR_CODES.RESUME_MISSING_ENCRYPTION_KEY,
-                errorMessage: 'Missing dataKey credentials to open the session encryption key for resume.',
-              };
-            }
-
-            const resolved = await resolveExistingSessionEncryptionKeyBase64({
-              credentials,
-              sessionId: normalizedExistingSessionId,
-            }).catch(() => null);
-            if (!resolved) {
-              return {
-                type: 'error',
-                errorCode: SPAWN_SESSION_ERROR_CODES.RESUME_MISSING_ENCRYPTION_KEY,
-                errorMessage: 'Failed to open session encryption key for resume.',
-              };
-            }
-
-            normalizedSessionEncryptionKeyBase64 = resolved;
+                const vendorResumeSupport = await getVendorResumeSupport(options.agent ?? null);
+                const ok = vendorResumeSupport({ experimentalCodexAcp });
+                if (!ok) {
+                  const supportLevel = AGENTS[catalogAgentId].vendorResumeSupport;
+                  const qualifier = supportLevel === 'experimental' ? ' (experimental and not enabled)' : '';
+                  return {
+                    type: 'error',
+                    errorCode: SPAWN_SESSION_ERROR_CODES.RESUME_NOT_SUPPORTED,
+                    errorMessage: `Resume is not supported for agent '${catalogAgentId}'${qualifier}.`,
+                  };
+                }
               }
               let directoryCreated = false;
 
@@ -417,12 +426,12 @@ export async function startDaemon(): Promise<void> {
             });
             let sessionAttachFilePath: string | null = null;
             if (normalizedExistingSessionId) {
+              if (!sessionAttachPayload) {
+                throw new Error('Missing session attach payload for existing session');
+              }
               const attach = await createSessionAttachFile({
                 happySessionId: normalizedExistingSessionId,
-                payload: {
-                  encryptionKeyBase64: normalizedSessionEncryptionKeyBase64,
-                  encryptionVariant: 'dataKey',
-                },
+                payload: sessionAttachPayload,
               });
               sessionAttachFilePath = attach.filePath;
               sessionAttachCleanup = attach.cleanup;

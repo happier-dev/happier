@@ -167,6 +167,34 @@ function killIsolatedTmuxServer(socketPath: string): void {
 }
 
 describe.skipIf(!shouldRunTmuxIntegration())('tmux (real) integration tests (opt-in)', { timeout: 20_000 }, () => {
+    it('spawnInTmux can start many windows concurrently without index-conflict failures', async () => {
+        const dir = mkdtempSync(join(tmpdir(), 'happier-cli-tmux-it-'));
+        const socketPath = join(dir, 'tmux.sock');
+        const utils = new TmuxUtilities('happy', undefined, socketPath);
+
+        try {
+            const scriptPath = writeDumpScript(dir);
+            const sessionName = `happy-it-${process.pid}-${Date.now()}`;
+
+            const results = await Promise.all(
+                Array.from({ length: 12 }).map(async (_, i) => {
+                    const windowName = `w${i + 1}`;
+                    const outFile = join(dir, `out-${windowName}.json`);
+                    return utils.spawnInTmux(
+                        [process.execPath, scriptPath, outFile, '2000', 'concurrency-check', windowName],
+                        { sessionName, windowName, cwd: dir },
+                        {},
+                    );
+                }),
+            );
+
+            expect(results.every((r) => r.success)).toBe(true);
+        } finally {
+            killIsolatedTmuxServer(socketPath);
+            rmSync(dir, { recursive: true, force: true });
+        }
+    });
+
     it('spawnInTmux returns a real pane PID via -P/-F (regression: PR107 option ordering)', async () => {
         const dir = mkdtempSync(join(tmpdir(), 'happier-cli-tmux-it-'));
         const socketPath = join(dir, 'tmux.sock');

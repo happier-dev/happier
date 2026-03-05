@@ -100,15 +100,26 @@ describe('createLocalRemoteModeController', () => {
     });
 
     controller.registerRemoteSwitchHandler();
-    controller.registerRemoteSwitchHandler();
-
     expect(harness.session.rpcHandlerManager.registerHandler).toHaveBeenCalledTimes(1);
 
-    await expect(harness.invokeSwitch({ to: 'remote' })).resolves.toBe(false);
+    await expect(harness.invokeSwitch({ to: 'remote' })).resolves.toBe(true);
     expect(requestSwitchToLocalIfSupported).not.toHaveBeenCalled();
 
     await expect(harness.invokeSwitch({ to: 'local' })).resolves.toBe(true);
     await expect(harness.invokeSwitch(undefined)).resolves.toBe(true);
     expect(requestSwitchToLocalIfSupported).toHaveBeenCalledTimes(2);
+
+    // Simulate a local-mode launcher overriding the switch handler, then ensure remote
+    // mode can re-register its handler to regain local-switch support.
+    const localModeSwitchHandler = vi.fn(async () => true);
+    harness.session.rpcHandlerManager.registerHandler('switch', localModeSwitchHandler);
+    await expect(harness.invokeSwitch({ to: 'local' })).resolves.toBe(true);
+    expect(localModeSwitchHandler).toHaveBeenCalledTimes(1);
+
+    controller.registerRemoteSwitchHandler();
+    expect(harness.session.rpcHandlerManager.registerHandler).toHaveBeenCalledTimes(3);
+
+    await expect(harness.invokeSwitch({ to: 'local' })).resolves.toBe(true);
+    expect(requestSwitchToLocalIfSupported).toHaveBeenCalledTimes(3);
   });
 });

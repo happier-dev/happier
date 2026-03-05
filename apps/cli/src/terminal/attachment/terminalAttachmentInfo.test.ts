@@ -1,11 +1,35 @@
 import { describe, expect, it } from 'vitest';
 import * as tmp from 'tmp';
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, stat, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
 import { readTerminalAttachmentInfo, writeTerminalAttachmentInfo } from './terminalAttachmentInfo';
 
 describe('terminalAttachmentInfo', () => {
+  it('writes attachment info with private file permissions', async () => {
+    if (process.platform === 'win32') return;
+    const dir = tmp.dirSync({ unsafeCleanup: true });
+    try {
+      await writeTerminalAttachmentInfo({
+        happyHomeDir: dir.name,
+        sessionId: 'sess_123',
+        terminal: {
+          mode: 'tmux',
+          tmux: { target: 'happy:win-1', tmpDir: '/tmp/happy-tmux' },
+        },
+      });
+
+      const sessionsDir = join(dir.name, 'terminal', 'sessions');
+      const dirStat = await stat(sessionsDir);
+      expect(dirStat.mode & 0o777).toBe(0o700);
+
+      const fileStat = await stat(join(sessionsDir, 'sess_123.json'));
+      expect(fileStat.mode & 0o777).toBe(0o600);
+    } finally {
+      dir.removeCallback();
+    }
+  });
+
   it('writes and reads per-session terminal attachment info', async () => {
     const dir = tmp.dirSync({ unsafeCleanup: true });
     try {

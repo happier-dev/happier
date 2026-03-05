@@ -21,6 +21,17 @@ describe('buildCodexAcpEnvOverrides', () => {
     expect(out.PATH).toBe(shimsDir);
   });
 
+  it('unsets Codex thread env keys so Codex ACP starts a fresh thread', () => {
+    const projectDir = '/tmp/happier-cli';
+    const out = buildCodexAcpEnvOverrides({ projectDir, baseEnv: { PATH: '/usr/bin:/bin' } }) as Record<string, string | undefined>;
+
+    const keys = ['CODEX_THREAD_ID', 'CODEX_INTERNAL_ORIGINATOR_OVERRIDE', 'CODEX_SHELL'] as const;
+    for (const key of keys) {
+      expect(Object.prototype.hasOwnProperty.call(out, key)).toBe(true);
+      expect(out[key]).toBeUndefined();
+    }
+  });
+
   it('ships a git shim in the shims directory', () => {
     const shimsDir = resolve(projectPath(), 'scripts', 'shims');
     expect(existsSync(resolve(shimsDir, 'git'))).toBe(true);

@@ -113,6 +113,9 @@ describe('codex local-control rollout discovery', () => {
                 filePath,
                 `${sessionMetaLine({ id: 'stale-only', timestamp: '2026-02-04T11:59:00.000Z', cwd: '/x' })}\n`,
             );
+            // Ensure the file does not look "active" for the newly-started session.
+            const staleMtime = new Date('2026-02-04T11:59:30.000Z');
+            await utimes(filePath, staleMtime, staleMtime);
 
             const discovered = await discoverCodexRolloutFileOnce({
                 sessionsRootDir: root,
@@ -146,6 +149,34 @@ describe('codex local-control rollout discovery', () => {
 
             expect(discovered?.filePath).toBe(filePath);
             expect(discovered?.sessionMeta.id).toBe('huge');
+        } finally {
+            await rm(root, { recursive: true, force: true });
+        }
+    });
+
+    it('falls back to the rollout filename id when session_meta is missing but the file is freshly written', async () => {
+        const root = await mkdtemp(join(tmpdir(), 'codex-sessions-no-meta-'));
+        try {
+            const dir = join(root, '2026', '02', '04');
+            await mkdir(dir, { recursive: true });
+
+            const resumeId = '019c17f4-cb9c-7512-b441-80d453fb5a53';
+            const filePath = join(dir, `rollout-2026-02-04T00-00-00-${resumeId}.jsonl`);
+            await writeFile(filePath, `${JSON.stringify({ type: 'noop', payload: {} })}\n`);
+
+            const startedAtMs = Date.parse('2026-02-04T12:00:05.000Z');
+            const mtime = new Date('2026-02-04T12:00:06.000Z');
+            await utimes(filePath, mtime, mtime);
+
+            const discovered = await discoverCodexRolloutFileOnce({
+                sessionsRootDir: root,
+                startedAtMs,
+                cwd: '/x',
+                scanLimit: 50,
+            });
+
+            expect(discovered?.filePath).toBe(filePath);
+            expect(discovered?.sessionMeta.id).toBe(resumeId);
         } finally {
             await rm(root, { recursive: true, force: true });
         }

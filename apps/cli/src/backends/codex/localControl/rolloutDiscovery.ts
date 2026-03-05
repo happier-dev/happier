@@ -22,6 +22,12 @@ type ScanOptions = {
 
 const CODEX_SESSION_META_CLOCK_SKEW_MS = 2_000;
 
+function parseResumeIdFromRolloutFilename(filePath: string): string | null {
+    const name = basename(filePath);
+    const match = /-([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\.jsonl$/i.exec(name);
+    return match ? match[1] : null;
+}
+
 function parseRolloutTimestampFromFilename(filePath: string): number | null {
     const name = basename(filePath);
     const match = /^rollout-(\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2})/.exec(name);
@@ -45,7 +51,9 @@ function isSessionMetaFreshForStart(opts: { sessionMeta: CodexSessionMetaPayload
     return ts >= opts.startedAtMs - CODEX_SESSION_META_CLOCK_SKEW_MS;
 }
 
-async function collectRolloutFiles(opts: ScanOptions): Promise<string[]> {
+type RolloutFileEntry = Readonly<{ filePath: string; mtimeMs: number }>;
+
+async function collectRolloutFiles(opts: ScanOptions): Promise<RolloutFileEntry[]> {
     const results: string[] = [];
     const maxDepth = Math.max(0, typeof opts.maxDepth === 'number' ? opts.maxDepth : 10);
 
@@ -74,21 +82,22 @@ async function collectRolloutFiles(opts: ScanOptions): Promise<string[]> {
 
     await walk(opts.sessionsRootDir, 0);
 
-    // Prefer newest by filename timestamp (or filesystem birthtime), not by mtime. Active sessions will keep mtime fresh.
+    // Prefer newest by filename timestamp (or filesystem birthtime), but include mtime as a signal so we can
+    // still observe rollouts that Codex continues to append to (the filename timestamp may be very old).
     const withTime: Array<{ filePath: string; sortMs: number; mtimeMs: number }> = [];
     for (const filePath of results) {
         try {
             const s = await stat(filePath);
             const fromName = parseRolloutTimestampFromFilename(filePath);
             const fromBirth = Number.isFinite(s.birthtimeMs) && s.birthtimeMs > 0 ? s.birthtimeMs : null;
-            const sortMs = fromName ?? fromBirth ?? s.mtimeMs;
+            const sortMs = Math.max(fromName ?? 0, fromBirth ?? 0, s.mtimeMs);
             withTime.push({ filePath, sortMs, mtimeMs: s.mtimeMs });
         } catch {
             // ignore unreadable files
         }
     }
     withTime.sort((a, b) => b.sortMs - a.sortMs || b.mtimeMs - a.mtimeMs);
-    return withTime.slice(0, Math.max(0, opts.scanLimit)).map((x) => x.filePath);
+    return withTime.slice(0, Math.max(0, opts.scanLimit)).map((x) => ({ filePath: x.filePath, mtimeMs: x.mtimeMs }));
 }
 
 async function readFirstLine(filePath: string): Promise<string | null> {
@@ -199,35 +208,53 @@ export async function discoverCodexRolloutFileOnce(opts: {
     // Fast-path: filename fragment match.
     if (resumeId) {
         const all = await collectRolloutFiles({ sessionsRootDir: opts.sessionsRootDir, scanLimit: opts.scanLimit });
-        const matches = all.filter((p) => p.includes(resumeId));
+        const matches = all.filter((p) => p.filePath.includes(resumeId));
         if (matches.length > 0) {
             // collectRolloutFiles returns newest-first by a stable creation-ish timestamp.
-            for (const filePath of matches) {
-                const sessionMeta = await readCodexSessionMetaFromRollout(filePath);
-                if (!sessionMeta) continue;
-                return { filePath, sessionMeta };
+            for (const entry of matches) {
+                const sessionMeta = await readCodexSessionMetaFromRollout(entry.filePath);
+                if (sessionMeta) return { filePath: entry.filePath, sessionMeta };
+                const idFromName = parseResumeIdFromRolloutFilename(entry.filePath);
+                if (idFromName) return { filePath: entry.filePath, sessionMeta: { id: idFromName, timestamp: new Date(entry.mtimeMs).toISOString() } };
             }
         }
     }
 
     const files = await collectRolloutFiles({ sessionsRootDir: opts.sessionsRootDir, scanLimit: opts.scanLimit });
-    const scored: Array<{ filePath: string; sessionMeta: CodexSessionMetaPayload; score: number }> = [];
-    for (const filePath of files) {
-        const sessionMeta = await readCodexSessionMetaFromRollout(filePath);
-        if (!sessionMeta) continue;
+    const scored: Array<{ filePath: string; mtimeMs: number; sessionMeta: CodexSessionMetaPayload; score: number }> = [];
+    for (const entry of files) {
+        const sessionMeta = await readCodexSessionMetaFromRollout(entry.filePath);
+        if (!sessionMeta) {
+            const idFromName = parseResumeIdFromRolloutFilename(entry.filePath);
+            if (!idFromName) continue;
+            if (entry.mtimeMs < opts.startedAtMs - CODEX_SESSION_META_CLOCK_SKEW_MS) continue;
+            const fallbackMeta: CodexSessionMetaPayload = { id: idFromName, timestamp: new Date(entry.mtimeMs).toISOString(), cwd: opts.cwd };
+            const score = scoreCodexRolloutCandidate({
+                sessionMeta: fallbackMeta,
+                startedAtMs: opts.startedAtMs,
+                cwd: opts.cwd,
+            });
+            scored.push({ filePath: entry.filePath, mtimeMs: entry.mtimeMs, sessionMeta: fallbackMeta, score });
+            continue;
+        }
         const score = scoreCodexRolloutCandidate({
             sessionMeta,
             startedAtMs: opts.startedAtMs,
             cwd: opts.cwd,
         });
-        scored.push({ filePath, sessionMeta, score });
+        scored.push({ filePath: entry.filePath, mtimeMs: entry.mtimeMs, sessionMeta, score });
     }
     scored.sort((a, b) => b.score - a.score);
 
-    // When starting a brand-new Codex session, ignore stale rollout files and keep polling until a fresh one appears.
+    // When starting a brand-new Codex session, ignore stale rollouts unless the file is actively being written.
+    // Codex may continue appending to an older rollout file even for a new interactive launch.
     const candidates = resumeId
         ? scored
-        : scored.filter((entry) => isSessionMetaFreshForStart({ sessionMeta: entry.sessionMeta, startedAtMs: opts.startedAtMs }));
+        : scored.filter(
+            (entry) =>
+                isSessionMetaFreshForStart({ sessionMeta: entry.sessionMeta, startedAtMs: opts.startedAtMs }) ||
+                entry.mtimeMs >= opts.startedAtMs - CODEX_SESSION_META_CLOCK_SKEW_MS,
+          );
 
     const best = candidates[0];
     if (!best) return null;

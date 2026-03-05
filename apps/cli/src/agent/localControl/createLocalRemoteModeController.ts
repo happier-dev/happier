@@ -29,7 +29,6 @@ export function createLocalRemoteModeController(params: {
   setRemoteUiAllowsSwitchToLocal: (allowed: boolean) => void;
 }) {
   let lastPublishedMode: Mode | null = null;
-  let switchHandlerRegistered = false;
 
   const publishModeState = async (nextMode: Mode): Promise<void> => {
     if (lastPublishedMode !== nextMode) {
@@ -58,13 +57,11 @@ export function createLocalRemoteModeController(params: {
   };
 
   const registerRemoteSwitchHandler = (): void => {
-    if (switchHandlerRegistered) return;
-    switchHandlerRegistered = true;
     params.session.rpcHandlerManager.registerHandler('switch', async (requestParams: unknown) => {
       const to = resolveSwitchRequestTarget(requestParams);
 
       // Remote launcher is already in remote mode, so {to:'remote'} is a no-op.
-      if (to === 'remote') return false;
+      if (to === 'remote') return true;
       return await params.requestSwitchToLocalIfSupported();
     });
   };

@@ -23,6 +23,7 @@ describe('adoptSessionsFromMarkers respawn descriptor', () => {
         version: 1,
         directory: '/tmp/workspace',
         agent: 'claude',
+        resume: 'vendor-sess-123',
         terminal: { mode: 'plain' },
       } as any,
     };
@@ -39,6 +40,7 @@ describe('adoptSessionsFromMarkers respawn descriptor', () => {
     expect(map.get(123)?.spawnOptions).toMatchObject({
       directory: '/tmp/workspace',
       agent: 'claude',
+      resume: 'vendor-sess-123',
       terminal: { mode: 'plain' },
     });
   });
