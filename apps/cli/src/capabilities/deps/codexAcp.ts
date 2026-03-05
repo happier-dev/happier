@@ -21,6 +21,17 @@ export const codexAcpBinPath = () => {
 
 const codexAcpStatePath = () => join(codexAcpInstallDir(), 'install-state.json');
 
+function normalizeCodexAcpInstallSpecCandidate(raw: unknown): string | null {
+    const spec = typeof raw === 'string' ? raw.trim() : '';
+    if (!spec) return null;
+    // The install spec is intended to be an npm install target (package spec / URL / file:),
+    // and we pass it as a single argv element. If it contains whitespace, it is almost
+    // certainly a misconfigured setting (e.g. pasted instructions). Ignore it and fall back
+    // to the default install spec.
+    if (/\s/.test(spec)) return null;
+    return spec;
+}
+
 async function readCodexAcpState(): Promise<{ lastInstallLogPath: string | null } | null> {
     try {
         const raw = await readFile(codexAcpStatePath(), 'utf8');
@@ -113,10 +124,9 @@ export async function installCodexAcp(installSpecOverride?: string): Promise<
 > {
     const logPath = join(configuration.logsDir, `install-dep-codex-acp-${Date.now()}.log`);
 
-    const installSpecRaw = typeof installSpecOverride === 'string' ? installSpecOverride.trim() : '';
     const installSpec =
-        installSpecRaw ||
-        (typeof process.env.HAPPIER_CODEX_ACP_INSTALL_SPEC === 'string' ? process.env.HAPPIER_CODEX_ACP_INSTALL_SPEC.trim() : '') ||
+        normalizeCodexAcpInstallSpecCandidate(installSpecOverride) ??
+        normalizeCodexAcpInstallSpecCandidate(process.env.HAPPIER_CODEX_ACP_INSTALL_SPEC) ??
         DEFAULT_CODEX_ACP_INSTALL_SPEC;
 
     const result = await installNpmDepToPrefix({
