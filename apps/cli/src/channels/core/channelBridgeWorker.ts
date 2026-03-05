@@ -3,7 +3,7 @@
  *
  * Responsibilities:
  * - Pull inbound channel messages from adapters
- * - Handle slash commands (`/sessions`, `/attach`, `/detach`, `/session`, `/help`)
+ * - Handle slash commands (`/sessions`, `/attach`, `/detach`, `/session`, `/help`, `/start`)
  * - Forward non-command inbound messages into attached Happier sessions
  * - Forward agent output back into the mapped channel conversation
  *
