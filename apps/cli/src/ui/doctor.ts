@@ -517,8 +517,7 @@ export async function runDoctorCommand(filter?: 'all' | 'daemon'): Promise<void>
                     });
                 });
             } else {
-                console.log(chalk.red('❌ No happier processes found'));
-                hasCriticalFailures = true;
+                console.log(chalk.yellow('⚠️  No happier processes found (process inventory may be unavailable in this runtime)'));
             }
 
             if (allProcesses.length > 1) { // More than just current process

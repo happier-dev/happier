@@ -263,7 +263,7 @@ export async function startChannelBridgeFromEnv(params: Readonly<{
       webhookMode: webhookModeRequested,
     });
 
-    adapters.push(telegramAdapter);
+    const telegramAdapterIndex = adapters.push(telegramAdapter) - 1;
 
     if (webhookModeRequested) {
       const port = runtimeConfig.telegram.webhookPort;
@@ -293,7 +293,7 @@ export async function startChannelBridgeFromEnv(params: Readonly<{
           requireTopics,
           webhookMode: false,
         });
-        adapters[adapters.length - 1] = telegramAdapter;
+        adapters[telegramAdapterIndex] = telegramAdapter;
         logger.warn('[channelBridge] Falling back to Telegram polling mode because webhook relay failed to start');
       }
     }
