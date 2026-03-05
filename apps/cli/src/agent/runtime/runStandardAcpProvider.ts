@@ -352,6 +352,7 @@ export async function runStandardAcpProvider(
       setCurrentPermissionMode: permissionModeState.setCurrentPermissionMode,
       setCurrentPermissionModeUpdatedAt: permissionModeState.setCurrentPermissionModeUpdatedAt,
       initialResumeId: opts.resume,
+      strictInitialResume: typeof opts.resume === 'string' && opts.resume.trim().length > 0,
       onAfterStart: config.onAfterStart ? () => config.onAfterStart?.({ session, runtime }) : undefined,
       onAfterReset: config.onAfterReset ? () => config.onAfterReset?.({ session, runtime }) : undefined,
       formatPromptErrorMessage: config.formatPromptErrorMessage,

@@ -203,6 +203,22 @@ describe('runStandardAcpProvider', () => {
     expect(harness.metrics.cleanupCalls).toBe(1);
   });
 
+  it('passes strictInitialResume when an explicit resume id is provided', async () => {
+    const harness = createHarness();
+    harness.opts.resume = 'resume-1';
+
+    let receivedParams: any = null;
+    harness.deps.runPermissionModePromptLoopFn = async (params: any) => {
+      receivedParams = params;
+      params.sendReady();
+    };
+
+    await runStandardAcpProvider(harness.opts, harness.config, harness.deps);
+
+    expect(receivedParams?.initialResumeId).toBe('resume-1');
+    expect(receivedParams?.strictInitialResume).toBe(true);
+  });
+
   it('in-flight steer controller calls steerPrompt with correct receiver', async () => {
     const harness = createHarness();
 
