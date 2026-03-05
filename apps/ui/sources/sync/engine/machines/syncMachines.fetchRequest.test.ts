@@ -140,6 +140,7 @@ describe('fetchAndApplyMachines request override', () => {
     it('does not drop machines when dataEncryptionKey cannot be decrypted (fallback to legacy machine encryption)', async () => {
         const fetchAndApplyMachines = await loadFetchAndApplyMachines();
         const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+        const consoleWarn = vi.spyOn(console, 'warn').mockImplementation(() => {});
         const requestSpy = vi.fn(async (_path: string, _init?: RequestInit) =>
             jsonResponse([
                 {
@@ -176,10 +177,60 @@ describe('fetchAndApplyMachines request override', () => {
         });
 
         consoleError.mockRestore();
+        consoleWarn.mockRestore();
 
         expect(applied).toHaveLength(1);
         expect((applied[0] as any[])).toHaveLength(1);
         expect((applied[0] as any[])[0]?.id).toBe('m1');
+    });
+
+    it('warns only once per machine when dataEncryptionKey decryption fails', async () => {
+        const fetchAndApplyMachines = await loadFetchAndApplyMachines();
+        const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+        const consoleWarn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+        const requestSpy = vi.fn(async (_path: string, _init?: RequestInit) =>
+            jsonResponse([
+                {
+                    id: 'm1',
+                    metadata: 'meta-1',
+                    metadataVersion: 1,
+                    daemonState: null,
+                    daemonStateVersion: 0,
+                    dataEncryptionKey: 'not-decryptable',
+                    seq: 1,
+                    active: true,
+                    activeAt: 10,
+                    revokedAt: null,
+                    createdAt: 1,
+                    updatedAt: 10,
+                } satisfies RawMachine,
+            ]),
+        );
+
+        const encryption = createEncryptionHarness();
+        encryption.decryptEncryptionKey.mockResolvedValue(null);
+
+        const machineDataKeys = new Map<string, Uint8Array>();
+
+        await fetchAndApplyMachines({
+            credentials: { token: 't', secret: 's' } satisfies AuthCredentials,
+            encryption,
+            machineDataKeys,
+            request: requestSpy,
+            applyMachines: () => {},
+        });
+        await fetchAndApplyMachines({
+            credentials: { token: 't', secret: 's' } satisfies AuthCredentials,
+            encryption,
+            machineDataKeys,
+            request: requestSpy,
+            applyMachines: () => {},
+        });
+
+        expect(consoleWarn).toHaveBeenCalledTimes(1);
+
+        consoleError.mockRestore();
+        consoleWarn.mockRestore();
     });
 
     it('honors replace=false by not dropping machines missing from the fetch response', async () => {

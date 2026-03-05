@@ -2,6 +2,7 @@ import { MMKV } from 'react-native-mmkv';
 import { readStorageScopeFromEnv, scopedStorageId } from '@/utils/system/storageScope';
 import { isStackContext } from './serverContext';
 import { canonicalizeServerUrl, createServerUrlComparableKey } from './url/serverUrlCanonical';
+import { readConfiguredServerUrlEnv, readConfiguredServerUrlEnvRaw } from './readConfiguredServerUrlEnv';
 
 export type ServerProfileSource = 'manual' | 'url' | 'stack-env' | 'notification' | 'preconfigured';
 
@@ -31,6 +32,7 @@ type PreconfiguredServer = Readonly<{
     name: string;
     source: ServerProfileSource;
     url: string;
+    idSeed?: string;
 }>;
 
 const SESSION_STORAGE_ACTIVE_ID_KEY = 'activeServerId';
@@ -98,14 +100,19 @@ function parsePreconfiguredServersFromEnv(): PreconfiguredServer[] {
     const entries: PreconfiguredServer[] = [];
     const seenUrlKeys = new Set<string>();
 
-    const append = (urlRaw: unknown, nameRaw: unknown, source: ServerProfileSource): void => {
+    const append = (
+        urlRaw: unknown,
+        nameRaw: unknown,
+        source: ServerProfileSource,
+        opts: Readonly<{ idSeed?: string }> = {},
+    ): void => {
         const url = normalizeUrl(String(urlRaw ?? ''));
         if (!url) return;
         const key = comparableUrlKey(url);
         if (seenUrlKeys.has(key)) return;
         seenUrlKeys.add(key);
         const name = String(nameRaw ?? '').trim();
-        entries.push({ name, source, url });
+        entries.push({ name, source, url, ...(opts.idSeed ? { idSeed: opts.idSeed } : {}) });
     };
 
     const rawPreconfigured = String(process.env.EXPO_PUBLIC_HAPPY_PRECONFIGURED_SERVERS ?? '').trim();
@@ -128,14 +135,17 @@ function parsePreconfiguredServersFromEnv(): PreconfiguredServer[] {
         }
     }
 
-    const singleUrl = normalizeUrl(String(process.env.EXPO_PUBLIC_HAPPY_SERVER_URL ?? ''));
+    const rawSingleUrl = normalizeUrl(readConfiguredServerUrlEnvRaw());
+    const singleUrl = normalizeUrl(readConfiguredServerUrlEnv());
     if (singleUrl) {
-        append(singleUrl, '', isStackContext() ? 'stack-env' : 'url');
+        const inStack = isStackContext();
+        const idSeed = rawSingleUrl && rawSingleUrl !== singleUrl ? deriveServerIdFromUrl(rawSingleUrl) : undefined;
+        append(singleUrl, '', inStack ? 'stack-env' : 'url', inStack ? { idSeed } : {});
     }
 
     // On web with no explicitly configured server, fall back to same-origin so that
     // self-hosted deployments (e.g. https://happier.example.com) get a server profile
-    // without needing EXPO_PUBLIC_HAPPY_SERVER_URL set at build time.
+    // without needing EXPO_PUBLIC_HAPPIER_SERVER_URL set at build time.
     if (entries.length === 0) {
         const origin = getWebSameOriginServerUrl();
         if (origin) {
@@ -180,7 +190,26 @@ function applyRuntimeSeedPolicy(servers: Record<string, ServerProfile>): Record<
     for (const configured of parsePreconfiguredServersFromEnv()) {
         const existing = findProfileByEquivalentUrl(next, configured.url);
         if (existing) continue;
-        const id = createUniqueServerId(next, deriveServerIdFromUrl(configured.url), configured.url);
+
+        const idSeed = String(configured.idSeed ?? '').trim();
+        if (idSeed && idSeed in next) {
+            const current = next[idSeed]!;
+            if (
+                current.source === 'stack-env'
+                && configured.source === 'stack-env'
+                && comparableUrlKey(current.serverUrl) !== comparableUrlKey(configured.url)
+            ) {
+                const now = nowMs();
+                next[idSeed] = {
+                    ...current,
+                    serverUrl: configured.url,
+                    updatedAt: now,
+                };
+                continue;
+            }
+        }
+
+        const id = createUniqueServerId(next, idSeed || deriveServerIdFromUrl(configured.url), configured.url);
         const now = nowMs();
         next[id] = {
             id,
@@ -314,7 +343,7 @@ function getWebSameOriginServerUrl(): string | null {
         const parsed = new URL(origin);
         if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return null;
         // Official hosted web app (app.happier.dev) is a static SPA; the API lives on api.happier.dev.
-        // When builds are missing EXPO_PUBLIC_HAPPY_SERVER_URL, this prevents the default server
+        // When builds are missing EXPO_PUBLIC_HAPPIER_SERVER_URL (and legacy aliases), this prevents the default server
         // from incorrectly pointing at the web host.
         if (parsed.hostname.toLowerCase() === 'app.happier.dev') {
             return 'https://api.happier.dev';
@@ -391,7 +420,7 @@ export function upsertServerProfile(
             ?? defaultServerNameFromUrl(url)
             ?? id,
         ).trim() || id,
-        serverUrl: existingEquivalent?.serverUrl ?? url,
+        serverUrl: url,
         createdAt: existing?.createdAt ?? now,
         updatedAt: now,
         lastUsedAt: existing?.lastUsedAt ?? 0,

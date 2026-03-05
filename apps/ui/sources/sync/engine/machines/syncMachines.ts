@@ -14,6 +14,19 @@ type SyncEncryption = {
     getMachineEncryption: (machineId: string) => MachineEncryption | null;
 };
 
+const warnedMachineDataEncryptionKeyFailuresByEncryption = new WeakMap<SyncEncryption, Set<string>>();
+
+function warnMachineDataEncryptionKeyDecryptFailureOnce(encryption: SyncEncryption, machineId: string): void {
+    let warnedMachineIds = warnedMachineDataEncryptionKeyFailuresByEncryption.get(encryption);
+    if (!warnedMachineIds) {
+        warnedMachineIds = new Set<string>();
+        warnedMachineDataEncryptionKeyFailuresByEncryption.set(encryption, warnedMachineIds);
+    }
+    if (warnedMachineIds.has(machineId)) return;
+    warnedMachineIds.add(machineId);
+    console.warn(`Failed to decrypt data encryption key for machine ${machineId}; falling back to legacy machine encryption.`);
+}
+
 export async function buildUpdatedMachineFromSocketUpdate(params: {
     machineUpdate: any;
     updateSeq: number;
@@ -170,7 +183,7 @@ export async function fetchAndApplyMachines(params: {
         if (machine.dataEncryptionKey) {
             const decryptedKey = await encryption.decryptEncryptionKey(machine.dataEncryptionKey);
             if (!decryptedKey) {
-                console.error(`Failed to decrypt data encryption key for machine ${machine.id}`);
+                warnMachineDataEncryptionKeyDecryptFailureOnce(encryption, machine.id);
                 // Keep the machine in sync; fall back to legacy machine encryption for metadata/daemonState.
                 // This prevents a single bad key from making the machine list appear empty.
                 machineKeysMap.set(machine.id, null);
