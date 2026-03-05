@@ -41,6 +41,7 @@ import type {
 import { logger } from '@/ui/logger';
 import { delay } from '@/utils/time';
 import { createSubprocessStderrAppender, type BoundedTextFileAppender } from '@/agent/runtime/subprocessArtifacts';
+import { summarizeAcpStderrForLogs } from './diagnostics/summarizeAcpStderrForLogs';
 import packageJson from '../../../package.json';
 import {
   type TransportHandler,
@@ -658,11 +659,13 @@ export class AcpBackend implements AgentBackend {
         hasActiveInvestigation,
       };
 
-      // Log to file (not console)
-      if (hasActiveInvestigation) {
-        logger.debug(`[AcpBackend] 🔍 Agent stderr (during investigation): ${text.trim()}`);
-      } else {
-        logger.debug(`[AcpBackend] Agent stderr: ${text.trim()}`);
+      const stderrSummary = summarizeAcpStderrForLogs(text);
+      if (stderrSummary) {
+        logger.debug(
+          hasActiveInvestigation
+            ? `[AcpBackend] 🔍 Agent stderr (during investigation): ${stderrSummary}`
+            : `[AcpBackend] Agent stderr: ${stderrSummary}`,
+        );
       }
 
       // Let transport handler process stderr and optionally emit messages
