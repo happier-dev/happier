@@ -9,7 +9,8 @@ import { RPC_ERROR_CODES, RPC_METHODS, isRpcMethodNotFoundResult } from '@happie
 import { apiSocket } from '../api/session/apiSocket';
 import type { MachineMetadata } from '../domains/state/storageTypes';
 import { buildSpawnHappySessionRpcParams, type SpawnHappySessionRpcParams, type SpawnSessionOptions } from '../domains/session/spawn/spawnSessionPayload';
-import { isPlainObject, normalizeSpawnSessionResult } from './_shared';
+import { readSpawnSessionRpcTimeoutMsFromEnv } from '../domains/session/spawn/spawnSessionRpcTimeout';
+import { isPlainObject, isSocketIoAckTimeoutError, normalizeSpawnSessionResult } from './_shared';
 import { mergeMachineMetadataForVersionMismatch } from './machineMetadataMerge';
 import { machineRpcWithServerScope } from '@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc';
 import { readRpcErrorCode } from '@happier-dev/protocol/rpcErrors';
@@ -33,6 +34,7 @@ export async function machineSpawnNewSession(options: SpawnSessionOptions): Prom
             method: RPC_METHODS.SPAWN_HAPPY_SESSION,
             payload: params,
             serverId,
+            timeoutMs: readSpawnSessionRpcTimeoutMsFromEnv(),
         });
         return normalizeSpawnSessionResult(result);
     } catch (error) {
@@ -44,6 +46,13 @@ export async function machineSpawnNewSession(options: SpawnSessionOptions): Prom
                 errorMessage:
                     `Daemon RPC is not available (RPC method not available). ` +
                     `The daemon may be stopped, still starting, or not connected to the server.`,
+            };
+        }
+        if (isSocketIoAckTimeoutError(error)) {
+            return {
+                type: 'error',
+                errorCode: SPAWN_SESSION_ERROR_CODES.SESSION_WEBHOOK_TIMEOUT,
+                errorMessage: 'Session startup timed out',
             };
         }
         return {
