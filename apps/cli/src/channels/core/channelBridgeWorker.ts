@@ -296,11 +296,15 @@ async function replyToConversation(
   conversation: Readonly<{ conversationId: string; threadId: string | null }>,
   text: string,
 ): Promise<void> {
-  await adapter.sendMessage({
-    conversationId: conversation.conversationId,
-    threadId: conversation.threadId,
-    text,
-  });
+  await withTimeout(
+    adapter.sendMessage({
+      conversationId: conversation.conversationId,
+      threadId: conversation.threadId,
+      text,
+    }),
+    EXTERNAL_IO_TIMEOUT_MS,
+    `replyToConversation(${adapter.providerId}:${conversation.conversationId})`,
+  );
 }
 
 async function authorizeCommand(params: Readonly<{
