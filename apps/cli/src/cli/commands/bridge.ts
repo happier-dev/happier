@@ -102,6 +102,7 @@ async function cmdList(): Promise<void> {
     const fetched = await readChannelBridgeTelegramConfigFromKv({
       kv,
       serverId,
+      allowUnsupportedSchema: true,
     });
     serverKvRecord = fetched.record;
   } catch (error) {

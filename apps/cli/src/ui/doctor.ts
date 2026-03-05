@@ -348,6 +348,7 @@ export async function runDoctorCommand(filter?: 'all' | 'daemon'): Promise<void>
                     const serverRecord = await readChannelBridgeTelegramConfigFromKv({
                         kv,
                         serverId,
+                        allowUnsupportedSchema: true,
                     });
                     runtimeSettings = overlayServerKvTelegramConfigInSettings({
                         settings,
