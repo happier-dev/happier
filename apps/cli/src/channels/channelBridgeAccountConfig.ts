@@ -283,9 +283,6 @@ export function upsertScopedTelegramBridgeConfig(params: Readonly<{
         delete webhook.secret;
       }
     }
-    if (isEmptyRecord(secrets)) {
-      delete telegram.secrets;
-    }
   }
 
   return root;

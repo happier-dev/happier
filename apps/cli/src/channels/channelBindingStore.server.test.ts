@@ -80,13 +80,16 @@ function createCountingKvClient(): Readonly<{
 function createConflictPayloadKvClient(): Readonly<{
   kv: ChannelBridgeKvClient;
   mutateCallCount: () => number;
+  getCallCount: () => number;
 }> {
+  let getCalls = 0;
   let mutateCalls = 0;
   let currentVersion = -1;
   let storedValue: string | null = null;
 
   const kv: ChannelBridgeKvClient = {
     get: async (key) => {
+      getCalls += 1;
       if (storedValue === null) {
         return { status: 404, body: { error: 'Key not found' } };
       }
@@ -142,6 +145,81 @@ function createConflictPayloadKvClient(): Readonly<{
 
   return {
     kv,
+    getCallCount: () => getCalls,
+    mutateCallCount: () => mutateCalls,
+  };
+}
+
+function createValidConflictPayloadKvClient(): Readonly<{
+  kv: ChannelBridgeKvClient;
+  mutateCallCount: () => number;
+  getCallCount: () => number;
+}> {
+  let getCalls = 0;
+  let mutateCalls = 0;
+  let currentVersion = 0;
+  let storedValue = Buffer.from(JSON.stringify({
+    schemaVersion: 1,
+    bindings: [],
+  }), 'utf8').toString('base64');
+
+  const conflictValue = Buffer.from(JSON.stringify({
+    schemaVersion: 1,
+    bindings: [],
+  }), 'utf8').toString('base64');
+
+  const kv: ChannelBridgeKvClient = {
+    get: async (key) => {
+      getCalls += 1;
+      return {
+        status: 200,
+        body: {
+          key,
+          value: storedValue,
+          version: currentVersion,
+        },
+      };
+    },
+    mutate: async (mutations) => {
+      mutateCalls += 1;
+      const [mutation] = mutations;
+      if (!mutation) {
+        return {
+          status: 400,
+          body: {
+            success: false,
+            errors: [{ key: 'missing', error: 'version-mismatch', version: currentVersion, value: storedValue }],
+          },
+        };
+      }
+
+      if (mutateCalls === 1) {
+        currentVersion = 1;
+        storedValue = conflictValue;
+        return {
+          status: 409,
+          body: {
+            success: false,
+            errors: [{ key: mutation.key, error: 'version-mismatch', version: currentVersion, value: storedValue }],
+          },
+        };
+      }
+
+      currentVersion += 1;
+      storedValue = mutation.value ?? storedValue;
+      return {
+        status: 200,
+        body: {
+          success: true,
+          results: [{ key: mutation.key, version: currentVersion }],
+        },
+      };
+    },
+  };
+
+  return {
+    kv,
+    getCallCount: () => getCalls,
     mutateCallCount: () => mutateCalls,
   };
 }
@@ -380,5 +458,25 @@ describe('createServerBackedChannelBindingStore', () => {
     });
 
     expect(binding).toBeNull();
+  });
+
+  it('uses conflict payload state for retry without extra primary read', async () => {
+    const conflict = createValidConflictPayloadKvClient();
+    const store = createServerBackedChannelBindingStore({
+      kv: conflict.kv,
+      serverId: 'local-3005',
+      maxWriteRetries: 3,
+    });
+
+    await store.upsertBinding({
+      providerId: 'telegram',
+      conversationId: '-100555',
+      threadId: null,
+      sessionId: 'sess-5',
+      lastForwardedSeq: 2,
+    });
+
+    expect(conflict.mutateCallCount()).toBe(2);
+    expect(conflict.getCallCount()).toBe(1);
   });
 });

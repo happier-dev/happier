@@ -126,8 +126,11 @@ export function createServerBackedChannelBindingStore(params: Readonly<{
     result: T;
     changed?: boolean;
   }>): Promise<T> {
+    let retryCurrent: BindingCache | null = null;
+
     for (let attempt = 0; attempt < maxWriteRetries; attempt += 1) {
-      const current = await load(true);
+      const current = retryCurrent ?? await load(true);
+      retryCurrent = null;
       const op = operation(cloneBindings(current.bindings));
       const changed = op.changed ?? true;
       if (!changed) {
@@ -159,7 +162,13 @@ export function createServerBackedChannelBindingStore(params: Readonly<{
             '[channelBindingStore] Conflict payload decode failed; aborting optimistic retry to avoid clobbering remote bindings',
           );
         }
-        setCache(error.currentVersion, fromServerDocument(doc));
+        const conflictBindings = fromServerDocument(doc);
+        setCache(error.currentVersion, conflictBindings);
+        retryCurrent = {
+          version: error.currentVersion,
+          bindings: cloneBindings(conflictBindings),
+          fetchedAtMs: Date.now(),
+        };
       }
     }
 
