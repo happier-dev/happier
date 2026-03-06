@@ -14,7 +14,8 @@ This folder documents how Happier works internally, with a focus on protocol, ba
 - opencode-feature-matrix.md: Low-level OpenCode implementation matrix and unified-architecture migration notes.
 - pi-feature-matrix.md: Low-level PI implementation matrix and unified-architecture migration notes.
 - acp-provider-feature-matrix.md: Low-level ACP-provider matrix and catalog migration notes.
-- channel-bridge.md: Provider-agnostic bridge architecture and adapter contract.
+- channel-bridge.md: Provider-agnostic bridge architecture, ingress mode matrix, and relay deployment model.
+- telegram-channel-bridge.md: Telegram adapter setup, commands, and channel-specific bridge usage.
 - issue-triage.md: How the GitHub issue triage workflows are wired to maintainer tooling.
 
 ## Conventions

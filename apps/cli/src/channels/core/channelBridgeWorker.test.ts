@@ -170,6 +170,64 @@ describe('createInMemoryChannelBindingStore', () => {
 });
 
 describe('executeChannelBridgeTick', () => {
+  it('sanitizes non-finite in-memory cursor values in binding writes', async () => {
+    const store = createInMemoryChannelBindingStore();
+
+    const upserted = await store.upsertBinding({
+      providerId: 'telegram',
+      conversationId: '-100sanity',
+      threadId: null,
+      sessionId: 'sess-sanity',
+      lastForwardedSeq: Number.NaN,
+    });
+
+    expect(upserted.lastForwardedSeq).toBe(0);
+
+    await store.updateLastForwardedSeq({
+      providerId: 'telegram',
+      conversationId: '-100sanity',
+      threadId: null,
+    }, Number.POSITIVE_INFINITY);
+
+    const afterInvalidUpdate = await store.getBinding({
+      providerId: 'telegram',
+      conversationId: '-100sanity',
+      threadId: null,
+    });
+
+    expect(afterInvalidUpdate?.lastForwardedSeq).toBe(0);
+  });
+
+  it('returns defensive copies from in-memory binding store reads', async () => {
+    const store = createInMemoryChannelBindingStore(() => 1_000);
+    await store.upsertBinding({
+      providerId: 'telegram',
+      conversationId: 'room-copy',
+      threadId: null,
+      sessionId: 'sess-copy',
+      lastForwardedSeq: 5,
+    });
+
+    const firstRead = await store.getBinding({
+      providerId: 'telegram',
+      conversationId: 'room-copy',
+      threadId: null,
+    });
+    expect(firstRead).not.toBeNull();
+    (firstRead as { sessionId: string }).sessionId = 'mutated-first-read';
+
+    const listed = await store.listBindings();
+    (listed[0] as { sessionId: string }).sessionId = 'mutated-list-read';
+
+    const secondRead = await store.getBinding({
+      providerId: 'telegram',
+      conversationId: 'room-copy',
+      threadId: null,
+    });
+
+    expect(secondRead?.sessionId).toBe('sess-copy');
+  });
+
   it('supports /attach then forwards inbound user messages into the bound session', async () => {
     const store = createInMemoryChannelBindingStore();
     const harness = createAdapterHarness();
@@ -690,6 +748,40 @@ describe('executeChannelBridgeTick', () => {
 
     const [binding] = await store.listBindings();
     expect(binding?.lastForwardedSeq).toBe(11);
+  });
+
+  it('skips agent rows with invalid seq values and continues forwarding valid rows', async () => {
+    const store = createInMemoryChannelBindingStore();
+    const harness = createAdapterHarness();
+
+    await store.upsertBinding({
+      providerId: 'telegram',
+      conversationId: '-1006',
+      threadId: null,
+      sessionId: 'sess-invalid-seq-row',
+      lastForwardedSeq: 9,
+    });
+
+    const { deps, warnings } = createDepsHarness({
+      fetchAgentMessagesAfterSeq: async () => [
+        { seq: Number.NaN, text: 'bad row' },
+        { seq: 12, text: 'valid row' },
+      ],
+    });
+
+    await executeChannelBridgeTick({
+      store,
+      adapters: [harness.adapter],
+      deps,
+      inboundDeduper: createChannelBridgeInboundDeduper(),
+    });
+
+    expect(harness.sent).toEqual([
+      { conversationId: '-1006', threadId: null, text: 'valid row' },
+    ]);
+    const [binding] = await store.listBindings();
+    expect(binding?.lastForwardedSeq).toBe(12);
+    expect(warnings.some((row) => row.message.includes('invalid seq'))).toBe(true);
   });
 
   it('does not attach when latest session sequence cannot be resolved', async () => {
@@ -1630,7 +1722,6 @@ describe('executeChannelBridgeTick', () => {
     expect(warnings.some((row) => row.message.includes('Failed to list bindings for outbound forwarding'))).toBe(true);
   });
 });
-
 describe('startChannelBridgeWorker', () => {
   it('runs the first tick on startup', async () => {
     const store = createInMemoryChannelBindingStore();

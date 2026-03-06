@@ -193,6 +193,11 @@ Happier acts as a secure bridge between your local development environment and y
   - it communicates with the daemon through the relay server
   - it receive daemon updates (sessions updates, messages, etc) through the relay server
 
+## Channel Integrations
+
+- Telegram bi-directional bridge setup (BotFather, topics/DM mapping, optional webhook relay):
+  - [Telegram channel bridge guide](docs/telegram-channel-bridge.md)
+
 ## Self-Hosting the Server Relay
 
 Happier is 100% self-hostable. It's even the most recommended way to run it, even if we also offer an end-to-end encrypted cloud server (app.happier.dev / api.happier.dev).

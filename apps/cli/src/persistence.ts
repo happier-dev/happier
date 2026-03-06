@@ -108,6 +108,11 @@ export interface Settings {
    * Parsed/normalized by `settings/memorySettings.ts`.
    */
   memory?: unknown
+
+  /**
+   * Channel bridge configuration (account/server scoped + optional global defaults).
+   */
+  channelBridge?: unknown
 }
 
 const defaultSettings: Settings = {
