@@ -187,6 +187,13 @@ HAPPIER_TELEGRAM_WEBHOOK_HOST=127.0.0.1
 HAPPIER_TELEGRAM_WEBHOOK_PORT=8787
 ```
 
+`HAPPIER_TELEGRAM_WEBHOOK_SECRET` is currently used for both:
+
+- webhook URL path token (`/telegram/webhook/<token>`)
+- Telegram `secret_token` header validation
+
+This is an implementation limitation today (single configured secret) and is weaker than using separate secrets for path and header checks.
+
 Important:
 
 - `HAPPIER_SERVER_URL` is the Telegram callback target only when server-relay mode exists and is enabled (planned, not currently implemented).
@@ -212,7 +219,8 @@ Set Telegram webhook:
 curl "https://api.telegram.org/bot<token>/setWebhook?url=https://your-public-host/telegram/webhook/<secret>&secret_token=<secret>"
 ```
 
-Use the same `<secret>` value for both webhook URL path token and `secret_token` so relay can validate the `X-Telegram-Bot-Api-Secret-Token` header.
+Current implementation requires the same `<secret>` value for both webhook URL path token and `secret_token`.
+Use a high-entropy random value and avoid sharing/logging webhook URLs.
 
 If you switch back to polling mode, clear webhook first:
 

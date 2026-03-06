@@ -303,11 +303,13 @@ describe('createServerBackedChannelBindingStore', () => {
     const storeA = createServerBackedChannelBindingStore({
       kv,
       serverId: 'local-3005',
+      accountId: 'acct-1',
     });
 
     const storeB = createServerBackedChannelBindingStore({
       kv,
       serverId: 'local-3005',
+      accountId: 'acct-1',
     });
 
     await storeA.upsertBinding({
@@ -333,6 +335,7 @@ describe('createServerBackedChannelBindingStore', () => {
     const store = createServerBackedChannelBindingStore({
       kv,
       serverId: 'local-3005',
+      accountId: 'acct-1',
     });
 
     await store.upsertBinding({
@@ -376,6 +379,7 @@ describe('createServerBackedChannelBindingStore', () => {
     const store = createServerBackedChannelBindingStore({
       kv: counting.kv,
       serverId: 'local-3005',
+      accountId: 'acct-1',
     });
 
     await store.upsertBinding({
@@ -412,6 +416,7 @@ describe('createServerBackedChannelBindingStore', () => {
     const store = createServerBackedChannelBindingStore({
       kv: counting.kv,
       serverId: 'local-3005',
+      accountId: 'acct-1',
     });
 
     await store.upsertBinding({
@@ -458,6 +463,7 @@ describe('createServerBackedChannelBindingStore', () => {
     const store = createServerBackedChannelBindingStore({
       kv: conflict.kv,
       serverId: 'local-3005',
+      accountId: 'acct-1',
       maxWriteRetries: 3,
     });
 
@@ -484,6 +490,7 @@ describe('createServerBackedChannelBindingStore', () => {
     const store = createServerBackedChannelBindingStore({
       kv,
       serverId: 'local-3005',
+      accountId: 'acct-1',
       maxWriteRetries: 3,
     });
 
@@ -558,6 +565,7 @@ describe('createServerBackedChannelBindingStore', () => {
     const store = createServerBackedChannelBindingStore({
       kv,
       serverId: 'local-3005',
+      accountId: 'acct-1',
       cacheTtlMs: 0,
       maxWriteRetries: 3,
     });
@@ -584,6 +592,7 @@ describe('createServerBackedChannelBindingStore', () => {
     const store = createServerBackedChannelBindingStore({
       kv: conflict.kv,
       serverId: 'local-3005',
+      accountId: 'acct-1',
       maxWriteRetries: 3,
     });
 

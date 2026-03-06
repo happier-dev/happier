@@ -124,6 +124,7 @@ describe('channelBridgeServerKv', () => {
     await upsertChannelBridgeTelegramConfigInKv({
       kv,
       serverId: 'local-3005',
+      accountId: 'acct-1',
       update: {
         tickMs: 2400,
         botToken: 'bot-token-1',
@@ -136,6 +137,7 @@ describe('channelBridgeServerKv', () => {
     const config = await readChannelBridgeTelegramConfigFromKv({
       kv,
       serverId: 'local-3005',
+      accountId: 'acct-1',
     });
 
     expect(config.record).toMatchObject({
@@ -156,6 +158,7 @@ describe('channelBridgeServerKv', () => {
     await upsertChannelBridgeTelegramConfigInKv({
       kv,
       serverId: 'local-3005',
+      accountId: 'acct-1',
       update: {
         botToken: 'bot-token-1',
         webhookSecret: 'secret-1',
@@ -165,6 +168,7 @@ describe('channelBridgeServerKv', () => {
     const config = await readChannelBridgeTelegramConfigFromKv({
       kv,
       serverId: 'local-3005',
+      accountId: 'acct-1',
     });
 
     expect(config.record).toBeNull();
@@ -177,6 +181,7 @@ describe('channelBridgeServerKv', () => {
     await upsertChannelBridgeTelegramConfigInKv({
       kv,
       serverId: 'local-3005',
+      accountId: 'acct-1',
       update: {
         allowedChatIds: ['-100111'],
       },
@@ -185,11 +190,13 @@ describe('channelBridgeServerKv', () => {
     await clearChannelBridgeTelegramConfigInKv({
       kv,
       serverId: 'local-3005',
+      accountId: 'acct-1',
     });
 
     const config = await readChannelBridgeTelegramConfigFromKv({
       kv,
       serverId: 'local-3005',
+      accountId: 'acct-1',
     });
 
     expect(config.record).toBeNull();
@@ -204,7 +211,7 @@ describe('channelBridgeServerKv', () => {
       updatedAtMs: 111,
     }), 'utf8').toString('base64');
 
-    const key = 'happier:channel-bridge:v1:server:local-3005:telegram-config';
+    const key = 'happier:channel-bridge:v1:server:local-3005:account:acct-1:telegram-config';
     const byKey = new Map<string, { value: string | null; version: number }>();
     byKey.set(key, {
       value: unknownSchemaValueBase64,
@@ -263,6 +270,7 @@ describe('channelBridgeServerKv', () => {
     await expect(upsertChannelBridgeTelegramConfigInKv({
       kv,
       serverId: 'local-3005',
+      accountId: 'acct-1',
       update: {
         allowedChatIds: ['-100111'],
       },
@@ -271,6 +279,7 @@ describe('channelBridgeServerKv', () => {
     const config = await readChannelBridgeTelegramConfigFromKv({
       kv,
       serverId: 'local-3005',
+      accountId: 'acct-1',
     });
 
     expect(config.record).toMatchObject({
@@ -283,7 +292,7 @@ describe('channelBridgeServerKv', () => {
   });
 
   it('retries upsert after version mismatch using conflict payload without extra read', async () => {
-    const key = 'happier:channel-bridge:v1:server:local-3005:telegram-config';
+    const key = 'happier:channel-bridge:v1:server:local-3005:account:acct-1:telegram-config';
     const initialValueBase64 = Buffer.from(JSON.stringify({
       schemaVersion: 1,
       telegram: {
@@ -357,6 +366,7 @@ describe('channelBridgeServerKv', () => {
     await upsertChannelBridgeTelegramConfigInKv({
       kv,
       serverId: 'local-3005',
+      accountId: 'acct-1',
       update: {
         requireTopics: true,
       },
@@ -371,7 +381,7 @@ describe('channelBridgeServerKv', () => {
   });
 
   it('retries clear after version mismatch without extra reread', async () => {
-    const key = 'happier:channel-bridge:v1:server:local-3005:telegram-config';
+    const key = 'happier:channel-bridge:v1:server:local-3005:account:acct-1:telegram-config';
     const initialValueBase64 = Buffer.from(JSON.stringify({
       schemaVersion: 1,
       telegram: {
@@ -447,6 +457,7 @@ describe('channelBridgeServerKv', () => {
     await clearChannelBridgeTelegramConfigInKv({
       kv,
       serverId: 'local-3005',
+      accountId: 'acct-1',
     });
 
     expect(getCalls).toBe(1);
@@ -460,6 +471,7 @@ describe('channelBridgeServerKv', () => {
     const first = await readChannelBridgeBindingsFromKv({
       kv,
       serverId: 'local-3005',
+      accountId: 'acct-1',
     });
     expect(first.version).toBe(-1);
     expect(first.doc.bindings).toEqual([]);
@@ -467,6 +479,7 @@ describe('channelBridgeServerKv', () => {
     const writtenVersion = await writeChannelBridgeBindingsToKv({
       kv,
       serverId: 'local-3005',
+      accountId: 'acct-1',
       expectedVersion: first.version,
       doc: {
         schemaVersion: 1,
@@ -489,6 +502,7 @@ describe('channelBridgeServerKv', () => {
     const second = await readChannelBridgeBindingsFromKv({
       kv,
       serverId: 'local-3005',
+      accountId: 'acct-1',
     });
     expect(second.version).toBe(0);
     expect(second.doc.bindings).toHaveLength(1);
@@ -512,6 +526,7 @@ describe('channelBridgeServerKv', () => {
     await expect(readChannelBridgeBindingsFromKv({
       kv,
       serverId: 'local-3005',
+      accountId: 'acct-1',
     })).rejects.toThrow('Invalid or unsupported channel bridge bindings payload in KV');
   });
 
@@ -543,6 +558,7 @@ describe('channelBridgeServerKv', () => {
     await expect(readChannelBridgeBindingsFromKv({
       kv,
       serverId: 'local-3005',
+      accountId: 'acct-1',
     })).rejects.toThrow('Invalid channel bridge binding lastForwardedSeq at index 0');
   });
 
@@ -575,6 +591,7 @@ describe('channelBridgeServerKv', () => {
     await expect(readChannelBridgeBindingsFromKv({
       kv,
       serverId: 'local-3005',
+      accountId: 'acct-1',
     })).rejects.toThrow('Invalid channel bridge binding updatedAtMs at index 0');
   });
 
@@ -609,6 +626,7 @@ describe('channelBridgeServerKv', () => {
     await expect(readChannelBridgeBindingsFromKv({
       kv,
       serverId: 'local-3005',
+      accountId: 'acct-1',
     })).rejects.toThrow('Invalid channel bridge binding threadId at index 0');
   });
 
@@ -648,6 +666,7 @@ describe('channelBridgeServerKv', () => {
     await expect(readChannelBridgeBindingsFromKv({
       kv,
       serverId: 'local-3005',
+      accountId: 'acct-1',
     })).rejects.toThrow('Invalid channel bridge binding identity fields at index 1');
   });
 
@@ -668,7 +687,35 @@ describe('channelBridgeServerKv', () => {
     await expect(readChannelBridgeTelegramConfigFromKv({
       kv,
       serverId: 'local-3005',
+      accountId: 'acct-1',
     })).rejects.toThrow('Invalid or unsupported Telegram config schema');
+  });
+
+  it('throws when telegram config payload contains malformed non-empty allowedChatIds', async () => {
+    const malformedAllowedChatIdsValueBase64 = Buffer.from(JSON.stringify({
+      schemaVersion: 1,
+      telegram: {
+        allowedChatIds: ['   ', 123, null],
+      },
+      updatedAtMs: 123,
+    }), 'utf8').toString('base64');
+    const kv: ChannelBridgeKvClient = {
+      get: async () => ({
+        status: 200,
+        body: {
+          key: 'k',
+          value: malformedAllowedChatIdsValueBase64,
+          version: 3,
+        },
+      }),
+      mutate: async () => ({ status: 200, body: { success: true, results: [] } }),
+    };
+
+    await expect(readChannelBridgeTelegramConfigFromKv({
+      kv,
+      serverId: 'local-3005',
+      accountId: 'acct-1',
+    })).rejects.toThrow('Invalid telegram.allowedChatIds payload');
   });
 
   it('treats malformed telegram config payload as recoverable when allowUnsupportedSchema=true', async () => {
@@ -688,6 +735,7 @@ describe('channelBridgeServerKv', () => {
     await expect(readChannelBridgeTelegramConfigFromKv({
       kv,
       serverId: 'local-3005',
+      accountId: 'acct-1',
       allowUnsupportedSchema: true,
     })).resolves.toEqual({
       record: null,

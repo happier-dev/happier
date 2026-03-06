@@ -367,11 +367,13 @@ export async function startChannelBridgeFromEnv(params: Readonly<{
   let store = params.store ?? null;
   if (!store) {
     const serverId = typeof params.serverId === 'string' ? params.serverId.trim() : '';
-    if (serverId) {
+    const accountId = typeof params.accountId === 'string' ? params.accountId.trim() : '';
+    if (serverId && accountId) {
       const kv = createAxiosChannelBridgeKvClient({ token: params.credentials.token });
       store = createServerBackedChannelBindingStore({
         kv,
         serverId,
+        accountId,
       });
     }
   }

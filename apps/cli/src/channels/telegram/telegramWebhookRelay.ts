@@ -3,6 +3,8 @@ import { isIP } from 'node:net';
 
 import fastify from 'fastify';
 
+import { logger } from '@/ui/logger';
+
 function secureCompareToken(providedToken: string, expectedToken: string): boolean {
   const providedBytes = Buffer.from(providedToken, 'utf8');
   const expectedBytes = Buffer.from(expectedToken, 'utf8');
@@ -61,7 +63,10 @@ export async function startTelegramWebhookRelay(params: Readonly<{
   if (!isLoopbackHost(host)) {
     throw new Error('Webhook host must be loopback-only');
   }
-  const requestedPort = Number.isFinite(params.port) ? Math.trunc(params.port) : 0;
+  if (params.port !== undefined && params.port !== null && !Number.isFinite(params.port)) {
+    throw new Error('Webhook port must be a finite number');
+  }
+  const requestedPort = params.port === undefined || params.port === null ? 0 : Math.trunc(params.port);
   if (requestedPort < 0 || requestedPort > 65_535) {
     throw new Error('Webhook port must be between 0 and 65535');
   }
@@ -80,8 +85,17 @@ export async function startTelegramWebhookRelay(params: Readonly<{
       return reply.status(401).send({ ok: false, error: 'Unauthorized' });
     }
 
-    await params.onUpdate(request.body);
-    return reply.send({ ok: true });
+    try {
+      await params.onUpdate(request.body);
+      return reply.send({ ok: true });
+    } catch (error) {
+      logger.warn('[TELEGRAM_WEBHOOK_RELAY] Failed to process inbound webhook update', {
+        path,
+        tokenLength: providedToken.trim().length,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      return reply.status(500).send({ ok: false, error: 'Internal Server Error' });
+    }
   });
 
   await app.listen({ port: requestedPort, host });

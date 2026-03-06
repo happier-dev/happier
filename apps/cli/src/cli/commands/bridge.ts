@@ -109,6 +109,7 @@ async function cmdList(): Promise<void> {
     const fetched = await readChannelBridgeTelegramConfigFromKv({
       kv,
       serverId,
+      accountId,
       allowUnsupportedSchema: true,
     });
     serverKvRecord = fetched.record;
@@ -276,6 +277,7 @@ async function cmdTelegramSet(args: string[]): Promise<void> {
     await upsertChannelBridgeTelegramConfigInKv({
       kv,
       serverId,
+      accountId,
       update: split.sharedUpdate,
     });
   }
@@ -313,6 +315,7 @@ async function cmdTelegramClear(): Promise<void> {
   await clearChannelBridgeTelegramConfigInKv({
     kv,
     serverId,
+    accountId,
   });
 
   await updateSettings(async (current) =>

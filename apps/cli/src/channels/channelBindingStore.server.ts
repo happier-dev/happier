@@ -86,6 +86,7 @@ function isRecoverableBindingsReadError(error: unknown): boolean {
 export function createServerBackedChannelBindingStore(params: Readonly<{
   kv: ChannelBridgeKvClient;
   serverId: string;
+  accountId: string;
   cacheTtlMs?: number;
   maxWriteRetries?: number;
 }>): ChannelBindingStore {
@@ -103,6 +104,7 @@ export function createServerBackedChannelBindingStore(params: Readonly<{
       const fetched = await readChannelBridgeBindingsFromKv({
         kv: params.kv,
         serverId: params.serverId,
+        accountId: params.accountId,
       });
       const next: BindingCache = {
         version: fetched.version,
@@ -159,6 +161,7 @@ export function createServerBackedChannelBindingStore(params: Readonly<{
         const version = await writeChannelBridgeBindingsToKv({
           kv: params.kv,
           serverId: params.serverId,
+          accountId: params.accountId,
           expectedVersion: current.version,
           doc: toServerDocument(op.nextBindings),
         });

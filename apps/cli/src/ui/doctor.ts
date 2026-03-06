@@ -397,12 +397,13 @@ export async function runDoctorCommand(filter?: 'all' | 'daemon'): Promise<void>
             let runtimeConfigSource = 'local settings';
             let serverKvReadFailure: string | null = null;
 
-            if (serverId.length > 0 && authCredentials?.token) {
+            if (serverId.length > 0 && accountId.length > 0 && authCredentials?.token) {
                 try {
                     const kv = createAxiosChannelBridgeKvClient({ token: authCredentials.token });
                     const serverRecord = await readChannelBridgeTelegramConfigFromKv({
                         kv,
                         serverId,
+                        accountId,
                         allowUnsupportedSchema: true,
                     });
                     runtimeSettings = overlayServerKvTelegramConfigInSettings({

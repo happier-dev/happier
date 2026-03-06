@@ -192,7 +192,11 @@ function parseTelegramConfigRecord(value: unknown): ChannelBridgeServerTelegramC
   }
 
   if (Array.isArray(telegram.allowedChatIds)) {
-    out.telegram.allowedChatIds = normalizeStringArray(telegram.allowedChatIds);
+    const normalizedAllowedChatIds = normalizeStringArray(telegram.allowedChatIds);
+    if (telegram.allowedChatIds.length > 0 && normalizedAllowedChatIds.length === 0) {
+      throw new ChannelBridgeBadPayloadError('Invalid telegram.allowedChatIds payload');
+    }
+    out.telegram.allowedChatIds = normalizedAllowedChatIds;
   }
   if (typeof telegram.requireTopics === 'boolean') {
     out.telegram.requireTopics = telegram.requireTopics;
@@ -274,12 +278,12 @@ function parseBindingsDocument(value: unknown): ChannelBridgeServerBindingsDocum
   };
 }
 
-function telegramConfigKvKey(serverId: string): string {
-  return `${CHANNEL_BRIDGE_KV_PREFIX}:server:${serverId}:telegram-config`;
+function telegramConfigKvKey(serverId: string, accountId: string): string {
+  return `${CHANNEL_BRIDGE_KV_PREFIX}:server:${serverId}:account:${accountId}:telegram-config`;
 }
 
-function bindingsKvKey(serverId: string): string {
-  return `${CHANNEL_BRIDGE_KV_PREFIX}:server:${serverId}:bindings`;
+function bindingsKvKey(serverId: string, accountId: string): string {
+  return `${CHANNEL_BRIDGE_KV_PREFIX}:server:${serverId}:account:${accountId}:bindings`;
 }
 
 async function readJsonValue(params: Readonly<{
@@ -397,9 +401,10 @@ export function createAxiosChannelBridgeKvClient(params: Readonly<{ token: strin
 export async function readChannelBridgeTelegramConfigFromKv(params: Readonly<{
   kv: ChannelBridgeKvClient;
   serverId: string;
+  accountId: string;
   allowUnsupportedSchema?: boolean;
 }>): Promise<Readonly<{ record: ChannelBridgeServerTelegramConfigRecord | null; version: number }>> {
-  const key = telegramConfigKvKey(params.serverId);
+  const key = telegramConfigKvKey(params.serverId, params.accountId);
   const row = await readJsonValue({ kv: params.kv, key });
   if (!row.valueBase64) {
     return { record: null, version: row.version };
@@ -503,13 +508,14 @@ function hasNonSecretTelegramConfigUpdate(update: ScopedTelegramBridgeUpdate): b
 export async function upsertChannelBridgeTelegramConfigInKv(params: Readonly<{
   kv: ChannelBridgeKvClient;
   serverId: string;
+  accountId: string;
   update: ScopedTelegramBridgeUpdate;
 }>): Promise<void> {
   if (!hasNonSecretTelegramConfigUpdate(params.update)) {
     return;
   }
 
-  const key = telegramConfigKvKey(params.serverId);
+  const key = telegramConfigKvKey(params.serverId, params.accountId);
   let current: Readonly<{
     record: ChannelBridgeServerTelegramConfigRecord | null;
     version: number;
@@ -519,6 +525,7 @@ export async function upsertChannelBridgeTelegramConfigInKv(params: Readonly<{
       current = await readChannelBridgeTelegramConfigFromKv({
         kv: params.kv,
         serverId: params.serverId,
+        accountId: params.accountId,
         allowUnsupportedSchema: true,
       });
     }
@@ -558,11 +565,13 @@ export async function upsertChannelBridgeTelegramConfigInKv(params: Readonly<{
 export async function clearChannelBridgeTelegramConfigInKv(params: Readonly<{
   kv: ChannelBridgeKvClient;
   serverId: string;
+  accountId: string;
 }>): Promise<void> {
-  const key = telegramConfigKvKey(params.serverId);
+  const key = telegramConfigKvKey(params.serverId, params.accountId);
   const current = await readChannelBridgeTelegramConfigFromKv({
     kv: params.kv,
     serverId: params.serverId,
+    accountId: params.accountId,
     allowUnsupportedSchema: true,
   });
   let expectedVersion = current.version;
@@ -595,8 +604,9 @@ export async function clearChannelBridgeTelegramConfigInKv(params: Readonly<{
 export async function readChannelBridgeBindingsFromKv(params: Readonly<{
   kv: ChannelBridgeKvClient;
   serverId: string;
+  accountId: string;
 }>): Promise<Readonly<{ doc: ChannelBridgeServerBindingsDocument; version: number }>> {
-  const key = bindingsKvKey(params.serverId);
+  const key = bindingsKvKey(params.serverId, params.accountId);
   const row = await readJsonValue({ kv: params.kv, key });
   return {
     doc: decodeChannelBridgeBindingsDocFromBase64(row.valueBase64),
@@ -607,10 +617,11 @@ export async function readChannelBridgeBindingsFromKv(params: Readonly<{
 export async function writeChannelBridgeBindingsToKv(params: Readonly<{
   kv: ChannelBridgeKvClient;
   serverId: string;
+  accountId: string;
   expectedVersion: number;
   doc: ChannelBridgeServerBindingsDocument;
 }>): Promise<number> {
-  const key = bindingsKvKey(params.serverId);
+  const key = bindingsKvKey(params.serverId, params.accountId);
   const valueBase64 = encodeJsonToBase64(params.doc);
   return await writeJsonValue({
     kv: params.kv,

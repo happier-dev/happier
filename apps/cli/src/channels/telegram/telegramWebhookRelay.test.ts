@@ -1,6 +1,7 @@
 import axios from 'axios';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
+import { logger } from '@/ui/logger';
 import { startTelegramWebhookRelay } from './telegramWebhookRelay';
 
 describe('startTelegramWebhookRelay', () => {
@@ -90,6 +91,7 @@ describe('startTelegramWebhookRelay', () => {
   });
 
   it('does not acknowledge webhook updates when onUpdate fails', async () => {
+    const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => undefined);
     const relay = await startTelegramWebhookRelay({
       port: 0,
       host: '127.0.0.1',
@@ -117,7 +119,15 @@ describe('startTelegramWebhookRelay', () => {
 
       expect(response.status).toBeGreaterThanOrEqual(500);
       expect(response.status).toBeLessThan(600);
+      expect(warnSpy).toHaveBeenCalledWith(
+        '[TELEGRAM_WEBHOOK_RELAY] Failed to process inbound webhook update',
+        expect.objectContaining({
+          path: relay.path,
+          tokenLength: 'secret-fail'.length,
+        }),
+      );
     } finally {
+      warnSpy.mockRestore();
       await relay.stop();
     }
   });
@@ -139,5 +149,15 @@ describe('startTelegramWebhookRelay', () => {
       secretHeaderToken: 'secret-123',
       onUpdate: () => undefined,
     })).rejects.toThrow('Webhook host must be loopback-only');
+  });
+
+  it('rejects non-finite webhook ports', async () => {
+    await expect(startTelegramWebhookRelay({
+      port: Number.NaN,
+      host: '127.0.0.1',
+      secretPathToken: 'secret-123',
+      secretHeaderToken: 'secret-123',
+      onUpdate: () => undefined,
+    })).rejects.toThrow('Webhook port must be a finite number');
   });
 });

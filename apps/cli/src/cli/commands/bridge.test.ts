@@ -92,6 +92,7 @@ describe('happier bridge command', () => {
     expect(upsertKvConfigMock).toHaveBeenCalledWith({
       kv: expect.any(Object),
       serverId: configuration.activeServerId,
+      accountId: 'acct_123',
       update: {
         allowedChatIds: [],
         requireTopics: true,
@@ -152,6 +153,7 @@ describe('happier bridge command', () => {
     expect(clearKvConfigMock).toHaveBeenCalledWith({
       kv: expect.any(Object),
       serverId: configuration.activeServerId,
+      accountId: 'acct_123',
     });
     expect(updateSettingsMock).toHaveBeenCalledTimes(1);
     expect(clearKvConfigMock.mock.invocationCallOrder[0]).toBeLessThan(updateSettingsMock.mock.invocationCallOrder[0]);
