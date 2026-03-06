@@ -353,6 +353,90 @@ describe('channelBridgeServerKv', () => {
     expect(finalParsed.telegram?.requireTopics).toBe(true);
   });
 
+  it('retries clear after version mismatch without extra reread', async () => {
+    const key = 'happier:channel-bridge:v1:server:local-3005:telegram-config';
+    const initialValueBase64 = Buffer.from(JSON.stringify({
+      schemaVersion: 1,
+      telegram: {
+        allowedChatIds: ['-100111'],
+      },
+      updatedAtMs: 101,
+    }), 'utf8').toString('base64');
+    const conflictValueBase64 = Buffer.from(JSON.stringify({
+      schemaVersion: 1,
+      telegram: {
+        allowedChatIds: ['-100222'],
+      },
+      updatedAtMs: 202,
+    }), 'utf8').toString('base64');
+
+    let storedVersion = 0;
+    let storedValue: string | null = initialValueBase64;
+    let getCalls = 0;
+    let mutateCalls = 0;
+
+    const kv: ChannelBridgeKvClient = {
+      get: async (requestedKey) => {
+        getCalls += 1;
+        if (storedValue === null) {
+          return { status: 404, body: { error: 'Key not found' } };
+        }
+        return {
+          status: 200,
+          body: {
+            key: requestedKey,
+            value: storedValue,
+            version: storedVersion,
+          },
+        };
+      },
+      mutate: async (mutations) => {
+        mutateCalls += 1;
+        const [mutation] = mutations;
+        if (!mutation) {
+          return {
+            status: 400,
+            body: {
+              success: false,
+              errors: [{ key, error: 'version-mismatch', version: storedVersion, value: storedValue }],
+            },
+          };
+        }
+
+        if (mutateCalls === 1) {
+          storedVersion = 1;
+          storedValue = conflictValueBase64;
+          return {
+            status: 409,
+            body: {
+              success: false,
+              errors: [{ key: mutation.key, error: 'version-mismatch', version: storedVersion, value: storedValue }],
+            },
+          };
+        }
+
+        storedVersion += 1;
+        storedValue = mutation.value ?? null;
+        return {
+          status: 200,
+          body: {
+            success: true,
+            results: [{ key: mutation.key, version: storedVersion }],
+          },
+        };
+      },
+    };
+
+    await clearChannelBridgeTelegramConfigInKv({
+      kv,
+      serverId: 'local-3005',
+    });
+
+    expect(getCalls).toBe(1);
+    expect(mutateCalls).toBe(2);
+    expect(storedValue).toBeNull();
+  });
+
   it('writes and reads bindings document from KV', async () => {
     const kv = createInMemoryKvClient();
 

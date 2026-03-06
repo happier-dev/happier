@@ -99,7 +99,7 @@ function createDefaultChannelBridgeDeps(credentials: Credentials): DefaultChanne
 
   async function resolveSessionRuntime(sessionId: string): Promise<CachedSessionRuntime | null> {
     const cached = sessionRuntimeCache.get(sessionId);
-    if (cached) return cached;
+    if (cached) return rememberSessionRuntime(sessionId, cached);
 
     const rawSession = await fetchSessionById({ token: credentials.token, sessionId });
     if (!rawSession) return null;

@@ -553,24 +553,29 @@ export async function clearChannelBridgeTelegramConfigInKv(params: Readonly<{
   serverId: string;
 }>): Promise<void> {
   const key = telegramConfigKvKey(params.serverId);
-  for (let attempt = 0; attempt < 4; attempt += 1) {
-    const current = await readChannelBridgeTelegramConfigFromKv({
-      kv: params.kv,
-      serverId: params.serverId,
-      allowUnsupportedSchema: true,
-    });
-    if (current.version < 0) return;
+  const current = await readChannelBridgeTelegramConfigFromKv({
+    kv: params.kv,
+    serverId: params.serverId,
+    allowUnsupportedSchema: true,
+  });
+  let expectedVersion = current.version;
+  if (expectedVersion < 0) return;
 
+  for (let attempt = 0; attempt < 4; attempt += 1) {
     try {
       await writeJsonValue({
         kv: params.kv,
         key,
         valueBase64: null,
-        expectedVersion: current.version,
+        expectedVersion,
       });
       return;
     } catch (error) {
       if (error instanceof ChannelBridgeKvVersionMismatchError) {
+        if (error.currentVersion < 0) {
+          return;
+        }
+        expectedVersion = error.currentVersion;
         continue;
       }
       throw error;

@@ -256,6 +256,131 @@ describe('startChannelBridgeFromEnv', () => {
     await handle?.stop();
   });
 
+  it('refreshes session runtime LRU order on cache hits', async () => {
+    vi.resetModules();
+
+    const fetchSessionById = vi.fn(async ({ sessionId }: { sessionId: string }) => ({
+      id: sessionId,
+      encryptionMode: 'plain',
+      metadata: null,
+      dataEncryptionKey: null,
+    }));
+    const sendCommitted = vi.fn(async () => undefined);
+
+    let capturedDeps: {
+      sendUserMessageToSession: (params: {
+        sessionId: string;
+        text: string;
+        sentFrom: string;
+        providerId: string;
+        conversationId: string;
+        threadId: string | null;
+      }) => Promise<void>;
+    } | null = null;
+
+    vi.doMock('@/sessionControl/sessionsHttp', async (importOriginal) => {
+      const actual = await importOriginal<typeof import('@/sessionControl/sessionsHttp')>();
+      return {
+        ...actual,
+        fetchSessionById,
+      };
+    });
+
+    vi.doMock('@/sessionControl/sessionSocketSendMessage', () => ({
+      sendSessionMessageViaSocketCommitted: sendCommitted,
+    }));
+
+    vi.doMock('./core/channelBridgeWorker', () => ({
+      createInMemoryChannelBindingStore: vi.fn(() => ({
+        listBindings: async () => [],
+        getBinding: async () => null,
+        upsertBinding: async () => ({
+          providerId: 'telegram',
+          conversationId: 'conv-1',
+          threadId: null,
+          sessionId: 'sess-1',
+          lastForwardedSeq: 0,
+          createdAtMs: Date.now(),
+          updatedAtMs: Date.now(),
+        }),
+        updateLastForwardedSeq: async () => undefined,
+        removeBinding: async () => false,
+      })),
+      startChannelBridgeWorker: vi.fn((params: { deps: typeof capturedDeps }) => {
+        capturedDeps = params.deps as typeof capturedDeps;
+        return {
+          trigger: vi.fn(),
+          stop: vi.fn(async () => undefined),
+        };
+      }),
+    }));
+
+    vi.doMock('./telegram/telegramAdapter', () => ({
+      createTelegramChannelAdapter: vi.fn(() => ({
+        providerId: 'telegram',
+        pullInboundMessages: async () => [],
+        sendMessage: async () => undefined,
+        enqueueWebhookUpdate: vi.fn(),
+        stop: async () => undefined,
+      })),
+    }));
+
+    const { startChannelBridgeFromEnv } = await import('./startChannelBridgeWorker');
+
+    const handle = await startChannelBridgeFromEnv({
+      credentials,
+      env: {
+        HAPPIER_TELEGRAM_BOT_TOKEN: 'bot-token',
+      } as NodeJS.ProcessEnv,
+    });
+
+    expect(handle).not.toBeNull();
+    expect(capturedDeps).not.toBeNull();
+
+    for (let index = 0; index < 200; index += 1) {
+      const sessionId = `sess-lru-${index}`;
+      await capturedDeps!.sendUserMessageToSession({
+        sessionId,
+        text: 'prime cache',
+        sentFrom: 'channel-bridge',
+        providerId: 'telegram',
+        conversationId: '-100111',
+        threadId: null,
+      });
+    }
+
+    await capturedDeps!.sendUserMessageToSession({
+      sessionId: 'sess-lru-0',
+      text: 'refresh oldest',
+      sentFrom: 'channel-bridge',
+      providerId: 'telegram',
+      conversationId: '-100111',
+      threadId: null,
+    });
+
+    await capturedDeps!.sendUserMessageToSession({
+      sessionId: 'sess-lru-200',
+      text: 'trigger eviction',
+      sentFrom: 'channel-bridge',
+      providerId: 'telegram',
+      conversationId: '-100111',
+      threadId: null,
+    });
+
+    await capturedDeps!.sendUserMessageToSession({
+      sessionId: 'sess-lru-0',
+      text: 'should stay cached',
+      sentFrom: 'channel-bridge',
+      providerId: 'telegram',
+      conversationId: '-100111',
+      threadId: null,
+    });
+
+    expect(fetchSessionById).toHaveBeenCalledTimes(201);
+
+    await handle?.stop();
+  });
+
   it('warns when webhook mode is enabled without webhook secret', async () => {
     vi.resetModules();
 
