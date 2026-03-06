@@ -4,6 +4,7 @@ import type { ChannelBridgeAdapter, ChannelBridgeInboundMessage } from '@/channe
 import { logger } from '@/ui/logger';
 
 type TelegramSelfUser = Readonly<{ id: number; username: string | null }>;
+type TelegramApiMethod = 'getMe' | 'getUpdates' | 'sendMessage';
 
 type TelegramApiClient = Readonly<{
   getMe: () => Promise<TelegramSelfUser>;
@@ -19,12 +20,31 @@ function telegramApiUrl(botToken: string, method: string): string {
   return `https://api.telegram.org/bot${botToken}/${method}`;
 }
 
-function formatTelegramApiFailure(method: 'getMe' | 'getUpdates' | 'sendMessage', status: number, data: unknown): string {
+function extractTelegramApiDescription(data: unknown): string | null {
   const record = asRecord(data);
   const description = record && typeof record.description === 'string' ? record.description.trim() : '';
-  return description.length > 0
+  return description.length > 0 ? description : null;
+}
+
+function formatTelegramApiFailure(method: TelegramApiMethod, status: number, description: string | null): string {
+  return description && description.length > 0
     ? `Telegram ${method} failed (${status}): ${description}`
     : `Telegram ${method} failed (${status})`;
+}
+
+export class TelegramApiError extends Error {
+  readonly method: TelegramApiMethod;
+  readonly statusCode: number;
+  readonly description: string | null;
+
+  constructor(params: Readonly<{ method: TelegramApiMethod; statusCode: number; data: unknown }>) {
+    const description = extractTelegramApiDescription(params.data);
+    super(formatTelegramApiFailure(params.method, params.statusCode, description));
+    this.name = 'TelegramApiError';
+    this.method = params.method;
+    this.statusCode = params.statusCode;
+    this.description = description;
+  }
 }
 
 function createDefaultTelegramApiClient(botToken: string): TelegramApiClient {
@@ -35,7 +55,11 @@ function createDefaultTelegramApiClient(botToken: string): TelegramApiClient {
         validateStatus: () => true,
       });
       if (response.status !== 200 || !response.data || response.data.ok !== true || !response.data.result) {
-        throw new Error(formatTelegramApiFailure('getMe', response.status, response.data));
+        throw new TelegramApiError({
+          method: 'getMe',
+          statusCode: response.status,
+          data: response.data,
+        });
       }
       const user = response.data.result;
       return {
@@ -54,7 +78,11 @@ function createDefaultTelegramApiClient(botToken: string): TelegramApiClient {
         validateStatus: () => true,
       });
       if (response.status !== 200 || !response.data || response.data.ok !== true || !Array.isArray(response.data.result)) {
-        throw new Error(formatTelegramApiFailure('getUpdates', response.status, response.data));
+        throw new TelegramApiError({
+          method: 'getUpdates',
+          statusCode: response.status,
+          data: response.data,
+        });
       }
       return response.data.result;
     },
@@ -72,7 +100,11 @@ function createDefaultTelegramApiClient(botToken: string): TelegramApiClient {
         validateStatus: () => true,
       });
       if (response.status !== 200 || !response.data || response.data.ok !== true) {
-        throw new Error(formatTelegramApiFailure('sendMessage', response.status, response.data));
+        throw new TelegramApiError({
+          method: 'sendMessage',
+          statusCode: response.status,
+          data: response.data,
+        });
       }
     },
   };

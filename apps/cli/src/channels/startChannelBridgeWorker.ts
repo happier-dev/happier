@@ -154,7 +154,7 @@ function createDefaultChannelBridgeDeps(credentials: Credentials): DefaultChanne
     listSessions: async () => {
       const displayLimit = 20;
       const pageSize = displayLimit;
-      const maxPages = displayLimit;
+      const maxPages = 1;
       const sessions: RawSessionListRow[] = [];
       let cursor: string | undefined;
 
@@ -175,10 +175,6 @@ function createDefaultChannelBridgeDeps(credentials: Credentials): DefaultChanne
           break;
         }
         cursor = page.nextCursor;
-      }
-
-      if (cursor) {
-        logger.warn(`[channelBridge] Session list pagination stopped after ${maxPages} pages; truncating /sessions results`);
       }
 
       return sessions.slice(0, displayLimit).map((row) => {

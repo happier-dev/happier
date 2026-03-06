@@ -14,6 +14,7 @@
  * - `updateLastForwardedSeq` must persist the maximum forwarded sequence.
  */
 import { startSingleFlightIntervalLoop, type SingleFlightIntervalLoopHandle } from '@/daemon/lifecycle/singleFlightIntervalLoop';
+import { TelegramApiError } from '@/channels/telegram/telegramAdapter';
 
 /**
  * Logical channel conversation reference.
@@ -198,19 +199,11 @@ async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, label: str
   }
 }
 
-function parseTelegramSendMessageFailureStatus(error: unknown): number | null {
-  if (!(error instanceof Error)) return null;
-  const match = error.message.match(/Telegram sendMessage failed \((\d{3})\)/);
-  if (!match) return null;
-  const parsed = Number.parseInt(match[1] ?? '', 10);
-  return Number.isInteger(parsed) ? parsed : null;
-}
-
 function isTelegramPermanentDeliveryFailure(error: unknown): boolean {
-  if (!(error instanceof Error)) return false;
-  const status = parseTelegramSendMessageFailureStatus(error);
-  if (status === 403) return true;
-  if (status === 400 && /chat not found/i.test(error.message)) return true;
+  if (!(error instanceof TelegramApiError)) return false;
+  if (error.method !== 'sendMessage') return false;
+  if (error.statusCode === 403) return true;
+  if (error.statusCode === 400 && /chat not found/i.test(error.message)) return true;
   return false;
 }
 

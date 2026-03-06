@@ -10,6 +10,7 @@ import {
   type ChannelBridgeDeps,
   type ChannelBridgeInboundMessage,
 } from '@/channels/core/channelBridgeWorker';
+import { TelegramApiError } from '@/channels/telegram/telegramAdapter';
 
 interface SentConversationMessage {
   conversationId: string;
@@ -1584,6 +1585,88 @@ describe('executeChannelBridgeTick', () => {
 
     const [binding] = await baseStore.listBindings();
     expect(binding?.lastForwardedSeq).toBe(9);
+  });
+
+  it('treats typed Telegram permanent delivery failures as non-retryable and advances cursor', async () => {
+    const store = createInMemoryChannelBindingStore();
+    const { deps, warnings } = createDepsHarness({
+      fetchAgentMessagesAfterSeq: async () => [{ seq: 1, text: 'delivery fails permanently' }],
+    });
+
+    await store.upsertBinding({
+      providerId: 'telegram',
+      conversationId: '-3004b',
+      threadId: null,
+      sessionId: 'sess-typed-permanent',
+      lastForwardedSeq: 0,
+    });
+
+    const adapter: ChannelBridgeAdapter = {
+      providerId: 'telegram',
+      pullInboundMessages: async () => [],
+      sendMessage: async () => {
+        throw new TelegramApiError({
+          method: 'sendMessage',
+          statusCode: 403,
+          data: { description: 'Forbidden: bot was blocked by the user' },
+        });
+      },
+    };
+
+    await executeChannelBridgeTick({
+      store,
+      adapters: [adapter],
+      deps,
+      inboundDeduper: createChannelBridgeInboundDeduper(),
+    });
+
+    const [binding] = await store.listBindings();
+    expect(binding?.lastForwardedSeq).toBe(1);
+    expect(
+      warnings.some((row) => row.message.includes('Detected permanent Telegram delivery failure')),
+    ).toBe(true);
+    expect(
+      warnings.some((row) => row.message.includes('Failed to forward agent output to channel')),
+    ).toBe(false);
+  });
+
+  it('does not treat untyped telegram-like send errors as permanent failures', async () => {
+    const store = createInMemoryChannelBindingStore();
+    const { deps, warnings } = createDepsHarness({
+      fetchAgentMessagesAfterSeq: async () => [{ seq: 1, text: 'must not be treated as permanent' }],
+    });
+
+    await store.upsertBinding({
+      providerId: 'telegram',
+      conversationId: '-3004c',
+      threadId: null,
+      sessionId: 'sess-untyped-error',
+      lastForwardedSeq: 0,
+    });
+
+    const adapter: ChannelBridgeAdapter = {
+      providerId: 'telegram',
+      pullInboundMessages: async () => [],
+      sendMessage: async () => {
+        throw new Error('Telegram sendMessage failed (403): Forbidden');
+      },
+    };
+
+    await executeChannelBridgeTick({
+      store,
+      adapters: [adapter],
+      deps,
+      inboundDeduper: createChannelBridgeInboundDeduper(),
+    });
+
+    const [binding] = await store.listBindings();
+    expect(binding?.lastForwardedSeq).toBe(0);
+    expect(
+      warnings.some((row) => row.message.includes('Detected permanent Telegram delivery failure')),
+    ).toBe(false);
+    expect(
+      warnings.some((row) => row.message.includes('Failed to forward agent output to channel')),
+    ).toBe(true);
   });
 
   it('does not advance cursor when conversation is reattached to a different session', async () => {

@@ -104,7 +104,7 @@ ${chalk.bold('happier bridge')} - Channel bridge configuration (account-scoped)
 
 ${chalk.bold('Usage:')}
   happier bridge list
-  happier bridge telegram set --bot-token <token> [--allowed-chat-ids <csv>|--allow-all] [--require-topics <true|false>] [--tick-ms <n>] [--webhook-enabled <true|false>] [--webhook-secret <secret>] [--webhook-host <host>] [--webhook-port <n>]
+  happier bridge telegram set [--bot-token <token>] [--allowed-chat-ids <csv>|--allow-all] [--require-topics <true|false>] [--tick-ms <n>] [--webhook-enabled <true|false>] [--webhook-secret <secret>] [--webhook-host <host>] [--webhook-port <n>]
   happier bridge telegram clear
 
 ${chalk.bold('Notes:')}

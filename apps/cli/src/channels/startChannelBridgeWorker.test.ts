@@ -51,7 +51,7 @@ describe('startChannelBridgeFromEnv', () => {
     expect(stopSpy).toHaveBeenCalledTimes(1);
   });
 
-  it('paginates listSessions across cursored pages in default bridge deps', async () => {
+  it('fetches only the first sessions page in default bridge deps', async () => {
     vi.resetModules();
 
     const fetchSessionsPage = vi
@@ -127,20 +127,14 @@ describe('startChannelBridgeFromEnv', () => {
     expect(capturedDeps).not.toBeNull();
 
     const sessions = await capturedDeps!.listSessions();
-    expect(fetchSessionsPage).toHaveBeenCalledTimes(2);
+    expect(fetchSessionsPage).toHaveBeenCalledTimes(1);
     expect(fetchSessionsPage).toHaveBeenNthCalledWith(1, {
       token: credentials.token,
       activeOnly: false,
       limit: 20,
       cursor: undefined,
     });
-    expect(fetchSessionsPage).toHaveBeenNthCalledWith(2, {
-      token: credentials.token,
-      activeOnly: false,
-      limit: 20,
-      cursor: 'cursor-1',
-    });
-    expect(sessions.map((row) => row.sessionId)).toEqual(['sess-1', 'sess-2']);
+    expect(sessions.map((row) => row.sessionId)).toEqual(['sess-1']);
 
     await handle?.stop();
   });

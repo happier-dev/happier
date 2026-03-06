@@ -206,7 +206,15 @@ function parseTelegramConfigRecord(value: unknown): ChannelBridgeServerTelegramC
   if (webhook) {
     const outWebhook: { enabled?: boolean; host?: string; port?: number } = {};
     if (typeof webhook.enabled === 'boolean') outWebhook.enabled = webhook.enabled;
-    if (typeof webhook.host === 'string') outWebhook.host = webhook.host;
+    if (typeof webhook.host === 'string') {
+      const trimmedHost = webhook.host.trim();
+      if (trimmedHost.length > 0) {
+        if (!isLoopbackHost(trimmedHost)) {
+          throw new ChannelBridgeBadPayloadError('Invalid telegram.webhook.host payload');
+        }
+        outWebhook.host = trimmedHost;
+      }
+    }
     if (webhook.port !== undefined) {
       if (
         typeof webhook.port !== 'number'
@@ -431,7 +439,15 @@ export async function readChannelBridgeTelegramConfigFromKv(params: Readonly<{
     throw error;
   }
 
-  const parsed = parseTelegramConfigRecord(decoded);
+  let parsed: ChannelBridgeServerTelegramConfigRecord | null;
+  try {
+    parsed = parseTelegramConfigRecord(decoded);
+  } catch (error) {
+    if (params.allowUnsupportedSchema && error instanceof ChannelBridgeBadPayloadError) {
+      return { record: null, version: row.version, rawValueBase64: row.valueBase64 };
+    }
+    throw error;
+  }
   if (!parsed) {
     if (params.allowUnsupportedSchema) {
       return { record: null, version: row.version, rawValueBase64: row.valueBase64 };

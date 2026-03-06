@@ -916,6 +916,73 @@ describe('channelBridgeServerKv', () => {
     })).rejects.toThrow('Invalid telegram.webhook.port payload');
   });
 
+  it('throws when telegram config payload contains non-loopback webhook.host', async () => {
+    const invalidWebhookHostValueBase64 = Buffer.from(JSON.stringify({
+      schemaVersion: 1,
+      telegram: {
+        webhook: {
+          enabled: true,
+          host: '0.0.0.0',
+          port: 8787,
+        },
+      },
+      updatedAtMs: 123,
+    }), 'utf8').toString('base64');
+    const kv: ChannelBridgeKvClient = {
+      get: async () => ({
+        status: 200,
+        body: {
+          key: 'k',
+          value: invalidWebhookHostValueBase64,
+          version: 3,
+        },
+      }),
+      mutate: async () => ({ status: 200, body: { success: true, results: [] } }),
+    };
+
+    await expect(readChannelBridgeTelegramConfigFromKv({
+      kv,
+      serverId: 'local-3005',
+      accountId: 'acct-1',
+    })).rejects.toThrow('Invalid telegram.webhook.host payload');
+  });
+
+  it('treats invalid webhook.host payload as recoverable when allowUnsupportedSchema=true', async () => {
+    const invalidWebhookHostValueBase64 = Buffer.from(JSON.stringify({
+      schemaVersion: 1,
+      telegram: {
+        webhook: {
+          enabled: true,
+          host: '0.0.0.0',
+          port: 8787,
+        },
+      },
+      updatedAtMs: 123,
+    }), 'utf8').toString('base64');
+    const kv: ChannelBridgeKvClient = {
+      get: async () => ({
+        status: 200,
+        body: {
+          key: 'k',
+          value: invalidWebhookHostValueBase64,
+          version: 7,
+        },
+      }),
+      mutate: async () => ({ status: 200, body: { success: true, results: [] } }),
+    };
+
+    await expect(readChannelBridgeTelegramConfigFromKv({
+      kv,
+      serverId: 'local-3005',
+      accountId: 'acct-1',
+      allowUnsupportedSchema: true,
+    })).resolves.toEqual({
+      record: null,
+      version: 7,
+      rawValueBase64: invalidWebhookHostValueBase64,
+    });
+  });
+
   it('treats malformed telegram config payload as recoverable when allowUnsupportedSchema=true', async () => {
     const malformedValueBase64 = Buffer.from('not-json', 'utf8').toString('base64');
     const kv: ChannelBridgeKvClient = {
