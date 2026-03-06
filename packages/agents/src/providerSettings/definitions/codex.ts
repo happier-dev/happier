@@ -6,6 +6,7 @@ export type CodexBackendMode = 'mcp' | 'acp';
 
 export const CODEX_PROVIDER_SETTINGS_DEFAULTS = Object.freeze({
   codexBackendMode: 'acp' satisfies CodexBackendMode,
+  codexMcpResumeInstallSpec: '',
   codexAcpInstallSpec: '',
 });
 
@@ -15,6 +16,7 @@ export function buildCodexProviderSettingsShape(zod: typeof z): ProviderSettings
     codexBackendMode: zod
       .enum(['mcp', 'mcp_resume', 'acp'])
       .transform((value): CodexBackendMode => (value === 'mcp' ? 'mcp' : 'acp')),
+    codexMcpResumeInstallSpec: zod.string(),
     codexAcpInstallSpec: zod.string(),
   } as const;
 }
