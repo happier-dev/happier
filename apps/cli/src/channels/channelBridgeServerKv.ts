@@ -10,6 +10,7 @@
 import axios from 'axios';
 
 import { resolveServerHttpBaseUrl } from '@/sessionControl/serverHttpBaseUrl';
+import { isLoopbackHost } from '@/channels/telegram/telegramWebhookRelay';
 
 import type { ScopedTelegramBridgeUpdate } from './channelBridgeAccountConfig';
 
@@ -140,11 +141,6 @@ function parseVersionMismatchError(value: unknown): Readonly<{ currentVersion: n
     currentVersion: Math.trunc(first.version),
     currentValueBase64,
   };
-}
-
-function isLoopbackHost(hostname: string): boolean {
-  const normalized = hostname.trim().toLowerCase();
-  return normalized === 'localhost' || normalized === '127.0.0.1' || normalized === '::1';
 }
 
 function assertSecureChannelBridgeKvBaseUrl(baseUrl: string): void {

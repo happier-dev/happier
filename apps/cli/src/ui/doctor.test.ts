@@ -149,14 +149,19 @@ describe('doctor redaction', () => {
 });
 
 describe('parseStrictWebhookPort', () => {
-    it('rejects negative string values', () => {
+    it('rejects negative and out-of-range values', () => {
         expect(parseStrictWebhookPort('-1')).toBeNull();
         expect(parseStrictWebhookPort(' -8787 ')).toBeNull();
+        expect(parseStrictWebhookPort('0')).toBeNull();
+        expect(parseStrictWebhookPort(0)).toBeNull();
+        expect(parseStrictWebhookPort('65536')).toBeNull();
+        expect(parseStrictWebhookPort(70_000)).toBeNull();
     });
 
-    it('accepts non-negative integer values', () => {
-        expect(parseStrictWebhookPort('0')).toBe(0);
+    it('accepts valid positive integer values', () => {
         expect(parseStrictWebhookPort('8787')).toBe(8787);
+        expect(parseStrictWebhookPort(8787)).toBe(8787);
+        expect(parseStrictWebhookPort('65535')).toBe(65_535);
     });
 });
 
@@ -203,6 +208,19 @@ describe('generic webhook field requirements', () => {
             'webhook.secret: <empty> (required when webhook.enabled=true)',
             'webhook.host: <empty> (required when webhook.enabled=true)',
             'webhook.port: <empty/invalid> (required when webhook.enabled=true)',
+        ]);
+    });
+
+    it('flags non-loopback webhook hosts when enabled', () => {
+        expect(
+            collectMissingRequiredWebhookFields({
+                webhookEnabled: true,
+                webhookSecret: 'secret-1',
+                webhookHost: '0.0.0.0',
+                webhookPort: 8787,
+            }),
+        ).toEqual([
+            "webhook.host: '0.0.0.0' is not loopback-only (required when webhook.enabled=true)",
         ]);
     });
 

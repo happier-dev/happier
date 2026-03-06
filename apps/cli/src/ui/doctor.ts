@@ -15,6 +15,7 @@ import { readDaemonState, type DaemonLocallyPersistedState } from '@/persistence
 import { resolveChannelBridgeRuntimeConfig } from '@/channels/channelBridgeConfig';
 import { createAxiosChannelBridgeKvClient, readChannelBridgeTelegramConfigFromKv } from '@/channels/channelBridgeServerKv';
 import { overlayServerKvTelegramConfigInSettings } from '@/channels/channelBridgeServerConfigOverlay';
+import { isLoopbackHost } from '@/channels/telegram/telegramWebhookRelay';
 import { existsSync, readdirSync, statSync } from 'node:fs'
 import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
@@ -65,8 +66,13 @@ export function collectMissingRequiredWebhookFields(params: Readonly<{
     if (params.webhookSecret.trim().length === 0) {
         issues.push('webhook.secret: <empty> (required when webhook.enabled=true)');
     }
-    if (params.webhookHost.trim().length === 0) {
+    const normalizedWebhookHost = params.webhookHost.trim();
+    if (normalizedWebhookHost.length === 0) {
         issues.push('webhook.host: <empty> (required when webhook.enabled=true)');
+    } else if (!isLoopbackHost(normalizedWebhookHost)) {
+        issues.push(
+            `webhook.host: '${normalizedWebhookHost}' is not loopback-only (required when webhook.enabled=true)`,
+        );
     }
     if (
         !Number.isFinite(params.webhookPort)
@@ -87,14 +93,14 @@ function asRecord(value: unknown): Record<string, unknown> | null {
 
 export function parseStrictWebhookPort(value: unknown): number | null {
     if (typeof value === 'number' && Number.isFinite(value)) {
-        if (!Number.isInteger(value) || value < 0) return null;
+        if (!Number.isInteger(value) || value <= 0 || value > 65_535) return null;
         return value;
     }
     if (typeof value === 'string') {
         const trimmed = value.trim();
         if (!/^\d+$/.test(trimmed)) return null;
         const parsed = Number.parseInt(trimmed, 10);
-        if (!Number.isFinite(parsed) || parsed < 0) return null;
+        if (!Number.isFinite(parsed) || parsed <= 0 || parsed > 65_535) return null;
         return parsed;
     }
     return null;
