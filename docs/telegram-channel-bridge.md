@@ -167,7 +167,7 @@ happier daemon stop && happier daemon start
 Telegram bridge example:
 
 - if Telegram bridge is configured but bot token is missing, doctor prints a red bridge error and the final line is `❌`
-- if `webhook.enabled=true` and `webhook.secret` is empty, doctor treats it as critical and final line is `❌`
+- if `webhook.enabled=true` and `secrets.webhookSecret` (or `HAPPIER_TELEGRAM_WEBHOOK_SECRET`) is empty, doctor treats it as critical and final line is `❌`
 - if `webhook.enabled=true` and `webhook.host` or `webhook.port` is missing/invalid, doctor treats it as critical and final line is `❌`
 
 Generic adapter behavior:

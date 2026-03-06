@@ -92,17 +92,19 @@ describe('startTelegramWebhookRelay', () => {
 
   it('does not acknowledge webhook updates when onUpdate fails', async () => {
     const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => undefined);
-    const relay = await startTelegramWebhookRelay({
-      port: 0,
-      host: '127.0.0.1',
-      secretPathToken: 'secret-fail',
-      secretHeaderToken: 'secret-fail',
-      onUpdate: async () => {
-        throw new Error('failed to process update');
-      },
-    });
+    let relay: Awaited<ReturnType<typeof startTelegramWebhookRelay>> | null = null;
 
     try {
+      relay = await startTelegramWebhookRelay({
+        port: 0,
+        host: '127.0.0.1',
+        secretPathToken: 'secret-fail',
+        secretHeaderToken: 'secret-fail',
+        onUpdate: async () => {
+          throw new Error('failed to process update');
+        },
+      });
+
       const response = await axios.post(
         `http://127.0.0.1:${relay.port}${relay.path}`,
         {
@@ -128,7 +130,7 @@ describe('startTelegramWebhookRelay', () => {
       );
     } finally {
       warnSpy.mockRestore();
-      await relay.stop();
+      await relay?.stop();
     }
   });
 

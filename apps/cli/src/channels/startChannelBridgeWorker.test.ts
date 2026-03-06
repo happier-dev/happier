@@ -131,13 +131,13 @@ describe('startChannelBridgeFromEnv', () => {
     expect(fetchSessionsPage).toHaveBeenNthCalledWith(1, {
       token: credentials.token,
       activeOnly: false,
-      limit: 100,
+      limit: 20,
       cursor: undefined,
     });
     expect(fetchSessionsPage).toHaveBeenNthCalledWith(2, {
       token: credentials.token,
       activeOnly: false,
-      limit: 100,
+      limit: 20,
       cursor: 'cursor-1',
     });
     expect(sessions.map((row) => row.sessionId)).toEqual(['sess-1', 'sess-2']);

@@ -153,8 +153,8 @@ function createDefaultChannelBridgeDeps(credentials: Credentials): DefaultChanne
     deps: {
     listSessions: async () => {
       const displayLimit = 20;
-      const pageSize = 100;
-      const maxPages = 50;
+      const pageSize = displayLimit;
+      const maxPages = displayLimit;
       const sessions: RawSessionListRow[] = [];
       let cursor: string | undefined;
 
