@@ -1527,45 +1527,49 @@ export async function startDaemon(): Promise<void> {
 
       // Do machine bootstrap in the background so shutdown requests are not blocked by /v1/machines latency.
       void (async () => {
-        const bridgeSettings = await readSettings().catch((error) => {
-          logger.warn(
-            '[DAEMON RUN] Failed to read settings for channel bridge startup; using env-only defaults',
-            error instanceof Error ? error.message : String(error),
-          );
-          return null;
-        });
-
-        const tokenPayload = decodeJwtPayload(credentials.token);
-        const channelBridgeAccountId =
-          tokenPayload && typeof tokenPayload.sub === 'string'
-            ? tokenPayload.sub.trim()
-            : null;
-        const channelBridgeServerId = (configuration.activeServerId ?? '').trim() || null;
-
-        let channelBridgeRuntimeSettings: unknown = bridgeSettings;
-        if (channelBridgeServerId && channelBridgeAccountId) {
-          try {
-            const kv = createAxiosChannelBridgeKvClient({ token: credentials.token });
-            const fetched = await readChannelBridgeTelegramConfigFromKv({
-              kv,
-              serverId: channelBridgeServerId,
-              allowUnsupportedSchema: true,
-            });
-            channelBridgeRuntimeSettings = overlayServerKvTelegramConfigInSettings({
-              settings: bridgeSettings,
-              serverId: channelBridgeServerId,
-              accountId: channelBridgeAccountId,
-              record: fetched.record,
-            });
-          } catch (error) {
+        const startChannelBridgeWorkerBestEffort = async (): Promise<void> => {
+          const bridgeSettings = await readSettings().catch((error) => {
             logger.warn(
-              '[DAEMON RUN] Failed to read channel bridge config from server KV; using local/env configuration',
-              serializeAxiosErrorForLog(error),
+              '[DAEMON RUN] Failed to read settings for channel bridge startup; using env-only defaults',
+              error instanceof Error ? error.message : String(error),
             );
-          }
-        }
+            return null;
+          });
 
-        if (!shutdownInitiated) {
+          const tokenPayload = decodeJwtPayload(credentials.token);
+          const channelBridgeAccountId =
+            tokenPayload && typeof tokenPayload.sub === 'string'
+              ? tokenPayload.sub.trim()
+              : null;
+          const channelBridgeServerId = (configuration.activeServerId ?? '').trim() || null;
+
+          let channelBridgeRuntimeSettings: unknown = bridgeSettings;
+          if (channelBridgeServerId && channelBridgeAccountId) {
+            try {
+              const kv = createAxiosChannelBridgeKvClient({ token: credentials.token });
+              const fetched = await readChannelBridgeTelegramConfigFromKv({
+                kv,
+                serverId: channelBridgeServerId,
+                allowUnsupportedSchema: true,
+              });
+              channelBridgeRuntimeSettings = overlayServerKvTelegramConfigInSettings({
+                settings: bridgeSettings,
+                serverId: channelBridgeServerId,
+                accountId: channelBridgeAccountId,
+                record: fetched.record,
+              });
+            } catch (error) {
+              logger.warn(
+                '[DAEMON RUN] Failed to read channel bridge config from server KV; using local/env configuration',
+                serializeAxiosErrorForLog(error),
+              );
+            }
+          }
+
+          if (shutdownInitiated) {
+            return;
+          }
+
           channelBridgeWorker = await startChannelBridgeFromEnv({
             credentials,
             ...(channelBridgeRuntimeSettings ? { settings: channelBridgeRuntimeSettings } : {}),
@@ -1579,6 +1583,10 @@ export async function startDaemon(): Promise<void> {
             return null;
           });
         }
+        };
+
+        void startChannelBridgeWorkerBestEffort();
+
         let attempts = 0;
         while (!shutdownInitiated) {
           try {
