@@ -1,6 +1,7 @@
 import axios from 'axios';
 
 import type { ChannelBridgeAdapter, ChannelBridgeInboundMessage } from '@/channels/core/channelBridgeWorker';
+import { logger } from '@/ui/logger';
 
 type TelegramSelfUser = Readonly<{ id: number; username: string | null }>;
 
@@ -186,6 +187,7 @@ export function createTelegramChannelAdapter(params: Readonly<{
   let updateOffset: number | null = null;
   const queuedWebhookUpdates: QueuedWebhookUpdate[] = [];
   let nextQueuedWebhookId = 1;
+  let droppedWebhookUpdates = 0;
 
   async function ensureSelfIdentity(): Promise<void> {
     if (selfBotId !== null) return;
@@ -213,6 +215,7 @@ export function createTelegramChannelAdapter(params: Readonly<{
     enqueueWebhookUpdate: (update: unknown) => {
       if (queuedWebhookUpdates.length >= MAX_WEBHOOK_QUEUE_SIZE) {
         queuedWebhookUpdates.shift();
+        droppedWebhookUpdates += 1;
       }
       queuedWebhookUpdates.push({
         id: nextQueuedWebhookId,
@@ -222,6 +225,13 @@ export function createTelegramChannelAdapter(params: Readonly<{
     },
     pullInboundMessages: async () => {
       if (webhookMode) {
+        if (droppedWebhookUpdates > 0) {
+          logger.warn(
+            `[channelBridge] Telegram webhook queue overflow: dropped ${droppedWebhookUpdates} oldest update(s)`,
+          );
+          droppedWebhookUpdates = 0;
+        }
+
         const snapshot = queuedWebhookUpdates.slice();
         const parsed = await parseUpdates(snapshot.map((row) => row.update));
         const consumedIds = new Set(snapshot.map((row) => row.id));

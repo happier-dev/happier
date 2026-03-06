@@ -1,4 +1,14 @@
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+
+const { loggerWarn } = vi.hoisted(() => ({
+  loggerWarn: vi.fn(),
+}));
+
+vi.mock('@/ui/logger', () => ({
+  logger: {
+    warn: loggerWarn,
+  },
+}));
 
 import { createTelegramChannelAdapter } from './telegramAdapter';
 
@@ -13,6 +23,10 @@ function createDeferredPromise<T>() {
 }
 
 describe('createTelegramChannelAdapter', () => {
+  beforeEach(() => {
+    loggerWarn.mockReset();
+  });
+
   it('parses inbound topic updates and ignores self-authored bot messages', async () => {
     const api = {
       getMe: vi.fn(async () => ({ id: 777, username: 'happier_bot' })),
@@ -190,6 +204,8 @@ describe('createTelegramChannelAdapter', () => {
     expect(inbound).toHaveLength(2_000);
     expect(inbound[0]?.messageId).toBe('100');
     expect(inbound[1_999]?.messageId).toBe('2099');
+    expect(loggerWarn).toHaveBeenCalledTimes(1);
+    expect(loggerWarn.mock.calls[0]?.[0]).toContain('dropped 100 oldest update(s)');
   });
 
   it('does not drop updates enqueued while webhook parsing is in flight', async () => {

@@ -155,8 +155,12 @@ function resolveExternalIoTimeoutMs(): number {
     return DEFAULT_EXTERNAL_IO_TIMEOUT_MS;
   }
 
+  if (!/^\d+$/.test(raw)) {
+    return DEFAULT_EXTERNAL_IO_TIMEOUT_MS;
+  }
+
   const parsed = Number.parseInt(raw, 10);
-  if (!Number.isFinite(parsed) || parsed <= 0) {
+  if (!Number.isSafeInteger(parsed) || parsed <= 0) {
     return DEFAULT_EXTERNAL_IO_TIMEOUT_MS;
   }
 

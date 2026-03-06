@@ -6,8 +6,14 @@ import fastify from 'fastify';
 function secureCompareToken(providedToken: string, expectedToken: string): boolean {
   const providedBytes = Buffer.from(providedToken, 'utf8');
   const expectedBytes = Buffer.from(expectedToken, 'utf8');
-  if (providedBytes.length !== expectedBytes.length) return false;
-  return timingSafeEqual(providedBytes, expectedBytes);
+  const length = Math.max(1, providedBytes.length, expectedBytes.length);
+  const providedPadded = Buffer.alloc(length);
+  const expectedPadded = Buffer.alloc(length);
+  providedBytes.copy(providedPadded);
+  expectedBytes.copy(expectedPadded);
+
+  const matches = timingSafeEqual(providedPadded, expectedPadded);
+  return matches && providedBytes.length === expectedBytes.length;
 }
 
 export type TelegramWebhookRelayHandle = Readonly<{
