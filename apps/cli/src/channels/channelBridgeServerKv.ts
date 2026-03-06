@@ -545,6 +545,9 @@ function applyTelegramConfigUpdate(current: ChannelBridgeServerTelegramConfigRec
   if (typeof current?.tickMs === 'number') {
     next.tickMs = current.tickMs;
   }
+  // `current` may be null when the existing KV payload is absent/unsupported and the caller
+  // intentionally rewrites canonical schema. In that case, unspecified tickMs is not carried
+  // forward and runtime defaults apply unless update.tickMs is explicitly provided.
   if (typeof update.tickMs === 'number' && Number.isFinite(update.tickMs)) {
     next.tickMs = Math.trunc(update.tickMs);
   }

@@ -220,6 +220,8 @@ export function createChannelBridgeInboundDeduper(now: () => number = () => Date
   const recent = new Map<string, number>();
   const ttlMs = 24 * 60 * 60 * 1000;
   const maxEntries = 100_000;
+  // Avoid full TTL scans on every message. If the map exceeds maxEntries,
+  // prune still runs immediately even within the minimum interval.
   const minPruneIntervalMs = 1_000;
   let lastPrunedAtMs = 0;
 

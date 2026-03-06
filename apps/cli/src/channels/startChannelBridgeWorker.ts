@@ -123,6 +123,9 @@ function createDefaultChannelBridgeDeps(credentials: Credentials): DefaultChanne
   const sessionRuntimeCache = new Map<string, CachedSessionRuntime>();
   const SESSION_CTX_CACHE_MAX_ENTRIES = 200;
 
+  // Bounded LRU-style cache: cache hits are reinserted to the tail as most-recently-used.
+  // No TTL is applied by design to avoid per-tick server fetches; stale entries are naturally
+  // refreshed on miss/eviction and this cache stores only encryption runtime metadata.
   const rememberSessionRuntime = (sessionId: string, runtime: CachedSessionRuntime): CachedSessionRuntime => {
     if (sessionRuntimeCache.has(sessionId)) {
       sessionRuntimeCache.delete(sessionId);
