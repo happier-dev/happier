@@ -207,7 +207,18 @@ function parseTelegramConfigRecord(value: unknown): ChannelBridgeServerTelegramC
     const outWebhook: { enabled?: boolean; host?: string; port?: number } = {};
     if (typeof webhook.enabled === 'boolean') outWebhook.enabled = webhook.enabled;
     if (typeof webhook.host === 'string') outWebhook.host = webhook.host;
-    if (typeof webhook.port === 'number' && Number.isFinite(webhook.port)) outWebhook.port = Math.trunc(webhook.port);
+    if (webhook.port !== undefined) {
+      if (
+        typeof webhook.port !== 'number'
+        || !Number.isFinite(webhook.port)
+        || !Number.isInteger(webhook.port)
+        || webhook.port < 1
+        || webhook.port > 65_535
+      ) {
+        throw new ChannelBridgeBadPayloadError('Invalid telegram.webhook.port payload');
+      }
+      outWebhook.port = webhook.port;
+    }
     out.telegram.webhook = outWebhook;
   }
 

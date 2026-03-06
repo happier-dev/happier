@@ -411,7 +411,7 @@ describe('createServerBackedChannelBindingStore', () => {
     expect(counting.mutateCallCount()).toBe(initialMutations);
   });
 
-  it('normalizes non-finite seq values and skips invalid seq writes', async () => {
+  it('rejects invalid identity/cursor values and skips invalid seq writes', async () => {
     const counting = createCountingKvClient();
     const store = createServerBackedChannelBindingStore({
       kv: counting.kv,
@@ -419,33 +419,57 @@ describe('createServerBackedChannelBindingStore', () => {
       accountId: 'acct-1',
     });
 
-    await store.upsertBinding({
+    await expect(store.upsertBinding({
       providerId: 'telegram',
       conversationId: '-100nf',
       threadId: null,
       sessionId: 'sess-nf',
       lastForwardedSeq: Number.NaN,
+    })).rejects.toThrow('Invalid channel binding input');
+
+    await expect(store.upsertBinding({
+      providerId: ' ',
+      conversationId: '-100nf',
+      threadId: null,
+      sessionId: 'sess-nf',
+      lastForwardedSeq: 1,
+    })).rejects.toThrow('Invalid channel binding input');
+
+    expect(counting.mutateCallCount()).toBe(0);
+
+    await store.upsertBinding({
+      providerId: ' telegram ',
+      conversationId: ' -100nf ',
+      threadId: ' 11 ',
+      sessionId: ' sess-nf ',
+      lastForwardedSeq: 2,
     });
 
     const saved = await store.getBinding({
       providerId: 'telegram',
       conversationId: '-100nf',
-      threadId: null,
+      threadId: '11',
     });
-    expect(saved?.lastForwardedSeq).toBe(0);
+    expect(saved).toMatchObject({
+      providerId: 'telegram',
+      conversationId: '-100nf',
+      threadId: '11',
+      sessionId: 'sess-nf',
+      lastForwardedSeq: 2,
+    });
 
     const initialMutations = counting.mutateCallCount();
 
     await store.updateLastForwardedSeq({
       providerId: 'telegram',
       conversationId: '-100nf',
-      threadId: null,
+      threadId: '11',
     }, Number.POSITIVE_INFINITY);
 
     await store.updateLastForwardedSeq({
       providerId: 'telegram',
       conversationId: '-100nf',
-      threadId: null,
+      threadId: '11',
     }, Number.NaN);
 
     expect(counting.mutateCallCount()).toBe(initialMutations);
@@ -453,9 +477,9 @@ describe('createServerBackedChannelBindingStore', () => {
     const afterInvalidUpdates = await store.getBinding({
       providerId: 'telegram',
       conversationId: '-100nf',
-      threadId: null,
+      threadId: '11',
     });
-    expect(afterInvalidUpdates?.lastForwardedSeq).toBe(0);
+    expect(afterInvalidUpdates?.lastForwardedSeq).toBe(2);
   });
 
   it('fails fast when conflict payload cannot be decoded', async () => {

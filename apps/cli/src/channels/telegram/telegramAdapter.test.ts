@@ -1,3 +1,4 @@
+import axios from 'axios';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const { loggerWarn } = vi.hoisted(() => ({
@@ -267,10 +268,12 @@ describe('createTelegramChannelAdapter', () => {
   });
 
   it('truncates outbound telegram messages above provider limit', async () => {
+    type SendMessageParams = Readonly<{ chatId: string; threadId: string | null; text: string }>;
+
     const api = {
       getMe: vi.fn(async () => ({ id: 9, username: 'happier_bot' })),
       getUpdates: vi.fn(async () => []),
-      sendMessage: vi.fn(async () => undefined),
+      sendMessage: vi.fn(async (_params: SendMessageParams) => undefined),
     };
 
     const adapter = createTelegramChannelAdapter({
@@ -286,8 +289,8 @@ describe('createTelegramChannelAdapter', () => {
     });
 
     expect(api.sendMessage).toHaveBeenCalledTimes(1);
-    const call = api.sendMessage.mock.calls[0]?.[0];
-    expect(call?.text).toHaveLength(4_096);
+    const calls = api.sendMessage.mock.calls as SendMessageParams[][];
+    expect(calls[0]?.[0]?.text).toHaveLength(4_096);
     expect(loggerWarn).toHaveBeenCalledWith(
       expect.stringContaining('Truncated Telegram outbound message for conversation 1234 to 4096 characters'),
     );
@@ -345,5 +348,29 @@ describe('createTelegramChannelAdapter', () => {
 
     await adapter.pullInboundMessages();
     expect(getUpdates).toHaveBeenNthCalledWith(3, { offset: 12, limit: 100 });
+  });
+
+  it('includes Telegram API error descriptions when available', async () => {
+    const postSpy = vi.spyOn(axios, 'post').mockResolvedValue({
+      status: 400,
+      data: {
+        ok: false,
+        description: 'Bad Request: chat not found',
+      },
+    } as never);
+
+    try {
+      const adapter = createTelegramChannelAdapter({
+        botToken: 'test-token',
+      });
+
+      await expect(adapter.sendMessage({
+        conversationId: '-100999',
+        threadId: null,
+        text: 'hello',
+      })).rejects.toThrow('Bad Request: chat not found');
+    } finally {
+      postSpy.mockRestore();
+    }
   });
 });

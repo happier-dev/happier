@@ -14,6 +14,7 @@ import {
 import { resolveChannelBridgeRuntimeConfig } from '@/channels/channelBridgeConfig';
 import {
   clearChannelBridgeTelegramConfigInKv,
+  type ChannelBridgeServerTelegramConfigRecord,
   createAxiosChannelBridgeKvClient,
   readChannelBridgeTelegramConfigFromKv,
   upsertChannelBridgeTelegramConfigInKv,
@@ -74,6 +75,75 @@ async function resolveActiveAuthContext(): Promise<Readonly<{ accountId: string;
     accountId,
     token: credentials.token,
   };
+}
+
+function restoreSharedTelegramUpdateFromKvRecord(
+  record: ChannelBridgeServerTelegramConfigRecord | null,
+): Readonly<{
+  tickMs?: number;
+  allowedChatIds?: string[];
+  requireTopics?: boolean;
+  webhookEnabled?: boolean;
+  webhookHost?: string;
+  webhookPort?: number;
+}> | null {
+  if (!record) return null;
+
+  const restored: {
+    tickMs?: number;
+    allowedChatIds?: string[];
+    requireTopics?: boolean;
+    webhookEnabled?: boolean;
+    webhookHost?: string;
+    webhookPort?: number;
+  } = {};
+
+  if (typeof record.tickMs === 'number' && Number.isFinite(record.tickMs)) {
+    restored.tickMs = Math.trunc(record.tickMs);
+  }
+  if (Array.isArray(record.telegram.allowedChatIds)) {
+    restored.allowedChatIds = [...record.telegram.allowedChatIds];
+  }
+  if (typeof record.telegram.requireTopics === 'boolean') {
+    restored.requireTopics = record.telegram.requireTopics;
+  }
+
+  const webhook = record.telegram.webhook;
+  if (typeof webhook?.enabled === 'boolean') {
+    restored.webhookEnabled = webhook.enabled;
+  }
+  if (typeof webhook?.host === 'string') {
+    restored.webhookHost = webhook.host;
+  }
+  if (typeof webhook?.port === 'number' && Number.isFinite(webhook.port)) {
+    restored.webhookPort = Math.trunc(webhook.port);
+  }
+
+  return restored;
+}
+
+async function rollbackServerKvAfterLocalSettingsFailure(params: Readonly<{
+  kv: ReturnType<typeof createAxiosChannelBridgeKvClient>;
+  serverId: string;
+  accountId: string;
+  previousRecord: ChannelBridgeServerTelegramConfigRecord | null;
+}>): Promise<void> {
+  const rollbackUpdate = restoreSharedTelegramUpdateFromKvRecord(params.previousRecord);
+  if (!rollbackUpdate || Object.keys(rollbackUpdate).length === 0) {
+    await clearChannelBridgeTelegramConfigInKv({
+      kv: params.kv,
+      serverId: params.serverId,
+      accountId: params.accountId,
+    });
+    return;
+  }
+
+  await upsertChannelBridgeTelegramConfigInKv({
+    kv: params.kv,
+    serverId: params.serverId,
+    accountId: params.accountId,
+    update: rollbackUpdate,
+  });
 }
 
 function showBridgeHelp(): void {
@@ -271,9 +341,21 @@ async function cmdTelegramSet(args: string[]): Promise<void> {
   }
 
   const split = splitScopedTelegramBridgeUpdate({ update });
+  const shouldWriteSharedKv = hasSharedTelegramBridgeUpdate({ update: split.sharedUpdate });
 
-  if (hasSharedTelegramBridgeUpdate({ update: split.sharedUpdate })) {
-    const kv = createAxiosChannelBridgeKvClient({ token: auth.token });
+  let kv: ReturnType<typeof createAxiosChannelBridgeKvClient> | null = null;
+  let previousServerKvRecord: ChannelBridgeServerTelegramConfigRecord | null = null;
+
+  if (shouldWriteSharedKv) {
+    kv = createAxiosChannelBridgeKvClient({ token: auth.token });
+    const previous = await readChannelBridgeTelegramConfigFromKv({
+      kv,
+      serverId,
+      accountId,
+      allowUnsupportedSchema: true,
+    });
+    previousServerKvRecord = previous.record;
+
     await upsertChannelBridgeTelegramConfigInKv({
       kv,
       serverId,
@@ -282,20 +364,40 @@ async function cmdTelegramSet(args: string[]): Promise<void> {
     });
   }
 
-  await updateSettings(async (current) =>
-    upsertScopedTelegramBridgeConfig({
-      settings: current,
-      serverId,
-      accountId,
-      update: split.localUpdate,
-    }),
-  );
+  try {
+    await updateSettings(async (current) =>
+      upsertScopedTelegramBridgeConfig({
+        settings: current,
+        serverId,
+        accountId,
+        update: split.localUpdate,
+      }),
+    );
+  } catch (error) {
+    if (shouldWriteSharedKv && kv) {
+      try {
+        await rollbackServerKvAfterLocalSettingsFailure({
+          kv,
+          serverId,
+          accountId,
+          previousRecord: previousServerKvRecord,
+        });
+      } catch (rollbackError) {
+        const primaryMessage = error instanceof Error ? error.message : String(error);
+        const rollbackMessage = rollbackError instanceof Error ? rollbackError.message : String(rollbackError);
+        throw new Error(
+          `Local settings update failed and server KV rollback failed (${primaryMessage}; rollback: ${rollbackMessage})`,
+        );
+      }
+    }
+    throw error;
+  }
 
   console.log(chalk.green('✓ Saved Telegram bridge config for active account scope'));
   console.log(`  Server:  ${serverId}`);
   console.log(`  Account: ${accountId}`);
   console.log(
-    hasSharedTelegramBridgeUpdate({ update: split.sharedUpdate })
+    shouldWriteSharedKv
       ? '  Persisted: non-secret fields -> server KV, full config -> scoped settings.json'
       : '  Persisted: secrets-only update -> scoped settings.json (server KV unchanged)',
   );
@@ -312,19 +414,44 @@ async function cmdTelegramClear(): Promise<void> {
   const accountId = auth.accountId;
 
   const kv = createAxiosChannelBridgeKvClient({ token: auth.token });
+  const previous = await readChannelBridgeTelegramConfigFromKv({
+    kv,
+    serverId,
+    accountId,
+    allowUnsupportedSchema: true,
+  });
+
   await clearChannelBridgeTelegramConfigInKv({
     kv,
     serverId,
     accountId,
   });
 
-  await updateSettings(async (current) =>
-    removeScopedTelegramBridgeConfig({
-      settings: current,
-      serverId,
-      accountId,
-    }),
-  );
+  try {
+    await updateSettings(async (current) =>
+      removeScopedTelegramBridgeConfig({
+        settings: current,
+        serverId,
+        accountId,
+      }),
+    );
+  } catch (error) {
+    try {
+      await rollbackServerKvAfterLocalSettingsFailure({
+        kv,
+        serverId,
+        accountId,
+        previousRecord: previous.record,
+      });
+    } catch (rollbackError) {
+      const primaryMessage = error instanceof Error ? error.message : String(error);
+      const rollbackMessage = rollbackError instanceof Error ? rollbackError.message : String(rollbackError);
+      throw new Error(
+        `Scoped settings clear failed and server KV rollback failed (${primaryMessage}; rollback: ${rollbackMessage})`,
+      );
+    }
+    throw error;
+  }
 
   console.log(chalk.green('✓ Cleared Telegram bridge config for active account scope'));
   console.log(`  Server:  ${serverId}`);

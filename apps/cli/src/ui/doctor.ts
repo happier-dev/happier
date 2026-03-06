@@ -358,7 +358,7 @@ export async function runDoctorCommand(filter?: 'all' | 'daemon'): Promise<void>
         }
 
         // Settings
-        let settingsSnapshot: unknown = null;
+        let settingsSnapshot: Awaited<ReturnType<typeof readSettings>> | null = null;
         try {
             settingsSnapshot = await readSettings();
             console.log(chalk.bold('\n📄 Settings (settings.json):'));
@@ -427,11 +427,29 @@ export async function runDoctorCommand(filter?: 'all' | 'daemon'): Promise<void>
             const serverScope = serverId ? asRecord(byServerId?.[serverId]) : null;
             const byAccountId = asRecord(serverScope?.byAccountId);
             const accountScope = accountId ? asRecord(byAccountId?.[accountId]) : null;
-            const providers = asRecord(accountScope?.providers);
-            const telegram = asRecord(providers?.telegram);
-            const providerEntries = providers
-                ? Object.entries(providers)
-                : [];
+            const globalProviders = asRecord(channelBridgeRoot?.providers);
+            const serverProviders = asRecord(serverScope?.providers);
+            const accountProviders = asRecord(accountScope?.providers);
+            const telegram =
+                asRecord(accountProviders?.telegram)
+                ?? asRecord(serverProviders?.telegram)
+                ?? asRecord(globalProviders?.telegram);
+            const providerMap = new Map<string, Record<string, unknown>>();
+
+            const mergeProviders = (providersRecord: Record<string, unknown> | null): void => {
+                if (!providersRecord) return;
+                for (const [providerId, providerConfig] of Object.entries(providersRecord)) {
+                    const providerEntry = asRecord(providerConfig);
+                    if (!providerEntry) continue;
+                    providerMap.set(providerId, providerEntry);
+                }
+            };
+
+            mergeProviders(globalProviders);
+            mergeProviders(serverProviders);
+            mergeProviders(accountProviders);
+
+            const providerEntries = [...providerMap.entries()];
 
             const runtimeBridge = resolveChannelBridgeRuntimeConfig({
                 env: process.env,

@@ -152,6 +152,7 @@ function createDefaultChannelBridgeDeps(credentials: Credentials): DefaultChanne
   return {
     deps: {
     listSessions: async () => {
+      const displayLimit = 20;
       const pageSize = 100;
       const maxPages = 50;
       const sessions: RawSessionListRow[] = [];
@@ -165,6 +166,10 @@ function createDefaultChannelBridgeDeps(credentials: Credentials): DefaultChanne
           cursor,
         });
         sessions.push(...page.sessions);
+        if (sessions.length >= displayLimit) {
+          cursor = undefined;
+          break;
+        }
         if (!page.hasNext || !page.nextCursor) {
           cursor = undefined;
           break;
@@ -176,7 +181,7 @@ function createDefaultChannelBridgeDeps(credentials: Credentials): DefaultChanne
         logger.warn(`[channelBridge] Session list pagination stopped after ${maxPages} pages; truncating /sessions results`);
       }
 
-      return sessions.map((row) => {
+      return sessions.slice(0, displayLimit).map((row) => {
         const meta = tryDecryptSessionMetadata({ credentials, rawSession: row });
         const tagRaw = meta?.tag;
         const tag = typeof tagRaw === 'string' ? tagRaw.trim() : '';

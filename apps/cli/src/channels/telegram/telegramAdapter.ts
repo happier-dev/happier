@@ -19,6 +19,14 @@ function telegramApiUrl(botToken: string, method: string): string {
   return `https://api.telegram.org/bot${botToken}/${method}`;
 }
 
+function formatTelegramApiFailure(method: 'getMe' | 'getUpdates' | 'sendMessage', status: number, data: unknown): string {
+  const record = asRecord(data);
+  const description = record && typeof record.description === 'string' ? record.description.trim() : '';
+  return description.length > 0
+    ? `Telegram ${method} failed (${status}): ${description}`
+    : `Telegram ${method} failed (${status})`;
+}
+
 function createDefaultTelegramApiClient(botToken: string): TelegramApiClient {
   return {
     getMe: async () => {
@@ -27,7 +35,7 @@ function createDefaultTelegramApiClient(botToken: string): TelegramApiClient {
         validateStatus: () => true,
       });
       if (response.status !== 200 || !response.data || response.data.ok !== true || !response.data.result) {
-        throw new Error(`Telegram getMe failed (${response.status})`);
+        throw new Error(formatTelegramApiFailure('getMe', response.status, response.data));
       }
       const user = response.data.result;
       return {
@@ -46,7 +54,7 @@ function createDefaultTelegramApiClient(botToken: string): TelegramApiClient {
         validateStatus: () => true,
       });
       if (response.status !== 200 || !response.data || response.data.ok !== true || !Array.isArray(response.data.result)) {
-        throw new Error(`Telegram getUpdates failed (${response.status})`);
+        throw new Error(formatTelegramApiFailure('getUpdates', response.status, response.data));
       }
       return response.data.result;
     },
@@ -64,7 +72,7 @@ function createDefaultTelegramApiClient(botToken: string): TelegramApiClient {
         validateStatus: () => true,
       });
       if (response.status !== 200 || !response.data || response.data.ok !== true) {
-        throw new Error(`Telegram sendMessage failed (${response.status})`);
+        throw new Error(formatTelegramApiFailure('sendMessage', response.status, response.data));
       }
     },
   };

@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 type ShutdownSource = 'happier-app' | 'happier-cli' | 'os-signal' | 'exception';
 type BuildHappyCliSubprocessLaunchSpec = typeof import('@/utils/spawnHappyCLI').buildHappyCliSubprocessLaunchSpec;
+type BridgeWorkerHandle = Readonly<{ stop: () => Promise<void>; trigger: () => void }>;
 
 const harness = vi.hoisted(() => {
   let resolveShutdown: ((value: { source: ShutdownSource; errorMessage?: string }) => void) | null = null;
@@ -13,7 +14,7 @@ const harness = vi.hoisted(() => {
   const automationWorkerRefreshAssignments = vi.fn(async () => {});
   const automationWorkerPause = vi.fn();
   const automationWorkerResume = vi.fn();
-  const startChannelBridgeFromEnv = vi.fn(async () => null);
+  const startChannelBridgeFromEnv = vi.fn<() => Promise<BridgeWorkerHandle | null>>(async () => null);
   const startAutomationWorker = vi.fn(() => {
     if (autoShutdownAfterAutomationStart && requestShutdownRef) {
       setTimeout(() => requestShutdownRef?.('happier-cli'), 0);
@@ -508,7 +509,7 @@ describe('startDaemon automation wiring (integration)', () => {
 
       await new Promise((resolve) => setTimeout(resolve, 0));
       harness.requestShutdown('happier-cli');
-      resolveBridgeStartup?.();
+      if (resolveBridgeStartup) resolveBridgeStartup();
       await run;
 
       expect(harness.startChannelBridgeFromEnv).toHaveBeenCalledTimes(1);

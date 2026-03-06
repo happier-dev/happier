@@ -209,15 +209,24 @@ export function createServerBackedChannelBindingStore(params: Readonly<{
     upsertBinding: async (binding) => {
       return await withOptimisticWrite((currentBindings) => {
         const nowMs = Date.now();
-        const key = bindingKey(binding);
-        const existing = currentBindings.find((row) => bindingKey(row) === key) ?? null;
+        const providerId = binding.providerId.trim();
+        const conversationId = binding.conversationId.trim();
+        const sessionId = binding.sessionId.trim();
+        const threadIdRaw = typeof binding.threadId === 'string' ? binding.threadId.trim() : '';
+        const threadId = threadIdRaw.length > 0 ? threadIdRaw : null;
+        const normalizedLastForwardedSeq = toNonNegativeInt(binding.lastForwardedSeq);
 
-        const normalizedLastForwardedSeq = toNonNegativeInt(binding.lastForwardedSeq) ?? 0;
+        if (!providerId || !conversationId || !sessionId || normalizedLastForwardedSeq === null) {
+          throw new Error('Invalid channel binding input');
+        }
+
+        const key = bindingKey({ providerId, conversationId, threadId });
+        const existing = currentBindings.find((row) => bindingKey(row) === key) ?? null;
         const nextBinding: ChannelSessionBinding = {
-          providerId: binding.providerId,
-          conversationId: binding.conversationId,
-          threadId: binding.threadId,
-          sessionId: binding.sessionId,
+          providerId,
+          conversationId,
+          threadId,
+          sessionId,
           lastForwardedSeq: normalizedLastForwardedSeq,
           createdAtMs: existing?.createdAtMs ?? nowMs,
           updatedAtMs: nowMs,

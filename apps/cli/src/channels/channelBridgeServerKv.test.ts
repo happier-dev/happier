@@ -152,6 +152,44 @@ describe('channelBridgeServerKv', () => {
     expect(config.version).toBe(0);
   });
 
+  it('isolates telegram config by account scope on the same server', async () => {
+    const kv = createInMemoryKvClient();
+
+    await upsertChannelBridgeTelegramConfigInKv({
+      kv,
+      serverId: 'local-3005',
+      accountId: 'acct-1',
+      update: {
+        requireTopics: true,
+      },
+    });
+
+    await upsertChannelBridgeTelegramConfigInKv({
+      kv,
+      serverId: 'local-3005',
+      accountId: 'acct-2',
+      update: {
+        allowedChatIds: ['-100222'],
+      },
+    });
+
+    const acct1 = await readChannelBridgeTelegramConfigFromKv({
+      kv,
+      serverId: 'local-3005',
+      accountId: 'acct-1',
+    });
+    const acct2 = await readChannelBridgeTelegramConfigFromKv({
+      kv,
+      serverId: 'local-3005',
+      accountId: 'acct-2',
+    });
+
+    expect(acct1.record?.telegram.requireTopics).toBe(true);
+    expect(acct1.record?.telegram.allowedChatIds).toBeUndefined();
+    expect(acct2.record?.telegram.allowedChatIds).toEqual(['-100222']);
+    expect(acct2.record?.telegram.requireTopics).toBeUndefined();
+  });
+
   it('ignores secret-only updates and leaves KV untouched', async () => {
     const kv = createInMemoryKvClient();
 
@@ -509,6 +547,47 @@ describe('channelBridgeServerKv', () => {
     expect(second.doc.bindings[0]?.sessionId).toBe('sess-1');
   });
 
+  it('isolates bindings documents by account scope on the same server', async () => {
+    const kv = createInMemoryKvClient();
+
+    await writeChannelBridgeBindingsToKv({
+      kv,
+      serverId: 'local-3005',
+      accountId: 'acct-1',
+      expectedVersion: -1,
+      doc: {
+        schemaVersion: 1,
+        bindings: [
+          {
+            providerId: 'telegram',
+            conversationId: '-100111',
+            threadId: null,
+            sessionId: 'sess-a',
+            lastForwardedSeq: 1,
+            createdAtMs: 1000,
+            updatedAtMs: 1000,
+          },
+        ],
+      },
+    });
+
+    const acct1 = await readChannelBridgeBindingsFromKv({
+      kv,
+      serverId: 'local-3005',
+      accountId: 'acct-1',
+    });
+    const acct2 = await readChannelBridgeBindingsFromKv({
+      kv,
+      serverId: 'local-3005',
+      accountId: 'acct-2',
+    });
+
+    expect(acct1.doc.bindings).toHaveLength(1);
+    expect(acct1.doc.bindings[0]?.sessionId).toBe('sess-a');
+    expect(acct2.doc.bindings).toEqual([]);
+    expect(acct2.version).toBe(-1);
+  });
+
   it('throws when bindings payload is invalid/corrupt in KV', async () => {
     const invalidValueBase64 = Buffer.from(JSON.stringify({ schemaVersion: 999, bindings: [] }), 'utf8').toString('base64');
     const kv: ChannelBridgeKvClient = {
@@ -716,6 +795,37 @@ describe('channelBridgeServerKv', () => {
       serverId: 'local-3005',
       accountId: 'acct-1',
     })).rejects.toThrow('Invalid telegram.allowedChatIds payload');
+  });
+
+  it('throws when telegram config payload contains invalid webhook.port', async () => {
+    const invalidWebhookPortValueBase64 = Buffer.from(JSON.stringify({
+      schemaVersion: 1,
+      telegram: {
+        webhook: {
+          enabled: true,
+          host: '127.0.0.1',
+          port: 70_000,
+        },
+      },
+      updatedAtMs: 123,
+    }), 'utf8').toString('base64');
+    const kv: ChannelBridgeKvClient = {
+      get: async () => ({
+        status: 200,
+        body: {
+          key: 'k',
+          value: invalidWebhookPortValueBase64,
+          version: 3,
+        },
+      }),
+      mutate: async () => ({ status: 200, body: { success: true, results: [] } }),
+    };
+
+    await expect(readChannelBridgeTelegramConfigFromKv({
+      kv,
+      serverId: 'local-3005',
+      accountId: 'acct-1',
+    })).rejects.toThrow('Invalid telegram.webhook.port payload');
   });
 
   it('treats malformed telegram config payload as recoverable when allowUnsupportedSchema=true', async () => {

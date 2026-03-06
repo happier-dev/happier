@@ -13,6 +13,7 @@ const decodeJwtPayloadMock = vi.fn();
 const checkDaemonMock = vi.fn();
 
 const createKvClientMock = vi.fn();
+const readKvConfigMock = vi.fn();
 const upsertKvConfigMock = vi.fn();
 const clearKvConfigMock = vi.fn();
 
@@ -34,7 +35,7 @@ vi.mock('@/channels/channelBridgeServerKv', () => ({
   createAxiosChannelBridgeKvClient: createKvClientMock,
   upsertChannelBridgeTelegramConfigInKv: upsertKvConfigMock,
   clearChannelBridgeTelegramConfigInKv: clearKvConfigMock,
-  readChannelBridgeTelegramConfigFromKv: vi.fn(),
+  readChannelBridgeTelegramConfigFromKv: readKvConfigMock,
 }));
 
 describe('happier bridge command', () => {
@@ -57,6 +58,7 @@ describe('happier bridge command', () => {
     });
 
     createKvClientMock.mockReturnValue({ get: vi.fn(), mutate: vi.fn() });
+    readKvConfigMock.mockResolvedValue({ record: null, version: -1 });
     upsertKvConfigMock.mockResolvedValue(undefined);
     clearKvConfigMock.mockResolvedValue(undefined);
 
@@ -273,6 +275,81 @@ describe('happier bridge command', () => {
         expect.anything(),
         expect.stringContaining('Invalid --webhook-host value'),
       );
+    } finally {
+      errorSpy.mockRestore();
+    }
+  });
+
+  it('rolls back shared KV update when local scoped settings write fails', async () => {
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    updateSettingsMock.mockRejectedValueOnce(new Error('settings unavailable'));
+
+    try {
+      const { handleBridgeCliCommand } = await import('./bridge');
+
+      await handleBridgeCliCommand({
+        args: ['bridge', 'telegram', 'set', '--bot-token', 'bot-token-1', '--require-topics', 'true'],
+        rawArgv: [],
+        terminalRuntime: null,
+      });
+
+      expect(upsertKvConfigMock).toHaveBeenCalledTimes(1);
+      expect(clearKvConfigMock).toHaveBeenCalledWith({
+        kv: expect.any(Object),
+        serverId: configuration.activeServerId,
+        accountId: 'acct_123',
+      });
+      expect(process.exitCode).toBe(1);
+      expect(errorSpy).toHaveBeenCalledWith(expect.anything(), expect.stringContaining('settings unavailable'));
+    } finally {
+      errorSpy.mockRestore();
+    }
+  });
+
+  it('restores previous shared KV config when local clear fails', async () => {
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    updateSettingsMock.mockRejectedValueOnce(new Error('settings clear unavailable'));
+    readKvConfigMock.mockResolvedValueOnce({
+      record: {
+        schemaVersion: 1,
+        updatedAtMs: 123,
+        telegram: {
+          allowedChatIds: ['-100111'],
+          requireTopics: true,
+          webhook: {
+            enabled: true,
+            host: '127.0.0.1',
+            port: 8787,
+          },
+        },
+      },
+      version: 4,
+    });
+
+    try {
+      const { handleBridgeCliCommand } = await import('./bridge');
+
+      await handleBridgeCliCommand({
+        args: ['bridge', 'telegram', 'clear'],
+        rawArgv: [],
+        terminalRuntime: null,
+      });
+
+      expect(clearKvConfigMock).toHaveBeenCalledTimes(1);
+      expect(upsertKvConfigMock).toHaveBeenCalledWith({
+        kv: expect.any(Object),
+        serverId: configuration.activeServerId,
+        accountId: 'acct_123',
+        update: {
+          allowedChatIds: ['-100111'],
+          requireTopics: true,
+          webhookEnabled: true,
+          webhookHost: '127.0.0.1',
+          webhookPort: 8787,
+        },
+      });
+      expect(process.exitCode).toBe(1);
+      expect(errorSpy).toHaveBeenCalledWith(expect.anything(), expect.stringContaining('settings clear unavailable'));
     } finally {
       errorSpy.mockRestore();
     }
