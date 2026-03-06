@@ -1570,7 +1570,7 @@ export async function startDaemon(): Promise<void> {
             return;
           }
 
-          channelBridgeWorker = await startChannelBridgeFromEnv({
+          const worker = await startChannelBridgeFromEnv({
             credentials,
             ...(channelBridgeRuntimeSettings ? { settings: channelBridgeRuntimeSettings } : {}),
             ...(channelBridgeServerId ? { serverId: channelBridgeServerId } : {}),
@@ -1582,7 +1582,22 @@ export async function startDaemon(): Promise<void> {
             );
             return null;
           });
-        }
+
+          if (!worker) {
+            return;
+          }
+
+          if (shutdownInitiated) {
+            await worker.stop().catch((error) => {
+              logger.warn(
+                '[DAEMON RUN] Failed to stop channel bridge worker started during shutdown',
+                serializeAxiosErrorForLog(error),
+              );
+            });
+            return;
+          }
+
+          channelBridgeWorker = worker;
         };
 
         void startChannelBridgeWorkerBestEffort();

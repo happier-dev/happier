@@ -132,6 +132,12 @@ describe('createTelegramChannelAdapter', () => {
       },
     ]);
     expect(api.getUpdates).not.toHaveBeenCalled();
+
+    const pendingReplay = await adapter.pullInboundMessages();
+    expect(pendingReplay).toHaveLength(1);
+
+    await adapter.ackInboundMessages?.(inbound);
+    await expect(adapter.pullInboundMessages()).resolves.toEqual([]);
   });
 
   it('keeps webhook updates queued when parsing fails and retries later', async () => {
@@ -253,9 +259,38 @@ describe('createTelegramChannelAdapter', () => {
     expect(firstInbound).toHaveLength(1);
     expect(firstInbound[0]?.messageId).toBe('901');
 
+    await adapter.ackInboundMessages?.(firstInbound);
+
     const secondInbound = await adapter.pullInboundMessages();
     expect(secondInbound).toHaveLength(1);
     expect(secondInbound[0]?.messageId).toBe('902');
+  });
+
+  it('truncates outbound telegram messages above provider limit', async () => {
+    const api = {
+      getMe: vi.fn(async () => ({ id: 9, username: 'happier_bot' })),
+      getUpdates: vi.fn(async () => []),
+      sendMessage: vi.fn(async () => undefined),
+    };
+
+    const adapter = createTelegramChannelAdapter({
+      botToken: 'test-token',
+      api,
+    });
+
+    const oversized = 'x'.repeat(4_500);
+    await adapter.sendMessage({
+      conversationId: '1234',
+      threadId: null,
+      text: oversized,
+    });
+
+    expect(api.sendMessage).toHaveBeenCalledTimes(1);
+    const call = api.sendMessage.mock.calls[0]?.[0];
+    expect(call?.text).toHaveLength(4_096);
+    expect(loggerWarn).toHaveBeenCalledWith(
+      expect.stringContaining('Truncated Telegram outbound message for conversation 1234 to 4096 characters'),
+    );
   });
 
   it('advances polling offset only after successful parsing', async () => {

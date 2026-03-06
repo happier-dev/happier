@@ -4,7 +4,14 @@ This checklist validates that one Happier account can use multiple machines + Te
 
 ## 1) Start from clean local state (test env)
 
+- Use a fresh test home per run:
+
+```bash
+export HAPPIER_HOME_DIR="$(mktemp -d /tmp/happier-uat-XXXXXX)"
+```
+
 - Stop daemon: `happier daemon stop`
+- Remove stale local settings if present: `rm -f "$HAPPIER_HOME_DIR/settings.json"`
 - Confirm active server: `happier server list`
 - Start daemon: `happier daemon start`
 

@@ -51,6 +51,9 @@ export type ChannelBridgeActorContext = Readonly<{
  * Expectations:
  * - `pullInboundMessages` should return available inbound items without throwing for
  *   normal empty states (return `[]` instead).
+ * - `ackInboundMessages` is optional and, when implemented, will be called after
+ *   the worker has fully handled a batch item (including command replies / forward attempts).
+ *   Adapters can use this to implement deferred acknowledgment semantics.
  * - `sendMessage` should deliver text into a target conversation/thread.
  * - `sendMessage` should tolerate at-least-once delivery attempts. Timeout races may
  *   trigger retries, so provider adapters should be idempotent when possible.
@@ -59,6 +62,7 @@ export type ChannelBridgeActorContext = Readonly<{
 export type ChannelBridgeAdapter = Readonly<{
   providerId: string;
   pullInboundMessages: () => Promise<ChannelBridgeInboundMessage[]>;
+  ackInboundMessages?: (messages: readonly ChannelBridgeInboundMessage[]) => void | Promise<void>;
   sendMessage: (params: Readonly<{ conversationId: string; threadId: string | null; text: string }>) => Promise<void>;
   stop?: () => void | Promise<void>;
 }>;
@@ -627,6 +631,8 @@ export async function executeChannelBridgeTick(params: Readonly<{
       continue;
     }
 
+    const ackableInbound: ChannelBridgeInboundMessage[] = [];
+
     for (const rawEvent of inbound) {
       const event: ChannelBridgeInboundMessage =
         rawEvent.providerId === adapter.providerId
@@ -643,8 +649,11 @@ export async function executeChannelBridgeTick(params: Readonly<{
       }
 
       if (deduper.isDuplicate(event)) {
+        ackableInbound.push(event);
         continue;
       }
+
+      let processedSuccessfully = false;
 
       try {
         const command = parseSlashCommand(event.text);
@@ -656,6 +665,7 @@ export async function executeChannelBridgeTick(params: Readonly<{
             store: params.store,
             deps: params.deps,
           });
+          processedSuccessfully = true;
           continue;
         }
 
@@ -664,6 +674,7 @@ export async function executeChannelBridgeTick(params: Readonly<{
             conversationId: event.conversationId,
             threadId: event.threadId,
           }, 'Unknown command. Use /help for supported commands.');
+          processedSuccessfully = true;
           continue;
         }
 
@@ -694,6 +705,7 @@ export async function executeChannelBridgeTick(params: Readonly<{
             ref,
             'No session is attached here. Use /attach <session-id-or-prefix> first.',
           );
+          processedSuccessfully = true;
           continue;
         }
 
@@ -721,8 +733,25 @@ export async function executeChannelBridgeTick(params: Readonly<{
             `Failed to send message to session ${binding.sessionId}.`,
           );
         }
+        processedSuccessfully = true;
       } catch (error) {
         params.deps.onWarning?.(`Failed to process inbound message for adapter ${adapter.providerId}`, error);
+      }
+
+      if (processedSuccessfully) {
+        ackableInbound.push(event);
+      }
+    }
+
+    if (adapter.ackInboundMessages && ackableInbound.length > 0) {
+      try {
+        await withTimeout(
+          Promise.resolve(adapter.ackInboundMessages(ackableInbound)),
+          EXTERNAL_IO_TIMEOUT_MS,
+          `ackInboundMessages(${adapter.providerId})`,
+        );
+      } catch (error) {
+        params.deps.onWarning?.(`Failed to acknowledge inbound messages for adapter ${adapter.providerId}`, error);
       }
     }
   }

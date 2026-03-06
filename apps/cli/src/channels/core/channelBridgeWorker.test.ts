@@ -1721,6 +1721,48 @@ describe('executeChannelBridgeTick', () => {
 
     expect(warnings.some((row) => row.message.includes('Failed to list bindings for outbound forwarding'))).toBe(true);
   });
+
+  it('acknowledges handled inbound messages when adapter exposes ack hook', async () => {
+    const store = createInMemoryChannelBindingStore();
+    await store.upsertBinding({
+      providerId: 'telegram',
+      conversationId: 'room-ack',
+      threadId: null,
+      sessionId: 'sess-ack',
+      lastForwardedSeq: 0,
+    });
+
+    const acknowledged: ChannelBridgeInboundMessage[][] = [];
+    const adapter: ChannelBridgeAdapter = {
+      providerId: 'telegram',
+      pullInboundMessages: async () => [
+        {
+          providerId: 'telegram',
+          conversationId: 'room-ack',
+          threadId: null,
+          senderId: 'user-1',
+          text: 'hello from telegram',
+          messageId: 'm-ack-1',
+        },
+      ],
+      ackInboundMessages: async (messages) => {
+        acknowledged.push(messages.map((message) => ({ ...message })));
+      },
+      sendMessage: async () => {},
+    };
+    const depsHarness = createDepsHarness();
+
+    await executeChannelBridgeTick({
+      store,
+      adapters: [adapter],
+      deps: depsHarness.deps,
+      inboundDeduper: createChannelBridgeInboundDeduper(),
+    });
+
+    expect(depsHarness.sentToSession).toHaveLength(1);
+    expect(acknowledged).toHaveLength(1);
+    expect(acknowledged[0]?.map((message) => message.messageId)).toEqual(['m-ack-1']);
+  });
 });
 describe('startChannelBridgeWorker', () => {
   it('runs the first tick on startup', async () => {

@@ -485,6 +485,40 @@ describe('startDaemon automation wiring (integration)', () => {
     }
   });
 
+  it('stops a bridge worker that resolves after shutdown has already started', async () => {
+    vi.useRealTimers();
+
+    const delayedWorkerStop = vi.fn(async () => {});
+    let resolveBridgeStartup: (() => void) | null = null;
+    harness.startChannelBridgeFromEnv.mockImplementationOnce(async () => {
+      await new Promise<void>((resolve) => {
+        resolveBridgeStartup = resolve;
+      });
+      return {
+        stop: delayedWorkerStop,
+        trigger: vi.fn(),
+      };
+    });
+
+    const exitSpy = vi.spyOn(process, 'exit').mockImplementation((() => undefined) as never);
+
+    try {
+      const { startDaemon } = await import('./startDaemon');
+      const run = startDaemon();
+
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      harness.requestShutdown('happier-cli');
+      resolveBridgeStartup?.();
+      await run;
+
+      expect(harness.startChannelBridgeFromEnv).toHaveBeenCalledTimes(1);
+      expect(delayedWorkerStop).toHaveBeenCalledTimes(1);
+      expect(exitSpy).toHaveBeenCalledWith(0);
+    } finally {
+      exitSpy.mockRestore();
+    }
+  });
+
   it('does not leak bearer tokens when machine registration fails', async () => {
     vi.useRealTimers();
 

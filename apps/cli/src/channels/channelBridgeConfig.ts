@@ -46,8 +46,15 @@ function parseStringArray(value: unknown): string[] | null {
   if (typeof value === 'string') return parseCsv(value);
   if (!Array.isArray(value)) return null;
   const out = value
-    .map((entry) => (typeof entry === 'string' ? entry.trim() : ''))
+    .map((entry) => {
+      if (typeof entry === 'string') return entry.trim();
+      if (typeof entry === 'number' && Number.isFinite(entry)) return String(Math.trunc(entry));
+      return '';
+    })
     .filter((entry) => entry.length > 0);
+  if (out.length === 0 && value.length > 0) {
+    return null;
+  }
   return out;
 }
 
@@ -146,9 +153,13 @@ export function resolveChannelBridgeRuntimeConfig(params: Readonly<{
       : settingsBotToken;
 
   const settingsAllowedChatIds = parseStringArray(telegram?.allowedChatIds) ?? [];
-  const allowedChatIds =
+  const envAllowedChatIdsRaw =
     typeof env.HAPPIER_TELEGRAM_ALLOWED_CHAT_IDS === 'string'
-      ? parseCsv(env.HAPPIER_TELEGRAM_ALLOWED_CHAT_IDS)
+      ? env.HAPPIER_TELEGRAM_ALLOWED_CHAT_IDS.trim()
+      : null;
+  const allowedChatIds =
+    envAllowedChatIdsRaw && envAllowedChatIdsRaw.length > 0
+      ? parseCsv(envAllowedChatIdsRaw)
       : settingsAllowedChatIds;
 
   const settingsRequireTopics = parseBoolean(telegram?.requireTopics) ?? false;

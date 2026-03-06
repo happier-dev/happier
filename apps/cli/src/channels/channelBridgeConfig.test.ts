@@ -228,4 +228,40 @@ describe('resolveChannelBridgeRuntimeConfig', () => {
     expect(config.telegram.allowedChatIds).toEqual([]);
     expect(config.telegram.requireTopics).toBe(true);
   });
+
+  it('keeps settings allowedChatIds when env override is empty', () => {
+    const config = resolveChannelBridgeRuntimeConfig({
+      env: {
+        HAPPIER_TELEGRAM_ALLOWED_CHAT_IDS: '   ',
+      },
+      settings: {
+        channelBridge: {
+          providers: {
+            telegram: {
+              allowedChatIds: ['-100111'],
+            },
+          },
+        },
+      },
+    });
+
+    expect(config.telegram.allowedChatIds).toEqual(['-100111']);
+  });
+
+  it('accepts numeric allowedChatIds from settings arrays', () => {
+    const config = resolveChannelBridgeRuntimeConfig({
+      env: {},
+      settings: {
+        channelBridge: {
+          providers: {
+            telegram: {
+              allowedChatIds: [-1001234567890],
+            },
+          },
+        },
+      },
+    });
+
+    expect(config.telegram.allowedChatIds).toEqual(['-1001234567890']);
+  });
 });

@@ -227,4 +227,52 @@ describe('happier bridge command', () => {
       errorSpy.mockRestore();
     }
   });
+
+  it('rejects malformed --allowed-chat-ids that parse to an empty list', async () => {
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+
+    try {
+      const { handleBridgeCliCommand } = await import('./bridge');
+
+      await handleBridgeCliCommand({
+        args: ['bridge', 'telegram', 'set', '--allowed-chat-ids', ',,,'],
+        rawArgv: [],
+        terminalRuntime: null,
+      });
+
+      expect(updateSettingsMock).not.toHaveBeenCalled();
+      expect(createKvClientMock).not.toHaveBeenCalled();
+      expect(process.exitCode).toBe(1);
+      expect(errorSpy).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.stringContaining('Invalid --allowed-chat-ids value'),
+      );
+    } finally {
+      errorSpy.mockRestore();
+    }
+  });
+
+  it('rejects non-loopback --webhook-host values', async () => {
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+
+    try {
+      const { handleBridgeCliCommand } = await import('./bridge');
+
+      await handleBridgeCliCommand({
+        args: ['bridge', 'telegram', 'set', '--webhook-host', '0.0.0.0'],
+        rawArgv: [],
+        terminalRuntime: null,
+      });
+
+      expect(updateSettingsMock).not.toHaveBeenCalled();
+      expect(createKvClientMock).not.toHaveBeenCalled();
+      expect(process.exitCode).toBe(1);
+      expect(errorSpy).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.stringContaining('Invalid --webhook-host value'),
+      );
+    } finally {
+      errorSpy.mockRestore();
+    }
+  });
 });

@@ -529,6 +529,38 @@ describe('channelBridgeServerKv', () => {
     })).rejects.toThrow('Invalid channel bridge binding lastForwardedSeq at index 0');
   });
 
+  it('throws when bindings payload omits required persisted cursor/timestamp fields', async () => {
+    const malformedValueBase64 = Buffer.from(JSON.stringify({
+      schemaVersion: 1,
+      bindings: [
+        {
+          providerId: 'telegram',
+          conversationId: '-100111',
+          sessionId: 'sess-1',
+          lastForwardedSeq: 3,
+          createdAtMs: 111,
+        },
+      ],
+    }), 'utf8').toString('base64');
+
+    const kv: ChannelBridgeKvClient = {
+      get: async () => ({
+        status: 200,
+        body: {
+          key: 'k',
+          value: malformedValueBase64,
+          version: 5,
+        },
+      }),
+      mutate: async () => ({ status: 200, body: { success: true, results: [] } }),
+    };
+
+    await expect(readChannelBridgeBindingsFromKv({
+      kv,
+      serverId: 'local-3005',
+    })).rejects.toThrow('Invalid channel bridge binding updatedAtMs at index 0');
+  });
+
   it('throws when bindings payload includes malformed thread ids', async () => {
     const malformedValueBase64 = Buffer.from(JSON.stringify({
       schemaVersion: 1,
@@ -537,6 +569,9 @@ describe('channelBridgeServerKv', () => {
           providerId: 'telegram',
           conversationId: '-100111',
           sessionId: 'sess-1',
+          lastForwardedSeq: 1,
+          createdAtMs: 100,
+          updatedAtMs: 101,
           threadId: 123,
         },
       ],
@@ -617,5 +652,29 @@ describe('channelBridgeServerKv', () => {
       kv,
       serverId: 'local-3005',
     })).rejects.toThrow('Invalid or unsupported Telegram config schema');
+  });
+
+  it('treats malformed telegram config payload as recoverable when allowUnsupportedSchema=true', async () => {
+    const malformedValueBase64 = Buffer.from('not-json', 'utf8').toString('base64');
+    const kv: ChannelBridgeKvClient = {
+      get: async () => ({
+        status: 200,
+        body: {
+          key: 'k',
+          value: malformedValueBase64,
+          version: 3,
+        },
+      }),
+      mutate: async () => ({ status: 200, body: { success: true, results: [] } }),
+    };
+
+    await expect(readChannelBridgeTelegramConfigFromKv({
+      kv,
+      serverId: 'local-3005',
+      allowUnsupportedSchema: true,
+    })).resolves.toEqual({
+      record: null,
+      version: 3,
+    });
   });
 });

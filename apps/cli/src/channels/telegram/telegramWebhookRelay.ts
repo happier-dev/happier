@@ -22,7 +22,7 @@ export type TelegramWebhookRelayHandle = Readonly<{
   stop: () => Promise<void>;
 }>;
 
-function isLoopbackHost(host: string): boolean {
+export function isLoopbackHost(host: string): boolean {
   const normalized = host.trim().toLowerCase();
   if (normalized === 'localhost') return true;
 

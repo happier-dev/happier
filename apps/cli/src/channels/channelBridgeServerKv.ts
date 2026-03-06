@@ -93,8 +93,16 @@ function encodeJsonToBase64(value: unknown): string {
 }
 
 function decodeBase64ToJson(valueBase64: string): unknown {
-  const raw = Buffer.from(valueBase64, 'base64').toString('utf8');
-  return JSON.parse(raw);
+  try {
+    const raw = Buffer.from(valueBase64, 'base64').toString('utf8');
+    return JSON.parse(raw);
+  } catch (error) {
+    throw new ChannelBridgeBadPayloadError(
+      error instanceof Error
+        ? `Invalid channel bridge KV payload: ${error.message}`
+        : 'Invalid channel bridge KV payload',
+    );
+  }
 }
 
 function asRecord(value: unknown): Record<string, unknown> | null {
@@ -227,21 +235,16 @@ function parseBindingsDocument(value: unknown): ChannelBridgeServerBindingsDocum
     }
 
     if (
-      item.lastForwardedSeq !== undefined
-      && (typeof item.lastForwardedSeq !== 'number' || !Number.isFinite(item.lastForwardedSeq))
+      typeof item.lastForwardedSeq !== 'number'
+      || !Number.isFinite(item.lastForwardedSeq)
+      || item.lastForwardedSeq < 0
     ) {
       throw new ChannelBridgeBadPayloadError(`Invalid channel bridge binding lastForwardedSeq at index ${index}`);
     }
-    if (
-      item.createdAtMs !== undefined
-      && (typeof item.createdAtMs !== 'number' || !Number.isFinite(item.createdAtMs))
-    ) {
+    if (typeof item.createdAtMs !== 'number' || !Number.isFinite(item.createdAtMs)) {
       throw new ChannelBridgeBadPayloadError(`Invalid channel bridge binding createdAtMs at index ${index}`);
     }
-    if (
-      item.updatedAtMs !== undefined
-      && (typeof item.updatedAtMs !== 'number' || !Number.isFinite(item.updatedAtMs))
-    ) {
+    if (typeof item.updatedAtMs !== 'number' || !Number.isFinite(item.updatedAtMs)) {
       throw new ChannelBridgeBadPayloadError(`Invalid channel bridge binding updatedAtMs at index ${index}`);
     }
 
@@ -255,15 +258,9 @@ function parseBindingsDocument(value: unknown): ChannelBridgeServerBindingsDocum
 
     const threadIdRaw = typeof item.threadId === 'string' ? item.threadId.trim() : '';
     const threadId = threadIdRaw.length > 0 ? threadIdRaw : null;
-    const lastForwardedSeq = typeof item.lastForwardedSeq === 'number' && Number.isFinite(item.lastForwardedSeq)
-      ? Math.max(0, Math.trunc(item.lastForwardedSeq))
-      : 0;
-    const createdAtMs = typeof item.createdAtMs === 'number' && Number.isFinite(item.createdAtMs)
-      ? Math.trunc(item.createdAtMs)
-      : Date.now();
-    const updatedAtMs = typeof item.updatedAtMs === 'number' && Number.isFinite(item.updatedAtMs)
-      ? Math.trunc(item.updatedAtMs)
-      : Date.now();
+    const lastForwardedSeq = Math.trunc(item.lastForwardedSeq);
+    const createdAtMs = Math.trunc(item.createdAtMs);
+    const updatedAtMs = Math.trunc(item.updatedAtMs);
     bindings.push({
       providerId,
       conversationId,
@@ -412,7 +409,17 @@ export async function readChannelBridgeTelegramConfigFromKv(params: Readonly<{
     return { record: null, version: row.version };
   }
 
-  const parsed = parseTelegramConfigRecord(decodeBase64ToJson(row.valueBase64));
+  let decoded: unknown;
+  try {
+    decoded = decodeBase64ToJson(row.valueBase64);
+  } catch (error) {
+    if (params.allowUnsupportedSchema && error instanceof ChannelBridgeBadPayloadError) {
+      return { record: null, version: row.version };
+    }
+    throw error;
+  }
+
+  const parsed = parseTelegramConfigRecord(decoded);
   if (!parsed) {
     if (params.allowUnsupportedSchema) {
       return { record: null, version: row.version };

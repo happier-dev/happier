@@ -19,6 +19,7 @@ import {
   upsertChannelBridgeTelegramConfigInKv,
 } from '@/channels/channelBridgeServerKv';
 import { overlayServerKvTelegramConfigInSettings } from '@/channels/channelBridgeServerConfigOverlay';
+import { isLoopbackHost } from '@/channels/telegram/telegramWebhookRelay';
 import { readCredentials, readSettings, updateSettings } from '@/persistence';
 import { argvValue } from '@/cli/commands/server/commandUtilities';
 
@@ -233,7 +234,11 @@ async function cmdTelegramSet(args: string[]): Promise<void> {
   if (allowAll) {
     update.allowedChatIds = [];
   } else if (allowedChatIdsRaw) {
-    update.allowedChatIds = parseCsvList(allowedChatIdsRaw);
+    const parsedAllowedChatIds = parseCsvList(allowedChatIdsRaw);
+    if (parsedAllowedChatIds.length === 0) {
+      throw new Error('Invalid --allowed-chat-ids value: provide at least one chat id or use --allow-all');
+    }
+    update.allowedChatIds = parsedAllowedChatIds;
   }
   if (requireTopicsRaw) {
     update.requireTopics = parseBooleanInput(requireTopicsRaw, '--require-topics');
@@ -249,6 +254,9 @@ async function cmdTelegramSet(args: string[]): Promise<void> {
     update.webhookSecret = webhookSecret;
   }
   if (webhookHost) {
+    if (!isLoopbackHost(webhookHost)) {
+      throw new Error('Invalid --webhook-host value: must be a loopback address (127.0.0.1, ::1, or localhost)');
+    }
     update.webhookHost = webhookHost;
   }
   if (webhookPortRaw) {

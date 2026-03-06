@@ -13,6 +13,7 @@ type TelegramApiClient = Readonly<{
 
 const TELEGRAM_GET_UPDATES_LONG_POLL_TIMEOUT_SECONDS = 25;
 const TELEGRAM_GET_UPDATES_HTTP_TIMEOUT_MS = 30_000;
+const TELEGRAM_MAX_SEND_MESSAGE_TEXT_LENGTH = 4_096;
 
 function telegramApiUrl(botToken: string, method: string): string {
   return `https://api.telegram.org/bot${botToken}/${method}`;
@@ -142,14 +143,28 @@ function parseInboundFromUpdate(params: Readonly<{
 function parseHighestUpdateOffset(updates: readonly unknown[]): number | null {
   let max: number | null = null;
   for (const item of updates) {
-    const record = asRecord(item);
-    if (!record) continue;
-    const rawUpdateId = record.update_id;
-    if (typeof rawUpdateId !== 'number' || !Number.isFinite(rawUpdateId)) continue;
-    const current = Math.trunc(rawUpdateId);
+    const current = parseUpdateId(item);
+    if (current === null) continue;
     if (max === null || current > max) max = current;
   }
   return max;
+}
+
+function parseUpdateId(update: unknown): number | null {
+  const record = asRecord(update);
+  if (!record) return null;
+  const rawUpdateId = record.update_id;
+  if (typeof rawUpdateId !== 'number' || !Number.isFinite(rawUpdateId)) return null;
+  return Math.trunc(rawUpdateId);
+}
+
+function inboundMessageKey(message: Readonly<{
+  providerId: string;
+  conversationId: string;
+  threadId: string | null;
+  messageId: string;
+}>): string {
+  return JSON.stringify([message.providerId, message.conversationId, message.threadId, message.messageId]);
 }
 
 export function createTelegramChannelAdapter(params: Readonly<{
@@ -175,6 +190,11 @@ export function createTelegramChannelAdapter(params: Readonly<{
     update: unknown;
   };
 
+  type PendingWebhookAck = {
+    queueIds: Set<number>;
+    maxUpdateId: number | null;
+  };
+
   let selfBotId: number | null = null;
   /**
    * Telegram polling cursor (`getUpdates` offset).
@@ -188,6 +208,31 @@ export function createTelegramChannelAdapter(params: Readonly<{
   const queuedWebhookUpdates: QueuedWebhookUpdate[] = [];
   let nextQueuedWebhookId = 1;
   let droppedWebhookUpdates = 0;
+  const pendingWebhookAcksByMessageKey = new Map<string, PendingWebhookAck>();
+
+  function dropPendingWebhookAckIds(ids: ReadonlySet<number>): void {
+    if (ids.size === 0) return;
+
+    for (const [key, pending] of pendingWebhookAcksByMessageKey) {
+      for (const id of ids) {
+        pending.queueIds.delete(id);
+      }
+      if (pending.queueIds.size === 0) {
+        pendingWebhookAcksByMessageKey.delete(key);
+      }
+    }
+  }
+
+  function removeQueuedWebhookUpdatesById(ids: ReadonlySet<number>): void {
+    if (ids.size === 0) return;
+
+    for (let index = queuedWebhookUpdates.length - 1; index >= 0; index -= 1) {
+      if (ids.has(queuedWebhookUpdates[index]!.id)) {
+        queuedWebhookUpdates.splice(index, 1);
+      }
+    }
+    dropPendingWebhookAckIds(ids);
+  }
 
   async function ensureSelfIdentity(): Promise<void> {
     if (selfBotId !== null) return;
@@ -214,8 +259,11 @@ export function createTelegramChannelAdapter(params: Readonly<{
     providerId: 'telegram',
     enqueueWebhookUpdate: (update: unknown) => {
       if (queuedWebhookUpdates.length >= MAX_WEBHOOK_QUEUE_SIZE) {
-        queuedWebhookUpdates.shift();
-        droppedWebhookUpdates += 1;
+        const dropped = queuedWebhookUpdates.shift();
+        if (dropped) {
+          droppedWebhookUpdates += 1;
+          dropPendingWebhookAckIds(new Set([dropped.id]));
+        }
       }
       queuedWebhookUpdates.push({
         id: nextQueuedWebhookId,
@@ -233,13 +281,36 @@ export function createTelegramChannelAdapter(params: Readonly<{
         }
 
         const snapshot = queuedWebhookUpdates.slice();
-        const parsed = await parseUpdates(snapshot.map((row) => row.update));
-        const consumedIds = new Set(snapshot.map((row) => row.id));
-        for (let index = queuedWebhookUpdates.length - 1; index >= 0; index -= 1) {
-          if (consumedIds.has(queuedWebhookUpdates[index]!.id)) {
-            queuedWebhookUpdates.splice(index, 1);
+        await ensureSelfIdentity();
+
+        const parsed: ChannelBridgeInboundMessage[] = [];
+        const consumedWithoutAck = new Set<number>();
+        for (const row of snapshot) {
+          const message = parseInboundFromUpdate({
+            update: row.update,
+            selfBotId,
+            allowedChatIds,
+            requireTopics,
+          });
+          if (!message) {
+            consumedWithoutAck.add(row.id);
+            continue;
           }
+
+          parsed.push(message);
+          const key = inboundMessageKey(message);
+          const pending = pendingWebhookAcksByMessageKey.get(key) ?? { queueIds: new Set<number>(), maxUpdateId: null };
+          pending.queueIds.add(row.id);
+
+          const updateId = parseUpdateId(row.update);
+          if (updateId !== null) {
+            pending.maxUpdateId = pending.maxUpdateId === null ? updateId : Math.max(pending.maxUpdateId, updateId);
+          }
+
+          pendingWebhookAcksByMessageKey.set(key, pending);
         }
+
+        removeQueuedWebhookUpdatesById(consumedWithoutAck);
         return parsed;
       }
 
@@ -255,11 +326,61 @@ export function createTelegramChannelAdapter(params: Readonly<{
       }
       return parsed;
     },
+    ackInboundMessages: async (messages) => {
+      if (!webhookMode || messages.length === 0) {
+        return;
+      }
+
+      const consumedIds = new Set<number>();
+      let maxAckedUpdateId: number | null = null;
+
+      for (const message of messages) {
+        const key = inboundMessageKey(message);
+        const pending = pendingWebhookAcksByMessageKey.get(key);
+        if (!pending) {
+          continue;
+        }
+
+        for (const queueId of pending.queueIds) {
+          consumedIds.add(queueId);
+        }
+
+        if (pending.maxUpdateId !== null) {
+          maxAckedUpdateId = maxAckedUpdateId === null
+            ? pending.maxUpdateId
+            : Math.max(maxAckedUpdateId, pending.maxUpdateId);
+        }
+
+        pendingWebhookAcksByMessageKey.delete(key);
+      }
+
+      removeQueuedWebhookUpdatesById(consumedIds);
+
+      if (maxAckedUpdateId !== null) {
+        const nextOffset = maxAckedUpdateId + 1;
+        updateOffset = updateOffset === null ? nextOffset : Math.max(updateOffset, nextOffset);
+      }
+    },
     sendMessage: async (message) => {
+      const normalizedText = String(message.text).trim();
+      const text = normalizedText.length > TELEGRAM_MAX_SEND_MESSAGE_TEXT_LENGTH
+        ? normalizedText.slice(0, TELEGRAM_MAX_SEND_MESSAGE_TEXT_LENGTH)
+        : normalizedText;
+
+      if (!text) {
+        return;
+      }
+
+      if (text.length !== normalizedText.length) {
+        logger.warn(
+          `[channelBridge] Truncated Telegram outbound message for conversation ${message.conversationId} to ${TELEGRAM_MAX_SEND_MESSAGE_TEXT_LENGTH} characters`,
+        );
+      }
+
       await api.sendMessage({
         chatId: message.conversationId,
         threadId: message.threadId,
-        text: message.text,
+        text,
       });
     },
   };
