@@ -927,7 +927,7 @@ export async function executeChannelBridgeTick(params: Readonly<{
             `sendMessage(${adapter.providerId})`,
           );
         } catch (error) {
-          if (adapter.providerId === 'telegram' && isTelegramPermanentDeliveryFailure(error)) {
+          if (isTelegramPermanentDeliveryFailure(error)) {
             params.deps.onWarning?.(
               `Detected permanent Telegram delivery failure; advancing outbound cursor without retry for session=${binding.sessionId} provider=${binding.providerId} conversation=${binding.conversationId} seq=${nextSeq}`,
               error,

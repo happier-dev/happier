@@ -1630,6 +1630,46 @@ describe('executeChannelBridgeTick', () => {
     ).toBe(false);
   });
 
+  it('treats typed Telegram permanent failures as non-retryable even for non-default provider ids', async () => {
+    const store = createInMemoryChannelBindingStore();
+    const { deps, warnings } = createDepsHarness({
+      fetchAgentMessagesAfterSeq: async () => [{ seq: 1, text: 'delivery fails permanently' }],
+    });
+
+    await store.upsertBinding({
+      providerId: 'telegram-v2',
+      conversationId: '-3004b-alt',
+      threadId: null,
+      sessionId: 'sess-typed-permanent-alt',
+      lastForwardedSeq: 0,
+    });
+
+    const adapter: ChannelBridgeAdapter = {
+      providerId: 'telegram-v2',
+      pullInboundMessages: async () => [],
+      sendMessage: async () => {
+        throw new TelegramApiError({
+          method: 'sendMessage',
+          statusCode: 403,
+          data: { description: 'Forbidden: bot was blocked by the user' },
+        });
+      },
+    };
+
+    await executeChannelBridgeTick({
+      store,
+      adapters: [adapter],
+      deps,
+      inboundDeduper: createChannelBridgeInboundDeduper(),
+    });
+
+    const [binding] = await store.listBindings();
+    expect(binding?.lastForwardedSeq).toBe(1);
+    expect(
+      warnings.some((row) => row.message.includes('Detected permanent Telegram delivery failure')),
+    ).toBe(true);
+  });
+
   it('does not treat untyped telegram-like send errors as permanent failures', async () => {
     const store = createInMemoryChannelBindingStore();
     const { deps, warnings } = createDepsHarness({

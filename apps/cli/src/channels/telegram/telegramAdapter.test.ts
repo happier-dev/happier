@@ -296,7 +296,35 @@ describe('createTelegramChannelAdapter', () => {
     );
   });
 
-  it('advances polling offset only after successful parsing', async () => {
+  it('truncates outbound telegram messages by Unicode code points without splitting surrogate pairs', async () => {
+    type SendMessageParams = Readonly<{ chatId: string; threadId: string | null; text: string }>;
+
+    const api = {
+      getMe: vi.fn(async () => ({ id: 9, username: 'happier_bot' })),
+      getUpdates: vi.fn(async () => []),
+      sendMessage: vi.fn(async (_params: SendMessageParams) => undefined),
+    };
+
+    const adapter = createTelegramChannelAdapter({
+      botToken: 'test-token',
+      api,
+    });
+
+    const nearBoundary = 'a'.repeat(4_095) + '🎉';
+    await adapter.sendMessage({
+      conversationId: '1234',
+      threadId: null,
+      text: nearBoundary,
+    });
+
+    expect(api.sendMessage).toHaveBeenCalledTimes(1);
+    const calls = api.sendMessage.mock.calls as SendMessageParams[][];
+    expect(calls[0]?.[0]?.text).toBe(nearBoundary);
+    expect(Array.from(calls[0]?.[0]?.text ?? '').length).toBe(4_096);
+    expect(loggerWarn).not.toHaveBeenCalled();
+  });
+
+  it('advances polling offset only after adapter acknowledgements in polling mode', async () => {
     const getMe = vi
       .fn()
       .mockRejectedValueOnce(new Error('temporary getMe failure'))
@@ -345,6 +373,12 @@ describe('createTelegramChannelAdapter', () => {
     const parsed = await adapter.pullInboundMessages();
     expect(parsed).toHaveLength(1);
     expect(getUpdates).toHaveBeenNthCalledWith(2, { offset: null, limit: 100 });
+
+    const replayBeforeAck = await adapter.pullInboundMessages();
+    expect(replayBeforeAck).toEqual(parsed);
+    expect(getUpdates).toHaveBeenCalledTimes(2);
+
+    await adapter.ackInboundMessages?.(parsed);
 
     await adapter.pullInboundMessages();
     expect(getUpdates).toHaveBeenNthCalledWith(3, { offset: 12, limit: 100 });

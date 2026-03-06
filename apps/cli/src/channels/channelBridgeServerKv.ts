@@ -191,7 +191,10 @@ function parseTelegramConfigRecord(value: unknown): ChannelBridgeServerTelegramC
     out.tickMs = Math.trunc(record.tickMs);
   }
 
-  if (Array.isArray(telegram.allowedChatIds)) {
+  if (telegram.allowedChatIds !== undefined) {
+    if (!Array.isArray(telegram.allowedChatIds)) {
+      throw new ChannelBridgeBadPayloadError('Invalid telegram.allowedChatIds payload');
+    }
     const normalizedAllowedChatIds = normalizeStringArray(telegram.allowedChatIds);
     if (telegram.allowedChatIds.length > 0 && normalizedAllowedChatIds.length === 0) {
       throw new ChannelBridgeBadPayloadError('Invalid telegram.allowedChatIds payload');
@@ -572,6 +575,9 @@ function applyTelegramConfigUpdate(current: ChannelBridgeServerTelegramConfigRec
     if (typeof update.webhookHost === 'string') {
       const normalizedHost = update.webhookHost.trim();
       if (normalizedHost.length === 0) {
+        throw new ChannelBridgeBadPayloadError('Invalid telegram.webhook.host update payload');
+      }
+      if (!isLoopbackHost(normalizedHost)) {
         throw new ChannelBridgeBadPayloadError('Invalid telegram.webhook.host update payload');
       }
       nextWebhook.host = normalizedHost;

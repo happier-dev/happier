@@ -267,6 +267,19 @@ describe('channelBridgeServerKv', () => {
     })).rejects.toThrow('Invalid telegram.webhook.port update payload');
   });
 
+  it('rejects non-loopback webhook host updates', async () => {
+    const kv = createInMemoryKvClient();
+
+    await expect(upsertChannelBridgeTelegramConfigInKv({
+      kv,
+      serverId: 'local-3005',
+      accountId: 'acct-1',
+      update: {
+        webhookHost: '0.0.0.0',
+      },
+    })).rejects.toThrow('Invalid telegram.webhook.host update payload');
+  });
+
   it('replaces raw telegram config bytes in KV without schema parsing', async () => {
     const kv = createInMemoryKvClient();
 
@@ -872,6 +885,33 @@ describe('channelBridgeServerKv', () => {
         body: {
           key: 'k',
           value: malformedAllowedChatIdsValueBase64,
+          version: 3,
+        },
+      }),
+      mutate: async () => ({ status: 200, body: { success: true, results: [] } }),
+    };
+
+    await expect(readChannelBridgeTelegramConfigFromKv({
+      kv,
+      serverId: 'local-3005',
+      accountId: 'acct-1',
+    })).rejects.toThrow('Invalid telegram.allowedChatIds payload');
+  });
+
+  it('throws when telegram config payload contains non-array allowedChatIds', async () => {
+    const malformedAllowedChatIdsTypeValueBase64 = Buffer.from(JSON.stringify({
+      schemaVersion: 1,
+      telegram: {
+        allowedChatIds: '-100123',
+      },
+      updatedAtMs: 123,
+    }), 'utf8').toString('base64');
+    const kv: ChannelBridgeKvClient = {
+      get: async () => ({
+        status: 200,
+        body: {
+          key: 'k',
+          value: malformedAllowedChatIdsTypeValueBase64,
           version: 3,
         },
       }),
