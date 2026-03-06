@@ -1,3 +1,5 @@
+import { isLoopbackHost } from '@/channels/telegram/telegramWebhookRelay';
+
 type RecordLike = Record<string, unknown>;
 
 function asRecord(value: unknown): RecordLike | null {
@@ -63,15 +65,14 @@ function readTrimmedString(value: unknown): string | null {
   return value.trim();
 }
 
-function mergeRecords(levels: Array<RecordLike | null>): RecordLike | null {
-  const merged: RecordLike = {};
-  let hasAny = false;
-  for (const level of levels) {
-    if (!level) continue;
-    hasAny = true;
-    Object.assign(merged, level);
+function firstParsed<T>(values: readonly unknown[], parse: (value: unknown) => T | null): T | null {
+  for (const value of values) {
+    const parsed = parse(value);
+    if (parsed !== null) {
+      return parsed;
+    }
   }
-  return hasAny ? merged : null;
+  return null;
 }
 
 type TelegramChannelBridgeRuntimeConfig = Readonly<{
@@ -121,22 +122,20 @@ export function resolveChannelBridgeRuntimeConfig(params: Readonly<{
   const telegramGlobal = asRecord(providersGlobal?.telegram);
   const telegramServer = asRecord(providersServer?.telegram);
   const telegramAccount = asRecord(providersAccount?.telegram);
-  const telegram = mergeRecords([telegramGlobal, telegramServer, telegramAccount]);
 
   const secretsGlobal = asRecord(telegramGlobal?.secrets);
   const secretsServer = asRecord(telegramServer?.secrets);
   const secretsAccount = asRecord(telegramAccount?.secrets);
-  const secrets = mergeRecords([secretsGlobal, secretsServer, secretsAccount]);
 
   const webhookGlobal = asRecord(telegramGlobal?.webhook);
   const webhookServer = asRecord(telegramServer?.webhook);
   const webhookAccount = asRecord(telegramAccount?.webhook);
-  const webhook = mergeRecords([webhookGlobal, webhookServer, webhookAccount]);
 
   const settingsTickMs =
-    parseInteger(channelBridgeAccount?.tickMs, 250, 60_000)
-    ?? parseInteger(channelBridgeServer?.tickMs, 250, 60_000)
-    ?? parseInteger(channelBridgeGlobal?.tickMs, 250, 60_000);
+    firstParsed(
+      [channelBridgeAccount?.tickMs, channelBridgeServer?.tickMs, channelBridgeGlobal?.tickMs],
+      (value) => parseInteger(value, 250, 60_000),
+    );
   const envTickMs =
     typeof env.HAPPIER_CHANNEL_BRIDGE_TICK_MS === 'string'
       ? parseStrictInteger(env.HAPPIER_CHANNEL_BRIDGE_TICK_MS, 250, 60_000)
@@ -144,15 +143,26 @@ export function resolveChannelBridgeRuntimeConfig(params: Readonly<{
   const tickMs = envTickMs ?? settingsTickMs ?? 2_500;
 
   const settingsBotToken =
-    readTrimmedString(secrets?.botToken)
-    ?? readTrimmedString(telegram?.botToken)
+    firstParsed([
+      secretsAccount?.botToken,
+      telegramAccount?.botToken,
+      secretsServer?.botToken,
+      telegramServer?.botToken,
+      secretsGlobal?.botToken,
+      telegramGlobal?.botToken,
+    ], readTrimmedString)
     ?? '';
   const botToken =
     typeof env.HAPPIER_TELEGRAM_BOT_TOKEN === 'string'
       ? env.HAPPIER_TELEGRAM_BOT_TOKEN.trim()
       : settingsBotToken;
 
-  const settingsAllowedChatIds = parseStringArray(telegram?.allowedChatIds) ?? [];
+  const settingsAllowedChatIds =
+    firstParsed(
+      [telegramAccount?.allowedChatIds, telegramServer?.allowedChatIds, telegramGlobal?.allowedChatIds],
+      parseStringArray,
+    )
+    ?? [];
   const envAllowedChatIdsRaw =
     typeof env.HAPPIER_TELEGRAM_ALLOWED_CHAT_IDS === 'string'
       ? env.HAPPIER_TELEGRAM_ALLOWED_CHAT_IDS.trim()
@@ -166,14 +176,24 @@ export function resolveChannelBridgeRuntimeConfig(params: Readonly<{
       ? parsedEnvAllowedChatIds
       : settingsAllowedChatIds;
 
-  const settingsRequireTopics = parseBoolean(telegram?.requireTopics) ?? false;
+  const settingsRequireTopics =
+    firstParsed(
+      [telegramAccount?.requireTopics, telegramServer?.requireTopics, telegramGlobal?.requireTopics],
+      parseBoolean,
+    )
+    ?? false;
   const envRequireTopics =
     typeof env.HAPPIER_TELEGRAM_REQUIRE_TOPICS === 'string'
       ? parseBoolean(env.HAPPIER_TELEGRAM_REQUIRE_TOPICS)
       : null;
   const requireTopics = envRequireTopics ?? settingsRequireTopics;
 
-  const settingsWebhookEnabled = parseBoolean(webhook?.enabled) ?? false;
+  const settingsWebhookEnabled =
+    firstParsed(
+      [webhookAccount?.enabled, webhookServer?.enabled, webhookGlobal?.enabled],
+      parseBoolean,
+    )
+    ?? false;
   const envWebhookEnabled =
     typeof env.HAPPIER_TELEGRAM_WEBHOOK_ENABLED === 'string'
       ? parseBoolean(env.HAPPIER_TELEGRAM_WEBHOOK_ENABLED)
@@ -181,22 +201,42 @@ export function resolveChannelBridgeRuntimeConfig(params: Readonly<{
   const webhookEnabled = envWebhookEnabled ?? settingsWebhookEnabled;
 
   const settingsWebhookSecret =
-    readTrimmedString(secrets?.webhookSecret)
-    ?? readTrimmedString(webhook?.secret)
+    firstParsed([
+      secretsAccount?.webhookSecret,
+      webhookAccount?.secret,
+      secretsServer?.webhookSecret,
+      webhookServer?.secret,
+      secretsGlobal?.webhookSecret,
+      webhookGlobal?.secret,
+    ], readTrimmedString)
     ?? '';
   const webhookSecret =
     typeof env.HAPPIER_TELEGRAM_WEBHOOK_SECRET === 'string'
       ? env.HAPPIER_TELEGRAM_WEBHOOK_SECRET.trim()
       : settingsWebhookSecret;
 
-  const settingsWebhookHost = readTrimmedString(webhook?.host) || '127.0.0.1';
+  const settingsWebhookHost =
+    firstParsed(
+      [webhookAccount?.host, webhookServer?.host, webhookGlobal?.host],
+      readTrimmedString,
+    )
+    || '127.0.0.1';
   const envWebhookHostRaw =
     typeof env.HAPPIER_TELEGRAM_WEBHOOK_HOST === 'string'
       ? env.HAPPIER_TELEGRAM_WEBHOOK_HOST.trim()
       : null;
-  const webhookHost = envWebhookHostRaw ? envWebhookHostRaw : settingsWebhookHost;
+  const envWebhookHost =
+    envWebhookHostRaw && isLoopbackHost(envWebhookHostRaw)
+      ? envWebhookHostRaw
+      : null;
+  const webhookHost = envWebhookHost ?? settingsWebhookHost;
 
-  const settingsWebhookPort = parseInteger(webhook?.port, 1, 65_535) ?? 8_787;
+  const settingsWebhookPort =
+    firstParsed(
+      [webhookAccount?.port, webhookServer?.port, webhookGlobal?.port],
+      (value) => parseInteger(value, 1, 65_535),
+    )
+    ?? 8_787;
   const envWebhookPort =
     typeof env.HAPPIER_TELEGRAM_WEBHOOK_PORT === 'string'
       ? parseStrictInteger(env.HAPPIER_TELEGRAM_WEBHOOK_PORT, 1, 65_535)

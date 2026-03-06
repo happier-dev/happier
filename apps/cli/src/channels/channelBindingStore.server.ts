@@ -242,20 +242,21 @@ export function createServerBackedChannelBindingStore(params: Readonly<{
         };
       });
     },
-    updateLastForwardedSeq: async (ref, seq) => {
-      await withOptimisticWrite((currentBindings) => {
+    updateLastForwardedSeq: async (ref, params) => {
+      return await withOptimisticWrite((currentBindings) => {
         const key = bindingKey(ref);
-        const parsedSeq = toNonNegativeInt(seq);
+        const parsedSeq = toNonNegativeInt(params.seq);
         if (parsedSeq === null) {
           return {
             nextBindings: currentBindings,
-            result: undefined,
+            result: false,
             changed: false,
           };
         }
         let changed = false;
         const nextBindings = currentBindings.map((binding) => {
           if (bindingKey(binding) !== key) return binding;
+          if (binding.sessionId !== params.expectedSessionId) return binding;
           if (parsedSeq <= binding.lastForwardedSeq) return binding;
           changed = true;
           return {
@@ -266,7 +267,7 @@ export function createServerBackedChannelBindingStore(params: Readonly<{
         });
         return {
           nextBindings,
-          result: undefined,
+          result: changed,
           changed,
         };
       });

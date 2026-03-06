@@ -302,6 +302,32 @@ describe('channelBridgeServerKv', () => {
     expect(readWithUnsupported.rawValueBase64).toBe(rawUnsupported);
   });
 
+  it('refuses raw replace when expected current version does not match', async () => {
+    const kv = createInMemoryKvClient();
+
+    await upsertChannelBridgeTelegramConfigInKv({
+      kv,
+      serverId: 'local-3005',
+      accountId: 'acct-1',
+      update: {
+        requireTopics: true,
+      },
+    });
+
+    const rawUnsupported = Buffer.from(JSON.stringify({
+      schemaVersion: 999,
+      unsupported: true,
+    }), 'utf8').toString('base64');
+
+    await expect(replaceChannelBridgeTelegramConfigRawInKv({
+      kv,
+      serverId: 'local-3005',
+      accountId: 'acct-1',
+      valueBase64: rawUnsupported,
+      expectedCurrentVersion: 999,
+    })).rejects.toThrow('KV version mismatch');
+  });
+
   it('upsert replaces unsupported telegram config schema instead of failing', async () => {
     const unknownSchemaValueBase64 = Buffer.from(JSON.stringify({
       schemaVersion: 999,
@@ -374,7 +400,7 @@ describe('channelBridgeServerKv', () => {
       update: {
         allowedChatIds: ['-100111'],
       },
-    })).resolves.toBeUndefined();
+    })).resolves.toBe(5);
 
     const config = await readChannelBridgeTelegramConfigFromKv({
       kv,

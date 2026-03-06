@@ -161,8 +161,14 @@ describe('createInMemoryChannelBindingStore', () => {
     const created = await store.getBinding(ref);
     expect(created?.lastForwardedSeq).toBe(0);
 
-    await store.updateLastForwardedSeq(ref, 7);
-    await store.updateLastForwardedSeq(ref, Number.NaN);
+    await store.updateLastForwardedSeq(ref, {
+      expectedSessionId: 'sess-cursor',
+      seq: 7,
+    });
+    await store.updateLastForwardedSeq(ref, {
+      expectedSessionId: 'sess-cursor',
+      seq: Number.NaN,
+    });
 
     const updated = await store.getBinding(ref);
     expect(updated?.lastForwardedSeq).toBe(7);
@@ -187,7 +193,10 @@ describe('executeChannelBridgeTick', () => {
       providerId: 'telegram',
       conversationId: '-100sanity',
       threadId: null,
-    }, Number.POSITIVE_INFINITY);
+    }, {
+      expectedSessionId: 'sess-sanity',
+      seq: Number.POSITIVE_INFINITY,
+    });
 
     const afterInvalidUpdate = await store.getBinding({
       providerId: 'telegram',
@@ -1575,6 +1584,55 @@ describe('executeChannelBridgeTick', () => {
 
     const [binding] = await baseStore.listBindings();
     expect(binding?.lastForwardedSeq).toBe(9);
+  });
+
+  it('does not advance cursor when conversation is reattached to a different session', async () => {
+    const baseStore = createInMemoryChannelBindingStore();
+    const ref = {
+      providerId: 'telegram',
+      conversationId: '-3005',
+      threadId: null,
+    } as const;
+
+    await baseStore.upsertBinding({
+      ...ref,
+      sessionId: 'sess-old',
+      lastForwardedSeq: 0,
+    });
+
+    const store: ChannelBindingStore = {
+      ...baseStore,
+      updateLastForwardedSeq: async (bindingRef, params) => {
+        await baseStore.upsertBinding({
+          ...bindingRef,
+          sessionId: 'sess-new',
+          lastForwardedSeq: 0,
+        });
+        return await baseStore.updateLastForwardedSeq(bindingRef, params);
+      },
+    };
+
+    const harness = createAdapterHarness();
+    const { deps, warnings } = createDepsHarness({
+      fetchAgentMessagesAfterSeq: async () => [
+        { seq: 1, text: 'first send' },
+        { seq: 2, text: 'must not send' },
+      ],
+    });
+
+    await executeChannelBridgeTick({
+      store,
+      adapters: [harness.adapter],
+      deps,
+      inboundDeduper: createChannelBridgeInboundDeduper(),
+    });
+
+    expect(harness.sent.map((row) => row.text)).toEqual(['first send']);
+
+    const rebound = await baseStore.getBinding(ref);
+    expect(rebound?.sessionId).toBe('sess-new');
+    expect(rebound?.lastForwardedSeq).toBe(0);
+    expect(warnings.some((row) => row.message.includes('Skipped cursor advance because binding changed'))).toBe(true);
   });
 
   it('warns when binding provider has no active adapter for outbound forwarding', async () => {

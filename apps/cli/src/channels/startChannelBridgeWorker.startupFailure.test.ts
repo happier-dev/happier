@@ -27,7 +27,7 @@ describe('startChannelBridgeFromEnv startup failures', () => {
           createdAtMs: Date.now(),
           updatedAtMs: Date.now(),
         }),
-        updateLastForwardedSeq: async () => undefined,
+        updateLastForwardedSeq: async () => true,
         removeBinding: async () => false,
       })),
       startChannelBridgeWorker: vi.fn(() => {
@@ -95,7 +95,7 @@ describe('startChannelBridgeFromEnv startup failures', () => {
           createdAtMs: Date.now(),
           updatedAtMs: Date.now(),
         }),
-        updateLastForwardedSeq: async () => undefined,
+        updateLastForwardedSeq: async () => true,
         removeBinding: async () => false,
       })),
       startChannelBridgeWorker: vi.fn(() => ({

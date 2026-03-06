@@ -451,8 +451,30 @@ export async function replaceChannelBridgeTelegramConfigRawInKv(params: Readonly
   serverId: string;
   accountId: string;
   valueBase64: string | null;
+  expectedCurrentVersion?: number;
 }>): Promise<void> {
   const key = telegramConfigKvKey(params.serverId, params.accountId);
+
+  if (typeof params.expectedCurrentVersion === 'number' && Number.isFinite(params.expectedCurrentVersion)) {
+    const expectedCurrentVersion = Math.trunc(params.expectedCurrentVersion);
+    const current = await readJsonValue({ kv: params.kv, key });
+    if (current.version !== expectedCurrentVersion) {
+      throw new ChannelBridgeKvVersionMismatchError({
+        key,
+        currentVersion: current.version,
+        currentValueBase64: current.valueBase64,
+      });
+    }
+
+    await writeJsonValue({
+      kv: params.kv,
+      key,
+      valueBase64: params.valueBase64,
+      expectedVersion: expectedCurrentVersion,
+    });
+    return;
+  }
+
   let current = await readJsonValue({ kv: params.kv, key });
 
   for (let attempt = 0; attempt < 4; attempt += 1) {
@@ -571,9 +593,9 @@ export async function upsertChannelBridgeTelegramConfigInKv(params: Readonly<{
   serverId: string;
   accountId: string;
   update: ScopedTelegramBridgeUpdate;
-}>): Promise<void> {
+}>): Promise<number | null> {
   if (!hasNonSecretTelegramConfigUpdate(params.update)) {
-    return;
+    return null;
   }
 
   const key = telegramConfigKvKey(params.serverId, params.accountId);
@@ -595,13 +617,13 @@ export async function upsertChannelBridgeTelegramConfigInKv(params: Readonly<{
     const nextValueBase64 = encodeJsonToBase64(nextRecord);
 
     try {
-      await writeJsonValue({
+      const writtenVersion = await writeJsonValue({
         kv: params.kv,
         key,
         valueBase64: nextValueBase64,
         expectedVersion: current.version,
       });
-      return;
+      return writtenVersion;
     } catch (error) {
       if (error instanceof ChannelBridgeKvVersionMismatchError) {
         try {
@@ -627,7 +649,7 @@ export async function clearChannelBridgeTelegramConfigInKv(params: Readonly<{
   kv: ChannelBridgeKvClient;
   serverId: string;
   accountId: string;
-}>): Promise<void> {
+}>): Promise<number | null> {
   const key = telegramConfigKvKey(params.serverId, params.accountId);
   const current = await readChannelBridgeTelegramConfigFromKv({
     kv: params.kv,
@@ -636,21 +658,21 @@ export async function clearChannelBridgeTelegramConfigInKv(params: Readonly<{
     allowUnsupportedSchema: true,
   });
   let expectedVersion = current.version;
-  if (expectedVersion < 0) return;
+  if (expectedVersion < 0) return null;
 
   for (let attempt = 0; attempt < 4; attempt += 1) {
     try {
-      await writeJsonValue({
+      const writtenVersion = await writeJsonValue({
         kv: params.kv,
         key,
         valueBase64: null,
         expectedVersion,
       });
-      return;
+      return writtenVersion;
     } catch (error) {
       if (error instanceof ChannelBridgeKvVersionMismatchError) {
         if (error.currentVersion < 0) {
-          return;
+          return null;
         }
         expectedVersion = error.currentVersion;
         continue;

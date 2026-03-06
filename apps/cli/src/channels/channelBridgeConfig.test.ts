@@ -148,6 +148,64 @@ describe('resolveChannelBridgeRuntimeConfig', () => {
     expect(config.telegram.allowedChatIds).toEqual(['-100settings']);
   });
 
+  it('falls back to lower scope when account allowedChatIds is malformed', () => {
+    const config = resolveChannelBridgeRuntimeConfig({
+      env: {},
+      serverId: 'local-test',
+      accountId: 'acct-123',
+      settings: {
+        channelBridge: {
+          providers: {
+            telegram: {
+              allowedChatIds: ['-100-global'],
+            },
+          },
+          byServerId: {
+            'local-test': {
+              providers: {
+                telegram: {
+                  allowedChatIds: ['-100-server'],
+                },
+              },
+              byAccountId: {
+                'acct-123': {
+                  providers: {
+                    telegram: {
+                      allowedChatIds: [{}],
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+    });
+
+    expect(config.telegram.allowedChatIds).toEqual(['-100-server']);
+  });
+
+  it('ignores non-loopback env webhook host and keeps settings host', () => {
+    const config = resolveChannelBridgeRuntimeConfig({
+      env: {
+        HAPPIER_TELEGRAM_WEBHOOK_HOST: '0.0.0.0',
+      },
+      settings: {
+        channelBridge: {
+          providers: {
+            telegram: {
+              webhook: {
+                host: '127.0.0.1',
+              },
+            },
+          },
+        },
+      },
+    });
+
+    expect(config.telegram.webhookHost).toBe('127.0.0.1');
+  });
+
   it('rejects webhook port zero and falls back to default', () => {
     const config = resolveChannelBridgeRuntimeConfig({
       env: {

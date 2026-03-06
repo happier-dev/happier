@@ -87,21 +87,14 @@ async function rollbackServerKvAfterLocalSettingsFailure(params: Readonly<{
   serverId: string;
   accountId: string;
   previousSnapshot: TelegramKvRawSnapshot;
+  rollbackGuardVersion: number;
 }>): Promise<void> {
-  if (params.previousSnapshot.version < 0 && params.previousSnapshot.rawValueBase64 === null) {
-    await clearChannelBridgeTelegramConfigInKv({
-      kv: params.kv,
-      serverId: params.serverId,
-      accountId: params.accountId,
-    });
-    return;
-  }
-
   await replaceChannelBridgeTelegramConfigRawInKv({
     kv: params.kv,
     serverId: params.serverId,
     accountId: params.accountId,
     valueBase64: params.previousSnapshot.rawValueBase64,
+    expectedCurrentVersion: params.rollbackGuardVersion,
   });
 }
 
@@ -304,6 +297,7 @@ async function cmdTelegramSet(args: string[]): Promise<void> {
 
   let kv: ReturnType<typeof createAxiosChannelBridgeKvClient> | null = null;
   let previousServerKvSnapshot: TelegramKvRawSnapshot | null = null;
+  let rollbackGuardVersion: number | null = null;
 
   if (shouldWriteSharedKv) {
     kv = createAxiosChannelBridgeKvClient({ token: auth.token });
@@ -318,7 +312,7 @@ async function cmdTelegramSet(args: string[]): Promise<void> {
       rawValueBase64: previous.rawValueBase64,
     };
 
-    await upsertChannelBridgeTelegramConfigInKv({
+    rollbackGuardVersion = await upsertChannelBridgeTelegramConfigInKv({
       kv,
       serverId,
       accountId,
@@ -336,13 +330,14 @@ async function cmdTelegramSet(args: string[]): Promise<void> {
       }),
     );
   } catch (error) {
-    if (shouldWriteSharedKv && kv) {
+    if (shouldWriteSharedKv && kv && typeof rollbackGuardVersion === 'number') {
       try {
         await rollbackServerKvAfterLocalSettingsFailure({
           kv,
           serverId,
           accountId,
           previousSnapshot: previousServerKvSnapshot ?? { version: -1, rawValueBase64: null },
+          rollbackGuardVersion,
         });
       } catch (rollbackError) {
         const primaryMessage = error instanceof Error ? error.message : String(error);
@@ -387,7 +382,7 @@ async function cmdTelegramClear(): Promise<void> {
     rawValueBase64: previous.rawValueBase64,
   };
 
-  await clearChannelBridgeTelegramConfigInKv({
+  const rollbackGuardVersion = await clearChannelBridgeTelegramConfigInKv({
     kv,
     serverId,
     accountId,
@@ -402,19 +397,22 @@ async function cmdTelegramClear(): Promise<void> {
       }),
     );
   } catch (error) {
-    try {
-      await rollbackServerKvAfterLocalSettingsFailure({
-        kv,
-        serverId,
-        accountId,
-        previousSnapshot,
-      });
-    } catch (rollbackError) {
-      const primaryMessage = error instanceof Error ? error.message : String(error);
-      const rollbackMessage = rollbackError instanceof Error ? rollbackError.message : String(rollbackError);
-      throw new Error(
-        `Scoped settings clear failed and server KV rollback failed (${primaryMessage}; rollback: ${rollbackMessage})`,
-      );
+    if (typeof rollbackGuardVersion === 'number') {
+      try {
+        await rollbackServerKvAfterLocalSettingsFailure({
+          kv,
+          serverId,
+          accountId,
+          previousSnapshot,
+          rollbackGuardVersion,
+        });
+      } catch (rollbackError) {
+        const primaryMessage = error instanceof Error ? error.message : String(error);
+        const rollbackMessage = rollbackError instanceof Error ? rollbackError.message : String(rollbackError);
+        throw new Error(
+          `Scoped settings clear failed and server KV rollback failed (${primaryMessage}; rollback: ${rollbackMessage})`,
+        );
+      }
     }
     throw error;
   }

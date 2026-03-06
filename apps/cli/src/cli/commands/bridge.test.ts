@@ -61,8 +61,8 @@ describe('happier bridge command', () => {
 
     createKvClientMock.mockReturnValue({ get: vi.fn(), mutate: vi.fn() });
     readKvConfigMock.mockResolvedValue({ record: null, version: -1, rawValueBase64: null });
-    upsertKvConfigMock.mockResolvedValue(undefined);
-    clearKvConfigMock.mockResolvedValue(undefined);
+    upsertKvConfigMock.mockResolvedValue(12);
+    clearKvConfigMock.mockResolvedValue(7);
     replaceKvRawConfigMock.mockResolvedValue(undefined);
 
     homeDir = await mkdtemp(join(tmpdir(), 'happier-bridge-cmd-'));
@@ -297,12 +297,13 @@ describe('happier bridge command', () => {
       });
 
       expect(upsertKvConfigMock).toHaveBeenCalledTimes(1);
-      expect(clearKvConfigMock).toHaveBeenCalledWith({
+      expect(replaceKvRawConfigMock).toHaveBeenCalledWith({
         kv: expect.any(Object),
         serverId: configuration.activeServerId,
         accountId: 'acct_123',
+        valueBase64: null,
+        expectedCurrentVersion: 12,
       });
-      expect(replaceKvRawConfigMock).not.toHaveBeenCalled();
       expect(process.exitCode).toBe(1);
       expect(errorSpy).toHaveBeenCalledWith(expect.anything(), expect.stringContaining('settings unavailable'));
     } finally {
@@ -335,6 +336,7 @@ describe('happier bridge command', () => {
         serverId: configuration.activeServerId,
         accountId: 'acct_123',
         valueBase64: rawMalformedPayload,
+        expectedCurrentVersion: 12,
       });
       expect(process.exitCode).toBe(1);
       expect(errorSpy).toHaveBeenCalledWith(expect.anything(), expect.stringContaining('settings unavailable'));
@@ -393,6 +395,7 @@ describe('happier bridge command', () => {
         serverId: configuration.activeServerId,
         accountId: 'acct_123',
         valueBase64: previousRawValueBase64,
+        expectedCurrentVersion: 7,
       });
       expect(process.exitCode).toBe(1);
       expect(errorSpy).toHaveBeenCalledWith(expect.anything(), expect.stringContaining('settings clear unavailable'));

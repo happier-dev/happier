@@ -124,7 +124,10 @@ export type ChannelBindingStore = Readonly<{
     sessionId: string;
     lastForwardedSeq: number;
   }>) => Promise<ChannelSessionBinding>;
-  updateLastForwardedSeq: (ref: ChannelBridgeConversationRef, seq: number) => Promise<void>;
+  updateLastForwardedSeq: (
+    ref: ChannelBridgeConversationRef,
+    params: Readonly<{ expectedSessionId: string; seq: number }>,
+  ) => Promise<boolean>;
   removeBinding: (ref: ChannelBridgeConversationRef) => Promise<boolean>;
 }>;
 
@@ -292,18 +295,23 @@ export function createInMemoryChannelBindingStore(now: () => number = () => Date
       byKey.set(key, { ...next });
       return { ...next };
     },
-    updateLastForwardedSeq: async (ref, seq) => {
+    updateLastForwardedSeq: async (ref, params) => {
       const key = bindingKey(ref);
       const existing = byKey.get(key);
-      if (!existing) return;
-      const parsedSeq = toNonNegativeInt(seq);
-      if (parsedSeq === null) return;
+      if (!existing) return false;
+      if (existing.sessionId !== params.expectedSessionId) return false;
+      const parsedSeq = toNonNegativeInt(params.seq);
+      if (parsedSeq === null) return false;
       const nextSeq = Math.max(existing.lastForwardedSeq, parsedSeq);
+      if (nextSeq === existing.lastForwardedSeq) {
+        return false;
+      }
       byKey.set(key, {
         ...existing,
         lastForwardedSeq: nextSeq,
         updatedAtMs: now(),
       });
+      return true;
     },
     removeBinding: async (ref) => byKey.delete(bindingKey(ref)),
   };
@@ -370,10 +378,14 @@ async function authorizeCommand(params: Readonly<{
   };
 
   try {
-    const result = await authorize({
-      commandName: params.commandName,
-      actor,
-    });
+    const result = await withTimeout(
+      authorize({
+        commandName: params.commandName,
+        actor,
+      }),
+      EXTERNAL_IO_TIMEOUT_MS,
+      `authorizeCommand(/${params.commandName})`,
+    );
     if (typeof result === 'boolean') {
       return {
         allowed: result,
@@ -872,11 +884,20 @@ export async function executeChannelBridgeTick(params: Readonly<{
       const persistCursor = async (nextSeq: number): Promise<boolean> => {
         try {
           maxSeq = nextSeq;
-          await withTimeout(
-            params.store.updateLastForwardedSeq(binding, maxSeq),
+          const advanced = await withTimeout(
+            params.store.updateLastForwardedSeq(binding, {
+              expectedSessionId: binding.sessionId,
+              seq: maxSeq,
+            }),
             EXTERNAL_IO_TIMEOUT_MS,
             `store.updateLastForwardedSeq(${binding.providerId}:${binding.conversationId}:${binding.threadId ?? 'null'}:${binding.sessionId}:${maxSeq})`,
           );
+          if (!advanced) {
+            params.deps.onWarning?.(
+              `Skipped cursor advance because binding changed or cursor was stale for session=${binding.sessionId} provider=${binding.providerId} conversation=${binding.conversationId} seq=${nextSeq}`,
+            );
+            return false;
+          }
           return true;
         } catch (error) {
           params.deps.onWarning?.(
@@ -1026,7 +1047,11 @@ export function startChannelBridgeWorker(params: Readonly<{
         const stopResults = await Promise.allSettled(
           adaptersToStop.map(async (adapter) => {
             if (typeof adapter.stop !== 'function') return;
-            await adapter.stop();
+            await withTimeout(
+              Promise.resolve(adapter.stop()),
+              EXTERNAL_IO_TIMEOUT_MS,
+              `adapter.stop(${adapter.providerId})`,
+            );
           }),
         );
 

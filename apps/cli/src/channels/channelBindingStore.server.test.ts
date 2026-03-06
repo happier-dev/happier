@@ -350,7 +350,10 @@ describe('createServerBackedChannelBindingStore', () => {
       providerId: 'telegram',
       conversationId: '-100111',
       threadId: null,
-    }, 10);
+    }, {
+      expectedSessionId: 'sess-1',
+      seq: 10,
+    });
 
     const updated = await store.getBinding({
       providerId: 'telegram',
@@ -395,12 +398,18 @@ describe('createServerBackedChannelBindingStore', () => {
       providerId: 'telegram',
       conversationId: '-100222',
       threadId: null,
-    }, 10);
+    }, {
+      expectedSessionId: 'sess-2',
+      seq: 10,
+    });
     await store.updateLastForwardedSeq({
       providerId: 'telegram',
       conversationId: '-100-missing',
       threadId: null,
-    }, 1);
+    }, {
+      expectedSessionId: 'sess-missing',
+      seq: 1,
+    });
     const missingRemoved = await store.removeBinding({
       providerId: 'telegram',
       conversationId: '-100-missing',
@@ -409,6 +418,44 @@ describe('createServerBackedChannelBindingStore', () => {
 
     expect(missingRemoved).toBe(false);
     expect(counting.mutateCallCount()).toBe(initialMutations);
+  });
+
+  it('does not advance cursor when expected session id does not match', async () => {
+    const counting = createCountingKvClient();
+    const store = createServerBackedChannelBindingStore({
+      kv: counting.kv,
+      serverId: 'local-3005',
+      accountId: 'acct-1',
+    });
+
+    await store.upsertBinding({
+      providerId: 'telegram',
+      conversationId: '-100session-guard',
+      threadId: null,
+      sessionId: 'sess-current',
+      lastForwardedSeq: 5,
+    });
+
+    const beforeMutations = counting.mutateCallCount();
+    const advanced = await store.updateLastForwardedSeq({
+      providerId: 'telegram',
+      conversationId: '-100session-guard',
+      threadId: null,
+    }, {
+      expectedSessionId: 'sess-stale',
+      seq: 99,
+    });
+
+    expect(advanced).toBe(false);
+    expect(counting.mutateCallCount()).toBe(beforeMutations);
+
+    const binding = await store.getBinding({
+      providerId: 'telegram',
+      conversationId: '-100session-guard',
+      threadId: null,
+    });
+    expect(binding?.sessionId).toBe('sess-current');
+    expect(binding?.lastForwardedSeq).toBe(5);
   });
 
   it('rejects invalid identity/cursor values and skips invalid seq writes', async () => {
@@ -464,13 +511,19 @@ describe('createServerBackedChannelBindingStore', () => {
       providerId: 'telegram',
       conversationId: '-100nf',
       threadId: '11',
-    }, Number.POSITIVE_INFINITY);
+    }, {
+      expectedSessionId: 'sess-nf',
+      seq: Number.POSITIVE_INFINITY,
+    });
 
     await store.updateLastForwardedSeq({
       providerId: 'telegram',
       conversationId: '-100nf',
       threadId: '11',
-    }, Number.NaN);
+    }, {
+      expectedSessionId: 'sess-nf',
+      seq: Number.NaN,
+    });
 
     expect(counting.mutateCallCount()).toBe(initialMutations);
 
@@ -607,7 +660,7 @@ describe('createServerBackedChannelBindingStore', () => {
       },
     ]);
 
-    await new Promise((resolve) => setTimeout(resolve, 1));
+    await new Promise((resolve) => setTimeout(resolve, 10));
     const second = await store.listBindings();
     expect(second).toEqual(first);
     expect(getCalls).toBeGreaterThanOrEqual(2);
