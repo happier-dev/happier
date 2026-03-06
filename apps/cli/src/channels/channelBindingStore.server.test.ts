@@ -607,8 +607,10 @@ describe('createServerBackedChannelBindingStore', () => {
       },
     ]);
 
+    await new Promise((resolve) => setTimeout(resolve, 1));
     const second = await store.listBindings();
     expect(second).toEqual(first);
+    expect(getCalls).toBeGreaterThanOrEqual(2);
   });
 
   it('uses conflict payload state for retry without extra primary read', async () => {
