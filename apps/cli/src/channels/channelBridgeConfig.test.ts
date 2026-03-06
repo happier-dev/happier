@@ -129,6 +129,25 @@ describe('resolveChannelBridgeRuntimeConfig', () => {
     expect(config.telegram.webhookPort).toBe(8_877);
   });
 
+  it('falls back to settings allowedChatIds when env CSV is effectively empty', () => {
+    const config = resolveChannelBridgeRuntimeConfig({
+      env: {
+        HAPPIER_TELEGRAM_ALLOWED_CHAT_IDS: ', ,',
+      },
+      settings: {
+        channelBridge: {
+          providers: {
+            telegram: {
+              allowedChatIds: ['-100settings'],
+            },
+          },
+        },
+      },
+    });
+
+    expect(config.telegram.allowedChatIds).toEqual(['-100settings']);
+  });
+
   it('rejects webhook port zero and falls back to default', () => {
     const config = resolveChannelBridgeRuntimeConfig({
       env: {

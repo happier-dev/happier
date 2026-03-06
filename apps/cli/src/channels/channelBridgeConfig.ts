@@ -157,9 +157,13 @@ export function resolveChannelBridgeRuntimeConfig(params: Readonly<{
     typeof env.HAPPIER_TELEGRAM_ALLOWED_CHAT_IDS === 'string'
       ? env.HAPPIER_TELEGRAM_ALLOWED_CHAT_IDS.trim()
       : null;
-  const allowedChatIds =
+  const parsedEnvAllowedChatIds =
     envAllowedChatIdsRaw && envAllowedChatIdsRaw.length > 0
       ? parseCsv(envAllowedChatIdsRaw)
+      : null;
+  const allowedChatIds =
+    parsedEnvAllowedChatIds && parsedEnvAllowedChatIds.length > 0
+      ? parsedEnvAllowedChatIds
       : settingsAllowedChatIds;
 
   const settingsRequireTopics = parseBoolean(telegram?.requireTopics) ?? false;

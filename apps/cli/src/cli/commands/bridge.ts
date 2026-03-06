@@ -14,9 +14,9 @@ import {
 import { resolveChannelBridgeRuntimeConfig } from '@/channels/channelBridgeConfig';
 import {
   clearChannelBridgeTelegramConfigInKv,
-  type ChannelBridgeServerTelegramConfigRecord,
   createAxiosChannelBridgeKvClient,
   readChannelBridgeTelegramConfigFromKv,
+  replaceChannelBridgeTelegramConfigRawInKv,
   upsertChannelBridgeTelegramConfigInKv,
 } from '@/channels/channelBridgeServerKv';
 import { overlayServerKvTelegramConfigInSettings } from '@/channels/channelBridgeServerConfigOverlay';
@@ -77,59 +77,18 @@ async function resolveActiveAuthContext(): Promise<Readonly<{ accountId: string;
   };
 }
 
-function restoreSharedTelegramUpdateFromKvRecord(
-  record: ChannelBridgeServerTelegramConfigRecord | null,
-): Readonly<{
-  tickMs?: number;
-  allowedChatIds?: string[];
-  requireTopics?: boolean;
-  webhookEnabled?: boolean;
-  webhookHost?: string;
-  webhookPort?: number;
-}> | null {
-  if (!record) return null;
-
-  const restored: {
-    tickMs?: number;
-    allowedChatIds?: string[];
-    requireTopics?: boolean;
-    webhookEnabled?: boolean;
-    webhookHost?: string;
-    webhookPort?: number;
-  } = {};
-
-  if (typeof record.tickMs === 'number' && Number.isFinite(record.tickMs)) {
-    restored.tickMs = Math.trunc(record.tickMs);
-  }
-  if (Array.isArray(record.telegram.allowedChatIds)) {
-    restored.allowedChatIds = [...record.telegram.allowedChatIds];
-  }
-  if (typeof record.telegram.requireTopics === 'boolean') {
-    restored.requireTopics = record.telegram.requireTopics;
-  }
-
-  const webhook = record.telegram.webhook;
-  if (typeof webhook?.enabled === 'boolean') {
-    restored.webhookEnabled = webhook.enabled;
-  }
-  if (typeof webhook?.host === 'string') {
-    restored.webhookHost = webhook.host;
-  }
-  if (typeof webhook?.port === 'number' && Number.isFinite(webhook.port)) {
-    restored.webhookPort = Math.trunc(webhook.port);
-  }
-
-  return restored;
-}
+type TelegramKvRawSnapshot = Readonly<{
+  version: number;
+  rawValueBase64: string | null;
+}>;
 
 async function rollbackServerKvAfterLocalSettingsFailure(params: Readonly<{
   kv: ReturnType<typeof createAxiosChannelBridgeKvClient>;
   serverId: string;
   accountId: string;
-  previousRecord: ChannelBridgeServerTelegramConfigRecord | null;
+  previousSnapshot: TelegramKvRawSnapshot;
 }>): Promise<void> {
-  const rollbackUpdate = restoreSharedTelegramUpdateFromKvRecord(params.previousRecord);
-  if (!rollbackUpdate || Object.keys(rollbackUpdate).length === 0) {
+  if (params.previousSnapshot.version < 0 && params.previousSnapshot.rawValueBase64 === null) {
     await clearChannelBridgeTelegramConfigInKv({
       kv: params.kv,
       serverId: params.serverId,
@@ -138,11 +97,11 @@ async function rollbackServerKvAfterLocalSettingsFailure(params: Readonly<{
     return;
   }
 
-  await upsertChannelBridgeTelegramConfigInKv({
+  await replaceChannelBridgeTelegramConfigRawInKv({
     kv: params.kv,
     serverId: params.serverId,
     accountId: params.accountId,
-    update: rollbackUpdate,
+    valueBase64: params.previousSnapshot.rawValueBase64,
   });
 }
 
@@ -344,7 +303,7 @@ async function cmdTelegramSet(args: string[]): Promise<void> {
   const shouldWriteSharedKv = hasSharedTelegramBridgeUpdate({ update: split.sharedUpdate });
 
   let kv: ReturnType<typeof createAxiosChannelBridgeKvClient> | null = null;
-  let previousServerKvRecord: ChannelBridgeServerTelegramConfigRecord | null = null;
+  let previousServerKvSnapshot: TelegramKvRawSnapshot | null = null;
 
   if (shouldWriteSharedKv) {
     kv = createAxiosChannelBridgeKvClient({ token: auth.token });
@@ -354,7 +313,10 @@ async function cmdTelegramSet(args: string[]): Promise<void> {
       accountId,
       allowUnsupportedSchema: true,
     });
-    previousServerKvRecord = previous.record;
+    previousServerKvSnapshot = {
+      version: previous.version,
+      rawValueBase64: previous.rawValueBase64,
+    };
 
     await upsertChannelBridgeTelegramConfigInKv({
       kv,
@@ -380,7 +342,7 @@ async function cmdTelegramSet(args: string[]): Promise<void> {
           kv,
           serverId,
           accountId,
-          previousRecord: previousServerKvRecord,
+          previousSnapshot: previousServerKvSnapshot ?? { version: -1, rawValueBase64: null },
         });
       } catch (rollbackError) {
         const primaryMessage = error instanceof Error ? error.message : String(error);
@@ -420,6 +382,10 @@ async function cmdTelegramClear(): Promise<void> {
     accountId,
     allowUnsupportedSchema: true,
   });
+  const previousSnapshot: TelegramKvRawSnapshot = {
+    version: previous.version,
+    rawValueBase64: previous.rawValueBase64,
+  };
 
   await clearChannelBridgeTelegramConfigInKv({
     kv,
@@ -441,7 +407,7 @@ async function cmdTelegramClear(): Promise<void> {
         kv,
         serverId,
         accountId,
-        previousRecord: previous.record,
+        previousSnapshot,
       });
     } catch (rollbackError) {
       const primaryMessage = error instanceof Error ? error.message : String(error);

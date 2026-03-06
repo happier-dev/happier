@@ -195,6 +195,22 @@ async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, label: str
   }
 }
 
+function parseTelegramSendMessageFailureStatus(error: unknown): number | null {
+  if (!(error instanceof Error)) return null;
+  const match = error.message.match(/Telegram sendMessage failed \((\d{3})\)/);
+  if (!match) return null;
+  const parsed = Number.parseInt(match[1] ?? '', 10);
+  return Number.isInteger(parsed) ? parsed : null;
+}
+
+function isTelegramPermanentDeliveryFailure(error: unknown): boolean {
+  if (!(error instanceof Error)) return false;
+  const status = parseTelegramSendMessageFailureStatus(error);
+  if (status === 403) return true;
+  if (status === 400 && /chat not found/i.test(error.message)) return true;
+  return false;
+}
+
 type ChannelBridgeInboundDeduper = Readonly<{
   isDuplicate: (message: ChannelBridgeInboundMessage) => boolean;
 }>;
@@ -315,7 +331,7 @@ function formatSessionsMessage(rows: Array<Readonly<{ sessionId: string; label: 
     .map((row) => `• ${row.sessionId}${row.label ? ` (${row.label})` : ''}`)
     .join('\n');
   const suffix = truncated ? `\n…and ${rows.length - limit} more.` : '';
-  return `Active sessions:\n${body}${suffix}`;
+  return `Recent sessions:\n${body}${suffix}`;
 }
 
 async function replyToConversation(
@@ -427,7 +443,11 @@ async function handleCommand(params: Readonly<{
   if (command.name === 'sessions') {
     let sessions: Array<Readonly<{ sessionId: string; label: string | null }>>;
     try {
-      sessions = await deps.listSessions();
+      sessions = await withTimeout(
+        deps.listSessions(),
+        EXTERNAL_IO_TIMEOUT_MS,
+        'listSessions()',
+      );
     } catch (error) {
       deps.onWarning?.('Failed to list sessions for /sessions command', error);
       await replyToConversation(adapter, ref, 'Failed to retrieve sessions. Please try again later.');
@@ -440,7 +460,11 @@ async function handleCommand(params: Readonly<{
   if (command.name === 'session') {
     let existing: ChannelSessionBinding | null;
     try {
-      existing = await store.getBinding(ref);
+      existing = await withTimeout(
+        store.getBinding(ref),
+        EXTERNAL_IO_TIMEOUT_MS,
+        `store.getBinding(${ref.providerId}:${ref.conversationId}:${ref.threadId ?? 'null'})`,
+      );
     } catch (error) {
       deps.onWarning?.('Failed to read binding for /session command', error);
       await replyToConversation(adapter, ref, 'Failed to read current session binding. Please try again later.');
@@ -464,7 +488,11 @@ async function handleCommand(params: Readonly<{
 
     let resolved: ResolveSessionIdResult;
     try {
-      resolved = await deps.resolveSessionIdOrPrefix(idOrPrefix);
+      resolved = await withTimeout(
+        deps.resolveSessionIdOrPrefix(idOrPrefix),
+        EXTERNAL_IO_TIMEOUT_MS,
+        `resolveSessionIdOrPrefix(${idOrPrefix})`,
+      );
     } catch (error) {
       deps.onWarning?.('Failed to resolve session by id/prefix for attach', error);
       await replyToConversation(
@@ -500,7 +528,11 @@ async function handleCommand(params: Readonly<{
 
     let latestSeq: number;
     try {
-      const resolvedSeq = toNonNegativeInt(await deps.resolveLatestSessionSeq(resolved.sessionId));
+      const resolvedSeq = toNonNegativeInt(await withTimeout(
+        deps.resolveLatestSessionSeq(resolved.sessionId),
+        EXTERNAL_IO_TIMEOUT_MS,
+        `resolveLatestSessionSeq(${resolved.sessionId})`,
+      ));
       if (resolvedSeq === null) {
         deps.onWarning?.(
           `resolveLatestSessionSeq returned an invalid value for session ${resolved.sessionId}; expected a non-negative integer`,
@@ -525,7 +557,11 @@ async function handleCommand(params: Readonly<{
 
     let previousBinding: ChannelSessionBinding | null;
     try {
-      previousBinding = await store.getBinding(ref);
+      previousBinding = await withTimeout(
+        store.getBinding(ref),
+        EXTERNAL_IO_TIMEOUT_MS,
+        `store.getBinding(${ref.providerId}:${ref.conversationId}:${ref.threadId ?? 'null'})`,
+      );
     } catch (error) {
       deps.onWarning?.('Failed to read existing binding during /attach', error);
       await replyToConversation(adapter, ref, 'Failed to read current binding before attach. Please try again later.');
@@ -534,13 +570,17 @@ async function handleCommand(params: Readonly<{
     const previousSessionId = previousBinding?.sessionId ?? null;
 
     try {
-      await store.upsertBinding({
+      await withTimeout(
+        store.upsertBinding({
         providerId: ref.providerId,
         conversationId: ref.conversationId,
         threadId: ref.threadId,
         sessionId: resolved.sessionId,
         lastForwardedSeq: latestSeq,
-      });
+        }),
+        EXTERNAL_IO_TIMEOUT_MS,
+        `store.upsertBinding(${ref.providerId}:${ref.conversationId}:${ref.threadId ?? 'null'})`,
+      );
     } catch (error) {
       deps.onWarning?.('Failed to persist binding during /attach', error);
       await replyToConversation(adapter, ref, `Failed to attach to session ${resolved.sessionId}: unable to persist binding.`);
@@ -558,7 +598,11 @@ async function handleCommand(params: Readonly<{
   if (command.name === 'detach') {
     let removed = false;
     try {
-      removed = await store.removeBinding(ref);
+      removed = await withTimeout(
+        store.removeBinding(ref),
+        EXTERNAL_IO_TIMEOUT_MS,
+        `store.removeBinding(${ref.providerId}:${ref.conversationId}:${ref.threadId ?? 'null'})`,
+      );
     } catch (error) {
       deps.onWarning?.('Failed to remove binding for /detach command', error);
       await replyToConversation(adapter, ref, 'Failed to detach current session binding. Please try again later.');
@@ -685,7 +729,11 @@ export async function executeChannelBridgeTick(params: Readonly<{
         };
         let binding: ChannelSessionBinding | null;
         try {
-          binding = await params.store.getBinding(ref);
+          binding = await withTimeout(
+            params.store.getBinding(ref),
+            EXTERNAL_IO_TIMEOUT_MS,
+            `store.getBinding(${ref.providerId}:${ref.conversationId}:${ref.threadId ?? 'null'})`,
+          );
         } catch (error) {
           params.deps.onWarning?.(
             `Failed to read binding for inbound message forwarding (provider=${adapter.providerId} conversation=${event.conversationId} thread=${event.threadId ?? 'null'})`,
@@ -758,7 +806,11 @@ export async function executeChannelBridgeTick(params: Readonly<{
 
   let bindings: ChannelSessionBinding[];
   try {
-    bindings = await params.store.listBindings();
+    bindings = await withTimeout(
+      params.store.listBindings(),
+      EXTERNAL_IO_TIMEOUT_MS,
+      'store.listBindings()',
+    );
   } catch (error) {
     params.deps.onWarning?.('Failed to list bindings for outbound forwarding', error);
     return;
@@ -820,7 +872,11 @@ export async function executeChannelBridgeTick(params: Readonly<{
       const persistCursor = async (nextSeq: number): Promise<boolean> => {
         try {
           maxSeq = nextSeq;
-          await params.store.updateLastForwardedSeq(binding, maxSeq);
+          await withTimeout(
+            params.store.updateLastForwardedSeq(binding, maxSeq),
+            EXTERNAL_IO_TIMEOUT_MS,
+            `store.updateLastForwardedSeq(${binding.providerId}:${binding.conversationId}:${binding.threadId ?? 'null'}:${binding.sessionId}:${maxSeq})`,
+          );
           return true;
         } catch (error) {
           params.deps.onWarning?.(
@@ -846,15 +902,26 @@ export async function executeChannelBridgeTick(params: Readonly<{
           }
           continue;
         }
-        await withTimeout(
-          adapter.sendMessage({
-            conversationId: binding.conversationId,
-            threadId: binding.threadId,
-            text,
-          }),
-          EXTERNAL_IO_TIMEOUT_MS,
-          `sendMessage(${adapter.providerId})`,
-        );
+        try {
+          await withTimeout(
+            adapter.sendMessage({
+              conversationId: binding.conversationId,
+              threadId: binding.threadId,
+              text,
+            }),
+            EXTERNAL_IO_TIMEOUT_MS,
+            `sendMessage(${adapter.providerId})`,
+          );
+        } catch (error) {
+          if (adapter.providerId === 'telegram' && isTelegramPermanentDeliveryFailure(error)) {
+            params.deps.onWarning?.(
+              `Detected permanent Telegram delivery failure; advancing outbound cursor without retry for session=${binding.sessionId} provider=${binding.providerId} conversation=${binding.conversationId} seq=${nextSeq}`,
+              error,
+            );
+          } else {
+            throw error;
+          }
+        }
         const persisted = await persistCursor(nextSeq);
         if (!persisted) {
           break;

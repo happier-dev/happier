@@ -414,11 +414,11 @@ export async function readChannelBridgeTelegramConfigFromKv(params: Readonly<{
   serverId: string;
   accountId: string;
   allowUnsupportedSchema?: boolean;
-}>): Promise<Readonly<{ record: ChannelBridgeServerTelegramConfigRecord | null; version: number }>> {
+}>): Promise<Readonly<{ record: ChannelBridgeServerTelegramConfigRecord | null; version: number; rawValueBase64: string | null }>> {
   const key = telegramConfigKvKey(params.serverId, params.accountId);
   const row = await readJsonValue({ kv: params.kv, key });
   if (!row.valueBase64) {
-    return { record: null, version: row.version };
+    return { record: null, version: row.version, rawValueBase64: null };
   }
 
   let decoded: unknown;
@@ -426,7 +426,7 @@ export async function readChannelBridgeTelegramConfigFromKv(params: Readonly<{
     decoded = decodeBase64ToJson(row.valueBase64);
   } catch (error) {
     if (params.allowUnsupportedSchema && error instanceof ChannelBridgeBadPayloadError) {
-      return { record: null, version: row.version };
+      return { record: null, version: row.version, rawValueBase64: row.valueBase64 };
     }
     throw error;
   }
@@ -434,7 +434,7 @@ export async function readChannelBridgeTelegramConfigFromKv(params: Readonly<{
   const parsed = parseTelegramConfigRecord(decoded);
   if (!parsed) {
     if (params.allowUnsupportedSchema) {
-      return { record: null, version: row.version };
+      return { record: null, version: row.version, rawValueBase64: row.valueBase64 };
     }
     throw new Error(`Invalid or unsupported Telegram config schema for key ${key}`);
   }
@@ -442,7 +442,41 @@ export async function readChannelBridgeTelegramConfigFromKv(params: Readonly<{
   return {
     record: parsed,
     version: row.version,
+    rawValueBase64: row.valueBase64,
   };
+}
+
+export async function replaceChannelBridgeTelegramConfigRawInKv(params: Readonly<{
+  kv: ChannelBridgeKvClient;
+  serverId: string;
+  accountId: string;
+  valueBase64: string | null;
+}>): Promise<void> {
+  const key = telegramConfigKvKey(params.serverId, params.accountId);
+  let current = await readJsonValue({ kv: params.kv, key });
+
+  for (let attempt = 0; attempt < 4; attempt += 1) {
+    try {
+      await writeJsonValue({
+        kv: params.kv,
+        key,
+        valueBase64: params.valueBase64,
+        expectedVersion: current.version,
+      });
+      return;
+    } catch (error) {
+      if (error instanceof ChannelBridgeKvVersionMismatchError) {
+        current = {
+          valueBase64: error.currentValueBase64,
+          version: error.currentVersion,
+        };
+        continue;
+      }
+      throw error;
+    }
+  }
+
+  throw new Error(`Unable to replace Telegram bridge KV value after retries for key ${key}`);
 }
 
 function applyTelegramConfigUpdate(current: ChannelBridgeServerTelegramConfigRecord | null, update: ScopedTelegramBridgeUpdate): ChannelBridgeServerTelegramConfigRecord {
@@ -475,7 +509,11 @@ function applyTelegramConfigUpdate(current: ChannelBridgeServerTelegramConfigRec
   }
 
   if (Array.isArray(update.allowedChatIds)) {
-    next.telegram.allowedChatIds = normalizeStringArray(update.allowedChatIds);
+    const normalizedAllowedChatIds = normalizeStringArray(update.allowedChatIds);
+    if (update.allowedChatIds.length > 0 && normalizedAllowedChatIds.length === 0) {
+      throw new ChannelBridgeBadPayloadError('Invalid telegram.allowedChatIds update payload');
+    }
+    next.telegram.allowedChatIds = normalizedAllowedChatIds;
   }
   if (typeof update.requireTopics === 'boolean') {
     next.telegram.requireTopics = update.requireTopics;
@@ -494,10 +532,22 @@ function applyTelegramConfigUpdate(current: ChannelBridgeServerTelegramConfigRec
       nextWebhook.enabled = update.webhookEnabled;
     }
     if (typeof update.webhookHost === 'string') {
-      nextWebhook.host = update.webhookHost;
+      const normalizedHost = update.webhookHost.trim();
+      if (normalizedHost.length === 0) {
+        throw new ChannelBridgeBadPayloadError('Invalid telegram.webhook.host update payload');
+      }
+      nextWebhook.host = normalizedHost;
     }
-    if (typeof update.webhookPort === 'number' && Number.isFinite(update.webhookPort)) {
-      nextWebhook.port = Math.trunc(update.webhookPort);
+    if (typeof update.webhookPort === 'number') {
+      if (
+        !Number.isFinite(update.webhookPort)
+        || !Number.isInteger(update.webhookPort)
+        || update.webhookPort < 1
+        || update.webhookPort > 65_535
+      ) {
+        throw new ChannelBridgeBadPayloadError('Invalid telegram.webhook.port update payload');
+      }
+      nextWebhook.port = update.webhookPort;
     }
     next.telegram.webhook = nextWebhook;
   }

@@ -370,7 +370,7 @@ describe('executeChannelBridgeTick', () => {
       inboundDeduper: createChannelBridgeInboundDeduper(),
     });
 
-    expect(harness.sent.some((row) => row.text.includes('Active sessions'))).toBe(true);
+    expect(harness.sent.some((row) => row.text.includes('Recent sessions'))).toBe(true);
     expect(harness.sent.some((row) => row.text.includes('Detached'))).toBe(true);
 
     const remaining = await store.listBindings();
@@ -1789,7 +1789,7 @@ describe('startChannelBridgeWorker', () => {
 
     try {
       await waitFor(() => harness.sent.length > 0);
-      expect(harness.sent.some((row) => row.text.includes('Active sessions'))).toBe(true);
+      expect(harness.sent.some((row) => row.text.includes('Recent sessions'))).toBe(true);
     } finally {
       await worker.stop();
     }

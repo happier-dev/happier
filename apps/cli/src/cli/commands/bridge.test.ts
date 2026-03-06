@@ -16,6 +16,7 @@ const createKvClientMock = vi.fn();
 const readKvConfigMock = vi.fn();
 const upsertKvConfigMock = vi.fn();
 const clearKvConfigMock = vi.fn();
+const replaceKvRawConfigMock = vi.fn();
 
 vi.mock('@/persistence', () => ({
   readCredentials: readCredentialsMock,
@@ -35,6 +36,7 @@ vi.mock('@/channels/channelBridgeServerKv', () => ({
   createAxiosChannelBridgeKvClient: createKvClientMock,
   upsertChannelBridgeTelegramConfigInKv: upsertKvConfigMock,
   clearChannelBridgeTelegramConfigInKv: clearKvConfigMock,
+  replaceChannelBridgeTelegramConfigRawInKv: replaceKvRawConfigMock,
   readChannelBridgeTelegramConfigFromKv: readKvConfigMock,
 }));
 
@@ -58,9 +60,10 @@ describe('happier bridge command', () => {
     });
 
     createKvClientMock.mockReturnValue({ get: vi.fn(), mutate: vi.fn() });
-    readKvConfigMock.mockResolvedValue({ record: null, version: -1 });
+    readKvConfigMock.mockResolvedValue({ record: null, version: -1, rawValueBase64: null });
     upsertKvConfigMock.mockResolvedValue(undefined);
     clearKvConfigMock.mockResolvedValue(undefined);
+    replaceKvRawConfigMock.mockResolvedValue(undefined);
 
     homeDir = await mkdtemp(join(tmpdir(), 'happier-bridge-cmd-'));
     process.env.HAPPIER_HOME_DIR = homeDir;
@@ -299,6 +302,40 @@ describe('happier bridge command', () => {
         serverId: configuration.activeServerId,
         accountId: 'acct_123',
       });
+      expect(replaceKvRawConfigMock).not.toHaveBeenCalled();
+      expect(process.exitCode).toBe(1);
+      expect(errorSpy).toHaveBeenCalledWith(expect.anything(), expect.stringContaining('settings unavailable'));
+    } finally {
+      errorSpy.mockRestore();
+    }
+  });
+
+  it('restores raw pre-existing KV payload when local scoped settings write fails', async () => {
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const rawMalformedPayload = Buffer.from('not-json', 'utf8').toString('base64');
+    updateSettingsMock.mockRejectedValueOnce(new Error('settings unavailable'));
+    readKvConfigMock.mockResolvedValueOnce({
+      record: null,
+      version: 7,
+      rawValueBase64: rawMalformedPayload,
+    });
+
+    try {
+      const { handleBridgeCliCommand } = await import('./bridge');
+
+      await handleBridgeCliCommand({
+        args: ['bridge', 'telegram', 'set', '--bot-token', 'bot-token-1', '--require-topics', 'true'],
+        rawArgv: [],
+        terminalRuntime: null,
+      });
+
+      expect(upsertKvConfigMock).toHaveBeenCalledTimes(1);
+      expect(replaceKvRawConfigMock).toHaveBeenCalledWith({
+        kv: expect.any(Object),
+        serverId: configuration.activeServerId,
+        accountId: 'acct_123',
+        valueBase64: rawMalformedPayload,
+      });
       expect(process.exitCode).toBe(1);
       expect(errorSpy).toHaveBeenCalledWith(expect.anything(), expect.stringContaining('settings unavailable'));
     } finally {
@@ -309,6 +346,20 @@ describe('happier bridge command', () => {
   it('restores previous shared KV config when local clear fails', async () => {
     const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
     updateSettingsMock.mockRejectedValueOnce(new Error('settings clear unavailable'));
+    const previousRawValueBase64 = Buffer.from(JSON.stringify({
+      schemaVersion: 1,
+      updatedAtMs: 123,
+      telegram: {
+        allowedChatIds: ['-100111'],
+        requireTopics: true,
+        webhook: {
+          enabled: true,
+          host: '127.0.0.1',
+          port: 8787,
+        },
+      },
+    }), 'utf8').toString('base64');
+
     readKvConfigMock.mockResolvedValueOnce({
       record: {
         schemaVersion: 1,
@@ -324,6 +375,7 @@ describe('happier bridge command', () => {
         },
       },
       version: 4,
+      rawValueBase64: previousRawValueBase64,
     });
 
     try {
@@ -336,17 +388,11 @@ describe('happier bridge command', () => {
       });
 
       expect(clearKvConfigMock).toHaveBeenCalledTimes(1);
-      expect(upsertKvConfigMock).toHaveBeenCalledWith({
+      expect(replaceKvRawConfigMock).toHaveBeenCalledWith({
         kv: expect.any(Object),
         serverId: configuration.activeServerId,
         accountId: 'acct_123',
-        update: {
-          allowedChatIds: ['-100111'],
-          requireTopics: true,
-          webhookEnabled: true,
-          webhookHost: '127.0.0.1',
-          webhookPort: 8787,
-        },
+        valueBase64: previousRawValueBase64,
       });
       expect(process.exitCode).toBe(1);
       expect(errorSpy).toHaveBeenCalledWith(expect.anything(), expect.stringContaining('settings clear unavailable'));

@@ -5,6 +5,7 @@ import {
   type ChannelBridgeKvClient,
   createAxiosChannelBridgeKvClient,
   clearChannelBridgeTelegramConfigInKv,
+  replaceChannelBridgeTelegramConfigRawInKv,
   readChannelBridgeBindingsFromKv,
   readChannelBridgeTelegramConfigFromKv,
   upsertChannelBridgeTelegramConfigInKv,
@@ -238,6 +239,67 @@ describe('channelBridgeServerKv', () => {
     });
 
     expect(config.record).toBeNull();
+  });
+
+  it('rejects malformed non-empty allowedChatIds updates', async () => {
+    const kv = createInMemoryKvClient();
+
+    await expect(upsertChannelBridgeTelegramConfigInKv({
+      kv,
+      serverId: 'local-3005',
+      accountId: 'acct-1',
+      update: {
+        allowedChatIds: ['   '],
+      },
+    })).rejects.toThrow('Invalid telegram.allowedChatIds update payload');
+  });
+
+  it('rejects invalid webhook port updates', async () => {
+    const kv = createInMemoryKvClient();
+
+    await expect(upsertChannelBridgeTelegramConfigInKv({
+      kv,
+      serverId: 'local-3005',
+      accountId: 'acct-1',
+      update: {
+        webhookPort: 0,
+      },
+    })).rejects.toThrow('Invalid telegram.webhook.port update payload');
+  });
+
+  it('replaces raw telegram config bytes in KV without schema parsing', async () => {
+    const kv = createInMemoryKvClient();
+
+    await upsertChannelBridgeTelegramConfigInKv({
+      kv,
+      serverId: 'local-3005',
+      accountId: 'acct-1',
+      update: {
+        requireTopics: true,
+      },
+    });
+
+    const rawUnsupported = Buffer.from(JSON.stringify({
+      schemaVersion: 999,
+      unsupported: true,
+    }), 'utf8').toString('base64');
+
+    await replaceChannelBridgeTelegramConfigRawInKv({
+      kv,
+      serverId: 'local-3005',
+      accountId: 'acct-1',
+      valueBase64: rawUnsupported,
+    });
+
+    const readWithUnsupported = await readChannelBridgeTelegramConfigFromKv({
+      kv,
+      serverId: 'local-3005',
+      accountId: 'acct-1',
+      allowUnsupportedSchema: true,
+    });
+
+    expect(readWithUnsupported.record).toBeNull();
+    expect(readWithUnsupported.rawValueBase64).toBe(rawUnsupported);
   });
 
   it('upsert replaces unsupported telegram config schema instead of failing', async () => {
@@ -850,6 +912,7 @@ describe('channelBridgeServerKv', () => {
     })).resolves.toEqual({
       record: null,
       version: 3,
+      rawValueBase64: malformedValueBase64,
     });
   });
 });
