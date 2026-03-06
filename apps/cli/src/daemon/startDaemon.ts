@@ -1891,11 +1891,6 @@ export async function startDaemon(): Promise<void> {
             }),
           ]);
 
-          if (channelBridgeStopTimeoutHandle) {
-            clearTimeout(channelBridgeStopTimeoutHandle);
-            channelBridgeStopTimeoutHandle = null;
-          }
-
           if (stopResult === 'timeout') {
             logger.warn(
               `[DAEMON RUN] Channel bridge worker stop timed out after ${channelBridgeStopTimeoutMs}ms; continuing shutdown`,
@@ -1906,6 +1901,11 @@ export async function startDaemon(): Promise<void> {
             '[DAEMON RUN] Failed to stop channel bridge worker during shutdown (best-effort)',
             serializeAxiosErrorForLog(error),
           );
+        } finally {
+          if (channelBridgeStopTimeoutHandle) {
+            clearTimeout(channelBridgeStopTimeoutHandle);
+            channelBridgeStopTimeoutHandle = null;
+          }
         }
       }
 

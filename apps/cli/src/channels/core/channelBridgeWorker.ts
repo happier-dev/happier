@@ -198,8 +198,8 @@ type ChannelBridgeInboundDeduper = Readonly<{
  */
 export function createChannelBridgeInboundDeduper(now: () => number = () => Date.now()): ChannelBridgeInboundDeduper {
   const recent = new Map<string, number>();
-  const ttlMs = 5 * 60 * 1000;
-  const maxEntries = 20_000;
+  const ttlMs = 24 * 60 * 60 * 1000;
+  const maxEntries = 100_000;
   const minPruneIntervalMs = 1_000;
   let lastPrunedAtMs = 0;
 

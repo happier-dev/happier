@@ -197,7 +197,9 @@ async function cmdTelegramSet(args: string[]): Promise<void> {
   const auth = await resolveActiveAuthContext();
   const accountId = auth.accountId;
 
-  const botToken = argvValue(args, '--bot-token').trim();
+  const rawBotToken = argvValue(args, '--bot-token');
+  const hasBotTokenFlag = args.some((arg) => arg === '--bot-token' || arg.startsWith('--bot-token='));
+  const botToken = rawBotToken.trim();
   const allowedChatIdsRaw = argvValue(args, '--allowed-chat-ids').trim();
   const allowAll = args.includes('--allow-all');
   const requireTopicsRaw = argvValue(args, '--require-topics').trim();
@@ -222,7 +224,12 @@ async function cmdTelegramSet(args: string[]): Promise<void> {
     webhookPort?: number;
   } = {};
 
-  if (botToken) update.botToken = botToken;
+  if (hasBotTokenFlag) {
+    if (!botToken) {
+      throw new Error('Invalid --bot-token value: cannot be empty');
+    }
+    update.botToken = botToken;
+  }
   if (allowAll) {
     update.allowedChatIds = [];
   } else if (allowedChatIdsRaw) {
@@ -256,15 +263,6 @@ async function cmdTelegramSet(args: string[]): Promise<void> {
 
   const split = splitScopedTelegramBridgeUpdate({ update });
 
-  await updateSettings(async (current) =>
-    upsertScopedTelegramBridgeConfig({
-      settings: current,
-      serverId,
-      accountId,
-      update: split.localUpdate,
-    }),
-  );
-
   if (hasSharedTelegramBridgeUpdate({ update: split.sharedUpdate })) {
     const kv = createAxiosChannelBridgeKvClient({ token: auth.token });
     await upsertChannelBridgeTelegramConfigInKv({
@@ -273,6 +271,15 @@ async function cmdTelegramSet(args: string[]): Promise<void> {
       update: split.sharedUpdate,
     });
   }
+
+  await updateSettings(async (current) =>
+    upsertScopedTelegramBridgeConfig({
+      settings: current,
+      serverId,
+      accountId,
+      update: split.localUpdate,
+    }),
+  );
 
   console.log(chalk.green('✓ Saved Telegram bridge config for active account scope'));
   console.log(`  Server:  ${serverId}`);
@@ -294,6 +301,12 @@ async function cmdTelegramClear(): Promise<void> {
   const auth = await resolveActiveAuthContext();
   const accountId = auth.accountId;
 
+  const kv = createAxiosChannelBridgeKvClient({ token: auth.token });
+  await clearChannelBridgeTelegramConfigInKv({
+    kv,
+    serverId,
+  });
+
   await updateSettings(async (current) =>
     removeScopedTelegramBridgeConfig({
       settings: current,
@@ -301,12 +314,6 @@ async function cmdTelegramClear(): Promise<void> {
       accountId,
     }),
   );
-
-  const kv = createAxiosChannelBridgeKvClient({ token: auth.token });
-  await clearChannelBridgeTelegramConfigInKv({
-    kv,
-    serverId,
-  });
 
   console.log(chalk.green('✓ Cleared Telegram bridge config for active account scope'));
   console.log(`  Server:  ${serverId}`);

@@ -102,6 +102,12 @@ function asRecord(value: unknown): Record<string, unknown> | null {
   return value as Record<string, unknown>;
 }
 
+function normalizeStringArray(values: readonly unknown[]): string[] {
+  return values
+    .map((value) => (typeof value === 'string' ? value.trim() : ''))
+    .filter((value) => value.length > 0);
+}
+
 function parseKvEntry(value: unknown): Readonly<{ valueBase64: string; version: number }> | null {
   const record = asRecord(value);
   if (!record) return null;
@@ -182,9 +188,7 @@ function parseTelegramConfigRecord(value: unknown): ChannelBridgeServerTelegramC
   }
 
   if (Array.isArray(telegram.allowedChatIds)) {
-    out.telegram.allowedChatIds = telegram.allowedChatIds
-      .map((value) => (typeof value === 'string' ? value.trim() : ''))
-      .filter((value) => value.length > 0);
+    out.telegram.allowedChatIds = normalizeStringArray(telegram.allowedChatIds);
   }
   if (typeof telegram.requireTopics === 'boolean') {
     out.telegram.requireTopics = telegram.requireTopics;
@@ -452,7 +456,7 @@ function applyTelegramConfigUpdate(current: ChannelBridgeServerTelegramConfigRec
   }
 
   if (Array.isArray(update.allowedChatIds)) {
-    next.telegram.allowedChatIds = [...update.allowedChatIds];
+    next.telegram.allowedChatIds = normalizeStringArray(update.allowedChatIds);
   }
   if (typeof update.requireTopics === 'boolean') {
     next.telegram.requireTopics = update.requireTopics;

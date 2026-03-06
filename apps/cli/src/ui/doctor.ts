@@ -85,17 +85,48 @@ function asRecord(value: unknown): Record<string, unknown> | null {
     return value as Record<string, unknown>;
 }
 
-function parseStrictWebhookPort(value: unknown): number | null {
+export function parseStrictWebhookPort(value: unknown): number | null {
     if (typeof value === 'number' && Number.isFinite(value)) {
-        return Math.trunc(value);
+        if (!Number.isInteger(value) || value < 0) return null;
+        return value;
     }
     if (typeof value === 'string') {
         const trimmed = value.trim();
-        if (!/^[-]?\d+$/.test(trimmed)) return null;
+        if (!/^\d+$/.test(trimmed)) return null;
         const parsed = Number.parseInt(trimmed, 10);
-        return Number.isFinite(parsed) ? parsed : null;
+        if (!Number.isFinite(parsed) || parsed < 0) return null;
+        return parsed;
     }
     return null;
+}
+
+function redactProviderSecrets(providerRecord: Record<string, unknown>): void {
+    const secrets = asRecord(providerRecord.secrets);
+    if (secrets) {
+        for (const [key, value] of Object.entries(secrets)) {
+            if (typeof value === 'string' && value.trim().length > 0) {
+                secrets[key] = '<redacted>';
+            }
+        }
+    }
+
+    if (typeof providerRecord.botToken === 'string' && providerRecord.botToken.trim().length > 0) {
+        providerRecord.botToken = '<redacted>';
+    }
+
+    const webhook = asRecord(providerRecord.webhook);
+    if (webhook && typeof webhook.secret === 'string' && webhook.secret.trim().length > 0) {
+        webhook.secret = '<redacted>';
+    }
+}
+
+function redactProvidersMap(providers: Record<string, unknown> | null): void {
+    if (!providers) return;
+    for (const providerScope of Object.values(providers)) {
+        const providerRecord = asRecord(providerScope);
+        if (!providerRecord) continue;
+        redactProviderSecrets(providerRecord);
+    }
 }
 
 export function resolveTelegramWebhookValidationInputs(params: Readonly<{
@@ -132,41 +163,29 @@ export function redactSettingsForDisplay(settings: SettingsForDisplay): Settings
     }
 
     const channelBridge = asRecord(redactedRecord.channelBridge);
-    const byServerId = asRecord(channelBridge?.byServerId);
-    if (byServerId) {
-        for (const serverScope of Object.values(byServerId)) {
-            const serverRecord = asRecord(serverScope);
-            const byAccountId = asRecord(serverRecord?.byAccountId);
-            if (!byAccountId) continue;
+    if (!channelBridge) {
+        return redacted;
+    }
 
-            for (const accountScope of Object.values(byAccountId)) {
-                const accountRecord = asRecord(accountScope);
-                const providers = asRecord(accountRecord?.providers);
-                if (!providers) continue;
+    redactProvidersMap(asRecord(channelBridge.providers));
 
-                for (const providerScope of Object.values(providers)) {
-                    const providerRecord = asRecord(providerScope);
-                    if (!providerRecord) continue;
+    const byServerId = asRecord(channelBridge.byServerId);
+    if (!byServerId) {
+        return redacted;
+    }
 
-                    const secrets = asRecord(providerRecord.secrets);
-                    if (secrets) {
-                        for (const [key, value] of Object.entries(secrets)) {
-                            if (typeof value === 'string' && value.trim().length > 0) {
-                                secrets[key] = '<redacted>';
-                            }
-                        }
-                    }
+    for (const serverScope of Object.values(byServerId)) {
+        const serverRecord = asRecord(serverScope);
+        if (!serverRecord) continue;
 
-                    if (typeof providerRecord.botToken === 'string' && providerRecord.botToken.trim().length > 0) {
-                        providerRecord.botToken = '<redacted>';
-                    }
+        redactProvidersMap(asRecord(serverRecord.providers));
 
-                    const webhook = asRecord(providerRecord.webhook);
-                    if (webhook && typeof webhook.secret === 'string' && webhook.secret.trim().length > 0) {
-                        webhook.secret = '<redacted>';
-                    }
-                }
-            }
+        const byAccountId = asRecord(serverRecord.byAccountId);
+        if (!byAccountId) continue;
+
+        for (const accountScope of Object.values(byAccountId)) {
+            const accountRecord = asRecord(accountScope);
+            redactProvidersMap(asRecord(accountRecord?.providers));
         }
     }
 

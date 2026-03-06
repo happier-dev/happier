@@ -8,7 +8,7 @@ This repository now includes a **built-in channel bridge core** plus a **Telegra
 
 The design is intentionally modular so additional adapters (Discord, Slack, WhatsApp, etc.) can plug into the same core contract.
 
-For core bridge architecture, ingress mode matrix, and relay deployment model, see `docs/channel-bridge.md`.
+For core bridge architecture, ingress mode matrix, and relay deployment model, see [docs/channel-bridge.md](./channel-bridge.md).
 
 ## Current Behavior
 
@@ -220,7 +220,7 @@ If you switch back to polling mode, clear webhook first:
 curl "https://api.telegram.org/bot<token>/deleteWebhook"
 ```
 
-For server-relay and standalone-relay planning details, see `docs/channel-bridge.md`.
+For server-relay and standalone-relay planning details, see [docs/channel-bridge.md](./channel-bridge.md).
 
 ## Telegram Commands (inside DM/topic)
 

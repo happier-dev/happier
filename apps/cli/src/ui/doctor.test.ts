@@ -3,6 +3,7 @@ import {
   collectMissingRequiredWebhookFields,
   resolveTelegramWebhookValidationInputs,
   isMissingRequiredTelegramWebhookSecret,
+  parseStrictWebhookPort,
   maskValue,
   redactSettingsForDisplay,
   redactDaemonStateForDisplay,
@@ -103,6 +104,59 @@ describe('doctor redaction', () => {
         expect(telegram.secrets.extraSecret).toBe('<redacted>');
         expect(telegram.webhook.host).toBe('127.0.0.1');
         expect(telegram.webhook.port).toBe(8787);
+    });
+
+    it('redacts global and server-scoped channel bridge provider secrets', () => {
+        const input = {
+            channelBridge: {
+                providers: {
+                    telegram: {
+                        botToken: 'global-bot-token',
+                        webhook: {
+                            secret: 'global-webhook-secret',
+                        },
+                        secrets: {
+                            botToken: 'global-bot-token',
+                        },
+                    },
+                },
+                byServerId: {
+                    'local-3005': {
+                        providers: {
+                            telegram: {
+                                botToken: 'server-bot-token',
+                                webhook: {
+                                    secret: 'server-webhook-secret',
+                                },
+                                secrets: {
+                                    webhookSecret: 'server-webhook-secret',
+                                },
+                            },
+                        },
+                    },
+                },
+            },
+        };
+
+        const redacted = redactSettingsForDisplay(input as never) as any;
+        expect(redacted.channelBridge.providers.telegram.botToken).toBe('<redacted>');
+        expect(redacted.channelBridge.providers.telegram.webhook.secret).toBe('<redacted>');
+        expect(redacted.channelBridge.providers.telegram.secrets.botToken).toBe('<redacted>');
+        expect(redacted.channelBridge.byServerId['local-3005'].providers.telegram.botToken).toBe('<redacted>');
+        expect(redacted.channelBridge.byServerId['local-3005'].providers.telegram.webhook.secret).toBe('<redacted>');
+        expect(redacted.channelBridge.byServerId['local-3005'].providers.telegram.secrets.webhookSecret).toBe('<redacted>');
+    });
+});
+
+describe('parseStrictWebhookPort', () => {
+    it('rejects negative string values', () => {
+        expect(parseStrictWebhookPort('-1')).toBeNull();
+        expect(parseStrictWebhookPort(' -8787 ')).toBeNull();
+    });
+
+    it('accepts non-negative integer values', () => {
+        expect(parseStrictWebhookPort('0')).toBe(0);
+        expect(parseStrictWebhookPort('8787')).toBe(8787);
     });
 });
 

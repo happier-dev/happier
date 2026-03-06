@@ -327,6 +327,7 @@ vi.mock('./shutdownPolicy', () => ({
 
 describe('startDaemon automation wiring (integration)', () => {
   afterEach(() => {
+    vi.clearAllMocks();
     vi.restoreAllMocks();
     harness.setAutoShutdownAfterAutomationStart(true);
   });

@@ -75,6 +75,45 @@ function extractAssistantText(content: unknown): string | null {
   return null;
 }
 
+type PlainTranscriptRowLike = Readonly<{
+  seq: number;
+  createdAt: number;
+  content: unknown;
+}>;
+
+function parsePlainTranscriptRows(rows: readonly PlainTranscriptRowLike[]): ReadonlyArray<Readonly<{
+  seq: number;
+  createdAtMs: number;
+  role: 'user' | 'agent';
+  content: unknown;
+}>> {
+  const out: Array<Readonly<{
+    seq: number;
+    createdAtMs: number;
+    role: 'user' | 'agent';
+    content: unknown;
+  }>> = [];
+
+  for (const row of rows) {
+    const content = asRecord(row.content);
+    if (!content || content.t !== 'plain') continue;
+    const value = asRecord(content.v);
+    if (!value) continue;
+
+    const role = value.role;
+    if (role !== 'user' && role !== 'agent') continue;
+
+    out.push({
+      seq: row.seq,
+      createdAtMs: row.createdAt,
+      role,
+      content: value.content,
+    });
+  }
+
+  return out;
+}
+
 function createDefaultChannelBridgeDeps(credentials: Credentials): DefaultChannelBridgeDepsHandle {
   type CachedSessionRuntime = Readonly<{
     ctx: SessionEncryptionContext;
@@ -108,11 +147,6 @@ function createDefaultChannelBridgeDeps(credentials: Credentials): DefaultChanne
       mode: resolveSessionStoredContentEncryptionMode(rawSession),
     };
     return rememberSessionRuntime(sessionId, runtime);
-  }
-
-  async function resolveSessionContext(sessionId: string): Promise<SessionEncryptionContext | null> {
-    const runtime = await resolveSessionRuntime(sessionId);
-    return runtime?.ctx ?? null;
   }
 
   return {
@@ -203,16 +237,24 @@ function createDefaultChannelBridgeDeps(credentials: Credentials): DefaultChanne
       return Math.max(0, Math.trunc(rows[0]!.seq));
     },
     fetchAgentMessagesAfterSeq: async ({ sessionId, afterSeq }) => {
-      const ctx = await resolveSessionContext(sessionId);
-      if (!ctx) return [];
+      const runtime = await resolveSessionRuntime(sessionId);
+      if (!runtime) return [];
+
       const encrypted = await fetchEncryptedTranscriptPageAfterSeq({
         token: credentials.token,
         sessionId,
         afterSeq,
         limit: 50,
       });
-      const decrypted = decryptTranscriptRows({ ctx, rows: encrypted });
-      return decrypted
+
+      const transcriptRows = runtime.mode === 'plain'
+        ? parsePlainTranscriptRows(encrypted)
+        : decryptTranscriptRows({
+          ctx: runtime.ctx,
+          rows: encrypted,
+        });
+
+      return transcriptRows
         .filter((row) => row.role === 'agent')
         .map((row) => ({ seq: row.seq, text: extractAssistantText(row.content) }))
         .filter((row) => typeof row.text === 'string' && row.text.trim().length > 0)

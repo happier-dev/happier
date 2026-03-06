@@ -479,7 +479,7 @@ describe('createServerBackedChannelBindingStore', () => {
     expect(conflict.mutateCallCount()).toBe(1);
   });
 
-  it('surfaces malformed primary KV payload conflicts instead of clobbering remote state', async () => {
+  it('fails fast when malformed primary KV payload is encountered before cache warm-up', async () => {
     const kv = createMalformedPrimaryReadKvClient();
     const store = createServerBackedChannelBindingStore({
       kv,
@@ -487,7 +487,7 @@ describe('createServerBackedChannelBindingStore', () => {
       maxWriteRetries: 3,
     });
 
-    await expect(store.listBindings()).resolves.toEqual([]);
+    await expect(store.listBindings()).rejects.toThrow('Invalid channel bridge binding lastForwardedSeq at index 0');
 
     await expect(store.upsertBinding({
       providerId: 'telegram',
@@ -495,15 +495,88 @@ describe('createServerBackedChannelBindingStore', () => {
       threadId: null,
       sessionId: 'sess-4',
       lastForwardedSeq: 1,
-    })).rejects.toThrow('Conflict payload decode failed');
+    })).rejects.toThrow('Invalid channel bridge binding lastForwardedSeq at index 0');
 
-    const binding = await store.getBinding({
+    await expect(store.getBinding({
       providerId: 'telegram',
       conversationId: '-100444',
       threadId: null,
+    })).rejects.toThrow('Invalid channel bridge binding lastForwardedSeq at index 0');
+  });
+
+  it('returns last known-good bindings when a recoverable decode error occurs after cache warm-up', async () => {
+    const validValue = Buffer.from(JSON.stringify({
+      schemaVersion: 1,
+      bindings: [
+        {
+          providerId: 'telegram',
+          conversationId: '-100cache',
+          threadId: null,
+          sessionId: 'sess-cache',
+          lastForwardedSeq: 7,
+          createdAtMs: 10,
+          updatedAtMs: 11,
+        },
+      ],
+    }), 'utf8').toString('base64');
+
+    const malformedValue = Buffer.from(JSON.stringify({
+      schemaVersion: 1,
+      bindings: [
+        {
+          providerId: 'telegram',
+          conversationId: '-100cache',
+          threadId: null,
+          sessionId: 'sess-cache',
+          lastForwardedSeq: 'oops',
+        },
+      ],
+    }), 'utf8').toString('base64');
+
+    let getCalls = 0;
+    const kv: ChannelBridgeKvClient = {
+      get: async (key) => {
+        getCalls += 1;
+        return {
+          status: 200,
+          body: {
+            key,
+            version: 4,
+            value: getCalls === 1 ? validValue : malformedValue,
+          },
+        };
+      },
+      mutate: async () => ({
+        status: 200,
+        body: {
+          success: true,
+          results: [],
+        },
+      }),
+    };
+
+    const store = createServerBackedChannelBindingStore({
+      kv,
+      serverId: 'local-3005',
+      cacheTtlMs: 0,
+      maxWriteRetries: 3,
     });
 
-    expect(binding).toBeNull();
+    const first = await store.listBindings();
+    expect(first).toEqual([
+      {
+        providerId: 'telegram',
+        conversationId: '-100cache',
+        threadId: null,
+        sessionId: 'sess-cache',
+        lastForwardedSeq: 7,
+        createdAtMs: 10,
+        updatedAtMs: 11,
+      },
+    ]);
+
+    const second = await store.listBindings();
+    expect(second).toEqual(first);
   });
 
   it('uses conflict payload state for retry without extra primary read', async () => {

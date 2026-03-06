@@ -55,4 +55,15 @@ describe('dispatchCli --tmux disallowed controller commands', () => {
     expect(exitSpy).toHaveBeenCalledWith(1);
     expect(startHappyHeadlessInTmux).not.toHaveBeenCalled();
   });
+
+  it('rejects --tmux-first invocations for controller commands', async () => {
+    await expect(
+      dispatchCli({
+        args: ['--tmux', 'bridge', 'list'],
+        rawArgv: ['happier', '--tmux', 'bridge', 'list'],
+        terminalRuntime: null,
+      }),
+    ).rejects.toThrow('process.exit(1)');
+    expect(startHappyHeadlessInTmux).not.toHaveBeenCalled();
+  });
 });

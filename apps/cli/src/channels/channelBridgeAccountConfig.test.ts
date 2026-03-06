@@ -108,6 +108,27 @@ describe('channelBridgeAccountConfig', () => {
     expect(telegram?.allowedChatIds).toEqual(['-100111', '-100222']);
   });
 
+  it('does not materialize providers.telegram for tick-only scoped updates', () => {
+    const next = upsertScopedTelegramBridgeConfig({
+      settings: {},
+      serverId: 'local-3005',
+      accountId: 'acct-1',
+      update: {
+        tickMs: 2_500,
+      },
+    });
+
+    expect((next as any).channelBridge.byServerId['local-3005'].byAccountId['acct-1'].providers).toBeUndefined();
+
+    const telegram = readScopedTelegramBridgeConfig({
+      settings: next,
+      serverId: 'local-3005',
+      accountId: 'acct-1',
+    });
+
+    expect(telegram).toBeNull();
+  });
+
   it('reports no shared update when only secrets are provided', () => {
     const split = splitScopedTelegramBridgeUpdate({
       update: {

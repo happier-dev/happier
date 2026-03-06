@@ -98,8 +98,30 @@ describe('happier bridge command', () => {
       },
     });
     expect(updateSettingsMock).toHaveBeenCalledTimes(1);
-    expect(updateSettingsMock.mock.invocationCallOrder[0]).toBeLessThan(upsertKvConfigMock.mock.invocationCallOrder[0]);
+    expect(upsertKvConfigMock.mock.invocationCallOrder[0]).toBeLessThan(updateSettingsMock.mock.invocationCallOrder[0]);
     expect(process.exitCode).toBeUndefined();
+  });
+
+  it('does not update local settings when shared KV write fails', async () => {
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    upsertKvConfigMock.mockRejectedValueOnce(new Error('KV unavailable'));
+
+    try {
+      const { handleBridgeCliCommand } = await import('./bridge');
+
+      await handleBridgeCliCommand({
+        args: ['bridge', 'telegram', 'set', '--bot-token', 'bot-token-1', '--require-topics', 'true'],
+        rawArgv: [],
+        terminalRuntime: null,
+      });
+
+      expect(upsertKvConfigMock).toHaveBeenCalledTimes(1);
+      expect(updateSettingsMock).not.toHaveBeenCalled();
+      expect(process.exitCode).toBe(1);
+      expect(errorSpy).toHaveBeenCalledWith(expect.anything(), expect.stringContaining('KV unavailable'));
+    } finally {
+      errorSpy.mockRestore();
+    }
   });
 
   it('does not write secrets-only updates to server KV', async () => {
@@ -132,8 +154,30 @@ describe('happier bridge command', () => {
       serverId: configuration.activeServerId,
     });
     expect(updateSettingsMock).toHaveBeenCalledTimes(1);
-    expect(updateSettingsMock.mock.invocationCallOrder[0]).toBeLessThan(clearKvConfigMock.mock.invocationCallOrder[0]);
+    expect(clearKvConfigMock.mock.invocationCallOrder[0]).toBeLessThan(updateSettingsMock.mock.invocationCallOrder[0]);
     expect(process.exitCode).toBeUndefined();
+  });
+
+  it('does not update local settings when shared KV clear fails', async () => {
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    clearKvConfigMock.mockRejectedValueOnce(new Error('KV clear unavailable'));
+
+    try {
+      const { handleBridgeCliCommand } = await import('./bridge');
+
+      await handleBridgeCliCommand({
+        args: ['bridge', 'telegram', 'clear'],
+        rawArgv: [],
+        terminalRuntime: null,
+      });
+
+      expect(clearKvConfigMock).toHaveBeenCalledTimes(1);
+      expect(updateSettingsMock).not.toHaveBeenCalled();
+      expect(process.exitCode).toBe(1);
+      expect(errorSpy).toHaveBeenCalledWith(expect.anything(), expect.stringContaining('KV clear unavailable'));
+    } finally {
+      errorSpy.mockRestore();
+    }
   });
 
   it('rejects webhook secrets that do not match Telegram-safe token charset', async () => {
@@ -154,6 +198,30 @@ describe('happier bridge command', () => {
       expect(errorSpy).toHaveBeenCalledWith(
         expect.anything(),
         expect.stringContaining('Invalid --webhook-secret value'),
+      );
+    } finally {
+      errorSpy.mockRestore();
+    }
+  });
+
+  it('rejects explicitly passed empty --bot-token values', async () => {
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+
+    try {
+      const { handleBridgeCliCommand } = await import('./bridge');
+
+      await handleBridgeCliCommand({
+        args: ['bridge', 'telegram', 'set', '--bot-token'],
+        rawArgv: [],
+        terminalRuntime: null,
+      });
+
+      expect(updateSettingsMock).not.toHaveBeenCalled();
+      expect(createKvClientMock).not.toHaveBeenCalled();
+      expect(process.exitCode).toBe(1);
+      expect(errorSpy).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.stringContaining('Invalid --bot-token value: cannot be empty'),
       );
     } finally {
       errorSpy.mockRestore();

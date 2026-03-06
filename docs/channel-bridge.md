@@ -50,8 +50,8 @@ Adapters plug into the core using a small interface:
 
 This keeps command semantics, binding behavior, and session forwarding logic centralized in the core.
 
-## Out of scope for this PR
+## Scope notes
 
 This document covers core bridge runtime behavior only.
 
-Provider-specific transport details, bridge runtime bootstrapping, scoped config sources, and server-relay deployment modes are covered in follow-up stacked PRs.
+Provider-specific transport details and adapter-specific setup are documented in companion docs (for example, `docs/telegram-channel-bridge.md`).

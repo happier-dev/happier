@@ -132,6 +132,7 @@ function parseInboundFromUpdate(params: Readonly<{
     providerId: 'telegram',
     conversationId,
     threadId,
+    senderId: senderId === null ? null : String(senderId),
     text,
     messageId,
   };

@@ -1,4 +1,5 @@
 import { timingSafeEqual } from 'node:crypto';
+import { isIP } from 'node:net';
 
 import fastify from 'fastify';
 
@@ -15,6 +16,21 @@ export type TelegramWebhookRelayHandle = Readonly<{
   stop: () => Promise<void>;
 }>;
 
+function isLoopbackHost(host: string): boolean {
+  const normalized = host.trim().toLowerCase();
+  if (normalized === 'localhost') return true;
+
+  const ipVersion = isIP(normalized);
+  if (ipVersion === 4) {
+    return normalized.startsWith('127.');
+  }
+  if (ipVersion === 6) {
+    return normalized === '::1';
+  }
+
+  return false;
+}
+
 export async function startTelegramWebhookRelay(params: Readonly<{
   port: number;
   host?: string;
@@ -30,12 +46,15 @@ export async function startTelegramWebhookRelay(params: Readonly<{
     throw new Error('Webhook secret token must match [A-Za-z0-9_-]');
   }
 
-  const secretHeaderToken = String(params.secretHeaderToken ?? secretPathToken).trim();
+  const secretHeaderToken = String(params.secretHeaderToken ?? '').trim();
   if (!secretHeaderToken) {
     throw new Error('Webhook header secret token is required');
   }
 
   const host = String(params.host ?? '127.0.0.1').trim() || '127.0.0.1';
+  if (!isLoopbackHost(host)) {
+    throw new Error('Webhook host must be loopback-only');
+  }
   const requestedPort = Number.isFinite(params.port) ? Math.trunc(params.port) : 0;
   if (requestedPort < 0 || requestedPort > 65_535) {
     throw new Error('Webhook port must be between 0 and 65535');

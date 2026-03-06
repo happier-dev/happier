@@ -22,6 +22,7 @@ describe('startTelegramWebhookRelay', () => {
       port: 0,
       host: '127.0.0.1',
       secretPathToken: 'secret-123',
+      secretHeaderToken: 'secret-123',
       onUpdate: (update) => {
         received.push(update);
       },
@@ -93,6 +94,7 @@ describe('startTelegramWebhookRelay', () => {
       port: 0,
       host: '127.0.0.1',
       secretPathToken: 'secret-fail',
+      secretHeaderToken: 'secret-fail',
       onUpdate: async () => {
         throw new Error('failed to process update');
       },
@@ -118,5 +120,24 @@ describe('startTelegramWebhookRelay', () => {
     } finally {
       await relay.stop();
     }
+  });
+
+  it('requires an explicit webhook header secret token', async () => {
+    await expect(startTelegramWebhookRelay({
+      port: 0,
+      host: '127.0.0.1',
+      secretPathToken: 'secret-123',
+      onUpdate: () => undefined,
+    })).rejects.toThrow('Webhook header secret token is required');
+  });
+
+  it('rejects non-loopback webhook hosts', async () => {
+    await expect(startTelegramWebhookRelay({
+      port: 0,
+      host: '0.0.0.0',
+      secretPathToken: 'secret-123',
+      secretHeaderToken: 'secret-123',
+      onUpdate: () => undefined,
+    })).rejects.toThrow('Webhook host must be loopback-only');
   });
 });

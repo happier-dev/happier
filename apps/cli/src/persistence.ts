@@ -38,6 +38,13 @@ function bestEffortChmodSync(path: string, mode: number): void {
 // Incremented when Settings structure changes.
 export const SUPPORTED_SCHEMA_VERSION = 6;
 
+export interface ChannelBridgeSettings {
+  tickMs?: number
+  providers?: Record<string, unknown>
+  byServerId?: Record<string, unknown>
+  [key: string]: unknown
+}
+
 export interface Settings {
   // Schema version for backwards compatibility
   schemaVersion: number
@@ -112,7 +119,7 @@ export interface Settings {
   /**
    * Channel bridge configuration (account/server scoped + optional global defaults).
    */
-  channelBridge?: unknown
+  channelBridge?: ChannelBridgeSettings
 }
 
 const defaultSettings: Settings = {

@@ -236,13 +236,20 @@ export function upsertScopedTelegramBridgeConfig(params: Readonly<{
     accountScope.tickMs = Math.trunc(params.update.tickMs);
   }
 
-  const providers = ensureRecord(accountScope, 'providers');
-  const telegram = ensureRecord(providers, 'telegram');
+  let cachedTelegramScope: RecordLike | null = null;
+  const ensureTelegramScope = (): RecordLike => {
+    if (cachedTelegramScope) return cachedTelegramScope;
+    const providers = ensureRecord(accountScope, 'providers');
+    cachedTelegramScope = ensureRecord(providers, 'telegram');
+    return cachedTelegramScope;
+  };
 
   if (Array.isArray(params.update.allowedChatIds)) {
+    const telegram = ensureTelegramScope();
     telegram.allowedChatIds = parseStringArray(params.update.allowedChatIds);
   }
   if (typeof params.update.requireTopics === 'boolean') {
+    const telegram = ensureTelegramScope();
     telegram.requireTopics = params.update.requireTopics;
   }
 
@@ -252,6 +259,7 @@ export function upsertScopedTelegramBridgeConfig(params: Readonly<{
     || (typeof params.update.webhookPort === 'number' && Number.isFinite(params.update.webhookPort));
 
   if (hasWebhookUpdate) {
+    const telegram = ensureTelegramScope();
     const webhook = ensureRecord(telegram, 'webhook');
     if (typeof params.update.webhookEnabled === 'boolean') {
       webhook.enabled = params.update.webhookEnabled;
@@ -269,6 +277,7 @@ export function upsertScopedTelegramBridgeConfig(params: Readonly<{
     || typeof params.update.webhookSecret === 'string';
 
   if (hasSecretUpdate) {
+    const telegram = ensureTelegramScope();
     const secrets = ensureRecord(telegram, 'secrets');
     if (typeof params.update.botToken === 'string') {
       secrets.botToken = params.update.botToken;

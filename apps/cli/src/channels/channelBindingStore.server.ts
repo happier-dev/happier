@@ -1,4 +1,12 @@
-import type { ChannelBindingStore, ChannelBridgeConversationRef, ChannelSessionBinding } from './core/channelBridgeWorker';
+/**
+ * Server-backed channel binding store.
+ *
+ * Responsibilities:
+ * - read/write channel binding state from server KV
+ * - keep optimistic concurrency behavior safe across concurrent machines
+ * - preserve local cache coherence and avoid silently clobbering remote data
+ */
+import type { ChannelBindingStore, ChannelBridgeConversationRef, ChannelSessionBinding } from '@/channels/core/channelBridgeWorker';
 import {
   ChannelBridgeBadPayloadError,
   ChannelBridgeKvVersionMismatchError,
@@ -7,7 +15,7 @@ import {
   type ChannelBridgeKvClient,
   type ChannelBridgeServerBindingsDocument,
   writeChannelBridgeBindingsToKv,
-} from './channelBridgeServerKv';
+} from '@/channels/channelBridgeServerKv';
 import { logger } from '@/ui/logger';
 
 type BindingCache = Readonly<{
@@ -108,11 +116,13 @@ export function createServerBackedChannelBindingStore(params: Readonly<{
         throw error;
       }
 
-      logger.warn('[channelBindingStore] Failed to decode primary KV payload; using empty bindings fallback', error);
+      logger.warn('[channelBindingStore] Failed to decode primary KV payload', error);
+      if (!cache) {
+        throw error;
+      }
 
       const next: BindingCache = {
-        version: cache?.version ?? -1,
-        bindings: [],
+        ...cache,
         fetchedAtMs: Date.now(),
       };
       cache = next;
