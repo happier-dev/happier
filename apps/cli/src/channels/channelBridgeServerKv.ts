@@ -549,7 +549,11 @@ function applyTelegramConfigUpdate(current: ChannelBridgeServerTelegramConfigRec
   // intentionally rewrites canonical schema. In that case, unspecified tickMs is not carried
   // forward and runtime defaults apply unless update.tickMs is explicitly provided.
   if (typeof update.tickMs === 'number' && Number.isFinite(update.tickMs)) {
-    next.tickMs = Math.trunc(update.tickMs);
+    const normalizedTickMs = Math.trunc(update.tickMs);
+    if (normalizedTickMs < 250 || normalizedTickMs > 60_000) {
+      throw new ChannelBridgeBadPayloadError('Invalid tickMs update payload: must be in [250, 60000]');
+    }
+    next.tickMs = normalizedTickMs;
   }
 
   if (Array.isArray(update.allowedChatIds)) {

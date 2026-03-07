@@ -182,6 +182,14 @@ function createDefaultChannelBridgeDeps(credentials: Credentials): DefaultChanne
     return rememberSessionRuntime(sessionId, runtime);
   }
 
+  const onWarning: NonNullable<ChannelBridgeDeps['onWarning']> = (message, error) => {
+    if (typeof error === 'undefined') {
+      logger.warn(`[channelBridge] ${message}`);
+    } else {
+      logger.warn(`[channelBridge] ${message}`, serializeAxiosErrorForLog(error));
+    }
+  };
+
   return {
     deps: {
     listSessions: async () => {
@@ -305,24 +313,32 @@ function createDefaultChannelBridgeDeps(credentials: Credentials): DefaultChanne
           rows: encrypted,
         });
 
-      const messages: ChannelBridgeAgentMessageRow[] = transcriptRows
-        .filter((row) => row.role === 'agent')
-        .map((row) => ({ seq: row.seq, text: extractAssistantText(row.content) }))
-        .filter((row) => typeof row.text === 'string' && row.text.trim().length > 0)
-        .map((row) => ({ seq: row.seq, text: row.text! }));
+      const messages: ChannelBridgeAgentMessageRow[] = [];
+      for (const row of transcriptRows) {
+        if (row.role !== 'agent') {
+          continue;
+        }
+
+        const text = extractAssistantText(row.content);
+        if (!text) {
+          onWarning(
+            `Skipped agent transcript row with unsupported content for session=${sessionId} seq=${row.seq}`,
+          );
+          continue;
+        }
+
+        messages.push({
+          seq: row.seq,
+          text,
+        });
+      }
 
       return {
         messages,
         highestSeenSeq,
       };
     },
-    onWarning: (message, error) => {
-      if (typeof error === 'undefined') {
-        logger.warn(`[channelBridge] ${message}`);
-      } else {
-        logger.warn(`[channelBridge] ${message}`, serializeAxiosErrorForLog(error));
-      }
-    },
+    onWarning,
     },
     dispose: () => {
       sessionRuntimeCache.clear();

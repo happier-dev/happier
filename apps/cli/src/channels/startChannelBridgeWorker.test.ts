@@ -509,6 +509,126 @@ describe('startChannelBridgeFromEnv', () => {
     await handle?.stop();
   });
 
+  it('warns when agent transcript rows cannot be mapped to bridge text output', async () => {
+    vi.resetModules();
+
+    const warnSpy = vi.fn();
+    const fetchSessionById = vi.fn(async () => ({
+      id: 'sess-plain-unextractable',
+      encryptionMode: 'plain',
+      metadata: null,
+      dataEncryptionKey: null,
+    }));
+    const fetchAfterSeq = vi.fn(async () => ([
+      {
+        seq: 11,
+        createdAt: 1,
+        content: {
+          t: 'plain',
+          v: {
+            role: 'agent',
+            content: {
+              type: 'output',
+              data: {
+                message: 123,
+              },
+            },
+          },
+        },
+      },
+    ]));
+
+    let capturedDeps: {
+      fetchAgentMessagesAfterSeq: (params: { sessionId: string; afterSeq: number }) => Promise<unknown>;
+    } | null = null;
+
+    vi.doMock('@/ui/logger', () => ({
+      logger: {
+        warn: warnSpy,
+        info: vi.fn(),
+        debug: vi.fn(),
+      },
+    }));
+
+    vi.doMock('@/sessionControl/sessionsHttp', async (importOriginal) => {
+      const actual = await importOriginal<typeof import('@/sessionControl/sessionsHttp')>();
+      return {
+        ...actual,
+        fetchSessionById,
+      };
+    });
+
+    vi.doMock('@/api/session/fetchEncryptedTranscriptWindow', async (importOriginal) => {
+      const actual = await importOriginal<typeof import('@/api/session/fetchEncryptedTranscriptWindow')>();
+      return {
+        ...actual,
+        fetchEncryptedTranscriptPageAfterSeq: fetchAfterSeq,
+      };
+    });
+
+    vi.doMock('./core/channelBridgeWorker', () => ({
+      createInMemoryChannelBindingStore: vi.fn(() => ({
+        listBindings: async () => [],
+        getBinding: async () => null,
+        upsertBinding: async () => ({
+          providerId: 'telegram',
+          conversationId: 'conv-1',
+          threadId: null,
+          sessionId: 'sess-1',
+          lastForwardedSeq: 0,
+          createdAtMs: Date.now(),
+          updatedAtMs: Date.now(),
+        }),
+        updateLastForwardedSeq: async () => true,
+        removeBinding: async () => false,
+      })),
+      startChannelBridgeWorker: vi.fn((params: { deps: typeof capturedDeps }) => {
+        capturedDeps = params.deps as typeof capturedDeps;
+        return {
+          trigger: vi.fn(),
+          stop: vi.fn(async () => undefined),
+        };
+      }),
+    }));
+
+    vi.doMock('./telegram/telegramAdapter', () => ({
+      createTelegramChannelAdapter: vi.fn(() => ({
+        providerId: 'telegram',
+        pullInboundMessages: async () => [],
+        sendMessage: async () => undefined,
+        enqueueWebhookUpdate: vi.fn(),
+        stop: async () => undefined,
+      })),
+    }));
+
+    const { startChannelBridgeFromEnv } = await import('./startChannelBridgeWorker');
+
+    const handle = await startChannelBridgeFromEnv({
+      credentials,
+      env: {
+        HAPPIER_TELEGRAM_BOT_TOKEN: 'bot-token',
+      } as NodeJS.ProcessEnv,
+    });
+
+    expect(handle).not.toBeNull();
+    expect(capturedDeps).not.toBeNull();
+
+    const rows = await capturedDeps!.fetchAgentMessagesAfterSeq({
+      sessionId: 'sess-plain-unextractable',
+      afterSeq: 0,
+    });
+
+    expect(rows).toEqual({
+      messages: [],
+      highestSeenSeq: 11,
+    });
+    expect(warnSpy).toHaveBeenCalledWith(
+      expect.stringContaining('[channelBridge] Skipped agent transcript row with unsupported content'),
+    );
+
+    await handle?.stop();
+  });
+
   it('refreshes session runtime LRU order on cache hits', async () => {
     vi.resetModules();
 

@@ -267,6 +267,28 @@ describe('channelBridgeServerKv', () => {
     })).rejects.toThrow('Invalid telegram.webhook.port update payload');
   });
 
+  it('rejects out-of-range tickMs updates', async () => {
+    const kv = createInMemoryKvClient();
+
+    await expect(upsertChannelBridgeTelegramConfigInKv({
+      kv,
+      serverId: 'local-3005',
+      accountId: 'acct-1',
+      update: {
+        tickMs: 100,
+      },
+    })).rejects.toThrow('Invalid tickMs update payload');
+
+    await expect(upsertChannelBridgeTelegramConfigInKv({
+      kv,
+      serverId: 'local-3005',
+      accountId: 'acct-1',
+      update: {
+        tickMs: 120_000,
+      },
+    })).rejects.toThrow('Invalid tickMs update payload');
+  });
+
   it('rejects non-loopback webhook host updates', async () => {
     const kv = createInMemoryKvClient();
 
