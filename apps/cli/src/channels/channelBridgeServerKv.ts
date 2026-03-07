@@ -117,6 +117,10 @@ function normalizeStringArray(values: readonly unknown[]): string[] {
     .filter((value) => value.length > 0);
 }
 
+function hasOnlyNonEmptyStringValues(values: readonly unknown[]): boolean {
+  return values.every((value) => typeof value === 'string' && value.trim().length > 0);
+}
+
 function parseKvEntry(value: unknown): Readonly<{ valueBase64: string; version: number }> | null {
   const record = asRecord(value);
   if (!record) return null;
@@ -196,7 +200,11 @@ function parseTelegramConfigRecord(value: unknown): ChannelBridgeServerTelegramC
       throw new ChannelBridgeBadPayloadError('Invalid telegram.allowedChatIds payload');
     }
     const normalizedAllowedChatIds = normalizeStringArray(telegram.allowedChatIds);
-    if (telegram.allowedChatIds.length > 0 && normalizedAllowedChatIds.length === 0) {
+    if (
+      telegram.allowedChatIds.length > 0
+      && (!hasOnlyNonEmptyStringValues(telegram.allowedChatIds)
+        || normalizedAllowedChatIds.length !== telegram.allowedChatIds.length)
+    ) {
       throw new ChannelBridgeBadPayloadError('Invalid telegram.allowedChatIds payload');
     }
     out.telegram.allowedChatIds = normalizedAllowedChatIds;
@@ -570,7 +578,11 @@ function applyTelegramConfigUpdate(current: ChannelBridgeServerTelegramConfigRec
 
   if (Array.isArray(update.allowedChatIds)) {
     const normalizedAllowedChatIds = normalizeStringArray(update.allowedChatIds);
-    if (update.allowedChatIds.length > 0 && normalizedAllowedChatIds.length === 0) {
+    if (
+      update.allowedChatIds.length > 0
+      && (!hasOnlyNonEmptyStringValues(update.allowedChatIds)
+        || normalizedAllowedChatIds.length !== update.allowedChatIds.length)
+    ) {
       throw new ChannelBridgeBadPayloadError('Invalid telegram.allowedChatIds update payload');
     }
     next.telegram.allowedChatIds = normalizedAllowedChatIds;

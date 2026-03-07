@@ -254,6 +254,49 @@ describe('channelBridgeServerKv', () => {
     })).rejects.toThrow('Invalid telegram.allowedChatIds update payload');
   });
 
+  it('rejects mixed valid/invalid allowedChatIds updates', async () => {
+    const kv = createInMemoryKvClient();
+
+    await expect(upsertChannelBridgeTelegramConfigInKv({
+      kv,
+      serverId: 'local-3005',
+      accountId: 'acct-1',
+      update: {
+        allowedChatIds: ['-100111', '   '],
+      },
+    })).rejects.toThrow('Invalid telegram.allowedChatIds update payload');
+  });
+
+  it('allows explicit allow-all updates with empty allowedChatIds', async () => {
+    const kv = createInMemoryKvClient();
+
+    await upsertChannelBridgeTelegramConfigInKv({
+      kv,
+      serverId: 'local-3005',
+      accountId: 'acct-1',
+      update: {
+        allowedChatIds: ['-100111'],
+      },
+    });
+
+    await upsertChannelBridgeTelegramConfigInKv({
+      kv,
+      serverId: 'local-3005',
+      accountId: 'acct-1',
+      update: {
+        allowedChatIds: [],
+      },
+    });
+
+    const config = await readChannelBridgeTelegramConfigFromKv({
+      kv,
+      serverId: 'local-3005',
+      accountId: 'acct-1',
+    });
+
+    expect(config.record?.telegram.allowedChatIds).toEqual([]);
+  });
+
   it('rejects invalid webhook port updates', async () => {
     const kv = createInMemoryKvClient();
 
@@ -955,6 +998,33 @@ describe('channelBridgeServerKv', () => {
         body: {
           key: 'k',
           value: malformedAllowedChatIdsValueBase64,
+          version: 3,
+        },
+      }),
+      mutate: async () => ({ status: 200, body: { success: true, results: [] } }),
+    };
+
+    await expect(readChannelBridgeTelegramConfigFromKv({
+      kv,
+      serverId: 'local-3005',
+      accountId: 'acct-1',
+    })).rejects.toThrow('Invalid telegram.allowedChatIds payload');
+  });
+
+  it('throws when telegram config payload contains mixed valid/invalid allowedChatIds', async () => {
+    const mixedAllowedChatIdsValueBase64 = Buffer.from(JSON.stringify({
+      schemaVersion: 1,
+      telegram: {
+        allowedChatIds: ['-100123', '   ', 123],
+      },
+      updatedAtMs: 123,
+    }), 'utf8').toString('base64');
+    const kv: ChannelBridgeKvClient = {
+      get: async () => ({
+        status: 200,
+        body: {
+          key: 'k',
+          value: mixedAllowedChatIdsValueBase64,
           version: 3,
         },
       }),

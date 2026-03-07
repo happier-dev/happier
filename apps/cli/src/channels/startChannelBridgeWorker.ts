@@ -1,3 +1,21 @@
+/**
+ * Channel bridge runtime wiring for the CLI daemon.
+ *
+ * Responsibilities:
+ * - resolve effective bridge runtime config from env/settings/account scope
+ * - construct provider adapters (Telegram today) and optional webhook relay
+ * - choose binding store implementation (in-memory or server-backed KV)
+ * - build default bridge deps that map channel events <-> session transcript I/O
+ * - start and return the core channel bridge worker lifecycle handle
+ *
+ * Public exports:
+ * - `ChannelBridgeRuntimeHandle`
+ * - `startChannelBridgeFromEnv`
+ *
+ * Runtime constraints:
+ * - designed for daemon/CLI runtime usage
+ * - webhook relay is loopback-bound and optional; polling remains supported
+ */
 import { createHash } from 'node:crypto';
 
 import { serializeAxiosErrorForLog } from '@/api/client/serializeAxiosErrorForLog';
