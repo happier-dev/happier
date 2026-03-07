@@ -302,6 +302,54 @@ describe('channelBridgeServerKv', () => {
     })).rejects.toThrow('Invalid telegram.webhook.host update payload');
   });
 
+  it('rejects malformed persisted webhook payloads during read', async () => {
+    const kv = createInMemoryKvClient();
+
+    const malformedWebhookPayload = Buffer.from(JSON.stringify({
+      schemaVersion: 1,
+      telegram: {
+        webhook: 'not-an-object',
+      },
+      updatedAtMs: 1,
+    }), 'utf8').toString('base64');
+
+    await replaceChannelBridgeTelegramConfigRawInKv({
+      kv,
+      serverId: 'local-3005',
+      accountId: 'acct-1',
+      valueBase64: malformedWebhookPayload,
+    });
+
+    await expect(readChannelBridgeTelegramConfigFromKv({
+      kv,
+      serverId: 'local-3005',
+      accountId: 'acct-1',
+    })).rejects.toThrow('Invalid telegram.webhook payload');
+
+    const emptyWebhookHostPayload = Buffer.from(JSON.stringify({
+      schemaVersion: 1,
+      telegram: {
+        webhook: {
+          host: '   ',
+        },
+      },
+      updatedAtMs: 2,
+    }), 'utf8').toString('base64');
+
+    await replaceChannelBridgeTelegramConfigRawInKv({
+      kv,
+      serverId: 'local-3005',
+      accountId: 'acct-1',
+      valueBase64: emptyWebhookHostPayload,
+    });
+
+    await expect(readChannelBridgeTelegramConfigFromKv({
+      kv,
+      serverId: 'local-3005',
+      accountId: 'acct-1',
+    })).rejects.toThrow('Invalid telegram.webhook.host payload');
+  });
+
   it('replaces raw telegram config bytes in KV without schema parsing', async () => {
     const kv = createInMemoryKvClient();
 

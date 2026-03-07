@@ -185,6 +185,47 @@ describe('createInMemoryChannelBindingStore', () => {
     const updated = await store.getBinding(ref);
     expect(updated?.lastForwardedSeq).toBe(7);
   });
+
+  it('normalizes binding keys the same way as server-backed store', async () => {
+    const store = createInMemoryChannelBindingStore();
+
+    await store.upsertBinding({
+      providerId: ' telegram ',
+      conversationId: ' room-1 ',
+      threadId: '   ',
+      sessionId: ' sess-1 ',
+      lastForwardedSeq: 1,
+    });
+
+    const found = await store.getBinding({
+      providerId: 'telegram',
+      conversationId: 'room-1',
+      threadId: null,
+    });
+    expect(found).toMatchObject({
+      providerId: 'telegram',
+      conversationId: 'room-1',
+      threadId: null,
+      sessionId: 'sess-1',
+    });
+
+    const advanced = await store.updateLastForwardedSeq({
+      providerId: ' telegram ',
+      conversationId: ' room-1 ',
+      threadId: '   ',
+    }, {
+      expectedSessionId: ' sess-1 ',
+      seq: 2,
+    });
+    expect(advanced).toBe(true);
+
+    const removed = await store.removeBinding({
+      providerId: 'telegram',
+      conversationId: 'room-1',
+      threadId: null,
+    });
+    expect(removed).toBe(true);
+  });
 });
 
 describe('executeChannelBridgeTick', () => {

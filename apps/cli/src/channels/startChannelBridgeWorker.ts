@@ -1,4 +1,4 @@
-import { createHash, randomUUID } from 'node:crypto';
+import { createHash } from 'node:crypto';
 
 import { serializeAxiosErrorForLog } from '@/api/client/serializeAxiosErrorForLog';
 import { fetchEncryptedTranscriptPageAfterSeq, fetchEncryptedTranscriptPageLatest } from '@/api/session/fetchEncryptedTranscriptWindow';
@@ -53,12 +53,11 @@ function createStableBridgeLocalId(params: Readonly<{
   providerId: string;
   conversationId: string;
   threadId: string | null;
+  sessionId: string;
+  text: string;
   messageId?: string;
 }>): string {
   const normalizedMessageId = typeof params.messageId === 'string' ? params.messageId.trim() : '';
-  if (normalizedMessageId.length === 0) {
-    return randomUUID();
-  }
 
   const digest = createHash('sha256')
     .update(params.providerId)
@@ -67,7 +66,7 @@ function createStableBridgeLocalId(params: Readonly<{
     .update('\u0000')
     .update(params.threadId ?? '')
     .update('\u0000')
-    .update(normalizedMessageId)
+    .update(normalizedMessageId.length > 0 ? normalizedMessageId : `fallback:${params.sessionId}:${params.text.trim()}`)
     .digest('hex');
   return `bridge-${digest}`;
 }
@@ -269,6 +268,8 @@ function createDefaultChannelBridgeDeps(credentials: Credentials): DefaultChanne
           providerId: params.providerId,
           conversationId: params.conversationId,
           threadId: params.threadId,
+          sessionId: params.sessionId,
+          text: params.text,
           messageId: params.messageId,
         }),
         sentFrom: params.sentFrom,
@@ -442,6 +443,9 @@ export async function startChannelBridgeFromEnv(params: Readonly<{
     if (!store) {
       const serverId = typeof params.serverId === 'string' ? params.serverId.trim() : '';
       const accountId = typeof params.accountId === 'string' ? params.accountId.trim() : '';
+      if ((serverId.length > 0) !== (accountId.length > 0)) {
+        throw new Error('Channel bridge server-backed bindings require both serverId and accountId');
+      }
       if (serverId && accountId) {
         const kv = createAxiosChannelBridgeKvClient({ token: params.credentials.token });
         store = createServerBackedChannelBindingStore({

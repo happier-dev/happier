@@ -497,14 +497,33 @@ describe('startChannelBridgeFromEnv', () => {
       threadId: '42',
       messageId: 'msg-2',
     });
+    await capturedDeps!.sendUserMessageToSession({
+      sessionId: 'sess-local-id-1',
+      text: 'fallback without message id',
+      sentFrom: 'telegram',
+      providerId: 'telegram',
+      conversationId: '-100local',
+      threadId: '42',
+    });
+    await capturedDeps!.sendUserMessageToSession({
+      sessionId: 'sess-local-id-1',
+      text: 'fallback without message id',
+      sentFrom: 'telegram',
+      providerId: 'telegram',
+      conversationId: '-100local',
+      threadId: '42',
+    });
 
-    expect(sendCommitted).toHaveBeenCalledTimes(3);
+    expect(sendCommitted).toHaveBeenCalledTimes(5);
     const firstLocalId = sendCommitted.mock.calls[0]?.[0]?.localId;
     const secondLocalId = sendCommitted.mock.calls[1]?.[0]?.localId;
     const thirdLocalId = sendCommitted.mock.calls[2]?.[0]?.localId;
+    const fourthLocalId = sendCommitted.mock.calls[3]?.[0]?.localId;
+    const fifthLocalId = sendCommitted.mock.calls[4]?.[0]?.localId;
 
     expect(firstLocalId).toBe(secondLocalId);
     expect(thirdLocalId).not.toBe(firstLocalId);
+    expect(fourthLocalId).toBe(fifthLocalId);
 
     await handle?.stop();
   });
@@ -892,6 +911,53 @@ describe('startChannelBridgeFromEnv', () => {
     })).rejects.toThrow('kv init failed');
 
     expect(relayStop).toHaveBeenCalledTimes(1);
+    expect(startWorker).not.toHaveBeenCalled();
+  });
+
+  it('fails fast when only one of serverId/accountId is provided', async () => {
+    vi.resetModules();
+
+    const startWorker = vi.fn();
+
+    vi.doMock('./core/channelBridgeWorker', () => ({
+      createInMemoryChannelBindingStore: vi.fn(() => ({
+        listBindings: async () => [],
+        getBinding: async () => null,
+        upsertBinding: async () => ({
+          providerId: 'telegram',
+          conversationId: 'conv-1',
+          threadId: null,
+          sessionId: 'sess-1',
+          lastForwardedSeq: 0,
+          createdAtMs: Date.now(),
+          updatedAtMs: Date.now(),
+        }),
+        updateLastForwardedSeq: async () => true,
+        removeBinding: async () => false,
+      })),
+      startChannelBridgeWorker: startWorker,
+    }));
+
+    vi.doMock('./telegram/telegramAdapter', () => ({
+      createTelegramChannelAdapter: vi.fn(() => ({
+        providerId: 'telegram',
+        pullInboundMessages: async () => [],
+        sendMessage: async () => undefined,
+        enqueueWebhookUpdate: vi.fn(),
+        stop: async () => undefined,
+      })),
+    }));
+
+    const { startChannelBridgeFromEnv } = await import('./startChannelBridgeWorker');
+
+    await expect(startChannelBridgeFromEnv({
+      credentials,
+      serverId: 'server-only',
+      env: {
+        HAPPIER_TELEGRAM_BOT_TOKEN: 'bot-token',
+      } as NodeJS.ProcessEnv,
+    })).rejects.toThrow('require both serverId and accountId');
+
     expect(startWorker).not.toHaveBeenCalled();
   });
 });

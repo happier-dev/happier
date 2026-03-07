@@ -205,19 +205,26 @@ function parseTelegramConfigRecord(value: unknown): ChannelBridgeServerTelegramC
     out.telegram.requireTopics = telegram.requireTopics;
   }
 
-  const webhook = asRecord(telegram.webhook);
-  if (webhook) {
+  if (telegram.webhook !== undefined) {
+    const webhook = asRecord(telegram.webhook);
+    if (!webhook) {
+      throw new ChannelBridgeBadPayloadError('Invalid telegram.webhook payload');
+    }
+
     const outWebhook: { enabled?: boolean; host?: string; port?: number } = {};
     if (typeof webhook.enabled === 'boolean') outWebhook.enabled = webhook.enabled;
-    if (typeof webhook.host === 'string') {
-      const trimmedHost = webhook.host.trim();
-      if (trimmedHost.length > 0) {
-        if (!isLoopbackHost(trimmedHost)) {
-          throw new ChannelBridgeBadPayloadError('Invalid telegram.webhook.host payload');
-        }
-        outWebhook.host = trimmedHost;
+
+    if (webhook.host !== undefined) {
+      if (typeof webhook.host !== 'string') {
+        throw new ChannelBridgeBadPayloadError('Invalid telegram.webhook.host payload');
       }
+      const trimmedHost = webhook.host.trim();
+      if (trimmedHost.length === 0 || !isLoopbackHost(trimmedHost)) {
+        throw new ChannelBridgeBadPayloadError('Invalid telegram.webhook.host payload');
+      }
+      outWebhook.host = trimmedHost;
     }
+
     if (webhook.port !== undefined) {
       if (
         typeof webhook.port !== 'number'
@@ -230,6 +237,11 @@ function parseTelegramConfigRecord(value: unknown): ChannelBridgeServerTelegramC
       }
       outWebhook.port = webhook.port;
     }
+
+    if (Object.keys(outWebhook).length === 0) {
+      throw new ChannelBridgeBadPayloadError('Invalid telegram.webhook payload');
+    }
+
     out.telegram.webhook = outWebhook;
   }
 

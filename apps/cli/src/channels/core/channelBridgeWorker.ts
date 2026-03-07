@@ -312,22 +312,35 @@ function normalizeAgentFetchResult(
  */
 export function createInMemoryChannelBindingStore(now: () => number = () => Date.now()): ChannelBindingStore {
   const byKey = new Map<string, ChannelSessionBinding>();
+  const normalizeRef = (ref: Readonly<{
+    providerId: string;
+    conversationId: string;
+    threadId: string | null;
+  }>): ChannelBridgeConversationRef => {
+    const providerId = ref.providerId.trim();
+    const conversationId = ref.conversationId.trim();
+    const threadIdRaw = typeof ref.threadId === 'string' ? ref.threadId.trim() : '';
+    return {
+      providerId,
+      conversationId,
+      threadId: threadIdRaw.length > 0 ? threadIdRaw : null,
+    };
+  };
 
   return {
     listBindings: async () => Array.from(byKey.values()).map((binding) => ({ ...binding })),
     getBinding: async (ref) => {
-      const found = byKey.get(bindingKey(ref));
+      const found = byKey.get(bindingKey(normalizeRef(ref)));
       return found ? { ...found } : null;
     },
     upsertBinding: async (binding) => {
-      const key = bindingKey(binding);
+      const normalizedRef = normalizeRef(binding);
+      const key = bindingKey(normalizedRef);
       const existing = byKey.get(key);
       const normalizedLastForwardedSeq = toNonNegativeInt(binding.lastForwardedSeq) ?? 0;
       const next: ChannelSessionBinding = {
-        providerId: binding.providerId,
-        conversationId: binding.conversationId,
-        threadId: binding.threadId,
-        sessionId: binding.sessionId,
+        ...normalizedRef,
+        sessionId: binding.sessionId.trim(),
         lastForwardedSeq: normalizedLastForwardedSeq,
         createdAtMs: existing?.createdAtMs ?? now(),
         updatedAtMs: now(),
@@ -336,10 +349,10 @@ export function createInMemoryChannelBindingStore(now: () => number = () => Date
       return { ...next };
     },
     updateLastForwardedSeq: async (ref, params) => {
-      const key = bindingKey(ref);
+      const key = bindingKey(normalizeRef(ref));
       const existing = byKey.get(key);
       if (!existing) return false;
-      if (existing.sessionId !== params.expectedSessionId) return false;
+      if (existing.sessionId !== params.expectedSessionId.trim()) return false;
       const parsedSeq = toNonNegativeInt(params.seq);
       if (parsedSeq === null) return false;
       const nextSeq = Math.max(existing.lastForwardedSeq, parsedSeq);
@@ -353,7 +366,7 @@ export function createInMemoryChannelBindingStore(now: () => number = () => Date
       });
       return true;
     },
-    removeBinding: async (ref) => byKey.delete(bindingKey(ref)),
+    removeBinding: async (ref) => byKey.delete(bindingKey(normalizeRef(ref))),
   };
 }
 
@@ -451,7 +464,7 @@ async function handleCommand(params: Readonly<{
   adapter: ChannelBridgeAdapter;
   store: ChannelBindingStore;
   deps: ChannelBridgeDeps;
-}>): Promise<true> {
+}>): Promise<void> {
   const { command, event, adapter, store, deps } = params;
   const ref: ChannelBridgeConversationRef = {
     providerId: event.providerId,
@@ -478,7 +491,7 @@ async function handleCommand(params: Readonly<{
     });
     if (!authz.allowed) {
       await replyForCommand(authz.message ?? 'You are not authorized to run this command here.');
-      return true;
+      return;
     }
   }
 
@@ -494,7 +507,7 @@ async function handleCommand(params: Readonly<{
         '/start - alias for /help',
       ].join('\n'),
     );
-    return true;
+    return;
   }
 
   if (command.name === 'sessions') {
@@ -508,10 +521,10 @@ async function handleCommand(params: Readonly<{
     } catch (error) {
       deps.onWarning?.('Failed to list sessions for /sessions command', error);
       await replyForCommand('Failed to retrieve sessions. Please try again later.');
-      return true;
+      return;
     }
     await replyForCommand(formatSessionsMessage(sessions));
-    return true;
+    return;
   }
 
   if (command.name === 'session') {
@@ -525,22 +538,22 @@ async function handleCommand(params: Readonly<{
     } catch (error) {
       deps.onWarning?.('Failed to read binding for /session command', error);
       await replyForCommand('Failed to read current session binding. Please try again later.');
-      return true;
+      return;
     }
 
     if (!existing) {
       await replyForCommand('No session is attached here. Use /attach <session-id-or-prefix>.');
-      return true;
+      return;
     }
     await replyForCommand(`Attached session: ${existing.sessionId}`);
-    return true;
+    return;
   }
 
   if (command.name === 'attach') {
     const idOrPrefix = String(command.args[0] ?? '').trim();
     if (!idOrPrefix) {
       await replyForCommand('Usage: /attach <session-id-or-prefix>');
-      return true;
+      return;
     }
 
     let resolved: ResolveSessionIdResult;
@@ -555,7 +568,7 @@ async function handleCommand(params: Readonly<{
       await replyForCommand(
         `Failed to attach to session ${idOrPrefix}: unable to resolve session identifier.`,
       );
-      return true;
+      return;
     }
 
     if (!resolved.ok) {
@@ -564,19 +577,19 @@ async function handleCommand(params: Readonly<{
           await replyForCommand(
             `Ambiguous session prefix. Candidates:\n${resolved.candidates.map((id) => `• ${id}`).join('\n')}`,
           );
-          return true;
+          return;
         }
 
         await replyForCommand('Ambiguous session prefix. Use /sessions to list active sessions.');
-        return true;
+        return;
       }
 
       if (resolved.code === 'unsupported') {
         await replyForCommand('Attaching by session ID or prefix is not supported in this environment.');
-        return true;
+        return;
       }
       await replyForCommand('Session not found. Use /sessions to list recent sessions.');
-      return true;
+      return;
     }
 
     let latestSeq: number;
@@ -593,7 +606,7 @@ async function handleCommand(params: Readonly<{
         await replyForCommand(
           `Failed to attach to session ${resolved.sessionId}: unable to resolve latest sequence cursor.`,
         );
-        return true;
+        return;
       }
       latestSeq = resolvedSeq;
     } catch (error) {
@@ -601,7 +614,7 @@ async function handleCommand(params: Readonly<{
       await replyForCommand(
         `Failed to attach to session ${resolved.sessionId}: unable to resolve latest sequence cursor.`,
       );
-      return true;
+      return;
     }
 
     let previousBinding: ChannelSessionBinding | null;
@@ -614,7 +627,7 @@ async function handleCommand(params: Readonly<{
     } catch (error) {
       deps.onWarning?.('Failed to read existing binding during /attach', error);
       await replyForCommand('Failed to read current binding before attach. Please try again later.');
-      return true;
+      return;
     }
     const previousSessionId = previousBinding?.sessionId ?? null;
 
@@ -633,7 +646,7 @@ async function handleCommand(params: Readonly<{
     } catch (error) {
       deps.onWarning?.('Failed to persist binding during /attach', error);
       await replyForCommand(`Failed to attach to session ${resolved.sessionId}: unable to persist binding.`);
-      return true;
+      return;
     }
 
     const switchedFrom =
@@ -641,7 +654,7 @@ async function handleCommand(params: Readonly<{
         ? ` (replaced previous session ${previousSessionId})`
         : '';
     await replyForCommand(`Attached this conversation to session ${resolved.sessionId}${switchedFrom}.`);
-    return true;
+    return;
   }
 
   if (command.name === 'detach') {
@@ -655,7 +668,7 @@ async function handleCommand(params: Readonly<{
     } catch (error) {
       deps.onWarning?.('Failed to remove binding for /detach command', error);
       await replyForCommand('Failed to detach current session binding. Please try again later.');
-      return true;
+      return;
     }
 
     if (removed) {
@@ -663,11 +676,11 @@ async function handleCommand(params: Readonly<{
     } else {
       await replyForCommand('No session was attached here.');
     }
-    return true;
+    return;
   }
 
   await replyForCommand(`Unknown command: /${command.name}. Use /help for supported commands.`);
-  return true;
+  return;
 }
 
 /**
