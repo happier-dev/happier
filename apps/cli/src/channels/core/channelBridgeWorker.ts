@@ -797,11 +797,18 @@ export async function executeChannelBridgeTick(params: Readonly<{
             `Failed to read binding for inbound message forwarding (provider=${adapter.providerId} conversation=${event.conversationId} thread=${event.threadId ?? 'null'})`,
             error,
           );
-          await replyToConversation(
-            adapter,
-            ref,
-            'Failed to read current session binding. Please try again later.',
-          );
+          try {
+            await replyToConversation(
+              adapter,
+              ref,
+              'Failed to read current session binding. Please try again later.',
+            );
+          } catch (replyError) {
+            params.deps.onWarning?.(
+              `Failed to send binding-read-failure reply for provider=${adapter.providerId} conversation=${event.conversationId} thread=${event.threadId ?? 'null'}`,
+              replyError,
+            );
+          }
           deduper.markSeen(event);
           ackableInbound.push(event);
           processedSuccessfully = true;

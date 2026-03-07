@@ -833,6 +833,49 @@ describe('executeChannelBridgeTick', () => {
     expect(harness.sent.filter((row) => row.text.includes('Failed to read current session binding'))).toHaveLength(1);
   });
 
+  it('acks binding-read failures even when failure reply delivery throws', async () => {
+    const baseStore = createInMemoryChannelBindingStore();
+    const store: ChannelBindingStore = {
+      ...baseStore,
+      getBinding: async () => {
+        throw new Error('binding read failed');
+      },
+    };
+    const harness = createAdapterHarness();
+    const { deps, warnings, sentToSession } = createDepsHarness();
+
+    const deduper = createChannelBridgeInboundDeduper();
+    const failedEvent: ChannelBridgeInboundMessage = {
+      providerId: 'telegram',
+      conversationId: 'bound-room-reply-fail',
+      threadId: null,
+      text: 'hello from channel',
+      messageId: 'non-command-getbinding-fail-reply-send',
+    };
+
+    harness.failSendOnce(new Error('temporary reply transport failure'));
+    harness.pushInbound(failedEvent);
+    await executeChannelBridgeTick({
+      store,
+      adapters: [harness.adapter],
+      deps,
+      inboundDeduper: deduper,
+    });
+
+    harness.pushInbound(failedEvent);
+    await executeChannelBridgeTick({
+      store,
+      adapters: [harness.adapter],
+      deps,
+      inboundDeduper: deduper,
+    });
+
+    expect(sentToSession).toHaveLength(0);
+    expect(warnings.filter((row) => row.message.includes('Failed to read binding for inbound message forwarding'))).toHaveLength(1);
+    expect(warnings.filter((row) => row.message.includes('Failed to send binding-read-failure reply'))).toHaveLength(1);
+    expect(harness.sent).toHaveLength(0);
+  });
+
   it('indicates when /sessions output is truncated', async () => {
     const store = createInMemoryChannelBindingStore();
     const harness = createAdapterHarness();
