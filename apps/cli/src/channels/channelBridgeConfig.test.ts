@@ -264,6 +264,27 @@ describe('resolveChannelBridgeRuntimeConfig', () => {
     expect(config.telegram.webhookSecret).toBe('server-secret');
   });
 
+  it('falls back to settings webhook secret when env secret token is invalid', () => {
+    const config = resolveChannelBridgeRuntimeConfig({
+      env: {
+        HAPPIER_TELEGRAM_WEBHOOK_SECRET: 'bad token!',
+      },
+      settings: {
+        channelBridge: {
+          providers: {
+            telegram: {
+              webhook: {
+                secret: 'settings-secret',
+              },
+            },
+          },
+        },
+      },
+    });
+
+    expect(config.telegram.webhookSecret).toBe('settings-secret');
+  });
+
   it('ignores non-loopback env webhook host and keeps settings host', () => {
     const config = resolveChannelBridgeRuntimeConfig({
       env: {

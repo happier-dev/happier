@@ -69,6 +69,15 @@ function readTrimmedString(value: unknown): string | null {
   return trimmed.length > 0 ? trimmed : null;
 }
 
+const TELEGRAM_WEBHOOK_SECRET_TOKEN_PATTERN = /^[A-Za-z0-9_-]+$/;
+
+function readWebhookSecretToken(value: unknown): string | null {
+  const token = readTrimmedString(value);
+  if (!token) return null;
+  if (!TELEGRAM_WEBHOOK_SECRET_TOKEN_PATTERN.test(token)) return null;
+  return token;
+}
+
 function firstParsed<T>(values: readonly unknown[], parse: (value: unknown) => T | null): T | null {
   for (const value of values) {
     const parsed = parse(value);
@@ -214,10 +223,12 @@ export function resolveChannelBridgeRuntimeConfig(params: Readonly<{
       webhookGlobal?.secret,
     ], readTrimmedString)
     ?? '';
-  const webhookSecret =
+  const envWebhookSecretRaw =
     typeof env.HAPPIER_TELEGRAM_WEBHOOK_SECRET === 'string'
       ? env.HAPPIER_TELEGRAM_WEBHOOK_SECRET.trim()
-      : settingsWebhookSecret;
+      : null;
+  const envWebhookSecret = readWebhookSecretToken(envWebhookSecretRaw);
+  const webhookSecret = envWebhookSecret ?? settingsWebhookSecret;
 
   const settingsWebhookHostRaw =
     firstParsed(
