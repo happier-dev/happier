@@ -215,12 +215,13 @@ export function resolveChannelBridgeRuntimeConfig(params: Readonly<{
       ? env.HAPPIER_TELEGRAM_WEBHOOK_SECRET.trim()
       : settingsWebhookSecret;
 
-  const settingsWebhookHost =
+  const settingsWebhookHostRaw =
     firstParsed(
       [webhookAccount?.host, webhookServer?.host, webhookGlobal?.host],
       readTrimmedString,
     )
     || '127.0.0.1';
+  const settingsWebhookHost = isLoopbackHost(settingsWebhookHostRaw) ? settingsWebhookHostRaw : '127.0.0.1';
   const envWebhookHostRaw =
     typeof env.HAPPIER_TELEGRAM_WEBHOOK_HOST === 'string'
       ? env.HAPPIER_TELEGRAM_WEBHOOK_HOST.trim()

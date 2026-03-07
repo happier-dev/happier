@@ -4,6 +4,7 @@ import {
   resolveTelegramWebhookValidationInputs,
   isMissingRequiredTelegramWebhookSecret,
   parseStrictWebhookPort,
+  applyDoctorExitCode,
   maskValue,
   redactSettingsForDisplay,
   redactDaemonStateForDisplay,
@@ -258,6 +259,30 @@ describe('telegram webhook validation inputs', () => {
         ).toEqual({
             webhookHost: '',
             webhookPort: null,
-        });
     });
+  });
+});
+
+describe('doctor exit code behavior', () => {
+  it('sets process exit code to 1 when critical failures are present', () => {
+    const previousExitCode = process.exitCode;
+    try {
+      process.exitCode = 0;
+      applyDoctorExitCode(true);
+      expect(process.exitCode).toBe(1);
+    } finally {
+      process.exitCode = previousExitCode;
+    }
+  });
+
+  it('leaves process exit code unchanged when no critical failures are present', () => {
+    const previousExitCode = process.exitCode;
+    try {
+      process.exitCode = 0;
+      applyDoctorExitCode(false);
+      expect(process.exitCode).toBe(0);
+    } finally {
+      process.exitCode = previousExitCode;
+    }
+  });
 });

@@ -1944,6 +1944,54 @@ describe('executeChannelBridgeTick', () => {
     expect(acknowledged).toHaveLength(1);
     expect(acknowledged[0]?.map((message) => message.messageId)).toEqual(['m-ack-1']);
   });
+
+  it('acknowledges slash-command and no-binding inbound messages in the same tick', async () => {
+    const store = createInMemoryChannelBindingStore();
+
+    const acknowledged: ChannelBridgeInboundMessage[][] = [];
+    const adapter: ChannelBridgeAdapter = {
+      providerId: 'telegram',
+      pullInboundMessages: async () => [
+        {
+          providerId: 'telegram',
+          conversationId: 'room-cmd-ack',
+          threadId: null,
+          senderId: 'user-1',
+          text: '/sessions',
+          messageId: 'm-ack-command',
+        },
+        {
+          providerId: 'telegram',
+          conversationId: 'room-cmd-ack',
+          threadId: null,
+          senderId: 'user-1',
+          text: 'hello on unbound conversation',
+          messageId: 'm-ack-unbound',
+        },
+      ],
+      ackInboundMessages: async (messages) => {
+        acknowledged.push(messages.map((message) => ({ ...message })));
+      },
+      sendMessage: async () => {},
+    };
+
+    const depsHarness = createDepsHarness({
+      sessions: [{ sessionId: 'sess-1', label: 'demo' }],
+    });
+
+    await executeChannelBridgeTick({
+      store,
+      adapters: [adapter],
+      deps: depsHarness.deps,
+      inboundDeduper: createChannelBridgeInboundDeduper(),
+    });
+
+    expect(acknowledged).toHaveLength(1);
+    expect(acknowledged[0]?.map((message) => message.messageId)).toEqual([
+      'm-ack-command',
+      'm-ack-unbound',
+    ]);
+  });
 });
 describe('startChannelBridgeWorker', () => {
   it('runs the first tick on startup', async () => {

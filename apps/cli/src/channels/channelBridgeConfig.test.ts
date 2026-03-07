@@ -32,7 +32,7 @@ describe('resolveChannelBridgeRuntimeConfig', () => {
     expect(config.telegram.requireTopics).toBe(true);
     expect(config.telegram.webhookEnabled).toBe(true);
     expect(config.telegram.webhookSecret).toBe('settings-secret');
-    expect(config.telegram.webhookHost).toBe('0.0.0.0');
+    expect(config.telegram.webhookHost).toBe('127.0.0.1');
     expect(config.telegram.webhookPort).toBe(9_001);
   });
 

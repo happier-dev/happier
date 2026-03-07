@@ -716,6 +716,7 @@ export async function executeChannelBridgeTick(params: Readonly<{
             store: params.store,
             deps: params.deps,
           });
+          ackableInbound.push(event);
           processedSuccessfully = true;
           continue;
         }
@@ -725,6 +726,7 @@ export async function executeChannelBridgeTick(params: Readonly<{
             conversationId: event.conversationId,
             threadId: event.threadId,
           }, 'Unknown command. Use /help for supported commands.');
+          ackableInbound.push(event);
           processedSuccessfully = true;
           continue;
         }
@@ -760,6 +762,7 @@ export async function executeChannelBridgeTick(params: Readonly<{
             ref,
             'No session is attached here. Use /attach <session-id-or-prefix> first.',
           );
+          ackableInbound.push(event);
           processedSuccessfully = true;
           continue;
         }

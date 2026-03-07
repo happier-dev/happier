@@ -264,6 +264,12 @@ export function shouldShowGlobalProcessInventory(filter: 'all' | 'daemon'): bool
     return filter === 'all';
 }
 
+export function applyDoctorExitCode(hasCriticalFailures: boolean): void {
+    if (hasCriticalFailures) {
+        process.exitCode = 1;
+    }
+}
+
 export async function runDoctorCommand(filter?: 'all' | 'daemon'): Promise<void> {
     // Default to 'all' if no filter specified
     if (!filter) {
@@ -692,4 +698,6 @@ export async function runDoctorCommand(filter?: 'all' | 'daemon'): Promise<void>
     } else {
         console.log(chalk.green('\n✅ Doctor diagnosis complete!\n'));
     }
+
+    applyDoctorExitCode(hasCriticalFailures);
 }
