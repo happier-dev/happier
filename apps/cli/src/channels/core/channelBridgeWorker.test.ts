@@ -25,6 +25,7 @@ interface SentSessionMessage {
   providerId: string;
   conversationId: string;
   threadId: string | null;
+  messageId?: string;
 }
 
 interface WarningRecord {
@@ -310,6 +311,7 @@ describe('executeChannelBridgeTick', () => {
         providerId: 'telegram',
         conversationId: '-1001',
         threadId: '88',
+        messageId: 'm2',
       },
     ]);
   });
@@ -659,6 +661,42 @@ describe('executeChannelBridgeTick', () => {
     expect(sentToSession).toHaveLength(0);
   });
 
+  it('acks unknown-command events even when reply delivery fails', async () => {
+    const store = createInMemoryChannelBindingStore();
+    const harness = createAdapterHarness();
+    const { deps, warnings, sentToSession } = createDepsHarness();
+    const deduper = createChannelBridgeInboundDeduper();
+
+    const event: ChannelBridgeInboundMessage = {
+      providerId: 'telegram',
+      conversationId: '-1001',
+      threadId: '99',
+      text: '/@',
+      messageId: 'm-unknown-reply-failure',
+    };
+
+    harness.failSendOnce(new Error('reply failed'));
+    harness.pushInbound(event);
+    await executeChannelBridgeTick({
+      store,
+      adapters: [harness.adapter],
+      deps,
+      inboundDeduper: deduper,
+    });
+
+    harness.pushInbound(event);
+    await executeChannelBridgeTick({
+      store,
+      adapters: [harness.adapter],
+      deps,
+      inboundDeduper: deduper,
+    });
+
+    expect(warnings.filter((row) => row.message.includes('Failed to send unknown-command reply'))).toHaveLength(1);
+    expect(harness.sent).toHaveLength(0);
+    expect(sentToSession).toHaveLength(0);
+  });
+
   it('replies for malformed slash command tokens instead of forwarding them', async () => {
     const store = createInMemoryChannelBindingStore();
     const harness = createAdapterHarness();
@@ -712,6 +750,42 @@ describe('executeChannelBridgeTick', () => {
     });
 
     expect(harness.sent.some((row) => row.text.includes('No session is attached here'))).toBe(true);
+    expect(sentToSession).toHaveLength(0);
+  });
+
+  it('acks non-command unbound events even when no-binding reply delivery fails', async () => {
+    const store = createInMemoryChannelBindingStore();
+    const harness = createAdapterHarness();
+    const { deps, warnings, sentToSession } = createDepsHarness();
+    const deduper = createChannelBridgeInboundDeduper();
+
+    const event: ChannelBridgeInboundMessage = {
+      providerId: 'telegram',
+      conversationId: 'unbound-room-fail-reply',
+      threadId: null,
+      text: 'hello from unbound thread',
+      messageId: 'm-unbound-reply-failure',
+    };
+
+    harness.failSendOnce(new Error('no-binding reply failed'));
+    harness.pushInbound(event);
+    await executeChannelBridgeTick({
+      store,
+      adapters: [harness.adapter],
+      deps,
+      inboundDeduper: deduper,
+    });
+
+    harness.pushInbound(event);
+    await executeChannelBridgeTick({
+      store,
+      adapters: [harness.adapter],
+      deps,
+      inboundDeduper: deduper,
+    });
+
+    expect(warnings.filter((row) => row.message.includes('Failed to send no-binding reply'))).toHaveLength(1);
+    expect(harness.sent).toHaveLength(0);
     expect(sentToSession).toHaveLength(0);
   });
 
@@ -1307,6 +1381,7 @@ describe('executeChannelBridgeTick', () => {
         providerId: 'discord',
         conversationId: 'discord-room',
         threadId: null,
+        messageId: 'discord-message',
       },
     ]);
     expect(warnings.some((row) => row.message.includes('Failed to pull inbound messages for adapter telegram'))).toBe(true);

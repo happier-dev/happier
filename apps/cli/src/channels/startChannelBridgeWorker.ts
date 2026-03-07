@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 
 import { serializeAxiosErrorForLog } from '@/api/client/serializeAxiosErrorForLog';
 import { fetchEncryptedTranscriptPageAfterSeq, fetchEncryptedTranscriptPageLatest } from '@/api/session/fetchEncryptedTranscriptWindow';
@@ -47,6 +47,29 @@ function toNonNegativeInt(value: unknown): number | null {
   if (typeof value !== 'number' || !Number.isFinite(value)) return null;
   const truncated = Math.trunc(value);
   return truncated >= 0 ? truncated : null;
+}
+
+function createStableBridgeLocalId(params: Readonly<{
+  providerId: string;
+  conversationId: string;
+  threadId: string | null;
+  messageId?: string;
+}>): string {
+  const normalizedMessageId = typeof params.messageId === 'string' ? params.messageId.trim() : '';
+  if (normalizedMessageId.length === 0) {
+    return randomUUID();
+  }
+
+  const digest = createHash('sha256')
+    .update(params.providerId)
+    .update('\u0000')
+    .update(params.conversationId)
+    .update('\u0000')
+    .update(params.threadId ?? '')
+    .update('\u0000')
+    .update(normalizedMessageId)
+    .digest('hex');
+  return `bridge-${digest}`;
 }
 
 function extractAssistantText(content: unknown): string | null {
@@ -234,7 +257,12 @@ function createDefaultChannelBridgeDeps(credentials: Credentials): DefaultChanne
         token: credentials.token,
         sessionId: params.sessionId,
         content,
-        localId: randomUUID(),
+        localId: createStableBridgeLocalId({
+          providerId: params.providerId,
+          conversationId: params.conversationId,
+          threadId: params.threadId,
+          messageId: params.messageId,
+        }),
         sentFrom: params.sentFrom,
       });
     },

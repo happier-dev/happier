@@ -388,6 +388,127 @@ describe('startChannelBridgeFromEnv', () => {
     await handle?.stop();
   });
 
+  it('uses deterministic localId for retried channel messages with stable message ids', async () => {
+    vi.resetModules();
+
+    const fetchSessionById = vi.fn(async () => ({
+      id: 'sess-local-id-1',
+      encryptionMode: 'plain',
+      metadata: null,
+      dataEncryptionKey: null,
+    }));
+    const sendCommitted = vi.fn(async () => undefined);
+
+    let capturedDeps: {
+      sendUserMessageToSession: (params: {
+        sessionId: string;
+        text: string;
+        sentFrom: string;
+        providerId: string;
+        conversationId: string;
+        threadId: string | null;
+        messageId?: string;
+      }) => Promise<void>;
+    } | null = null;
+
+    vi.doMock('@/sessionControl/sessionsHttp', async (importOriginal) => {
+      const actual = await importOriginal<typeof import('@/sessionControl/sessionsHttp')>();
+      return {
+        ...actual,
+        fetchSessionById,
+      };
+    });
+
+    vi.doMock('@/sessionControl/sessionSocketSendMessage', () => ({
+      sendSessionMessageViaSocketCommitted: sendCommitted,
+    }));
+
+    vi.doMock('./core/channelBridgeWorker', () => ({
+      createInMemoryChannelBindingStore: vi.fn(() => ({
+        listBindings: async () => [],
+        getBinding: async () => null,
+        upsertBinding: async () => ({
+          providerId: 'telegram',
+          conversationId: 'conv-1',
+          threadId: null,
+          sessionId: 'sess-1',
+          lastForwardedSeq: 0,
+          createdAtMs: Date.now(),
+          updatedAtMs: Date.now(),
+        }),
+        updateLastForwardedSeq: async () => true,
+        removeBinding: async () => false,
+      })),
+      startChannelBridgeWorker: vi.fn((params: { deps: typeof capturedDeps }) => {
+        capturedDeps = params.deps as typeof capturedDeps;
+        return {
+          trigger: vi.fn(),
+          stop: vi.fn(async () => undefined),
+        };
+      }),
+    }));
+
+    vi.doMock('./telegram/telegramAdapter', () => ({
+      createTelegramChannelAdapter: vi.fn(() => ({
+        providerId: 'telegram',
+        pullInboundMessages: async () => [],
+        sendMessage: async () => undefined,
+        enqueueWebhookUpdate: vi.fn(),
+        stop: async () => undefined,
+      })),
+    }));
+
+    const { startChannelBridgeFromEnv } = await import('./startChannelBridgeWorker');
+
+    const handle = await startChannelBridgeFromEnv({
+      credentials,
+      env: {
+        HAPPIER_TELEGRAM_BOT_TOKEN: 'bot-token',
+      } as NodeJS.ProcessEnv,
+    });
+
+    expect(handle).not.toBeNull();
+    expect(capturedDeps).not.toBeNull();
+
+    await capturedDeps!.sendUserMessageToSession({
+      sessionId: 'sess-local-id-1',
+      text: 'first attempt',
+      sentFrom: 'telegram',
+      providerId: 'telegram',
+      conversationId: '-100local',
+      threadId: '42',
+      messageId: 'msg-1',
+    });
+    await capturedDeps!.sendUserMessageToSession({
+      sessionId: 'sess-local-id-1',
+      text: 'retry same message',
+      sentFrom: 'telegram',
+      providerId: 'telegram',
+      conversationId: '-100local',
+      threadId: '42',
+      messageId: 'msg-1',
+    });
+    await capturedDeps!.sendUserMessageToSession({
+      sessionId: 'sess-local-id-1',
+      text: 'different message',
+      sentFrom: 'telegram',
+      providerId: 'telegram',
+      conversationId: '-100local',
+      threadId: '42',
+      messageId: 'msg-2',
+    });
+
+    expect(sendCommitted).toHaveBeenCalledTimes(3);
+    const firstLocalId = sendCommitted.mock.calls[0]?.[0]?.localId;
+    const secondLocalId = sendCommitted.mock.calls[1]?.[0]?.localId;
+    const thirdLocalId = sendCommitted.mock.calls[2]?.[0]?.localId;
+
+    expect(firstLocalId).toBe(secondLocalId);
+    expect(thirdLocalId).not.toBe(firstLocalId);
+
+    await handle?.stop();
+  });
+
   it('refreshes session runtime LRU order on cache hits', async () => {
     vi.resetModules();
 

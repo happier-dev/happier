@@ -115,6 +115,7 @@ export type ChannelBridgeDeps = Readonly<{
     providerId: string;
     conversationId: string;
     threadId: string | null;
+    messageId?: string;
   }>) => Promise<void>;
   resolveLatestSessionSeq: (sessionId: string) => Promise<number>;
   fetchAgentMessagesAfterSeq: (params: Readonly<{ sessionId: string; afterSeq: number }>) => Promise<
@@ -762,10 +763,17 @@ export async function executeChannelBridgeTick(params: Readonly<{
         }
 
         if (event.text.trim().startsWith('/')) {
-          await replyToConversation(adapter, {
-            conversationId: event.conversationId,
-            threadId: event.threadId,
-          }, 'Unknown command. Use /help for supported commands.');
+          try {
+            await replyToConversation(adapter, {
+              conversationId: event.conversationId,
+              threadId: event.threadId,
+            }, 'Unknown command. Use /help for supported commands.');
+          } catch (replyError) {
+            params.deps.onWarning?.(
+              `Failed to send unknown-command reply for provider=${adapter.providerId} conversation=${event.conversationId} thread=${event.threadId ?? 'null'}`,
+              replyError,
+            );
+          }
           deduper.markSeen(event);
           ackableInbound.push(event);
           processedSuccessfully = true;
@@ -801,11 +809,18 @@ export async function executeChannelBridgeTick(params: Readonly<{
         }
 
         if (!binding) {
-          await replyToConversation(
-            adapter,
-            ref,
-            'No session is attached here. Use /attach <session-id-or-prefix> first.',
-          );
+          try {
+            await replyToConversation(
+              adapter,
+              ref,
+              'No session is attached here. Use /attach <session-id-or-prefix> first.',
+            );
+          } catch (replyError) {
+            params.deps.onWarning?.(
+              `Failed to send no-binding reply for provider=${adapter.providerId} conversation=${event.conversationId} thread=${event.threadId ?? 'null'}`,
+              replyError,
+            );
+          }
           deduper.markSeen(event);
           ackableInbound.push(event);
           processedSuccessfully = true;
@@ -821,6 +836,7 @@ export async function executeChannelBridgeTick(params: Readonly<{
               providerId: adapter.providerId,
               conversationId: event.conversationId,
               threadId: event.threadId,
+              messageId: event.messageId,
             }),
             EXTERNAL_IO_TIMEOUT_MS,
             `sendUserMessageToSession(${binding.sessionId})`,
