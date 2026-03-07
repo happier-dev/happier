@@ -1509,6 +1509,55 @@ describe('executeChannelBridgeTick', () => {
     expect(harness.sent.some((row) => row.text.includes('Failed to send message to session sess-fail.'))).toBe(true);
   });
 
+  it('acks session-forward failures even when failure reply delivery throws', async () => {
+    const store = createInMemoryChannelBindingStore();
+    const harness = createAdapterHarness();
+
+    await store.upsertBinding({
+      providerId: 'telegram',
+      conversationId: 'failing-room-reply-fail',
+      threadId: null,
+      sessionId: 'sess-fail-reply',
+      lastForwardedSeq: 0,
+    });
+
+    const { deps, warnings } = createDepsHarness({
+      sendUserMessageToSession: async () => {
+        throw new Error('session unavailable');
+      },
+    });
+
+    const deduper = createChannelBridgeInboundDeduper();
+    const failedEvent: ChannelBridgeInboundMessage = {
+      providerId: 'telegram',
+      conversationId: 'failing-room-reply-fail',
+      threadId: null,
+      text: 'hello',
+      messageId: 'send-fail-reply-ack',
+    };
+
+    harness.failSendOnce(new Error('temporary reply transport failure'));
+    harness.pushInbound(failedEvent);
+    await executeChannelBridgeTick({
+      store,
+      adapters: [harness.adapter],
+      deps,
+      inboundDeduper: deduper,
+    });
+
+    harness.pushInbound(failedEvent);
+    await executeChannelBridgeTick({
+      store,
+      adapters: [harness.adapter],
+      deps,
+      inboundDeduper: deduper,
+    });
+
+    expect(warnings.filter((row) => row.message.includes('Failed to forward channel message into session'))).toHaveLength(1);
+    expect(warnings.filter((row) => row.message.includes('Failed to send session-forward-failure reply'))).toHaveLength(1);
+    expect(harness.sent).toHaveLength(0);
+  });
+
   it('persists cursor after successful sends when a later outbound row fails', async () => {
     const store = createInMemoryChannelBindingStore();
 

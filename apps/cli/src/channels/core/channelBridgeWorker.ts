@@ -853,11 +853,18 @@ export async function executeChannelBridgeTick(params: Readonly<{
             `Failed to forward channel message into session ${binding.sessionId} (provider=${adapter.providerId} conversation=${event.conversationId} thread=${event.threadId ?? 'null'} messageId=${event.messageId}); message will not be retried because the user is notified in-channel`,
             error,
           );
-          await replyToConversation(
-            adapter,
-            ref,
-            `Failed to send message to session ${binding.sessionId}.`,
-          );
+          try {
+            await replyToConversation(
+              adapter,
+              ref,
+              `Failed to send message to session ${binding.sessionId}.`,
+            );
+          } catch (replyError) {
+            params.deps.onWarning?.(
+              `Failed to send session-forward-failure reply for provider=${adapter.providerId} conversation=${event.conversationId} thread=${event.threadId ?? 'null'}`,
+              replyError,
+            );
+          }
         }
         processedSuccessfully = true;
       } catch (error) {
