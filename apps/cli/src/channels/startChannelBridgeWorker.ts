@@ -58,6 +58,9 @@ function createStableBridgeLocalId(params: Readonly<{
   messageId?: string;
 }>): string {
   const normalizedMessageId = typeof params.messageId === 'string' ? params.messageId.trim() : '';
+  if (normalizedMessageId.length === 0) {
+    throw new Error('Channel bridge inbound messageId is required for stable idempotency');
+  }
 
   const digest = createHash('sha256')
     .update(params.providerId)
@@ -66,7 +69,7 @@ function createStableBridgeLocalId(params: Readonly<{
     .update('\u0000')
     .update(params.threadId ?? '')
     .update('\u0000')
-    .update(normalizedMessageId.length > 0 ? normalizedMessageId : `fallback:${params.sessionId}:${params.text.trim()}`)
+    .update(normalizedMessageId)
     .digest('hex');
   return `bridge-${digest}`;
 }

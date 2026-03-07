@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { startChannelBridgeFromEnv } from './startChannelBridgeWorker';
 
@@ -9,6 +9,26 @@ const credentials = {
     secret: new Uint8Array([1, 2, 3]),
   },
 };
+
+afterEach(() => {
+  vi.clearAllMocks();
+  vi.restoreAllMocks();
+  vi.resetModules();
+
+  for (const modulePath of [
+    '@/sessionControl/sessionsHttp',
+    '@/api/session/fetchEncryptedTranscriptWindow',
+    '@/sessionControl/sessionSocketSendMessage',
+    '@/session/replay/decryptTranscriptRows',
+    '@/ui/logger',
+    './core/channelBridgeWorker',
+    './telegram/telegramAdapter',
+    './telegram/telegramWebhookRelay',
+    './channelBridgeServerKv',
+  ]) {
+    vi.doUnmock(modulePath);
+  }
+});
 
 describe('startChannelBridgeFromEnv', () => {
   it('returns null when telegram token is not configured and no custom adapters are provided', async () => {
@@ -237,6 +257,7 @@ describe('startChannelBridgeFromEnv', () => {
       providerId: 'telegram',
       conversationId: '-100111',
       threadId: null,
+      messageId: 'msg-ctx-1',
     });
     await capturedDeps!.fetchAgentMessagesAfterSeq({
       sessionId: 'sess-ctx-1',
@@ -388,7 +409,7 @@ describe('startChannelBridgeFromEnv', () => {
     await handle?.stop();
   });
 
-  it('uses deterministic localId for retried channel messages with stable message ids', async () => {
+  it('uses deterministic localId for retried channel messages and rejects missing message ids', async () => {
     vi.resetModules();
 
     const fetchSessionById = vi.fn(async () => ({
@@ -497,33 +518,33 @@ describe('startChannelBridgeFromEnv', () => {
       threadId: '42',
       messageId: 'msg-2',
     });
-    await capturedDeps!.sendUserMessageToSession({
-      sessionId: 'sess-local-id-1',
-      text: 'fallback without message id',
-      sentFrom: 'telegram',
-      providerId: 'telegram',
-      conversationId: '-100local',
-      threadId: '42',
-    });
-    await capturedDeps!.sendUserMessageToSession({
-      sessionId: 'sess-local-id-1',
-      text: 'fallback without message id',
-      sentFrom: 'telegram',
-      providerId: 'telegram',
-      conversationId: '-100local',
-      threadId: '42',
-    });
 
-    expect(sendCommitted).toHaveBeenCalledTimes(5);
+    await expect(capturedDeps!.sendUserMessageToSession({
+      sessionId: 'sess-local-id-1',
+      text: 'missing message id',
+      sentFrom: 'telegram',
+      providerId: 'telegram',
+      conversationId: '-100local',
+      threadId: '42',
+    })).rejects.toThrow('inbound messageId is required');
+
+    await expect(capturedDeps!.sendUserMessageToSession({
+      sessionId: 'sess-local-id-1',
+      text: 'blank message id',
+      sentFrom: 'telegram',
+      providerId: 'telegram',
+      conversationId: '-100local',
+      threadId: '42',
+      messageId: '   ',
+    })).rejects.toThrow('inbound messageId is required');
+
+    expect(sendCommitted).toHaveBeenCalledTimes(3);
     const firstLocalId = sendCommitted.mock.calls[0]?.[0]?.localId;
     const secondLocalId = sendCommitted.mock.calls[1]?.[0]?.localId;
     const thirdLocalId = sendCommitted.mock.calls[2]?.[0]?.localId;
-    const fourthLocalId = sendCommitted.mock.calls[3]?.[0]?.localId;
-    const fifthLocalId = sendCommitted.mock.calls[4]?.[0]?.localId;
 
     expect(firstLocalId).toBe(secondLocalId);
     expect(thirdLocalId).not.toBe(firstLocalId);
-    expect(fourthLocalId).toBe(fifthLocalId);
 
     await handle?.stop();
   });
@@ -738,6 +759,7 @@ describe('startChannelBridgeFromEnv', () => {
         providerId: 'telegram',
         conversationId: '-100111',
         threadId: null,
+        messageId: `msg-${sessionId}`,
       });
     }
 
@@ -748,6 +770,7 @@ describe('startChannelBridgeFromEnv', () => {
       providerId: 'telegram',
       conversationId: '-100111',
       threadId: null,
+      messageId: 'msg-sess-lru-0-refresh',
     });
 
     await capturedDeps!.sendUserMessageToSession({
@@ -757,6 +780,7 @@ describe('startChannelBridgeFromEnv', () => {
       providerId: 'telegram',
       conversationId: '-100111',
       threadId: null,
+      messageId: 'msg-sess-lru-200-evict',
     });
 
     await capturedDeps!.sendUserMessageToSession({
@@ -766,6 +790,7 @@ describe('startChannelBridgeFromEnv', () => {
       providerId: 'telegram',
       conversationId: '-100111',
       threadId: null,
+      messageId: 'msg-sess-lru-0-stay',
     });
 
     expect(fetchSessionById).toHaveBeenCalledTimes(201);
@@ -777,6 +802,14 @@ describe('startChannelBridgeFromEnv', () => {
     vi.resetModules();
 
     const warnSpy = vi.fn();
+    const startRelay = vi.fn();
+    const createTelegramChannelAdapter = vi.fn(() => ({
+      providerId: 'telegram',
+      pullInboundMessages: async () => [],
+      sendMessage: async () => undefined,
+      enqueueWebhookUpdate: vi.fn(),
+      stop: async () => undefined,
+    }));
 
     vi.doMock('@/ui/logger', () => ({
       logger: {
@@ -809,14 +842,16 @@ describe('startChannelBridgeFromEnv', () => {
     }));
 
     vi.doMock('./telegram/telegramAdapter', () => ({
-      createTelegramChannelAdapter: vi.fn(() => ({
-        providerId: 'telegram',
-        pullInboundMessages: async () => [],
-        sendMessage: async () => undefined,
-        enqueueWebhookUpdate: vi.fn(),
-        stop: async () => undefined,
-      })),
+      createTelegramChannelAdapter,
     }));
+
+    vi.doMock('./telegram/telegramWebhookRelay', async (importOriginal) => {
+      const actual = await importOriginal<typeof import('./telegram/telegramWebhookRelay')>();
+      return {
+        ...actual,
+        startTelegramWebhookRelay: startRelay,
+      };
+    });
 
     const { startChannelBridgeFromEnv } = await import('./startChannelBridgeWorker');
 
@@ -832,6 +867,8 @@ describe('startChannelBridgeFromEnv', () => {
     expect(warnSpy).toHaveBeenCalledWith(
       '[channelBridge] Telegram webhook.enabled=true but webhook.secret is missing; falling back to polling mode',
     );
+    expect(startRelay).not.toHaveBeenCalled();
+    expect(createTelegramChannelAdapter).toHaveBeenCalledWith(expect.objectContaining({ webhookMode: false }));
 
     await handle?.stop();
   });
@@ -953,6 +990,14 @@ describe('startChannelBridgeFromEnv', () => {
     await expect(startChannelBridgeFromEnv({
       credentials,
       serverId: 'server-only',
+      env: {
+        HAPPIER_TELEGRAM_BOT_TOKEN: 'bot-token',
+      } as NodeJS.ProcessEnv,
+    })).rejects.toThrow('require both serverId and accountId');
+
+    await expect(startChannelBridgeFromEnv({
+      credentials,
+      accountId: 'account-only',
       env: {
         HAPPIER_TELEGRAM_BOT_TOKEN: 'bot-token',
       } as NodeJS.ProcessEnv,
