@@ -1402,6 +1402,75 @@ describe('executeChannelBridgeTick', () => {
     expect(sentToSession).toHaveLength(1);
   });
 
+  it('does not mark inbound messages as seen when processing fails before completion', async () => {
+    const baseStore = createInMemoryChannelBindingStore();
+    const ref = {
+      providerId: 'telegram',
+      conversationId: 'retry-on-failure-room',
+      threadId: null,
+    } as const;
+
+    await baseStore.upsertBinding({
+      ...ref,
+      sessionId: 'sess-retry-on-failure',
+      lastForwardedSeq: 0,
+    });
+
+    let failGetBindingOnce = true;
+    const store: ChannelBindingStore = {
+      ...baseStore,
+      getBinding: async (bindingRef) => {
+        if (failGetBindingOnce) {
+          failGetBindingOnce = false;
+          throw new Error('temporary store failure');
+        }
+        return await baseStore.getBinding(bindingRef);
+      },
+    };
+
+    const repeatedEvent: ChannelBridgeInboundMessage = {
+      providerId: 'telegram',
+      conversationId: 'retry-on-failure-room',
+      threadId: null,
+      senderId: 'user-1',
+      text: 'retry me',
+      messageId: 'm-retry-after-failure',
+    };
+
+    let pullCount = 0;
+    const adapter: ChannelBridgeAdapter = {
+      providerId: 'telegram',
+      pullInboundMessages: async () => {
+        pullCount += 1;
+        if (pullCount <= 2) {
+          return [repeatedEvent];
+        }
+        return [];
+      },
+      sendMessage: async () => {},
+    };
+
+    const { deps, sentToSession, warnings } = createDepsHarness();
+    const deduper = createChannelBridgeInboundDeduper();
+
+    await executeChannelBridgeTick({
+      store,
+      adapters: [adapter],
+      deps,
+      inboundDeduper: deduper,
+    });
+    await executeChannelBridgeTick({
+      store,
+      adapters: [adapter],
+      deps,
+      inboundDeduper: deduper,
+    });
+
+    expect(warnings.some((row) => row.message.includes('Failed to read binding for inbound message forwarding'))).toBe(true);
+    expect(sentToSession).toHaveLength(1);
+    expect(sentToSession[0]?.text).toBe('retry me');
+  });
+
   it('does not dedupe messages when inbound messageId is empty', async () => {
     const store = createInMemoryChannelBindingStore();
     const harness = createAdapterHarness();

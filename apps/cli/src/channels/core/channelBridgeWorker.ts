@@ -208,7 +208,8 @@ function isTelegramPermanentDeliveryFailure(error: unknown): boolean {
 }
 
 type ChannelBridgeInboundDeduper = Readonly<{
-  isDuplicate: (message: ChannelBridgeInboundMessage) => boolean;
+  hasSeen: (message: ChannelBridgeInboundMessage) => boolean;
+  markSeen: (message: ChannelBridgeInboundMessage) => void;
 }>;
 
 /**
@@ -243,19 +244,32 @@ export function createChannelBridgeInboundDeduper(now: () => number = () => Date
     }
   };
 
+  const dedupeKey = (message: ChannelBridgeInboundMessage): string | null => {
+    const normalizedMessageId = String(message.messageId).trim();
+    if (normalizedMessageId.length === 0) {
+      return null;
+    }
+    return JSON.stringify([message.providerId, message.conversationId, message.threadId, normalizedMessageId]);
+  };
+
   return {
-    isDuplicate: (message) => {
-      const normalizedMessageId = String(message.messageId).trim();
-      if (normalizedMessageId.length === 0) {
+    hasSeen: (message) => {
+      const key = dedupeKey(message);
+      if (!key) {
         return false;
       }
-
-      const key = JSON.stringify([message.providerId, message.conversationId, message.threadId, normalizedMessageId]);
       const currentNow = now();
       prune(currentNow);
-      if (recent.has(key)) return true;
+      return recent.has(key);
+    },
+    markSeen: (message) => {
+      const key = dedupeKey(message);
+      if (!key) {
+        return;
+      }
+      const currentNow = now();
+      prune(currentNow);
       recent.set(key, currentNow);
-      return false;
     },
   };
 }
@@ -699,7 +713,7 @@ export async function executeChannelBridgeTick(params: Readonly<{
         );
       }
 
-      if (deduper.isDuplicate(event)) {
+      if (deduper.hasSeen(event)) {
         ackableInbound.push(event);
         continue;
       }
@@ -716,6 +730,7 @@ export async function executeChannelBridgeTick(params: Readonly<{
             store: params.store,
             deps: params.deps,
           });
+          deduper.markSeen(event);
           ackableInbound.push(event);
           processedSuccessfully = true;
           continue;
@@ -726,6 +741,7 @@ export async function executeChannelBridgeTick(params: Readonly<{
             conversationId: event.conversationId,
             threadId: event.threadId,
           }, 'Unknown command. Use /help for supported commands.');
+          deduper.markSeen(event);
           ackableInbound.push(event);
           processedSuccessfully = true;
           continue;
@@ -762,6 +778,7 @@ export async function executeChannelBridgeTick(params: Readonly<{
             ref,
             'No session is attached here. Use /attach <session-id-or-prefix> first.',
           );
+          deduper.markSeen(event);
           ackableInbound.push(event);
           processedSuccessfully = true;
           continue;
@@ -797,6 +814,7 @@ export async function executeChannelBridgeTick(params: Readonly<{
       }
 
       if (processedSuccessfully) {
+        deduper.markSeen(event);
         ackableInbound.push(event);
       }
     }

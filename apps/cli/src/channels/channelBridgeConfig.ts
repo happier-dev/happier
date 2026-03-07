@@ -45,7 +45,10 @@ function parseCsv(raw: string): string[] {
 }
 
 function parseStringArray(value: unknown): string[] | null {
-  if (typeof value === 'string') return parseCsv(value);
+  if (typeof value === 'string') {
+    const parsed = parseCsv(value);
+    return parsed.length > 0 ? parsed : null;
+  }
   if (!Array.isArray(value)) return null;
   const out = value
     .map((entry) => {
@@ -62,7 +65,8 @@ function parseStringArray(value: unknown): string[] | null {
 
 function readTrimmedString(value: unknown): string | null {
   if (typeof value !== 'string') return null;
-  return value.trim();
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : null;
 }
 
 function firstParsed<T>(values: readonly unknown[], parse: (value: unknown) => T | null): T | null {

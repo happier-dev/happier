@@ -185,6 +185,85 @@ describe('resolveChannelBridgeRuntimeConfig', () => {
     expect(config.telegram.allowedChatIds).toEqual(['-100-server']);
   });
 
+  it('falls back to lower scope when account allowedChatIds string normalizes empty', () => {
+    const config = resolveChannelBridgeRuntimeConfig({
+      env: {},
+      serverId: 'local-test',
+      accountId: 'acct-123',
+      settings: {
+        channelBridge: {
+          byServerId: {
+            'local-test': {
+              providers: {
+                telegram: {
+                  allowedChatIds: ['-100-server'],
+                },
+              },
+              byAccountId: {
+                'acct-123': {
+                  providers: {
+                    telegram: {
+                      allowedChatIds: ',  ,',
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+    });
+
+    expect(config.telegram.allowedChatIds).toEqual(['-100-server']);
+  });
+
+  it('falls back to lower scope when higher-scope string secrets are blank', () => {
+    const config = resolveChannelBridgeRuntimeConfig({
+      env: {},
+      serverId: 'local-test',
+      accountId: 'acct-123',
+      settings: {
+        channelBridge: {
+          providers: {
+            telegram: {
+              botToken: 'global-token',
+              webhook: {
+                secret: 'global-secret',
+              },
+            },
+          },
+          byServerId: {
+            'local-test': {
+              providers: {
+                telegram: {
+                  botToken: 'server-token',
+                  webhook: {
+                    secret: 'server-secret',
+                  },
+                },
+              },
+              byAccountId: {
+                'acct-123': {
+                  providers: {
+                    telegram: {
+                      botToken: '   ',
+                      webhook: {
+                        secret: '   ',
+                      },
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+    });
+
+    expect(config.telegram.botToken).toBe('server-token');
+    expect(config.telegram.webhookSecret).toBe('server-secret');
+  });
+
   it('ignores non-loopback env webhook host and keeps settings host', () => {
     const config = resolveChannelBridgeRuntimeConfig({
       env: {
