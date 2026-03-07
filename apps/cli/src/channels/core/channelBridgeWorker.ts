@@ -665,9 +665,7 @@ export async function executeChannelBridgeTick(params: Readonly<{
   store: ChannelBindingStore;
   adapters: readonly ChannelBridgeAdapter[];
   deps: ChannelBridgeDeps;
-  inboundDeduper: Readonly<{
-    isDuplicate: (message: ChannelBridgeInboundMessage) => boolean;
-  }>;
+  inboundDeduper: ChannelBridgeInboundDeduper;
   warnedMissingAdapterBindings?: Set<string>;
 }>): Promise<void> {
   const activeAdapters: ChannelBridgeAdapter[] = [];
