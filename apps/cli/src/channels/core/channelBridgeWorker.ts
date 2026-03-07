@@ -218,7 +218,7 @@ function isTelegramPermanentDeliveryFailure(error: unknown): boolean {
   if (!(error instanceof TelegramApiError)) return false;
   if (error.method !== 'sendMessage') return false;
   if (error.statusCode === 403) return true;
-  if (error.statusCode === 400 && /chat not found/i.test(error.message)) return true;
+  if (error.statusCode === 400 && error.description !== null && /chat not found/i.test(error.description)) return true;
   return false;
 }
 

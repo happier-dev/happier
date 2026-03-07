@@ -2008,6 +2008,46 @@ describe('executeChannelBridgeTick', () => {
     ).toBe(true);
   });
 
+  it('treats typed Telegram 400 chat-not-found failures as non-retryable', async () => {
+    const store = createInMemoryChannelBindingStore();
+    const { deps, warnings } = createDepsHarness({
+      fetchAgentMessagesAfterSeq: async () => [{ seq: 1, text: 'delivery fails permanently' }],
+    });
+
+    await store.upsertBinding({
+      providerId: 'telegram',
+      conversationId: '-3004c',
+      threadId: null,
+      sessionId: 'sess-typed-permanent-chat-not-found',
+      lastForwardedSeq: 0,
+    });
+
+    const adapter: ChannelBridgeAdapter = {
+      providerId: 'telegram',
+      pullInboundMessages: async () => [],
+      sendMessage: async () => {
+        throw new TelegramApiError({
+          method: 'sendMessage',
+          statusCode: 400,
+          data: { description: 'Bad Request: chat not found' },
+        });
+      },
+    };
+
+    await executeChannelBridgeTick({
+      store,
+      adapters: [adapter],
+      deps,
+      inboundDeduper: createChannelBridgeInboundDeduper(),
+    });
+
+    const [binding] = await store.listBindings();
+    expect(binding?.lastForwardedSeq).toBe(1);
+    expect(
+      warnings.some((row) => row.message.includes('Detected permanent Telegram delivery failure')),
+    ).toBe(true);
+  });
+
   it('does not treat untyped telegram-like send errors as permanent failures', async () => {
     const store = createInMemoryChannelBindingStore();
     const { deps, warnings } = createDepsHarness({
