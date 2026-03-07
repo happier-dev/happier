@@ -85,12 +85,24 @@ export type ResolveSessionIdResult =
   | Readonly<{ ok: true; sessionId: string }>
   | Readonly<{ ok: false; code: 'session_not_found' | 'session_id_ambiguous' | 'unsupported'; candidates?: string[] }>;
 
+export type ChannelBridgeAgentMessageRow = Readonly<{
+  seq: number;
+  text: string;
+}>;
+
+export type ChannelBridgeAgentFetchResult = Readonly<{
+  messages: readonly ChannelBridgeAgentMessageRow[];
+  highestSeenSeq?: number | null;
+}>;
+
 /**
  * Bridge dependencies supplied by runtime integration.
  *
  * - `resolveLatestSessionSeq` should return the latest valid non-negative transcript cursor.
  * - `fetchAgentMessagesAfterSeq` should return rows with `seq > afterSeq`.
  *   Results may be unsorted; the worker enforces ascending `seq` delivery before forwarding.
+ * - `fetchAgentMessagesAfterSeq` may optionally return `highestSeenSeq` when no agent rows are
+ *   present so the worker can advance cursor windows across non-agent transcript pages.
  * - `onWarning` receives non-fatal operational issues; worker continues best-effort.
  */
 export type ChannelBridgeDeps = Readonly<{
@@ -105,7 +117,9 @@ export type ChannelBridgeDeps = Readonly<{
     threadId: string | null;
   }>) => Promise<void>;
   resolveLatestSessionSeq: (sessionId: string) => Promise<number>;
-  fetchAgentMessagesAfterSeq: (params: Readonly<{ sessionId: string; afterSeq: number }>) => Promise<Array<Readonly<{ seq: number; text: string }>>>;
+  fetchAgentMessagesAfterSeq: (params: Readonly<{ sessionId: string; afterSeq: number }>) => Promise<
+    readonly ChannelBridgeAgentMessageRow[] | ChannelBridgeAgentFetchResult
+  >;
   authorizeCommand?: (params: Readonly<{ commandName: string; actor: ChannelBridgeActorContext }>) => Promise<boolean | Readonly<{ allowed: boolean; message?: string }>>;
   onWarning?: (message: string, error?: unknown) => void;
 }>;
@@ -271,6 +285,22 @@ export function createChannelBridgeInboundDeduper(now: () => number = () => Date
       prune(currentNow);
       recent.set(key, currentNow);
     },
+  };
+}
+
+function normalizeAgentFetchResult(
+  fetched: readonly ChannelBridgeAgentMessageRow[] | ChannelBridgeAgentFetchResult,
+): Readonly<{ messages: readonly ChannelBridgeAgentMessageRow[]; highestSeenSeq: number | null }> {
+  if (Array.isArray(fetched)) {
+    return {
+      messages: fetched,
+      highestSeenSeq: null,
+    };
+  }
+
+  return {
+    messages: fetched.messages,
+    highestSeenSeq: toNonNegativeInt(fetched.highestSeenSeq ?? null),
   };
 }
 
@@ -868,7 +898,7 @@ export async function executeChannelBridgeTick(params: Readonly<{
     warnedMissingAdapterBindings?.delete(missingBindingWarningKey);
 
     try {
-      const messages = await withTimeout(
+      const fetchedMessages = await withTimeout(
         params.deps.fetchAgentMessagesAfterSeq({
           sessionId: binding.sessionId,
           afterSeq: binding.lastForwardedSeq,
@@ -876,6 +906,11 @@ export async function executeChannelBridgeTick(params: Readonly<{
         EXTERNAL_IO_TIMEOUT_MS,
         `fetchAgentMessagesAfterSeq(${binding.sessionId})`,
       );
+
+      const {
+        messages,
+        highestSeenSeq,
+      } = normalizeAgentFetchResult(fetchedMessages);
 
       const orderedMessages: Array<Readonly<{ seq: number; text: string }>> = [];
       for (const row of messages) {
@@ -921,6 +956,11 @@ export async function executeChannelBridgeTick(params: Readonly<{
           return false;
         }
       };
+
+      if (orderedMessages.length === 0 && highestSeenSeq !== null && highestSeenSeq > maxSeq) {
+        await persistCursor(highestSeenSeq);
+        continue;
+      }
 
       for (const row of orderedMessages) {
         const parsedSeq = row.seq;

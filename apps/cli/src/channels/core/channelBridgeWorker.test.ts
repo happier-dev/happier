@@ -760,6 +760,42 @@ describe('executeChannelBridgeTick', () => {
     expect(binding?.lastForwardedSeq).toBe(11);
   });
 
+  it('advances outbound cursor when transcript page contains only non-agent rows', async () => {
+    const store = createInMemoryChannelBindingStore();
+    const harness = createAdapterHarness();
+
+    await store.upsertBinding({
+      providerId: 'telegram',
+      conversationId: '-1005b',
+      threadId: null,
+      sessionId: 'sess-non-agent-window',
+      lastForwardedSeq: 9,
+    });
+
+    const { deps } = createDepsHarness({
+      fetchAgentMessagesAfterSeq: async ({ afterSeq }: { afterSeq: number }) => {
+        if (afterSeq === 9) {
+          return {
+            messages: [],
+            highestSeenSeq: 59,
+          };
+        }
+        return [];
+      },
+    });
+
+    await executeChannelBridgeTick({
+      store,
+      adapters: [harness.adapter],
+      deps,
+      inboundDeduper: createChannelBridgeInboundDeduper(),
+    });
+
+    expect(harness.sent).toEqual([]);
+    const [binding] = await store.listBindings();
+    expect(binding?.lastForwardedSeq).toBe(59);
+  });
+
   it('skips agent rows with invalid seq values and continues forwarding valid rows', async () => {
     const store = createInMemoryChannelBindingStore();
     const harness = createAdapterHarness();

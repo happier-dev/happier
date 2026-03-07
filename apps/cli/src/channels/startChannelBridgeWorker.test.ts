@@ -160,7 +160,7 @@ describe('startChannelBridgeFromEnv', () => {
         conversationId: string;
         threadId: string | null;
       }) => Promise<void>;
-      fetchAgentMessagesAfterSeq: (params: { sessionId: string; afterSeq: number }) => Promise<Array<{ seq: number; text: string }>>;
+      fetchAgentMessagesAfterSeq: (params: { sessionId: string; afterSeq: number }) => Promise<unknown>;
     } | null = null;
 
     vi.doMock('@/sessionControl/sessionsHttp', async (importOriginal) => {
@@ -299,7 +299,7 @@ describe('startChannelBridgeFromEnv', () => {
     ]));
 
     let capturedDeps: {
-      fetchAgentMessagesAfterSeq: (params: { sessionId: string; afterSeq: number }) => Promise<Array<{ seq: number; text: string }>>;
+      fetchAgentMessagesAfterSeq: (params: { sessionId: string; afterSeq: number }) => Promise<unknown>;
     } | null = null;
 
     vi.doMock('@/sessionControl/sessionsHttp', async (importOriginal) => {
@@ -374,12 +374,15 @@ describe('startChannelBridgeFromEnv', () => {
       afterSeq: 0,
     });
 
-    expect(rows).toEqual([
-      {
-        seq: 11,
-        text: 'plain assistant output',
-      },
-    ]);
+    expect(rows).toEqual({
+      messages: [
+        {
+          seq: 11,
+          text: 'plain assistant output',
+        },
+      ],
+      highestSeenSeq: 12,
+    });
     expect(decryptRows).not.toHaveBeenCalled();
 
     await handle?.stop();

@@ -21,6 +21,7 @@ import {
   startChannelBridgeWorker,
   type ChannelBindingStore,
   type ChannelBridgeAdapter,
+  type ChannelBridgeAgentMessageRow,
   type ChannelBridgeDeps,
   type ChannelBridgeWorkerHandle,
 } from './core/channelBridgeWorker';
@@ -40,6 +41,12 @@ type DefaultChannelBridgeDepsHandle = Readonly<{
 function asRecord(value: unknown): Record<string, unknown> | null {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
   return value as Record<string, unknown>;
+}
+
+function toNonNegativeInt(value: unknown): number | null {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return null;
+  const truncated = Math.trunc(value);
+  return truncated >= 0 ? truncated : null;
 }
 
 function extractAssistantText(content: unknown): string | null {
@@ -242,7 +249,12 @@ function createDefaultChannelBridgeDeps(credentials: Credentials): DefaultChanne
     },
     fetchAgentMessagesAfterSeq: async ({ sessionId, afterSeq }) => {
       const runtime = await resolveSessionRuntime(sessionId);
-      if (!runtime) return [];
+      if (!runtime) {
+        return {
+          messages: [],
+          highestSeenSeq: null,
+        };
+      }
 
       const encrypted = await fetchEncryptedTranscriptPageAfterSeq({
         token: credentials.token,
@@ -251,6 +263,13 @@ function createDefaultChannelBridgeDeps(credentials: Credentials): DefaultChanne
         limit: 50,
       });
 
+      const highestSeenSeq = encrypted.reduce<number | null>((currentMax, row) => {
+        const parsedSeq = toNonNegativeInt(row.seq);
+        if (parsedSeq === null) return currentMax;
+        if (currentMax === null) return parsedSeq;
+        return parsedSeq > currentMax ? parsedSeq : currentMax;
+      }, null);
+
       const transcriptRows = runtime.mode === 'plain'
         ? parsePlainTranscriptRows(encrypted)
         : decryptTranscriptRows({
@@ -258,11 +277,16 @@ function createDefaultChannelBridgeDeps(credentials: Credentials): DefaultChanne
           rows: encrypted,
         });
 
-      return transcriptRows
+      const messages: ChannelBridgeAgentMessageRow[] = transcriptRows
         .filter((row) => row.role === 'agent')
         .map((row) => ({ seq: row.seq, text: extractAssistantText(row.content) }))
         .filter((row) => typeof row.text === 'string' && row.text.trim().length > 0)
         .map((row) => ({ seq: row.seq, text: row.text! }));
+
+      return {
+        messages,
+        highestSeenSeq,
+      };
     },
     onWarning: (message, error) => {
       if (typeof error === 'undefined') {
