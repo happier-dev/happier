@@ -387,61 +387,58 @@ export async function startChannelBridgeFromEnv(params: Readonly<{
   }
 
   let defaultDepsHandle: DefaultChannelBridgeDepsHandle | null = null;
-  const deps = (() => {
-    if (params.deps) return params.deps;
-    defaultDepsHandle = createDefaultChannelBridgeDeps(params.credentials);
-    return defaultDepsHandle.deps;
-  })();
-  let store = params.store ?? null;
-  if (!store) {
-    const serverId = typeof params.serverId === 'string' ? params.serverId.trim() : '';
-    const accountId = typeof params.accountId === 'string' ? params.accountId.trim() : '';
-    if (serverId && accountId) {
-      const kv = createAxiosChannelBridgeKvClient({ token: params.credentials.token });
-      store = createServerBackedChannelBindingStore({
-        kv,
-        serverId,
-        accountId,
-      });
-    }
-  }
-  if (!store) {
-    store = createInMemoryChannelBindingStore();
-  }
-  const tickMs = runtimeConfig.tickMs;
-
-  let worker: ChannelBridgeWorkerHandle;
   try {
-    worker = startChannelBridgeWorker({
+    const deps = (() => {
+      if (params.deps) return params.deps;
+      defaultDepsHandle = createDefaultChannelBridgeDeps(params.credentials);
+      return defaultDepsHandle.deps;
+    })();
+
+    let store = params.store ?? null;
+    if (!store) {
+      const serverId = typeof params.serverId === 'string' ? params.serverId.trim() : '';
+      const accountId = typeof params.accountId === 'string' ? params.accountId.trim() : '';
+      if (serverId && accountId) {
+        const kv = createAxiosChannelBridgeKvClient({ token: params.credentials.token });
+        store = createServerBackedChannelBindingStore({
+          kv,
+          serverId,
+          accountId,
+        });
+      }
+    }
+    if (!store) {
+      store = createInMemoryChannelBindingStore();
+    }
+
+    const worker = startChannelBridgeWorker({
       store,
       adapters,
       deps,
-      tickMs,
+      tickMs: runtimeConfig.tickMs,
     });
+
+    return {
+      trigger: worker.trigger,
+      stop: async () => {
+        try {
+          await worker.stop();
+        } finally {
+          try {
+            if (relayHandle) {
+              await relayHandle.stop().catch((error: unknown) => {
+                logger.warn('[channelBridge] Error stopping webhook relay during shutdown', error);
+              });
+            }
+          } finally {
+            defaultDepsHandle?.dispose();
+          }
+        }
+      },
+    };
   } catch (error) {
-    if (relayHandle) {
-      await relayHandle.stop().catch(() => undefined);
-    }
+    await relayHandle?.stop().catch(() => undefined);
     defaultDepsHandle?.dispose();
     throw error;
   }
-
-  return {
-    trigger: worker.trigger,
-    stop: async () => {
-      try {
-        await worker.stop();
-      } finally {
-        try {
-          if (relayHandle) {
-            await relayHandle.stop().catch((error: unknown) => {
-              logger.warn('[channelBridge] Error stopping webhook relay during shutdown', error);
-            });
-          }
-        } finally {
-          defaultDepsHandle?.dispose();
-        }
-      }
-    },
-  };
 }

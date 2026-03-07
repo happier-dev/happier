@@ -575,4 +575,82 @@ describe('startChannelBridgeFromEnv', () => {
 
     await handle?.stop();
   });
+
+  it('stops webhook relay when store initialization fails before worker startup', async () => {
+    vi.resetModules();
+
+    const relayStop = vi.fn(async () => undefined);
+    const startWorker = vi.fn();
+    const kvInitError = new Error('kv init failed');
+
+    vi.doMock('@/ui/logger', () => ({
+      logger: {
+        warn: vi.fn(),
+        info: vi.fn(),
+        debug: vi.fn(),
+      },
+    }));
+
+    vi.doMock('./core/channelBridgeWorker', () => ({
+      createInMemoryChannelBindingStore: vi.fn(() => ({
+        listBindings: async () => [],
+        getBinding: async () => null,
+        upsertBinding: async () => ({
+          providerId: 'telegram',
+          conversationId: 'conv-1',
+          threadId: null,
+          sessionId: 'sess-1',
+          lastForwardedSeq: 0,
+          createdAtMs: Date.now(),
+          updatedAtMs: Date.now(),
+        }),
+        updateLastForwardedSeq: async () => true,
+        removeBinding: async () => false,
+      })),
+      startChannelBridgeWorker: startWorker,
+    }));
+
+    vi.doMock('./telegram/telegramAdapter', () => ({
+      createTelegramChannelAdapter: vi.fn(() => ({
+        providerId: 'telegram',
+        pullInboundMessages: async () => [],
+        sendMessage: async () => undefined,
+        enqueueWebhookUpdate: vi.fn(),
+        stop: async () => undefined,
+      })),
+    }));
+
+    vi.doMock('./telegram/telegramWebhookRelay', async (importOriginal) => {
+      const actual = await importOriginal<typeof import('./telegram/telegramWebhookRelay')>();
+      return {
+        ...actual,
+        startTelegramWebhookRelay: vi.fn(async () => ({
+          port: 8787,
+          stop: relayStop,
+        })),
+      };
+    });
+
+    vi.doMock('./channelBridgeServerKv', () => ({
+      createAxiosChannelBridgeKvClient: vi.fn(() => {
+        throw kvInitError;
+      }),
+    }));
+
+    const { startChannelBridgeFromEnv } = await import('./startChannelBridgeWorker');
+
+    await expect(startChannelBridgeFromEnv({
+      credentials,
+      serverId: 'server-a',
+      accountId: 'acct-a',
+      env: {
+        HAPPIER_TELEGRAM_BOT_TOKEN: 'bot-token',
+        HAPPIER_TELEGRAM_WEBHOOK_ENABLED: 'true',
+        HAPPIER_TELEGRAM_WEBHOOK_SECRET: 'secret-token',
+      } as NodeJS.ProcessEnv,
+    })).rejects.toThrow('kv init failed');
+
+    expect(relayStop).toHaveBeenCalledTimes(1);
+    expect(startWorker).not.toHaveBeenCalled();
+  });
 });

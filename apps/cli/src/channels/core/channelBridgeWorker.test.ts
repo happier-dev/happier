@@ -80,12 +80,14 @@ function createAdapterHarness(providerId: string = 'telegram'): {
   pushInbound: (event: ChannelBridgeInboundMessage) => void;
   sent: SentConversationMessage[];
   failPullOnce: (error: Error) => void;
+  failSendOnce: (error: Error) => void;
   stopCalls: () => number;
   pendingInboundCount: () => number;
 } {
   const queue: ChannelBridgeInboundMessage[] = [];
   const sent: SentConversationMessage[] = [];
   let pullError: Error | null = null;
+  let sendError: Error | null = null;
   let stopCallCount = 0;
 
   return {
@@ -102,6 +104,11 @@ function createAdapterHarness(providerId: string = 'telegram'): {
         return items;
       },
       sendMessage: async (params) => {
+        if (sendError) {
+          const error = sendError;
+          sendError = null;
+          throw error;
+        }
         sent.push({
           conversationId: params.conversationId,
           threadId: params.threadId,
@@ -118,6 +125,9 @@ function createAdapterHarness(providerId: string = 'telegram'): {
     sent,
     failPullOnce: (error) => {
       pullError = error;
+    },
+    failSendOnce: (error) => {
+      sendError = error;
     },
     stopCalls: () => stopCallCount,
     pendingInboundCount: () => queue.length,
@@ -337,6 +347,50 @@ describe('executeChannelBridgeTick', () => {
     });
 
     expect(harness.sent.some((row) => row.text.includes('replaced previous session sess-old'))).toBe(true);
+  });
+
+  it('does not retry /attach when success reply delivery fails', async () => {
+    const store = createInMemoryChannelBindingStore();
+    const harness = createAdapterHarness();
+    let latestSeqCallCount = 0;
+
+    const { deps } = createDepsHarness({
+      resolveSessionIdOrPrefix: async () => ({ ok: true as const, sessionId: 'sess-no-retry' }),
+      resolveLatestSessionSeq: async () => {
+        latestSeqCallCount += 1;
+        return latestSeqCallCount === 1 ? 10 : 25;
+      },
+    });
+
+    harness.failSendOnce(new Error('temporary command reply failure'));
+    const deduper = createChannelBridgeInboundDeduper();
+    const attachEvent: ChannelBridgeInboundMessage = {
+      providerId: 'telegram',
+      conversationId: '-1001',
+      threadId: '88',
+      text: '/attach sess-no-retry',
+      messageId: 'm-attach-reply-fails-once',
+    };
+
+    harness.pushInbound(attachEvent);
+    await executeChannelBridgeTick({
+      store,
+      adapters: [harness.adapter],
+      deps,
+      inboundDeduper: deduper,
+    });
+
+    harness.pushInbound(attachEvent);
+    await executeChannelBridgeTick({
+      store,
+      adapters: [harness.adapter],
+      deps,
+      inboundDeduper: deduper,
+    });
+
+    expect(latestSeqCallCount).toBe(1);
+    const [binding] = await store.listBindings();
+    expect(binding?.lastForwardedSeq).toBe(10);
   });
 
   it('supports /sessions and /detach command flow', async () => {
@@ -672,24 +726,37 @@ describe('executeChannelBridgeTick', () => {
     const harness = createAdapterHarness();
     const { deps, warnings, sentToSession } = createDepsHarness();
 
-    harness.pushInbound({
+    const failedEvent: ChannelBridgeInboundMessage = {
       providerId: 'telegram',
       conversationId: 'bound-room',
       threadId: null,
       text: 'hello from channel',
       messageId: 'non-command-getbinding-fail',
-    });
+    };
+
+    harness.pushInbound(failedEvent);
+    const deduper = createChannelBridgeInboundDeduper();
 
     await executeChannelBridgeTick({
       store,
       adapters: [harness.adapter],
       deps,
-      inboundDeduper: createChannelBridgeInboundDeduper(),
+      inboundDeduper: deduper,
+    });
+
+    harness.pushInbound(failedEvent);
+
+    await executeChannelBridgeTick({
+      store,
+      adapters: [harness.adapter],
+      deps,
+      inboundDeduper: deduper,
     });
 
     expect(sentToSession).toHaveLength(0);
     expect(warnings.some((row) => row.message.includes('Failed to read binding for inbound message forwarding'))).toBe(true);
-    expect(harness.sent.some((row) => row.text.includes('Failed to read current session binding'))).toBe(true);
+    expect(warnings.filter((row) => row.message.includes('Failed to read binding for inbound message forwarding'))).toHaveLength(1);
+    expect(harness.sent.filter((row) => row.text.includes('Failed to read current session binding'))).toHaveLength(1);
   });
 
   it('indicates when /sessions output is truncated', async () => {
@@ -1438,7 +1505,7 @@ describe('executeChannelBridgeTick', () => {
     expect(sentToSession).toHaveLength(1);
   });
 
-  it('does not mark inbound messages as seen when processing fails before completion', async () => {
+  it('marks inbound messages as seen after replying on transient binding-read failure', async () => {
     const baseStore = createInMemoryChannelBindingStore();
     const ref = {
       providerId: 'telegram',
@@ -1502,9 +1569,8 @@ describe('executeChannelBridgeTick', () => {
       inboundDeduper: deduper,
     });
 
-    expect(warnings.some((row) => row.message.includes('Failed to read binding for inbound message forwarding'))).toBe(true);
-    expect(sentToSession).toHaveLength(1);
-    expect(sentToSession[0]?.text).toBe('retry me');
+    expect(warnings.filter((row) => row.message.includes('Failed to read binding for inbound message forwarding'))).toHaveLength(1);
+    expect(sentToSession).toHaveLength(0);
   });
 
   it('does not dedupe messages when inbound messageId is empty', async () => {

@@ -458,6 +458,17 @@ async function handleCommand(params: Readonly<{
     threadId: event.threadId,
   };
 
+  const replyForCommand = async (text: string): Promise<void> => {
+    try {
+      await replyToConversation(adapter, ref, text);
+    } catch (error) {
+      deps.onWarning?.(
+        `Failed to send command reply for /${command.name} (provider=${ref.providerId} conversation=${ref.conversationId} thread=${ref.threadId ?? 'null'})`,
+        error,
+      );
+    }
+  };
+
   if (command.name !== 'help' && command.name !== 'start') {
     const authz = await authorizeCommand({
       commandName: command.name,
@@ -465,19 +476,13 @@ async function handleCommand(params: Readonly<{
       deps,
     });
     if (!authz.allowed) {
-      await replyToConversation(
-        adapter,
-        ref,
-        authz.message ?? 'You are not authorized to run this command here.',
-      );
+      await replyForCommand(authz.message ?? 'You are not authorized to run this command here.');
       return true;
     }
   }
 
   if (command.name === 'help' || command.name === 'start') {
-    await replyToConversation(
-      adapter,
-      ref,
+    await replyForCommand(
       [
         'Happier bridge commands:',
         '/sessions - list recent sessions',
@@ -501,10 +506,10 @@ async function handleCommand(params: Readonly<{
       );
     } catch (error) {
       deps.onWarning?.('Failed to list sessions for /sessions command', error);
-      await replyToConversation(adapter, ref, 'Failed to retrieve sessions. Please try again later.');
+      await replyForCommand('Failed to retrieve sessions. Please try again later.');
       return true;
     }
-    await replyToConversation(adapter, ref, formatSessionsMessage(sessions));
+    await replyForCommand(formatSessionsMessage(sessions));
     return true;
   }
 
@@ -518,22 +523,22 @@ async function handleCommand(params: Readonly<{
       );
     } catch (error) {
       deps.onWarning?.('Failed to read binding for /session command', error);
-      await replyToConversation(adapter, ref, 'Failed to read current session binding. Please try again later.');
+      await replyForCommand('Failed to read current session binding. Please try again later.');
       return true;
     }
 
     if (!existing) {
-      await replyToConversation(adapter, ref, 'No session is attached here. Use /attach <session-id-or-prefix>.');
+      await replyForCommand('No session is attached here. Use /attach <session-id-or-prefix>.');
       return true;
     }
-    await replyToConversation(adapter, ref, `Attached session: ${existing.sessionId}`);
+    await replyForCommand(`Attached session: ${existing.sessionId}`);
     return true;
   }
 
   if (command.name === 'attach') {
     const idOrPrefix = String(command.args[0] ?? '').trim();
     if (!idOrPrefix) {
-      await replyToConversation(adapter, ref, 'Usage: /attach <session-id-or-prefix>');
+      await replyForCommand('Usage: /attach <session-id-or-prefix>');
       return true;
     }
 
@@ -546,9 +551,7 @@ async function handleCommand(params: Readonly<{
       );
     } catch (error) {
       deps.onWarning?.('Failed to resolve session by id/prefix for attach', error);
-      await replyToConversation(
-        adapter,
-        ref,
+      await replyForCommand(
         `Failed to attach to session ${idOrPrefix}: unable to resolve session identifier.`,
       );
       return true;
@@ -557,23 +560,21 @@ async function handleCommand(params: Readonly<{
     if (!resolved.ok) {
       if (resolved.code === 'session_id_ambiguous') {
         if (resolved.candidates && resolved.candidates.length > 0) {
-          await replyToConversation(
-            adapter,
-            ref,
+          await replyForCommand(
             `Ambiguous session prefix. Candidates:\n${resolved.candidates.map((id) => `• ${id}`).join('\n')}`,
           );
           return true;
         }
 
-        await replyToConversation(adapter, ref, 'Ambiguous session prefix. Use /sessions to list active sessions.');
+        await replyForCommand('Ambiguous session prefix. Use /sessions to list active sessions.');
         return true;
       }
 
       if (resolved.code === 'unsupported') {
-        await replyToConversation(adapter, ref, 'Attaching by session ID or prefix is not supported in this environment.');
+        await replyForCommand('Attaching by session ID or prefix is not supported in this environment.');
         return true;
       }
-      await replyToConversation(adapter, ref, 'Session not found. Use /sessions to list recent sessions.');
+      await replyForCommand('Session not found. Use /sessions to list recent sessions.');
       return true;
     }
 
@@ -588,9 +589,7 @@ async function handleCommand(params: Readonly<{
         deps.onWarning?.(
           `resolveLatestSessionSeq returned an invalid value for session ${resolved.sessionId}; expected a non-negative integer`,
         );
-        await replyToConversation(
-          adapter,
-          ref,
+        await replyForCommand(
           `Failed to attach to session ${resolved.sessionId}: unable to resolve latest sequence cursor.`,
         );
         return true;
@@ -598,9 +597,7 @@ async function handleCommand(params: Readonly<{
       latestSeq = resolvedSeq;
     } catch (error) {
       deps.onWarning?.('Failed to resolve latest session sequence for attach', error);
-      await replyToConversation(
-        adapter,
-        ref,
+      await replyForCommand(
         `Failed to attach to session ${resolved.sessionId}: unable to resolve latest sequence cursor.`,
       );
       return true;
@@ -615,7 +612,7 @@ async function handleCommand(params: Readonly<{
       );
     } catch (error) {
       deps.onWarning?.('Failed to read existing binding during /attach', error);
-      await replyToConversation(adapter, ref, 'Failed to read current binding before attach. Please try again later.');
+      await replyForCommand('Failed to read current binding before attach. Please try again later.');
       return true;
     }
     const previousSessionId = previousBinding?.sessionId ?? null;
@@ -634,7 +631,7 @@ async function handleCommand(params: Readonly<{
       );
     } catch (error) {
       deps.onWarning?.('Failed to persist binding during /attach', error);
-      await replyToConversation(adapter, ref, `Failed to attach to session ${resolved.sessionId}: unable to persist binding.`);
+      await replyForCommand(`Failed to attach to session ${resolved.sessionId}: unable to persist binding.`);
       return true;
     }
 
@@ -642,7 +639,7 @@ async function handleCommand(params: Readonly<{
       previousSessionId && previousSessionId !== resolved.sessionId
         ? ` (replaced previous session ${previousSessionId})`
         : '';
-    await replyToConversation(adapter, ref, `Attached this conversation to session ${resolved.sessionId}${switchedFrom}.`);
+    await replyForCommand(`Attached this conversation to session ${resolved.sessionId}${switchedFrom}.`);
     return true;
   }
 
@@ -656,19 +653,19 @@ async function handleCommand(params: Readonly<{
       );
     } catch (error) {
       deps.onWarning?.('Failed to remove binding for /detach command', error);
-      await replyToConversation(adapter, ref, 'Failed to detach current session binding. Please try again later.');
+      await replyForCommand('Failed to detach current session binding. Please try again later.');
       return true;
     }
 
     if (removed) {
-      await replyToConversation(adapter, ref, 'Detached this conversation from Happier session.');
+      await replyForCommand('Detached this conversation from Happier session.');
     } else {
-      await replyToConversation(adapter, ref, 'No session was attached here.');
+      await replyForCommand('No session was attached here.');
     }
     return true;
   }
 
-  await replyToConversation(adapter, ref, `Unknown command: /${command.name}. Use /help for supported commands.`);
+  await replyForCommand(`Unknown command: /${command.name}. Use /help for supported commands.`);
   return true;
 }
 
@@ -797,6 +794,9 @@ export async function executeChannelBridgeTick(params: Readonly<{
             ref,
             'Failed to read current session binding. Please try again later.',
           );
+          deduper.markSeen(event);
+          ackableInbound.push(event);
+          processedSuccessfully = true;
           continue;
         }
 
