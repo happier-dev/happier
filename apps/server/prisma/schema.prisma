@@ -134,6 +134,7 @@ model VoiceSessionLease {
 
     @@index([accountId, expiresAt])
     @@index([accountId, periodKey])
+    @@index([expiresAt])
 }
 
 model VoiceConversation {
@@ -191,6 +192,7 @@ model AccountChange {
 
     @@id([accountId, kind, entityId])
     @@index([accountId, cursor])
+    @@index([changedAt(sort: Asc), accountId, cursor])
 }
 
 model TerminalAuthRequest {
@@ -204,6 +206,8 @@ model TerminalAuthRequest {
     responseAccount   Account? @relation(fields: [responseAccountId], references: [id])
     createdAt         DateTime @default(now())
     updatedAt         DateTime @updatedAt
+
+    @@index([updatedAt])
 }
 
 model AccountAuthRequest {
@@ -214,6 +218,8 @@ model AccountAuthRequest {
     responseAccount   Account? @relation(fields: [responseAccountId], references: [id])
     createdAt         DateTime @default(now())
     updatedAt         DateTime @updatedAt
+
+    @@index([updatedAt])
 }
 
 model AuthPairingSession {
@@ -279,6 +285,7 @@ model Session {
     @@unique([accountId, tag])
     @@index([accountId, updatedAt(sort: Desc)])
     @@index([accountId, archivedAt(sort: Desc)])
+    @@index([lastActiveAt(sort: Asc), updatedAt(sort: Asc)])
 }
 
 model SessionMessage {
@@ -347,6 +354,8 @@ model GlobalLock {
     createdAt DateTime @default(now())
     updatedAt DateTime @updatedAt
     expiresAt DateTime
+
+    @@index([expiresAt])
 }
 
 model RepeatKey {
@@ -354,6 +363,8 @@ model RepeatKey {
     value     String
     createdAt DateTime @default(now())
     expiresAt DateTime
+
+    @@index([expiresAt])
 }
 
 model SimpleCache {
@@ -502,6 +513,7 @@ model AutomationRun {
     @@index([accountId, state, dueAt])
     @@index([automationId, dueAt])
     @@index([claimedByMachineId, leaseExpiresAt])
+    @@index([state, finishedAt])
 }
 
 model AutomationRunEvent {
@@ -513,6 +525,7 @@ model AutomationRunEvent {
     payload   Json?
 
     @@index([runId, ts])
+    @@index([ts])
 }
 
 model UploadedFile {
@@ -659,6 +672,7 @@ model UserFeedItem {
     @@unique([userId, counter])
     @@unique([userId, repeatKey])
     @@index([userId, counter(sort: Desc)])
+    @@index([createdAt])
 }
 
 //

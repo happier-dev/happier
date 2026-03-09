@@ -32,6 +32,7 @@ import { createDefaultActionExecutor } from '@/sync/ops/actions/defaultActionExe
 import { resolveServerIdForSessionIdFromLocalCache } from '@/sync/runtime/orchestration/serverScopedRpc/resolveServerIdForSessionIdFromLocalCache';
 import { isActionEnabledInState } from '@/sync/domains/settings/actionsSettings';
 import { canForkConversation } from '@/sync/domains/sessionFork/forkUiSupport';
+import { SessionRetentionNotice } from '@/components/sessions/info/SessionRetentionNotice';
 
 
 // Animated status dot component
@@ -359,6 +360,7 @@ function SessionInfoContent({ session }: { session: Session }) {
                     </ItemGroup>
                 )}
 
+                <SessionRetentionNotice sessionId={session.id} />
                     {/* Session Details */}
                     <ItemGroup>
                         <Item

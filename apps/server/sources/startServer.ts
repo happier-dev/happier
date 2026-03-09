@@ -24,14 +24,13 @@ import { Server as SocketIOServer } from 'socket.io';
 import { createAdapter } from '@socket.io/redis-streams-adapter';
 import { getRedisClient } from '@/storage/redis/redis';
 import { eventRouter } from '@/app/events/eventRouter';
-import { startAccountChangeCleanupFromEnv } from '@/app/changes/accountChangeCleanup';
 import { shouldConsumePresenceFromRedis, shouldEnableLocalPresenceDbFlush } from '@/app/presence/presenceMode';
 import { startPresenceRedisWorker } from '@/app/presence/presenceRedisQueue';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { startVoiceSessionLeaseCleanupFromEnv } from '@/app/voice/voiceSessionLeaseCleanup';
 import { initializeServerSentry } from '@/app/monitoring/sentry';
 import { inferAndApplyTailscaleServePublicServerUrl } from '@/app/integrations/tailscale/tailscaleServePublicUrlInference';
+import { startRetentionWorker } from '@/app/retention/runtime/startRetentionWorker';
 
 export type ServerFlavor = 'full' | 'light';
 export type ServerRole = 'all' | 'api' | 'worker';
@@ -183,16 +182,10 @@ export async function startServer(flavor: ServerFlavor): Promise<void> {
     }
 
     if (role === 'all' || role === 'worker') {
-        const cleanup = startAccountChangeCleanupFromEnv();
-        if (cleanup) {
-            onShutdown('account-change-cleanup', async () => {
-                cleanup.stop();
-            });
-        }
-        const voiceCleanup = startVoiceSessionLeaseCleanupFromEnv();
-        if (voiceCleanup) {
-            onShutdown('voice-lease-cleanup', async () => {
-                voiceCleanup.stop();
+        const retentionWorker = startRetentionWorker();
+        if (retentionWorker) {
+            onShutdown('retention-worker', async () => {
+                retentionWorker.stop();
             });
         }
         startDatabaseMetricsUpdater();

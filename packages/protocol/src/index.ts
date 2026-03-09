@@ -62,6 +62,7 @@ export {
 export { buildConnectedServiceCredentialRecord } from './connect/buildConnectedServiceCredentialRecord.js';
 
 export { parseBooleanEnv, parseOptionalBooleanEnv } from './env/parseBooleanEnv.js';
+export type { ServerRetentionCapabilities } from './features/payload/capabilities/serverRetentionCapabilities.js';
 
 export {
   SessionStoredMessageContentSchema,

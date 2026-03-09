@@ -13,11 +13,13 @@ import { resolveAttachmentsUploadsFeature } from '@/app/features/attachmentsUplo
 import { resolveEncryptionFeature } from '@/app/features/encryptionFeature';
 import { resolveE2eeFeature } from '@/app/features/e2eeFeature';
 import { resolveServerUrlCapabilitiesFeature } from '@/app/features/serverUrlCapabilitiesFeature';
+import { resolveServerRetentionCapabilitiesFeature } from '../serverRetentionCapabilitiesFeature';
 
 export type ServerFeatureResolver = (env: NodeJS.ProcessEnv) => FeaturesPayloadDelta;
 
 export const serverFeatureRegistry: readonly ServerFeatureResolver[] = Object.freeze([
     (env) => resolveServerUrlCapabilitiesFeature(env),
+    (env) => resolveServerRetentionCapabilitiesFeature(env),
     (env) => resolveBugReportsFeature(env),
     (env) => resolveAutomationsFeature(env),
     (_env) => resolveSharingFeature(),

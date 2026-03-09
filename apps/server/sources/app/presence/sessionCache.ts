@@ -202,6 +202,18 @@ class ActivityCache {
         return false; // No update needed
     }
 
+    isSessionObservedActive(sessionId: string, now = Date.now()): boolean {
+        this.maybeCleanup(now);
+        for (const entry of this.sessionCache.values()) {
+            if (entry.sessionId !== sessionId) continue;
+            if (entry.validUntil <= now) continue;
+            if (entry.active || entry.pendingUpdate !== null) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     queueMachineUpdate(machineId: string, timestamp: number): boolean {
         this.maybeCleanup(Date.now());
         const cached = this.machineCache.get(machineId);
