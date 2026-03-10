@@ -41,6 +41,16 @@ export const ACTION_IDS = [
   'memory.search',
   'memory.get_window',
   'memory.ensure_up_to_date',
+
+  // Prompt library / external prompt assets
+  'prompt_doc.update',
+  'prompt_bundle.update',
+  'prompt_asset.export',
+  'prompt_registry.install',
+
+  // Action approvals (approval queue)
+  'approval.request.create',
+  'approval.request.decide',
 ] as const;
 
 export const ActionIdSchema = z.enum(ACTION_IDS);

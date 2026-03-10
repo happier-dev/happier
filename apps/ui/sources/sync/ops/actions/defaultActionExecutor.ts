@@ -1,6 +1,12 @@
-import { createActionExecutor, type ActionExecutorDeps } from '@happier-dev/protocol';
-
-import { ActionsSettingsV1Schema, isActionEnabledByActionsSettings, type ActionId } from '@happier-dev/protocol';
+import {
+  ApprovalRequestV1Schema,
+  ActionsSettingsV1Schema,
+  createActionExecutor,
+  isActionEnabledByActionsSettings,
+  type ActionExecutorDeps,
+  type ActionId,
+  type ApprovalRequestV1,
+} from '@happier-dev/protocol';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 
 import {
@@ -19,6 +25,7 @@ import { voiceActivityController } from '@/voice/activity/voiceActivityControlle
 import { voiceSessionManager } from '@/voice/session/voiceSession';
 import { VOICE_AGENT_GLOBAL_SESSION_ID } from '@/voice/agent/voiceAgentGlobalSessionId';
 import { storage } from '@/sync/domains/state/storage';
+import type { ArtifactHeader } from '@/sync/domains/artifacts/artifactTypes';
 import { openSessionForVoiceTool } from '@/voice/tools/actionImpl/openSession';
 import { spawnSessionForVoiceTool } from '@/voice/tools/actionImpl/spawnSession';
 import { spawnSessionWithPickerForVoiceTool } from '@/voice/tools/actionImpl/spawnSessionPicker';
@@ -31,6 +38,11 @@ import { listRecentPathsForVoiceTool } from '@/voice/tools/actionImpl/pathsListR
 import { listMachinesForVoiceTool } from '@/voice/tools/actionImpl/machinesList';
 import { listServersForVoiceTool } from '@/voice/tools/actionImpl/serversList';
 import { listAgentBackendsForVoiceTool, listAgentModelsForVoiceTool } from '@/voice/tools/actionImpl/agentCatalogList';
+import { sync } from '@/sync/sync';
+import { updatePromptDoc } from '@/sync/ops/promptLibrary/promptDocs';
+import { updateSkillPromptBundle } from '@/sync/ops/promptLibrary/promptBundles';
+import { writePromptLibraryArtifactToExternalAsset } from '@/sync/ops/promptLibrary/exportPromptLibraryArtifact';
+import { installPromptRegistryItem } from '@/sync/ops/promptLibrary/installPromptRegistryItem';
 
 export function createDefaultActionExecutor(opts?: Readonly<{
   resolveServerIdForSessionId?: (sessionId: string) => string | null;
@@ -180,6 +192,114 @@ export function createDefaultActionExecutor(opts?: Readonly<{
         method: RPC_METHODS.DAEMON_MEMORY_ENSURE_UP_TO_DATE,
         payload: sessionId ? { sessionId } : {},
       }),
+
+    approvalsCreate: async ({ request }) => {
+      const sessionId = typeof request.createdBy.sessionId === 'string' ? String(request.createdBy.sessionId).trim() : '';
+      const serverId = typeof (request as { serverId?: unknown }).serverId === 'string'
+        ? String((request as { serverId?: string }).serverId).trim()
+        : '';
+      const header: ArtifactHeader = {
+        v: 1,
+        kind: 'approval_request.v1',
+        title: request.summary,
+        approvalStatus: request.status,
+        actionId: request.actionId,
+        ...(serverId ? { serverId } : {}),
+        ...(sessionId ? { sessions: [sessionId], sessionId } : {}),
+      };
+      const artifactId = await sync.createArtifactWithHeader(header, JSON.stringify(request));
+      return { artifactId };
+    },
+
+    approvalsGet: async ({ artifactId }) => {
+      const local = storage.getState().artifacts[artifactId] ?? null;
+      const localBody = local?.body;
+      if (typeof localBody === 'string') {
+        try {
+          const parsed = ApprovalRequestV1Schema.safeParse(JSON.parse(localBody));
+          if (parsed.success) return parsed.data;
+        } catch {
+          // ignore and fall through to fetch
+        }
+      }
+
+      const full = await sync.fetchArtifactWithBody(artifactId);
+      if (full) {
+        storage.getState().updateArtifact(full);
+        const body = full.body;
+        if (typeof body !== 'string') return null;
+        try {
+          const parsed = ApprovalRequestV1Schema.safeParse(JSON.parse(body));
+          return parsed.success ? parsed.data : null;
+        } catch {
+          return null;
+        }
+      }
+
+      return null;
+    },
+
+    approvalsUpdate: async ({ artifactId, request }) => {
+      const sessionId = typeof request.createdBy.sessionId === 'string' ? String(request.createdBy.sessionId).trim() : '';
+      const header: ArtifactHeader = {
+        v: 1,
+        kind: 'approval_request.v1',
+        title: request.summary,
+        approvalStatus: request.status,
+        actionId: request.actionId,
+        ...(sessionId ? { sessions: [sessionId], sessionId } : {}),
+      };
+
+      await sync.updateArtifactWithHeader(artifactId, header, JSON.stringify(request satisfies ApprovalRequestV1));
+      return { ok: true };
+    },
+
+    promptDocUpdate: async ({ artifactId, title, markdown, folderId, tags }) => {
+      await updatePromptDoc({ artifactId, title, markdown, ...(typeof folderId !== 'undefined' ? { folderId } : {}), ...(tags ? { tags } : {}) });
+      return { ok: true, artifactId };
+    },
+
+    promptBundleUpdate: async ({ artifactId, title, skillMarkdown, folderId, tags }) => {
+      await updateSkillPromptBundle({ artifactId, title, skillMarkdown, ...(typeof folderId !== 'undefined' ? { folderId } : {}), ...(tags ? { tags } : {}) });
+      return { ok: true, artifactId };
+    },
+
+    promptAssetExport: async ({ artifactId, machineId, assetTypeId, scope, directory, targetPath, targetName, installMode }) => {
+      const result = await writePromptLibraryArtifactToExternalAsset({
+        artifactId,
+        machineId,
+        assetTypeId,
+        scope,
+        workspacePath: directory ?? null,
+        targetInput: targetPath ?? targetName ?? '',
+        installMode,
+        promptExternalLinks: storage.getState().settings.promptExternalLinksV1,
+        previewOnly: false,
+      });
+      if (!result.ok || !result.nextPromptExternalLinks) {
+        return { ok: false, errorCode: result.ok ? 'invalid_parameters' : (result.errorCode ?? 'invalid_parameters'), error: result.ok ? 'invalid_parameters' : result.error };
+      }
+      storage.getState().applySettingsLocal({ promptExternalLinksV1: result.nextPromptExternalLinks });
+      return { ok: true, artifactId, exported: true };
+    },
+
+    promptRegistryInstall: async ({ machineId, sourceId, itemId, configuredSources, installTarget }) => {
+      const result = await installPromptRegistryItem({
+        machineId,
+        sourceId,
+        itemId,
+        configuredSources,
+        promptExternalLinks: storage.getState().settings.promptExternalLinksV1,
+        ...(installTarget ? { installTarget } : {}),
+      });
+      if (!result.ok) {
+        return { ok: false, errorCode: 'invalid_parameters', error: result.error, ...(result.artifactId ? { artifactId: result.artifactId } : {}) };
+      }
+      if (result.nextPromptExternalLinks) {
+        storage.getState().applySettingsLocal({ promptExternalLinksV1: result.nextPromptExternalLinks });
+      }
+      return { ok: true, artifactId: result.artifactId, exported: result.exported };
+    },
 
     ...(opts?.resolveServerIdForSessionId ? { resolveServerIdForSessionId: opts.resolveServerIdForSessionId } : {}),
   };

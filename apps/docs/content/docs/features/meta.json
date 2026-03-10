@@ -3,6 +3,8 @@
   "pages": [
     "index",
     "feature-matrix",
+    "prompts-and-skills",
+    "inbox-and-approvals",
     "connected-services",
     "git",
     "multi-server",

@@ -31,6 +31,24 @@ describe('DefaultTransport handleStderr', () => {
     expect(asStatusErrorMessage(result.message).detail).toContain('something went wrong');
   });
 
+  it('does not misclassify generic "API keys" guidance as an auth error', () => {
+    const transport = new DefaultTransport('generic');
+    const result = transport.handleStderr('Do not include any sensitive information such as API keys, passwords, credentials.', {
+      activeToolCalls: new Set(),
+      hasActiveInvestigation: false,
+    });
+    expect(result.message).toBeNull();
+  });
+
+  it('does not misclassify non-error "authentication" text as an auth error', () => {
+    const transport = new DefaultTransport('generic');
+    const result = transport.handleStderr('Authentication with State Persistence', {
+      activeToolCalls: new Set(),
+      hasActiveInvestigation: false,
+    });
+    expect(result.message).toBeNull();
+  });
+
   it('does not emit status errors for benign stderr output', () => {
     const transport = new DefaultTransport('generic');
     expect(
@@ -41,4 +59,3 @@ describe('DefaultTransport handleStderr', () => {
     ).toBeNull();
   });
 });
-

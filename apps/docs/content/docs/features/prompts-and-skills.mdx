@@ -1,0 +1,365 @@
+---
+title: Prompts, skills, templates, and registries
+description: Manage reusable prompt content in Happier, attach it to agents and profiles, and install or export it to provider-native locations on your machines.
+---
+
+Happier groups reusable AI instructions into one product area with a single canonical library and several ways to apply or export what you save there.
+
+From a user perspective, there are five related pieces:
+
+1. **Library** — your synced prompt docs and skill bundles
+2. **Templates** — reusable slash shortcuts that insert saved prompts
+3. **System prompt additions** — ordered instructions attached to coding, voice, and profile surfaces
+4. **External assets** — prompts/skills that exist on a machine or inside a project
+5. **Registries** — installable skill catalogs such as `skills.sh` or Git sources
+
+The core rule is:
+
+- **Happier library is the source of truth**
+- external files are optional imports, installs, and exports
+- Happier tracks explicit links so it can detect drift instead of silently overwriting files
+
+## The library
+
+Open **Settings → Prompts & Skills** to manage your reusable content.
+
+The library currently supports two item types:
+
+- **Prompts** — markdown text blocks
+- **Skills** — a `SKILL.md` bundle, optionally with supporting files
+
+Use prompts when you want plain reusable instructions or templates. Use skills when you want a portable bundle that should export as a real skill directory.
+
+### Prompts
+
+Prompts are best for:
+
+- reusable instructions you want to insert into the composer
+- reusable system prompt additions
+- profile-specific or agent-specific guidance
+- personal prompt snippets that should sync across devices
+
+Each prompt can have:
+
+- a title
+- markdown content
+- an optional folder
+- optional tags
+
+### Skills
+
+Skills are best for:
+
+- reusable task instructions that should travel as a real skill bundle
+- prompt content that needs supporting files such as templates or reference snippets
+- assets you want to install into `.agents/skills`, `.claude/skills`, `.opencode/skills`, or other provider-specific locations
+
+Each skill can have:
+
+- a title
+- `SKILL.md` content
+- supporting files stored inside the same bundle
+- an optional folder
+- optional tags
+
+Supporting files are useful for:
+
+- templates referenced from `SKILL.md`
+- additional markdown instructions
+- configuration snippets
+- other exported bundle files
+
+## Folders and tags
+
+Use **Folders** when you want lightweight organization without duplicating prompts.
+
+Recommended patterns:
+
+- one folder per team or workstream
+- one folder per provider or backend setup
+- one folder for templates vs another for system additions
+
+Tags are lighter-weight than folders and work well for:
+
+- `coding`
+- `voice`
+- `review`
+- `research`
+- `profile`
+
+## Templates (slash commands inside Happier)
+
+Templates are Happier-native slash shortcuts built from saved prompts.
+
+Open **Settings → Prompts & Skills → Templates** to create them.
+
+Each template maps:
+
+- a **slash token** such as `/review` or `/ship-check`
+- to a **target prompt** from your library
+- with a behavior:
+  - **Insert**
+  - **Insert and send**
+
+Use templates when you want a fast reusable composer shortcut without turning the prompt into a system rule.
+
+### Template behavior
+
+When you type a saved token in the composer:
+
+- Happier resolves the linked prompt
+- inserts the prompt content into the composer
+- optionally sends immediately if the template is configured that way
+
+Happier blocks collisions with built-in action commands, so a template token cannot silently override a core slash action.
+
+## System prompt additions
+
+This is the user-facing name for what the implementation internally stores as ordered prompt stacks.
+
+Open:
+
+- **Settings → Prompts & Skills → System prompt additions**
+
+You can attach prompts or skills to:
+
+- the **Coding agent**
+- the **Voice agent**
+- any saved **Profile**
+
+### How it works
+
+System prompt additions are:
+
+- ordered
+- individually enabled or disabled
+- reusable across multiple surfaces
+
+Happier resolves them into the session’s append/system prompt in a shared way across UI and CLI.
+
+That means:
+
+- starting a session from the app and from the CLI uses the same prompt-building logic
+- profile-linked additions and surface-linked additions compose consistently
+
+### Recommended usage
+
+Use coding additions for:
+
+- code-review rules
+- repo-specific style constraints
+- output format expectations
+
+Use voice additions for:
+
+- shorter conversational style
+- speech-friendly formatting
+- dictation or accessibility preferences
+
+Use profile additions for:
+
+- environment- or endpoint-specific rules
+- reusable “work profile” or “research profile” instructions
+
+## External assets
+
+Open **Settings → Prompts & Skills → External Assets** when you want to inspect or manage prompt-related files that live on a real machine.
+
+This screen is machine-aware and, for project-scoped assets, workspace-aware.
+
+Examples include:
+
+- portable **Agent skills (`.agents/skills`)**
+- provider-native skill locations such as `.claude/skills` or `.opencode/skills`
+- provider-native command locations such as `.claude/commands`
+
+### What you can do there
+
+- discover supported external assets on a selected machine
+- inspect what Happier can read from that machine or project
+- import external assets into the library
+
+### What “managed by Happier” means
+
+When you export or install a library item to a machine target, Happier stores an explicit **external link**.
+
+That link records:
+
+- which library item it came from
+- which machine and scope it targets
+- the external reference/path identity
+- digests used for drift detection
+
+This is what lets Happier show whether an external copy is still in sync.
+
+## Exporting library items to machines
+
+Prompts and skills can be exported from their editor screens to external targets.
+
+Use this when you want:
+
+- a real provider-native file on disk
+- a real skill directory in a repo
+- compatibility with other tools that read those files directly
+
+### Install method: copy vs symlink
+
+For bundle-based targets such as skills, Happier supports:
+
+- **Copy** — writes an independent copy into the selected target
+- **Symlink** — writes a Happier-managed materialized copy and links the target to it
+
+Use **symlink** when you want easier updates and a single managed copy per install target. Use **copy** when you need a completely standalone on-disk copy.
+
+### Drift safety
+
+Happier does not silently overwrite changed external assets.
+
+If a linked external file or directory changes on disk after export:
+
+- Happier detects the digest mismatch
+- export, install, or delete actions fail with a conflict instead of overwriting
+
+This is deliberate. The library and the machine copy are related, but Happier still treats local disk mutations as real changes that need review.
+
+## Registries
+
+Open **Settings → Prompts & Skills → Registries** to browse installable skill catalogs.
+
+Current registry concepts:
+
+- built-in **`skills.sh`**
+- configurable **Git sources**
+- adapter-driven future registry types
+
+### `skills.sh`
+
+Happier integrates with the actual public `skills.sh` registry surface instead of only scanning the CLI repo.
+
+In practice:
+
+- browsing the built-in `skills.sh` source shows real public skills
+- searching uses the upstream `skills.sh` search API
+- opening an item shows details before you import or install it
+
+### Git sources
+
+Git sources let you add:
+
+- a repository URL, or
+- a local checkout path
+
+Happier scans those sources for skill bundles and exposes them through the same registry UI as built-in sources.
+
+This is useful for:
+
+- private team skill repos
+- local experiments
+- curated internal catalogs
+
+## Import vs install vs export
+
+These terms mean different things in Happier:
+
+### Import
+
+Bring something **into the Happier library**.
+
+Examples:
+
+- import a skill from `skills.sh`
+- import an existing `.agents/skills/foo` directory from a machine
+
+### Install
+
+Take a registry item, import it into the library, and also install it to a selected external machine target.
+
+Result:
+
+- synced library item
+- external machine install
+- explicit external link recorded by Happier
+
+### Export
+
+Take an existing library item and write it to an external machine target.
+
+Result:
+
+- external machine copy or install created from a library item you already had
+
+## Provider support
+
+Happier keeps the library model provider-agnostic, but external asset support depends on each provider’s file conventions.
+
+Current examples include:
+
+- **Agent skills (`.agents`)** — portable skill standard
+- **Claude** — commands and skills where supported by the local file layout
+- **OpenCode** — commands and skills where supported by the local file layout
+- **Gemini** — skill locations where supported
+- **Copilot** — skill locations where supported
+
+The library itself still works even when a provider has no stable external asset format.
+
+## Common workflows
+
+### Build a reusable coding instruction
+
+1. Create a **Prompt**
+2. Put it in a folder if useful
+3. Add it to **Coding agent system prompt additions**
+4. Optionally attach it to a specific **Profile**
+
+### Create a reusable slash shortcut
+
+1. Create a **Prompt**
+2. Open **Templates**
+3. Map a token like `/review` to that prompt
+4. Use **Insert** or **Insert and send**
+
+### Install a skill from `skills.sh`
+
+1. Open **Registries**
+2. Select **`skills.sh`**
+3. Search or browse
+4. Open item details
+5. Choose:
+   - **Import** to library only, or
+   - **Install** to import + install on a machine target
+
+### Export a skill to a project
+
+1. Open the skill in the library
+2. Choose **Manage external assets**
+3. Pick machine, scope, target type, and install method
+4. Confirm the preview
+
+## Important things to understand
+
+### Library first
+
+Happier is designed so you can reason about prompt content from one place first, then connect it to machines and providers as needed.
+
+### External files are real
+
+If you or another tool edits an exported asset on disk, Happier treats that as a real external change and refuses silent overwrite.
+
+### Templates are different from system prompt additions
+
+- **Templates** affect what you insert or send in the composer
+- **System prompt additions** affect the session’s system/append prompt
+
+### Skills are bundles, not just text
+
+If you need supporting files, use a skill bundle rather than a plain prompt.
+
+## Related docs
+
+- [Profiles](./profiles)
+- [Permissions](./permissions)
+- [Friends](./friends)
+- [Provider integrations](../advanced/provider-integrations)
+- [OpenCode](../providers/opencode)
+- [Claude](../providers/claude)
+- [Codex](../providers/codex)

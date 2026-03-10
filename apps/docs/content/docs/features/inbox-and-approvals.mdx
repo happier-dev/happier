@@ -1,0 +1,209 @@
+---
+title: Inbox and approvals
+description: Understand the global Inbox, approval requests, permission requests, and how this differs from Friends.
+---
+
+Happier has a **global Inbox**.
+
+Inbox is the place where the app surfaces **things that need your attention**, even when they come from different parts of the product.
+
+## Inbox
+
+Inbox is the action center for:
+
+- approval requests
+- pending permission requests
+- incoming friend-related attention items
+- shared-session activity
+- update-style items
+
+Use Inbox when you want to answer: **“What needs my attention right now?”**
+
+## Approval requests
+
+Approval requests are the user-facing layer for actions that should not run immediately.
+
+Instead of executing directly, Happier can create an approval request that you review first.
+
+This is important for actions such as:
+
+- prompt updates proposed by an agent
+- filesystem writes or installs
+- external asset exports
+- other actions intentionally routed through the approval queue
+
+### What an approval contains
+
+An approval request includes:
+
+- the action being requested
+- the arguments for that action
+- a short summary
+- optional preview information such as a target path or mutation plan
+- its current status
+
+Statuses include states such as:
+
+- open
+- approved
+- rejected
+- executed
+- failed
+
+### Why Happier uses approvals
+
+This gives you:
+
+- a review point before a sensitive action happens
+- a durable record of what was asked
+- a single model that can be reused for more than just prompt features
+
+The approval system is intentionally **ActionSpec-driven**, which means the mechanism is generic rather than hardcoded only for prompts or skills.
+
+## Permission requests
+
+Permissions and approvals are related, but they are not the same thing.
+
+### Permission requests
+
+A permission request is typically about whether the current session or agent may use a tool or perform a tool-like action.
+
+Examples:
+
+- allow a command
+- allow a file write
+- allow a tool invocation pattern
+
+These are about **runtime tool access**.
+
+## User-action requests
+
+Some requests are not plain tool permissions and not generic approval queue items.
+
+Happier also surfaces **user-action requests**, where the agent needs a structured human response before it can continue.
+
+Common examples:
+
+- **AskUserQuestion**
+- **Exit Plan Mode**
+- provider-specific requests that need approval, rejection, revision, or explicit answers
+
+These are handled through one generalized response model instead of one-off custom buttons per request type.
+
+### What you can do with a user-action request
+
+Depending on the request, Happier can ask you to:
+
+- approve
+- reject
+- request changes
+- answer one or more structured questions
+
+This is why `Exit Plan Mode` and `AskUserQuestion` can both appear as user-facing requests even though they are not the same tool.
+
+### Where user-action requests appear
+
+User-action requests can appear:
+
+- in the session transcript
+- in approval/request detail screens
+- in voice conversations, where the voice agent can present the choices and send the structured answer back for you
+- in push notifications, which can bring you back into the exact session that needs an answer
+
+## Notifications for requests
+
+Permission requests and user-action requests can also surface through push notifications when you enable those notification types.
+
+Current mobile behavior:
+
+- **Permission requests** can show `Allow` and `Deny`
+- **User-action requests** can show `Answer`
+- tapping the notification itself opens the session directly
+
+The action buttons are designed as a fast return path, not as a full out-of-app approval UI:
+
+- `Allow` / `Deny` open the app, send the permission response when the target server is already trusted on the device, and then open the session
+- `Answer` opens the app on the correct session so you can answer in context
+
+Notifications can also include a short summary of what the tool or request is asking for, so you do not have to enter the app blindly.
+
+### Approval requests
+
+An approval request is about **running a higher-level action through Happier’s action system**.
+
+Examples:
+
+- approve a prompt update proposal
+- approve an external asset export or install
+
+These are about **action execution**, not only tool access.
+
+## How approvals work in practice
+
+The typical flow is:
+
+1. something proposes an action
+2. Happier creates an approval request
+3. the request appears in **Inbox**
+4. you open it and review the summary/details
+5. you approve or reject it
+6. if approved, Happier executes the underlying action and records the result
+
+This gives one review model across the product instead of many one-off confirmation systems.
+
+## Prompt and skill examples
+
+Examples of prompt-related actions that can show up in Inbox:
+
+- an agent proposes changing a saved prompt
+- a skill install or export requires approval
+- a filesystem-targeted prompt asset mutation is queued for review
+
+This is why the prompts/skills feature set and the Inbox feature set are closely related.
+
+## What users should expect
+
+### Inbox items are intentionally mixed
+
+Inbox is not only about prompts. It is meant to be a unified queue for actionable items across product areas.
+
+### Approval requests are durable
+
+Because approvals are stored as real data, they survive normal app navigation and can be reviewed later instead of disappearing like a temporary modal.
+
+## Common workflows
+
+### Review a prompt-related approval
+
+1. Open **Inbox**
+2. Find the approval request
+3. Open the item
+4. Review the summary and preview information
+5. Approve or reject it
+
+### Handle a permission prompt
+
+1. Open **Inbox** if the request is surfaced there
+2. Review what the agent or tool is asking to do
+3. Approve or deny based on what you want the session to be allowed to do
+
+### Answer an AskUserQuestion or Exit Plan Mode request
+
+1. Open the surfaced request in the transcript, details view, or Inbox
+2. Review the question or action being requested
+3. Approve, reject, request changes, or answer the question directly
+4. Happier sends that response back through the generalized user-action response path
+
+### Manage friends separately
+
+1. Open **Friends**
+2. Review requests, relationships, or user search there
+3. Use Inbox only for cross-feature attention items
+
+## Related docs
+
+- [Friends](./friends)
+- [Permissions](./permissions)
+- [Notification routing](./notifications-routing)
+- [Pending queue](./pending-queue)
+- [Prompts, skills, templates, and registries](./prompts-and-skills)

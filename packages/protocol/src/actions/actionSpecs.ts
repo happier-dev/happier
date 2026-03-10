@@ -5,6 +5,10 @@ import { ActionUiPlacementSchema, type ActionUiPlacement } from './actionUiPlace
 import { ReviewStartInputSchema } from '../reviews/reviewStart.js';
 import { ActionInputPredicateSchema, type ActionInputPredicate } from './actionInputPredicates.js';
 import { MemorySearchQueryV1Schema } from '../memory/memorySearch.js';
+import { ApprovalRequestCreatedBySchema } from '../approvals/approvalRequestV1.js';
+import { PromptRegistryConfiguredSourceV1Schema } from '../promptLibrary/promptRegistriesV1.js';
+import { PromptAssetInstallModeV1Schema, PromptAssetScopeV1Schema } from '../promptLibrary/promptAssetsV1.js';
+import { BackendTargetKeySchema } from '../backendTargets/backendTargetRef.js';
 
 const ZodSchemaLike = z.custom<z.ZodTypeAny>((value) => {
   if (!value || typeof value !== 'object') return false;
@@ -106,6 +110,14 @@ export const ActionSpecSchema = z.object({
   title: z.string().min(1),
   description: z.string().min(1).optional(),
   safety: ActionSafetySchema,
+  /**
+   * When set, the action can be routed through the approval queue even if the
+   * action itself is marked as `safety='safe'`.
+   *
+   * This does not imply that the action always requires approvals; it only
+   * signals eligibility for approval request wrappers.
+   */
+  requiresApprovalQueue: z.boolean().optional(),
   placements: z.array(ActionUiPlacementSchema).default([]),
   // Optional stable slash command token for ui_slash_command.
   slash: z.object({
@@ -304,6 +316,70 @@ const MemoryGetWindowInputSchema = z.object({
 const MemoryEnsureUpToDateInputSchema = z.object({
   machineId: z.string().min(1),
   sessionId: z.string().min(1).optional(),
+}).passthrough();
+
+const ApprovalRequestCreateInputSchema = z.object({
+  actionId: ActionIdSchema,
+  actionArgs: z.unknown(),
+  summary: z.string().min(1),
+  createdBy: ApprovalRequestCreatedBySchema,
+  preview: z.unknown().optional(),
+}).passthrough();
+
+const ApprovalRequestDecideInputSchema = z.object({
+  artifactId: z.string().min(1),
+  decision: z.enum(['approve', 'reject']),
+}).passthrough();
+
+const PromptDocUpdateInputSchema = z.object({
+  artifactId: z.string().min(1),
+  title: z.string().min(1),
+  markdown: z.string(),
+  folderId: z.string().min(1).nullable().optional(),
+  tags: z.array(z.string().min(1)).optional(),
+}).passthrough();
+
+const PromptBundleUpdateInputSchema = z.object({
+  artifactId: z.string().min(1),
+  title: z.string().min(1),
+  skillMarkdown: z.string(),
+  folderId: z.string().min(1).nullable().optional(),
+  tags: z.array(z.string().min(1)).optional(),
+}).passthrough();
+
+const PromptAssetExportInputSchema = z.object({
+  artifactId: z.string().min(1),
+  machineId: z.string().min(1),
+  assetTypeId: z.string().min(1),
+  scope: PromptAssetScopeV1Schema,
+  directory: z.string().min(1).optional(),
+  targetPath: z.string().min(1).optional(),
+  targetName: z.string().min(1).optional(),
+  installMode: PromptAssetInstallModeV1Schema.optional(),
+}).passthrough().superRefine((value, ctx) => {
+  const hasDocTarget = typeof value.targetPath === 'string' && value.targetPath.trim().length > 0;
+  const hasBundleTarget = typeof value.targetName === 'string' && value.targetName.trim().length > 0;
+  if (!hasDocTarget && !hasBundleTarget) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: 'targetPath or targetName is required',
+      path: ['targetPath'],
+    });
+  }
+});
+
+const PromptRegistryInstallInputSchema = z.object({
+  machineId: z.string().min(1),
+  sourceId: z.string().min(1),
+  itemId: z.string().min(1),
+  configuredSources: z.array(PromptRegistryConfiguredSourceV1Schema).default([]),
+  installTarget: z.object({
+    assetTypeId: z.string().min(1),
+    scope: PromptAssetScopeV1Schema,
+    directory: z.string().min(1).optional(),
+    targetName: z.string().min(1),
+    installMode: PromptAssetInstallModeV1Schema.optional(),
+  }).optional(),
 }).passthrough();
 
 export const ACTION_SPECS: readonly ActionSpec[] = Object.freeze([
@@ -1230,7 +1306,212 @@ export const ACTION_SPECS: readonly ActionSpec[] = Object.freeze([
       mcp: true,
       session_control_cli: false,
     },
+    examples: {
+      voice: { argsExample: '{"machineId":"{{machineId}}","sessionId":"{{sessionId}}"}' },
+      mcp: { argsExample: '{"machineId":"{{machineId}}","sessionId":"{{sessionId}}"}' },
+    },
     inputSchema: MemoryEnsureUpToDateInputSchema,
+  },
+  {
+    id: 'prompt_doc.update',
+    title: 'Update prompt document',
+    description: 'Update a prompt document stored in the Happier prompt library.',
+    safety: 'danger',
+    placements: [],
+    surfaces: {
+      ui_button: false,
+      ui_slash_command: false,
+      voice_tool: false,
+      voice_action_block: false,
+      mcp: true,
+      session_control_cli: false,
+    },
+    inputSchema: PromptDocUpdateInputSchema,
+    inputHints: {
+      title: 'Update prompt document',
+      fields: [
+        { path: 'artifactId', title: 'Prompt artifact id', widget: 'text', required: true },
+        { path: 'title', title: 'Title', widget: 'text', required: true },
+        { path: 'markdown', title: 'Markdown', widget: 'textarea', required: true },
+        { path: 'folderId', title: 'Folder id', widget: 'text' },
+        { path: 'tags', title: 'Tags', widget: 'text_list', listSeparator: 'comma' },
+      ],
+    },
+  },
+  {
+    id: 'prompt_bundle.update',
+    title: 'Update prompt bundle',
+    description: 'Update a skill bundle stored in the Happier prompt library.',
+    safety: 'danger',
+    placements: [],
+    surfaces: {
+      ui_button: false,
+      ui_slash_command: false,
+      voice_tool: false,
+      voice_action_block: false,
+      mcp: true,
+      session_control_cli: false,
+    },
+    inputSchema: PromptBundleUpdateInputSchema,
+    inputHints: {
+      title: 'Update prompt bundle',
+      fields: [
+        { path: 'artifactId', title: 'Bundle artifact id', widget: 'text', required: true },
+        { path: 'title', title: 'Title', widget: 'text', required: true },
+        { path: 'skillMarkdown', title: 'SKILL.md markdown', widget: 'textarea', required: true },
+        { path: 'folderId', title: 'Folder id', widget: 'text' },
+        { path: 'tags', title: 'Tags', widget: 'text_list', listSeparator: 'comma' },
+      ],
+    },
+  },
+  {
+    id: 'prompt_asset.export',
+    title: 'Export prompt asset',
+    description: 'Export a prompt doc or skill bundle from the Happier library to a provider-native asset.',
+    safety: 'danger',
+    placements: [],
+    surfaces: {
+      ui_button: false,
+      ui_slash_command: false,
+      voice_tool: false,
+      voice_action_block: false,
+      mcp: true,
+      session_control_cli: false,
+    },
+    inputSchema: PromptAssetExportInputSchema,
+    inputHints: {
+      title: 'Export prompt asset',
+      fields: [
+        { path: 'artifactId', title: 'Artifact id', widget: 'text', required: true },
+        { path: 'machineId', title: 'Machine id', widget: 'text', required: true },
+        { path: 'assetTypeId', title: 'Asset type id', widget: 'text', required: true },
+        {
+          path: 'scope',
+          title: 'Scope',
+          widget: 'select',
+          required: true,
+          options: [
+            { value: 'project', label: 'Project' },
+            { value: 'user', label: 'User' },
+          ],
+        },
+        { path: 'directory', title: 'Project directory', widget: 'text' },
+        { path: 'targetPath', title: 'Document path', widget: 'text' },
+        { path: 'targetName', title: 'Skill name', widget: 'text' },
+        {
+          path: 'installMode',
+          title: 'Install mode',
+          widget: 'select',
+          options: [
+            { value: 'copy', label: 'Copy' },
+            { value: 'symlink', label: 'Symlink' },
+          ],
+        },
+      ],
+    },
+  },
+  {
+    id: 'prompt_registry.install',
+    title: 'Install prompt registry skill',
+    description: 'Import a skill bundle from a registry and optionally export it to an external skills location.',
+    safety: 'danger',
+    placements: [],
+    surfaces: {
+      ui_button: false,
+      ui_slash_command: false,
+      voice_tool: false,
+      voice_action_block: false,
+      mcp: true,
+      session_control_cli: false,
+    },
+    inputSchema: PromptRegistryInstallInputSchema,
+    inputHints: {
+      title: 'Install prompt registry skill',
+      fields: [
+        { path: 'machineId', title: 'Machine id', widget: 'text', required: true },
+        { path: 'sourceId', title: 'Source id', widget: 'text', required: true },
+        { path: 'itemId', title: 'Item id', widget: 'text', required: true },
+        { path: 'configuredSources', title: 'Configured sources (json)', widget: 'textarea' },
+        { path: 'installTarget.assetTypeId', title: 'Target asset type', widget: 'text' },
+        {
+          path: 'installTarget.scope',
+          title: 'Target scope',
+          widget: 'select',
+          options: [
+            { value: 'project', label: 'Project' },
+            { value: 'user', label: 'User' },
+          ],
+        },
+        { path: 'installTarget.directory', title: 'Project directory', widget: 'text' },
+        { path: 'installTarget.targetName', title: 'Target skill name', widget: 'text' },
+        {
+          path: 'installTarget.installMode',
+          title: 'Install mode',
+          widget: 'select',
+          options: [
+            { value: 'copy', label: 'Copy' },
+            { value: 'symlink', label: 'Symlink' },
+          ],
+        },
+      ],
+    },
+  },
+  {
+    id: 'approval.request.create',
+    title: 'Create approval request',
+    description: 'Create an approval request for another action to run.',
+    safety: 'danger',
+    placements: [],
+    surfaces: {
+      ui_button: false,
+      ui_slash_command: false,
+      voice_tool: false,
+      voice_action_block: false,
+      mcp: true,
+      session_control_cli: false,
+    },
+    inputSchema: ApprovalRequestCreateInputSchema,
+    inputHints: {
+      title: 'Request approval',
+      description: 'Create an approval request in the global inbox.',
+      fields: [
+        { path: 'summary', title: 'Summary', widget: 'textarea', required: true },
+        { path: 'actionId', title: 'Action id', widget: 'text', required: true },
+        { path: 'actionArgs', title: 'Action args (json)', widget: 'textarea', required: true },
+      ],
+    },
+  },
+  {
+    id: 'approval.request.decide',
+    title: 'Decide approval request',
+    description: 'Approve or reject an approval request.',
+    safety: 'danger',
+    placements: [],
+    surfaces: {
+      ui_button: true,
+      ui_slash_command: false,
+      voice_tool: false,
+      voice_action_block: false,
+      mcp: false,
+      session_control_cli: false,
+    },
+    inputSchema: ApprovalRequestDecideInputSchema,
+    inputHints: {
+      title: 'Approve or reject',
+      fields: [
+        { path: 'artifactId', title: 'Approval artifact id', widget: 'text', required: true },
+        {
+          path: 'decision',
+          title: 'Decision',
+          widget: 'select',
+          required: true,
+          options: [
+            { value: 'approve', label: 'Approve' },
+            { value: 'reject', label: 'Reject' },
+          ],
+        },
+      ],
+    },
   },
 ]);
 

@@ -3,6 +3,8 @@ import type { ActionId } from './actionIds.js';
 import type { ActionUiPlacement } from './actionUiPlacements.js';
 import type { MemorySearchQueryV1, MemorySearchResultV1 } from '../memory/memorySearch.js';
 import type { MemoryWindowV1 } from '../memory/memoryWindow.js';
+import { ApprovalRequestV1Schema, type ApprovalRequestV1 } from '../approvals/approvalRequestV1.js';
+import type { PromptRegistryConfiguredSourceV1 } from '../promptLibrary/promptRegistriesV1.js';
 
 export type ActionExecuteResult =
   | Readonly<{ ok: true; result: unknown }>
@@ -104,6 +106,48 @@ export type ActionExecutorDeps = Readonly<{
   }>) => Promise<MemoryWindowV1>;
   daemonMemoryEnsureUpToDate: (args: Readonly<{ machineId: string; sessionId?: string; serverId?: string | null }>) => Promise<unknown>;
 
+  // Approval queue (optional)
+  approvalsCreate?: (args: Readonly<{ request: ApprovalRequestV1; serverId?: string | null }>) => Promise<{ artifactId: string }>;
+  approvalsGet?: (args: Readonly<{ artifactId: string; serverId?: string | null }>) => Promise<ApprovalRequestV1 | null>;
+  approvalsUpdate?: (args: Readonly<{ artifactId: string; request: ApprovalRequestV1; serverId?: string | null }>) => Promise<{ ok: true } | { ok: false; errorCode: string; error: string }>;
+  promptDocUpdate?: (args: Readonly<{
+    artifactId: string;
+    title: string;
+    markdown: string;
+    folderId?: string | null;
+    tags?: readonly string[];
+  }>) => Promise<unknown>;
+  promptBundleUpdate?: (args: Readonly<{
+    artifactId: string;
+    title: string;
+    skillMarkdown: string;
+    folderId?: string | null;
+    tags?: readonly string[];
+  }>) => Promise<unknown>;
+  promptAssetExport?: (args: Readonly<{
+    artifactId: string;
+    machineId: string;
+    assetTypeId: string;
+    scope: 'user' | 'project';
+    directory?: string;
+    targetPath?: string;
+    targetName?: string;
+    installMode?: 'copy' | 'symlink';
+  }>) => Promise<unknown>;
+  promptRegistryInstall?: (args: Readonly<{
+    machineId: string;
+    sourceId: string;
+    itemId: string;
+    configuredSources: readonly PromptRegistryConfiguredSourceV1[];
+    installTarget?: Readonly<{
+      assetTypeId: string;
+      scope: 'user' | 'project';
+      directory?: string;
+      targetName: string;
+      installMode?: 'copy' | 'symlink';
+    }>;
+  }>) => Promise<unknown>;
+
   // Optional policy hook for fail-closed action disablement.
   isActionEnabled?: (actionId: ActionId, ctx: ActionExecutorContext) => boolean;
 
@@ -161,14 +205,24 @@ async function fanoutStarts(params: Readonly<{
   return results;
 }
 
+function buildApprovalDecisionResult(request: ApprovalRequestV1): ActionExecuteResult {
+  return {
+    ok: true,
+    result: {
+      ok: true,
+      status: request.status,
+      ...(request.execution ? { execution: request.execution } : {}),
+    },
+  };
+}
+
 export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
   execute: (actionId: ActionId, input: unknown, context?: ActionExecutorContext) => Promise<ActionExecuteResult>;
 }> {
   const isActionEnabled = deps.isActionEnabled ?? ((_id: ActionId, _ctx: ActionExecutorContext) => true);
 
-  return {
-    execute: async (actionId: ActionId, input: unknown, context?: ActionExecutorContext): Promise<ActionExecuteResult> => {
-      const ctx: ActionExecutorContext = context ?? {};
+  const execute = async (actionId: ActionId, input: unknown, context?: ActionExecutorContext): Promise<ActionExecuteResult> => {
+    const ctx: ActionExecutorContext = context ?? {};
 
       if (!isActionEnabled(actionId, ctx)) {
         return { ok: false, errorCode: 'action_disabled', error: 'action_disabled' };
@@ -445,6 +499,257 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
           return { ok: true, result: res };
         }
 
+
+        if (actionId === 'prompt_doc.update') {
+          if (!deps.promptDocUpdate) {
+            return { ok: false, errorCode: 'unsupported_action', error: 'unsupported_action:prompt_doc.update' };
+          }
+          const artifactId = normalizeId((parsed.data as any).artifactId);
+          const title = String((parsed.data as any).title ?? '').trim();
+          if (!artifactId || !title) return { ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' };
+          const res = await deps.promptDocUpdate({
+            artifactId,
+            title,
+            markdown: String((parsed.data as any).markdown ?? ''),
+            ...(Object.prototype.hasOwnProperty.call(parsed.data, 'folderId')
+              ? { folderId: ((parsed.data as any).folderId ?? null) as string | null }
+              : {}),
+            ...(Array.isArray((parsed.data as any).tags)
+              ? { tags: ((parsed.data as any).tags as unknown[]).filter((entry): entry is string => typeof entry === 'string') }
+              : {}),
+          });
+          return { ok: true, result: res };
+        }
+
+        if (actionId === 'prompt_bundle.update') {
+          if (!deps.promptBundleUpdate) {
+            return { ok: false, errorCode: 'unsupported_action', error: 'unsupported_action:prompt_bundle.update' };
+          }
+          const artifactId = normalizeId((parsed.data as any).artifactId);
+          const title = String((parsed.data as any).title ?? '').trim();
+          if (!artifactId || !title) return { ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' };
+          const res = await deps.promptBundleUpdate({
+            artifactId,
+            title,
+            skillMarkdown: String((parsed.data as any).skillMarkdown ?? ''),
+            ...(Object.prototype.hasOwnProperty.call(parsed.data, 'folderId')
+              ? { folderId: ((parsed.data as any).folderId ?? null) as string | null }
+              : {}),
+            ...(Array.isArray((parsed.data as any).tags)
+              ? { tags: ((parsed.data as any).tags as unknown[]).filter((entry): entry is string => typeof entry === 'string') }
+              : {}),
+          });
+          return { ok: true, result: res };
+        }
+
+        if (actionId === 'prompt_asset.export') {
+          if (!deps.promptAssetExport) {
+            return { ok: false, errorCode: 'unsupported_action', error: 'unsupported_action:prompt_asset.export' };
+          }
+          const artifactId = normalizeId((parsed.data as any).artifactId);
+          const machineId = normalizeId((parsed.data as any).machineId);
+          const assetTypeId = normalizeId((parsed.data as any).assetTypeId);
+          const scope = (parsed.data as any).scope === 'project' ? 'project' : (parsed.data as any).scope === 'user' ? 'user' : null;
+          if (!artifactId || !machineId || !assetTypeId || !scope) {
+            return { ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' };
+          }
+          const res = await deps.promptAssetExport({
+            artifactId,
+            machineId,
+            assetTypeId,
+            scope,
+            ...(typeof (parsed.data as any).directory === 'string' && String((parsed.data as any).directory).trim().length > 0
+              ? { directory: String((parsed.data as any).directory).trim() }
+              : {}),
+            ...(typeof (parsed.data as any).targetPath === 'string' && String((parsed.data as any).targetPath).trim().length > 0
+              ? { targetPath: String((parsed.data as any).targetPath).trim() }
+              : {}),
+            ...(typeof (parsed.data as any).targetName === 'string' && String((parsed.data as any).targetName).trim().length > 0
+              ? { targetName: String((parsed.data as any).targetName).trim() }
+              : {}),
+            ...((parsed.data as any).installMode === 'copy' || (parsed.data as any).installMode === 'symlink'
+              ? { installMode: (parsed.data as any).installMode }
+              : {}),
+          });
+          if ((res as any)?.ok === false) {
+            return {
+              ok: false,
+              errorCode: typeof (res as any).errorCode === 'string' ? (res as any).errorCode : 'action_failed',
+              error: typeof (res as any).error === 'string' ? (res as any).error : 'action_failed',
+            };
+          }
+          return { ok: true, result: res };
+        }
+
+        if (actionId === 'prompt_registry.install') {
+          if (!deps.promptRegistryInstall) {
+            return { ok: false, errorCode: 'unsupported_action', error: 'unsupported_action:prompt_registry.install' };
+          }
+          const machineId = normalizeId((parsed.data as any).machineId);
+          const sourceId = normalizeId((parsed.data as any).sourceId);
+          const itemId = normalizeId((parsed.data as any).itemId);
+          if (!machineId || !sourceId || !itemId) {
+            return { ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' };
+          }
+          const installTargetRaw = (parsed.data as any).installTarget;
+          const installTarget =
+            installTargetRaw
+            && typeof installTargetRaw === 'object'
+            && typeof installTargetRaw.assetTypeId === 'string'
+            && typeof installTargetRaw.targetName === 'string'
+            && (installTargetRaw.scope === 'project' || installTargetRaw.scope === 'user')
+              ? {
+                  assetTypeId: installTargetRaw.assetTypeId,
+                  scope: installTargetRaw.scope,
+                  ...(typeof installTargetRaw.directory === 'string' && installTargetRaw.directory.trim().length > 0
+                    ? { directory: installTargetRaw.directory.trim() }
+                    : {}),
+                  targetName: installTargetRaw.targetName,
+                  ...((installTargetRaw.installMode === 'copy' || installTargetRaw.installMode === 'symlink')
+                    ? { installMode: installTargetRaw.installMode }
+                    : {}),
+                }
+              : undefined;
+          const res = await deps.promptRegistryInstall({
+            machineId,
+            sourceId,
+            itemId,
+            configuredSources: Array.isArray((parsed.data as any).configuredSources) ? (parsed.data as any).configuredSources : [],
+            ...(installTarget ? { installTarget } : {}),
+          });
+          if ((res as any)?.ok === false) {
+            return {
+              ok: false,
+              errorCode: typeof (res as any).errorCode === 'string' ? (res as any).errorCode : 'action_failed',
+              error: typeof (res as any).error === 'string' ? (res as any).error : 'action_failed',
+            };
+          }
+          return { ok: true, result: res };
+        }
+
+        if (actionId === 'approval.request.create') {
+          if (!deps.approvalsCreate) {
+            return { ok: false, errorCode: 'unsupported_action', error: 'unsupported_action:approvals' };
+          }
+
+          const now = Date.now();
+          const targetActionId = (parsed.data as any).actionId as ActionId;
+          if (targetActionId === 'approval.request.create' || targetActionId === 'approval.request.decide') {
+            return { ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' };
+          }
+
+          const targetSpec = getActionSpec(targetActionId);
+          const isEligibleForApprovalQueue =
+            targetSpec.safety === 'danger' || (targetSpec as any).requiresApprovalQueue === true;
+          if (!isEligibleForApprovalQueue) {
+            return { ok: false, errorCode: 'action_not_approvable', error: 'action_not_approvable' };
+          }
+
+          const request: ApprovalRequestV1 = {
+            v: 1,
+            status: 'open',
+            createdAtMs: now,
+            updatedAtMs: now,
+            createdBy: (parsed.data as any).createdBy,
+            actionId: targetActionId,
+            actionArgs: (parsed.data as any).actionArgs,
+            summary: String((parsed.data as any).summary ?? '').trim(),
+            ...(normalizeId(ctx.serverId) ? { serverId: normalizeId(ctx.serverId) } : {}),
+            ...(Object.prototype.hasOwnProperty.call(parsed.data, 'preview') ? { preview: (parsed.data as any).preview } : {}),
+          };
+          const res = await deps.approvalsCreate({ request, serverId: normalizeId(ctx.serverId) || null });
+          return { ok: true, result: res };
+        }
+
+        if (actionId === 'approval.request.decide') {
+          if (!deps.approvalsGet || !deps.approvalsUpdate) {
+            return { ok: false, errorCode: 'unsupported_action', error: 'unsupported_action:approvals' };
+          }
+
+          const artifactId = normalizeId((parsed.data as any).artifactId);
+          if (!artifactId) return { ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' };
+
+          const existingRaw = await deps.approvalsGet({ artifactId, serverId: normalizeId(ctx.serverId) || null });
+          if (!existingRaw) return { ok: false, errorCode: 'approval_not_found', error: 'approval_not_found' };
+
+          const existingParsed = ApprovalRequestV1Schema.safeParse(existingRaw);
+          if (!existingParsed.success) return { ok: false, errorCode: 'approval_invalid', error: 'approval_invalid' };
+          const existing = existingParsed.data;
+          const decision = (parsed.data as any).decision;
+
+          if (existing.actionId === 'approval.request.create' || existing.actionId === 'approval.request.decide') {
+            return { ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' };
+          }
+
+          const isRecoverableApproved = decision === 'approve'
+            && existing.status === 'approved'
+            && existing.decision?.kind === 'approve'
+            && !existing.execution;
+
+          if (decision === 'reject' && existing.status === 'rejected' && existing.decision?.kind === 'reject') {
+            return buildApprovalDecisionResult(existing);
+          }
+
+          if (decision === 'approve'
+            && (existing.status === 'approved' || existing.status === 'executed' || existing.status === 'failed')
+            && existing.decision?.kind === 'approve'
+            && !isRecoverableApproved) {
+            return buildApprovalDecisionResult(existing);
+          }
+
+          if (existing.status !== 'open' && !isRecoverableApproved) {
+            return { ok: false, errorCode: 'approval_not_open', error: 'approval_not_open' };
+          }
+
+          const now = Date.now();
+
+          if (decision === 'reject') {
+            const nextRejected: ApprovalRequestV1 = {
+              ...existing,
+              status: 'rejected',
+              updatedAtMs: now,
+              decision: { kind: 'reject', decidedAtMs: now },
+            };
+            const updated = await deps.approvalsUpdate({ artifactId, request: nextRejected, serverId: normalizeId(ctx.serverId) || null });
+            if ((updated as any)?.ok === false) return { ok: false, errorCode: (updated as any).errorCode, error: (updated as any).error };
+            return buildApprovalDecisionResult(nextRejected);
+          }
+
+          let approvedRequest = existing;
+          if (existing.status === 'open') {
+            approvedRequest = {
+              ...existing,
+              status: 'approved',
+              updatedAtMs: now,
+              decision: { kind: 'approve', decidedAtMs: now },
+            };
+
+            const approved = await deps.approvalsUpdate({
+              artifactId,
+              request: approvedRequest,
+              serverId: normalizeId(ctx.serverId) || null,
+            });
+            if ((approved as any)?.ok === false) {
+              return { ok: false, errorCode: (approved as any).errorCode, error: (approved as any).error };
+            }
+          }
+
+          const exec = await execute(existing.actionId, existing.actionArgs, ctx);
+          const executedAtMs = Date.now();
+          const nextExecuted: ApprovalRequestV1 = {
+            ...approvedRequest,
+            status: exec.ok ? 'executed' : 'failed',
+            updatedAtMs: executedAtMs,
+            execution: exec.ok
+              ? { executedAtMs, ok: true, result: (exec as any).result }
+              : { executedAtMs, ok: false, errorCode: (exec as any).errorCode, error: (exec as any).error },
+          };
+
+          const updated = await deps.approvalsUpdate({ artifactId, request: nextExecuted, serverId: normalizeId(ctx.serverId) || null });
+          if ((updated as any)?.ok === false) return { ok: false, errorCode: (updated as any).errorCode, error: (updated as any).error };
+          return buildApprovalDecisionResult(nextExecuted);
+        }
+
         if (actionId === 'memory.search') {
           const machineId = normalizeId((parsed.data as any).machineId);
           if (!machineId) return { ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' };
@@ -488,6 +793,9 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
       } catch (error) {
         return { ok: false, errorCode: 'action_failed', error: error instanceof Error ? error.message : 'action_failed' };
       }
-    },
+  };
+
+  return {
+    execute,
   };
 }
