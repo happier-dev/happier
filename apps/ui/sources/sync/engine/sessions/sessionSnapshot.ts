@@ -70,83 +70,92 @@ export async function fetchAndApplySessions(params: {
         cursor = nextCursor;
     }
 
-    // Initialize all session encryptions first
+    // Decrypt all session keys in parallel
     const sessionKeys = new Map<string, Uint8Array | null>();
-    for (const session of sessions) {
-        if (session.dataEncryptionKey) {
-            const decrypted = await encryption.decryptEncryptionKey(session.dataEncryptionKey);
-            if (!decrypted) {
-                console.error(`Failed to decrypt data encryption key for session ${session.id}`);
-                sessionKeys.set(session.id, null);
-                sessionDataKeys.delete(session.id);
-                continue;
+    const keyResults = await Promise.all(
+        sessions.map(async (session) => {
+            if (session.dataEncryptionKey) {
+                const decrypted = await encryption.decryptEncryptionKey(session.dataEncryptionKey);
+                return { id: session.id, decrypted, hasKey: true };
             }
-            sessionKeys.set(session.id, decrypted);
-            sessionDataKeys.set(session.id, decrypted);
+            return { id: session.id, decrypted: null, hasKey: false };
+        }),
+    );
+    for (const { id, decrypted, hasKey } of keyResults) {
+        if (hasKey && !decrypted) {
+            console.error(`Failed to decrypt data encryption key for session ${id}`);
+            sessionKeys.set(id, null);
+            sessionDataKeys.delete(id);
+        } else if (hasKey && decrypted) {
+            sessionKeys.set(id, decrypted);
+            sessionDataKeys.set(id, decrypted);
         } else {
-            sessionKeys.set(session.id, null);
-            sessionDataKeys.delete(session.id);
+            sessionKeys.set(id, null);
+            sessionDataKeys.delete(id);
         }
     }
     await encryption.initializeSessions(sessionKeys);
 
-    // Decrypt sessions
-    const decryptedSessions: (Omit<Session, 'presence'> & { presence?: 'online' | number })[] = [];
-    for (const session of sessions) {
-        const encryptionMode: 'e2ee' | 'plain' = session.encryptionMode === 'plain' ? 'plain' : 'e2ee';
-
-        const sessionEncryption = encryption.getSessionEncryption(session.id);
-        if (encryptionMode === 'e2ee' && !sessionEncryption) {
-            console.error(`Session encryption not found for ${session.id} - this should never happen`);
-            continue;
+    // Decrypt all sessions in parallel
+    const parsePlainMetadata = (value: string): Metadata | null => {
+        try {
+            const parsedJson = JSON.parse(value);
+            const parsed = MetadataSchema.safeParse(parsedJson);
+            return parsed.success ? parsed.data : null;
+        } catch {
+            return null;
         }
+    };
 
-        const parsePlainMetadata = (value: string): Metadata | null => {
-            try {
-                const parsedJson = JSON.parse(value);
-                const parsed = MetadataSchema.safeParse(parsedJson);
-                return parsed.success ? parsed.data : null;
-            } catch {
+    const parsePlainAgentState = (value: string | null): unknown => {
+        if (!value) return {};
+        try {
+            const parsedJson = JSON.parse(value);
+            const parsed = AgentStateSchema.safeParse(parsedJson);
+            return parsed.success ? parsed.data : {};
+        } catch {
+            return {};
+        }
+    };
+
+    const decryptedSessionResults = await Promise.all(
+        sessions.map(async (session) => {
+            const encryptionMode: 'e2ee' | 'plain' = session.encryptionMode === 'plain' ? 'plain' : 'e2ee';
+
+            const sessionEncryption = encryption.getSessionEncryption(session.id);
+            if (encryptionMode === 'e2ee' && !sessionEncryption) {
+                console.error(`Session encryption not found for ${session.id} - this should never happen`);
                 return null;
             }
-        };
 
-        const parsePlainAgentState = (value: string | null): unknown => {
-            if (!value) return {};
-            try {
-                const parsedJson = JSON.parse(value);
-                const parsed = AgentStateSchema.safeParse(parsedJson);
-                return parsed.success ? parsed.data : {};
-            } catch {
-                return {};
-            }
-        };
+            const metadata =
+                encryptionMode === 'plain'
+                    ? parsePlainMetadata(session.metadata)
+                    : await sessionEncryption!.decryptMetadata(session.metadataVersion, session.metadata);
 
-        const metadata =
-            encryptionMode === 'plain'
-                ? parsePlainMetadata(session.metadata)
-                : await sessionEncryption!.decryptMetadata(session.metadataVersion, session.metadata);
+            const agentState =
+                encryptionMode === 'plain'
+                    ? parsePlainAgentState(session.agentState)
+                    : await sessionEncryption!.decryptAgentState(session.agentStateVersion, session.agentState);
 
-        const agentState =
-            encryptionMode === 'plain'
-                ? parsePlainAgentState(session.agentState)
-                : await sessionEncryption!.decryptAgentState(session.agentStateVersion, session.agentState);
-
-        // Put it all together
-        const accessLevel = session.share?.accessLevel;
-        const normalizedAccessLevel =
-            accessLevel === 'view' || accessLevel === 'edit' || accessLevel === 'admin' ? accessLevel : undefined;
-        decryptedSessions.push({
-            ...session,
-            encryptionMode,
-            thinking: false,
-            thinkingAt: 0,
-            metadata,
-            agentState,
-            accessLevel: normalizedAccessLevel,
-            canApprovePermissions: session.share?.canApprovePermissions ?? undefined,
-        });
-    }
+            const accessLevel = session.share?.accessLevel;
+            const normalizedAccessLevel =
+                accessLevel === 'view' || accessLevel === 'edit' || accessLevel === 'admin' ? accessLevel : undefined;
+            return {
+                ...session,
+                encryptionMode,
+                thinking: false,
+                thinkingAt: 0,
+                metadata,
+                agentState,
+                accessLevel: normalizedAccessLevel,
+                canApprovePermissions: session.share?.canApprovePermissions ?? undefined,
+            };
+        }),
+    );
+    const decryptedSessions = decryptedSessionResults.filter(
+        (s): s is NonNullable<typeof s> => s !== null,
+    );
 
     // Apply to storage
     applySessions(decryptedSessions);
