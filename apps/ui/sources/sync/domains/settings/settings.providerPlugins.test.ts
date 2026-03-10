@@ -20,7 +20,7 @@ describe('settingsParse provider plugin defaults', () => {
         expect((settings as any).claudeRemoteAdvancedOptionsJson).toBe('');
         expect((settings as any).claudeCodeExperimentalAgentTeamsEnabled).toBe(false);
         expect((settings as any).codexBackendMode).toBe('acp');
-        expect((settings as any).codexAcpInstallSpec).toBe('');
+        expect((settings as any).backendCliSourcePreferenceById).toEqual({});
     });
 
     it('forces Codex ACP when migrating settings from schema v5', () => {
@@ -47,5 +47,20 @@ describe('settingsParse provider plugin defaults', () => {
         } as any);
 
         expect((settings as any).claudeRemoteAdvancedOptionsJson).toBe('');
+    });
+
+    it('preserves valid backend CLI source preferences and drops invalid values', () => {
+        const settings = settingsParse({
+            backendCliSourcePreferenceById: {
+                codex: 'managed-first',
+                gemini: 'system-first',
+                invalid: 'nope',
+            },
+        } as any);
+
+        expect((settings as any).backendCliSourcePreferenceById).toEqual({
+            codex: 'managed-first',
+            gemini: 'system-first',
+        });
     });
 });

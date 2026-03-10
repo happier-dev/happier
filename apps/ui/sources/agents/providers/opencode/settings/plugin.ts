@@ -1,18 +1,12 @@
-import { z } from 'zod';
-
-import { buildOpenCodeProviderSettingsShape, OPENCODE_PROVIDER_SETTINGS_DEFAULTS } from '@happier-dev/agents';
+import { OPENCODE_PROVIDER_FIELDS } from '@happier-dev/agents';
 
 import type { ProviderSettingsPlugin } from '@/agents/providers/_shared/providerSettingsPlugin';
 
-const shape = buildOpenCodeProviderSettingsShape(z);
-const defaults: Record<keyof typeof shape, unknown> = OPENCODE_PROVIDER_SETTINGS_DEFAULTS;
-
-export const OPENCODE_PROVIDER_SETTINGS_PLUGIN = {
+export const OPENCODE_PROVIDER_SETTINGS_PLUGIN: ProviderSettingsPlugin = {
     providerId: 'opencode',
     title: 'OpenCode',
     icon: { ionName: 'code-slash-outline', color: '#5AC8FA' },
-    settingsShape: shape,
-    settingsDefaults: defaults,
+    settings: OPENCODE_PROVIDER_FIELDS,
     uiSections: [
         {
             id: 'opencodeBackendMode',
@@ -39,6 +33,24 @@ export const OPENCODE_PROVIDER_SETTINGS_PLUGIN = {
                 },
             ],
         },
+        {
+            id: 'opencodeServer',
+            title: 'Server connection',
+            footer: 'Leave empty to use Happier-managed OpenCode server lifecycle. Set an absolute http(s) URL to connect to an existing OpenCode server instead.',
+            fields: [
+                {
+                    key: 'opencodeServerBaseUrl',
+                    kind: 'text',
+                    title: 'Existing OpenCode server URL',
+                    subtitle: 'Optional override for a user-managed OpenCode server.',
+                    binding: {
+                        kind: 'perActiveServer',
+                        fallbackSettingKey: 'opencodeServerBaseUrl',
+                        byServerIdSettingKey: 'opencodeServerBaseUrlByServerIdV1',
+                    },
+                },
+            ],
+        },
     ],
     buildOutgoingMessageMetaExtras: () => ({}),
-} as const satisfies ProviderSettingsPlugin;
+};

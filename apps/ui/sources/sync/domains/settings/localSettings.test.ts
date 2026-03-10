@@ -6,9 +6,14 @@ describe('localSettingsParse', () => {
     it('includes multi-pane and pane tab defaults', () => {
         const parsed = localSettingsParse(null);
         expect(parsed.uiMultiPanePanelsEnabled).toBe(true);
+        expect(parsed.uiItemDensity).toBe('cozy');
         expect(parsed.detailsPaneTabsBehavior).toBe('preview');
+        expect(parsed.sessionsListStorageTab).toBe('persisted');
         expect(typeof (parsed as any).sidebarWidthPx).toBe('number');
         expect(typeof (parsed as any).sidebarWidthBasisPx).toBe('number');
+        expect((parsed as any).bottomPaneHeightPx).toBe(320);
+        expect((parsed as any).bottomPaneHeightBasisPx).toBe(900);
+        expect((parsed as any).embeddedTerminalDockLocation).toBe('bottom');
     });
 
     it('returns defaults for non-object input', () => {
@@ -33,5 +38,15 @@ describe('localSettingsParse', () => {
 
         const tooBig = localSettingsParse({ uiFontScale: 100 });
         expect(tooBig.uiFontScale).toBeLessThanOrEqual(2.5);
+    });
+
+    it('accepts direct sessions list tab selection', () => {
+        const parsed = localSettingsParse({ sessionsListStorageTab: 'direct' });
+        expect(parsed.sessionsListStorageTab).toBe('direct');
+    });
+
+    it('accepts the middle ui item density selection', () => {
+        const parsed = localSettingsParse({ uiItemDensity: 'cozy' });
+        expect(parsed.uiItemDensity).toBe('cozy');
     });
 });

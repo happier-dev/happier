@@ -1,28 +1,33 @@
 import { describe, expect, it, vi } from 'vitest';
+import { defineSettingDefinitions } from '@happier-dev/protocol';
+import { z } from 'zod';
 
 describe('settingsDefaults provider plugin default guards', () => {
-    it('does not allow provider defaults to overwrite known defaults with undefined', async () => {
+    it('rejects provider settings that try to shadow core-owned settings', async () => {
         vi.resetModules();
 
         vi.doMock('@/agents/providers/_registry/providerSettingsRegistry', () => ({
             PROVIDER_SETTINGS_PLUGINS: [
                 {
                     providerId: 'mock-provider',
-                    settingsShape: {},
-                    settingsDefaults: {
-                        // This key is owned by core settings, not provider plugins.
-                        // A bad plugin (or a leaky mock) must not be able to wipe it out.
-                        attachmentsUploadsUploadLocation: undefined,
-                    },
+                    title: 'Mock provider',
+                    icon: { ionName: 'terminal-outline', color: '#000' },
+                    settings: defineSettingDefinitions({
+                        attachmentsUploadsUploadLocation: {
+                            schema: z.string(),
+                            default: 'provider-owned',
+                            description: 'Invalid provider-owned override',
+                            storageScope: 'account',
+                        },
+                    }),
+                    uiSections: [],
+                    buildOutgoingMessageMetaExtras: () => ({}),
                 },
             ],
         }));
 
         try {
-            const { settingsDefaults, settingsParse } = await import('./settings');
-
-            expect((settingsDefaults as any).attachmentsUploadsUploadLocation).toBe('workspace');
-            expect((settingsParse({}) as any).attachmentsUploadsUploadLocation).toBe('workspace');
+            await expect(import('./settings')).rejects.toThrow(/attachmentsUploadsUploadLocation/);
         } finally {
             vi.unmock('@/agents/providers/_registry/providerSettingsRegistry');
             vi.resetModules();

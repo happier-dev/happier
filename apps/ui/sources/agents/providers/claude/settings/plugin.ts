@@ -1,22 +1,15 @@
-import { z } from 'zod';
-
 import {
     buildClaudeRemoteOutgoingMessageMetaExtras,
-    buildClaudeRemoteProviderSettingsShape,
-    CLAUDE_REMOTE_PROVIDER_SETTINGS_DEFAULTS,
+    CLAUDE_REMOTE_PROVIDER_FIELDS,
 } from '@happier-dev/agents';
 
 import type { ProviderSettingsPlugin } from '@/agents/providers/_shared/providerSettingsPlugin';
 
-const shape = buildClaudeRemoteProviderSettingsShape(z);
-const defaults: Record<keyof typeof shape, unknown> = CLAUDE_REMOTE_PROVIDER_SETTINGS_DEFAULTS;
-
-export const CLAUDE_PROVIDER_SETTINGS_PLUGIN = {
+export const CLAUDE_PROVIDER_SETTINGS_PLUGIN: ProviderSettingsPlugin = {
     providerId: 'claude',
     title: 'Claude (remote)',
     icon: { ionName: 'sparkles-outline', color: '#FF9500' },
-    settingsShape: shape,
-    settingsDefaults: defaults,
+    settings: CLAUDE_REMOTE_PROVIDER_FIELDS,
     uiSections: [
         {
             id: 'claudeCodeExperiments',
@@ -141,4 +134,4 @@ export const CLAUDE_PROVIDER_SETTINGS_PLUGIN = {
     buildOutgoingMessageMetaExtras: ({ settings }) => {
         return buildClaudeRemoteOutgoingMessageMetaExtras(settings);
     },
-} as const satisfies ProviderSettingsPlugin;
+};
