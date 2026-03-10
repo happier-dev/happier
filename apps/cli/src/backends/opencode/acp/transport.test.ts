@@ -98,6 +98,13 @@ describe('OpenCodeTransport determineToolName', () => {
       input: { toolName: 'read_file' },
       expected: 'read',
     },
+    {
+      label: 'canonicalizes direct OpenCode MCP client aliases using the explicit tool hint',
+      toolName: 'qa_marker_stdio_20260306_get_marker',
+      toolCallId: 'tool-6',
+      input: { tool_name: 'get_marker' },
+      expected: 'mcp__qa_marker_stdio_20260306__get_marker',
+    },
   ])('$label', ({ toolName, toolCallId, input, expected }) => {
     const transport = new OpenCodeTransport();
     expect(transport.determineToolName(toolName, toolCallId, input, DEFAULT_TOOL_NAME_CONTEXT)).toBe(expected);
@@ -220,6 +227,13 @@ ProviderModelNotFoundError: ProviderModelNotFoundError
 });
 
 describe('OpenCodeTransport timeouts', () => {
+  it('exposes the expected ACP timeout policy', () => {
+    const transport = new OpenCodeTransport();
+    expect(transport.getIdleTimeout()).toBe(1_500);
+    expect(transport.getPostToolCallIdleTimeoutMs?.()).toBe(1_500);
+    expect(transport.getIdleWithoutAssistantMessageTimeoutMs()).toBe(10_000);
+  });
+
   it('treats task-like tool calls as investigation tools', () => {
     const transport = new OpenCodeTransport();
     expect(transport.isInvestigationTool('task-123', undefined)).toBe(true);

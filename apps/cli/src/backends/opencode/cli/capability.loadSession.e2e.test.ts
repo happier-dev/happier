@@ -2,6 +2,9 @@ import { describe, expect, it } from 'vitest';
 import { execFileSync } from 'node:child_process';
 
 import { cliCapability as openCodeCliCapability } from './capability';
+import type { DetectCliEntry, DetectCliSnapshot } from '@/capabilities/snapshots/cliSnapshot';
+
+type DetectArgs = Parameters<NonNullable<typeof openCodeCliCapability.detect>>[0];
 
 function resolveBinaryOnPath(name: string): string | null {
   try {
@@ -15,24 +18,50 @@ function resolveBinaryOnPath(name: string): string | null {
   }
 }
 
+function makeUnavailableCliEntry(): DetectCliEntry {
+  return { available: false };
+}
+
+function makeCliSnapshot(overrides: Partial<DetectCliSnapshot['clis']>): DetectCliSnapshot {
+  return {
+    path: process.env.PATH ?? null,
+    clis: {
+      claude: makeUnavailableCliEntry(),
+      codex: makeUnavailableCliEntry(),
+      opencode: makeUnavailableCliEntry(),
+      gemini: makeUnavailableCliEntry(),
+      auggie: makeUnavailableCliEntry(),
+      qwen: makeUnavailableCliEntry(),
+      kimi: makeUnavailableCliEntry(),
+      kilo: makeUnavailableCliEntry(),
+      kiro: makeUnavailableCliEntry(),
+      customAcp: makeUnavailableCliEntry(),
+      pi: makeUnavailableCliEntry(),
+      copilot: makeUnavailableCliEntry(),
+      ...overrides,
+    },
+    tmux: { available: false },
+    windowsTerminal: { available: false },
+  };
+}
+
 describe('cli.opencode capability (ACP)', () => {
   const providersEnabled =
     (process.env.HAPPIER_E2E_PROVIDERS ?? process.env.HAPPY_E2E_PROVIDERS) === '1'
     && (process.env.HAPPIER_E2E_PROVIDER_OPENCODE ?? process.env.HAPPY_E2E_PROVIDER_OPENCODE) === '1';
 
   it('returns deterministic capability results with or without provider probes enabled', async () => {
-    const request = { id: 'cli.opencode', params: { includeAcpCapabilities: true } } as any;
+    const request: DetectArgs['request'] = { id: 'cli.opencode', params: { includeAcpCapabilities: true } };
     if (!providersEnabled) {
-      const res = (await openCodeCliCapability.detect({
+      const res = await openCodeCliCapability.detect({
         request,
         context: {
-          cliSnapshot: {
-            path: process.env.PATH ?? null,
-            clis: { opencode: { available: false } },
-            tmux: { available: false },
-          },
-        } as any,
-      })) as any;
+          cliSnapshot: makeCliSnapshot({ opencode: { available: false } }),
+        },
+      }) as {
+        available: boolean;
+        acp?: { ok: boolean; loadSession?: boolean };
+      };
 
       expect(res.available).toBe(false);
       expect(res.acp).toBeUndefined();
@@ -43,17 +72,17 @@ describe('cli.opencode capability (ACP)', () => {
     const resolvedPath = resolveBinaryOnPath('opencode');
     expect(resolvedPath, 'providers are enabled but opencode is not on PATH').not.toBeNull();
 
-    const context = {
+    const context: DetectArgs['context'] = {
       cliSnapshot: {
-        path: process.env.PATH ?? null,
-        clis: {
-          opencode: { available: true, resolvedPath: resolvedPath! },
-        },
-        tmux: { available: false },
+        ...makeCliSnapshot({ opencode: { available: true, resolvedPath: resolvedPath! } }),
       },
-    } as any;
+    };
 
-    const res = (await openCodeCliCapability.detect({ request, context })) as any;
+    const res = await openCodeCliCapability.detect({ request, context }) as {
+      available: boolean;
+      resolvedPath: string | null;
+      acp?: { ok: boolean; loadSession?: boolean };
+    };
     expect(res.available).toBe(true);
     expect(res.resolvedPath).toBe(resolvedPath);
     expect(res.acp?.ok).toBe(true);

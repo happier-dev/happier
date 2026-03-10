@@ -1,6 +1,6 @@
 import { createOpenCodeBackend } from '@/backends/opencode/acp/backend';
-import type { ExecutionRunBackendFactory } from '@/backends/executionRuns/types';
-import { permissionModeForExecutionRunPolicy } from '@/backends/executionRuns/permissionModeForExecutionRunPolicy';
+import { permissionModeForExecutionRunPolicy } from '@/agent/executionRuns/policy/permissionModeForExecutionRunPolicy';
+import type { ExecutionRunBackendFactory } from '@/agent/executionRuns/registry/executionRunBackendTypes';
 
 export const executionRunBackendFactory: ExecutionRunBackendFactory = (opts) => {
   return createOpenCodeBackend({

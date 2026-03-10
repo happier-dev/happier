@@ -55,9 +55,13 @@ Recommended first-run flow:
 Notes:
 - The CLI never needs your secret key directly. For device-key accounts, restore happens in the app (mobile/web UI).
 - On enterprise/keyless deployments (mTLS or keyless OAuth), the same `happier auth login` flow works; the browser/app will use whatever the server advertises via `GET /v1/features`.
+- **Terminal connect is separate from account restore.** In the app, use **Scan QR to connect terminal** only for terminal/daemon approval. To sign a phone into the same account, use **Add your phone** on an already-signed-in desktop/web app and **Restore account** on the phone.
+- If the mobile QR/deep link does not include a server URL, your current server is probably loopback-only (`localhost` / `127.0.0.1`). Configure the phone to a reachable server URL first, then retry.
 
 Advanced:
 - To also print optional “configure server” links (rarely needed): `happier auth login --print-configure-links`
+
+User guide: [Features → Device linking & restore](/docs/features/device-linking-and-restore)
 
 ### Remote machine pairing (SSH, automated)
 
@@ -86,6 +90,8 @@ happier auth approve --public-key <publicKey> --json
 # Back on the remote host (waits, claims, and writes credentials)
 happier auth wait --public-key <publicKey> --json
 ```
+
+This is terminal/CLI pairing, not the same flow as device restore inside the app.
 
 ## Server profiles
 
@@ -119,6 +125,145 @@ happier --server-url https://api.company.example --webapp-url https://app.compan
 ## Daemon (background mode)
 
 For always-on background sessions, remote control, and headless servers, see [Daemon](./daemon).
+
+## Attach to an existing session
+
+If a supported session is already running on the current machine, you can reattach to that same live session from a terminal:
+
+```bash
+happier attach <session-id>
+```
+
+This is the main “start in the app, continue in the terminal” workflow.
+
+Important notes:
+
+- attach works only for sessions that were started on the current machine,
+- you must target the same Happier account/server profile that owns the session.
+
+Attach strategy depends on the provider:
+
+- some providers use Happier’s `tmux`-backed attach flow,
+- OpenCode uses a provider-native attach flow for server-backed sessions.
+
+For OpenCode, the supported reattach command is still `happier attach <session-id>`. Do not rely on a raw vendor `opencode attach ...` command as your normal Happier workflow.
+
+Supported attach styles include:
+
+- **tmux-backed sessions** on machines where tmux is enabled
+- **Windows Terminal** or **Console** hosted sessions on Windows
+- **provider-native attach** for supported provider sessions such as OpenCode
+
+For the full workflow, see [Features → Attach to a running session](/docs/features/attach-to-session).
+
+## Resume an inactive session
+
+If a Happier session is inactive but still vendor-resumable, you can resume it directly from the CLI.
+
+### Interactive selector
+
+```bash
+happier resume
+```
+
+In a supported TTY, Happier shows an interactive picker of resumable inactive sessions.
+
+### Resume by id
+
+```bash
+happier resume <session-id>
+```
+
+You can use a full session id or an unambiguous prefix.
+
+Important behavior:
+
+- resume is strict: if the provider resume fails, Happier errors instead of starting a fresh session
+- archived or already-active sessions cannot be resumed
+- the command restores the session working directory before launching the provider again
+
+For the full user guide and the meaning of “resumable”, see [Features → Resume inactive sessions](/docs/features/session-resume).
+
+## List sessions
+
+Use:
+
+```bash
+happier session list
+```
+
+The default output is a table that includes session id, agent, recent activity, active state, resume state, title, and path.
+
+Useful variants:
+
+```bash
+happier session list --resumable
+happier session list --plain
+happier session list --json
+```
+
+- `--resumable` filters to sessions that can currently be resumed
+- `--plain` restores the older one-line output
+- `--json` is for scripting
+
+## Backend profiles
+
+The CLI supports backend profiles for session starts and profile discovery:
+
+```bash
+happier profiles list
+happier claude --profile deepseek
+happier codex --profile openai
+```
+
+For the full guide, see [Features → Profiles](/docs/features/profiles).
+
+## Happier tools
+
+The CLI also exposes the unified **Happier tools** surface directly.
+
+Use it when you want to:
+
+- inspect which built-in Happier tools are currently available
+- inspect which custom MCP tools resolve in the current machine/workspace context
+- call one of those tools directly from the terminal
+
+### List tools
+
+```bash
+happier tools list
+```
+
+Optional:
+
+```bash
+happier tools list --directory /path/to/project
+```
+
+This lists:
+
+- built-in Happier tools
+- custom MCP tools that resolve for the selected directory and machine
+
+`list` does **not** require a session id.
+
+### Call a tool
+
+```bash
+happier tools call --session-id <session-id> --source happier --tool action_spec_search --args-json '{"query":"plan mode","limit":5}'
+```
+
+Examples:
+
+- `--source happier --tool review_start`
+- `--source happier --tool subagents_plan_start`
+- `--source happier --tool action_spec_get`
+- `--source happier --tool action_options_resolve`
+- `--source playwright --tool browser_navigate`
+
+Use the Happier built-in discovery tools when you do not know the exact action id or valid option values yet.
+
+For the broader product model, see [Happier tools & actions](/docs/features/happier-tools).
 
 ## Multi-server reference
 

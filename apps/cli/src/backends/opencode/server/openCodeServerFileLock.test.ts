@@ -4,7 +4,7 @@ import { join } from 'node:path';
 
 import { describe, expect, it } from 'vitest';
 
-import { withOpenCodeServerFileLock } from './openCodeServerFileLock';
+import { resolveOpenCodeServerLockTimeoutMsFromEnv, withOpenCodeServerFileLock } from './openCodeServerFileLock';
 
 async function pathExists(path: string): Promise<boolean> {
   try {
@@ -16,6 +16,15 @@ async function pathExists(path: string): Promise<boolean> {
 }
 
 describe('withOpenCodeServerFileLock', () => {
+  it('defaults the lock timeout to the larger managed-server startup timeout when unset', () => {
+    expect(resolveOpenCodeServerLockTimeoutMsFromEnv({
+      HAPPIER_OPENCODE_SERVER_START_TIMEOUT_MS: '30000',
+    })).toBe(30_000);
+    expect(resolveOpenCodeServerLockTimeoutMsFromEnv({
+      HAPPIER_OPENCODE_SERVER_START_TIMEOUT_MS: '15000',
+    })).toBe(20_000);
+  });
+
   it('removes a lock left behind by a dead pid and proceeds', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'happier-opencode-lock-'));
     try {

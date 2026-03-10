@@ -1,12 +1,25 @@
 import { mkdir, open, readFile, stat, unlink } from 'node:fs/promises';
 import { dirname } from 'node:path';
 
-function resolveLockTimeoutMsFromEnv(env: NodeJS.ProcessEnv): number {
+import { isOpenCodeServerPidAlive } from './openCodeServerProcessState';
+
+function resolveManagedServerStartTimeoutMsFromEnv(env: NodeJS.ProcessEnv): number {
+  const raw = typeof env.HAPPIER_OPENCODE_SERVER_START_TIMEOUT_MS === 'string'
+    ? env.HAPPIER_OPENCODE_SERVER_START_TIMEOUT_MS.trim()
+    : '';
+  const n = Number(raw);
+  if (!Number.isFinite(n) || n <= 0) return 30_000;
+  return Math.min(Math.floor(n), 120_000);
+}
+
+export function resolveOpenCodeServerLockTimeoutMsFromEnv(env: NodeJS.ProcessEnv): number {
   const raw = typeof env.HAPPIER_OPENCODE_SERVER_LOCK_TIMEOUT_MS === 'string'
     ? env.HAPPIER_OPENCODE_SERVER_LOCK_TIMEOUT_MS.trim()
     : '';
   const n = Number(raw);
-  if (!Number.isFinite(n) || n <= 0) return 20_000;
+  if (!Number.isFinite(n) || n <= 0) {
+    return Math.max(20_000, Math.min(resolveManagedServerStartTimeoutMsFromEnv(env), 60_000));
+  }
   return Math.min(Math.floor(n), 60_000);
 }
 
@@ -17,16 +30,6 @@ function resolveLockStaleAfterMsFromEnv(env: NodeJS.ProcessEnv): number {
   const n = Number(raw);
   if (!Number.isFinite(n) || n <= 0) return 300_000;
   return Math.min(Math.floor(n), 3_600_000);
-}
-
-function isPidAlive(pid: number): boolean {
-  if (!Number.isFinite(pid) || pid <= 0) return false;
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch {
-    return false;
-  }
 }
 
 async function shouldBreakLock(
@@ -50,7 +53,7 @@ async function shouldBreakLock(
     const parsed = JSON.parse(raw);
     const pid = typeof (parsed as any)?.pid === 'number' ? (parsed as any).pid : Number((parsed as any)?.pid);
     if (Number.isFinite(pid) && pid > 0) {
-      return !isPidAlive(Math.floor(pid));
+      return !isOpenCodeServerPidAlive(Math.floor(pid));
     }
   } catch {
     // fall through
@@ -60,7 +63,7 @@ async function shouldBreakLock(
 }
 
 export async function withOpenCodeServerFileLock<T>(lockFile: string, fn: () => Promise<T>): Promise<T> {
-  const timeoutMs = resolveLockTimeoutMsFromEnv(process.env);
+  const timeoutMs = resolveOpenCodeServerLockTimeoutMsFromEnv(process.env);
   const staleAfterMs = resolveLockStaleAfterMsFromEnv(process.env);
   const startedAt = Date.now();
   let handle: Awaited<ReturnType<typeof open>> | null = null;

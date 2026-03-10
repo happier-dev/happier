@@ -7,18 +7,34 @@ import type { ACPProvider } from '@/api/session/sessionMessageTypes';
 import { configuration } from '@/configuration';
 import { MessageBuffer } from '@/ui/ink/messageBuffer';
 import { logger } from '@/ui/logger';
-import { buildChangeTitleInstruction } from '@/agent/runtime/changeTitleInstruction';
+import { buildChangeTitleInstruction, shouldAppendChangeTitleInstruction } from '@/agent/runtime/changeTitleInstruction';
 import { CHANGE_TITLE_TOOL_NAME_ALIASES, isChangeTitleToolNameAlias } from '@happier-dev/protocol/tools/v2';
 
 import type { OpenCodeGlobalEvent, OpenCodeModelRef, OpenCodePermissionRequest, OpenCodeQuestionRequest, OpenCodeSession } from './types';
 import { createOpenCodeServerRuntimeClient, type OpenCodeServerRuntimeClient } from './client';
 import { extractOpenCodeTextHistoryItems, importOpenCodeTextHistoryCommitted } from './openCodeSessionMessageImport';
 import { extractOpenCodeTaskChildSessionId, importOpenCodeTaskSidechainBestEffort } from './openCodeTaskSidechainImport';
+import { createOpenCodeTranscriptStreamBridge } from './openCodeTranscriptStreamBridge';
+import { asRecord, normalizeString, normalizeStringArray } from './openCodeParsing';
+import { extractOpenCodeErrorText } from './openCodeErrorText';
+import { extractOpenCodeSessionMessageId, parseOpenCodeToolPart } from './openCodeMessageParsing';
+import { canonicalizeOpenCodeConfiguredMcpToolName, resolveOpenCodeChangeTitleToolNameForMcpClient } from './openCodeMcpToolNames';
+import { modelSupportsToolCalls, parseOpenCodeModelId, resolveOpenCodeDefaultProviderIdFromModelId } from './openCodeModelParsing';
+import { parsePermissionRequest } from './openCodePermissionParsing';
+import {
+  buildQuestionAnswersArray,
+  extractBashCommandHint,
+  hasAnyMeaningfulInputFields,
+  looksLikeFreeformQuestionHintLabel,
+  openCodeQuestionRecordLooksLikeInternalTitleUpdate,
+  parseQuestionRequest,
+} from './openCodeQuestionParsing';
 import {
   createOpenCodeAscendingMessageId,
   resolveOpenCodeUserMessageIdFromMetadata,
   upsertOpenCodeUserMessageIdInMetadata,
 } from './openCodeUserMessageIds';
+import { buildOpenCodeSessionPermissionRuleset } from '@/agent/runtime/permission/openCodeFamilyPermissionPolicy';
 
 type Deferred<T> = {
   promise: Promise<T>;
@@ -36,192 +52,12 @@ function createDeferred<T>(): Deferred<T> {
   return { promise, resolve, reject };
 }
 
-function asRecord(value: unknown): Record<string, unknown> | null {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
-  return value as Record<string, unknown>;
-}
-
-function normalizeString(value: unknown): string {
-  return typeof value === 'string' ? value : '';
-}
-
-function normalizeStringArray(value: unknown): string[] {
-  if (!Array.isArray(value)) return [];
-  return value.map((v) => (typeof v === 'string' ? v : '')).filter(Boolean);
-}
-
-function parseOpenCodeModelId(raw: string): OpenCodeModelRef | null {
-  const trimmed = raw.trim();
-  if (!trimmed) return null;
-  const idx = trimmed.indexOf('/');
-  if (idx <= 0 || idx === trimmed.length - 1) return null;
-  return { providerID: trimmed.slice(0, idx), modelID: trimmed.slice(idx + 1) };
-}
-
-function extractOpenCodeSessionMessageId(raw: unknown): string | null {
-  const rec = asRecord(raw);
-  if (!rec) return null;
-  const info = asRecord(rec.info);
-  if (!info) return null;
-  const id = normalizeString(info.id).trim();
-  return id.length > 0 ? id : null;
+function isPromiseLike<T>(value: PromiseLike<T> | T | void): value is PromiseLike<T> {
+  return Boolean(value) && typeof (value as PromiseLike<T>).then === 'function';
 }
 
 function normalizeEnvVar(value: unknown): string {
   return typeof value === 'string' ? value.trim() : '';
-}
-
-function sanitizeOpenCodeMcpClientName(name: string): string {
-  return name.replace(/[^a-zA-Z0-9_-]/g, '_');
-}
-
-function resolveOpenCodeChangeTitleToolNameForMcpClient(mcpClientName: string): string {
-  return `${sanitizeOpenCodeMcpClientName(mcpClientName)}_change_title`;
-}
-
-function resolveOpenCodeDefaultProviderIdFromModelId(modelId: string): string {
-  const trimmed = modelId.trim();
-  const idx = trimmed.indexOf('/');
-  if (idx <= 0) return '';
-  return trimmed.slice(0, idx);
-}
-
-function extractOpenCodeErrorText(error: unknown): string | null {
-  if (typeof error === 'string') {
-    const trimmed = error.trim();
-    return trimmed.length > 0 ? trimmed : null;
-  }
-  if (error && typeof error === 'object' && !Array.isArray(error)) {
-    const rec = error as Record<string, unknown>;
-    const message = typeof rec.message === 'string' ? rec.message.trim() : '';
-    if (message) return message;
-    const data = rec.data && typeof rec.data === 'object' && !Array.isArray(rec.data) ? (rec.data as Record<string, unknown>) : null;
-    const dataMessage = typeof data?.message === 'string' ? String(data.message).trim() : '';
-    if (dataMessage) return dataMessage;
-    const detail = typeof rec.detail === 'string' ? rec.detail.trim() : '';
-    if (detail) return detail;
-    const errorText = typeof rec.error === 'string' ? rec.error.trim() : '';
-    if (errorText) return errorText;
-  }
-  return null;
-}
-
-function modelSupportsToolCalls(raw: unknown): boolean {
-  const rec = asRecord(raw);
-  if (!rec) return false;
-  const status = normalizeString(rec.status);
-  if (status && status !== 'active') return false;
-  const capabilities = asRecord(rec.capabilities);
-  if (!capabilities) return false;
-  if (capabilities.toolcall !== true) return false;
-  const input = asRecord(capabilities.input);
-  if (input && input.text === false) return false;
-  return true;
-}
-
-function splitCommaSeparatedLabels(value: string): string[] {
-  return value
-    .split(',')
-    .map((t) => t.trim())
-    .filter(Boolean);
-}
-
-function hasAnyMeaningfulInputFields(rawInput: unknown): boolean {
-  if (rawInput == null) return false;
-  if (typeof rawInput === 'string') return rawInput.trim().length > 0;
-  if (Array.isArray(rawInput)) return rawInput.length > 0;
-  const rec = asRecord(rawInput);
-  if (!rec) return false;
-  return Object.keys(rec).length > 0;
-}
-
-function extractBashCommandHint(rawInput: unknown): string {
-  const rec = asRecord(rawInput);
-  if (!rec) return '';
-  const command = normalizeString(rec.command);
-  if (command) return command;
-  const cmd = normalizeString(rec.cmd);
-  if (cmd) return cmd;
-  const argv = Array.isArray(rec.argv) ? rec.argv : Array.isArray(rec.items) ? rec.items : null;
-  if (Array.isArray(argv) && argv.every((v) => typeof v === 'string')) {
-    const joined = (argv as string[]).join(' ').trim();
-    if (joined) return joined;
-  }
-  return '';
-}
-
-function buildQuestionAnswersArray(params: {
-  questions: ReadonlyArray<Record<string, unknown>>;
-  answersByQuestionKey: Record<string, string>;
-}): string[][] {
-  const out: string[][] = [];
-  for (const q of params.questions) {
-    const question = normalizeString(q.question);
-    const header = normalizeString(q.header);
-    const key = question.trim().length > 0 ? question : header;
-    const raw = typeof params.answersByQuestionKey[key] === 'string' ? params.answersByQuestionKey[key]! : '';
-    out.push(splitCommaSeparatedLabels(raw));
-  }
-  return out;
-}
-
-function looksLikeFreeformQuestionHintLabel(label: string): boolean {
-  const normalized = label.trim().toLowerCase();
-  if (!normalized) return false;
-  // OpenCode sometimes encodes freeform questions as a single “type/enter your answer” option.
-  // Treat these as typed answers rather than a real selection.
-  return normalized.includes('type') || normalized.includes('enter') || normalized.includes('your own answer');
-}
-
-function parseQuestionRequest(raw: unknown): OpenCodeQuestionRequest | null {
-  const rec = asRecord(raw);
-  if (!rec) return null;
-  const id = normalizeString(rec.id);
-  const sessionID = normalizeString(rec.sessionID);
-  if (!id || !sessionID) return null;
-  const questionsRaw = rec.questions;
-  const questions = Array.isArray(questionsRaw) ? questionsRaw : [];
-  const toolRec = asRecord(rec.tool);
-  const tool = toolRec
-    ? { messageID: normalizeString(toolRec.messageID), callID: normalizeString(toolRec.callID) }
-    : undefined;
-  return { id, sessionID, questions, ...(tool?.messageID && tool.callID ? { tool } : {}) };
-}
-
-function parsePermissionRequest(raw: unknown): OpenCodePermissionRequest | null {
-  const rec = asRecord(raw);
-  if (!rec) return null;
-  const id = normalizeString(rec.id);
-  const sessionID = normalizeString(rec.sessionID);
-  const permission = normalizeString(rec.permission);
-  if (!id || !sessionID || !permission) return null;
-  const patterns = normalizeStringArray(rec.patterns);
-  const always = normalizeStringArray(rec.always);
-  const metadata = (asRecord(rec.metadata) ?? {}) as Record<string, unknown>;
-  const toolRec = asRecord(rec.tool);
-  const tool = toolRec
-    ? { messageID: normalizeString(toolRec.messageID), callID: normalizeString(toolRec.callID) }
-    : undefined;
-  return { id, sessionID, permission, patterns, metadata, always, ...(tool?.messageID && tool.callID ? { tool } : {}) };
-}
-
-function parseOpenCodeToolPart(raw: unknown): {
-  sessionID: string;
-  messageID: string;
-  callID: string;
-  tool: string;
-  state: Record<string, unknown>;
-} | null {
-  const rec = asRecord(raw);
-  if (!rec) return null;
-  if (normalizeString(rec.type) !== 'tool') return null;
-  const sessionID = normalizeString(rec.sessionID);
-  const messageID = normalizeString(rec.messageID);
-  const callID = normalizeString(rec.callID);
-  const tool = normalizeString(rec.tool);
-  const state = asRecord(rec.state);
-  if (!sessionID || !messageID || !callID || !tool || !state) return null;
-  return { sessionID, messageID, callID, tool, state };
 }
 
 export type OpenCodeServerRuntimeDeps = Readonly<{
@@ -263,7 +99,9 @@ export function createOpenCodeServerRuntime(params: {
   const turnBackfilledAssistantMessageIds = new Set<string>();
   let turnAssistantBackfillAttempts = 0;
   let turnAssistantBackfillFirstAttemptAtMs: number | null = null;
+  let turnAssistantBackfillIdleAttempted = false;
   let idleSignalSeen = false;
+  let statusPollBusySeen = false;
   let resolveOnIdleInFlight = false;
   let turnControlAbort: AbortController | null = null;
   let handledPermissionIds: Set<string> | null = null;
@@ -272,20 +110,19 @@ export function createOpenCodeServerRuntime(params: {
   let inFlightQuestionIds: Set<string> | null = null;
   let userMessageIdLastTimestampMs = 0;
   let userMessageIdCounter = 0;
+  const observedRemoteTextMessageIds = new Set<string>();
+  let liveHistorySyncPromise: Promise<void> | null = null;
+  let queuedLiveHistorySyncAllowAssistantReplies = false;
 
   let turnStreamKey: string | null = null;
   const accumulatedTextByPartKey = new Map<string, string>();
 
-  const sessionPermissionRuleset = [
-    // Default policy: ask for outside-worktree edits (relative paths beginning with ../), then allow in-worktree edits.
-    // OpenCode applies the first matching rule, so ordering is important here.
-    { permission: 'edit', pattern: '../*', action: 'ask' },
-    { permission: 'edit', pattern: '*', action: 'allow' },
-  ] as const;
+  const resolveSessionPermissionRuleset = (): ReadonlyArray<{ permission: string; pattern: string; action: 'ask' | 'allow' | 'deny' }> =>
+    buildOpenCodeSessionPermissionRuleset(params.getPermissionMode?.() ?? 'default');
 
-	  const partTypeByPartKey = new Map<string, string>();
-	  const toolCallSentByCallId = new Set<string>();
-	  const toolResultSentByCallId = new Set<string>();
+  const partTypeByPartKey = new Map<string, string>();
+  const toolCallSentByCallId = new Set<string>();
+  const toolResultSentByCallId = new Set<string>();
 
   const ensureClient = async (): Promise<OpenCodeServerRuntimeClient> => {
     if (client) return client;
@@ -385,11 +222,33 @@ export function createOpenCodeServerRuntime(params: {
     void c.subscribeGlobalEvents({
       signal: controller.signal,
       onEvent: (evt) => {
-        try {
-          handleEvent(evt);
-        } catch (error) {
-          logger.debug('[OpenCodeServer] Failed handling event (non-fatal)', error);
+        const processEvent = (): Promise<void> | void => {
+          try {
+            return handleEvent(evt);
+          } catch (error) {
+            logger.debug('[OpenCodeServer] Failed handling event (non-fatal)', error);
+          }
+        };
+
+        const trackPendingEventWork = (work: Promise<void>): Promise<void> => {
+          const tracked = work.finally(() => {
+            if (pendingEventWork === tracked) pendingEventWork = null;
+          });
+          pendingEventWork = tracked;
+          return tracked;
+        };
+
+        if (pendingEventWork) {
+          return trackPendingEventWork(
+            pendingEventWork.then(async () => {
+              await processEvent();
+            }),
+          );
         }
+
+        const maybePendingWork = processEvent();
+        if (!isPromiseLike(maybePendingWork)) return maybePendingWork;
+        return trackPendingEventWork(Promise.resolve(maybePendingWork));
       },
     }).catch((error) => {
       if (controller.signal.aborted) return;
@@ -397,13 +256,17 @@ export function createOpenCodeServerRuntime(params: {
     });
   };
 
+  let currentThinking = false;
+  let pendingEventWork: Promise<void> | null = null;
   const setThinking = (value: boolean) => {
-    params.onThinkingChange(value);
+    if (value === currentThinking) return;
+    currentThinking = value;
     params.session.keepAlive(value, 'remote');
+    params.onThinkingChange(value);
   };
 
   const resetTurnEventState = () => {
-    flushAllStreamBuffers();
+    clearStreamWriters();
     turnStreamKey = null;
     turnPromptActive = false;
     turnActivitySeen = false;
@@ -414,14 +277,18 @@ export function createOpenCodeServerRuntime(params: {
     turnBackfilledAssistantMessageIds.clear();
     turnAssistantBackfillAttempts = 0;
     turnAssistantBackfillFirstAttemptAtMs = null;
+    turnAssistantBackfillIdleAttempted = false;
     idleSignalSeen = false;
+    statusPollBusySeen = false;
     resolveOnIdleInFlight = false;
     sidechainIdByRemoteSessionId.clear();
     sidechainStreamSeenBySidechainId.clear();
-    accumulatedTextByPartKey.clear();
-	    partTypeByPartKey.clear();
-	    toolCallSentByCallId.clear();
-	    toolResultSentByCallId.clear();
+    pendingTaskSidechainImportsBySidechainId.clear();
+    pendingTaskChildSessionDiscoveryCallKeys.clear();
+      accumulatedTextByPartKey.clear();
+      partTypeByPartKey.clear();
+      toolCallSentByCallId.clear();
+      toolResultSentByCallId.clear();
     if (turnControlAbort) {
       try {
         turnControlAbort.abort();
@@ -472,6 +339,12 @@ export function createOpenCodeServerRuntime(params: {
     return Math.max(25, Math.min(30_000, configured));
   })();
 
+  const prePromptIdleWaitMs = (() => {
+    const raw = Number.parseInt(String(process.env.HAPPIER_OPENCODE_SERVER_PREPROMPT_IDLE_WAIT_MS ?? ''), 10);
+    const configured = Number.isFinite(raw) && raw >= 0 ? Math.trunc(raw) : 30_000;
+    return Math.max(0, Math.min(300_000, configured));
+  })();
+
   const streamDeltaFlushIntervalMs = (() => {
     const raw = Number.parseInt(String(process.env.HAPPIER_OPENCODE_SERVER_STREAM_DELTA_FLUSH_MS ?? ''), 10);
     const configured = Number.isFinite(raw) && raw >= 0 ? Math.trunc(raw) : 50;
@@ -507,6 +380,49 @@ export function createOpenCodeServerRuntime(params: {
     if (raw === '0' || raw === 'false' || raw === 'no' || raw === 'off') return false;
     return true;
   })();
+
+  const waitForIdleBeforePromptBestEffort = async (opts: {
+    client: OpenCodeServerRuntimeClient;
+    sessionId: string;
+    signal: AbortSignal;
+  }): Promise<void> => {
+    if (!statusPollEnabled) return;
+    if (prePromptIdleWaitMs <= 0) return;
+    const startedAtMs = Date.now();
+    // If the session is currently busy (e.g. tool still running after an abort),
+    // wait a bounded amount of time for it to become idle before sending a new prompt.
+    while (!opts.signal.aborted && Date.now() - startedAtMs < prePromptIdleWaitMs) {
+      let statuses: unknown;
+      try {
+        statuses = await opts.client.sessionStatusList();
+      } catch (error) {
+        logger.debug('[OpenCodeServer] pre-prompt status polling failed (non-fatal)', error);
+        return;
+      }
+      const rec =
+        statuses && typeof statuses === 'object' && !Array.isArray(statuses) ? (statuses as any)[opts.sessionId] : null;
+      const statusType = normalizeString(asRecord(rec)?.type);
+      if (statusType !== 'busy') return;
+
+      await new Promise<void>((resolve) => {
+        const onAbort = () => {
+          cleanup();
+          clearTimeout(timer);
+          resolve();
+        };
+        const cleanup = () => {
+          opts.signal.removeEventListener('abort', onAbort);
+        };
+        const timer = setTimeout(() => {
+          cleanup();
+          resolve();
+        }, pollSleepMs);
+        timer.unref?.();
+        opts.signal.addEventListener('abort', onAbort, { once: true });
+        if (opts.signal.aborted) onAbort();
+      });
+    }
+  };
 
   const assistantBackfillMaxAttempts = (() => {
     const raw = Number.parseInt(String(process.env.HAPPIER_OPENCODE_SERVER_ASSISTANT_BACKFILL_MAX_ATTEMPTS ?? ''), 10);
@@ -547,10 +463,12 @@ export function createOpenCodeServerRuntime(params: {
     if (!exceededConsecutive && !exceededGrace) return;
 
     setThinking(false);
+    void flushAndClearStreamWriters({ reason: 'abort', interruptedReason: 'control_plane_failure' }).finally(() => {
+      params.session.sendAgentMessage(provider, { type: 'turn_aborted', id: randomUUID() });
+    });
     const detail = extractOpenCodeErrorText(error);
     const message = detail ? `${controlPlaneDisconnectMessage}\n\nDetails: ${detail}` : controlPlaneDisconnectMessage;
     params.session.sendAgentMessage(provider, { type: 'message', message });
-    params.session.sendAgentMessage(provider, { type: 'turn_aborted', id: randomUUID() });
     rejectTurn(error ?? new Error('OpenCode control-plane polling failed'));
   };
 
@@ -597,9 +515,19 @@ export function createOpenCodeServerRuntime(params: {
       maybeAbortTurnOnControlPlaneFailure(error);
       return;
     }
-    const rec = statuses && typeof statuses === 'object' && !Array.isArray(statuses) ? (statuses as any)[sessionId] : null;
+    const map = statuses && typeof statuses === 'object' && !Array.isArray(statuses) ? (statuses as any as Record<string, unknown>) : null;
+    const rec = map ? map[sessionId] : null;
     const statusType = normalizeString(asRecord(rec)?.type);
-    if (statusType !== 'idle') return;
+
+    // OpenCode (>= 1.2.17) only returns *busy* sessions from /session/status. When the session becomes idle
+    // it is omitted from the response map, so interpret "missing entry" as idle once we have evidence
+    // that the turn had activity (or we observed it as busy at least once).
+    const missingImpliesIdle = rec == null && (statusPollBusySeen || turnActivitySeen);
+    if (statusType === 'busy') {
+      statusPollBusySeen = true;
+      return;
+    }
+    if (statusType !== 'idle' && !missingImpliesIdle) return;
     setThinking(false);
     idleSignalSeen = true;
   };
@@ -612,6 +540,11 @@ export function createOpenCodeServerRuntime(params: {
     if (resolveOnIdleInFlight) return;
     resolveOnIdleInFlight = true;
     try {
+      // When idle is observed via SSE, the status poll loop may not run again before we resolve.
+      // Backfill assistant text one final time on idle to avoid ending the turn without the final response.
+      if (!turnAssistantBackfillIdleAttempted) {
+        await backfillAssistantTextFromControlPlaneBestEffort();
+      }
       const permissions = await listPendingPermissionRequests();
       const questions = await listPendingQuestionRequests();
       const handledPerms = handledPermissionIds ?? new Set<string>();
@@ -623,6 +556,17 @@ export function createOpenCodeServerRuntime(params: {
         questions.some((q) => !handledQs.has(q.id) || inFlightQs.has(q.id));
       if (hasUnhandled) return;
       if (!turnDeferred) return;
+      if (pendingTaskChildSessionDiscoveryCallKeys.size > 0) return;
+
+      // Ensure Task sidechain imports are committed before the turn completes, otherwise
+      // downstream scenarios can miss the imported sidechain transcript (e.g. provider tests
+      // that assert Task subagent output is present synchronously after task_complete).
+      const pendingSidechainImports = Array.from(pendingTaskSidechainImportsBySidechainId.values());
+      if (pendingSidechainImports.length > 0) {
+        await Promise.allSettled(pendingSidechainImports);
+      }
+
+      await flushAndClearStreamWriters({ reason: 'turn-end' });
       params.session.sendAgentMessage(provider, { type: 'task_complete', id: randomUUID() });
       resolveTurn();
     } finally {
@@ -639,11 +583,21 @@ export function createOpenCodeServerRuntime(params: {
 
   const sidechainIdByRemoteSessionId = new Map<string, string>();
   const sidechainStreamSeenBySidechainId = new Set<string>();
+  const pendingTaskSidechainImportsBySidechainId = new Map<string, Promise<void>>();
+  const pendingTaskChildSessionDiscoveryCallKeys = new Set<string>();
 
   const resolveSidechainIdForRemoteSession = (remoteSessionId: string): string | null => {
     if (!remoteSessionId) return null;
     if (remoteSessionId === sessionId) return null;
     return sidechainIdByRemoteSessionId.get(remoteSessionId) ?? null;
+  };
+
+  const markObservedTextHistoryItems = (items: ReadonlyArray<{ messageId: string }>): void => {
+    for (const item of items) {
+      const messageId = typeof item.messageId === 'string' ? item.messageId.trim() : '';
+      if (!messageId) continue;
+      observedRemoteTextMessageIds.add(messageId);
+    }
   };
 
   const resolveOrCreateUserMessageId = async (localIdRaw: string | null | undefined): Promise<string | null> => {
@@ -731,6 +685,8 @@ export function createOpenCodeServerRuntime(params: {
     } catch {
       // Best-effort: do not block prompt completion on metadata persistence.
     }
+
+    observedRemoteTextMessageIds.add(candidateMessageId);
   };
 
   const getStreamKeyForMessage = (remoteSessionId: string, messageID: string): string => {
@@ -738,10 +694,6 @@ export function createOpenCodeServerRuntime(params: {
     if (!normalized) return ensureTurnStreamKey();
     const sessionPart = remoteSessionId ? `:ses:${remoteSessionId}` : '';
     return `${ensureTurnStreamKey()}${sessionPart}:msg:${normalized}`;
-  };
-
-  const getThinkingStreamKeyForMessage = (remoteSessionId: string, messageID: string): string => {
-    return `${getStreamKeyForMessage(remoteSessionId, messageID)}:thinking`;
   };
 
   const splitBackfilledTextIntoChunks = (text: string): string[] => {
@@ -785,9 +737,14 @@ export function createOpenCodeServerRuntime(params: {
     if (turnAssistantBackfillFirstAttemptAtMs == null) {
       turnAssistantBackfillFirstAttemptAtMs = nowMs;
     }
-    if (turnAssistantBackfillAttempts >= assistantBackfillMaxAttempts) return;
-    if (nowMs - turnAssistantBackfillFirstAttemptAtMs > assistantBackfillGraceMs) return;
-    turnAssistantBackfillAttempts += 1;
+    const isIdleFinalAttempt = idleSignalSeen && !turnAssistantBackfillIdleAttempted;
+    if (isIdleFinalAttempt) {
+      turnAssistantBackfillIdleAttempted = true;
+    } else {
+      if (turnAssistantBackfillAttempts >= assistantBackfillMaxAttempts) return;
+      if (nowMs - turnAssistantBackfillFirstAttemptAtMs > assistantBackfillGraceMs) return;
+      turnAssistantBackfillAttempts += 1;
+    }
 
     const c = await ensureClient();
     let raw: unknown;
@@ -817,23 +774,80 @@ export function createOpenCodeServerRuntime(params: {
       if (!messageID) continue;
       const text = item.text ?? '';
       if (!text) continue;
-      const streamKey = getStreamKeyForMessage(sessionId, messageID);
-      const meta = { happierStreamKey: streamKey, opencodeMessageId: messageID, opencodeRemoteSessionId: sessionId } satisfies Record<
-        string,
-        unknown
-      >;
-
       const chunks = splitBackfilledTextIntoChunks(text);
       if (chunks.length === 0) continue;
 
       turnBackfilledAssistantMessageIds.add(messageID);
       turnStreamedAssistantMessageIds.add(messageID);
+      observedRemoteTextMessageIds.add(messageID);
       for (const chunk of chunks) {
         if (!chunk) continue;
-        params.session.sendAgentMessage(provider, { type: 'message', message: chunk }, { meta });
+        transcriptStreamBridge.appendAssistantDelta({
+          deltaText: chunk,
+          streamKey: getStreamKeyForMessage(sessionId, messageID),
+          remoteSessionId: sessionId,
+          messageId: messageID,
+          sidechainId: null,
+        });
       }
       turnActivitySeen = true;
     }
+  };
+
+  const importLiveCommittedTextHistoryBestEffort = async (opts?: { allowAssistantReplies?: boolean }): Promise<void> => {
+    if (opts?.allowAssistantReplies === true) {
+      queuedLiveHistorySyncAllowAssistantReplies = true;
+    }
+    if (liveHistorySyncPromise) {
+      await liveHistorySyncPromise;
+      return;
+    }
+
+    const runSync = (async () => {
+      while (true) {
+        const allowAssistantReplies = queuedLiveHistorySyncAllowAssistantReplies;
+        queuedLiveHistorySyncAllowAssistantReplies = false;
+
+        if (turnPromptActive) return;
+        if (!sessionId) return;
+        const c = await ensureClient();
+        let raw: unknown;
+        try {
+          raw = await c.sessionMessagesList({ sessionId });
+        } catch {
+          return;
+        }
+
+        const items = extractOpenCodeTextHistoryItems(Array.isArray(raw) ? raw : []);
+        if (items.length > 0) {
+          const unseen = items.filter((item) => {
+            if (observedRemoteTextMessageIds.has(item.messageId)) return false;
+            if (item.role === 'assistant' && !allowAssistantReplies) return false;
+            return true;
+          });
+          if (unseen.length > 0) {
+            await importOpenCodeTextHistoryCommitted({
+              session: params.session,
+              provider,
+              remoteSessionId: sessionId,
+              items: unseen,
+              importedFrom: 'acp-live-sync',
+            });
+            markObservedTextHistoryItems(unseen);
+          }
+        }
+
+        if (!queuedLiveHistorySyncAllowAssistantReplies) return;
+      }
+    })();
+
+    const currentPromise = runSync.finally(() => {
+      if (liveHistorySyncPromise === currentPromise) {
+        liveHistorySyncPromise = null;
+      }
+    });
+    liveHistorySyncPromise = currentPromise;
+    await currentPromise;
   };
 
   const buildSidechainMeta = (
@@ -852,180 +866,108 @@ export function createOpenCodeServerRuntime(params: {
     };
   };
 
-	  type StreamBufferEntry = {
-	    buffer: string;
-	    flushTimer: ReturnType<typeof setTimeout> | null;
-	    type: 'message' | 'thinking';
-	    sidechainId: string | null;
-	    meta: Record<string, unknown>;
-	  };
+  const transcriptStreamBridge = createOpenCodeTranscriptStreamBridge({
+    provider,
+    session: params.session,
+    draftFlushIntervalMs: streamDeltaFlushIntervalMs,
+  });
 
-  const streamBuffersByKey = new Map<string, StreamBufferEntry>();
-
-	  const flushStreamBufferKey = (streamKey: string) => {
-	    const entry = streamBuffersByKey.get(streamKey);
-	    if (!entry) return;
-	    if (entry.flushTimer) {
-	      clearTimeout(entry.flushTimer);
-	      entry.flushTimer = null;
-	    }
-	    streamBuffersByKey.delete(streamKey);
-	    const buffered = entry.buffer;
-	    if (!buffered) return;
-
-    if (entry.type === 'thinking') {
-      params.session.sendAgentMessage(
-        provider,
-        { type: 'thinking', text: buffered, ...(entry.sidechainId ? { sidechainId: entry.sidechainId } : null) },
-        { meta: entry.meta },
-      );
-      return;
-    }
-
-    params.session.sendAgentMessage(
-      provider,
-      { type: 'message', message: buffered, ...(entry.sidechainId ? { sidechainId: entry.sidechainId } : null) },
-      { meta: entry.meta },
-    );
+  const clearStreamWriters = () => {
+    transcriptStreamBridge.clear();
   };
 
-	  const flushAllStreamBuffers = () => {
-	    for (const key of Array.from(streamBuffersByKey.keys())) {
-	      flushStreamBufferKey(key);
-	    }
-	  };
+  const flushAndClearStreamWriters = async (opts: {
+    reason: 'tool-call-boundary' | 'turn-end' | 'abort';
+    interruptedReason?: string;
+  }) => {
+    await transcriptStreamBridge.flushAll(opts);
+  };
 
-	  const sendDelta = (delta: string, remoteSessionId: string, messageID: string, sidechainId: string | null) => {
+    const sendDelta = (delta: string, remoteSessionId: string, messageID: string, sidechainId: string | null) => {
     turnActivitySeen = true;
     if (sidechainId) sidechainStreamSeenBySidechainId.add(sidechainId);
     if (!sidechainId && sessionId && remoteSessionId === sessionId) {
       turnStreamedAssistantMessageIds.add(messageID);
+      observedRemoteTextMessageIds.add(messageID);
     }
-    const streamKey = getStreamKeyForMessage(remoteSessionId, messageID);
-    const meta = buildSidechainMeta(
-      { happierStreamKey: streamKey, opencodeMessageId: messageID, opencodeRemoteSessionId: remoteSessionId },
+    transcriptStreamBridge.appendAssistantDelta({
+      deltaText: delta,
+      streamKey: getStreamKeyForMessage(remoteSessionId, messageID),
       remoteSessionId,
+      messageId: messageID,
       sidechainId,
-    );
-
-    if (streamDeltaFlushIntervalMs === 0) {
-      params.session.sendAgentMessage(
-        provider,
-        { type: 'message', message: delta, ...(sidechainId ? { sidechainId } : null) },
-        { meta },
-      );
-      return;
-    }
-
-	    const existing = streamBuffersByKey.get(streamKey);
-	    if (existing) {
-	      existing.type = 'message';
-	      existing.sidechainId = sidechainId;
-	      existing.meta = meta;
-	      existing.buffer = existing.buffer + delta;
-	      if (existing.buffer.length >= streamDeltaMaxChars) flushStreamBufferKey(streamKey);
-	      return;
-	    }
-
-    const flushTimer = setTimeout(() => flushStreamBufferKey(streamKey), streamDeltaFlushIntervalMs);
-    flushTimer.unref?.();
-	    streamBuffersByKey.set(streamKey, {
-	      buffer: delta,
-	      flushTimer,
-	      type: 'message',
-	      sidechainId,
-	      meta,
-	    });
-    if (delta.length >= streamDeltaMaxChars) flushStreamBufferKey(streamKey);
+    });
   };
 
-	  const sendThinkingDelta = (delta: string, remoteSessionId: string, messageID: string, sidechainId: string | null) => {
+    const sendThinkingDelta = (delta: string, remoteSessionId: string, messageID: string, sidechainId: string | null) => {
     if (!delta) return;
     turnActivitySeen = true;
     if (sidechainId) sidechainStreamSeenBySidechainId.add(sidechainId);
-    const streamKey = getThinkingStreamKeyForMessage(remoteSessionId, messageID);
-    const meta = buildSidechainMeta(
-      { happierStreamKey: streamKey, opencodeMessageId: messageID, opencodeRemoteSessionId: remoteSessionId },
+    transcriptStreamBridge.appendThinkingDelta({
+      deltaText: delta,
+      streamKey: getStreamKeyForMessage(remoteSessionId, messageID),
       remoteSessionId,
+      messageId: messageID,
       sidechainId,
-    );
-
-    if (streamDeltaFlushIntervalMs === 0) {
-      params.session.sendAgentMessage(
-        provider,
-        { type: 'thinking', text: delta, ...(sidechainId ? { sidechainId } : null) },
-        { meta },
-      );
-      return;
-    }
-
-	    const existing = streamBuffersByKey.get(streamKey);
-	    if (existing) {
-	      existing.type = 'thinking';
-	      existing.sidechainId = sidechainId;
-	      existing.meta = meta;
-	      existing.buffer = existing.buffer + delta;
-	      if (existing.buffer.length >= streamDeltaMaxChars) flushStreamBufferKey(streamKey);
-	      return;
-	    }
-
-    const flushTimer = setTimeout(() => flushStreamBufferKey(streamKey), streamDeltaFlushIntervalMs);
-    flushTimer.unref?.();
-	    streamBuffersByKey.set(streamKey, {
-	      buffer: delta,
-	      flushTimer,
-	      type: 'thinking',
-	      sidechainId,
-	      meta,
-	    });
-    if (delta.length >= streamDeltaMaxChars) flushStreamBufferKey(streamKey);
+    });
   };
 
-  const sendToolFromPart = (part: ReturnType<typeof parseOpenCodeToolPart>, sidechainId: string | null) => {
+  const sendToolFromPart = async (part: ReturnType<typeof parseOpenCodeToolPart>, sidechainId: string | null) => {
     if (!part) return;
     turnActivitySeen = true;
     if (sidechainId) sidechainStreamSeenBySidechainId.add(sidechainId);
 
-    const status = normalizeString(part.state.status);
-	    const callId = part.callID;
-	    const callKey = `${part.sessionID}:${callId}`;
-	    const messageID = part.messageID;
-	    const toolRaw = normalizeString(part.tool).trim();
-	    const toolLower = toolRaw.toLowerCase();
-	    const isChangeTitleTool =
-	      toolLower === preferredOpenCodeChangeTitleToolName.toLowerCase() || isChangeTitleToolNameAlias(toolLower);
-	    if (isChangeTitleTool) return;
-	    const toolNameForAcp = toolLower === 'grep' ? 'search' : toolRaw;
-	    const meta = buildSidechainMeta(
-	      { opencodeMessageId: messageID, opencodeRemoteSessionId: part.sessionID },
-	      part.sessionID,
-	      sidechainId,
-	    );
-	    const rawInput = (part.state as any).input ?? {};
-	    const hasMeaningfulInput = hasAnyMeaningfulInputFields(rawInput);
-	    const isBashLike = part.tool === 'bash' || part.tool === 'Bash' || part.tool === 'execute' || part.tool === 'Terminal';
-	    const commandHint = isBashLike ? extractBashCommandHint(rawInput) : '';
-	    const shouldEmitToolCallNow =
-	      !toolCallSentByCallId.has(callKey) &&
-	      (hasMeaningfulInput || Boolean(commandHint) || status === 'completed' || status === 'error');
+      const status = normalizeString(part.state.status);
+      const callId = part.callID;
+      const callKey = `${part.sessionID}:${callId}`;
+      const messageID = part.messageID;
+      const toolRaw = normalizeString(part.tool).trim();
+      const toolLower = toolRaw.toLowerCase();
+      const isChangeTitleTool =
+        toolLower === preferredOpenCodeChangeTitleToolName.toLowerCase() || isChangeTitleToolNameAlias(toolLower);
+      if (isChangeTitleTool) return;
 
-		    if (shouldEmitToolCallNow) {
-		      toolCallSentByCallId.add(callKey);
-		      params.session.sendAgentMessage(
-		        provider,
-		        { type: 'tool-call', callId, name: toolNameForAcp, input: rawInput, id: randomUUID(), ...(sidechainId ? { sidechainId } : null) },
-		        { meta },
-		      );
-		    }
-
-    if (toolLower === 'task') {
-      const metadata = asRecord(part.state.metadata) ?? {};
-      const outputText = normalizeString(part.state.output);
-      const remoteSessionId = extractOpenCodeTaskChildSessionId({ output: outputText, metadata });
-      if (remoteSessionId && remoteSessionId !== sessionId) {
-        sidechainIdByRemoteSessionId.set(remoteSessionId, callId);
+      // Task sidechains must be registered without awaiting, because SSE consumers do not await
+      // event handlers and related child-session events (questions/deltas) can arrive immediately.
+      if (toolLower === 'task') {
+        const metadata = asRecord(part.state.metadata) ?? {};
+        const outputText = normalizeString(part.state.output);
+        const remoteSessionId = extractOpenCodeTaskChildSessionId({ output: outputText, metadata });
+        if (remoteSessionId && remoteSessionId !== sessionId) {
+          sidechainIdByRemoteSessionId.set(remoteSessionId, callId);
+          pendingTaskChildSessionDiscoveryCallKeys.delete(callKey);
+        } else if (status === 'completed' || status === 'error') {
+          pendingTaskChildSessionDiscoveryCallKeys.delete(callKey);
+        } else {
+          pendingTaskChildSessionDiscoveryCallKeys.add(callKey);
+        }
       }
-    }
+
+      const canonicalMcpToolName =
+        canonicalizeOpenCodeConfiguredMcpToolName(toolRaw, params.mcpServers);
+      const toolNameForAcp = canonicalMcpToolName ?? (toolLower === 'grep' ? 'search' : toolRaw);
+      const meta = buildSidechainMeta(
+        { opencodeMessageId: messageID, opencodeRemoteSessionId: part.sessionID },
+        part.sessionID,
+        sidechainId,
+      );
+      const rawInput = (part.state as any).input ?? {};
+      const hasMeaningfulInput = hasAnyMeaningfulInputFields(rawInput);
+      const isBashLike = part.tool === 'bash' || part.tool === 'Bash' || part.tool === 'execute' || part.tool === 'Terminal';
+      const commandHint = isBashLike ? extractBashCommandHint(rawInput) : '';
+      const shouldEmitToolCallNow =
+        !toolCallSentByCallId.has(callKey) &&
+        (hasMeaningfulInput || Boolean(commandHint) || status === 'completed' || status === 'error');
+
+      if (shouldEmitToolCallNow) {
+          await flushAndClearStreamWriters({ reason: 'tool-call-boundary' });
+        toolCallSentByCallId.add(callKey);
+        params.session.sendAgentMessage(
+          provider,
+          { type: 'tool-call', callId, name: toolNameForAcp, input: rawInput, id: randomUUID(), ...(sidechainId ? { sidechainId } : null) },
+          { meta },
+        );
+      }
 
     if ((status === 'completed' || status === 'error') && !toolResultSentByCallId.has(callKey)) {
       toolResultSentByCallId.add(callKey);
@@ -1045,27 +987,36 @@ export function createOpenCodeServerRuntime(params: {
         if (toolLower === 'task') {
           const remoteSessionId = extractOpenCodeTaskChildSessionId({ output: output.output, metadata: output.metadata });
           if (remoteSessionId) {
-            void (async () => {
-              if (sidechainStreamSeenBySidechainId.has(callId)) return;
-              const c = await ensureClient();
-              const imported = await importOpenCodeTaskSidechainBestEffort({
-                client: c,
-                session: params.session,
-                provider,
-                remoteSessionId,
-                sidechainId: callId,
+            if (!pendingTaskSidechainImportsBySidechainId.has(callId)) {
+              const importPromise = (async () => {
+                if (sidechainStreamSeenBySidechainId.has(callId)) return;
+                const c = await ensureClient();
+                const imported = await importOpenCodeTaskSidechainBestEffort({
+                  client: c,
+                  session: params.session,
+                  provider,
+                  remoteSessionId,
+                  sidechainId: callId,
+                });
+                if (imported) return;
+                const fallback = output.output.replace(/<task_metadata>[\s\S]*?<\/task_metadata>/gi, '').trim();
+                if (!fallback) return;
+                await params.session.sendAgentMessageCommitted(
+                  provider,
+                  { type: 'message', message: fallback, sidechainId: callId },
+                  { localId: randomUUID(), meta: { importedFrom: 'acp-sidechain', remoteSessionId, sidechainId: callId } },
+                );
+              })().catch((error) => {
+                logger.debug('[OpenCodeServer] Failed to import Task sidechain (non-fatal)', error);
               });
-              if (imported) return;
-              const fallback = output.output.replace(/<task_metadata>[\s\S]*?<\/task_metadata>/gi, '').trim();
-              if (!fallback) return;
-              await params.session.sendAgentMessageCommitted(
-                provider,
-                { type: 'message', message: fallback, sidechainId: callId },
-                { localId: randomUUID(), meta: { importedFrom: 'acp-sidechain', remoteSessionId, sidechainId: callId } },
-              );
-            })().catch((error) => {
-              logger.debug('[OpenCodeServer] Failed to import Task sidechain (non-fatal)', error);
-            });
+
+              pendingTaskSidechainImportsBySidechainId.set(callId, importPromise);
+              void importPromise.finally(() => {
+                if (pendingTaskSidechainImportsBySidechainId.get(callId) === importPromise) {
+                  pendingTaskSidechainImportsBySidechainId.delete(callId);
+                }
+              });
+            }
           }
         }
       } else {
@@ -1081,6 +1032,10 @@ export function createOpenCodeServerRuntime(params: {
           { meta },
         );
       }
+
+      if (idleSignalSeen && turnPromptActive) {
+        void maybeResolveTurnOnIdleSignal();
+      }
     }
   };
 
@@ -1090,11 +1045,18 @@ export function createOpenCodeServerRuntime(params: {
     setThinking(false);
     idleSignalSeen = false;
     if (turnPromptActive) turnActivitySeen = true;
-    params.session.sendAgentMessage(provider, { type: 'task_started', id: randomUUID() });
 
     const questions = req.questions
       .map((q) => (asRecord(q) ?? null))
       .filter(Boolean) as Array<Record<string, unknown>>;
+
+    if (questions.length > 0 && questions.every(openCodeQuestionRecordLooksLikeInternalTitleUpdate)) {
+      const c = await ensureClient();
+      await c.questionReply({ requestId: req.id, answers: questions.map(() => ['OK']) });
+      return;
+    }
+
+    params.session.sendAgentMessage(provider, { type: 'task_started', id: randomUUID() });
 
     const askUserQuestionInput = {
       questions: questions.map((q) => ({
@@ -1114,13 +1076,28 @@ export function createOpenCodeServerRuntime(params: {
           // OpenCode represents some freeform prompts as a single “type now” option with a `locations` field,
           // but Happier’s AskUserQuestion should treat these as typed answers (not a real selection).
           const hasLocations = Array.isArray((q as any).locations);
-          const isSingleOptionHint = options.length === 1 && looksLikeFreeformQuestionHintLabel(options[0]!.label);
+          const hintOption = options.find((opt) => looksLikeFreeformQuestionHintLabel(opt.label)) ?? null;
+          const isSingleOptionHint = options.length === 1 && hintOption !== null;
+
+          // If the question offers multiple suggestions plus a freeform “type your own answer” option, model it as:
+          // - structured options (excluding the hint option)
+          // - plus a freeform text input (placeholder/description taken from the hint option)
+          if (q.multiple !== true && hintOption !== null && options.length > 1) {
+            const placeholder = hintOption.label.trim();
+            const description = hintOption.description.trim();
+            return {
+              options: options.filter((opt) => opt !== hintOption),
+              ...(placeholder || description
+                ? { freeform: { ...(placeholder ? { placeholder } : null), ...(description ? { description } : null) } }
+                : null),
+            };
+          }
+
           const isFreeform = hasLocations || options.length === 0 || (q.multiple !== true && isSingleOptionHint);
           if (!isFreeform) return { options };
 
-          const hint = options[0];
-          const placeholder = hint?.label?.trim() ?? '';
-          const description = hint?.description?.trim() ?? '';
+          const placeholder = hintOption?.label?.trim() ?? '';
+          const description = hintOption?.description?.trim() ?? '';
           return {
             options: [],
             ...(placeholder || description
@@ -1163,14 +1140,25 @@ export function createOpenCodeServerRuntime(params: {
     idleSignalSeen = false;
     if (turnPromptActive) turnActivitySeen = true;
 
+    const mode = params.getPermissionMode?.() ?? 'default';
+    const c = await ensureClient();
+
+    // Mirror Happier permission mode semantics for provider-native permission prompts.
+    if (mode === 'read-only' || mode === 'plan') {
+      await c.permissionReply({ requestId: req.id, reply: 'reject' });
+      return;
+    }
+    if (mode === 'yolo' || mode === 'acceptEdits' || mode === 'bypassPermissions') {
+      await c.permissionReply({ requestId: req.id, reply: 'once' });
+      return;
+    }
+
     const decision = await params.permissionHandler.handleToolCall(req.id, req.permission, {
       permission: req.permission,
       patterns: req.patterns,
       always: req.always,
       metadata: req.metadata,
     });
-
-    const c = await ensureClient();
 
     if (decision.decision === 'approved_for_session') {
       // Happier owns "always allow" persistence and scope. Always reply "once" to OpenCode so
@@ -1258,7 +1246,15 @@ export function createOpenCodeServerRuntime(params: {
       if (partID && partType) partTypeByPartKey.set(`${sessionID}:${partID}`, partType);
 
       const maybeTool = parseOpenCodeToolPart(part);
-      if (maybeTool) sendToolFromPart(maybeTool, sidechainId);
+      if (maybeTool) {
+        void sendToolFromPart(maybeTool, sidechainId).catch((error) => {
+          logger.debug('[OpenCodeServer] tool handler failed (non-fatal)', error);
+        });
+        return;
+      }
+      if (!turnPromptActive && sessionID === sessionId) {
+        void importLiveCommittedTextHistoryBestEffort({ allowAssistantReplies: false });
+      }
       return;
     }
 
@@ -1281,11 +1277,11 @@ export function createOpenCodeServerRuntime(params: {
       const partType = partTypeByPartKey.get(`${sessionID}:${partID}`) ?? '';
       const accumulationKey = `${sessionID}:${messageID}:${partType === 'reasoning' ? 'reasoning' : 'text'}`;
       const accumulated = accumulatedTextByPartKey.get(accumulationKey) ?? '';
-      const nextAccumulated = delta.startsWith(accumulated) ? delta : accumulated + delta;
-      accumulatedTextByPartKey.set(accumulationKey, nextAccumulated);
+        const nextAccumulated = delta.startsWith(accumulated) ? delta : accumulated + delta;
+        accumulatedTextByPartKey.set(accumulationKey, nextAccumulated);
 
-	      const deltaOut = delta.startsWith(accumulated) ? delta.slice(accumulated.length) : delta;
-	      if (!deltaOut) return;
+        const deltaOut = delta.startsWith(accumulated) ? delta.slice(accumulated.length) : delta;
+        if (!deltaOut) return;
       if (partType === 'reasoning') {
         sendThinkingDelta(deltaOut, sessionID, messageID, sidechainId);
       } else {
@@ -1315,6 +1311,9 @@ export function createOpenCodeServerRuntime(params: {
       if (!sessionID || sessionID !== sessionId) return;
       const statusRec = asRecord(rec.status);
       const statusType = normalizeString(statusRec?.type);
+      if (!turnPromptActive && (statusType === 'busy' || statusType === 'idle')) {
+        void importLiveCommittedTextHistoryBestEffort({ allowAssistantReplies: statusType === 'idle' });
+      }
       if (statusType === 'busy') {
         setThinking(true);
       }
@@ -1333,6 +1332,9 @@ export function createOpenCodeServerRuntime(params: {
       if (!rec) return;
       const sessionID = normalizeString(rec.sessionID);
       if (!sessionID || sessionID !== sessionId) return;
+      if (!turnPromptActive) {
+        void importLiveCommittedTextHistoryBestEffort({ allowAssistantReplies: true });
+      }
       setThinking(false);
       if (turnPromptActive) {
         idleSignalSeen = true;
@@ -1347,11 +1349,13 @@ export function createOpenCodeServerRuntime(params: {
       const sessionID = normalizeString(rec.sessionID);
       if (!sessionID || sessionID !== sessionId) return;
       setThinking(false);
+      void flushAndClearStreamWriters({ reason: 'abort', interruptedReason: 'session_error' }).finally(() => {
+        params.session.sendAgentMessage(provider, { type: 'turn_aborted', id: randomUUID() });
+      });
       const detail = extractOpenCodeErrorText(rec.error);
       if (detail) {
         params.session.sendAgentMessage(provider, { type: 'message', message: detail });
       }
-      params.session.sendAgentMessage(provider, { type: 'turn_aborted', id: randomUUID() });
       rejectTurn(rec.error ?? new Error('OpenCode session error'));
       return;
     }
@@ -1367,19 +1371,20 @@ export function createOpenCodeServerRuntime(params: {
     if (ensuredMcpServersForDirectory) return;
     if (!params.mcpServers || Object.keys(params.mcpServers).length === 0) return;
     const c = await ensureClient();
-    try {
-      for (const [name, cfg] of Object.entries(params.mcpServers)) {
-        const serverName = typeof name === 'string' ? name.trim() : '';
-        if (!serverName) continue;
-        const cmd = typeof cfg?.command === 'string' ? cfg.command.trim() : '';
-        if (!cmd) continue;
-        const args = Array.isArray(cfg.args) ? cfg.args.filter((v) => typeof v === 'string' && v.trim().length > 0).map((v) => v.trim()) : [];
-        const env = cfg.env && typeof cfg.env === 'object' && !Array.isArray(cfg.env)
-          ? Object.fromEntries(
-              Object.entries(cfg.env).filter(([k, v]) => typeof k === 'string' && k.length > 0 && typeof v === 'string'),
-            )
-          : undefined;
+    let hadFailures = false;
+    for (const [name, cfg] of Object.entries(params.mcpServers)) {
+      const serverName = typeof name === 'string' ? name.trim() : '';
+      if (!serverName) continue;
+      const cmd = typeof cfg?.command === 'string' ? cfg.command.trim() : '';
+      if (!cmd) continue;
+      const args = Array.isArray(cfg.args) ? cfg.args.filter((v) => typeof v === 'string' && v.trim().length > 0).map((v) => v.trim()) : [];
+      const env = cfg.env && typeof cfg.env === 'object' && !Array.isArray(cfg.env)
+        ? Object.fromEntries(
+            Object.entries(cfg.env).filter(([k, v]) => typeof k === 'string' && k.length > 0 && typeof v === 'string'),
+          )
+        : undefined;
 
+      try {
         await c.mcpAdd({
           name: serverName,
           config: {
@@ -1390,11 +1395,12 @@ export function createOpenCodeServerRuntime(params: {
           },
         });
         ensuredMcpServerNames.add(serverName);
+      } catch (error) {
+        hadFailures = true;
+        logger.debug('[OpenCodeServer] Failed to register MCP server (non-fatal)', { serverName, error });
       }
-      ensuredMcpServersForDirectory = true;
-    } catch (error) {
-      logger.debug('[OpenCodeServer] Failed to register MCP servers (non-fatal)', error);
     }
+    ensuredMcpServersForDirectory = hadFailures !== true;
   };
 
   const preferredOpenCodeChangeTitleToolName = resolveOpenCodeChangeTitleToolNameForMcpClient('happier');
@@ -1402,6 +1408,7 @@ export function createOpenCodeServerRuntime(params: {
 
   return {
     getSessionId: () => sessionId,
+    shouldResumeAfterPermissionModeChange: () => false,
     supportsInFlightSteer: () => false,
     isTurnInFlight: () => turnInFlight,
 
@@ -1438,25 +1445,32 @@ export function createOpenCodeServerRuntime(params: {
           await ensureMcpServersForCurrentDirectoryBestEffort();
         }
         publishDynamicSessionOptionsBestEffort();
+        const snapshot = params.session.getMetadataSnapshot();
+        const existingVendorSessionId = typeof (snapshot as any)?.opencodeSessionId === 'string'
+          ? String((snapshot as any).opencodeSessionId).trim()
+          : '';
+        const marker = snapshot && typeof snapshot === 'object' ? (snapshot as any).opencodeResumeHistoryImportV1 : null;
+        const shouldSkipHistoryImport =
+          (existingVendorSessionId && existingVendorSessionId === resumeId) ||
+          Boolean(marker && typeof marker === 'object' && (marker as any).v === 1 && String((marker as any).remoteSessionId ?? '') === resumeId);
+        if (shouldSkipHistoryImport) {
+          try {
+            const raw = await c.sessionMessagesList({ sessionId: resumeId });
+            markObservedTextHistoryItems(extractOpenCodeTextHistoryItems(Array.isArray(raw) ? raw : []));
+          } catch {
+            // non-fatal
+          }
+        }
 
         // Best-effort: import remote history into a fresh Happier session when resuming. This powers
         // the provider contract scenario `acp_resume_fresh_session_imports_history`.
         void (async () => {
           try {
-            const snapshot = params.session.getMetadataSnapshot();
-            const existingVendorSessionId = typeof (snapshot as any)?.opencodeSessionId === 'string'
-              ? String((snapshot as any).opencodeSessionId).trim()
-              : '';
             // If we're resuming inside an existing Happier session that already has an OpenCode sessionId,
             // do not import remote history again (avoids transcript duplication and resume flakiness).
-            if (existingVendorSessionId && existingVendorSessionId === resumeId) {
+            if (shouldSkipHistoryImport) {
               return;
             }
-            const marker = snapshot && typeof snapshot === 'object' ? (snapshot as any).opencodeResumeHistoryImportV1 : null;
-            if (marker && typeof marker === 'object' && (marker as any).v === 1 && String((marker as any).remoteSessionId ?? '') === resumeId) {
-              return;
-            }
-
             const raw = await c.sessionMessagesList({ sessionId: resumeId });
             const items = extractOpenCodeTextHistoryItems(raw);
             if (items.length === 0) return;
@@ -1467,6 +1481,7 @@ export function createOpenCodeServerRuntime(params: {
               items,
               importedFrom: 'acp-history',
             });
+            markObservedTextHistoryItems(items);
             await params.session.updateMetadata((prev) => ({
               ...(prev as any),
               opencodeResumeHistoryImportV1: { v: 1, remoteSessionId: resumeId, importedAtMs: Date.now() },
@@ -1479,7 +1494,7 @@ export function createOpenCodeServerRuntime(params: {
         return sessionId!;
       }
 
-      const created: OpenCodeSession = await c.sessionCreate({ permission: [...sessionPermissionRuleset] as unknown[] });
+      const created: OpenCodeSession = await c.sessionCreate({ permission: [...resolveSessionPermissionRuleset()] as unknown[] });
       sessionId = created.id;
       omitCustomMessageIdOnFirstPromptAfterResume = false;
       const createdDirectory = normalizeString((created as any)?.directory).trim();
@@ -1512,8 +1527,12 @@ export function createOpenCodeServerRuntime(params: {
         const alreadyMentionsChangeTitle =
           lower.includes(preferredOpenCodeChangeTitleToolName.toLowerCase()) ||
           CHANGE_TITLE_TOOL_NAME_ALIASES.some((alias) => lower.includes(alias));
+        if (alreadyMentionsChangeTitle) {
+          didSendChangeTitleInstructionForSession = true;
+          return raw;
+        }
+        if (!shouldAppendChangeTitleInstruction(raw)) return raw;
         didSendChangeTitleInstructionForSession = true;
-        if (alreadyMentionsChangeTitle) return raw;
         return `${raw}\n\n${changeTitleInstruction}`;
       })();
 
@@ -1521,6 +1540,7 @@ export function createOpenCodeServerRuntime(params: {
       const messageID = shouldOmitCustomMessageId
         ? undefined
         : (await resolveOrCreateUserMessageId(paramsWithMeta.localId ?? null)) ?? undefined;
+      if (messageID) observedRemoteTextMessageIds.add(messageID);
       const agent = selectedAgent ?? undefined;
       const model = selectedModel ?? undefined;
       const config = Object.keys(configOverrides).length > 0 ? { ...configOverrides } : undefined;
@@ -1539,6 +1559,13 @@ export function createOpenCodeServerRuntime(params: {
       const controlAbort = new AbortController();
       turnControlAbort = controlAbort;
       let prePromptMessageIdsForBackfill: Set<string> | null = null;
+
+      await waitForIdleBeforePromptBestEffort({ client: c, sessionId, signal: controlAbort.signal });
+      if (controlAbort.signal.aborted) {
+        // Abort handling (runtime.cancel) will reject the turn; do not attempt to send another prompt.
+        await thisTurnDeferred.promise;
+        return;
+      }
 
       try {
         const raw = await c.sessionMessagesList({ sessionId });
@@ -1574,6 +1601,7 @@ export function createOpenCodeServerRuntime(params: {
         }
       } catch (error) {
         setThinking(false);
+        await flushAndClearStreamWriters({ reason: 'abort', interruptedReason: 'prompt_async_error' });
         const detail = extractOpenCodeErrorText(error);
         if (detail) {
           params.session.sendAgentMessage(provider, { type: 'message', message: detail });
@@ -1694,6 +1722,7 @@ export function createOpenCodeServerRuntime(params: {
       }
 
       setThinking(false);
+      await flushAndClearStreamWriters({ reason: 'abort', interruptedReason: 'cancelled' });
       rejectTurn(new Error('OpenCode session aborted'));
       resetRuntimeState();
     },

@@ -42,7 +42,8 @@ describe('opencodeDaemonSpawnHooks.validateSpawn', () => {
     expect(res.ok).toBe(false);
     if (res.ok) throw new Error('expected validation to fail');
     expect(res.errorMessage.toLowerCase()).toContain('opencode');
-    expect(res.errorMessage.toLowerCase()).toContain('path');
+    expect(res.errorMessage.toLowerCase()).toContain('system install');
+    expect(res.errorMessage).toContain('HAPPIER_OPENCODE_PATH');
   });
 
   it('allows spawn when opencode is on PATH', async () => {

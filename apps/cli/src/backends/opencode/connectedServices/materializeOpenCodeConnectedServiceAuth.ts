@@ -7,7 +7,7 @@ import {
   buildConnectedServiceOauthAuthEntry,
   requireConnectedServiceTokenCredentialRecord,
   requireConnectedServiceOauthCredentialRecordWithExpiry,
-} from '@/backends/connectedServices/connectedServiceCredentialRecord';
+} from '@/daemon/connectedServices/shared/connectedServiceCredentialRecord';
 
 export async function materializeOpenCodeConnectedServiceAuth(params: Readonly<{
   rootDir: string;

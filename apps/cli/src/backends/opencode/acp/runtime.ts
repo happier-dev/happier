@@ -8,11 +8,13 @@ import { OpenCodeTurnDiffAccumulator } from '../utils/turnDiffAccumulator';
 
 export function createOpenCodeAcpRuntime(params: {
   directory: string;
+  machineId: string;
   session: ApiSessionClient;
   messageBuffer: MessageBuffer;
   mcpServers: Record<string, McpServerConfig>;
   permissionHandler: AcpPermissionHandler;
   onThinkingChange: (thinking: boolean) => void;
+  memoryRecallGuidanceEnabled?: boolean;
   /**
    * Return the latest permission mode intent so the next backend spawn can apply it.
    * Used for provider-enforced permission/sandbox policies that are configured at process start.
@@ -30,6 +32,10 @@ export function createOpenCodeAcpRuntime(params: {
     mcpServers: params.mcpServers,
     permissionHandler: params.permissionHandler,
     onThinkingChange: params.onThinkingChange,
+    memoryRecallGuidance: {
+      enabled: params.memoryRecallGuidanceEnabled === true,
+      machineId: params.machineId,
+    },
     getPermissionMode: params.getPermissionMode,
     hooks: {
       onBeginTurn: () => {

@@ -3,10 +3,7 @@ import type { ACPProvider } from '@/api/session/sessionMessageTypes';
 
 import type { OpenCodeServerRuntimeClient } from './client';
 import { extractOpenCodeTextHistoryItems, importOpenCodeTextHistoryCommitted } from './openCodeSessionMessageImport';
-
-function normalizeString(value: unknown): string {
-  return typeof value === 'string' ? value : '';
-}
+import { normalizeString } from './openCodeParsing';
 
 function extractChildSessionIdFromTaskOutput(output: string): string | null {
   const text = output.trim();
@@ -33,16 +30,48 @@ export async function importOpenCodeTaskSidechainBestEffort(params: Readonly<{
   remoteSessionId: string;
   sidechainId: string;
 }>): Promise<boolean> {
-  const raw = await params.client.sessionMessagesList({ sessionId: params.remoteSessionId }).catch(() => []);
-  const items = extractOpenCodeTextHistoryItems(raw);
-  if (items.length === 0) return false;
-  await importOpenCodeTextHistoryCommitted({
-    session: params.session,
-    provider: params.provider,
-    remoteSessionId: params.remoteSessionId,
-    items,
-    importedFrom: 'acp-sidechain',
-    sidechainId: params.sidechainId,
-  });
-  return true;
+  const resolvePositiveIntEnv = (raw: string | undefined, fallback: number, bounds: { min: number; max: number }): number => {
+    const value = (raw ?? '').trim();
+    if (!value) return fallback;
+    const parsed = Number.parseInt(value, 10);
+    if (!Number.isFinite(parsed)) return fallback;
+    return Math.min(bounds.max, Math.max(bounds.min, Math.trunc(parsed)));
+  };
+
+  const maxWaitMs = resolvePositiveIntEnv(process.env.HAPPIER_OPENCODE_TASK_SIDECHAIN_IMPORT_WAIT_MS, 25_000, { min: 0, max: 120_000 });
+  const retryBaseDelayMs = resolvePositiveIntEnv(process.env.HAPPIER_OPENCODE_TASK_SIDECHAIN_IMPORT_RETRY_BASE_DELAY_MS, 250, { min: 0, max: 10_000 });
+  const retryMaxDelayMs = resolvePositiveIntEnv(process.env.HAPPIER_OPENCODE_TASK_SIDECHAIN_IMPORT_RETRY_MAX_DELAY_MS, 2_000, { min: 0, max: 30_000 });
+
+  const sleep = async (ms: number): Promise<void> => {
+    if (ms <= 0) return;
+    await new Promise<void>((resolve) => setTimeout(resolve, ms));
+  };
+
+  let delayMs = retryBaseDelayMs;
+  const startMs = Date.now();
+  const deadlineMs = startMs + maxWaitMs;
+  while (true) {
+    const raw = await params.client.sessionMessagesList({ sessionId: params.remoteSessionId }).catch(() => []);
+    const items = extractOpenCodeTextHistoryItems(raw);
+    if (items.length > 0) {
+      await importOpenCodeTextHistoryCommitted({
+        session: params.session,
+        provider: params.provider,
+        remoteSessionId: params.remoteSessionId,
+        items,
+        importedFrom: 'acp-sidechain',
+        sidechainId: params.sidechainId,
+      });
+      return true;
+    }
+
+    const remainingMs = deadlineMs - Date.now();
+    if (remainingMs <= 0) return false;
+
+    const nextDelayMs = delayMs <= 0 ? Math.min(remainingMs, 1) : Math.min(delayMs, remainingMs);
+    await sleep(nextDelayMs);
+    if (delayMs > 0) {
+      delayMs = Math.min(retryMaxDelayMs, Math.max(delayMs, 1) * 2);
+    }
+  }
 }

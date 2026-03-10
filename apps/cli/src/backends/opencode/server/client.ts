@@ -1,25 +1,20 @@
 import { logger } from '@/ui/logger';
 import type { MessageBuffer } from '@/ui/ink/messageBuffer';
 
+import { resolveOpenCodeServerAuthHeadersFromEnv } from './openCodeServerAuth';
 import { subscribeSseJson } from './openCodeSse';
 import type { OpenCodeGlobalEvent, OpenCodeModelRef, OpenCodeSession } from './types';
-import { ensureSharedManagedOpenCodeServerBaseUrl, readSharedManagedOpenCodeServerStateBestEffort } from './sharedManagedServer';
+import {
+  ensureSharedManagedOpenCodeServerBaseUrl,
+  isLoopbackManagedOpenCodeBaseUrl,
+  readSharedManagedOpenCodeServerStateBestEffort,
+} from './sharedManagedServer';
 
 type PermissionReply = 'once' | 'always' | 'reject';
 
 function normalizeBaseUrl(raw: string): string {
   const trimmed = raw.trim().replace(/\/+$/, '');
   return trimmed;
-}
-
-function resolveBasicAuthHeader(): string | null {
-  const password = typeof process.env.OPENCODE_SERVER_PASSWORD === 'string' ? process.env.OPENCODE_SERVER_PASSWORD : '';
-  if (!password) return null;
-  const username = typeof process.env.OPENCODE_SERVER_USERNAME === 'string' && process.env.OPENCODE_SERVER_USERNAME.trim().length > 0
-    ? process.env.OPENCODE_SERVER_USERNAME.trim()
-    : 'opencode';
-  const token = Buffer.from(`${username}:${password}`, 'utf8').toString('base64');
-  return `Basic ${token}`;
 }
 
 function buildUrl(baseUrl: string, path: string, query?: Record<string, string | undefined>): string {
@@ -56,6 +51,7 @@ async function fetchJson<T>(params: {
 
 export type OpenCodeServerRuntimeClient = Readonly<{
   setDirectoryOverride: (directory: string) => void;
+  sessionList: () => Promise<unknown[]>;
   sessionCreate: (opts?: { permission?: unknown[] }) => Promise<OpenCodeSession>;
   sessionGet: (opts: { sessionId: string }) => Promise<OpenCodeSession>;
   sessionMessagesList: (opts: { sessionId: string }) => Promise<unknown[]>;
@@ -128,12 +124,12 @@ async function sleepUntilOrAbort(ms: number, signal: AbortSignal): Promise<void>
   });
 }
 
-export async function createOpenCodeServerRuntimeClient(params: Readonly<{ directory: string; messageBuffer: MessageBuffer }>): Promise<OpenCodeServerRuntimeClient> {
+export async function createOpenCodeServerRuntimeClient(params: Readonly<{ directory: string; messageBuffer: MessageBuffer; baseUrlOverride?: string | null }>): Promise<OpenCodeServerRuntimeClient> {
+  const baseUrlOverrideRaw = typeof params.baseUrlOverride === 'string' ? params.baseUrlOverride.trim() : '';
   const envUrlRaw = typeof process.env.HAPPIER_OPENCODE_SERVER_URL === 'string' ? process.env.HAPPIER_OPENCODE_SERVER_URL.trim() : '';
-  const usingManagedServer = envUrlRaw.length === 0;
+  const usingManagedServer = baseUrlOverrideRaw.length === 0 && envUrlRaw.length === 0;
 
-  const authHeader = resolveBasicAuthHeader();
-  const headers: Record<string, string> = authHeader ? { Authorization: authHeader } : {};
+  const headers = resolveOpenCodeServerAuthHeadersFromEnv();
 
   let directoryOverride = '';
   const resolveDirectory = (): string => {
@@ -155,7 +151,8 @@ export async function createOpenCodeServerRuntimeClient(params: Readonly<{ direc
   };
 
   let baseUrl = normalizeBaseUrl(
-    envUrlRaw
+    baseUrlOverrideRaw
+      || envUrlRaw
       || await ensureSharedManagedOpenCodeServerBaseUrl({
         probeHealth,
       }),
@@ -165,7 +162,7 @@ export async function createOpenCodeServerRuntimeClient(params: Readonly<{ direc
     if (!usingManagedServer) return;
 
     const state = await readSharedManagedOpenCodeServerStateBestEffort().catch(() => null);
-    if (state?.baseUrl && state.baseUrl.trim()) {
+    if (state?.baseUrl && isLoopbackManagedOpenCodeBaseUrl(state.baseUrl)) {
       const normalized = normalizeBaseUrl(state.baseUrl);
       if (normalized && normalized !== baseUrl) {
         baseUrl = normalized;
@@ -223,6 +220,14 @@ export async function createOpenCodeServerRuntimeClient(params: Readonly<{ direc
   const client: OpenCodeServerRuntimeClient = {
     setDirectoryOverride: (directory) => {
       directoryOverride = typeof directory === 'string' ? directory : '';
+    },
+    sessionList: async () => {
+      const raw = await fetchJson<unknown>({
+        url: buildUrl(baseUrl, '/session', { directory: resolveDirectory() }),
+        method: 'GET',
+        headers,
+      });
+      return Array.isArray(raw) ? raw : [];
     },
     sessionCreate: async (opts) => {
       return await fetchJson<OpenCodeSession>({

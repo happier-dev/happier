@@ -20,6 +20,7 @@ describe('OpenCode ACP runtime permission mode wiring', () => {
     let permissionMode: 'default' | 'yolo' = 'default';
     const runtime = createOpenCodeAcpRuntime({
       directory: '/tmp',
+      machineId: 'machine-1',
       session: createOpenCodeSessionFixture(),
       messageBuffer: createOpenCodeMessageBufferFixture(),
       mcpServers: {},
@@ -46,6 +47,7 @@ describe('OpenCode ACP runtime permission mode wiring', () => {
     const createSpy = createOpenCodeCatalogBackendSpy(createCalls);
     const runtime = createOpenCodeAcpRuntime({
       directory: '/tmp',
+      machineId: 'machine-1',
       session: createOpenCodeSessionFixture(),
       messageBuffer: createOpenCodeMessageBufferFixture(),
       mcpServers: {},

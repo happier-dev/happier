@@ -3,14 +3,7 @@ import { randomUUID } from 'node:crypto';
 import type { ApiSessionClient } from '@/api/session/sessionClient';
 import type { ACPProvider } from '@/api/session/sessionMessageTypes';
 
-function asRecord(value: unknown): Record<string, unknown> | null {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
-  return value as Record<string, unknown>;
-}
-
-function normalizeString(value: unknown): string {
-  return typeof value === 'string' ? value : '';
-}
+import { asRecord, normalizeString } from './openCodeParsing';
 
 function normalizeRole(value: unknown): 'user' | 'assistant' | null {
   const raw = normalizeString(value).trim().toLowerCase();
@@ -81,7 +74,7 @@ export async function importOpenCodeTextHistoryCommitted(params: Readonly<{
   provider: ACPProvider;
   remoteSessionId: string;
   items: ReadonlyArray<OpenCodeTextHistoryItem>;
-  importedFrom: 'acp-history' | 'acp-sidechain';
+  importedFrom: 'acp-history' | 'acp-sidechain' | 'acp-live-sync';
   sidechainId?: string;
 }>): Promise<void> {
   for (const item of params.items) {

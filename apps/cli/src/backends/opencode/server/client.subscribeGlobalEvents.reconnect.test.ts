@@ -6,6 +6,20 @@ vi.mock('./openCodeSse', () => ({
 
 vi.mock('./sharedManagedServer', () => ({
   ensureSharedManagedOpenCodeServerBaseUrl: vi.fn(),
+  isLoopbackManagedOpenCodeBaseUrl: (rawBaseUrl: string) => {
+    const value = rawBaseUrl.trim();
+    if (!value) return false;
+    try {
+      const url = new URL(value);
+      if (url.protocol !== 'http:' && url.protocol !== 'https:') return false;
+      const port = Number.parseInt(url.port, 10);
+      if (!Number.isFinite(port) || port <= 0) return false;
+      const host = url.hostname.toLowerCase();
+      return host === 'localhost' || host === '::1' || host.startsWith('127.');
+    } catch {
+      return false;
+    }
+  },
   readSharedManagedOpenCodeServerStateBestEffort: vi.fn(),
 }));
 
@@ -283,6 +297,70 @@ describe('createOpenCodeServerRuntimeClient.subscribeGlobalEvents', () => {
     await expect.poll(() => subscribeMock.mock.calls.length).toBeGreaterThan(1);
     expect(String(secondParams?.url ?? '')).toContain('127.0.0.1:10000');
     expect(ensureMock.mock.calls.length).toBe(2);
+
+    controller.abort();
+    await client.dispose();
+  });
+
+  it('ignores non-loopback managed server state during SSE reconnect refresh', async () => {
+    delete process.env.HAPPIER_OPENCODE_SERVER_URL;
+
+    const fetchSpy = vi.fn(async (url: any) => {
+      const urlStr = String(url);
+      if (urlStr.includes('127.0.0.1:9999') && urlStr.includes('/global/health')) {
+        return createOkJsonResponse({ healthy: true, version: 'test' }) as any;
+      }
+      return createOkJsonResponse({}) as any;
+    });
+    vi.stubGlobal('fetch', fetchSpy as any);
+
+    const { ensureSharedManagedOpenCodeServerBaseUrl, readSharedManagedOpenCodeServerStateBestEffort } = await import('./sharedManagedServer');
+    const ensureMock = ensureSharedManagedOpenCodeServerBaseUrl as unknown as ReturnType<typeof vi.fn>;
+    const readMock = readSharedManagedOpenCodeServerStateBestEffort as unknown as ReturnType<typeof vi.fn>;
+    ensureMock.mockResolvedValueOnce('http://127.0.0.1:9999');
+    readMock.mockResolvedValueOnce({ baseUrl: 'http://example.com:8080', pid: process.pid, startedAtMs: 2 });
+
+    const { subscribeSseJson } = await import('./openCodeSse');
+    const subscribeMock = subscribeSseJson as unknown as ReturnType<typeof vi.fn>;
+
+    let firstParams: any = null;
+    let secondParams: any = null;
+
+    let rejectFirstDone!: (error: unknown) => void;
+    const firstDone = new Promise<void>((_resolve, reject) => {
+      rejectFirstDone = reject;
+    });
+
+    subscribeMock
+      .mockImplementationOnce(async (params: any) => {
+        firstParams = params;
+        return { close: vi.fn(), done: firstDone };
+      })
+      .mockImplementationOnce(async (params: any) => {
+        secondParams = params;
+        let resolveDone!: () => void;
+        const done = new Promise<void>((resolve) => {
+          resolveDone = resolve;
+        });
+        params.signal?.addEventListener?.('abort', () => resolveDone(), { once: true });
+        return { close: vi.fn(() => resolveDone()), done };
+      });
+
+    const { createOpenCodeServerRuntimeClient } = await import('./client');
+    const client = await createOpenCodeServerRuntimeClient({ directory: '/tmp', messageBuffer: { push: () => {} } as any });
+
+    const onEvent = vi.fn();
+    const controller = new AbortController();
+    await client.subscribeGlobalEvents({ signal: controller.signal, onEvent });
+
+    expect(String(firstParams?.url ?? '')).toContain('127.0.0.1:9999');
+
+    rejectFirstDone(new Error('socket hang up'));
+
+    await expect.poll(() => subscribeMock.mock.calls.length).toBeGreaterThan(1);
+    expect(String(secondParams?.url ?? '')).toContain('127.0.0.1:9999');
+    expect(String(secondParams?.url ?? '')).not.toContain('example.com:8080');
+    expect(ensureMock).toHaveBeenCalledTimes(1);
 
     controller.abort();
     await client.dispose();

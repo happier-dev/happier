@@ -9,12 +9,12 @@
  */
 
 import { AcpBackend, type AcpBackendOptions, type AcpPermissionHandler } from '@/agent/acp/AcpBackend';
-import { resolveCliPathOverride } from '@/agent/acp/resolveCliPathOverride';
 import type { AgentBackend, McpServerConfig, AgentFactoryOptions } from '@/agent/core';
 import { openCodeTransport } from '@/backends/opencode/acp/transport';
 import { logger } from '@/ui/logger';
 import type { PermissionMode } from '@/api/types';
-import { buildOpenCodeFamilyPermissionEnv } from '@/backends/opencode/utils/opencodeFamilyPermissionEnv';
+import { buildOpenCodeFamilyPermissionEnv } from '@/agent/runtime/permission/openCodeFamilyPermissionEnv';
+import { requireProviderCliCommand } from '@/runtime/managedTools/requireProviderCliCommand';
 import { parseBooleanEnv } from '@happier-dev/protocol';
 
 export interface OpenCodeBackendOptions extends AgentFactoryOptions {
@@ -50,7 +50,7 @@ export function createOpenCodeBackend(options: OpenCodeBackendOptions): AgentBac
   const backendOptions: AcpBackendOptions = {
     agentName: 'opencode',
     cwd: options.cwd,
-    command: resolveCliPathOverride({ agentId: 'opencode' }) ?? 'opencode',
+    command: requireProviderCliCommand('opencode', { processEnv: mergedEnv }),
     args: [
       'acp',
       ...(shouldPrintLogs ? (['--print-logs'] as const) : []),

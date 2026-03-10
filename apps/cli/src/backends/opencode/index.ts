@@ -10,6 +10,7 @@ export const agent = {
   getCliCommandHandler: async () => (await import('@/backends/opencode/cli/command')).handleOpenCodeCliCommand,
   getCliCapabilityOverride: async () => (await import('@/backends/opencode/cli/capability')).cliCapability,
   getCliDetect: async () => (await import('@/backends/opencode/cli/detect')).cliDetect,
+  getCliAuthSpec: async () => (await import('@/backends/opencode/cli/auth/opencodeCliAuthSpec')).opencodeCliAuthSpec,
   getDaemonSpawnHooks: async () => opencodeDaemonSpawnHooks,
   vendorResumeSupport: AGENTS_CORE.opencode.resume.vendorResume,
   getAcpBackendFactory: async () => {

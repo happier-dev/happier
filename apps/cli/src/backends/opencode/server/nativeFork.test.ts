@@ -34,13 +34,9 @@ describe('forkOpenCodeSessionNative', () => {
     expect(client.sessionFork).toHaveBeenCalledWith({ sessionId: 'ses_parent_vendor' });
   });
 
-  it('forks at a user message using deterministic msg_<localId>', async () => {
+  it('forks before a user message using deterministic msg_<localId> (exclusive cursor semantics)', async () => {
     const client = {
       sessionFork: vi.fn(async () => ({ id: 'ses_child' })),
-      sessionMessagesList: vi.fn(async () => ([
-        { info: { id: 'msg_local-1' } },
-        { info: { id: 'msg_asst_1' } },
-      ])),
       dispose: vi.fn(async () => {}),
     };
 
@@ -61,17 +57,44 @@ describe('forkOpenCodeSessionNative', () => {
       }),
     });
 
-    expect(out).toEqual({ vendorSessionId: 'ses_child', vendorMessageId: 'msg_asst_1' });
-    expect(client.sessionFork).toHaveBeenCalledWith({ sessionId: 'ses_parent_vendor', messageId: 'msg_asst_1' });
+    expect(out).toEqual({ vendorSessionId: 'ses_child', vendorMessageId: 'msg_local-1' });
+    expect(client.sessionFork).toHaveBeenCalledWith({ sessionId: 'ses_parent_vendor', messageId: 'msg_local-1' });
   });
 
-  it('derives msg_<localId> from decrypted meta when row.localId is missing', async () => {
+  it('forks after the first user message (inclusive) when upToSeqInclusive is 1', async () => {
     const client = {
       sessionFork: vi.fn(async () => ({ id: 'ses_child' })),
       sessionMessagesList: vi.fn(async () => ([
-        { info: { id: 'msg_local-2' } },
-        { info: { id: 'msg_asst_2' } },
+        { info: { id: 'msg_local-1' } },
+        { info: { id: 'msg_next' } },
       ])),
+      dispose: vi.fn(async () => {}),
+    };
+
+    const out = await forkOpenCodeSessionNative({
+      credentials: createCredentials(),
+      parentHappySessionId: 'sess_parent',
+      parentRawSession: { encryptionMode: 'plain' } as any,
+      directory: '/repo',
+      parentOpenCodeSessionId: 'ses_parent_vendor',
+      forkPoint: { type: 'seq', upToSeqInclusive: 1 },
+    }, {
+      createClient: async () => client as any,
+      fetchSingleHappyRow: async () => ({
+        seq: 1,
+        createdAt: 1,
+        localId: 'local-1',
+        content: { t: 'plain', v: { role: 'user', content: { type: 'text', text: 'hi' } } },
+      }),
+    });
+
+    expect(out).toEqual({ vendorSessionId: 'ses_child', vendorMessageId: 'msg_next' });
+    expect(client.sessionFork).toHaveBeenCalledWith({ sessionId: 'ses_parent_vendor', messageId: 'msg_next' });
+  });
+
+  it('derives msg_<localId> from decrypted meta when row.localId is missing (exclusive)', async () => {
+    const client = {
+      sessionFork: vi.fn(async () => ({ id: 'ses_child' })),
       dispose: vi.fn(async () => {}),
     };
 
@@ -91,8 +114,8 @@ describe('forkOpenCodeSessionNative', () => {
       }),
     });
 
-    expect(out).toEqual({ vendorSessionId: 'ses_child', vendorMessageId: 'msg_asst_2' });
-    expect(client.sessionFork).toHaveBeenCalledWith({ sessionId: 'ses_parent_vendor', messageId: 'msg_asst_2' });
+    expect(out).toEqual({ vendorSessionId: 'ses_child', vendorMessageId: 'msg_local-2' });
+    expect(client.sessionFork).toHaveBeenCalledWith({ sessionId: 'ses_parent_vendor', messageId: 'msg_local-2' });
   });
 
   it('forks at an agent message using stored meta.opencodeMessageId', async () => {
@@ -159,10 +182,6 @@ describe('forkOpenCodeSessionNative', () => {
   it('resolves user message IDs from parent session metadata when available', async () => {
     const client = {
       sessionFork: vi.fn(async () => ({ id: 'ses_child' })),
-      sessionMessagesList: vi.fn(async () => ([
-        { info: { id: 'msg_000000000000aaaaaaaaaaaaaa' } },
-        { info: { id: 'msg_000000000001bbbbbbbbbbbbbb' } },
-      ])),
       dispose: vi.fn(async () => {}),
     };
 
@@ -191,7 +210,77 @@ describe('forkOpenCodeSessionNative', () => {
       }),
     });
 
-    expect(out).toEqual({ vendorSessionId: 'ses_child', vendorMessageId: 'msg_000000000001bbbbbbbbbbbbbb' });
-    expect(client.sessionFork).toHaveBeenCalledWith({ sessionId: 'ses_parent_vendor', messageId: 'msg_000000000001bbbbbbbbbbbbbb' });
+    expect(out).toEqual({ vendorSessionId: 'ses_child', vendorMessageId: 'msg_000000000000aaaaaaaaaaaaaa' });
+    expect(client.sessionFork).toHaveBeenCalledWith({ sessionId: 'ses_parent_vendor', messageId: 'msg_000000000000aaaaaaaaaaaaaa' });
+  });
+
+  it('falls back to OpenCode message history lookup when msg_<localId> does not exist (legacy sessions)', async () => {
+    const client = {
+      sessionFork: vi.fn()
+        .mockRejectedValueOnce(new Error('unknown message id'))
+        .mockResolvedValueOnce({ id: 'ses_child' }),
+      sessionMessagesList: vi.fn(async () => ([
+        { info: { id: 'msg_a', role: 'user', time: { created: 1000 } }, parts: [{ type: 'text', text: 'older' }] },
+        { info: { id: 'msg_real', role: 'user', time: { created: 2000 } }, parts: [{ type: 'text', text: 'hi' }] },
+        { info: { id: 'msg_b', role: 'assistant', time: { created: 3000 } }, parts: [{ type: 'text', text: 'ok' }] },
+      ])),
+      dispose: vi.fn(async () => {}),
+    };
+
+    const out = await forkOpenCodeSessionNative({
+      credentials: createCredentials(),
+      parentHappySessionId: 'sess_parent',
+      parentRawSession: { encryptionMode: 'plain' } as any,
+      directory: '/repo',
+      parentOpenCodeSessionId: 'ses_parent_vendor',
+      forkPoint: { type: 'seq', upToSeqInclusive: 10 },
+    }, {
+      createClient: async () => client as any,
+      fetchSingleHappyRow: async () => ({
+        seq: 10,
+        createdAt: 2000,
+        localId: 'local-1',
+        content: { t: 'plain', v: { role: 'user', content: { type: 'text', text: 'hi' } } },
+      }),
+    });
+
+    expect(out).toEqual({ vendorSessionId: 'ses_child', vendorMessageId: 'msg_real' });
+    expect(client.sessionFork).toHaveBeenNthCalledWith(1, { sessionId: 'ses_parent_vendor', messageId: 'msg_local-1' });
+    expect(client.sessionFork).toHaveBeenNthCalledWith(2, { sessionId: 'ses_parent_vendor', messageId: 'msg_real' });
+  });
+
+  it('preserves first-user inclusive fork semantics when fallback rematches the vendor user message', async () => {
+    const client = {
+      sessionFork: vi.fn()
+        .mockRejectedValueOnce(new Error('stale cursor'))
+        .mockResolvedValueOnce({ id: 'ses_child' }),
+      sessionMessagesList: vi.fn(async () => ([
+        { info: { id: 'msg_local-1', role: 'user', time: { created: 1000 } }, parts: [{ type: 'text', text: 'old hi' }] },
+        { info: { id: 'msg_real', role: 'user', time: { created: 2000 } }, parts: [{ type: 'text', text: 'hi' }] },
+        { info: { id: 'msg_after_real', role: 'assistant', time: { created: 3000 } }, parts: [{ type: 'text', text: 'ok' }] },
+      ])),
+      dispose: vi.fn(async () => {}),
+    };
+
+    const out = await forkOpenCodeSessionNative({
+      credentials: createCredentials(),
+      parentHappySessionId: 'sess_parent',
+      parentRawSession: { encryptionMode: 'plain' } as any,
+      directory: '/repo',
+      parentOpenCodeSessionId: 'ses_parent_vendor',
+      forkPoint: { type: 'seq', upToSeqInclusive: 1 },
+    }, {
+      createClient: async () => client as any,
+      fetchSingleHappyRow: async () => ({
+        seq: 1,
+        createdAt: 2000,
+        localId: 'local-1',
+        content: { t: 'plain', v: { role: 'user', content: { type: 'text', text: 'hi' } } },
+      }),
+    });
+
+    expect(out).toEqual({ vendorSessionId: 'ses_child', vendorMessageId: 'msg_after_real' });
+    expect(client.sessionFork).toHaveBeenNthCalledWith(1, { sessionId: 'ses_parent_vendor', messageId: 'msg_real' });
+    expect(client.sessionFork).toHaveBeenNthCalledWith(2, { sessionId: 'ses_parent_vendor', messageId: 'msg_after_real' });
   });
 });

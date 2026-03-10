@@ -46,14 +46,23 @@ function expectDefaultAcpArgs(args: string[]): void {
 }
 
 describe('createOpenCodeBackend command resolution', () => {
+  const originalHappyHomeDir = process.env.HAPPIER_HOME_DIR;
+  const originalHome = process.env.HOME;
   const originalOpenCodePath = process.env.HAPPIER_OPENCODE_PATH;
+  const originalPath = process.env.PATH;
   const originalPrintLogs = process.env.HAPPIER_OPENCODE_ACP_PRINT_LOGS;
   const originalLogLevel = process.env.HAPPIER_OPENCODE_ACP_LOG_LEVEL;
   const tempDirs: string[] = [];
 
   afterEach(() => {
+    if (originalHappyHomeDir === undefined) delete process.env.HAPPIER_HOME_DIR;
+    else process.env.HAPPIER_HOME_DIR = originalHappyHomeDir;
+    if (originalHome === undefined) delete process.env.HOME;
+    else process.env.HOME = originalHome;
     if (originalOpenCodePath === undefined) delete process.env.HAPPIER_OPENCODE_PATH;
     else process.env.HAPPIER_OPENCODE_PATH = originalOpenCodePath;
+    if (originalPath === undefined) delete process.env.PATH;
+    else process.env.PATH = originalPath;
 
     if (originalPrintLogs === undefined) delete process.env.HAPPIER_OPENCODE_ACP_PRINT_LOGS;
     else process.env.HAPPIER_OPENCODE_ACP_PRINT_LOGS = originalPrintLogs;
@@ -68,19 +77,41 @@ describe('createOpenCodeBackend command resolution', () => {
   });
 
   it.each([
-    { label: 'unset override', override: undefined, expected: 'opencode' },
-    { label: 'whitespace override', override: '   ', expected: 'opencode' },
-    { label: 'non-existent override', override: join(tmpdir(), 'definitely-missing-opencode-binary'), expected: 'opencode' },
-  ])('falls back to opencode for $label', ({ override, expected }) => {
+    {
+      label: 'unset override',
+      override: undefined,
+      expectedMessage: /Opencode CLI \(opencode\) is not available from any configured source/,
+    },
+    {
+      label: 'whitespace override',
+      override: '   ',
+      expectedMessage: /Opencode CLI \(opencode\) is not available from any configured source/,
+    },
+    {
+      label: 'non-existent override',
+      override: join(tmpdir(), 'definitely-missing-opencode-binary'),
+      expectedMessage: /HAPPIER_OPENCODE_PATH is set but does not point to a supported CLI entrypoint/,
+    },
+  ])('fails closed for $label when OpenCode is not resolvable', ({ override, expectedMessage }) => {
+    const happyHomeDir = makeTempDir('happier-opencode-home-');
+    tempDirs.push(happyHomeDir);
+    process.env.HAPPIER_HOME_DIR = happyHomeDir;
+    process.env.HOME = happyHomeDir;
+    process.env.PATH = '';
     if (override === undefined) delete process.env.HAPPIER_OPENCODE_PATH;
     else process.env.HAPPIER_OPENCODE_PATH = override;
 
-    const backend = createOpenCodeBackend({ cwd: tmpdir(), env: {} }) as unknown as AcpBackendLike;
-    expect(backend.options.command).toBe(expected);
-    expectDefaultAcpArgs(backend.options.args);
+    expect(() => createOpenCodeBackend({ cwd: tmpdir(), env: {} })).toThrow(
+      expectedMessage,
+    );
   });
 
   it('handles non-executable override paths with explicit platform semantics', () => {
+    const happyHomeDir = makeTempDir('happier-opencode-home-');
+    tempDirs.push(happyHomeDir);
+    process.env.HAPPIER_HOME_DIR = happyHomeDir;
+    process.env.HOME = happyHomeDir;
+    process.env.PATH = '';
     const workDir = makeTempDir('happier-opencode-backend-');
     tempDirs.push(workDir);
     const binDir = join(workDir, 'bin');
@@ -90,14 +121,14 @@ describe('createOpenCodeBackend command resolution', () => {
 
     process.env.HAPPIER_OPENCODE_PATH = nonExecutablePath;
 
-    const backend = createOpenCodeBackend({ cwd: workDir, env: {} }) as unknown as AcpBackendLike;
+    const factory = () => createOpenCodeBackend({ cwd: workDir, env: {} }) as unknown as AcpBackendLike;
     if (process.platform === 'win32') {
+      const backend = factory();
       expect(backend.options.command).toBe(nonExecutablePath);
       expectDefaultAcpArgs(backend.options.args);
       return;
     }
-    expect(backend.options.command).toBe('opencode');
-    expectDefaultAcpArgs(backend.options.args);
+    expect(factory).toThrow(/HAPPIER_OPENCODE_PATH is set but does not point to a supported CLI entrypoint/);
   });
 
   it('uses HAPPIER_OPENCODE_PATH when it points to an existing executable', () => {
