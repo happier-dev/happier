@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { SessionMcpSelectionV1Schema, WindowsRemoteSessionLaunchModeSchema } from '@happier-dev/protocol';
 
 import type { AutomationTemplate } from './automationTypes';
 
@@ -7,6 +8,7 @@ const AutomationTemplateSchema = z.object({
     prompt: z.string().optional(),
     displayText: z.string().optional(),
     agent: z.string().optional(),
+    transcriptStorage: z.enum(['persisted', 'direct']).optional(),
     profileId: z.string().optional(),
     environmentVariables: z.record(z.string(), z.string()).optional(),
     resume: z.string().optional(),
@@ -14,9 +16,10 @@ const AutomationTemplateSchema = z.object({
     permissionModeUpdatedAt: z.number().int().optional(),
     modelId: z.string().optional(),
     modelUpdatedAt: z.number().int().optional(),
+    mcpSelection: SessionMcpSelectionV1Schema.optional(),
     terminal: z.unknown().optional(),
+    windowsRemoteSessionLaunchMode: WindowsRemoteSessionLaunchModeSchema.optional(),
     windowsRemoteSessionConsole: z.enum(['hidden', 'visible']).optional(),
-    experimentalCodexResume: z.boolean().optional(),
     experimentalCodexAcp: z.boolean().optional(),
     existingSessionId: z.string().optional(),
     sessionEncryptionKeyBase64: z.string().optional(),

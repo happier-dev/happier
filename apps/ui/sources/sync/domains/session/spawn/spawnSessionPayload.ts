@@ -1,15 +1,20 @@
 import type { TerminalSpawnOptions } from '@/sync/domains/settings/terminalSettings';
-import type { AgentId } from '@/agents/catalog/catalog';
 import type { PermissionMode } from '@/sync/domains/permissions/permissionTypes';
+import type {
+    BackendTargetRefV1,
+    SessionMcpSelectionV1,
+    WindowsRemoteSessionLaunchMode,
+} from '@happier-dev/protocol';
 
 // Options for spawning a session
 export interface SpawnSessionOptions {
     machineId: string;
     serverId?: string | null;
     directory: string;
+    transcriptStorage?: 'persisted' | 'direct';
     approvedNewDirectoryCreation?: boolean;
     token?: string;
-    agent?: AgentId;
+    backendTarget: BackendTargetRefV1;
     // Session-scoped profile identity (non-secret). Empty string means "no profile".
     profileId?: string;
     // Environment variables from AI backend profile
@@ -32,11 +37,6 @@ export interface SpawnSessionOptions {
     modelId?: string;
     modelUpdatedAt?: number;
     /**
-     * Experimental: allow Codex vendor resume.
-     * Only relevant when agent === 'codex' and resume is set.
-     */
-    experimentalCodexResume?: boolean;
-    /**
      * Experimental: route Codex through ACP (codex-acp).
      * When enabled, Codex sessions use ACP instead of MCP.
      */
@@ -46,6 +46,7 @@ export interface SpawnSessionOptions {
      * Windows-only: when starting a session remotely via the daemon, optionally open a visible console window
      * on the machine so the user can later interact locally.
      */
+    windowsRemoteSessionLaunchMode?: WindowsRemoteSessionLaunchMode;
     windowsRemoteSessionConsole?: 'hidden' | 'visible';
     /**
      * Optional: per-session bindings to Happier Connected Services profiles.
@@ -54,14 +55,16 @@ export interface SpawnSessionOptions {
      * and decrypt/materialize them locally for the provider runtime.
      */
     connectedServices?: unknown;
+    mcpSelection?: SessionMcpSelectionV1;
 }
 
 export type SpawnHappySessionRpcParams = {
     type: 'spawn-in-directory'
     directory: string
+    transcriptStorage?: 'persisted' | 'direct'
     approvedNewDirectoryCreation?: boolean
     token?: string
-    agent?: AgentId
+    backendTarget: BackendTargetRefV1
     profileId?: string
     environmentVariables?: Record<string, string>
     resume?: string
@@ -69,15 +72,35 @@ export type SpawnHappySessionRpcParams = {
     permissionModeUpdatedAt?: number
     modelId?: string
     modelUpdatedAt?: number
-    experimentalCodexResume?: boolean
     experimentalCodexAcp?: boolean
     terminal?: TerminalSpawnOptions
+    windowsRemoteSessionLaunchMode?: WindowsRemoteSessionLaunchMode
     windowsRemoteSessionConsole?: 'hidden' | 'visible'
     connectedServices?: unknown
+    mcpSelection?: SessionMcpSelectionV1
 };
 
 export function buildSpawnHappySessionRpcParams(options: SpawnSessionOptions): SpawnHappySessionRpcParams {
-    const { directory, approvedNewDirectoryCreation = false, token, agent, environmentVariables, profileId, resume, permissionMode, permissionModeUpdatedAt, modelId, modelUpdatedAt, experimentalCodexResume, experimentalCodexAcp, terminal, windowsRemoteSessionConsole, connectedServices } = options;
+    const {
+        directory,
+        transcriptStorage,
+        approvedNewDirectoryCreation = false,
+        token,
+        backendTarget,
+        environmentVariables,
+        profileId,
+        resume,
+        permissionMode,
+        permissionModeUpdatedAt,
+        modelId,
+        modelUpdatedAt,
+        experimentalCodexAcp,
+        terminal,
+        windowsRemoteSessionLaunchMode,
+        windowsRemoteSessionConsole,
+        connectedServices,
+        mcpSelection,
+    } = options;
 
     const normalizedModelId = typeof modelId === 'string' ? modelId.trim() : '';
     const includeModelOverride =
@@ -89,25 +112,32 @@ export function buildSpawnHappySessionRpcParams(options: SpawnSessionOptions): S
     const params: SpawnHappySessionRpcParams = {
         type: 'spawn-in-directory',
         directory,
+        transcriptStorage,
         approvedNewDirectoryCreation,
         token,
-        agent,
+        backendTarget,
         profileId,
         environmentVariables,
         resume,
         permissionMode,
         permissionModeUpdatedAt,
         ...(includeModelOverride ? { modelId: normalizedModelId, modelUpdatedAt } : {}),
-        experimentalCodexResume,
         experimentalCodexAcp,
         connectedServices,
+        ...(mcpSelection ? { mcpSelection } : {}),
     };
 
     if (terminal) {
         params.terminal = terminal;
     }
-    if (windowsRemoteSessionConsole === 'hidden' || windowsRemoteSessionConsole === 'visible') {
-        params.windowsRemoteSessionConsole = windowsRemoteSessionConsole;
+    if (
+        windowsRemoteSessionLaunchMode === 'hidden'
+        || windowsRemoteSessionLaunchMode === 'windows_terminal'
+        || windowsRemoteSessionLaunchMode === 'console'
+    ) {
+        params.windowsRemoteSessionLaunchMode = windowsRemoteSessionLaunchMode;
+    } else if (windowsRemoteSessionConsole === 'hidden' || windowsRemoteSessionConsole === 'visible') {
+        params.windowsRemoteSessionLaunchMode = windowsRemoteSessionConsole === 'visible' ? 'console' : 'hidden';
     }
 
     return params;

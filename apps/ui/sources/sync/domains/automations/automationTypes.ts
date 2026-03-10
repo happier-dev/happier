@@ -1,3 +1,5 @@
+import type { SessionMcpSelectionV1, WindowsRemoteSessionLaunchMode } from '@happier-dev/protocol';
+
 export type AutomationSchedule = Readonly<{
     kind: 'cron' | 'interval';
     scheduleExpr: string | null;
@@ -64,6 +66,7 @@ export type AutomationTemplate = Readonly<{
     prompt?: string;
     displayText?: string;
     agent?: string;
+    transcriptStorage?: 'persisted' | 'direct';
     profileId?: string;
     environmentVariables?: Record<string, string>;
     resume?: string;
@@ -71,9 +74,10 @@ export type AutomationTemplate = Readonly<{
     permissionModeUpdatedAt?: number;
     modelId?: string;
     modelUpdatedAt?: number;
+    mcpSelection?: SessionMcpSelectionV1;
     terminal?: unknown;
+    windowsRemoteSessionLaunchMode?: WindowsRemoteSessionLaunchMode;
     windowsRemoteSessionConsole?: 'hidden' | 'visible';
-    experimentalCodexResume?: boolean;
     experimentalCodexAcp?: boolean;
     existingSessionId?: string;
     sessionEncryptionKeyBase64?: string;

@@ -44,11 +44,13 @@ const baseChecklists = {
     [CHECKLIST_IDS.NEW_SESSION]: [
         ...cliAgentRequests,
         { id: 'tool.tmux' },
+        { id: 'tool.windowsTerminal' },
         { id: 'tool.executionRuns' },
     ],
     [CHECKLIST_IDS.MACHINE_DETAILS]: [
         ...cliAgentRequests,
         { id: 'tool.tmux' },
+        { id: 'tool.windowsTerminal' },
         { id: 'tool.executionRuns' },
         { id: CODEX_ACP_DEP_ID },
     ],

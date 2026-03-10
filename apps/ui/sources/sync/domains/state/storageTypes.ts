@@ -8,6 +8,7 @@ import {
     createSessionPermissionModeSchema,
     createSessionTerminalMetadataSchema,
     createSessionSystemSessionV1Schema,
+    WindowsRemoteSessionLaunchModeSchema,
 } from "@happier-dev/protocol";
 
 //
@@ -32,6 +33,8 @@ const MetadataObjectSchema = z.object({
     geminiSessionId: z.string().optional(), // Gemini ACP session ID (opaque)
     opencodeSessionId: z.string().optional(), // OpenCode ACP session ID (opaque)
     opencodeBackendMode: z.enum(['server', 'acp']).optional(),
+    opencodeServerBaseUrl: z.string().optional(),
+    opencodeServerBaseUrlExplicit: z.literal(true).optional(),
     auggieSessionId: z.string().optional(), // Auggie ACP session ID (opaque)
     qwenSessionId: z.string().optional(), // Qwen Code ACP session ID (opaque)
     kimiSessionId: z.string().optional(), // Kimi ACP session ID (opaque)
@@ -111,6 +114,12 @@ const MetadataObjectSchema = z.object({
      * Desired ACP config option overrides selected by the user (UI/CLI).
      */
     acpConfigOptionOverridesV1: createAcpConfigOptionOverridesV1Schema(z).optional(),
+    acpConfiguredBackendV1: z.object({
+        v: z.literal(1),
+        updatedAt: z.number(),
+        backendId: z.string(),
+        title: z.string(),
+    }).passthrough().optional(),
     homeDir: z.string().optional(), // User's home directory on the machine
     happyHomeDir: z.string().optional(), // Happy configuration directory 
     hostPid: z.number().optional(), // Process ID of the session
@@ -173,6 +182,13 @@ const MetadataObjectSchema = z.object({
         appliedToLocalId: z.string().optional(),
         appliedAtMs: z.number().optional(),
     }).optional(),
+    forkInitialPromptV1: z.object({
+        v: z.literal(1),
+        text: z.string(),
+        createdAtMs: z.number(),
+        sourceMessageId: z.string().optional(),
+        appliedAtMs: z.number().optional(),
+    }).optional(),
 }).passthrough();
 
 export const MetadataSchema = z.preprocess((value) => {
@@ -190,6 +206,13 @@ export type Metadata = z.infer<typeof MetadataSchema>;
 
 export const AgentStateSchema = z.object({
     controlledByUser: z.boolean().nullish(),
+    localControl: z.object({
+        attached: z.boolean().nullish(),
+        topology: z.enum(['exclusive', 'shared']).nullish(),
+        remoteWritable: z.boolean().nullish(),
+        canAttach: z.boolean().nullish(),
+        canDetach: z.boolean().nullish(),
+    }).nullish(),
     requests: z.record(z.string(), z.object({
         tool: z.string(),
         kind: z.string().optional(),
@@ -258,6 +281,7 @@ export interface Session {
     thinkingAt: number,
     presence: "online" | number, // "online" when active, timestamp when last seen
     optimisticThinkingAt?: number | null; // Local-only timestamp used for immediate "processing" UI feedback after submit
+    thinkingGraceUntil?: number | null; // Local-only timestamp used to debounce thinking indicator and avoid flicker between streaming chunks
     todos?: Array<{
         content: string;
         status: 'pending' | 'in_progress' | 'completed';
@@ -330,6 +354,7 @@ export const MachineMetadataSchema = z.object({
     username: z.string().optional(),
     arch: z.string().optional(),
     displayName: z.string().optional(), // Custom display name for the machine
+    windowsRemoteSessionLaunchMode: WindowsRemoteSessionLaunchModeSchema.optional(),
     windowsRemoteSessionConsole: z.enum(['hidden', 'visible']).optional(),
     // Daemon status fields
     daemonLastKnownStatus: z.enum(['running', 'shutting-down']).optional(),
@@ -418,6 +443,12 @@ export interface ScmCapabilities {
     writeRemoteFetch: boolean;
     writeRemotePull: boolean;
     writeRemotePush: boolean;
+    writeRemotePublish?: boolean;
+    readBranches?: boolean;
+    writeBranchCreate?: boolean;
+    writeBranchCheckout?: boolean;
+    readStash?: boolean;
+    writeStash?: boolean;
     workspaceWorktreeCreate: boolean;
     changeSetModel?: 'index' | 'working-copy';
     supportedDiffAreas?: Array<'included' | 'pending' | 'both'>;

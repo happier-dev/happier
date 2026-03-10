@@ -76,7 +76,14 @@ export async function readTerminalAttachmentInfo(params: {
     if (parsed.version !== 1) return null;
     if (parsed.sessionId !== params.sessionId) return null;
     if (!parsed.terminal || typeof parsed.terminal !== 'object') return null;
-    if (parsed.terminal.mode !== 'plain' && parsed.terminal.mode !== 'tmux') return null;
+    if (
+      parsed.terminal.mode !== 'plain'
+      && parsed.terminal.mode !== 'tmux'
+      && parsed.terminal.mode !== 'windows_terminal'
+      && parsed.terminal.mode !== 'windows_console'
+    ) {
+      return null;
+    }
     return parsed as TerminalAttachmentInfo;
   } catch {
     return null;

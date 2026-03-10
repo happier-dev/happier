@@ -87,4 +87,26 @@ describe('parseAndStripTerminalRuntimeFlags', () => {
       argv: ['--verbose'],
     });
   });
+
+  it('extracts windows terminal runtime info', () => {
+    const parsed = parseAndStripTerminalRuntimeFlags([
+      '--happy-terminal-mode',
+      'windows_terminal',
+      '--happy-terminal-requested',
+      'windows_terminal',
+      '--happy-terminal-window-id',
+      'happy-session-1',
+      '--foo',
+      'bar',
+    ]);
+
+    expect(parsed).toEqual({
+      terminal: {
+        mode: 'windows_terminal',
+        requested: 'windows_terminal',
+        windowId: 'happy-session-1',
+      },
+      argv: ['--foo', 'bar'],
+    });
+  });
 });

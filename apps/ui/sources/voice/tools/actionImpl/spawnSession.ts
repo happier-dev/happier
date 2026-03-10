@@ -2,6 +2,7 @@ import { machineSpawnNewSession } from '@/sync/ops/machines';
 import { storage } from '@/sync/domains/state/storage';
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 import { useVoiceTargetStore } from '@/voice/runtime/voiceTargetStore';
+import { resolveEffectiveWindowsRemoteSessionLaunchMode } from '@/sync/domains/session/spawn/windowsRemoteSessionLaunchMode';
 
 import { normalizeNonEmptyString } from './shared';
 import { createWorkspaceId } from '@/utils/worktree/workspaceHandles';
@@ -100,12 +101,18 @@ export async function spawnSessionForVoiceTool(params: Readonly<{
   const requestedModelId = normalizeNonEmptyString(params.modelId);
   const modelId = requestedModelId && requestedModelId !== 'default' ? requestedModelId : null;
   const modelUpdatedAt = modelId ? Date.now() : null;
+  const machineMetadata = (state?.machines?.[machineId] ?? Object.values(state?.machines ?? {}).find((entry: any) => entry?.id === machineId) ?? null)?.metadata ?? null;
+  const windowsRemoteSessionLaunchMode = resolveEffectiveWindowsRemoteSessionLaunchMode({
+    machineMetadata,
+    settings: state?.settings ?? {},
+  }).mode;
 
   const spawned = await machineSpawnNewSession({
     machineId,
     directory,
-    agent,
+    backendTarget: { kind: 'builtInAgent', agentId: agent },
     serverId,
+    ...(windowsRemoteSessionLaunchMode ? { windowsRemoteSessionLaunchMode } : {}),
     ...(modelId ? { modelId, modelUpdatedAt: modelUpdatedAt ?? Date.now() } : {}),
   });
 

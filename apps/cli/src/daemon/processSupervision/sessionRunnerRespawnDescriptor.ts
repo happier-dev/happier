@@ -1,9 +1,11 @@
 import type { SpawnSessionOptions } from '@/rpc/handlers/registerSessionHandlers';
-import type { TerminalSpawnOptions } from '@/terminal/runtime/terminalConfig';
-import { CATALOG_AGENT_IDS } from '@/backends/types';
+import type { TerminalMode, TerminalSpawnOptions } from '@/terminal/runtime/terminalConfig';
+import { BackendTargetRefSchema, SessionMcpSelectionV1Schema } from '@happier-dev/protocol';
 import * as z from 'zod';
 
-const TerminalTmuxSpawnOptionsSchema = z
+const TERMINAL_MODES = ['plain', 'tmux', 'windows_terminal', 'windows_console'] as const satisfies readonly TerminalMode[];
+
+const TerminalTmuxSpawnOptionsSchema: z.ZodType<NonNullable<TerminalSpawnOptions['tmux']>> = z
   .object({
     sessionName: z.string().optional(),
     isolated: z.boolean().optional(),
@@ -11,9 +13,9 @@ const TerminalTmuxSpawnOptionsSchema = z
   })
   .passthrough();
 
-const TerminalSpawnOptionsSchema = z
+const TerminalSpawnOptionsSchema: z.ZodType<TerminalSpawnOptions> = z
   .object({
-    mode: z.enum(['plain', 'tmux']).optional(),
+    mode: z.enum(TERMINAL_MODES).optional(),
     tmux: TerminalTmuxSpawnOptionsSchema.optional(),
   })
   .passthrough();
@@ -22,15 +24,18 @@ export const SessionRunnerRespawnDescriptorV1Schema = z
   .object({
     version: z.literal(1),
     directory: z.string(),
-    agent: z.enum(CATALOG_AGENT_IDS).optional(),
+    backendTarget: BackendTargetRefSchema.optional(),
     resume: z.string().optional(),
+    transcriptStorage: z.enum(['persisted', 'direct']).optional(),
     terminal: TerminalSpawnOptionsSchema.optional(),
+    windowsRemoteSessionLaunchMode: z.enum(['hidden', 'windows_terminal', 'console']).optional(),
     windowsRemoteSessionConsole: z.enum(['hidden', 'visible']).optional(),
     profileId: z.string().optional(),
     permissionMode: z.string().optional(),
     permissionModeUpdatedAt: z.number().int().optional(),
     modelId: z.string().optional(),
     modelUpdatedAt: z.number().int().optional(),
+    mcpSelection: SessionMcpSelectionV1Schema.optional(),
     experimentalCodexAcp: z.boolean().optional(),
     // Back-compat: older marker payloads used this flag name.
     experimentalCodexResume: z.boolean().optional(),
@@ -51,19 +56,23 @@ export function buildSessionRunnerRespawnDescriptorV1FromSpawnOptions(
   const directory = normalizeOptionalString(spawnOptions.directory);
   if (!directory) return null;
   const resume = normalizeOptionalString(spawnOptions.resume);
+  const transcriptStorage = spawnOptions.transcriptStorage === 'direct' ? 'direct' : undefined;
 
   const descriptor: SessionRunnerRespawnDescriptorV1 = {
     version: 1,
     directory,
-    ...(typeof spawnOptions.agent === 'string' ? { agent: spawnOptions.agent as any } : {}),
+    ...(spawnOptions.backendTarget ? { backendTarget: spawnOptions.backendTarget } : {}),
     ...(resume ? { resume } : {}),
-    ...(spawnOptions.terminal ? { terminal: spawnOptions.terminal as TerminalSpawnOptions } : {}),
+    ...(transcriptStorage ? { transcriptStorage } : {}),
+    ...(spawnOptions.terminal ? { terminal: spawnOptions.terminal } : {}),
+    ...(spawnOptions.windowsRemoteSessionLaunchMode ? { windowsRemoteSessionLaunchMode: spawnOptions.windowsRemoteSessionLaunchMode } : {}),
     ...(spawnOptions.windowsRemoteSessionConsole ? { windowsRemoteSessionConsole: spawnOptions.windowsRemoteSessionConsole } : {}),
     ...(typeof spawnOptions.profileId === 'string' ? { profileId: spawnOptions.profileId } : {}),
     ...(typeof spawnOptions.permissionMode === 'string' ? { permissionMode: spawnOptions.permissionMode } : {}),
     ...(typeof spawnOptions.permissionModeUpdatedAt === 'number' ? { permissionModeUpdatedAt: spawnOptions.permissionModeUpdatedAt } : {}),
     ...(typeof spawnOptions.modelId === 'string' ? { modelId: spawnOptions.modelId } : {}),
     ...(typeof spawnOptions.modelUpdatedAt === 'number' ? { modelUpdatedAt: spawnOptions.modelUpdatedAt } : {}),
+    ...(spawnOptions.mcpSelection ? { mcpSelection: spawnOptions.mcpSelection } : {}),
     ...(spawnOptions.experimentalCodexAcp === true ? { experimentalCodexAcp: true } : {}),
   };
 
@@ -76,15 +85,18 @@ export function buildSpawnSessionOptionsFromRespawnDescriptorV1(
 ): SpawnSessionOptions {
   return {
     directory: descriptor.directory,
-    ...(descriptor.agent ? { agent: descriptor.agent as any } : {}),
+    ...(descriptor.backendTarget ? { backendTarget: descriptor.backendTarget } : {}),
     ...(typeof descriptor.resume === 'string' ? { resume: descriptor.resume } : {}),
-    ...(descriptor.terminal ? { terminal: descriptor.terminal as any } : {}),
+    ...(descriptor.transcriptStorage === 'direct' ? { transcriptStorage: 'direct' } : {}),
+    ...(descriptor.terminal ? { terminal: descriptor.terminal } : {}),
+    ...(descriptor.windowsRemoteSessionLaunchMode ? { windowsRemoteSessionLaunchMode: descriptor.windowsRemoteSessionLaunchMode } : {}),
     ...(descriptor.windowsRemoteSessionConsole ? { windowsRemoteSessionConsole: descriptor.windowsRemoteSessionConsole } : {}),
     ...(typeof descriptor.profileId === 'string' ? { profileId: descriptor.profileId } : {}),
     ...(typeof descriptor.permissionMode === 'string' ? { permissionMode: descriptor.permissionMode as any } : {}),
     ...(typeof descriptor.permissionModeUpdatedAt === 'number' ? { permissionModeUpdatedAt: descriptor.permissionModeUpdatedAt } : {}),
     ...(typeof descriptor.modelId === 'string' ? { modelId: descriptor.modelId } : {}),
     ...(typeof descriptor.modelUpdatedAt === 'number' ? { modelUpdatedAt: descriptor.modelUpdatedAt } : {}),
+    ...(descriptor.mcpSelection ? { mcpSelection: descriptor.mcpSelection } : {}),
     ...(descriptor.experimentalCodexAcp === true ? { experimentalCodexAcp: true } : {}),
     approvedNewDirectoryCreation: true,
   };

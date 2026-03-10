@@ -10,8 +10,15 @@ import {
   type SpawnSessionResult,
 } from '@/rpc/handlers/registerSessionHandlers';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
-import { SessionContinueWithReplayRpcParamsSchema, SessionForkRpcParamsSchema } from '@happier-dev/protocol';
-import { buildHappierReplayPromptFromDialog } from '@happier-dev/agents';
+import {
+  BackendTargetRefSchema,
+  SessionContinueWithReplayRpcParamsSchema,
+  SessionForkRpcParamsSchema,
+  SessionMcpSelectionV1Schema,
+} from '@happier-dev/protocol';
+import {
+  buildHappierReplayPromptFromDialog,
+} from '@happier-dev/agents';
 import { isPermissionMode } from '@/api/types';
 import { CATALOG_AGENT_IDS } from '@/backends/types';
 import type { CatalogAgentId } from '@/backends/types';
@@ -21,6 +28,8 @@ import { hydrateReplayDialogFromForkChain } from '@/session/replay/hydrateReplay
 import { createReplaySeededSession } from '@/session/replay/createReplaySeededSession';
 import { fetchSessionById } from '@/sessionControl/sessionsHttp';
 import { tryDecryptSessionMetadata } from '@/sessionControl/sessionEncryptionContext';
+import { resolveForkCutoffSeqInclusive } from '@/session/fork/resolveForkCutoffSeqInclusive';
+import { resolveForkInheritedOverridesFromMetadata } from '@/session/fork/resolveForkInheritedOverridesFromMetadata';
 import { updateSessionMetadataWithRetry } from '@/sessionControl/updateSessionMetadataWithRetry';
 import { listExecutionRunMarkers } from '@/daemon/executionRunRegistry';
 import psList from 'ps-list';
@@ -29,20 +38,61 @@ import type { DaemonExecutionRunEntry, DaemonExecutionRunProcessInfo } from '@ha
 import type { RpcHandlerManager } from '../rpc/RpcHandlerManager';
 import type { MemoryWorkerHandle } from '@/daemon/memory/memoryWorker';
 import { registerMachineMemoryRpcHandlers } from './rpcHandlers.memory';
+import { registerMachineTerminalRpcHandlers } from './rpcHandlers.terminal';
+import { registerMachineMcpServersRpcHandlers } from './rpcHandlers.mcpServers';
+import { registerMachineDirectSessionsRpcHandlers } from './rpcHandlers.directSessions';
+import { registerMachineSessionHandoffRpcHandlers } from './rpcHandlers.sessionHandoff';
+import { registerMachinePromptAssetsRpcHandlers } from './rpcHandlers.promptAssets';
+import { registerMachinePromptRegistriesRpcHandlers } from './rpcHandlers.promptRegistries';
 import { runReplaySummaryForDialog } from '@/session/replay/summary/runReplaySummaryForDialog';
 import { resolveCliFeatureDecision } from '@/features/featureDecisionService';
 import { configuration } from '@/configuration';
 import { isAcpForkEligibleForProvider } from '@/agent/acp/acpForkEligibility';
+import type {
+  MachineTransferReceiveEnvelope,
+  MachineTransferSendEnvelope,
+  SessionHandoffProviderBundle,
+  SessionHandoffWorkspaceBundle,
+  TransferEndpointCandidate,
+} from '@happier-dev/protocol';
+import {
+  applyOpenCodeSessionAffinityMetadata,
+  buildOpenCodeSessionEnvironmentVariables,
+  readOpenCodeSessionAffinityFromMetadata,
+} from '@/backends/opencode/utils/opencodeSessionAffinity';
 
 export type MachineRpcHandlers = {
   spawnSession: (options: SpawnSessionOptions) => Promise<SpawnSessionResult>;
   stopSession: (sessionId: string) => Promise<boolean>;
   requestShutdown: () => void;
   memory?: MemoryWorkerHandle;
+  machineTransferChannel?: Readonly<{
+    onEnvelope: (listener: (payload: MachineTransferReceiveEnvelope) => void) => () => void;
+    sendEnvelope: (payload: MachineTransferSendEnvelope) => void;
+  }>;
+  directPeerTransfer?: Readonly<{
+    publishTransfer: (params: Readonly<{
+      handoffId: string;
+      bundles: Readonly<{
+        providerBundle: SessionHandoffProviderBundle;
+        workspaceBundle?: SessionHandoffWorkspaceBundle;
+      }>;
+    }>) => readonly TransferEndpointCandidate[];
+    requestBundles?: (params: Readonly<{
+      handoffId: string;
+      endpointCandidates: readonly TransferEndpointCandidate[];
+    }>) => Promise<Readonly<{
+      providerBundle: SessionHandoffProviderBundle;
+      workspaceBundle?: SessionHandoffWorkspaceBundle;
+    }>>;
+    clearPublishedTransfer: (handoffId: string) => void;
+  }>;
 };
 
 export type MachineRpcHandlerDeps = Readonly<{
   runReplaySummaryForDialog?: typeof runReplaySummaryForDialog;
+  promptAssetsHomedir?: () => string;
+  promptAssetsHappierHomeDir?: () => string;
 }>;
 
 async function toCanonicalPath(path: string): Promise<string | null> {
@@ -84,22 +134,27 @@ export function registerMachineRpcHandlers(params: Readonly<{
   rpcHandlerManager.registerHandler(RPC_METHODS.SPAWN_HAPPY_SESSION, async (params: any) => {
     const {
       directory,
+      spawnNonce,
+      initialPrompt,
       sessionId,
       machineId,
       approvedNewDirectoryCreation,
-      agent,
+      backendTarget,
       token,
       environmentVariables,
       profileId,
       terminal,
       resume,
+      connectedServices,
+      transcriptStorage,
       permissionMode,
       permissionModeUpdatedAt,
       modelId,
       modelUpdatedAt,
+      windowsRemoteSessionLaunchMode,
       windowsRemoteSessionConsole,
-      experimentalCodexResume,
       experimentalCodexAcp,
+      mcpSelection,
     } = params || {};
 
     const normalizedModelId = typeof modelId === 'string' && modelId.trim().length > 0 ? modelId : undefined;
@@ -107,16 +162,52 @@ export function registerMachineRpcHandlers(params: Readonly<{
       typeof permissionMode === 'string' && isPermissionMode(permissionMode) ? permissionMode : undefined;
     const normalizedPermissionModeUpdatedAt =
       normalizedPermissionMode && typeof permissionModeUpdatedAt === 'number' ? permissionModeUpdatedAt : undefined;
-    const envKeys = environmentVariables && typeof environmentVariables === 'object'
-      ? Object.keys(environmentVariables as Record<string, unknown>)
-      : [];
+    const normalizedEnvironmentVariables = environmentVariables && typeof environmentVariables === 'object'
+      ? environmentVariables as Record<string, string>
+      : undefined;
+    const normalizedResume = typeof resume === 'string' ? resume : undefined;
+    const normalizedInitialPrompt = typeof initialPrompt === 'string' ? initialPrompt : undefined;
+    const normalizedSpawnNonce = typeof spawnNonce === 'string' && spawnNonce.trim().length > 0 ? spawnNonce : undefined;
+    const normalizedTranscriptStorage =
+      transcriptStorage === 'persisted' || transcriptStorage === 'direct' ? transcriptStorage : undefined;
+    const normalizedBackendTarget = (() => {
+      const parsed = BackendTargetRefSchema.safeParse(backendTarget);
+      if (!parsed.success) return undefined;
+      if (parsed.data.kind === 'builtInAgent') {
+        const agentId = parsed.data.agentId.trim();
+        if (!isKnownAgentId(agentId)) {
+          return null;
+        }
+        return {
+          kind: 'builtInAgent' as const,
+          agentId,
+        };
+      }
+      return {
+        kind: 'configuredAcpBackend' as const,
+        backendId: parsed.data.backendId.trim(),
+      };
+    })();
+    if (normalizedBackendTarget === null) {
+      return {
+        type: 'error',
+        errorCode: SPAWN_SESSION_ERROR_CODES.INVALID_REQUEST,
+        errorMessage: 'Unknown backend target',
+      };
+    }
+    const normalizedMcpSelection = (() => {
+      if (mcpSelection === undefined) return undefined;
+      const parsed = SessionMcpSelectionV1Schema.safeParse(mcpSelection);
+      return parsed.success ? parsed.data : undefined;
+    })();
+    const envKeys = normalizedEnvironmentVariables ? Object.keys(normalizedEnvironmentVariables) : [];
     const maxEnvKeysToLog = 20;
     const envKeySample = envKeys.slice(0, maxEnvKeysToLog);
     logger.debug('[API MACHINE] Spawning session', {
       directory,
       sessionId,
       machineId,
-      agent,
+      backendTarget: normalizedBackendTarget,
       approvedNewDirectoryCreation,
       profileId,
       hasToken: !!token,
@@ -128,19 +219,40 @@ export function registerMachineRpcHandlers(params: Readonly<{
       environmentVariableCount: envKeys.length,
       environmentVariableKeySample: envKeySample,
       environmentVariableKeysTruncated: envKeys.length > maxEnvKeysToLog,
-      hasResume: typeof resume === 'string' && resume.trim().length > 0,
-      experimentalCodexResume: experimentalCodexResume === true,
+      hasMcpSelection: normalizedMcpSelection !== undefined,
+      mcpSelectionForceIncludeCount: normalizedMcpSelection?.forceIncludeServerIds.length ?? 0,
+      mcpSelectionForceExcludeCount: normalizedMcpSelection?.forceExcludeServerIds.length ?? 0,
+      hasResume: normalizedResume !== undefined,
       experimentalCodexAcp: experimentalCodexAcp === true,
+    });
+
+    const buildBaseSpawnOptions = (resolvedDirectory: string): SpawnSessionOptions => ({
+      directory: resolvedDirectory,
+      spawnNonce: normalizedSpawnNonce,
+      initialPrompt: normalizedInitialPrompt,
+      machineId,
+      backendTarget: normalizedBackendTarget,
+      token,
+      environmentVariables: normalizedEnvironmentVariables,
+      profileId,
+      terminal,
+      resume: normalizedResume,
+      connectedServices,
+      transcriptStorage: normalizedTranscriptStorage,
+      permissionMode: normalizedPermissionMode,
+      permissionModeUpdatedAt: normalizedPermissionModeUpdatedAt,
+      modelId: normalizedModelId,
+      modelUpdatedAt: typeof modelUpdatedAt === 'number' ? modelUpdatedAt : undefined,
+      windowsRemoteSessionLaunchMode,
+      windowsRemoteSessionConsole,
+      mcpSelection: normalizedMcpSelection,
+      experimentalCodexAcp,
     });
 
     // Handle resume-session type for inactive session resumption
     if (params?.type === 'resume-session') {
       const {
         sessionId: existingSessionId,
-        directory,
-        agent,
-        resume,
-        experimentalCodexResume,
         experimentalCodexAcp
       } = params;
       logger.debug(`[API MACHINE] Resuming inactive session ${existingSessionId}`);
@@ -160,17 +272,11 @@ export function registerMachineRpcHandlers(params: Readonly<{
         };
       }
 
+      const baseSpawnOptions = buildBaseSpawnOptions(directory);
       const result = await spawnSession({
-        directory,
-        agent,
+        ...baseSpawnOptions,
         existingSessionId,
         approvedNewDirectoryCreation: true,
-        resume: typeof resume === 'string' ? resume : undefined,
-        permissionMode: normalizedPermissionMode,
-        permissionModeUpdatedAt: normalizedPermissionModeUpdatedAt,
-        modelId: normalizedModelId,
-        modelUpdatedAt: typeof modelUpdatedAt === 'number' ? modelUpdatedAt : undefined,
-        experimentalCodexResume: Boolean(experimentalCodexResume),
         experimentalCodexAcp: Boolean(experimentalCodexAcp),
       });
 
@@ -186,24 +292,11 @@ export function registerMachineRpcHandlers(params: Readonly<{
       return { type: 'error', errorCode: SPAWN_SESSION_ERROR_CODES.INVALID_REQUEST, errorMessage: 'Directory is required' };
     }
 
+    const baseSpawnOptions = buildBaseSpawnOptions(directory);
     const result = await spawnSession({
-      directory,
+      ...baseSpawnOptions,
       sessionId,
-      machineId,
       approvedNewDirectoryCreation,
-      agent,
-      token,
-      environmentVariables,
-      profileId,
-      terminal,
-      resume,
-      permissionMode: normalizedPermissionMode,
-      permissionModeUpdatedAt: normalizedPermissionModeUpdatedAt,
-      modelId: normalizedModelId,
-      modelUpdatedAt: typeof modelUpdatedAt === 'number' ? modelUpdatedAt : undefined,
-      windowsRemoteSessionConsole,
-      experimentalCodexResume,
-      experimentalCodexAcp,
     });
 
     switch (result.type) {
@@ -226,6 +319,33 @@ export function registerMachineRpcHandlers(params: Readonly<{
       memoryWorker,
     });
   }
+
+  registerMachineTerminalRpcHandlers({ rpcHandlerManager });
+  registerMachineMcpServersRpcHandlers({ rpcHandlerManager });
+  registerMachinePromptAssetsRpcHandlers({
+    rpcHandlerManager,
+    deps: {
+      homedir: params.deps?.promptAssetsHomedir,
+      happierHomeDir: params.deps?.promptAssetsHappierHomeDir,
+    },
+  });
+  registerMachinePromptRegistriesRpcHandlers({
+    rpcHandlerManager,
+    deps: {
+      homedir: params.deps?.promptAssetsHomedir,
+      happierHomeDir: params.deps?.promptAssetsHappierHomeDir,
+    },
+  });
+  registerMachineDirectSessionsRpcHandlers({
+    rpcHandlerManager,
+    spawnSession,
+    stopSession,
+  });
+  registerMachineSessionHandoffRpcHandlers({
+    rpcHandlerManager,
+    ...(handlers.machineTransferChannel ? { machineTransferChannel: handlers.machineTransferChannel } : {}),
+    ...(handlers.directPeerTransfer ? { directPeerTransfer: handlers.directPeerTransfer } : {}),
+  });
 
 	  rpcHandlerManager.registerHandler(RPC_METHODS.SESSION_CONTINUE_WITH_REPLAY, async (raw: unknown) => {
     const parsed = SessionContinueWithReplayRpcParamsSchema.safeParse(raw);
@@ -306,12 +426,7 @@ export function registerMachineRpcHandlers(params: Readonly<{
 	        }
 	      }
 
-	      const rawSession = await fetchSessionById({ token: credentials.token, sessionId: replay.previousSessionId }).catch(() => null);
-	      if (!rawSession) return null;
-	      const metadata = tryDecryptSessionMetadata({ credentials, rawSession });
-	      const text = typeof (metadata as any)?.summary?.text === 'string' ? String((metadata as any).summary.text) : '';
-	      const trimmed = text.trim();
-	      return trimmed.length > 0 ? trimmed : null;
+	      return null;
 	    })();
 
     const seedDraft = buildHappierReplayPromptFromDialog({
@@ -395,7 +510,7 @@ export function registerMachineRpcHandlers(params: Readonly<{
 
     const result = await spawnSession({
       directory,
-      agent,
+      backendTarget: { kind: 'builtInAgent', agentId: agent },
       approvedNewDirectoryCreation,
       existingSessionId: created.sessionId,
       permissionMode: normalizedPermissionMode,
@@ -423,6 +538,19 @@ export function registerMachineRpcHandlers(params: Readonly<{
 
     const { parentSessionId, forkPoint } = parsed.data;
     const requestedStrategy = typeof parsed.data.strategy === 'string' ? parsed.data.strategy : 'auto';
+
+    if (forkPoint.type === 'seq') {
+      const seq = typeof forkPoint.upToSeqInclusive === 'number' && Number.isFinite(forkPoint.upToSeqInclusive)
+        ? Math.trunc(forkPoint.upToSeqInclusive)
+        : NaN;
+      if (!Number.isFinite(seq) || seq <= 0) {
+        return {
+          ok: false,
+          errorCode: SPAWN_SESSION_ERROR_CODES.INVALID_REQUEST,
+          errorMessage: 'Cannot fork from an uncommitted message (missing seq).',
+        };
+      }
+    }
 
     const credentials = await readCredentials().catch(() => null);
     if (!credentials) {
@@ -474,24 +602,45 @@ export function registerMachineRpcHandlers(params: Readonly<{
       };
     }
 
-    const opencodeBackendModeFromParent =
+    const openCodeParentAffinity =
       agentRaw === 'opencode'
-        ? (() => {
-          const raw = typeof (parentMetadata as any)?.opencodeBackendMode === 'string'
-            ? String((parentMetadata as any).opencodeBackendMode).trim()
-            : '';
-          return raw === 'acp' ? 'acp' : raw === 'server' ? 'server' : null;
-        })()
+        ? readOpenCodeSessionAffinityFromMetadata(parentMetadata)
         : null;
+    const inheritedForkOverrides = resolveForkInheritedOverridesFromMetadata(parentMetadata);
 
-    const cutoffSeqInclusive = forkPoint.type === 'seq'
+    const targetSeqInclusive = forkPoint.type === 'seq'
       ? forkPoint.upToSeqInclusive
       : (typeof (parentSession as any)?.seq === 'number' && Number.isFinite((parentSession as any).seq) ? Math.max(0, Math.floor((parentSession as any).seq)) : 0);
+
+    // Branch-and-edit semantics: when the fork target is a user message, the child session should
+    // start from the state *before* that user message, while restoring the message as an editable draft.
+    // Providers with native fork support (e.g. OpenCode) still need the original user-message seq
+    // to resolve vendor message ids correctly.
+    const cutoffSeqInclusive = forkPoint.type === 'seq'
+      ? (() => {
+        // Default to inclusive cutoff; adjust to exclusive for user messages when detectable.
+        return targetSeqInclusive;
+      })()
+      : targetSeqInclusive;
+
+    const resolvedCutoff = forkPoint.type === 'seq'
+      ? await resolveForkCutoffSeqInclusive({
+        credentials,
+        parentSessionId,
+        parentRawSession: parentSession,
+        targetSeqInclusive,
+      }).catch(() => null)
+      : null;
+
+    const effectiveCutoffSeqInclusive =
+      forkPoint.type === 'seq' && resolvedCutoff
+        ? resolvedCutoff.cutoffSeqInclusive
+        : cutoffSeqInclusive;
 
     // Spawn request coalescing dedupes identical spawn fingerprints within a short window. Forking must
     // be able to create multiple sessions quickly (e.g. multi-level fork chains), so provide a
     // fork-specific nonce to guarantee unique spawn keys without leaking extra env vars to the child.
-    const spawnNonce = `fork:${parentSessionId}:${cutoffSeqInclusive}:${randomUUID()}`;
+    const spawnNonce = `fork:${parentSessionId}:${effectiveCutoffSeqInclusive}:${randomUUID()}`;
 
     const maxTextChars = parseEnvBoundedInt('HAPPIER_REPLAY_MAX_TEXT_CHARS', { min: 1, max: 50_000 }, null);
 
@@ -500,10 +649,7 @@ export function registerMachineRpcHandlers(params: Readonly<{
 
     if (shouldAttemptProviderNative && agentRaw === 'opencode') {
       try {
-        const backendModeRaw = typeof (parentMetadata as any)?.opencodeBackendMode === 'string'
-          ? String((parentMetadata as any).opencodeBackendMode).trim()
-          : '';
-        const backendMode = backendModeRaw === 'server' ? 'server' : backendModeRaw === 'acp' ? 'acp' : '';
+        const backendMode = openCodeParentAffinity?.backendMode ?? '';
         const vendorSessionIdRaw = typeof (parentMetadata as any)?.opencodeSessionId === 'string'
           ? String((parentMetadata as any).opencodeSessionId).trim()
           : '';
@@ -517,7 +663,7 @@ export function registerMachineRpcHandlers(params: Readonly<{
             directory,
             parentOpenCodeSessionId: vendorSessionIdRaw,
             forkPoint: forkPoint.type === 'seq'
-              ? { type: 'seq', upToSeqInclusive: cutoffSeqInclusive }
+              ? { type: 'seq', upToSeqInclusive: targetSeqInclusive }
               : { type: 'latest' },
           }).catch(() => null);
 
@@ -525,11 +671,15 @@ export function registerMachineRpcHandlers(params: Readonly<{
           if (forkedVendorSessionId) {
             const result = await spawnSession({
               directory,
-              agent: agentRaw,
+              backendTarget: { kind: 'builtInAgent', agentId: agentRaw },
               approvedNewDirectoryCreation: true,
               spawnNonce,
               resume: forkedVendorSessionId,
-              environmentVariables: { HAPPIER_OPENCODE_BACKEND_MODE: 'server' },
+              environmentVariables: buildOpenCodeSessionEnvironmentVariables({
+                backendMode: 'server',
+                serverBaseUrl: openCodeParentAffinity?.serverBaseUrl ?? null,
+              }),
+              ...inheritedForkOverrides.spawn,
             } satisfies SpawnSessionOptions);
 
             if (result.type === 'success' && result.sessionId) {
@@ -544,14 +694,19 @@ export function registerMachineRpcHandlers(params: Readonly<{
                   credentials,
                   sessionId: childSessionId,
                   rawSession: childRaw,
-                  updater: (metadata) => ({
-                    ...metadata,
-                    opencodeSessionId: forkedVendorSessionId,
-                    opencodeBackendMode: 'server',
-                    forkV1: {
-                      v: 1,
-                      parentSessionId,
-                      parentCutoffSeqInclusive: cutoffSeqInclusive,
+                      updater: (metadata) => ({
+                        ...metadata,
+                        ...inheritedForkOverrides.metadata,
+                        ...applyOpenCodeSessionAffinityMetadata({
+                          backendMode: 'server',
+                          vendorSessionId: forkedVendorSessionId,
+                          serverBaseUrl: openCodeParentAffinity?.serverBaseUrl ?? null,
+                          serverBaseUrlExplicit: openCodeParentAffinity?.serverBaseUrlExplicit ?? false,
+                        }),
+                        forkV1: {
+                          v: 1,
+                          parentSessionId,
+                      parentCutoffSeqInclusive: effectiveCutoffSeqInclusive,
                       createdAtMs: Date.now(),
                       strategy: 'provider_native',
                       providerHint: {
@@ -607,11 +762,19 @@ export function registerMachineRpcHandlers(params: Readonly<{
               if (forkedSessionId) {
                 const result = await spawnSession({
                   directory,
-                  agent: agentRaw,
+                  backendTarget: { kind: 'builtInAgent', agentId: agentRaw },
                   approvedNewDirectoryCreation: true,
                   resume: forkedSessionId,
                   ...(agentRaw === 'codex' ? { experimentalCodexAcp: true } : {}),
-                  ...(agentRaw === 'opencode' ? { environmentVariables: { HAPPIER_OPENCODE_BACKEND_MODE: 'acp' } } : {}),
+                  ...(agentRaw === 'opencode'
+                    ? {
+                      environmentVariables: buildOpenCodeSessionEnvironmentVariables({
+                        backendMode: 'acp',
+                        serverBaseUrl: openCodeParentAffinity?.serverBaseUrl ?? null,
+                      }),
+                    }
+                    : {}),
+                  ...inheritedForkOverrides.spawn,
                 } satisfies SpawnSessionOptions);
 
                 if (result.type === 'success' && result.sessionId) {
@@ -628,11 +791,19 @@ export function registerMachineRpcHandlers(params: Readonly<{
                       rawSession: childRaw,
                       updater: (metadata) => ({
                         ...metadata,
-                        ...(agentRaw === 'opencode' ? { opencodeBackendMode: 'acp', opencodeSessionId: forkedSessionId } : {}),
+                        ...inheritedForkOverrides.metadata,
+                        ...(agentRaw === 'opencode'
+                          ? applyOpenCodeSessionAffinityMetadata({
+                            backendMode: 'acp',
+                            vendorSessionId: forkedSessionId,
+                            serverBaseUrl: openCodeParentAffinity?.serverBaseUrl ?? null,
+                            serverBaseUrlExplicit: openCodeParentAffinity?.serverBaseUrlExplicit ?? false,
+                          })
+                          : {}),
                         forkV1: {
                           v: 1,
                           parentSessionId,
-                          parentCutoffSeqInclusive: cutoffSeqInclusive,
+                          parentCutoffSeqInclusive: effectiveCutoffSeqInclusive,
                           createdAtMs: Date.now(),
                           strategy: 'acp_fork_latest',
                           providerHint: { providerId: agentRaw, vendorSessionId: forkedSessionId },
@@ -665,13 +836,13 @@ export function registerMachineRpcHandlers(params: Readonly<{
     const replaySummaryRunner = parsed.data.replaySummaryRunner;
     const summaryRequested = Boolean(replaySummaryRunner);
 
-	    const hydrated = await hydrateReplayDialogFromForkChain({
+    const hydrated = await hydrateReplayDialogFromForkChain({
       credentials,
       startingSessionId: parentSessionId,
       limit: configuration.replaySeedCandidateLimit,
       maxTextChars: maxTextChars ?? undefined,
       wantSynopsisText: summaryRequested,
-      ...(forkPoint.type === 'seq' ? { upToSeqInclusive: forkPoint.upToSeqInclusive } : {}),
+      ...(forkPoint.type === 'seq' ? { upToSeqInclusive: effectiveCutoffSeqInclusive } : {}),
     }).catch(() => null);
     if (!hydrated || hydrated.dialog.length === 0) {
       return {
@@ -704,11 +875,7 @@ export function registerMachineRpcHandlers(params: Readonly<{
 	        }
 	      }
 
-	      const metaSummary = typeof (parentMetadata as any)?.summary?.text === 'string'
-	        ? String((parentMetadata as any).summary.text)
-	        : '';
-	      const trimmed = metaSummary.trim();
-	      return trimmed.length > 0 ? trimmed : null;
+	      return null;
 	    })()
       : null;
 
@@ -736,15 +903,20 @@ export function registerMachineRpcHandlers(params: Readonly<{
           credentials,
           directory,
           agentId: agentRaw,
-          tag: `fork:${parentSessionId}:${cutoffSeqInclusive}:${randomUUID()}`,
+          tag: `fork:${parentSessionId}:${effectiveCutoffSeqInclusive}:${randomUUID()}`,
           metadata: {
+            ...inheritedForkOverrides.metadata,
             ...(agentRaw === 'opencode'
-              ? { opencodeBackendMode: opencodeBackendModeFromParent ?? 'server' }
+              ? applyOpenCodeSessionAffinityMetadata({
+                backendMode: openCodeParentAffinity?.backendMode ?? 'server',
+                serverBaseUrl: openCodeParentAffinity?.serverBaseUrl ?? null,
+                serverBaseUrlExplicit: openCodeParentAffinity?.serverBaseUrlExplicit ?? false,
+              })
               : {}),
             forkV1: {
               v: 1,
               parentSessionId,
-              parentCutoffSeqInclusive: cutoffSeqInclusive,
+              parentCutoffSeqInclusive: effectiveCutoffSeqInclusive,
               createdAtMs: nowMs,
               strategy: 'replay',
               providerHint: { providerId: agentRaw },
@@ -753,7 +925,7 @@ export function registerMachineRpcHandlers(params: Readonly<{
               v: 1,
               seedText: seedDraft,
               sourceSessionId: parentSessionId,
-              sourceCutoffSeqInclusive: cutoffSeqInclusive,
+              sourceCutoffSeqInclusive: effectiveCutoffSeqInclusive,
               createdAtMs: nowMs,
             },
           },
@@ -776,13 +948,19 @@ export function registerMachineRpcHandlers(params: Readonly<{
 
     const spawnResult = await spawnSession({
       directory,
-      agent: agentRaw,
+      backendTarget: { kind: 'builtInAgent', agentId: agentRaw },
       approvedNewDirectoryCreation: true,
       spawnNonce,
       existingSessionId: created.sessionId,
       ...(agentRaw === 'opencode'
-        ? { environmentVariables: { HAPPIER_OPENCODE_BACKEND_MODE: opencodeBackendModeFromParent ?? 'server' } }
+        ? {
+          environmentVariables: buildOpenCodeSessionEnvironmentVariables({
+            backendMode: openCodeParentAffinity?.backendMode ?? 'server',
+            serverBaseUrl: openCodeParentAffinity?.serverBaseUrl ?? null,
+          }),
+        }
         : {}),
+      ...inheritedForkOverrides.spawn,
     } satisfies SpawnSessionOptions);
 
     if (spawnResult.type !== 'success') {

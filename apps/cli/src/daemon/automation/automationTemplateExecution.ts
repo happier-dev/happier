@@ -1,7 +1,12 @@
 import { z } from 'zod';
-import { openAccountScopedBlobCiphertext } from '@happier-dev/protocol';
+import { openAccountScopedBlobCiphertext, SessionMcpSelectionV1Schema } from '@happier-dev/protocol';
 
 import type { SpawnSessionOptions } from '@/rpc/handlers/registerSessionHandlers';
+import {
+  SpawnSessionPermissionModeSchema,
+  SpawnSessionTerminalSchema,
+} from '@/rpc/handlers/spawnSessionOptionsContract';
+import { decodeBase64, decryptLegacy } from '@/api/encryption';
 
 const ENCRYPTED_TEMPLATE_ENVELOPE_KIND = 'happier_automation_template_encrypted_v1';
 const PLAINTEXT_TEMPLATE_ENVELOPE_KIND = 'happier_automation_template_plain_v1';
@@ -15,13 +20,16 @@ const TemplateSchema = z.object({
   profileId: z.string().optional(),
   environmentVariables: z.record(z.string(), z.string()).optional(),
   resume: z.string().optional(),
-  permissionMode: z.string().optional(),
+  permissionMode: SpawnSessionPermissionModeSchema.optional(),
   permissionModeUpdatedAt: z.number().int().optional(),
   modelId: z.string().optional(),
   modelUpdatedAt: z.number().int().optional(),
-  terminal: z.unknown().optional(),
+  mcpSelection: SessionMcpSelectionV1Schema.optional(),
+  connectedServices: z.unknown().optional(),
+  transcriptStorage: z.enum(['persisted', 'direct']).optional(),
+  terminal: SpawnSessionTerminalSchema.optional(),
+  windowsRemoteSessionLaunchMode: z.enum(['hidden', 'windows_terminal', 'console']).optional(),
   windowsRemoteSessionConsole: z.enum(['hidden', 'visible']).optional(),
-  experimentalCodexResume: z.boolean().optional(),
   experimentalCodexAcp: z.boolean().optional(),
   existingSessionId: z.string().trim().min(1).optional(),
   sessionEncryptionKeyBase64: z.string().optional(),
@@ -68,7 +76,7 @@ export type AutomationClaimedRunPayload = Readonly<{
 export type ParsedAutomationExecution = Readonly<{
   targetType: 'new_session' | 'existing_session';
   directory: string;
-  agent?: SpawnSessionOptions['agent'];
+  backendTarget?: SpawnSessionOptions['backendTarget'];
   profileId?: string;
   environmentVariables?: Record<string, string>;
   resume?: string;
@@ -76,9 +84,12 @@ export type ParsedAutomationExecution = Readonly<{
   permissionModeUpdatedAt?: number;
   modelId?: string;
   modelUpdatedAt?: number;
+  mcpSelection?: SpawnSessionOptions['mcpSelection'];
+  connectedServices?: SpawnSessionOptions['connectedServices'];
+  transcriptStorage?: SpawnSessionOptions['transcriptStorage'];
   terminal?: SpawnSessionOptions['terminal'];
+  windowsRemoteSessionLaunchMode?: SpawnSessionOptions['windowsRemoteSessionLaunchMode'];
   windowsRemoteSessionConsole?: SpawnSessionOptions['windowsRemoteSessionConsole'];
-  experimentalCodexResume?: boolean;
   experimentalCodexAcp?: boolean;
   existingSessionId?: string;
   sessionEncryptionKeyBase64?: string;
@@ -142,21 +153,41 @@ export function parseAutomationTemplateExecution(
     if (!encryption) {
       return { ok: false, error: 'Encrypted automation template cannot be decrypted without machine encryption context' };
     }
-    try {
-      const opened = openAccountScopedBlobCiphertext({
-        kind: 'automation_template_payload',
-        material: encryption.type === 'legacy'
-          ? { type: 'legacy', secret: encryption.secret }
-          : { type: 'dataKey', machineKey: encryption.machineKey },
-        ciphertext: anyEnvelope.data.payloadCiphertext,
-      });
-      const decrypted = opened?.value;
-      if (!decrypted || typeof decrypted !== 'object' || Array.isArray(decrypted)) {
+
+    const opened = (() => {
+      try {
+        const opened = openAccountScopedBlobCiphertext({
+          kind: 'automation_template_payload',
+          material: encryption.type === 'legacy'
+            ? { type: 'legacy', secret: encryption.secret }
+            : { type: 'dataKey', machineKey: encryption.machineKey },
+          ciphertext: anyEnvelope.data.payloadCiphertext,
+        });
+        const decrypted = opened?.value;
+        if (!decrypted || typeof decrypted !== 'object' || Array.isArray(decrypted)) {
+          return null;
+        }
+        return decrypted;
+      } catch {
+        return null;
+      }
+    })();
+
+    if (opened) {
+      parsedPayload = opened;
+    } else {
+      // Legacy fallback: some older templates were sealed with a raw secretbox (base64 of encryptLegacy).
+      try {
+        const ciphertextBytes = decodeBase64(anyEnvelope.data.payloadCiphertext, 'base64');
+        const secret = encryption.type === 'legacy' ? encryption.secret : encryption.machineKey;
+        const decrypted = decryptLegacy(ciphertextBytes, secret);
+        if (!decrypted || typeof decrypted !== 'object' || Array.isArray(decrypted)) {
+          return { ok: false, error: 'Invalid encrypted automation template payload' };
+        }
+        parsedPayload = decrypted;
+      } catch {
         return { ok: false, error: 'Invalid encrypted automation template payload' };
       }
-      parsedPayload = decrypted;
-    } catch {
-      return { ok: false, error: 'Invalid encrypted automation template payload' };
     }
   }
 
@@ -181,7 +212,9 @@ export function parseAutomationTemplateExecution(
     value: {
       targetType: payload.automation.targetType,
       directory: template.directory,
-      ...(template.agent ? { agent: template.agent as SpawnSessionOptions['agent'] } : {}),
+      ...(template.agent
+        ? { backendTarget: { kind: 'builtInAgent', agentId: template.agent } as const satisfies NonNullable<SpawnSessionOptions['backendTarget']> }
+        : {}),
       ...(template.profileId ? { profileId: template.profileId } : {}),
       ...(template.environmentVariables ? { environmentVariables: template.environmentVariables } : {}),
       ...(template.resume ? { resume: template.resume } : {}),
@@ -189,11 +222,16 @@ export function parseAutomationTemplateExecution(
       ...(typeof template.permissionModeUpdatedAt === 'number' ? { permissionModeUpdatedAt: template.permissionModeUpdatedAt } : {}),
       ...(template.modelId ? { modelId: template.modelId } : {}),
       ...(typeof template.modelUpdatedAt === 'number' ? { modelUpdatedAt: template.modelUpdatedAt } : {}),
+      ...(template.mcpSelection ? { mcpSelection: template.mcpSelection } : {}),
+      ...(template.connectedServices !== undefined ? { connectedServices: template.connectedServices } : {}),
+      ...(template.transcriptStorage !== undefined ? { transcriptStorage: template.transcriptStorage } : {}),
       ...(template.terminal !== undefined ? { terminal: template.terminal as SpawnSessionOptions['terminal'] } : {}),
+      ...(template.windowsRemoteSessionLaunchMode
+        ? { windowsRemoteSessionLaunchMode: template.windowsRemoteSessionLaunchMode }
+        : {}),
       ...(template.windowsRemoteSessionConsole
         ? { windowsRemoteSessionConsole: template.windowsRemoteSessionConsole }
         : {}),
-      ...(template.experimentalCodexResume !== undefined ? { experimentalCodexResume: template.experimentalCodexResume } : {}),
       ...(template.experimentalCodexAcp !== undefined ? { experimentalCodexAcp: template.experimentalCodexAcp } : {}),
       ...(template.existingSessionId ? { existingSessionId: template.existingSessionId } : {}),
       ...(template.sessionEncryptionKeyBase64 ? { sessionEncryptionKeyBase64: template.sessionEncryptionKeyBase64 } : {}),

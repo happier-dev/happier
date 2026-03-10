@@ -13,9 +13,11 @@ import { Text, TextInput } from '@/components/ui/text/Text';
 import { LlmTaskRunnerConfigV1BackendModelPicker } from '@/components/settings/llmTasks/LlmTaskRunnerConfigV1BackendModelPicker';
 import { Typography } from '@/constants/Typography';
 import { t } from '@/text';
-import { useSettingMutable } from '@/sync/domains/state/storage';
+import { useLocalSettingMutable, useSettingMutable } from '@/sync/domains/state/storage';
 import type { BusySteerSendPolicy, MessageSendMode } from '@/sync/domains/session/control/submitMode';
 import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
+import { useDeviceType } from '@/utils/platform/responsive';
+import { WINDOWS_REMOTE_SESSION_LAUNCH_MODE_OPTIONS } from '@/sync/domains/session/spawn/windowsRemoteSessionLaunchModeOptions';
 
 export default React.memo(function SessionSettingsScreen() {
     const { theme } = useUnistyles();
@@ -27,6 +29,7 @@ export default React.memo(function SessionSettingsScreen() {
     const [tmuxSessionName, setTmuxSessionName] = useSettingMutable('sessionTmuxSessionName');
     const [tmuxIsolated, setTmuxIsolated] = useSettingMutable('sessionTmuxIsolated');
     const [tmuxTmpDir, setTmuxTmpDir] = useSettingMutable('sessionTmuxTmpDir');
+    const [windowsRemoteSessionLaunchMode, setWindowsRemoteSessionLaunchMode] = useSettingMutable('sessionWindowsRemoteSessionLaunchMode');
 
     const [messageSendMode, setMessageSendMode] = useSettingMutable('sessionMessageSendMode');
     const [busySteerSendPolicy, setBusySteerSendPolicy] = useSettingMutable('sessionBusySteerSendPolicy');
@@ -44,8 +47,71 @@ export default React.memo(function SessionSettingsScreen() {
 
     const [sessionTagsEnabled, setSessionTagsEnabled] = useSettingMutable('sessionTagsEnabled');
 
+    // Session list settings (moved from Appearance)
+    const deviceType = useDeviceType();
+    const panelsSupported = Platform.OS === 'web' || deviceType === 'tablet';
+    const [sessionListDensity, setSessionListDensity] = useSettingMutable('sessionListDensity');
+    const [hideInactiveSessions, setHideInactiveSessions] = useSettingMutable('hideInactiveSessions');
+    const [sessionListActiveGroupingV1, setSessionListActiveGroupingV1] = useSettingMutable('sessionListActiveGroupingV1');
+    const [sessionListInactiveGroupingV1, setSessionListInactiveGroupingV1] = useSettingMutable('sessionListInactiveGroupingV1');
+    const [sessionsRightPaneDefaultOpen, setSessionsRightPaneDefaultOpen] = useLocalSettingMutable('sessionsRightPaneDefaultOpen');
+    const [uiMultiPanePanelsEnabled] = useLocalSettingMutable('uiMultiPanePanelsEnabled');
+
+    // Input settings (moved from Appearance)
+    const [agentInputActionBarLayout, setAgentInputActionBarLayout] = useSettingMutable('agentInputActionBarLayout');
+    const [agentInputChipDensity, setAgentInputChipDensity] = useSettingMutable('agentInputChipDensity');
+    const [alwaysShowContextSize, setAlwaysShowContextSize] = useSettingMutable('alwaysShowContextSize');
+
     const [openHistoryScopeMenu, setOpenHistoryScopeMenu] = React.useState<boolean>(false);
     const [openReplayMenu, setOpenReplayMenu] = React.useState<boolean>(false);
+    const [openGroupingMenu, setOpenGroupingMenu] = React.useState<null | 'active' | 'inactive'>(null);
+    const [openSessionListDensityMenu, setOpenSessionListDensityMenu] = React.useState(false);
+    const [openWindowsRemoteSessionLaunchModeMenu, setOpenWindowsRemoteSessionLaunchModeMenu] = React.useState(false);
+
+    const groupingMenuItems = React.useMemo(() => [
+        {
+            id: 'project',
+            title: t('settingsFeatures.sessionListGrouping.projectTitle'),
+            subtitle: t('settingsFeatures.sessionListGrouping.projectSubtitle'),
+        },
+        {
+            id: 'date',
+            title: t('settingsFeatures.sessionListGrouping.dateTitle'),
+            subtitle: t('settingsFeatures.sessionListGrouping.dateSubtitle'),
+        },
+    ], []);
+
+    const selectGrouping = React.useCallback((itemId: string, section: 'active' | 'inactive') => {
+        if (itemId !== 'project' && itemId !== 'date') return;
+        if (section === 'active') {
+            setSessionListActiveGroupingV1(itemId);
+            return;
+        }
+        setSessionListInactiveGroupingV1(itemId);
+    }, [setSessionListActiveGroupingV1, setSessionListInactiveGroupingV1]);
+
+    const sessionListDensityItems = React.useMemo(() => [
+        {
+            id: 'detailed',
+            title: t('settingsAppearance.sessionListDensity.detailed'),
+            subtitle: t('settingsAppearance.sessionListDensity.detailedDescription'),
+        },
+        {
+            id: 'cozy',
+            title: t('settingsAppearance.sessionListDensity.cozy'),
+            subtitle: t('settingsAppearance.sessionListDensity.cozyDescription'),
+        },
+        {
+            id: 'narrow',
+            title: t('settingsAppearance.sessionListDensity.narrow'),
+            subtitle: t('settingsAppearance.sessionListDensity.narrowDescription'),
+        },
+    ], []);
+
+    const handleSessionListDensitySelect = React.useCallback((itemId: string) => {
+        if (itemId !== 'detailed' && itemId !== 'cozy' && itemId !== 'narrow') return;
+        setSessionListDensity(itemId);
+    }, [setSessionListDensity]);
 
     const options: Array<{ key: MessageSendMode; title: string; subtitle: string }> = [
         {
@@ -122,6 +188,88 @@ export default React.memo(function SessionSettingsScreen() {
                     rightElement={<Switch value={Boolean(sessionTagsEnabled)} onValueChange={setSessionTagsEnabled} />}
                     showChevron={false}
                     onPress={() => setSessionTagsEnabled(!sessionTagsEnabled)}
+                />
+                <DropdownMenu
+                    open={openSessionListDensityMenu}
+                    onOpenChange={setOpenSessionListDensityMenu}
+                    variant="selectable"
+                    search={false}
+                    selectedId={sessionListDensity}
+                    showCategoryTitles={false}
+                    matchTriggerWidth={true}
+                    connectToTrigger={true}
+                    rowKind="item"
+                    popoverBoundaryRef={popoverBoundaryRef}
+                    itemTrigger={{
+                        title: t('settingsAppearance.sessionListDensity.title'),
+                        subtitle: t('settingsAppearance.sessionListDensity.subtitle'),
+                        icon: <Ionicons name="albums-outline" size={29} color={theme.colors.accent.indigo} />,
+                        showSelectedSubtitle: false,
+                        itemProps: { testID: 'settings-session-sessionListDensity-trigger' },
+                    }}
+                    items={sessionListDensityItems}
+                    onSelect={handleSessionListDensitySelect}
+                />
+                <Item
+                    title={t('settingsFeatures.hideInactiveSessions')}
+                    subtitle={t('settingsFeatures.hideInactiveSessionsSubtitle')}
+                    icon={<Ionicons name="eye-off-outline" size={29} color={theme.colors.accent.orange} />}
+                    rightElement={<Switch value={hideInactiveSessions} onValueChange={setHideInactiveSessions} />}
+                    showChevron={false}
+                />
+                <DropdownMenu
+                    open={openGroupingMenu === 'active'}
+                    onOpenChange={(next) => setOpenGroupingMenu(next ? 'active' : null)}
+                    variant="selectable"
+                    search={false}
+                    selectedId={sessionListActiveGroupingV1 as any}
+                    showCategoryTitles={false}
+                    matchTriggerWidth={true}
+                    connectToTrigger={true}
+                    rowKind="item"
+                    popoverBoundaryRef={popoverBoundaryRef}
+                    itemTrigger={{
+                        title: t('settingsFeatures.sessionListActiveGrouping'),
+                        subtitle: t('settingsFeatures.sessionListActiveGroupingSubtitle'),
+                        icon: <Ionicons name="folder-open-outline" size={29} color={theme.colors.accent.blue} />,
+                        showSelectedSubtitle: false,
+                    }}
+                    items={groupingMenuItems}
+                    onSelect={(itemId) => selectGrouping(itemId, 'active')}
+                />
+                <DropdownMenu
+                    open={openGroupingMenu === 'inactive'}
+                    onOpenChange={(next) => setOpenGroupingMenu(next ? 'inactive' : null)}
+                    variant="selectable"
+                    search={false}
+                    selectedId={sessionListInactiveGroupingV1 as any}
+                    showCategoryTitles={false}
+                    matchTriggerWidth={true}
+                    connectToTrigger={true}
+                    rowKind="item"
+                    popoverBoundaryRef={popoverBoundaryRef}
+                    itemTrigger={{
+                        title: t('settingsFeatures.sessionListInactiveGrouping'),
+                        subtitle: t('settingsFeatures.sessionListInactiveGroupingSubtitle'),
+                        icon: <Ionicons name="calendar-outline" size={29} color={theme.colors.success} />,
+                        showSelectedSubtitle: false,
+                    }}
+                    items={groupingMenuItems}
+                    onSelect={(itemId) => selectGrouping(itemId, 'inactive')}
+                />
+                <Item
+                    title={t('settingsAppearance.sessionsRightPaneDefaultOpen')}
+                    subtitle={t('settingsAppearance.sessionsRightPaneDefaultOpenDescription')}
+                    icon={<Ionicons name="documents-outline" size={29} color={theme.colors.accent.blue} />}
+                    rightElement={
+                        <Switch
+                            value={sessionsRightPaneDefaultOpen}
+                            onValueChange={setSessionsRightPaneDefaultOpen}
+                            disabled={!panelsSupported || !uiMultiPanePanelsEnabled}
+                        />
+                    }
+                    disabled={!panelsSupported || !uiMultiPanePanelsEnabled}
+                    showChevron={false}
                 />
             </ItemGroup>
 
@@ -205,21 +353,52 @@ export default React.memo(function SessionSettingsScreen() {
                 </ItemGroup>
             ) : null}
 
-            <ItemGroup title={t('settingsSession.transcript.title')} footer={t('settingsSession.transcript.footer')}>
+            {/* Input (moved from Appearance) */}
+            <ItemGroup title={t('settingsSession.input.title')} footer={t('settingsSession.input.footer')}>
                 <Item
-                    title={t('settingsSession.transcript.title')}
-                    subtitle={t('settingsSession.transcript.entrySubtitle')}
-                    icon={<Ionicons name="chatbubble-ellipses-outline" size={29} color={theme.colors.accent.blue} />}
-                    onPress={() => router.push('/(app)/settings/session/transcript')}
+                    title={t('settingsAppearance.agentInputActionBarLayout')}
+                    subtitle={t('settingsAppearance.agentInputActionBarLayoutDescription')}
+                    icon={<Ionicons name="menu-outline" size={29} color={theme.colors.accent.indigo} />}
+                    detail={
+                        agentInputActionBarLayout === 'auto'
+                            ? t('settingsAppearance.agentInputActionBarLayoutOptions.auto')
+                            : agentInputActionBarLayout === 'wrap'
+                                ? t('settingsAppearance.agentInputActionBarLayoutOptions.wrap')
+                                : agentInputActionBarLayout === 'scroll'
+                                    ? t('settingsAppearance.agentInputActionBarLayoutOptions.scroll')
+                                    : t('settingsAppearance.agentInputActionBarLayoutOptions.collapsed')
+                    }
+                    onPress={() => {
+                        const order: Array<typeof agentInputActionBarLayout> = ['auto', 'wrap', 'scroll', 'collapsed'];
+                        const idx = Math.max(0, order.indexOf(agentInputActionBarLayout));
+                        const next = order[(idx + 1) % order.length]!;
+                        setAgentInputActionBarLayout(next);
+                    }}
                 />
-            </ItemGroup>
-
-            <ItemGroup title={t('settingsSession.permissions.title')} footer={t('settingsSession.permissions.footer')}>
                 <Item
-                    title={t('settingsSession.permissions.title')}
-                    subtitle={t('settingsSession.permissions.entrySubtitle')}
-                    icon={<Ionicons name="shield-checkmark-outline" size={29} color={theme.colors.success} />}
-                    onPress={() => router.push('/(app)/settings/session/permissions')}
+                    title={t('settingsAppearance.agentInputChipDensity')}
+                    subtitle={t('settingsAppearance.agentInputChipDensityDescription')}
+                    icon={<Ionicons name="text-outline" size={29} color={theme.colors.accent.indigo} />}
+                    detail={
+                        agentInputChipDensity === 'auto'
+                            ? t('settingsAppearance.agentInputChipDensityOptions.auto')
+                            : agentInputChipDensity === 'labels'
+                                ? t('settingsAppearance.agentInputChipDensityOptions.labels')
+                                : t('settingsAppearance.agentInputChipDensityOptions.icons')
+                    }
+                    onPress={() => {
+                        const order: Array<typeof agentInputChipDensity> = ['auto', 'labels', 'icons'];
+                        const idx = Math.max(0, order.indexOf(agentInputChipDensity));
+                        const next = order[(idx + 1) % order.length]!;
+                        setAgentInputChipDensity(next);
+                    }}
+                />
+                <Item
+                    title={t('settingsAppearance.alwaysShowContextSize')}
+                    subtitle={t('settingsAppearance.alwaysShowContextSizeDescription')}
+                    icon={<Ionicons name="analytics-outline" size={29} color={theme.colors.accent.indigo} />}
+                    rightElement={<Switch value={alwaysShowContextSize} onValueChange={setAlwaysShowContextSize} />}
+                    showChevron={false}
                 />
             </ItemGroup>
 
@@ -351,6 +530,15 @@ export default React.memo(function SessionSettingsScreen() {
                 />
             </ItemGroup>
 
+            <ItemGroup title={t('settingsSession.handoff.groupTitle')} footer={t('settingsSession.handoff.groupFooter')}>
+                <Item
+                    title={t('settingsSession.handoff.title')}
+                    subtitle={t('settingsSession.handoff.entrySubtitle')}
+                    icon={<Ionicons name="swap-horizontal-outline" size={29} color={theme.colors.accent.green} />}
+                    onPress={() => router.push('/(app)/settings/session/handoff')}
+                />
+            </ItemGroup>
+
             <ItemGroup title={t('profiles.tmux.title')}>
                 <Item
                     testID="settings-session-tmux-enabled-item"
@@ -407,6 +595,35 @@ export default React.memo(function SessionSettingsScreen() {
                         )}
                     </>
                 )}
+            </ItemGroup>
+
+            <ItemGroup title={t('settingsSession.windows.title')}>
+                <DropdownMenu
+                    open={openWindowsRemoteSessionLaunchModeMenu}
+                    onOpenChange={setOpenWindowsRemoteSessionLaunchModeMenu}
+                    items={WINDOWS_REMOTE_SESSION_LAUNCH_MODE_OPTIONS.map((option) => ({
+                        id: option.value,
+                        title: t(option.labelKey),
+                        subtitle: t(option.subtitleKey),
+                    }))}
+                    selectedId={windowsRemoteSessionLaunchMode}
+                    onSelect={(id) => {
+                        if (id === 'hidden' || id === 'windows_terminal' || id === 'console') {
+                            setWindowsRemoteSessionLaunchMode(id);
+                        }
+                    }}
+                    itemTrigger={{
+                        title: t('settingsSession.windows.defaultModeTitle'),
+                        subtitle: t(
+                            WINDOWS_REMOTE_SESSION_LAUNCH_MODE_OPTIONS.find((option) => option.value === windowsRemoteSessionLaunchMode)?.subtitleKey
+                                ?? 'windowsRemoteSessionLaunchMode.hiddenSubtitle',
+                        ),
+                        icon: <Ionicons name="logo-windows" size={29} color={theme.colors.accent.blue} />,
+                    }}
+                    rowKind="item"
+                    connectToTrigger
+                    variant="default"
+                />
             </ItemGroup>
 
             <ItemGroup title={t('settingsSession.terminalConnect.title')} style={styles.sectionSpacerTop}>

@@ -1,5 +1,7 @@
 import { createHash } from 'node:crypto';
 
+import { SessionMcpSelectionV1Schema } from '@happier-dev/protocol';
+
 import type { SpawnSessionOptions, SpawnSessionResult } from '@/rpc/handlers/registerSessionHandlers';
 
 function sha256Hex(value: string): string {
@@ -48,6 +50,20 @@ function hashRecordValues(record: Record<string, string> | undefined): Record<st
   return out;
 }
 
+function normalizeMcpSelectionForFingerprint(value: SpawnSessionOptions['mcpSelection']): Json {
+  if (value === undefined) return null;
+  const parsed = SessionMcpSelectionV1Schema.safeParse(value);
+  if (!parsed.success) return null;
+
+  const { v, managedServersEnabled, forceIncludeServerIds, forceExcludeServerIds } = parsed.data;
+  return {
+    v,
+    managedServersEnabled,
+    forceIncludeServerIds: [...forceIncludeServerIds].sort(),
+    forceExcludeServerIds: [...forceExcludeServerIds].sort(),
+  };
+}
+
 export type DaemonSpawnRequestKey = Readonly<{ kind: 'existing' | 'new'; key: string }>;
 
 export function computeDaemonSpawnRequestKey(options: SpawnSessionOptions): DaemonSpawnRequestKey {
@@ -57,10 +73,15 @@ export function computeDaemonSpawnRequestKey(options: SpawnSessionOptions): Daem
   }
 
   const directory = normalizeNonEmptyString(options.directory) ?? '';
-  const agent = normalizeNonEmptyString(options.agent) ?? null;
+  const backendTarget =
+    options.backendTarget === undefined
+      ? null
+      : toStableJson(options.backendTarget, new WeakSet());
+  const transcriptStorage = normalizeNonEmptyString(options.transcriptStorage) === 'direct' ? 'direct' : null;
   const spawnNonce = normalizeNonEmptyString(options.spawnNonce);
   const profileId = options.profileId !== undefined ? String(options.profileId ?? '') : null;
   const terminal = options.terminal ?? null;
+  const windowsRemoteSessionLaunchMode = normalizeNonEmptyString(options.windowsRemoteSessionLaunchMode);
   const windowsRemoteSessionConsole = normalizeNonEmptyString(options.windowsRemoteSessionConsole);
 
   const permissionMode = normalizeNonEmptyString(options.permissionMode);
@@ -68,7 +89,6 @@ export function computeDaemonSpawnRequestKey(options: SpawnSessionOptions): Daem
   const modelId = normalizeNonEmptyString(options.modelId);
 
   const resume = normalizeNonEmptyString(options.resume);
-  const experimentalCodexResume = options.experimentalCodexResume === true;
   const experimentalCodexAcp = options.experimentalCodexAcp === true;
 
   const token = normalizeNonEmptyString(options.token);
@@ -76,23 +96,26 @@ export function computeDaemonSpawnRequestKey(options: SpawnSessionOptions): Daem
 
   const environmentVariables = options.environmentVariables;
   const connectedServices = options.connectedServices;
+  const mcpSelection = normalizeMcpSelectionForFingerprint(options.mcpSelection);
 
   const fingerprint = {
     directory,
-    agent,
+    backendTarget,
     approvedNewDirectoryCreation: options.approvedNewDirectoryCreation === true,
     profileId,
     terminal: toStableJson(terminal, new WeakSet()),
+    windowsRemoteSessionLaunchMode: windowsRemoteSessionLaunchMode ?? null,
     windowsRemoteSessionConsole: windowsRemoteSessionConsole ?? null,
     permissionMode: permissionMode ?? null,
     modelId: modelId ?? null,
     resume: resume ?? null,
-    experimentalCodexResume,
     experimentalCodexAcp,
     tokenHash: token ? sha256Hex(token) : null,
     initialPromptHash: initialPrompt ? sha256Hex(initialPrompt) : null,
     envValueHashes: hashRecordValues(environmentVariables),
     connectedServicesHash: connectedServices === undefined ? null : sha256Hex(stableJsonStringify(connectedServices)),
+    mcpSelection,
+    ...(transcriptStorage ? { transcriptStorage } : {}),
     ...(spawnNonce ? { spawnNonce } : {}),
   } as const;
 

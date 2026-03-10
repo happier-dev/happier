@@ -1,27 +1,21 @@
 import { execFile } from 'child_process';
 import type { ExecOptions } from 'child_process';
 import { constants as fsConstants } from 'fs';
-import { existsSync, readFileSync } from 'fs';
 import { access } from 'fs/promises';
-import { homedir } from 'os';
 import { join, delimiter as PATH_DELIMITER } from 'path';
 import { promisify } from 'util';
 
 import { AGENTS, type CatalogAgentId, type CliDetectSpec } from '@/backends/catalog';
+import { resolveCliAuthHomeDir } from '@/capabilities/cliAuth/shared';
+import type { CliAuthSpec, CliAuthStatus } from '@/backends/types';
+import { resolveProviderCliCommand } from '@/runtime/managedTools/providerCliResolution';
+import { ensureJavaScriptRuntimeExecutable } from '@/runtime/js/ensureJavaScriptRuntimeExecutable';
 import { AsyncTtlCache } from '@happier-dev/protocol';
+import { getProviderCliRuntimeSpec } from '@happier-dev/agents';
 import { resolveWindowsCommandInvocation, resolveWindowsCommandOnPath } from '@happier-dev/cli-common/process';
 
 const execFileAsync = promisify(execFile);
 type ExecFileBestEffortOptions = ExecOptions & Readonly<{ windowsVerbatimArguments?: boolean }>;
-
-function resolveHomeDir(): string {
-    const envHome =
-        process.platform === 'win32'
-            ? (process.env.USERPROFILE || process.env.HOME)
-            : process.env.HOME;
-    const trimmed = typeof envHome === 'string' ? envHome.trim() : '';
-    return trimmed.length > 0 ? trimmed : homedir();
-}
 
 export type DetectCliName = CatalogAgentId;
 
@@ -31,13 +25,17 @@ export interface DetectCliRequest {
      * This is best-effort and may return null when unknown/unsupported.
      */
     includeLoginStatus?: boolean;
+    bypassCache?: boolean;
 }
 
 export interface DetectCliEntry {
     available: boolean;
     resolvedPath?: string;
+    resolvedCommand?: string;
+    resolutionSource?: 'override' | 'system' | 'managed';
     version?: string;
     isLoggedIn?: boolean | null;
+    authStatus?: CliAuthStatus | null;
     /**
      * Optional ACP agent capability probe results for CLIs that can run in ACP mode.
      * This is only populated when a capabilities request explicitly asks for it.
@@ -69,24 +67,97 @@ export interface DetectTmuxEntry {
     version?: string;
 }
 
+export interface DetectWindowsTerminalEntry {
+    available: boolean;
+    resolvedPath?: string;
+}
+
 export interface DetectCliSnapshot {
     path: string | null;
     clis: Record<DetectCliName, DetectCliEntry>;
     tmux: DetectTmuxEntry;
+    windowsTerminal: DetectWindowsTerminalEntry;
 }
 
 const CLI_SNAPSHOT_TTL_MS = 30_000;
+const CLI_AUTH_ENV_KEYS = [
+    'ANTHROPIC_API_KEY',
+    'ANTHROPIC_AUTH_TOKEN',
+    'OPENAI_API_KEY',
+    'GEMINI_API_KEY',
+    'GOOGLE_API_KEY',
+] as const;
 
 const cliSnapshotCache = new AsyncTtlCache<DetectCliSnapshot>({
     successTtlMs: CLI_SNAPSHOT_TTL_MS,
     errorTtlMs: 2_000,
 });
 
+const DEFAULT_CLI_SNAPSHOT_PROBE_TIMEOUT_MS = process.env.CI ? 3_000 : 1_500;
+const DEFAULT_CLI_SNAPSHOT_LOGIN_STATUS_PROBE_TIMEOUT_MS = process.env.CI ? 7_000 : 6_500;
+const CLI_SNAPSHOT_PROBE_TIMEOUT = Symbol('CLI_SNAPSHOT_PROBE_TIMEOUT');
+
+function resolveCliSnapshotProbeTimeoutMs(includeLoginStatus: boolean): number {
+    if (includeLoginStatus) {
+        const rawLoginStatus = process.env.HAPPIER_CLI_SNAPSHOT_LOGIN_STATUS_PROBE_TIMEOUT_MS;
+        const parsedLoginStatus = typeof rawLoginStatus === 'string' ? Number(rawLoginStatus) : Number.NaN;
+        if (Number.isFinite(parsedLoginStatus) && parsedLoginStatus > 0) {
+            return parsedLoginStatus;
+        }
+    }
+
+    const raw = process.env.HAPPIER_CLI_SNAPSHOT_PROBE_TIMEOUT_MS;
+    const parsed = typeof raw === 'string' ? Number(raw) : Number.NaN;
+    if (Number.isFinite(parsed) && parsed > 0) {
+        return parsed;
+    }
+    return includeLoginStatus
+        ? DEFAULT_CLI_SNAPSHOT_LOGIN_STATUS_PROBE_TIMEOUT_MS
+        : DEFAULT_CLI_SNAPSHOT_PROBE_TIMEOUT_MS;
+}
+
+async function withCliSnapshotProbeTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T | typeof CLI_SNAPSHOT_PROBE_TIMEOUT> {
+    let timeoutId: ReturnType<typeof setTimeout> | null = null;
+    try {
+        return await Promise.race([
+            promise,
+            new Promise<typeof CLI_SNAPSHOT_PROBE_TIMEOUT>((resolve) => {
+                timeoutId = setTimeout(() => resolve(CLI_SNAPSHOT_PROBE_TIMEOUT), timeoutMs);
+            }),
+        ]);
+    } finally {
+        if (timeoutId !== null) {
+            clearTimeout(timeoutId);
+        }
+    }
+}
+
 function buildCliSnapshotCacheKey(params: DetectCliRequest, pathEnv: string | null): string {
     const includeLoginStatus = params.includeLoginStatus === true ? '1' : '0';
     const path = String(pathEnv ?? '');
     const pathExt = process.platform === 'win32' ? String(process.env.PATHEXT ?? '') : '';
-    return `${includeLoginStatus}:${pathExt}:${path}`;
+    const home = String(process.env.HOME ?? '');
+    const userProfile = String(process.env.USERPROFILE ?? '');
+
+    // Include environment variables that affect CLI resolution and auth.
+    // Provider resolution can fall back to HOME/USERPROFILE when HAPPIER_HOME_DIR is unset,
+    // and auth probes also read provider files from HOME/USERPROFILE.
+    const happierHomeDir = String(process.env.HAPPIER_HOME_DIR ?? '');
+    const sourcePrefs = String(process.env.HAPPIER_BACKEND_CLI_SOURCE_PREFERENCES_JSON ?? '');
+    const authEnvFingerprint = params.includeLoginStatus === true
+        ? CLI_AUTH_ENV_KEYS.map((key) => `${key}=${String(process.env[key] ?? '')}`).join(':')
+        : '';
+
+    // Include all HAPPIER_*_PATH overrides for known agents
+    const agentIds = Object.keys(AGENTS);
+    const pathOverrides = agentIds
+        .map((id) => {
+            const envKey = `HAPPIER_${id.toUpperCase()}_PATH`;
+            return String(process.env[envKey] ?? '');
+        })
+        .join(':');
+
+    return `${includeLoginStatus}:${pathExt}:${path}:${home}:${userProfile}:${happierHomeDir}:${sourcePrefs}:${authEnvFingerprint}:${pathOverrides}`;
 }
 
 async function resolveCommandOnPath(command: string, pathEnv: string | null): Promise<string | null> {
@@ -120,15 +191,11 @@ async function resolveClaudeOutsidePath(): Promise<string | null> {
 
     const override = typeof process.env.HAPPIER_CLAUDE_PATH === 'string' ? process.env.HAPPIER_CLAUDE_PATH.trim() : '';
     if (override) {
-        try {
-            await access(override, accessMode);
-            return override;
-        } catch {
-            // ignore
-        }
+        const resolvedOverride = await resolveCliOverridePath('claude');
+        if (resolvedOverride) return resolvedOverride;
     }
 
-    const homeDir = resolveHomeDir();
+    const homeDir = resolveCliAuthHomeDir();
     const candidates: string[] = [];
 
     if (isWindows) {
@@ -161,16 +228,29 @@ async function resolveClaudeOutsidePath(): Promise<string | null> {
 async function resolveCliOverridePath(name: DetectCliName): Promise<string | null> {
     const isWindows = process.platform === 'win32';
     const accessMode = isWindows ? fsConstants.F_OK : fsConstants.X_OK;
-    const envKey = `HAPPIER_${name.toUpperCase()}_PATH`;
-    const override = typeof process.env[envKey] === 'string' ? String(process.env[envKey]).trim() : '';
+    const override = readCliOverridePath(name);
     if (!override) return null;
 
     try {
         await access(override, accessMode);
         return override;
     } catch {
-        return null;
+        const runtimeSpec = getProviderCliRuntimeSpec(name);
+        if (!runtimeSpec.acceptsJavaScriptFileOverride || isWindows) return null;
+        if (!/\.(?:c?js|mjs)$/i.test(override)) return null;
+        try {
+            await access(override, fsConstants.F_OK);
+            return override;
+        } catch {
+            return null;
+        }
     }
+}
+
+function readCliOverridePath(name: DetectCliName): string | null {
+    const envKey = `HAPPIER_${name.toUpperCase()}_PATH`;
+    const override = typeof process.env[envKey] === 'string' ? String(process.env[envKey]).trim() : '';
+    return override || null;
 }
 
 function getFirstLine(value: string): string | null {
@@ -194,11 +274,42 @@ function extractTmuxVersion(value: string | null): string | null {
     return match?.[1] ?? null;
 }
 
+function quoteShellArgument(value: string): string {
+    if (process.platform === 'win32') {
+        return `"${value.replaceAll('"', '""')}"`;
+    }
+    return `'${value.replaceAll("'", `'\\''`)}'`;
+}
+
+async function isCliPathRunnable(resolvedPath: string): Promise<boolean> {
+    if (!/\.(c?js)$/i.test(resolvedPath)) {
+        return true;
+    }
+
+    const runtimeExecutable = await ensureJavaScriptRuntimeExecutable({
+        isBunRuntime: typeof process.versions.bun === 'string',
+    });
+    return Boolean(runtimeExecutable);
+}
+
+async function resolveCliLaunchCommand(params: { resolvedPath: string }): Promise<string> {
+    if (!/\.(c?js)$/i.test(params.resolvedPath)) {
+        return quoteShellArgument(params.resolvedPath);
+    }
+
+    const runtimeExecutable = await ensureJavaScriptRuntimeExecutable({
+        isBunRuntime: typeof process.versions.bun === 'string',
+    });
+    if (!runtimeExecutable) return quoteShellArgument(params.resolvedPath);
+    return `${quoteShellArgument(runtimeExecutable)} ${quoteShellArgument(params.resolvedPath)}`;
+}
+
 function defaultVersionArgsToTry(): Array<string[]> {
     return [['--version'], ['version'], ['-v']];
 }
 
 const cliDetectCache = new Map<DetectCliName, CliDetectSpec | null>();
+const cliAuthSpecCache = new Map<DetectCliName, CliAuthSpec | null>();
 
 async function resolveCliDetectSpec(name: DetectCliName): Promise<CliDetectSpec | null> {
     if (cliDetectCache.has(name)) {
@@ -222,18 +333,33 @@ async function resolveCliVersionArgsToTry(name: DetectCliName): Promise<Array<st
     return spec.map((v) => [...v]);
 }
 
-async function resolveCliLoginStatusArgs(name: DetectCliName): Promise<string[] | null> {
-    const spec = (await resolveCliDetectSpec(name))?.loginStatusArgs;
-    if (spec === null) return null;
-    if (!spec) return null;
-    return [...spec];
+async function resolveCliAuthSpec(name: DetectCliName): Promise<CliAuthSpec | null> {
+    if (cliAuthSpecCache.has(name)) {
+        return cliAuthSpecCache.get(name) ?? null;
+    }
+
+    const entry = AGENTS[name];
+    if (!entry?.getCliAuthSpec) {
+        cliAuthSpecCache.set(name, null);
+        return null;
+    }
+
+    const spec = await entry.getCliAuthSpec();
+    cliAuthSpecCache.set(name, spec);
+    return spec;
+}
+
+async function resolveCliBinaryNames(name: DetectCliName): Promise<readonly string[]> {
+    const binaryNames = (await resolveCliAuthSpec(name))?.binaryNames;
+    if (binaryNames && binaryNames.length > 0) return binaryNames;
+    return [name];
 }
 
 async function detectCliVersion(params: { name: DetectCliName; resolvedPath: string }): Promise<string | null> {
     // Best-effort, must never throw.
     try {
         // Keep this short (runs in parallel for multiple CLIs), but give enough headroom for slower systems.
-        const timeoutMs = 1200;
+        const timeoutMs = process.env.CI ? 2500 : 1200;
         const isWindows = process.platform === 'win32';
         const isCmdScript = isWindows && /\.(cmd|bat)$/i.test(params.resolvedPath);
         const isJsFile = /\.(c?js)$/i.test(params.resolvedPath);
@@ -244,29 +370,80 @@ async function detectCliVersion(params: { name: DetectCliName; resolvedPath: str
             return '';
         };
 
-        const argsToTry: Array<string[]> = await resolveCliVersionArgsToTry(params.name);
+        const argsToTry: Array<string[]> = await (async () => {
+            try {
+                return await resolveCliVersionArgsToTry(params.name);
+            } catch {
+                return defaultVersionArgsToTry();
+            }
+        })();
 
-        const execFileBestEffort = async (file: string, args: string[], options: ExecFileBestEffortOptions): Promise<{ stdout: string; stderr: string }> => {
+        const isTransientExecFileError = (error: unknown): boolean => {
+            if (!error || typeof error !== 'object' || Array.isArray(error)) return false;
+            const code = (error as any).code;
+            if (typeof code === 'string' && ['EAGAIN', 'EMFILE', 'ENFILE', 'ETXTBSY'].includes(code)) return true;
+            if ((error as any).killed === true) return true;
+            return false;
+        };
+
+        const execFileBestEffort = async (
+            file: string,
+            args: string[],
+            options: ExecFileBestEffortOptions,
+        ): Promise<{ stdout: string; stderr: string; error: unknown | null }> => {
             try {
                 const { stdout, stderr } = await execFileAsync(file, args, options);
-                return { stdout: asString(stdout), stderr: asString(stderr) };
+                return { stdout: asString(stdout), stderr: asString(stderr), error: null };
             } catch (error) {
                 // For non-zero exit codes, execFile still provides stdout/stderr on the error object.
                 const maybeStdout = asString((error as any)?.stdout);
                 const maybeStderr = asString((error as any)?.stderr);
-                return { stdout: maybeStdout, stderr: maybeStderr };
+                return { stdout: maybeStdout, stderr: maybeStderr, error };
             }
         };
 
+	        const probeSemverOnce = async (
+	            file: string,
+	            args: string[],
+	            options: ExecFileBestEffortOptions,
+	        ): Promise<{ semver: string | null; error: unknown | null; combinedTrimmed: string }> => {
+	            const { stdout, stderr, error } = await execFileBestEffort(file, args, options);
+	            const combined = `${stdout}\n${stderr}`;
+	            const combinedTrimmed = combined.trim();
+	            const firstLine = getFirstLine(combined);
+	            const semver = extractSemver(firstLine) ?? extractSemver(combined);
+	            return { semver, error, combinedTrimmed };
+	        };
+
+        const probeSemverWithRetry = async (
+            file: string,
+            args: string[],
+            options: ExecFileBestEffortOptions,
+	        ): Promise<string | null> => {
+	            const first = await probeSemverOnce(file, args, options);
+	            if (first.semver) return first.semver;
+
+	            const shouldRetry =
+	                (first.error && isTransientExecFileError(first.error))
+	                || (!first.error && first.combinedTrimmed.length === 0);
+	            if (!shouldRetry) return null;
+
+	            // Best-effort retry for transient spawn/timeout failures (can happen under load).
+	            await new Promise((resolve) => setTimeout(resolve, 0));
+	            const second = await probeSemverOnce(file, args, options);
+	            return second.semver;
+	        };
+
         if (isJsFile) {
+            const runtimeExecutable = await ensureJavaScriptRuntimeExecutable({
+                isBunRuntime: typeof process.versions.bun === 'string',
+            });
+            if (!runtimeExecutable) return null;
             for (const args of argsToTry) {
-                const { stdout, stderr } = await execFileBestEffort(process.execPath, [params.resolvedPath, ...args], {
+                const semver = await probeSemverWithRetry(runtimeExecutable, [params.resolvedPath, ...args], {
                     timeout: timeoutMs,
                     windowsHide: true,
                 });
-                const combined = `${stdout}\n${stderr}`;
-                const firstLine = getFirstLine(combined);
-                const semver = extractSemver(firstLine) ?? extractSemver(combined);
                 if (semver) return semver;
             }
             return null;
@@ -280,22 +457,18 @@ async function detectCliVersion(params: { name: DetectCliName; resolvedPath: str
                 args: primary,
                 resolveCommandOnPath: false,
             });
-            const { stdout, stderr } = await execFileBestEffort(invocation.command, invocation.args, {
+            return await probeSemverWithRetry(invocation.command, invocation.args, {
                 timeout: timeoutMs,
                 windowsHide: true,
                 windowsVerbatimArguments: invocation.windowsVerbatimArguments,
             });
-            return extractSemver(getFirstLine(`${stdout}\n${stderr}`));
         }
 
         for (const args of argsToTry) {
-            const { stdout, stderr } = await execFileBestEffort(params.resolvedPath, args, {
+            const semver = await probeSemverWithRetry(params.resolvedPath, args, {
                 timeout: timeoutMs,
                 windowsHide: true,
             });
-            const combined = `${stdout}\n${stderr}`;
-            const firstLine = getFirstLine(combined);
-            const semver = extractSemver(firstLine) ?? extractSemver(combined);
             if (semver) return semver;
         }
 
@@ -353,119 +526,61 @@ async function detectTmuxVersion(params: { resolvedPath: string }): Promise<stri
     }
 }
 
-async function detectCliLoginStatus(params: { name: DetectCliName; resolvedPath: string }): Promise<boolean | null> {
+async function detectCliAuthStatus(params: { name: DetectCliName; resolvedPath: string }): Promise<CliAuthStatus | null> {
     // Best-effort, must never throw.
     try {
-        if (params.name === 'gemini') {
-            return detectGeminiCliLoginStatus();
-        }
-
-        const timeoutMs = 800;
-        const loginArgs = await resolveCliLoginStatusArgs(params.name);
-        if (!loginArgs) return null;
-
-        const isWindows = process.platform === 'win32';
-        const isCmdScript = isWindows && /\.(cmd|bat)$/i.test(params.resolvedPath);
-
-        const runStatus = async (file: string, args: string[], windowsVerbatimArguments?: boolean): Promise<boolean | null> => {
-            try {
-                await execFileAsync(file, args, { timeout: timeoutMs, windowsHide: true, windowsVerbatimArguments });
-                return true;
-            } catch (error) {
-                // execFileAsync throws on non-zero exit; check exit code via various properties.
-                const code = (error as any)?.status ?? (error as any)?.exitCode ?? (error as any)?.code;
-                // Non-zero exit codes are still a deterministic "not logged in" for our probes.
-                if (typeof code === 'number') {
-                    return false;
-                }
-                return null;
-            }
+        const spec = await resolveCliAuthSpec(params.name);
+        if (!spec?.detectAuthStatus) return null;
+        const checkedAt = Date.now();
+        const draft = await spec.detectAuthStatus({ resolvedPath: params.resolvedPath });
+        return {
+            checkedAt,
+            state: draft.state,
+            ...(draft.method !== undefined ? { method: draft.method } : {}),
+            ...(draft.accountLabel !== undefined ? { accountLabel: draft.accountLabel } : {}),
+            ...(draft.reason !== undefined ? { reason: draft.reason } : {}),
+            ...(draft.source !== undefined ? { source: draft.source } : {}),
         };
-
-        if (isCmdScript) {
-            const invocation = resolveWindowsCommandInvocation({
-                command: params.resolvedPath,
-                args: loginArgs,
-                resolveCommandOnPath: false,
-            });
-            return await runStatus(invocation.command, invocation.args, invocation.windowsVerbatimArguments);
-        }
-        return await runStatus(params.resolvedPath, loginArgs);
     } catch {
         return null;
     }
 }
 
-function detectGeminiCliLoginStatus(): boolean | null {
-    // Non-interactive probe: never execute `gemini auth ...` because it can open a browser window.
-    //
-    // Gemini CLI can authenticate via:
-    // - API key (GEMINI_API_KEY / GOOGLE_API_KEY or local config)
-    // - Local OAuth creds file (~/.gemini/oauth_creds.json)
-    // - gcloud ADC (~/.config/gcloud/application_default_credentials.json)
-    //
-    // We treat "any plausible credential present" as logged in. If we cannot read anything reliably,
-    // return null (unknown) rather than risking a false negative.
-    try {
-        const envApiKeyCandidates = [process.env.GEMINI_API_KEY, process.env.GOOGLE_API_KEY]
-            .map((v) => (typeof v === 'string' ? v.trim() : ''))
-            .filter(Boolean);
-        if (envApiKeyCandidates.length > 0) return true;
-
-        const home = resolveHomeDir();
-        const candidatePaths = [
-            join(home, '.gemini', 'oauth_creds.json'),
-            join(home, '.gemini', 'config.json'),
-            join(home, '.config', 'gemini', 'config.json'),
-            join(home, '.gemini', 'auth.json'),
-            join(home, '.config', 'gemini', 'auth.json'),
-            join(home, '.config', 'gcloud', 'application_default_credentials.json'),
-        ];
-
-        const hasPlausibleCreds = (value: unknown): boolean => {
-            if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
-            const rec = value as Record<string, unknown>;
-
-            const strings = [
-                rec.access_token,
-                rec.refresh_token,
-                rec.token,
-                rec.apiKey,
-                rec.GEMINI_API_KEY,
-            ].filter((v): v is string => typeof v === 'string' && v.trim().length > 0);
-            if (strings.length > 0) return true;
-
-            // gcloud ADC authorized_user shape
-            if (rec.type === 'authorized_user' && typeof rec.refresh_token === 'string' && rec.refresh_token.trim().length > 0) {
-                return true;
-            }
-
-            return false;
-        };
-
-        let sawAnyCandidateFile = false;
-        let sawAnyParseError = false;
-        let sawAnyParseableFile = false;
-        for (const path of candidatePaths) {
-            if (!existsSync(path)) continue;
-            try {
-                const raw = readFileSync(path, 'utf8');
-                sawAnyCandidateFile = true;
-                const parsed = JSON.parse(raw) as unknown;
-                sawAnyParseableFile = true;
-                if (hasPlausibleCreds(parsed)) return true;
-            } catch {
-                // Ignore parse/read errors; we'll fall back to unknown if we saw files but couldn't read them.
-                sawAnyCandidateFile = true;
-                sawAnyParseError = true;
-            }
-        }
-
-        if (sawAnyCandidateFile && sawAnyParseError && !sawAnyParseableFile) return null;
-        return false;
-    } catch {
-        return null;
+async function resolveCliPathForName(
+    name: DetectCliName,
+    pathEnv: string | null,
+): Promise<Readonly<{ resolvedPath: string; resolutionSource: 'override' | 'system' | 'managed' }> | null> {
+    const rawOverride = readCliOverridePath(name);
+    if (rawOverride) {
+        const override = await resolveCliOverridePath(name);
+        if (!override) return null;
+        if (!await isCliPathRunnable(override)) return null;
+        return { resolvedPath: override, resolutionSource: 'override' };
     }
+
+    const managedResolution = resolveProviderCliCommand(name);
+    if (managedResolution) {
+        if (!await isCliPathRunnable(managedResolution.command)) return null;
+        return {
+            resolvedPath: managedResolution.command,
+            resolutionSource: managedResolution.source,
+        };
+    }
+
+    const binaryNames = await resolveCliBinaryNames(name);
+    for (const binaryName of binaryNames) {
+        const resolved = await resolveCommandOnPath(binaryName, pathEnv);
+        if (resolved) {
+            if (!await isCliPathRunnable(resolved)) continue;
+            return { resolvedPath: resolved, resolutionSource: 'system' };
+        }
+    }
+
+    if (name !== 'claude') return null;
+    const resolvedPath = await resolveClaudeOutsidePath();
+    if (!resolvedPath) return null;
+    if (!await isCliPathRunnable(resolvedPath)) return null;
+    return { resolvedPath, resolutionSource: 'system' };
 }
 
 /**
@@ -478,36 +593,74 @@ function detectGeminiCliLoginStatus(): boolean | null {
 export async function detectCliSnapshotOnDaemonPath(data: DetectCliRequest): Promise<DetectCliSnapshot> {
     const pathEnv = typeof process.env.PATH === 'string' ? process.env.PATH : null;
     const includeLoginStatus = Boolean(data?.includeLoginStatus);
+    const probeTimeoutMs = resolveCliSnapshotProbeTimeoutMs(includeLoginStatus);
     const cacheKey = buildCliSnapshotCacheKey({ includeLoginStatus }, pathEnv);
-    const cached = cliSnapshotCache.get(cacheKey);
-    if (cached?.kind === 'success' && cliSnapshotCache.isFresh(cached)) return cached.value;
+    const cached = data?.bypassCache ? null : cliSnapshotCache.get(cacheKey);
+    if (!data?.bypassCache && cached?.kind === 'success' && cliSnapshotCache.isFresh(cached)) return cached.value;
 
     return await cliSnapshotCache.runDedupe(cacheKey, async () => {
         const cached2 = cliSnapshotCache.get(cacheKey);
-        if (cached2?.kind === 'success' && cliSnapshotCache.isFresh(cached2)) return cached2.value;
+        if (!data?.bypassCache && cached2?.kind === 'success' && cliSnapshotCache.isFresh(cached2)) return cached2.value;
 
     const names = Object.keys(AGENTS) as DetectCliName[];
 
     const pairs = await Promise.all(
         names.map(async (name) => {
-            const resolvedPath =
-                (await resolveCliOverridePath(name))
-                ?? (await resolveCommandOnPath(name, pathEnv))
-                ?? (name === 'claude' ? await resolveClaudeOutsidePath() : null);
-            if (!resolvedPath) {
+            const resolved = await resolveCliPathForName(name, pathEnv);
+            if (!resolved) {
                 const entry: DetectCliEntry = { available: false };
                 return [name, entry] as const;
             }
+            const { resolvedPath, resolutionSource } = resolved;
 
-            const version = await detectCliVersion({ name, resolvedPath });
-            const isLoggedIn = includeLoginStatus ? await detectCliLoginStatus({ name, resolvedPath }) : null;
-            const entry: DetectCliEntry = {
-                available: true,
-                resolvedPath,
-                ...(typeof version === 'string' ? { version } : {}),
-                ...(includeLoginStatus ? { isLoggedIn } : {}),
-            };
-            return [name, entry] as const;
+            const timedEntry = await withCliSnapshotProbeTimeout(
+                (async (): Promise<DetectCliEntry> => {
+                    const version = await detectCliVersion({ name, resolvedPath });
+                    const authStatus = includeLoginStatus ? await detectCliAuthStatus({ name, resolvedPath }) : null;
+                    const resolvedCommand = await resolveCliLaunchCommand({ resolvedPath });
+                    const isLoggedIn = includeLoginStatus
+                        ? (authStatus?.state === 'logged_in'
+                            ? true
+                            : authStatus?.state === 'logged_out'
+                                ? false
+                                : null)
+                        : null;
+
+                    return {
+                        available: true,
+                        resolvedPath,
+                        resolvedCommand,
+                        resolutionSource,
+                        ...(typeof version === 'string' ? { version } : {}),
+                        ...(includeLoginStatus ? { isLoggedIn } : {}),
+                        ...(includeLoginStatus ? { authStatus } : {}),
+                    };
+                })(),
+                probeTimeoutMs,
+            );
+
+            if (timedEntry === CLI_SNAPSHOT_PROBE_TIMEOUT) {
+                const checkedAt = Date.now();
+                const entry: DetectCliEntry = {
+                    available: true,
+                    resolvedPath,
+                    resolutionSource,
+                    ...(includeLoginStatus
+                        ? {
+                            isLoggedIn: null,
+                            authStatus: {
+                                checkedAt,
+                                state: 'unknown',
+                                reason: 'timeout',
+                                source: 'command',
+                            } satisfies CliAuthStatus,
+                        }
+                        : {}),
+                };
+                return [name, entry] as const;
+            }
+
+            return [name, timedEntry] as const;
         }),
     );
 
@@ -515,6 +668,12 @@ export async function detectCliSnapshotOnDaemonPath(data: DetectCliRequest): Pro
     const tmux: DetectTmuxEntry = (() => {
         if (!tmuxResolvedPath) return { available: false };
         return { available: true, resolvedPath: tmuxResolvedPath };
+    })();
+
+    const windowsTerminalResolvedPath = await resolveCommandOnPath('wt.exe', pathEnv);
+    const windowsTerminal: DetectWindowsTerminalEntry = (() => {
+        if (!windowsTerminalResolvedPath) return { available: false };
+        return { available: true, resolvedPath: windowsTerminalResolvedPath };
     })();
 
     if (tmux.available && tmuxResolvedPath) {
@@ -528,6 +687,7 @@ export async function detectCliSnapshotOnDaemonPath(data: DetectCliRequest): Pro
         path: pathEnv,
         clis: Object.fromEntries(pairs) as Record<DetectCliName, DetectCliEntry>,
         tmux,
+        windowsTerminal,
     };
     }).then((snapshot) => {
         cliSnapshotCache.setSuccess(cacheKey, snapshot);
@@ -537,6 +697,6 @@ export async function detectCliSnapshotOnDaemonPath(data: DetectCliRequest): Pro
         cliSnapshotCache.setError(cacheKey);
         const names = Object.keys(AGENTS) as DetectCliName[];
         const clis = Object.fromEntries(names.map((name) => [name, { available: false } satisfies DetectCliEntry])) as Record<DetectCliName, DetectCliEntry>;
-        return { path: pathEnv, clis, tmux: { available: false } };
+        return { path: pathEnv, clis, tmux: { available: false }, windowsTerminal: { available: false } };
     });
 }

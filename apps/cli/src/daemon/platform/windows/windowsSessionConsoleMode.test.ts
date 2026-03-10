@@ -1,64 +1,46 @@
 import { describe, expect, it } from 'vitest';
-import { resolveWindowsRemoteSessionConsoleMode } from './windowsSessionConsoleMode';
 
-describe('resolveWindowsRemoteSessionConsoleMode', () => {
-  it('returns visible when explicitly requested on Windows', () => {
-    expect(
-      resolveWindowsRemoteSessionConsoleMode({
-        platform: 'win32',
-        requested: 'visible',
-        env: {},
-      }),
-    ).toBe('visible');
+import { resolveWindowsRemoteSessionLaunchMode } from './windowsSessionConsoleMode';
+
+describe('resolveWindowsRemoteSessionLaunchMode', () => {
+  it('defaults to hidden on non-Windows platforms', () => {
+    expect(resolveWindowsRemoteSessionLaunchMode({
+      platform: 'darwin',
+      env: {},
+    })).toBe('hidden');
   });
 
-  it('returns visible when env is set on Windows', () => {
-    expect(
-      resolveWindowsRemoteSessionConsoleMode({
-        platform: 'win32',
-        requested: undefined,
-        env: { HAPPIER_WINDOWS_REMOTE_SESSION_CONSOLE: 'visible' },
-      }),
-    ).toBe('visible');
+  it('returns the requested mode when explicitly provided', () => {
+    expect(resolveWindowsRemoteSessionLaunchMode({
+      platform: 'win32',
+      requested: 'windows_terminal',
+      env: {},
+    })).toBe('windows_terminal');
   });
 
-  it('prefers explicit requested mode over environment value on Windows', () => {
-    expect(
-      resolveWindowsRemoteSessionConsoleMode({
-        platform: 'win32',
-        requested: 'hidden',
-        env: { HAPPIER_WINDOWS_REMOTE_SESSION_CONSOLE: 'visible' },
-      }),
-    ).toBe('hidden');
+  it('maps the legacy visible request to console', () => {
+    expect(resolveWindowsRemoteSessionLaunchMode({
+      platform: 'win32',
+      requested: 'visible',
+      env: {},
+    } as any)).toBe('console');
   });
 
-  it('treats non-visible env values as hidden on Windows', () => {
-    expect(
-      resolveWindowsRemoteSessionConsoleMode({
-        platform: 'win32',
-        requested: undefined,
-        env: { HAPPIER_WINDOWS_REMOTE_SESSION_CONSOLE: 'VISIBLE' },
-      }),
-    ).toBe('hidden');
+  it('uses the canonical env override when present', () => {
+    expect(resolveWindowsRemoteSessionLaunchMode({
+      platform: 'win32',
+      env: {
+        HAPPIER_WINDOWS_REMOTE_SESSION_LAUNCH_MODE: 'windows_terminal',
+      },
+    })).toBe('windows_terminal');
   });
 
-  it('defaults to hidden on Windows when unset', () => {
-    expect(
-      resolveWindowsRemoteSessionConsoleMode({
-        platform: 'win32',
-        requested: undefined,
-        env: {},
-      }),
-    ).toBe('hidden');
-  });
-
-  it('always returns hidden on non-Windows', () => {
-    expect(
-      resolveWindowsRemoteSessionConsoleMode({
-        platform: 'darwin',
-        requested: 'visible',
-        env: { HAPPIER_WINDOWS_REMOTE_SESSION_CONSOLE: 'visible' },
-      }),
-    ).toBe('hidden');
+  it('maps the legacy env override to console', () => {
+    expect(resolveWindowsRemoteSessionLaunchMode({
+      platform: 'win32',
+      env: {
+        HAPPIER_WINDOWS_REMOTE_SESSION_CONSOLE: 'visible',
+      },
+    })).toBe('console');
   });
 });

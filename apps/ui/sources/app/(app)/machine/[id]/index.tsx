@@ -33,7 +33,10 @@ import { DetectedClisList } from '@/components/machines/DetectedClisList';
 import { useMachineCapabilitiesCache } from '@/hooks/server/useMachineCapabilitiesCache';
 import { getActiveServerId } from '@/sync/domains/server/serverProfiles';
 import { resolveTerminalSpawnOptions } from '@/sync/domains/settings/terminalSettings';
-import { resolveWindowsRemoteSessionConsoleFromMachineMetadata } from '@/sync/domains/session/spawn/windowsRemoteSessionConsole';
+import {
+    readMachineWindowsRemoteSessionLaunchMode,
+    resolveEffectiveWindowsRemoteSessionLaunchMode,
+} from '@/sync/domains/session/spawn/windowsRemoteSessionLaunchMode';
 import { Switch } from '@/components/ui/forms/Switch';
 import { CAPABILITIES_REQUEST_MACHINE_DETAILS } from '@/capabilities/requests';
 import { setActiveServerAndSwitch } from '@/sync/domains/server/activeServerSwitch';
@@ -41,6 +44,11 @@ import type { DaemonExecutionRunEntry } from '@happier-dev/protocol';
 import { ExecutionRunRow } from '@/components/sessions/runs/ExecutionRunRow';
 import { Text, TextInput } from '@/components/ui/text/Text';
 import { useMountedShouldContinue } from '@/hooks/ui/useMountedShouldContinue';
+import { PathInputBrowseButton } from '@/components/ui/pathBrowser/PathInputBrowseButton';
+import { openMachinePathBrowserModal } from '@/components/ui/pathBrowser/openMachinePathBrowserModal';
+import { DEFAULT_AGENT_ID, isAgentId } from '@/agents/catalog/catalog';
+import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
+import { WINDOWS_REMOTE_SESSION_LAUNCH_MODE_OPTIONS } from '@/sync/domains/session/spawn/windowsRemoteSessionLaunchModeOptions';
 
 
 const styles = StyleSheet.create((theme) => ({
@@ -131,6 +139,7 @@ export default function MachineDetailScreen() {
     const [isStoppingDaemon, setIsStoppingDaemon] = useState(false);
     const [isRenamingMachine, setIsRenamingMachine] = useState(false);
     const [isUpdatingWindowsConsoleMode, setIsUpdatingWindowsConsoleMode] = useState(false);
+    const [openWindowsRemoteSessionLaunchModeMenu, setOpenWindowsRemoteSessionLaunchModeMenu] = useState(false);
     const [isRevokingMachine, setIsRevokingMachine] = useState(false);
     const [customPath, setCustomPath] = useState('');
     const [isSpawning, setIsSpawning] = useState(false);
@@ -139,13 +148,15 @@ export default function MachineDetailScreen() {
     const isOnline = !!machine && isMachineOnline(machine);
     const metadata = machine?.metadata;
     const isWindowsMachine = metadata?.platform === 'win32';
-    const windowsRemoteSessionConsoleVisible =
-        isWindowsMachine && (metadata?.windowsRemoteSessionConsole === 'visible');
+    const machineWindowsRemoteSessionLaunchMode = readMachineWindowsRemoteSessionLaunchMode(metadata);
+    const windowsRemoteSessionLaunchModeOverrideEnabled =
+        isWindowsMachine && machineWindowsRemoteSessionLaunchMode !== undefined;
 
     const terminalUseTmux = useSetting('sessionUseTmux');
     const terminalTmuxSessionName = useSetting('sessionTmuxSessionName');
     const terminalTmuxIsolated = useSetting('sessionTmuxIsolated');
     const terminalTmuxTmpDir = useSetting('sessionTmuxTmpDir');
+    const windowsRemoteSessionLaunchModeDefault = useSetting('sessionWindowsRemoteSessionLaunchMode');
     const [terminalTmuxByMachineId, setTerminalTmuxByMachineId] = useSettingMutable('sessionTmuxByMachineId');
     const settings = useSettings();
     const activeServerId = getActiveServerId();
@@ -187,6 +198,22 @@ export default function MachineDetailScreen() {
         enabled: Boolean(machineId && isOnline && !isServerSwitching),
         request: CAPABILITIES_REQUEST_MACHINE_DETAILS,
     });
+    const detectedCapabilitiesSnapshot = React.useMemo(() => {
+        return detectedCapabilities.status === 'loaded'
+            ? detectedCapabilities.snapshot
+            : detectedCapabilities.status === 'loading'
+                ? detectedCapabilities.snapshot
+                : detectedCapabilities.status === 'error'
+                    ? detectedCapabilities.snapshot
+                    : undefined;
+    }, [detectedCapabilities]);
+    const windowsTerminalAvailable =
+        isWindowsMachine
+        && ((detectedCapabilitiesSnapshot?.response.results as Record<string, any> | undefined)?.['tool.windowsTerminal']?.data?.available === true);
+    const effectiveWindowsRemoteSessionLaunchMode = resolveEffectiveWindowsRemoteSessionLaunchMode({
+        machineMetadata: metadata,
+        settings,
+    }).mode;
 
     const tmuxOverride = machineId ? terminalTmuxByMachineId?.[machineId] : undefined;
     const tmuxOverrideEnabled = Boolean(tmuxOverride);
@@ -519,16 +546,20 @@ export default function MachineDetailScreen() {
         }
     };
 
-    const setWindowsRemoteSessionConsoleVisible = useCallback(async (visible: boolean) => {
+    const updateMachineWindowsRemoteSessionLaunchMode = useCallback(async (mode: 'hidden' | 'windows_terminal' | 'console' | null) => {
         if (!machine || !machineId || !machine.metadata) return;
         if (machine.metadata.platform !== 'win32') return;
 
         setIsUpdatingWindowsConsoleMode(true);
         try {
-            const { windowsRemoteSessionConsole: _prev, ...rest } = machine.metadata;
+            const {
+                windowsRemoteSessionLaunchMode: _next,
+                windowsRemoteSessionConsole: _legacy,
+                ...rest
+            } = machine.metadata;
             const updatedMetadata: MachineMetadata = {
                 ...rest,
-                windowsRemoteSessionConsole: visible ? 'visible' : 'hidden',
+                ...(mode ? { windowsRemoteSessionLaunchMode: mode } : {}),
             };
 
             await machineUpdateMetadata(
@@ -547,6 +578,14 @@ export default function MachineDetailScreen() {
         }
     }, [machine, machineId]);
 
+    const setWindowsRemoteSessionLaunchModeOverrideEnabled = useCallback(async (enabled: boolean) => {
+        if (!enabled) {
+            await updateMachineWindowsRemoteSessionLaunchMode(null);
+            return;
+        }
+        await updateMachineWindowsRemoteSessionLaunchMode(effectiveWindowsRemoteSessionLaunchMode ?? windowsRemoteSessionLaunchModeDefault);
+    }, [effectiveWindowsRemoteSessionLaunchMode, updateMachineWindowsRemoteSessionLaunchMode, windowsRemoteSessionLaunchModeDefault]);
+
     const handleStartSession = async (approvedNewDirectoryCreation: boolean = false): Promise<void> => {
         if (!machine || !machineId) return;
         try {
@@ -558,12 +597,14 @@ export default function MachineDetailScreen() {
                 settings: storage.getState().settings,
                 machineId,
             });
+            const preferredAgentId = isAgentId(settings.lastUsedAgent) ? settings.lastUsedAgent : DEFAULT_AGENT_ID;
             const result = await machineSpawnNewSession({
                 machineId: machineId!,
                 directory: absolutePath,
                 approvedNewDirectoryCreation,
+                backendTarget: { kind: 'builtInAgent', agentId: preferredAgentId },
                 terminal,
-                windowsRemoteSessionConsole: resolveWindowsRemoteSessionConsoleFromMachineMetadata(machine.metadata),
+                ...(effectiveWindowsRemoteSessionLaunchMode ? { windowsRemoteSessionLaunchMode: effectiveWindowsRemoteSessionLaunchMode } : {}),
             });
             switch (result.type) {
                 case 'success':
@@ -601,6 +642,19 @@ export default function MachineDetailScreen() {
             setIsSpawning(false);
         }
     };
+
+    const handleBrowseCustomPath = useCallback(async () => {
+        if (!machineId) return;
+        const selected = await openMachinePathBrowserModal({
+            machineId,
+            serverId: activeServerId,
+            initialPath: resolveAbsolutePath(customPath, machine?.metadata?.homeDir ?? ''),
+            title: t('machine.launchNewSessionInDirectory'),
+        });
+        if (!selected) return;
+        setCustomPath(formatPathRelativeToHome(selected, machine?.metadata?.homeDir));
+        setTimeout(() => inputRef.current?.focus(), 50);
+    }, [activeServerId, customPath, machine?.metadata?.homeDir, machineId]);
 
     const pastUsedRelativePath = useCallback((session: Session) => {
         if (!session.metadata) return t('machine.unknownPath');
@@ -733,6 +787,10 @@ export default function MachineDetailScreen() {
                         <ItemGroup title={t('machine.launchNewSessionInDirectory')}>
                         <View style={{ opacity: isMachineOnline(machine) ? 1 : 0.5 }}>
                             <View style={styles.pathInputContainer}>
+                                <PathInputBrowseButton
+                                    onPress={handleBrowseCustomPath}
+                                    disabled={!isMachineOnline(machine)}
+                                />
                                 <View style={[styles.pathInput, { paddingVertical: 8 }]}>
                                     <MultiTextInput
                                         ref={inputRef}
@@ -881,23 +939,55 @@ export default function MachineDetailScreen() {
                 {!!machineId && isWindowsMachine && (
                     <ItemGroup title={t('machine.windows.title')}>
                         <Item
-                            title={t('machine.windows.remoteSessionConsoleTitle')}
+                            title={t('machine.windows.remoteSessionModeOverrideTitle')}
                             subtitle={
-                                windowsRemoteSessionConsoleVisible
-                                    ? t('machine.windows.remoteSessionConsoleVisibleSubtitle')
-                                    : t('machine.windows.remoteSessionConsoleHiddenSubtitle')
+                                windowsRemoteSessionLaunchModeOverrideEnabled
+                                    ? t('machine.windows.remoteSessionModeOverrideEnabledSubtitle')
+                                    : t('machine.windows.remoteSessionModeOverrideDisabledSubtitle')
                             }
                             rightElement={
                                 <Switch
-                                    value={windowsRemoteSessionConsoleVisible}
-                                    onValueChange={setWindowsRemoteSessionConsoleVisible}
+                                    value={windowsRemoteSessionLaunchModeOverrideEnabled}
+                                    onValueChange={setWindowsRemoteSessionLaunchModeOverrideEnabled}
                                     disabled={isUpdatingWindowsConsoleMode}
                                 />
                             }
                             showChevron={false}
                             disabled={isUpdatingWindowsConsoleMode}
-                            onPress={() => setWindowsRemoteSessionConsoleVisible(!windowsRemoteSessionConsoleVisible)}
+                            onPress={() => setWindowsRemoteSessionLaunchModeOverrideEnabled(!windowsRemoteSessionLaunchModeOverrideEnabled)}
                         />
+                        {windowsRemoteSessionLaunchModeOverrideEnabled ? (
+                            <DropdownMenu
+                                open={openWindowsRemoteSessionLaunchModeMenu}
+                                onOpenChange={setOpenWindowsRemoteSessionLaunchModeMenu}
+                                items={WINDOWS_REMOTE_SESSION_LAUNCH_MODE_OPTIONS.map((option) => ({
+                                    id: option.value,
+                                    title: t(option.labelKey),
+                                    subtitle: option.value === 'windows_terminal' && !windowsTerminalAvailable
+                                        ? `${t(option.subtitleKey)} ${t('machine.windows.windowsTerminalUnavailableSuffix')}`
+                                        : t(option.subtitleKey),
+                                    disabled: option.value === 'windows_terminal' && !windowsTerminalAvailable,
+                                }))}
+                                selectedId={machineWindowsRemoteSessionLaunchMode ?? effectiveWindowsRemoteSessionLaunchMode ?? windowsRemoteSessionLaunchModeDefault}
+                                onSelect={(id) => {
+                                    if (id === 'hidden' || id === 'windows_terminal' || id === 'console') {
+                                        void updateMachineWindowsRemoteSessionLaunchMode(id);
+                                    }
+                                }}
+                                itemTrigger={{
+                                    title: t('machine.windows.remoteSessionModeTitle'),
+                                    subtitle: t(
+                                        WINDOWS_REMOTE_SESSION_LAUNCH_MODE_OPTIONS.find((option) =>
+                                            option.value === (machineWindowsRemoteSessionLaunchMode ?? effectiveWindowsRemoteSessionLaunchMode ?? windowsRemoteSessionLaunchModeDefault)
+                                        )?.subtitleKey ?? 'windowsRemoteSessionLaunchMode.hiddenSubtitle',
+                                    ),
+                                    icon: <Ionicons name="logo-windows" size={29} color={theme.colors.accent.blue} />,
+                                }}
+                                rowKind="item"
+                                connectToTrigger
+                                variant="default"
+                            />
+                        ) : null}
                     </ItemGroup>
                 )}
 

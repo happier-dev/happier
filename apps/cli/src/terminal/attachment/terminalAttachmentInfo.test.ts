@@ -58,6 +58,34 @@ describe('terminalAttachmentInfo', () => {
     }
   });
 
+  it('reads windows terminal attachment info', async () => {
+    const dir = tmp.dirSync({ unsafeCleanup: true });
+    try {
+      await writeTerminalAttachmentInfo({
+        happyHomeDir: dir.name,
+        sessionId: 'sess_windows_1',
+        terminal: {
+          mode: 'windows_terminal',
+          requested: 'windows_terminal',
+          windows: {
+            host: 'windows_terminal',
+            windowId: 'happy-session-1',
+            pid: 77,
+          },
+        },
+      });
+
+      const info = await readTerminalAttachmentInfo({
+        happyHomeDir: dir.name,
+        sessionId: 'sess_windows_1',
+      });
+      expect(info?.terminal.mode).toBe('windows_terminal');
+      expect((info?.terminal as any)?.windows?.windowId).toBe('happy-session-1');
+    } finally {
+      dir.removeCallback();
+    }
+  });
+
   it('stores sessionId using a filename-safe encoding to prevent path traversal', async () => {
     const dir = tmp.dirSync({ unsafeCleanup: true });
     try {

@@ -3,6 +3,7 @@ import * as React from 'react';
 import { t } from '@/text';
 import { Modal } from '@/modal';
 import { sync } from '@/sync/sync';
+import { useApplySettings } from '@/sync/store/settingsWriters';
 import { storage } from '@/sync/domains/state/storage';
 import { machineSpawnNewSession } from '@/sync/ops';
 import { resolveTerminalSpawnOptions } from '@/sync/domains/settings/terminalSettings';
@@ -15,20 +16,24 @@ import { getSecretSatisfaction } from '@/utils/secrets/secretSatisfaction';
 import type { SecretChoiceByProfileIdByEnvVarName } from '@/utils/secrets/secretRequirementApply';
 import { clearNewSessionDraft } from '@/sync/domains/state/persistence';
 import { getBuiltInProfile } from '@/sync/domains/profiles/profileUtils';
-import type { AIBackendProfile, SavedSecret, Settings } from '@/sync/domains/settings/settings';
+import type { AIBackendProfile } from '@/sync/domains/profiles/profileCompatibility';
+import type { Settings } from '@/sync/domains/settings/settings';
+import type { SavedSecret } from '@/sync/domains/settings/savedSecretTypes';
 import type { NewSessionAutomationDraft } from '@/sync/domains/automations/automationDraft';
-import { resolveWindowsRemoteSessionConsoleFromMachineMetadata } from '@/sync/domains/session/spawn/windowsRemoteSessionConsole';
+import { resolveEffectiveWindowsRemoteSessionLaunchMode } from '@/sync/domains/session/spawn/windowsRemoteSessionLaunchMode';
 import { getAgentCore, type AgentId } from '@/agents/catalog/catalog';
 import { buildSpawnEnvironmentVariablesFromUiState, buildSpawnSessionExtrasFromUiState, getAgentResumeExperimentsFromSettings, getNewSessionPreflightIssues } from '@/agents/catalog/catalog';
 import { transformProfileToEnvironmentVars } from '@/components/sessions/new/modules/profileHelpers';
 import type { UseMachineEnvPresenceResult } from '@/hooks/machine/useMachineEnvPresence';
 import { getMachineCapabilitiesSnapshot } from '@/hooks/server/useMachineCapabilitiesCache';
 import type { PermissionMode, ModelMode } from '@/sync/domains/permissions/permissionTypes';
-import { SPAWN_SESSION_ERROR_CODES } from '@happier-dev/protocol';
+import { SPAWN_SESSION_ERROR_CODES, type BackendTargetRefV1, type WindowsRemoteSessionLaunchMode } from '@happier-dev/protocol';
 import { parsePermissionIntentAlias } from '@happier-dev/agents';
 import { nowServerMs } from '@/sync/runtime/time';
 import { buildAutomationTemplate } from '@/components/sessions/new/modules/buildAutomationTemplate';
 import { encodeAutomationTemplateCiphertextForAccount } from '@/sync/domains/automations/encodeAutomationTemplateCiphertextForAccount';
+import { resolveSessionComposerSend } from '@/sync/domains/input/slashCommands/resolveSessionComposerSend';
+import { expandPromptTemplateInvocation } from '@/sync/domains/input/slashCommands/expandPromptTemplateInvocation';
 import {
     buildAutomationScheduleFromDraft,
     normalizeAutomationDescription,
@@ -38,6 +43,11 @@ import {
 import { delay } from '@/utils/timing/time';
 import { showDaemonUnavailableAlert } from '@/utils/errors/daemonUnavailableAlert';
 import { useMountedRef } from '@/hooks/ui/useMountedRef';
+import type { SessionMcpSelectionV1 } from '@happier-dev/protocol';
+
+type MutableSettingsDelta = {
+    -readonly [TKey in keyof Settings]?: Settings[TKey];
+};
 
 export function useCreateNewSession(params: Readonly<{
     router: { push: (options: any) => void; replace: (path: any, options?: any) => void };
@@ -58,6 +68,8 @@ export function useCreateNewSession(params: Readonly<{
     recentMachinePaths: Array<{ machineId: string; path: string }>;
 
     agentType: AgentId;
+    backendTarget?: BackendTargetRefV1;
+    transcriptStorage?: 'persisted' | 'direct';
     permissionMode: PermissionMode;
     modelMode: ModelMode;
     /**
@@ -70,6 +82,8 @@ export function useCreateNewSession(params: Readonly<{
     resumeSessionId: string;
     agentNewSessionOptions?: Record<string, unknown> | null;
     automationDraft?: NewSessionAutomationDraft | null;
+    mcpSelection?: SessionMcpSelectionV1 | null;
+    windowsRemoteSessionLaunchModeOverride?: WindowsRemoteSessionLaunchMode | null;
 
     machineEnvPresence: UseMachineEnvPresenceResult;
     secrets: SavedSecret[];
@@ -84,6 +98,7 @@ export function useCreateNewSession(params: Readonly<{
     handleCreateSession: (opts?: Readonly<{ initialMessage?: 'send' | 'skip'; afterCreated?: (sessionId: string) => void | Promise<void> }>) => void;
 }> {
     const mountedRef = useMountedRef();
+    const applySettings = useApplySettings();
     const handleCreateSession = React.useCallback(async (opts?: Readonly<{ initialMessage?: 'send' | 'skip'; afterCreated?: (sessionId: string) => void | Promise<void> }>) => {
             if (!params.selectedMachineId) {
                 Modal.alert(t('common.error'), t('newSession.noMachineSelected'));
@@ -134,15 +149,14 @@ export function useCreateNewSession(params: Readonly<{
 
             // Keep prod session creation behavior unchanged:
             // only persist/apply profiles & model when an explicit opt-in flag is enabled.
-            const settingsUpdate: Parameters<typeof sync.applySettings>[0] = {
+            const settingsUpdate: MutableSettingsDelta = {
                 recentMachinePaths: updatedPaths,
                 lastUsedAgent: params.agentType,
-                lastUsedPermissionMode: params.permissionMode,
             };
             if (profilesActive) {
                 settingsUpdate.lastUsedProfile = params.selectedProfileId;
             }
-            sync.applySettings(settingsUpdate);
+            applySettings(settingsUpdate);
 
             // Get environment variables from selected profile
             let environmentVariables = undefined;
@@ -221,6 +235,7 @@ export function useCreateNewSession(params: Readonly<{
                 environmentVariables,
                 newSessionOptions: params.agentNewSessionOptions,
             });
+            const backendTarget: BackendTargetRefV1 = params.backendTarget ?? { kind: 'builtInAgent', agentId: params.agentType };
 
             const connectedServices = (params.agentNewSessionOptions as any)?.connectedServices;
 
@@ -266,7 +281,11 @@ export function useCreateNewSession(params: Readonly<{
                         ? params.modelMode
                         : undefined;
                 const spawnModelUpdatedAt = spawnModelId ? spawnPermissionModeUpdatedAt : undefined;
-                const windowsRemoteSessionConsole = resolveWindowsRemoteSessionConsoleFromMachineMetadata(params.selectedMachine?.metadata);
+                const windowsRemoteSessionLaunchMode = resolveEffectiveWindowsRemoteSessionLaunchMode({
+                    machineMetadata: params.selectedMachine?.metadata,
+                    settings: params.settings,
+                    sessionOverride: params.windowsRemoteSessionLaunchModeOverride ?? undefined,
+                }).mode;
 
                 if (params.automationDraft?.enabled === true) {
                     const schedule = buildAutomationScheduleFromDraft(params.automationDraft);
@@ -274,6 +293,7 @@ export function useCreateNewSession(params: Readonly<{
                     const template = buildAutomationTemplate({
                         directory: actualPath,
                         agentType: params.agentType,
+                        transcriptStorage: params.transcriptStorage,
                         ...(params.sessionPrompt.trim().length > 0 ? { prompt: params.sessionPrompt.trim() } : {}),
                         ...(profilesActive ? { profileId: params.selectedProfileId ?? '' } : {}),
                         ...(environmentVariables ? { environmentVariables } : {}),
@@ -281,8 +301,9 @@ export function useCreateNewSession(params: Readonly<{
                         permissionMode: spawnPermissionMode,
                         permissionModeUpdatedAt: spawnPermissionModeUpdatedAt,
                         ...(spawnModelId ? { modelId: spawnModelId, modelUpdatedAt: spawnModelUpdatedAt } : {}),
+                        ...(params.mcpSelection ? { mcpSelection: params.mcpSelection } : {}),
                         ...(terminal ? { terminal } : {}),
-                        ...(windowsRemoteSessionConsole ? { windowsRemoteSessionConsole } : {}),
+                        ...(windowsRemoteSessionLaunchMode ? { windowsRemoteSessionLaunchMode } : {}),
                         ...(connectedServices ? { connectedServices } : {}),
                         ...buildSpawnSessionExtrasFromUiState({
                             agentId: params.agentType,
@@ -320,7 +341,8 @@ export function useCreateNewSession(params: Readonly<{
                           serverId: resolvedTargetServerId,
                           directory: actualPath,
                           approvedNewDirectoryCreation: true,
-                          agent: params.agentType,
+                          backendTarget,
+                          transcriptStorage: params.transcriptStorage,
                           profileId: profilesActive ? (params.selectedProfileId ?? '') : undefined,
                           environmentVariables,
                           resume: resumeId,
@@ -328,13 +350,14 @@ export function useCreateNewSession(params: Readonly<{
                           permissionModeUpdatedAt: spawnPermissionModeUpdatedAt,
                           ...(spawnModelId ? { modelId: spawnModelId, modelUpdatedAt: spawnModelUpdatedAt } : {}),
                           ...(connectedServices ? { connectedServices } : {}),
+                          ...(params.mcpSelection ? { mcpSelection: params.mcpSelection } : {}),
                           ...buildSpawnSessionExtrasFromUiState({
                           agentId: params.agentType,
                           settings: params.settings,
                           resumeSessionId: params.resumeSessionId,
                       }),
                       terminal,
-                      windowsRemoteSessionConsole,
+                      windowsRemoteSessionLaunchMode,
                   });
 
                 if (result.type === 'success' && result.sessionId) {
@@ -368,7 +391,34 @@ export function useCreateNewSession(params: Readonly<{
                 // Send initial message if provided
                 const shouldSendInitialMessage = (opts?.initialMessage ?? 'send') !== 'skip';
                 if (shouldSendInitialMessage && params.sessionPrompt.trim()) {
-                    await sync.sendMessage(result.sessionId, params.sessionPrompt);
+                    const promptInvocationsV1 = storage.getState().settings.promptInvocationsV1;
+                    const resolvedInitialMessage = resolveSessionComposerSend({
+                        input: params.sessionPrompt,
+                        executionRunsEnabled: false,
+                        promptInvocationsV1,
+                    });
+
+                    let initialMessageText = params.sessionPrompt;
+                    if (resolvedInitialMessage.kind === 'template') {
+                        initialMessageText = await expandPromptTemplateInvocation({
+                            targetArtifactId: resolvedInitialMessage.targetArtifactId,
+                            argsText: resolvedInitialMessage.rest,
+                        });
+                    } else if (resolvedInitialMessage.kind === 'send') {
+                        initialMessageText = resolvedInitialMessage.text;
+                    } else if (resolvedInitialMessage.kind === 'noop') {
+                        initialMessageText = '';
+                    }
+
+                    if (initialMessageText.trim().length > 0) {
+                        await sync.sendMessage(
+                            result.sessionId,
+                            initialMessageText,
+                            undefined,
+                            undefined,
+                            profilesActive ? { profileId: params.selectedProfileId ?? '' } : undefined,
+                        );
+                    }
                 }
 
                 if (opts?.afterCreated) {
@@ -433,6 +483,7 @@ export function useCreateNewSession(params: Readonly<{
             params.setIsCreating(false);
         }
         }, [
+            applySettings,
             mountedRef,
             params.agentType,
             params.machineEnvPresence.meta,
@@ -451,7 +502,9 @@ export function useCreateNewSession(params: Readonly<{
         params.targetServerId,
           params.selectedSecretIdByProfileIdByEnvVarName,
           params.selectedMachine?.metadata?.platform,
+          params.selectedMachine?.metadata?.windowsRemoteSessionLaunchMode,
           params.selectedMachine?.metadata?.windowsRemoteSessionConsole,
+          params.windowsRemoteSessionLaunchModeOverride,
           params.selectedMachineId,
           params.selectedPath,
           params.selectedProfileId,

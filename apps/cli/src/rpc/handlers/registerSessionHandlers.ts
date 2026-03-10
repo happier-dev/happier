@@ -1,9 +1,8 @@
 import type { TerminalSpawnOptions } from '@/terminal/runtime/terminalConfig';
 import type { PermissionMode } from '@/api/types';
-import type { CatalogAgentId } from '@/backends/types';
 import type { RpcHandlerRegistrar } from '@/api/rpc/types';
 import type { Metadata } from '@/api/types';
-import type { SpawnSessionErrorCode } from '@happier-dev/protocol';
+import type { BackendTargetRefV1, SessionMcpSelectionV1, SpawnSessionErrorCode } from '@happier-dev/protocol';
 export { SPAWN_SESSION_ERROR_CODES } from '@happier-dev/protocol';
 export type { SpawnSessionErrorCode } from '@happier-dev/protocol';
 import { registerCapabilitiesHandlers } from './capabilities';
@@ -13,6 +12,7 @@ import { registerSessionLogTailHandler } from './sessionLogTail';
 import { registerAttachmentsUploadHandlers } from './attachmentsUpload';
 import { registerRipgrepHandler } from './ripgrep';
 import { registerDifftasticHandler } from './difftastic';
+import { registerSessionUserMessageSendHandler } from './sessionUserMessageSend';
 
 /*
  * Spawn Session Options and Result
@@ -47,11 +47,6 @@ export interface SpawnSessionOptions {
      */
     resume?: string;
     /**
-     * Experimental: allow Codex vendor resume for this spawn.
-     * This is evaluated by the daemon BEFORE spawning the child process.
-     */
-    experimentalCodexResume?: boolean;
-    /**
      * Experimental: switch Codex sessions to use ACP (codex-acp) instead of MCP.
      * This is evaluated by the daemon BEFORE spawning the child process.
      */
@@ -79,7 +74,7 @@ export interface SpawnSessionOptions {
     modelId?: string;
     modelUpdatedAt?: number;
     approvedNewDirectoryCreation?: boolean;
-    agent?: CatalogAgentId;
+    backendTarget?: BackendTargetRefV1;
     token?: string;
     /**
      * Daemon/runtime terminal configuration for the spawned session (non-secret).
@@ -94,6 +89,7 @@ export interface SpawnSessionOptions {
      *
      * Note: this is intentionally scoped to daemon-spawned remote sessions and does not affect tool subprocesses.
      */
+    windowsRemoteSessionLaunchMode?: 'hidden' | 'windows_terminal' | 'console';
     windowsRemoteSessionConsole?: 'hidden' | 'visible';
     /**
      * Session-scoped profile identity for display/debugging across devices.
@@ -122,6 +118,19 @@ export interface SpawnSessionOptions {
      * and decrypt/materialize them locally for the provider runtime.
      */
     connectedServices?: unknown;
+    /**
+     * Optional per-session MCP selection overlay for Happier-managed MCP servers.
+     * This is stored in session metadata and applied at runner startup.
+     */
+    mcpSelection?: SessionMcpSelectionV1;
+
+    /**
+     * Controls whether the session transcript is committed to Happier server storage ("persisted")
+     * or treated as provider-backed only ("direct").
+     *
+     * When set to "direct", the daemon will signal the spawned runner to suppress transcript commits.
+     */
+    transcriptStorage?: 'persisted' | 'direct';
 }
 
 export type SpawnSessionResult =
@@ -137,6 +146,11 @@ export function registerSessionHandlers(
     workingDirectory: string,
     opts?: Readonly<{
         getSessionMetadata?: () => Metadata | null;
+        enqueueSessionUserMessage?: ((request: {
+            text: string;
+            localId?: string;
+            meta: Record<string, unknown>;
+        }) => Promise<void> | void) | null;
     }>,
 ) {
     let additionalAllowedReadDirs: string[] = [];
@@ -155,4 +169,7 @@ export function registerSessionHandlers(
     registerAttachmentsUploadHandlers(rpcHandlerManager, { workingDirectory, setAdditionalAllowedReadDirs });
     registerRipgrepHandler(rpcHandlerManager, workingDirectory);
     registerDifftasticHandler(rpcHandlerManager, workingDirectory);
+    registerSessionUserMessageSendHandler(rpcHandlerManager, {
+        enqueueSessionUserMessage: opts?.enqueueSessionUserMessage ?? null,
+    });
 }
