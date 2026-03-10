@@ -1,0 +1,219 @@
+---
+title: Attach to a running session
+description: Start a session from the Happier app, attach to it later in your terminal, and switch between remote and local control.
+---
+
+This guide explains how to start a supported session from the Happier app, leave it running on your machine, and then reconnect to that same session later from a terminal.
+
+This is the main workflow behind:
+
+- starting a session from the app UI while you are away from your terminal,
+- reconnecting later with `happier attach <session-id>`, and
+- switching the same session between **remote control** (from Happier) and **local control** (from the provider TUI in your terminal).
+
+## When to use it
+
+This workflow is useful when you want to:
+
+- start a session from the web or desktop app,
+- let the agent begin working immediately,
+- come back later and continue from a shell on the same machine,
+- switch back to the app without losing the session history.
+
+Common examples:
+
+- start a **Codex** or **Claude** session from the app, then attach later from your terminal,
+- start an **OpenCode** session from the app, then reopen it locally without creating a second Happier session,
+- begin a task from the UI, then switch to local mode when you want to use the provider’s native TUI directly,
+- leave a session running in the background and reconnect later without starting a new one.
+
+## How attach works
+
+`happier attach` reconnects to a session that is already running.
+
+```bash
+happier attach <session-id>
+```
+
+What happens depends on how that session was started:
+
+- **tmux-backed session**: Happier reattaches you to the live tmux session
+- **Windows Terminal session**: Happier focuses the existing Windows Terminal host for that session
+- **Windows Console session**: Happier brings the existing console host to the foreground
+- **provider-native attach session**: Happier uses the provider’s own attach flow for that session
+
+`happier attach` reconnects to the existing session. It does not start a new one.
+
+## Requirements
+
+Attach support depends on the session type.
+
+### tmux-backed sessions
+
+This is the classic attach flow for providers such as **Claude** and **Codex** on machines where `tmux` is available.
+
+Requirements:
+
+- the session must run on a machine where Happier CLI/daemon is available,
+- `tmux` integration must be enabled before the session starts,
+- you must attach from the same machine that owns the running session,
+- you must be using the same Happier account/server profile that started the session.
+
+`tmux` keeps the provider process alive after the app starts it, so Happier can reconnect to it later.
+
+### Windows interactive-host sessions
+
+On **Windows**, tmux is often not the right answer. Happier also supports Windows-specific remote session modes:
+
+- **Hidden** — best for purely remote usage from the app
+- **Windows Terminal** — best when you want to come back later and continue in a Windows Terminal window
+- **Console** — starts the session in a regular visible console host
+
+If the session was started in **Windows Terminal** or **Console** mode, `happier attach <session-id>` focuses that existing interactive host instead of using tmux.
+
+### Provider-native attach sessions
+
+Some providers can attach through their own native session model.
+
+For example, **OpenCode** can reopen a supported existing provider session without relying on tmux. In practice, this still means attaching from a terminal context that can reach the same underlying OpenCode machine/session.
+
+## Choose how app-started sessions should launch
+
+### Enable tmux-backed starts
+
+Use this when you want tmux-backed attachable sessions on machines where tmux is available.
+
+In the app:
+
+1. Open **Settings**
+2. Open **Session**
+3. Enable the **tmux integration** option
+
+Once enabled, new supported sessions started from the app are launched inside `tmux` so Happier can reattach them later.
+
+### Choose the default Windows mode
+
+For Windows machines:
+
+1. Open **Settings**
+2. Open **Session**
+3. In the **Windows** section, choose the default remote session mode:
+   - **Hidden**
+   - **Windows Terminal**
+   - **Console**
+
+You can then refine that default in two places:
+
+- **Per machine**: open the machine details screen and override the global Windows mode for that machine
+- **Per session**: in the new-session flow, use the Windows mode chip when the selected machine is Windows
+
+Precedence is:
+
+1. per-session choice
+2. machine override
+3. global Windows default
+
+## Typical flow
+
+The most common flow looks like this:
+
+1. Start the session in the Happier app
+2. Use it normally in **remote** mode
+3. Run `happier attach <session-id>` on the owning machine
+4. Switch to **local** mode when you want direct provider-TUI control
+5. Continue working in the terminal
+6. Switch back to **remote** mode later to continue from the app
+
+If you send a message from the app while the session is in local mode, Happier may queue it first and deliver it once the session is ready to resume remote processing.
+
+## Remote control vs local control
+
+The same session can move between two control styles:
+
+- **Remote control**: you interact from Happier’s UI and Happier drives the provider in the background
+- **Local control**: you interact from the provider’s own terminal UI after attaching locally
+
+This is a control switch inside the same session, not a new session. The transcript, session id, and session settings stay the same.
+
+## Supported providers
+
+### Claude
+
+- Claude supports local and remote control in Happier.
+- In local mode, you use the normal Claude terminal UI directly.
+- On machines with `tmux`, this usually uses tmux-backed attach.
+- On Windows, use Happier’s Windows remote session modes instead of expecting tmux.
+- If **local permission bridge** is enabled, some permission prompts can still appear in Happier while the session is locally attached.
+
+See also: [Claude](../providers/claude)
+
+### Codex
+
+- Codex supports app-started sessions plus later terminal attachment.
+- After attaching, you can switch into local control and continue from the Codex TUI directly.
+- On machines with `tmux`, this usually uses tmux-backed attach.
+- On Windows, use Happier’s Windows remote session modes instead of expecting tmux.
+- Switching back to remote lets Happier take over again without losing the session.
+
+See also: [Codex](../providers/codex)
+
+### OpenCode
+
+- OpenCode supports app-started sessions plus later terminal attachment.
+- For supported sessions, Happier can use OpenCode’s native attach flow instead of tmux.
+- The session remains the same Happier session while you move between remote and local control.
+
+See also: [OpenCode](../providers/opencode)
+
+## What happens to messages while switching
+
+Happier keeps one canonical session state. During switching:
+
+- transcript history remains shared,
+- permission mode follows the session,
+- queued messages stay attached to the session,
+- app-sent messages may wait in the pending queue if the session is not ready to process them immediately.
+
+This is expected. It prevents messages from being lost during mode switches or reconnects.
+
+## Troubleshooting
+
+### `happier attach` does not find the session
+
+Check that:
+
+- the session was started with an attachable mode before it began running,
+- the session was started on this same machine,
+- you are authenticated against the same Happier server/account.
+
+### The session starts in the app but cannot be attached later
+
+This usually means one of the following:
+
+- the session was started in a non-attachable mode such as **Hidden** on Windows,
+- the session was not launched inside `tmux` on a tmux-based machine,
+- the Windows interactive host is no longer running,
+- the local machine/session ownership does not match the attach attempt.
+
+### On Windows, `Windows Terminal` is unavailable
+
+If Happier cannot use **Windows Terminal** on that machine:
+
+- install or update Windows Terminal, or
+- choose **Console** or **Hidden** instead.
+
+### The app briefly shows queued or waiting states during switching
+
+Short “waiting”, “pending”, or “resume” states during local ↔ remote switching are normal. Happier may wait for the provider process, transcript source, or daemon heartbeat to settle before the UI fully reflects the new mode.
+
+## Related guides
+
+- [Resume inactive sessions](./session-resume)
+- [Session settings](./session-settings)
+- [CLI](../clients/cli)
+- [Permissions](./permissions)
+- [Pending queue](./pending-queue)
+- [Windows](../platforms/windows)
+- [Claude](../providers/claude)
+- [Codex](../providers/codex)
+- [OpenCode](../providers/opencode)

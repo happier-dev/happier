@@ -1,0 +1,183 @@
+---
+title: Session settings
+description: Configure session behavior, permissions, transcript presentation, and tool rendering from the app.
+---
+
+The **Session** settings screen controls how Happier sessions behave in the app.
+
+Recent versions split the advanced controls into focused sub-screens so the root page stays easier to scan:
+
+- **Permissions**
+- **Transcript**
+- **Tool Rendering**
+
+The root session settings screen keeps the most common session-wide controls in one place and links to the more detailed sections when needed.
+
+## Where to find it
+
+Open:
+
+1. **Settings**
+2. **Session**
+
+From there, use the dedicated entries to open:
+
+- **Permissions**
+- **Transcript**
+- **Tool Rendering**
+
+## What stays on the main Session screen
+
+The root Session screen keeps the controls that affect how you work day to day:
+
+- **Session list** behavior such as density, grouping, hidden inactive sessions, and tags
+- **Message sending** behavior such as interrupt vs queue/pending strategies
+- **Web-only input behavior** such as **Enter to send**
+- **Message history** scope as a dropdown
+- **Input layout** preferences
+- **Replay / resume** defaults
+- **Terminal connect** options
+- **Attach / local-control launch defaults** such as tmux and Windows remote session mode
+
+This keeps the root screen focused on common workflow choices instead of mixing them with large advanced settings groups.
+
+## Attach and local-control settings
+
+The root Session screen also contains the defaults that control how app-started sessions can later be continued from a terminal.
+
+### tmux integration
+
+Enable **tmux integration** when you want supported sessions to start inside `tmux`.
+
+Use this on machines where:
+
+- `tmux` is installed,
+- you want to start from the app first, then later run `happier attach <session-id>` from a shell,
+- you want providers such as **Claude** or **Codex** to reopen inside the same tmux-backed local host.
+
+### Windows remote session mode
+
+For Windows machines, the Session screen also exposes a **default Windows remote session mode**.
+
+The available modes are:
+
+- **Hidden** — keep the session in the background for remote app usage
+- **Windows Terminal** — start the session in a dedicated Windows Terminal host so you can later continue there locally
+- **Console** — start the session in a visible console host
+
+This is the global default. You can still override it:
+
+- per machine from the machine details screen
+- per session from the new-session flow when the selected machine is Windows
+
+Precedence is:
+
+1. per-session choice
+2. machine override
+3. global Session setting
+
+For the full workflow, see [Attach to a running session](./attach-to-session).
+
+## Permissions screen
+
+The dedicated **Permissions** screen separates two different concerns:
+
+### 1. Default permissions
+
+This section shows one row per enabled backend choice and lets you choose the default permission mode for new sessions.
+
+Important details:
+
+- the list is **dynamic**
+- it comes from the resolved backend catalog
+- built-in backends and configured **Custom ACP** backends can both appear here
+- if a backend choice is not enabled for your account/build/settings, it should not appear
+
+### 2. Apply permission changes
+
+This is now a separate dropdown group.
+
+It controls **when** a permission change should take effect for a running session:
+
+- **Immediate**
+- **Next prompt**
+
+Use **Immediate** when you want the running session to react right away. Use **Next prompt** when you want the change to arm for the next turn instead of changing the current one mid-flight.
+
+The same screen can also show related permission/session-default controls such as where prompts appear and transcript-storage defaults for backend choices when those features are available.
+
+Full guide: [Permissions](./permissions)
+
+## Transcript screen
+
+The **Transcript** screen controls how session conversations are presented:
+
+- transcript layout
+- thinking display
+- tool chrome mode
+- tool grouping / collapsed preview behavior
+- motion / scrolling defaults
+- code and diff presentation
+
+This is a presentation layer. It does not change provider behavior or tool permissions.
+
+Some transcript-related defaults, such as transcript-storage defaults for new sessions, are still backend-aware. That means a built-in backend and a configured ACP backend can have different default behavior.
+
+## Tool Rendering screen
+
+The **Tool Rendering** screen controls how tool calls appear in the transcript.
+
+It contains:
+
+- default tool-detail behavior
+- per-tool overrides
+- separate overrides for the expanded/full view
+
+This is useful when you want different defaults for tools like:
+
+- `Bash`
+- `Read`
+- `Edit`
+- `Diff`
+- `WebSearch`
+
+For example, you might keep most tools compact in the timeline but still expand `Diff` or `Patch` more aggressively when opened.
+
+Related guide: [Tool timeline & normalization](./tool-timeline)
+
+## Web-only session behavior
+
+On web, Session settings also includes input behavior that used to live elsewhere:
+
+### Enter to send
+
+Controls whether pressing Enter sends the current message directly.
+
+Use this when you want more chat-like behavior on desktop/web.
+
+### Message history
+
+Message history is now a dropdown instead of an inline toggle pair.
+
+The options let you choose whether composer history is kept:
+
+- per session, or
+- globally
+
+This makes the current selection easier to understand at a glance.
+
+## Why this structure changed
+
+The goal of the split is simple:
+
+- keep the main Session page fast to scan
+- move high-detail controls into dedicated screens
+- make advanced settings easier to reason about
+- preserve the same underlying logic instead of creating separate implementations
+
+If you are looking for a setting and no longer see it inline on the root Session screen, it most likely moved into one of the dedicated sub-screens rather than being removed.
+
+## Related guides
+
+- [ACP backends](./acp-backends)
+- [Profiles](./profiles)

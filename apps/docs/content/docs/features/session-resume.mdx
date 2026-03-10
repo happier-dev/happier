@@ -1,0 +1,187 @@
+---
+title: Resume inactive sessions
+description: Resume an inactive Happier session from the app, web UI, or CLI without starting over.
+---
+
+Session resume lets you continue an **inactive Happier session** by asking the provider backend to reopen the same provider session, then reconnecting that provider session to the same Happier session.
+
+This is different from:
+
+- **Attach**: reconnecting to a session that is still running locally through its live terminal/provider host
+- **Browse Direct sessions**: opening a provider-native session that Happier does not own yet
+- **Starting a new session**: creating a fresh provider session with no vendor resume
+
+## What “resume” means in Happier
+
+In Happier, resume is a strict workflow:
+
+1. Happier finds the existing Happier session
+2. Happier checks whether that session is actually **vendor-resumable**
+3. Happier asks the backend/provider to resume the same vendor session
+4. If that vendor resume fails, Happier shows an error instead of silently starting a new session
+
+That strict behavior matters because it keeps one session identity and one transcript source of truth.
+
+When a synced Happier session resumes, Happier continues the existing session. It does **not** create a second imported-history pass just because you resumed it.
+
+## When a session is resumable
+
+A session is resumable only when all of these are true:
+
+- the session is a normal Happier-managed session
+- it is currently **inactive**
+- it is **not archived**
+- Happier has a valid provider resume id stored in session metadata
+- the selected backend/provider supports resume for that session
+- your current settings do not disable that backend
+
+If any of those checks fail, Happier treats the session as **not resumable** and shows that clearly in the UI or CLI.
+
+## App and web behavior
+
+In the app or web UI, an inactive session can still accept input **only if it is resumable**.
+
+Typical behavior:
+
+- **Inactive + resumable + machine reachable**: you can send a message and Happier resumes the session first
+- **Inactive + not resumable**: input is disabled
+- **Inactive + machine offline**: input is disabled until the owning machine is reachable again
+
+This is why some inactive sessions still look “ready”, while others show a blocked or offline state.
+
+## CLI behavior
+
+Happier CLI exposes two main workflows for resume.
+
+### List sessions
+
+```bash
+happier session list
+```
+
+By default this prints a table with:
+
+- shortened session id
+- agent
+- last updated time
+- active state
+- resume status
+- title
+- working directory path
+
+Useful variants:
+
+```bash
+happier session list --resumable
+happier session list --plain
+happier session list --json
+```
+
+Use:
+
+- `--resumable` to show only sessions that can currently be resumed
+- `--plain` for the older one-line output format
+- `--json` for scripting
+
+### Resume interactively
+
+```bash
+happier resume
+```
+
+In a real TTY, Happier opens an interactive selector and shows resumable inactive sessions sorted by recent activity.
+
+If your terminal does not support the interactive selector, Happier tells you to use `happier session list --resumable` and then resume by id.
+
+### Resume by id
+
+```bash
+happier resume <session-id>
+```
+
+You can pass a full session id or an unambiguous prefix.
+
+Happier then:
+
+1. resolves the session
+2. validates that it is inactive, not archived, and resumable
+3. restores the session’s working directory
+4. resumes the provider session
+5. reconnects that provider session to the same Happier session
+
+If the session is active already, archived, missing its working directory, or not vendor-resumable, the command fails with a clear error.
+
+## Resume status in the CLI table
+
+The `RESUME` column is a quick summary:
+
+- `yes`: resumable
+- `no(unsupported)`: that agent/backend does not support vendor resume
+- `no(missing-id)`: the session does not have the provider resume id Happier needs
+- `no(disabled)`: resume exists for that backend, but your current settings disable it
+- `no(off)`: account settings disabled that backend entirely
+
+## Codex-specific behavior
+
+Codex resume in Happier is **ACP-only**.
+
+Important points:
+
+- Codex now defaults to **ACP** in Happier
+- legacy `mcp_resume` behavior is gone
+- if you opt Codex back to plain **MCP**, Codex sessions are no longer resumable
+- for new Codex sessions, Happier may fall back from ACP to MCP if ACP is unavailable
+- for an explicit **resume**, Happier stays strict and errors instead of falling back
+
+So for Codex, “can I resume this session?” depends both on the session metadata and on whether Codex ACP is enabled in your settings.
+
+## Resume vs attach
+
+Use **resume** when the session is inactive and the provider supports reopening that provider session.
+
+Use **attach** when the session is still running locally and you want to reconnect to the live process:
+
+```bash
+happier attach <session-id>
+```
+
+If you are unsure:
+
+- use `attach` for a still-running local session
+- use `resume` for an inactive session you want to continue
+
+Attach can mean different things depending on how the session was started:
+
+- tmux reattach,
+- focusing an existing Windows Terminal or Console host,
+- or using a provider-native attach flow when the provider supports it.
+
+## Resume vs Direct sessions
+
+Direct sessions are provider-native sessions that Happier can inspect or follow, but that Happier does not fully own yet.
+
+For those sessions:
+
+- browsing/opening happens through the **Direct** sessions flow
+- syncing/importing happens through **Take over + Sync**
+- normal Happier resume applies after the session is a synced Happier session and has valid vendor-resume metadata
+
+## Things to check if resume is unavailable
+
+If a session does not resume, check:
+
+- is the session inactive rather than already running?
+- is it archived?
+- does it belong to the provider/backend you think it does?
+- are you on the correct Happier server/account profile?
+- for Codex, is **ACP** enabled?
+- is the owning machine online and reachable from Happier?
+
+## Related guides
+
+- [Attach to a running session](./attach-to-session)
+- [Synced and direct sessions](./direct-sessions)
+- [Browse and import provider sessions](./browse-and-import-sessions)
+- [CLI](../clients/cli)
+- [Codex](../providers/codex)
+- [Permissions](./permissions)
