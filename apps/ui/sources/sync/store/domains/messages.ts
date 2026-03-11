@@ -17,8 +17,8 @@ function normalizeSeq(seq: unknown): number | null {
 }
 
 function compareTranscriptMessagesOldestFirst(a: Message, b: Message): number {
-    const aSeq = normalizeSeq((a as any).seq);
-    const bSeq = normalizeSeq((b as any).seq);
+    const aSeq = normalizeSeq(a.seq);
+    const bSeq = normalizeSeq(b.seq);
     if (aSeq !== null && bSeq !== null && aSeq !== bSeq) {
         return aSeq - bSeq;
     }
@@ -36,6 +36,7 @@ export type SessionMessages = {
     messagesById: Record<string, Message>;
     // Back-compat alias for older call sites (do not use in new code).
     messagesMap: Record<string, Message>;
+    draftsByLocalId: Record<string, { text: string; segmentKind: 'assistant' | 'thinking'; sidechainId: string | null; updatedAtMs: number }>;
     /**
      * IMPORTANT ARCHITECTURE NOTE:
      * `messagesById` is intentionally mutated in-place for streaming performance.
@@ -56,6 +57,13 @@ export type MessagesDomain = {
     sessionMessages: Record<string, SessionMessages>;
     isMutableToolCall: (sessionId: string, callId: string) => boolean;
     applyMessages: (sessionId: string, messages: NormalizedMessage[]) => { changed: string[]; hasReadyEvent: boolean };
+    applyTranscriptDraftDelta: (sessionId: string, params: {
+        localId: string;
+        segmentKind: 'assistant' | 'thinking';
+        sidechainId: string | null;
+        deltaText: string;
+        createdAtMs: number;
+    }) => void;
     applyMessagesLoaded: (sessionId: string) => void;
     resetSessionMessages: (sessionId: string) => void;
 };
@@ -141,12 +149,18 @@ function coerceSessionMessages(input: unknown): SessionMessages {
             ? Math.trunc(raw.messagesVersion)
             : 0;
 
+    const draftsByLocalId: Record<string, { text: string; segmentKind: 'assistant' | 'thinking'; sidechainId: string | null; updatedAtMs: number }> =
+        raw?.draftsByLocalId && typeof raw.draftsByLocalId === 'object' && !Array.isArray(raw.draftsByLocalId)
+            ? (raw.draftsByLocalId as Record<string, any>)
+            : {};
+
     const isLoaded = raw?.isLoaded === true;
 
     return {
         messageIdsOldestFirst,
         messagesById,
         messagesMap: messagesById,
+        draftsByLocalId,
         reducerState,
         latestThinkingMessageId,
         latestThinkingMessageActivityAtMs,
@@ -311,6 +325,7 @@ function createEmptySessionMessages(): SessionMessages {
         messageIdsOldestFirst: [],
         messagesById,
         messagesMap: messagesById,
+        draftsByLocalId: {},
         reducerState: createReducer(),
         latestThinkingMessageId: null,
         latestThinkingMessageActivityAtMs: null,
@@ -465,30 +480,6 @@ export function createMessagesDomain<S extends MessagesDomain & MessagesDomainDe
                     });
                 })();
 
-                // If we previously surfaced orphan sidechain messages as root transcript entries,
-                // remove them once their owning tool-call arrives. Root transcript IDs should not
-                // include sidechain children when the owner exists (they are rendered as nested
-                // `children` of the owning tool-call message).
-                const attachedSidechainChildIds = new Set<string>();
-                for (const [sidechainId, chain] of existingSession.reducerState.sidechains.entries()) {
-                    if (!existingSession.reducerState.toolIdToMessageId.has(sidechainId)) continue;
-                    for (const m of chain) attachedSidechainChildIds.add(m.id);
-                }
-                if (attachedSidechainChildIds.size > 0) {
-                    const pruned = nextIds.filter((id) => !attachedSidechainChildIds.has(id));
-                    if (pruned.length !== nextIds.length) {
-                        for (const removedId of nextIds) {
-                            if (!attachedSidechainChildIds.has(removedId)) continue;
-                            delete messagesById[removedId];
-                            idsToRemove.add(removedId);
-                            if (latestThinkingMessageId === removedId) {
-                                shouldRecomputeLatestThinking = true;
-                            }
-                        }
-                        nextIds = pruned;
-                    }
-                }
-
                 if (shouldRecomputeLatestThinking) {
                     latestThinkingMessageId = findLatestThinkingMessageId({ idsOldestFirst: nextIds, messagesById });
                 }
@@ -526,6 +517,15 @@ export function createMessagesDomain<S extends MessagesDomain & MessagesDomainDe
                             };
                         }
                     }
+                }
+
+                const draftsByLocalId = existingSession.draftsByLocalId;
+                let didClearTranscriptDraft = false;
+                for (const message of processedMessages) {
+                    const localId = 'localId' in message && typeof message.localId === 'string' ? message.localId : null;
+                    if (!localId || draftsByLocalId[localId] === undefined) continue;
+                    delete draftsByLocalId[localId];
+                    didClearTranscriptDraft = true;
                 }
 
                 // Update session with todos and latestUsage
@@ -585,11 +585,12 @@ export function createMessagesDomain<S extends MessagesDomain & MessagesDomainDe
                             messageIdsOldestFirst: nextIds,
                             messagesById,
                             messagesMap: messagesById,
+                            draftsByLocalId,
                             reducerState: existingSession.reducerState, // Explicitly include the mutated reducer state
                             latestThinkingMessageId,
                             latestThinkingMessageActivityAtMs,
-                            messagesVersion: existingSession.messagesVersion + (processedMessages.length > 0 ? 1 : 0),
-                            isLoaded: true
+                            messagesVersion: existingSession.messagesVersion + ((processedMessages.length > 0 || didClearTranscriptDraft) ? 1 : 0),
+                            isLoaded: existingSession.isLoaded
                         }
                     },
                     sessionPending: updatedSessionPending
@@ -597,6 +598,45 @@ export function createMessagesDomain<S extends MessagesDomain & MessagesDomainDe
             });
 
             return { changed: Array.from(changed), hasReadyEvent };
+        },
+        applyTranscriptDraftDelta: (sessionId, params) => {
+            const localId = typeof params.localId === 'string' ? params.localId.trim() : '';
+            if (!localId) return;
+            const deltaText = typeof params.deltaText === 'string' ? params.deltaText : '';
+            if (!deltaText) return;
+            const segmentKind = params.segmentKind === 'thinking' ? 'thinking' : 'assistant';
+            const sidechainId = typeof params.sidechainId === 'string' && params.sidechainId.trim()
+                ? params.sidechainId.trim()
+                : null;
+            const createdAtMs =
+                typeof params.createdAtMs === 'number' && Number.isFinite(params.createdAtMs) && params.createdAtMs >= 0
+                    ? Math.trunc(params.createdAtMs)
+                    : Date.now();
+
+            set((state) => {
+                const existingSession = coerceSessionMessages(state.sessionMessages[sessionId]);
+                const draftsByLocalId = existingSession.draftsByLocalId;
+                const prev = draftsByLocalId[localId];
+                const prevText = prev && typeof prev.text === 'string' ? prev.text : '';
+                draftsByLocalId[localId] = {
+                    text: prevText + deltaText,
+                    segmentKind,
+                    sidechainId,
+                    updatedAtMs: createdAtMs,
+                };
+
+                return {
+                    ...state,
+                    sessionMessages: {
+                        ...state.sessionMessages,
+                        [sessionId]: {
+                            ...existingSession,
+                            draftsByLocalId,
+                            messagesVersion: existingSession.messagesVersion + 1,
+                        },
+                    },
+                };
+            });
         },
         applyMessagesLoaded: (sessionId: string) => set((state) => {
             const rawExistingSession = state.sessionMessages[sessionId];
@@ -655,6 +695,7 @@ export function createMessagesDomain<S extends MessagesDomain & MessagesDomainDe
                             messageIdsOldestFirst,
                             messagesById,
                             messagesMap: messagesById,
+                            draftsByLocalId: {},
                             latestThinkingMessageId,
                             latestThinkingMessageActivityAtMs,
                             messagesVersion,
@@ -690,6 +731,7 @@ export function createMessagesDomain<S extends MessagesDomain & MessagesDomainDe
                         messageIdsOldestFirst: [],
                         messagesById,
                         messagesMap: messagesById,
+                        draftsByLocalId: {},
                         reducerState: createReducer(),
                         latestThinkingMessageId: null,
                         latestThinkingMessageActivityAtMs: null,
