@@ -23,12 +23,24 @@ export function resolveScriptUrlsFromHtml(html: string, baseUrl: string): string
 }
 
 export function selectPrimaryAppScriptUrl(urls: readonly string[]): string | null {
-  const prefer = (u: string) =>
-    u.includes('index.bundle')
-    || u.includes('bundle.js')
-    || u.includes('main.js');
+  const score = (url: string): number => {
+    if (url.includes('index.bundle')) return 6;
+    if (url.includes('entry.bundle')) return 5;
+    if (url.includes('expo-router/entry')) return 4;
+    if (url.includes('AppEntry')) return 3;
+    if (url.includes('bundle.js')) return 2;
+    if (url.includes('main.js')) return 1;
+    return 0;
+  };
 
-  const match = urls.find((u) => prefer(u)) ?? null;
-  return match ?? (urls[0] ?? null);
+  let bestUrl: string | null = null;
+  let bestScore = -1;
+  for (const url of urls) {
+    const nextScore = score(url);
+    if (nextScore > bestScore) {
+      bestUrl = url;
+      bestScore = nextScore;
+    }
+  }
+  return bestUrl ?? (urls[0] ?? null);
 }
-
