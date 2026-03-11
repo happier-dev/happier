@@ -34,6 +34,8 @@ export const Switch = ({ value, disabled, onValueChange, style, ...rest }: Switc
             {...rest}
             accessibilityRole="switch"
             accessibilityState={{ checked: !!value, disabled: !!disabled }}
+            aria-checked={!!value}
+            aria-disabled={disabled ? true : undefined}
             disabled={disabled}
             onPress={() => onValueChange?.(!value)}
             style={({ pressed }) => [
