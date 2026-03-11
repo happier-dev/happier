@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { ActivityIndicator, View } from 'react-native';
+import { ActivityIndicator, Pressable, View } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
 
 import { Text } from '@/components/ui/text/Text';
@@ -14,18 +14,62 @@ export type SessionPaneLazyLoaderProps<TProps extends object> = Readonly<{
 
 export function SessionPaneLazyLoader<TProps extends object>(input: SessionPaneLazyLoaderProps<TProps>) {
     const [Impl, setImpl] = React.useState<React.ComponentType<TProps> | null>(null);
+    const [retryNonce, setRetryNonce] = React.useState(0);
+    const [error, setError] = React.useState<unknown>(null);
     const { theme } = useUnistyles();
 
     React.useEffect(() => {
         let cancelled = false;
-        void input.load().then((mod) => {
-            if (cancelled) return;
-            setImpl(() => mod);
-        });
+        setError(null);
+        void input.load()
+            .then((mod) => {
+                if (cancelled) return;
+                setImpl(() => mod);
+            })
+            .catch((loadError) => {
+                if (cancelled) return;
+                setError(loadError);
+            });
         return () => {
             cancelled = true;
         };
-    }, [input.load]);
+    }, [input.load, retryNonce]);
+
+    const onRetry = React.useCallback(() => {
+        setImpl(null);
+        setError(null);
+        setRetryNonce((value) => value + 1);
+    }, []);
+
+    if (error) {
+        return (
+            <View
+                testID={`${input.testID}-error`}
+                style={{ flex: 1, alignItems: 'center', justifyContent: 'center', paddingVertical: 16, gap: 10 }}
+            >
+                <Text style={{ fontSize: 12, color: theme.colors.textSecondary, ...Typography.default() }}>
+                    {t('common.error')}
+                </Text>
+                <Text style={{ fontSize: 12, color: theme.colors.textSecondary, ...Typography.default() }}>
+                    {t('errors.tryAgain')}
+                </Text>
+                <Pressable
+                    onPress={onRetry}
+                    accessibilityRole="button"
+                    style={{
+                        paddingHorizontal: 12,
+                        paddingVertical: 8,
+                        borderRadius: 10,
+                        backgroundColor: theme.colors.surface,
+                    }}
+                >
+                    <Text style={{ fontSize: 12, color: theme.colors.text, ...Typography.default('semiBold') }}>
+                        {t('common.retry')}
+                    </Text>
+                </Pressable>
+            </View>
+        );
+    }
 
     if (!Impl) {
         return (

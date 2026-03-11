@@ -13,6 +13,8 @@ let mockedSettings: Record<string, any> = {
     rightPaneWidthBasisPx: 835,
     detailsPaneWidthPx: 520,
     detailsPaneWidthBasisPx: 835,
+    bottomPaneHeightPx: 320,
+    bottomPaneHeightBasisPx: 900,
 };
 
 vi.mock('react-native', () => ({
@@ -21,8 +23,8 @@ vi.mock('react-native', () => ({
     useWindowDimensions: () => ({ width: mockedWindowWidthPx, height: 800 }),
 }));
 
-vi.mock('@/components/ui/panels/MultiPaneHost', () => ({
-    MultiPaneHost: (props: any) => {
+vi.mock('@/components/ui/panels/MultiPaneHostWithBottom', () => ({
+    MultiPaneHostWithBottom: (props: any) => {
         lastProps = props;
         return React.createElement('MultiPaneHostStub');
     },
@@ -67,6 +69,8 @@ describe('AppPaneScopeHost (docked max widths)', () => {
             rightPaneWidthBasisPx: 835,
             detailsPaneWidthPx: 520,
             detailsPaneWidthBasisPx: 835,
+            bottomPaneHeightPx: 320,
+            bottomPaneHeightBasisPx: 900,
         };
 
         await act(async () => {
@@ -100,6 +104,8 @@ describe('AppPaneScopeHost (docked max widths)', () => {
             rightPaneWidthBasisPx: 1800,
             detailsPaneWidthPx: 520,
             detailsPaneWidthBasisPx: 1800,
+            bottomPaneHeightPx: 320,
+            bottomPaneHeightBasisPx: 900,
         };
 
         await act(async () => {

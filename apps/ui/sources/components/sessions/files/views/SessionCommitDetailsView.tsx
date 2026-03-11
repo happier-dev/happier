@@ -36,8 +36,8 @@ import { ScrollEdgeFades } from '@/components/ui/scroll/ScrollEdgeFades';
 import { ScrollEdgeIndicators } from '@/components/ui/scroll/ScrollEdgeIndicators';
 import { useScmReviewViewabilityConfig } from '@/scm/review/useScmReviewViewabilityConfig';
 import { useViewableItemIndices } from '@/components/ui/scroll/useViewableItemIndices';
-import { resolveIndexWindow } from '@/components/ui/scroll/resolveIndexWindow';
 import { resolveSessionWorkspacePath } from '@/sync/domains/session/resolveSessionWorkspacePath';
+import { useScmDiffExpandedKeys } from '@/components/sessions/files/content/review/useScmDiffExpandedKeys';
 
 export type SessionCommitDetailsViewProps = Readonly<{
     sessionId: string;
@@ -95,84 +95,15 @@ export function SessionCommitDetailsView(props: SessionCommitDetailsViewProps) {
         debounceMs: viewabilityConfig.debounceMs,
     });
 
-    const [collapsedKeys, setCollapsedKeys] = React.useState<Set<string>>(() => new Set());
-    const toggleCollapsed = React.useCallback((key: string) => {
-        setCollapsedKeys((prev) => {
-            const next = new Set(prev);
-            if (next.has(key)) next.delete(key);
-            else next.add(key);
-            return next;
-        });
-    }, []);
-
     const allKeys = React.useMemo(() => diffFiles.map((f) => f.key), [diffFiles]);
-    const initialAutoExpandedKeySet = React.useMemo(() => {
-        const initialCount = Math.max(1, viewabilityConfig.aheadCount + viewabilityConfig.behindCount + 1);
-        const keys = allKeys.slice(0, initialCount);
-        return new Set(keys);
-    }, [allKeys, viewabilityConfig.aheadCount, viewabilityConfig.behindCount]);
-
-    const [autoExpandedKeys, setAutoExpandedKeys] = React.useState<Set<string>>(() => new Set());
-
-    React.useEffect(() => {
-        // Reset whenever the commit content changes.
-        if (!tooLarge) {
-            setAutoExpandedKeys(new Set());
-            return;
-        }
-        setAutoExpandedKeys(new Set(initialAutoExpandedKeySet));
-        setCollapsedKeys(new Set());
-    }, [initialAutoExpandedKeySet, tooLarge, sessionId, sha]);
-
-    React.useEffect(() => {
-        if (!tooLarge) return;
-        const window = resolveIndexWindow({
-            viewableIndices: viewability.viewableIndices,
-            aheadCount: viewabilityConfig.aheadCount,
-            // Never auto-expand diffs *above* the first visible row: expanding above the viewport
-            // changes height "behind" the user's scroll position and makes scrolling feel like it
-            // snaps back up on web. Prefetch can be bidirectional, but auto-expansion must not be.
-            behindCount: 0,
-            maxIndex: Math.max(0, allKeys.length - 1),
-        });
-        if (!window) return;
-        const windowKeys = allKeys.slice(window.startIndex, window.endIndex + 1);
-        setAutoExpandedKeys((prev) => {
-            let changed = false;
-            const next = new Set(prev);
-            for (const key of windowKeys) {
-                if (next.has(key)) continue;
-                next.add(key);
-                changed = true;
-            }
-            return changed ? next : prev;
-        });
-    }, [
+    const { expandedKeys, toggleCollapsed } = useScmDiffExpandedKeys({
         allKeys,
+        viewableIndices: viewability.viewableIndices,
         tooLarge,
-        viewability.viewableIndices,
-        viewabilityConfig.aheadCount,
-        viewabilityConfig.behindCount,
-    ]);
-
-    const expandedKeys = React.useMemo(() => {
-        if (!tooLarge) {
-            const out = new Set<string>();
-            for (const key of allKeys) {
-                if (collapsedKeys.has(key)) continue;
-                out.add(key);
-            }
-            return out;
-        }
-
-        const autoKeys = autoExpandedKeys.size > 0 ? autoExpandedKeys : initialAutoExpandedKeySet;
-        const out = new Set<string>();
-        for (const key of autoKeys) {
-            if (collapsedKeys.has(key)) continue;
-            out.add(key);
-        }
-        return out;
-    }, [allKeys, autoExpandedKeys, collapsedKeys, initialAutoExpandedKeySet, tooLarge]);
+        aheadCount: viewabilityConfig.aheadCount,
+        behindCount: viewabilityConfig.behindCount,
+        resetKey: `${sessionId}:${sha}`,
+    });
 
     const sessionsData = useSessions();
     const isStorageReady = sessionsData !== null;
@@ -221,6 +152,12 @@ export function SessionCommitDetailsView(props: SessionCommitDetailsViewProps) {
             if (hasLoadedDiffRef.current) return;
             setIsLoading(true);
             setError(null);
+            return;
+        }
+
+        if (!session) {
+            setError(t('files.commitDetails.missingContext'));
+            setIsLoading(false);
             return;
         }
 

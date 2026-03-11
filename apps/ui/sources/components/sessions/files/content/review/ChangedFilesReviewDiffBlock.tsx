@@ -1,5 +1,6 @@
 import * as React from 'react';
 import { ActivityIndicator, Image, Platform, View, useWindowDimensions } from 'react-native';
+import { SvgXml } from 'react-native-svg';
 
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
@@ -16,6 +17,7 @@ import { isKnownBinaryPath, isKnownImagePath } from '@/scm/utils/filePresentatio
 import { useChangedFilesReviewImagePreview } from './useChangedFilesReviewImagePreview';
 import type { ReviewCommentDraft } from '@/sync/domains/input/reviewComments/reviewCommentTypes';
 import { toTestIdSafeValue } from '@/utils/ui/toTestIdSafeValue';
+import type { ChangedFilesReviewDiffStateSource } from '@/components/sessions/files/content/review/ChangedFilesReviewDiffStore';
 
 export type ReviewDiffState = Readonly<{
     status: 'idle' | 'loading' | 'loaded' | 'error';
@@ -28,14 +30,20 @@ export const ChangedFilesReviewDiffBlock = React.memo((props: Readonly<{
     sessionId: string;
     snapshotSignature: string | null;
     filePath: string;
-    state: ReviewDiffState;
+    estimatedChangedLines?: number | null;
+    diffStateSource: ChangedFilesReviewDiffStateSource;
     reviewCommentsEnabled: boolean;
     reviewCommentDrafts: readonly ReviewCommentDraft[];
     onUpsertReviewCommentDraft?: (draft: ReviewCommentDraft) => void;
     onDeleteReviewCommentDraft?: (commentId: string) => void;
     onReviewCommentError?: (message: string) => void;
 }>) => {
-    const { theme, sessionId, filePath, state, snapshotSignature } = props;
+    const { theme, sessionId, filePath, snapshotSignature } = props;
+    const state = React.useSyncExternalStore(
+        React.useCallback((listener) => props.diffStateSource.subscribe(filePath, listener), [filePath, props.diffStateSource]),
+        React.useCallback(() => props.diffStateSource.getDiffState(filePath), [filePath, props.diffStateSource]),
+        React.useCallback(() => props.diffStateSource.getDiffState(filePath), [filePath, props.diffStateSource]),
+    );
     const noOverflowAnchor = Platform.OS === 'web' ? ({ overflowAnchor: 'none' } as any) : null;
     const testIdSafePath = React.useMemo(() => toTestIdSafeValue(filePath), [filePath]);
     const blockTestId = `scm-review-diff-${testIdSafePath}`;
@@ -60,6 +68,13 @@ export const ChangedFilesReviewDiffBlock = React.memo((props: Readonly<{
     const effectiveWrapLines = wrapLines !== false;
     const effectiveShowLineNumbers = showLineNumbers !== false;
 
+    const estimatedChangedLines = React.useMemo(() => {
+        const raw = props.estimatedChangedLines;
+        if (raw === null || raw === undefined) return null;
+        if (typeof raw !== 'number' || !Number.isFinite(raw)) return null;
+        return Math.max(0, Math.floor(raw));
+    }, [props.estimatedChangedLines]);
+
     const virtualized = React.useMemo(() => {
         if (props.reviewCommentsEnabled) return false;
         if (!state.diff) return false;
@@ -73,11 +88,35 @@ export const ChangedFilesReviewDiffBlock = React.memo((props: Readonly<{
     }, [props.reviewCommentsEnabled, state.diff, virtualizationByteThreshold, virtualizationLineThreshold]);
 
     const diffContainerStyle = virtualized ? { maxHeight: maxVirtualizedHeight } : null;
+    const shouldReserveVirtualizedHeightWhileLoading = React.useMemo(() => {
+        if (props.reviewCommentsEnabled) return false;
+        const estimated = estimatedChangedLines;
+        if (estimated === null) return false;
+        return estimated >= virtualizationLineThreshold;
+    }, [estimatedChangedLines, props.reviewCommentsEnabled, virtualizationLineThreshold]);
+    // Reserve height during loading for large diffs so rows don't "grow" once a diff arrives
+    // (which can cause scroll jumps in virtualized lists). Avoid reserving the large virtualized
+    // height for small diffs to prevent stale layout caches from leaving large whitespace gaps.
+    const loadingContainerStyle = shouldReserveVirtualizedHeightWhileLoading ? { height: maxVirtualizedHeight } : null;
 
     if (state.status === 'loading' || state.status === 'idle') {
         return (
-            <View testID={blockTestId} style={[{ paddingHorizontal: 16, paddingVertical: 12 }, noOverflowAnchor]}>
-                <ActivityIndicator size="small" color={theme.colors.textSecondary} />
+            <View testID={blockTestId} style={[{ paddingHorizontal: 16, paddingVertical: 8 }, noOverflowAnchor]}>
+                <View
+                    style={[
+                        {
+                            borderRadius: 12,
+                            overflow: 'hidden',
+                            borderWidth: 1,
+                            borderColor: theme.colors.divider,
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                        },
+                        loadingContainerStyle,
+                    ]}
+                >
+                    <ActivityIndicator size="small" color={theme.colors.textSecondary} />
+                </View>
             </View>
         );
     }
@@ -115,12 +154,16 @@ export const ChangedFilesReviewDiffBlock = React.memo((props: Readonly<{
                                 backgroundColor: theme.colors.surfaceHigh ?? theme.colors.surface,
                             }}
                         >
-                            <Image
-                                source={{ uri: imagePreview.uri }}
-                                resizeMode="contain"
-                                style={{ width: '100%', height: '100%' }}
-                                accessibilityLabel={t('files.binaryFile')}
-                            />
+                            {Platform.OS !== 'web' && imagePreview.svgXml ? (
+                                <SvgXml xml={imagePreview.svgXml} width="100%" height="100%" />
+                            ) : (
+                                <Image
+                                    source={{ uri: imagePreview.uri }}
+                                    resizeMode="contain"
+                                    style={{ width: '100%', height: '100%' }}
+                                    accessibilityLabel={t('files.binaryFile')}
+                                />
+                            )}
                         </View>
                         <Text style={{ fontSize: 12, color: theme.colors.textSecondary, ...Typography.default() }}>
                             {t('files.binaryFile')}

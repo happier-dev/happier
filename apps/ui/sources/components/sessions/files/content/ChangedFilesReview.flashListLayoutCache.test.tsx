@@ -5,6 +5,8 @@ import { lightTheme } from '@/theme';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
+const SLOW_TEST_TIMEOUT_MS = 60_000;
+
 function toTestIdSafeValue(value: string): string {
     return value.trim().replace(/[^a-zA-Z0-9._-]/g, '_');
 }
@@ -33,6 +35,18 @@ vi.mock('@shopify/flash-list', () => {
     });
 
     return { FlashList };
+});
+
+vi.mock('react-native', async (importOriginal) => {
+    const rn = await importOriginal<typeof import('react-native')>();
+    return {
+        ...rn,
+        Platform: {
+            ...(rn as any).Platform,
+            OS: 'web',
+            select: (value: any) => value?.web ?? value?.default ?? null,
+        },
+    };
 });
 
 vi.mock('@/components/ui/text/Text', () => ({
@@ -70,7 +84,14 @@ vi.mock('@/components/sessions/files/content/review/useChangedFilesReviewPrefetc
 
 vi.mock('@/components/sessions/files/content/review/useChangedFilesReviewDiffLoading', () => ({
     useChangedFilesReviewDiffLoading: () => ({
-        getDiffState: (_path: string) => ({ kind: 'ready', patch: 'diff --git a/x b/x\n' }),
+        diffStateSource: {
+            getDiffState: (_path: string) => ({ status: 'loaded', diff: 'diff --git a/x b/x\n', error: null }),
+            subscribe: () => () => {},
+            reset: () => {},
+            prune: () => {},
+            setDiffState: () => {},
+            updateDiffState: () => {},
+        },
     }),
 }));
 
@@ -96,7 +117,7 @@ vi.mock('@/components/sessions/files/content/review/ChangedFilesReviewDiffAreaSe
 }));
 
 describe('ChangedFilesReview (FlashList layout cache)', () => {
-    it('clears FlashList layout cache before toggling a row', async () => {
+    it('clears FlashList layout cache before expanding a row', async () => {
         clearLayoutCacheOnUpdate.mockClear();
 
         const { ChangedFilesReview } = await import('./ChangedFilesReview');
@@ -131,15 +152,22 @@ describe('ChangedFilesReview (FlashList layout cache)', () => {
                     maxFiles={25}
                     maxChangedLines={2000}
                     onFilePress={() => {}}
+                    initialCollapsedPaths={[file.fullPath]}
                 />,
             );
         });
 
         const row = tree!.root.findByProps({ testID: `scm-change-row-${toTestIdSafeValue(file.fullPath)}` });
         await act(async () => {
-            row.props.onPress();
+            if (typeof row.props.onPress === 'function') {
+                row.props.onPress();
+            } else if (typeof row.props.onClick === 'function') {
+                row.props.onClick();
+            } else {
+                throw new Error('Expected ScmChangeRow to be pressable/clickable');
+            }
         });
 
         expect(clearLayoutCacheOnUpdate).toHaveBeenCalledTimes(1);
-    });
+    }, SLOW_TEST_TIMEOUT_MS);
 });

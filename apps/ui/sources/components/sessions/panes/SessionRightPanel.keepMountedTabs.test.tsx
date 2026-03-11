@@ -4,41 +4,13 @@ import { describe, expect, it, vi } from 'vitest';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
-vi.mock('react-native', () => ({
-    Platform: { select: (value: any) => value?.default ?? null },
-    View: (props: any) => React.createElement('View', props, props.children),
-    Pressable: (props: any) => React.createElement('Pressable', props, props.children),
-    ActivityIndicator: (props: any) => React.createElement('ActivityIndicator', props),
-}));
-
-vi.mock('react-native-unistyles', () => ({
-    __esModule: true,
-    useUnistyles: () => ({
-        theme: {
-            colors: {
-                surface: '#fff',
-                surfaceHigh: '#f6f6f6',
-                divider: '#ddd',
-                text: '#000',
-                textSecondary: '#666',
-            },
-        },
-    }),
-    StyleSheet: {
-        create: (value: any) =>
-            typeof value === 'function'
-                ? value({
-                    colors: {
-                        surface: '#fff',
-                        surfaceHigh: '#f6f6f6',
-                        divider: '#ddd',
-                        text: '#000',
-                        textSecondary: '#666',
-                    },
-                })
-                : value,
-    },
-}));
+vi.mock('react-native', async () => {
+    const stub = await import('@/dev/reactNativeStub');
+    return {
+        ...stub,
+        Platform: { OS: 'web', select: (value: any) => value?.web ?? value?.default ?? null },
+    };
+});
 
 vi.mock('@expo/vector-icons', () => ({
     Octicons: 'Octicons',
@@ -96,12 +68,26 @@ describe('SessionRightPanel (keep mounted tabs)', () => {
             tree = renderer.create(<SessionRightPanel sessionId="s1" scopeId="session:s1" />);
         });
 
+        const findHostSurfaceView = (testID: string) => {
+            return tree!.root.find((node) => (node.type as unknown) === 'View' && node.props?.testID === testID);
+        };
+        const getStyleValue = (node: renderer.ReactTestInstance, key: string) => {
+            const style = node.props.style;
+            const styles = Array.isArray(style) ? style : [style];
+            for (const entry of styles) {
+                if (entry && typeof entry === 'object' && key in entry) {
+                    return (entry as Record<string, unknown>)[key];
+                }
+            }
+            return undefined;
+        };
+
         expect(tree!.root.findAllByType('SessionRightPanelGitView')).toHaveLength(1);
         // Lazy-mount inactive tabs for faster initial open.
         expect(tree!.root.findAllByType('SessionRepositoryTreeBrowserView')).toHaveLength(0);
 
         await act(async () => {
-            const filesTab = tree!.root.findByProps({ testID: 'session-rightpanel-tab-files' });
+            const filesTab = tree!.root.findByProps({ testID: 'session-rightpanel-tab:files' });
             filesTab.props.onPress();
         });
 
@@ -109,13 +95,17 @@ describe('SessionRightPanel (keep mounted tabs)', () => {
         expect(tree!.root.findAllByType('SessionRepositoryTreeBrowserView')).toHaveLength(1);
         const repositoryTree = tree!.root.findByType('SessionRepositoryTreeBrowserView');
         expect(repositoryTree).toBeTruthy();
+        expect(getStyleValue(findHostSurfaceView('session-rightpanel-surface-git'), 'visibility')).toBe('hidden');
+        expect(getStyleValue(findHostSurfaceView('session-rightpanel-surface-files'), 'visibility')).toBe('visible');
 
         // Switching back keeps both mounted.
         await act(async () => {
-            const gitTab = tree!.root.findByProps({ testID: 'session-rightpanel-tab-git' });
+            const gitTab = tree!.root.findByProps({ testID: 'session-rightpanel-tab:git' });
             gitTab.props.onPress();
         });
         expect(tree!.root.findAllByType('SessionRightPanelGitView')).toHaveLength(1);
         expect(tree!.root.findAllByType('SessionRepositoryTreeBrowserView')).toHaveLength(1);
+        expect(getStyleValue(findHostSurfaceView('session-rightpanel-surface-git'), 'visibility')).toBe('visible');
+        expect(getStyleValue(findHostSurfaceView('session-rightpanel-surface-files'), 'visibility')).toBe('hidden');
     });
 });

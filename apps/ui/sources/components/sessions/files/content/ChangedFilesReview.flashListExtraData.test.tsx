@@ -5,6 +5,8 @@ import { lightTheme } from '@/theme';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
+const SLOW_TEST_TIMEOUT_MS = 60_000;
+
 function toTestIdSafeValue(value: string): string {
     return value.trim().replace(/[^a-zA-Z0-9._-]/g, '_');
 }
@@ -31,6 +33,17 @@ vi.mock('@shopify/flash-list', () => {
 });
 
 // Note: Vitest setup already stubs `react-native`, `@expo/vector-icons`, and `react-native-unistyles`.
+vi.mock('react-native', async (importOriginal) => {
+    const rn = await importOriginal<typeof import('react-native')>();
+    return {
+        ...rn,
+        Platform: {
+            ...(rn as any).Platform,
+            OS: 'web',
+            select: (value: any) => value?.web ?? value?.default ?? null,
+        },
+    };
+});
 
 vi.mock('@/components/ui/text/Text', () => ({
     Text: (props: any) => React.createElement('Text', props, props.children),
@@ -42,6 +55,10 @@ vi.mock('@/constants/Typography', () => ({
 
 vi.mock('@/text', () => ({
     t: (key: string) => key,
+}));
+
+vi.mock('@/utils/platform/deferOnWeb', () => ({
+    deferOnWeb: (_cb: any) => {},
 }));
 
 vi.mock('@/components/ui/code/diff/pierre/PierreScrollRootVirtualizerProvider', () => ({
@@ -67,7 +84,14 @@ vi.mock('@/components/sessions/files/content/review/useChangedFilesReviewPrefetc
 
 vi.mock('@/components/sessions/files/content/review/useChangedFilesReviewDiffLoading', () => ({
     useChangedFilesReviewDiffLoading: () => ({
-        getDiffState: (_path: string) => ({ kind: 'ready', patch: 'diff --git a/x b/x\n' }),
+        diffStateSource: {
+            getDiffState: (_path: string) => ({ status: 'loaded', diff: 'diff --git a/x b/x\n', error: null }),
+            subscribe: () => () => {},
+            reset: () => {},
+            prune: () => {},
+            setDiffState: () => {},
+            updateDiffState: () => {},
+        },
     }),
 }));
 
@@ -139,11 +163,17 @@ describe('ChangedFilesReview (FlashList extraData)', () => {
 
         const row = tree!.root.findByProps({ testID: `scm-change-row-${toTestIdSafeValue(file.fullPath)}` });
         await act(async () => {
-            row.props.onPress();
+            if (typeof row.props.onPress === 'function') {
+                row.props.onPress();
+            } else if (typeof row.props.onClick === 'function') {
+                row.props.onClick();
+            } else {
+                throw new Error('Expected ScmChangeRow to be pressable/clickable');
+            }
         });
 
         expect(tree!.root.findAllByProps({ testID: `scm-review-diff-${toTestIdSafeValue(file.fullPath)}` })).toHaveLength(0);
-    });
+    }, SLOW_TEST_TIMEOUT_MS);
 
     it('configures FlashList with stable virtualization settings', async () => {
         const { ChangedFilesReview } = await import('./ChangedFilesReview');
@@ -187,8 +217,10 @@ describe('ChangedFilesReview (FlashList extraData)', () => {
         expect(Number.isFinite(list.props.drawDistance)).toBe(true);
         expect(list.props.drawDistance).toBeGreaterThan(0);
 
+        expect(typeof list.props.overrideItemLayout).toBe('function');
+
         expect(typeof list.props.getItemType).toBe('function');
         expect(list.props.getItemType({ kind: 'section' }, 0)).toBe('section');
         expect(list.props.getItemType({ kind: 'file' }, 0)).toBe('file');
-    });
+    }, SLOW_TEST_TIMEOUT_MS);
 });

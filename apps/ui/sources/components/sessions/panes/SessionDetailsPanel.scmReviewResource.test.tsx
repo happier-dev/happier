@@ -4,28 +4,13 @@ import { describe, expect, it, vi } from 'vitest';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
-vi.mock('react-native', () => ({
-    Platform: { OS: 'web', select: (_: any) => 1 },
-    AppState: { addEventListener: () => ({ remove: () => {} }) },
-    View: 'View',
-    Pressable: 'Pressable',
-    ScrollView: 'ScrollView',
-}));
-
-vi.mock('react-native-unistyles', () => ({
-    useUnistyles: () => ({
-        theme: {
-            colors: {
-                surface: '#fff',
-                surfaceHigh: '#f5f5f5',
-                divider: '#eee',
-                text: '#000',
-                textSecondary: '#666',
-            },
-        },
-    }),
-    StyleSheet: { create: (value: any) => value },
-}));
+vi.mock('react-native', async () => {
+    const rn = await import('@/dev/reactNativeStub');
+    return {
+        ...rn,
+        Platform: { ...rn.Platform, OS: 'web' },
+    };
+});
 
 vi.mock('@expo/vector-icons', () => ({
     Octicons: 'Octicons',

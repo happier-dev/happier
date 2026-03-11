@@ -1,69 +1,23 @@
 import * as React from 'react';
 import { useOptionalAppPaneContext } from '@/components/appShell/panes/AppPaneProvider';
 import type { PaneDriver } from '@/components/appShell/panes/types';
-import { SessionPaneLazyLoader, type SessionPaneLazyLoaderProps } from './SessionPaneLazyLoader';
+import { SessionRightPanel } from './SessionRightPanel';
+import { SessionBottomPanel } from './bottom/SessionBottomPanel';
+import { SessionDetailsPanel } from './SessionDetailsPanel';
 
 type SessionPaneScopedProps = Readonly<{ sessionId: string; scopeId: string }>;
 
-type SessionPaneComponent = React.ComponentType<SessionPaneScopedProps>;
-
-let rightPaneImpl: SessionPaneComponent | null = null;
-let rightPanePromise: Promise<SessionPaneComponent> | null = null;
-let detailsPaneImpl: SessionPaneComponent | null = null;
-let detailsPanePromise: Promise<SessionPaneComponent> | null = null;
-
-function loadRightPaneModule(): Promise<SessionPaneComponent> {
-    if (rightPaneImpl) return Promise.resolve(rightPaneImpl);
-    if (!rightPanePromise) {
-        rightPanePromise = import('./SessionRightPanel')
-            .then((mod) => {
-                rightPaneImpl = mod.SessionRightPanel as SessionPaneComponent;
-                return rightPaneImpl;
-            })
-            .catch((error) => {
-                rightPanePromise = null;
-                throw error;
-            });
-    }
-    return rightPanePromise;
+export async function loadSessionSubagentDetailsModule(): Promise<void> {
+    await import('@/components/sessions/agents/details/SessionSubagentDetailsView');
 }
 
-function loadDetailsPaneModule(): Promise<SessionPaneComponent> {
-    if (detailsPaneImpl) return Promise.resolve(detailsPaneImpl);
-    if (!detailsPanePromise) {
-        detailsPanePromise = import('./SessionDetailsPanel')
-            .then((mod) => {
-                detailsPaneImpl = mod.SessionDetailsPanel as SessionPaneComponent;
-                return detailsPaneImpl;
-            })
-            .catch((error) => {
-                detailsPanePromise = null;
-                throw error;
-            });
-    }
-    return detailsPanePromise;
+export const sessionPaneModulePrefetchLoaders: Array<() => Promise<void>> = [
+    loadSessionSubagentDetailsModule,
+];
+
+export async function prefetchSessionPaneModules(): Promise<void> {
+    await Promise.all(sessionPaneModulePrefetchLoaders.map((loadModule) => loadModule()));
 }
-
-function prefetchSessionPaneModules(): void {
-    void loadRightPaneModule().catch(() => {});
-    void loadDetailsPaneModule().catch(() => {});
-}
-
-const LazySessionRightPanel = React.memo((props: SessionPaneScopedProps) => {
-    const load = React.useCallback(async () => {
-        return loadRightPaneModule();
-    }, []);
-    const Loader = SessionPaneLazyLoader as unknown as React.ComponentType<SessionPaneLazyLoaderProps<SessionPaneScopedProps>>;
-    return React.createElement(Loader, { testID: 'session-right-pane-module-loading', load, props });
-});
-
-const LazySessionDetailsPanel = React.memo((props: SessionPaneScopedProps) => {
-    const load = React.useCallback(async () => {
-        return loadDetailsPaneModule();
-    }, []);
-    const Loader = SessionPaneLazyLoader as unknown as React.ComponentType<SessionPaneLazyLoaderProps<SessionPaneScopedProps>>;
-    return React.createElement(Loader, { testID: 'session-details-pane-module-loading', load, props });
-});
 
 export function useRegisterSessionPaneDriver(sessionId: string): string {
     const scopeId = React.useMemo(() => `session:${sessionId}`, [sessionId]);
@@ -73,15 +27,16 @@ export function useRegisterSessionPaneDriver(sessionId: string): string {
 
     React.useEffect(() => {
         if (!canRegister) return;
-        prefetchSessionPaneModules();
+        void prefetchSessionPaneModules();
     }, [canRegister]);
 
     React.useEffect(() => {
         if (!registerDriver) return;
         const driver: PaneDriver = {
             scopeId,
-            renderRightPane: () => React.createElement(LazySessionRightPanel, { sessionId, scopeId }),
-            renderDetailsPane: () => React.createElement(LazySessionDetailsPanel, { sessionId, scopeId }),
+            renderRightPane: () => React.createElement(SessionRightPanel, { sessionId, scopeId }),
+            renderDetailsPane: () => React.createElement(SessionDetailsPanel, { sessionId, scopeId }),
+            renderBottomPane: () => React.createElement(SessionBottomPanel, { sessionId, scopeId }),
         };
         return registerDriver(driver);
     }, [registerDriver, scopeId, sessionId]);

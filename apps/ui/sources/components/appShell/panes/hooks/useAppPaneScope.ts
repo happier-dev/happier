@@ -12,9 +12,14 @@ export type AppPaneScopeApi = Readonly<{
     closeRight: () => void;
     setRightTab: (tabId: string) => void;
     setRightTabState: (tabId: string, nextState: unknown) => void;
+    openBottom: (options?: Readonly<{ tabId?: string }>) => void;
+    closeBottom: () => void;
+    setBottomTab: (tabId: string) => void;
+    setBottomTabState: (tabId: string, nextState: unknown) => void;
     openDetailsTab: (tab: DetailsTab, options?: Readonly<{ intent?: 'default' | 'pinned' | 'preview' }>) => void;
     setDetailsTabState: (tabKey: string, nextState: unknown) => void;
     pinDetailsTab: (tabKey: string) => void;
+    unpinDetailsTab: (tabKey: string) => void;
     closeDetails: () => void;
     closeDetailsTab: (tabKey: string) => void;
     setActiveDetailsTab: (tabKey: string) => void;
@@ -51,6 +56,22 @@ export function useAppPaneScope(scopeId: string): AppPaneScopeApi {
         dispatch({ type: 'setRightTabState', scopeId, tabId, nextState });
     }, [dispatch, scopeId]);
 
+    const openBottom = React.useCallback((options?: Readonly<{ tabId?: string }>) => {
+        dispatch({ type: 'openBottom', scopeId, tabId: options?.tabId });
+    }, [dispatch, scopeId]);
+
+    const closeBottom = React.useCallback(() => {
+        dispatch({ type: 'closeBottom', scopeId });
+    }, [dispatch, scopeId]);
+
+    const setBottomTab = React.useCallback((tabId: string) => {
+        dispatch({ type: 'setBottomTab', scopeId, tabId });
+    }, [dispatch, scopeId]);
+
+    const setBottomTabState = React.useCallback((tabId: string, nextState: unknown) => {
+        dispatch({ type: 'setBottomTabState', scopeId, tabId, nextState });
+    }, [dispatch, scopeId]);
+
     const openDetailsTab = React.useCallback((tab: DetailsTab, options?: Readonly<{ intent?: 'default' | 'pinned' | 'preview' }>) => {
         const intent = options?.intent ?? 'default';
         const behavior = detailsPaneTabsBehavior === 'persistent' ? 'persistent' : 'preview';
@@ -78,6 +99,10 @@ export function useAppPaneScope(scopeId: string): AppPaneScopeApi {
         dispatch({ type: 'pinDetailsTab', scopeId, tabKey });
     }, [dispatch, scopeId]);
 
+    const unpinDetailsTab = React.useCallback((tabKey: string) => {
+        dispatch({ type: 'unpinDetailsTab', scopeId, tabKey });
+    }, [dispatch, scopeId]);
+
     const closeDetails = React.useCallback(() => {
         dispatch({ type: 'closeDetails', scopeId });
     }, [dispatch, scopeId]);
@@ -97,9 +122,14 @@ export function useAppPaneScope(scopeId: string): AppPaneScopeApi {
         closeRight,
         setRightTab,
         setRightTabState,
+        openBottom,
+        closeBottom,
+        setBottomTab,
+        setBottomTabState,
         openDetailsTab,
         setDetailsTabState,
         pinDetailsTab,
+        unpinDetailsTab,
         closeDetails,
         closeDetailsTab,
         setActiveDetailsTab,

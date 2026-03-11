@@ -37,8 +37,20 @@ vi.mock('@/text', () => ({
     t: (key: string) => key,
 }));
 
-describe('useRegisterSessionPaneDriver (lazy loading)', () => {
-    it('renders a loading fallback while the session pane module is loading', async () => {
+vi.mock('./SessionRightPanel', () => ({
+    SessionRightPanel: () => React.createElement('SessionRightPanel'),
+}));
+
+vi.mock('./SessionDetailsPanel', () => ({
+    SessionDetailsPanel: () => React.createElement('SessionDetailsPanel'),
+}));
+
+vi.mock('./bottom/SessionBottomPanel', () => ({
+    SessionBottomPanel: () => React.createElement('SessionBottomPanel'),
+}));
+
+describe('useRegisterSessionPaneDriver (right pane loading)', () => {
+    it('renders the right pane eagerly alongside the details and bottom panes', async () => {
         capturedDriver = null;
         const { useRegisterSessionPaneDriver } = await import('./useRegisterSessionPaneDriver');
 
@@ -54,6 +66,12 @@ describe('useRegisterSessionPaneDriver (lazy loading)', () => {
         expect(capturedDriver).toBeTruthy();
         const rightNode = capturedDriver.renderRightPane();
         expect(rightNode).toBeTruthy();
+        expect(typeof capturedDriver.renderDetailsPane).toBe('function');
+        expect(typeof capturedDriver.renderBottomPane).toBe('function');
+        const detailsNode = capturedDriver.renderDetailsPane();
+        const bottomNode = capturedDriver.renderBottomPane();
+        expect(detailsNode).toBeTruthy();
+        expect(bottomNode).toBeTruthy();
 
         let tree: renderer.ReactTestRenderer | null = null;
         act(() => {
@@ -61,6 +79,23 @@ describe('useRegisterSessionPaneDriver (lazy loading)', () => {
         });
 
         const json = JSON.stringify(tree!.toJSON());
-        expect(json).toContain('common.loading');
+        expect(json).toContain('SessionRightPanel');
+        expect(json).not.toContain('common.loading');
+
+        act(() => {
+            tree = renderer.create(detailsNode);
+        });
+
+        const detailsJson = JSON.stringify(tree!.toJSON());
+        expect(detailsJson).toContain('SessionDetailsPanel');
+        expect(detailsJson).not.toContain('common.loading');
+
+        act(() => {
+            tree = renderer.create(bottomNode);
+        });
+
+        const bottomJson = JSON.stringify(tree!.toJSON());
+        expect(bottomJson).toContain('SessionBottomPanel');
+        expect(bottomJson).not.toContain('common.loading');
     });
 });

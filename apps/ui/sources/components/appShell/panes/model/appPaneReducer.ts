@@ -1,4 +1,4 @@
-export type PaneId = 'right' | 'details';
+export type PaneId = 'right' | 'details' | 'bottom';
 
 export type DetailsTabOpenMode = 'preview' | 'pinned';
 
@@ -6,6 +6,7 @@ export type DetailsTab = Readonly<{
     key: string;
     kind: string;
     title: string;
+    subtitle?: string | null;
     resource: unknown;
 }>;
 
@@ -26,6 +27,11 @@ export type PaneScopeState = Readonly<{
         activeTabKey: string | null;
         tabState: Readonly<Record<string, unknown>>;
     };
+    bottom: {
+        isOpen: boolean;
+        activeTabId: string | null;
+        tabState: Readonly<Record<string, unknown>>;
+    };
 }>;
 
 export type AppPaneState = Readonly<{
@@ -43,9 +49,14 @@ export type AppPaneAction =
     | { type: 'closeRight'; scopeId: string }
     | { type: 'setRightTab'; scopeId: string; tabId: string }
     | { type: 'setRightTabState'; scopeId: string; tabId: string; nextState: unknown }
+    | { type: 'openBottom'; scopeId: string; tabId?: string }
+    | { type: 'closeBottom'; scopeId: string }
+    | { type: 'setBottomTab'; scopeId: string; tabId: string }
+    | { type: 'setBottomTabState'; scopeId: string; tabId: string; nextState: unknown }
     | { type: 'openDetailsTab'; scopeId: string; tab: DetailsTab; openAs: DetailsTabOpenMode }
     | { type: 'setDetailsTabState'; scopeId: string; tabKey: string; nextState: unknown }
     | { type: 'pinDetailsTab'; scopeId: string; tabKey: string }
+    | { type: 'unpinDetailsTab'; scopeId: string; tabKey: string }
     | { type: 'closeDetails'; scopeId: string }
     | { type: 'closeDetailsTab'; scopeId: string; tabKey: string }
     | { type: 'setActiveDetailsTab'; scopeId: string; tabKey: string };
@@ -63,6 +74,7 @@ function createEmptyScopeState(): PaneScopeState {
     return {
         right: { isOpen: false, activeTabId: null, tabState: {} },
         details: { isOpen: false, tabs: [], activeTabKey: null, tabState: {} },
+        bottom: { isOpen: false, activeTabId: null, tabState: {} },
     };
 }
 
@@ -147,6 +159,40 @@ export function appPaneReduce(state: AppPaneState, action: AppPaneAction): AppPa
                 },
             }));
         }
+        case 'openBottom': {
+            return upsertScope(state, action.scopeId, (prev) => ({
+                ...prev,
+                bottom: {
+                    ...prev.bottom,
+                    isOpen: true,
+                    activeTabId: action.tabId ?? prev.bottom.activeTabId,
+                },
+            }));
+        }
+        case 'closeBottom': {
+            return upsertScope(state, action.scopeId, (prev) => ({
+                ...prev,
+                bottom: { ...prev.bottom, isOpen: false },
+            }));
+        }
+        case 'setBottomTab': {
+            return upsertScope(state, action.scopeId, (prev) => ({
+                ...prev,
+                bottom: { ...prev.bottom, activeTabId: action.tabId },
+            }));
+        }
+        case 'setBottomTabState': {
+            return upsertScope(state, action.scopeId, (prev) => ({
+                ...prev,
+                bottom: {
+                    ...prev.bottom,
+                    tabState: {
+                        ...prev.bottom.tabState,
+                        [action.tabId]: action.nextState,
+                    },
+                },
+            }));
+        }
         case 'openDetailsTab': {
             return upsertScope(state, action.scopeId, (prev) => {
                 const existingIndex = prev.details.tabs.findIndex((t) => t.key === action.tab.key);
@@ -201,6 +247,44 @@ export function appPaneReduce(state: AppPaneState, action: AppPaneAction): AppPa
                 if (index < 0) return prev;
                 const nextTabs = prev.details.tabs.map((t, i) => (i === index ? { ...t, isPinned: true, isPreview: false } : t));
                 return { ...prev, details: { ...prev.details, tabs: nextTabs } };
+            });
+        }
+        case 'unpinDetailsTab': {
+            return upsertScope(state, action.scopeId, (prev) => {
+                const index = prev.details.tabs.findIndex((t) => t.key === action.tabKey);
+                if (index < 0) return prev;
+
+                // Revert the tab into the preview slot (unpinned + preview) and preserve the
+                // invariant that only one preview tab exists at a time.
+                const nextTabsWithTarget = prev.details.tabs.map((t, i) => (i === index
+                    ? { ...t, isPinned: false, isPreview: true }
+                    : t));
+
+                const removedPreviewKeys = new Set<string>();
+                for (const tab of nextTabsWithTarget) {
+                    if (tab.key === action.tabKey) continue;
+                    if (tab.isPinned) continue;
+                    if (!tab.isPreview) continue;
+                    removedPreviewKeys.add(tab.key);
+                }
+
+                let nextTabs = nextTabsWithTarget;
+                let nextTabState = prev.details.tabState;
+                if (removedPreviewKeys.size > 0) {
+                    nextTabs = nextTabsWithTarget.filter((t) => !removedPreviewKeys.has(t.key));
+                    const mutableState = { ...prev.details.tabState } as Record<string, unknown>;
+                    for (const key of removedPreviewKeys) {
+                        delete mutableState[key];
+                    }
+                    nextTabState = mutableState;
+                }
+
+                const nextActive = action.tabKey;
+                return setDetailsTabs(
+                    { ...prev, details: { ...prev.details, tabState: nextTabState } },
+                    nextTabs,
+                    nextActive,
+                );
             });
         }
         case 'closeDetails': {

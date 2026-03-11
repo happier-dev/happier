@@ -6,6 +6,8 @@ import { describe, expect, it, vi } from 'vitest';
 
 let mockSnapshot: any = null;
 let lastScmOperationsInput: any = null;
+const invalidateFromUserAndAwaitMock = vi.hoisted(() => vi.fn());
+const invalidateFromAutoRefreshAndAwaitMock = vi.hoisted(() => vi.fn());
 
 vi.mock('react-native-reanimated', () => ({}));
 
@@ -88,8 +90,11 @@ vi.mock('@/hooks/server/useFeatureEnabled', () => ({
     useFeatureEnabled: () => true,
 }));
 
-vi.mock('@/sync/domains/state/storage', () => ({
-    __esModule: true,
+vi.mock('@/sync/domains/state/storage', async (importOriginal) => {
+    const actual = await importOriginal<typeof import('@/sync/domains/state/storage')>();
+
+    return {
+        ...actual,
     useSetting: () => null,
     useAllMachines: () => [{ id: 'm1', active: true, activeAt: 1, metadata: { host: 'mbp', homeDir: '/tmp' } }],
     useProjectForSession: () => null,
@@ -103,7 +108,8 @@ vi.mock('@/sync/domains/state/storage', () => ({
     useSessionProjectScmSnapshot: () => mockSnapshot,
     useSessionProjectScmSnapshotError: () => null,
     useSessionProjectScmTouchedPaths: () => [],
-}));
+    };
+});
 
 vi.mock('@/components/sessions/sourceControl/states', () => ({
     NotSourceControlRepositoryState: () => React.createElement('NotSourceControlRepositoryState'),
@@ -131,7 +137,8 @@ vi.mock('@/scm/registry/scmUiBackendRegistry', () => ({
 
 vi.mock('@/scm/scmStatusSync', () => ({
     scmStatusSync: {
-        invalidateFromUserAndAwait: vi.fn(),
+        invalidateFromUserAndAwait: invalidateFromUserAndAwaitMock,
+        invalidateFromAutoRefreshAndAwait: invalidateFromAutoRefreshAndAwaitMock,
     },
 }));
 
@@ -156,6 +163,30 @@ vi.mock('./SessionRightPanelGitHistoryTab', () => ({
 }));
 
 describe('SessionRightPanelGitView (snapshot SWR)', () => {
+    it('keeps retrying source-control refresh while the first snapshot is still unavailable', async () => {
+        vi.useFakeTimers();
+        try {
+            const { SessionRightPanelGitView } = await import('./SessionRightPanelGitView');
+            mockSnapshot = null;
+            invalidateFromUserAndAwaitMock.mockReset();
+            invalidateFromAutoRefreshAndAwaitMock.mockReset();
+
+            await act(async () => {
+                renderer.create(React.createElement(SessionRightPanelGitView, { sessionId: 's1', scopeId: 'session:s1' }));
+            });
+
+            expect(invalidateFromUserAndAwaitMock).toHaveBeenCalledWith('s1');
+
+            await act(async () => {
+                await vi.advanceTimersByTimeAsync(10_500);
+            });
+
+            expect(invalidateFromAutoRefreshAndAwaitMock).toHaveBeenCalledWith('s1');
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+
     it('keeps last-known snapshot content visible while snapshot is revalidating', async () => {
         const { SessionRightPanelGitView } = await import('./SessionRightPanelGitView');
 

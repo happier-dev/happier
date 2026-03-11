@@ -1,6 +1,6 @@
 import type * as React from 'react';
 
-export type PaneId = 'right' | 'details';
+export type PaneId = 'right' | 'details' | 'bottom';
 
 export type PaneScopeId = string;
 
@@ -14,6 +14,7 @@ export type PaneDriver = Readonly<{
     scopeId: PaneScopeId;
     renderRightPane?: (ctx: Readonly<{ scopeId: PaneScopeId }>) => React.ReactNode;
     renderDetailsPane?: (ctx: Readonly<{ scopeId: PaneScopeId }>) => React.ReactNode;
+    renderBottomPane?: (ctx: Readonly<{ scopeId: PaneScopeId }>) => React.ReactNode;
     openResource?: (resource: PaneResource) => void;
     onScopeDeactivated?: () => void;
 }>;

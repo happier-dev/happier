@@ -9,7 +9,9 @@ import { startTestDaemon, type StartedDaemon } from '../../src/testkit/daemon/da
 import { startCliAuthLoginForTerminalConnect, type StartedCliTerminalConnect } from '../../src/testkit/uiE2e/cliTerminalConnect';
 import { fakeClaudeFixturePath } from '../../src/testkit/fakeClaude';
 import { gotoDomContentLoadedWithRetries, normalizeLoopbackBaseUrl } from '../../src/testkit/uiE2e/pageNavigation';
+import { clickScopedButtonByTestIdOrRole } from '../../src/testkit/uiE2e/clickScopedButtonByTestIdOrRole';
 import { createGitRepoForPartialStagingFixture } from '../../src/testkit/uiE2e/gitRepoFixtures';
+import { spawnSessionFromDaemon } from '../../src/testkit/uiE2e/spawnSessionFromDaemon';
 import { toTestIdSafeValue } from '../../src/testkit/uiE2e/testIdSafeValue';
 
 const run = createRunDirs({ runLabel: 'ui-e2e' });
@@ -49,31 +51,6 @@ function rightPaneLocator(page: Page) {
   return page
     .getByTestId('multi-pane-right-docked')
     .or(page.getByTestId('multi-pane-right-overlay'));
-}
-
-async function spawnSessionFromDaemon(params: {
-  daemon: StartedDaemon;
-  directory: string;
-}): Promise<string> {
-  const token = params.daemon.state.controlToken;
-  if (!token) throw new Error('daemon control token missing');
-
-  const res = await fetch(`http://127.0.0.1:${params.daemon.state.httpPort}/spawn-session`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'x-happier-daemon-token': token,
-    },
-    body: JSON.stringify({
-      directory: params.directory,
-      agent: 'claude',
-    }),
-  });
-  const json = (await res.json().catch(() => null)) as any;
-  if (!res.ok || !json || json.success !== true || typeof json.sessionId !== 'string') {
-    throw new Error(`Failed to spawn session (status=${res.status}): ${JSON.stringify(json)}`);
-  }
-  return json.sessionId as string;
 }
 
 async function enableScmWriteOperationsInSettings(page: Page, baseUrl: string) {
@@ -213,12 +190,12 @@ test.describe('ui e2e: SCM partial staging + commit + discard', () => {
       await expect(rightPaneLocator(page)).toHaveCount(1, { timeout: 60_000 });
 
       const rightPane = rightPaneLocator(page);
-      const gitTabByTestId = rightPane.getByTestId('session-rightpanel-tab-git');
-      if (await gitTabByTestId.count()) {
-        await gitTabByTestId.click();
-      } else {
-        await rightPane.getByRole('button', { name: 'Source control' }).click();
-      }
+      await clickScopedButtonByTestIdOrRole({
+        scope: rightPane,
+        testId: 'session-rightpanel-tab-git',
+        roleName: 'Source control',
+        timeoutMs: 180_000,
+      });
 
       const twoHunksPath = 'src/two-hunks.txt';
       const wholeFilePath = 'src/whole-file.txt';

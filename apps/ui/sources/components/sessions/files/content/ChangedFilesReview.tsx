@@ -1,7 +1,6 @@
 import * as React from 'react';
 import { Platform, Pressable, View, type ScrollViewProps } from 'react-native';
 import { Octicons } from '@expo/vector-icons';
-import { FlashList, type FlashListRef } from '@shopify/flash-list';
 
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
@@ -11,17 +10,15 @@ import type { ScmFileStatus } from '@/scm/scmStatusFiles';
 import { t } from '@/text';
 import { scmUiBackendRegistry } from '@/scm/registry/scmUiBackendRegistry';
 import type { ScmDiffArea } from '@happier-dev/protocol';
-import { PierreScrollRootVirtualizerProvider } from '@/components/ui/code/diff/pierre/PierreScrollRootVirtualizerProvider';
-import { useChangedFilesReviewCollapsedPaths } from '@/components/sessions/files/content/review/useChangedFilesReviewCollapsedPaths';
 import { useChangedFilesReviewDiffLoading } from '@/components/sessions/files/content/review/useChangedFilesReviewDiffLoading';
-import { buildChangedFilesReviewRows, type ChangedFilesReviewRow } from '@/components/sessions/files/content/review/buildChangedFilesReviewRows';
-import { ChangedFilesReviewDiffBlock, type ReviewDiffState } from '@/components/sessions/files/content/review/ChangedFilesReviewDiffBlock';
+import { type ChangedFilesReviewRow } from '@/components/sessions/files/content/review/buildChangedFilesReviewRows';
 import { useChangedFilesReviewPrefetch } from '@/components/sessions/files/content/review/useChangedFilesReviewPrefetch';
 import { useChangedFilesReviewFocusPath } from '@/components/sessions/files/content/review/useChangedFilesReviewFocusPath';
 import { entryToDelta, fileHasDeltaForArea, toAreaFileStatus, totalsChangedLines, type ScmEntryDelta } from '@/components/sessions/files/content/review/scmEntryDelta';
 import { ChangedFilesSectionHeader } from '@/components/sessions/files/changedFiles/ChangedFilesSectionHeader';
 import { ChangedFilesReviewDiffAreaSelector } from '@/components/sessions/files/content/review/ChangedFilesReviewDiffAreaSelector';
 import { useChangedFilesReviewDiffBlockRenderer } from '@/components/sessions/files/content/review/useChangedFilesReviewDiffBlockRenderer';
+import { useInitialScrollRestore } from '@/components/sessions/files/content/review/useInitialScrollRestore';
 import type { ReviewCommentDraft } from '@/sync/domains/input/reviewComments/reviewCommentTypes';
 import { ScmChangeRow } from '@/components/sessions/sourceControl/changes/ScmChangeRow';
 import { buildSnapshotSignature } from '@/scm/statusSync/projectState';
@@ -31,6 +28,10 @@ import { resolveDefaultDiffModeForFile } from '@/scm/diff/defaultMode';
 import { useSetting } from '@/sync/domains/state/storage';
 import { deferOnWeb } from '@/utils/platform/deferOnWeb';
 import { filterDirectoryLikeScmFileStatuses, isDirectoryLikeScmFileStatus } from '@/scm/isDirectoryLikeScmFileStatus';
+import { DiffFilesListView, type DiffFilesListViewHandle } from '@/components/ui/code/diff/DiffFilesListView';
+import { useScmDiffExpandedKeys } from '@/components/sessions/files/content/review/useScmDiffExpandedKeys';
+import { useScmReviewViewabilityConfig } from '@/scm/review/useScmReviewViewabilityConfig';
+import { resolveWebScrollableElement } from '@/components/ui/scroll/resolveWebScrollableElement';
 
 const ViewWithClick = View as unknown as React.ComponentType<
     React.ComponentPropsWithRef<typeof View> & { onClick?: any; onKeyDown?: any; tabIndex?: number }
@@ -245,41 +246,150 @@ export function ChangedFilesReview(props: ChangedFilesReviewProps) {
     }, [sections]);
 
     const tooLarge = reviewFiles.length > maxFiles || totalsChangedLines(snapshot, diffArea) > maxChangedLines;
-    const rows = React.useMemo(() => buildChangedFilesReviewRows({ sections }), [sections]);
-    const pathToRowIndex = React.useMemo(() => {
-        const map = new Map<string, number>();
-        for (let i = 0; i < rows.length; i++) {
-            const row = rows[i];
-            if (row?.kind === 'file' && row.file?.fullPath) {
-                map.set(row.file.fullPath, i);
+
+    const reviewFileEntries = React.useMemo(() => {
+        const out: Array<{
+            key: string;
+            sectionKey: string;
+            sectionTitle: string;
+            indexInSection: number;
+            fileIndex: number;
+            file: ScmFileStatus;
+        }> = [];
+        const seen = new Set<string>();
+        let fileIndex = 0;
+        for (const section of sections) {
+            if (!section || section.files.length === 0) continue;
+            for (let indexInSection = 0; indexInSection < section.files.length; indexInSection++) {
+                const file = section.files[indexInSection];
+                const path = file?.fullPath;
+                if (!path) continue;
+                if (seen.has(path)) continue;
+                seen.add(path);
+                out.push({
+                    key: path,
+                    sectionKey: section.key,
+                    sectionTitle: section.title,
+                    indexInSection,
+                    fileIndex,
+                    file,
+                });
+                fileIndex += 1;
             }
         }
+        return out;
+    }, [sections]);
+
+    const sectionHeaderTitleByKey = React.useMemo(() => {
+        const map = new Map<string, string>();
+        for (const entry of reviewFileEntries) {
+            if (entry.indexInSection !== 0) continue;
+            map.set(entry.key, entry.sectionTitle);
+        }
         return map;
-    }, [rows]);
-    const listRef = React.useRef<FlashListRef<ChangedFilesReviewRow> | null>(null);
+    }, [reviewFileEntries]);
+
+    const fileMetaByKey = React.useMemo(() => {
+        const map = new Map<string, { file: ScmFileStatus; showDivider: boolean }>();
+        for (let i = 0; i < reviewFileEntries.length; i++) {
+            const entry = reviewFileEntries[i];
+            const next = reviewFileEntries[i + 1];
+            map.set(entry.key, { file: entry.file, showDivider: Boolean(next && next.sectionKey === entry.sectionKey) });
+        }
+        return map;
+    }, [reviewFileEntries]);
+
+    const reviewListFiles = React.useMemo(() => reviewFileEntries.map((entry) => entry.file), [reviewFileEntries]);
+
+    const diffFiles = React.useMemo(() => {
+        const mapKind = (status: ScmFileStatus['status']): 'new' | 'deleted' | 'renamed' | undefined => {
+            if (status === 'added' || status === 'untracked') return 'new';
+            if (status === 'deleted') return 'deleted';
+            if (status === 'renamed') return 'renamed';
+            return undefined;
+        };
+        return reviewFileEntries.map((entry) => ({
+            key: entry.key,
+            filePath: entry.key,
+            added: typeof entry.file.linesAdded === 'number' ? entry.file.linesAdded : 0,
+            removed: typeof entry.file.linesRemoved === 'number' ? entry.file.linesRemoved : 0,
+            kind: mapKind(entry.file.status),
+        }));
+    }, [reviewFileEntries]);
+
+    const allKeys = React.useMemo(() => diffFiles.map((f) => f.key), [diffFiles]);
+    const pathToRowIndex = React.useMemo(() => {
+        const map = new Map<string, number>();
+        for (let i = 0; i < allKeys.length; i++) map.set(allKeys[i] as string, i);
+        return map;
+    }, [allKeys]);
+
+    const listRef = React.useRef<DiffFilesListViewHandle | null>(null);
     const lastScrollTopRef = React.useRef<number>(typeof props.initialScrollTop === 'number' ? props.initialScrollTop : 0);
-    const hasAppliedInitialScrollRef = React.useRef(false);
 
     const snapshotSignature = React.useMemo(() => {
         if (!snapshot) return null;
         return buildSnapshotSignature(snapshot);
     }, [snapshot]);
 
-    const { collapsedPaths, isCollapsed, toggleCollapsed, expandPath } = useChangedFilesReviewCollapsedPaths({
-        reviewFiles,
-        initialCollapsedPaths: props.initialCollapsedPaths,
-        onCollapsedPathsChange: props.onCollapsedPathsChange,
-    });
+    const collapsedKeysRef = React.useRef<ReadonlySet<string>>(new Set());
+    const isCollapsed = React.useCallback((path: string) => collapsedKeysRef.current.has(path), []);
+
     const fallbackError = t('files.reviewDiffRequestFailed');
 
     const initialRequestedPaths = React.useMemo(() => {
-        const count = Math.max(1, Math.min(maxFiles, reviewFiles.length));
+        const count = Math.max(1, Math.min(maxFiles, reviewListFiles.length));
         const out: string[] = [];
-        for (const file of reviewFiles.slice(0, count)) {
+        for (const file of reviewListFiles.slice(0, count)) {
             if (file?.fullPath) out.push(file.fullPath);
         }
         return out;
-    }, [maxFiles, reviewFiles]);
+    }, [maxFiles, reviewListFiles]);
+
+    const prefetchRows = React.useMemo(() => {
+        return reviewFileEntries.map((entry) => ({
+            kind: 'file',
+            key: `file:${entry.key}`,
+            sectionKey: entry.sectionKey,
+            indexInSection: entry.indexInSection,
+            fileIndex: entry.fileIndex,
+            file: entry.file,
+        } satisfies ChangedFilesReviewRow));
+    }, [reviewFileEntries]);
+
+    const prefetch = useChangedFilesReviewPrefetch({
+        sessionId,
+        snapshotSignature,
+        diffArea,
+        rows: prefetchRows,
+        reviewFiles: reviewListFiles,
+        isCollapsed,
+        normalizeError: plugin.errorNormalizer,
+        fallbackError,
+        initialRequestedPaths,
+    });
+
+    const viewabilityConfig = useScmReviewViewabilityConfig();
+    const tooLargeForExpansion = tooLarge && viewabilityConfig.enabled;
+    const { expandedKeys, collapsedKeys, toggleCollapsed } = useScmDiffExpandedKeys({
+        allKeys,
+        viewableIndices: prefetch.viewableRowIndices,
+        tooLarge: tooLargeForExpansion,
+        aheadCount: viewabilityConfig.aheadCount,
+        behindCount: viewabilityConfig.behindCount,
+        resetKey: `${sessionId}:${snapshotSignature ?? 'nosig'}:${diffArea}`,
+        initialCollapsedKeys: props.initialCollapsedPaths ?? null,
+        onCollapsedKeysChange: props.onCollapsedPathsChange,
+    });
+
+    React.useEffect(() => {
+        collapsedKeysRef.current = collapsedKeys;
+    }, [collapsedKeys]);
+
+    const expandPath = React.useCallback((path: string) => {
+        if (!collapsedKeys.has(path)) return;
+        toggleCollapsed(path);
+    }, [collapsedKeys, toggleCollapsed]);
 
     const reportScrollTop = React.useCallback((nextTop: number) => {
         if (!Number.isFinite(nextTop)) return;
@@ -294,37 +404,37 @@ export function ChangedFilesReview(props: ChangedFilesReviewProps) {
         // In the UI app we compile shared RN code without DOM typings; `HTMLElement` can be `never`.
         // Treat DOM nodes as `any` within the web-only branch.
         const host = (rawList?.getScrollableNode?.() as any) ?? null;
-        if (!host) return null;
 
         const win = (globalThis as any).window as Window | undefined;
-        const isScrollable = (el: any): el is any => {
-            if (!el) return false;
-            if (!win?.getComputedStyle) return false;
-            const style = win.getComputedStyle(el);
-            const overflowY = style.overflowY;
-            if (overflowY !== 'auto' && overflowY !== 'scroll' && overflowY !== 'overlay') return false;
-            return el.scrollHeight > el.clientHeight + 1;
+        if (!win) return null;
+        const doc = win.document as Document | undefined;
+        const listHost = (doc?.querySelector?.('[data-testid="scm-review-list"]') as Element | null) ?? null;
+        const rootCandidate: Element | null = listHost ?? (host as Element | null);
+        if (!rootCandidate) return null;
+
+        const disableOverflowAnchor = (el: any) => {
+            try {
+                el?.style?.setProperty?.('overflow-anchor', 'none');
+            } catch {
+                // ignore
+            }
         };
 
-        const boundary = (host.closest?.('[data-testid="session-details-panel-root"]') as any) ?? null;
-        let cursor: any = host;
-        let steps = 0;
-        while (cursor && steps < 40) {
-            if (isScrollable(cursor)) {
-                try {
-                    cursor.style.setProperty('overflow-anchor', 'none');
-                } catch {
-                    // ignore
-                }
-                webScrollRootRef.current = cursor as any;
-                return cursor as any;
-            }
-            if (boundary && cursor === boundary) break;
-            cursor = (cursor as any)?.parentElement ?? null;
-            steps += 1;
-        }
+        // Match our Playwright e2e helper semantics:
+        // 1) Prefer host itself if scrollable.
+        // 2) Otherwise prefer a nested scroll container inside the host.
+        // 3) Fall back to ancestors.
+        const resolved = resolveWebScrollableElement(rootCandidate as any, {
+            win,
+            pick: 'first',
+            maxDescendants: 1200,
+            maxAncestors: 40,
+        });
+        if (!resolved) return null;
 
-        return null;
+        disableOverflowAnchor(resolved);
+        webScrollRootRef.current = resolved as any;
+        return resolved as any;
     }, []);
 
     React.useEffect(() => {
@@ -375,71 +485,44 @@ export function ChangedFilesReview(props: ChangedFilesReviewProps) {
         }
     }, [props.onScroll, reportScrollTop, resolveWebScrollRoot]);
 
-    React.useEffect(() => {
-        if (Platform.OS !== 'web') return;
-        if (hasAppliedInitialScrollRef.current) return;
-        const initial = props.initialScrollTop;
-        if (typeof initial !== 'number' || !Number.isFinite(initial) || initial <= 0) return;
-        hasAppliedInitialScrollRef.current = true;
-        deferOnWeb(() => {
-            const raf: (cb: FrameRequestCallback) => number =
-                typeof globalThis.requestAnimationFrame === 'function'
-                    ? globalThis.requestAnimationFrame.bind(globalThis)
-                    : (cb) => globalThis.setTimeout(() => cb(Date.now()), 0);
-
-            let attempts = 0;
-            const maxAttempts = 12;
-            const tryApply = () => {
-                const scrollRoot = webScrollRootRef.current ?? resolveWebScrollRoot();
-                if (!scrollRoot) {
-                    attempts += 1;
-                    if (attempts >= maxAttempts) return;
-                    raf(() => tryApply());
-                    return;
+    useInitialScrollRestore({
+        initialScrollTop: typeof props.initialScrollTop === 'number' ? props.initialScrollTop : null,
+        latestScrollTopRef: lastScrollTopRef,
+        applyInitialScrollTop: React.useCallback((initial) => {
+            if (Platform.OS === 'web') {
+                const scrollRoot = webScrollRootRef.current;
+                const currentTop =
+                    scrollRoot && typeof (scrollRoot as any).scrollTop === 'number' ? Number((scrollRoot as any).scrollTop) : null;
+                const trackedTop = Number.isFinite(lastScrollTopRef.current) ? lastScrollTopRef.current : 0;
+                // If the user has already scrolled but we haven't yet observed a stable scrollTop via
+                // FlashList events (common during early mount on web), do not override their position.
+                if (typeof currentTop === 'number' && currentTop > 0 && trackedTop <= 0) {
+                    return true;
                 }
+            }
 
-                const rawList: any = listRef.current as any;
-                try {
-                    rawList?.scrollToOffset?.({ offset: initial, animated: false });
-                } catch {
-                    // ignore
-                }
-                try {
-                    (scrollRoot as any).scrollTop = initial;
-                } catch {
-                    // ignore
-                }
+            const rawList: any = listRef.current as any;
+            if (!rawList || typeof rawList.scrollToOffset !== 'function') return false;
+            try {
+                rawList.scrollToOffset({ offset: initial, animated: false });
+            } catch {
+                return false;
+            }
 
-                // Re-apply a couple times to beat post-layout adjustments.
-                raf(() => {
-                    try {
-                        rawList?.scrollToOffset?.({ offset: initial, animated: false });
-                    } catch {
-                        // ignore
-                    }
+            if (Platform.OS === 'web') {
+                const scrollRoot = webScrollRootRef.current;
+                if (scrollRoot && typeof (scrollRoot as any).scrollTop === 'number') {
                     try {
                         (scrollRoot as any).scrollTop = initial;
                     } catch {
                         // ignore
                     }
-                    raf(() => {
-                        try {
-                            rawList?.scrollToOffset?.({ offset: initial, animated: false });
-                        } catch {
-                            // ignore
-                        }
-                        try {
-                            (scrollRoot as any).scrollTop = initial;
-                        } catch {
-                            // ignore
-                        }
-                    });
-                });
-            };
+                }
+            }
 
-            tryApply();
-        });
-    }, [props.initialScrollTop, resolveWebScrollRoot]);
+            return true;
+        }, []),
+    });
 
     React.useEffect(() => {
         return () => {
@@ -447,43 +530,12 @@ export function ChangedFilesReview(props: ChangedFilesReviewProps) {
         };
     }, [props.onScrollTopChange]);
 
-    const preserveScrollOnToggleCollapsed = React.useCallback((path: string) => {
-        const rawList: any = listRef.current as any;
-        // FlashList caches row measurements; clear before expanding/collapsing highly variable diff rows.
-        // This is especially important on web to avoid stale measurement artifacts, but it's safe to
-        // call on all platforms.
-        try {
-            const clearLayoutCache = rawList?.clearLayoutCacheOnUpdate;
-            if (typeof clearLayoutCache === 'function') {
-                clearLayoutCache.call(rawList);
-            }
-        } catch {
-            // ignore
-        }
-
-        toggleCollapsed(path);
-    }, [toggleCollapsed]);
-
-    const prefetch = useChangedFilesReviewPrefetch({
-        sessionId,
-        snapshotSignature,
-        diffArea,
-        rows,
-        reviewFiles,
-        isCollapsed,
-        normalizeError: plugin.errorNormalizer,
-        fallbackError,
-        initialRequestedPaths,
-    });
-
-    const { getDiffState } = useChangedFilesReviewDiffLoading({
+    const { diffStateSource } = useChangedFilesReviewDiffLoading({
         sessionId,
         isRepo: Boolean(snapshot?.repo.isRepo),
-        reviewFiles,
+        reviewFiles: reviewListFiles,
         diffArea,
-        // Review is now virtualized, so we no longer force a "single-file" mode when thresholds are exceeded.
-        // Render cost is bounded by virtualization; diff fetch is bounded via requestedPaths + cache/prefetch.
-        tooLarge: false,
+        tooLarge,
         selectedPath: '',
         snapshotSignature,
         diffCache: prefetch.prefetchEnabled ? scmDiffCache : null,
@@ -506,31 +558,33 @@ export function ChangedFilesReview(props: ChangedFilesReviewProps) {
 
     const highlightedPath = useChangedFilesReviewFocusPath({
         focusPath: typeof props.focusPath === 'string' ? props.focusPath : null,
-        reviewFiles,
+        reviewFiles: reviewListFiles,
         expandPath,
         scrollToPath,
     });
 
     // Prefetch scheduling + viewability windowing is handled by useChangedFilesReviewPrefetch.
 
-    // FlashList can aggressively recycle rows; ensure collapsed/expanded state is reflected by
-    // baking it into the `data` items (in addition to `extraData`) so visible rows always update.
-    const rowsWithViewState = React.useMemo(() => {
-        if (collapsedPaths.size === 0) return rows;
-        return rows.map((row) => {
-            if (row.kind !== 'file') return row;
-            const path = row.file.fullPath;
-            const nextCollapsed = isCollapsed(path);
-            if (row.collapsed === nextCollapsed) return row;
-            return { ...row, collapsed: nextCollapsed };
-        });
-    }, [collapsedPaths, isCollapsed, rows]);
+    const estimatedChangedLinesByPath = React.useMemo(() => {
+        const map = new Map<string, number>();
+        for (const file of reviewListFiles) {
+            if (!file?.fullPath) continue;
+            const added = typeof file.linesAdded === 'number' && Number.isFinite(file.linesAdded) ? file.linesAdded : 0;
+            const removed = typeof file.linesRemoved === 'number' && Number.isFinite(file.linesRemoved) ? file.linesRemoved : 0;
+            map.set(file.fullPath, Math.max(0, added) + Math.max(0, removed));
+        }
+        return map;
+    }, [reviewListFiles]);
+    const getEstimatedChangedLines = React.useCallback((path: string) => {
+        return estimatedChangedLinesByPath.get(path) ?? null;
+    }, [estimatedChangedLinesByPath]);
 
     const renderDiffBlock = useChangedFilesReviewDiffBlockRenderer({
         theme,
         sessionId,
         snapshotSignature,
-        getDiffState,
+        diffStateSource,
+        getEstimatedChangedLines,
         reviewCommentsEnabled,
         reviewCommentDrafts,
         onUpsertReviewCommentDraft: props.onUpsertReviewCommentDraft,
@@ -610,33 +664,26 @@ export function ChangedFilesReview(props: ChangedFilesReviewProps) {
         tooLarge,
     ]);
 
-    const renderRow = React.useCallback(({ item, index }: { item: ChangedFilesReviewRow; index: number }) => {
-        if (item.kind === 'section') {
-            return (
-                <ChangedFilesSectionHeader theme={theme} color={theme.colors.textSecondary}>
-                    {item.title}
-                </ChangedFilesSectionHeader>
-            );
-        }
+    const renderBeforeFileRow = React.useCallback(({ file }: Readonly<{ file: any; index: number }>) => {
+        const title = sectionHeaderTitleByKey.get(file.key as string);
+        if (!title) return null;
+        return (
+            <ChangedFilesSectionHeader theme={theme} color={theme.colors.textSecondary}>
+                {title}
+            </ChangedFilesSectionHeader>
+        );
+    }, [sectionHeaderTitleByKey, theme]);
 
-        const file = item.file;
+    const renderFileRow = React.useCallback((params: any) => {
+        const meta = fileMetaByKey.get(params.file.key as string);
+        if (!meta) return null;
+        const file = meta.file;
         const safePath = toTestIdSafeValue(file.fullPath);
-        const collapsed = item.collapsed === true || isCollapsed(file.fullPath);
-        const showDiff = !collapsed;
+
         const stopPropagationIfPossible = (event: unknown) => {
             const maybeEvent: any = event as any;
-            try {
-                maybeEvent?.stopPropagation?.();
-            } catch {
-                // ignore
-            }
-            try {
-                // Some web event implementations can expose a `nativeEvent` getter that throws
-                // (e.g. pooled events or cross-realm wrappers). Treat this as best-effort.
-                maybeEvent?.nativeEvent?.stopPropagation?.();
-            } catch {
-                // ignore
-            }
+            try { maybeEvent?.stopPropagation?.(); } catch {}
+            try { maybeEvent?.nativeEvent?.stopPropagation?.(); } catch {}
         };
 
         const openFileTestId = `scm-change-open-file-${safePath}`;
@@ -683,74 +730,64 @@ export function ChangedFilesReview(props: ChangedFilesReviewProps) {
             </View>
         );
 
-        const next = rowsWithViewState[index + 1];
-        const showDivider = next?.kind === 'file' && next.sectionKey === item.sectionKey;
-
         return (
-            <View>
-                <ScmChangeRow
-                    theme={theme}
-                    file={file}
-                    density={rowDensity}
-                    highlighted={highlightedPath === file.fullPath}
-                    onPressPinned={
-                        onFilePressPinned
-                            ? () => deferOnWeb(() => onFilePressPinned(file))
-                            : undefined
-                    }
-                    onToggleSelection={onToggleSelectionForFile ? () => onToggleSelectionForFile(file) : undefined}
-                    trailingElement={rightElement}
-                    showDivider={showDivider}
-                    onPress={() => preserveScrollOnToggleCollapsed(file.fullPath)}
-                />
-                {showDiff && renderDiffBlock(file.fullPath)}
-            </View>
+            <ScmChangeRow
+                theme={theme}
+                file={file}
+                density={rowDensity}
+                highlighted={highlightedPath === file.fullPath}
+                onPressPinned={
+                    onFilePressPinned
+                        ? () => deferOnWeb(() => onFilePressPinned(file))
+                        : undefined
+                }
+                onToggleSelection={onToggleSelectionForFile ? () => onToggleSelectionForFile(file) : undefined}
+                trailingElement={rightElement}
+                showDivider={meta.showDivider}
+                onPress={params.onToggleExpanded}
+            />
         );
     }, [
+        fileMetaByKey,
         highlightedPath,
-        isCollapsed,
         onFilePressPinned,
         onFilePress,
         onToggleSelectionForFile,
-        preserveScrollOnToggleCollapsed,
         renderFileActions,
         renderFileTrailingActions,
-        renderDiffBlock,
         rowDensity,
-        rowsWithViewState,
         theme,
     ]);
 
-      return (
-	          <PierreScrollRootVirtualizerProvider>
-	                <View style={{ flex: 1, minHeight: 0 }}>
-	                <FlashList
-	                    ref={listRef}
-	                    testID="scm-review-list"
-	                    style={
-	                        Platform.OS === 'web'
-	                            ? {
-	                                flex: 1,
-	                                minHeight: 0,
-	                                // @ts-expect-error RN style types omit CSS `overflow-anchor`; required to disable browser scroll anchoring on web.
-	                                overflowAnchor: 'none',
-	                            }
-	                            : { flex: 1, minHeight: 0 }
-	                    }
-	                    data={rowsWithViewState}
-	                    keyExtractor={(item) => item.key}
-	                    getItemType={(item) => item.kind}
-	                    drawDistance={1200}
-                    // FlashList memoizes row rendering; ensure UI state like collapsed paths triggers visible re-renders.
-                    extraData={collapsedPaths}
-                    onScroll={handleScroll}
-                    onLayout={props.onLayout}
-                    onContentSizeChange={props.onContentSizeChange}
-                    onViewableItemsChanged={prefetch.onViewableItemsChanged}
-                    renderItem={renderRow}
-                    ListHeaderComponent={ListHeaderComponent}
-                />
-            </View>
-        </PierreScrollRootVirtualizerProvider>
+    const renderInlineUnifiedDiff = React.useCallback(({ file }: any) => {
+        const path = typeof file.filePath === 'string' ? file.filePath : String(file.key ?? '');
+        return renderDiffBlock(path);
+    }, [renderDiffBlock]);
+
+    return (
+        <View style={{ flex: 1, minHeight: 0 }}>
+            <DiffFilesListView
+                ref={listRef as any}
+                testID="scm-review-list"
+                files={diffFiles as any}
+                expandedKeys={expandedKeys}
+                onToggleExpanded={toggleCollapsed}
+                canRenderInlineDiffs={true}
+                wrapLines={true}
+                showLineNumbers={true}
+                showPrefix={true}
+                virtualizeFileList
+                inlineDiffContainerVariant="none"
+                renderBeforeFileRow={renderBeforeFileRow as any}
+                renderFileRow={renderFileRow as any}
+                renderInlineUnifiedDiff={renderInlineUnifiedDiff as any}
+                ListHeaderComponent={ListHeaderComponent as any}
+                onScroll={handleScroll}
+                onLayout={props.onLayout as any}
+                onContentSizeChange={props.onContentSizeChange as any}
+                onViewableItemsChanged={prefetch.onViewableItemsChanged as any}
+                scrollEventThrottle={16}
+            />
+        </View>
     );
 }

@@ -6,65 +6,38 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 let lastScrollLockBypassEl: { addEventListener: any; removeEventListener: any } | null = null;
 
-vi.mock('react-native', () => ({
-    Platform: { OS: 'web', select: (_: any) => 1 },
-    View: React.forwardRef((props: any, ref: any) => {
-        if (ref) {
-            const el = {
-                addEventListener: vi.fn(),
-                removeEventListener: vi.fn(),
-                querySelectorAll: () => [],
-                getAttribute: () => null,
-                scrollHeight: 0,
-                clientHeight: 0,
-                scrollWidth: 0,
-                clientWidth: 0,
-                scrollTop: 0,
-                scrollLeft: 0,
-            };
-            if (props?.testID === 'session-details-panel-root') {
-                lastScrollLockBypassEl = el;
+vi.mock('react-native', async () => {
+    const rn = await import('@/dev/reactNativeStub');
+    return {
+        ...rn,
+        Platform: { ...rn.Platform, OS: 'web' },
+        View: React.forwardRef((props: any, ref: any) => {
+            if (ref) {
+                const el = {
+                    addEventListener: vi.fn(),
+                    removeEventListener: vi.fn(),
+                    querySelectorAll: () => [],
+                    getAttribute: () => null,
+                    scrollHeight: 0,
+                    clientHeight: 0,
+                    scrollWidth: 0,
+                    clientWidth: 0,
+                    scrollTop: 0,
+                    scrollLeft: 0,
+                };
+                if (props?.testID === 'session-details-panel-root') {
+                    lastScrollLockBypassEl = el;
+                }
+                const host = { getScrollableNode: () => el };
+                if (typeof ref === 'function') ref(host);
+                else if (typeof ref === 'object') (ref as any).current = host;
             }
-            const host = { getScrollableNode: () => el };
-            if (typeof ref === 'function') ref(host);
-            else if (typeof ref === 'object') (ref as any).current = host;
-        }
-        return React.createElement('View', props, props.children);
-    }),
-    Pressable: (props: any) => React.createElement('Pressable', props, props.children),
-    ScrollView: (props: any) => React.createElement('ScrollView', props, props.children),
-}));
-
-vi.mock('react-native-unistyles', () => ({
-    useUnistyles: () => ({
-        theme: {
-            colors: {
-                surface: '#fff',
-                surfaceHigh: '#f5f5f5',
-                divider: '#eee',
-                text: '#000',
-                textSecondary: '#666',
-                shadow: { color: '#000', opacity: 0.2 },
-            },
-        },
-    }),
-    StyleSheet: {
-        absoluteFillObject: {},
-        create: (value: any) =>
-            typeof value === 'function'
-                ? value({
-                    colors: {
-                        surface: '#fff',
-                        surfaceHigh: '#f5f5f5',
-                        divider: '#eee',
-                        text: '#000',
-                        textSecondary: '#666',
-                        shadow: { color: '#000', opacity: 0.2 },
-                    },
-                })
-                : value,
-    },
-}));
+            return React.createElement('View', props, props.children);
+        }),
+        Pressable: (props: any) => React.createElement('Pressable', props, props.children),
+        ScrollView: (props: any) => React.createElement('ScrollView', props, props.children),
+    };
+});
 
 vi.mock('@expo/vector-icons', () => ({
     Octicons: 'Octicons',
@@ -103,6 +76,8 @@ vi.mock('@/sync/domains/state/storage', () => ({
     useLocalSettingMutable: () => [false, vi.fn()],
 }));
 
+const unpinDetailsTab = vi.fn();
+
 const scopeState = {
     details: {
         isOpen: true,
@@ -119,6 +94,7 @@ vi.mock('@/components/appShell/panes/hooks/useAppPaneScope', () => ({
         closeDetails: vi.fn(),
         closeDetailsTab: vi.fn(),
         pinDetailsTab: vi.fn(),
+        unpinDetailsTab,
         setActiveDetailsTab: vi.fn(),
         openDetailsTab: vi.fn(),
         scopeState,
@@ -205,7 +181,7 @@ describe('SessionDetailsPanel (keep mounted tabs)', () => {
         (globalThis as any).document = originalDocument;
     });
 
-    it('renders pinned tab affordance as a pin icon (not pin-slash)', async () => {
+    it('renders pinned tab affordance as an unpin icon (pin-slash)', async () => {
         const { SessionDetailsPanel } = await import('./SessionDetailsPanel');
 
         let tree: renderer.ReactTestRenderer | null = null;
@@ -213,14 +189,14 @@ describe('SessionDetailsPanel (keep mounted tabs)', () => {
             tree = renderer.create(<SessionDetailsPanel sessionId="s1" scopeId="session:s1" />);
         });
 
-        const pinnedA = tree!.root.findByProps({ testID: 'session-details-tab-pinned-file_a' });
-        const pinnedReview = tree!.root.findByProps({ testID: 'session-details-tab-pinned-scmReview' });
+        const pinnedA = tree!.root.findByProps({ testID: 'session-details-tab-unpin-file_a' });
+        const pinnedReview = tree!.root.findByProps({ testID: 'session-details-tab-unpin-scmReview' });
 
         const aIcon = pinnedA.findByType('Octicons');
         const reviewIcon = pinnedReview.findByType('Octicons');
 
-        expect((aIcon.props as any).name).toBe('pin');
-        expect((reviewIcon.props as any).name).toBe('pin');
+        expect((aIcon.props as any).name).toBe('pin-slash');
+        expect((reviewIcon.props as any).name).toBe('pin-slash');
     });
 
     it('renders preview tab pin action as a pin icon (not pin-slash)', async () => {
@@ -247,5 +223,21 @@ describe('SessionDetailsPanel (keep mounted tabs)', () => {
         } finally {
             scopeState.details.tabs.pop();
         }
+    });
+
+    it('unpins a pinned tab when pressing the unpin action', async () => {
+        const { SessionDetailsPanel } = await import('./SessionDetailsPanel');
+
+        let tree: renderer.ReactTestRenderer | null = null;
+        await act(async () => {
+            tree = renderer.create(<SessionDetailsPanel sessionId="s1" scopeId="session:s1" />);
+        });
+
+        const unpinButton = tree!.root.findByProps({ testID: 'session-details-tab-unpin-file_a' });
+        await act(async () => {
+            unpinButton.props.onPress?.({ stopPropagation: () => {} });
+        });
+
+        expect(unpinDetailsTab).toHaveBeenCalledWith('file:a');
     });
 });

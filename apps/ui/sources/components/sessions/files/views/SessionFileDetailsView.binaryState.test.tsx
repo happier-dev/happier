@@ -5,9 +5,13 @@ import { describe, expect, it, vi } from 'vitest';
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 (globalThis as any).__DEV__ = false;
 
-vi.mock('react-native', () => ({
-  View: 'View',
-  ScrollView: 'ScrollView',
+vi.mock('react-native', async () => ({
+  ...(await import('@/dev/reactNativeStub')),
+  Platform: { OS: 'ios', select: (spec: any) => spec?.ios ?? spec?.default },
+}));
+
+vi.mock('@expo/vector-icons', () => ({
+  Ionicons: 'Ionicons',
 }));
 
 vi.mock('react-native-unistyles', () => ({
@@ -33,6 +37,15 @@ vi.mock('@/components/ui/layout/layout', () => ({
 
 vi.mock('@/text', () => ({
   t: (key: string) => key,
+}));
+
+vi.mock('@/modal', () => ({
+  Modal: {
+    alert: vi.fn(),
+    confirm: vi.fn(),
+    prompt: vi.fn(),
+    show: vi.fn(),
+  },
 }));
 
 vi.mock('@/components/sessions/files/file/FileHeader', () => ({
@@ -89,6 +102,19 @@ vi.mock('@/components/appShell/panes/hooks/useAppPaneScope', () => ({
   }),
 }));
 
+const startDownloadSpy = vi.fn(async (_input: any) => ({ ok: true as const }));
+
+vi.mock('@/hooks/session/files/useWorkspaceFileTransfers', () => ({
+  useWorkspaceFileTransfers: () => ({
+    uploadState: { status: 'idle' },
+    downloadState: { status: 'idle' },
+    startUploads: vi.fn(async () => ({ ok: true })),
+    cancelUploads: vi.fn(),
+    startDownload: (input: any) => startDownloadSpy(input),
+    cancelDownload: vi.fn(),
+  }),
+}));
+
 const refreshSpy = vi.fn(async (..._args: any[]) => ({
   status: 'ready' as const,
   error: null,
@@ -113,8 +139,10 @@ vi.mock('@/hooks/session/files/useFileScmStageActions', () => ({
 vi.mock('./sessionFileDetails/useSessionFileEditorState', () => ({
   useSessionFileEditorState: () => ({
     editorSurfaceEnabled: false,
-    editorText: '',
-    setEditorText: vi.fn(),
+    editorSeedText: '',
+    editorHandleRef: { current: null },
+    onEditorChange: vi.fn(),
+    getEditorText: () => '',
     editorDirty: false,
     editorTooLarge: false,
     editorChunkTooLarge: false,
@@ -154,6 +182,7 @@ vi.mock('@/utils/code/fileLanguage', () => ({
 }));
 
 vi.mock('@/scm/settings/commitStrategy', () => ({
+  SCM_COMMIT_STRATEGIES: ['atomic', 'git_staging'],
   allowsLiveStaging: () => false,
   isAtomicCommitStrategy: () => true,
 }));
@@ -208,6 +237,13 @@ describe('SessionFileDetailsView (binary)', () => {
     expect(refreshSpy).toHaveBeenCalled();
     expect(tree.root.findAllByType('FileHeader' as any).length).toBe(1);
     expect(tree.root.findAllByType('ScmChangeDiscardButton' as any).length).toBe(1);
+    expect(tree.root.findAllByProps({ testID: 'file-header-download', accessibilityRole: 'button' }).length).toBe(1);
     expect(tree.root.findAllByType('FileBinaryState' as any).length).toBe(1);
+
+    await act(async () => {
+      tree.root.findByProps({ testID: 'file-header-download', accessibilityRole: 'button' }).props.onPress();
+    });
+
+    expect(startDownloadSpy).toHaveBeenCalledWith({ path: 'bin.dat', asZip: false });
   });
 });

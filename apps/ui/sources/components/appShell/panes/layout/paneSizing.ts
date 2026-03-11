@@ -12,6 +12,11 @@ export const PANE_SIZING_DEFAULTS = {
         // No global cap: see `right.maxPx`.
         maxPx: Number.POSITIVE_INFINITY,
     },
+    bottom: {
+        minPx: 220,
+        // No global cap: the effective max is derived from container height minus the main min height.
+        maxPx: Number.POSITIVE_INFINITY,
+    },
 } as const;
 
 export function resolveScaledPaneWidthPx(input: Readonly<{
@@ -41,6 +46,37 @@ export function resolveScaledPaneWidthPxUncapped(input: Readonly<{
     if (!Number.isFinite(prefer)) return input.minPx;
     if (!Number.isFinite(basis) || basis <= 0) return clampMin(prefer);
     const ratio = input.containerWidthPx / basis;
+    if (!Number.isFinite(ratio) || ratio <= 0) return clampMin(prefer);
+    return clampMin(prefer * ratio);
+}
+
+export function resolveScaledPaneHeightPx(input: Readonly<{
+    preferredHeightPx: number;
+    basisContainerHeightPx: number;
+    containerHeightPx: number;
+    minPx: number;
+    maxPx: number;
+}>): number {
+    const clamp = (value: number) => Math.min(input.maxPx, Math.max(input.minPx, value));
+    const basis = input.basisContainerHeightPx;
+    if (!Number.isFinite(basis) || basis <= 0) return clamp(input.preferredHeightPx);
+    const ratio = input.containerHeightPx / basis;
+    if (!Number.isFinite(ratio) || ratio <= 0) return clamp(input.preferredHeightPx);
+    return clamp(input.preferredHeightPx * ratio);
+}
+
+export function resolveScaledPaneHeightPxUncapped(input: Readonly<{
+    preferredHeightPx: number;
+    basisContainerHeightPx: number;
+    containerHeightPx: number;
+    minPx: number;
+}>): number {
+    const clampMin = (value: number) => Math.max(input.minPx, value);
+    const basis = input.basisContainerHeightPx;
+    const prefer = input.preferredHeightPx;
+    if (!Number.isFinite(prefer)) return input.minPx;
+    if (!Number.isFinite(basis) || basis <= 0) return clampMin(prefer);
+    const ratio = input.containerHeightPx / basis;
     if (!Number.isFinite(ratio) || ratio <= 0) return clampMin(prefer);
     return clampMin(prefer * ratio);
 }

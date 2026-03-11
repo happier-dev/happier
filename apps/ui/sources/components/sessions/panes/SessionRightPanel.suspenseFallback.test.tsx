@@ -4,42 +4,6 @@ import { describe, expect, it, vi } from 'vitest';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
-vi.mock('react-native', () => ({
-    Platform: { OS: 'web', select: (value: any) => value?.default ?? null },
-    View: (props: any) => React.createElement('View', props, props.children),
-    Pressable: (props: any) => React.createElement('Pressable', props, props.children),
-    ActivityIndicator: (props: any) => React.createElement('ActivityIndicator', props),
-}));
-
-vi.mock('react-native-unistyles', () => ({
-    __esModule: true,
-    useUnistyles: () => ({
-        theme: {
-            colors: {
-                surface: '#fff',
-                surfaceHigh: '#f6f6f6',
-                divider: '#ddd',
-                text: '#000',
-                textSecondary: '#666',
-            },
-        },
-    }),
-    StyleSheet: {
-        create: (value: any) =>
-            typeof value === 'function'
-                ? value({
-                    colors: {
-                        surface: '#fff',
-                        surfaceHigh: '#f6f6f6',
-                        divider: '#ddd',
-                        text: '#000',
-                        textSecondary: '#666',
-                    },
-                })
-                : value,
-    },
-}));
-
 vi.mock('@expo/vector-icons', () => ({
     Octicons: 'Octicons',
 }));

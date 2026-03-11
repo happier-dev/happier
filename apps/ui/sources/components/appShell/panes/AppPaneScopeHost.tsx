@@ -1,11 +1,12 @@
 import * as React from 'react';
 import { Platform, View, useWindowDimensions } from 'react-native';
-import { MultiPaneHost } from '@/components/ui/panels/MultiPaneHost';
+import { MultiPaneHostWithBottom } from '@/components/ui/panels/MultiPaneHostWithBottom';
 import { resolvePaneLayout } from '@/components/ui/panels/paneBreakpoints';
+import { resolveBottomPaneLayout } from '@/components/ui/panels/resolveBottomPaneLayout';
 import { useDeviceType } from '@/utils/platform/responsive';
 import { useLocalSetting, useLocalSettingMutable } from '@/sync/domains/state/storage';
 import { useAppPaneContext } from './AppPaneProvider';
-import { PANE_SIZING_DEFAULTS, resolveDockedPaneSizing, resolveScaledPaneWidthPx, resolveScaledPaneWidthPxUncapped } from './layout/paneSizing';
+import { PANE_SIZING_DEFAULTS, resolveDockedPaneSizing, resolveScaledPaneHeightPx, resolveScaledPaneHeightPxUncapped, resolveScaledPaneWidthPx, resolveScaledPaneWidthPxUncapped } from './layout/paneSizing';
 import { resolveMultiPaneDeviceType } from './layout/resolveMultiPaneDeviceType';
 import { applyEditorFocusModePaneLayoutOverride } from './layout/applyEditorFocusModePaneLayoutOverride';
 
@@ -14,16 +15,19 @@ export type AppPaneScopeHostProps = Readonly<{
     main: React.ReactNode;
     rightPane?: React.ReactNode | null;
     detailsPane?: React.ReactNode | null;
+    bottomPane?: React.ReactNode | null;
 }>;
 
 export const AppPaneScopeHost = React.memo((props: AppPaneScopeHostProps) => {
     const { dispatch, state, getDriver, driverRegistryVersion } = useAppPaneContext();
     const deviceType = useDeviceType();
     const multiPaneDeviceType = resolveMultiPaneDeviceType({ platform: Platform.OS, deviceType });
-    const { width: windowWidthPx } = useWindowDimensions();
+    const { width: windowWidthPx, height: windowHeightPx } = useWindowDimensions();
     const [containerWidthPx, setContainerWidthPx] = React.useState<number>(windowWidthPx);
+    const [containerHeightPx, setContainerHeightPx] = React.useState<number>(windowHeightPx);
     const [rightDragWidthPx, setRightDragWidthPx] = React.useState<number | null>(null);
     const [detailsDragWidthPx, setDetailsDragWidthPx] = React.useState<number | null>(null);
+    const [bottomDragHeightPx, setBottomDragHeightPx] = React.useState<number | null>(null);
     // `useLocalSetting` may return `undefined` transiently during hydration. Treat the setting as
     // enabled unless it has been explicitly disabled to avoid hiding panes on initial load.
     const multiPaneEnabled = useLocalSetting('uiMultiPanePanelsEnabled') !== false;
@@ -34,11 +38,15 @@ export const AppPaneScopeHost = React.memo((props: AppPaneScopeHostProps) => {
     const rightPaneWidthBasisPx = useLocalSetting('rightPaneWidthBasisPx');
     const detailsPaneWidthPx = useLocalSetting('detailsPaneWidthPx');
     const detailsPaneWidthBasisPx = useLocalSetting('detailsPaneWidthBasisPx');
+    const bottomPaneHeightPx = useLocalSetting('bottomPaneHeightPx');
+    const bottomPaneHeightBasisPx = useLocalSetting('bottomPaneHeightBasisPx');
 
     const [, setRightPaneWidthPx] = useLocalSettingMutable('rightPaneWidthPx');
     const [, setRightPaneWidthBasisPx] = useLocalSettingMutable('rightPaneWidthBasisPx');
     const [, setDetailsPaneWidthPx] = useLocalSettingMutable('detailsPaneWidthPx');
     const [, setDetailsPaneWidthBasisPx] = useLocalSettingMutable('detailsPaneWidthBasisPx');
+    const [, setBottomPaneHeightPx] = useLocalSettingMutable('bottomPaneHeightPx');
+    const [, setBottomPaneHeightBasisPx] = useLocalSettingMutable('bottomPaneHeightBasisPx');
 
     React.useEffect(() => {
         dispatch({ type: 'activateScope', scopeId: props.scopeId });
@@ -47,6 +55,7 @@ export const AppPaneScopeHost = React.memo((props: AppPaneScopeHostProps) => {
     const scopeState = state.scopes[props.scopeId];
     const rightOpen = Boolean(scopeState?.right.isOpen);
     const detailsOpen = Boolean(scopeState?.details.isOpen);
+    const bottomOpen = Boolean(scopeState?.bottom?.isOpen);
 
     const driver = React.useMemo(() => getDriver(props.scopeId), [driverRegistryVersion, getDriver, props.scopeId]);
 
@@ -59,6 +68,10 @@ export const AppPaneScopeHost = React.memo((props: AppPaneScopeHostProps) => {
     const detailsPane =
         detailsOpen
             ? (props.detailsPane ?? driver?.renderDetailsPane?.({ scopeId: props.scopeId }) ?? null)
+            : null;
+    const bottomPane =
+        bottomOpen
+            ? (props.bottomPane ?? driver?.renderBottomPane?.({ scopeId: props.scopeId }) ?? null)
             : null;
 
     const scaledRightPreferredPx = resolveScaledPaneWidthPxUncapped({
@@ -96,6 +109,41 @@ export const AppPaneScopeHost = React.memo((props: AppPaneScopeHostProps) => {
 
     const rightPreferredPxForLayout = rightDragWidthPx ?? scaledRightPreferredPx;
     const detailsPreferredPxForLayout = detailsDragWidthPx ?? scaledDetailsPreferredPx;
+
+    const scaledBottomPreferredPx = resolveScaledPaneHeightPxUncapped({
+        preferredHeightPx: bottomPaneHeightPx,
+        basisContainerHeightPx: bottomPaneHeightBasisPx,
+        containerHeightPx,
+        minPx: PANE_SIZING_DEFAULTS.bottom.minPx,
+    });
+
+    const bottomPreferredPxForLayout = bottomDragHeightPx ?? scaledBottomPreferredPx;
+
+    const resolvedBottomLayout = resolveBottomPaneLayout({
+        containerHeightPx,
+        mainMinHeightPx: PANE_SIZING_DEFAULTS.mainMinPx,
+        bottomMinHeightPx: PANE_SIZING_DEFAULTS.bottom.minPx,
+        preferredHeightPx: bottomPreferredPxForLayout,
+    });
+
+    const bottomStoredMaxHeightPxForSizing =
+        resolvedBottomLayout.presentation === 'docked'
+            ? resolvedBottomLayout.dockMaxHeightPx
+            : resolvedBottomLayout.overlayMaxHeightPx;
+
+    const storedEffectiveBottomDockHeightPx = resolveScaledPaneHeightPx({
+        preferredHeightPx: bottomPaneHeightPx,
+        basisContainerHeightPx: bottomPaneHeightBasisPx,
+        containerHeightPx,
+        minPx: PANE_SIZING_DEFAULTS.bottom.minPx,
+        maxPx: bottomStoredMaxHeightPxForSizing,
+    });
+
+    const effectiveBottomDockHeightPx = bottomDragHeightPx ?? storedEffectiveBottomDockHeightPx;
+    const bottomResizeMaxHeightPx =
+        bottomDragHeightPx != null
+            ? resolvedBottomLayout.overlayMaxHeightPx
+            : bottomStoredMaxHeightPxForSizing;
 
     const singlePaneBudgetMaxPx = React.useMemo(() => {
         const mainMinPx = editorFocusModeEnabled ? 0 : PANE_SIZING_DEFAULTS.mainMinPx;
@@ -328,6 +376,10 @@ export const AppPaneScopeHost = React.memo((props: AppPaneScopeHostProps) => {
         dispatch({ type: 'closeDetails', scopeId: props.scopeId });
     }, [dispatch, props.scopeId]);
 
+    const onCloseBottom = React.useCallback(() => {
+        dispatch({ type: 'closeBottom', scopeId: props.scopeId });
+    }, [dispatch, props.scopeId]);
+
     const onCommitRightDockWidthPx = React.useCallback((nextWidthPx: number) => {
         setRightPaneWidthPx(nextWidthPx);
         setRightPaneWidthBasisPx(containerWidthPx);
@@ -338,16 +390,26 @@ export const AppPaneScopeHost = React.memo((props: AppPaneScopeHostProps) => {
         setDetailsPaneWidthBasisPx(containerWidthPx);
     }, [containerWidthPx, setDetailsPaneWidthBasisPx, setDetailsPaneWidthPx]);
 
+    const onCommitBottomDockHeightPx = React.useCallback((nextHeightPx: number) => {
+        setBottomPaneHeightPx(nextHeightPx);
+        setBottomPaneHeightBasisPx(containerHeightPx);
+    }, [containerHeightPx, setBottomPaneHeightBasisPx, setBottomPaneHeightPx]);
+
     return (
         <View
             style={{ flex: 1, minHeight: 0, minWidth: 0 }}
             onLayout={(event) => {
                 const next = Math.round(event?.nativeEvent?.layout?.width ?? 0);
-                if (!Number.isFinite(next) || next <= 0) return;
-                setContainerWidthPx((prev) => (Math.abs(prev - next) > 1 ? next : prev));
+                if (Number.isFinite(next) && next > 0) {
+                    setContainerWidthPx((prev) => (Math.abs(prev - next) > 1 ? next : prev));
+                }
+                const nextHeight = Math.round(event?.nativeEvent?.layout?.height ?? 0);
+                if (Number.isFinite(nextHeight) && nextHeight > 0) {
+                    setContainerHeightPx((prev) => (Math.abs(prev - nextHeight) > 1 ? nextHeight : prev));
+                }
             }}
         >
-            <MultiPaneHost
+            <MultiPaneHostWithBottom
                 main={props.main}
                 hideMain={editorFocusModeEnabled && (rightOpen || detailsOpen)}
                 rightPane={rightPane}
@@ -365,6 +427,14 @@ export const AppPaneScopeHost = React.memo((props: AppPaneScopeHostProps) => {
                 onCommitDetailsDockWidthPx={onCommitDetailsDockWidthPx}
                 onDragRightDockWidthPx={setRightDragWidthPx}
                 onDragDetailsDockWidthPx={setDetailsDragWidthPx}
+                bottomPane={bottomPane}
+                bottomPresentation={resolvedBottomLayout.presentation}
+                bottomDockHeightPx={effectiveBottomDockHeightPx}
+                bottomDockMinHeightPx={PANE_SIZING_DEFAULTS.bottom.minPx}
+                bottomDockMaxHeightPx={bottomResizeMaxHeightPx}
+                onCloseBottom={onCloseBottom}
+                onCommitBottomDockHeightPx={onCommitBottomDockHeightPx}
+                onDragBottomDockHeightPx={setBottomDragHeightPx}
             />
         </View>
     );

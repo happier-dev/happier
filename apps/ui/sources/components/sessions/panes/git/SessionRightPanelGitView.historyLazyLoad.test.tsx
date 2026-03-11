@@ -88,8 +88,11 @@ vi.mock('@/hooks/server/useFeatureEnabled', () => ({
     useFeatureEnabled: () => true,
 }));
 
-vi.mock('@/sync/domains/state/storage', () => ({
-    __esModule: true,
+vi.mock('@/sync/domains/state/storage', async (importOriginal) => {
+    const actual = await importOriginal<typeof import('@/sync/domains/state/storage')>();
+
+    return {
+        ...actual,
     useSetting: () => null,
     useAllMachines: () => [{ id: 'm1', active: true, activeAt: 1, metadata: { host: 'mbp', homeDir: '/tmp' } }],
     useProjectForSession: () => null,
@@ -133,7 +136,8 @@ vi.mock('@/sync/domains/state/storage', () => ({
     }),
     useSessionProjectScmSnapshotError: () => null,
     useSessionProjectScmTouchedPaths: () => [],
-}));
+    };
+});
 
 vi.mock('@/components/sessions/sourceControl/states', () => ({
     NotSourceControlRepositoryState: () => React.createElement('NotSourceControlRepositoryState'),

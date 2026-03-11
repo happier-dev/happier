@@ -7,8 +7,8 @@ import { Typography } from '@/constants/Typography';
 import { t } from '@/text';
 
 export type SourceControlRemoteAction = Readonly<{
-    key: 'fetch' | 'pull' | 'push';
-    iconName: 'sync' | 'arrow-down' | 'arrow-up';
+    key: 'fetch' | 'pull' | 'push' | 'publish';
+    iconName: 'sync' | 'arrow-down' | 'arrow-up' | 'cloud-upload';
     label: string;
     disabled: boolean;
     onPress: () => void;

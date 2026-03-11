@@ -37,7 +37,7 @@ vi.mock('@/sync/domains/state/storage', () => ({
         if (name === 'filesDiffRendererMode') return ['pierre', setFilesDiffRendererMode];
         if (name === 'filesDiffPresentationStyle') return [filesDiffPresentationStyleValue, setFilesDiffPresentationStyle];
         if (name === 'filesChangedFilesRowDensity') return ['comfortable', setFilesChangedFilesRowDensity];
-        if (name === 'scmCommitMessageGeneratorEnabled') return [false, setScmCommitMessageGeneratorEnabled];
+        if (name === 'scmCommitMessageGeneratorEnabled') return [true, setScmCommitMessageGeneratorEnabled];
         if (name === 'scmCommitMessageGeneratorBackendId') return ['claude', setScmCommitMessageGeneratorBackendId];
         if (name === 'scmCommitMessageGeneratorInstructions') return ['', setScmCommitMessageGeneratorInstructions];
         return [null, vi.fn()];
@@ -218,7 +218,7 @@ describe('SourceControlSettingsView', () => {
         expect(setFilesChangedFilesRowDensity).toHaveBeenCalledWith('compact');
     });
 
-    it('renders commit message generator settings and allows enabling', async () => {
+    it('renders commit message generator settings and allows disabling', async () => {
         setScmCommitMessageGeneratorEnabled.mockClear();
 
         const { SourceControlSettingsView } = await import('./SourceControlSettingsView');
@@ -236,7 +236,7 @@ describe('SourceControlSettingsView', () => {
             generatorItem!.props.onPress();
         });
 
-        expect(setScmCommitMessageGeneratorEnabled).toHaveBeenCalledWith(true);
+        expect(setScmCommitMessageGeneratorEnabled).toHaveBeenCalledWith(false);
     });
 
     it('allows editing commit message generator instructions', async () => {

@@ -2,6 +2,8 @@ import * as React from 'react';
 import renderer, { act } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
 
+import { SessionCommitDetailsView } from './SessionCommitDetailsView';
+
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 const diffFilesListSpy = vi.fn();
@@ -171,8 +173,6 @@ describe('SessionCommitDetailsView', () => {
         prefetchAheadCount = 1;
         prefetchBehindCount = 1;
 
-        const { SessionCommitDetailsView } = await import('./SessionCommitDetailsView');
-
         let tree!: renderer.ReactTestRenderer;
         await act(async () => {
             tree = renderer.create(<SessionCommitDetailsView sessionId="s1" sha="abc" />);
@@ -231,8 +231,6 @@ describe('SessionCommitDetailsView', () => {
             error: null,
         });
 
-        const { SessionCommitDetailsView } = await import('./SessionCommitDetailsView');
-
         await act(async () => {
             renderer.create(<SessionCommitDetailsView sessionId="s1" sha="abc" />);
         });
@@ -277,8 +275,6 @@ describe('SessionCommitDetailsView', () => {
         prefetchAheadCount = 1;
         prefetchBehindCount = 1;
 
-        const { SessionCommitDetailsView } = await import('./SessionCommitDetailsView');
-
         let tree!: renderer.ReactTestRenderer;
         await act(async () => {
             tree = renderer.create(<SessionCommitDetailsView sessionId="s1" sha="abc" />);
@@ -311,8 +307,6 @@ describe('SessionCommitDetailsView', () => {
         diffFilesListSpy.mockClear();
         sessionsMock = {};
         sessionMock = { metadata: { path: '/repo' } };
-
-        const { SessionCommitDetailsView } = await import('./SessionCommitDetailsView');
 
         let tree!: renderer.ReactTestRenderer;
         await act(async () => {
@@ -352,8 +346,6 @@ describe('SessionCommitDetailsView', () => {
         sessionsMock = {};
         sessionMock = { metadata: { path: '/repo' } };
 
-        const { SessionCommitDetailsView } = await import('./SessionCommitDetailsView');
-
         let tree!: renderer.ReactTestRenderer;
         await act(async () => {
             tree = renderer.create(<SessionCommitDetailsView sessionId="s1" sha="abc" />);
@@ -392,8 +384,6 @@ describe('SessionCommitDetailsView', () => {
         diffFilesListSpy.mockClear();
         sessionsMock = {};
         sessionMock = { metadata: { path: '/repo' } };
-
-        const { SessionCommitDetailsView } = await import('./SessionCommitDetailsView');
 
         await act(async () => {
             renderer.create(<SessionCommitDetailsView sessionId="s1" sha="abc" />);
@@ -463,8 +453,6 @@ describe('SessionCommitDetailsView', () => {
             error: null,
         }));
 
-        const { SessionCommitDetailsView } = await import('./SessionCommitDetailsView');
-
         await act(async () => {
             renderer.create(<SessionCommitDetailsView sessionId="s1" sha="abc" />);
         });
@@ -511,8 +499,6 @@ describe('SessionCommitDetailsView', () => {
             diff: filesDiff,
             error: null,
         }));
-
-        const { SessionCommitDetailsView } = await import('./SessionCommitDetailsView');
 
         await act(async () => {
             renderer.create(<SessionCommitDetailsView sessionId="s1" sha="abc" />);

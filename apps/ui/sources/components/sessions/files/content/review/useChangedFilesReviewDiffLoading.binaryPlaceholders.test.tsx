@@ -40,7 +40,7 @@ describe('useChangedFilesReviewDiffLoading (binary placeholders)', () => {
             linesRemoved: 0,
         } as any;
 
-        let captured: any = null;
+        let diffStateSource: any = null;
 
         function Probe() {
             const reviewFiles = React.useMemo(() => [file], []);
@@ -57,7 +57,7 @@ describe('useChangedFilesReviewDiffLoading (binary placeholders)', () => {
                 normalizeError,
                 fallbackError: 'fallback',
             });
-            captured = hook.getDiffState('src/image.png');
+            diffStateSource = hook.diffStateSource;
             return React.createElement('Probe');
         }
 
@@ -69,11 +69,13 @@ describe('useChangedFilesReviewDiffLoading (binary placeholders)', () => {
             await act(async () => {
                 await Promise.resolve();
             });
-            if (captured?.status === 'loaded') break;
+            const current = diffStateSource?.getDiffState?.('src/image.png');
+            if (current?.status === 'loaded') break;
         }
 
         expect(sessionScmDiffFileSpy).toHaveBeenCalledTimes(1);
-        expect(captured?.status).toBe('loaded');
-        expect(String(captured?.diff ?? '')).toBe('');
+        const finalState = diffStateSource?.getDiffState?.('src/image.png');
+        expect(finalState?.status).toBe('loaded');
+        expect(String(finalState?.diff ?? '')).toBe('');
     });
 });

@@ -2,6 +2,7 @@ import * as React from 'react';
 import { ScrollView, View } from 'react-native';
 import { FileActionToolbar, type FileDiffMode } from '@/components/sessions/files/file/FileActionToolbar';
 import { FileContentPanel } from '@/components/sessions/files/file/FileContentPanel';
+import { FileDownloadButton } from '@/components/sessions/files/file/FileDownloadButton';
 import { FileHeader } from '@/components/sessions/files/file/FileHeader';
 import { FileBinaryState, FileErrorState, FileLoadingState } from '@/components/sessions/files/file/FileScreenState';
 import { FileEditorPanel } from '@/components/sessions/files/file/editor/FileEditorPanel';
@@ -19,6 +20,8 @@ import {
 } from '@/sync/domains/state/storage';
 import { useUnistyles, StyleSheet } from 'react-native-unistyles';
 import { layout } from '@/components/ui/layout/layout';
+import { Text } from '@/components/ui/text/Text';
+import { Typography } from '@/constants/Typography';
 import { t } from '@/text';
 import { buildFileLineSelectionFingerprint, canUseLineSelection } from '@/scm/scmLineSelection';
 import { getFileLanguageFromPath } from '@/utils/code/fileLanguage';
@@ -325,8 +328,9 @@ export function SessionFileDetailsView(props: SessionFileDetailsViewProps) {
         editorSurfaceEnabled,
         isEditingFile,
         editorResetKey,
-        editorText,
-        setEditorText,
+        editorSeedText,
+        editorHandleRef,
+        onEditorChange,
         isSavingEdits,
         editorDirty,
         editorTooLarge,
@@ -394,14 +398,24 @@ export function SessionFileDetailsView(props: SessionFileDetailsViewProps) {
         };
     }, [fileEntry]);
 
+    const previewTooLarge = error === t('files.fileTooLargeToPreview');
+    const fatalError = Boolean(error) && !previewTooLarge;
+
+    React.useEffect(() => {
+        if (!previewTooLarge) return;
+        if (displayMode !== 'file') return;
+        setDisplayMode('diff');
+    }, [displayMode, previewTooLarge]);
+
     if (isLoading) {
         return <FileLoadingState theme={theme} filePath={filePath} />;
     }
 
-    if (error) {
-        return <FileErrorState theme={theme} filePath={filePath} error={error} onRetry={onRefresh} />;
+    if (fatalError) {
+        return <FileErrorState theme={theme} filePath={filePath} error={error ?? t('common.error')} onRetry={onRefresh} />;
     }
     const isBinaryFile = fileContent?.isBinary === true;
+    const showDownloadAction = previewTooLarge || isBinaryFile;
     const imagePreviewUri = (() => {
         const base64 = fileContent?.binaryBase64 ?? null;
         const mime = fileContent?.binaryMime ?? null;
@@ -423,17 +437,29 @@ export function SessionFileDetailsView(props: SessionFileDetailsViewProps) {
                     fileName={fileName}
                     filePathDir={filePathDir}
                     rightElement={
-                        fileStatusForHeaderActions && scmWriteEnabled && (scmSnapshot?.capabilities?.writeDiscard === true) ? (
-                            <ScmChangeDiscardButton
-                                sessionId={sessionId}
-                                sessionPath={sessionPath}
-                                snapshot={scmSnapshot ?? null}
-                                scmWriteEnabled={scmWriteEnabled}
-                                commitStrategy={scmCommitStrategy}
-                                file={fileStatusForHeaderActions}
-                                surface="file"
-                                onAfterDiscard={refreshAll}
-                            />
+                        showDownloadAction || (fileStatusForHeaderActions && scmWriteEnabled && (scmSnapshot?.capabilities?.writeDiscard === true)) ? (
+                            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                                {showDownloadAction ? (
+                                    <FileDownloadButton
+                                        testID="file-header-download"
+                                        sessionId={sessionId}
+                                        path={filePath}
+                                        asZip={false}
+                                    />
+                                ) : null}
+                                {fileStatusForHeaderActions && scmWriteEnabled && (scmSnapshot?.capabilities?.writeDiscard === true) ? (
+                                    <ScmChangeDiscardButton
+                                        sessionId={sessionId}
+                                        sessionPath={sessionPath}
+                                        snapshot={scmSnapshot ?? null}
+                                        scmWriteEnabled={scmWriteEnabled}
+                                        commitStrategy={scmCommitStrategy}
+                                        file={fileStatusForHeaderActions}
+                                        surface="file"
+                                        onAfterDiscard={refreshAll}
+                                    />
+                                ) : null}
+                            </View>
                         ) : null
                     }
                 />
@@ -471,6 +497,25 @@ export function SessionFileDetailsView(props: SessionFileDetailsViewProps) {
                     onCancelEditingFile={cancelEditingFile}
                     onSaveEditingFile={saveFileEdits}
                 />
+                {previewTooLarge && error ? (
+                    <View
+                        testID="file-preview-unavailable-banner"
+                        style={{
+                            marginHorizontal: 16,
+                            marginBottom: 12,
+                            paddingHorizontal: 12,
+                            paddingVertical: 10,
+                            borderRadius: 12,
+                            borderWidth: 1,
+                            borderColor: theme.colors.divider,
+                            backgroundColor: theme.colors.surfaceHigh,
+                        }}
+                    >
+                        <Text style={{ fontSize: 13, color: theme.colors.textSecondary, ...Typography.default() }}>
+                            {error}
+                        </Text>
+                    </View>
+                ) : null}
             </View>
 
             <View
@@ -485,9 +530,10 @@ export function SessionFileDetailsView(props: SessionFileDetailsViewProps) {
                     <FileEditorPanel
                         theme={theme}
                         resetKey={String(editorResetKey)}
-                        value={editorText}
+                        editorRef={editorHandleRef}
+                        value={editorSeedText}
                         language={language}
-                        onChange={setEditorText}
+                        onChange={onEditorChange}
                         wrapLines={wrapLinesInDiffs}
                         showLineNumbers={showLineNumbers}
                         changeDebounceMs={typeof filesEditorChangeDebounceMs === 'number' ? filesEditorChangeDebounceMs : undefined}

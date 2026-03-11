@@ -6,6 +6,14 @@ import { AppPaneProvider, useAppPaneContext } from '@/components/appShell/panes/
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
+vi.mock('react-native', async () => {
+    const stub = await import('@/dev/reactNativeStub');
+    return {
+        ...stub,
+        Platform: { OS: 'web', select: (value: any) => value?.web ?? value?.default ?? null },
+    };
+});
+
 const invalidateFromUserAndAwaitSpy = vi.fn();
 const loadCommitHistorySpy = vi.fn();
 const useChangedFilesDataSpy = vi.fn();
@@ -31,52 +39,6 @@ function buildScmSnapshotMock(capabilities: any) {
         capabilities,
     };
 }
-
-vi.mock('react-native', () => ({
-    View: 'View',
-    Pressable: 'Pressable',
-    ScrollView: 'ScrollView',
-    ActivityIndicator: 'ActivityIndicator',
-    Platform: { select: (value: any) => value?.default ?? null },
-}));
-
-vi.mock('react-native-unistyles', () => ({
-    __esModule: true,
-    useUnistyles: () => ({
-        theme: {
-            dark: false,
-            colors: {
-                text: '#000',
-                textSecondary: '#666',
-                divider: '#ddd',
-                surface: '#fff',
-                surfaceHigh: '#f6f6f6',
-                input: { background: '#f2f2f2' },
-                warning: '#f90',
-                success: '#0a0',
-                textLink: '#09f',
-            },
-        },
-    }),
-    StyleSheet: {
-        create: (styles: any) =>
-            typeof styles === 'function'
-                ? styles({
-                    colors: {
-                        text: '#000',
-                        textSecondary: '#666',
-                        divider: '#ddd',
-                        surface: '#fff',
-                        surfaceHigh: '#f6f6f6',
-                        input: { background: '#f2f2f2' },
-                        warning: '#f90',
-                        success: '#0a0',
-                        textLink: '#09f',
-                    },
-                })
-                : styles,
-    },
-}));
 
 vi.mock('@expo/vector-icons', () => ({
     Octicons: 'Octicons',
@@ -342,6 +304,25 @@ describe('SessionRightPanel git sub-tabs', () => {
         const { SessionRightPanel } = await import('./SessionRightPanel');
 
         let observedState: any = null;
+        useChangedFilesDataSpy.mockImplementation(() => ({
+            attributionReliability: 'explicit',
+            scmStatusFiles: {
+                includedFiles: [],
+                pendingFiles: [],
+                changeSetModel: 'index',
+                branch: 'main',
+                upstream: null,
+                ahead: 0,
+                behind: 0,
+                detached: false,
+                totalIncluded: 0,
+                totalPending: 0,
+            },
+            allRepositoryChangedFiles: [],
+            sessionAttributedFiles: [],
+            repositoryOnlyFiles: [],
+            suppressedInferredCount: 0,
+        }));
         const Probe = () => {
             const { state } = useAppPaneContext();
             observedState = state;
@@ -387,10 +368,23 @@ describe('SessionRightPanel git sub-tabs', () => {
         const commitSurface = findHostSurfaceView('session-rightpanel-git-surface:commit');
         const updateSurface = findHostSurfaceView('session-rightpanel-git-surface:update');
         const historySurface = findHostSurfaceView('session-rightpanel-git-surface:history');
+        const getVisibility = (node: renderer.ReactTestInstance) => {
+            const style = node.props.style;
+            const styles = Array.isArray(style) ? style : [style];
+            for (const entry of styles) {
+                if (entry && typeof entry === 'object' && 'visibility' in entry) {
+                    return (entry as any).visibility;
+                }
+            }
+            return undefined;
+        };
 
         expect(getOpacity(commitSurface)).toBe(1);
         expect(getOpacity(updateSurface)).toBe(0);
         expect(getOpacity(historySurface)).toBe(0);
+        expect(getVisibility(commitSurface)).toBe('visible');
+        expect(getVisibility(updateSurface)).toBe('hidden');
+        expect(getVisibility(historySurface)).toBe('hidden');
 
         const updateTab = tree.root.findByProps({ testID: 'session-rightpanel-git-subtab:update' });
         await act(async () => {
@@ -401,6 +395,9 @@ describe('SessionRightPanel git sub-tabs', () => {
         expect(getOpacity(commitSurface)).toBe(0);
         expect(getOpacity(updateSurface)).toBe(1);
         expect(getOpacity(historySurface)).toBe(0);
+        expect(getVisibility(commitSurface)).toBe('hidden');
+        expect(getVisibility(updateSurface)).toBe('visible');
+        expect(getVisibility(historySurface)).toBe('hidden');
 
         const historyTab = tree.root.findByProps({ testID: 'session-rightpanel-git-subtab:history' });
         await act(async () => {
@@ -411,6 +408,9 @@ describe('SessionRightPanel git sub-tabs', () => {
         expect(getOpacity(commitSurface)).toBe(0);
         expect(getOpacity(updateSurface)).toBe(0);
         expect(getOpacity(historySurface)).toBe(1);
+        expect(getVisibility(commitSurface)).toBe('hidden');
+        expect(getVisibility(updateSurface)).toBe('hidden');
+        expect(getVisibility(historySurface)).toBe('visible');
         expect(tree.root.findAllByType('SourceControlOperationsHistorySection' as any).length).toBe(1);
     });
 

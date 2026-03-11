@@ -6,19 +6,25 @@ import { describe, expect, it, vi } from 'vitest';
 
 const setExpandedPathsSpy = vi.fn();
 
-vi.mock('react-native', () => ({
-    Platform: { OS: 'web', select: (value: any) => value?.default ?? null },
-    View: 'View',
-    ScrollView: (props: any) => React.createElement('ScrollView', props, props.children),
-    TextInput: (props: any) => React.createElement('TextInput', props),
-    Pressable: (props: any) => React.createElement('Pressable', props, props.children),
-    Dimensions: { get: () => ({ width: 1200, height: 800, scale: 2, fontScale: 1 }) },
-    useWindowDimensions: () => ({ width: 1200, height: 800 }),
-}));
+vi.mock('react-native', async () => {
+    const stub = await import('@/dev/reactNativeStub');
+    return {
+        ...stub,
+        Platform: { OS: 'web', select: (value: any) => value?.default ?? null },
+    };
+});
 
 vi.mock('@expo/vector-icons', () => ({
     Octicons: 'Octicons',
     Ionicons: 'Ionicons',
+}));
+
+vi.mock('@/components/ui/forms/dropdown/DropdownMenu', () => ({
+    DropdownMenu: (props: any) => React.createElement('DropdownMenu', props),
+}));
+
+vi.mock('@/components/ui/lists/ItemRowActions', () => ({
+    ItemRowActions: (props: any) => React.createElement('ItemRowActions', props),
 }));
 
 vi.mock('react-native-unistyles', () => ({
@@ -59,6 +65,17 @@ vi.mock('@/constants/Typography', () => ({
     Typography: { default: () => ({}) },
 }));
 
+vi.mock('@/hooks/session/files/useWorkspaceFileTransfers', () => ({
+    useWorkspaceFileTransfers: () => ({
+        uploadState: { status: 'idle' },
+        downloadState: { status: 'idle' },
+        startUploads: vi.fn(async () => ({ ok: true })),
+        cancelUploads: vi.fn(),
+        startDownload: vi.fn(async () => ({ ok: true })),
+        cancelDownload: vi.fn(),
+    }),
+}));
+
 vi.mock('@/sync/domains/state/storage', () => ({
     storage: { getState: () => ({ setSessionRepositoryTreeExpandedPaths: setExpandedPathsSpy }) },
     useSession: () => ({ active: true, metadata: { machineId: 'm1' } }),
@@ -96,6 +113,14 @@ vi.mock('@/components/sessions/model/resolveSessionMachineReachability', () => (
 
 vi.mock('@/utils/sessions/machineUtils', () => ({
     isMachineOnline: () => true,
+}));
+
+vi.mock('@/components/sessions/model/useSessionMachineReachability', () => ({
+    useSessionMachineReachability: () => ({
+        machineReachable: true,
+        machineOnline: true,
+        machineRpcTargetAvailable: true,
+    }),
 }));
 
 vi.mock('@/scm/scmStatusSync', () => ({

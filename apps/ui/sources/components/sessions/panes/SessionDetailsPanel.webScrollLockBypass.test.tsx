@@ -49,46 +49,21 @@ const fakeDomNode = {
     },
 };
 
-vi.mock('react-native', () => ({
-    Platform: { OS: 'web', select: (_: any) => 1 },
-    View: React.forwardRef((props: any, ref: any) => {
-        if (ref && typeof ref === 'object') {
-            ref.current = fakeDomNode;
-        }
-        return React.createElement('View', props, props.children);
-    }),
-    Pressable: (props: any) => React.createElement('Pressable', props, props.children),
-    ScrollView: (props: any) => React.createElement('ScrollView', props, props.children),
-}));
-
-vi.mock('react-native-unistyles', () => ({
-    useUnistyles: () => ({
-        theme: {
-            colors: {
-                surface: '#fff',
-                surfaceHigh: '#f5f5f5',
-                divider: '#eee',
-                text: '#000',
-                textSecondary: '#666',
-            },
-        },
-    }),
-    StyleSheet: {
-        absoluteFillObject: {},
-        create: (value: any) =>
-            typeof value === 'function'
-                ? value({
-                    colors: {
-                        surface: '#fff',
-                        surfaceHigh: '#f5f5f5',
-                        divider: '#eee',
-                        text: '#000',
-                        textSecondary: '#666',
-                    },
-                })
-                : value,
-    },
-}));
+vi.mock('react-native', async () => {
+    const rn = await import('@/dev/reactNativeStub');
+    return {
+        ...rn,
+        Platform: { ...rn.Platform, OS: 'web' },
+        View: React.forwardRef((props: any, ref: any) => {
+            if (ref && typeof ref === 'object') {
+                ref.current = fakeDomNode;
+            }
+            return React.createElement('View', props, props.children);
+        }),
+        Pressable: (props: any) => React.createElement('Pressable', props, props.children),
+        ScrollView: (props: any) => React.createElement('ScrollView', props, props.children),
+    };
+});
 
 vi.mock('@expo/vector-icons', () => ({
     Octicons: 'Octicons',

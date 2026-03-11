@@ -46,8 +46,10 @@ export type SessionRightPanelGitCommitTabContentProps = Readonly<{
         | { ok: true; message: string }
         | { ok: false; error: string }
     >;
+    showBranchSummary?: boolean;
     onOpenFilesSidebar: () => void;
     onOpenReviewAllChanges: () => void;
+    onOpenStashDetails: () => void;
     openFileInDetails: (fullPath: string) => void;
     openFileInDetailsPinned: (fullPath: string) => void;
 }>;
@@ -153,6 +155,7 @@ export const SessionRightPanelGitCommitTabContent = React.memo((props: SessionRi
             backendLabel={props.backendLabel}
             commitActionLabel={props.commitActionLabel}
             scmSnapshot={props.scmSnapshot}
+            scmWriteEnabled={props.scmWriteEnabled}
             hasConflicts={props.hasConflicts}
             scmOperationBusy={props.scmOperationBusy}
             scmOperationStatus={props.scmOperationStatus}
@@ -183,8 +186,10 @@ export const SessionRightPanelGitCommitTabContent = React.memo((props: SessionRi
             onGenerateCommitMessageSuggestion={props.onGenerateCommitMessageSuggestion}
             onClearSelection={commitSelectionUiEnabled && repositorySelectedCount > 0 ? bulkSelectNone : undefined}
             scmStatusFiles={changed.scmStatusFiles}
+            showBranchSummary={props.showBranchSummary}
             showCommitComposer={props.commitWriteEnabled}
             onOpenReviewAllChanges={props.onOpenReviewAllChanges}
+            onOpenStashDetails={props.onOpenStashDetails}
         />
     );
 });

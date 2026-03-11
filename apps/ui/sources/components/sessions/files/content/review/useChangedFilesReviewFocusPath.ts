@@ -15,6 +15,11 @@ export function useChangedFilesReviewFocusPath(input: Readonly<{
 
     const [highlightedPath, setHighlightedPath] = React.useState<string | null>(null);
     const appliedFocusPathRef = React.useRef<string | null>(null);
+    const expandPathRef = React.useRef(expandPath);
+    const scrollToPathRef = React.useRef(scrollToPath);
+
+    expandPathRef.current = expandPath;
+    scrollToPathRef.current = scrollToPath;
 
     React.useEffect(() => {
         const resolved = typeof focusPath === 'string' ? focusPath : null;
@@ -27,10 +32,10 @@ export function useChangedFilesReviewFocusPath(input: Readonly<{
         appliedFocusPathRef.current = resolved;
 
         setHighlightedPath(resolved);
-        expandPath(resolved);
+        expandPathRef.current(resolved);
 
         const scrollTimer = setTimeout(() => {
-            scrollToPath(resolved);
+            scrollToPathRef.current(resolved);
         }, 50);
         const clearTimer = setTimeout(() => {
             setHighlightedPath(null);
@@ -39,7 +44,7 @@ export function useChangedFilesReviewFocusPath(input: Readonly<{
             clearTimeout(scrollTimer);
             clearTimeout(clearTimer);
         };
-    }, [expandPath, focusPath, reviewFiles, scrollToPath]);
+    }, [focusPath, reviewFiles]);
 
     return highlightedPath;
 }

@@ -1,6 +1,6 @@
 import * as React from 'react';
 import renderer, { act } from 'react-test-renderer';
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -10,11 +10,18 @@ const flashListScrollToIndexSpy: any = vi.fn();
 const deferOnWebSpy: any = vi.fn((cb: any) => cb());
 
 const resolveInlineDiffVirtualizationSpy = vi.hoisted(() => vi.fn());
+const diffFilesListViewSpy = vi.hoisted(() => vi.fn());
 
 let wrapLinesInDiffsSetting: boolean = true;
 let showLineNumbersSetting: boolean = true;
 let inlineVirtualizationLineThresholdSetting: number | undefined = undefined;
 let inlineVirtualizationByteThresholdSetting: number | undefined = undefined;
+let scmReviewPrefetchAheadCountWebSetting: number | undefined = undefined;
+let scmReviewPrefetchBehindCountWebSetting: number | undefined = undefined;
+let scmReviewPrefetchAheadCountNativeSetting: number | undefined = undefined;
+let scmReviewPrefetchBehindCountNativeSetting: number | undefined = undefined;
+let scmReviewPrefetchDebounceMsSetting: number | undefined = undefined;
+let flashListViewableIndicesOverride: number[] | null = null;
 
 function buildUnifiedDiff(path: string) {
     return `diff --git a/${path} b/${path}\n--- a/${path}\n+++ b/${path}\n@@ -1 +1 @@\n-old\n+new\n`;
@@ -39,11 +46,22 @@ vi.mock('@/components/ui/code/diff/DiffViewer', () => ({
     DiffViewer: (props: any) => React.createElement('CodeLinesView', { ...props, virtualized: props.virtualized }),
 }));
 
+vi.mock('@/components/ui/code/diff/DiffFilesListView', async (importOriginal) => {
+    const mod = await importOriginal<typeof import('@/components/ui/code/diff/DiffFilesListView')>();
+    return {
+        ...mod,
+        DiffFilesListView: React.forwardRef((props: any, ref: any) => {
+            diffFilesListViewSpy(props);
+            return React.createElement((mod as any).DiffFilesListView, { ...props, ref });
+        }),
+    };
+});
+
 vi.mock('@/utils/platform/deferOnWeb', () => ({
     deferOnWeb: (cb: any) => deferOnWebSpy(cb),
 }));
 
-vi.mock('@shopify/flash-list', () => ({
+vi.mock('@/components/ui/lists/flashListCompat/FlashListCompat', () => ({
     FlashList: React.forwardRef((props: any, ref: any) => {
         React.useImperativeHandle(ref, () => ({
             scrollToIndex: flashListScrollToIndexSpy,
@@ -52,9 +70,12 @@ vi.mock('@shopify/flash-list', () => ({
         }));
         const data = Array.isArray(props.data) ? props.data : [];
         React.useEffect(() => {
-            if (typeof props.onViewableItemsChanged !== 'function') return;
+        if (typeof props.onViewableItemsChanged !== 'function') return;
+            const indices = Array.isArray(flashListViewableIndicesOverride)
+                ? flashListViewableIndicesOverride
+                : data.map((_item: any, index: number) => index);
             props.onViewableItemsChanged({
-                viewableItems: data.map((_item: any, index: number) => ({ index })),
+                viewableItems: indices.map((index: number) => ({ index })),
             });
         }, [data, props.onViewableItemsChanged]);
 
@@ -94,6 +115,11 @@ vi.mock('@/sync/domains/state/storage', () => ({
         if (key === 'showLineNumbers') return showLineNumbersSetting;
         if (key === 'filesDiffInlineVirtualizationLineThreshold') return inlineVirtualizationLineThresholdSetting;
         if (key === 'filesDiffInlineVirtualizationByteThreshold') return inlineVirtualizationByteThresholdSetting;
+        if (key === 'scmReviewPrefetchAheadCountWeb') return scmReviewPrefetchAheadCountWebSetting;
+        if (key === 'scmReviewPrefetchBehindCountWeb') return scmReviewPrefetchBehindCountWebSetting;
+        if (key === 'scmReviewPrefetchAheadCountNative') return scmReviewPrefetchAheadCountNativeSetting;
+        if (key === 'scmReviewPrefetchBehindCountNative') return scmReviewPrefetchBehindCountNativeSetting;
+        if (key === 'scmReviewPrefetchDebounceMs') return scmReviewPrefetchDebounceMsSetting;
         return undefined;
     },
 }));
@@ -102,6 +128,7 @@ vi.mock('react-native', () => ({
     View: 'View',
     Image: 'Image',
     Pressable: 'Pressable',
+    FlatList: 'FlatList',
     ScrollView: 'ScrollView',
     ActivityIndicator: 'ActivityIndicator',
     TextInput: 'TextInput',
@@ -168,6 +195,16 @@ vi.mock('@/components/ui/code/highlighting/useCodeLinesSyntaxHighlighting', () =
 }));
 
 describe('ChangedFilesReview', () => {
+    beforeEach(() => {
+        vi.resetModules();
+        scmReviewPrefetchAheadCountWebSetting = undefined;
+        scmReviewPrefetchBehindCountWebSetting = undefined;
+        scmReviewPrefetchAheadCountNativeSetting = undefined;
+        scmReviewPrefetchBehindCountNativeSetting = undefined;
+        scmReviewPrefetchDebounceMsSetting = undefined;
+        flashListViewableIndicesOverride = null;
+    });
+
     const theme = {
         colors: {
             surface: '#111',
@@ -206,7 +243,96 @@ describe('ChangedFilesReview', () => {
     const fileA = { fileName: 'a.ts', filePath: 'src', fullPath: 'src/a.ts', status: 'modified', isIncluded: false, linesAdded: 1, linesRemoved: 1 } as any;
     const fileB = { fileName: 'b.ts', filePath: 'src', fullPath: 'src/b.ts', status: 'modified', isIncluded: false, linesAdded: 1, linesRemoved: 1 } as any;
     const fileC = { fileName: 'c.ts', filePath: 'src', fullPath: 'src/c.ts', status: 'modified', isIncluded: false, linesAdded: 1, linesRemoved: 1 } as any;
+
+    it('limits auto-expanded diffs when large and viewability config is enabled', async () => {
+        // Enable viewability windowing.
+        scmReviewPrefetchAheadCountWebSetting = 3;
+        scmReviewPrefetchBehindCountWebSetting = 2;
+        scmReviewPrefetchDebounceMsSetting = 0;
+        flashListViewableIndicesOverride = [0];
+
+        const { ChangedFilesReview } = await import('./ChangedFilesReview');
+
+        const files = Array.from({ length: 10 }, (_unused, index) => ({
+            fileName: `file-${index}.ts`,
+            filePath: 'src',
+            fullPath: `src/file-${index}.ts`,
+            status: 'modified',
+            isIncluded: false,
+            linesAdded: 1,
+            linesRemoved: 0,
+        })) as any[];
+
+        diffFilesListViewSpy.mockClear();
+
+        await act(async () => {
+            renderer.create(
+                <ChangedFilesReview
+                    theme={theme}
+                    sessionId="session-1"
+                    snapshot={snapshot}
+                    changedFilesViewMode="repository"
+                    attributionReliability="high"
+                    allRepositoryChangedFiles={files}
+                    sessionAttributedFiles={[]}
+                    repositoryOnlyFiles={[]}
+                    suppressedInferredCount={0}
+                    maxFiles={1}
+                    maxChangedLines={2000}
+                    onFilePress={vi.fn()}
+                />,
+            );
+        });
+
+        for (let i = 0; i < 3; i++) {
+            await act(async () => {
+                await Promise.resolve();
+            });
+        }
+
+        const lastProps = diffFilesListViewSpy.mock.calls.at(-1)?.[0];
+        expect(lastProps).toBeTruthy();
+
+        // Initial window expands `ahead+behind+1` files only.
+        expect(lastProps.expandedKeys.size).toBe(6);
+        expect(lastProps.expandedKeys.has('src/file-0.ts')).toBe(true);
+        expect(lastProps.expandedKeys.has('src/file-5.ts')).toBe(true);
+        expect(lastProps.expandedKeys.has('src/file-6.ts')).toBe(false);
+        expect(lastProps.expandedKeys.has('src/file-9.ts')).toBe(false);
+
+        // Reset per-test overrides.
+        scmReviewPrefetchAheadCountWebSetting = undefined;
+        scmReviewPrefetchBehindCountWebSetting = undefined;
+        scmReviewPrefetchDebounceMsSetting = undefined;
+        flashListViewableIndicesOverride = null;
+    });
     const directoryLike = { fileName: 'src/some-dir/', filePath: 'src/some-dir/', fullPath: 'src/some-dir/', status: 'added', isIncluded: false, linesAdded: 1, linesRemoved: 0 } as any;
+
+    it('renders the review list via DiffFilesListView', async () => {
+        diffFilesListViewSpy.mockClear();
+        const { ChangedFilesReview } = await import('./ChangedFilesReview');
+
+        await act(async () => {
+            renderer.create(
+                <ChangedFilesReview
+                    theme={theme}
+                    sessionId="session-1"
+                    snapshot={snapshot}
+                    changedFilesViewMode="repository"
+                    attributionReliability="high"
+                    allRepositoryChangedFiles={[fileA]}
+                    sessionAttributedFiles={[]}
+                    repositoryOnlyFiles={[]}
+                    suppressedInferredCount={0}
+                    maxFiles={25}
+                    maxChangedLines={2000}
+                    onFilePress={vi.fn()}
+                />
+            );
+        });
+
+        expect(diffFilesListViewSpy).toHaveBeenCalled();
+    });
 
     it('loads diffs for all files when within thresholds', async () => {
         wrapLinesInDiffsSetting = true;
@@ -251,6 +377,60 @@ describe('ChangedFilesReview', () => {
         expect(sessionScmDiffFileSpy.mock.calls.length).toBe(2);
         const calledPaths = sessionScmDiffFileSpy.mock.calls.map((call: any) => call[1]?.path);
         expect(calledPaths).toEqual(['src/a.ts', 'src/b.ts']);
+    });
+
+    it('keeps FlashList renderItem stable while diffs load', async () => {
+        wrapLinesInDiffsSetting = true;
+        showLineNumbersSetting = true;
+        sessionScmDiffFileSpy.mockClear();
+        let resolveDiff: null | ((value: any) => void) = null;
+        sessionScmDiffFileSpy.mockImplementation(async (_sessionId: string, req: any) => {
+            return await new Promise((resolve) => {
+                resolveDiff = () => resolve({
+                    success: true,
+                    diff: buildUnifiedDiff(req.path),
+                    error: null,
+                });
+            });
+        });
+
+        const { ChangedFilesReview } = await import('./ChangedFilesReview');
+
+        let tree: renderer.ReactTestRenderer;
+        await act(async () => {
+            tree = renderer.create(
+                <ChangedFilesReview
+                    theme={theme}
+                    sessionId="s1"
+                    snapshot={snapshot}
+                    changedFilesViewMode="repository"
+                    attributionReliability="high"
+                    allRepositoryChangedFiles={[fileA]}
+                    sessionAttributedFiles={[]}
+                    repositoryOnlyFiles={[]}
+                    suppressedInferredCount={0}
+                    maxFiles={25}
+                    maxChangedLines={2000}
+                    onFilePress={() => {}}
+                />,
+            );
+        });
+
+        await act(async () => {
+            await Promise.resolve();
+        });
+
+        const listBefore = tree!.root.findByType('FlashList' as any);
+        const renderItemBefore = listBefore.props.renderItem;
+
+        await act(async () => {
+            expect(resolveDiff).not.toBeNull();
+            resolveDiff?.(null);
+            await Promise.resolve();
+        });
+
+        const listAfter = tree!.root.findByType('FlashList' as any);
+        expect(listAfter.props.renderItem).toBe(renderItemBefore);
     });
 
     it('filters directory-like SCM entries from review rows', async () => {
@@ -1313,5 +1493,69 @@ describe('ChangedFilesReview', () => {
         });
 
         expect(tree!.root.findAllByType('ScmChangeRow' as any)).toHaveLength(1);
+    });
+
+    it('falls back to FlatList on web when FlashList throws "not enough layouts"', async () => {
+        sessionScmDiffFileSpy.mockClear();
+
+        const globalWindowContainer = globalThis as unknown as { window?: unknown };
+        const prevWindow = globalWindowContainer.window;
+        const listeners = new Map<string, EventListenerOrEventListenerObject[]>();
+        try {
+            globalWindowContainer.window = {
+                addEventListener: (type: string, fn: EventListenerOrEventListenerObject) => {
+                    const arr = listeners.get(type) ?? [];
+                    arr.push(fn);
+                    listeners.set(type, arr);
+                },
+                removeEventListener: (type: string, fn: EventListenerOrEventListenerObject) => {
+                    const arr = listeners.get(type) ?? [];
+                    listeners.set(type, arr.filter((f) => f !== fn));
+                },
+            };
+
+            const { ChangedFilesReview } = await import('./ChangedFilesReview');
+
+            let tree!: renderer.ReactTestRenderer;
+            await act(async () => {
+                tree = renderer.create(
+                    <ChangedFilesReview
+                        theme={theme}
+                        sessionId="session-1"
+                        snapshot={snapshot}
+                        changedFilesViewMode="repository"
+                        attributionReliability="high"
+                        allRepositoryChangedFiles={[fileA, fileB]}
+                        sessionAttributedFiles={[]}
+                        repositoryOnlyFiles={[]}
+                        suppressedInferredCount={0}
+                        maxFiles={25}
+                        maxChangedLines={2000}
+                        onFilePress={vi.fn()}
+                    />,
+                );
+            });
+
+            expect(tree.root.findAllByType('FlashList' as any)).toHaveLength(1);
+            expect(listeners.get('error')?.length ?? 0).toBeGreaterThan(0);
+
+            const errorMessage = 'index out of bounds, not enough layouts';
+            const handler = (listeners.get('error') ?? [])[0];
+            const fakeEvent = {
+                message: errorMessage,
+                error: new Error(errorMessage),
+                preventDefault: vi.fn(),
+                stopImmediatePropagation: vi.fn(),
+            } as unknown as ErrorEvent;
+
+            await act(async () => {
+                (handler as EventListener)(fakeEvent);
+            });
+
+            expect(tree.root.findAllByType('FlatList' as any).length).toBeGreaterThan(0);
+            expect(tree.root.findAllByType('FlashList' as any)).toHaveLength(0);
+        } finally {
+            globalWindowContainer.window = prevWindow;
+        }
     });
 });

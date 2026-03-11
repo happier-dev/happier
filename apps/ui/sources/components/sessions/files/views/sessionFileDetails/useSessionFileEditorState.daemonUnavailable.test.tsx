@@ -10,7 +10,7 @@ import { useSessionFileEditorState } from './useSessionFileEditorState';
 type SessionWriteFileFn = typeof import('@/sync/ops').sessionWriteFile;
 
 const sessionWriteFileSpy = vi.hoisted(() =>
-    vi.fn<SessionWriteFileFn>(async () => ({ success: true })),
+    vi.fn<SessionWriteFileFn>(async () => ({ success: true, hash: 'h1' })),
 );
 const showDaemonUnavailableAlertSpy = vi.hoisted(() => vi.fn());
 const modalAlertSpy = vi.hoisted(() => vi.fn());
@@ -42,7 +42,7 @@ type SessionFileEditorState = {
     editorSurfaceEnabled: boolean;
     isEditingFile: boolean;
     startEditingFile: () => void;
-    setEditorText: (value: string) => void;
+    onEditorChange: (value: string) => void;
     saveFileEdits: () => void;
 };
 
@@ -98,7 +98,7 @@ describe('useSessionFileEditorState (daemon unavailable)', () => {
 	        });
 
 	        await act(async () => {
-	            getState().setEditorText('hello changed');
+	            getState().onEditorChange('hello changed');
 	        });
 
 	        await act(async () => {
@@ -126,6 +126,7 @@ describe('useSessionFileEditorState (daemon unavailable)', () => {
 	        expect(getState().editorSurfaceEnabled).toBe(true);
 	        expect(getState().isEditingFile).toBe(true);
 	        expect(sessionWriteFileSpy).toHaveBeenCalledTimes(1);
+        expect(sessionWriteFileSpy.mock.calls[0]?.[2]).toBe('hello changed');
 	    });
 
     it('passes a shouldContinue guard that becomes false after unmount', async () => {
@@ -167,7 +168,7 @@ describe('useSessionFileEditorState (daemon unavailable)', () => {
 
 	        await act(async () => {
 	            getState().startEditingFile();
-	            getState().setEditorText('hello changed');
+	            getState().onEditorChange('hello changed');
 	        });
 
 	        await act(async () => {

@@ -10,9 +10,12 @@ import { useSessionResumeAction } from '@/components/sessions/model/SessionResum
 import { emitSessionResumeRequest } from '@/components/sessions/model/sessionResumeRequests';
 import { useScmCommitHistory } from '@/hooks/session/files/useScmCommitHistory';
 import { useFilesScmOperations } from '@/hooks/session/files/useFilesScmOperations';
+import { usePublishBranchAction } from '@/hooks/session/sourceControl/usePublishBranchAction';
 import { resolveSessionWorkspacePath } from '@/sync/domains/session/resolveSessionWorkspacePath';
 import { scmUiBackendRegistry } from '@/scm/registry/scmUiBackendRegistry';
 import { scmStatusSync } from '@/scm/scmStatusSync';
+import { useScmAdaptivePolling } from '@/scm/refresh/useScmAdaptivePolling';
+import { buildSnapshotSignature } from '@/scm/statusSync/projectState';
 import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
 import { SCM_COMMIT_STRATEGIES, type ScmCommitStrategy } from '@/scm/settings/commitStrategy';
 import { useLastNonNullValue } from '@/hooks/ui/useLastNonNullValue';
@@ -71,6 +74,7 @@ export const SessionRightPanelGitView = React.memo((props: SessionRightPanelGitV
     }, [scmCommitStrategySetting]);
     const scmRemoteConfirmPolicy = useSetting('scmRemoteConfirmPolicy');
     const scmPushRejectPolicy = useSetting('scmPushRejectPolicy');
+    const autoRefreshIntervalSetting = useSetting('scmFilesAutoRefreshIntervalMs');
     const scmWriteEnabled = useFeatureEnabled('scm.writeOperations');
     const project = useProjectForSession(props.sessionId);
     const projectSessionIds = useProjectSessions(project?.id ?? null);
@@ -81,6 +85,18 @@ export const SessionRightPanelGitView = React.memo((props: SessionRightPanelGitV
     });
     const { machineReachable, machineRpcTargetAvailable } = useSessionMachineReachability(props.sessionId);
     const isSessionInactive = session?.active === false;
+    const maxIntervalMs = React.useMemo(() => {
+        const raw = typeof autoRefreshIntervalSetting === 'number' && Number.isFinite(autoRefreshIntervalSetting)
+            ? autoRefreshIntervalSetting
+            : 60_000;
+        return Math.max(0, raw);
+    }, [autoRefreshIntervalSetting]);
+    const baseIntervalMs = React.useMemo(() => Math.max(0, Math.min(10_000, maxIntervalMs)), [maxIntervalMs]);
+    const snapshotSignature = React.useMemo(() => {
+        if (!effectiveScmSnapshot) return null;
+        return buildSnapshotSignature(effectiveScmSnapshot);
+    }, [effectiveScmSnapshot]);
+    const getSnapshotSignature = React.useCallback(() => snapshotSignature, [snapshotSignature]);
 
     const {
         historyEntries,
@@ -111,6 +127,17 @@ export const SessionRightPanelGitView = React.memo((props: SessionRightPanelGitV
         didInitCommitHistoryKeyRef.current = commitHistoryInitKey;
         void loadCommitHistory({ reset: true });
     }, [commitHistoryInitKey, initialRefreshKey, loadCommitHistory, refreshScmData, sessionPath]);
+
+    useScmAdaptivePolling({
+        enabled: Boolean(props.sessionId) && Boolean(sessionPath),
+        baseIntervalMs,
+        stepIntervalMs: baseIntervalMs,
+        maxIntervalMs,
+        getSignature: getSnapshotSignature,
+        invalidateAndAwait: React.useCallback(async () => {
+            await scmStatusSync.invalidateFromAutoRefreshAndAwait(props.sessionId);
+        }, [props.sessionId]),
+    });
 
     const {
         scmOperationBusy,
@@ -219,6 +246,18 @@ export const SessionRightPanelGitView = React.memo((props: SessionRightPanelGitV
         );
     }, [pane.openDetailsTab]);
 
+    const onOpenStashDetails = React.useCallback(() => {
+        pane.openDetailsTab(
+            {
+                key: 'scmStash',
+                kind: 'scmStash',
+                title: t('files.stash.detailsTitle'),
+                resource: { kind: 'scmStash' },
+            },
+            { intent: 'pinned' },
+        );
+    }, [pane.openDetailsTab]);
+
     const scmStatusFilesSummary: ScmStatusFiles | null = React.useMemo(() => {
         if (!effectiveScmSnapshot?.repo.isRepo) return null;
         return {
@@ -238,11 +277,17 @@ export const SessionRightPanelGitView = React.memo((props: SessionRightPanelGitV
     const isLockedByOtherSession = Boolean(
         inFlightScmOperation && inFlightScmOperation.sessionId !== props.sessionId
     );
+    const { canPublish, publishBusy, publishBranch } = usePublishBranchAction({
+        sessionId: props.sessionId,
+        snapshot: effectiveScmSnapshot,
+        writeEnabled: scmWriteEnabled === true && Boolean(sessionPath),
+        disabled: false,
+    });
 
     const remoteActions = React.useMemo(() => {
         const actions: SourceControlRemoteAction[] = [];
         if (!effectiveScmSnapshot?.repo.isRepo) return actions;
-        const busy = scmOperationBusy || hasGlobalOperationInFlight || isLockedByOtherSession;
+        const busy = scmOperationBusy || publishBusy || hasGlobalOperationInFlight || isLockedByOtherSession;
         const caps = effectiveScmSnapshot.capabilities;
         if (!caps) return actions;
 
@@ -291,14 +336,29 @@ export const SessionRightPanelGitView = React.memo((props: SessionRightPanelGitV
             });
         }
 
+        if (canPublish && (pullPreflightReason === 'upstream_required' || pushPreflightReason === 'upstream_required')) {
+            actions.push({
+                key: 'publish',
+                iconName: 'cloud-upload',
+                label: t('files.branchMenu.publish.title'),
+                disabled: busy,
+                onPress: () => {
+                    void publishBranch();
+                },
+            });
+        }
+
         return actions;
     }, [
+        canPublish,
         effectiveScmSnapshot,
         hasGlobalOperationInFlight,
         isLockedByOtherSession,
         onFetch,
         onPull,
         onPush,
+        publishBranch,
+        publishBusy,
         pullPreflight.allowed,
         pullPreflightReason,
         pushPreflight.allowed,
@@ -406,17 +466,24 @@ export const SessionRightPanelGitView = React.memo((props: SessionRightPanelGitV
             onGenerateCommitMessageSuggestion={onGenerateCommitMessageSuggestion}
             onOpenFilesSidebar={onOpenFilesSidebar}
             onOpenReviewAllChanges={onOpenReviewAllChanges}
+            onOpenStashDetails={onOpenStashDetails}
             openFileInDetails={openFileInDetails}
             openFileInDetailsPinned={openFileInDetailsPinned}
+            showBranchSummary={displayActiveGitSubTab === 'commit'}
         />
     );
 
     const updateTab = (
         <SessionRightPanelGitUpdateTab
             theme={theme}
+            sessionId={props.sessionId}
+            scmSnapshot={effectiveScmSnapshot}
+            scmWriteEnabled={scmWriteEnabled}
+            disabled={scmOperationBusy || hasGlobalOperationInFlight || isLockedByOtherSession}
             actions={remoteActions}
             hint={remoteHint}
             scmStatusFiles={scmStatusFilesSummary}
+            showBranchSummary={displayActiveGitSubTab === 'update'}
         />
     );
 
@@ -467,7 +534,11 @@ const GitSubTabSurface = React.memo((props: Readonly<{ testID?: string; isActive
         <View
             style={[
                 StyleSheet.absoluteFillObject,
-                { opacity: props.isActive ? 1 : 0, pointerEvents: props.isActive ? 'auto' : 'none' },
+                {
+                    opacity: props.isActive ? 1 : 0,
+                    pointerEvents: props.isActive ? 'auto' : 'none',
+                    visibility: Platform.OS === 'web' ? (props.isActive ? 'visible' : 'hidden') : 'visible',
+                },
             ]}
             testID={props.testID}
             {...(a11yHiddenProps ?? {})}

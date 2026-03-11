@@ -12,8 +12,8 @@ vi.mock('react-native', () => ({
     useWindowDimensions: () => ({ width: 2000, height: 900 }),
 }));
 
-vi.mock('@/components/ui/panels/MultiPaneHost', () => ({
-    MultiPaneHost: (props: any) => {
+vi.mock('@/components/ui/panels/MultiPaneHostWithBottom', () => ({
+    MultiPaneHostWithBottom: (props: any) => {
         lastProps = props;
         return React.createElement('MultiPaneHostStub');
     },
@@ -32,6 +32,8 @@ vi.mock('@/sync/domains/state/storage', () => ({
         // A user-resized overlay preference above the global docked max.
         if (key === 'detailsPaneWidthPx') return 1400;
         if (key === 'detailsPaneWidthBasisPx') return 2000;
+        if (key === 'bottomPaneHeightPx') return 320;
+        if (key === 'bottomPaneHeightBasisPx') return 900;
         return null;
     },
     useLocalSettingMutable: () => [null, vi.fn()],

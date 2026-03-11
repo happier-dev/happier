@@ -12,8 +12,8 @@ vi.mock('react-native', () => ({
     useWindowDimensions: () => ({ width: 1800, height: 900 }),
 }));
 
-vi.mock('@/components/ui/panels/MultiPaneHost', () => ({
-    MultiPaneHost: (props: any) => {
+vi.mock('@/components/ui/panels/MultiPaneHostWithBottom', () => ({
+    MultiPaneHostWithBottom: (props: any) => {
         lastProps = props;
         return React.createElement('MultiPaneHostStub');
     },
@@ -31,6 +31,8 @@ vi.mock('@/sync/domains/state/storage', () => ({
         if (key === 'rightPaneWidthBasisPx') return 1800;
         if (key === 'detailsPaneWidthPx') return 520;
         if (key === 'detailsPaneWidthBasisPx') return 1800;
+        if (key === 'bottomPaneHeightPx') return 320;
+        if (key === 'bottomPaneHeightBasisPx') return 900;
         return null;
     },
     useLocalSettingMutable: () => [null, vi.fn()],

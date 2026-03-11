@@ -30,6 +30,7 @@ const sessionReadFileSpy = vi.fn(async (..._args: any[]) => ({
 
 vi.mock('@/sync/ops', () => ({
     sessionScmDiffFile: (...args: any[]) => sessionScmDiffFileSpy(...args),
+    sessionStatFile: vi.fn(async () => ({ success: true, exists: true, kind: 'file', sizeBytes: 1024, modifiedMs: 1 })),
     sessionReadFile: (...args: any[]) => sessionReadFileSpy(...args),
 }));
 

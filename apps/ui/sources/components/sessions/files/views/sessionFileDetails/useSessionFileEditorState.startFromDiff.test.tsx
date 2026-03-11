@@ -116,7 +116,7 @@ describe('useSessionFileEditorState (start from diff)', () => {
         });
 
         await act(async () => {
-            latest.setEditorText('console.log(2);');
+            latest.onEditorChange('console.log(2);');
         });
 
         expect(latest.editorDirty).toBe(true);
@@ -125,6 +125,7 @@ describe('useSessionFileEditorState (start from diff)', () => {
             tree.update(<Harness displayMode="file" fileText={'console.log(1);\\n// refreshed'} />);
         });
 
-        expect(latest.editorText).toBe('console.log(2);');
+        expect(latest.getEditorText()).toBe('console.log(2);');
     });
+
 });

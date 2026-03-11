@@ -1,7 +1,8 @@
 import * as React from 'react';
 
 import type { ReviewCommentDraft } from '@/sync/domains/input/reviewComments/reviewCommentTypes';
-import { ChangedFilesReviewDiffBlock, type ReviewDiffState } from '@/components/sessions/files/content/review/ChangedFilesReviewDiffBlock';
+import { ChangedFilesReviewDiffBlock } from '@/components/sessions/files/content/review/ChangedFilesReviewDiffBlock';
+import type { ChangedFilesReviewDiffStateSource } from '@/components/sessions/files/content/review/ChangedFilesReviewDiffStore';
 
 const EMPTY_REVIEW_COMMENT_DRAFTS: readonly ReviewCommentDraft[] = [];
 
@@ -9,7 +10,8 @@ export function useChangedFilesReviewDiffBlockRenderer(input: Readonly<{
     theme: any;
     sessionId: string;
     snapshotSignature: string | null;
-    getDiffState: (path: string) => ReviewDiffState;
+    diffStateSource: ChangedFilesReviewDiffStateSource;
+    getEstimatedChangedLines?: (path: string) => number | null;
     reviewCommentsEnabled?: boolean;
     reviewCommentDrafts?: readonly ReviewCommentDraft[];
     onUpsertReviewCommentDraft?: (draft: ReviewCommentDraft) => void;
@@ -20,23 +22,25 @@ export function useChangedFilesReviewDiffBlockRenderer(input: Readonly<{
         theme,
         sessionId,
         snapshotSignature,
-        getDiffState,
+        diffStateSource,
         reviewCommentsEnabled,
         reviewCommentDrafts,
         onUpsertReviewCommentDraft,
         onDeleteReviewCommentDraft,
         onReviewCommentError,
+        getEstimatedChangedLines,
     } = input;
 
     return React.useCallback((path: string) => {
-        const state: ReviewDiffState = getDiffState(path);
+        const estimated = getEstimatedChangedLines ? getEstimatedChangedLines(path) : null;
         return (
             <ChangedFilesReviewDiffBlock
                 theme={theme}
                 sessionId={sessionId}
                 snapshotSignature={snapshotSignature}
                 filePath={path}
-                state={state}
+                estimatedChangedLines={estimated}
+                diffStateSource={diffStateSource}
                 reviewCommentsEnabled={reviewCommentsEnabled === true}
                 reviewCommentDrafts={reviewCommentDrafts ?? EMPTY_REVIEW_COMMENT_DRAFTS}
                 onUpsertReviewCommentDraft={onUpsertReviewCommentDraft}
@@ -45,7 +49,8 @@ export function useChangedFilesReviewDiffBlockRenderer(input: Readonly<{
             />
         );
     }, [
-        getDiffState,
+        diffStateSource,
+        getEstimatedChangedLines,
         onDeleteReviewCommentDraft,
         onReviewCommentError,
         onUpsertReviewCommentDraft,

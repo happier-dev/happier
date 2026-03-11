@@ -6,15 +6,16 @@ import type { ScmFileStatus } from '@/scm/scmStatusFiles';
 import type { ScmDiffCache } from '@/scm/diffCache/scmDiffCache';
 import { fetchSessionUnifiedDiffForPath } from '@/scm/diff/fetchSessionUnifiedDiffForPath';
 
+import {
+    createChangedFilesReviewDiffStateSource,
+    type ChangedFilesReviewDiffStateSource,
+} from '@/components/sessions/files/content/review/ChangedFilesReviewDiffStore';
+
 type DiffState = {
     status: 'idle' | 'loading' | 'loaded' | 'error';
     diff: string;
     error: string | null;
 };
-
-function initialDiffState(): DiffState {
-    return { status: 'idle', diff: '', error: null };
-}
 
 export function useChangedFilesReviewDiffLoading(input: {
     sessionId: string;
@@ -70,11 +71,11 @@ export function useChangedFilesReviewDiffLoading(input: {
     const requestedPathsNormalizedRef = React.useRef<readonly string[] | null>(null);
     requestedPathsNormalizedRef.current = requestedPathsNormalized;
 
-    const [diffStateByPath, setDiffStateByPath] = React.useState<Record<string, DiffState>>({});
-    const diffStateByPathRef = React.useRef(diffStateByPath);
-    React.useEffect(() => {
-        diffStateByPathRef.current = diffStateByPath;
-    }, [diffStateByPath]);
+    const diffStateSourceRef = React.useRef<ChangedFilesReviewDiffStateSource | null>(null);
+    if (!diffStateSourceRef.current) {
+        diffStateSourceRef.current = createChangedFilesReviewDiffStateSource();
+    }
+    const diffStateSource = diffStateSourceRef.current;
 
     const lastFetchAtMsByPathRef = React.useRef<Record<string, number>>({});
     const inFlightPathsRef = React.useRef<Set<string>>(new Set());
@@ -94,7 +95,7 @@ export function useChangedFilesReviewDiffLoading(input: {
     }, [minRefetchMs]);
 
     React.useEffect(() => {
-        setDiffStateByPath({});
+        diffStateSource.reset();
         lastFetchAtMsByPathRef.current = {};
         inFlightPathsRef.current = new Set();
     }, [diffArea, sessionId]);
@@ -106,23 +107,7 @@ export function useChangedFilesReviewDiffLoading(input: {
     }, [diffArea, refreshToken, sessionId, snapshotSignature]);
 
     React.useEffect(() => {
-        setDiffStateByPath((prev) => {
-            const keys = Object.keys(prev);
-            if (keys.length === 0) return prev;
-            let changed = false;
-            const next: Record<string, DiffState> = {};
-            for (const key of keys) {
-                // Keep loaded/off-screen diffs in memory while the review is open so list row heights
-                // remain stable during virtualized scrolling. Only drop entries for files that no
-                // longer exist in the current review set.
-                if (!fileStatusByPath.has(key) && !inFlightPathsRef.current.has(key)) {
-                    changed = true;
-                    continue;
-                }
-                next[key] = prev[key]!;
-            }
-            return changed ? next : prev;
-        });
+        diffStateSource.prune(new Set(fileStatusByPath.keys()), inFlightPathsRef.current);
     }, [fileStatusByPath]);
 
     React.useEffect(() => {
@@ -133,7 +118,7 @@ export function useChangedFilesReviewDiffLoading(input: {
         let cancelled = false;
 
         const loadDiff = async (path: string) => {
-            const existing = diffStateByPathRef.current[path];
+            const existing = diffStateSource.getDiffState(path);
             const nowMs = Date.now();
             if (existing?.status === 'loaded' || existing?.status === 'error') {
                 const lastFetchAtMs = lastFetchAtMsByPathRef.current[path] ?? 0;
@@ -157,23 +142,19 @@ export function useChangedFilesReviewDiffLoading(input: {
             if (signature && diffCache) {
                 const cached = diffCache.get({ sessionId, snapshotSignature: signature, diffArea, path });
                 if (cached && typeof cached.diff === 'string') {
-                    setDiffStateByPath((prev) => ({
-                        ...prev,
-                        [path]: { status: 'loaded', diff: cached.diff, error: null },
-                    }));
+                    diffStateSource.setDiffState(path, { status: 'loaded', diff: cached.diff, error: null });
                     lastFetchAtMsByPathRef.current[path] = Date.now();
                     inFlightPathsRef.current.delete(path);
                     return;
                 }
             }
 
-            setDiffStateByPath((prev) => {
-                const existing = prev[path];
+            diffStateSource.updateDiffState(path, (prev) => {
                 // Stale-while-revalidate: keep already-loaded diffs visible while we refresh in the background.
-                if (existing?.status === 'loaded' && existing.diff) {
+                if (prev?.status === 'loaded' && prev.diff) {
                     return prev;
                 }
-                return { ...prev, [path]: { status: 'loading', diff: '', error: null } };
+                return { status: 'loading', diff: '', error: null };
             });
             try {
                 const file = fileStatusByPath.get(path) ?? null;
@@ -188,45 +169,30 @@ export function useChangedFilesReviewDiffLoading(input: {
                 lastFetchAtMsByPathRef.current[path] = Date.now();
                 if (cancelled) return;
                 if (!response.success) {
-                    setDiffStateByPath((prev) => {
-                        const existing = prev[path];
-                        if (existing?.status === 'loaded' && existing.diff) {
+                    diffStateSource.updateDiffState(path, (prev) => {
+                        if (prev?.status === 'loaded' && prev.diff) {
                             return prev;
                         }
-                        return {
-                            ...prev,
-                            [path]: {
-                                status: 'error',
-                                diff: '',
-                                error: response.error,
-                            },
-                        };
+                        return { status: 'error', diff: '', error: response.error };
                     });
                     return;
                 }
 
-                setDiffStateByPath((prev) => ({
-                    ...prev,
-                    [path]: { status: 'loaded', diff: response.diff ?? '', error: null },
-                }));
+                diffStateSource.setDiffState(path, { status: 'loaded', diff: response.diff ?? '', error: null });
                 if (signature && diffCache) {
                     diffCache.set({ sessionId, snapshotSignature: signature, diffArea, path }, response.diff ?? '');
                 }
             } catch (err) {
                 if (cancelled) return;
                 const normalized = normalizeError(err);
-                setDiffStateByPath((prev) => {
-                    const existing = prev[path];
-                    if (existing?.status === 'loaded' && existing.diff) {
+                diffStateSource.updateDiffState(path, (prev) => {
+                    if (prev?.status === 'loaded' && prev.diff) {
                         return prev;
                     }
                     return {
-                        ...prev,
-                        [path]: {
-                            status: 'error',
-                            diff: '',
-                            error: (typeof normalized === 'string' && normalized.trim()) ? normalized : fallbackError,
-                        },
+                        status: 'error',
+                        diff: '',
+                        error: (typeof normalized === 'string' && normalized.trim()) ? normalized : fallbackError,
                     };
                 });
                 lastFetchAtMsByPathRef.current[path] = Date.now();
@@ -296,10 +262,7 @@ export function useChangedFilesReviewDiffLoading(input: {
         tooLarge,
     ]);
 
-    const getDiffState = React.useCallback((path: string) => diffStateByPath[path] ?? initialDiffState(), [diffStateByPath]);
-
     return {
-        diffStateByPath,
-        getDiffState,
+        diffStateSource,
     };
 }

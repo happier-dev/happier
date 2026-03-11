@@ -4,45 +4,16 @@ import { describe, expect, it, vi } from 'vitest';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
-vi.mock('react-native', () => ({
-    Platform: { OS: 'web', select: (_: any) => 1 },
-    View: (props: any) => React.createElement('View', props, props.children),
-    Pressable: (props: any) => React.createElement('Pressable', props, props.children),
-    ScrollView: (props: any) => React.createElement('ScrollView', props, props.children),
-}));
-
-vi.mock('react-native-unistyles', () => ({
-    useUnistyles: () => ({
-        theme: {
-            colors: {
-                surface: '#fff',
-                surfaceHigh: '#f6f6f6',
-                divider: '#ddd',
-                text: '#000',
-                textSecondary: '#666',
-                modal: { border: '#ddd' },
-                shadow: { color: '#000', opacity: 0.2 },
-            },
-        },
-    }),
-    StyleSheet: {
-        create: (value: any) =>
-            typeof value === 'function'
-                ? value({
-                    colors: {
-                        surface: '#fff',
-                        surfaceHigh: '#f6f6f6',
-                        divider: '#ddd',
-                        text: '#000',
-                        textSecondary: '#666',
-                        modal: { border: '#ddd' },
-                        shadow: { color: '#000', opacity: 0.2 },
-                    },
-                })
-                : value,
-        absoluteFillObject: { position: 'absolute', top: 0, right: 0, bottom: 0, left: 0 },
-    },
-}));
+vi.mock('react-native', async () => {
+    const rn = await import('@/dev/reactNativeStub');
+    return {
+        ...rn,
+        Platform: { ...rn.Platform, OS: 'web' },
+        View: (props: any) => React.createElement('View', props, props.children),
+        Pressable: (props: any) => React.createElement('Pressable', props, props.children),
+        ScrollView: (props: any) => React.createElement('ScrollView', props, props.children),
+    };
+});
 
 vi.mock('@expo/vector-icons', () => ({
     Ionicons: 'Ionicons',

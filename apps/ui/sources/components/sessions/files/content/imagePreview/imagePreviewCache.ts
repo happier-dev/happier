@@ -1,11 +1,11 @@
 export type ImagePreviewCacheKey = Readonly<{
     sessionId: string;
-    snapshotSignature: string;
+    signature: string;
     filePath: string;
 }>;
 
 export type ImagePreviewCacheValue =
-    | Readonly<{ status: 'loaded'; uri: string }>
+    | Readonly<{ status: 'loaded'; uri: string; svgXml?: string | null }>
     | Readonly<{ status: 'error'; error: string }>;
 
 export type ImagePreviewCacheEntry = Readonly<{
@@ -13,7 +13,7 @@ export type ImagePreviewCacheEntry = Readonly<{
     byteSize: number;
     cachedAtMs: number;
     sessionId: string;
-    snapshotSignature: string;
+    signature: string;
     filePath: string;
 }>;
 
@@ -52,7 +52,7 @@ export class ImagePreviewCache {
     }
 
     set(key: ImagePreviewCacheKey, value: ImagePreviewCacheValue): void {
-        if (!key.sessionId || !key.snapshotSignature || !key.filePath) return;
+        if (!key.sessionId || !key.signature || !key.filePath) return;
         const storageKey = this.toStorageKey(key);
 
         const previous = this.entries.get(storageKey) ?? null;
@@ -67,7 +67,7 @@ export class ImagePreviewCache {
             byteSize,
             cachedAtMs: this.options.now(),
             sessionId: key.sessionId,
-            snapshotSignature: key.snapshotSignature,
+            signature: key.signature,
             filePath: key.filePath,
         };
         this.entries.set(storageKey, entry);
@@ -100,13 +100,14 @@ export class ImagePreviewCache {
     private estimateBytes(value: ImagePreviewCacheValue): number {
         if (value.status === 'loaded') {
             // UTF-16 in JS: approximate 2 bytes per code unit. Good enough for caps.
-            return Math.max(0, value.uri.length * 2);
+            const svgBytes = typeof value.svgXml === 'string' ? value.svgXml.length * 2 : 0;
+            return Math.max(0, value.uri.length * 2 + svgBytes);
         }
         return Math.max(0, value.error.length * 2);
     }
 
     private toStorageKey(key: ImagePreviewCacheKey): string {
-        return `${key.sessionId}\u0000${key.snapshotSignature}\u0000${key.filePath}`;
+        return `${key.sessionId}\u0000${key.signature}\u0000${key.filePath}`;
     }
 
     private evictIfNeeded(): void {

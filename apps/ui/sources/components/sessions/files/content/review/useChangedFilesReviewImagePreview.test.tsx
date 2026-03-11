@@ -65,4 +65,39 @@ describe('useChangedFilesReviewImagePreview', () => {
             tree!.unmount();
         });
     });
+
+    it('supports svg previews (including decoded svgXml for native rendering)', async () => {
+        const { sessionReadFile } = await import('@/sync/ops');
+        const { useChangedFilesReviewImagePreview } = await import('./useChangedFilesReviewImagePreview');
+
+        const svg = '<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"></svg>';
+        vi.mocked(sessionReadFile).mockResolvedValueOnce({ success: true, content: Buffer.from(svg, 'utf-8').toString('base64') } as any);
+
+        let current: any = null;
+        function Test(props: { enabled: boolean }) {
+            current = useChangedFilesReviewImagePreview({
+                sessionId: 's1',
+                snapshotSignature: 'sig1',
+                filePath: 'image.svg',
+                enabled: props.enabled,
+            });
+            return null;
+        }
+
+        let tree: renderer.ReactTestRenderer | null = null;
+        await act(async () => {
+            tree = renderer.create(<Test enabled={true} />);
+            await flushAsync(8);
+        });
+
+        expect(vi.mocked(sessionReadFile)).toHaveBeenCalledTimes(1);
+        expect(current.status).toBe('loaded');
+        expect(typeof current.uri).toBe('string');
+        expect(current.uri.startsWith('data:image/svg+xml;base64,')).toBe(true);
+        expect(current.svgXml).toBe(svg);
+
+        await act(async () => {
+            tree!.unmount();
+        });
+    });
 });

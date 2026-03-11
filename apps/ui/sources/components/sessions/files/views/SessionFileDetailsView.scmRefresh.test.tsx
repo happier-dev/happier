@@ -5,9 +5,9 @@ import { describe, expect, it, vi } from 'vitest';
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 (globalThis as any).__DEV__ = false;
 
-vi.mock('react-native', () => ({
-  View: 'View',
-  ScrollView: 'ScrollView',
+vi.mock('react-native', async () => ({
+  ...(await import('@/dev/reactNativeStub')),
+  Platform: { OS: 'ios', select: (spec: any) => spec?.ios ?? spec?.default },
 }));
 
 vi.mock('react-native-unistyles', () => ({
@@ -38,11 +38,21 @@ vi.mock('@/text', () => ({
   t: (key: string) => key,
 }));
 
+vi.mock('@/modal', () => ({
+  Modal: {
+    alert: vi.fn(),
+    confirm: vi.fn(),
+    prompt: vi.fn(),
+    show: vi.fn(),
+  },
+}));
+
 vi.mock('@/utils/code/fileLanguage', () => ({
   getFileLanguageFromPath: () => 'txt',
 }));
 
 vi.mock('@/scm/settings/commitStrategy', () => ({
+  SCM_COMMIT_STRATEGIES: ['atomic', 'git_staging'],
   allowsLiveStaging: () => false,
   isAtomicCommitStrategy: () => true,
 }));
@@ -142,8 +152,10 @@ vi.mock('./sessionFileDetails/useSessionFileEditorState', () => ({
     editorSurfaceEnabled: false,
     isEditingFile: false,
     editorResetKey: 0,
-    editorText: '',
-    setEditorText: vi.fn(),
+    editorSeedText: '',
+    editorHandleRef: { current: null },
+    onEditorChange: vi.fn(),
+    getEditorText: () => '',
     isSavingEdits: false,
     editorDirty: false,
     editorTooLarge: false,

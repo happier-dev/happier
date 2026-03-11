@@ -1,8 +1,11 @@
 import * as React from 'react';
 import renderer, { act } from 'react-test-renderer';
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
+
+const publishBranchMock = vi.hoisted(() => vi.fn(async () => true));
+const usePublishBranchActionMock = vi.hoisted(() => vi.fn());
 
 vi.mock('react-native-reanimated', () => ({}));
 
@@ -88,8 +91,15 @@ vi.mock('@/hooks/server/useFeatureEnabled', () => ({
     useFeatureEnabled: () => true,
 }));
 
-vi.mock('@/sync/domains/state/storage', () => ({
-    __esModule: true,
+vi.mock('@/hooks/session/sourceControl/usePublishBranchAction', () => ({
+    usePublishBranchAction: (...args: any[]) => usePublishBranchActionMock(...args),
+}));
+
+vi.mock('@/sync/domains/state/storage', async (importOriginal) => {
+    const actual = await importOriginal<typeof import('@/sync/domains/state/storage')>();
+
+    return {
+        ...actual,
     useSetting: () => null,
     useAllMachines: () => [{ id: 'm1', active: true, activeAt: 1, metadata: { host: 'mbp', homeDir: '/tmp' } }],
     useProjectForSession: () => null,
@@ -135,7 +145,8 @@ vi.mock('@/sync/domains/state/storage', () => ({
     useSessionProjectScmTouchedPaths: () => [],
     useSessionProjectScmOperationLogEntryIds: () => [],
     useSessionProjectScmTouchedPathsCount: () => 0,
-}));
+    };
+});
 
 vi.mock('@/components/sessions/sourceControl/states', () => ({
     NotSourceControlRepositoryState: () => React.createElement('NotSourceControlRepositoryState'),
@@ -186,7 +197,16 @@ vi.mock('./SessionRightPanelGitHistoryTab', () => ({
 }));
 
 describe('SessionRightPanelGitView (remote action visibility)', () => {
-    it('hides pull/push when upstream is required and avoids showing a persistent blocked hint', async () => {
+    beforeEach(() => {
+        publishBranchMock.mockClear();
+        usePublishBranchActionMock.mockReturnValue({
+            canPublish: true,
+            publishBusy: false,
+            publishBranch: publishBranchMock,
+        });
+    });
+
+    it('shows publish when upstream is required and hides blocked pull/push actions', async () => {
         const { SessionRightPanelGitView } = await import('./SessionRightPanelGitView');
 
         let tree!: renderer.ReactTestRenderer;
@@ -196,7 +216,7 @@ describe('SessionRightPanelGitView (remote action visibility)', () => {
 
         const updateTab = tree.root.findByType('UpdateTab' as any);
         const actions = (updateTab.props as any).actions as Array<{ key: string }>;
-        expect(actions.map((a) => a.key)).toEqual(['fetch']);
+        expect(actions.map((a) => a.key)).toEqual(['fetch', 'publish']);
         expect((updateTab.props as any).hint).toBeNull();
     });
 });

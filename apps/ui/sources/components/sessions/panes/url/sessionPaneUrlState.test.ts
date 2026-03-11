@@ -11,6 +11,11 @@ describe('sessionPaneUrlState', () => {
         it('parses right tab id', () => {
             expect(parseSessionPaneUrlState({ right: 'files' })).toEqual({ rightTabId: 'files' });
             expect(parseSessionPaneUrlState({ right: 'git' })).toEqual({ rightTabId: 'git' });
+            expect(parseSessionPaneUrlState({ right: 'terminal' })).toEqual({ rightTabId: 'terminal' });
+        });
+
+        it('parses bottom terminal tab id', () => {
+            expect(parseSessionPaneUrlState({ bottom: 'terminal' })).toEqual({ bottomTabId: 'terminal' });
         });
 
         it('parses file details target', () => {
@@ -36,6 +41,12 @@ describe('sessionPaneUrlState', () => {
         it('parses commit details target', () => {
             expect(parseSessionPaneUrlState({ details: 'commit', sha: '0338a0f' })).toEqual({
                 details: { kind: 'commit', sha: '0338a0f' },
+            });
+        });
+
+        it('parses terminal details target', () => {
+            expect(parseSessionPaneUrlState({ details: 'terminal' })).toEqual({
+                details: { kind: 'terminal' },
             });
         });
     });
@@ -65,6 +76,71 @@ describe('sessionPaneUrlState', () => {
             );
         });
 
+        it('opens the terminal tab when requested in url state', () => {
+            const pane = {
+                openRight: vi.fn(),
+                setRightTab: vi.fn(),
+                openBottom: vi.fn(),
+                setBottomTab: vi.fn(),
+                openDetailsTab: vi.fn(),
+            };
+
+            applySessionPaneUrlState(pane as any, {
+                rightTabId: 'terminal',
+            });
+
+            expect(pane.openRight).toHaveBeenCalledWith({ tabId: 'terminal' });
+            expect(pane.setRightTab).toHaveBeenCalledWith('terminal');
+            expect(pane.openBottom).toHaveBeenCalledTimes(0);
+            expect(pane.setBottomTab).toHaveBeenCalledTimes(0);
+            expect(pane.openDetailsTab).toHaveBeenCalledTimes(0);
+        });
+
+        it('opens the bottom terminal tab when requested in url state', () => {
+            const pane = {
+                openRight: vi.fn(),
+                setRightTab: vi.fn(),
+                openBottom: vi.fn(),
+                setBottomTab: vi.fn(),
+                openDetailsTab: vi.fn(),
+            };
+
+            applySessionPaneUrlState(pane as any, {
+                bottomTabId: 'terminal',
+            });
+
+            expect(pane.openBottom).toHaveBeenCalledWith({ tabId: 'terminal' });
+            expect(pane.setBottomTab).toHaveBeenCalledWith('terminal');
+            expect(pane.openRight).toHaveBeenCalledTimes(0);
+            expect(pane.setRightTab).toHaveBeenCalledTimes(0);
+            expect(pane.openDetailsTab).toHaveBeenCalledTimes(0);
+        });
+
+        it('opens the details terminal tab when requested in url state', () => {
+            const pane = {
+                openRight: vi.fn(),
+                setRightTab: vi.fn(),
+                openBottom: vi.fn(),
+                setBottomTab: vi.fn(),
+                openDetailsTab: vi.fn(),
+            };
+
+            applySessionPaneUrlState(pane as any, {
+                details: { kind: 'terminal' },
+            });
+
+            expect(pane.openRight).toHaveBeenCalledTimes(0);
+            expect(pane.openBottom).toHaveBeenCalledTimes(0);
+            expect(pane.openDetailsTab).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    key: 'terminal:embedded',
+                    kind: 'terminal',
+                    resource: { kind: 'terminal' },
+                }),
+                { intent: 'pinned' },
+            );
+        });
+
         it('ignores unsafe file paths in url state', () => {
             const pane = {
                 openRight: vi.fn(),
@@ -84,6 +160,26 @@ describe('sessionPaneUrlState', () => {
     });
 
     describe('serializeSessionPaneUrlState', () => {
+        it('serializes terminal tab state', () => {
+            expect(
+                serializeSessionPaneUrlState({
+                    rightTabId: 'terminal',
+                })
+            ).toEqual({
+                right: 'terminal',
+            });
+        });
+
+        it('serializes bottom terminal tab state', () => {
+            expect(
+                serializeSessionPaneUrlState({
+                    bottomTabId: 'terminal',
+                })
+            ).toEqual({
+                bottom: 'terminal',
+            });
+        });
+
         it('serializes file details state', () => {
             expect(
                 serializeSessionPaneUrlState({
@@ -109,6 +205,16 @@ describe('sessionPaneUrlState', () => {
                 sha: '0338a0f',
             });
         });
+
+        it('serializes terminal details state', () => {
+            expect(
+                serializeSessionPaneUrlState({
+                    details: { kind: 'terminal' },
+                })
+            ).toEqual({
+                details: 'terminal',
+            });
+        });
     });
 
     describe('deriveSessionPaneUrlStateFromScopeState', () => {
@@ -116,6 +222,7 @@ describe('sessionPaneUrlState', () => {
             expect(
                 deriveSessionPaneUrlStateFromScopeState({
                     right: { isOpen: true, activeTabId: 'files', tabState: {} },
+                    bottom: { isOpen: false, activeTabId: null, tabState: {} },
                     details: {
                         isOpen: true,
                         tabs: [
@@ -136,6 +243,63 @@ describe('sessionPaneUrlState', () => {
                 details: { kind: 'file', path: 'src/app.ts' },
             });
         });
+
+        it('derives an active terminal tab', () => {
+            expect(
+                deriveSessionPaneUrlStateFromScopeState({
+                    right: { isOpen: true, activeTabId: 'terminal', tabState: {} },
+                    bottom: { isOpen: false, activeTabId: null, tabState: {} },
+                    details: {
+                        isOpen: false,
+                        tabs: [],
+                        activeTabKey: null,
+                    },
+                } as any)
+            ).toEqual({
+                rightTabId: 'terminal',
+            });
+        });
+
+        it('derives an active bottom terminal tab', () => {
+            expect(
+                deriveSessionPaneUrlStateFromScopeState({
+                    right: { isOpen: false, activeTabId: null, tabState: {} },
+                    bottom: { isOpen: true, activeTabId: 'terminal', tabState: {} },
+                    details: {
+                        isOpen: false,
+                        tabs: [],
+                        activeTabKey: null,
+                    },
+                } as any)
+            ).toEqual({
+                bottomTabId: 'terminal',
+            });
+        });
+
+        it('derives an active terminal details tab', () => {
+            expect(
+                deriveSessionPaneUrlStateFromScopeState({
+                    right: { isOpen: false, activeTabId: null, tabState: {} },
+                    bottom: { isOpen: false, activeTabId: null, tabState: {} },
+                    details: {
+                        isOpen: true,
+                        tabs: [
+                            {
+                                key: 'terminal:embedded',
+                                kind: 'terminal',
+                                title: 'Terminal',
+                                resource: { kind: 'terminal' },
+                                isPinned: true,
+                                isPreview: false,
+                            },
+                        ],
+                        activeTabKey: 'terminal:embedded',
+                    },
+                } as any)
+            ).toEqual({
+                details: { kind: 'terminal' },
+            });
+        });
     });
 
     describe('reconcileSessionPaneScopeFromUrlState', () => {
@@ -144,6 +308,9 @@ describe('sessionPaneUrlState', () => {
                 openRight: vi.fn(),
                 closeRight: vi.fn(),
                 setRightTab: vi.fn(),
+                openBottom: vi.fn(),
+                closeBottom: vi.fn(),
+                setBottomTab: vi.fn(),
                 openDetailsTab: vi.fn(),
                 closeDetails: vi.fn(),
             };
@@ -151,8 +318,10 @@ describe('sessionPaneUrlState', () => {
             reconcileSessionPaneScopeFromUrlState(pane as any, null);
 
             expect(pane.closeRight).toHaveBeenCalledTimes(1);
+            expect(pane.closeBottom).toHaveBeenCalledTimes(1);
             expect(pane.closeDetails).toHaveBeenCalledTimes(1);
             expect(pane.openRight).toHaveBeenCalledTimes(0);
+            expect(pane.openBottom).toHaveBeenCalledTimes(0);
             expect(pane.openDetailsTab).toHaveBeenCalledTimes(0);
         });
 
@@ -161,6 +330,9 @@ describe('sessionPaneUrlState', () => {
                 openRight: vi.fn(),
                 closeRight: vi.fn(),
                 setRightTab: vi.fn(),
+                openBottom: vi.fn(),
+                closeBottom: vi.fn(),
+                setBottomTab: vi.fn(),
                 openDetailsTab: vi.fn(),
                 closeDetails: vi.fn(),
             };
@@ -169,6 +341,7 @@ describe('sessionPaneUrlState', () => {
 
             expect(pane.openRight).toHaveBeenCalledWith({ tabId: 'files' });
             expect(pane.setRightTab).toHaveBeenCalledWith('files');
+            expect(pane.closeBottom).toHaveBeenCalledTimes(1);
             expect(pane.closeDetails).toHaveBeenCalledTimes(1);
             expect(pane.openDetailsTab).toHaveBeenCalledTimes(0);
         });
@@ -178,6 +351,9 @@ describe('sessionPaneUrlState', () => {
                 openRight: vi.fn(),
                 closeRight: vi.fn(),
                 setRightTab: vi.fn(),
+                openBottom: vi.fn(),
+                closeBottom: vi.fn(),
+                setBottomTab: vi.fn(),
                 openDetailsTab: vi.fn(),
                 closeDetails: vi.fn(),
             };
@@ -185,12 +361,33 @@ describe('sessionPaneUrlState', () => {
             reconcileSessionPaneScopeFromUrlState(pane as any, { details: { kind: 'commit', sha: '0338a0f' } });
 
             expect(pane.closeRight).toHaveBeenCalledTimes(1);
+            expect(pane.closeBottom).toHaveBeenCalledTimes(1);
             expect(pane.openDetailsTab).toHaveBeenCalledWith(
                 expect.objectContaining({
                     key: 'commit:0338a0f',
                     kind: 'commit',
                 })
             );
+        });
+
+        it('re-opens the bottom terminal when url state requests it', () => {
+            const pane = {
+                openRight: vi.fn(),
+                closeRight: vi.fn(),
+                setRightTab: vi.fn(),
+                openBottom: vi.fn(),
+                closeBottom: vi.fn(),
+                setBottomTab: vi.fn(),
+                openDetailsTab: vi.fn(),
+                closeDetails: vi.fn(),
+            };
+
+            reconcileSessionPaneScopeFromUrlState(pane as any, { bottomTabId: 'terminal' });
+
+            expect(pane.closeRight).toHaveBeenCalledTimes(1);
+            expect(pane.openBottom).toHaveBeenCalledWith({ tabId: 'terminal' });
+            expect(pane.setBottomTab).toHaveBeenCalledWith('terminal');
+            expect(pane.closeDetails).toHaveBeenCalledTimes(1);
         });
     });
 });

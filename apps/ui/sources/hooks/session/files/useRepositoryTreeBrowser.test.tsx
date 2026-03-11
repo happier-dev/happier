@@ -12,6 +12,7 @@ const cachedDirectoryEntries = new Map<string, Array<{ name: string; type: 'file
 
 vi.mock('@/sync/domains/input/repositoryDirectory', () => ({
     listRepositoryDirectoryEntries: (input: any) => listRepositoryDirectoryEntriesSpy(input),
+    warmRepositoryDirectoryCache: (input: any) => listRepositoryDirectoryEntriesSpy(input),
     getCachedRepositoryDirectoryEntries: (input: any) => cachedDirectoryEntries.get(`${input.sessionId}:${input.directoryPath}`) ?? null,
     setCachedRepositoryDirectoryEntries: (input: any) => {
         cachedDirectoryEntries.set(`${input.sessionId}:${input.directoryPath}`, input.entries);
@@ -219,5 +220,80 @@ describe('useRepositoryTreeBrowser', () => {
         expect(listRepositoryDirectoryEntriesSpy).toHaveBeenCalledWith({ sessionId: 'session-2', directoryPath: 'src' });
         expect(apiRef.current.nodes.some((n: any) => n.path === 'src/b.ts')).toBe(true);
         expect(apiRef.current.nodes.some((n: any) => n.path === 'src/a.ts')).toBe(false);
+    });
+
+    it('revalidates already-expanded directories when reloadToken changes', async () => {
+        cachedDirectoryEntries.clear();
+
+        let srcEntries = [{ name: 'old.ts', type: 'file' as const }];
+        listRepositoryDirectoryEntriesSpy.mockImplementation(async ({ directoryPath }) => {
+            if (!directoryPath) {
+                return {
+                    ok: true,
+                    entries: [{ name: 'src', type: 'directory' }],
+                };
+            }
+            if (directoryPath === 'src') {
+                return { ok: true, entries: srcEntries };
+            }
+            return { ok: true, entries: [] };
+        });
+
+        const { useRepositoryTreeBrowser } = await import('./useRepositoryTreeBrowser');
+
+        const apiRef: { current: any } = { current: null };
+        let setReloadToken: ((value: number) => void) | null = null;
+
+        function Test() {
+            const [expandedPaths, setExpandedPaths] = React.useState<string[]>([]);
+            const [reloadToken, setReload] = React.useState(0);
+            setReloadToken = setReload;
+
+            apiRef.current = useRepositoryTreeBrowser({
+                sessionId: 'session-1',
+                enabled: true,
+                expandedPaths,
+                onExpandedPathsChange: setExpandedPaths,
+                reloadToken,
+            });
+            return null;
+        }
+
+        await act(async () => {
+            renderer.create(<Test />);
+        });
+        await act(async () => {});
+
+        await act(async () => {
+            await apiRef.current.toggleDirectory('src');
+        });
+
+        for (let i = 0; i < 10; i += 1) {
+            await act(async () => {
+                await Promise.resolve();
+            });
+            if (apiRef.current.nodes.some((n: any) => n.path === 'src/old.ts')) break;
+        }
+
+        expect(apiRef.current.nodes.some((n: any) => n.path === 'src/old.ts')).toBe(true);
+
+        srcEntries = [{ name: 'new.ts', type: 'file' as const }];
+        listRepositoryDirectoryEntriesSpy.mockClear();
+
+        await act(async () => {
+            setReloadToken!(1);
+        });
+
+        for (let i = 0; i < 10; i += 1) {
+            await act(async () => {
+                await Promise.resolve();
+            });
+            if (apiRef.current.nodes.some((n: any) => n.path === 'src/new.ts')) break;
+        }
+
+        expect(listRepositoryDirectoryEntriesSpy.mock.calls).toContainEqual([{ sessionId: 'session-1', directoryPath: '' }]);
+        expect(listRepositoryDirectoryEntriesSpy.mock.calls).toContainEqual([{ sessionId: 'session-1', directoryPath: 'src' }]);
+        expect(apiRef.current.nodes.some((n: any) => n.path === 'src/new.ts')).toBe(true);
+        expect(apiRef.current.nodes.some((n: any) => n.path === 'src/old.ts')).toBe(false);
     });
 });

@@ -73,7 +73,7 @@ export const SessionLinkFileAction = React.memo((props: SessionLinkFileActionPro
                     accessibilityLabel={t('common.linkFile')}
                 >
                     <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-                        <Ionicons name="link-outline" size={16} color={props.iconColor} />
+                        <Ionicons name="document-outline" size={18} color={props.iconColor} />
                         {props.showLabel ? (
                             <Text style={props.textStyle}>{t('common.linkFile')}</Text>
                         ) : null}

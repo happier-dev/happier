@@ -24,7 +24,150 @@ For detailed server profile, switching, and multi-daemon guidance, see [Features
 
 ## Notifications
 
-See [Notifications](./notifications) for push notification setup (Expo + APNs/FCM) and self-hosting notes.
+Happier supports push notifications for:
+
+- turn completion (`Ready`)
+- permission requests
+- action requests that need a human answer
+
+On iOS and Android, permission/action-request notifications can also expose action buttons and route you back into the correct session, including multi-server flows.
+
+See [Notifications](./notifications) for setup/self-hosting notes and [Notification routing](/docs/features/notifications-routing) for the exact in-app behavior.
+
+## Embedded terminal
+
+The app can show a live session terminal directly inside the session UI.
+
+- On larger layouts, you can place it in the **bottom panel**, **sidebar**, or **details panel**.
+- On phone-sized layouts, Happier uses a more focused terminal presentation instead of trying to keep multiple desktop-style panels open at once.
+- The terminal depends on a connected daemon for the current machine/session.
+
+Full guide: [Embedded terminal](/docs/features/embedded-terminal).
+
+## Local memory search
+
+The app can search a machine-local memory index built by the selected daemon-connected machine.
+
+That lets you:
+
+- search past transcript context from the UI
+- switch between machines when you have more than one daemon
+- open matching sessions at the relevant conversation point
+
+Memory search is opt-in and machine-scoped, so you enable and configure it per machine.
+
+Full guide: [Local memory search](/docs/features/local-memory-search).
+
+## Provider authentication in settings
+
+Provider settings can also open machine-local CLI login flows directly inside the app.
+
+- on larger layouts, Happier uses the shared bottom-pane terminal
+- on smaller layouts, Happier uses a more focused terminal presentation
+- the provider settings page also shows auth status, auth method, and refresh actions when supported
+
+Full guide: [Provider authentication](/docs/features/provider-authentication).
+
+## Machine installables
+
+Each connected machine has an **Installables** screen in **Machine details**.
+
+Use it to manage tools that Happier can install and maintain for that specific machine, such as **Codex ACP**.
+
+This screen lets you:
+
+- see whether an installable is present
+- check the installed version and latest known version
+- install, reinstall, or update it manually
+- control **Auto-install when needed**
+- control **Auto-update** (`off`, `notify`, or `auto`)
+
+Installables are managed per machine, so your laptop, desktop, and remote boxes can each have different installed tools and policies.
+
+Full guide: [Installables](/docs/features/installables).
+
+## Session workspace surfaces
+
+The app includes a repository-aware workspace UI directly inside sessions.
+
+On larger layouts, this is split across:
+
+- a **right sidebar** for **Files** and **Source control**
+- a **details pane** for file previews, editors, review tabs, historical commit diffs, and stash details
+
+On smaller layouts, the same workflows are shown as focused full-screen screens instead of permanent docked panels.
+
+### What this gives you
+
+- browse and search the current workspace
+- open files into preview or edit tabs
+- review uncommitted diffs without leaving the session
+- inspect commit history
+- switch between review and editing while keeping your place
+
+Full guide: [Git & Files](/docs/features/git).
+
+### Persistent tab/workspace state
+
+The details pane is designed for multi-step work:
+
+- switching between details tabs keeps their local state
+- editor tabs preserve in-progress edits while you inspect other files
+- review/history tabs preserve scroll position when you come back
+- session workspace surfaces are intended to let you continue where you left off instead of rebuilding context each time
+
+### Focused details mode
+
+When you need more room for a diff or file editor, the details surface can switch into a more focused layout instead of permanently compressing the main session area.
+
+This is useful for:
+
+- reviewing large diffs
+- editing while keeping Source control open
+- working on a smaller laptop/browser window
+
+## Linking project files into a prompt
+
+The session composer includes file-linking helpers so you can send file context without manually typing paths.
+
+### Link file chip
+
+Use **Link file** in the composer to open a project-file picker for the current workspace.
+
+This is useful when you want to say things like:
+
+- “Explain this file”
+- “Refactor the two files I linked”
+- “Compare these configs”
+
+### `@`-style file search
+
+Where supported, you can also use `@`-style file search from the composer to quickly reference workspace files.
+
+The goal of both surfaces is the same:
+
+- quickly find a file
+- attach it to your next message
+- keep your session grounded in the real workspace instead of hand-written path references
+
+## Message attachments
+
+The app also supports **message attachments** for local files that are not already in the workspace.
+
+This is a separate workflow from **Link file**:
+
+- use **Link file** for files that already exist in the current workspace
+- use **Attachments** for files from your device, such as screenshots, exported logs, or documents
+
+Current user-facing behavior:
+
+- images show as thumbnails in the composer
+- clicking a thumbnail opens a larger preview before send
+- sent image attachments render inline in the transcript
+- clicking a sent transcript image opens the same preview modal
+- per-file upload progress is shown while files are uploading
+
+Full guide: [Attachments & image previews](/docs/features/attachments).
 
 ## Updates
 
@@ -38,10 +181,25 @@ Full matrix (all apps/assets): [Updates](/docs/advanced/updates).
 
 Happier supports both:
 
-- **Device-key accounts (default)**: end-to-end encrypted by default; users must **restore** access on new devices/browsers by providing their secret key (for example via “Login with mobile app”).
+- **Device-key accounts (default)**: end-to-end encrypted by default; users must **restore** access on new devices/browsers by using the account restore flow (for example **Add your phone** on a signed-in computer, or **Restore with Secret Key Instead**).
 - **Keyless accounts (enterprise)**: no device keys; sign-in can be **seamless across devices**, typically paired with plaintext storage mode.
 
 The app discovers available login and signup options from your server via `GET /v1/features` and renders what the server advertises.
+
+### Device linking, restore, and terminal QR flows
+
+In the app, these are different flows:
+
+- **Add your phone** shows a QR code on a signed-in desktop/web app so a phone can join the same account
+- **Restore account** is the logged-out flow for joining an existing account on a new device
+- **Scan QR to connect terminal** approves a CLI/daemon connection and does not sign a new phone/browser into the UI
+- **Enter URL manually** is the fallback when you cannot scan
+
+On phones and mobile-sized web browsers with camera support, Happier opens the account-restore scanner first. On larger web/desktop layouts, Happier shows a QR code that another signed-in device can scan instead.
+
+If you self-host and your current server is `localhost`, Happier may intentionally omit the server URL from mobile QR/deep links. In that case, first configure the phone to a reachable server URL (LAN IP, Tailscale, or a public domain), then retry.
+
+User guide: [Features → Device linking & restore](/docs/features/device-linking-and-restore)
 
 For operator configuration, see:
 - [Server Auth](/docs/server/auth)

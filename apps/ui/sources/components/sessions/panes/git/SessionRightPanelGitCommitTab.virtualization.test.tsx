@@ -10,6 +10,10 @@ vi.mock('react-native', () => ({
     ScrollView: 'ScrollView',
     Pressable: 'Pressable',
     Platform: { select: (value: any) => value?.default ?? null, OS: 'web' },
+    AppState: {
+        currentState: 'active',
+        addEventListener: () => ({ remove: () => {} }),
+    },
 }));
 
 vi.mock('@expo/vector-icons', () => ({

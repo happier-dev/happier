@@ -1,16 +1,20 @@
 import { isSafeWorkspaceRelativePath } from '@/utils/path/isSafeWorkspaceRelativePath';
+import { createSessionDetailsTerminalTab, SESSION_DETAILS_TERMINAL_TAB_KEY } from '@/components/sessions/terminal/embeddedTerminalDocking';
 
 export type SessionPaneUrlDetailsTarget =
     | Readonly<{ kind: 'file'; path: string }>
-    | Readonly<{ kind: 'commit'; sha: string }>;
+    | Readonly<{ kind: 'commit'; sha: string }>
+    | Readonly<{ kind: 'terminal' }>;
 
 export type SessionPaneUrlState = Readonly<{
-    rightTabId?: 'git' | 'files';
+    rightTabId?: 'git' | 'files' | 'terminal';
+    bottomTabId?: 'terminal';
     details?: SessionPaneUrlDetailsTarget;
 }>;
 
 type PaneScopeStateLike = Readonly<{
     right: Readonly<{ isOpen: boolean; activeTabId: string | null }>;
+    bottom: Readonly<{ isOpen: boolean; activeTabId: string | null }>;
     details: Readonly<{ isOpen: boolean; tabs: ReadonlyArray<Readonly<{ key: string; kind: string; resource: unknown }>>; activeTabKey: string | null }>;
 }>;
 
@@ -26,7 +30,9 @@ function readSingleStringParam(params: Readonly<Record<string, unknown>>, key: s
 
 export function parseSessionPaneUrlState(params: Readonly<Record<string, unknown>>): SessionPaneUrlState | null {
     const rightRaw = readSingleStringParam(params, 'right')?.trim() ?? '';
-    const rightTabId = rightRaw === 'git' || rightRaw === 'files' ? rightRaw : null;
+    const rightTabId = rightRaw === 'git' || rightRaw === 'files' || rightRaw === 'terminal' ? rightRaw : null;
+    const bottomRaw = readSingleStringParam(params, 'bottom')?.trim() ?? '';
+    const bottomTabId = bottomRaw === 'terminal' ? bottomRaw : null;
 
     const detailsRaw = readSingleStringParam(params, 'details')?.trim() ?? '';
     const pathRaw = readSingleStringParam(params, 'path')?.trim() ?? '';
@@ -39,10 +45,14 @@ export function parseSessionPaneUrlState(params: Readonly<Record<string, unknown
     if (detailsRaw === 'commit' && shaRaw) {
         details = { kind: 'commit', sha: shaRaw };
     }
+    if (detailsRaw === 'terminal') {
+        details = { kind: 'terminal' };
+    }
 
-    if (!rightTabId && !details) return null;
+    if (!rightTabId && !bottomTabId && !details) return null;
     return {
         ...(rightTabId ? { rightTabId } : null),
+        ...(bottomTabId ? { bottomTabId } : null),
         ...(details ? { details } : null),
     };
 }
@@ -52,6 +62,9 @@ export function serializeSessionPaneUrlState(state: SessionPaneUrlState): Record
     if (state.rightTabId) {
         out.right = state.rightTabId;
     }
+    if (state.bottomTabId) {
+        out.bottom = state.bottomTabId;
+    }
     if (state.details?.kind === 'file') {
         out.details = 'file';
         out.path = state.details.path;
@@ -60,14 +73,54 @@ export function serializeSessionPaneUrlState(state: SessionPaneUrlState): Record
         out.details = 'commit';
         out.sha = state.details.sha;
     }
+    if (state.details?.kind === 'terminal') {
+        out.details = 'terminal';
+    }
     return out;
+}
+
+export function buildActiveDetailsRouteParams(
+    detailsTabs: readonly unknown[],
+    activeDetailsKey: string | null
+): Record<string, string> {
+    const activeTab = (detailsTabs as ReadonlyArray<any>).find((tab) => tab?.key === activeDetailsKey)
+        ?? (detailsTabs as ReadonlyArray<any>).at(-1)
+        ?? null;
+    if (!activeTab) return {};
+
+    if (activeTab.kind === 'file') {
+        const path = typeof activeTab.resource?.path === 'string' ? activeTab.resource.path.trim() : '';
+        if (!path || !isSafeWorkspaceRelativePath(path)) return {};
+        return serializeSessionPaneUrlState({ details: { kind: 'file', path } });
+    }
+
+    if (activeTab.kind === 'commit') {
+        const rawSha = typeof activeTab.resource?.sha === 'string'
+            ? activeTab.resource.sha
+            : typeof activeTab.resource?.commitHash === 'string'
+                ? activeTab.resource.commitHash
+                : '';
+        const sha = rawSha.trim().split(/\s+/)[0] ?? '';
+        if (!sha) return {};
+        return serializeSessionPaneUrlState({ details: { kind: 'commit', sha } });
+    }
+
+    if (activeTab.key === SESSION_DETAILS_TERMINAL_TAB_KEY || activeTab.kind === 'terminal') {
+        return serializeSessionPaneUrlState({ details: { kind: 'terminal' } });
+    }
+
+    return {};
 }
 
 export function deriveSessionPaneUrlStateFromScopeState(scopeState: PaneScopeStateLike | null): SessionPaneUrlState | null {
     if (!scopeState) return null;
     const rightTabId =
-        scopeState.right.isOpen && (scopeState.right.activeTabId === 'git' || scopeState.right.activeTabId === 'files')
+        scopeState.right.isOpen && (scopeState.right.activeTabId === 'git' || scopeState.right.activeTabId === 'files' || scopeState.right.activeTabId === 'terminal')
             ? scopeState.right.activeTabId
+            : null;
+    const bottomTabId =
+        scopeState.bottom.isOpen && scopeState.bottom.activeTabId === 'terminal'
+            ? scopeState.bottom.activeTabId
             : null;
 
     let details: SessionPaneUrlDetailsTarget | null = null;
@@ -89,12 +142,15 @@ export function deriveSessionPaneUrlStateFromScopeState(scopeState: PaneScopeSta
                     details = { kind: 'commit', sha: safeSha };
                 }
             }
+        } else if (tab?.key === SESSION_DETAILS_TERMINAL_TAB_KEY || tab?.kind === 'terminal') {
+            details = { kind: 'terminal' };
         }
     }
 
-    if (!rightTabId && !details) return null;
+    if (!rightTabId && !bottomTabId && !details) return null;
     return {
         ...(rightTabId ? { rightTabId } : null),
+        ...(bottomTabId ? { bottomTabId } : null),
         ...(details ? { details } : null),
     };
 }
@@ -103,6 +159,8 @@ export function applySessionPaneUrlState(
     pane: Readonly<{
         openRight: (options?: Readonly<{ tabId?: string }>) => void;
         setRightTab: (tabId: string) => void;
+        openBottom: (options?: Readonly<{ tabId?: string }>) => void;
+        setBottomTab: (tabId: string) => void;
         openDetailsTab: (tab: any, options?: any) => void;
     }>,
     state: SessionPaneUrlState
@@ -110,6 +168,10 @@ export function applySessionPaneUrlState(
     if (state.rightTabId) {
         pane.openRight({ tabId: state.rightTabId });
         pane.setRightTab(state.rightTabId);
+    }
+    if (state.bottomTabId) {
+        pane.openBottom({ tabId: state.bottomTabId });
+        pane.setBottomTab(state.bottomTabId);
     }
 
     if (state.details?.kind === 'file') {
@@ -134,6 +196,11 @@ export function applySessionPaneUrlState(
             title: safeSha.slice(0, 7),
             resource: { kind: 'commit', sha: safeSha },
         });
+        return;
+    }
+
+    if (state.details?.kind === 'terminal') {
+        pane.openDetailsTab(createSessionDetailsTerminalTab(), { intent: 'pinned' });
     }
 }
 
@@ -142,6 +209,9 @@ export function reconcileSessionPaneScopeFromUrlState(
         openRight: (options?: Readonly<{ tabId?: string }>) => void;
         closeRight: () => void;
         setRightTab: (tabId: string) => void;
+        openBottom: (options?: Readonly<{ tabId?: string }>) => void;
+        closeBottom: () => void;
+        setBottomTab: (tabId: string) => void;
         openDetailsTab: (tab: any, options?: any) => void;
         closeDetails: () => void;
     }>,
@@ -152,6 +222,13 @@ export function reconcileSessionPaneScopeFromUrlState(
         pane.setRightTab(state.rightTabId);
     } else {
         pane.closeRight();
+    }
+
+    if (state?.bottomTabId) {
+        pane.openBottom({ tabId: state.bottomTabId });
+        pane.setBottomTab(state.bottomTabId);
+    } else {
+        pane.closeBottom();
     }
 
     if (state?.details) {

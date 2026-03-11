@@ -2,10 +2,14 @@ import * as React from 'react';
 import renderer, { act } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
 
+import { SessionDetailsPanel } from './SessionDetailsPanel';
+
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 vi.mock('react-native', () => ({
     Platform: { OS: 'web', select: (_: any) => 1 },
+    AppState: { currentState: 'active', addEventListener: vi.fn(() => ({ remove: vi.fn() })) },
+    ActivityIndicator: 'ActivityIndicator',
     View: 'View',
     Pressable: (props: any) => React.createElement('Pressable', props, props.children),
     ScrollView: (props: any) => React.createElement('ScrollView', props, props.children),
@@ -20,6 +24,7 @@ vi.mock('react-native-unistyles', () => ({
                 divider: '#eee',
                 text: '#000',
                 textSecondary: '#666',
+                accent: { indigo: '#00f' },
                 shadow: { color: '#000' },
             },
         },
@@ -34,6 +39,7 @@ vi.mock('react-native-unistyles', () => ({
                         divider: '#eee',
                         text: '#000',
                         textSecondary: '#666',
+                        accent: { indigo: '#00f' },
                         shadow: { color: '#000' },
                     },
                 })
@@ -60,6 +66,10 @@ vi.mock('@/components/sessions/files/views/SessionCommitDetailsView', () => ({
 
 vi.mock('@/components/sessions/files/views/SessionFileDetailsView', () => ({
     SessionFileDetailsView: () => React.createElement('SessionFileDetailsView'),
+}));
+
+vi.mock('@/components/sessions/terminal/SessionEmbeddedTerminalPane', () => ({
+    SessionEmbeddedTerminalPane: () => React.createElement('SessionEmbeddedTerminalPane'),
 }));
 
 vi.mock('@/text', () => ({
@@ -97,8 +107,6 @@ vi.mock('@/components/appShell/panes/hooks/useAppPaneScope', () => ({
 
 describe('SessionDetailsPanel (active tab fallback)', () => {
     it('marks only the last tab active when activeTabKey is missing', async () => {
-        const { SessionDetailsPanel } = await import('./SessionDetailsPanel');
-
         let tree: renderer.ReactTestRenderer | null = null;
         await act(async () => {
             tree = renderer.create(<SessionDetailsPanel sessionId="s1" scopeId="session:s1" />);

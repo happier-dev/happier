@@ -14,6 +14,7 @@ import type { ScmDiffArea } from '@happier-dev/protocol';
 import { Modal } from '@/modal';
 import { t, type TranslationKey } from '@/text';
 import { useUnistyles } from 'react-native-unistyles';
+import { Switch } from '@/components/ui/forms/Switch';
 import type {
     ScmGitRepoPreferredBackend,
     ScmPushRejectPolicy,
@@ -227,6 +228,7 @@ export const SourceControlSettingsView = React.memo(function SourceControlSettin
     const [scmCommitMessageGeneratorBackendId, setScmCommitMessageGeneratorBackendId] = useSettingMutable('scmCommitMessageGeneratorBackendId');
     const [scmCommitMessageGeneratorInstructions, setScmCommitMessageGeneratorInstructions] = useSettingMutable('scmCommitMessageGeneratorInstructions');
     const [scmIncludeCoAuthoredBy, setScmIncludeCoAuthoredBy] = useSettingMutable('scmIncludeCoAuthoredBy');
+    const [filesEditorAutoSave, setFilesEditorAutoSave] = useSettingMutable('filesEditorAutoSave');
     const backendPlugins = scmBackendSettingsRegistry.listPlugins();
     const currentDiffModeByBackend = scmDefaultDiffModeByBackend ?? {};
     const effectiveFilesDiffSyntaxHighlightingMode = (filesDiffSyntaxHighlightingMode ?? 'off') as 'off' | 'simple' | 'advanced';
@@ -480,6 +482,21 @@ export const SourceControlSettingsView = React.memo(function SourceControlSettin
                     ))}
                 </ItemGroup>
             ))}
+            {/* Editor */}
+            <ItemGroup title={t('settingsSourceControl.editor')} footer={t('settingsSourceControl.editorFooter')}>
+                <Item
+                    title={t('settingsSourceControl.editorAutoSave')}
+                    subtitle={t('settingsSourceControl.editorAutoSaveDescription')}
+                    icon={<Ionicons name="save-outline" size={29} color={theme.colors.accent.blue} />}
+                    rightElement={
+                        <Switch
+                            value={filesEditorAutoSave === true}
+                            onValueChange={setFilesEditorAutoSave}
+                        />
+                    }
+                    showChevron={false}
+                />
+            </ItemGroup>
         </ItemList>
     );
 });

@@ -6,9 +6,11 @@ import { describe, expect, it, vi } from 'vitest';
 
 vi.mock('react-native', () => ({
     Platform: { OS: 'web', select: (_: any) => 1 },
+    ActivityIndicator: 'ActivityIndicator',
     View: 'View',
     Pressable: 'Pressable',
     ScrollView: 'ScrollView',
+    AppState: { currentState: 'active', addEventListener: vi.fn(() => ({ remove: vi.fn() })) },
 }));
 
 vi.mock('react-native-unistyles', () => ({

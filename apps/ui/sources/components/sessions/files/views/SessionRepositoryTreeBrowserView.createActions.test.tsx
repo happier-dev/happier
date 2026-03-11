@@ -1,6 +1,6 @@
 import * as React from 'react';
 import renderer, { act } from 'react-test-renderer';
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -8,26 +8,36 @@ const promptSpy = vi.fn(async (..._args: any[]) => null as any);
 const alertSpy = vi.fn((..._args: any[]) => {});
 const writeFileSpy = vi.fn(async (..._args: any[]) => ({ success: true } as any));
 const createDirectorySpy = vi.fn(async (..._args: any[]) => ({ success: true } as any));
+const startUploadsSpy = vi.fn(async (..._args: any[]) => ({ ok: true } as any));
 const setExpandedSpy = vi.fn();
-const safePathSpy = vi.fn((value: string) => value === 'src/new-file.ts' || value === 'src/new-folder');
+const safePathSpy = vi.fn((value: string) => value === 'src/new-file.ts' || value === 'src/new-folder' || value === 'src/uploads');
+let sessionActive = true;
+let machineRpcTargetAvailable = true;
 
-vi.mock('react-native', () => ({
-    Platform: { OS: 'web', select: (value: any) => value?.default ?? null },
-    View: 'View',
-    ScrollView: (props: any) => React.createElement('ScrollView', props, props.children),
-    TextInput: (props: any) => React.createElement('TextInput', props),
-    Pressable: (props: any) => React.createElement('Pressable', props, props.children),
-    Dimensions: { get: () => ({ width: 1200, height: 800, scale: 2, fontScale: 1 }) },
-    useWindowDimensions: () => ({ width: 1200, height: 800 }),
-    AppState: {
-        addEventListener: () => ({ remove: () => {} }),
-        currentState: 'active',
-    },
-}));
+vi.mock('react-native', async () => {
+    const stub = await import('@/dev/reactNativeStub');
+    return {
+        ...stub,
+        Platform: { OS: 'web', select: (value: any) => value?.default ?? null },
+    };
+});
 
 vi.mock('@expo/vector-icons', () => ({
     Octicons: 'Octicons',
     Ionicons: 'Ionicons',
+}));
+
+vi.mock('@/components/ui/forms/dropdown/DropdownMenu', () => ({
+    DropdownMenu: (props: any) => {
+        const trigger = typeof props.trigger === 'function'
+            ? props.trigger({ toggle: vi.fn(), openMenu: vi.fn(), closeMenu: vi.fn(), open: Boolean(props.open), selectedItem: null })
+            : props.trigger;
+        return React.createElement('DropdownMenu', props, trigger);
+    },
+}));
+
+vi.mock('@/components/ui/lists/ItemRowActions', () => ({
+    ItemRowActions: (props: any) => React.createElement('ItemRowActions', props),
 }));
 
 vi.mock('react-native-unistyles', () => ({
@@ -63,12 +73,23 @@ vi.mock('@/text', () => ({
 }));
 
 vi.mock('@/constants/Typography', () => ({
-    Typography: { default: () => ({}) },
+    Typography: { default: () => ({}), mono: () => ({}) },
+}));
+
+vi.mock('@/hooks/session/files/useWorkspaceFileTransfers', () => ({
+    useWorkspaceFileTransfers: () => ({
+        uploadState: { status: 'idle' },
+        downloadState: { status: 'idle' },
+        startUploads: startUploadsSpy,
+        cancelUploads: vi.fn(),
+        startDownload: vi.fn(async () => ({ ok: true })),
+        cancelDownload: vi.fn(),
+    }),
 }));
 
 vi.mock('@/sync/domains/state/storage', () => ({
     storage: { getState: () => ({ setSessionRepositoryTreeExpandedPaths: setExpandedSpy }) },
-    useSession: () => ({ active: true, metadata: { machineId: 'm1' } }),
+    useSession: () => ({ active: sessionActive, metadata: { machineId: 'm1' } }),
     useProjectForSession: () => ({ key: { machineId: 'm1', path: '/repo' } }),
     useAllMachines: () => [{ id: 'm1', active: true, activeAt: 1, metadata: { host: 'mbp', platform: 'darwin', happyCliVersion: '0', happyHomeDir: '/tmp/.h', homeDir: '/tmp' } }],
     useMachine: () => ({ id: 'm1' }),
@@ -86,6 +107,14 @@ vi.mock('@/components/sessions/model/resolveSessionMachineReachability', () => (
 
 vi.mock('@/utils/sessions/machineUtils', () => ({
     isMachineOnline: () => true,
+}));
+
+vi.mock('@/components/sessions/model/useSessionMachineReachability', () => ({
+    useSessionMachineReachability: () => ({
+        machineReachable: machineRpcTargetAvailable,
+        machineOnline: machineRpcTargetAvailable,
+        machineRpcTargetAvailable,
+    }),
 }));
 
 vi.mock('@/scm/scmStatusSync', () => ({
@@ -136,6 +165,134 @@ vi.mock('@/components/sessions/files/repositoryTree/computeExpandedPathsForRevea
 }));
 
 describe('SessionRepositoryTreeBrowserView (create actions)', () => {
+    beforeEach(() => {
+        sessionActive = true;
+        machineRpcTargetAvailable = true;
+        promptSpy.mockReset();
+        alertSpy.mockClear();
+        writeFileSpy.mockClear();
+        createDirectorySpy.mockClear();
+        startUploadsSpy.mockClear();
+        setExpandedSpy.mockClear();
+        safePathSpy.mockClear();
+        safePathSpy.mockImplementation((value: string) => value === 'src/new-file.ts' || value === 'src/new-folder' || value === 'src/uploads');
+    });
+
+    it('keeps create actions enabled when the session is inactive but the machine target is available', async () => {
+        const { SessionRepositoryTreeBrowserView } = await import('./SessionRepositoryTreeBrowserView');
+        sessionActive = false;
+        machineRpcTargetAvailable = true;
+
+        let tree: renderer.ReactTestRenderer;
+        await act(async () => {
+            tree = renderer.create(
+                <SessionRepositoryTreeBrowserView
+                    sessionId="s1"
+                    onOpenFile={vi.fn()}
+                />
+            );
+        });
+
+        const createFileButton = tree!.root.findByProps({ testID: 'repository-tree-create-file' });
+        const uploadMenu = tree!.root.findByType('DropdownMenu' as any);
+        expect(uploadMenu.props.items.find((item: any) => item.id === 'repository-tree-upload-files')?.disabled).toBe(false);
+        expect(createFileButton.props.disabled).toBe(false);
+    });
+
+    it('disables create actions when no machine RPC target is available', async () => {
+        const { SessionRepositoryTreeBrowserView } = await import('./SessionRepositoryTreeBrowserView');
+        machineRpcTargetAvailable = false;
+
+        let tree: renderer.ReactTestRenderer;
+        await act(async () => {
+            tree = renderer.create(
+                <SessionRepositoryTreeBrowserView
+                    sessionId="s1"
+                    onOpenFile={vi.fn()}
+                />
+            );
+        });
+
+        const createFileButton = tree!.root.findByProps({ testID: 'repository-tree-create-file' });
+        const uploadMenu = tree!.root.findByType('DropdownMenu' as any);
+        expect(uploadMenu.props.items.find((item: any) => item.id === 'repository-tree-upload-files')?.disabled).toBe(true);
+        expect(createFileButton.props.disabled).toBe(true);
+    });
+
+    it('renders stable web upload input testIDs for UI e2e', async () => {
+        const { SessionRepositoryTreeBrowserView } = await import('./SessionRepositoryTreeBrowserView');
+
+        let tree: renderer.ReactTestRenderer;
+        await act(async () => {
+            tree = renderer.create(
+                <SessionRepositoryTreeBrowserView
+                    sessionId="s1"
+                    onOpenFile={vi.fn()}
+                />
+            );
+        });
+
+        expect(tree!.root.findAllByProps({ 'data-testid': 'repository-tree-upload-input-files' })).toHaveLength(1);
+        expect(tree!.root.findAllByProps({ 'data-testid': 'repository-tree-upload-input-folder' })).toHaveLength(1);
+    });
+
+    it('uses the selected upload destination for toolbar-triggered web uploads', async () => {
+        const { SessionRepositoryTreeBrowserView } = await import('./SessionRepositoryTreeBrowserView');
+        promptSpy.mockResolvedValueOnce('src/uploads');
+        startUploadsSpy.mockClear();
+
+        let tree: renderer.ReactTestRenderer;
+        await act(async () => {
+            tree = renderer.create(
+                <SessionRepositoryTreeBrowserView
+                    sessionId="s1"
+                    onOpenFile={vi.fn()}
+                />
+            );
+        });
+
+        const uploadMenu = tree!.root.findByType('DropdownMenu' as any);
+        await act(async () => {
+            await uploadMenu.props.onSelect('repository-tree-upload-destination-select');
+        });
+
+        expect(promptSpy).toHaveBeenCalledWith(
+            'settingsAttachments.workspaceDirectory.uploadsDirectory.promptTitle',
+            'settingsAttachments.workspaceDirectory.uploadsDirectory.promptMessage',
+            expect.objectContaining({
+                defaultValue: '',
+                placeholder: 'files.projectRoot',
+            }),
+        );
+
+        const rerenderedUploadMenu = tree!.root.findByType('DropdownMenu' as any);
+        expect(rerenderedUploadMenu.props.items.find((item: any) => item.id === 'repository-tree-upload-destination-select'))
+            .toMatchObject({ subtitle: 'src/uploads' });
+
+        const [fileInput] = tree!.root.findAllByProps({ 'data-testid': 'repository-tree-upload-input-files' });
+        const file = { name: 'upload-source.txt' };
+
+        await act(async () => {
+            fileInput.props.onChange({
+                target: {
+                    files: [file],
+                    value: 'upload-source.txt',
+                },
+            });
+        });
+
+        expect(startUploadsSpy).toHaveBeenCalledWith({
+            entries: [
+                {
+                    kind: 'web',
+                    file,
+                    relativePath: 'upload-source.txt',
+                },
+            ],
+            destinationDir: 'src/uploads',
+        });
+    });
+
     it('creates a file and opens it pinned', async () => {
         const { SessionRepositoryTreeBrowserView } = await import('./SessionRepositoryTreeBrowserView');
         mountCount.current = 0;

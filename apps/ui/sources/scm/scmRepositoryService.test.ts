@@ -74,7 +74,7 @@ function makeScmSnapshot(partial?: Partial<ProtocolScmWorkingSnapshot>): Protoco
     return {
         projectKey: 'machine:/repo',
         fetchedAt: 123,
-        repo: { isRepo: true, rootPath: '/repo', backendId: 'git', mode: '.git' },
+        repo: { isRepo: true, rootPath: '/repo', backendId: 'git', mode: '.git', worktrees: [] },
         capabilities: {
             readStatus: true,
             readDiffFile: true,
@@ -196,6 +196,7 @@ describe('ScmRepositoryService.fetchSnapshotForSession', () => {
                     rootPath: '/repo-from-project',
                     backendId: 'git',
                     mode: '.git',
+                    worktrees: [],
                 },
             }),
         } as any);
@@ -355,7 +356,7 @@ describe('ScmRepositoryService.fetchSnapshotForSession', () => {
         vi.mocked(sessionScmStatusSnapshot).mockResolvedValue({
             success: true,
             snapshot: makeScmSnapshot({
-                repo: { isRepo: true, rootPath: '/repo', backendId: 'sapling', mode: '.sl' },
+                repo: { isRepo: true, rootPath: '/repo', backendId: 'sapling', mode: '.sl', worktrees: [] },
                 capabilities: {
                     ...makeScmSnapshot().capabilities,
                     writeInclude: false,
@@ -401,7 +402,7 @@ describe('ScmRepositoryService.fetchSnapshotForSession', () => {
             success: true,
             snapshot: makeScmSnapshot({
                 projectKey: 'machine-a:/Users/tester/repo',
-                repo: { isRepo: true, rootPath: '/Users/tester/repo', backendId: 'git', mode: '.git' },
+                repo: { isRepo: true, rootPath: '/Users/tester/repo', backendId: 'git', mode: '.git', worktrees: [] },
             }),
         } as any);
 
@@ -427,7 +428,7 @@ describe('ScmRepositoryService.fetchSnapshotForSession', () => {
             success: true,
             snapshot: {
                 ...makeScmSnapshot({
-                    repo: { isRepo: true, rootPath: '/repo', backendId: 'git', mode: '.git' },
+                    repo: { isRepo: true, rootPath: '/repo', backendId: 'git', mode: '.git', worktrees: [] },
                 }),
                 capabilities: undefined,
             },
@@ -450,6 +451,12 @@ describe('ScmRepositoryService.fetchSnapshotForSession', () => {
             writeRemoteFetch: false,
             writeRemotePull: false,
             writeRemotePush: false,
+            writeRemotePublish: false,
+            readBranches: false,
+            writeBranchCreate: false,
+            writeBranchCheckout: false,
+            readStash: false,
+            writeStash: false,
             workspaceWorktreeCreate: false,
             changeSetModel: 'working-copy',
             supportedDiffAreas: ['pending', 'both'],

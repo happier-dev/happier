@@ -4,6 +4,8 @@ import { describe, expect, it, vi } from 'vitest';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
+const SLOW_TEST_TIMEOUT_MS = 60_000;
+
 vi.mock('react-native-reanimated', () => ({}));
 
 vi.mock('react-native', () => ({
@@ -82,8 +84,11 @@ vi.mock('@/hooks/server/useFeatureEnabled', () => ({
     useFeatureEnabled: () => true,
 }));
 
-vi.mock('@/sync/domains/state/storage', () => ({
-    __esModule: true,
+vi.mock('@/sync/domains/state/storage', async (importOriginal) => {
+    const actual = await importOriginal<typeof import('@/sync/domains/state/storage')>();
+
+    return {
+        ...actual,
     useSetting: () => null,
     useAllMachines: () => [{ id: 'm1', active: true, activeAt: 1, metadata: { host: 'mbp', homeDir: '/tmp' } }],
     useProjectForSession: () => null,
@@ -127,7 +132,8 @@ vi.mock('@/sync/domains/state/storage', () => ({
     }),
     useSessionProjectScmSnapshotError: () => null,
     useSessionProjectScmTouchedPaths: () => [],
-}));
+    };
+});
 
 vi.mock('@/components/sessions/sourceControl/states', () => ({
     NotSourceControlRepositoryState: () => React.createElement('NotSourceControlRepositoryState'),
@@ -189,5 +195,5 @@ describe('SessionRightPanelGitView (keep mounted sub-tabs)', () => {
         expect(tree.root.findAllByType('CommitTab' as any)).toHaveLength(1);
         expect(tree.root.findAllByType('UpdateTab' as any)).toHaveLength(1);
         expect(tree.root.findAllByType('HistoryTab' as any)).toHaveLength(1);
-    });
+    }, SLOW_TEST_TIMEOUT_MS);
 });

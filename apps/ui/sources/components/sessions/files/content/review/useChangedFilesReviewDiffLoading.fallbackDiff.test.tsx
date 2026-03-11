@@ -42,7 +42,7 @@ describe('useChangedFilesReviewDiffLoading (fallback diff)', () => {
             linesRemoved: 0,
         } as any;
 
-        let captured: any = null;
+        let diffStateSource: any = null;
 
         function Probe() {
             const reviewFiles = React.useMemo(() => [file], []);
@@ -59,7 +59,7 @@ describe('useChangedFilesReviewDiffLoading (fallback diff)', () => {
                 normalizeError,
                 fallbackError: 'fallback',
             });
-            captured = hook.getDiffState('src/new.txt');
+            diffStateSource = hook.diffStateSource;
             return React.createElement('Probe');
         }
 
@@ -71,13 +71,15 @@ describe('useChangedFilesReviewDiffLoading (fallback diff)', () => {
             await act(async () => {
                 await Promise.resolve();
             });
-            if (typeof captured?.diff === 'string' && captured.diff.includes('diff --git')) break;
+            const current = diffStateSource?.getDiffState?.('src/new.txt');
+            if (typeof current?.diff === 'string' && current.diff.includes('diff --git')) break;
         }
 
         expect(sessionScmDiffFileSpy).toHaveBeenCalledTimes(1);
         expect(sessionReadFileSpy).toHaveBeenCalledTimes(1);
-        expect(String(captured?.diff ?? '')).toContain('diff --git a/src/new.txt b/src/new.txt');
-        expect(String(captured?.diff ?? '')).toContain('+hello');
-        expect(String(captured?.diff ?? '')).toContain('+world');
+        const finalState = diffStateSource?.getDiffState?.('src/new.txt');
+        expect(String(finalState?.diff ?? '')).toContain('diff --git a/src/new.txt b/src/new.txt');
+        expect(String(finalState?.diff ?? '')).toContain('+hello');
+        expect(String(finalState?.diff ?? '')).toContain('+world');
     });
 });

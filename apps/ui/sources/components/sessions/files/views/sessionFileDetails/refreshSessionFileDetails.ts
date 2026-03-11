@@ -1,5 +1,6 @@
 import { t } from '@/text';
-import { sessionScmDiffFile, sessionReadFile } from '@/sync/ops';
+import { config } from '@/config';
+import { sessionScmDiffFile, sessionReadFile, sessionStatFile } from '@/sync/ops';
 import { resolveSessionPathState } from '@/hooks/session/files/sessionPathState';
 import { getImageMimeTypeFromPath, isBinaryContent, isKnownBinaryPath } from '@/scm/utils/filePresentation';
 import type { ScmDiffArea } from '@happier-dev/protocol';
@@ -76,6 +77,25 @@ export async function refreshSessionFileDetails(input: Readonly<{
 
         const imageMime = getImageMimeTypeFromPath(input.filePath);
         const wantsBinaryPreview = typeof imageMime === 'string' && imageMime.trim().length > 0;
+
+        const maxPreviewBytesRaw = config.filesPreviewMaxBytes;
+        const maxPreviewBytes =
+            typeof maxPreviewBytesRaw === 'number' && Number.isFinite(maxPreviewBytesRaw) && maxPreviewBytesRaw > 0
+                ? Math.floor(maxPreviewBytesRaw)
+                : null;
+        if (maxPreviewBytes != null) {
+            const stat = await sessionStatFile(input.sessionId, input.filePath);
+            if (stat.success && stat.exists === true && typeof stat.sizeBytes === 'number' && stat.sizeBytes > maxPreviewBytes) {
+                return {
+                    status: 'ready',
+                    error: t('files.fileTooLargeToPreview'),
+                    diffContent,
+                    fileContent: null,
+                    fileWriteSupported: false,
+                };
+            }
+        }
+
         if (isKnownBinaryPath(input.filePath) && !wantsBinaryPreview) {
             fileContent = { content: '', isBinary: true };
             return {

@@ -6,10 +6,12 @@ import { describe, expect, it, vi } from 'vitest';
 
 vi.mock('react-native', () => ({
     Platform: { OS: 'web', select: (_: any) => 1 },
+    ActivityIndicator: 'ActivityIndicator',
     View: React.forwardRef((props: any, ref: any) => React.createElement('View', { ...props, ref }, props.children)),
     Pressable: (props: any) => React.createElement('Pressable', props, props.children),
     ScrollView: (props: any) => React.createElement('ScrollView', props, props.children),
     Dimensions: { get: () => ({ width: 1200, height: 800, scale: 2, fontScale: 1 }) },
+    AppState: { currentState: 'active', addEventListener: vi.fn(() => ({ remove: vi.fn() })) },
 }));
 
 vi.mock('react-native-unistyles', () => ({
@@ -22,6 +24,10 @@ vi.mock('react-native-unistyles', () => ({
                 text: '#000',
                 textSecondary: '#666',
                 shadow: { color: '#000', opacity: 0.2 },
+                accent: {
+                    indigo: '#5C6BC0',
+                    orange: '#FF9500',
+                },
             },
         },
     }),
@@ -37,6 +43,10 @@ vi.mock('react-native-unistyles', () => ({
                         text: '#000',
                         textSecondary: '#666',
                         shadow: { color: '#000', opacity: 0.2 },
+                        accent: {
+                            indigo: '#5C6BC0',
+                            orange: '#FF9500',
+                        },
                     },
                 })
                 : value,
@@ -66,6 +76,10 @@ vi.mock('@/components/sessions/files/views/SessionCommitDetailsView', () => ({
 
 vi.mock('@/components/sessions/files/views/SessionScmReviewDetailsView', () => ({
     SessionScmReviewDetailsView: () => React.createElement('SessionScmReviewDetailsView'),
+}));
+
+vi.mock('@/components/sessions/terminal/SessionEmbeddedTerminalPane', () => ({
+    SessionEmbeddedTerminalPane: () => React.createElement('SessionEmbeddedTerminalPane'),
 }));
 
 vi.mock('@/text', () => ({

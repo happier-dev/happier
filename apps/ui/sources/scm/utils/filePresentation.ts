@@ -51,6 +51,7 @@ const IMAGE_MIME_BY_EXTENSION: Record<string, string> = {
     webp: 'image/webp',
     bmp: 'image/bmp',
     ico: 'image/x-icon',
+    svg: 'image/svg+xml',
 };
 
 function getPathExtension(path: string): string | null {

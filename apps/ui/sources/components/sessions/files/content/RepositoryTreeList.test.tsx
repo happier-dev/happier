@@ -1,6 +1,6 @@
 import * as React from 'react';
 import renderer, { act } from 'react-test-renderer';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -48,8 +48,16 @@ vi.mock('@/components/ui/media/FileIcon', () => ({
     FileIcon: 'FileIcon',
 }));
 
+vi.mock('@/components/ui/forms/dropdown/DropdownMenu', () => ({
+    DropdownMenu: (props: any) => React.createElement('DropdownMenu', props),
+}));
+
 vi.mock('@/components/ui/lists/Item', () => ({
     Item: (props: any) => React.createElement('Item', props),
+}));
+
+vi.mock('@/components/sessions/files/repositoryTree/WebDropTargetView', () => ({
+    WebDropTargetView: (props: any) => React.createElement('WebDropTargetView', props, props.children),
 }));
 
 vi.mock('@/constants/Typography', () => ({
@@ -63,27 +71,63 @@ vi.mock('@/text', () => ({
     t: (key: string) => key,
 }));
 
+vi.mock('@/modal', () => ({
+    Modal: {
+        prompt: vi.fn(async () => null),
+        confirm: vi.fn(async () => false),
+        alert: vi.fn(() => {}),
+    },
+}));
+
 vi.mock('@/sync/ops', () => ({
     sessionListDirectory: (sessionId: string, path: string) => sessionListDirectorySpy(sessionId, path),
 }));
 
+const mockTheme = {
+    colors: {
+        surface: '#111',
+        surfaceHigh: '#222',
+        surfaceHighest: '#2a2a2a',
+        surfacePressed: '#1b1b1b',
+        surfacePressedOverlay: 'rgba(255, 255, 255, 0.08)',
+        surfaceSelected: '#191919',
+        divider: '#333',
+        text: '#eee',
+        textSecondary: '#aaa',
+        textLink: '#08f',
+        accent: {
+            blue: '#08f',
+        },
+        warning: '#f80',
+        success: '#0f0',
+        textDestructive: '#f00',
+        deleteAction: '#f44',
+        button: {
+            secondary: {
+                tint: '#08f',
+            },
+        },
+        modal: {
+            border: '#444',
+        },
+        shadow: {
+            color: '#000',
+            opacity: 0.2,
+        },
+    },
+    dark: false,
+} as const;
+
 vi.mock('react-native-unistyles', () => ({
     useUnistyles: () => ({
-        theme: {
-            colors: {
-                surface: '#111',
-                surfaceHigh: '#222',
-                divider: '#333',
-                text: '#eee',
-                textSecondary: '#aaa',
-                textLink: '#08f',
-                warning: '#f80',
-                success: '#0f0',
-                textDestructive: '#f00',
-            },
-            dark: false,
-        },
+        theme: mockTheme,
     }),
+    StyleSheet: {
+        create: (value: any) =>
+            typeof value === 'function'
+                ? value(mockTheme)
+                : value,
+    },
 }));
 
 vi.mock('@/components/ui/buttons/RoundButton', () => ({
@@ -91,17 +135,15 @@ vi.mock('@/components/ui/buttons/RoundButton', () => ({
 }));
 
 describe('RepositoryTreeList', () => {
-    const theme = {
-        colors: {
-            surface: '#111',
-            surfaceHigh: '#222',
-            divider: '#333',
-            text: '#eee',
-            textSecondary: '#aaa',
-            textLink: '#08f',
-        },
-        dark: false,
-    } as any;
+    const theme = mockTheme as any;
+
+    beforeEach(() => {
+        vi.useFakeTimers();
+    });
+
+    afterEach(() => {
+        vi.useRealTimers();
+    });
 
     it('renders an error state when directory listing fails', async () => {
         sessionListDirectorySpy.mockReset();
@@ -287,6 +329,133 @@ describe('RepositoryTreeList', () => {
 
         expect(onOpenFilePinned).toHaveBeenCalledWith('README.md');
         expect(onOpenFile).toHaveBeenCalledTimes(0);
+    });
+
+    it('routes file-row drag hover to the parent directory destination', async () => {
+        sessionListDirectorySpy.mockReset();
+        sessionListDirectorySpy.mockImplementation(async (_sessionId: string, path: string) => {
+            if (path !== '') return { success: true, entries: [] };
+            return {
+                success: true,
+                entries: [
+                    { name: 'src', type: 'directory' },
+                    { name: 'README.md', type: 'file' },
+                ],
+            };
+        });
+
+        const onWebDropTargetChange = vi.fn();
+        const { RepositoryTreeList } = await import('./RepositoryTreeList');
+
+        function Wrapper() {
+            const [expandedPaths, setExpandedPaths] = React.useState<string[]>([]);
+            return (
+                <RepositoryTreeList
+                    theme={theme}
+                    sessionId="session-1"
+                    expandedPaths={expandedPaths}
+                    onExpandedPathsChange={setExpandedPaths}
+                    onOpenFile={vi.fn()}
+                    {...({ onWebDropTargetChange } as any)}
+                />
+            );
+        }
+
+        let tree: renderer.ReactTestRenderer;
+        await act(async () => {
+            tree = renderer.create(<Wrapper />);
+        });
+        await act(async () => {
+            await Promise.resolve();
+        });
+
+        const dropTargets = (tree! as any).root.findAllByType('WebDropTargetView');
+        const fileTarget = dropTargets.find((target: any) => {
+            const row = target.findAllByType('Item')[0];
+            return row?.props?.title === 'README.md';
+        });
+        expect(fileTarget).toBeTruthy();
+
+        await act(async () => {
+            const stopPropagation = vi.fn();
+            fileTarget.props.onDragEnter({
+                dataTransfer: { types: ['Files'] },
+                stopPropagation,
+            });
+            expect(stopPropagation).not.toHaveBeenCalled();
+        });
+
+        expect(onWebDropTargetChange).toHaveBeenCalledWith({
+            destinationDir: '',
+            hoverPath: 'README.md',
+            autoExpandDirectoryPath: null,
+        });
+    });
+
+    it('marks a hovered collapsed directory for delayed auto-expand', async () => {
+        sessionListDirectorySpy.mockReset();
+        sessionListDirectorySpy.mockImplementation(async (_sessionId: string, path: string) => {
+            if (path === '') {
+                return {
+                    success: true,
+                    entries: [{ name: 'src', type: 'directory' }],
+                };
+            }
+            if (path === 'src') {
+                return {
+                    success: true,
+                    entries: [{ name: 'a.ts', type: 'file' }],
+                };
+            }
+            return { success: true, entries: [] };
+        });
+
+        const onWebDropTargetChange = vi.fn();
+        const { RepositoryTreeList } = await import('./RepositoryTreeList');
+
+        function Wrapper() {
+            const [expandedPaths, setExpandedPaths] = React.useState<string[]>([]);
+            return (
+                <RepositoryTreeList
+                    theme={theme}
+                    sessionId="session-1"
+                    expandedPaths={expandedPaths}
+                    onExpandedPathsChange={setExpandedPaths}
+                    onOpenFile={vi.fn()}
+                    {...({ onWebDropTargetChange } as any)}
+                />
+            );
+        }
+
+        let tree: renderer.ReactTestRenderer;
+        await act(async () => {
+            tree = renderer.create(<Wrapper />);
+        });
+        await act(async () => {
+            await Promise.resolve();
+        });
+
+        const dropTargets = (tree! as any).root.findAllByType('WebDropTargetView');
+        const directoryTarget = dropTargets.find((target: any) => {
+            const row = target.findAllByType('Item')[0];
+            return row?.props?.title === 'src/';
+        });
+        expect(directoryTarget).toBeTruthy();
+
+        await act(async () => {
+            const stopPropagation = vi.fn();
+            directoryTarget.props.onDragEnter({
+                dataTransfer: { types: ['Files'] },
+                stopPropagation,
+            });
+            expect(stopPropagation).not.toHaveBeenCalled();
+        });
+
+        expect(onWebDropTargetChange).toHaveBeenCalledWith({
+            destinationDir: 'src',
+            hoverPath: 'src',
+            autoExpandDirectoryPath: 'src',
+        });
     });
 
     it('keeps the previous tree visible while reloading the root directory', async () => {
