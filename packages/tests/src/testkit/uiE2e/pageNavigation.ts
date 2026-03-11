@@ -17,6 +17,8 @@ export function normalizeLoopbackBaseUrl(input: string): string {
 }
 
 export async function gotoDomContentLoadedWithRetries(page: Page, url: string, timeoutMs = 90_000): Promise<void> {
+  const normalizeUrl = (value: string): string => value.replace(/\/+$/, '');
+  const targetUrl = normalizeUrl(url);
   const retryable = (error: unknown): boolean => {
     const message = error instanceof Error ? error.message : String(error);
     return (
@@ -25,6 +27,12 @@ export async function gotoDomContentLoadedWithRetries(page: Page, url: string, t
       || message.includes('net::ERR_CONNECTION_RESET')
       || message.includes('net::ERR_ABORTED')
     );
+  };
+
+  const isCommittedTimeout = (error: unknown): boolean => {
+    const message = error instanceof Error ? error.message : String(error);
+    if (!message.toLowerCase().includes('timeout')) return false;
+    return normalizeUrl(page.url()) === targetUrl;
   };
 
   const start = Date.now();
@@ -37,6 +45,7 @@ export async function gotoDomContentLoadedWithRetries(page: Page, url: string, t
       await page.goto(url, { waitUntil: 'domcontentloaded', timeout: remaining });
       return;
     } catch (error) {
+      if (isCommittedTimeout(error)) return;
       if (attempt >= 4 || !retryable(error)) throw error;
       await page.waitForTimeout(500 * attempt);
     }
