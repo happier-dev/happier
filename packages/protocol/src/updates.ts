@@ -1,4 +1,6 @@
 import { z } from 'zod';
+import { ExecutionRunPublicStateSchema } from './executionRuns.js';
+import { SessionStoredMessageContentSchema } from './sessionMessages/sessionStoredMessageContent.js';
 
 const TimestampMsSchema = z.number().int().min(0);
 const Base64Schema = z.string();
@@ -20,8 +22,22 @@ export const UpdateBodySchema = z.discriminatedUnion('t', [
     message: z.object({
       id: z.string(),
       seq: z.number().int().min(0),
-      content: z.unknown(),
+      content: SessionStoredMessageContentSchema,
       localId: z.string().nullable(),
+      sidechainId: z.string().nullable().optional(),
+      createdAt: TimestampMsSchema,
+      updatedAt: TimestampMsSchema,
+    }).strict(),
+  }).passthrough(),
+  z.object({
+    t: z.literal('message-updated'),
+    sid: z.string(),
+    message: z.object({
+      id: z.string(),
+      seq: z.number().int().min(0),
+      content: SessionStoredMessageContentSchema,
+      localId: z.string().nullable(),
+      sidechainId: z.string().nullable().optional(),
       createdAt: TimestampMsSchema,
       updatedAt: TimestampMsSchema,
     }).strict(),
@@ -230,6 +246,20 @@ export const EphemeralUpdateSchema = z.discriminatedUnion('type', [
     thinking: z.boolean().optional(),
   }).passthrough(),
   z.object({
+    type: z.literal('transcript-draft'),
+    sessionId: z.string(),
+    localId: z.string(),
+    segmentKind: z.enum(['assistant', 'thinking']),
+    sidechainId: z.string().nullable().optional(),
+    delta: SessionStoredMessageContentSchema,
+    createdAt: TimestampMsSchema,
+  }).passthrough(),
+  z.object({
+    type: z.literal('execution-run-updated'),
+    sessionId: z.string(),
+    run: ExecutionRunPublicStateSchema,
+  }).passthrough(),
+  z.object({
     type: z.literal('machine-activity'),
     id: z.string(),
     active: z.boolean(),
@@ -291,6 +321,7 @@ export const MessageAckResponseSchema = z.union([
      * Optional for backward compatibility with older servers.
      */
     didWrite: z.boolean().optional(),
+    didUpdate: z.boolean().optional(),
   }).strict(),
   z.object({
     ok: z.literal(false),

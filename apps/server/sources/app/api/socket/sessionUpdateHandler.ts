@@ -22,6 +22,7 @@ import { checkSessionAccess, requireAccessLevel } from "@/app/share/accessContro
 import { getSessionParticipantUserIds } from "@/app/share/sessionParticipants";
 import { parseIntEnv } from "@/config/env";
 import { parseSessionMessageSidechainId } from "@/app/session/parseSessionMessageSidechainId";
+import { ExecutionRunPublicStateSchema } from "@happier-dev/protocol";
 
 const DEFAULT_TRANSCRIPT_DRAFT_PARTICIPANTS_CACHE_TTL_MS = 5_000;
 const DEFAULT_TRANSCRIPT_DRAFT_PARTICIPANTS_CACHE_MAX_ENTRIES = 200;
@@ -221,6 +222,76 @@ export function sessionUpdateHandler(userId: string, socket: Socket, connection:
             });
         } catch (error) {
             log({ module: 'websocket', level: 'error' }, `Error in session-alive: ${error}`);
+        }
+    });
+
+    socket.on('execution-run-updated', async (data: any) => {
+        try {
+            websocketEventsCounter.inc({ event_type: 'execution-run-updated' });
+
+            const sid = typeof data?.sid === 'string' ? String(data.sid).trim() : '';
+            const runRaw = data?.run;
+            const machineId = typeof (socket.data as { machineId?: unknown } | undefined)?.machineId === 'string'
+                ? String((socket.data as { machineId?: string }).machineId).trim()
+                : '';
+            if (!sid) return;
+
+            // Only allow the daemon session-scoped socket to publish execution run state.
+            if (connection.connectionType !== 'session-scoped') {
+                return;
+            }
+            if (connection.sessionId && connection.sessionId !== sid) {
+                return;
+            }
+            if (!machineId) {
+                return;
+            }
+
+            const accessKey = await db.accessKey.findUnique({
+                where: {
+                    accountId_machineId_sessionId: {
+                        accountId: userId,
+                        machineId,
+                        sessionId: sid,
+                    },
+                },
+                select: { machineId: true },
+            });
+            if (!accessKey) {
+                return;
+            }
+
+            const access = await checkSessionAccess(userId, sid);
+            if (!access) return;
+            if (!requireAccessLevel(access, 'edit')) {
+                return;
+            }
+
+            const parsedRun = ExecutionRunPublicStateSchema.safeParse(runRaw);
+            if (!parsedRun.success) {
+                return;
+            }
+
+            const participantUserIds = await getSessionParticipantUserIds({ sessionId: sid });
+            if (!participantUserIds || participantUserIds.length === 0) return;
+
+            const payload = {
+                type: 'execution-run-updated' as const,
+                sessionId: sid,
+                run: parsedRun.data,
+            };
+
+            // Broadcast to all participants. Execution runs are a UI optimization; clients must still treat this as a hint.
+            for (const participantUserId of participantUserIds) {
+                eventRouter.emitEphemeral({
+                    userId: participantUserId,
+                    payload,
+                    recipientFilter: { type: 'all-interested-in-session', sessionId: sid },
+                    skipSenderConnection: connection,
+                });
+            }
+        } catch (error) {
+            log({ module: 'websocket', level: 'error' }, `Error in execution-run-updated handler: ${error}`);
         }
     });
 
