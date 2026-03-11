@@ -70,4 +70,47 @@ describe('ActionListSection', () => {
         expect(React.isValidElement(selectableRowProps.left.props.children)).toBe(true);
         expect(selectableRowProps.left.props.children.props.children).toBe('.');
     });
+
+    it('normalizes icon fragments so they do not render raw text nodes under <View>', async () => {
+        const { ActionListSection } = await import('./ActionListSection');
+
+        selectableRowProps = null;
+
+        act(() => {
+            renderer.create(
+                <ActionListSection
+                    actions={[
+                        {
+                            id: 'fragment',
+                            label: 'Fragment icon',
+                            icon: <>{'.'}</>,
+                        },
+                    ]}
+                />,
+            );
+        });
+
+        expect(selectableRowProps).toBeTruthy();
+        expect(selectableRowProps.left).toBeTruthy();
+        expect((selectableRowProps.left.type as any)?.name ?? selectableRowProps.left.type).toBe('View');
+
+        const badNodes: Array<{ parent: string | null; value: string }> = [];
+        const walk = (node: any, parentType: string | null) => {
+            if (node == null) return;
+            if (typeof node === 'string') {
+                if (parentType !== 'Text' && node.trim().length > 0) badNodes.push({ parent: parentType, value: node });
+                return;
+            }
+            if (Array.isArray(node)) {
+                for (const child of node) walk(child, parentType);
+                return;
+            }
+            const nextParent = typeof node.type === 'string' ? node.type : parentType;
+            const children = Array.isArray(node.children) ? node.children : [];
+            for (const child of children) walk(child, nextParent);
+        };
+
+        walk(renderer.create(selectableRowProps.left).toJSON(), null);
+        expect(badNodes).toEqual([]);
+    });
 });

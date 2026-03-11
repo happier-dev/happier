@@ -91,6 +91,27 @@ describe('validatePath', () => {
         }
     });
 
+    it('accepts paths that only differ by canonical realpath aliases', () => {
+        const testBase = join(tmpdir(), `happier-pathSecurity-canonical-${Date.now()}`);
+        const realWorkspace = join(testBase, 'real-workspace');
+        const aliasWorkspace = join(testBase, 'alias-workspace');
+
+        try {
+            mkdirSync(realWorkspace, { recursive: true });
+            symlinkSync(realWorkspace, aliasWorkspace);
+
+            const result = validatePath(join(realWorkspace, 'notes.txt'), aliasWorkspace);
+            expect(result).toMatchObject({
+                valid: true,
+                resolvedPath: join(realWorkspace, 'notes.txt'),
+            });
+        } finally {
+            if (existsSync(testBase)) {
+                rmSync(testBase, { recursive: true, force: true });
+            }
+        }
+    });
+
     it('rejects when working directory is missing or invalid', () => {
         expect(validatePath('file.txt', '')).toEqual({
             valid: false,

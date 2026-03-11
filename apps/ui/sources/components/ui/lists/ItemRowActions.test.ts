@@ -3,6 +3,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import renderer, { act } from 'react-test-renderer';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
+const mockEnv = vi.hoisted(() => ({
+    iconsRenderAsText: false,
+}));
 
 vi.mock('@/components/ui/overlays/FloatingOverlay', () => {
     const React = require('react');
@@ -33,7 +36,9 @@ vi.mock('@/components/ui/popover', () => {
 vi.mock('@expo/vector-icons', () => {
     const React = require('react');
     return {
-        Ionicons: (props: any) => React.createElement('Ionicons', props, props.children),
+        Ionicons: (props: any) => (
+            mockEnv.iconsRenderAsText ? React.createElement(React.Fragment, null, '.') : React.createElement('Ionicons', props, props.children)
+        ),
     };
 });
 
@@ -77,6 +82,7 @@ describe('ItemRowActions', () => {
             tree = renderer.create(
                 React.createElement(ItemRowActions, {
                     title: 'Profile',
+                    overflowTriggerTestID: 'row-actions-trigger',
                     actions: [
                         { id: 'edit', title: 'Edit profile', icon: 'create-outline', onPress: onEdit },
                     ],
@@ -85,7 +91,7 @@ describe('ItemRowActions', () => {
         });
 
         const trigger = (tree?.root.findAllByType('Pressable' as any) ?? []).find(
-            (node: any) => node.props?.accessibilityLabel === 'common.moreActions',
+            (node: any) => node.props?.testID === 'row-actions-trigger',
         );
         expect(trigger).toBeTruthy();
 
@@ -97,6 +103,7 @@ describe('ItemRowActions', () => {
             (node: any) => node.props?.title === 'Edit profile',
         );
         expect(editRow).toBeTruthy();
+        expect(editRow?.props?.testID).toBe('edit');
 
         act(() => {
             editRow?.props?.onPress?.();
@@ -128,5 +135,147 @@ describe('ItemRowActions', () => {
         );
         expect(trigger).toBeUndefined();
         expect(tree?.root.findAllByType('Popover' as any).length).toBe(0);
+    });
+
+    it('uses a custom overflow trigger renderer when provided', async () => {
+        const { ItemRowActions } = await import('./ItemRowActions');
+        const onEdit = vi.fn();
+
+        let tree: ReturnType<typeof renderer.create> | undefined;
+        act(() => {
+            tree = renderer.create(
+                React.createElement(ItemRowActions, {
+                    title: 'Profile',
+                    overflowTriggerTestID: 'custom-trigger',
+                    actions: [
+                        { id: 'edit', title: 'Edit profile', icon: 'create-outline', onPress: onEdit },
+                    ],
+                    renderOverflowTrigger: ({ open, toggle, testID, accessibilityLabel, accessibilityHint }) => React.createElement(
+                        'Pressable',
+                        {
+                            testID,
+                            accessibilityLabel,
+                            accessibilityHint,
+                            accessibilityState: { expanded: open },
+                            onPress: toggle,
+                        },
+                        React.createElement('CustomTrigger', { open }),
+                    ),
+                }),
+            );
+        });
+
+        const trigger = (tree?.root.findAllByType('Pressable' as any) ?? []).find(
+            (node: any) => node.props?.testID === 'custom-trigger',
+        );
+        expect(trigger).toBeTruthy();
+        expect(trigger?.props?.accessibilityState).toEqual({ expanded: false });
+
+        act(() => {
+            trigger?.props?.onPress?.();
+        });
+
+        const customTrigger = tree?.root.findByType('CustomTrigger' as any);
+        expect(customTrigger?.props?.open).toBe(true);
+        expect(tree?.root.findAllByType('Popover' as any).length).toBe(1);
+    });
+
+    it('does not emit raw text nodes under Pressable when row action icons render as text on web', async () => {
+        mockEnv.iconsRenderAsText = true;
+        const { ItemRowActions } = await import('./ItemRowActions');
+
+        let tree: ReturnType<typeof renderer.create> | undefined;
+        try {
+            act(() => {
+                tree = renderer.create(
+                    React.createElement(ItemRowActions, {
+                        title: 'Profile',
+                        overflowTriggerTestID: 'row-actions-trigger',
+                        actions: [
+                            { id: 'edit', title: 'Edit profile', icon: 'create-outline', onPress: vi.fn() },
+                        ],
+                    }),
+                );
+            });
+
+            const trigger = (tree?.root.findAllByType('Pressable' as any) ?? []).find(
+                (node: any) => node.props?.testID === 'row-actions-trigger',
+            );
+            expect(trigger).toBeTruthy();
+
+            const badNodes: Array<{ parent: string | null; value: string }> = [];
+            const walk = (node: any, parentType: string | null) => {
+                if (node == null) return;
+                if (typeof node === 'string' || typeof node === 'number') {
+                    const value = String(node);
+                    if (parentType !== 'Text' && value.trim().length > 0) badNodes.push({ parent: parentType, value });
+                    return;
+                }
+                if (Array.isArray(node)) {
+                    for (const child of node) walk(child, parentType);
+                    return;
+                }
+                const nextParent = typeof node.type === 'string' ? node.type : parentType;
+                const children = Array.isArray(node.children) ? node.children : [];
+                for (const child of children) walk(child, nextParent);
+            };
+
+            walk(tree?.toJSON(), null);
+            expect(badNodes).toEqual([]);
+        } finally {
+            mockEnv.iconsRenderAsText = false;
+            act(() => {
+                tree?.unmount();
+            });
+        }
+    });
+
+    it('does not emit raw text nodes for inline action icons when icons render as text on web', async () => {
+        mockEnv.iconsRenderAsText = true;
+        const { ItemRowActions } = await import('./ItemRowActions');
+
+        let tree: ReturnType<typeof renderer.create> | undefined;
+        try {
+            act(() => {
+                tree = renderer.create(
+                    React.createElement(ItemRowActions, {
+                        title: 'Profile',
+                        compactThreshold: 200,
+                        actions: [
+                            { id: 'favorite', title: 'Favorite', icon: 'star-outline', onPress: vi.fn() },
+                        ],
+                    }),
+                );
+            });
+
+            const pressables = tree?.root.findAllByType('Pressable' as any) ?? [];
+            const inlinePressable = pressables.find((node: any) => node.props?.accessibilityLabel === 'Favorite');
+            expect(inlinePressable).toBeTruthy();
+
+            const badNodes: Array<{ parent: string | null; value: string }> = [];
+            const walk = (node: any, parentType: string | null) => {
+                if (node == null) return;
+                if (typeof node === 'string' || typeof node === 'number') {
+                    const value = String(node);
+                    if (parentType !== 'Text' && value.trim().length > 0) badNodes.push({ parent: parentType, value });
+                    return;
+                }
+                if (Array.isArray(node)) {
+                    for (const child of node) walk(child, parentType);
+                    return;
+                }
+                const nextParent = typeof node.type === 'string' ? node.type : parentType;
+                const children = Array.isArray(node.children) ? node.children : [];
+                for (const child of children) walk(child, nextParent);
+            };
+
+            walk(tree?.toJSON(), null);
+            expect(badNodes).toEqual([]);
+        } finally {
+            mockEnv.iconsRenderAsText = false;
+            act(() => {
+                tree?.unmount();
+            });
+        }
     });
 });
