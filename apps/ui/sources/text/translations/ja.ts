@@ -2547,6 +2547,7 @@ export const ja: TranslationStructure = {
         "マシンがオフラインです。オンラインに戻してこのセッションを再開してください。",
         openRuns: "セッションの実行を開く",
         openAutomations: "セッションの自動化を開く",
+        openSubagents: ({ count }: { count: number }) => (count > 0 ? `Open agents (${count})` : 'Open agents'),
         participants: {
           to: '宛先',
           lead: 'メイン',
@@ -2555,6 +2556,74 @@ export const ja: TranslationStructure = {
           executionRun: ({ runId }: { runId: string }) => `実行 ${runId}`,
           cardTo: ({ label }: { label: string }) => `宛先: ${label}`,
           unsupportedAttachmentsOrReviewComments: '宛先指定での送信は現在、添付ファイルやレビューコメントに対応していません。',
+        },
+        subagents: {
+          messages: {
+            teamLabel: ({ teamId }: { teamId: string }) => `Team: ${teamId}`,
+            memberLabel: ({ memberLabel, teamId }: { memberLabel: string; teamId: string }) =>
+              `${memberLabel} · ${teamId}`,
+            launch: {
+              createTeamTitle: "チームを作成",
+              createMemberTitle: "チームメイトを起動",
+            },
+            command: {
+              deleteTeamTitle: "チームを削除",
+              deleteMemberTitle: "チームメイトを停止",
+            },
+          },
+                    panel: {
+            title: "エージェント",
+            active: "稼働中",
+            recent: "最近",
+            emptyActive: "稼働中のエージェントはありません。",
+            emptyRecent: "最近のエージェントはまだありません。",
+            openFull: "全画面表示を開く",
+            openAdvancedRun: "ランの詳細",
+            send: "メッセージを送信",
+            delete: "削除",
+            launchSectionTitle: "起動",
+            launchSectionSubtitle: "このセッションから新しいエージェントと実行ランを開始します。",
+            sectionCount: ({ count }: { count: number }) => `${count}`,
+            groupCount: ({ count }: { count: number }) => `${count} エージェント`,
+            launchExecutionRunsTitle: "実行ランを開始",
+            launchExecutionRunsSubtitle: "レビュー・計画・委任のプリセットで実行ランチャーを開きます。",
+            launchExecutionRunsAdvanced: "詳細…",
+            launchClaudeTeamsTitle: "Claude チームを起動",
+            launchClaudeTeamsSubtitle: "構造化された Claude チームコマンドでチームを作成するか、チームメイトを起動します。",
+            teamIdLabel: "チーム ID",
+            teamIdPlaceholder: "チーム-id",
+            teamDescriptionPlaceholder: "このチームの担当は何ですか？",
+            launchClaudeTeamA11y: "Claude チームを作成",
+            launchClaudeTeamAction: "チームを作成",
+            teammateTeamIdLabel: "チームメイトのチーム",
+            teammateLabelPlaceholder: "チームメイトのラベル",
+            teammateInstructionsPlaceholder: "このチームメイトは何をするべきですか？",
+            launchTeammateA11y: "チームメイトを起動",
+            launchTeammateAction: "チームメイトを起動",
+            typeFact: ({ value }: { value: string }) => `Type: ${value}`,
+            providerFact: ({ value }: { value: string }) => `Provider: ${value}`,
+            backendFact: ({ value }: { value: string }) => `Backend: ${value}`,
+            intentFact: ({ value }: { value: string }) => `Intent: ${value}`,
+            errors: {
+              teamIdRequired: "先にチーム ID を入力してください。",
+              memberTeamIdRequired: "先にチームメイトのチーム ID を入力してください。",
+              memberLabelRequired: "先にチームメイトのラベルを入力してください。",
+              memberInstructionsRequired: "先にチームメイトへの指示を入力してください。",
+            },
+          },
+          details: {
+            unavailable: "このエージェントの文字起こしはもう利用できません。",
+          },
+          kind: {
+            execution_run: "実行",
+            agent_team_member: "チームエージェント",
+            task_sidechain: "タスクエージェント",
+          },
+          intent: {
+            review: "レビュー",
+            plan: "計画",
+            delegate: "委任",
+          },
         },
         actionMenu: {
           openA11y: "セッションの操作を開く",
@@ -3309,24 +3378,13 @@ export const ja: TranslationStructure = {
       hide: "非表示",
       rawJsonDevMode: "Raw JSON (開発モード)",
     },
-    taskView: {
-      initializing: "エージェントを初期化中...",
-      moreTools: ({ count }: { count: number }) => `+${count} 個のツール`,
-    },
-    taskLikeSummary: {
-      createTask: "タスクを作成",
-      createTaskWithSubject: ({ subject }: { subject: string }) =>
-        `タスクを作成: ${subject}`,
-      listTasks: "タスク一覧",
-      updateTask: "タスクを更新",
-      updateTaskWithId: ({ id }: { id: string }) => `タスク ${id} を更新`,
-      updateTaskWithIdStatus: ({
-        id,
-        status,
-      }: {
-        id: string;
-        status: string;
-      }) => `タスク ${id} を更新: ${status}`,
+    agentTeamView: {
+      team: "チーム",
+      member: "メンバー",
+      type: "種類",
+      content: "内容",
+      status: "状態",
+      description: "説明",
     },
     subAgentRunView: {
       planTitle: "計画",

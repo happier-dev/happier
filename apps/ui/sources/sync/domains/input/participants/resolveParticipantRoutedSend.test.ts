@@ -23,4 +23,15 @@ describe('resolveParticipantRoutedSend', () => {
         expect((outbound as any).runId).toBe('run_1');
         expect((outbound as any).delivery).toBe('steer_if_supported');
     });
+
+    it('allows overriding execution-run delivery mode', () => {
+        const outbound = resolveParticipantRoutedSend({
+            text: 'interrupt',
+            recipient: { kind: 'execution_run', runId: 'run_2' },
+            executionRunDelivery: 'interrupt',
+        });
+        expect(outbound.type).toBe('execution_run_send');
+        expect((outbound as any).runId).toBe('run_2');
+        expect((outbound as any).delivery).toBe('interrupt');
+    });
 });

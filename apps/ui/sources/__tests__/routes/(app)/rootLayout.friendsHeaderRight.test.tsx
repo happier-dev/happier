@@ -67,8 +67,10 @@ async function flushEffects(): Promise<void> {
 async function renderRootLayout() {
     const { default: RootLayout } = await import('@/app/(app)/_layout');
     let tree: ReturnType<typeof renderer.create> | undefined;
-    await act(async () => {
+    act(() => {
         tree = renderer.create(<RootLayout />);
+    });
+    await act(async () => {
         await flushEffects();
     });
     return tree;
@@ -77,6 +79,12 @@ async function renderRootLayout() {
 function getFriendsManageScreen(tree: ReturnType<typeof renderer.create> | undefined) {
     const screens = tree?.root.findAllByType(Stack.Screen) ?? [];
     return screens.find((node) => node.props?.name === 'friends/manage');
+}
+
+function getScreenNames(tree: ReturnType<typeof renderer.create> | undefined): string[] {
+    return (tree?.root.findAllByType(Stack.Screen) ?? [])
+        .map((node) => node.props?.name)
+        .filter((name): name is string => typeof name === 'string');
 }
 
 afterEach(() => {
@@ -121,25 +129,45 @@ describe('RootLayout', () => {
             });
 
             const tree = await renderRootLayout();
-            // Let feature probing fetch + apply server features so the headerRight opacity
-            // reflects the computed friends identity readiness.
-            await act(async () => {
-                await flushEffects();
-            });
+            try {
+                // Let feature probing fetch + apply server features so the headerRight opacity
+                // reflects the computed friends identity readiness.
+                await act(async () => {
+                    await flushEffects();
+                });
 
-            const friendsManage = getFriendsManageScreen(tree);
-            expect(friendsManage).toBeTruthy();
+                const friendsManage = getFriendsManageScreen(tree);
+                expect(friendsManage).toBeTruthy();
 
-            const options = friendsManage?.props?.options?.({ navigation: { navigate: vi.fn() } });
-            expect(typeof options?.headerRight).toBe('function');
+                const options = friendsManage?.props?.options?.({ navigation: { navigate: vi.fn() } });
+                expect(typeof options?.headerRight).toBe('function');
 
-            const node = options.headerRight();
-            expect(node).not.toBeNull();
-            expect(node.props?.style?.opacity).toBe(scenario.expectedOpacity);
+                const node = options.headerRight();
+                expect(node).not.toBeNull();
+                expect(node.props?.style?.opacity).toBe(scenario.expectedOpacity);
+            } finally {
+                act(() => {
+                    tree?.unmount();
+                });
+            }
+        });
+    }
 
+    it('registers session detail routes for tool and execution-run screens', async () => {
+        vi.resetModules();
+        stubRootLayoutFeaturesFetch();
+
+        const tree = await renderRootLayout();
+        try {
+            const screenNames = getScreenNames(tree);
+
+            expect(screenNames).toContain('session/[id]/message/[messageId]');
+            expect(screenNames).toContain('session/[id]/runs/new');
+            expect(screenNames).toContain('session/[id]/runs/[runId]');
+        } finally {
             act(() => {
                 tree?.unmount();
             });
-        });
-    }
+        }
+    });
 });

@@ -17,13 +17,14 @@ export type ParticipantRoutedSend =
 export function resolveParticipantRoutedSend(params: Readonly<{
     text: string;
     recipient: ParticipantRecipientV1;
+    executionRunDelivery?: 'prompt' | 'steer_if_supported' | 'interrupt';
 }>): ParticipantRoutedSend {
     if (params.recipient.kind === 'execution_run') {
         return {
             type: 'execution_run_send',
             runId: params.recipient.runId,
             message: params.text,
-            delivery: 'steer_if_supported',
+            delivery: params.executionRunDelivery ?? 'steer_if_supported',
         };
     }
 

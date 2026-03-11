@@ -1,0 +1,361 @@
+---
+title: Agents & subagents
+description: Use the Agents surface to launch, monitor, and interact with Happier subagents, Claude teams, and provider-backed agent threads.
+---
+
+Happier now treats agent work as a first-class session surface.
+
+In one session, you can have:
+
+- **Happier subagents**: review, plan, and delegate runs started by Happier
+- **Claude team agents**: Claude teammates created inside a Claude team
+- **Provider-backed agent threads**: monitor-only task/agent sidechains emitted by providers
+
+The **Agents** surface is the place to launch them, watch their status, reopen their transcript, and take actions when the runtime supports them.
+
+## Plan run vs plan mode
+
+Happier intentionally separates:
+
+- a **plan run** started from the Agents surface, and
+- a **session mode** such as `plan` on the current provider session
+
+Use **Start plan run** when you want a separate planner or planning-style subagent working in parallel.
+
+Use the session **Mode** picker when you want the current session itself to switch into a provider-supported mode.
+
+These are different workflows:
+
+- a plan run creates a separate agent row in the Agents surface
+- a session mode changes how the current session behaves
+
+If a provider does not support session modes, Happier simply does not offer the mode control for that session.
+
+## Where to find agents in a session
+
+There are two primary entry points:
+
+1. **Session header**
+   - Use the Agents button in the session header to open the Agents surface quickly.
+   - The badge shows how many agents are currently active in the session.
+2. **Right sidebar → Agents**
+   - The right sidebar has a dedicated **Agents** tab.
+   - This is the main control surface for agent launch, monitoring, and quick actions.
+
+The session transcript still keeps the original tool cards where an agent was launched.
+The Agents tab does **not** replace that history. It gives you a live roster so you do not need to scroll back to find a running agent.
+
+## What appears in the Agents tab
+
+The tab is organized into:
+
+- **LAUNCH**: actions for starting new agent work from the current session
+- **ACTIVE**: agents that are currently running
+- **RECENT**: agents that finished, failed, or were terminated
+
+Each row shows the most important facts for that agent:
+
+- name
+- status
+- type
+- provider
+- intent, when relevant
+- latest activity preview, when Happier has loaded that transcript
+
+Clicking a row opens the agent in the **details pane** first, so you can inspect the transcript without leaving the session.
+
+The same agent/run should also stay reachable from its original transcript entry, so you can open details either from the roster or from the place where it first appeared in the conversation.
+
+## Agent types in Happier
+
+### Happier subagents
+
+These are subagents started by Happier itself.
+
+Current presets are:
+
+- **Review**
+- **Plan**
+- **Delegate**
+
+Use them when you want Happier to create a bounded or long-lived subagent that works inside the current session’s context.
+
+What each one is for:
+
+- **Review**: parallel review of the current worktree or change set
+- **Plan**: separate planner-style reasoning without changing the current session mode
+- **Delegate**: a helper run that you can steer while it executes work in parallel
+
+User-facing behavior:
+
+- launch from the **Launch Happier subagents** card
+- reopen from the Agents list
+- send steering/follow-up messages while the run is still running
+- stop/cancel the run from the Agents list or details view
+- open advanced run details when you need lower-level execution-run metadata
+
+### Claude team agents
+
+In Claude sessions, Happier can also surface Claude’s team-style subagents as first-class agents.
+
+You can:
+
+- create a Claude team
+- launch a new teammate
+- launch additional teammates into an existing team
+- message a teammate directly
+- broadcast to the team
+- terminate a teammate
+- delete a whole team
+
+Claude team agents appear in the same Agents roster as Happier subagents, but their controls are Claude-specific.
+
+### Provider-backed task sidechains
+
+Some providers emit task/agent sidechains that Happier can normalize into agent rows.
+
+These rows are mainly for:
+
+- monitoring
+- reopening the transcript
+- understanding what a provider-created side thread is doing
+
+They are **monitor-only** unless the provider/runtime exposes a supported control plane.
+
+That means they may not offer send/stop/delete actions even though they still show up as first-class rows in the Agents surface.
+
+## Where subagent transcripts appear
+
+For supported agents and runs, Happier keeps transcript access available from both places:
+
+- the **Agents** surface,
+- the original **tool entry** in the main session transcript.
+
+This applies to:
+
+- Happier-managed execution runs such as review / plan / delegate,
+- Claude teammates surfaced from Claude Agent Teams,
+- provider-backed task sidechains that Happier can normalize into agent rows.
+
+If a row is controllable, opening either entry point should land you on the same underlying transcript/details surface.
+
+## Launching new agent work
+
+### Launch Happier subagents
+
+Use **Launch Happier subagents** when you want Happier to start a review, plan, or delegate run.
+
+The launcher supports:
+
+- preset intents for quick starts
+- backend selection
+- permission mode selection
+- instructions
+- an **Advanced…** path when you need the full launcher/details flow
+
+Backend selection here uses the same backend catalog as the rest of Happier. That means the launcher can target:
+
+- built-in providers such as Claude, Codex, Gemini, or Kiro
+- configured **Custom ACP** backends that you added in **ACP Backends**
+
+If the session already has agents, the launch section stays collapsed by default so the roster remains visible first.
+
+### Launch Claude teams and teammates
+
+In Claude sessions, the sidebar also shows Claude-specific launch actions.
+
+Use them to:
+
+- **Create team**
+- **Launch teammate**
+
+When a Claude team already exists in the session, the team group in the Agents roster also exposes a direct **Launch teammate** action for that existing team.
+
+This avoids forcing you back through a generic global launcher when you already know which team you want to extend.
+
+## Backend-aware launch defaults
+
+Because launchers now operate on real backend choices rather than only built-in provider ids, backend-aware defaults can follow the selected target more precisely.
+
+That includes things like:
+
+- compatible profiles
+- default permission mode
+- default model or mode where supported
+
+This is especially useful when you use multiple configured ACP backends that represent different agent roles on top of the same underlying CLI.
+
+## Opening an agent
+
+When you click an agent row in the Agents list:
+
+- Happier opens the **details pane** first
+- the transcript is shown using the **same transcript rendering stack** used elsewhere in the app
+- the top of the view shows a compact summary card with agent metadata
+
+This is important for consistency:
+
+- tool-backed agent transcripts use the same transcript components as normal focused tool details
+- Happier subagent transcripts stream and update through the same session data flow
+- full-page open is still available when you want more space
+
+## Sending messages to agents
+
+### Happier subagents
+
+While a Happier subagent is running, you can send follow-up instructions from:
+
+- the main composer, when the agent is selected as the recipient
+- the agent details pane
+- the full details route
+
+Depending on the run type, Happier uses the appropriate execution-run delivery mode under the hood.
+
+Running execution runs can also appear as recipients in the main session composer, so you do not always need to open the details pane first.
+
+See:
+
+- [Participant routing & live run messaging](/docs/features/participant-routing)
+
+### Claude teammates
+
+For Claude team agents, Happier supports routed messages through the session composer.
+
+The recipient chip lets you send to:
+
+- **Lead**
+- a specific teammate
+- **Broadcast**
+
+Important current limitation:
+
+- routed Claude teammate messages do **not** support attachments
+- routed Claude teammate messages do **not** support review comment drafts
+
+Use a normal lead message when you need those.
+
+Regular non-routed session messages still support Happier attachments as usual.
+
+See:
+
+- [Attachments & image previews](/docs/features/attachments)
+- [ACP backends](/docs/features/acp-backends)
+
+## When agents disappear from the roster
+
+The Agents roster follows the live control state, not just historical transcript entries.
+
+Examples:
+
+- a running execution run appears while it can still be controlled,
+- after stop/cancel or completion, it moves out of the active recipient lifecycle,
+- a Claude teammate that has been terminated is removed from the active recipient list.
+
+Historical transcript entries remain available, but the recipient picker only shows targets that are still valid to message.
+
+### Monitor-only provider sidechains
+
+If the row is a provider-backed monitor-only agent, Happier shows the transcript but does not expose send controls.
+
+This is intentional: the row exists for visibility, not for fake control that the provider/runtime cannot actually honor.
+
+## Agent lifecycle in the UI
+
+### Active vs Recent
+
+- **ACTIVE** shows work that is currently running
+- **RECENT** shows completed, failed, cancelled, or terminated agents
+
+This makes long sessions much easier to reason about because you can separate “what still needs attention” from “what already finished”.
+
+### Claude teammate termination
+
+When a Claude teammate is terminated:
+
+- it is removed from active/sendable targets
+- it remains visible in **RECENT** for history and traceability
+
+This avoids the confusing state where an agent looks available even though Claude has already shut it down.
+
+### Running transcript visibility
+
+You do not need to scroll back to the launch point to monitor a running agent.
+
+The Agents tab is the canonical live roster for:
+
+- what is running now
+- what recently finished
+- how to reopen the relevant transcript
+
+## Direct sessions, inactive sessions, and resumable sessions
+
+Agent control depends on what kind of session you are in.
+
+### Synced active sessions
+
+These support the full agent control surface.
+
+### Inactive but resumable sessions
+
+If the session is inactive **but resumable** and the machine is reachable:
+
+- Happier can still surface the Happier-subagent launcher
+- starting a Happier subagent resumes the session first, then launches the subagent
+
+That keeps the UI honest: if Happier offers the launcher, the start flow should work.
+
+### Linked direct sessions
+
+Linked direct sessions are different.
+
+If the direct session is only being observed and the local runner is **not** active yet:
+
+- Happier treats it as **observe-only** for Happier subagents
+- no Happier-subagent launch
+- no execution-run send/stop controls
+- no execution-run recipient targeting
+
+Once the direct session is locally controlled again, those controls become available.
+
+## Recommended workflows
+
+### I want a quick parallel review from the current session
+
+Open **Agents** → **Launch Happier subagents** → **Review**.
+
+Use this when you want a bounded review pass without losing the main session context.
+
+### I want a long-running helper that I can steer
+
+Start a delegate-style Happier subagent, then keep using the row or details pane to steer it while it runs.
+
+### I want Claude teammates working in parallel
+
+In a Claude session:
+
+1. create a team
+2. launch one or more teammates
+3. send teammate-specific messages or broadcast from the main composer
+
+### I only want to monitor provider-created side work
+
+Use the Agents tab as a read-only roster for provider-backed task sidechains.
+
+This is useful when the provider emits side threads but does not expose a supported control surface through Happier.
+
+## Mental model
+
+The simplest way to reason about the feature is:
+
+- the **transcript** keeps the causal history of how an agent was launched
+- the **Agents tab** is the live roster of what exists now
+- the **details pane** is the fastest way to reopen and interact with that agent
+
+If you keep those three roles separate, the UI becomes predictable even in long sessions with many agents.
+
+## Related pages
+
+- [Claude](../providers/claude)
+- [Synced and direct sessions](./direct-sessions)
+- [Steering while busy](./steering)
+- [Tool timeline & normalization](./tool-timeline)

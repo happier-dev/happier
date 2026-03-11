@@ -57,6 +57,103 @@ describe('ToolTimelineRowHeader', () => {
         expect(icons.some((i) => i.props?.name === 'open-outline')).toBe(true);
     });
 
+    it('renders the open action outside the primary row pressable on web', async () => {
+        const { ToolTimelineRowHeader } = await import('./ToolTimelineRowHeader');
+
+        let tree: renderer.ReactTestRenderer;
+        await act(async () => {
+            tree = renderer.create(
+                <ToolTimelineRowHeader
+                    density="comfortable"
+                    icon={React.createElement('Text', null, 'ICON')}
+                    title="Title"
+                    onPress={() => {}}
+                    canOpen={true}
+                    onOpen={() => {}}
+                />,
+            );
+        });
+
+        const pressables = tree!.root.findAllByType('Pressable') as any[];
+        expect(pressables).toHaveLength(2);
+
+        const openButton = pressables[1];
+        let ancestor = openButton.parent;
+        while (ancestor) {
+            expect(ancestor.type).not.toBe('Pressable');
+            ancestor = ancestor.parent;
+        }
+    });
+
+    it('stops propagation before invoking the open action button callback', async () => {
+        const { ToolTimelineRowHeader } = await import('./ToolTimelineRowHeader');
+        const onOpen = vi.fn();
+
+        let tree: renderer.ReactTestRenderer;
+        await act(async () => {
+            tree = renderer.create(
+                <ToolTimelineRowHeader
+                    density="comfortable"
+                    icon={React.createElement('Text', null, 'ICON')}
+                    title="Title"
+                    onPress={() => {}}
+                    canOpen={true}
+                    onOpen={onOpen}
+                />,
+            );
+        });
+
+        const pressables = tree!.root.findAllByType('Pressable') as any[];
+        const openButton = pressables[1];
+        const stopPropagation = vi.fn();
+
+        await act(async () => {
+            openButton.props.onPress?.({ stopPropagation });
+        });
+
+        expect(stopPropagation).toHaveBeenCalledTimes(1);
+        expect(onOpen).toHaveBeenCalledTimes(1);
+    });
+
+    it('keeps the open action visually hidden until hover on web', async () => {
+        const { ToolTimelineRowHeader } = await import('./ToolTimelineRowHeader');
+
+        let tree: renderer.ReactTestRenderer;
+        await act(async () => {
+            tree = renderer.create(
+                <ToolTimelineRowHeader
+                    density="comfortable"
+                    icon={React.createElement('Text', null, 'ICON')}
+                    title="Title"
+                    onPress={() => {}}
+                    canOpen={true}
+                    onOpen={() => {}}
+                />,
+            );
+        });
+
+        const findOpenWrapper = () =>
+            tree!.root.findAll(
+                (node) =>
+                    String(node.type) === 'View' &&
+                    Array.isArray((node.props as any).style) &&
+                    (node.props as any).style.some((entry: any) => entry?.width === 26),
+            )[0] as any;
+
+        const openWrapper = findOpenWrapper();
+        expect(openWrapper).toBeTruthy();
+        const baseOpacity = (openWrapper.props.style as any[]).find((entry: any) => typeof entry?.opacity === 'number')?.opacity;
+        expect(baseOpacity).toBe(0);
+
+        const pressable = tree!.root.findAllByType('Pressable')[0] as any;
+        await act(async () => {
+            pressable.props.onHoverIn?.();
+        });
+
+        const hoverOpacity = ((findOpenWrapper().props.style as any[]).find((entry: any) => typeof entry?.opacity === 'number')?.opacity);
+        expect(hoverOpacity).toBe(1);
+    });
+
     it('crossfades the left icon to a chevron-down on hover when expandable (web)', async () => {
         const { ToolTimelineRowHeader } = await import('./ToolTimelineRowHeader');
 

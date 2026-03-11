@@ -38,9 +38,37 @@ describe('shouldEnsureDaemonForInvocation', () => {
 
 describe('shouldAutoStartDaemonAfterAuth', () => {
   it('starts only when flagged and not in daemon process', () => {
-    expect(shouldAutoStartDaemonAfterAuth({ env: { HAPPIER_SESSION_AUTOSTART_DAEMON: '1' }, isDaemonProcess: false })).toBe(true);
-    expect(shouldAutoStartDaemonAfterAuth({ env: { HAPPIER_SESSION_AUTOSTART_DAEMON: '0' }, isDaemonProcess: false })).toBe(false);
-    expect(shouldAutoStartDaemonAfterAuth({ env: { HAPPIER_SESSION_AUTOSTART_DAEMON: '1' }, isDaemonProcess: true })).toBe(false);
+    expect(
+      shouldAutoStartDaemonAfterAuth({
+        env: { HAPPIER_SESSION_AUTOSTART_DAEMON: '1' },
+        isDaemonProcess: false,
+        startedBy: 'terminal',
+      }),
+    ).toBe(true);
+    expect(
+      shouldAutoStartDaemonAfterAuth({
+        env: { HAPPIER_SESSION_AUTOSTART_DAEMON: '0' },
+        isDaemonProcess: false,
+        startedBy: 'terminal',
+      }),
+    ).toBe(false);
+    expect(
+      shouldAutoStartDaemonAfterAuth({
+        env: { HAPPIER_SESSION_AUTOSTART_DAEMON: '1' },
+        isDaemonProcess: true,
+        startedBy: 'terminal',
+      }),
+    ).toBe(false);
+  });
+
+  it('does not auto-start for daemon-started child sessions', () => {
+    expect(
+      shouldAutoStartDaemonAfterAuth({
+        env: { HAPPIER_SESSION_AUTOSTART_DAEMON: '1' },
+        isDaemonProcess: false,
+        startedBy: 'daemon',
+      }),
+    ).toBe(false);
   });
 });
 

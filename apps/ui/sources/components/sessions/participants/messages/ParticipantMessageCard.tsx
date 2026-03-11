@@ -6,6 +6,7 @@ import type { ParticipantMessageV1 } from '@happier-dev/protocol';
 
 import type { Message } from '@/sync/domains/messages/messageTypes';
 import { Text } from '@/components/ui/text/Text';
+import { readStructuredUserMessageText } from '@/components/sessions/transcript/structured/readStructuredUserMessageText';
 import { t } from '@/text';
 
 function describeParticipantRecipient(payload: ParticipantMessageV1): string {
@@ -19,14 +20,8 @@ function describeParticipantRecipient(payload: ParticipantMessageV1): string {
     return r.memberLabel ?? r.memberId;
 }
 
-function readUserVisibleMessageText(message: Message): string | null {
-    if (message.kind !== 'user-text') return null;
-    const text = (message.displayText ?? message.text ?? '').trim();
-    return text.length > 0 ? text : null;
-}
-
 export function ParticipantMessageCard(props: Readonly<{ payload: ParticipantMessageV1; message: Message }>) {
-    const messageText = readUserVisibleMessageText(props.message);
+    const messageText = readStructuredUserMessageText(props.message);
     if (!messageText) return null;
 
     const label = describeParticipantRecipient(props.payload);

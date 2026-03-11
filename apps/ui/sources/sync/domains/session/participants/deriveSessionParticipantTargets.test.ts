@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import type { Message, ToolCallMessage } from '@/sync/domains/messages/messageTypes';
+import type { MessageMeta } from '@/sync/domains/messages/messageMetaTypes';
 
 import { deriveAutoRecipientFromFocusedToolTranscript, deriveSessionParticipantTargets } from './deriveSessionParticipantTargets';
 
@@ -47,6 +48,18 @@ function createAgentTextMessage(params: { id: string; text: string; seq?: number
     } as Message;
 }
 
+function createUserTextMessage(params: { id: string; text: string; seq?: number; meta?: MessageMeta }): Message {
+    return {
+        kind: 'user-text',
+        id: params.id,
+        ...(typeof params.seq === 'number' ? { seq: params.seq } : {}),
+        localId: null,
+        createdAt: Date.now(),
+        text: params.text,
+        ...(params.meta ? { meta: params.meta } : {}),
+    } as Message;
+}
+
 describe('deriveSessionParticipantTargets', () => {
     it('includes running execution runs derived from SubAgentRun tool calls', () => {
         const messages: Message[] = [
@@ -64,6 +77,25 @@ describe('deriveSessionParticipantTargets', () => {
         });
 
         expect(targets.some((t) => t.recipient.kind === 'execution_run' && t.recipient.runId === 'run_1')).toBe(true);
+    });
+
+    it('omits execution-run participant targets when execution-run control is disabled for the current session runtime', () => {
+        const messages: Message[] = [
+            createToolMessage({
+                id: 'm1',
+                name: 'SubAgentRun',
+                state: 'running',
+                input: { runId: 'run_1' },
+            }),
+        ];
+
+        const targets = deriveSessionParticipantTargets({
+            session: { metadata: { flavor: 'claude' } } as any,
+            messages,
+            canControlExecutionRuns: false,
+        });
+
+        expect(targets.some((t) => t.recipient.kind === 'execution_run' && t.recipient.runId === 'run_1')).toBe(false);
     });
 
     it('excludes execution runs for interrupted SubAgentRun tools when there is no prior running signal', () => {
@@ -127,6 +159,26 @@ describe('deriveSessionParticipantTargets', () => {
         });
 
         expect(targets.some((t) => t.recipient.kind === 'execution_run' && t.recipient.runId === runId)).toBe(true);
+    });
+
+    it('does not keep old execution-run start-text recipients alive without a matching SubAgentRun lifecycle signal', () => {
+        const staleRunId = 'run_ee562033-43de-48e1-b519-1eea91454b0e';
+        const activeRunId = 'run_22d45bf4-bbea-426a-a9b4-74e004272ce5';
+        const messages: Message[] = [
+            createAgentTextMessage({
+                id: 'agent-start-stale',
+                text: `Execution run started successfully.\nRun ID: ${staleRunId}\nBackend: claude`,
+            }),
+        ];
+
+        const targets = deriveSessionParticipantTargets({
+            session: { metadata: { flavor: 'claude' } } as any,
+            messages,
+            activeExecutionRuns: [{ runId: activeRunId, status: 'running' }],
+        });
+
+        expect(targets.some((t) => t.recipient.kind === 'execution_run' && t.recipient.runId === staleRunId)).toBe(false);
+        expect(targets.some((t) => t.recipient.kind === 'execution_run' && t.recipient.runId === activeRunId)).toBe(true);
     });
 
     it('excludes bounded execution runs from start-text fallback when interrupted transcript has no active-running confirmation', () => {
@@ -326,6 +378,253 @@ describe('deriveSessionParticipantTargets', () => {
 
         expect(targets.some((t) => t.recipient.kind === 'agent_team_member' && t.recipient.memberId === 'alpha@probe' && t.recipient.teamId === 'probe')).toBe(true);
         expect(targets.some((t) => t.recipient.kind === 'agent_team_broadcast' && t.recipient.teamId === 'probe')).toBe(true);
+    });
+
+    it('includes claude team targets derived from participant_message.v1 meta when no agent-team tool calls are present', () => {
+        const messages: Message[] = [
+            createUserTextMessage({
+                id: 'u1',
+                text: 'ALPHA_DETAIL_1: please do x',
+                meta: {
+                    happier: {
+                        kind: 'participant_message.v1',
+                        payload: {
+                            recipient: {
+                                kind: 'agent_team_member',
+                                teamId: 'probe',
+                                memberId: 'alpha@probe',
+                                memberLabel: 'alpha',
+                            },
+                        },
+                    },
+                },
+            }),
+        ];
+
+        const targets = deriveSessionParticipantTargets({
+            session: { metadata: { flavor: 'claude' } } as any,
+            messages,
+        });
+
+        expect(targets.some((t) => t.recipient.kind === 'agent_team_broadcast' && t.recipient.teamId === 'probe')).toBe(true);
+        expect(
+            targets.some((t) => t.recipient.kind === 'agent_team_member' && t.recipient.memberId === 'alpha@probe' && t.recipient.teamId === 'probe'),
+        ).toBe(true);
+    });
+
+    it('includes a freshly launched Claude teammate from subagent_launch.v1 meta even when prior team tool calls already exist', () => {
+        const messages: Message[] = [
+            createToolMessage({
+                id: 'team-create',
+                name: 'AgentTeamCreate',
+                state: 'completed',
+                input: { team_name: 'probe', description: 'x' },
+                result: { ok: true },
+            }),
+            createToolMessage({
+                id: 'task-alpha',
+                name: 'Task',
+                state: 'completed',
+                input: { description: 'spawn alpha', team_name: 'probe', name: 'alpha' },
+                result: { tool_use_result: { status: 'teammate_spawned', agent_id: 'alpha@probe', team_name: 'probe', name: 'alpha' } },
+            }),
+            createUserTextMessage({
+                id: 'u-member-launch',
+                text: 'Launch teammate gamma',
+                meta: {
+                    happier: {
+                        kind: 'subagent_launch.v1',
+                        payload: {
+                            kind: 'agent_team_member_create',
+                            teamId: 'probe',
+                            memberLabel: 'gamma',
+                            instructions: 'Investigate gamma and reply.',
+                            runInBackground: true,
+                        },
+                    },
+                },
+            }),
+        ];
+
+        const targets = deriveSessionParticipantTargets({
+            session: { metadata: { flavor: 'claude' } } as any,
+            messages,
+        });
+
+        expect(targets.some((t) => t.recipient.kind === 'agent_team_broadcast' && t.recipient.teamId === 'probe')).toBe(true);
+        expect(
+            targets.some((t) => t.recipient.kind === 'agent_team_member' && t.recipient.memberId === 'gamma@probe' && t.recipient.teamId === 'probe'),
+        ).toBe(true);
+    });
+
+    it('infers claude team members and broadcast from AgentTeamSendMessage tool inputs when AgentTeamCreate is missing', () => {
+        const messages: Message[] = [
+            createToolMessage({
+                id: 'send1',
+                name: 'AgentTeamSendMessage',
+                state: 'completed',
+                input: { team_name: 'probe', agent_id: 'alpha@probe', message: 'hi' },
+                result: { ok: true },
+            }),
+        ];
+
+        const targets = deriveSessionParticipantTargets({
+            session: { metadata: { flavor: 'claude' } } as any,
+            messages,
+        });
+
+        expect(targets.some((t) => t.recipient.kind === 'agent_team_broadcast' && t.recipient.teamId === 'probe')).toBe(true);
+        expect(
+            targets.some((t) => t.recipient.kind === 'agent_team_member' && t.recipient.memberId === 'alpha@probe' && t.recipient.teamId === 'probe'),
+        ).toBe(true);
+    });
+
+    it('infers claude team members from AgentTeamSendMessage recipient field when team was created earlier', () => {
+        const messages: Message[] = [
+            createToolMessage({
+                id: 't1',
+                name: 'AgentTeamCreate',
+                state: 'completed',
+                input: { team_name: 'probe', description: 'x' },
+                result: { ok: true },
+            }),
+            createToolMessage({
+                id: 'send1',
+                name: 'AgentTeamSendMessage',
+                state: 'completed',
+                input: { type: 'message', recipient: 'alpha', content: 'hello' },
+                result: { tool_use_result: { success: true, target: 'alpha' } },
+            }),
+        ];
+
+        const targets = deriveSessionParticipantTargets({
+            session: { metadata: { flavor: 'claude' } } as any,
+            messages,
+        });
+
+        expect(targets.some((t) => t.recipient.kind === 'agent_team_broadcast' && t.recipient.teamId === 'probe')).toBe(true);
+        expect(
+            targets.some((t) => t.recipient.kind === 'agent_team_member' && t.recipient.memberId === 'alpha@probe' && t.recipient.teamId === 'probe'),
+        ).toBe(true);
+    });
+
+    it('does not resurrect claude team targets from participant_message.v1 meta after AgentTeamDelete is observed', () => {
+        const messages: Message[] = [
+            createUserTextMessage({
+                id: 'u1',
+                text: 'To alpha (historical)',
+                meta: {
+                    happier: {
+                        kind: 'participant_message.v1',
+                        payload: {
+                            recipient: {
+                                kind: 'agent_team_member',
+                                teamId: 'probe',
+                                memberId: 'alpha@probe',
+                                memberLabel: 'alpha',
+                            },
+                        },
+                    },
+                },
+            }),
+            createToolMessage({
+                id: 'delete1',
+                name: 'AgentTeamDelete',
+                state: 'completed',
+                input: { team_name: 'probe' },
+                result: { ok: true },
+            }),
+        ];
+
+        const targets = deriveSessionParticipantTargets({
+            session: { metadata: { flavor: 'claude' } } as any,
+            messages,
+        });
+
+        expect(targets.some((t) => t.recipient.kind === 'agent_team_broadcast' && t.recipient.teamId === 'probe')).toBe(false);
+        expect(
+            targets.some((t) => t.recipient.kind === 'agent_team_member' && t.recipient.memberId === 'alpha@probe' && t.recipient.teamId === 'probe'),
+        ).toBe(false);
+    });
+
+    it('does not resurrect a shutdown teammate from participant_message.v1 meta when a shutdown_approved sidechain event is present', () => {
+        const shutdownApproved = createAgentTextMessage({
+            id: 's1',
+            text: "\"{\\\"type\\\":\\\"shutdown_approved\\\",\\\"from\\\":\\\"beta\\\"}\"",
+        });
+
+        const messages: Message[] = [
+            createUserTextMessage({
+                id: 'u1',
+                text: 'To beta (historical)',
+                meta: {
+                    happier: {
+                        kind: 'participant_message.v1',
+                        payload: {
+                            recipient: {
+                                kind: 'agent_team_member',
+                                teamId: 'probe',
+                                memberId: 'beta@probe',
+                                memberLabel: 'beta',
+                            },
+                        },
+                    },
+                },
+            }),
+            createToolMessage({
+                id: 't1',
+                name: 'AgentTeamCreate',
+                state: 'completed',
+                input: { team_name: 'probe', description: 'x' },
+                result: { ok: true },
+            }),
+            createToolMessage({
+                id: 'task_beta',
+                name: 'Task',
+                state: 'completed',
+                input: { description: 'spawn beta', team_name: 'probe', name: 'beta' },
+                result: { tool_use_result: { status: 'teammate_spawned', agent_id: 'beta@probe', team_name: 'probe', name: 'beta' } },
+                toolExtras: { messages: [shutdownApproved] },
+            }),
+        ];
+
+        const targets = deriveSessionParticipantTargets({
+            session: { metadata: { flavor: 'claude' } } as any,
+            messages,
+        });
+
+        expect(targets.some((t) => t.recipient.kind === 'agent_team_member' && t.recipient.memberId === 'beta@probe' && t.recipient.teamId === 'probe')).toBe(false);
+    });
+
+    it('uses AgentTeamCreate tool_use_result.team_name as the team id when it differs from input', () => {
+        const messages: Message[] = [
+            createToolMessage({
+                id: 't1',
+                name: 'AgentTeamCreate',
+                state: 'completed',
+                input: { team_name: 'probe', description: 'x' },
+                result: {
+                    content: [{ type: 'text', text: '{\"team_name\":\"actual-team\",\"team_file_path\":\"/Users/x/.claude/teams/actual-team/config.json\"}' }],
+                    tool_use_result: { team_name: 'actual-team', team_file_path: '/Users/x/.claude/teams/actual-team/config.json' },
+                },
+            }),
+            createToolMessage({
+                id: 'task1',
+                name: 'Task',
+                state: 'completed',
+                input: { description: 'spawn' },
+                result: { tool_use_result: { status: 'teammate_spawned', agent_id: 'alpha@actual-team', team_name: 'actual-team', name: 'alpha' } },
+            }),
+        ];
+
+        const targets = deriveSessionParticipantTargets({
+            session: { metadata: { flavor: 'claude' } } as any,
+            messages,
+        });
+
+        expect(targets.some((t) => t.recipient.kind === 'agent_team_member' && t.recipient.memberId === 'alpha@actual-team' && t.recipient.teamId === 'actual-team')).toBe(true);
+        expect(targets.some((t) => t.recipient.kind === 'agent_team_broadcast' && t.recipient.teamId === 'actual-team')).toBe(true);
+        expect(targets.some((t) => t.recipient.kind === 'agent_team_broadcast' && t.recipient.teamId === 'probe')).toBe(false);
     });
 
     it('includes claude team members and broadcast even when session flavor is missing (derived from tool names)', () => {
@@ -559,6 +858,58 @@ describe('deriveSessionParticipantTargets', () => {
                 result: { tool_use_result: { status: 'teammate_spawned', agent_id: 'alpha@probe', team_name: 'probe', name: 'Alpha' } },
             }),
             createToolMessage({
+                id: 'delete-failed-1',
+                name: 'AgentTeamDelete',
+                state: 'completed',
+                input: { team_name: 'probe' },
+                result: {
+                    content: [
+                        {
+                            type: 'text',
+                            text: JSON.stringify({
+                                success: false,
+                                message:
+                                    'Cannot cleanup team with 1 active member(s): alpha@probe. Use requestShutdown to gracefully terminate teammates first.',
+                                team_name: 'probe',
+                            }),
+                        },
+                    ],
+                    tool_use_result: {
+                        success: false,
+                        message:
+                            'Cannot cleanup team with 1 active member(s): alpha@probe. Use requestShutdown to gracefully terminate teammates first.',
+                        team_name: 'probe',
+                    },
+                },
+            }),
+        ];
+
+        const targets = deriveSessionParticipantTargets({
+            session: { metadata: { flavor: 'claude' } } as any,
+            messages,
+        });
+
+        expect(targets.some((t) => t.recipient.kind === 'agent_team_broadcast' && t.recipient.teamId === 'probe')).toBe(true);
+        expect(targets.some((t) => t.recipient.kind === 'agent_team_member' && t.recipient.memberId === 'alpha@probe')).toBe(true);
+    });
+
+    it('removes broadcast and members after AgentTeamDelete for the same team', () => {
+        const messages: Message[] = [
+            createToolMessage({
+                id: 'create1',
+                name: 'AgentTeamCreate',
+                state: 'completed',
+                input: { team_name: 'probe' },
+                result: { ok: true },
+            }),
+            createToolMessage({
+                id: 'agent1',
+                name: 'Agent',
+                state: 'completed',
+                input: { name: 'Alpha', team_name: 'probe' },
+                result: { tool_use_result: { status: 'teammate_spawned', agent_id: 'alpha@probe', team_name: 'probe', name: 'Alpha' } },
+            }),
+            createToolMessage({
                 id: 'delete1',
                 name: 'AgentTeamDelete',
                 state: 'completed',
@@ -703,6 +1054,142 @@ describe('deriveSessionParticipantTargets', () => {
         expect(targets.some((t) => t.recipient.kind === 'agent_team_member' && t.recipient.memberId === 'Alpha@probe')).toBe(true);
         expect(targets.some((t) => t.recipient.kind === 'agent_team_member' && t.recipient.memberId === 'Beta@probe')).toBe(false);
         expect(targets.some((t) => t.recipient.kind === 'agent_team_broadcast' && t.recipient.teamId === 'probe')).toBe(true);
+    });
+
+    it('removes teammate when Agent sidechain shutdown_approved is emitted as double-encoded JSON in tool-call children', () => {
+        const shutdownEvent = '{"type":"shutdown_approved","from":"Beta","timestamp":"2026-03-01T10:24:03.984Z"}';
+        const messages: Message[] = [
+            createToolMessage({
+                id: 'create1',
+                name: 'AgentTeamCreate',
+                state: 'completed',
+                input: { team_name: 'probe' },
+                result: { ok: true },
+            }),
+            createToolMessage({
+                id: 'agent1',
+                name: 'Agent',
+                state: 'completed',
+                input: { name: 'Alpha', team_name: 'probe' },
+                result: { tool_use_result: { status: 'teammate_spawned', agent_id: 'Alpha@probe', team_name: 'probe', name: 'Alpha' } },
+            }),
+            createToolMessage({
+                id: 'agent2',
+                name: 'Agent',
+                state: 'completed',
+                input: { name: 'Beta', team_name: 'probe' },
+                result: { tool_use_result: { status: 'teammate_spawned', agent_id: 'Beta@probe', team_name: 'probe', name: 'Beta' } },
+                children: [
+                    {
+                        kind: 'agent-text',
+                        id: 'child1',
+                        localId: null,
+                        createdAt: Date.now(),
+                        text: JSON.stringify(shutdownEvent),
+                    },
+                ],
+            }),
+        ];
+
+        const targets = deriveSessionParticipantTargets({
+            session: { metadata: { flavor: 'claude' } } as any,
+            messages,
+        });
+
+        expect(targets.some((t) => t.recipient.kind === 'agent_team_member' && t.recipient.memberId === 'Alpha@probe')).toBe(true);
+        expect(targets.some((t) => t.recipient.kind === 'agent_team_member' && t.recipient.memberId === 'Beta@probe')).toBe(false);
+        expect(targets.some((t) => t.recipient.kind === 'agent_team_broadcast' && t.recipient.teamId === 'probe')).toBe(true);
+    });
+
+    it('removes teammate when shutdown_approved is nested under an Agent sidechain tool-call descendant', () => {
+        const messages: Message[] = [
+            createToolMessage({
+                id: 'create1',
+                name: 'AgentTeamCreate',
+                state: 'completed',
+                input: { team_name: 'probe' },
+                result: { ok: true },
+            }),
+            createToolMessage({
+                id: 'agent1',
+                name: 'Agent',
+                state: 'completed',
+                input: { name: 'Alpha', team_name: 'probe' },
+                result: { tool_use_result: { status: 'teammate_spawned', agent_id: 'Alpha@probe', team_name: 'probe', name: 'Alpha' } },
+            }),
+            createToolMessage({
+                id: 'agent2',
+                name: 'Agent',
+                state: 'completed',
+                input: { name: 'Beta', team_name: 'probe' },
+                result: { tool_use_result: { status: 'teammate_spawned', agent_id: 'Beta@probe', team_name: 'probe', name: 'Beta' } },
+                children: [
+                    createToolMessage({
+                        id: 'mailbox-child',
+                        name: 'MCP: Receive instruction via mailbox',
+                        state: 'completed',
+                        children: [
+                            createAgentTextMessage({
+                                id: 'shutdown-child',
+                                text: '{"type":"shutdown_approved","from":"Beta","timestamp":"2026-03-01T10:24:03.984Z"}',
+                            }),
+                        ],
+                    }),
+                ],
+            }),
+        ];
+
+        const targets = deriveSessionParticipantTargets({
+            session: { metadata: { flavor: 'claude' } } as any,
+            messages,
+        });
+
+        expect(targets.some((t) => t.recipient.kind === 'agent_team_member' && t.recipient.memberId === 'Alpha@probe')).toBe(true);
+        expect(targets.some((t) => t.recipient.kind === 'agent_team_member' && t.recipient.memberId === 'Beta@probe')).toBe(false);
+        expect(targets.some((t) => t.recipient.kind === 'agent_team_broadcast' && t.recipient.teamId === 'probe')).toBe(true);
+    });
+
+    it('does not resurrect a shutdown teammate from later AgentTeamSendMessage tool calls', () => {
+        const shutdownEvent = '{"type":"shutdown_approved","from":"beta","timestamp":"2026-03-01T10:24:03.984Z"}';
+        const messages: Message[] = [
+            createToolMessage({
+                id: 'create1',
+                name: 'AgentTeamCreate',
+                state: 'completed',
+                input: { team_name: 'probe' },
+                result: { ok: true },
+            }),
+            createToolMessage({
+                id: 'agent2',
+                name: 'Agent',
+                state: 'completed',
+                input: { name: 'Beta', team_name: 'probe' },
+                result: { tool_use_result: { status: 'teammate_spawned', agent_id: 'beta@probe', team_name: 'probe', name: 'Beta' } },
+                children: [
+                    {
+                        kind: 'agent-text',
+                        id: 'child1',
+                        localId: null,
+                        createdAt: Date.now(),
+                        text: JSON.stringify(shutdownEvent),
+                    },
+                ],
+            }),
+            createToolMessage({
+                id: 'send1',
+                name: 'AgentTeamSendMessage',
+                state: 'completed',
+                input: { type: 'send_message', recipient: 'beta', content: 'Ping after shutdown' },
+                result: { ok: true },
+            }),
+        ];
+
+        const targets = deriveSessionParticipantTargets({
+            session: { metadata: { flavor: 'claude' } } as any,
+            messages,
+        });
+
+        expect(targets.some((t) => t.recipient.kind === 'agent_team_member' && t.recipient.memberId === 'beta@probe')).toBe(false);
     });
 
     it('removes teammate when team config edit removes agentId from members list', () => {
@@ -916,6 +1403,23 @@ describe('deriveAutoRecipientFromFocusedToolTranscript', () => {
         expect((auto as any)?.runId).toBe('run_1');
     });
 
+    it('returns null for focused SubAgentRun tool when execution-run control is disabled for the current session runtime', () => {
+        const toolMsg = createToolMessage({
+            id: 'm1',
+            name: 'SubAgentRun',
+            state: 'running',
+            input: { runId: 'run_1' },
+            toolExtras: { id: 'toolu_run_1' },
+        });
+        const auto = deriveAutoRecipientFromFocusedToolTranscript({
+            session: { metadata: { flavor: 'claude' } } as any,
+            tool: toolMsg.tool,
+            messages: [toolMsg],
+            canControlExecutionRuns: false,
+        });
+        expect(auto).toBeNull();
+    });
+
     it('returns null for focused SubAgentRun tool with abort-like errors when there is no prior running signal', () => {
         const toolMsg = createToolMessage({
             id: 'm1',
@@ -1044,6 +1548,55 @@ describe('deriveAutoRecipientFromFocusedToolTranscript', () => {
         expect(auto?.kind).toBe('agent_team_member');
         expect((auto as any)?.teamId).toBe('probe');
         expect((auto as any)?.memberId).toBe('alpha@probe');
+    });
+
+    it('returns null for focused Task tool when focused transcript contains shutdown_approved notification (claude)', () => {
+        const toolMsg = createToolMessage({
+            id: 'm1',
+            name: 'Task',
+            state: 'completed',
+            result: { tool_use_result: { status: 'teammate_spawned', agent_id: 'beta@probe', team_name: 'probe', name: 'beta' } },
+        });
+        const auto = deriveAutoRecipientFromFocusedToolTranscript({
+            session: { metadata: { flavor: 'claude' } } as any,
+            tool: toolMsg.tool,
+            messages: [],
+            focusedMessages: [
+                createAgentTextMessage({
+                    id: 'shutdown',
+                    text: '"{\\"type\\":\\"shutdown_approved\\",\\"from\\":\\"beta\\"}"',
+                }),
+            ],
+        });
+        expect(auto).toBeNull();
+    });
+
+    it('returns null for focused Agent tool when shutdown_approved is nested under a focused child tool-call (claude)', () => {
+        const toolMsg = createToolMessage({
+            id: 'm1',
+            name: 'Agent',
+            state: 'completed',
+            result: { tool_use_result: { status: 'teammate_spawned', agent_id: 'beta@probe', team_name: 'probe', name: 'beta' } },
+        });
+        const auto = deriveAutoRecipientFromFocusedToolTranscript({
+            session: { metadata: { flavor: 'claude' } } as any,
+            tool: toolMsg.tool,
+            messages: [],
+            focusedMessages: [
+                createToolMessage({
+                    id: 'mailbox-focused',
+                    name: 'MCP: Receive instruction via mailbox',
+                    state: 'completed',
+                    children: [
+                        createAgentTextMessage({
+                            id: 'shutdown',
+                            text: '{"type":"shutdown_approved","from":"beta","timestamp":"2026-03-01T10:24:03.984Z"}',
+                        }),
+                    ],
+                }),
+            ],
+        });
+        expect(auto).toBeNull();
     });
 
     it('returns agent_team_member recipient for focused Agent tool with teammate_spawned result (claude)', () => {

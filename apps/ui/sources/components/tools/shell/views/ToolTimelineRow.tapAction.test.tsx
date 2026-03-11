@@ -4,6 +4,14 @@ import { describe, expect, it, vi, beforeEach } from 'vitest';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
+const ensureSidechainMessagesLoadedMock = vi.fn(async () => 'loaded');
+
+vi.mock('@/sync/sync', () => ({
+    sync: {
+        ensureSidechainMessagesLoaded: ensureSidechainMessagesLoadedMock,
+    },
+}));
+
 vi.mock('react-native', async () => ({
     Platform: { OS: 'web', select: (values: any) => values?.web ?? values?.default },
     View: 'View',
@@ -140,6 +148,8 @@ describe('ToolTimelineRow (tap action)', () => {
     beforeEach(() => {
         pushSpy.mockClear();
         specificToolViewMock.mockClear();
+        ensureSidechainMessagesLoadedMock.mockReset();
+        ensureSidechainMessagesLoadedMock.mockResolvedValue('loaded');
         settings = {
             toolViewDetailLevelDefault: 'title',
             toolViewDetailLevelDefaultLocalControl: 'summary',
@@ -170,7 +180,7 @@ describe('ToolTimelineRow (tap action)', () => {
         });
 
         expect(tree!.root.findAllByType('SpecificToolView' as any)).toHaveLength(0);
-        const pressable = tree!.root.findByType('Pressable' as any);
+        const pressable = tree!.root.findAllByType('Pressable' as any)[0];
         await act(async () => {
             pressable.props.onPress();
         });
@@ -209,7 +219,7 @@ describe('ToolTimelineRow (tap action)', () => {
 
         expect(findHeaderTitleFontSize()).toBe(13);
 
-        const pressable = tree!.root.findByType('Pressable' as any);
+        const pressable = tree!.root.findAllByType('Pressable' as any)[0];
         await act(async () => {
             pressable.props.onPress();
         });
@@ -217,10 +227,11 @@ describe('ToolTimelineRow (tap action)', () => {
         expect(findHeaderTitleFontSize()).toBe(13);
     });
 
-    it('opens full view when tap action is open (and canOpen is true)', async () => {
+    it('prefers a stable server route when tap action is open and the message is already persisted', async () => {
         settings.toolViewTapAction = 'open';
         const { ToolTimelineRow } = await import('./ToolTimelineRow');
         const tool: any = {
+            id: 'call_read_1',
             name: 'read',
             state: 'completed',
             input: {},
@@ -233,16 +244,64 @@ describe('ToolTimelineRow (tap action)', () => {
 
         let tree: renderer.ReactTestRenderer | null = null;
         await act(async () => {
-            tree = renderer.create(<ToolTimelineRow tool={tool} metadata={null} sessionId="s1" messageId="m1" />);
+            tree = renderer.create(
+                <ToolTimelineRow
+                    tool={tool}
+                    metadata={null}
+                    sessionId="s1"
+                    messageId="server:server-msg-1"
+                />,
+            );
         });
 
-        const pressable = tree!.root.findByType('Pressable' as any);
+        const pressable = tree!.root.findAllByType('Pressable' as any)[0];
         await act(async () => {
             pressable.props.onPress();
         });
 
         expect(pushSpy).toHaveBeenCalledTimes(1);
+        expect(pushSpy).toHaveBeenCalledWith('/session/s1/message/server%3Aserver-msg-1');
         expect(tree!.root.findAllByType('SpecificToolView' as any)).toHaveLength(0);
+    });
+
+    it('suppresses open-details routing when tool navigation is disabled, even if the tool has its own id', async () => {
+        settings.toolViewTapAction = 'open';
+        const { ToolTimelineRow } = await import('./ToolTimelineRow');
+        const tool: any = {
+            id: 'subagent_run_1',
+            name: 'SubAgentRun',
+            state: 'completed',
+            input: {},
+            createdAt: 1,
+            startedAt: 1,
+            completedAt: 2,
+            description: null,
+            result: {},
+        };
+
+        let tree: renderer.ReactTestRenderer | null = null;
+        await act(async () => {
+            tree = renderer.create(
+                <ToolTimelineRow
+                    tool={tool}
+                    metadata={null}
+                    sessionId="s1"
+                    messageId={undefined}
+                    interaction={{ canSendMessages: true, canApprovePermissions: true, disableToolNavigation: true }}
+                />,
+            );
+        });
+
+        const hostText = tree!.root.findAllByType('Text' as any).map((n: any) => String(n.props?.children ?? '')).join(' ');
+        expect(hostText).not.toContain('toolView.open');
+
+        const pressable = tree!.root.findAllByType('Pressable' as any)[0];
+        await act(async () => {
+            pressable.props.onPress();
+        });
+
+        expect(pushSpy).not.toHaveBeenCalled();
+        expect(tree!.root.findAllByType('SpecificToolView' as any)).toHaveLength(1);
     });
 
     it('auto-expands and shows action-required status for pending user-action tools', async () => {
@@ -271,6 +330,37 @@ describe('ToolTimelineRow (tap action)', () => {
         expect(tree!.root.findAllByType('SpecificToolView' as any)).toHaveLength(1);
         const hostText = tree!.root.findAllByType('Text' as any).map((n: any) => String(n.props?.children ?? '')).join(' ');
         expect(hostText).toContain('status.actionRequired');
+    });
+
+    it('preloads sidechain messages when a Task tool is expanded', async () => {
+        settings.toolViewTapAction = 'expand';
+        const { ToolTimelineRow } = await import('./ToolTimelineRow');
+        const tool: any = {
+            id: 'tool_task_1',
+            name: 'Task',
+            state: 'completed',
+            input: {},
+            createdAt: 1,
+            startedAt: 1,
+            completedAt: 2,
+            description: null,
+            result: {},
+        };
+
+        let tree: renderer.ReactTestRenderer | null = null;
+        await act(async () => {
+            tree = renderer.create(<ToolTimelineRow tool={tool} metadata={null} sessionId="s1" messageId="m1" />);
+        });
+
+        expect(ensureSidechainMessagesLoadedMock).not.toHaveBeenCalled();
+
+        const pressable = tree!.root.findAllByType('Pressable' as any)[0];
+        await act(async () => {
+            pressable.props.onPress();
+            await Promise.resolve();
+        });
+
+        expect(ensureSidechainMessagesLoadedMock).toHaveBeenCalledWith('s1', 'tool_task_1');
     });
 
     it('shows a running indicator in the header for Task tools', async () => {

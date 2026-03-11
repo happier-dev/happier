@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { Pressable, View } from 'react-native';
+import { Pressable, type StyleProp, View, type ViewStyle } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 
 import type { ParticipantRecipientV1 } from '@happier-dev/protocol';
@@ -10,8 +10,80 @@ import type { AgentInputExtraActionChipRenderContext } from '@/components/sessio
 import type { SessionParticipantTarget } from '@/sync/domains/session/participants/participantTargets';
 import { Text } from '@/components/ui/text/Text';
 import { t } from '@/text';
-import { useUnistyles } from 'react-native-unistyles';
-import { resolveRecipientAccentColor } from './resolveRecipientAccentColor';
+import { StyleSheet } from 'react-native-unistyles';
+import { type RecipientAccentKey, resolveRecipientAccentKey } from './resolveRecipientAccentColor';
+
+const stylesheet = StyleSheet.create((theme) => ({
+    anchor: {
+        alignSelf: 'flex-start',
+    },
+    chipRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 6,
+    },
+    popoverContainer: {
+        paddingHorizontal: 12,
+        paddingVertical: 10,
+        gap: 8,
+    },
+    popoverTitle: {
+        fontSize: 12,
+        fontWeight: '600',
+        color: theme.colors.textSecondary,
+    },
+    popoverItemPressable: {
+        paddingVertical: 8,
+    },
+    popoverItemRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 8,
+    },
+    popoverItemText: {
+        fontSize: 13,
+        color: theme.colors.text,
+    },
+    accentDot: {
+        width: 8,
+        height: 8,
+        borderRadius: 999,
+    },
+    accentDotFallback: {
+        backgroundColor: theme.colors.textSecondary,
+    },
+    accentDotBlue: {
+        backgroundColor: theme.colors.accent.blue,
+    },
+    accentDotGreen: {
+        backgroundColor: theme.colors.accent.green,
+    },
+    accentDotOrange: {
+        backgroundColor: theme.colors.accent.orange,
+    },
+    accentDotYellow: {
+        backgroundColor: theme.colors.accent.yellow,
+    },
+    accentDotRed: {
+        backgroundColor: theme.colors.accent.red,
+    },
+    accentDotIndigo: {
+        backgroundColor: theme.colors.accent.indigo,
+    },
+    accentDotPurple: {
+        backgroundColor: theme.colors.accent.purple,
+    },
+}));
+
+const accentDotStyleByKey: Readonly<Record<RecipientAccentKey, StyleProp<ViewStyle>>> = {
+    blue: stylesheet.accentDotBlue,
+    green: stylesheet.accentDotGreen,
+    orange: stylesheet.accentDotOrange,
+    yellow: stylesheet.accentDotYellow,
+    red: stylesheet.accentDotRed,
+    indigo: stylesheet.accentDotIndigo,
+    purple: stylesheet.accentDotPurple,
+};
 
 function recipientsEqual(a: ParticipantRecipientV1, b: ParticipantRecipientV1): boolean {
     if (a.kind !== b.kind) return false;
@@ -51,22 +123,22 @@ export type RecipientChipProps = Readonly<{
 export const RecipientChip = React.memo(function RecipientChip(props: RecipientChipProps) {
     if (props.targets.length === 0) return null;
     const [open, setOpen] = React.useState(false);
-    const anchorRef = React.useRef<View | null>(null);
+    const anchorRef = React.useRef<React.ElementRef<typeof View> | null>(null);
     const popoverAnchorRef = props.ctx.popoverAnchorRef ?? anchorRef;
-    const { theme } = useUnistyles();
+    const styles = stylesheet;
 
     const selectedLabel = resolveRecipientLabel(props.targets, props.recipient);
 
     return (
         <>
-            <View ref={anchorRef as any} collapsable={false} style={{ alignSelf: 'flex-start' }}>
+            <View ref={anchorRef} collapsable={false} style={styles.anchor}>
                 <Pressable
                     onPress={() => setOpen((v) => !v)}
                     style={({ pressed }) => props.ctx.chipStyle(Boolean(pressed))}
                     accessibilityRole="button"
                     accessibilityLabel={t('session.participants.sendToTitle')}
                 >
-                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                    <View style={styles.chipRow}>
                         <Ionicons name="navigate-outline" size={16} color={props.ctx.iconColor} />
                         {props.ctx.showLabel ? (
                             <Text numberOfLines={1} style={props.ctx.textStyle}>
@@ -79,7 +151,7 @@ export const RecipientChip = React.memo(function RecipientChip(props: RecipientC
 
             <Popover
                 open={open}
-                anchorRef={popoverAnchorRef as any}
+                anchorRef={popoverAnchorRef}
                 boundaryRef={null}
                 placement="top"
                 gap={8}
@@ -96,53 +168,41 @@ export const RecipientChip = React.memo(function RecipientChip(props: RecipientC
             >
                 {({ maxHeight }) => (
                     <AgentInputPopoverSurface maxHeight={maxHeight} scrollEnabled keyboardShouldPersistTaps="handled">
-                        <View style={{ paddingHorizontal: 12, paddingVertical: 10, gap: 8 }}>
-                            <Text style={{ fontSize: 12, fontWeight: '600', color: theme.colors.textSecondary }}>
-                                {t('session.participants.sendToTitle')}
-                            </Text>
+                        <View style={styles.popoverContainer}>
+                            <Text style={styles.popoverTitle}>{t('session.participants.sendToTitle')}</Text>
 
                             <Pressable
                                 onPress={() => {
                                     props.onRecipientChange(null);
                                     setOpen(false);
                                 }}
-                                style={({ pressed }) => ({
-                                    paddingVertical: 8,
-                                    opacity: pressed ? 0.7 : 1,
-                                })}
+                                style={({ pressed }) => [styles.popoverItemPressable, { opacity: pressed ? 0.7 : 1 }]}
                             >
-                                <Text style={{ fontSize: 13, color: theme.colors.text }}>{t('session.participants.lead')}</Text>
+                                <Text style={styles.popoverItemText}>{t('session.participants.lead')}</Text>
                             </Pressable>
 
-                            {props.targets.map((target) => (
-                                <Pressable
-                                    key={target.key}
-                                    onPress={() => {
-                                        props.onRecipientChange(target.recipient);
-                                        setOpen(false);
-                                    }}
-                                    style={({ pressed }) => ({
-                                        paddingVertical: 8,
-                                        opacity: pressed ? 0.7 : 1,
-                                    })}
-                                >
-                                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-                                        {typeof target.accentName === 'string' && target.accentName.trim().length > 0 ? (
-                                            <View
-                                                style={{
-                                                    width: 8,
-                                                    height: 8,
-                                                    borderRadius: 999,
-                                                    backgroundColor:
-                                                        resolveRecipientAccentColor({ theme: theme as any, accentName: target.accentName }) ??
-                                                        theme.colors.textSecondary,
-                                                }}
-                                            />
-                                        ) : null}
-                                        <Text style={{ fontSize: 13, color: theme.colors.text }}>{resolveTargetLabel(target)}</Text>
-                                    </View>
-                                </Pressable>
-                            ))}
+                            {props.targets.map((target) => {
+                                const accentKey = typeof target.accentName === 'string' ? resolveRecipientAccentKey(target.accentName) : null;
+                                const accentStyle = accentKey ? accentDotStyleByKey[accentKey] : styles.accentDotFallback;
+
+                                return (
+                                    <Pressable
+                                        key={target.key}
+                                        onPress={() => {
+                                            props.onRecipientChange(target.recipient);
+                                            setOpen(false);
+                                        }}
+                                        style={({ pressed }) => [styles.popoverItemPressable, { opacity: pressed ? 0.7 : 1 }]}
+                                    >
+                                        <View style={styles.popoverItemRow}>
+                                            {typeof target.accentName === 'string' && target.accentName.trim().length > 0 ? (
+                                                <View style={[styles.accentDot, accentStyle]} />
+                                            ) : null}
+                                            <Text style={styles.popoverItemText}>{resolveTargetLabel(target)}</Text>
+                                        </View>
+                                    </Pressable>
+                                );
+                            })}
                         </View>
                     </AgentInputPopoverSurface>
                 )}

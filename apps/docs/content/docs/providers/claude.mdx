@@ -123,6 +123,28 @@ Practical guidance:
 - Use OAuth when the user does not already have Claude Code installed / logged in.
 - In the new-session auth picker, Claude-compatible backends will show only the Claude-related connected-service options they actually support.
 
+## Session handoff
+
+Claude supports Happier session handoff between machines.
+
+That means you can:
+
+- start a Claude session on one machine
+- hand off the same Happier session id to another machine
+- continue that session there
+- hand it back later if needed
+
+Important notes:
+
+- machine-local Claude login still matters for native Claude CLI workflows
+- connected services can make cross-machine continuity easier because the credential is account-managed instead of machine-local only
+- direct-session handoff support is provider-dependent, but Claude is one of the supported providers
+
+See:
+
+- [Session handoff](/docs/features/session-handoff)
+- [Connected services](/docs/features/connected-services)
+
 ## Where to configure Claude in Happier
 
 In the app:
@@ -171,10 +193,12 @@ When Agent Teams are enabled in Claude, Happier can:
   - a specific **team member** (1:1), or
   - a **team broadcast** (team-wide).
 - Surface Claude teammates as first-class rows in the session **Agents** tab, where you can reopen their transcript, launch more teammates into an existing team, and terminate them when needed.
+- Reopen teammate work from both the **Agents** sidebar and the original **transcript/tool entry**.
 
 For the complete user-facing guide to the Agents sidebar, Happier subagents, details-pane behavior, and Claude team workflows, see:
 
 - [Agents & subagents](/docs/features/subagents)
+- [Participant routing & live run messaging](/docs/features/participant-routing)
 
 ### Routing UI (recipient chip)
 
@@ -186,12 +210,29 @@ When a Claude session has an active team, the session composer shows a **“To:�
 
 Routed messages are stored as a provider-agnostic structured message kind (`participant_message.v1`) so Happier can render them as a distinct card in the transcript (instead of looking like a normal bubble).
 
+The important user-visible rule is:
+
+- Happier shows the message you typed,
+- Happier does **not** show Claude’s internal prompt rewrite for the routing step.
+
 ### View-aware default recipient
 
 When you open a focused tool transcript view:
 
 - `Task` transcripts that contain a teammate spawn event can auto-select that teammate as the recipient (if you haven’t manually picked a different recipient).
 - `SubAgentRun` transcripts auto-select the running execution run as the recipient (while it is running).
+
+If you manually pick a different recipient on that screen, your manual choice wins until you leave/reopen the screen.
+
+### Teammate lifecycle in the recipient picker
+
+The recipient picker follows the active Claude team roster.
+
+That means:
+
+- active teammates remain available as recipients,
+- **Broadcast** remains available while the team exists,
+- terminated teammates are removed from the active recipient list.
 
 ### Current limitation: attachments and review comments
 

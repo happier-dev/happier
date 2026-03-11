@@ -13,4 +13,11 @@ describe('canonicalizeToolNameForRendering (change_title aliases)', () => {
     ])('normalizes %s to change_title', (toolName) => {
         expect(canonicalizeToolNameForRendering(toolName, {})).toBe('change_title');
     });
+
+    it.each([
+        'happier/change_title',
+        'happy/change_title',
+    ])('still treats persisted legacy slash form %s as change_title in the UI compatibility layer', (toolName) => {
+        expect(canonicalizeToolNameForRendering(toolName, {})).toBe('change_title');
+    });
 });

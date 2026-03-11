@@ -2,6 +2,7 @@ import { Ionicons } from '@expo/vector-icons';
 import * as React from 'react';
 import { Pressable, View } from 'react-native';
 import { ResumeChip } from './ResumeChip';
+import { normalizeNodeForView } from '@/components/ui/rendering/normalizeNodeForView';
 import { Text } from '@/components/ui/text/Text';
 
 
@@ -37,6 +38,7 @@ export function PathAndResumeRow(props: PathAndResumeRowProps) {
             <View style={[props.styles.actionButtonsLeft, { flex: 1, flexWrap: 'nowrap', minWidth: 0 }]}>
                 {hasPath ? (
                     <Pressable
+                        testID="agent-input-path-chip"
                         onPress={props.onPathClick}
                         hitSlop={{ top: 5, bottom: 10, left: 0, right: 0 }}
                         style={(p) => ([
@@ -46,11 +48,13 @@ export function PathAndResumeRow(props: PathAndResumeRowProps) {
                             { flexShrink: 1, minWidth: 0 },
                         ])}
                     >
-                        <Ionicons
-                            name="folder-outline"
-                            size={16}
-                            color={props.iconColor}
-                        />
+                        {normalizeNodeForView(
+                            <Ionicons
+                                name="folder-outline"
+                                size={16}
+                                color={props.iconColor}
+                            />,
+                        )}
                         <Text
                             numberOfLines={1}
                             ellipsizeMode="middle"

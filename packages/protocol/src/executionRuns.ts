@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { VoiceAssistantActionSchema } from './voiceActions.js';
+import { BackendTargetRefSchema } from './backendTargets/backendTargetRef.js';
 
 /**
  * Public contract for execution runs (sub-agents / reviews / planning / delegation / voice agent).
@@ -60,14 +61,14 @@ export type ExecutionRunIoMode = z.infer<typeof ExecutionRunIoModeSchema>;
 
 export const ExecutionRunResumeHandleVendorSessionV1Schema = z.object({
   kind: z.literal('vendor_session.v1'),
-  backendId: z.string().min(1),
+  backendTarget: BackendTargetRefSchema,
   vendorSessionId: z.string().min(1),
 }).passthrough();
 export type ExecutionRunResumeHandleVendorSessionV1 = z.infer<typeof ExecutionRunResumeHandleVendorSessionV1Schema>;
 
 export const ExecutionRunResumeHandleVoiceAgentSessionsV1Schema = z.object({
   kind: z.literal('voice_agent_sessions.v1'),
-  backendId: z.string().min(1),
+  backendTarget: BackendTargetRefSchema,
   chatVendorSessionId: z.string().min(1),
   commitVendorSessionId: z.string().min(1),
 }).passthrough();
@@ -78,6 +79,12 @@ export const ExecutionRunResumeHandleSchema = z.discriminatedUnion('kind', [
   ExecutionRunResumeHandleVoiceAgentSessionsV1Schema,
 ]);
 export type ExecutionRunResumeHandle = z.infer<typeof ExecutionRunResumeHandleSchema>;
+
+export const ExecutionRunTranscriptSchema = z.object({
+  persistenceMode: z.enum(['ephemeral', 'persistent']),
+  epoch: z.number().int().min(0),
+}).passthrough();
+export type ExecutionRunTranscript = z.infer<typeof ExecutionRunTranscriptSchema>;
 
 export const ExecutionRunDisplaySchema = z.object({
   /**
@@ -100,7 +107,7 @@ export const ExecutionRunPublicStateSchema = z.object({
   callId: z.string().min(1),
   sidechainId: z.string().min(1),
   intent: ExecutionRunIntentSchema,
-  backendId: z.string().min(1),
+  backendTarget: BackendTargetRefSchema,
   display: ExecutionRunDisplaySchema.optional(),
   // Policy/class fields are required for client surfaces (e.g. to decide if send/resume controls apply).
   permissionMode: z.string().min(1),
@@ -108,7 +115,10 @@ export const ExecutionRunPublicStateSchema = z.object({
   runClass: ExecutionRunClassSchema,
   ioMode: ExecutionRunIoModeSchema,
   status: ExecutionRunStatusSchema,
+  turnInFlight: z.boolean().optional(),
+  availableActionIds: z.array(z.string().min(1)).optional(),
   resumeHandle: ExecutionRunResumeHandleSchema.optional(),
+  transcript: ExecutionRunTranscriptSchema.optional(),
   startedAtMs: z.number().int().nonnegative(),
   finishedAtMs: z.number().int().nonnegative().optional(),
   error: ExecutionRunErrorSchema.optional(),
@@ -117,7 +127,7 @@ export type ExecutionRunPublicState = z.infer<typeof ExecutionRunPublicStateSche
 
 export const ExecutionRunStartRequestSchema = z.object({
   intent: ExecutionRunIntentSchema,
-  backendId: z.string().min(1),
+  backendTarget: BackendTargetRefSchema,
   instructions: z.string().optional(),
   display: ExecutionRunDisplaySchema.optional(),
   permissionMode: z.string().min(1),
@@ -223,6 +233,7 @@ export type ExecutionRunActionResponse = z.infer<typeof ExecutionRunActionRespon
 export const ExecutionRunTurnStreamStartRequestSchema = z.object({
   runId: z.string().min(1),
   message: z.string().min(1),
+  displayMessage: z.string().min(1).optional(),
   resume: z.boolean().optional(),
 }).passthrough();
 export type ExecutionRunTurnStreamStartRequest = z.infer<typeof ExecutionRunTurnStreamStartRequestSchema>;

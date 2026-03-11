@@ -2607,6 +2607,7 @@ export const it: TranslationStructure = {
         "La macchina è offline. Riportala online per riprendere questa sessione.",
           openRuns: "Apri esecuzioni della sessione",
           openAutomations: "Apri automazioni della sessione",
+          openSubagents: ({ count }: { count: number }) => (count > 0 ? `Open agents (${count})` : 'Open agents'),
           participants: {
             to: 'A',
             lead: 'Principale',
@@ -2615,6 +2616,74 @@ export const it: TranslationStructure = {
             executionRun: ({ runId }: { runId: string }) => `Esecuzione ${runId}`,
             cardTo: ({ label }: { label: string }) => `A: ${label}`,
             unsupportedAttachmentsOrReviewComments: 'L’invio a un destinatario non supporta ancora allegati o commenti di revisione.',
+          },
+          subagents: {
+            messages: {
+              teamLabel: ({ teamId }: { teamId: string }) => `Team: ${teamId}`,
+              memberLabel: ({ memberLabel, teamId }: { memberLabel: string; teamId: string }) =>
+                `${memberLabel} · ${teamId}`,
+              launch: {
+                createTeamTitle: "Crea team",
+                createMemberTitle: "Avvia compagno di squadra",
+              },
+              command: {
+                deleteTeamTitle: "Elimina team",
+                deleteMemberTitle: "Arresta compagno di squadra",
+              },
+            },
+                        panel: {
+              title: "Agenti",
+              active: "Attivi",
+              recent: "Recenti",
+              emptyActive: "Nessun agente attivo.",
+              emptyRecent: "Nessun agente recente per ora.",
+              openFull: "Apri vista completa",
+              openAdvancedRun: "Dettagli esecuzione",
+              send: "Invia messaggio",
+              delete: "Elimina",
+              launchSectionTitle: "Avvio",
+              launchSectionSubtitle: "Avvia nuovi agenti ed esecuzioni da questa sessione.",
+              sectionCount: ({ count }: { count: number }) => `${count}`,
+              groupCount: ({ count }: { count: number }) => `${count} agenti`,
+              launchExecutionRunsTitle: "Avvia esecuzioni",
+              launchExecutionRunsSubtitle: "Apri il launcher delle esecuzioni con preset di revisione, piano o delega.",
+              launchExecutionRunsAdvanced: "Avanzate…",
+              launchClaudeTeamsTitle: "Avvia team Claude",
+              launchClaudeTeamsSubtitle: "Crea un team o avvia un compagno con comandi strutturati dei team Claude.",
+              teamIdLabel: "ID team",
+              teamIdPlaceholder: "id-team",
+              teamDescriptionPlaceholder: "Di cosa si occupa questo team?",
+              launchClaudeTeamA11y: "Crea team Claude",
+              launchClaudeTeamAction: "Crea team",
+              teammateTeamIdLabel: "Team del compagno",
+              teammateLabelPlaceholder: "Etichetta del compagno",
+              teammateInstructionsPlaceholder: "Cosa deve fare questo compagno?",
+              launchTeammateA11y: "Avvia compagno",
+              launchTeammateAction: "Avvia compagno",
+              typeFact: ({ value }: { value: string }) => `Type: ${value}`,
+              providerFact: ({ value }: { value: string }) => `Provider: ${value}`,
+              backendFact: ({ value }: { value: string }) => `Backend: ${value}`,
+              intentFact: ({ value }: { value: string }) => `Intent: ${value}`,
+              errors: {
+                teamIdRequired: "Inserisci prima un ID team.",
+                memberTeamIdRequired: "Inserisci prima l'ID team del compagno.",
+                memberLabelRequired: "Inserisci prima un'etichetta per il compagno.",
+                memberInstructionsRequired: "Inserisci prima le istruzioni per il compagno.",
+              },
+            },
+            details: {
+              unavailable: "Questa trascrizione dell'agente non è più disponibile.",
+            },
+            kind: {
+              execution_run: "Esecuzione",
+              agent_team_member: "Agente del team",
+              task_sidechain: "Agente del task",
+            },
+            intent: {
+              review: "Revisione",
+              plan: "Piano",
+              delegate: "Delega",
+            },
           },
           actionMenu: {
             openA11y: "Apri azioni della sessione",
@@ -3367,25 +3436,13 @@ export const it: TranslationStructure = {
       hide: "Nascondi",
       rawJsonDevMode: "JSON grezzo (Modalità sviluppatore)",
     },
-    taskView: {
-      initializing: "Inizializzazione agente...",
-      moreTools: ({ count }: { count: number }) =>
-        `+${count} altri ${plural({ count, singular: "strumento", plural: "strumenti" })}`,
-    },
-    taskLikeSummary: {
-      createTask: "Crea attività",
-      createTaskWithSubject: ({ subject }: { subject: string }) =>
-        `Crea attività: ${subject}`,
-      listTasks: "Elenca attività",
-      updateTask: "Aggiorna attività",
-      updateTaskWithId: ({ id }: { id: string }) => `Aggiorna attività ${id}`,
-      updateTaskWithIdStatus: ({
-        id,
-        status,
-      }: {
-        id: string;
-        status: string;
-      }) => `Aggiorna attività ${id}: ${status}`,
+    agentTeamView: {
+      team: "Team",
+      member: "Membro",
+      type: "Tipo",
+      content: "Contenuto",
+      status: "Stato",
+      description: "Descrizione",
     },
     subAgentRunView: {
       planTitle: "Piano",

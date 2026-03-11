@@ -22,11 +22,34 @@ vi.mock('@expo/vector-icons', () => ({
 }));
 
 vi.mock('react-native-unistyles', () => ({
+    StyleSheet: {
+        create: (styles: any) => {
+            if (typeof styles === 'function') {
+                return styles({
+                    colors: {
+                        text: '#f4f4f4',
+                        textSecondary: '#9ca3af',
+                        accent: {
+                            blue: '#3b82f6',
+                            green: '#22c55e',
+                            orange: '#f97316',
+                            yellow: '#facc15',
+                            red: '#ef4444',
+                            indigo: '#6366f1',
+                            purple: '#a855f7',
+                        },
+                    },
+                });
+            }
+            return styles;
+        },
+        absoluteFillObject: {},
+    },
     useUnistyles: () => ({
         theme: {
             colors: {
-                text: '#f4f4f4',
-                textSecondary: '#9ca3af',
+                text: '#000000',
+                textSecondary: '#49454F',
             },
         },
     }),
@@ -82,6 +105,44 @@ describe('RecipientChip', () => {
 
         expect(tree!.toJSON()).toBeNull();
         expect(capturedPopoverProps).toBeNull();
+    });
+
+    it('can transition from no targets to targets without a hooks-order crash', async () => {
+        capturedPopoverProps = null;
+        const { RecipientChip } = await import('./RecipientChip');
+        const ctx = {
+            chipStyle: () => ({ padding: 4 }),
+            iconColor: '#000',
+            showLabel: true,
+            textStyle: {},
+            popoverAnchorRef: null,
+        } as any;
+
+        let tree: renderer.ReactTestRenderer | null = null;
+        act(() => {
+            tree = renderer.create(
+                <RecipientChip ctx={ctx} targets={[]} recipient={null} onRecipientChange={() => {}} />,
+            );
+        });
+
+        expect(() => {
+            act(() => {
+                tree!.update(
+                    <RecipientChip
+                        ctx={ctx}
+                        targets={[
+                            {
+                                key: 'agent_team_broadcast:team_1',
+                                displayLabel: 'team_1',
+                                recipient: { kind: 'agent_team_broadcast', teamId: 'team_1' },
+                            },
+                        ]}
+                        recipient={null}
+                        onRecipientChange={() => {}}
+                    />,
+                );
+            });
+        }).not.toThrow();
     });
 
     it('renders popover via portal so it is not clipped on web', async () => {

@@ -1,0 +1,165 @@
+---
+title: Participant routing & live run messaging
+description: Send messages to the lead, a Claude teammate, or a running execution run from the same session UI.
+---
+
+Happier supports **participant routing** inside a session.
+
+That means the same session composer can target:
+
+- the normal **Lead** agent,
+- a specific **Claude teammate**,
+- a Claude **Broadcast** target, or
+- a **running execution run**.
+
+This is the end-user model for all of the routing work added around Claude teams, subagents, and execution runs.
+
+## Where you can route messages
+
+You can route messages from:
+
+- the **main session composer**,
+- a focused **subagent / teammate / run details** view,
+- transcript detail views for supported tool-backed subagents.
+
+If the current screen has no alternate recipients, the composer behaves like a normal session composer.
+
+## The recipient chip
+
+When alternate recipients are available, the composer shows a **Send to** chip.
+
+Depending on the session, the chip can list:
+
+- **Lead**
+- one or more **Claude teammates**
+- **Broadcast**
+- one or more **running execution runs**
+
+Happier remembers the selection **per screen while that screen stays open**. If you leave and reopen the screen, the selection resets to the default state for that screen.
+
+## View-aware automatic selection
+
+If you open a focused teammate or run transcript, Happier can auto-select that recipient for the composer.
+
+This only happens when:
+
+- the focused view clearly maps to one recipient, and
+- you have **not** already manually chosen a different recipient on that screen.
+
+Examples:
+
+- opening a Claude teammate transcript can auto-select that teammate,
+- opening a running execution-run transcript can auto-select that run,
+- once you manually switch recipients, your manual choice wins for the rest of that screen session.
+
+## What happens when you send
+
+### Lead
+
+Sending to **Lead** is a normal session message.
+
+- it appears as a standard user message,
+- attachments work normally,
+- review-comment drafts work normally.
+
+### Claude teammate or Broadcast
+
+Sending to a Claude teammate or to Broadcast creates a **routed participant message**.
+
+User-visible behavior:
+
+- Happier keeps your original text in the transcript,
+- the transcript shows a structured card such as **To: alpha** or **To: Broadcast: qa-team**,
+- the card is visually distinct from a normal user bubble.
+
+Implementation detail that matters for users:
+
+- Happier rewrites the backend prompt that Claude receives,
+- but the UI does **not** show that internal Claude-specific rewrite,
+- you only see the message you actually typed.
+
+### Running execution run
+
+Sending to a running execution run sends directly to that run instead of to the lead session.
+
+This is useful when a review, delegate, or other execution run is already working and you want to refine it without starting over.
+
+## Execution-run delivery modes
+
+When the selected recipient is an execution run, Happier shows a **Delivery** chip.
+
+The app currently exposes two user-facing modes:
+
+### Steer
+
+This is the default.
+
+Behavior:
+
+- if the backend supports in-flight steering, Happier steers the current turn immediately,
+- otherwise Happier aborts the current turn and sends your message as the next turn,
+- the run itself keeps going; Happier does **not** kill the whole run just because steering is unavailable.
+
+Use this when you want the least disruptive follow-up.
+
+### Interrupt
+
+Behavior:
+
+- Happier always aborts the current turn,
+- then immediately sends your new instruction as a new turn.
+
+Use this when the current turn is clearly headed in the wrong direction and you want to replace it now.
+
+## When a run can receive messages
+
+Execution runs are only shown as recipients while they are actually sendable.
+
+In practice:
+
+- a running long-lived run can stay selectable while it remains active,
+- a bounded run is only selectable while its active turn is still in flight,
+- once a run finishes, stops, or becomes non-sendable, it disappears from the recipient list.
+
+This is why a run can sometimes still say **running** in a broad sense but no longer offer a send control: Happier follows the runtime’s real sendability contract instead of guessing from a stale transcript state.
+
+## How routed messages appear in the transcript
+
+Routed participant messages are rendered as structured message cards.
+
+They intentionally show:
+
+- **who** the message was sent to,
+- the **original text** you typed.
+
+They intentionally do **not** show:
+
+- backend-specific prompt rewrites,
+- Claude-specific internal routing instructions.
+
+## Where to follow the recipient’s work
+
+You can inspect the recipient’s work from either place:
+
+- the **Agents** panel / Agents sidebar,
+- the original **tool or transcript entry** in the session timeline.
+
+For supported subagents and runs, both paths lead to the same underlying transcript/details flow.
+
+## Current limitations
+
+Routed messages to Claude teammates currently do **not** support:
+
+- attachments,
+- review-comment drafts.
+
+If you need those, send a normal **Lead** message instead.
+
+Execution-run routing is also limited to recipients that expose a real control path. Some provider-created sidechains are monitor-only and therefore appear as transcripts you can inspect, but not as recipients you can send to.
+
+## Related pages
+
+- [Agents & subagents](/docs/features/subagents)
+- [Steering & interrupting](/docs/features/steering)
+- [Claude](/docs/providers/claude)
+- [Attachments & image previews](/docs/features/attachments)

@@ -2575,6 +2575,7 @@ export const ru: TranslationStructure = {
           "Машина не в сети. Подключите её, чтобы возобновить эту сессию.",
         openRuns: "Открыть запуски сессии",
         openAutomations: "Открыть автоматизации сессии",
+        openSubagents: ({ count }: { count: number }) => (count > 0 ? `Open agents (${count})` : 'Open agents'),
         participants: {
           to: 'Кому',
           lead: 'Главный',
@@ -2583,6 +2584,74 @@ export const ru: TranslationStructure = {
           executionRun: ({ runId }: { runId: string }) => `Запуск ${runId}`,
           cardTo: ({ label }: { label: string }) => `Кому: ${label}`,
           unsupportedAttachmentsOrReviewComments: 'Отправка получателю пока не поддерживает вложения или комментарии ревью.',
+        },
+        subagents: {
+          messages: {
+            teamLabel: ({ teamId }: { teamId: string }) => `Team: ${teamId}`,
+            memberLabel: ({ memberLabel, teamId }: { memberLabel: string; teamId: string }) =>
+              `${memberLabel} · ${teamId}`,
+            launch: {
+              createTeamTitle: "Создать команду",
+              createMemberTitle: "Запустить участника команды",
+            },
+            command: {
+              deleteTeamTitle: "Удалить команду",
+              deleteMemberTitle: "Отключить участника команды",
+            },
+          },
+                    panel: {
+            title: "Агенты",
+            active: "Активные",
+            recent: "Недавние",
+            emptyActive: "Нет активных агентов.",
+            emptyRecent: "Пока нет недавних агентов.",
+            openFull: "Открыть полное представление",
+            openAdvancedRun: "Детали запуска",
+            send: "Отправить сообщение",
+            delete: "Удалить",
+            launchSectionTitle: "Запуск",
+            launchSectionSubtitle: "Запускайте новых агентов и выполнения из этой сессии.",
+            sectionCount: ({ count }: { count: number }) => `${count}`,
+            groupCount: ({ count }: { count: number }) => `${count} агентов`,
+            launchExecutionRunsTitle: "Запустить выполнения",
+            launchExecutionRunsSubtitle: "Открыть запуск выполнения с шаблонами обзора, плана или делегирования.",
+            launchExecutionRunsAdvanced: "Расширенные…",
+            launchClaudeTeamsTitle: "Запустить команды Claude",
+            launchClaudeTeamsSubtitle: "Создайте команду или запустите участника с помощью структурированных команд Claude для команд.",
+            teamIdLabel: "ID команды",
+            teamIdPlaceholder: "id-команды",
+            teamDescriptionPlaceholder: "За что отвечает эта команда?",
+            launchClaudeTeamA11y: "Создать команду Claude",
+            launchClaudeTeamAction: "Создать команду",
+            teammateTeamIdLabel: "Команда участника",
+            teammateLabelPlaceholder: "Метка участника",
+            teammateInstructionsPlaceholder: "Что должен делать этот участник?",
+            launchTeammateA11y: "Запустить участника",
+            launchTeammateAction: "Запустить участника",
+            typeFact: ({ value }: { value: string }) => `Type: ${value}`,
+            providerFact: ({ value }: { value: string }) => `Provider: ${value}`,
+            backendFact: ({ value }: { value: string }) => `Backend: ${value}`,
+            intentFact: ({ value }: { value: string }) => `Intent: ${value}`,
+            errors: {
+              teamIdRequired: "Сначала введите ID команды.",
+              memberTeamIdRequired: "Сначала введите ID команды участника.",
+              memberLabelRequired: "Сначала введите метку участника.",
+              memberInstructionsRequired: "Сначала введите инструкции для участника.",
+            },
+          },
+          details: {
+            unavailable: "Этот транскрипт агента больше недоступен.",
+          },
+          kind: {
+            execution_run: "Запуск выполнения",
+            agent_team_member: "Командный агент",
+            task_sidechain: "Агент задачи",
+          },
+          intent: {
+            review: "Ревью",
+            plan: "План",
+            delegate: "Делегирование",
+          },
         },
         actionMenu: {
           openA11y: "Открыть действия сессии",
@@ -3060,25 +3129,13 @@ export const ru: TranslationStructure = {
       hide: "Скрыть",
       rawJsonDevMode: "Исходный JSON (режим разработчика)",
     },
-    taskView: {
-      initializing: "Инициализация агента...",
-      moreTools: ({ count }: { count: number }) =>
-        `+${count} ещё ${plural({ count, one: "инструмент", few: "инструмента", many: "инструментов" })}`,
-    },
-    taskLikeSummary: {
-      createTask: "Создать задачу",
-      createTaskWithSubject: ({ subject }: { subject: string }) =>
-        `Создать задачу: ${subject}`,
-      listTasks: "Список задач",
-      updateTask: "Обновить задачу",
-      updateTaskWithId: ({ id }: { id: string }) => `Обновить задачу ${id}`,
-      updateTaskWithIdStatus: ({
-        id,
-        status,
-      }: {
-        id: string;
-        status: string;
-      }) => `Обновить задачу ${id}: ${status}`,
+    agentTeamView: {
+      team: "Команда",
+      member: "Участник",
+      type: "Тип",
+      content: "Содержимое",
+      status: "Статус",
+      description: "Описание",
     },
     subAgentRunView: {
       planTitle: "План",

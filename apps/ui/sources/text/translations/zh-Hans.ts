@@ -2149,6 +2149,7 @@ export const zhHans: TranslationStructure = {
     machineOfflineCannotResume: "机器离线。请将其恢复在线后再恢复此会话。",
       openRuns: "打开会话运行",
       openAutomations: "打开会话自动化",
+      openSubagents: ({ count }: { count: number }) => (count > 0 ? `Open agents (${count})` : 'Open agents'),
       participants: {
         to: '发送给',
         lead: '主助手',
@@ -2157,6 +2158,74 @@ export const zhHans: TranslationStructure = {
         executionRun: ({ runId }: { runId: string }) => `运行 ${runId}`,
         cardTo: ({ label }: { label: string }) => `发送给：${label}`,
         unsupportedAttachmentsOrReviewComments: '发送给指定对象目前不支持附件或评审评论。',
+      },
+      subagents: {
+        messages: {
+          teamLabel: ({ teamId }: { teamId: string }) => `Team: ${teamId}`,
+          memberLabel: ({ memberLabel, teamId }: { memberLabel: string; teamId: string }) =>
+            `${memberLabel} · ${teamId}`,
+          launch: {
+            createTeamTitle: "创建团队",
+            createMemberTitle: "启动队友",
+          },
+          command: {
+            deleteTeamTitle: "删除团队",
+            deleteMemberTitle: "停止队友",
+          },
+        },
+                panel: {
+          title: "代理",
+          active: "活跃",
+          recent: "最近",
+          emptyActive: "没有活跃代理。",
+          emptyRecent: "还没有最近的代理。",
+          openFull: "打开完整视图",
+          openAdvancedRun: "运行详情",
+          send: "发送消息",
+          delete: "删除",
+          launchSectionTitle: "启动",
+          launchSectionSubtitle: "从这个会话启动新的代理和执行运行。",
+          sectionCount: ({ count }: { count: number }) => `${count}`,
+          groupCount: ({ count }: { count: number }) => `${count} 个代理`,
+          launchExecutionRunsTitle: "启动执行运行",
+          launchExecutionRunsSubtitle: "以审查、计划或委派预设打开运行启动器。",
+          launchExecutionRunsAdvanced: "高级…",
+          launchClaudeTeamsTitle: "启动 Claude 团队",
+          launchClaudeTeamsSubtitle: "使用结构化的 Claude 团队命令创建团队或启动队友。",
+          teamIdLabel: "团队 ID",
+          teamIdPlaceholder: "团队-id",
+          teamDescriptionPlaceholder: "这个团队负责什么？",
+          launchClaudeTeamA11y: "创建 Claude 团队",
+          launchClaudeTeamAction: "创建团队",
+          teammateTeamIdLabel: "队友所属团队",
+          teammateLabelPlaceholder: "队友标签",
+          teammateInstructionsPlaceholder: "这个队友应该做什么？",
+          launchTeammateA11y: "启动队友",
+          launchTeammateAction: "启动队友",
+          typeFact: ({ value }: { value: string }) => `Type: ${value}`,
+          providerFact: ({ value }: { value: string }) => `Provider: ${value}`,
+          backendFact: ({ value }: { value: string }) => `Backend: ${value}`,
+          intentFact: ({ value }: { value: string }) => `Intent: ${value}`,
+          errors: {
+            teamIdRequired: "请先输入团队 ID。",
+            memberTeamIdRequired: "请先输入队友所属团队的 ID。",
+            memberLabelRequired: "请先输入队友标签。",
+            memberInstructionsRequired: "请先输入队友说明。",
+          },
+        },
+        details: {
+          unavailable: "此代理转录内容已不可用。",
+        },
+        kind: {
+          execution_run: "执行",
+          agent_team_member: "团队代理",
+          task_sidechain: "任务代理",
+        },
+        intent: {
+          review: "审查",
+          plan: "规划",
+          delegate: "委派",
+        },
       },
       actionMenu: {
         openA11y: "打开会话操作",
@@ -2891,25 +2960,13 @@ export const zhHans: TranslationStructure = {
       hide: "隐藏",
       rawJsonDevMode: "原始 JSON（开发模式）",
     },
-    taskView: {
-      initializing: "正在初始化 agent...",
-      moreTools: ({ count }: { count: number }) =>
-        `+${count} 个更多${plural({ count, singular: "工具", plural: "工具" })}`,
-    },
-    taskLikeSummary: {
-      createTask: "创建任务",
-      createTaskWithSubject: ({ subject }: { subject: string }) =>
-        `创建任务：${subject}`,
-      listTasks: "列出任务",
-      updateTask: "更新任务",
-      updateTaskWithId: ({ id }: { id: string }) => `更新任务 ${id}`,
-      updateTaskWithIdStatus: ({
-        id,
-        status,
-      }: {
-        id: string;
-        status: string;
-      }) => `更新任务 ${id}：${status}`,
+    agentTeamView: {
+      team: "团队",
+      member: "成员",
+      type: "类型",
+      content: "内容",
+      status: "状态",
+      description: "描述",
     },
     subAgentRunView: {
       planTitle: "计划",

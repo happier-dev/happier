@@ -1,6 +1,6 @@
 import * as React from 'react';
 import renderer, { act } from 'react-test-renderer';
-import { describe, expect, it, vi } from 'vitest';
+import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -52,6 +52,11 @@ const machineExecutionRunsListSpy = vi.fn(async (_machineId: string, _opts?: Rec
     ],
 }));
 const stackScreenSpy = vi.fn((_props: any) => null);
+const routerPushSpy = vi.fn();
+const routerBackSpy = vi.fn();
+let localSearchParamsMock: Record<string, unknown> = { id: 'session-1', runId: 'run_1' };
+let hydrateReady = true;
+let SessionRunDetailsScreen: typeof import('@/app/(app)/session/[id]/runs/[runId]').default;
 
 vi.mock('react-native', () => ({
     Platform: {
@@ -80,6 +85,7 @@ vi.mock('react-native-unistyles', () => ({
                 textSecondary: '#aaa',
                 textLink: '#06f',
                 textDestructive: '#f00',
+                groupped: { sectionTitle: '#888' },
                 shadow: { color: '#000' },
             },
         },
@@ -97,6 +103,7 @@ vi.mock('react-native-unistyles', () => ({
                     link: '#06f',
                     textLink: '#06f',
                     textDestructive: '#f00',
+                    groupped: { sectionTitle: '#888' },
                     shadow: { color: '#000' },
                 },
             };
@@ -106,11 +113,19 @@ vi.mock('react-native-unistyles', () => ({
 }));
 
 vi.mock('expo-router', () => ({
-    useLocalSearchParams: () => ({ id: 'session-1', runId: 'run_1' }),
-    useRouter: () => ({ push: vi.fn(), back: vi.fn() }),
+    useLocalSearchParams: () => localSearchParamsMock,
+    useRouter: () => ({ push: routerPushSpy, back: routerBackSpy }),
     Stack: { Screen: (props: any) => stackScreenSpy(props) },
 }));
 vi.mock('@expo/vector-icons', () => ({ Ionicons: 'Ionicons' }));
+
+vi.mock('@/hooks/session/useHydrateSessionForRoute', () => ({
+    useHydrateSessionForRoute: () => hydrateReady,
+}));
+
+vi.mock('@/components/sessions/shell/SessionInvalidLinkFallback', () => ({
+    SessionInvalidLinkFallback: () => React.createElement('SessionInvalidLinkFallback', { testID: 'session-invalid-link' }),
+}));
 
 vi.mock('@/text', () => ({
     t: (key: string, vars?: any) => {
@@ -138,33 +153,82 @@ vi.mock('@/sync/ops/machineExecutionRuns', () => ({
     machineExecutionRunsList: (...args: MachineExecutionRunsListArgs) => machineExecutionRunsListSpy(...args),
 }));
 
-vi.mock('@/sync/domains/state/storage', () => ({
-    storage: {
-        getState: () => ({
-            sessions: {
-                'session-1': { id: 'session-1', updatedAt: 0, metadata: { machineId: 'machine-1' } },
-            },
-        }),
-    },
-}));
+vi.mock('@/sync/domains/state/storage', async (importOriginal) => {
+    const actual = await importOriginal<typeof import('@/sync/domains/state/storage')>();
+    return {
+        ...actual,
+        storage: {
+            getState: () => ({
+                sessions: {
+                    'session-1': { id: 'session-1', updatedAt: 0, metadata: { machineId: 'machine-1' } },
+                },
+                sessionMessages: {
+                    'session-1': {
+                        reducerState: {
+                            toolIdToMessageId: new Map<string, string>([['side_1', 'message-side-1']]),
+                        },
+                    },
+                },
+            }),
+        },
+        useSession: () => ({ id: 'session-1', metadata: { flavor: 'codex' }, accessLevel: 'edit', canApprovePermissions: true }),
+        useSessionMessages: () => ({ messages: [], isLoaded: true }),
+        useResolvedSessionMessageRouteId: () => null,
+        useMessage: () => null,
+    };
+});
 vi.mock('@/components/ui/layout/layout', () => ({ layout: { maxWidth: 999 } }));
+vi.mock('@/components/sessions/transcript/details/SessionMessageDetailsView', () => ({
+    SessionMessageDetailsView: () => React.createElement('SessionMessageDetailsView'),
+}));
+vi.mock('@/components/sessions/runs/details/SessionExecutionRunInfoCard', () => ({
+    SessionExecutionRunInfoCard: (props: any) => React.createElement(
+        'View',
+        null,
+        React.createElement('Text', null, props.run?.runId),
+        React.createElement('Text', null, props.daemonProcessLine ?? ''),
+    ),
+}));
 
 describe('Session Run Details Screen', () => {
-    it('configures the run details header and constrains the content width', async () => {
-        stackScreenSpy.mockClear();
-        getRunSpy.mockClear();
-        const Screen = (await import('@/app/(app)/session/[id]/runs/[runId]')).default;
+    beforeAll(async () => {
+        ({ default: SessionRunDetailsScreen } = await import('@/app/(app)/session/[id]/runs/[runId]'));
+    }, 60_000);
 
+    beforeEach(() => {
+        getRunSpy.mockClear();
+        sendRunSpy.mockClear();
+        stopRunSpy.mockClear();
+        machineExecutionRunsListSpy.mockClear();
+        stackScreenSpy.mockClear();
+        routerPushSpy.mockReset();
+        routerBackSpy.mockReset();
+        localSearchParamsMock = { id: 'session-1', runId: 'run_1' };
+        hydrateReady = true;
+    });
+
+    it('configures the run details header and constrains the content width', async () => {
         let tree: renderer.ReactTestRenderer | null = null;
         await act(async () => {
-            tree = renderer.create(React.createElement(Screen));
+            tree = renderer.create(React.createElement(SessionRunDetailsScreen));
             await Promise.resolve();
         });
 
         expect(stackScreenSpy).toHaveBeenCalled();
         const stackOptions = stackScreenSpy.mock.calls.at(-1)?.[0]?.options;
         expect(stackOptions?.headerTitle).toBe('runs.runLabel');
+        expect(typeof stackOptions?.headerLeft).toBe('function');
         expect(typeof stackOptions?.headerRight).toBe('function');
+
+        let headerLeftTree: renderer.ReactTestRenderer | null = null;
+        await act(async () => {
+            headerLeftTree = renderer.create(React.createElement(stackOptions.headerLeft));
+        });
+        const backButton = headerLeftTree!.root.findByType('Pressable');
+        await act(async () => {
+            backButton.props.onPress();
+        });
+        expect(routerBackSpy).toHaveBeenCalledTimes(1);
 
         let headerRightTree: renderer.ReactTestRenderer | null = null;
         await act(async () => {
@@ -187,13 +251,36 @@ describe('Session Run Details Screen', () => {
         expect(hasConstrainedContainer).toBe(true);
     });
 
-    it('loads run details via session execution run get', async () => {
-        getRunSpy.mockClear();
-        const Screen = (await import('@/app/(app)/session/[id]/runs/[runId]')).default;
+    it('renders invalid-link fallback when the run id param is missing', async () => {
+        localSearchParamsMock = { id: 'session-1' };
 
         let tree: renderer.ReactTestRenderer | null = null;
         await act(async () => {
-            tree = renderer.create(React.createElement(Screen));
+            tree = renderer.create(React.createElement(SessionRunDetailsScreen));
+            await Promise.resolve();
+        });
+
+        expect(tree!.root.findAllByType('ActivityIndicator')).toHaveLength(0);
+        expect(tree!.root.findByProps({ testID: 'session-invalid-link' })).toBeTruthy();
+    });
+
+    it('still loads run details while hydration is pending so deleted-session recovery is not blocked', async () => {
+        hydrateReady = false;
+
+        let tree: renderer.ReactTestRenderer | null = null;
+        await act(async () => {
+            tree = renderer.create(React.createElement(SessionRunDetailsScreen));
+            await Promise.resolve();
+        });
+
+        expect(tree).not.toBeNull();
+        expect(getRunSpy).toHaveBeenCalledWith('session-1', expect.objectContaining({ runId: 'run_1' }));
+    });
+
+    it('loads run details via session execution run get', async () => {
+        let tree: renderer.ReactTestRenderer | null = null;
+        await act(async () => {
+            tree = renderer.create(React.createElement(SessionRunDetailsScreen));
             await Promise.resolve();
         });
 
@@ -226,11 +313,9 @@ describe('Session Run Details Screen', () => {
             },
         });
 
-        const Screen = (await import('@/app/(app)/session/[id]/runs/[runId]')).default;
-
         let tree: renderer.ReactTestRenderer | null = null;
         await act(async () => {
-            tree = renderer.create(React.createElement(Screen));
+            tree = renderer.create(React.createElement(SessionRunDetailsScreen));
             await Promise.resolve();
         });
 
@@ -240,13 +325,9 @@ describe('Session Run Details Screen', () => {
     });
 
     it('renders daemon process stats when machine execution runs list includes the run', async () => {
-        getRunSpy.mockClear();
-        machineExecutionRunsListSpy.mockClear();
-        const Screen = (await import('@/app/(app)/session/[id]/runs/[runId]')).default;
-
         let tree: renderer.ReactTestRenderer | null = null;
         await act(async () => {
-            tree = renderer.create(React.createElement(Screen));
+            tree = renderer.create(React.createElement(SessionRunDetailsScreen));
             await Promise.resolve();
         });
 
@@ -258,7 +339,6 @@ describe('Session Run Details Screen', () => {
     });
 
     it('renders structured meta using the structured message registry when available', async () => {
-        getRunSpy.mockClear();
         getRunSpy.mockResolvedValueOnce({
             run: {
                 runId: 'run_1',
@@ -281,11 +361,9 @@ describe('Session Run Details Screen', () => {
             },
         });
 
-        const Screen = (await import('@/app/(app)/session/[id]/runs/[runId]')).default;
-
         let tree: renderer.ReactTestRenderer | null = null;
         await act(async () => {
-            tree = renderer.create(React.createElement(Screen));
+            tree = renderer.create(React.createElement(SessionRunDetailsScreen));
             await Promise.resolve();
         });
 
@@ -294,31 +372,46 @@ describe('Session Run Details Screen', () => {
         expect(textNodes.some((n: any) => String(n.props.children).includes('structured'))).toBe(false);
     });
 
-    it('can stop and send to long-lived running runs', async () => {
-        getRunSpy.mockClear();
-        sendRunSpy.mockClear();
-        stopRunSpy.mockClear();
+    it('opens the owning tool details when the run sidechain maps to a transcript tool message', async () => {
+        let tree: renderer.ReactTestRenderer | null = null;
+        await act(async () => {
+            tree = renderer.create(React.createElement(SessionRunDetailsScreen));
+            await Promise.resolve();
+        });
+
+        const openDetailsButtons = tree!.root.findAll((node) => {
+            if ((node as any).type !== 'Pressable') return false;
+            return String((node as any).props?.accessibilityLabel ?? '') === 'toolView.open';
+        });
+        expect(openDetailsButtons).toHaveLength(1);
+
+        await act(async () => {
+            await openDetailsButtons[0]!.props.onPress();
+        });
+
+        expect(routerPushSpy).toHaveBeenCalledWith('/session/session-1/message/tool%3Aside_1');
+    });
+
+    it('can stop and send to running bounded backend runs', async () => {
         getRunSpy.mockResolvedValueOnce({
             run: {
                 runId: 'run_1',
                 callId: 'call_1',
                 sidechainId: 'side_1',
-                intent: 'voice_agent',
+                intent: 'review',
                 backendId: 'claude',
                 permissionMode: 'read_write',
                 retentionPolicy: 'resumable',
-                runClass: 'long_lived',
+                runClass: 'bounded',
                 ioMode: 'request_response',
                 status: 'running',
                 startedAtMs: 1,
             },
         });
 
-        const Screen = (await import('@/app/(app)/session/[id]/runs/[runId]')).default;
-
         let tree: renderer.ReactTestRenderer | null = null;
         await act(async () => {
-            tree = renderer.create(React.createElement(Screen));
+            tree = renderer.create(React.createElement(SessionRunDetailsScreen));
             await Promise.resolve();
         });
 
@@ -347,5 +440,37 @@ describe('Session Run Details Screen', () => {
             await stopButtons[0]!.props.onPress();
         });
         expect(stopRunSpy).toHaveBeenCalledWith('session-1', expect.objectContaining({ runId: 'run_1' }));
+    });
+
+    it('hides the send composer for running voice-agent runs', async () => {
+        getRunSpy.mockResolvedValueOnce({
+            run: {
+                runId: 'run_1',
+                callId: 'call_1',
+                sidechainId: 'side_1',
+                intent: 'voice_agent',
+                backendId: 'codex',
+                permissionMode: 'read_write',
+                retentionPolicy: 'resumable',
+                runClass: 'long_lived',
+                ioMode: 'streaming',
+                status: 'running',
+                startedAtMs: 1,
+            },
+        });
+
+        let tree: renderer.ReactTestRenderer | null = null;
+        await act(async () => {
+            tree = renderer.create(React.createElement(SessionRunDetailsScreen));
+            await Promise.resolve();
+        });
+
+        expect(tree!.root.findAllByType('TextInput')).toHaveLength(0);
+        const sendButtons = tree!.root.findAll((node) => {
+            if ((node as any).type !== 'Pressable') return false;
+            return String((node as any).props?.accessibilityLabel ?? '') === 'runs.send.a11y.sendToRun';
+        });
+        expect(sendButtons).toHaveLength(0);
+        expect(sendRunSpy).not.toHaveBeenCalled();
     });
 });

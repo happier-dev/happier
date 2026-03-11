@@ -1,5 +1,5 @@
 import React from 'react';
-import { describe, expect, it, vi } from 'vitest';
+import { beforeAll, describe, expect, it, vi } from 'vitest';
 import renderer, { act, type ReactTestInstance } from 'react-test-renderer';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
@@ -33,9 +33,13 @@ function hasFlexGrowOne(value: unknown): boolean {
 }
 
 describe('PathAndResumeRow', () => {
-    it('does not let the path chip flex-grow (keeps chips left-aligned)', async () => {
-        const { PathAndResumeRow } = await import('./PathAndResumeRow');
+    let PathAndResumeRow: (typeof import('./PathAndResumeRow'))['PathAndResumeRow'];
 
+    beforeAll(async () => {
+        ({ PathAndResumeRow } = await import('./PathAndResumeRow'));
+    }, 60_000);
+
+    it('does not let the path chip flex-grow (keeps chips left-aligned)', async () => {
         const styles = {
             pathRow: {},
             actionButtonsLeft: {},
@@ -75,5 +79,39 @@ describe('PathAndResumeRow', () => {
         const computed = styleFn?.({ pressed: false });
         const styleParts = Array.isArray(computed) ? computed : [computed];
         expect(styleParts.some(hasFlexGrowOne)).toBe(false);
+    });
+
+    it('exposes the canonical path chip testID for new-session automation and routing flows', async () => {
+        const styles = {
+            pathRow: {},
+            actionButtonsLeft: {},
+            actionChip: {},
+            actionChipIconOnly: {},
+            actionChipPressed: {},
+            actionChipText: {},
+        };
+
+        let tree: renderer.ReactTestRenderer | undefined;
+        act(() => {
+            tree = renderer.create(
+                React.createElement(PathAndResumeRow, {
+                    styles,
+                    showChipLabels: true,
+                    iconColor: '#000',
+                    currentPath: '',
+                    onPathClick: () => {},
+                    emptyPathLabel: 'Select Path',
+                    resumeSessionId: null,
+                    onResumeClick: undefined,
+                    resumeLabelTitle: 'Resume session',
+                    resumeLabelOptional: 'Resume: Optional',
+                }),
+            );
+        });
+
+        const pathChip = tree?.root.findAll(
+            (node) => String(node.type) === 'Pressable' && node.props?.testID === 'agent-input-path-chip'
+        );
+        expect(pathChip).toHaveLength(1);
     });
 });

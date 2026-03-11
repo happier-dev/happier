@@ -4,6 +4,8 @@ import type { ParticipantRecipientV1 } from '@happier-dev/protocol';
 
 import type { SessionParticipantTarget } from '@/sync/domains/session/participants/participantTargets';
 
+export type ExecutionRunDeliveryMode = 'prompt' | 'steer_if_supported' | 'interrupt';
+
 function recipientsEqual(a: ParticipantRecipientV1 | null, b: ParticipantRecipientV1 | null): boolean {
     if (!a || !b) return a === b;
     if (a.kind !== b.kind) return false;
@@ -33,9 +35,12 @@ export function useSessionRecipientState(params: Readonly<{
     recipient: ParticipantRecipientV1 | null;
     didManualOverride: boolean;
     setManualRecipient: (next: ParticipantRecipientV1 | null) => void;
+    executionRunDelivery: ExecutionRunDeliveryMode;
+    setExecutionRunDelivery: (next: ExecutionRunDeliveryMode) => void;
 }> {
     const [manualRecipient, setManualRecipientState] = React.useState<ParticipantRecipientV1 | null>(null);
     const [didManualOverride, setDidManualOverride] = React.useState(false);
+    const [executionRunDelivery, setExecutionRunDelivery] = React.useState<ExecutionRunDeliveryMode>('steer_if_supported');
 
     // If the manually selected recipient disappears (run completes/team removed), clear it and
     // allow auto-recipient to apply again.
@@ -64,5 +69,7 @@ export function useSessionRecipientState(params: Readonly<{
         recipient: effectiveRecipient,
         didManualOverride,
         setManualRecipient,
+        executionRunDelivery,
+        setExecutionRunDelivery,
     };
 }

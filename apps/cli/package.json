@@ -8,10 +8,6 @@
   "homepage": "https://github.com/happier-dev/happier",
   "bugs": "https://github.com/happier-dev/happier/issues",
   "repository": "happier-dev/happier",
-  "bin": {
-    "happier": "./bin/happier.mjs",
-    "happier-mcp": "./bin/happier-mcp.mjs"
-  },
   "main": "./dist/index.cjs",
   "module": "./dist/index.mjs",
   "types": "./dist/index.d.cts",
@@ -45,10 +41,33 @@
         "types": "./dist/backends/codex/happyMcpStdioBridge.d.mts",
         "default": "./dist/backends/codex/happyMcpStdioBridge.mjs"
       }
+    },
+    "./mcp/bridges/remoteMcpStdioBridge": {
+      "require": {
+        "types": "./dist/mcp/bridges/remoteMcpStdioBridge.d.cts",
+        "default": "./dist/mcp/bridges/remoteMcpStdioBridge.cjs"
+      },
+      "import": {
+        "types": "./dist/mcp/bridges/remoteMcpStdioBridge.d.mts",
+        "default": "./dist/mcp/bridges/remoteMcpStdioBridge.mjs"
+      }
+    },
+    "./mcp/launchers/stdioMcpServerLauncher": {
+      "require": {
+        "types": "./dist/mcp/launchers/stdioMcpServerLauncher.d.cts",
+        "default": "./dist/mcp/launchers/stdioMcpServerLauncher.cjs"
+      },
+      "import": {
+        "types": "./dist/mcp/launchers/stdioMcpServerLauncher.d.mts",
+        "default": "./dist/mcp/launchers/stdioMcpServerLauncher.mjs"
+      }
     }
   },
   "files": [
     "dist",
+    "dist/**",
+    "package-dist",
+    "package-dist/**",
     "bin",
     "scripts/**/*.cjs",
     "scripts/**/*.mjs",
@@ -65,10 +84,10 @@
   ],
   "scripts": {
     "typecheck": "tsc --noEmit",
-    "build": "node scripts/rmDist.mjs && npx tsc --noEmit && npx pkgroll",
+    "build": "node scripts/rmDist.mjs && tsc --noEmit && node scripts/runPkgrollBuild.mjs && node scripts/syncPackageDist.mjs",
     "test": "$npm_execpath run test:unit",
     "test:unit": "$npm_execpath run build && vitest run --config vitest.config.ts",
-    "test:integration": "$npm_execpath run build && vitest run --config vitest.integration.config.ts",
+    "test:integration": "$npm_execpath run build && node scripts/runVitestShards.mjs --config vitest.integration.config.ts",
     "test:slow": "vitest run --config vitest.slow.config.ts",
     "start": "$npm_execpath run build && node ./bin/happier.mjs",
     "dev": "tsx src/index.ts",
@@ -80,7 +99,7 @@
     "pretypecheck": "yarn -s build:shared",
     "prebuild": "yarn -s build:shared",
     "pretest": "yarn -s build:shared",
-    "postinstall": "node -e \"const fs=require('fs');const cp=require('child_process');try{const gate=require('../../scripts/postinstall/shouldRunPostinstall.cjs');if(!gate.shouldRunPostinstall({workspace:'cli',scope:process.env.HAPPIER_INSTALL_SCOPE||''}))process.exit(0);}catch{}if(!fs.existsSync('scripts/unpack-tools.cjs'))process.exit(0);const r=cp.spawnSync(process.execPath,['scripts/unpack-tools.cjs'],{stdio:'inherit'});process.exit(r.status??1);\"",
+    "postinstall": "node -e \"const fs=require('fs');const cp=require('child_process');try{const gate=require('../../scripts/postinstall/shouldRunPostinstall.cjs');if(!gate.shouldRunPostinstall({workspace:'cli',scope:process.env.HAPPIER_INSTALL_SCOPE||''}))process.exit(0);}catch{}if(!fs.existsSync('scripts/unpack-tools.cjs'))process.exit(0);const r=cp.spawnSync(process.execPath,['scripts/unpack-tools.cjs'],{stdio:'inherit'});if((r.status??1)!==0)process.exit(r.status??1);if(fs.existsSync('scripts/postinstall/fix-node-pty-spawn-helper-permissions.cjs')){cp.spawnSync(process.execPath,['scripts/postinstall/fix-node-pty-spawn-helper-permissions.cjs'],{stdio:'inherit'});}process.exit(0);\"",
     "tool:trace:extract": "tsx scripts/tool-trace-extract.ts",
     "tool:trace:fixtures:v1": "tsx scripts/tool-trace-fixtures-v1.ts",
     "// ==== Dev/Stable Variant Management ====": "",
@@ -123,6 +142,7 @@
     "@types/react": "^19.2.7",
     "@types/tmp": "^0.2.6",
     "ai": "^5.0.107",
+    "archiver": "^7.0.1",
     "axios": "^1.13.2",
     "chalk": "^5.6.2",
     "cross-spawn": "^7.0.6",
@@ -133,6 +153,8 @@
     "http-proxy-middleware": "^3.0.5",
     "https-proxy-agent": "^7.0.6",
     "ink": "^6.5.1",
+    "@homebridge/node-pty-prebuilt-multiarch": "^0.13.1",
+    "node-pty": "^1.1.0",
     "open": "^10.2.0",
     "openapi-types": "12.1.3",
     "ps-list": "^8.1.1",
@@ -147,6 +169,7 @@
   },
   "devDependencies": {
     "@eslint/compat": "^1",
+    "@types/archiver": "^7.0.0",
     "@types/node": ">=20",
     "cross-env": "^10.1.0",
     "dotenv": "^16.6.1",

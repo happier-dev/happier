@@ -1,7 +1,39 @@
 import { asRecord, firstNonEmptyString, hasNonEmptyRecord } from './_shared';
 import { isChangeTitleToolNameAlias } from '@happier-dev/protocol/tools/v2';
 
-function canonicalizeToolNameNonV2(toolName: string, input: unknown): string {
+function isLegacySlashChangeTitleName(name: string): boolean {
+    const normalized = typeof name === 'string' ? name.trim().toLowerCase() : '';
+    return normalized === 'happier/change_title' || normalized === 'happy/change_title';
+}
+
+function isUiChangeTitleAlias(name: string): boolean {
+    return isChangeTitleToolNameAlias(name) || isLegacySlashChangeTitleName(name);
+}
+
+function extractContradictoryWrappedToolName(params: {
+    toolName: string;
+    input: unknown;
+    description?: string | null;
+}): string | null {
+    if (!isUiChangeTitleAlias(params.toolName)) return null;
+
+    const inputObj = asRecord(params.input);
+    const permission = asRecord(inputObj?.permission);
+    const directToolName = firstNonEmptyString(inputObj?.toolName);
+    const permissionToolName = firstNonEmptyString(permission?.toolName);
+    const describedToolName = (() => {
+        const raw = firstNonEmptyString(params.description);
+        if (!raw) return null;
+        const match = raw.match(/^tool:\s*(.+)$/i);
+        return match?.[1]?.trim() || null;
+    })();
+
+    const candidates = [directToolName, permissionToolName, describedToolName].filter((value): value is string => !!value);
+    const contradictory = candidates.find((candidate) => !isUiChangeTitleAlias(candidate));
+    return contradictory ?? null;
+}
+
+function canonicalizeToolNameNonV2(toolName: string, input: unknown, description?: string | null): string {
     // NOTE: This path covers:
     // - legacy sessions (pre V2 tool normalization)
     // - Claude local-control sessions (tool events produced from a transcript; no `_happier` metadata)
@@ -11,9 +43,14 @@ function canonicalizeToolNameNonV2(toolName: string, input: unknown): string {
     if (toolName === 'CodexPatch' || toolName === 'GeminiPatch') return 'Patch';
     if (toolName === 'CodexDiff' || toolName === 'GeminiDiff') return 'Diff';
     if (toolName === 'CodexReasoning' || toolName === 'GeminiReasoning' || toolName === 'think') return 'Reasoning';
+    if (toolName === 'Agent') return 'Task';
     if (toolName === 'exit_plan_mode') return 'ExitPlanMode';
 
-    if (isChangeTitleToolNameAlias(toolName)) return 'change_title';
+    if (isUiChangeTitleAlias(toolName)) {
+        const contradictoryWrappedToolName = extractContradictoryWrappedToolName({ toolName, input, description });
+        if (contradictoryWrappedToolName) return 'unknown';
+        return 'change_title';
+    }
 
     const lower = toolName.toLowerCase();
     if (lower === 'patch') return 'Patch';
@@ -76,7 +113,26 @@ function canonicalizeToolNameNonV2(toolName: string, input: unknown): string {
     return toolName;
 }
 
-export function canonicalizeToolNameForRendering(toolName: string, input: unknown): string {
+function resolveSpecificAcpWrappedToolName(toolName: string, input: unknown): string | null {
+    const inputObj = asRecord(input);
+    const acpTitle = firstNonEmptyString(asRecord(inputObj?._acp)?.title) ?? firstNonEmptyString(inputObj?.title);
+    if (!acpTitle || acpTitle.includes(' ')) return null;
+
+    const normalizedToolName = toolName.trim().toLowerCase();
+    const normalizedAcpTitle = acpTitle.trim().toLowerCase();
+    if (normalizedToolName === normalizedAcpTitle) return null;
+
+    if ((normalizedToolName === 'read' || normalizedToolName === 'read_file' || normalizedToolName === 'readfile') && normalizedAcpTitle === 'web_fetch') {
+        return 'WebFetch';
+    }
+    if (normalizedToolName === 'search' && normalizedAcpTitle === 'web_search') {
+        return 'WebSearch';
+    }
+
+    return null;
+}
+
+export function canonicalizeToolNameForRendering(toolName: string, input: unknown, description?: string | null): string {
     const inputObj = asRecord(input);
     const happier = asRecord(asRecord(inputObj)?._happier);
     const canonicalFromHappier = firstNonEmptyString(happier?.canonicalToolName);
@@ -87,5 +143,8 @@ export function canonicalizeToolNameForRendering(toolName: string, input: unknow
     const canonicalFromHappy = firstNonEmptyString(happy?.canonicalToolName);
     if (canonicalFromHappy) return canonicalFromHappy;
 
-    return canonicalizeToolNameNonV2(toolName, input);
+    const specificAcpWrappedToolName = resolveSpecificAcpWrappedToolName(toolName, input);
+    if (specificAcpWrappedToolName) return specificAcpWrappedToolName;
+
+    return canonicalizeToolNameNonV2(toolName, input, description);
 }

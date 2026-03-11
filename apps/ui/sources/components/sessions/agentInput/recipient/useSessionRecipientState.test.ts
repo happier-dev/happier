@@ -54,6 +54,22 @@ function target(recipient: ParticipantRecipientV1, label = 'x'): SessionParticip
 }
 
 describe('useSessionRecipientState', () => {
+    it('defaults execution-run delivery to steer_if_supported and allows overriding', async () => {
+        const auto: ParticipantRecipientV1 = { kind: 'execution_run', runId: 'run_1' };
+        const targets = [target(auto)];
+
+        const hook = await renderHook(() => useSessionRecipientState({ targets, autoRecipient: auto }));
+        expect((hook.getCurrent() as any).executionRunDelivery).toBe('steer_if_supported');
+
+        await act(async () => {
+            (hook.getCurrent() as any).setExecutionRunDelivery('interrupt');
+            await flushAsync();
+        });
+
+        expect((hook.getCurrent() as any).executionRunDelivery).toBe('interrupt');
+        hook.unmount();
+    });
+
     it('applies autoRecipient when user has not manually selected a recipient', async () => {
         const auto: ParticipantRecipientV1 = { kind: 'execution_run', runId: 'run_1' };
         const targets = [target(auto)];

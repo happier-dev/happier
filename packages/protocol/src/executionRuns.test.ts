@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import * as Protocol from './index.js';
 
 import {
   ExecutionRunIntentSchema,
@@ -29,23 +30,27 @@ describe('executionRuns protocol', () => {
       callId: 'subagent_run_1',
       sidechainId: 'subagent_run_1',
       intent: 'review',
-      backendId: 'claude',
+      backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
       permissionMode: 'read_only',
       retentionPolicy: 'ephemeral',
       runClass: 'bounded',
       ioMode: 'request_response',
       status: 'succeeded',
+      turnInFlight: true,
       startedAtMs: now,
       finishedAtMs: now + 1,
+      transcript: { persistenceMode: 'persistent', epoch: 2 },
     });
     expect(parsed.intent).toBe('review');
+    expect((parsed as any).turnInFlight).toBe(true);
+    expect((parsed as any).transcript).toMatchObject({ persistenceMode: 'persistent', epoch: 2 });
 
     expect(() => ExecutionRunPublicStateSchema.parse({
       runId: 'run_1',
       callId: 'subagent_run_1',
       sidechainId: 'subagent_run_1',
       intent: 'review',
-      backendId: 'claude',
+      backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
       status: 'succeeded',
       startedAtMs: now,
     })).toThrow();
@@ -54,7 +59,7 @@ describe('executionRuns protocol', () => {
   it('validates start request', () => {
     const parsed = ExecutionRunStartRequestSchema.parse({
       intent: 'review',
-      backendId: 'claude',
+      backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
       instructions: 'Review.',
       permissionMode: 'read_only',
       retentionPolicy: 'ephemeral',
@@ -67,24 +72,28 @@ describe('executionRuns protocol', () => {
   it('validates optional resumeHandle on start requests', () => {
     expect(() => ExecutionRunStartRequestSchema.parse({
       intent: 'review',
-      backendId: 'claude',
+      backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
       instructions: 'Review.',
       permissionMode: 'read_only',
       retentionPolicy: 'resumable',
       runClass: 'bounded',
       ioMode: 'request_response',
-      resumeHandle: { kind: 'vendor_session.v1', backendId: 'claude' },
+      resumeHandle: { kind: 'vendor_session.v1', backendTarget: { kind: 'builtInAgent', agentId: 'claude' } },
     })).toThrow();
 
     const parsed = ExecutionRunStartRequestSchema.parse({
       intent: 'review',
-      backendId: 'claude',
+      backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
       instructions: 'Review.',
       permissionMode: 'read_only',
       retentionPolicy: 'resumable',
       runClass: 'bounded',
       ioMode: 'request_response',
-      resumeHandle: { kind: 'vendor_session.v1', backendId: 'claude', vendorSessionId: 'vendor_1' },
+      resumeHandle: {
+        kind: 'vendor_session.v1',
+        backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+        vendorSessionId: 'vendor_1',
+      },
     }) as any;
     expect(parsed.resumeHandle?.kind).toBe('vendor_session.v1');
   });
@@ -92,7 +101,7 @@ describe('executionRuns protocol', () => {
   it('validates optional display fields for group-chat future-proofing', () => {
     expect(() => ExecutionRunStartRequestSchema.parse({
       intent: 'review',
-      backendId: 'claude',
+      backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
       instructions: 'Review.',
       permissionMode: 'read_only',
       retentionPolicy: 'ephemeral',
@@ -103,7 +112,7 @@ describe('executionRuns protocol', () => {
 
     const parsed = ExecutionRunStartRequestSchema.parse({
       intent: 'review',
-      backendId: 'claude',
+      backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
       instructions: 'Review.',
       permissionMode: 'read_only',
       retentionPolicy: 'ephemeral',
@@ -223,6 +232,42 @@ describe('executionRuns protocol', () => {
     })).not.toThrow();
     expect(() => ParticipantMessageV1Schema.parse({
       recipient: { kind: 'agent_team_broadcast', teamId: 'probe' },
+    })).not.toThrow();
+  });
+
+  it('exports and validates subagent_launch.v1 meta payload', () => {
+    expect('SubagentLaunchV1Schema' in Protocol).toBe(true);
+    const schema = (Protocol as { SubagentLaunchV1Schema: { parse: (value: unknown) => unknown } }).SubagentLaunchV1Schema;
+
+    expect(() => schema.parse({
+      kind: 'agent_team_create',
+      teamId: 'team_1',
+      description: 'Coordinate work',
+    })).not.toThrow();
+
+    expect(() => schema.parse({
+      kind: 'agent_team_member_create',
+      teamId: 'team_1',
+      memberLabel: 'Alice',
+      instructions: 'Review the routing changes',
+      runInBackground: true,
+    })).not.toThrow();
+  });
+
+  it('exports and validates subagent_command.v1 meta payload', () => {
+    expect('SubagentCommandV1Schema' in Protocol).toBe(true);
+    const schema = (Protocol as { SubagentCommandV1Schema: { parse: (value: unknown) => unknown } }).SubagentCommandV1Schema;
+
+    expect(() => schema.parse({
+      kind: 'agent_team_delete',
+      teamId: 'team_1',
+    })).not.toThrow();
+
+    expect(() => schema.parse({
+      kind: 'agent_team_member_delete',
+      teamId: 'team_1',
+      memberId: 'alice@team_1',
+      memberLabel: 'Alice',
     })).not.toThrow();
   });
 });

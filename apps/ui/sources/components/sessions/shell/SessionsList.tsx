@@ -7,7 +7,7 @@ import { SessionListViewItem, useSetting, useSettingMutable } from '@/sync/domai
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useVisibleSessionListViewData } from '@/hooks/session/useVisibleSessionListViewData';
 import { Typography } from '@/constants/Typography';
-import { StyleSheet } from 'react-native-unistyles';
+import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { useIsTablet } from '@/utils/platform/responsive';
 import { UpdateBanner } from '@/components/ui/feedback/UpdateBanner';
 import { RecoveryKeyReminderBanner } from '@/components/account/RecoveryKeyReminderBanner';
@@ -19,6 +19,7 @@ import { formatPathRelativeToHome } from '@/utils/sessions/sessionUtils';
 import { getAllKnownTags, getTagsForSession } from './sessionTagUtils';
 import { t } from '@/text';
 import { SessionItem } from './SessionItem';
+import { Ionicons } from '@expo/vector-icons';
 
 const stylesheet = StyleSheet.create((theme) => ({
     container: {
@@ -110,6 +111,7 @@ type SessionListBlock =
 
 export function SessionsList() {
     const styles = stylesheet;
+    const { theme } = useUnistyles();
     const safeArea = useSafeAreaInsets();
     const data = useVisibleSessionListViewData();
     const pathname = usePathname();
@@ -317,19 +319,31 @@ export function SessionsList() {
         );
     };
 
-    const VirtualizedFooterComponent = () => {
+    const renderVirtualizedFooter = React.useCallback(() => {
         return (
             <View style={styles.footerContainer}>
                 <Pressable
-                    style={styles.footerButton}
+                    style={{
+                        backgroundColor: theme.colors.surface,
+                        borderRadius: 12,
+                        paddingVertical: 10,
+                        paddingHorizontal: 12,
+                        alignSelf: 'stretch',
+                        flexDirection: 'row',
+                        alignItems: 'center',
+                        gap: 8,
+                    }}
                     onPress={() => router.push('/session/archived')}
                     accessibilityRole="button"
                 >
-                    <Text style={styles.footerButtonText}>{t('sessionInfo.archivedSessions')}</Text>
+                    <Ionicons name="archive-outline" size={18} color={theme.colors.text} />
+                    <Text style={{ fontSize: 13, color: theme.colors.text }}>
+                        {t('sessionInfo.archivedSessions')}
+                    </Text>
                 </Pressable>
             </View>
         );
-    };
+    }, [router, styles.footerContainer, theme.colors.surface, theme.colors.text]);
 
     const virtualizedListContent = Platform.OS === 'web' ? (
         <FlatList
@@ -341,7 +355,7 @@ export function SessionsList() {
             keyExtractor={listItemKeyExtractor as any}
             contentContainerStyle={{ paddingBottom: safeArea.bottom + 128, maxWidth: layout.maxWidth }}
             ListHeaderComponent={VirtualizedHeaderComponent as any}
-            ListFooterComponent={VirtualizedFooterComponent as any}
+            ListFooterComponent={renderVirtualizedFooter as any}
         />
     ) : (
         <FlashList

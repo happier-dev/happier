@@ -1,6 +1,7 @@
 import type { RpcHandlerRegistrar } from '@/api/rpc/types';
 import type { ACPMessageData, ACPProvider } from '@/api/session/sessionMessageTypes';
 import type { AgentBackend } from '@/agent/core/AgentBackend';
+import type { ExecutionRunPublicState } from '@happier-dev/protocol';
 
 import { SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc';
 import {
@@ -41,9 +42,28 @@ export function registerExecutionRunHandlers(
     parentProvider: ACPProvider;
     createBackend: (opts: { runId?: string; backendId: string; permissionMode: string; modelId?: string; start?: any }) => AgentBackend;
     sendAcp: (provider: ACPProvider, body: ACPMessageData, opts?: { meta?: Record<string, unknown> }) => void;
+    streamedTranscriptSession?: Readonly<{
+      sendAgentMessageCommitted: (
+        provider: ACPProvider,
+        body: ACPMessageData,
+        opts: { localId: string; meta?: Record<string, unknown> },
+      ) => Promise<void>;
+      sendTranscriptDraftDelta: (
+        provider: ACPProvider,
+        params: {
+          localId: string;
+          segmentKind: 'assistant' | 'thinking';
+          sidechainId: string | null;
+          deltaText: string;
+          createdAtMs: number;
+        },
+      ) => void;
+    }>;
     transcriptWriter?: Readonly<{
       appendUserText: (text: string, meta: Record<string, unknown>) => void | Promise<void>;
       appendAssistantText: (text: string, meta: Record<string, unknown>) => void | Promise<void>;
+      appendUserTextCommitted?: (text: string, meta: Record<string, unknown>) => Promise<void>;
+      appendAssistantTextCommitted?: (text: string, meta: Record<string, unknown>) => Promise<void>;
     }>;
     getServerFeaturesSnapshot?: () => CliServerFeaturesSnapshot | undefined;
     policy?: Readonly<{
@@ -53,6 +73,7 @@ export function registerExecutionRunHandlers(
       maxDepth?: number;
     }>;
     budgetRegistry?: ExecutionBudgetRegistry;
+    onExecutionRunPublicStateUpdated?: (run: ExecutionRunPublicState) => void;
   }>,
 ): void {
   const policy = resolveExecutionRunPolicy({
@@ -70,7 +91,9 @@ export function registerExecutionRunHandlers(
     cwd: ctx.cwd,
     createBackend: ctx.createBackend,
     sendAcp: ctx.sendAcp,
+    streamedTranscriptSession: ctx.streamedTranscriptSession,
     transcriptWriter: ctx.transcriptWriter,
+    onPublicStateUpdated: ctx.onExecutionRunPublicStateUpdated,
     boundedTimeoutMs: policy.boundedTimeoutMs ?? undefined,
     maxTurns: policy.maxTurns ?? undefined,
     budgetRegistry: ctx.budgetRegistry,
@@ -237,7 +260,11 @@ export function registerExecutionRunHandlers(
     if (!isExecutionRunsEnabled()) return executionRunsDisabled();
     const parsed = ExecutionRunTurnStreamStartRequestSchema.safeParse(raw);
     if (!parsed.success) return invalidParams();
-    const started = await manager.startTurnStream(parsed.data.runId, { message: parsed.data.message, resume: parsed.data.resume });
+    const started = await manager.startTurnStream(parsed.data.runId, {
+      message: parsed.data.message,
+      ...(typeof parsed.data.displayMessage === 'string' ? { displayMessage: parsed.data.displayMessage } : {}),
+      resume: parsed.data.resume,
+    });
     if (!started.ok) return { ok: false, error: started.error, errorCode: started.errorCode };
     return { streamId: started.streamId };
   });

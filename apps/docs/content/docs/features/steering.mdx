@@ -1,22 +1,22 @@
 ---
-title: Steering while busy
-description: Send context updates into an in-flight turn when the backend supports steering.
+title: Steering & interrupting
+description: Understand how Happier updates a busy lead session or a running execution run without losing your message.
 ---
 
-Happier supports **in-flight steering** for compatible runtimes.
+Happier supports two related busy-send behaviors:
 
-Steering means you can send a new user message **without interrupting the current turn**. The message is injected as extra context while the agent is still working.
+- **session steering** for the main lead session, and
+- **execution-run delivery modes** for running subagents and delegate/review runs.
 
-## When steering applies
+The shared goal is the same: let you send new context while something is already busy, without making you guess whether the message will be lost.
 
-Steering is used only when all conditions are true:
+## Session steering
 
-- the current backend/runtime advertises steering support,
-- the session is online and agent-ready,
-- a turn is currently in flight,
-- your send policy is set to steer while busy.
+Session steering means you send a new lead message while the main session is still in the middle of a turn.
 
-If these conditions are not met, Happier falls back to normal pending-queue behavior.
+When the current backend/runtime supports in-flight steering, Happier can inject the message into the active turn instead of forcing you to wait.
+
+If steering is not available for that session/runtime, Happier falls back to the normal busy-send path for the main session.
 
 ## Busy-session send policy
 
@@ -32,16 +32,53 @@ You can choose:
 - **Steer immediately**: send immediately and steer the active turn.
 - **Server pending**: store message in pending queue first.
 
-## Interaction with pending queue
+## Execution-run delivery modes
 
-Steering and pending queue are complementary:
+When the selected recipient is a **running execution run**, Happier shows a **Delivery** chip next to the composer.
+
+The app currently exposes two modes:
+
+### Steer
+
+This is the default for execution runs.
+
+Behavior:
+
+- if the backend supports steering, Happier steers the active turn,
+- otherwise Happier aborts the current turn and immediately sends a new turn,
+- the run stays alive either way.
+
+### Interrupt
+
+Behavior:
+
+- Happier always aborts the current turn,
+- then immediately sends your message as a new turn,
+- the run continues from there instead of being fully stopped.
+
+## Important distinction: interrupting a turn is not stopping a run
+
+For execution runs, an **interrupt** changes the current turn.
+
+It does **not** mean:
+
+- stop the whole run,
+- delete the run,
+- remove the run from history.
+
+The run only leaves the available recipient list when it is no longer sendable, such as after stop/cancel, completion, or when a bounded run has already left its in-flight turn.
+
+## Interaction with pending queue and routing
+
+Session steering and pending queue are complementary:
 
 - Use steering for quick context corrections while the turn is running.
 - Use pending queue when you want ordered, editable messages before execution.
 
-If steer fails for any reason, Happier uses queue fallback so messages are not lost.
+Execution-run delivery is separate from that session-level pending behavior. For running execution runs, use the recipient and delivery chips documented here and in the participant-routing guide.
 
 ## Related pages
 
+- [Participant routing & live run messaging](/docs/features/participant-routing)
 - [Pending queue](/docs/features/pending-queue)
 - [Permissions](/docs/features/permissions)

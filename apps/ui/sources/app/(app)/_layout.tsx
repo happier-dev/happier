@@ -612,10 +612,18 @@ export default function RootLayout() {
                 }}
             />
             <Stack.Screen
-                name="session/[id]/files"
+                name="session/[id]/runs/new"
                 options={{
                     headerShown: true,
-                    headerTitle: t('common.files'),
+                    headerTitle: '',
+                    headerBackTitle: t('common.back'),
+                }}
+            />
+            <Stack.Screen
+                name="session/[id]/runs/[runId]"
+                options={{
+                    headerShown: true,
+                    headerTitle: '',
                     headerBackTitle: t('common.back'),
                 }}
             />
@@ -623,6 +631,14 @@ export default function RootLayout() {
                 name="session/[id]/index"
                 options={{
                     headerShown: false
+                }}
+            />
+            <Stack.Screen
+                name="session/[id]/message/[messageId]"
+                options={{
+                    headerShown: true,
+                    headerTitle: '',
+                    headerBackTitle: t('common.back'),
                 }}
             />
             <Stack.Screen

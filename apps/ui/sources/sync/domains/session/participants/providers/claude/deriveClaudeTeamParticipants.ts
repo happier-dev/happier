@@ -75,6 +75,59 @@ function hasAgentTeamCreateSuccessSignal(value: unknown, depth = 0): boolean {
     return false;
 }
 
+function hasAgentTeamDeleteFailureSignal(value: unknown, depth = 0): boolean {
+    if (depth > 4 || value == null) return false;
+
+    if (typeof value === 'string') {
+        const normalized = value.replaceAll('\\"', '"').trim();
+        const parsed = tryParseJsonObjectString(normalized);
+        if (parsed) return hasAgentTeamDeleteFailureSignal(parsed, depth + 1);
+        const lower = normalized.toLowerCase();
+        return (
+            /^error\s*:/i.test(normalized)
+            || lower.includes('cannot cleanup team')
+            || lower.includes('use requestshutdown')
+            || /"ok"\s*:\s*false/i.test(normalized)
+            || /"success"\s*:\s*false/i.test(normalized)
+        );
+    }
+
+    if (Array.isArray(value)) {
+        return value.some((item) => hasAgentTeamDeleteFailureSignal(item, depth + 1));
+    }
+
+    if (typeof value === 'object') {
+        const record = value as Record<string, unknown>;
+        if (record.ok === false || record.success === false) return true;
+        return Object.values(record).some((item) => hasAgentTeamDeleteFailureSignal(item, depth + 1));
+    }
+
+    return false;
+}
+
+function hasAgentTeamDeleteSuccessSignal(value: unknown, depth = 0): boolean {
+    if (depth > 4 || value == null) return false;
+
+    if (typeof value === 'string') {
+        const normalized = value.replaceAll('\\"', '"').trim();
+        const parsed = tryParseJsonObjectString(normalized);
+        if (parsed) return hasAgentTeamDeleteSuccessSignal(parsed, depth + 1);
+        return /"ok"\s*:\s*true/i.test(normalized) || /"success"\s*:\s*true/i.test(normalized);
+    }
+
+    if (Array.isArray(value)) {
+        return value.some((item) => hasAgentTeamDeleteSuccessSignal(item, depth + 1));
+    }
+
+    if (typeof value === 'object') {
+        const record = value as Record<string, unknown>;
+        if (record.ok === true || record.success === true) return true;
+        return Object.values(record).some((item) => hasAgentTeamDeleteSuccessSignal(item, depth + 1));
+    }
+
+    return false;
+}
+
 function readTeamIdFromAgentTeamCreateInput(input: unknown): string | null {
     if (!input || typeof input !== 'object' || Array.isArray(input)) return null;
     const record = input as Record<string, unknown>;
@@ -94,6 +147,40 @@ function readTeamIdFromAgentTeamCreateInput(input: unknown): string | null {
     return trimmed.length > 0 ? trimmed : null;
 }
 
+function readTeamIdFromAgentTeamCreateResult(result: unknown): string | null {
+    if (!result) return null;
+
+    if (typeof result === 'string') {
+        const parsed = tryParseJsonObjectString(result);
+        if (parsed) return readTeamIdFromAgentTeamCreateResult(parsed);
+        return null;
+    }
+
+    if (result && typeof result === 'object' && !Array.isArray(result)) {
+        const record = result as Record<string, unknown>;
+
+        const toolUseResult = (record as any).tool_use_result;
+        if (toolUseResult && typeof toolUseResult === 'object' && !Array.isArray(toolUseResult)) {
+            const teamName = typeof (toolUseResult as any).team_name === 'string' ? String((toolUseResult as any).team_name).trim() : '';
+            if (teamName) return teamName;
+        }
+
+        const directTeamName = typeof (record as any).team_name === 'string' ? String((record as any).team_name).trim() : '';
+        if (directTeamName) return directTeamName;
+    }
+
+    const text = coerceTextFromToolResult(result);
+    if (!text) return null;
+
+    const parsed = tryParseJsonObjectString(text.replaceAll('\\"', '"'));
+    if (parsed && typeof parsed.team_name === 'string') {
+        const teamName = String(parsed.team_name).trim();
+        if (teamName) return teamName;
+    }
+
+    return null;
+}
+
 function readMemberIdFromAgentTeamDeleteInput(input: unknown, teamIdFallback: string | null): string | null {
     if (!input || typeof input !== 'object' || Array.isArray(input)) return null;
     const record = input as Record<string, unknown>;
@@ -107,8 +194,16 @@ function readMemberIdFromAgentTeamDeleteInput(input: unknown, teamIdFallback: st
                     : '';
     if (directId.length > 0) return directId;
 
-    const rawName = typeof (record as any).name === 'string' ? String((record as any).name).trim() : '';
+    const rawName =
+        typeof (record as any).name === 'string'
+            ? String((record as any).name).trim()
+            : typeof (record as any).recipient === 'string'
+                ? String((record as any).recipient).trim()
+                : typeof (record as any).target === 'string'
+                    ? String((record as any).target).trim()
+                    : '';
     if (!rawName) return null;
+    if (['broadcast', 'team', 'all', 'everyone', 'teammates', 'members'].includes(rawName.toLowerCase())) return null;
     if (rawName.includes('@')) return rawName;
 
     const teamId = readTeamIdFromAgentTeamCreateInput(input) ?? teamIdFallback;
@@ -189,25 +284,81 @@ function readTeammateIdFromShutdownApprovedToolMessages(
     for (const message of messages) {
         if (!message || typeof message !== 'object' || Array.isArray(message)) continue;
         const text = typeof (message as any).text === 'string' ? String((message as any).text).trim() : '';
-        if (!text.startsWith('{') || !text.endsWith('}')) continue;
+        if (text) {
+            const normalizedText = (() => {
+                let current = text;
+                // Some sidechain payloads arrive double-encoded as JSON strings, e.g.
+                // "\"{\\\"type\\\":\\\"shutdown_approved\\\",...}\""
+                for (let i = 0; i < 2; i += 1) {
+                    const trimmed = current.trim();
+                    if (!(trimmed.startsWith('"') && trimmed.endsWith('"'))) break;
+                    try {
+                        const unwrapped = JSON.parse(trimmed);
+                        if (typeof unwrapped !== 'string') break;
+                        current = unwrapped;
+                    } catch {
+                        break;
+                    }
+                }
+                return current.trim();
+            })();
 
-        let parsed: unknown = null;
-        try {
-            parsed = JSON.parse(text);
-        } catch {
-            parsed = null;
+            const parsed =
+                tryParseJsonObjectString(normalizedText)
+                ?? (normalizedText.includes('\\"') ? tryParseJsonObjectString(normalizedText.replaceAll('\\"', '"')) : null);
+            if (parsed) {
+                const eventType = typeof (parsed as any).type === 'string' ? String((parsed as any).type).trim() : '';
+                if (eventType === 'shutdown_approved') {
+                    const from = typeof (parsed as any).from === 'string' ? String((parsed as any).from).trim() : '';
+                    if (from) {
+                        const resolved = resolveTeammateIdFromShutdownNotification(from, teamId, membersById);
+                        if (resolved) return resolved;
+                    }
+                }
+            }
         }
-        if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) continue;
 
-        const eventType = typeof (parsed as any).type === 'string' ? String((parsed as any).type).trim() : '';
-        if (eventType !== 'shutdown_approved') continue;
-        const from = typeof (parsed as any).from === 'string' ? String((parsed as any).from).trim() : '';
-        if (!from) continue;
+        const nestedChildren = Array.isArray((message as any).children) ? (message as any).children : null;
+        if (nestedChildren) {
+            const nestedResolved = readTeammateIdFromShutdownApprovedToolMessages(nestedChildren, teamId, membersById);
+            if (nestedResolved) return nestedResolved;
+        }
 
-        const resolved = resolveTeammateIdFromShutdownNotification(from, teamId, membersById);
-        if (resolved) return resolved;
+        const nestedToolMessages =
+            (message as any).tool && typeof (message as any).tool === 'object' && Array.isArray((message as any).tool.messages)
+                ? (message as any).tool.messages
+                : null;
+        if (nestedToolMessages) {
+            const nestedResolved = readTeammateIdFromShutdownApprovedToolMessages(nestedToolMessages, teamId, membersById);
+            if (nestedResolved) return nestedResolved;
+        }
+
+        const nestedMessages = Array.isArray((message as any).messages) ? (message as any).messages : null;
+        if (nestedMessages) {
+            const nestedResolved = readTeammateIdFromShutdownApprovedToolMessages(nestedMessages, teamId, membersById);
+            if (nestedResolved) return nestedResolved;
+        }
     }
     return null;
+}
+
+export function claudeFocusedTranscriptShowsTeammateShutdownApproved(params: Readonly<{
+    teamId: string;
+    memberId: string;
+    memberLabel?: string;
+    focusedMessages: readonly Message[] | undefined;
+}>): boolean {
+    const focusedMessages = params.focusedMessages;
+    if (!Array.isArray(focusedMessages) || focusedMessages.length === 0) return false;
+
+    const membersById = new Map<string, { memberId: string; memberLabel?: string; memberColor?: string }>();
+    membersById.set(params.memberId, {
+        memberId: params.memberId,
+        ...(params.memberLabel ? { memberLabel: params.memberLabel } : {}),
+    });
+
+    const shutdownMemberId = readTeammateIdFromShutdownApprovedToolMessages(focusedMessages, params.teamId, membersById);
+    return shutdownMemberId === params.memberId;
 }
 
 function readClaudeTeamIdFromConfigPath(path: string): string | null {
@@ -297,6 +448,25 @@ function deriveRemovedTeamMemberIdsFromConfigMutation(params: Readonly<{
     return { teamId, removedMemberIds: Array.from(removedIds) };
 }
 
+function readMemberLabelFromAgentTeamSendMessageInput(input: unknown): string | null {
+    if (!input || typeof input !== 'object' || Array.isArray(input)) return null;
+    const record = input as Record<string, unknown>;
+    const raw =
+        typeof (record as any).name === 'string'
+            ? String((record as any).name).trim()
+            : typeof (record as any).agent_name === 'string'
+                ? String((record as any).agent_name).trim()
+                : typeof (record as any).agentName === 'string'
+                    ? String((record as any).agentName).trim()
+                    : typeof (record as any).recipient === 'string'
+                        ? String((record as any).recipient).trim()
+                        : typeof (record as any).target === 'string'
+                            ? String((record as any).target).trim()
+                            : '';
+    if (['broadcast', 'team', 'all', 'everyone', 'teammates', 'members'].includes(raw.toLowerCase())) return null;
+    return raw.length > 0 ? raw : null;
+}
+
 export function deriveClaudeSpawnedTeammateFromTaskToolResult(
     result: unknown,
 ): { teamId: string; memberId: string; memberLabel?: string; memberColor?: string } | null {
@@ -372,6 +542,7 @@ export function deriveClaudeSpawnedTeammateFromTaskToolInput(
 export function deriveClaudeTeamParticipants(params: Readonly<{ messages: readonly Message[] }>): ClaudeTeamParticipantSnapshot {
     let teamId: string | null = null;
     const membersById = new Map<string, { memberId: string; memberLabel?: string; memberColor?: string }>();
+    const terminatedMemberIdsLower = new Set<string>();
     const orderedToolMessages = params.messages
         .map((message, index) => ({ message, index }))
         .filter((entry): entry is { message: ToolCallMessage; index: number } => Boolean(entry.message) && entry.message.kind === 'tool-call')
@@ -403,7 +574,9 @@ export function deriveClaudeTeamParticipants(params: Readonly<{ messages: readon
     for (const { message: toolMsg } of orderedToolMessages) {
         const toolName = toolMsg.tool?.name;
         if (toolName === 'TeamCreate' || toolName === 'AgentTeamCreate') {
-            const candidateTeamId = readTeamIdFromAgentTeamCreateInput(toolMsg.tool.input);
+            const candidateTeamId =
+                readTeamIdFromAgentTeamCreateResult(toolMsg.tool.result)
+                ?? readTeamIdFromAgentTeamCreateInput(toolMsg.tool.input);
             if (!candidateTeamId) continue;
 
             if (hasAgentTeamCreateFailureSignal(toolMsg.tool.result)) continue;
@@ -416,17 +589,36 @@ export function deriveClaudeTeamParticipants(params: Readonly<{ messages: readon
         }
         if (toolName === 'TeamDelete' || toolName === 'AgentTeamDelete') {
             if (toolMsg.tool?.state !== 'completed') continue;
+            if (hasAgentTeamDeleteFailureSignal(toolMsg.tool.result)) continue;
+            if (!hasAgentTeamDeleteSuccessSignal(toolMsg.tool.result)) continue;
             const deletedTeamId = readTeamIdFromAgentTeamCreateInput(toolMsg.tool.input) ?? teamId;
             const deletedMemberId = readMemberIdFromAgentTeamDeleteInput(toolMsg.tool.input, deletedTeamId);
             if (deletedMemberId) {
+                terminatedMemberIdsLower.add(readLowerCase(deletedMemberId));
                 membersById.delete(deletedMemberId);
                 continue;
             }
             if (deletedTeamId && (!teamId || teamId === deletedTeamId)) {
                 teamId = null;
                 membersById.clear();
+                terminatedMemberIdsLower.clear();
             }
             continue;
+        }
+
+        if (toolName === 'AgentTeamSendMessage' || toolName === 'TeamSendMessage') {
+            const candidateTeamId: string | null = readTeamIdFromAgentTeamCreateInput(toolMsg.tool.input) ?? teamId;
+            if (!teamId && candidateTeamId) teamId = candidateTeamId;
+
+            const memberId = readMemberIdFromAgentTeamDeleteInput(toolMsg.tool.input, candidateTeamId ?? teamId);
+            if (memberId) {
+                if (terminatedMemberIdsLower.has(readLowerCase(memberId))) continue;
+                const existing = membersById.get(memberId);
+                if (!existing) {
+                    const label = readMemberLabelFromAgentTeamSendMessageInput(toolMsg.tool.input);
+                    membersById.set(memberId, { memberId, ...(label ? { memberLabel: label } : {}) });
+                }
+            }
         }
 
         const removedFromConfigMutation = deriveRemovedTeamMemberIdsFromConfigMutation({
@@ -443,6 +635,7 @@ export function deriveClaudeTeamParticipants(params: Readonly<{ messages: readon
             for (const removedMemberId of removedFromConfigMutation.removedMemberIds) {
                 const normalizedRemovedMemberId = String(removedMemberId).trim();
                 if (!normalizedRemovedMemberId) continue;
+                terminatedMemberIdsLower.add(readLowerCase(normalizedRemovedMemberId));
                 deferredConfigRemovals.push({
                     teamId: effectiveTeamId ?? null,
                     memberId: normalizedRemovedMemberId,
@@ -457,7 +650,10 @@ export function deriveClaudeTeamParticipants(params: Readonly<{ messages: readon
                             membersById,
                         )
                         : null);
-                if (resolvedByExact) membersById.delete(resolvedByExact);
+                if (resolvedByExact) {
+                    terminatedMemberIdsLower.add(readLowerCase(resolvedByExact));
+                    membersById.delete(resolvedByExact);
+                }
             }
         }
 
@@ -467,6 +663,7 @@ export function deriveClaudeTeamParticipants(params: Readonly<{ messages: readon
                 deriveClaudeSpawnedTeammateFromTaskToolInput(toolMsg.tool.input);
             if (spawned) {
                 teamId = teamId ?? spawned.teamId;
+                terminatedMemberIdsLower.delete(readLowerCase(spawned.memberId));
                 if (!membersById.has(spawned.memberId)) {
                     membersById.set(spawned.memberId, {
                         memberId: spawned.memberId,
@@ -491,6 +688,7 @@ export function deriveClaudeTeamParticipants(params: Readonly<{ messages: readon
                 membersById,
             );
             if (shutdownMemberId) {
+                terminatedMemberIdsLower.add(readLowerCase(shutdownMemberId));
                 membersById.delete(shutdownMemberId);
             }
         }
@@ -508,7 +706,10 @@ export function deriveClaudeTeamParticipants(params: Readonly<{ messages: readon
                         membersById,
                     )
                     : null);
-            if (resolvedByExact) membersById.delete(resolvedByExact);
+            if (resolvedByExact) {
+                terminatedMemberIdsLower.add(readLowerCase(resolvedByExact));
+                membersById.delete(resolvedByExact);
+            }
         }
     }
 
