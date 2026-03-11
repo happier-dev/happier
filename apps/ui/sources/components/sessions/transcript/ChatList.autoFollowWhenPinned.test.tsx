@@ -131,6 +131,26 @@ vi.mock('@/components/sessions/actions/SessionActionDraftCard', () => ({
   SessionActionDraftCard: () => React.createElement('SessionActionDraftCard'),
 }));
 
+vi.mock('@/components/sessions/transcript/motion/TranscriptMotionProvider', () => ({
+  TranscriptMotionProvider: ({ children }: any) => React.createElement(React.Fragment, null, children),
+}));
+
+vi.mock('@/components/sessions/transcript/motion/resolveTranscriptMotionConfig', () => ({
+  resolveTranscriptMotionConfig: () => ({ preset: 'off', animateThinkingEnabled: false }),
+}));
+
+vi.mock('@/components/sessions/transcript/motion/TranscriptEnterWrapper', () => ({
+  TranscriptEnterWrapper: ({ children }: any) => React.createElement(React.Fragment, null, children),
+}));
+
+vi.mock('@/components/sessions/transcript/scroll/JumpToBottomButton', () => ({
+  JumpToBottomButton: () => null,
+}));
+
+vi.mock('@/hooks/ui/useReducedMotionPreference', () => ({
+  useReducedMotionPreference: () => false,
+}));
+
 vi.mock('@/sync/domains/state/agentStateCapabilities', () => ({
   getPermissionsInUiWhileLocal: () => ({}),
 }));
@@ -144,8 +164,18 @@ vi.mock('@/sync/sync', () => ({
     loadOlderMessages: vi.fn(),
     loadNewerMessages: vi.fn(),
     hasDeferredNewerMessages: () => false,
+    getSyncTuning: () => ({
+      transcriptForwardPrefetchThresholdPx: 0,
+      transcriptBackwardPrefetchThresholdPx: 0,
+      transcriptFlashListEstimatedItemSize: 120,
+      transcriptWebHotTailItemCount: 2,
+      transcriptWebInitialPinStabilizeMs: 0,
+      transcriptWebInitialPinRetryIntervalMs: 16,
+    }),
   },
 }));
+
+const chatListModulePromise = import('./ChatList');
 
 describe('ChatList (auto-follow while pinned)', () => {
   beforeEach(() => {
@@ -181,6 +211,13 @@ describe('ChatList (auto-follow while pinned)', () => {
   });
 
   it('pins to bottom when pinned and new activity arrives', async () => {
+    const { ChatList } = await chatListModulePromise;
+    (globalThis as any).requestAnimationFrame = (cb: any) => {
+      cb(0);
+      return 1;
+    };
+    (globalThis as any).cancelAnimationFrame = () => {};
+
     sessionMessagesState = {
       isLoaded: true,
       messages: [
@@ -189,12 +226,9 @@ describe('ChatList (auto-follow while pinned)', () => {
       ],
     };
 
-    const { ChatList } = await import('./ChatList');
     let tree: renderer.ReactTestRenderer | null = null;
-    await act(async () => {
+    act(() => {
       tree = renderer.create(<ChatList session={{ ...sessionState }} />);
-      await Promise.resolve();
-      await Promise.resolve();
     });
 
     scrollToOffsetSpy.mockClear();
@@ -207,10 +241,8 @@ describe('ChatList (auto-follow while pinned)', () => {
       ],
     };
 
-    await act(async () => {
+    act(() => {
       tree!.update(<ChatList session={{ ...sessionState }} />);
-      await Promise.resolve();
-      await Promise.resolve();
     });
 
     expect(scrollToOffsetSpy).toHaveBeenCalled();

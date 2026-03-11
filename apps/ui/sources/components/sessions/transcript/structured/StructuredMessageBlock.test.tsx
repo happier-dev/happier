@@ -102,4 +102,73 @@ describe('StructuredMessageBlock', () => {
             tree!.root.findAll((n: any) => n.type === 'Text' && n.props?.children === text)[0]!;
         expect(findTextNode('hello there').props.selectable).toBe(true);
     });
+
+    it('renders subagent launch card for valid payload', () => {
+        let tree: renderer.ReactTestRenderer | null = null;
+        act(() => {
+            tree = renderer.create(
+                <StructuredMessageBlock
+                    message={{
+                        kind: 'user-text',
+                        id: 'm_launch',
+                        localId: null,
+                        createdAt: 1,
+                        text: 'Launch the alpha teammate',
+                        meta: {
+                            happier: {
+                                kind: 'subagent_launch.v1',
+                                payload: {
+                                    kind: 'agent_team_member_create',
+                                    teamId: 'team_1',
+                                    memberLabel: 'alpha',
+                                    instructions: 'Handle the linting lane',
+                                    runInBackground: true,
+                                },
+                            },
+                        },
+                    } as any}
+                    sessionId="s1"
+                    onJumpToAnchor={() => {}}
+                />,
+            );
+        });
+
+        const serialized = JSON.stringify(tree!.toJSON());
+        expect(serialized).toContain('alpha');
+        expect(serialized).toContain('Launch the alpha teammate');
+    });
+
+    it('renders subagent command card for valid payload', () => {
+        let tree: renderer.ReactTestRenderer | null = null;
+        act(() => {
+            tree = renderer.create(
+                <StructuredMessageBlock
+                    message={{
+                        kind: 'user-text',
+                        id: 'm_command',
+                        localId: null,
+                        createdAt: 1,
+                        text: 'Shut alpha down',
+                        meta: {
+                            happier: {
+                                kind: 'subagent_command.v1',
+                                payload: {
+                                    kind: 'agent_team_member_delete',
+                                    teamId: 'team_1',
+                                    memberId: 'alpha@team_1',
+                                    memberLabel: 'alpha',
+                                },
+                            },
+                        },
+                    } as any}
+                    sessionId="s1"
+                    onJumpToAnchor={() => {}}
+                />,
+            );
+        });
+
+        const serialized = JSON.stringify(tree!.toJSON());
+        expect(serialized).toContain('alpha');
+        expect(serialized).toContain('Shut alpha down');
+    });
 });

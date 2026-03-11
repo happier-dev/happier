@@ -199,4 +199,42 @@ describe('ChatList (turn thinking expansion wiring)', () => {
     const lastTurnProps = renderedTurnViewProps[renderedTurnViewProps.length - 1];
     expect(lastTurnProps.resolveThinkingExpanded('t1')).toBe(true);
   });
+
+  it('refreshes the turn message lookup when the messages map changes', async () => {
+    settingValues.transcriptGroupingMode = 'turns';
+    settingValues.transcriptGroupToolCalls = false;
+    settingValues.transcriptTurnToolCallsGroupStrategy = 'consecutive_tools';
+    settingValues.transcriptListImplementation = 'flatlist_legacy';
+    settingValues.sessionThinkingDisplayMode = 'inline';
+    settingValues.sessionThinkingInlinePresentation = 'summary';
+
+    const initialUserMessage = { kind: 'user-text', id: 'u1', localId: null, createdAt: 1, text: 'initial user' };
+    const initialAgentMessage = { kind: 'agent-text', id: 'a1', localId: null, createdAt: 2, text: 'initial answer', isThinking: false };
+    sessionMessagesState = { isLoaded: true, messages: [initialUserMessage, initialAgentMessage] };
+    buildChatListItemsMock.mockReturnValue([
+      { kind: 'message', id: initialUserMessage.id, messageId: initialUserMessage.id, createdAt: initialUserMessage.createdAt, seq: null },
+      { kind: 'message', id: initialAgentMessage.id, messageId: initialAgentMessage.id, createdAt: initialAgentMessage.createdAt, seq: null },
+    ]);
+
+    const { ChatList } = await import('./ChatList');
+    let tree: renderer.ReactTestRenderer;
+    await act(async () => {
+      tree = renderer.create(<ChatList session={sessionState} />);
+    });
+
+    const firstTurnProps = renderedTurnViewProps[0];
+    expect(firstTurnProps?.getMessageById?.('a1')?.text).toBe('initial answer');
+
+    const updatedUserMessage = { ...initialUserMessage, text: 'updated user' };
+    const updatedAgentMessage = { ...initialAgentMessage, text: 'updated answer' };
+    sessionMessagesState = { isLoaded: true, messages: [updatedUserMessage, updatedAgentMessage] };
+    const rerenderedSessionState = { ...sessionState };
+
+    await act(async () => {
+      tree!.update(<ChatList session={rerenderedSessionState} />);
+    });
+
+    const lastTurnProps = renderedTurnViewProps[renderedTurnViewProps.length - 1];
+    expect(lastTurnProps?.getMessageById?.('a1')?.text).toBe('updated answer');
+  });
 });

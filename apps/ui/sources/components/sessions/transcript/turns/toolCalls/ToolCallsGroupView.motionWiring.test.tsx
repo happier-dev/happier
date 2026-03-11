@@ -47,6 +47,8 @@ vi.mock('@/sync/domains/state/storage', () => ({
         if (key === 'transcriptToolCallsGroupShowBackground') return toolCallsGroupShowBackground;
         return null;
     },
+    useSessionMessagesById: () => ({}),
+    useSessionMessagesReducerState: () => null,
 }));
 
 vi.mock('@/components/tools/shell/views/ToolView', () => ({

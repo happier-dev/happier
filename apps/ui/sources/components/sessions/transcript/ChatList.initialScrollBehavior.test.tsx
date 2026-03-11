@@ -237,6 +237,42 @@ describe('ChatList (initial scroll/pagination behavior)', () => {
     expect(loadOlderMessagesMock).toHaveBeenCalledTimes(1);
   });
 
+  it('keeps loading older pages past 10 attempts while the transcript is still short and progress continues', async () => {
+    sessionState = { ...sessionState, seq: 250 };
+    sessionMessagesState = { isLoaded: true, messages: [] };
+    loadOlderMessagesMock
+      .mockResolvedValueOnce({ loaded: 1, hasMore: true, status: 'loaded' })
+      .mockResolvedValueOnce({ loaded: 1, hasMore: true, status: 'loaded' })
+      .mockResolvedValueOnce({ loaded: 1, hasMore: true, status: 'loaded' })
+      .mockResolvedValueOnce({ loaded: 1, hasMore: true, status: 'loaded' })
+      .mockResolvedValueOnce({ loaded: 1, hasMore: true, status: 'loaded' })
+      .mockResolvedValueOnce({ loaded: 1, hasMore: true, status: 'loaded' })
+      .mockResolvedValueOnce({ loaded: 1, hasMore: true, status: 'loaded' })
+      .mockResolvedValueOnce({ loaded: 1, hasMore: true, status: 'loaded' })
+      .mockResolvedValueOnce({ loaded: 1, hasMore: true, status: 'loaded' })
+      .mockResolvedValueOnce({ loaded: 1, hasMore: true, status: 'loaded' })
+      .mockResolvedValueOnce({ loaded: 1, hasMore: true, status: 'loaded' })
+      .mockResolvedValueOnce({ loaded: 1, hasMore: false, status: 'no_more' });
+
+    const { ChatList } = await import('./ChatList');
+    await act(async () => {
+      renderer.create(<ChatList session={sessionState} />);
+    });
+
+    expect(capturedFlatListProps).toBeTruthy();
+
+    await act(async () => {
+      capturedFlatListProps.onLayout?.({ nativeEvent: { layout: { height: 800 } } });
+      capturedFlatListProps.onContentSizeChange?.(400, 200);
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(loadOlderMessagesMock).toHaveBeenCalledTimes(12);
+  });
+
   it('pins to the visual bottom on initial load (even before layout measurements)', async () => {
     sessionState = { ...sessionState, seq: 25 };
     sessionMessagesState = {

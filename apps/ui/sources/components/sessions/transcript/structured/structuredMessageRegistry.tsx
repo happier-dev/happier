@@ -10,6 +10,8 @@ import {
     ReviewFindingsV1Schema,
     SessionSummaryShardV1Schema,
     SessionSynopsisV1Schema,
+    SubagentCommandV1Schema,
+    SubagentLaunchV1Schema,
     VoiceAgentTurnV1Schema,
 } from '@happier-dev/protocol';
 import { ReviewFindingsMessageCard } from '@/components/sessions/reviews/messages/ReviewFindingsMessageCard';
@@ -18,9 +20,13 @@ import { DelegateOutputMessageCard } from '@/components/sessions/delegations/mes
 import type { Message } from '@/sync/domains/messages/messageTypes';
 import type { ReviewCommentAnchor, ReviewCommentSource } from '@/sync/domains/input/reviewComments/reviewCommentTypes';
 import { ParticipantMessageCard } from '@/components/sessions/participants/messages/ParticipantMessageCard';
+import { SubagentLaunchMessageCard } from '@/components/sessions/subagents/messages/SubagentLaunchMessageCard';
+import { SubagentCommandMessageCard } from '@/components/sessions/subagents/messages/SubagentCommandMessageCard';
 
 export type StructuredMessageKind =
     | 'participant_message.v1'
+    | 'subagent_launch.v1'
+    | 'subagent_command.v1'
     | 'review_comments.v1'
     | 'review_findings.v1'
     | 'plan_output.v1'
@@ -46,6 +52,16 @@ export const STRUCTURED_MESSAGE_REGISTRY: readonly StructuredMessageRegistryEntr
         kind: 'participant_message.v1',
         schema: ParticipantMessageV1Schema,
         render: (payload, params) => <ParticipantMessageCard payload={payload} message={params.message} />,
+    },
+    {
+        kind: 'subagent_launch.v1',
+        schema: SubagentLaunchV1Schema,
+        render: (payload, params) => <SubagentLaunchMessageCard payload={payload} message={params.message} />,
+    },
+    {
+        kind: 'subagent_command.v1',
+        schema: SubagentCommandV1Schema,
+        render: (payload, params) => <SubagentCommandMessageCard payload={payload} message={params.message} />,
     },
     {
         kind: 'review_comments.v1',

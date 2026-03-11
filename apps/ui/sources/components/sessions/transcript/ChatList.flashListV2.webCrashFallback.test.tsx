@@ -211,4 +211,60 @@ describe('ChatList (FlashList v2 web crash fallback)', () => {
       globalWindowContainer.window = prevWindow;
     }
   });
+
+  it('does not fall back for unrelated "index out of bounds" errors', async () => {
+    settingValues.transcriptListImplementation = 'flash_v2';
+
+    const globalWindowContainer = globalThis as unknown as { window?: unknown };
+    const prevWindow = globalWindowContainer.window;
+    const listeners = new Map<string, EventListenerOrEventListenerObject[]>();
+    try {
+      globalWindowContainer.window = {
+        addEventListener: (type: string, fn: EventListenerOrEventListenerObject) => {
+          const arr = listeners.get(type) ?? [];
+          arr.push(fn);
+          listeners.set(type, arr);
+        },
+        removeEventListener: (type: string, fn: EventListenerOrEventListenerObject) => {
+          const arr = listeners.get(type) ?? [];
+          listeners.set(
+            type,
+            arr.filter((f) => f !== fn),
+          );
+        },
+      };
+
+      const { ChatList } = await import('./ChatList');
+
+      let tree: renderer.ReactTestRenderer | null = null;
+      await act(async () => {
+        tree = renderer.create(<ChatList session={sessionState} />);
+      });
+      expect(tree).not.toBeNull();
+
+      expect(capturedFlashListProps).toBeTruthy();
+      expect(listeners.get('error')?.length ?? 0).toBeGreaterThan(0);
+
+      const errorMessage = 'index out of bounds';
+      const handler = (listeners.get('error') ?? [])[0];
+      expect(typeof handler).toBe('function');
+
+      const fakeEvent = {
+        message: errorMessage,
+        error: new Error(errorMessage),
+        preventDefault: vi.fn(),
+        stopImmediatePropagation: vi.fn(),
+      } as unknown as ErrorEvent;
+
+      await act(async () => {
+        (handler as EventListener)(fakeEvent);
+      });
+
+      expect(fakeEvent.preventDefault).not.toHaveBeenCalled();
+      expect(tree!.root.findAllByType('FlashList').length).toBeGreaterThan(0);
+      expect(tree!.root.findAllByType('FlatList').length).toBe(0);
+    } finally {
+      globalWindowContainer.window = prevWindow;
+    }
+  });
 });
