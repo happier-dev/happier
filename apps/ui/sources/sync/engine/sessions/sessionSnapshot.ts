@@ -74,11 +74,16 @@ export async function fetchAndApplySessions(params: {
     const sessionKeys = new Map<string, Uint8Array | null>();
     const keyResults = await Promise.all(
         sessions.map(async (session) => {
-            if (session.dataEncryptionKey) {
-                const decrypted = await encryption.decryptEncryptionKey(session.dataEncryptionKey);
-                return { id: session.id, decrypted, hasKey: true };
+            try {
+                if (session.dataEncryptionKey) {
+                    const decrypted = await encryption.decryptEncryptionKey(session.dataEncryptionKey);
+                    return { id: session.id, decrypted, hasKey: true };
+                }
+                return { id: session.id, decrypted: null, hasKey: false };
+            } catch (err) {
+                console.error(`Failed to decrypt encryption key for session ${session.id}`, err);
+                return { id: session.id, decrypted: null, hasKey: true };
             }
-            return { id: session.id, decrypted: null, hasKey: false };
         }),
     );
     for (const { id, decrypted, hasKey } of keyResults) {
@@ -120,37 +125,42 @@ export async function fetchAndApplySessions(params: {
 
     const decryptedSessionResults = await Promise.all(
         sessions.map(async (session) => {
-            const encryptionMode: 'e2ee' | 'plain' = session.encryptionMode === 'plain' ? 'plain' : 'e2ee';
+            try {
+                const encryptionMode: 'e2ee' | 'plain' = session.encryptionMode === 'plain' ? 'plain' : 'e2ee';
 
-            const sessionEncryption = encryption.getSessionEncryption(session.id);
-            if (encryptionMode === 'e2ee' && !sessionEncryption) {
-                console.error(`Session encryption not found for ${session.id} - this should never happen`);
+                const sessionEncryption = encryption.getSessionEncryption(session.id);
+                if (encryptionMode === 'e2ee' && !sessionEncryption) {
+                    console.error(`Session encryption not found for ${session.id} - this should never happen`);
+                    return null;
+                }
+
+                const metadata =
+                    encryptionMode === 'plain'
+                        ? parsePlainMetadata(session.metadata)
+                        : await sessionEncryption!.decryptMetadata(session.metadataVersion, session.metadata);
+
+                const agentState =
+                    encryptionMode === 'plain'
+                        ? parsePlainAgentState(session.agentState)
+                        : await sessionEncryption!.decryptAgentState(session.agentStateVersion, session.agentState);
+
+                const accessLevel = session.share?.accessLevel;
+                const normalizedAccessLevel =
+                    accessLevel === 'view' || accessLevel === 'edit' || accessLevel === 'admin' ? accessLevel : undefined;
+                return {
+                    ...session,
+                    encryptionMode,
+                    thinking: false,
+                    thinkingAt: 0,
+                    metadata,
+                    agentState,
+                    accessLevel: normalizedAccessLevel,
+                    canApprovePermissions: session.share?.canApprovePermissions ?? undefined,
+                };
+            } catch (err) {
+                console.error(`Failed to decrypt session ${session.id}`, err);
                 return null;
             }
-
-            const metadata =
-                encryptionMode === 'plain'
-                    ? parsePlainMetadata(session.metadata)
-                    : await sessionEncryption!.decryptMetadata(session.metadataVersion, session.metadata);
-
-            const agentState =
-                encryptionMode === 'plain'
-                    ? parsePlainAgentState(session.agentState)
-                    : await sessionEncryption!.decryptAgentState(session.agentStateVersion, session.agentState);
-
-            const accessLevel = session.share?.accessLevel;
-            const normalizedAccessLevel =
-                accessLevel === 'view' || accessLevel === 'edit' || accessLevel === 'admin' ? accessLevel : undefined;
-            return {
-                ...session,
-                encryptionMode,
-                thinking: false,
-                thinkingAt: 0,
-                metadata,
-                agentState,
-                accessLevel: normalizedAccessLevel,
-                canApprovePermissions: session.share?.canApprovePermissions ?? undefined,
-            };
         }),
     );
     const decryptedSessions = decryptedSessionResults.filter(
