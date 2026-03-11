@@ -13,6 +13,7 @@ export interface GeminiMode {
   permissionMode: PermissionMode;
   model?: string;
   originalUserMessage?: string; // Original user message without system prompt
+  appendSystemPrompt?: string | null;
   localId?: string | null;
   replaySeedAllowed?: boolean;
 }

@@ -6,10 +6,9 @@
  */
 
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'fs';
-import { join } from 'path';
-import { homedir } from 'os';
 import { logger } from '@/ui/logger';
 import { GEMINI_MODEL_ENV, DEFAULT_GEMINI_MODEL } from '../constants';
+import { resolveGeminiConfigPaths } from './resolveGeminiConfigPaths';
 
 /**
  * Result of reading Gemini local configuration
@@ -34,12 +33,13 @@ export function readGeminiLocalConfig(): GeminiLocalConfig {
   
   // Try common Gemini CLI config locations
   // Gemini CLI stores OAuth tokens in ~/.gemini/oauth_creds.json after 'gemini auth'
+  const paths = resolveGeminiConfigPaths();
   const possiblePaths = [
-    join(homedir(), '.gemini', 'oauth_creds.json'), // Main OAuth credentials file
-    join(homedir(), '.gemini', 'config.json'),
-    join(homedir(), '.config', 'gemini', 'config.json'),
-    join(homedir(), '.gemini', 'auth.json'),
-    join(homedir(), '.config', 'gemini', 'auth.json'),
+    paths.userOauthCredsPath,
+    paths.userConfigPath,
+    paths.xdgConfigPath,
+    paths.userAuthPath,
+    paths.xdgAuthPath,
   ];
 
   for (const configPath of possiblePaths) {
@@ -139,8 +139,7 @@ export function determineGeminiModel(
  */
 export function saveGeminiModelToConfig(model: string): void {
   try {
-    const configDir = join(homedir(), '.gemini');
-    const configPath = join(configDir, 'config.json');
+    const { geminiDir: configDir, userConfigPath: configPath } = resolveGeminiConfigPaths();
     
     // Create directory if it doesn't exist
     if (!existsSync(configDir)) {
@@ -178,8 +177,7 @@ export function saveGeminiModelToConfig(model: string): void {
  */
 export function saveGoogleCloudProjectToConfig(projectId: string, email?: string): void {
   try {
-    const configDir = join(homedir(), '.gemini');
-    const configPath = join(configDir, 'config.json');
+    const { geminiDir: configDir, userConfigPath: configPath } = resolveGeminiConfigPaths();
     
     // Create directory if it doesn't exist
     if (!existsSync(configDir)) {

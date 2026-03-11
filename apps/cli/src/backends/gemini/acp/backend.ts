@@ -12,20 +12,23 @@ import { AcpBackend, type AcpBackendOptions, type AcpPermissionHandler } from '@
 import type { AgentBackend, McpServerConfig, AgentFactoryOptions } from '@/agent/core';
 import { geminiTransport } from '@/backends/gemini/acp/transport';
 import { logger } from '@/ui/logger';
-import { 
-  GEMINI_API_KEY_ENV, 
-  GOOGLE_API_KEY_ENV, 
-  GEMINI_MODEL_ENV, 
-  DEFAULT_GEMINI_MODEL 
+import {
+  GEMINI_API_KEY_ENV,
+  GOOGLE_API_KEY_ENV,
+  GEMINI_MODEL_ENV,
+  DEFAULT_GEMINI_MODEL
 } from '@/backends/gemini/constants';
 import type { PermissionMode } from '@/api/types';
 import { normalizePermissionModeToIntent } from '@/agent/runtime/permission/permissionModeCanonical';
-import { 
-  readGeminiLocalConfig, 
+import {
+  readGeminiLocalConfig,
   determineGeminiModel,
   getGeminiModelSource
 } from '@/backends/gemini/utils/config';
+import { createGeminiMcpCliEnvironment } from '@/backends/gemini/mcp/createGeminiMcpCliEnvironment';
+import { wrapBackendDisposeWithCleanup } from '@/backends/gemini/mcp/wrapBackendDisposeWithCleanup';
 import { CHANGE_TITLE_TOOL_NAME_ALIASES } from '@happier-dev/protocol/tools/v2';
+import { requireProviderCliLaunchSpec } from '@/runtime/managedTools/requireProviderCliLaunchSpec';
 
 function isTruthyEnv(value: string | undefined): boolean {
   const normalized = typeof value === 'string' ? value.trim().toLowerCase() : '';
@@ -105,9 +108,15 @@ export function createGeminiBackend(options: GeminiBackendOptions): GeminiBacken
     logger.debug(`[Gemini] No API key found; using oauth-personal auth via Gemini CLI cached credentials.`);
   }
 
-  // Command to run gemini
-  const geminiCommand = 'gemini';
-  
+  // Merge environment for consistent resolution across validation and spawn
+  const mergedSourceEnv = {
+    ...process.env,
+    ...options.env,
+  };
+
+  // Resolve gemini CLI command (supports managed installs, overrides, and PATH)
+  const geminiLaunch = requireProviderCliLaunchSpec('gemini', { processEnv: mergedSourceEnv });
+
   // Get model from options, local config, system environment, or use default
   // Priority: options.model (if provided) > local config > env var > default
   // If options.model is undefined, check local config, then env, then use default
@@ -146,7 +155,7 @@ export function createGeminiBackend(options: GeminiBackendOptions): GeminiBacken
   if (localConfig.googleCloudProject) {
     const storedEmail = localConfig.googleCloudProjectEmail;
     const currentEmail = options.currentUserEmail;
-    
+
     // Use project if: no email stored (applies to all), or emails match
     if (!storedEmail || storedEmail === currentEmail) {
       googleCloudProject = localConfig.googleCloudProject;
@@ -155,14 +164,25 @@ export function createGeminiBackend(options: GeminiBackendOptions): GeminiBacken
       logger.debug(`[Gemini] Skipping stored Google Cloud Project (stored for ${storedEmail}, current user is ${currentEmail || 'unknown'})`);
     }
   }
+  const shouldPrepareMcpCliEnvironment = Boolean(
+    options.mcpServers && Object.keys(options.mcpServers).length > 0,
+  );
+  const preparedMcpCliEnvironment = shouldPrepareMcpCliEnvironment
+    ? createGeminiMcpCliEnvironment({
+      cwd: options.cwd,
+      processEnv: mergedSourceEnv,
+      mcpServers: options.mcpServers ?? {},
+    })
+    : null;
 
   const backendOptions: AcpBackendOptions = {
     agentName: 'gemini',
     cwd: options.cwd,
-    command: geminiCommand,
-    args: geminiArgs,
+    command: geminiLaunch.command,
+    args: [...geminiLaunch.args, ...geminiArgs],
     env: {
       ...options.env,
+      ...(preparedMcpCliEnvironment?.env ?? {}),
       ...(apiKey ? { [GEMINI_API_KEY_ENV]: apiKey, [GOOGLE_API_KEY_ENV]: apiKey } : {}),
       // Pass model via env var - gemini CLI reads GEMINI_MODEL automatically
       [GEMINI_MODEL_ENV]: model,
@@ -206,7 +226,9 @@ export function createGeminiBackend(options: GeminiBackendOptions): GeminiBacken
   });
 
   return {
-    backend: new AcpBackend(backendOptions),
+    backend: preparedMcpCliEnvironment
+      ? wrapBackendDisposeWithCleanup(new AcpBackend(backendOptions), preparedMcpCliEnvironment.cleanup)
+      : new AcpBackend(backendOptions),
     model,
     modelSource,
   };

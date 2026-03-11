@@ -143,4 +143,50 @@ describe('waitForTranscriptEncryptedMessageByLocalId', () => {
     expect(calls.some((v) => v.startsWith('v1:'))).toBe(false);
     expect(calls.filter((v) => v.startsWith('v2:')).length).toBeGreaterThan(0);
   });
+
+  it('returns parsed message details (sidechainId + timestamps) when the v2 localId route succeeds', async () => {
+    process.env.HAPPIER_SERVER_URL = 'http://adapter.test';
+    reloadConfiguration();
+
+    const { waitForTranscriptEncryptedMessageByLocalId } = await import('./transcriptMessageLookup');
+
+    app = fastify({ logger: false });
+    app.get('/v2/sessions/:sid/messages/by-local-id/:localId', async (_req, reply) => {
+      return reply.code(200).send({
+        message: {
+          id: 'm1',
+          seq: 1,
+          localId: 'l1',
+          sidechainId: 'sc-1',
+          createdAt: 111,
+          updatedAt: 222,
+          content: { t: 'plain', v: { role: 'user', content: { type: 'text', text: 'hi' } } },
+        },
+      });
+    });
+    await app.ready();
+
+    restoreAdapter = installAxiosFastifyAdapter({ app, origin: 'http://adapter.test' });
+
+    const result = await waitForTranscriptEncryptedMessageByLocalId({
+      token: 'token',
+      sessionId: 'sid',
+      localId: 'l1',
+      maxWaitMs: 200,
+      pollIntervalMs: 10,
+      errorBackoffBaseMs: 10,
+      errorBackoffMaxMs: 10,
+      onError: () => {},
+    });
+
+    expect(result).toMatchObject({
+      id: 'm1',
+      seq: 1,
+      localId: 'l1',
+      sidechainId: 'sc-1',
+      createdAt: 111,
+      updatedAt: 222,
+      content: { t: 'plain' },
+    });
+  });
 });

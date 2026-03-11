@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 
 import type { AgentMessage } from '@/agent';
 import type { ApiSessionClient } from '@/api/session/sessionClient';
+import type { StreamedTranscriptWriter } from '@/api/session/streamedTranscriptWriter';
 import {
   handleAcpModelOutputDelta,
   handleAcpStatusRunning,
@@ -13,6 +14,7 @@ import { MessageBuffer } from '@/ui/ink/messageBuffer';
 
 import { normalizeAvailableCommands, publishSlashCommandsToMetadata } from '@/agent/acp/commands/publishSlashCommands';
 import { GeminiDiffProcessor } from '../utils/diffProcessor';
+import { buildGeminiWorkspaceProjectAuthenticationMessage } from '../utils/buildGeminiWorkspaceProjectGuidance';
 import { GeminiTurnMessageState } from './geminiTurnMessageState';
 
 export function createGeminiBackendMessageHandler(params: {
@@ -20,10 +22,11 @@ export function createGeminiBackendMessageHandler(params: {
   messageBuffer: MessageBuffer;
   state: GeminiTurnMessageState;
   diffProcessor: GeminiDiffProcessor;
+  transcriptStream?: Pick<StreamedTranscriptWriter, 'appendThinkingDelta' | 'flushAll'>;
 }): (msg: AgentMessage) => void {
   const forwarder = createAcpAgentMessageForwarder({
     sendAcp: (provider, body) => params.session.sendAgentMessage(provider, body),
-    provider: 'gemini' as any,
+    provider: 'gemini',
     makeId: () => randomUUID(),
   });
 
@@ -92,11 +95,7 @@ export function createGeminiBackendMessageHandler(params: {
           }
 
           if (errorMessage.includes('Authentication required')) {
-            errorMessage =
-              `Authentication required.\n` +
-              `For Google Workspace accounts, run: happier gemini project set <project-id>\n` +
-              `Or use a different Google account: happier connect gemini\n` +
-              `Guide: https://goo.gle/gemini-cli-auth-docs#workspace-gca`;
+            errorMessage = buildGeminiWorkspaceProjectAuthenticationMessage();
           }
 
           params.messageBuffer.addMessage(`Error: ${errorMessage}`, 'status');
@@ -110,6 +109,7 @@ export function createGeminiBackendMessageHandler(params: {
 
       case 'tool-call': {
         params.state.hadToolCallInTurn = true;
+        params.transcriptStream?.flushAll({ reason: 'tool-call-boundary' });
         const toolArgs = msg.args ? JSON.stringify(msg.args).substring(0, 100) : '';
         const isInvestigationTool =
           msg.toolName === 'codebase_investigator' ||
@@ -259,10 +259,14 @@ export function createGeminiBackendMessageHandler(params: {
               params.messageBuffer.updateLastMessage(`[Thinking] ${thinkingPreview}...`, 'system');
             }
           }
-          params.session.sendAgentMessage('gemini', {
-            type: 'thinking',
-            text: thinkingText,
-          });
+          if (params.transcriptStream) {
+            params.transcriptStream.appendThinkingDelta(thinkingText);
+          } else {
+            params.session.sendAgentMessage('gemini', {
+              type: 'thinking',
+              text: thinkingText,
+            });
+          }
         }
         break;
 

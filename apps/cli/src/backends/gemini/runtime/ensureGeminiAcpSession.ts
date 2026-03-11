@@ -14,18 +14,18 @@ export async function ensureGeminiAcpSession(params: {
 }): Promise<{
   acpSessionId: string;
   storedResumeId: string | null;
+  startedFreshSession: boolean;
 }> {
   const resumeId = params.storedResumeId;
   if (resumeId) {
-    if (!params.backend.loadSession) {
+    const loadWithReplay = params.backend.loadSessionWithReplayCapture?.bind(params.backend);
+    const loadSession = params.backend.loadSession?.bind(params.backend);
+    if (!loadWithReplay && !loadSession) {
       throw new Error('Gemini ACP backend does not support loading sessions');
     }
 
     const nextStoredResumeId = null; // consume once
     params.messageBuffer.addMessage('Resuming previous context…', 'status');
-    const loadWithReplay = (params.backend as any).loadSessionWithReplayCapture as
-      | undefined
-      | ((id: string) => Promise<{ sessionId: string; replay: any[] }>);
     let replay: any[] | null = null;
     let acpSessionId: string;
 
@@ -36,9 +36,12 @@ export async function ensureGeminiAcpSession(params: {
         typeof loaded.sessionId === 'string' && loaded.sessionId.trim().length > 0
           ? loaded.sessionId.trim()
           : resumeId;
-    } else {
-      await params.backend.loadSession(resumeId);
+    } else if (loadSession) {
+      const loadExistingSession = loadSession;
+      await loadExistingSession(resumeId);
       acpSessionId = resumeId;
+    } else {
+      throw new Error('Gemini ACP backend does not support loading sessions');
     }
 
     params.onDebug(`[gemini] ACP session loaded: ${acpSessionId}`);
@@ -53,10 +56,10 @@ export async function ensureGeminiAcpSession(params: {
       });
     }
 
-    return { acpSessionId, storedResumeId: nextStoredResumeId };
+    return { acpSessionId, storedResumeId: nextStoredResumeId, startedFreshSession: false };
   }
 
   const { sessionId } = await params.backend.startSession();
   params.onDebug(`[gemini] ACP session started: ${sessionId}`);
-  return { acpSessionId: sessionId, storedResumeId: params.storedResumeId };
+  return { acpSessionId: sessionId, storedResumeId: params.storedResumeId, startedFreshSession: true };
 }

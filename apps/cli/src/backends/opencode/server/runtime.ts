@@ -18,7 +18,7 @@ import { createOpenCodeTranscriptStreamBridge } from './openCodeTranscriptStream
 import { asRecord, normalizeString, normalizeStringArray } from './openCodeParsing';
 import { extractOpenCodeErrorText } from './openCodeErrorText';
 import { extractOpenCodeSessionMessageId, parseOpenCodeToolPart } from './openCodeMessageParsing';
-import { canonicalizeOpenCodeConfiguredMcpToolName, resolveOpenCodeChangeTitleToolNameForMcpClient } from './openCodeMcpToolNames';
+import { canonicalizeOpenCodeConfiguredMcpToolName } from './openCodeMcpToolNames';
 import { modelSupportsToolCalls, parseOpenCodeModelId, resolveOpenCodeDefaultProviderIdFromModelId } from './openCodeModelParsing';
 import { parsePermissionRequest } from './openCodePermissionParsing';
 import {
@@ -34,7 +34,8 @@ import {
   resolveOpenCodeUserMessageIdFromMetadata,
   upsertOpenCodeUserMessageIdInMetadata,
 } from './openCodeUserMessageIds';
-import { buildOpenCodeSessionPermissionRuleset } from '@/agent/runtime/permission/openCodeFamilyPermissionPolicy';
+import { buildOpenCodeSessionPermissionRuleset } from '@/backends/openCodeFamily/permission/openCodeFamilyPermissionPolicy';
+import { resolvePreferredChangeTitleToolNameForProvider } from '@/agent/prompting/coding/providerToolAliasRegistry';
 
 type Deferred<T> = {
   promise: Promise<T>;
@@ -1403,7 +1404,7 @@ export function createOpenCodeServerRuntime(params: {
     ensuredMcpServersForDirectory = hadFailures !== true;
   };
 
-  const preferredOpenCodeChangeTitleToolName = resolveOpenCodeChangeTitleToolNameForMcpClient('happier');
+  const preferredOpenCodeChangeTitleToolName = resolvePreferredChangeTitleToolNameForProvider('opencode');
   const changeTitleInstruction = buildChangeTitleInstruction({ preferredToolName: preferredOpenCodeChangeTitleToolName });
 
   return {

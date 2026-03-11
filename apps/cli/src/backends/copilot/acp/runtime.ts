@@ -9,11 +9,13 @@ import { maybeUpdateCopilotSessionIdMetadata } from '@/backends/copilot/utils/co
 
 export function createCopilotAcpRuntime(params: {
   directory: string;
+  machineId: string;
   session: ApiSessionClient;
   messageBuffer: MessageBuffer;
   mcpServers: Record<string, McpServerConfig>;
   permissionHandler: AcpPermissionHandler;
   onThinkingChange: (thinking: boolean) => void;
+  memoryRecallGuidanceEnabled?: boolean;
   getPermissionMode?: () => PermissionMode | null | undefined;
 }) {
   const lastPublishedCopilotSessionId = { value: null as string | null };
@@ -27,6 +29,10 @@ export function createCopilotAcpRuntime(params: {
     mcpServers: params.mcpServers,
     permissionHandler: params.permissionHandler,
     onThinkingChange: params.onThinkingChange,
+    memoryRecallGuidance: {
+      enabled: params.memoryRecallGuidanceEnabled === true,
+      machineId: params.machineId,
+    },
     getPermissionMode: params.getPermissionMode,
     onSessionIdChange: (nextSessionId) => {
       maybeUpdateCopilotSessionIdMetadata({

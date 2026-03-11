@@ -60,6 +60,7 @@ export function createHappierMcpServer(client: HappyMcpSessionClient): { mcp: Mc
     // Not exposed as MCP tools today; satisfy executor deps to keep a single shared implementation.
     sessionOpen: async () => ({ ok: false, errorCode: 'unsupported_action', error: 'unsupported_action:session.open' }),
     sessionFork: async () => ({ ok: false, errorCode: 'unsupported_action', error: 'unsupported_action:session.fork' }),
+    sessionRollback: async () => ({ ok: false, errorCode: 'unsupported_action', error: 'unsupported_action:session.rollback' }),
     sessionSpawnNew: async () => ({ ok: false, errorCode: 'unsupported_action', error: 'unsupported_action:session.spawn_new' }),
     sessionSpawnPicker: async () => ({ ok: false, errorCode: 'unsupported_action', error: 'unsupported_action:session.spawn_picker' }),
     workspacesListRecent: async () => ({ ok: false, errorCode: 'unsupported_action', error: 'unsupported_action:workspaces.list_recent' }),

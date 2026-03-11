@@ -23,12 +23,11 @@ import type { AgentMessage } from '@/agent/core';
 import { CHANGE_TITLE_TOOL_NAME_ALIASES } from '@happier-dev/protocol/tools/v2';
 import { logger } from '@/ui/logger';
 import { filterJsonObjectOrArrayLine } from '@/agent/transport/utils/jsonStdoutFilter';
+import { extractHappierToolsShellBridgeToolNameHint } from '@/agent/transport/utils/happierToolsShellBridgeToolNameHint';
 import { getSuggestedGeminiModelsForUi } from '@/backends/gemini/models/suggestedGeminiModelsForUi';
 import {
-  findEmptyInputDefaultToolName,
   findToolNameFromId,
   findToolNameFromInputFields,
-  isEmptyToolInput,
   type ToolPatternWithInputFields,
 } from '@/agent/transport/utils/toolPatternInference';
 
@@ -58,14 +57,12 @@ export const GEMINI_TIMEOUTS = {
  * - name: canonical tool name
  * - patterns: strings to match in toolCallId (case-insensitive)
  * - inputFields: optional fields that indicate this tool when present in input
- * - emptyInputDefault: if true, this tool is the default when input is empty
  */
 const GEMINI_TOOL_PATTERNS: ToolPatternWithInputFields[] = [
   {
     name: 'change_title',
     patterns: CHANGE_TITLE_TOOL_NAME_ALIASES,
     inputFields: ['title'],
-    emptyInputDefault: true, // change_title often has empty input (title extracted from context)
   },
   {
     name: 'save_memory',
@@ -109,6 +106,40 @@ const GEMINI_TOOL_PATTERNS: ToolPatternWithInputFields[] = [
     inputFields: ['todos', 'items'],
   },
 ];
+
+function isSyntheticTitleOnlyInferenceInput(input: Record<string, unknown>): boolean {
+  const keys = Object.keys(input);
+  if (keys.length === 0) return false;
+  if (!keys.every((key) => key === 'title' || key === 'description' || key === '_acp')) {
+    return false;
+  }
+
+  const title = typeof input.title === 'string' ? input.title.trim() : '';
+  if (!title) return false;
+
+  const description = typeof input.description === 'string' ? input.description.trim() : '';
+  if (description && description !== title) return false;
+
+  const acp = input._acp;
+  if (acp === undefined) return true;
+  if (!acp || typeof acp !== 'object' || Array.isArray(acp)) return false;
+
+  const acpRecord = acp as Record<string, unknown>;
+  const acpKeys = Object.keys(acpRecord);
+  if (!acpKeys.every((key) => key === 'title')) return false;
+  const acpTitle = typeof acpRecord.title === 'string' ? acpRecord.title.trim() : '';
+  return !acpTitle || acpTitle === title;
+}
+
+function extractOpaqueToolNamePrefix(toolCallId: string): string | null {
+  const trimmed = toolCallId.trim();
+  if (!trimmed) return null;
+  const prefix = trimmed.split('-', 1)[0]?.trim() ?? '';
+  if (!prefix) return null;
+  if (!/^[a-z0-9_]+$/i.test(prefix)) return null;
+  if (findToolNameFromId(prefix, GEMINI_TOOL_PATTERNS, { preferLongestMatch: true })) return null;
+  return prefix;
+}
 
 /**
  * Gemini CLI transport handler.
@@ -255,11 +286,10 @@ export class GeminiTransport implements TransportHandler {
    *
    * When Gemini sends "other" or "Unknown tool", tries to determine the real name from:
    * 1. toolCallId patterns (most reliable - tool name often embedded in ID)
-   * 2. Input field signatures (specific fields indicate specific tools)
-   * 3. Empty input default (some tools like change_title have empty input)
-   *
-   * Context-based heuristics were removed as they were fragile and the above
-   * methods cover all known cases.
+ * 2. Input field signatures (specific fields indicate specific tools)
+ *
+ * Context-based heuristics were removed as they were fragile and the above
+ * methods cover all known cases.
    */
   determineToolName(
     toolName: string,
@@ -267,6 +297,11 @@ export class GeminiTransport implements TransportHandler {
     input: Record<string, unknown>,
     _context: ToolNameContext
   ): string {
+    const shellBridgeToolName = extractHappierToolsShellBridgeToolNameHint(input);
+    if (shellBridgeToolName) return shellBridgeToolName;
+    const syntheticTitleOnlyInput = isSyntheticTitleOnlyInferenceInput(input);
+    const opaqueToolPrefix = syntheticTitleOnlyInput ? extractOpaqueToolNamePrefix(toolCallId) : null;
+
     // 0. Normalize direct legacy aliases (for example happy__change_title) to canonical names.
     const directToolName = findToolNameFromId(toolName, GEMINI_TOOL_PATTERNS, { preferLongestMatch: true });
     if (directToolName) return directToolName;
@@ -284,15 +319,11 @@ export class GeminiTransport implements TransportHandler {
     }
 
     // 2. Check input fields for tool-specific signatures
-    const inputFieldToolName = findToolNameFromInputFields(input, GEMINI_TOOL_PATTERNS);
+    const inputFieldToolName = syntheticTitleOnlyInput
+      ? null
+      : findToolNameFromInputFields(input, GEMINI_TOOL_PATTERNS);
     if (inputFieldToolName) return inputFieldToolName;
-
-    // 3. For empty input, use the default tool (if configured)
-    // This handles cases like change_title where the title is extracted from context
-    if (toolName === 'other' && isEmptyToolInput(input)) {
-      const defaultToolName = findEmptyInputDefaultToolName(GEMINI_TOOL_PATTERNS);
-      if (defaultToolName) return defaultToolName;
-    }
+    if (opaqueToolPrefix) return opaqueToolPrefix;
 
     // Return original tool name if we couldn't determine it
     // Log unknown patterns so developers can add them to GEMINI_TOOL_PATTERNS
