@@ -18,18 +18,26 @@ function createHarness(createMachinesDomain: any, initialState: any) {
     return { get, domain };
 }
 
+function mockMachineDomainBoundaries(): void {
+    vi.doMock('../sessionListCache', () => ({
+        setActiveServerSessionListCache: (_cache: any, value: any) => ({ server_a: value }),
+    }));
+    vi.doMock('../../domains/server/serverRuntime', () => ({
+        getActiveServerSnapshot: () => ({ serverId: 'server_a' }),
+    }));
+    vi.doMock('../../domains/state/warmCachePersistence', () => ({
+        resolveWarmCacheAccountScope: vi.fn((fallback: string | null | undefined) => fallback ?? null),
+        saveMachineDisplayWarmCacheEntries: vi.fn(),
+    }));
+}
+
 describe('machines domain: sessionListViewData rebuild gating', () => {
     it('keeps sessionListViewData reference stable for machine activity-only updates', async () => {
         const buildSessionListViewDataWithServerScope = vi.fn(() => [{ type: 'built' }]);
         vi.doMock('../buildSessionListViewDataWithServerScope', () => ({
             buildSessionListViewDataWithServerScope,
         }));
-        vi.doMock('../sessionListCache', () => ({
-            setActiveServerSessionListCache: (_cache: any, value: any) => ({ server_a: value }),
-        }));
-        vi.doMock('../../domains/server/serverRuntime', () => ({
-            getActiveServerSnapshot: () => ({ serverId: 'server_a' }),
-        }));
+        mockMachineDomainBoundaries();
 
         const { createMachinesDomain } = await import('./machines');
 
@@ -58,6 +66,23 @@ describe('machines domain: sessionListViewData rebuild gating', () => {
                 sessionListActiveGroupingV1: 'project',
                 sessionListInactiveGroupingV1: 'project',
             },
+            sessionListRenderables: {
+                s1: {
+                    id: 's1',
+                    seq: 1,
+                    createdAt: 1,
+                    updatedAt: 1,
+                    active: true,
+                    activeAt: 1,
+                    archivedAt: null,
+                    metadataVersion: 1,
+                    agentStateVersion: 0,
+                    metadata: { machineId: 'm1', path: '/home/u/repo', homeDir: '/home/u' },
+                    thinking: false,
+                    thinkingAt: 0,
+                    presence: 'online',
+                },
+            },
             sessionListViewData: initialList,
             sessionListViewDataByServerId: {},
             machines: {
@@ -74,8 +99,20 @@ describe('machines domain: sessionListViewData rebuild gating', () => {
                     daemonStateVersion: 0,
                 },
             },
+            machineDisplayById: {
+                m1: {
+                    id: 'm1',
+                    updatedAt: 1,
+                    active: true,
+                    activeAt: 1,
+                    revokedAt: null,
+                    metadataVersion: 1,
+                    metadata: { displayName: 'Mac' },
+                },
+            },
             machineListByServerId: {},
             machineListStatusByServerId: {},
+            profile: { id: 'account_a' },
         };
 
         const { get, domain } = createHarness(createMachinesDomain, initialState);
@@ -104,12 +141,7 @@ describe('machines domain: sessionListViewData rebuild gating', () => {
         vi.doMock('../buildSessionListViewDataWithServerScope', () => ({
             buildSessionListViewDataWithServerScope,
         }));
-        vi.doMock('../sessionListCache', () => ({
-            setActiveServerSessionListCache: (_cache: any, value: any) => ({ server_a: value }),
-        }));
-        vi.doMock('../../domains/server/serverRuntime', () => ({
-            getActiveServerSnapshot: () => ({ serverId: 'server_a' }),
-        }));
+        mockMachineDomainBoundaries();
 
         const { createMachinesDomain } = await import('./machines');
 
@@ -138,6 +170,23 @@ describe('machines domain: sessionListViewData rebuild gating', () => {
                 sessionListActiveGroupingV1: 'project',
                 sessionListInactiveGroupingV1: 'project',
             },
+            sessionListRenderables: {
+                s1: {
+                    id: 's1',
+                    seq: 1,
+                    createdAt: 1,
+                    updatedAt: 1,
+                    active: true,
+                    activeAt: 1,
+                    archivedAt: null,
+                    metadataVersion: 1,
+                    agentStateVersion: 0,
+                    metadata: { machineId: 'm1', path: '/home/u/repo', homeDir: '/home/u' },
+                    thinking: false,
+                    thinkingAt: 0,
+                    presence: 'online',
+                },
+            },
             sessionListViewData: initialList,
             sessionListViewDataByServerId: {},
             machines: {
@@ -154,8 +203,20 @@ describe('machines domain: sessionListViewData rebuild gating', () => {
                     daemonStateVersion: 0,
                 },
             },
+            machineDisplayById: {
+                m1: {
+                    id: 'm1',
+                    updatedAt: 1,
+                    active: true,
+                    activeAt: 1,
+                    revokedAt: null,
+                    metadataVersion: 1,
+                    metadata: { displayName: 'Mac' },
+                },
+            },
             machineListByServerId: {},
             machineListStatusByServerId: {},
+            profile: { id: 'account_a' },
         };
 
         const { get, domain } = createHarness(createMachinesDomain, initialState);
@@ -183,12 +244,7 @@ describe('machines domain: sessionListViewData rebuild gating', () => {
         vi.doMock('../buildSessionListViewDataWithServerScope', () => ({
             buildSessionListViewDataWithServerScope: vi.fn(() => [{ type: 'built' }]),
         }));
-        vi.doMock('../sessionListCache', () => ({
-            setActiveServerSessionListCache: (_cache: any, value: any) => ({ server_a: value }),
-        }));
-        vi.doMock('../../domains/server/serverRuntime', () => ({
-            getActiveServerSnapshot: () => ({ serverId: 'server_a' }),
-        }));
+        mockMachineDomainBoundaries();
 
         const { createMachinesDomain } = await import('./machines');
 
@@ -224,11 +280,32 @@ describe('machines domain: sessionListViewData rebuild gating', () => {
                 sessionListActiveGroupingV1: 'date',
                 sessionListInactiveGroupingV1: 'date',
             },
+            sessionListRenderables: {},
             sessionListViewData: [],
             sessionListViewDataByServerId: {},
             machines: {
                 [activeMachine.id]: activeMachine,
                 [remoteMachine.id]: remoteMachine,
+            },
+            machineDisplayById: {
+                [activeMachine.id]: {
+                    id: activeMachine.id,
+                    updatedAt: activeMachine.updatedAt,
+                    active: activeMachine.active,
+                    activeAt: activeMachine.activeAt,
+                    revokedAt: null,
+                    metadataVersion: activeMachine.metadataVersion,
+                    metadata: { displayName: 'Active' },
+                },
+                [remoteMachine.id]: {
+                    id: remoteMachine.id,
+                    updatedAt: remoteMachine.updatedAt,
+                    active: remoteMachine.active,
+                    activeAt: remoteMachine.activeAt,
+                    revokedAt: null,
+                    metadataVersion: remoteMachine.metadataVersion,
+                    metadata: { displayName: 'Remote' },
+                },
             },
             machineListByServerId: {
                 server_a: [activeMachine],
@@ -236,6 +313,7 @@ describe('machines domain: sessionListViewData rebuild gating', () => {
             machineListStatusByServerId: {
                 server_a: 'idle',
             },
+            profile: { id: 'account_a' },
         };
 
         const { get, domain } = createHarness(createMachinesDomain, initialState);

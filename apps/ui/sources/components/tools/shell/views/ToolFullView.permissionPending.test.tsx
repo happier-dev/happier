@@ -5,6 +5,14 @@ import { makeToolCall } from './ToolView.testHelpers';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
+const ensureSidechainMessagesLoadedMock = vi.fn();
+
+vi.mock('@/sync/sync', () => ({
+    sync: {
+        ensureSidechainMessagesLoaded: ensureSidechainMessagesLoadedMock,
+    },
+}));
+
 vi.mock('@/components/sessions/transcript/motion/TranscriptCollapsible', () => ({
     TranscriptCollapsible: ({ expanded, children }: any) =>
         expanded ? React.createElement(React.Fragment, null, children) : null,
@@ -18,16 +26,20 @@ vi.mock('react-native-device-info', () => ({
     getDeviceType: () => 'Handset',
 }));
 
-vi.mock('react-native', () => ({
-    View: 'View',
-    Text: 'Text',
-    ScrollView: 'ScrollView',
-    Pressable: 'Pressable',
-    AppState: { currentState: 'active', addEventListener: () => ({ remove: () => {} }) },
-    Dimensions: { get: () => ({ width: 800, height: 600, scale: 2, fontScale: 2 }) },
-    Platform: { OS: 'ios', select: (v: any) => v.ios },
-    useWindowDimensions: () => ({ width: 800, height: 600 }),
-}));
+vi.mock('react-native', async () => {
+    const rn = await import('@/dev/reactNativeStub');
+    return {
+        ...rn,
+        View: 'View',
+        Text: 'Text',
+        ScrollView: 'ScrollView',
+        Pressable: 'Pressable',
+        AppState: { currentState: 'active', addEventListener: () => ({ remove: () => {} }) },
+        Dimensions: { get: () => ({ width: 800, height: 600, scale: 2, fontScale: 2 }) },
+        Platform: { ...rn.Platform, OS: 'ios', select: (v: any) => v.ios },
+        useWindowDimensions: () => ({ width: 800, height: 600 }),
+    };
+});
 
 vi.mock('@/sync/domains/state/storage', () => ({
     useLocalSetting: () => false,
@@ -35,6 +47,7 @@ vi.mock('@/sync/domains/state/storage', () => ({
         if (key === 'permissionPromptSurface') return 'composer';
         return false;
     },
+    useSessionTranscriptDraftMessages: () => [],
 }));
 
 vi.mock('@/text', () => ({

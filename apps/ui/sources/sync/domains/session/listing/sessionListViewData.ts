@@ -1,5 +1,6 @@
 import { isHiddenSystemSession } from '@happier-dev/protocol';
-import type { Machine, Session } from '@/sync/domains/state/storageTypes';
+import type { MachineDisplayRenderable } from '@/sync/domains/machines/machineDisplayRenderable';
+import type { SessionListRenderableSession } from './sessionListRenderable';
 
 export type SessionListViewItem =
     | {
@@ -7,14 +8,14 @@ export type SessionListViewItem =
         title: string;
         headerKind?: 'date' | 'server' | 'active' | 'inactive' | 'project' | 'pinned';
         groupKey?: string;
+        workspaceKey?: string;
         serverId?: string;
         serverName?: string;
-        machine?: Machine;
         subtitle?: string;
     }
     | {
         type: 'session';
-        session: Session;
+        session: SessionListRenderableSession;
         section?: 'active' | 'inactive';
         groupKey?: string;
         groupKind?: 'active' | 'date' | 'project' | 'pinned';
@@ -62,18 +63,15 @@ function formatPathRelativeToHome(path: string, homeDir?: string | null): string
     return relativePath ? `~${relativePath}` : '~';
 }
 
-function makeUnknownMachine(id: string): Machine {
+function makeUnknownMachine(id: string): MachineDisplayRenderable {
     return {
         id,
-        seq: 0,
-        createdAt: 0,
         updatedAt: 0,
         active: false,
         activeAt: 0,
+        revokedAt: null,
         metadata: null,
         metadataVersion: 0,
-        daemonState: null,
-        daemonStateVersion: 0,
     };
 }
 
@@ -102,19 +100,19 @@ function hashFNV1a32Hex(input: string): string {
 type ProjectGroup = {
     key: string;
     displayPath: string;
-    machine: Machine;
+    machine: MachineDisplayRenderable;
     latestCreatedAt: number;
-    sessions: Session[];
+    sessions: SessionListRenderableSession[];
 };
 
-function compareSessionsStableNewestFirst(a: Session, b: Session): number {
+function compareSessionsStableNewestFirst(a: SessionListRenderableSession, b: SessionListRenderableSession): number {
     if (b.createdAt !== a.createdAt) return b.createdAt - a.createdAt;
     return a.id.localeCompare(b.id);
 }
 
 function groupSessionsByProject(params: Readonly<{
-    sessions: ReadonlyArray<Session>;
-    machines: Record<string, Machine>;
+    sessions: ReadonlyArray<SessionListRenderableSession>;
+    machines: Record<string, MachineDisplayRenderable>;
 }>): ProjectGroup[] {
     const groups = new Map<string, ProjectGroup>();
 
@@ -160,7 +158,9 @@ function pushProjectGroupsToList(params: Readonly<{
 }>): void {
     for (const group of params.groups) {
         const hasGroupHeader = Boolean(group.displayPath);
-        const groupKey = `server:${params.serverKey}:${params.section}:project:${hashFNV1a32Hex(group.key)}`;
+        const wsHash = hashFNV1a32Hex(group.key);
+        const groupKey = `server:${params.serverKey}:${params.section}:project:${wsHash}`;
+        const workspaceKey = `wl_${wsHash}`;
 
         if (hasGroupHeader) {
             params.listData.push({
@@ -168,6 +168,7 @@ function pushProjectGroupsToList(params: Readonly<{
                 title: group.displayPath,
                 headerKind: 'project',
                 groupKey,
+                workspaceKey,
                 machine: group.machine,
                 subtitle: group.machine.metadata?.displayName || group.machine.metadata?.host || group.machine.id,
                 ...(params.serverScopeMeta as any),
@@ -191,7 +192,7 @@ function pushProjectGroupsToList(params: Readonly<{
 
 function pushDateGroupsToList(params: Readonly<{
     listData: SessionListViewItem[];
-    sessions: ReadonlyArray<Session>;
+    sessions: ReadonlyArray<SessionListRenderableSession>;
     section: 'active' | 'inactive';
     serverKey: string;
     serverScopeMeta: Record<string, unknown>;
@@ -202,7 +203,7 @@ function pushDateGroupsToList(params: Readonly<{
     const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
     const yesterday = new Date(today.getTime() - 24 * 60 * 60 * 1000);
 
-    let currentDateGroup: Session[] = [];
+    let currentDateGroup: SessionListRenderableSession[] = [];
     let currentDateString: string | null = null;
 
     const flush = () => {
@@ -253,8 +254,8 @@ function pushDateGroupsToList(params: Readonly<{
 }
 
 export function buildSessionListViewData(
-    sessions: Record<string, Session>,
-    machines: Record<string, Machine>,
+    sessions: Record<string, SessionListRenderableSession>,
+    machines: Record<string, MachineDisplayRenderable>,
     options: BuildSessionListViewDataOptions
 ): SessionListViewItem[] {
     const serverScopeMeta = options.serverScope
@@ -263,12 +264,12 @@ export function buildSessionListViewData(
             serverName: options.serverScope.serverName,
         }
         : {};
-    const activeSessions: Session[] = [];
-    const inactiveSessions: Session[] = [];
+    const activeSessions: SessionListRenderableSession[] = [];
+    const inactiveSessions: SessionListRenderableSession[] = [];
 
     Object.values(sessions).forEach((session) => {
         // Hide system sessions from user-facing lists by default.
-        if (isHiddenSystemSession({ metadata: session.metadata })) {
+        if (session.metadata?.hiddenSystemSession === true || isHiddenSystemSession({ metadata: session.metadata as never })) {
             return;
         }
         if (isSessionActive(session)) {

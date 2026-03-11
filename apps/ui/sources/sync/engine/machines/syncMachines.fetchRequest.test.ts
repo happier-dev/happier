@@ -41,6 +41,8 @@ function createEncryptionHarness() {
     return {
         decryptEncryptionKey,
         initializeMachines,
+        decryptMetadata,
+        decryptDaemonState,
         getMachineEncryption: (machineId: string) => {
             if (!initialized.has(machineId)) return null;
             return { decryptMetadata, decryptDaemonState };
@@ -106,6 +108,356 @@ describe('fetchAndApplyMachines request override', () => {
         expect(applied).toHaveLength(1);
         expect((applied[0] as any[])[0]?.id).toBe('m1');
         expect((applied[0] as any[])[0]?.revokedAt).toBe(null);
+    });
+
+    it('reuses warm cache machine display data when metadata version matches', async () => {
+        const fetchAndApplyMachines = await loadFetchAndApplyMachines();
+        const requestSpy = vi.fn(async (_path: string, _init?: RequestInit) =>
+            jsonResponse([
+                {
+                    id: 'm_cached',
+                    metadata: 'encrypted-meta',
+                    metadataVersion: 5,
+                    daemonState: null,
+                    daemonStateVersion: 0,
+                    dataEncryptionKey: 'key-1',
+                    seq: 1,
+                    active: true,
+                    activeAt: 10,
+                    revokedAt: null,
+                    createdAt: 1,
+                    updatedAt: 10,
+                } satisfies RawMachine,
+            ]),
+        );
+
+        const encryption = createEncryptionHarness();
+        const applyMachines = vi.fn();
+        const applyMachineDisplayEntries = vi.fn();
+
+        await fetchAndApplyMachines({
+            credentials: { token: 't', secret: 's' } satisfies AuthCredentials,
+            encryption,
+            machineDataKeys: new Map<string, Uint8Array>(),
+            request: requestSpy,
+            applyMachines,
+            ...( {
+                cachedMachineDisplayEntries: {
+                    m_cached: {
+                        machineId: 'm_cached',
+                        metadataVersion: 5,
+                        updatedAt: 10,
+                        active: true,
+                        activeAt: 10,
+                        revokedAt: null,
+                        displayName: 'Cached machine',
+                        host: 'mbp',
+                        homeDir: '/home/u',
+                    },
+                },
+                applyMachineDisplayEntries,
+            } as any),
+        } as any);
+
+        expect(encryption.decryptMetadata).not.toHaveBeenCalled();
+        expect(applyMachines).toHaveBeenCalledWith([
+            expect.objectContaining({
+                id: 'm_cached',
+                metadataVersion: 5,
+                metadata: expect.objectContaining({
+                    displayName: 'Cached machine',
+                    host: 'mbp',
+                    homeDir: '/home/u',
+                }),
+            }),
+        ], false);
+        expect(applyMachineDisplayEntries).toHaveBeenCalledWith([
+            expect.objectContaining({
+                id: 'm_cached',
+                metadataVersion: 5,
+                metadata: expect.objectContaining({
+                    displayName: 'Cached machine',
+                    host: 'mbp',
+                    homeDir: '/home/u',
+                }),
+            }),
+        ], { replace: true });
+    });
+
+    it('still hydrates machine daemonState when cache-hit display metadata is fresh', async () => {
+        const fetchAndApplyMachines = await loadFetchAndApplyMachines();
+        const requestSpy = vi.fn(async (_path: string, _init?: RequestInit) =>
+            jsonResponse([
+                {
+                    id: 'm_cached',
+                    metadata: 'encrypted-meta',
+                    metadataVersion: 5,
+                    daemonState: 'encrypted-daemon',
+                    daemonStateVersion: 7,
+                    dataEncryptionKey: 'key-1',
+                    seq: 1,
+                    active: true,
+                    activeAt: 10,
+                    revokedAt: null,
+                    createdAt: 1,
+                    updatedAt: 10,
+                } satisfies RawMachine,
+            ]),
+        );
+
+        const encryption = createEncryptionHarness();
+        const applyMachines = vi.fn();
+        const applyMachineDisplayEntries = vi.fn();
+
+        await fetchAndApplyMachines({
+            credentials: { token: 't', secret: 's' } satisfies AuthCredentials,
+            encryption,
+            machineDataKeys: new Map<string, Uint8Array>(),
+            request: requestSpy,
+            applyMachines,
+            ...( {
+                cachedMachineDisplayEntries: {
+                    m_cached: {
+                        machineId: 'm_cached',
+                        metadataVersion: 5,
+                        updatedAt: 10,
+                        active: true,
+                        activeAt: 10,
+                        revokedAt: null,
+                        displayName: 'Cached machine',
+                        host: 'mbp',
+                        homeDir: '/home/u',
+                    },
+                },
+                applyMachineDisplayEntries,
+            } as any),
+        } as any);
+
+        await new Promise((resolve) => setTimeout(resolve, 0));
+
+        expect(encryption.decryptDaemonState).toHaveBeenCalledWith(7, 'encrypted-daemon');
+        expect(applyMachines).toHaveBeenLastCalledWith([
+            expect.objectContaining({
+                id: 'm_cached',
+                metadataVersion: 5,
+                daemonStateVersion: 7,
+                daemonState: { decrypted: 'encrypted-daemon' },
+            }),
+        ], false);
+    });
+
+    it('preserves existing daemonState while cache-hit machine hydration is still pending', async () => {
+        const fetchAndApplyMachines = await loadFetchAndApplyMachines();
+        const requestSpy = vi.fn(async (_path: string, _init?: RequestInit) =>
+            jsonResponse([
+                {
+                    id: 'm_cached',
+                    metadata: 'encrypted-meta',
+                    metadataVersion: 5,
+                    daemonState: 'encrypted-daemon',
+                    daemonStateVersion: 7,
+                    dataEncryptionKey: 'key-1',
+                    seq: 1,
+                    active: true,
+                    activeAt: 10,
+                    revokedAt: null,
+                    createdAt: 1,
+                    updatedAt: 10,
+                } satisfies RawMachine,
+            ]),
+        );
+
+        const encryption = createEncryptionHarness();
+        encryption.decryptMetadata.mockImplementation(async () => new Promise<never>(() => {}));
+        encryption.decryptDaemonState.mockImplementation(async () => new Promise<never>(() => {}));
+        const applyMachines = vi.fn();
+        const applyMachineDisplayEntries = vi.fn();
+
+        const fetchPromise = fetchAndApplyMachines({
+            credentials: { token: 't', secret: 's' } satisfies AuthCredentials,
+            encryption,
+            machineDataKeys: new Map<string, Uint8Array>(),
+            request: requestSpy,
+            applyMachines,
+            getExistingMachine: (machineId: string) => machineId === 'm_cached'
+                ? ({
+                    id: 'm_cached',
+                    seq: 1,
+                    createdAt: 1,
+                    updatedAt: 9,
+                    active: true,
+                    activeAt: 9,
+                    revokedAt: null,
+                    metadata: { displayName: 'Existing machine', host: 'mbp', homeDir: '/home/u' },
+                    metadataVersion: 5,
+                    daemonState: { healthy: true },
+                    daemonStateVersion: 7,
+                } as any)
+                : null,
+            ...( {
+                cachedMachineDisplayEntries: {
+                    m_cached: {
+                        machineId: 'm_cached',
+                        metadataVersion: 5,
+                        updatedAt: 10,
+                        active: true,
+                        activeAt: 10,
+                        revokedAt: null,
+                        displayName: 'Cached machine',
+                        host: 'mbp',
+                        homeDir: '/home/u',
+                    },
+                },
+                applyMachineDisplayEntries,
+            } as any),
+        } as any);
+
+        const raceResult = await Promise.race([
+            fetchPromise.then(() => 'resolved'),
+            new Promise<'timeout'>((resolve) => setTimeout(() => resolve('timeout'), 25)),
+        ]);
+
+        expect(raceResult).toBe('resolved');
+        expect(applyMachines).toHaveBeenCalledWith([
+            expect.objectContaining({
+                id: 'm_cached',
+                metadataVersion: 5,
+                daemonStateVersion: 7,
+                daemonState: { healthy: true },
+            }),
+        ], false);
+    });
+
+    it('clears existing daemonState immediately when the fetched row no longer carries daemonState', async () => {
+        const fetchAndApplyMachines = await loadFetchAndApplyMachines();
+        const requestSpy = vi.fn(async (_path: string, _init?: RequestInit) =>
+            jsonResponse([
+                {
+                    id: 'm_cached',
+                    metadata: 'encrypted-meta',
+                    metadataVersion: 5,
+                    daemonState: null,
+                    daemonStateVersion: 0,
+                    dataEncryptionKey: 'key-1',
+                    seq: 1,
+                    active: true,
+                    activeAt: 10,
+                    revokedAt: null,
+                    createdAt: 1,
+                    updatedAt: 10,
+                } satisfies RawMachine,
+            ]),
+        );
+
+        const encryption = createEncryptionHarness();
+        const applyMachines = vi.fn();
+        const applyMachineDisplayEntries = vi.fn();
+
+        await fetchAndApplyMachines({
+            credentials: { token: 't', secret: 's' } satisfies AuthCredentials,
+            encryption,
+            machineDataKeys: new Map<string, Uint8Array>(),
+            request: requestSpy,
+            applyMachines,
+            getExistingMachine: (machineId: string) => machineId === 'm_cached'
+                ? ({
+                    id: 'm_cached',
+                    seq: 1,
+                    createdAt: 1,
+                    updatedAt: 9,
+                    active: true,
+                    activeAt: 9,
+                    revokedAt: null,
+                    metadata: { displayName: 'Existing machine', host: 'mbp', homeDir: '/home/u' },
+                    metadataVersion: 5,
+                    daemonState: { healthy: true },
+                    daemonStateVersion: 7,
+                } as any)
+                : null,
+            ...( {
+                cachedMachineDisplayEntries: {
+                    m_cached: {
+                        machineId: 'm_cached',
+                        metadataVersion: 5,
+                        updatedAt: 10,
+                        active: true,
+                        activeAt: 10,
+                        revokedAt: null,
+                        displayName: 'Cached machine',
+                        host: 'mbp',
+                        homeDir: '/home/u',
+                    },
+                },
+                applyMachineDisplayEntries,
+            } as any),
+        } as any);
+
+        expect(applyMachines).toHaveBeenCalledWith([
+            expect.objectContaining({
+                id: 'm_cached',
+                daemonState: null,
+                daemonStateVersion: 0,
+            }),
+        ], false);
+    });
+
+    it('renders placeholder machine displays immediately on empty cache and hydrates in the background', async () => {
+        const fetchAndApplyMachines = await loadFetchAndApplyMachines();
+        const requestSpy = vi.fn(async (_path: string, _init?: RequestInit) =>
+            jsonResponse([
+                {
+                    id: 'm_cold',
+                    metadata: 'encrypted-meta',
+                    metadataVersion: 5,
+                    daemonState: null,
+                    daemonStateVersion: 0,
+                    dataEncryptionKey: 'key-1',
+                    seq: 1,
+                    active: true,
+                    activeAt: 10,
+                    revokedAt: null,
+                    createdAt: 1,
+                    updatedAt: 10,
+                } satisfies RawMachine,
+            ]),
+        );
+
+        const encryption = createEncryptionHarness();
+        encryption.decryptMetadata.mockImplementation(async () => new Promise<never>(() => {}));
+        encryption.decryptDaemonState.mockImplementation(async () => new Promise<never>(() => {}));
+        const applyMachines = vi.fn();
+        const applyMachineDisplayEntries = vi.fn();
+
+        const fetchPromise = fetchAndApplyMachines({
+            credentials: { token: 't', secret: 's' } satisfies AuthCredentials,
+            encryption,
+            machineDataKeys: new Map<string, Uint8Array>(),
+            request: requestSpy,
+            applyMachines,
+            applyMachineDisplayEntries,
+            cachedMachineDisplayEntries: {},
+        });
+
+        const raceResult = await Promise.race([
+            fetchPromise.then(() => 'resolved'),
+            new Promise<'timeout'>((resolve) => setTimeout(() => resolve('timeout'), 25)),
+        ]);
+
+        expect(raceResult).toBe('resolved');
+        expect(applyMachineDisplayEntries).toHaveBeenCalledWith([
+            expect.objectContaining({
+                id: 'm_cold',
+                metadataVersion: 5,
+                metadata: null,
+            }),
+        ], { replace: true });
+        expect(applyMachines).toHaveBeenCalledWith([
+            expect.objectContaining({
+                id: 'm_cold',
+                metadataVersion: 5,
+                metadata: null,
+            }),
+        ], false);
     });
 
     it('does not throw when the request transport fails (e.g. network error)', async () => {

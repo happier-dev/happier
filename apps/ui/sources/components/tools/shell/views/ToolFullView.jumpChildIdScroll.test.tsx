@@ -7,6 +7,41 @@ import type { Message, ToolCall, ToolCallMessage } from '@/sync/domains/messages
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 let scrollToSpy: ReturnType<typeof vi.fn> | null = null;
+let scrollToIndexSpy: ReturnType<typeof vi.fn> | null = null;
+
+vi.mock('@/sync/sync', () => ({
+    sync: {
+        ensureSidechainMessagesLoaded: vi.fn(),
+        loadOlderSidechainMessages: vi.fn(),
+        getSyncTuning: () => ({
+            transcriptFlashListEstimatedItemSize: 120,
+        }),
+    },
+}));
+
+vi.mock('@shopify/flash-list', async () => {
+    const React = await vi.importActual<any>('react');
+
+    scrollToIndexSpy = vi.fn();
+
+    const FlashList = React.forwardRef(function FlashList(props: any, ref: any) {
+        const instance = React.useMemo(
+            () => ({
+                scrollToIndex: scrollToIndexSpy,
+                scrollToEnd: vi.fn(),
+                scrollToOffset: vi.fn(),
+            }),
+            [],
+        );
+
+        if (typeof ref === 'function') ref(instance);
+        else if (ref && typeof ref === 'object') ref.current = instance;
+
+        return React.createElement('FlashList', props, props.children);
+    });
+
+    return { FlashList };
+});
 
 vi.mock('@expo/vector-icons', () => ({
     Ionicons: 'Ionicons',
@@ -23,7 +58,9 @@ vi.mock('react-native', async () => {
     scrollToSpy = vi.fn();
 
     const ScrollView = React.forwardRef(function ScrollView(props: any, ref: any) {
-        React.useImperativeHandle(ref, () => ({ scrollTo: scrollToSpy }), []);
+        React.useImperativeHandle(ref, () => ({
+            scrollTo: scrollToSpy,
+        }), []);
         return React.createElement('ScrollView', props, props.children);
     });
 
@@ -32,15 +69,16 @@ vi.mock('react-native', async () => {
         View: 'View',
         Text: 'Text',
         Pressable: 'Pressable',
+        ScrollView,
         Platform: { OS: 'ios', select: (v: any) => v.ios },
         useWindowDimensions: () => ({ width: 800, height: 600 }),
-        ScrollView,
     };
 });
 
 vi.mock('@/sync/domains/state/storage', () => ({
     useLocalSetting: () => false,
     useSetting: () => false,
+    useSessionTranscriptDraftMessages: () => [],
 }));
 
 vi.mock('@/text', () => ({
@@ -104,9 +142,8 @@ describe('ToolFullView (jumpChildId)', () => {
 
         const messages: Message[] = [makeToolCallMessage('child-1'), makeToolCallMessage('child-2')];
 
-        let tree: ReturnType<typeof renderer.create> | undefined;
         await act(async () => {
-            tree = renderer.create(
+            renderer.create(
                 React.createElement(ToolFullView, {
                     tool: makeToolCall({}),
                     sessionId: 's1',
@@ -115,16 +152,9 @@ describe('ToolFullView (jumpChildId)', () => {
                     jumpChildId: 'child-2',
                 }),
             );
+            await Promise.resolve();
         });
-
-        const wrapper = tree!.root.findByProps({ testID: 'tool-fullview-transcript-message-child-2' });
-        expect(typeof wrapper.props.onLayout).toBe('function');
-
-        await act(async () => {
-            wrapper.props.onLayout({ nativeEvent: { layout: { y: 180 } } });
-        });
-
-        expect(scrollToSpy).not.toBeNull();
-        expect(scrollToSpy!).toHaveBeenCalledWith({ y: 180, animated: true });
+        expect(scrollToIndexSpy).not.toBeNull();
+        expect(scrollToIndexSpy!).toHaveBeenCalledWith(expect.objectContaining({ index: 1, animated: true }));
     });
 });

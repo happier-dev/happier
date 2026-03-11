@@ -19,6 +19,7 @@ import { isWebElementScrollable, resolveWebScrollableElement } from '@/component
 import { useHeaderHeight } from '@/utils/platform/responsive';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { MessageView } from './MessageView';
+import type { Message } from '@/sync/domains/messages/messageTypes';
 import { Metadata, Session } from '@/sync/domains/state/storageTypes';
 import { ChatFooter, type ChatFooterLocalControlState } from './ChatFooter';
 import { buildChatListItems, buildChatListItemsCached, type ChatListItem, type ChatListItemsBuildCache } from '@/components/sessions/chatListItems';
@@ -44,6 +45,22 @@ import { settingsDefaults } from '@/sync/domains/settings/settings';
 import { deriveTranscriptInteraction, type TranscriptInteraction } from '@/utils/sessions/deriveTranscriptInteraction';
 import { buildChatListNativeId } from './chatListNativeId';
 import { useWebFlashListCrashFallback } from '@/components/ui/lists/useWebFlashListCrashFallback';
+import { buildTranscriptHotColdSegments } from '@/components/sessions/transcript/segments/buildTranscriptHotColdSegments';
+import {
+    getWebTranscriptDistanceFromBottom,
+    isWebTranscriptScrollable,
+    resolveWebTranscriptScrollMetrics,
+} from '@/components/sessions/transcript/webTranscriptScrollMetrics';
+import { WebTranscriptSplitFooter } from '@/components/sessions/transcript/web/WebTranscriptSplitFooter';
+import {
+    captureWebTranscriptPrependAnchor,
+    refreshWebTranscriptPrependAnchor,
+    restoreWebTranscriptPrependAnchor,
+    TRANSCRIPT_WEB_MESSAGE_PREPEND_ANCHOR_TEST_ID_PREFIX,
+    TRANSCRIPT_WEB_PREPEND_ANCHOR_TEST_ID_PREFIX,
+    TRANSCRIPT_WEB_TOOL_GROUP_PREPEND_ANCHOR_TEST_ID_PREFIX,
+    type WebTranscriptPrependAnchor,
+} from '@/components/sessions/transcript/webTranscriptPrependAnchor';
 
 type ScrollableChatListRef = Readonly<{
     scrollToIndex: (params: { index: number; animated?: boolean; viewPosition?: number }) => void;
@@ -101,8 +118,18 @@ export const ChatList = React.memo((props: {
         fireAndForget(sync.prefetchForkedTranscriptContext(props.session.id), { tag: 'ChatList.prefetchForkedTranscriptContext' });
     }, [forkContextNeedsPrefetch, props.session.id]);
 
-    const messageIdsOldestFirst = forkedTranscriptEnabled ? (fork!.combinedMessageIdsOldestFirst as any as string[]) : childMessageIdsOldestFirst;
-    const messagesById = forkedTranscriptEnabled ? (fork!.combinedMessagesById as any) : childMessagesById;
+    const messageIdsOldestFirst = React.useMemo(() => {
+        if (forkedTranscriptEnabled) {
+            return fork!.combinedMessageIdsOldestFirst as any as string[];
+        }
+        return childMessageIdsOldestFirst;
+    }, [childMessageIdsOldestFirst, fork, forkedTranscriptEnabled]);
+    const messagesById = React.useMemo(() => {
+        if (forkedTranscriptEnabled) {
+            return fork!.combinedMessagesById as any;
+        }
+        return childMessagesById;
+    }, [childMessagesById, fork, forkedTranscriptEnabled]);
 
     const groupingMode = forkedTranscriptEnabled ? 'linear' : (transcriptGroupingMode === 'turns' ? 'turns' : 'linear');
     const groupToolCalls =
@@ -222,6 +249,7 @@ export const ChatList = React.memo((props: {
             sessionSeq={props.session.seq ?? 0}
             forkedTranscriptEnabled={forkedTranscriptEnabled}
             items={groupedItems}
+            messagesById={messagesById}
             committedMessagesCount={messageIdsOldestFirst.length}
             latestCommittedActivityKey={latestCommittedActivityKey}
             activeThinkingMessageId={activeThinkingMessageId}
@@ -279,6 +307,7 @@ const ListFooter = React.memo((props: {
 const ChatListMessageRow = React.memo(function ChatListMessageRow(props: {
     sessionId: string;
     messageId: string;
+    messageOverride?: Message | null;
     originSessionId?: string;
     isReadOnlyContext?: boolean;
     metadata: Metadata | null;
@@ -288,7 +317,8 @@ const ChatListMessageRow = React.memo(function ChatListMessageRow(props: {
     interaction: TranscriptInteraction;
 }) {
     const originSessionId = props.originSessionId ?? props.sessionId;
-    const message = useMessage(originSessionId, props.messageId);
+    const committedMessage = useMessage(originSessionId, props.messageId);
+    const message = props.messageOverride ?? committedMessage;
     if (!message) return null;
 
     const isThinking = message.kind === 'agent-text' && message.isThinking === true;
@@ -302,16 +332,18 @@ const ChatListMessageRow = React.memo(function ChatListMessageRow(props: {
         }
         : props.interaction;
     return (
-        <View testID={`transcript-message-${props.messageId}`}>
-            <MessageView
-                message={message}
-                metadata={props.metadata}
-                sessionId={originSessionId}
-                activeThinkingMessageId={props.activeThinkingMessageId}
-                thinkingExpanded={isThinking ? props.resolveThinkingExpanded(message.id) : undefined}
-                onThinkingExpandedChange={isThinking ? (next) => props.setThinkingExpanded(message.id, next) : undefined}
-                interaction={readOnlyInteraction}
-            />
+        <View testID={`${TRANSCRIPT_WEB_MESSAGE_PREPEND_ANCHOR_TEST_ID_PREFIX}${props.messageId}`}>
+            <View testID={`transcript-message-${props.messageId}`}>
+                <MessageView
+                    message={message}
+                    metadata={props.metadata}
+                    sessionId={originSessionId}
+                    activeThinkingMessageId={props.activeThinkingMessageId}
+                    thinkingExpanded={isThinking ? props.resolveThinkingExpanded(message.id) : undefined}
+                    onThinkingExpandedChange={isThinking ? (next) => props.setThinkingExpanded(message.id, next) : undefined}
+                    interaction={readOnlyInteraction}
+                />
+            </View>
         </View>
     );
 });
@@ -322,6 +354,7 @@ const ChatListInternal = React.memo((props: {
     sessionSeq: number,
     forkedTranscriptEnabled: boolean,
     items: ChatTranscriptListItem[],
+    messagesById: Readonly<Record<string, Message>>,
     committedMessagesCount: number,
     latestCommittedActivityKey: string | null,
     activeThinkingMessageId: string | null,
@@ -649,6 +682,7 @@ const ChatListInternal = React.memo((props: {
                         <ChatListMessageRow
                             sessionId={props.sessionId}
                             messageId={item.messageId}
+                            messageOverride={props.messagesById[item.messageId] ?? null}
                             originSessionId={item.originSessionId}
                             isReadOnlyContext={item.isReadOnlyContext}
                             metadata={props.metadata}

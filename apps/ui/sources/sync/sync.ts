@@ -30,7 +30,21 @@ import {
     saveSessionMaterializedMaxSeqById,
     loadChangesCursor,
     saveChangesCursor,
+    loadProfile as loadPersistedProfile,
 } from './domains/state/persistence';
+import {
+    clearWarmCacheAccountScope,
+    loadMachineDisplayWarmCacheEntries,
+    loadSessionListWarmCacheEntries,
+    resolveWarmCacheAccountScope,
+    setWarmCacheAccountScope,
+} from './domains/state/warmCachePersistence';
+import {
+    buildMachineDisplayCacheEntriesFromRenderables,
+    buildMachineDisplayRenderableFromCacheEntry,
+    buildSessionListCacheEntriesFromRenderables,
+    buildSessionListRenderableFromCacheEntry,
+} from './domains/state/warmCacheAdapters';
 import { initializeTracking, tracking } from '@/track';
 import { applyCrashReportsOptOut } from '@/utils/system/sentry';
 import { parseToken } from '@/utils/auth/parseToken';
@@ -381,6 +395,7 @@ class Sync {
         this.encryption = encryption;
         this.anonID = encryption.anonID;
         this.serverID = parseToken(credentials.token);
+        setWarmCacheAccountScope(this.serverID);
         this.changesCursor = loadChangesCursor(this.getChangesCursorScope());
         this.changesCursorDirty = false;
         // Derive a stable per-account key for field-level secret settings.
@@ -395,6 +410,7 @@ class Sync {
         } catch {
             this.settingsSecretsKey = null;
         }
+        this.hydrateWarmCachesForActiveServer();
         await this.#init();
 
         // UX: avoid blocking login forever if initial sync fetches hang/retry indefinitely.
@@ -414,6 +430,7 @@ class Sync {
         this.encryption = encryption;
         this.anonID = encryption.anonID;
         this.serverID = parseToken(credentials.token);
+        setWarmCacheAccountScope(this.serverID);
         this.changesCursor = loadChangesCursor(this.getChangesCursorScope());
         this.changesCursorDirty = false;
         try {
@@ -426,7 +443,28 @@ class Sync {
         } catch {
             this.settingsSecretsKey = null;
         }
+        this.hydrateWarmCachesForActiveServer();
         await this.#init();
+    }
+
+    private hydrateWarmCachesForActiveServer(): void {
+        const serverId = String(getActiveServerSnapshot().serverId ?? '').trim();
+        const accountId = resolveWarmCacheAccountScope(loadPersistedProfile().id);
+        if (!serverId || !accountId) return;
+
+        const machineEntries = loadMachineDisplayWarmCacheEntries(serverId, accountId);
+        if (Object.keys(machineEntries).length > 0) {
+            storage.getState().replaceMachineDisplays(
+                Object.values(machineEntries).map((entry) => buildMachineDisplayRenderableFromCacheEntry(entry)),
+            );
+        }
+
+        const sessionEntries = loadSessionListWarmCacheEntries(serverId, accountId);
+        if (Object.keys(sessionEntries).length > 0) {
+            storage.getState().replaceSessionListRenderables(
+                Object.values(sessionEntries).map((entry) => buildSessionListRenderableFromCacheEntry(entry)),
+            );
+        }
     }
 
     private resetServerScopedRuntimeState = () => {
@@ -473,6 +511,7 @@ class Sync {
             ...state,
             profile: { ...profileDefaults },
             sessions: {},
+            sessionListRenderables: {},
             sessionsData: null,
             sessionListViewData: null,
             sessionListViewDataByServerId: setActiveServerSessionListCache(
@@ -481,6 +520,7 @@ class Sync {
             ),
             sessionScmStatus: {},
             machines: {},
+            machineDisplayById: {},
             sessionMessages: {},
             sessionPending: {},
             artifacts: {},
@@ -514,6 +554,7 @@ class Sync {
 
     public disconnectServer(): void {
         this.resetServerScopedRuntimeState();
+        clearWarmCacheAccountScope();
     }
 
     /**
@@ -1482,15 +1523,44 @@ class Sync {
     // Private
     //
 
+    private getPrioritizedSessionHydrationIds = (): string[] => {
+        const prioritizedByViewport = Array.from(this.sessionViewport.entries())
+            .sort((left, right) => right[1].lastUpdatedAt - left[1].lastUpdatedAt)
+            .map(([sessionId]) => sessionId);
+
+        const eagerListCount = Math.max(0, Math.trunc(this.syncTuning.sessionListEagerHydrationCount ?? 0));
+        if (eagerListCount <= 0) {
+            return prioritizedByViewport;
+        }
+
+        const eagerListIds: string[] = [];
+        for (const item of storage.getState().sessionListViewData ?? []) {
+            if (item.type !== 'session') continue;
+            eagerListIds.push(item.session.id);
+            if (eagerListIds.length >= eagerListCount) break;
+        }
+
+        return Array.from(new Set([...prioritizedByViewport, ...eagerListIds]));
+    }
+
     private fetchSessions = async () => {
         if (!this.credentials) return;
+        const cachedSessionListEntries = buildSessionListCacheEntriesFromRenderables(storage.getState().sessionListRenderables);
         await fetchAndApplySessions({
             credentials: this.credentials,
             encryption: this.encryption,
             sessionDataKeys: this.sessionDataKeys,
-            applySessions: (sessions) => {
-                this.activeServerSessionIds = new Set(sessions.map((session) => session.id));
+            getExistingSession: (sessionId) => storage.getState().sessions[sessionId] ?? null,
+            cachedSessionListEntries,
+            applySessionListRenderables: (sessions) => storage.getState().replaceSessionListRenderables(sessions),
+            onSnapshotFetched: (sessionIds) => {
+                this.activeServerSessionIds = new Set(sessionIds);
                 this.hasFetchedSessionsSnapshotForActiveServer = true;
+            },
+            prioritizeSessionIds: this.getPrioritizedSessionHydrationIds(),
+            sessionListEagerHydrationCount: this.syncTuning.sessionListEagerHydrationCount,
+            sessionListHydrationConcurrencyLimit: this.syncTuning.sessionListHydrationConcurrencyLimit,
+            applySessions: (sessions) => {
                 this.applySessions(sessions);
             },
             repairInvalidReadStateV1: (params) => this.repairInvalidReadStateV1(params),
@@ -1955,11 +2025,16 @@ class Sync {
 
     private fetchMachines = async () => {
         if (!this.credentials) return;
+        const cachedMachineDisplayEntries = buildMachineDisplayCacheEntriesFromRenderables(storage.getState().machineDisplayById);
 
         await fetchAndApplyMachines({
             credentials: this.credentials,
             encryption: this.encryption,
             machineDataKeys: this.machineDataKeys,
+            getExistingMachine: (machineId) => storage.getState().machines[machineId] ?? null,
+            cachedMachineDisplayEntries,
+            applyMachineDisplayEntries: (machines) => storage.getState().replaceMachineDisplays(machines),
+            machineDisplayHydrationConcurrencyLimit: this.syncTuning.machineDisplayHydrationConcurrencyLimit,
             applyMachines: (machines, replace) => storage.getState().applyMachines(machines, replace),
             replace: false,
         });

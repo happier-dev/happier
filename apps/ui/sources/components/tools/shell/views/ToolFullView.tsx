@@ -13,12 +13,15 @@ import { StructuredResultView } from '@/components/tools/renderers/system/Struct
 import { normalizeToolCallForRendering } from '@/components/tools/normalization/core/normalizeToolCallForRendering';
 import { PermissionFooter } from '../permissions/PermissionFooter';
 import { useSetting } from '@/sync/domains/state/storage';
-import { MessageView } from '@/components/sessions/transcript/MessageView';
+import { useSessionTranscriptDraftMessages } from '@/sync/domains/state/storage';
 import { useUnistyles } from 'react-native-unistyles';
 import { Text, TextSelectabilityScope } from '@/components/ui/text/Text';
 import { resolveToolHeaderTextPresentation } from '@/components/tools/shell/presentation/resolveToolHeaderTextPresentation';
-import { TranscriptMessageBlockList } from '@/components/sessions/transcript/messageBlocks/TranscriptMessageBlockList';
 import { shouldShowGenericPermissionPromptForRequest } from '@/utils/sessions/permissions/permissionPromptPolicy';
+import { useEnsureSidechainsLoaded } from '@/hooks/session/useEnsureSidechainsLoaded';
+import { ChainTranscriptList } from '@/components/sessions/transcript/ChainTranscriptList';
+import { sync } from '@/sync/sync';
+import { resolveToolTranscriptSidechainId } from './resolveToolTranscriptSidechainId';
 
 
 interface ToolFullViewProps {
@@ -37,13 +40,25 @@ interface ToolFullViewProps {
 export function ToolFullView({ tool, sessionId, metadata, messages = [], jumpChildId, interaction }: ToolFullViewProps) {
     const { theme } = useUnistyles();
     const toolForRendering = React.useMemo<ToolCall>(() => normalizeToolCallForRendering(tool), [tool]);
-    const scrollRef = React.useRef<ScrollView | null>(null);
 
     const normalizedJumpChildId = typeof jumpChildId === 'string' && jumpChildId.length > 0 ? jumpChildId : null;
 
     const normalizedToolName = React.useMemo(() => {
         return resolveToolHeaderTextPresentation({ tool: toolForRendering, metadata: metadata ?? null }).normalizedToolName;
     }, [metadata, toolForRendering]);
+
+    const transcriptSidechainId = React.useMemo(() => {
+        return resolveToolTranscriptSidechainId({ tool: toolForRendering, normalizedToolName });
+    }, [normalizedToolName, toolForRendering]);
+
+    useEnsureSidechainsLoaded({
+        enabled:
+            typeof sessionId === 'string' &&
+            sessionId.length > 0 &&
+            (normalizedToolName === 'Task' || normalizedToolName === 'SubAgentRun' || normalizedToolName === 'Agent'),
+        sessionId,
+        sidechainIds: [transcriptSidechainId],
+    });
 
     // Check if there's a specialized content view for this tool.
     // ToolFullView always renders the same tool renderer in `detailLevel="full"` mode.
@@ -53,38 +68,127 @@ export function ToolFullView({ tool, sessionId, metadata, messages = [], jumpChi
     const [showDebug, setShowDebug] = React.useState<boolean>(toolViewShowDebugByDefault);
     const isWaitingForPermission =
         toolForRendering.permission?.status === 'pending' && toolForRendering.state !== 'completed';
-    const canRenderTaskTranscript =
-        (normalizedToolName === 'Task' || normalizedToolName === 'SubAgentRun' || normalizedToolName === 'Agent') &&
-        messages.length > 0 &&
-        typeof sessionId === 'string' &&
-        sessionId.length > 0;
 
-    return (
-        <ScrollView ref={(node) => { scrollRef.current = node; }} style={[styles.container, { paddingHorizontal: screenWidth > 700 ? 16 : 0 }]}>
-            <View style={styles.contentWrapper}>
-                {/* Tool-specific content or generic fallback */}
-                {canRenderTaskTranscript ? (
-                    <View style={styles.sectionFullWidth}>
-                        <TranscriptMessageBlockList
+    const normalizedSessionId = typeof sessionId === 'string' && sessionId.length > 0 ? sessionId : null;
+    const sidechainId = transcriptSidechainId;
+    const draftMessages = useSessionTranscriptDraftMessages(normalizedSessionId ?? '', sidechainId);
+    const canRenderTaskTranscript =
+        normalizedSessionId !== null &&
+        (normalizedToolName === 'Task' || normalizedToolName === 'SubAgentRun' || normalizedToolName === 'Agent') &&
+        (sidechainId !== null || messages.length > 0);
+
+    const transcriptInteraction = React.useMemo(() => {
+        return {
+            canSendMessages: interaction?.canSendMessages ?? true,
+            canApprovePermissions: interaction?.canApprovePermissions ?? true,
+            permissionDisabledReason: interaction?.permissionDisabledReason,
+            disableToolNavigation: true,
+        };
+    }, [interaction?.canApprovePermissions, interaction?.canSendMessages, interaction?.permissionDisabledReason]);
+
+    const loadOlderSidechain = React.useCallback(async () => {
+        if (!normalizedSessionId || !sidechainId) {
+            return { loaded: 0, hasMore: false, status: 'not_ready' as const };
+        }
+        return sync.loadOlderSidechainMessages(normalizedSessionId, sidechainId);
+    }, [normalizedSessionId, sidechainId]);
+
+    const permissionFooter =
+        isWaitingForPermission &&
+        toolForRendering.permission &&
+        normalizedSessionId &&
+        shouldShowGenericPermissionPromptForRequest({ toolName: toolForRendering.name, requestKind: toolForRendering.permission.kind }) ? (
+            <PermissionFooter
+                permission={toolForRendering.permission}
+                sessionId={normalizedSessionId}
+                toolName={normalizedToolName}
+                toolInput={toolForRendering.input}
+                metadata={metadata || null}
+                canApprovePermissions={interaction?.canApprovePermissions ?? true}
+                disabledReason={interaction?.permissionDisabledReason}
+            />
+        ) : null;
+
+    const debugSection = (
+        <View style={styles.section}>
+            <View style={styles.sectionHeader}>
+                <Ionicons name="code-slash" size={20} color={theme.colors.accent.orange} />
+                <Text style={styles.sectionTitle}>{t('tools.fullView.debug')}</Text>
+                <Text
+                    style={[styles.toolId, { marginLeft: 8 }]}
+                    onPress={() => setShowDebug((v) => !v)}
+                >
+                    {showDebug ? t('tools.fullView.hide') : t('tools.fullView.show')}
+                </Text>
+            </View>
+            {showDebug && (
+                <CodeView
+                    code={JSON.stringify({
+                        name: tool.name,
+                        normalizedName: normalizedToolName,
+                        state: toolForRendering.state,
+                        description: toolForRendering.description,
+                        input: toolForRendering.input,
+                        result: toolForRendering.result,
+                        createdAt: toolForRendering.createdAt,
+                        startedAt: toolForRendering.startedAt,
+                        completedAt: toolForRendering.completedAt,
+                        permission: toolForRendering.permission,
+                        messages,
+                        jumpChildId: normalizedJumpChildId,
+                    }, null, 2)}
+                />
+            )}
+        </View>
+    );
+
+    if (canRenderTaskTranscript && normalizedSessionId) {
+        const transcriptHeader =
+            messages.length === 0 && SpecializedFullView ? (
+                <TextSelectabilityScope selectable>
+                    <SpecializedFullView
+                        tool={toolForRendering}
+                        metadata={metadata || null}
+                        messages={messages}
+                        sessionId={sessionId}
+                        detailLevel="full"
+                        interaction={interaction}
+                    />
+                </TextSelectabilityScope>
+            ) : null;
+
+        return (
+            <View style={[styles.container, { paddingHorizontal: screenWidth > 700 ? 16 : 0 }]}>
+                <View style={[styles.contentWrapper, { flex: 1, minHeight: 0 }]}>
+                    <View style={styles.transcriptSection}>
+                        <ChainTranscriptList
+                            sessionId={normalizedSessionId}
                             messages={messages}
-                            sessionId={sessionId}
+                            draftMessages={draftMessages}
                             metadata={metadata || null}
-                            interaction={{
-                                canSendMessages: interaction?.canSendMessages ?? true,
-                                canApprovePermissions: interaction?.canApprovePermissions ?? true,
-                                permissionDisabledReason: interaction?.permissionDisabledReason,
-                                disableToolNavigation: true,
-                            }}
+                            interaction={transcriptInteraction}
+                            loadOlder={sidechainId ? loadOlderSidechain : undefined}
                             jumpToMessageId={normalizedJumpChildId}
-                            onResolvedJumpToMessageY={(y) => {
-                                const node: any = scrollRef.current as any;
-                                if (!node || typeof node.scrollTo !== 'function') return;
-                                node.scrollTo({ y, animated: true });
-                            }}
+                            header={transcriptHeader}
+                            footer={
+                                <>
+                                    {permissionFooter}
+                                    {debugSection}
+                                </>
+                            }
                             messageWrapperTestIdPrefix="tool-fullview-transcript-message"
                         />
                     </View>
-                ) : SpecializedFullView ? (
+                </View>
+            </View>
+        );
+    }
+
+    return (
+        <ScrollView style={[styles.container, { paddingHorizontal: screenWidth > 700 ? 16 : 0 }]}>
+            <View style={styles.contentWrapper}>
+                {/* Tool-specific content or generic fallback */}
+                {SpecializedFullView ? (
                     <TextSelectabilityScope selectable>
                         <SpecializedFullView
                             tool={toolForRendering}
@@ -174,53 +278,8 @@ export function ToolFullView({ tool, sessionId, metadata, messages = [], jumpChi
                     </TextSelectabilityScope>
                 )}
 
-                {/* Permission footer - allow approve/deny from the full view */}
-                {isWaitingForPermission &&
-                    toolForRendering.permission &&
-                    sessionId &&
-                    shouldShowGenericPermissionPromptForRequest({ toolName: toolForRendering.name, requestKind: toolForRendering.permission.kind }) && (
-                    <PermissionFooter
-                        permission={toolForRendering.permission}
-                        sessionId={sessionId}
-                        toolName={normalizedToolName}
-                        toolInput={toolForRendering.input}
-                        metadata={metadata || null}
-                        canApprovePermissions={interaction?.canApprovePermissions ?? true}
-                        disabledReason={interaction?.permissionDisabledReason}
-                    />
-                )}
-                
-                {/* Debug/raw payloads (opt-in) */}
-                <View style={styles.section}>
-                    <View style={styles.sectionHeader}>
-                        <Ionicons name="code-slash" size={20} color={theme.colors.accent.orange} />
-                        <Text style={styles.sectionTitle}>{t('tools.fullView.debug')}</Text>
-                        <Text
-                            style={[styles.toolId, { marginLeft: 8 }]}
-                            onPress={() => setShowDebug((v) => !v)}
-                        >
-                            {showDebug ? t('tools.fullView.hide') : t('tools.fullView.show')}
-                        </Text>
-                    </View>
-                    {showDebug && (
-                        <CodeView
-                            code={JSON.stringify({
-                                name: tool.name,
-                                normalizedName: normalizedToolName,
-                                state: toolForRendering.state,
-                                description: toolForRendering.description,
-                                input: toolForRendering.input,
-                                result: toolForRendering.result,
-                                createdAt: toolForRendering.createdAt,
-                                startedAt: toolForRendering.startedAt,
-                                completedAt: toolForRendering.completedAt,
-                                permission: toolForRendering.permission,
-                                messages,
-                                jumpChildId: normalizedJumpChildId,
-                            }, null, 2)}
-                        />
-                    )}
-                </View>
+                {permissionFooter}
+                {debugSection}
             </View>
         </ScrollView>
     );
@@ -243,6 +302,11 @@ const styles = StyleSheet.create((theme) => ({
     },
     sectionFullWidth: {
         marginBottom: 28,
+        paddingHorizontal: 0,
+    },
+    transcriptSection: {
+        flex: 1,
+        minHeight: 0,
         paddingHorizontal: 0,
     },
     sectionHeader: {

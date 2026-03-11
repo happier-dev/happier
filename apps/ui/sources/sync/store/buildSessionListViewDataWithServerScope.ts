@@ -1,11 +1,12 @@
 import { getServerProfileById } from '../domains/server/serverProfiles';
 import { getActiveServerSnapshot } from '../domains/server/serverRuntime';
 import { buildSessionListViewData, type SessionListViewItem } from '../domains/session/listing/sessionListViewData';
-import type { Machine, Session } from '../domains/state/storageTypes';
+import type { MachineDisplayRenderable } from '../domains/machines/machineDisplayRenderable';
+import type { SessionListRenderableSession } from '../domains/session/listing/sessionListRenderable';
 
 export function buildSessionListViewDataWithServerScope(params: {
-    sessions: Record<string, Session>;
-    machines: Record<string, Machine>;
+    sessions: Record<string, SessionListRenderableSession>;
+    machines: Record<string, MachineDisplayRenderable>;
     groupInactiveSessionsByProject: boolean;
     activeGroupingV1?: 'project' | 'date';
     inactiveGroupingV1?: 'project' | 'date';

@@ -5,11 +5,13 @@ import { describe, expect, it, vi, beforeEach } from 'vitest';
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 let capturedFlatListProps: any = null;
+let capturedMessageViewProps: any[] = [];
 
 let sessionMessagesState: { messages: any[]; isLoaded: boolean } = { messages: [], isLoaded: true };
 let sessionPendingState: { messages: any[] } = { messages: [] };
 let sessionActionDraftsState: any[] = [];
 let sessionState: any = null;
+let transcriptDraftMessagesState: any[] = [];
 
 const buildChatListItemsMock = vi.fn((..._args: any[]): any[] => []);
 
@@ -35,7 +37,12 @@ vi.mock('react-native', async (importOriginal) => {
     ActivityIndicator: () => ReactMod.createElement('ActivityIndicator'),
     FlatList: (props: any) => {
       capturedFlatListProps = props;
-      return ReactMod.createElement('FlatList');
+      const data = Array.isArray(props?.data) ? props.data : [];
+      const children = data.map((item: any, index: number) => {
+        const key = typeof props?.keyExtractor === 'function' ? props.keyExtractor(item, index) : String(index);
+        return ReactMod.createElement(ReactMod.Fragment, { key }, props.renderItem?.({ item, index }));
+      });
+      return ReactMod.createElement('FlatList', null, children);
     },
   };
 });
@@ -51,16 +58,26 @@ vi.mock('react-native-safe-area-context', () => ({
 vi.mock('@/sync/domains/state/storage', () => ({
   useSession: () => sessionState,
   useSessionTranscriptIds: () => ({
-    ids: (sessionMessagesState.messages ?? []).map((m: any) => m.id),
+    ids: [
+      ...(sessionMessagesState.messages ?? []).map((m: any) => m.id),
+      ...(transcriptDraftMessagesState ?? []).map((m: any) => m.id),
+    ],
     isLoaded: sessionMessagesState.isLoaded,
   }),
-  useSessionMessagesById: () => Object.fromEntries((sessionMessagesState.messages ?? []).map((m: any) => [m.id, m])),
+  useSessionMessagesById: () => Object.fromEntries([
+    ...(sessionMessagesState.messages ?? []).map((m: any) => [m.id, m]),
+    ...(transcriptDraftMessagesState ?? []).map((m: any) => [m.id, m]),
+  ]),
   useForkedTranscriptSnapshot: () => null,
   useSessionPendingMessages: () => sessionPendingState,
   useSessionActionDrafts: () => sessionActionDraftsState,
+  useSessionTranscriptDraftMessages: () => transcriptDraftMessagesState,
   useSessionLatestThinkingMessageId: () => null,
   useSessionLatestThinkingMessageActivityAtMs: () => null,
-  useMessage: () => null,
+  useMessage: (_sessionId: string, messageId: string) => {
+    const committed = (sessionMessagesState.messages ?? []).find((m: any) => m.id === messageId);
+    return committed ?? (transcriptDraftMessagesState ?? []).find((m: any) => m.id === messageId) ?? null;
+  },
   useSetting: (key: string) => settingValues[key],
   getStorage: () => ({
     getState: () => ({
@@ -84,11 +101,10 @@ vi.mock('./ChatFooter', () => ({
 }));
 
 vi.mock('./MessageView', () => ({
-  MessageView: () => React.createElement('MessageView'),
-}));
-
-vi.mock('@/components/sessions/transcript/turns/TurnView', () => ({
-  TurnView: () => React.createElement('TurnView'),
+  MessageView: (props: any) => {
+    capturedMessageViewProps.push(props);
+    return React.createElement('MessageView');
+  },
 }));
 
 vi.mock('@/components/sessions/pending/PendingMessagesTranscriptBlock', () => ({
@@ -125,10 +141,12 @@ vi.mock('@/utils/system/fireAndForget', () => ({
 describe('ChatList (turn grouping mode)', () => {
   beforeEach(() => {
     capturedFlatListProps = null;
+    capturedMessageViewProps = [];
     buildChatListItemsMock.mockClear();
     sessionMessagesState = { messages: [], isLoaded: true };
     sessionPendingState = { messages: [] };
     sessionActionDraftsState = [];
+    transcriptDraftMessagesState = [];
     sessionState = {
       id: 'session-1',
       seq: 0,
@@ -170,6 +188,7 @@ describe('ChatList (turn grouping mode)', () => {
     expect(capturedFlatListProps).toBeTruthy();
     expect(Array.isArray(capturedFlatListProps.data)).toBe(true);
     expect(capturedFlatListProps.data[0]?.kind).toBe('turn');
+    expect(capturedMessageViewProps.map((props) => props?.message?.id)).toEqual(['u1', 'a1']);
   });
 
   it('does not group tool calls into tool-call groups when tool chrome mode is cards', async () => {
@@ -205,5 +224,37 @@ describe('ChatList (turn grouping mode)', () => {
     expect(firstTurn).toBeTruthy();
     const kinds = (firstTurn.content ?? []).map((c: any) => c.kind);
     expect(kinds).not.toContain('tool_calls');
+  });
+
+  it('renders main-chain transcript drafts after committed messages', async () => {
+    settingValues.transcriptGroupingMode = 'linear';
+    settingValues.transcriptGroupToolCalls = false;
+    settingValues.transcriptListImplementation = 'flatlist_legacy';
+
+    const messages = [
+      { kind: 'agent-text', id: 'm1', localId: null, createdAt: 1, text: 'Committed' },
+    ];
+    sessionMessagesState = { isLoaded: true, messages };
+    transcriptDraftMessagesState = [
+      { kind: 'agent-text', id: 'draft:local-1', localId: 'local-1', createdAt: 2, text: 'Draft tail', isThinking: true },
+    ];
+    buildChatListItemsMock.mockImplementation((opts: any) => {
+      if (opts?.includeCommittedMessages === false) return [];
+      return (opts.messageIdsOldestFirst ?? []).map((id: string) => ({
+        kind: 'message',
+        id,
+        messageId: id,
+        createdAt: opts.messagesById[id]?.createdAt ?? 0,
+        seq: null,
+      }));
+    });
+
+    const { ChatList } = await import('./ChatList');
+    await act(async () => {
+      renderer.create(<ChatList session={sessionState} />);
+    });
+
+    expect(capturedMessageViewProps.map((props) => props?.message?.id)).toEqual(['draft:local-1', 'm1']);
+    expect(capturedMessageViewProps[0]?.message?.text).toBe('Draft tail');
   });
 });

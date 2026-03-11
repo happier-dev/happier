@@ -6,12 +6,19 @@ import { Text } from '@/components/ui/text/Text';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
+vi.mock('@/sync/sync', () => ({
+  sync: {
+    ensureSidechainMessagesLoaded: vi.fn(),
+  },
+}));
+
 vi.mock('@/text', () => ({
   t: (key: string) => key,
 }));
 
 vi.mock('@/sync/domains/state/storage', () => ({
   useSetting: () => false,
+  useSessionTranscriptDraftMessages: () => [],
 }));
 
 vi.mock('@/components/ui/media/CodeView', () => ({

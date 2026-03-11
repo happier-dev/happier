@@ -5,9 +5,52 @@ beforeEach(() => {
     vi.clearAllMocks();
 });
 
-function createHarness(createSessionsDomain: any, createReducer: any) {
+function mockSessionPersistenceBoundaries(): void {
+    vi.doMock('../../domains/state/persistence', () => ({
+        loadSessionDrafts: vi.fn(() => ({})),
+        loadSessionLastViewed: vi.fn(() => ({})),
+        loadSessionModelModeUpdatedAts: vi.fn(() => ({})),
+        loadSessionModelModes: vi.fn(() => ({})),
+        loadSessionPermissionModeUpdatedAts: vi.fn(() => ({})),
+        loadSessionPermissionModes: vi.fn(() => ({})),
+        loadSessionActionDrafts: vi.fn(() => ({})),
+        loadSessionReviewCommentsDrafts: vi.fn(() => ({})),
+        saveSessionDrafts: vi.fn(),
+        saveSessionLastViewed: vi.fn(),
+        loadSettings: vi.fn(() => ({
+            settings: {
+                preferredLanguage: 'en',
+            },
+            version: null,
+        })),
+        loadLocalSettings: vi.fn(() => ({})),
+        loadPurchases: vi.fn(() => ({})),
+        saveSessionModelModeUpdatedAts: vi.fn(),
+        saveSessionModelModes: vi.fn(),
+        saveSessionPermissionModeUpdatedAts: vi.fn(),
+        saveSessionPermissionModes: vi.fn(),
+        saveSessionActionDrafts: vi.fn(),
+        saveSessionReviewCommentsDrafts: vi.fn(),
+        saveLocalSettings: vi.fn(),
+        savePurchases: vi.fn(),
+        saveSettings: vi.fn(),
+    }));
+    vi.doMock('../../domains/state/warmCachePersistence', () => ({
+        resolveWarmCacheAccountScope: vi.fn((fallback: string | null | undefined) => fallback ?? null),
+        saveSessionListWarmCacheEntries: vi.fn(),
+    }));
+    vi.doMock('@/sync/domains/models/modelOptions', () => ({
+        isModelSelectableForSession: vi.fn(() => true),
+    }));
+    vi.doMock('@/agents/catalog/catalog', () => ({
+        resolveAgentIdFromFlavor: vi.fn(() => null),
+    }));
+}
+
+function createHarness(createSessionsDomain: any) {
     let state: any = {
         sessions: {},
+        sessionListRenderables: {},
         sessionsData: null,
         sessionListViewData: null,
         sessionListViewDataByServerId: {},
@@ -18,7 +61,9 @@ function createHarness(createSessionsDomain: any, createReducer: any) {
         actionDraftsBySessionId: {},
         isDataReady: false,
         machines: {},
+        machineDisplayById: {},
         sessionMessages: {},
+        profile: { id: 'account_a' },
         settings: { groupInactiveSessionsByProject: false },
     };
 
@@ -38,10 +83,10 @@ describe('sessions domain: sessionListViewData rebuild gating', () => {
         vi.doMock('../../runtime/orchestration/projectManager', () => ({
             projectManager: { updateSessions },
         }));
+        mockSessionPersistenceBoundaries();
 
-        const { createReducer } = await import('../../reducer/reducer');
         const { createSessionsDomain } = await import('./sessions');
-        const { domain } = createHarness(createSessionsDomain, createReducer);
+        const { domain } = createHarness(createSessionsDomain);
 
         domain.applySessions([
             {
@@ -88,10 +133,10 @@ describe('sessions domain: sessionListViewData rebuild gating', () => {
         vi.doMock('../../runtime/orchestration/projectManager', () => ({
             projectManager: { updateSessions: vi.fn() },
         }));
+        mockSessionPersistenceBoundaries();
 
-        const { createReducer } = await import('../../reducer/reducer');
         const { createSessionsDomain } = await import('./sessions');
-        const { get, domain } = createHarness(createSessionsDomain, createReducer);
+        const { get, domain } = createHarness(createSessionsDomain);
 
         domain.applySessions([
             {
@@ -139,10 +184,10 @@ describe('sessions domain: sessionListViewData rebuild gating', () => {
         vi.doMock('../../runtime/orchestration/projectManager', () => ({
             projectManager: { updateSessions: vi.fn() },
         }));
+        mockSessionPersistenceBoundaries();
 
-        const { createReducer } = await import('../../reducer/reducer');
         const { createSessionsDomain } = await import('./sessions');
-        const { get, domain } = createHarness(createSessionsDomain, createReducer);
+        const { get, domain } = createHarness(createSessionsDomain);
 
         domain.applySessions([
             {
@@ -190,10 +235,10 @@ describe('sessions domain: sessionListViewData rebuild gating', () => {
         vi.doMock('../../runtime/orchestration/projectManager', () => ({
             projectManager: { updateSessions: vi.fn() },
         }));
+        mockSessionPersistenceBoundaries();
 
-        const { createReducer } = await import('../../reducer/reducer');
         const { createSessionsDomain } = await import('./sessions');
-        const { get, domain } = createHarness(createSessionsDomain, createReducer);
+        const { get, domain } = createHarness(createSessionsDomain);
 
         domain.applySessions([
             {
@@ -243,10 +288,10 @@ describe('sessions domain: sessionListViewData rebuild gating', () => {
         vi.doMock('../../runtime/orchestration/projectManager', () => ({
             projectManager: { updateSessions: vi.fn() },
         }));
+        mockSessionPersistenceBoundaries();
 
-        const { createReducer } = await import('../../reducer/reducer');
         const { createSessionsDomain } = await import('./sessions');
-        const { get, domain } = createHarness(createSessionsDomain, createReducer);
+        const { get, domain } = createHarness(createSessionsDomain);
 
         domain.applySessions([
             {
@@ -277,10 +322,10 @@ describe('sessions domain: sessionListViewData rebuild gating', () => {
         vi.doMock('../../runtime/orchestration/projectManager', () => ({
             projectManager: { updateSessions: vi.fn() },
         }));
+        mockSessionPersistenceBoundaries();
 
-        const { createReducer } = await import('../../reducer/reducer');
         const { createSessionsDomain } = await import('./sessions');
-        const { get, domain } = createHarness(createSessionsDomain, createReducer);
+        const { get, domain } = createHarness(createSessionsDomain);
 
         domain.applySessions([
             {
