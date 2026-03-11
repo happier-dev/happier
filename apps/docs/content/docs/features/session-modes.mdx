@@ -1,0 +1,141 @@
+---
+title: Session modes
+description: Understand provider-defined session modes such as Plan, how they differ from permissions, and how Happier handles plan approval flows.
+---
+
+Session modes are a separate control surface from permissions.
+
+In Happier:
+
+- **Permissions** decide how approvals are handled
+- **Session modes** decide how the provider should behave for the current session
+
+This distinction is important because a session can be in **Mode = Plan** while still asking you for permission prompts.
+
+## What a session mode is
+
+A session mode is a provider-defined operating mode for the current session.
+
+Examples:
+
+- `build`
+- `plan`
+- provider-specific defaults or overrides
+
+Happier only shows the **Mode** control when the active provider/backend supports session modes for that session.
+
+If the provider does not expose modes, the Mode control is hidden.
+
+## Mode vs permissions
+
+These two settings solve different problems:
+
+- **Mode** changes what kind of turn the provider is trying to run
+- **Permission mode** changes how Happier and the provider handle approvals
+
+That means these combinations are valid:
+
+- **Mode = Plan** + **Permission = Default**
+- **Mode = Plan** + **Permission = Read Only**
+- **Mode = Build** + **Permission = YOLO**
+
+Mode does **not** replace permissions.
+
+## Plan mode
+
+Plan mode is the most important session-mode example in current Happier builds.
+
+When a session starts or switches into **Plan**:
+
+- the provider is expected to reason about the work and propose a plan
+- Happier keeps the session in plan mode until the provider asks to exit it
+- permission prompts can still appear if the provider/runtime requests them
+
+Plan mode should be read as:
+
+> “work in planning mode for this session”
+
+It should **not** be read as:
+
+> “auto-approve tools”
+
+## Starting a session in plan mode
+
+From the CLI:
+
+```bash
+happier claude --agent-mode plan
+happier codex --agent-mode plan
+happier opencode --agent-mode plan
+```
+
+From the app:
+
+1. start a new session
+2. open the input controls
+3. pick **Mode**
+4. choose **Plan** when it is available
+
+## Exiting plan mode
+
+When the provider is ready to leave planning and begin execution, Happier surfaces an **Exit Plan Mode** user-action request.
+
+This is intentionally a **user-action request**, not a plain permission prompt.
+
+Common choices are:
+
+- **Approve Plan**
+- **Request changes**
+- provider-specific approval variants
+
+## Claude plan mode
+
+Claude’s plan flow is the main provider-specific case today.
+
+In Happier:
+
+- Claude **Plan** is shown under **Mode**
+- Claude can still request permissions while in plan mode
+- the plan-review step is surfaced as **Exit Plan Mode**
+
+Claude can expose these approval choices:
+
+- **Approve Plan**: leave plan mode and continue normally
+- **Request changes**: stay in plan mode and revise the plan
+- **Approve Plan (Accept Edits)**: leave plan mode and continue with an edit-friendly permission posture
+- **Approve Plan (Bypass All Permissions)**: leave plan mode and continue with a YOLO-style permission posture
+
+These choices affect what happens **after** Claude leaves plan mode.
+
+## What happens after approval
+
+After you approve a plan:
+
+- Happier clears the session’s plan-mode override
+- the session returns to the provider’s normal working mode
+- the chosen post-plan permission posture becomes the active permission mode
+
+Example:
+
+- **Mode = Plan**
+- **Approve Plan (Bypass All Permissions)**
+- session returns to build/default mode
+- permission mode becomes the YOLO-equivalent for the provider
+
+If you choose **Request changes**, Happier keeps the session in plan mode and sends the revision request back to the provider.
+
+## Notifications and inbox behavior
+
+Plan review is also treated consistently across the UI:
+
+- it can appear in the transcript
+- it can appear in Inbox
+- it can trigger a **user-action request** notification
+
+Happier keeps plan review separate from generic permission requests so it is easier to understand what decision is actually being requested.
+
+## Related guides
+
+- [Permissions](/docs/features/permissions)
+- [Inbox and approvals](/docs/features/inbox-and-approvals)
+- [Claude](/docs/providers/claude)

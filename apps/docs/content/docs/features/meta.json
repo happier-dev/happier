@@ -27,6 +27,7 @@
     "feature-flags",
     "session-settings",
     "permissions",
+    "session-modes",
     "pending-queue",
     "steering",
     "participant-routing",
