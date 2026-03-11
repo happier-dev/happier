@@ -1,0 +1,217 @@
+---
+title: Attachments & image previews
+description: Attach local files to a message, preview images before and after sending, and control where uploaded attachments are stored.
+---
+
+Happier lets you attach local files directly to a message in both:
+
+- a **new session composer** before the first message, and
+- an **existing session composer** inside an active transcript.
+
+This is different from **Link file**:
+
+- **Attachments** send local files from your device into the session
+- **Link file** references files that already exist in the current workspace
+
+Use attachments when you want to send things like:
+
+- screenshots
+- exported logs
+- design assets
+- PDFs or docs from outside the repo
+- generated output files that are not already in the workspace
+
+## How to add attachments
+
+Happier supports several attachment flows depending on platform:
+
+- **All platforms:** pick files with the attachment/file-picker flow
+- **Web:** drag and drop files into the composer
+- **Web:** paste clipboard files/images into the composer when the browser exposes them as files
+
+You can attach both images and non-image files in the same message.
+
+## What you see before sending
+
+Before you send the message, Happier keeps attachments as **drafts** in the composer.
+
+### Non-image files
+
+Non-image files appear as attachment chips with the filename.
+
+### Images
+
+Image attachments appear as inline thumbnails instead of plain filename chips.
+
+This makes it easier to confirm:
+
+- you picked the correct image
+- the image order looks right
+- you are not about to send the wrong screenshot
+
+### Remove before send
+
+You can remove an attachment before sending it.
+
+### Upload progress
+
+When you send a message with attachments, Happier uploads each file first and shows **per-file progress** in the composer:
+
+- image tiles show an upload overlay with a percentage
+- non-image chips show percentage progress inline
+
+This is especially useful when you send multiple files together, because you can see which file is still uploading and which one already finished.
+
+## Previewing images before sending
+
+Click an image thumbnail in the composer to open a larger preview.
+
+The preview modal is designed for quick confirmation before send:
+
+- the image takes the full modal body
+- the filename stays in the header
+- if multiple images are attached, you can move between them from the same modal
+
+On **web**, the previous/next controls appear when you hover the image.
+
+On **touch/native** surfaces, the navigation controls stay directly available because there is no hover state.
+
+## What happens when you send attachments
+
+Happier keeps the attachment flow provider-agnostic.
+
+When you send a message with attachments:
+
+1. Happier uploads each file first
+2. Happier stores the files in the configured attachment upload location
+3. the sent message includes an attachments block with stable file paths
+4. the agent is instructed to read those paths with the **Read** tool before answering
+
+This means attachments behave like real files in the session environment, not like provider-specific “inline binary parts”.
+
+That has a few practical benefits:
+
+- the same message history remains understandable across providers
+- the agent can read the exact file path it was given
+- image attachments and non-image attachments follow the same core workflow
+
+## How images behave after sending
+
+Sent user messages keep their attachments in the transcript.
+
+### Inline transcript images
+
+If an attachment is an image, Happier shows it inline in the message instead of only listing the filename.
+
+This makes transcripts easier to scan when you shared:
+
+- screenshots
+- mockups
+- diagrams
+- exported charts
+
+### Shared image preview modal
+
+Clicking an inline image in the transcript opens the same preview modal used by the composer.
+
+That gives you a consistent image-viewing flow before and after send.
+
+### Non-image attachments
+
+Non-image files still appear in the message attachments row and can be opened from there.
+
+### Very large or unavailable previews
+
+Happier does not try to force every image into an inline preview.
+
+If an image is too large for the in-app preview budget, or the preview cannot be loaded cleanly:
+
+- the attachment still remains attached to the message
+- Happier falls back to a placeholder/open-file path instead of pretending the preview succeeded
+
+This protects transcript performance while preserving access to the underlying file.
+
+## Attachment storage location
+
+You can control where Happier stores uploaded message attachments.
+
+Open:
+
+- **Settings**
+- **Attachments**
+
+### Workspace directory (default)
+
+Default behavior stores attachments inside the current workspace.
+
+By default, Happier uses:
+
+```text
+.happier/uploads
+```
+
+This is useful when you want attachments to live alongside the rest of the session’s project context.
+
+### OS temp
+
+You can also store attachments in the operating system temporary directory instead of the workspace.
+
+This is useful when:
+
+- you do not want attachment files written into the repo/worktree
+- the attachment is only temporary session input
+- you want the upload flow without adding extra workspace files
+
+## Source-control ignore behavior
+
+When workspace storage is enabled, Happier can also help keep attachment files out of normal source-control workflows.
+
+Attachment settings let you choose the ignore strategy for workspace uploads.
+
+This matters when you want the convenience of workspace-backed attachments without accidentally treating them as project files you intend to commit.
+
+## Limits and important things to know
+
+### Size limit
+
+Attachment uploads still follow the normal **maximum attachment size** setting.
+
+If a file is over that limit, Happier skips it and tells you why.
+
+### No separate image-count cap
+
+Happier does not add a special “only a few images” composer rule on top of the normal attachment settings.
+
+The main practical limit is still your configured file-size policy.
+
+### Images are still files
+
+Image attachments get a better UI, but they still follow the same core attachment model as other files.
+
+That means:
+
+- the image is uploaded as a file
+- the message stores a file-path reference
+- the agent reads that file from the session environment
+
+## Attachments vs Link file
+
+Use **Attachments** when the file starts on your device and needs to be brought into the session.
+
+Use **Link file** when the file already exists in the workspace and you only want to reference it in your prompt.
+
+Examples:
+
+- **Attachment:** “Here is the screenshot I just took on my desktop”
+- **Link file:** “Look at `src/auth/login.ts` and explain this bug”
+
+## Provider-specific note
+
+Regular session messages support attachments through Happier’s shared attachment flow.
+
+One current exception is **routed Claude teammate messages**: those still do not support attachments yet.
+
+See:
+
+- [Claude](/docs/providers/claude)
+- [Subagents](/docs/features/subagents)
