@@ -1,0 +1,384 @@
+---
+title: MCP servers
+description: Configure Happier-managed MCP servers, preview the effective tool surface for a session, and reuse the same tools across native-MCP and shell-bridge providers.
+---
+
+MCP servers let agents use external tools such as browser automation, documentation lookup, GitHub APIs, and custom internal systems.
+
+Happier gives you one place to manage them across the app, daemon, and CLI:
+
+- define MCP servers once in Happier
+- choose where they should apply by default
+- import existing host MCP JSON
+- detect MCP servers already configured in Claude, Codex, or OpenCode
+- preview the exact tool set for a backend, machine, and workspace
+- override Happier-managed MCP selection for a single session without changing your saved defaults
+
+## MCP servers vs Happier tools
+
+MCP servers are one part of the broader **Happier tools** surface.
+
+That means:
+
+- built-in Happier actions and custom MCP tools are configured and delivered as one tool surface
+- providers that support **native MCP** receive the tools through MCP directly
+- providers that use the **Happier shell bridge** still receive the same Happier-managed tools through the CLI bridge
+
+So this page is still the right place to configure custom MCP tools, even when the selected provider does not expose them as native MCP inventory.
+
+For the broader product model, see [Happier tools & actions](./happier-tools).
+
+## Where to manage MCP servers
+
+In the app:
+
+- **Settings → MCP servers**
+
+In the CLI:
+
+```bash
+happier mcp servers list
+happier mcp servers test --server <name-or-id>
+happier mcp servers detect --provider codex
+```
+
+The same account-synced MCP settings are used by the app UI, the daemon, and the CLI.
+
+## How the MCP settings screen is organized
+
+The MCP settings screen has three tabs:
+
+### Configured
+
+Shows the MCP servers that you manage directly in Happier.
+
+Use this tab to:
+
+- review your saved servers
+- edit or remove them
+- add a new server
+- quick-install common presets
+
+### Detected
+
+Shows MCP servers Happier found in provider-native config files on the selected machine.
+
+Today, Happier can detect provider-native MCP servers for:
+
+- **Claude**
+- **Codex**
+- **OpenCode**
+
+Detected servers are shown as **read-only**. You can use this view to understand what the selected backend already has configured, or import those definitions into Happier-managed MCP settings.
+
+### Preview
+
+Shows the effective tool picture for a specific combination of:
+
+- backend/provider
+- machine
+- workspace or directory
+
+Use this tab when you want to answer:
+
+- “What will this session actually see?”
+- “Which Happier-managed servers apply here by default?”
+- “Which provider-native MCP servers already exist for this backend?”
+- “Which saved servers are available but not currently applied?”
+
+## Add a server
+
+When you add a new MCP server in Happier, you can start from three entry points:
+
+### Configure
+
+Use this when you want to define the server manually.
+
+Happier supports:
+
+- **Local command** (`stdio`)
+- **Remote HTTP**
+- **Remote SSE**
+
+For local command servers, the main field is a command line so you can paste common README examples directly. Happier then splits that into command + arguments internally.
+
+For remote servers, you provide:
+
+- the URL
+- optional headers
+- optional environment variables
+
+### Import JSON
+
+Use this when a README or another tool gives you a host MCP JSON snippet.
+
+Happier supports common host MCP JSON shapes such as:
+
+- `mcpServers`
+- `servers`
+- nested `mcp.servers`
+
+Import JSON is useful when a project tells you to paste something like:
+
+```json
+{
+  "mcpServers": {
+    "playwright": {
+      "command": "npx",
+      "args": ["-y", "@playwright/mcp@latest"]
+    }
+  }
+}
+```
+
+Happier parses the supported fields, lets you review the result, and then converts it into normal Happier-managed MCP entries.
+
+### Quick install
+
+Use this when you want a fast setup for common developer MCP servers.
+
+Current curated presets:
+
+- **Playwright**
+- **Context7**
+- **Sequential Thinking**
+- **GitHub**
+
+Some presets install immediately. Others can ask for follow-up auth mapping, such as a saved secret or a machine environment variable.
+
+## What “Applies to” means
+
+Every Happier-managed MCP server has default scope rules under **Applies to**.
+
+That determines where Happier should include the server automatically.
+
+Supported scopes:
+
+- **All machines** — use this for portable servers, especially remote HTTP/SSE servers
+- **One machine** — use this for local command servers installed on a specific machine
+- **One workspace on one machine** — use this when a server should apply only for a specific project directory
+
+Examples:
+
+- A remote GitHub MCP server usually belongs on **All machines**
+- A local `npx @playwright/mcp` setup often belongs on **One machine**
+- A project-local MCP server started from repo files often belongs on **One workspace on one machine**
+
+Important:
+
+- these are **default apply rules**, not hard limits for every future session
+- you can still override Happier-managed MCP selection from the new-session MCP chip
+
+## Secrets, auth, and environment values
+
+Happier lets you set MCP env vars and headers using:
+
+- **Saved Secrets** — recommended
+- **machine environment references** such as `${MY_TOKEN}`
+- **plain text** values
+
+Recommended usage:
+
+- use **Saved Secrets** for reusable tokens and API keys
+- use **machine env references** when the value should come from the daemon or shell environment on the target machine
+- avoid **plain text** unless the value is not sensitive
+
+Saved Secrets are especially useful for remote MCP servers that require auth headers such as:
+
+- `Authorization: Bearer ...`
+- GitHub tokens
+- private API tokens
+
+## Testing an MCP server
+
+Each Happier-managed MCP server can be tested from the MCP settings flow.
+
+Testing verifies that Happier can:
+
+- resolve the configuration
+- resolve saved secrets and env references
+- start or connect to the server
+- list tools successfully
+
+This is the fastest way to catch:
+
+- wrong command lines
+- missing local installations
+- bad URLs
+- missing auth
+- missing machine env variables
+
+## Detected provider-native MCP servers
+
+The **Detected** tab shows MCP servers already configured in the selected provider’s own config files.
+
+This is useful when:
+
+- you already configured MCP in Claude, Codex, or OpenCode before using Happier
+- you want to compare provider-native config with Happier-managed defaults
+- you want to import an existing provider-native server into Happier
+
+Important:
+
+- detected entries are **informational and read-only**
+- they are refreshed for the selected machine and directory
+- provider-native and Happier-managed MCP can both matter for the final session picture
+
+## Preview before starting a session
+
+The **Preview** tab shows what a session should use for a specific context.
+
+It combines:
+
+- the built-in Happier tool surface
+- Happier-managed MCP servers that apply by default
+- provider-native detected MCP servers for the selected backend/context
+- Happier-managed servers that are available but not currently applied
+
+Use Preview when you want confidence before starting an important session, especially across multiple machines or workspaces.
+
+## MCP in the new-session composer
+
+When you start a new session, the composer shows an **MCP chip** such as:
+
+- `MCP (3)`
+
+The number is the current MCP count for that session context.
+
+Select the chip to open the MCP picker.
+
+From there you can:
+
+- see which Happier-managed servers are selected by default
+- include additional Happier-managed servers for this session only
+- exclude Happier-managed servers that would normally apply by default
+- see provider-native detected servers that the selected backend already has configured
+
+Important limits:
+
+- provider-native detected entries are shown as **read-only context**
+- the built-in Happier tool surface is always present
+- changes in the picker affect the session you are about to start; they do not rewrite your saved account defaults
+
+## What happens when you change MCP settings
+
+MCP settings apply on the **next session start**.
+
+That means:
+
+- editing an MCP server changes future sessions
+- it does not hot-swap tools into already-running sessions
+- resumed sessions continue to use the session-level tool state they were started with
+
+## Supported providers and important behavior
+
+Tool delivery depends on the selected backend.
+
+Happier currently supports:
+
+- **Native MCP delivery** on providers such as Claude, Codex, OpenCode, Kiro, and compatible custom ACP backends
+- **Shell-bridge delivery** on providers such as Gemini, Auggie, Qwen, Kimi, Kilo, Pi, and Copilot
+
+Important distinction:
+
+- provider-native **detected** MCP configuration is only available where that provider actually has a native MCP config model
+- Happier-managed custom MCP tools can still be delivered through the shell bridge on providers without native MCP delivery
+
+See also:
+
+- [Claude](/docs/providers/claude)
+- [Codex](/docs/providers/codex)
+- [OpenCode](/docs/providers/opencode)
+- [Happier tools & actions](./happier-tools)
+
+## Strict mode
+
+Strict mode changes how Happier reacts to invalid MCP configuration.
+
+- **Off**: Happier skips invalid MCP entries when it can and continues starting the session
+- **On**: Happier fails the start if an enabled effective MCP server cannot be resolved correctly
+
+Use strict mode when you want the startup behavior to be fail-closed instead of best-effort.
+
+## Common use cases
+
+### Use Playwright everywhere on one machine
+
+1. Open **Settings → MCP servers**
+2. Add **Playwright** from **Quick install**
+3. Set **Applies to → One machine**
+4. Test it
+5. Start sessions on that machine and confirm the MCP chip includes it
+
+### Reuse a remote GitHub MCP server across all machines
+
+1. Add a server with **Remote HTTP**
+2. Store the token as a **Saved Secret**
+3. Set **Applies to → All machines**
+4. Test it from the machine that will run sessions
+
+### Import a README snippet without manually rebuilding it
+
+1. Copy the host MCP JSON from the README
+2. Open **Add server → Import JSON**
+3. Paste the JSON
+4. Review the parsed result
+5. Map any secrets to a Saved Secret or machine env reference
+6. Save and test
+
+### Override MCP selection for one session
+
+1. Open the new-session screen
+2. Select the **MCP** chip
+3. Deselect a default Happier-managed server you do not want
+4. Select an additional Happier-managed server you want for this session only
+5. Start the session
+
+## Troubleshooting
+
+### “The server is saved, but it does not appear in my session”
+
+Check:
+
+- the selected machine
+- the selected workspace/directory
+- the server’s **Applies to** rules
+- the selected backend’s tool-delivery support
+- the new-session MCP chip, which can override Happier-managed defaults per session
+
+Also use the **Preview** tab to confirm the effective result before starting the session.
+
+### “Detected does not show what I expected”
+
+Check:
+
+- the selected machine
+- the selected directory/workspace
+- whether the backend stores MCP config in user-level files, project files, or both
+
+The Detected tab is context-sensitive and refreshes based on the selected machine and directory.
+
+### “Test fails”
+
+The most common causes are:
+
+- the local command is not installed on that machine
+- the URL is wrong
+- a required token/header is missing
+- a machine env reference is not present on the daemon host
+
+### “I changed MCP settings, but my current session did not change”
+
+That is expected.
+
+MCP settings apply on the **next session start**. Start a new session to pick up the updated configuration.
+
+## Related pages
+
+- [Happier tools & actions](./happier-tools)
+- [Connected services](./connected-services)
+- [Profiles](./profiles)
+- [Provider integrations](../advanced/provider-integrations)
+- [Claude](../providers/claude)
+- [Codex](../providers/codex)
+- [OpenCode](../providers/opencode)
