@@ -35,6 +35,8 @@ vi.mock('react-native', async (importOriginal) => {
         View: 'View',
         Text: 'Text',
         ScrollView: 'ScrollView',
+        Image: 'Image',
+        ActivityIndicator: 'ActivityIndicator',
         Pressable: ({ children, ...props }: any) => React.createElement('Pressable', props, children),
     };
 });
@@ -42,18 +44,22 @@ vi.mock('react-native', async (importOriginal) => {
 vi.mock('react-native-unistyles', () => ({
     useUnistyles: () => ({
         theme: {
-            colors: {
-                success: '#0a0',
-                text: '#111',
-                textSecondary: '#555',
-                link: '#06f',
-                surfaceHighest: '#fff',
-                divider: '#ddd',
-                input: { background: '#f7f7f7' },
-                userMessageBackground: '#eef',
-                agentEventText: '#777',
+                colors: {
+                    success: '#0a0',
+                    text: '#111',
+                    textSecondary: '#555',
+                    link: '#06f',
+                    surfaceHighest: '#fff',
+                    surfaceHigh: '#f5f5f5',
+                    surface: '#fff',
+                    divider: '#ddd',
+                    overlay: { text: '#fff', scrimStrong: 'rgba(0,0,0,0.7)' },
+                    shadow: { color: '#000' },
+                    input: { background: '#f7f7f7' },
+                    userMessageBackground: '#eef',
+                    agentEventText: '#777',
+                },
             },
-        },
     }),
     StyleSheet: {
         create: (input: any) => {
@@ -64,7 +70,11 @@ vi.mock('react-native-unistyles', () => ({
                     textSecondary: '#555',
                     link: '#06f',
                     surfaceHighest: '#fff',
+                    surfaceHigh: '#f5f5f5',
+                    surface: '#fff',
                     divider: '#ddd',
+                    overlay: { text: '#fff', scrimStrong: 'rgba(0,0,0,0.7)' },
+                    shadow: { color: '#000' },
                     input: { background: '#f7f7f7' },
                     userMessageBackground: '#eef',
                     agentEventText: '#777',
@@ -110,8 +120,9 @@ vi.mock('@/text', () => ({
     },
 }));
 
+const modalShowSpy = vi.fn();
 vi.mock('@/modal', () => ({
-    Modal: { alert: vi.fn() },
+    Modal: { alert: vi.fn(), show: (config: unknown) => modalShowSpy(config) },
 }));
 
 const sendMessageSpy = vi.fn<(sessionId: string, text: string, opts?: unknown) => Promise<void>>(async () => undefined);
@@ -121,6 +132,18 @@ vi.mock('@/sync/sync', () => ({
         submitMessage: vi.fn(),
     },
 }));
+
+const { sessionReadFileSpy } = vi.hoisted(() => ({
+    sessionReadFileSpy: vi.fn(async (_sessionId: string, _path: string) => ({ success: true, content: 'aGVsbG8=' })),
+}));
+
+vi.mock('@/sync/ops', async () => {
+    const actual = await vi.importActual<any>('@/sync/ops');
+    return {
+        ...actual,
+        sessionReadFile: (sessionId: string, path: string) => sessionReadFileSpy(sessionId, path),
+    };
+});
 
 vi.mock('expo-clipboard', () => ({
     setStringAsync: vi.fn(),
@@ -137,18 +160,23 @@ vi.mock('@/hooks/server/useFeatureEnabled', () => ({
 
 let thinkingDisplayMode: 'inline' | 'tool' | 'hidden' = 'inline';
 let thinkingInlinePresentation: 'full' | 'summary' = 'full';
+let filesImagePreviewMaxBytes: number | null = null;
 vi.mock('@/sync/domains/state/storage', () => ({
     useSession: () => null,
     useSetting: (key: string) => {
         if (key === 'sessionThinkingDisplayMode') return thinkingDisplayMode;
         if (key === 'sessionThinkingInlinePresentation') return thinkingInlinePresentation;
+        if (key === 'filesImagePreviewMaxBytes') return filesImagePreviewMaxBytes;
         return null;
     },
+    useSessionMessagesById: () => ({}),
+    useSessionMessagesReducerState: () => null,
 }));
 
 afterEach(() => {
     thinkingDisplayMode = 'inline';
     thinkingInlinePresentation = 'full';
+    filesImagePreviewMaxBytes = null;
 });
 
 vi.mock('@/utils/sessions/discardedCommittedMessages', () => ({
@@ -322,7 +350,170 @@ describe('MessageView (structured meta)', { timeout: 60_000 }, () => {
         expect(markdownViews).toHaveLength(1);
         expect(markdownViews[0]!.props.markdown).toBe('hello');
 
-        expect(() => tree!.root.findByProps({ testID: 'message-attachments-row' })).not.toThrow();
+        expect(() => tree!.root.findByProps({ testID: 'message-attachments-inline-images' })).not.toThrow();
+        expect(tree!.root.findAllByProps({ testID: 'message-attachments-row' })).toHaveLength(0);
+    });
+
+    it('normalizes wrapped voice agent turn text before rendering it in the hidden voice transcript', async () => {
+        const { MessageView } = await import('./MessageView');
+
+        const message: any = {
+            kind: 'user-text',
+            localId: 'local-voice-1',
+            text: [
+                'At the start of your reply, include a short friendly greeting (one sentence).',
+                'Then continue with your response.',
+                'Context updates since your last voice turn:',
+                'New messages in session: s1 (1 new message)',
+                '',
+                'User said:',
+                'Create a file named voice_perm_local_active_20260307_d.txt containing exactly HELLO.',
+            ].join('\n'),
+            meta: {
+                happier: {
+                    kind: 'voice_agent_turn.v1',
+                    payload: { v: 1, epoch: 3, role: 'user', voiceAgentId: 'mid', ts: 100 },
+                },
+            },
+        };
+
+        let tree: renderer.ReactTestRenderer | null = null;
+        await act(async () => {
+            tree = renderer.create(<MessageView message={message} metadata={null} sessionId="s1" />);
+        });
+
+        const markdownViews = tree!.root.findAllByType('MarkdownView' as any);
+        expect(markdownViews).toHaveLength(1);
+        expect(markdownViews[0]!.props.markdown).toBe(
+            'Create a file named voice_perm_local_active_20260307_d.txt containing exactly HELLO.',
+        );
+    });
+
+    it('hides internal voice tool follow-up payload turns from the hidden voice transcript', async () => {
+        const { MessageView } = await import('./MessageView');
+
+        const message: any = {
+            kind: 'user-text',
+            localId: 'local-voice-2',
+            text: [
+                'VOICE_TOOL_RESULTS_JSON:{"toolResults":[{"t":"sendSessionMessage"}]}',
+                'VOICE_TOOL_RESULT_INSTRUCTIONS: All actions succeeded. Summarize the completed outcome accurately.',
+            ].join('\n'),
+            meta: {
+                happier: {
+                    kind: 'voice_agent_turn.v1',
+                    payload: { v: 1, epoch: 3, role: 'user', voiceAgentId: 'mid', ts: 100 },
+                },
+            },
+        };
+
+        let tree: renderer.ReactTestRenderer | null = null;
+        await act(async () => {
+            tree = renderer.create(<MessageView message={message} metadata={null} sessionId="s1" />);
+        });
+
+        expect(tree!.toJSON()).toBeNull();
+    });
+
+    it('renders a placeholder tile for inline image attachments when filesImagePreviewMaxBytes is tiny', async () => {
+        const { MessageView } = await import('./MessageView');
+
+        filesImagePreviewMaxBytes = 1;
+
+        const path = '.happier/uploads/messages/m2/file.png';
+        const message: any = {
+            kind: 'user-text',
+            localId: 'local-1',
+            text: [
+                'hello',
+                '',
+                'Attachments: read each file path with the Read tool before answering.',
+                '[attachments]',
+                `- ${path} (file.png, image/png, 10 bytes)`,
+                '[/attachments]',
+            ].join('\n'),
+            displayText: 'hello',
+            meta: {
+                happier: {
+                    kind: 'attachments.v1',
+                    payload: {
+                        attachments: [
+                            { name: 'file.png', path, mimeType: 'image/png', sizeBytes: 10, sha256: 'h2' },
+                        ],
+                    },
+                },
+            },
+        };
+
+        let tree: renderer.ReactTestRenderer | null = null;
+        await act(async () => {
+            tree = renderer.create(<MessageView message={message} metadata={null} sessionId="s1" />);
+        });
+
+        expect(() => tree!.root.findByProps({ testID: 'message-attachments-inline-images' })).not.toThrow();
+        expect(() => tree!.root.findByProps({ testID: `message-attachments-inline-image:${path}` })).not.toThrow();
+        expect(tree!.root.findAllByProps({ testID: `message-attachments-inline-image-preview:${path}` })).toHaveLength(0);
+    });
+
+    it('opens inline transcript images in the shared attachment preview modal', async () => {
+        const { MessageView } = await import('./MessageView');
+
+        const firstPath = '.happier/uploads/messages/m3/one.png';
+        const secondPath = '.happier/uploads/messages/m3/two.png';
+        const message: any = {
+            kind: 'user-text',
+            localId: 'local-1',
+            text: [
+                'hello',
+                '',
+                'Attachments: read each file path with the Read tool before answering.',
+                '[attachments]',
+                `- ${firstPath} (one.png, image/png, 10 bytes)`,
+                `- ${secondPath} (two.png, image/png, 10 bytes)`,
+                '[/attachments]',
+            ].join('\n'),
+            displayText: 'hello',
+            meta: {
+                happier: {
+                    kind: 'attachments.v1',
+                    payload: {
+                        attachments: [
+                            { name: 'one.png', path: firstPath, mimeType: 'image/png', sizeBytes: 10, sha256: 'h3' },
+                            { name: 'two.png', path: secondPath, mimeType: 'image/png', sizeBytes: 10, sha256: 'h4' },
+                        ],
+                    },
+                },
+            },
+        };
+
+        modalShowSpy.mockClear();
+        routerPushSpy.mockClear();
+
+        let tree: renderer.ReactTestRenderer | null = null;
+        await act(async () => {
+            tree = renderer.create(<MessageView message={message} metadata={null} sessionId="s1" />);
+        });
+
+        const firstImage = tree!.root.findByProps({ testID: `message-attachments-inline-image:${firstPath}` });
+        await act(async () => {
+            firstImage.props.onPress();
+        });
+
+        expect(routerPushSpy).not.toHaveBeenCalled();
+        expect(modalShowSpy).toHaveBeenCalledTimes(1);
+        const modalConfig = modalShowSpy.mock.calls[0]?.[0] as null | {
+            props?: Readonly<{
+                images?: ReadonlyArray<Readonly<{ kind: string; filePath?: string; title: string }>>;
+                initialIndex?: number;
+            }>;
+        };
+        expect(modalConfig?.props).toEqual(expect.objectContaining({
+            initialIndex: 0,
+            images: expect.arrayContaining([
+                expect.objectContaining({ kind: 'session-image', filePath: firstPath, title: 'one.png' }),
+                expect.objectContaining({ kind: 'session-image', filePath: secondPath, title: 'two.png' }),
+            ]),
+        }));
     });
 
     it('navigates to the file screen when clicking Jump in the review-comments card', async () => {

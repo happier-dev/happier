@@ -1,9 +1,8 @@
-import { encodeBase64 } from '@/encryption/base64';
-
 import { apiSocket } from '../api/session/apiSocket';
 import type { AttachmentsUploadFileSource } from '../domains/attachments/attachmentsUploadFileSource';
 import { assertRpcResponseWithSuccess } from '../runtime/assertRpcResponseWithSuccess';
 import { readRpcErrorCode } from '../runtime/rpcErrors';
+import { uploadInChunks, type ChunkUploadProgress } from '../domains/files/transfers/chunkTransferClient';
 
 export type AttachmentsUploadLocation = 'workspace' | 'os_temp';
 export type VcsIgnoreStrategy = 'git_info_exclude' | 'gitignore' | 'none';
@@ -16,6 +15,11 @@ export type AttachmentsUploadConfig = Readonly<{
     maxFileBytes: number;
     uploadTtlMs: number;
     chunkSizeBytes: number;
+}>;
+
+export type AttachmentsUploadProgress = Readonly<{
+    uploadedBytes: number;
+    totalBytes: number;
 }>;
 
 type ConfigureResponse = Readonly<{ success: true } | { success: false; error: string }>;
@@ -61,28 +65,27 @@ export async function sessionAttachmentsUploadFile(args: Readonly<{
     file: AttachmentsUploadFileSource;
     messageLocalId: string;
     config: AttachmentsUploadConfig;
+    onProgress?: (progress: AttachmentsUploadProgress) => void;
 }>): Promise<SessionAttachmentsUploadFileResult> {
-    let uploadId: string | null = null;
-
+    let nativeHandle: any = null;
     try {
         let described = describeUploadSource(args.file);
-        if (described.sizeBytes < 0 && args.file.kind === 'native') {
+        if (args.file.kind === 'native') {
             try {
                 const FileSystem: any = await import('expo-file-system');
                 const file = new FileSystem.File(args.file.uri);
-                const handle = file.open();
-                try {
-                    const fromHandle = typeof handle?.size === 'number' && Number.isFinite(handle.size) ? handle.size : null;
-                    const fromFile = typeof file?.size === 'number' && Number.isFinite(file.size) ? file.size : null;
-                    const resolved = fromHandle ?? fromFile;
-                    if (resolved != null) {
-                        described = { ...described, sizeBytes: resolved };
-                    }
-                } finally {
-                    try { handle.close(); } catch { }
+                nativeHandle = file.open();
+                const fromHandle = typeof nativeHandle?.size === 'number' && Number.isFinite(nativeHandle.size) ? nativeHandle.size : null;
+                const fromFile = typeof file?.size === 'number' && Number.isFinite(file.size) ? file.size : null;
+                const resolved = fromHandle ?? fromFile;
+                if (described.sizeBytes < 0 && resolved != null) {
+                    described = { ...described, sizeBytes: resolved };
                 }
             } catch {
-                // Best-effort only; fall through to size validation below.
+                nativeHandle = null;
+                if (described.sizeBytes < 0) {
+                    // Best-effort only; fall through to size validation below.
+                }
             }
         }
 
@@ -118,71 +121,61 @@ export async function sessionAttachmentsUploadFile(args: Readonly<{
             return { success: false, error: init.error };
         }
 
-        uploadId = init.uploadId;
-        const chunkSizeBytes = init.chunkSizeBytes;
+        const emitProgress = (progress: ChunkUploadProgress) => {
+            if (!args.onProgress) return;
+            try {
+                args.onProgress(progress);
+            } catch {
+                // ignore
+            }
+        };
 
-        let index = 0;
-        if (args.file.kind === 'web') {
-            for (let offset = 0; offset < described.sizeBytes; offset += chunkSizeBytes) {
-                const nextEnd = Math.min(described.sizeBytes, offset + chunkSizeBytes);
+        const readBytes = async (offset: number, length: number): Promise<Uint8Array> => {
+            if (args.file.kind === 'web') {
+                const nextEnd = Math.min(described.sizeBytes, offset + length);
                 const chunkBlob = args.file.file.slice(offset, nextEnd);
-                const chunkBytes = new Uint8Array(await chunkBlob.arrayBuffer());
-                const contentBase64 = encodeBase64(chunkBytes, 'base64');
+                return new Uint8Array(await chunkBlob.arrayBuffer());
+            }
 
+            if (!nativeHandle) {
+                throw new Error('Failed to open native attachment file');
+            }
+            if (typeof nativeHandle.offset === 'number' || nativeHandle.offset === null) {
+                nativeHandle.offset = offset;
+            }
+            return nativeHandle.readBytes(length);
+        };
+
+        const finalize = await uploadInChunks<UploadInitResponse, UploadChunkResponse, UploadFinalizeResponse>({
+            totalBytes: described.sizeBytes,
+            readBytes,
+            init: async () => init,
+            sendChunk: async ({ uploadId, index, contentBase64 }) => {
                 const chunkResponse = await apiSocket.sessionRPC<UploadChunkResponse, unknown>(args.sessionId, 'attachments.upload.chunk', {
                     uploadId,
                     index,
                     contentBase64,
                 });
-                const chunk = assertRpcResponseWithSuccess<UploadChunkResponse>(chunkResponse);
-                if (!chunk.success) {
-                    return { success: false, error: chunk.error };
-                }
-                index += 1;
-            }
-        } else {
-            const FileSystem: any = await import('expo-file-system');
-            const file = new FileSystem.File(args.file.uri);
-            const handle = file.open();
-            try {
-                if (typeof handle.offset === 'number' || handle.offset === null) {
-                    handle.offset = 0;
-                }
-
-                for (let offset = 0; offset < described.sizeBytes; offset += chunkSizeBytes) {
-                    const length = Math.min(chunkSizeBytes, described.sizeBytes - offset);
-                    const chunkBytes: Uint8Array = handle.readBytes(length);
-                    if (chunkBytes.byteLength !== length) {
-                        return { success: false, error: 'Failed to read attachment chunk' };
-                    }
-                    const contentBase64 = encodeBase64(chunkBytes, 'base64');
-
-                    const chunkResponse = await apiSocket.sessionRPC<UploadChunkResponse, unknown>(args.sessionId, 'attachments.upload.chunk', {
-                        uploadId,
-                        index,
-                        contentBase64,
-                    });
-                    const chunk = assertRpcResponseWithSuccess<UploadChunkResponse>(chunkResponse);
-                    if (!chunk.success) {
-                        return { success: false, error: chunk.error };
-                    }
-                    index += 1;
-                }
-            } finally {
-                try { handle.close(); } catch { }
-            }
-        }
-
-        const finalizeResponse = await apiSocket.sessionRPC<UploadFinalizeResponse, unknown>(args.sessionId, 'attachments.upload.finalize', {
-            uploadId,
+                return assertRpcResponseWithSuccess<UploadChunkResponse>(chunkResponse);
+            },
+            finalize: async ({ uploadId }) => {
+                const finalizeResponse = await apiSocket.sessionRPC<UploadFinalizeResponse, unknown>(args.sessionId, 'attachments.upload.finalize', {
+                    uploadId,
+                });
+                return assertRpcResponseWithSuccess<UploadFinalizeResponse>(finalizeResponse);
+            },
+            abort: async ({ uploadId }) => {
+                const abortResponse = await apiSocket.sessionRPC<UploadAbortResponse, unknown>(args.sessionId, 'attachments.upload.abort', { uploadId });
+                return assertRpcResponseWithSuccess<UploadAbortResponse>(abortResponse);
+            },
+            onProgress: emitProgress,
         });
-        const finalized = assertRpcResponseWithSuccess<UploadFinalizeResponse>(finalizeResponse);
-        if (!finalized.success) {
-            return { success: false, error: finalized.error };
+
+        if (!finalize.success) {
+            return { success: false, error: finalize.error };
         }
 
-        uploadId = null;
-        return { success: true, path: finalized.path, sizeBytes: finalized.sizeBytes, sha256: finalized.sha256 };
+        return { success: true, path: finalize.path, sizeBytes: finalize.sizeBytes, sha256: finalize.sha256 };
     } catch (error) {
         return {
             success: false,
@@ -190,14 +183,8 @@ export async function sessionAttachmentsUploadFile(args: Readonly<{
             errorCode: readRpcErrorCode(error),
         };
     } finally {
-        if (uploadId) {
-            try {
-                const abortResponse = await apiSocket.sessionRPC<UploadAbortResponse, unknown>(args.sessionId, 'attachments.upload.abort', { uploadId });
-                const aborted = assertRpcResponseWithSuccess<UploadAbortResponse>(abortResponse);
-                void aborted;
-            } catch {
-                // Best-effort only.
-            }
+        if (nativeHandle) {
+            try { nativeHandle.close(); } catch { }
         }
     }
 }

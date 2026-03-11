@@ -34,7 +34,13 @@ import { applySuggestion } from '@/components/autocomplete/applySuggestion';
 import { SourceControlStatusBadge, useHasMeaningfulScmStatus } from '@/components/sessions/sourceControl/status';
 import { ModelPickerOverlay, type ModelPickerProbeState } from '@/components/model/ModelPickerOverlay';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
-import { useSessionMessagesById, useSessionMessagesVersion, useSessionTranscriptIds, useSetting } from '@/sync/domains/state/storage';
+import {
+    useSessionMessagesById,
+    useSessionMessagesReducerState,
+    useSessionMessagesVersion,
+    useSessionTranscriptIds,
+    useSetting,
+} from '@/sync/domains/state/storage';
 import { useUserMessageHistory } from '@/hooks/session/useUserMessageHistory';
 import { Theme } from '@/theme';
 import { t } from '@/text';
@@ -45,7 +51,7 @@ const ScrollViewWithWheel = ScrollView as unknown as React.ComponentType<
     }
 >;
 import { Metadata } from '@/sync/domains/state/storageTypes';
-import { AIBackendProfile, getProfileEnvironmentVariables } from '@/sync/domains/settings/settings';
+import { getProfileEnvironmentVariables, type AIBackendProfile } from '@/sync/domains/profiles/profileCompatibility';
 import { DEFAULT_AGENT_ID, getAgentCore, resolveAgentIdFromFlavor, type AgentId } from '@/agents/catalog/catalog';
 import { resolveProfileById } from '@/sync/domains/profiles/profileUtils';
 import { getProfileDisplayName } from '@/components/profiles/profileDisplay';
@@ -60,15 +66,29 @@ import { getContextWarning } from './contextWarning';
 import { shouldRenderPermissionChip } from './permissionChipVisibility';
 import { buildAgentInputActionMenuActions } from './actionMenuActions';
 import { PermissionModePicker } from './components/PermissionModePicker';
+import { AgentInputChipLabel } from './components/AgentInputChipLabel';
+import { AgentInputChipPickerModal } from './components/AgentInputChipPickerModal';
+import { DEFAULT_OPTION_CHIP_CYCLE_MAX_OPTIONS, resolveChipOptionInteraction, shouldRenderChipForOptions } from './chipOptionInteraction';
 import { computeSessionModePickerControl } from '@/sync/acp/sessionModeControl';
 import { computeAcpConfigOptionControls, type AcpConfigOptionValueId } from '@/sync/acp/configOptionsControl';
 import type { PendingPermissionRequest } from '@/utils/sessions/sessionUtils';
 import { Text } from '@/components/ui/text/Text';
 import { attachActionBarMouseDragScroll } from './attachActionBarMouseDragScroll';
 import { PermissionPromptCard } from '@/components/tools/shell/permissions/PermissionPromptCard';
+import { UserActionPromptCard } from '@/components/tools/shell/userActions/UserActionPromptCard';
 import type { PermissionToolCallMessageLocation } from '@/utils/sessions/permissions/permissionToolCallLocationTypes';
 import { resolvePermissionToolCallLocations } from '@/utils/sessions/permissions/resolvePermissionToolCallLocations';
-import { resolvePermissionPromptSurface, shouldShowGenericPermissionPromptForRequest } from '@/utils/sessions/permissions/permissionPromptPolicy';
+import {
+    resolveAgentRequestKind,
+    resolvePermissionPromptSurface,
+    shouldShowGenericPermissionPromptForRequest,
+} from '@/utils/sessions/permissions/permissionPromptPolicy';
+import { buildSessionMessageRouteId } from '@/sync/domains/messages/messageRouteIds';
+import { normalizeNodeForView } from '@/components/ui/rendering/normalizeNodeForView';
+import {
+    AttachmentImagePreviewModal,
+    type AttachmentImagePreviewModalImage,
+} from '@/components/sessions/attachments/preview/AttachmentImagePreviewModal';
 
 const ACTION_BAR_SCROLL_END_GUTTER_WIDTH = 24;
 
@@ -78,6 +98,7 @@ export type AgentInputExtraActionChipRenderContext = Readonly<{
     showLabel: boolean;
     iconColor: string;
     textStyle: any;
+    countTextStyle: any;
     /**
      * Full-width anchor for agent-input popovers (matches the overall composer width).
      * Useful for chip-triggered popovers (e.g. "Link file") that should size like the @ suggestions.
@@ -85,17 +106,60 @@ export type AgentInputExtraActionChipRenderContext = Readonly<{
     popoverAnchorRef: React.RefObject<any>;
 }>;
 
+/**
+ * Controls whether a chip's label is displayed in `auto` density mode.
+ *
+ * - `'always'` – label is always visible (selector chips like agent, machine, permission mode).
+ * - `'auto-hide'` – label is hidden in auto mode because the icon is self-explanatory (attach, link file).
+ */
+export type ChipLabelPolicy = 'always' | 'auto-hide';
+
 export type AgentInputExtraActionChip = Readonly<{
     key: string;
+    /**
+     * Determines whether the label should be shown in auto chip density mode.
+     * Defaults to `'always'` when not specified.
+     */
+    labelPolicy?: ChipLabelPolicy;
     render: (ctx: AgentInputExtraActionChipRenderContext) => React.ReactNode;
+}>;
+
+export type AgentInputAttachmentPreview =
+    | Readonly<{ kind: 'image'; uri: string }>;
+
+export type AgentInputAttachmentUploadProgress = Readonly<{
+    uploadedBytes: number;
+    totalBytes: number;
 }>;
 
 export type AgentInputAttachment = Readonly<{
     key: string;
     label: string;
     status?: 'pending' | 'uploading' | 'uploaded' | 'error';
+    preview?: AgentInputAttachmentPreview;
+    uploadProgress?: AgentInputAttachmentUploadProgress;
+    error?: string;
     onRemove?: () => void;
 }>;
+
+type ComposerAttachmentImagePreviewItem = Extract<AttachmentImagePreviewModalImage, Readonly<{ kind: 'direct' }>>;
+
+function resolveAttachmentImagePreviewItems(attachments: readonly AgentInputAttachment[]): ComposerAttachmentImagePreviewItem[] {
+    const previews: ComposerAttachmentImagePreviewItem[] = [];
+    for (const attachment of attachments) {
+        const imagePreviewUri =
+            attachment.preview?.kind === 'image' && typeof attachment.preview.uri === 'string' && attachment.preview.uri.trim().length > 0
+                ? attachment.preview.uri
+                : null;
+        if (!imagePreviewUri) continue;
+        previews.push({
+            kind: 'direct',
+            uri: imagePreviewUri,
+            title: attachment.label,
+        });
+    }
+    return previews;
+}
 
 const AGENT_INPUT_TEST_IDS = {
     sessionInput: 'session-composer-input',
@@ -169,6 +233,7 @@ interface AgentInputProps {
     alwaysShowContextSize?: boolean;
     onFileViewerPress?: () => void;
     agentType?: AgentId;
+    agentLabel?: string | null;
     onAgentClick?: () => void;
     machineName?: string | null;
     onMachineClick?: () => void;
@@ -194,6 +259,7 @@ interface AgentInputProps {
     onAttachmentsAdded?: (files: readonly File[]) => void;
     hasSendableAttachments?: boolean;
     permissionRequests?: ReadonlyArray<PendingPermissionRequest>;
+    userActionRequests?: ReadonlyArray<PendingPermissionRequest>;
     canApprovePermissions?: boolean;
     permissionDisabledReason?: 'public' | 'readOnly' | 'notGranted' | 'inactive';
 }
@@ -201,6 +267,16 @@ interface AgentInputProps {
 function truncateWithEllipsis(value: string, maxChars: number) {
     if (value.length <= maxChars) return value;
     return `${value.slice(0, maxChars)}…`;
+}
+
+function resolveUploadProgressPercent(progress?: AgentInputAttachmentUploadProgress): number | null {
+    const uploadedBytes = progress?.uploadedBytes;
+    const totalBytes = progress?.totalBytes;
+    if (typeof uploadedBytes !== 'number' || !Number.isFinite(uploadedBytes)) return null;
+    if (typeof totalBytes !== 'number' || !Number.isFinite(totalBytes) || totalBytes <= 0) return null;
+
+    const raw = Math.round((uploadedBytes / totalBytes) * 100);
+    return Math.max(0, Math.min(100, raw));
 }
 
 function parseAcpBooleanValueId(valueId: string): boolean {
@@ -486,6 +562,9 @@ const stylesheet = StyleSheet.create((theme, runtime) => ({
         fontWeight: '600',
         ...Typography.default('semiBold'),
     },
+    actionChipCountText: {
+        color: theme.colors.textTertiary,
+    },
     overlayOptionRow: {
         flexDirection: 'row',
         alignItems: 'center',
@@ -578,6 +657,53 @@ const stylesheet = StyleSheet.create((theme, runtime) => ({
         maxWidth: 180,
         ...Typography.default(),
     },
+    attachmentChipMeta: {
+        color: theme.colors.textSecondary,
+        fontSize: 11,
+        ...Typography.default('semiBold'),
+    },
+    attachmentImageTile: {
+        width: 58,
+        height: 58,
+        position: 'relative',
+    },
+    attachmentImageSurface: {
+        width: 52,
+        height: 52,
+        marginTop: 6,
+        marginRight: 6,
+        borderRadius: 12,
+        borderWidth: 1,
+        borderColor: theme.colors.divider,
+        backgroundColor: theme.colors.surface,
+        overflow: 'hidden',
+    },
+    attachmentImage: {
+    },
+    attachmentImageOverlay: {
+        position: 'absolute',
+        top: 0,
+        left: 0,
+        right: 0,
+        bottom: 0,
+        justifyContent: 'center',
+        alignItems: 'center',
+        backgroundColor: theme.colors.overlay.scrim,
+    },
+    attachmentImageOverlayText: {
+        color: theme.colors.overlay.text,
+        fontSize: 12,
+        ...Typography.default('semiBold'),
+    },
+    attachmentImageErrorOverlay: {
+        backgroundColor: 'rgba(210, 0, 0, 0.32)',
+    },
+    attachmentImageRemoveButton: {
+        position: 'absolute',
+        top: 0,
+        right: 0,
+        zIndex: 10,
+    },
     fileDropOverlay: {
         position: 'absolute',
         top: 0,
@@ -587,7 +713,7 @@ const stylesheet = StyleSheet.create((theme, runtime) => ({
         zIndex: 50,
         justifyContent: 'center',
         alignItems: 'center',
-        backgroundColor: 'rgba(255,255,255,0.78)',
+        backgroundColor: theme.colors.overlay.scrim,
         borderWidth: 1,
         borderColor: theme.colors.divider,
         borderRadius: Platform.select({ default: 16, android: 20 }),
@@ -605,12 +731,12 @@ const stylesheet = StyleSheet.create((theme, runtime) => ({
         paddingHorizontal: 14,
         paddingVertical: 10,
         borderRadius: 999,
-        backgroundColor: 'rgba(255,255,255,0.92)',
+        backgroundColor: theme.colors.surface,
         borderWidth: 1,
         borderColor: theme.colors.divider,
     },
     fileDropOverlayText: {
-        color: theme.colors.textSecondary,
+        color: theme.colors.text,
         fontSize: 13,
         ...Typography.default('semiBold'),
     },
@@ -622,6 +748,28 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
     const { width: screenWidth, height: screenHeight } = useWindowDimensions();
     const keyboardHeight = useKeyboardHeight();
     const voiceEnabled = useFeatureEnabled('voice');
+    const attachmentImagePreviewItems = React.useMemo(
+        () => resolveAttachmentImagePreviewItems(props.attachments ?? []),
+        [props.attachments],
+    );
+    const renderIoniconNode = React.useCallback(
+        (
+            name: React.ComponentProps<typeof Ionicons>['name'],
+            size: number,
+            color: string,
+            style?: React.ComponentProps<typeof Ionicons>['style'],
+        ) => normalizeNodeForView(<Ionicons name={name} size={size} color={color} style={style} />),
+        [],
+    );
+    const renderOcticonNode = React.useCallback(
+        (
+            name: React.ComponentProps<typeof Octicons>['name'],
+            size: number,
+            color: string,
+            style?: React.ComponentProps<typeof Octicons>['style'],
+        ) => normalizeNodeForView(<Octicons name={name} size={size} color={color} style={style} />),
+        [],
+    );
 
     const defaultInputMaxHeight = React.useMemo(() => {
         return computeAgentInputDefaultMaxHeight({
@@ -638,6 +786,7 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
     const [fileDragActive, setFileDragActive] = React.useState(false);
 
     const pendingPermissionRequests = props.permissionRequests ?? [];
+    const pendingUserActionRequests = props.userActionRequests ?? [];
     const canApprovePermissions = props.canApprovePermissions ?? true;
     const permissionPromptSurface = useSetting('permissionPromptSurface');
     const resolvedPermissionPromptSurface = resolvePermissionPromptSurface(permissionPromptSurface);
@@ -646,30 +795,46 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
         () => pendingPermissionRequests.filter((req) => shouldShowGenericPermissionPromptForRequest({ toolName: req.tool, requestKind: req.kind })),
         [pendingPermissionRequests],
     );
+    const composerUserActionRequests = React.useMemo(
+        () =>
+            pendingUserActionRequests.filter(
+                (req) => resolveAgentRequestKind({ toolName: req.tool, requestKind: req.kind }) === 'user_action'
+            ),
+        [pendingUserActionRequests],
+    );
     const sessionIdForStorage = props.sessionId ?? '';
     const { ids: committedMessageIdsOldestFirst } = useSessionTranscriptIds(sessionIdForStorage);
     const committedMessagesById = useSessionMessagesById(sessionIdForStorage);
+    const committedMessagesReducerState = useSessionMessagesReducerState(sessionIdForStorage);
     const permissionLocationVersion = useSessionMessagesVersion(
         sessionIdForStorage,
-        Boolean(props.sessionId && showComposerPermissionCards && composerPermissionRequests.length > 0),
+        Boolean(props.sessionId && showComposerPermissionCards && (composerPermissionRequests.length > 0 || composerUserActionRequests.length > 0)),
     );
 
     const permissionLocationsById = React.useMemo(() => {
         if (!props.sessionId) return new Map<string, PermissionToolCallMessageLocation | null>();
         if (!showComposerPermissionCards) return new Map<string, PermissionToolCallMessageLocation | null>();
-        if (composerPermissionRequests.length === 0) return new Map<string, PermissionToolCallMessageLocation | null>();
-        const ids = Array.isArray(composerPermissionRequests) ? composerPermissionRequests.map((r) => r.id) : [];
+        if (composerPermissionRequests.length === 0 && composerUserActionRequests.length === 0) return new Map<string, PermissionToolCallMessageLocation | null>();
+        const ids = [...composerPermissionRequests, ...composerUserActionRequests].map((r) => r.id);
         return new Map(
             resolvePermissionToolCallLocations({
                 permissionIds: ids,
                 messageIdsOldestFirst: committedMessageIdsOldestFirst,
                 messagesById: committedMessagesById,
+                resolveRouteMessageId: (messageId, _message) =>
+                    buildSessionMessageRouteId({
+                        messageId,
+                        messagesById: committedMessagesById,
+                        reducerState: committedMessagesReducerState,
+                    }),
             }),
         );
     }, [
         committedMessageIdsOldestFirst,
         committedMessagesById,
+        committedMessagesReducerState,
         composerPermissionRequests,
+        composerUserActionRequests,
         props.sessionId,
         showComposerPermissionCards,
         permissionLocationVersion,
@@ -767,18 +932,26 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
         sessionId: props.sessionId ?? null,
     });
 
+    const sendActionDisabled = Boolean(props.disabled || props.isSendDisabled || props.isSending);
+
     const handleSend = React.useCallback(() => {
+        if (sendActionDisabled) {
+            return;
+        }
         messageHistory.reset();
         props.onSend();
-    }, [messageHistory, props.onSend]);
+    }, [messageHistory, props.onSend, sendActionDisabled]);
 
-    const effectiveChipDensity = React.useMemo<'labels' | 'icons'>(() => {
-        if (agentInputChipDensity === 'labels' || agentInputChipDensity === 'icons') {
-            return agentInputChipDensity;
+    const effectiveChipDensity = React.useMemo<'auto' | 'labels' | 'icons'>(() => {
+        if (agentInputChipDensity === 'icons') {
+            return 'icons';
         }
-        // auto
-        return screenWidth < 420 ? 'icons' : 'labels';
-    }, [agentInputChipDensity, screenWidth]);
+        if (agentInputChipDensity === 'labels') {
+            return 'labels';
+        }
+        // auto: selectively hide labels for self-explanatory chips.
+        return 'auto';
+    }, [agentInputChipDensity]);
 
     const effectiveActionBarLayout = React.useMemo<'wrap' | 'scroll' | 'collapsed'>(() => {
         if (agentInputActionBarLayout === 'wrap' || agentInputActionBarLayout === 'scroll' || agentInputActionBarLayout === 'collapsed') {
@@ -788,7 +961,9 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
         return screenWidth < 420 ? 'scroll' : 'wrap';
     }, [agentInputActionBarLayout, screenWidth]);
 
-    const showChipLabels = effectiveChipDensity === 'labels';
+    // In labels mode: always show; in icons mode: never show; in auto: show for 'always' policy chips.
+    const showChipLabels = effectiveChipDensity === 'labels' || effectiveChipDensity === 'auto';
+    const showAutoHideChipLabels = effectiveChipDensity === 'labels';
 
 
     // Abort button state
@@ -1272,7 +1447,7 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
             }
 
             if (agentInputEnterToSend && event.key === 'Enter' && !event.shiftKey) {
-                if (props.value.trim()) {
+                if (!sendActionDisabled && props.value.trim()) {
                     handleSend();
                     return true; // Key was handled
                 }
@@ -1291,16 +1466,19 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
 
         }
         return false; // Key was not handled
-            }, [suggestions, moveUp, moveDown, selected, handleSuggestionSelect, inputState.text, inputState.selection.start, inputState.selection.end, props.showAbortButton, props.onAbort, isAborting, handleAbortPress, agentInputEnterToSend, props.value, handleSend, props.onPermissionModeChange, agentId, permissionModeOrder, effectivePermissionPolicy.effectiveMode, messageHistory, props.onChangeText]);
+            }, [suggestions, moveUp, moveDown, selected, handleSuggestionSelect, inputState.text, inputState.selection.start, inputState.selection.end, props.showAbortButton, props.onAbort, isAborting, handleAbortPress, agentInputEnterToSend, props.value, handleSend, props.onPermissionModeChange, agentId, permissionModeOrder, effectivePermissionPolicy.effectiveMode, messageHistory, props.onChangeText, sendActionDisabled]);
 
 
 
 
     return (
-        <View style={[
-            styles.container,
-            { paddingHorizontal: props.contentPaddingHorizontal ?? (screenWidth > 700 ? 16 : 8) }
-        ]}>
+        <View
+            pointerEvents={Platform.OS === 'web' ? 'auto' : undefined}
+            style={[
+                styles.container,
+                { paddingHorizontal: props.contentPaddingHorizontal ?? (screenWidth > 700 ? 16 : 8) },
+            ]}
+        >
             <View style={[
                 styles.innerContainer,
                 ...(typeof props.maxWidthCap === 'number'
@@ -1487,7 +1665,7 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
                                                             ]}
                                                         >
                                                             {props.acpSessionModeOptionsOverrideProbe!.phase === 'idle' ? (
-                                                                <Ionicons name="refresh-outline" size={18} color={theme.colors.textSecondary} />
+                                                                renderIoniconNode('refresh-outline', 18, theme.colors.textSecondary)
                                                             ) : (
                                                                 <ActivityIndicator size="small" />
                                                             )}
@@ -1827,12 +2005,12 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
                     {fileDragActive && typeof props.onAttachmentsAdded === 'function' ? (
                         <View testID="agent-input-drop-overlay" pointerEvents="none" style={styles.fileDropOverlay}>
                             <View style={styles.fileDropOverlayContent}>
-                                <Ionicons name="attach-outline" size={18} color={theme.colors.textSecondary} />
+                                {renderIoniconNode('attach-outline', 18, theme.colors.text)}
                                 <Text style={styles.fileDropOverlayText}>{t('agentInput.dropToAttach')}</Text>
                             </View>
                         </View>
                     ) : null}
-                    {props.sessionId && composerPermissionRequests.length > 0 && showComposerPermissionCards ? (
+                    {props.sessionId && (composerPermissionRequests.length > 0 || composerUserActionRequests.length > 0) && showComposerPermissionCards ? (
                         <View style={styles.permissionRequestsContainer}>
                             <View style={{ position: 'relative' }}>
                                 <ScrollView
@@ -1862,6 +2040,24 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
                                             return (
                                                 <View key={req.id} style={styles.permissionRequestCard}>
                                                     <PermissionPromptCard
+                                                        request={req}
+                                                        location={location}
+                                                        sessionId={props.sessionId!}
+                                                        metadata={props.metadata || null}
+                                                        canApprovePermissions={canApprovePermissions}
+                                                        disabledReason={props.permissionDisabledReason}
+                                                    />
+                                                </View>
+                                            );
+                                        })}
+                                        {composerUserActionRequests.map((req) => {
+                                            const location =
+                                                props.sessionId
+                                                    ? (permissionLocationsById.get(req.id) ?? null)
+                                                    : null;
+                                            return (
+                                                <View key={req.id} style={styles.permissionRequestCard}>
+                                                    <UserActionPromptCard
                                                         request={req}
                                                         location={location}
                                                         sessionId={props.sessionId!}
@@ -1902,13 +2098,69 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
                             >
                                 {props.attachments.map((att) => {
                                     const removingDisabled = att.status === 'uploading';
+                                    const percent = att.status === 'uploading' ? resolveUploadProgressPercent(att.uploadProgress) : null;
+                                    const imagePreviewUri =
+                                        att.preview?.kind === 'image' && typeof att.preview.uri === 'string' && att.preview.uri.trim().length > 0
+                                            ? att.preview.uri
+                                            : null;
+                                    const imagePreviewIndex = attachmentImagePreviewItems.findIndex((item) => item.uri === imagePreviewUri && item.title === att.label);
+
+                                    if (imagePreviewUri) {
+                                        return (
+                                            <View key={att.key} style={styles.attachmentImageTile}>
+                                                <Pressable
+                                                    accessibilityLabel={t('common.open')}
+                                                    accessibilityRole="imagebutton"
+                                                    onPress={() => {
+                                                        Modal.show({
+                                                            component: AttachmentImagePreviewModal,
+                                                            props: {
+                                                                images: attachmentImagePreviewItems,
+                                                                initialIndex: imagePreviewIndex >= 0 ? imagePreviewIndex : 0,
+                                                            },
+                                                        });
+                                                    }}
+                                                    style={styles.attachmentImageSurface}
+                                                    testID={`agent-input-attachment-image:${att.key}`}
+                                                >
+                                                    <Image
+                                                        source={{ uri: imagePreviewUri }}
+                                                        style={[{ width: '100%', height: '100%' }, styles.attachmentImage]}
+                                                        contentFit="cover"
+                                                    />
+                                                    {att.status === 'uploading' && percent != null ? (
+                                                        <View style={styles.attachmentImageOverlay}>
+                                                            <Text style={styles.attachmentImageOverlayText}>{percent}%</Text>
+                                                        </View>
+                                                    ) : null}
+                                                    {att.status === 'error' ? (
+                                                        <View style={[styles.attachmentImageOverlay, styles.attachmentImageErrorOverlay]}>
+                                                            {renderIoniconNode('alert-circle', 20, theme.colors.overlay.text)}
+                                                        </View>
+                                                    ) : null}
+                                                </Pressable>
+                                                {att.onRemove ? (
+                                                    <Pressable
+                                                        testID={`agent-input-attachment-remove:${att.key}`}
+                                                        onPress={() => {
+                                                            if (removingDisabled) return;
+                                                            hapticsLight();
+                                                            att.onRemove?.();
+                                                        }}
+                                                        disabled={removingDisabled}
+                                                        hitSlop={8}
+                                                        style={styles.attachmentImageRemoveButton}
+                                                    >
+                                                        {renderIoniconNode('close-circle', 18, theme.colors.textSecondary)}
+                                                    </Pressable>
+                                                ) : null}
+                                            </View>
+                                        );
+                                    }
+
                                     return (
                                         <View key={att.key} style={styles.attachmentChip}>
-                                            <Ionicons
-                                                name="document-outline"
-                                                size={14}
-                                                color={theme.colors.textSecondary}
-                                            />
+                                            {renderIoniconNode('document-outline', 14, theme.colors.textSecondary)}
                                             <Text
                                                 numberOfLines={1}
                                                 style={styles.attachmentChipText}
@@ -1916,10 +2168,15 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
                                                 {att.label}
                                             </Text>
                                             {att.status === 'uploading' ? (
-                                                <ActivityIndicator size="small" color={theme.colors.textSecondary} />
+                                                percent != null ? (
+                                                    <Text style={styles.attachmentChipMeta}>{percent}%</Text>
+                                                ) : (
+                                                    <ActivityIndicator size="small" color={theme.colors.textSecondary} />
+                                                )
                                             ) : null}
                                             {att.onRemove ? (
                                                 <Pressable
+                                                    testID={`agent-input-attachment-remove:${att.key}`}
                                                     onPress={() => {
                                                         if (removingDisabled) return;
                                                         hapticsLight();
@@ -1928,11 +2185,7 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
                                                     disabled={removingDisabled}
                                                     hitSlop={8}
                                                 >
-                                                    <Ionicons
-                                                        name="close-circle"
-                                                        size={16}
-                                                        color={theme.colors.textSecondary}
-                                                    />
+                                                    {renderIoniconNode('close-circle', 16, theme.colors.textSecondary)}
                                                 </Pressable>
                                             ) : null}
                                         </View>
@@ -1979,22 +2232,32 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
                                         !showChipLabels ? styles.actionChipIconOnly : null,
                                         pressed ? styles.actionChipPressed : null,
                                     ]);
-                                    const extraChips = (props.extraActionChips ?? []).map((chip) => (
-                                        <React.Fragment key={chip.key}>
-                                            {chip.render({
-                                                chipStyle,
-                                                showLabel: showChipLabels,
-                                                iconColor: theme.colors.button.secondary.tint,
-                                                textStyle: styles.actionChipText,
-                                                popoverAnchorRef: overlayAnchorRef,
-                                            })}
-                                        </React.Fragment>
-                                    ));
+                                    const chipStyleAutoHide = (pressed: boolean) => ([
+                                        styles.actionChip,
+                                        !showAutoHideChipLabels ? styles.actionChipIconOnly : null,
+                                        pressed ? styles.actionChipPressed : null,
+                                    ]);
+                                    const extraChips = (props.extraActionChips ?? []).map((chip) => {
+                                        const isAutoHide = chip.labelPolicy === 'auto-hide';
+                                        return (
+                                            <React.Fragment key={chip.key}>
+                                                {chip.render({
+                                                    chipStyle: isAutoHide ? chipStyleAutoHide : chipStyle,
+                                                    showLabel: isAutoHide ? showAutoHideChipLabels : showChipLabels,
+                                                    iconColor: theme.colors.button.secondary.tint,
+                                                    textStyle: styles.actionChipText,
+                                                    countTextStyle: styles.actionChipCountText,
+                                                    popoverAnchorRef: overlayAnchorRef,
+                                                })}
+                                            </React.Fragment>
+                                        );
+                                    });
 
                                     const permissionOrControlsChip = (showPermissionChip || actionBarIsCollapsed) ? (
                                         <Pressable
                                             ref={settingsAnchorRef}
                                             key="permission"
+                                            testID="agent-input-settings-button"
                                             onPress={() => {
                                                 hapticsLight();
                                                 if (!actionBarIsCollapsed && props.onPermissionClick) {
@@ -2006,11 +2269,7 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
                                             hitSlop={{ top: 5, bottom: 10, left: 0, right: 0 }}
                                             style={(p) => chipStyle(p.pressed)}
                                         >
-                                            <Octicons
-                                                name="gear"
-                                                size={16}
-                                                color={theme.colors.button.secondary.tint}
-                                            />
+                                            {renderOcticonNode('gear', 16, theme.colors.button.secondary.tint)}
                                             {showChipLabels && permissionChipLabel ? (
                                                 <Text style={styles.actionChipText}>
                                                     {permissionChipLabel}
@@ -2042,30 +2301,52 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
                                             ...control.options.map((o) => o.id).filter((id) => id && id !== 'default'),
                                         ];
                                         const uniqueIds = Array.from(new Set(optionIds));
-                                        if (uniqueIds.length < 2) return null;
+                                        const shouldRender = shouldRenderChipForOptions({
+                                            optionCount: uniqueIds.length,
+                                            showWhenNoOptions: false,
+                                            showWhenSingleOption: false,
+                                        });
+                                        if (!shouldRender) return null;
 
-                                        const currentIndex = uniqueIds.indexOf(control.selectedId);
-                                        const safeIndex = currentIndex >= 0 ? currentIndex : 0;
-                                        const nextIndex = (safeIndex + 1) % uniqueIds.length;
-                                        const nextId = uniqueIds[nextIndex] ?? 'default';
+                                        const interaction = resolveChipOptionInteraction({
+                                            currentOptionId: control.selectedId,
+                                            selectableOptionIds: uniqueIds,
+                                            cycleMaxOptions: DEFAULT_OPTION_CHIP_CYCLE_MAX_OPTIONS,
+                                        });
+                                        const optionsById = new Map(control.options.map((option) => [option.id, option]));
 
                                         return (
                                             <Pressable
                                                 key="mode"
                                                 onPress={() => {
                                                     hapticsLight();
-                                                    props.onAcpSessionModeChange?.(nextId);
+                                                    if (interaction.kind === 'cycle') {
+                                                        props.onAcpSessionModeChange?.(interaction.nextOptionId);
+                                                        return;
+                                                    }
+                                                    if (interaction.kind === 'picker') {
+                                                        Modal.show({
+                                                            component: AgentInputChipPickerModal,
+                                                            props: {
+                                                                title: t('agentInput.mode.sectionTitle'),
+                                                                options: interaction.selectableOptionIds.map((id) => ({
+                                                                    id,
+                                                                    label: optionsById.get(id)?.name
+                                                                        ?? (id === 'default' ? t('common.default') : id),
+                                                                    subtitle: optionsById.get(id)?.description,
+                                                                })),
+                                                                selectedOptionId: control.selectedId,
+                                                                onSelect: (selectedId) => props.onAcpSessionModeChange?.(selectedId),
+                                                            },
+                                                        });
+                                                    }
                                                 }}
                                                 hitSlop={{ top: 5, bottom: 10, left: 0, right: 0 }}
                                                 style={(p) => chipStyle(p.pressed)}
                                                 accessibilityRole="button"
                                                 accessibilityLabel={t('agentInput.mode.badgeA11y', { name: control.label })}
                                             >
-                                                <Ionicons
-                                                    name="list-outline"
-                                                    size={16}
-                                                    color={theme.colors.button.secondary.tint}
-                                                />
+                                                {renderIoniconNode('list-outline', 18, theme.colors.button.secondary.tint)}
                                                 {showChipLabels ? (
                                                     <Text style={styles.actionChipText}>
                                                         {control.isPending
@@ -2087,11 +2368,7 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
                                             hitSlop={{ top: 5, bottom: 10, left: 0, right: 0 }}
                                             style={(p) => chipStyle(p.pressed)}
                                         >
-                                            <Ionicons
-                                                name={profileIcon as any}
-                                                size={16}
-                                                color={theme.colors.button.secondary.tint}
-                                            />
+                                            {renderIoniconNode(profileIcon as any, 18, theme.colors.button.secondary.tint)}
                                             {showChipLabels ? (
                                                 <Text style={styles.actionChipText}>
                                                     {profileLabel ?? t('profiles.noProfile')}
@@ -2110,17 +2387,14 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
                                             hitSlop={{ top: 5, bottom: 10, left: 0, right: 0 }}
                                             style={(p) => chipStyle(p.pressed)}
                                         >
-                                            <Ionicons
-                                                name="list-outline"
-                                                size={16}
-                                                color={theme.colors.button.secondary.tint}
-                                            />
+                                            {renderIoniconNode('list-outline', 18, theme.colors.button.secondary.tint)}
                                             {showChipLabels ? (
-                                                <Text style={styles.actionChipText}>
-                                                    {props.envVarsCount === undefined
-                                                        ? t('agentInput.envVars.title')
-                                                        : t('agentInput.envVars.titleWithCount', { count: props.envVarsCount })}
-                                                </Text>
+                                                <AgentInputChipLabel
+                                                    label={t('agentInput.envVars.title')}
+                                                    count={props.envVarsCount}
+                                                    textStyle={styles.actionChipText}
+                                                    countTextStyle={styles.actionChipCountText}
+                                                />
                                             ) : null}
                                         </Pressable>
                                     ) : null;
@@ -2128,6 +2402,7 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
                                     const agentChip = (props.agentType && props.onAgentClick) ? (
                                         <Pressable
                                             key="agent"
+                                            testID="agent-input-agent-chip"
                                             onPress={() => {
                                                 hapticsLight();
                                                 props.onAgentClick?.();
@@ -2135,14 +2410,10 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
                                             hitSlop={{ top: 5, bottom: 10, left: 0, right: 0 }}
                                             style={(p) => chipStyle(p.pressed)}
                                         >
-                                            <Octicons
-                                                name="cpu"
-                                                size={16}
-                                                color={theme.colors.button.secondary.tint}
-                                            />
+                                            {renderOcticonNode('cpu', 16, theme.colors.button.secondary.tint)}
                                             {showChipLabels ? (
                                                 <Text style={styles.actionChipText}>
-                                                    {t(getAgentCore(props.agentType).displayNameKey)}
+                                                    {props.agentLabel ?? t(getAgentCore(props.agentType).displayNameKey)}
                                                 </Text>
                                             ) : null}
                                         </Pressable>
@@ -2159,11 +2430,7 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
                                                 hitSlop={{ top: 5, bottom: 10, left: 0, right: 0 }}
                                             style={(p) => chipStyle(p.pressed)}
                                         >
-                                            <Ionicons
-                                                name="desktop-outline"
-                                                size={16}
-                                                color={theme.colors.button.secondary.tint}
-                                            />
+                                            {renderIoniconNode('desktop-outline', 18, theme.colors.button.secondary.tint)}
                                             {showChipLabels ? (
                                                 <Text style={styles.actionChipText}>
                                                     {props.machineName === null
@@ -2187,11 +2454,7 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
                                                 hitSlop={{ top: 5, bottom: 10, left: 0, right: 0 }}
                                             style={(p) => chipStyle(p.pressed)}
                                         >
-                                            <Ionicons
-                                                name="folder-outline"
-                                                size={16}
-                                                color={theme.colors.button.secondary.tint}
-                                            />
+                                            {renderIoniconNode('folder-outline', 18, theme.colors.button.secondary.tint)}
                                             {showChipLabels ? (
                                                 <Text style={styles.actionChipText}>
                                                     {typeof props.currentPath === 'string' && props.currentPath.length > 0
@@ -2224,6 +2487,9 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
                                     const abortButton = props.onAbort && props.showAbortButton && !actionBarIsCollapsed ? (
                                         <Shaker key="abort" ref={shakerRef}>
                                             <Pressable
+                                                testID="agent-input-abort"
+                                                accessibilityRole="button"
+                                                accessibilityLabel={t('runs.stop.stopRunA11y')}
                                                 style={(p) => [
                                                     styles.actionButton,
                                                     p.pressed ? styles.actionButtonPressed : null,
@@ -2238,11 +2504,7 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
                                                         color={theme.colors.button.secondary.tint}
                                                     />
                                                 ) : (
-                                                    <Octicons
-                                                        name={"stop"}
-                                                        size={16}
-                                                        color={theme.colors.button.secondary.tint}
-                                                    />
+                                                    renderOcticonNode('stop', 16, theme.colors.button.secondary.tint)
                                                 )}
                                             </Pressable>
                                         </Shaker>
@@ -2402,15 +2664,15 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
                                     style={{ marginLeft: 8, marginRight: 8 }}
                                 >
                                     {hasSendableContent ? (
-                                        <Octicons
-                                            name="arrow-up"
-                                            size={16}
-                                            color={theme.colors.button.primary.tint}
-                                            style={{ marginTop: Platform.OS === 'web' ? 2 : 0 }}
-                                        />
+                                        renderOcticonNode(
+                                            'arrow-up',
+                                            16,
+                                            theme.colors.button.primary.tint,
+                                            { marginTop: Platform.OS === 'web' ? 2 : 0 },
+                                        )
                                     ) : micPressHandler ? (
                                         micActive ? (
-                                            <Ionicons name="stop-circle" size={22} color={theme.colors.button.primary.tint} />
+                                            renderIoniconNode('stop-circle', 22, theme.colors.button.primary.tint)
                                         ) : (
                                             <Image
                                                 source={require('@/assets/images/icon-voice-white.png')}
@@ -2419,12 +2681,12 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
                                             />
                                         )
                                     ) : (
-                                        <Octicons
-                                            name="arrow-up"
-                                            size={16}
-                                            color={theme.colors.button.primary.tint}
-                                            style={{ marginTop: Platform.OS === 'web' ? 2 : 0 }}
-                                        />
+                                        renderOcticonNode(
+                                            'arrow-up',
+                                            16,
+                                            theme.colors.button.primary.tint,
+                                            { marginTop: Platform.OS === 'web' ? 2 : 0 },
+                                        )
                                     )}
                                 </PrimaryCircleIconButton>
                                     </View>,
@@ -2505,11 +2767,13 @@ function SourceControlStatusButton({ sessionId, onPress, compact }: { sessionId?
             {hasMeaningfulScmStatus ? (
                 <SourceControlStatusBadge sessionId={sessionId} />
             ) : (
-                <Octicons
-                    name="git-branch"
-                    size={16}
-                    color={theme.colors.button.secondary.tint}
-                />
+                normalizeNodeForView(
+                    <Octicons
+                        name="git-branch"
+                        size={16}
+                        color={theme.colors.button.secondary.tint}
+                    />,
+                )
             )}
         </Pressable>
     );

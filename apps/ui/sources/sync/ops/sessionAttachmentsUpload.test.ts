@@ -1,6 +1,8 @@
 import { describe, expect, it, vi } from 'vitest';
 
 type RpcResponse = any;
+const nativeOpenSpy = vi.fn();
+const nativeCloseSpy = vi.fn();
 const sessionRPCSpy = vi.fn(async (_sessionId: string, _method: string, _payload: unknown): Promise<RpcResponse> => ({
     success: false,
     error: 'unconfigured',
@@ -39,7 +41,14 @@ vi.mock('expo-file-system', () => {
             this.uri = uri;
         }
         open() {
-            return new FakeFileHandle(new TextEncoder().encode('hello'));
+            nativeOpenSpy();
+            const handle = new FakeFileHandle(new TextEncoder().encode('hello'));
+            const close = handle.close.bind(handle);
+            handle.close = () => {
+                nativeCloseSpy();
+                close();
+            };
+            return handle;
         }
     }
 
@@ -94,8 +103,50 @@ describe('sessionAttachmentsUpload', () => {
         expect(calls[4]?.payload).toMatchObject({ uploadId: 'u1', index: 2, contentBase64: 'bw==' });
     });
 
+    it('calls onProgress after each uploaded chunk', async () => {
+        const { sessionAttachmentsUploadFile } = await import('./sessionAttachmentsUpload');
+
+        sessionRPCSpy.mockImplementation(async (_sessionId: string, method: string) => {
+            if (method === 'attachments.configure') return { success: true };
+            if (method === 'attachments.upload.init') return { success: true, uploadId: 'u1', chunkSizeBytes: 2 };
+            if (method === 'attachments.upload.chunk') return { success: true };
+            if (method === 'attachments.upload.finalize') return { success: true, path: 'p1', sizeBytes: 5, sha256: 'h1' };
+            return { success: false, error: `unexpected method ${method}` };
+        });
+
+        const file = typeof File === 'function'
+            ? new File([new TextEncoder().encode('hello')], 'hello.txt', { type: 'text/plain' })
+            : ({ name: 'hello.txt', size: 5, type: 'text/plain', slice: () => new Blob([]) } as any);
+
+        const progressSpy = vi.fn();
+
+        const res = await sessionAttachmentsUploadFile({
+            sessionId: 's1',
+            file: { kind: 'web', file },
+            messageLocalId: 'm1',
+            config: {
+                uploadLocation: 'workspace',
+                workspaceRelativeDir: '.happier/uploads',
+                vcsIgnoreStrategy: 'git_info_exclude',
+                vcsIgnoreWritesEnabled: true,
+                maxFileBytes: 25 * 1024 * 1024,
+                uploadTtlMs: 5 * 60 * 1000,
+                chunkSizeBytes: 256 * 1024,
+            },
+            onProgress: progressSpy,
+        });
+
+        expect(res).toMatchObject({ success: true });
+        expect(progressSpy.mock.calls.length).toBeGreaterThan(1);
+
+        const last = progressSpy.mock.calls.at(-1)?.[0] ?? null;
+        expect(last).toMatchObject({ uploadedBytes: 5, totalBytes: 5 });
+    });
+
     it('uploads a native file by reading bytes from an expo-file-system FileHandle', async () => {
         const { sessionAttachmentsUploadFile } = await import('./sessionAttachmentsUpload');
+        nativeOpenSpy.mockClear();
+        nativeCloseSpy.mockClear();
 
         sessionRPCSpy.mockImplementation(async (_sessionId: string, method: string) => {
             if (method === 'attachments.configure') return { success: true };
@@ -122,6 +173,8 @@ describe('sessionAttachmentsUpload', () => {
 
         expect(res).toMatchObject({ success: true });
         expect((res as any).path).toBe('p1');
+        expect(nativeOpenSpy).toHaveBeenCalledTimes(1);
+        expect(nativeCloseSpy).toHaveBeenCalledTimes(1);
 
         const calls = sessionRPCSpy.mock.calls.map((c) => ({ method: c[1], payload: c[2] }));
         expect(calls[1]?.payload).toMatchObject({ name: 'hello.txt', sizeBytes: 5, mimeType: 'text/plain', messageLocalId: 'm1' });
