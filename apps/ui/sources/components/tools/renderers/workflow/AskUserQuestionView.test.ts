@@ -11,6 +11,7 @@ const sendMessage = vi.fn();
 const sessionAllowWithAnswers = vi.fn();
 const modalAlert = vi.fn();
 let supportsAnswersInPermission = true;
+let activeAskUserQuestionRequest: { tool: string; kind?: 'user_action' } | null = null;
 
 vi.mock('@/text', () => ({
     t: (key: string) => key,
@@ -20,6 +21,11 @@ vi.mock('@/modal', () => ({
     Modal: {
         alert: (...args: any[]) => modalAlert(...args),
     },
+}));
+
+vi.mock('@/components/ui/text/Text', () => ({
+    Text: (props: any) => React.createElement('Text', props, props.children),
+    TextInput: (props: any) => React.createElement('TextInput', props, props.children),
 }));
 
 vi.mock('@expo/vector-icons', () => ({
@@ -39,7 +45,21 @@ vi.mock('@/sync/domains/state/storage', () => ({
     storage: {
         getState: () => ({
             sessions: {
-                s1: { agentState: { capabilities: { askUserQuestionAnswersInPermission: supportsAnswersInPermission } } },
+                s1: {
+                    agentState: {
+                        capabilities: { askUserQuestionAnswersInPermission: supportsAnswersInPermission },
+                        requests: activeAskUserQuestionRequest
+                            ? {
+                                toolu_1: {
+                                    tool: activeAskUserQuestionRequest.tool,
+                                    ...(activeAskUserQuestionRequest.kind ? { kind: activeAskUserQuestionRequest.kind } : {}),
+                                    arguments: {},
+                                    createdAt: 1,
+                                },
+                            }
+                            : {},
+                    },
+                },
             },
         }),
     },
@@ -83,6 +103,27 @@ describe('AskUserQuestionView', () => {
                         question: 'Which file should I inspect?',
                         multiSelect: false,
                         options: [],
+                    },
+                ],
+            },
+            completedAt: null,
+            permission: { id: 'toolu_1', status: 'pending' },
+            ...overrides,
+        });
+    }
+
+    function makeSuggestionsWithFreeformTool(overrides: Partial<ToolCall> = {}): ToolCall {
+        return makeToolCall({
+            name: 'AskUserQuestion',
+            state: 'running',
+            input: {
+                questions: [
+                    {
+                        header: 'Q1',
+                        question: 'What are you trying to achieve?',
+                        multiSelect: false,
+                        options: [{ label: 'Option A', description: '' }, { label: 'Option B', description: '' }],
+                        freeform: { placeholder: 'Other (type below)', description: 'Type a different goal.' },
                     },
                 ],
             },
@@ -146,6 +187,7 @@ describe('AskUserQuestionView', () => {
         sessionAllowWithAnswers.mockReset();
         modalAlert.mockReset();
         supportsAnswersInPermission = true;
+        activeAskUserQuestionRequest = { tool: 'AskUserQuestion', kind: 'user_action' };
     });
 
     it('submits answers via permission approval without sending a follow-up user message', async () => {
@@ -160,14 +202,22 @@ describe('AskUserQuestionView', () => {
         expect(sendMessage).toHaveBeenCalledTimes(0);
     });
 
-    it('shows an error when permission id is missing and does not submit', async () => {
+    it('does not allow answering when the permission id is missing', async () => {
         const tree = await renderView(makeTool({ permission: undefined }));
-        await chooseOptionAndSubmit(tree, 'A');
+
+        const option = findPressableByText(tree, 'A');
+        expect(option).toBeTruthy();
+        await act(async () => {
+            await option!.props.onPress();
+        });
+
+        const submit = findPressableByText(tree, 'tools.askUserQuestion.submit');
+        expect(submit).toBeUndefined();
 
         expect(sessionAllowWithAnswers).toHaveBeenCalledTimes(0);
         expect(sessionDeny).toHaveBeenCalledTimes(0);
         expect(sendMessage).toHaveBeenCalledTimes(0);
-        expect(modalAlert).toHaveBeenCalledWith('common.error', 'errors.missingPermissionId');
+        expect(modalAlert).toHaveBeenCalledTimes(0);
     });
 
     it('shows an error when permission approval fails', async () => {
@@ -182,17 +232,37 @@ describe('AskUserQuestionView', () => {
         expect(modalAlert).toHaveBeenCalledWith('common.error', 'boom');
     });
 
-    it('falls back to deny+sendMessage when answers-in-permission capability is unavailable', async () => {
+    it('uses permission approval when answers-in-permission capability is unavailable but the matching request is still active', async () => {
         supportsAnswersInPermission = false;
-        sessionDeny.mockResolvedValueOnce(undefined);
-        sendMessage.mockResolvedValueOnce(undefined);
+        activeAskUserQuestionRequest = { tool: 'AskUserQuestion', kind: 'user_action' };
+        sessionAllowWithAnswers.mockResolvedValueOnce(undefined);
 
         const tree = await renderView(makeTool());
         await chooseOptionAndSubmit(tree, 'A');
 
+        expect(sessionAllowWithAnswers).toHaveBeenCalledTimes(1);
+        expect(sessionAllowWithAnswers).toHaveBeenCalledWith('s1', 'toolu_1', { 'Pick one': 'A' });
+        expect(sessionDeny).toHaveBeenCalledTimes(0);
+        expect(sendMessage).toHaveBeenCalledTimes(0);
+    });
+
+    it('does not allow answering when the matching AskUserQuestion request is no longer active', async () => {
+        supportsAnswersInPermission = true;
+        activeAskUserQuestionRequest = null;
+
+        const tree = await renderView(makeTool());
+
+        const option = findPressableByText(tree, 'A');
+        expect(option).toBeTruthy();
+        await act(async () => {
+            await option!.props.onPress();
+        });
+
+        const submit = findPressableByText(tree, 'tools.askUserQuestion.submit');
+        expect(submit).toBeUndefined();
         expect(sessionAllowWithAnswers).toHaveBeenCalledTimes(0);
-        expect(sessionDeny).toHaveBeenCalledWith('s1', 'toolu_1');
-        expect(sendMessage).toHaveBeenCalledWith('s1', 'Q1: A');
+        expect(sessionDeny).toHaveBeenCalledTimes(0);
+        expect(sendMessage).toHaveBeenCalledTimes(0);
     });
 
     it('does not allow answering when canApprovePermissions is false', async () => {
@@ -232,6 +302,34 @@ describe('AskUserQuestionView', () => {
 
         expect(sessionAllowWithAnswers).toHaveBeenCalledTimes(1);
         expect(sessionAllowWithAnswers).toHaveBeenCalledWith('s1', 'toolu_1', { 'Which file should I inspect?': 'README.md' });
+        expect(sessionDeny).toHaveBeenCalledTimes(0);
+        expect(sendMessage).toHaveBeenCalledTimes(0);
+    });
+
+    it('supports suggestion questions that allow a typed freeform answer (options + freeform)', async () => {
+        sessionAllowWithAnswers.mockResolvedValueOnce(undefined);
+
+        const tree = await renderView(makeSuggestionsWithFreeformTool());
+
+        const submitBefore = findPressableByText(tree, 'tools.askUserQuestion.submit');
+        expect(submitBefore).toBeTruthy();
+        expect(submitBefore!.props.disabled).toBe(true);
+
+        const input = tree.root.findByType('TextInput' as any);
+        await act(async () => {
+            input.props.onChangeText('Custom goal, with commas');
+        });
+
+        const submitAfter = findPressableByText(tree, 'tools.askUserQuestion.submit');
+        expect(submitAfter).toBeTruthy();
+        expect(submitAfter!.props.disabled).toBe(false);
+
+        await act(async () => {
+            await submitAfter!.props.onPress();
+        });
+
+        expect(sessionAllowWithAnswers).toHaveBeenCalledTimes(1);
+        expect(sessionAllowWithAnswers).toHaveBeenCalledWith('s1', 'toolu_1', { 'What are you trying to achieve?': 'Custom goal, with commas' });
         expect(sessionDeny).toHaveBeenCalledTimes(0);
         expect(sendMessage).toHaveBeenCalledTimes(0);
     });

@@ -98,8 +98,28 @@ Depending on the request, Happier can ask you to:
 - reject
 - request changes
 - answer one or more structured questions
+- pick a provider-specific approval variant when one exists
 
 This is why `Exit Plan Mode` and `AskUserQuestion` can both appear as user-facing requests even though they are not the same tool.
+
+### Example: plan review flow
+
+When a provider supports a planning mode, a common user-action flow is:
+
+1. the agent proposes a plan
+2. Happier shows an **Exit Plan Mode** request
+3. you can:
+   - **Approve Plan**
+   - **Request changes**
+   - choose a provider-specific approval variant from the plan menu
+
+For Claude, the approval variants can include:
+
+- **Approve Plan**: exit plan mode and continue normally
+- **Approve Plan (Accept Edits)**: exit plan mode and continue with an edit-friendly permission mode
+- **Approve Plan (Bypass All Permissions)**: exit plan mode and continue with a YOLO-style permission mode
+
+If you choose **Request changes**, the session stays in plan mode and Claude revises the plan instead of starting execution.
 
 ### Where user-action requests appear
 
@@ -126,6 +146,17 @@ The action buttons are designed as a fast return path, not as a full out-of-app 
 - `Answer` opens the app on the correct session so you can answer in context
 
 Notifications can also include a short summary of what the tool or request is asking for, so you do not have to enter the app blindly.
+
+## Permission requests vs user-action requests
+
+This distinction is important in current Happier builds:
+
+- **Permission request** = “should this tool/action be allowed?”
+- **User-action request** = “the agent needs a structured human decision or answer before it can continue”
+
+Both can block a session.
+Both can appear in the transcript or arrive through notifications.
+But they are intentionally tracked and rendered as different request types.
 
 ### Approval requests
 
@@ -186,12 +217,13 @@ Because approvals are stored as real data, they survive normal app navigation an
 1. Open **Inbox** if the request is surfaced there
 2. Review what the agent or tool is asking to do
 3. Approve or deny based on what you want the session to be allowed to do
+4. If Happier offers a scoped “don’t ask again” choice, use that when you want the rest of the session to stop prompting for the same tool or command pattern
 
 ### Answer an AskUserQuestion or Exit Plan Mode request
 
 1. Open the surfaced request in the transcript, details view, or Inbox
 2. Review the question or action being requested
-3. Approve, reject, request changes, or answer the question directly
+3. Approve, reject, request changes, choose a plan approval variant, or answer the question directly
 4. Happier sends that response back through the generalized user-action response path
 
 ### Manage friends separately

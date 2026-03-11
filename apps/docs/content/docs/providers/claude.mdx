@@ -32,13 +32,46 @@ On machines with `tmux`, this is usually a tmux-backed attach flow. On Windows, 
 
 For the full workflow, see [Features → Attach to a running session](/docs/features/attach-to-session).
 
-## Permissions
+## Permissions and modes
 
-Happier uses a **provider-agnostic permission mode** (`default`, `read-only`, `safe-yolo`, `yolo`, `plan`) and maps it to Claude’s native behaviors when needed.
+Happier uses:
+
+- a **provider-agnostic permission mode** (`default`, `read-only`, `safe-yolo`, `yolo`)
+- a separate Claude **session mode** surface (including **Plan**)
 
 For the full user guide (CLI flags, UI picker, defaults, and apply timing), see:
 
 - [Permissions](../features/permissions)
+
+### Claude plan mode
+
+In current Happier builds, **Plan** is shown under **Mode**, not under the normal permission picker.
+
+That matters because:
+
+- **Mode = Plan** changes Claude’s behavior for the current session
+- **permission mode** still controls how approvals are handled
+
+Plan mode does **not** bypass approvals by itself. Claude can still ask for permission while the session is in plan mode.
+
+### Exiting plan mode
+
+When Claude finishes planning, Happier surfaces **Exit Plan Mode** as a user-action request.
+
+Common choices are:
+
+- **Approve Plan**
+- **Request changes**
+- **Approve Plan (Accept Edits)**
+- **Approve Plan (Bypass All Permissions)**
+
+Those choices affect what happens **after** Claude leaves plan mode:
+
+- **Approve Plan** returns to normal build mode
+- **Accept Edits** returns to build mode with an edit-friendly permission posture
+- **Bypass All Permissions** returns to build mode with a YOLO-style permission posture
+
+If you request changes, Claude stays in plan mode and revises the plan instead of starting execution.
 
 ### Local ↔ remote switching
 
@@ -195,7 +228,7 @@ When Agent Teams are enabled in Claude, Happier can:
 - Surface Claude teammates as first-class rows in the session **Agents** tab, where you can reopen their transcript, launch more teammates into an existing team, and terminate them when needed.
 - Reopen teammate work from both the **Agents** sidebar and the original **transcript/tool entry**.
 
-For the complete user-facing guide to the Agents sidebar, Happier subagents, details-pane behavior, and Claude team workflows, see:
+For the complete user-facing guide to the Agents sidebar, Subagents, details-pane behavior, and Claude team workflows, see:
 
 - [Agents & subagents](/docs/features/subagents)
 - [Participant routing & live run messaging](/docs/features/participant-routing)

@@ -22,6 +22,7 @@ import { clearDevAuthKey, readDevAuthKey, writeDevAuthKey } from './utils/auth/d
 import { getExpoStatePaths, isStateProcessRunning } from './utils/expo/expo.mjs';
 import { resolveAuthSeedFromEnv } from './utils/stack/startup.mjs';
 import { copyFileIfMissing, linkFileIfMissing, removeFileOrSymlinkIfExists, writeSecretFileIfMissing } from './utils/auth/files.mjs';
+import { clearStackForceLoginCredentialPaths } from './utils/auth/clearStackForceLoginCredentialPaths.mjs';
 import { resolveHandyMasterSecretFromStack } from './utils/auth/handy_master_secret.mjs';
 import { ensureDir, readTextIfExists } from './utils/fs/ops.mjs';
 import { stackExistsSync } from './utils/stack/stacks.mjs';
@@ -40,6 +41,7 @@ import { getVerbosityLevel } from './utils/cli/verbosity.mjs';
 import { runOrchestratedGuidedAuthFlow, startDaemonPostAuth } from './utils/auth/orchestrated_stack_auth_flow.mjs';
 import { applyStackActiveServerScopeEnv } from './utils/auth/stable_scope_id.mjs';
 import { isLocalishUrl } from './utils/service/auth_guidance.mjs';
+import { resolveStackAuthCliExecutable } from './utils/auth/stack_guided_login.mjs';
 import {
   findAnyCredentialPathInCliHome,
   findExistingStackCredentialPath,
@@ -49,12 +51,20 @@ import { decodeJwtPayloadUnsafe } from './utils/auth/decode_jwt_payload_unsafe.m
 import { fileHasContent } from './utils/fs/file_has_content.mjs';
 import { buildConfigureServerLinks } from '@happier-dev/cli-common/links';
 import { getStackRuntimeStatePath, isPidAlive as isRuntimePidAlive, readStackRuntimeStateFile } from './utils/stack/runtime_state.mjs';
+import { resolveStackRuntimeLaunchContext } from './runtime/launch/resolveStackRuntimeLaunchContext.mjs';
 
 function resolveGuidedStartAction({ healthOk = false, runtimeOwnerAlive = false, autoStart = false } = {}) {
   if (healthOk) return 'proceed';
   if (runtimeOwnerAlive) return 'wait';
   if (autoStart) return 'start';
   return 'prompt';
+}
+
+function resolveGuidedStackStartCommand({ stackName, useRuntimeStart = false } = {}) {
+  const name = String(stackName ?? '').trim() || 'main';
+  return useRuntimeStart
+    ? `hstack stack start ${name} --background --runtime`
+    : `hstack stack dev ${name} --background`;
 }
 
 async function getInternalServerUrlCompat() {
@@ -1576,6 +1586,8 @@ async function cmdLogin({ argv, json }) {
 
   const { envWebappUrl } = getWebappUrlEnvOverride({ env: process.env, stackName });
   const expoWebappUrl = await resolveWebappUrlFromRunningExpo({ rootDir, stackName });
+  const runtimeLaunchContext = await resolveStackRuntimeLaunchContext({ argv: [], env: process.env });
+  const runtimeSnapshotActive = Boolean(runtimeLaunchContext.snapshot);
 
   const serviceMode = (process.env.HAPPIER_STACK_SERVICE_MODE ?? '').toString().trim() === '1';
   const wantsDefaultExpoInAuto =
@@ -1584,8 +1596,14 @@ async function cmdLogin({ argv, json }) {
     !envWebappUrl &&
     method !== 'mobile' &&
     tty &&
-    !serviceMode;
+    !serviceMode &&
+    !runtimeSnapshotActive;
   const effectiveWebappMode = wantsDefaultExpoInAuto ? 'expo' : requestedWebappMode;
+  const shouldUseRuntimeStart = runtimeSnapshotActive && effectiveWebappMode !== 'expo';
+  const guidedStartCommand = resolveGuidedStackStartCommand({
+    stackName,
+    useRuntimeStart: shouldUseRuntimeStart,
+  });
 
   let webappUrlRaw = '';
   let webappUrlSource = '';
@@ -1603,8 +1621,8 @@ async function cmdLogin({ argv, json }) {
     webappUrlSource = 'expo';
   } else {
     // auto|stack: preserve existing ordering for now (env override wins unless explicitly forced otherwise).
-    webappUrlRaw = envWebappUrl || expoWebappUrl || publicServerUrl;
-    webappUrlSource = envWebappUrl ? 'stack env override' : expoWebappUrl ? 'expo' : 'server';
+    webappUrlRaw = runtimeSnapshotActive ? envWebappUrl || publicServerUrl || expoWebappUrl : envWebappUrl || expoWebappUrl || publicServerUrl;
+    webappUrlSource = envWebappUrl ? 'stack env override' : runtimeSnapshotActive ? (publicServerUrl ? 'server' : expoWebappUrl ? 'expo' : 'server') : expoWebappUrl ? 'expo' : 'server';
   }
 
   const webappUrl = webappUrlRaw ? await preferStackLocalhostUrl(webappUrlRaw, { stackName }) : '';
@@ -1616,24 +1634,12 @@ async function cmdLogin({ argv, json }) {
 
   const identity = parseCliIdentityOrThrow((kv.get('--identity') ?? '').trim());
   const cliHomeDir = resolveCliHomeDirForIdentity({ cliHomeDir: resolveCliHomeDir(), identity });
-  const cliBin = join(getComponentDir(rootDir, 'happier-cli'), 'bin', 'happier.mjs');
 
   const force =
     argv.includes('--force') ||
     (kv.get('--force') ?? '').toString().trim() === '1';
   const wantPrint = argv.includes('--print');
   const noOpen = flags.has('--no-open') || flags.has('--no-browser') || flags.has('--no-browser-open');
-
-  const nodeArgs = [cliBin, 'auth', 'login'];
-  if (force || argv.includes('--force')) {
-    nodeArgs.push('--force');
-  }
-  if (noOpen) {
-    nodeArgs.push('--no-open');
-  }
-  if (method) {
-    nodeArgs.push('--method', method);
-  }
 
   let env = {
     ...process.env,
@@ -1647,6 +1653,21 @@ async function cmdLogin({ argv, json }) {
   };
   env = applyStackActiveServerScopeEnv({ env, stackName, cliIdentity: identity });
 
+  const cliExecutable = await resolveStackAuthCliExecutable({ rootDir, env });
+  const executableLooksLikeScript =
+    cliExecutable.endsWith('.mjs') || cliExecutable.endsWith('.js') || cliExecutable.endsWith('.cjs');
+  const loginCommand = executableLooksLikeScript ? process.execPath : cliExecutable;
+  const loginArgs = executableLooksLikeScript ? [cliExecutable, 'auth', 'login'] : ['auth', 'login'];
+  if (force || argv.includes('--force')) {
+    loginArgs.push('--force');
+  }
+  if (noOpen) {
+    loginArgs.push('--no-open');
+  }
+  if (method) {
+    loginArgs.push('--method', method);
+  }
+
   if (wantPrint) {
     const cmd =
       `HAPPIER_HOME_DIR="${cliHomeDir}" ` +
@@ -1656,10 +1677,7 @@ async function cmdLogin({ argv, json }) {
       (webappUrl ? `HAPPIER_WEBAPP_URL="${webappUrl}" ` : '') +
       (noOpen ? `HAPPIER_NO_BROWSER_OPEN="1" ` : '') +
       (method ? `HAPPIER_AUTH_METHOD="${method}" ` : '') +
-      `node "${cliBin}" auth login` +
-      (nodeArgs.includes('--force') ? ' --force' : '') +
-      (noOpen ? ' --no-open' : '') +
-      (method ? ` --method ${method}` : '');
+      `"${loginCommand}" ${loginArgs.map((arg) => `"${arg}"`).join(' ')}`;
 
     const configureServer =
       webappUrl && publicServerUrl
@@ -1694,6 +1712,14 @@ async function cmdLogin({ argv, json }) {
     throw new Error('[auth] login: --json is supported only with --print');
   }
 
+  if (force) {
+    await clearStackForceLoginCredentialPaths({
+      cliHomeDir,
+      serverUrl: internalServerUrl,
+      env,
+    });
+  }
+
   const shouldAutoStart = flags.has('--start-if-needed');
   const guidedReadyTimeoutMs = resolveGuidedServerReadyTimeoutMs(process.env);
   const waitForGuidedServerReadyOrThrow = async (reason) => {
@@ -1705,7 +1731,7 @@ async function cmdLogin({ argv, json }) {
       throw new Error(
         `[auth] ${stackName}: server did not become healthy in time (${guidedReadyTimeoutMs}ms) while ${reason}.\n` +
           `[auth] Start it manually:\n` +
-          `  hstack stack dev ${stackName} --background`
+          `  ${guidedStartCommand}`
       );
     }
   };
@@ -1730,7 +1756,7 @@ async function cmdLogin({ argv, json }) {
           throw new Error(
             `[auth] ${stackName}: cannot run guided login because the stack is not running in non-interactive mode.\n` +
               `[auth] Re-run with --start-if-needed or start it manually:\n` +
-              `  hstack stack dev ${stackName} --background`
+              `  ${guidedStartCommand}`
           );
         }
         startOk = await withRl(async (rl) => {
@@ -1745,7 +1771,7 @@ async function cmdLogin({ argv, json }) {
       if (!startOk) {
         throw new Error(
           `[auth] ${stackName}: cannot run guided login because the stack is not running.\n` +
-            `[auth] Start it with: hstack stack dev ${stackName} --background`
+            `[auth] Start it with: ${guidedStartCommand}`
         );
       }
 
@@ -1753,21 +1779,22 @@ async function cmdLogin({ argv, json }) {
         process.execPath,
         [
           join(rootDir, 'scripts', 'stack.mjs'),
-          effectiveWebappMode === 'expo' ? 'dev' : 'start',
+          shouldUseRuntimeStart ? 'start' : effectiveWebappMode === 'expo' ? 'dev' : 'start',
           stackName,
           '--background',
+          ...(shouldUseRuntimeStart ? ['--runtime'] : []),
           '--no-daemon',
           '--no-browser',
         ],
         {
           cwd: rootDir,
-          env: { ...process.env, ...(effectiveWebappMode === 'expo' ? { HAPPIER_STACK_AUTH_FLOW: '1' } : {}) },
+          env: { ...process.env, ...(!shouldUseRuntimeStart && effectiveWebappMode === 'expo' ? { HAPPIER_STACK_AUTH_FLOW: '1' } : {}) },
         }
       ).catch((err) => {
         const msg =
           `[auth] ${stackName}: failed to start the stack for guided login.\n` +
           `[auth] Try starting it manually:\n` +
-          `  hstack stack ${effectiveWebappMode === 'expo' ? 'dev' : 'start'} ${stackName} --background\n\n` +
+          `  ${guidedStartCommand}\n\n` +
           `${String(err?.stack ?? err)}`;
         throw new Error(msg);
       });
@@ -1841,7 +1868,7 @@ async function cmdLogin({ argv, json }) {
               `[auth] Falling back to hosted web app (${HOSTED_WEBAPP_URL}) for the approval UI (targets: ${publicServerUrl}).`
           );
           const hostedEnv = { ...scopedEnv, HAPPIER_WEBAPP_URL: HOSTED_WEBAPP_URL };
-          await run(process.execPath, nodeArgs, { cwd: rootDir, env: hostedEnv });
+          await run(loginCommand, loginArgs, { cwd: rootDir, env: hostedEnv });
           webappUrlForDaemon = HOSTED_WEBAPP_URL;
           break;
         }
@@ -1874,14 +1901,14 @@ async function cmdLogin({ argv, json }) {
             `[auth] ${stackName}: falling back to hosted web app (${HOSTED_WEBAPP_URL}) for the approval UI (targets: ${publicServerUrl}).`
           );
           const hostedEnv = { ...scopedEnv, HAPPIER_WEBAPP_URL: HOSTED_WEBAPP_URL };
-          await run(process.execPath, nodeArgs, { cwd: rootDir, env: hostedEnv });
+          await run(loginCommand, loginArgs, { cwd: rootDir, env: hostedEnv });
           webappUrlForDaemon = HOSTED_WEBAPP_URL;
           break;
         }
         if (choice === 'mobile') {
           // eslint-disable-next-line no-console
           console.error(`[auth] ${stackName}: switching to mobile login (targets: ${publicServerUrl}).`);
-          const mobileArgs = [...nodeArgs];
+          const mobileArgs = [...loginArgs];
           if (!mobileArgs.includes('--method')) {
             mobileArgs.push('--method', 'mobile');
           } else {
@@ -1890,7 +1917,7 @@ async function cmdLogin({ argv, json }) {
               mobileArgs[idx + 1] = 'mobile';
             }
           }
-          await run(process.execPath, mobileArgs, { cwd: rootDir, env: scopedEnv });
+          await run(loginCommand, mobileArgs, { cwd: rootDir, env: scopedEnv });
           break;
         }
 
@@ -1905,7 +1932,7 @@ async function cmdLogin({ argv, json }) {
       }
     }
   } else {
-    await run(process.execPath, nodeArgs, { cwd: rootDir, env: scopedEnv });
+    await run(loginCommand, loginArgs, { cwd: rootDir, env: scopedEnv });
   }
 
   try {

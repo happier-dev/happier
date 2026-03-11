@@ -1,6 +1,6 @@
 ---
 title: Codex
-description: Configure Codex in Happier, including ACP as the default backend, installables management, local control, and resume behavior.
+description: Configure Codex in Happier, including the default App Server backend, installables management, local control, and resume behavior.
 ---
 
 This page documents how Happier integrates with **Codex** and what Codex-specific behavior matters for day-to-day usage.
@@ -66,22 +66,44 @@ Notes:
 - If you connect multiple profiles, you can choose which one to use when starting a new session.
 - On web, Happier uses device or paste flows. Embedded OAuth is native-only.
 
+## Session handoff
+
+Codex supports Happier session handoff as an **experimental** capability.
+
+What that means in practice:
+
+- the handoff action can move the same Happier session id to another machine
+- Codex continuity can work across machines when the destination is ready
+- the feature is less mature than Claude or OpenCode handoff
+
+Practical guidance:
+
+- prefer Claude or OpenCode when you want the most stable cross-machine handoff today
+- keep Codex authenticated and ready on the destination machine
+- use connected services when possible to reduce machine-local auth friction
+
+See:
+
+- [Session handoff](/docs/features/session-handoff)
+- [Connected services](/docs/features/connected-services)
+
 ## Backends and local control
 
 Happier can run Codex using different backends depending on what’s available and what features you enable:
 
-- **Codex ACP**: the default Codex backend in Happier and the backend used for Codex resume.
-- **Codex MCP**: still available for normal fresh sessions.
+- **Codex App Server (default)**: the recommended path for normal Codex sessions in Happier. It supports the app-first workflow, local/remote switching, and vendor resume when the session metadata is available.
+- **Codex ACP (legacy fallback)**: still available when you explicitly switch Codex to ACP mode.
+- **Codex MCP**: still available for fresh sessions; vendor resume on MCP depends on the Codex resume helper being installed.
 - **Local-control**: Happier can switch a session into a “local control” mode that mirrors Codex activity (useful when moving control from the app back to your terminal).
 
 Important Codex behavior:
 
-- Happier now defaults Codex to **ACP**
+- Happier now defaults Codex to **App Server**
 - old `mcp_resume` behavior is gone
-- if ACP is unavailable for a **new** session, Happier may fall back to MCP with a warning
-- if you explicitly try to **resume** a Codex session and ACP is unavailable, Happier errors instead of falling back
+- if App Server is unavailable for a **new** session, Happier may fall back to another supported backend with a warning
+- local/remote switching and normal Codex resume work on the default App Server path
 
-If you manually switch Codex to plain `mcp` in settings, new sessions can still run, but Codex sessions are no longer resumable from Happier.
+If you manually switch Codex to plain `mcp` in settings, new sessions can still run, but vendor resume then depends on the Codex resume helper instead of the default App Server path.
 
 For the full user-facing MCP guide in Happier, see:
 
@@ -98,7 +120,7 @@ Happier exposes that in:
 This matters for two reasons:
 
 - **cold start performance** — a preinstalled Codex ACP binary starts faster than an on-demand fallback path
-- **resume reliability** — Codex resume requires ACP to be available on the machine
+- **ACP-mode reliability** — if you explicitly choose ACP, keeping Codex ACP installed avoids slower fallback paths and missing-capability errors
 
 ### Default behavior
 
@@ -106,9 +128,6 @@ For the managed Codex ACP installable, Happier defaults to:
 
 - **Auto-install when needed**: on
 - **Auto-update**: auto
-
-For the full user-facing MCP guide in Happier, see:
-
 
 If you select the Codex ACP backend for a new session and Codex ACP is missing, Happier can install it in the background so that later sessions on that machine start more reliably and with less startup overhead.
 
@@ -119,12 +138,12 @@ For a **new** Codex session:
 - Happier tries to keep session start usable even if Codex ACP is not yet installed
 - in parallel, Happier can install Codex ACP in the background when policy allows it
 
-For **resume**:
+For **resume in ACP mode**:
 
 - Codex ACP must already be available
 - Happier does not silently replace resume with a fresh session
 
-If you want predictable Codex resume on a machine, keep Codex ACP installed there and leave automatic updates enabled unless you have a specific reason not to.
+If you want predictable Codex resume while using ACP on a machine, keep Codex ACP installed there and leave automatic updates enabled unless you have a specific reason not to. If you stay on the default App Server path, this ACP installable is not required for normal resume.
 
 Full guide: [Installables](/docs/features/installables).
 
@@ -145,13 +164,13 @@ For the end-to-end workflow, see [Features → Attach to a running session](/doc
 
 ## Resume inactive Codex sessions
 
-Codex resume in Happier is **ACP-only**.
+Codex resume in Happier is no longer ACP-only.
 
-That means an inactive Codex session can be resumed only when:
+An inactive Codex session can be resumed when:
 
 - the session has valid Codex resume metadata
-- Codex ACP is enabled in your Happier settings
-- ACP is actually available when you resume
+- the current backend/machine combination supports resume for that session (App Server by default, ACP when explicitly selected, or MCP with the Codex resume helper)
+- any required machine dependency for the selected resume path is already installed
 
 From the CLI, use:
 
@@ -169,9 +188,9 @@ From the app/web UI, inactive Codex sessions are resumable only when those same 
 
 Resume is strict: Happier does not silently replace a failed Codex resume with a fresh Codex session.
 
-## Permissions
+## Permissions and modes
 
-Happier uses a **provider-agnostic permission mode** (`default`, `read-only`, `safe-yolo`, `yolo`, `plan`) and applies it to Codex in the best available way.
+Happier uses a **provider-agnostic permission mode** (`default`, `read-only`, `safe-yolo`, `yolo`) and applies it to Codex in the best available way.
 
 For the full user guide (CLI flags, UI picker, defaults, apply timing), see:
 
@@ -191,9 +210,11 @@ Important notes:
 
 ### Plan mode
 
-`plan` is shown only when the current Codex backend/session advertises a compatible session mode.
+Plan is a **session mode**, not a normal permission mode.
 
-If `plan` is not supported for the current session, Happier will fall back to `default` and the UI will show that in the “Effective policy” line.
+It is shown only when the current Codex backend/session advertises a compatible session mode.
+
+If plan is not supported for the current session, Happier simply does not show the Mode control for that session/backend.
 
 ## Switching and permission persistence
 

@@ -4,7 +4,7 @@ import renderer, { act } from 'react-test-renderer';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
-let permissionPromptSurfaceSetting: any = 'composer';
+const permissionPromptSurfaceSetting = vi.hoisted(() => ({ value: 'composer' as any }));
 
 vi.mock('react-native', async () => {
     const rn = await import('@/dev/reactNativeStub');
@@ -27,6 +27,66 @@ vi.mock('react-native', async () => {
     };
 });
 
+vi.mock('react-native-unistyles', () => {
+    const createFallbackToken = (value: string) => {
+        const token: any = new Proxy(
+            {},
+            {
+                get: (_target, prop) => {
+                    if (prop === Symbol.toPrimitive) return () => value;
+                    if (prop === 'toString') return () => value;
+                    if (prop === 'valueOf') return () => value;
+                    return token;
+                },
+            },
+        );
+        return token;
+    };
+
+    const fallback = createFallbackToken('#000');
+    const withFallback = <T extends Record<string, any>>(obj: T): T =>
+        new Proxy(obj, {
+            get: (target, prop) => (prop in target ? (target as any)[prop] : fallback),
+        });
+
+    const theme = {
+        colors: withFallback({
+            input: withFallback({ background: '#111' }),
+            text: '#fff',
+            textSecondary: '#aaa',
+            textTertiary: '#888',
+            divider: '#333',
+            surface: '#000',
+            surfacePressed: '#111',
+            overlay: withFallback({ scrim: 'rgba(0,0,0,0.4)', text: '#fff' }),
+            radio: withFallback({ active: '#0af', inactive: '#555', dot: '#0af' }),
+            button: withFallback({
+                secondary: withFallback({ tint: '#0af' }),
+                primary: withFallback({ tint: '#0af' }),
+            }),
+            permission: withFallback({
+                acceptEdits: '#0a0',
+                bypass: '#f00',
+                plan: '#0af',
+                readOnly: '#777',
+                safeYolo: '#fb0',
+                yolo: '#f0f',
+            }),
+        }),
+    };
+
+    const runtime = {
+        insets: { top: 0, bottom: 0, left: 0, right: 0 },
+    };
+
+    return {
+        useUnistyles: () => ({ theme, runtime }),
+        StyleSheet: {
+            create: (value: any) => (typeof value === 'function' ? value(theme, runtime) : value),
+        },
+    };
+});
+
 vi.mock('@expo/vector-icons', () => ({
     Ionicons: (props: Record<string, unknown>) => React.createElement('Ionicons', props, null),
     Octicons: (props: Record<string, unknown>) => React.createElement('Octicons', props, null),
@@ -43,37 +103,46 @@ vi.mock('@/components/tools/shell/permissions/PermissionFooter', () => ({
 vi.mock('@/components/tools/shell/permissions/PermissionPromptCard', () => ({
     PermissionPromptCard: (props: any) => React.createElement('PermissionPromptCard', props),
 }));
+vi.mock('@/components/tools/shell/userActions/UserActionPromptCard', () => ({
+    UserActionPromptCard: (props: any) => React.createElement('UserActionPromptCard', props),
+}));
 
 vi.mock('@/text', () => ({
     t: (key: string) => key,
 }));
 
-vi.mock('@/sync/domains/state/storage', () => ({
-    useSetting: (key: string) => {
-        if (key === 'profiles') return [];
-        if (key === 'agentInputEnterToSend') return true;
-        if (key === 'agentInputActionBarLayout') return 'wrap';
-        if (key === 'agentInputChipDensity') return 'labels';
-        if (key === 'sessionPermissionModeApplyTiming') return 'immediate';
-        if (key === 'permissionPromptSurface') return permissionPromptSurfaceSetting;
-        return null;
-    },
-    useSettings: () => ({
-        profiles: [],
-        agentInputEnterToSend: true,
-        agentInputActionBarLayout: 'wrap',
-        agentInputChipDensity: 'labels',
-        sessionPermissionModeApplyTiming: 'immediate',
-        permissionPromptSurface: permissionPromptSurfaceSetting,
-	    }),
-	    useSessionMessages: () => ({ messages: [], isLoaded: true }),
-	    useSessionTranscriptIds: () => ({ ids: [], isLoaded: true }),
-	    useSessionMessagesById: () => ({}),
-	    useSessionMessagesVersion: () => 0,
-	}));
+vi.mock('@/sync/domains/state/storage', () => {
+    const emptyIds: string[] = [];
+    const emptyMessagesById: Record<string, any> = {};
+
+    return {
+        useSetting: (key: string) => {
+            if (key === 'profiles') return [];
+            if (key === 'agentInputEnterToSend') return true;
+            if (key === 'agentInputHistoryScope') return 'perSession';
+            if (key === 'agentInputActionBarLayout') return 'wrap';
+            if (key === 'agentInputChipDensity') return 'labels';
+            if (key === 'sessionPermissionModeApplyTiming') return 'immediate';
+            if (key === 'permissionPromptSurface') return permissionPromptSurfaceSetting.value;
+            return null;
+        },
+        useSessionTranscriptIds: () => ({ ids: emptyIds, isLoaded: true }),
+        useSessionMessagesById: () => emptyMessagesById,
+        useSessionMessagesVersion: () => 0,
+        useSessionMessagesReducerState: () => null,
+    };
+});
 
 vi.mock('@/sync/domains/state/storageStore', () => ({
     getStorage: () => (selector: any) => selector({ sessionMessages: {} }),
+}));
+
+vi.mock('@/hooks/session/useUserMessageHistory', () => ({
+    useUserMessageHistory: () => ({
+        moveUp: () => null,
+        moveDown: () => null,
+        reset: () => {},
+    }),
 }));
 
 vi.mock('@/agents/catalog/catalog', () => ({
@@ -126,11 +195,11 @@ vi.mock('@/components/ui/status/StatusDot', () => ({
 }));
 
 vi.mock('@/components/autocomplete/useActiveWord', () => ({
-    useActiveWord: () => ({ word: '', start: 0, end: 0 }),
+    useActiveWord: () => null,
 }));
 
 vi.mock('@/components/autocomplete/useActiveSuggestions', () => ({
-    useActiveSuggestions: () => [[], 0, () => {}, () => {}],
+    useActiveSuggestions: () => [[], -1, () => {}, () => {}],
 }));
 
 vi.mock('./components/AgentInputAutocomplete', () => ({
@@ -174,9 +243,13 @@ vi.mock('@/components/model/ModelPickerOverlay', () => ({
     ModelPickerOverlay: () => null,
 }));
 
-vi.mock('@/sync/domains/settings/settings', () => ({
-    getProfileEnvironmentVariables: () => [],
-}));
+vi.mock('@/sync/domains/profiles/profileCompatibility', async (importOriginal) => {
+    const actual = await importOriginal<typeof import('@/sync/domains/profiles/profileCompatibility')>();
+    return {
+        ...actual,
+        getProfileEnvironmentVariables: () => [],
+    };
+});
 
 vi.mock('@/sync/domains/profiles/profileUtils', () => ({
     resolveProfileById: () => null,
@@ -252,52 +325,102 @@ vi.mock('./attachActionBarMouseDragScroll', () => ({
 
 describe('AgentInput (permission prompt surface)', () => {
     beforeEach(() => {
-        permissionPromptSurfaceSetting = 'composer';
+        permissionPromptSurfaceSetting.value = 'composer';
     });
 
     it('hides permission cards when surface is transcript', async () => {
-        permissionPromptSurfaceSetting = 'transcript';
+        permissionPromptSurfaceSetting.value = 'transcript';
         const { AgentInput } = await import('./AgentInput');
-        let tree: renderer.ReactTestRenderer | null = null;
-        await act(async () => {
-                tree = renderer.create(
-                    <AgentInput
-                        placeholder="x"
-                        value=""
-                        onChangeText={() => {}}
-                        onSend={() => {}}
-                        autocompletePrefixes={[]}
-                        autocompleteSuggestions={async () => []}
-                        sessionId="s1"
-                        permissionRequests={[{ id: 'p1', tool: 'Bash', arguments: { command: 'ls' }, createdAt: 1 } as any]}
-                        connectionStatus={null as any}
-                    />
-                );
+        let tree!: renderer.ReactTestRenderer;
+        act(() => {
+            tree = renderer.create(
+                <AgentInput
+                    placeholder="x"
+                    value=""
+                    onChangeText={() => {}}
+                    onSend={() => {}}
+                    autocompletePrefixes={[]}
+                    autocompleteSuggestions={async () => []}
+                    sessionId="s1"
+                    permissionRequests={[{ id: 'p1', tool: 'Bash', arguments: { command: 'ls' }, createdAt: 1 } as any]}
+                    connectionStatus={null as any}
+                />
+            );
         });
 
-        expect(tree!.root.findAllByType('PermissionPromptCard' as any)).toHaveLength(0);
+        expect(tree.root.findAllByType('PermissionPromptCard' as any)).toHaveLength(0);
+        act(() => tree.unmount());
     });
 
     it('shows permission cards when surface is composer', async () => {
-        permissionPromptSurfaceSetting = 'composer';
+        permissionPromptSurfaceSetting.value = 'composer';
         const { AgentInput } = await import('./AgentInput');
-        let tree: renderer.ReactTestRenderer | null = null;
-        await act(async () => {
-                tree = renderer.create(
-                    <AgentInput
-                        placeholder="x"
-                        value=""
-                        onChangeText={() => {}}
-                        onSend={() => {}}
-                        autocompletePrefixes={[]}
-                        autocompleteSuggestions={async () => []}
-                        sessionId="s1"
-                        permissionRequests={[{ id: 'p1', tool: 'Bash', arguments: { command: 'ls' }, createdAt: 1 } as any]}
-                        connectionStatus={null as any}
-                    />
-                );
+        let tree!: renderer.ReactTestRenderer;
+        act(() => {
+            tree = renderer.create(
+                <AgentInput
+                    placeholder="x"
+                    value=""
+                    onChangeText={() => {}}
+                    onSend={() => {}}
+                    autocompletePrefixes={[]}
+                    autocompleteSuggestions={async () => []}
+                    sessionId="s1"
+                    permissionRequests={[{ id: 'p1', tool: 'Bash', arguments: { command: 'ls' }, createdAt: 1 } as any]}
+                    connectionStatus={null as any}
+                />
+            );
         });
 
-        expect(tree!.root.findAllByType('PermissionPromptCard' as any)).toHaveLength(1);
+        expect(tree.root.findAllByType('PermissionPromptCard' as any)).toHaveLength(1);
+        act(() => tree.unmount());
+    });
+
+    it('shows user action cards when surface is composer', async () => {
+        permissionPromptSurfaceSetting.value = 'composer';
+        const { AgentInput } = await import('./AgentInput');
+        let tree!: renderer.ReactTestRenderer;
+        act(() => {
+            tree = renderer.create(
+                <AgentInput
+                    placeholder="x"
+                    value=""
+                    onChangeText={() => {}}
+                    onSend={() => {}}
+                    autocompletePrefixes={[]}
+                    autocompleteSuggestions={async () => []}
+                    sessionId="s1"
+                    userActionRequests={[{ id: 'q1', tool: 'AskUserQuestion', kind: 'user_action', arguments: { questions: [{ header: 'Mode', question: 'Create?', options: [{ label: 'Yes', description: 'Create it' }], multiSelect: false }] }, createdAt: 1 } as any]}
+                    connectionStatus={null as any}
+                />
+            );
+        });
+
+        expect(tree.root.findAllByType('UserActionPromptCard' as any)).toHaveLength(1);
+        act(() => tree.unmount());
+    });
+
+    it('shows user action cards for legacy requests without an explicit kind', async () => {
+        permissionPromptSurfaceSetting.value = 'composer';
+        const { AgentInput } = await import('./AgentInput');
+        let tree!: renderer.ReactTestRenderer;
+        act(() => {
+            tree = renderer.create(
+                <AgentInput
+                    placeholder="x"
+                    value=""
+                    onChangeText={() => {}}
+                    onSend={() => {}}
+                    autocompletePrefixes={[]}
+                    autocompleteSuggestions={async () => []}
+                    sessionId="s1"
+                    userActionRequests={[{ id: 'q1', tool: 'AskUserQuestion', arguments: { questions: [{ header: 'Mode', question: 'Create?', options: [{ label: 'Yes', description: 'Create it' }], multiSelect: false }] }, createdAt: 1 } as any]}
+                    connectionStatus={null as any}
+                />
+            );
+        });
+
+        expect(tree.root.findAllByType('UserActionPromptCard' as any)).toHaveLength(1);
+        act(() => tree.unmount());
     });
 });

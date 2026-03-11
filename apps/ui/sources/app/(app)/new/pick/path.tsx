@@ -13,6 +13,7 @@ import { PathSelector } from '@/components/sessions/new/components/PathSelector'
 import { SearchHeader } from '@/components/ui/forms/SearchHeader';
 import { getRecentPathsForMachine } from '@/utils/sessions/recentPaths';
 import { Text } from '@/components/ui/text/Text';
+import { safeRouterBack } from '@/utils/navigation/safeRouterBack';
 
 
 export default React.memo(function PathPickerScreen() {
@@ -20,7 +21,7 @@ export default React.memo(function PathPickerScreen() {
     const styles = stylesheet;
     const router = useRouter();
     const navigation = useNavigation();
-    const params = useLocalSearchParams<{ machineId?: string; selectedPath?: string }>();
+    const params = useLocalSearchParams<{ machineId?: string; selectedPath?: string; path?: string }>();
     const machines = useAllMachines();
     const sessions = useSessions();
     const recentMachinePaths = useSetting('recentMachinePaths');
@@ -28,12 +29,19 @@ export default React.memo(function PathPickerScreen() {
     const [favoriteDirectoriesRaw, setFavoriteDirectories] = useSettingMutable('favoriteDirectories');
     const favoriteDirectories = favoriteDirectoriesRaw ?? [];
 
-    const [customPath, setCustomPathState] = useState(params.selectedPath || '');
+    const initialPath = typeof params.selectedPath === 'string' && params.selectedPath.length > 0
+        ? params.selectedPath
+        : (typeof params.path === 'string' ? params.path : '');
+    const [customPath, setCustomPathState] = useState(initialPath);
     const customPathRef = React.useRef(customPath);
     const setCustomPath = React.useCallback((next: string) => {
         customPathRef.current = next;
         setCustomPathState(next);
     }, []);
+    React.useEffect(() => {
+        customPathRef.current = initialPath;
+        setCustomPathState(initialPath);
+    }, [initialPath]);
     const [pathSearchQuery, setPathSearchQuery] = useState('');
 
     // Get the selected machine
@@ -65,15 +73,21 @@ export default React.memo(function PathPickerScreen() {
                 ...CommonActions.setParams({ path: pathToUse }),
                 source: previousRoute.key,
             });
-            router.back();
+            safeRouterBack({ router, navigation, fallbackHref: '/new' });
         } else {
-            router.setParams({ path: pathToUse });
+            router.replace({
+                pathname: '/new',
+                params: {
+                    machineId: params.machineId,
+                    path: pathToUse,
+                },
+            } as never);
         }
-    }, [machineHomeDir, navigation, router]);
+    }, [machineHomeDir, navigation, params.machineId, router]);
 
     const handleBackPress = React.useCallback(() => {
-        router.back();
-    }, [router]);
+        safeRouterBack({ router, navigation, fallbackHref: '/new' });
+    }, [navigation, router]);
 
     const headerTitle = t('newSession.selectPathTitle');
     const headerBackTitle = t('common.back');
@@ -170,6 +184,10 @@ export default React.memo(function PathPickerScreen() {
                         onChangeSearchQuery={setPathSearchQuery}
                         favoriteDirectories={favoriteDirectories}
                         onChangeFavoriteDirectories={setFavoriteDirectories}
+                        machineBrowse={{
+                            enabled: true,
+                            machineId: machine.id,
+                        }}
                     />
                 </View>
             </ItemList>

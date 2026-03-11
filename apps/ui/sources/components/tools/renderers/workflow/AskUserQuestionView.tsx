@@ -1,15 +1,15 @@
 import * as React from 'react';
-import { View, TouchableOpacity, ActivityIndicator, TextInput } from 'react-native';
+import { View, TouchableOpacity, ActivityIndicator } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { ToolViewProps } from '../core/_registry';
 import { ToolSectionView } from '../../shell/presentation/ToolSectionView';
-import { sessionAllowWithAnswers, sessionDeny } from '@/sync/ops';
+import { sessionAllowWithAnswers } from '@/sync/ops';
 import { storage } from '@/sync/domains/state/storage';
-import { sync } from '@/sync/sync';
 import { Modal } from '@/modal';
 import { t } from '@/text';
 import { Ionicons } from '@expo/vector-icons';
-import { Text } from '@/components/ui/text/Text';
+import { Text, TextInput } from '@/components/ui/text/Text';
+import { resolveAgentRequestKind } from '@/utils/sessions/permissions/permissionPromptPolicy';
 
 
 interface QuestionOption {
@@ -221,7 +221,13 @@ export const AskUserQuestionView = React.memo<ToolViewProps>(({ tool, sessionId,
 
     const isRunning = tool.state === 'running';
     const canApprovePermissions = interaction?.canApprovePermissions ?? true;
-    const canInteract = isRunning && !isSubmitted && canApprovePermissions;
+    const toolCallId = tool.permission?.id;
+    const session = sessionId ? storage.getState().sessions[sessionId] : undefined;
+    const activeMatchingRequest = toolCallId ? (session as any)?.agentState?.requests?.[toolCallId] : null;
+    const hasActiveAskUserQuestionRequest =
+        activeMatchingRequest?.tool === 'AskUserQuestion' &&
+        resolveAgentRequestKind({ toolName: activeMatchingRequest.tool, requestKind: activeMatchingRequest.kind }) === 'user_action';
+    const canInteract = isRunning && !isSubmitted && canApprovePermissions && hasActiveAskUserQuestionRequest;
     const disabledMessage =
         interaction?.permissionDisabledReason === 'public'
             ? t('session.sharing.permissionApprovalsDisabledPublic')
@@ -233,12 +239,15 @@ export const AskUserQuestionView = React.memo<ToolViewProps>(({ tool, sessionId,
     const allQuestionsAnswered = questions.every((_, qIndex) => {
         const q = questions[qIndex];
         const options = Array.isArray(q?.options) ? q.options : [];
+        const hasFreeform = Boolean(q?.freeform);
+        const typed = freeformAnswers.get(qIndex);
+        const hasTyped = typeof typed === 'string' && typed.trim().length > 0;
         if (options.length === 0) {
-            const value = freeformAnswers.get(qIndex);
-            return typeof value === 'string' && value.trim().length > 0;
+            return hasTyped;
         }
         const selected = selections.get(qIndex);
-        return Boolean(selected && selected.size > 0);
+        const hasSelection = Boolean(selected && selected.size > 0);
+        return hasFreeform ? (hasSelection || hasTyped) : hasSelection;
     });
 
     const handleOptionToggle = React.useCallback((questionIndex: number, optionIndex: number, multiSelect: boolean) => {
@@ -264,18 +273,18 @@ export const AskUserQuestionView = React.memo<ToolViewProps>(({ tool, sessionId,
 
             return newMap;
         });
+
+        // If the user chooses a structured option, clear any typed freeform value so we have a single source of truth.
+        setFreeformAnswers((prev) => {
+            if (!prev.has(questionIndex)) return prev;
+            const next = new Map(prev);
+            next.delete(questionIndex);
+            return next;
+        });
     }, [canInteract]);
 
     const handleSubmit = React.useCallback(async () => {
         if (!sessionId || !allQuestionsAnswered || isSubmitting) return;
-
-        setIsSubmitting(true);
-
-        // HACK: Disable the form immediately by switching to the submitted view.
-        // Without this, users could edit their selections while the network calls
-        // are in flight, but those edits would be ignored since we've already
-        // captured the values above. TODO: Revisit this logic.
-        setIsSubmitted(true);
 
         // Format answers as readable text
         const responseLines: string[] = [];
@@ -283,9 +292,9 @@ export const AskUserQuestionView = React.memo<ToolViewProps>(({ tool, sessionId,
         questions.forEach((q, qIndex) => {
             const questionKey = typeof q.question === 'string' && q.question.trim().length > 0 ? q.question : q.header;
             const options = Array.isArray(q.options) ? q.options : [];
+            const typed = freeformAnswers.get(qIndex);
+            const typedText = typeof typed === 'string' ? typed.trim() : '';
             if (options.length === 0) {
-                const typed = freeformAnswers.get(qIndex);
-                const typedText = typeof typed === 'string' ? typed.trim() : '';
                 if (typedText.length > 0) {
                     responseLines.push(`${q.header}: ${typedText}`);
                     answers[questionKey] = typedText;
@@ -294,6 +303,11 @@ export const AskUserQuestionView = React.memo<ToolViewProps>(({ tool, sessionId,
             }
 
             const selected = selections.get(qIndex);
+            if (typedText.length > 0) {
+                responseLines.push(`${q.header}: ${typedText}`);
+                answers[questionKey] = typedText;
+                return;
+            }
             if (selected && selected.size > 0) {
                 const selectedLabelsArray = Array.from(selected)
                     .map(optIndex => options[optIndex]?.label)
@@ -307,34 +321,37 @@ export const AskUserQuestionView = React.memo<ToolViewProps>(({ tool, sessionId,
         const responseText = responseLines.join('\n');
 
         try {
-            const toolCallId = tool.permission?.id;
             if (!toolCallId) {
                 Modal.alert(t('common.error'), t('errors.missingPermissionId'));
                 return;
             }
 
-            const session = storage.getState().sessions[sessionId];
-            const supportsAnswersInPermission = Boolean(
-                (session as any)?.agentState?.capabilities?.askUserQuestionAnswersInPermission,
-            );
-
-            if (supportsAnswersInPermission) {
-                // Preferred: attach answers directly to the existing permission approval RPC.
-                // This matches how Claude Code expects AskUserQuestion to be completed.
-                await sessionAllowWithAnswers(sessionId, toolCallId, answers);
-            } else {
-                // Back-compat: older agents won't understand answers-on-permission. Abort the tool call and
-                // send a normal user message so the agent can continue using the same information.
-                await sessionDeny(sessionId, toolCallId);
-                await sync.sendMessage(sessionId, responseText);
+            const latestSession = storage.getState().sessions[sessionId];
+            const latestRequest = (latestSession as any)?.agentState?.requests?.[toolCallId];
+            const hasLiveMatchingRequest =
+                latestRequest?.tool === 'AskUserQuestion' &&
+                resolveAgentRequestKind({ toolName: latestRequest.tool, requestKind: latestRequest.kind }) === 'user_action';
+            if (!hasLiveMatchingRequest) {
+                return;
             }
+
+            setIsSubmitting(true);
+
+            // HACK: Disable the form immediately by switching to the submitted view.
+            // Without this, users could edit their selections while the network calls
+            // are in flight, but those edits would be ignored since we've already
+            // captured the values above. TODO: Revisit this logic.
+            setIsSubmitted(true);
+
+            await sessionAllowWithAnswers(sessionId, toolCallId, answers);
             setIsSubmitted(true);
         } catch (error) {
+            setIsSubmitted(false);
             Modal.alert(t('common.error'), error instanceof Error ? error.message : t('errors.failedToSendMessage'));
         } finally {
             setIsSubmitting(false);
         }
-    }, [sessionId, questions, selections, freeformAnswers, allQuestionsAnswered, isSubmitting, tool.permission?.id]);
+    }, [sessionId, questions, selections, freeformAnswers, allQuestionsAnswered, isSubmitting, toolCallId]);
 
     // Show submitted state
     if (isSubmitted || tool.state === 'completed') {
@@ -352,12 +369,14 @@ export const AskUserQuestionView = React.memo<ToolViewProps>(({ tool, sessionId,
                                 ? ((typeof freeform === 'string' && freeform.trim().length > 0)
                                     ? freeform.trim()
                                     : (answersFromResult?.[questionKey] ?? '-'))
-                                : (selected && selected.size > 0
-                                    ? Array.from(selected)
-                                        .map(optIndex => options[optIndex]?.label)
-                                        .filter(Boolean)
-                                        .join(', ')
-                                    : (answersFromResult?.[questionKey] ?? '-'));
+                                : ((typeof freeform === 'string' && freeform.trim().length > 0)
+                                    ? freeform.trim()
+                                    : (selected && selected.size > 0
+                                        ? Array.from(selected)
+                                            .map(optIndex => options[optIndex]?.label)
+                                            .filter(Boolean)
+                                            .join(', ')
+                                        : (answersFromResult?.[questionKey] ?? '-')));
                         return (
                             <View key={qIndex} style={styles.submittedItem}>
                                 <Text style={styles.submittedHeader}>{q.header}:</Text>
@@ -389,7 +408,7 @@ export const AskUserQuestionView = React.memo<ToolViewProps>(({ tool, sessionId,
                             </View>
                             <Text style={styles.questionText}>{question.question}</Text>
                             <View style={styles.optionsContainer}>
-                                {options.length === 0 ? (
+                                {options.length === 0 || question.freeform ? (
                                     <View>
                                         <TextInput
                                             style={styles.freeformInput}
@@ -401,6 +420,14 @@ export const AskUserQuestionView = React.memo<ToolViewProps>(({ tool, sessionId,
                                                     next.set(qIndex, text);
                                                     return next;
                                                 });
+                                                if (options.length > 0 && text.trim().length > 0) {
+                                                    setSelections((prev) => {
+                                                        if (!prev.has(qIndex)) return prev;
+                                                        const next = new Map(prev);
+                                                        next.delete(qIndex);
+                                                        return next;
+                                                    });
+                                                }
                                             }}
                                             placeholder={question.freeform?.placeholder ?? t('tools.askUserQuestion.otherPlaceholder')}
                                             placeholderTextColor={theme.colors.textSecondary}

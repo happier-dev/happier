@@ -239,4 +239,43 @@ describe('PermissionHandler (updatedPermissions response allowlist)', () => {
     expect((client.agentState as any).requests?.toolu_2).toBeUndefined();
     await expect(p2).resolves.toEqual({ behavior: 'allow', updatedInput: { command: ['bash', '-lc', 'unset BAR; find src'] } });
   });
+
+  it('does not apply allowlist side-effects from denied permission responses', async () => {
+    const { session, client } = createPermissionHandlerSessionStub('s1');
+    const { PermissionHandler } = await import('./permissionHandler');
+    const handler = new PermissionHandler(session);
+
+    handler.onMessage(bashToolUseMessage('toolu_denied_1', 'ls'));
+
+    const controller1 = new AbortController();
+    const denied = handler.handleToolCall('Bash', { command: 'ls' }, defaultMode, { signal: controller1.signal });
+
+    const permissionRpc = client.rpcHandlerManager.getHandler('permission');
+    expect(permissionRpc).toBeDefined();
+
+    await permissionRpc?.({
+      id: 'toolu_denied_1',
+      approved: false,
+      allowedTools: ['Bash(ls:*)'],
+      updatedPermissions: [
+        {
+          type: 'addRules',
+          behavior: 'allow',
+          destination: 'session',
+          rules: [{ toolName: 'Bash', ruleContent: 'ls:*' }],
+        },
+      ],
+    } as any);
+
+    await expect(denied).resolves.toMatchObject({ behavior: 'deny' });
+
+    handler.onMessage(bashToolUseMessage('toolu_denied_2', 'ls src'));
+
+    const controller2 = new AbortController();
+    const pending = handler.handleToolCall('Bash', { command: 'ls src' }, defaultMode, { signal: controller2.signal });
+
+    expect((client.agentState as any).requests?.toolu_denied_2).toBeDefined();
+    controller2.abort();
+    await expect(pending).rejects.toBeTruthy();
+  });
 });

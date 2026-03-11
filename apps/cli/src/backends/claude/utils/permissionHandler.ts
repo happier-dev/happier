@@ -17,6 +17,7 @@ import { delay } from "@/utils/time";
 import { recordToolTraceEvent } from '@/agent/tools/trace/toolTrace';
 import { extractAgentIdFromTaskResultText } from '@/backends/claude/remote/sidechains/extractAgentIdFromTaskResult';
 import { resolveClaudeSdkPermissionModeFromEnhancedMode } from '@/backends/claude/utils/permissionMode';
+import { syncClaudePermissionModeFromMetadata } from '@/backends/claude/utils/syncPermissionModeFromMetadata';
 import type { PermissionRpcPayload } from './permissionRpc';
 import { updateAgentStateBestEffort, updateMetadataBestEffort } from '@/api/session/sessionWritesBestEffort';
 import { configuration } from '@/configuration';
@@ -27,6 +28,7 @@ import { resolveAgentRequestKind } from '@/agent/permissions/requestKind';
 import { isToolAllowedForSession } from '@/agent/permissions/permissionToolIdentifier';
 import { applyAllowedToolsToAllowlist, applyUpdatedPermissionsToAllowlist, seedAllowlistFromCompletedRequests } from '@/agent/permissions/applyPermissionAllowlistUpdates';
 import { computeNextMetadataStringOverrideV1 } from '@happier-dev/agents';
+import { isClaudeLocalPermissionBridgeAgentStateRequest } from './permissionRequestSource';
 
 type PermissionResponse = PermissionRpcPayload;
 
@@ -61,6 +63,7 @@ export class PermissionHandler {
     private agentIdByTaskId = new Map<string, string>();
     private exitedPlanModeLocalIds = new Map<string, number>();
     private exitedPlanModeFallbackUntilMs: number = 0;
+    private metadataWatcherAbort: AbortController | null = null;
 
     constructor(session: Session) {
         this.session = session;
@@ -70,6 +73,54 @@ export class PermissionHandler {
         });
         this.advertiseCapabilities();
         this.seedAllowlistFromAgentState();
+        this.startMetadataWatcher();
+    }
+
+    private startMetadataWatcher(): void {
+        if (this.metadataWatcherAbort) return;
+        if (typeof this.session.client.waitForMetadataUpdate !== 'function') return;
+
+        const controller = new AbortController();
+        this.metadataWatcherAbort = controller;
+        const signal = controller.signal;
+
+        const backoffMs = configuration.claudeMetadataWatcherIdleBackoffMs;
+        const waitForAbortOrBackoff = async (): Promise<void> => {
+            if (signal.aborted) return;
+            if (backoffMs <= 0) return;
+            await new Promise<void>((resolve) => {
+                const timer = setTimeout(resolve, backoffMs);
+                timer.unref?.();
+                signal.addEventListener(
+                    'abort',
+                    () => {
+                        clearTimeout(timer);
+                        resolve();
+                    },
+                    { once: true },
+                );
+            });
+        };
+
+        void (async () => {
+            while (!signal.aborted) {
+                const updated = await this.session.client.waitForMetadataUpdate(signal).catch(() => false);
+                if (!updated || signal.aborted) {
+                    // `waitForMetadataUpdate` can fail closed when the session client is detached/disconnected.
+                    // Back off to avoid a tight loop that can OOM.
+                    await waitForAbortOrBackoff();
+                    continue;
+                }
+                try {
+                    const next = syncClaudePermissionModeFromMetadata({ session: this.session, permissionHandler: this });
+                    if (next) {
+                        logger.debug(`[Claude] Permission mode updated from metadata while waiting: ${next}`);
+                    }
+                } catch (error) {
+                    logger.debug('[Claude] Failed to sync permission mode from metadata (non-fatal)', error);
+                }
+            }
+        })();
     }
 
     private isToolExplicitlyAllowed(toolName: string, input: unknown): boolean {
@@ -278,7 +329,9 @@ export class PermissionHandler {
             const snapshot = (this.session.client as any).getAgentStateSnapshot?.() ?? null;
             const requests = snapshot?.requests;
             if (!requests || typeof requests !== 'object') return false;
-            return id in (requests as Record<string, unknown>);
+            const request = (requests as Record<string, unknown>)[id];
+            if (!request) return false;
+            return !isClaudeLocalPermissionBridgeAgentStateRequest(request);
         } catch {
             return false;
         }
@@ -288,6 +341,15 @@ export class PermissionHandler {
         const id = message.id;
         this.permissionRequestPushNotifier?.markCompleted(id);
         this.responses.set(id, { ...message, receivedAt: Date.now() });
+        const snapshot = (this.session.client as any).getAgentStateSnapshot?.() ?? null;
+        const request = snapshot?.requests?.[id] ?? null;
+        const toolName = request && typeof request.tool === 'string' ? request.tool : null;
+
+        this.applyPermissionResponseSideEffects({
+            response: message,
+            toolName,
+            sourceLocalId: null,
+        });
 
         updateAgentStateBestEffort(
             this.session.client,
@@ -316,6 +378,36 @@ export class PermissionHandler {
             '[Claude]',
             'complete_permission_request_late',
         );
+    }
+
+    private applyPermissionResponseSideEffects(params: {
+        response: PermissionResponse;
+        toolName: string | null;
+        sourceLocalId: string | null;
+    }): void {
+        const { response, toolName, sourceLocalId } = params;
+        if (response.approved) {
+            if (response.mode) {
+                this.permissionMode = response.mode;
+                this.session.setLastPermissionMode(response.mode);
+            }
+            const updatedPermissions = response.updatedPermissions;
+            this.applyUpdatedPermissionsAllowlist(updatedPermissions);
+
+            const allowedTools = response.allowedTools ?? response.allowTools;
+            applyAllowedToolsToAllowlist(this.allowedToolIdentifiers, allowedTools);
+            this.tryAutoApprovePendingRequests();
+        }
+
+        if (
+            response.approved
+            && (toolName === 'ExitPlanMode' || toolName === 'exit_plan_mode')
+        ) {
+            if (sourceLocalId) {
+                this.noteExitPlanModeApproved(sourceLocalId);
+            }
+            this.clearAcpSessionModeOverrideBestEffort();
+        }
     }
 
     private applyPermissionResponse(message: PermissionResponse): void {
@@ -405,6 +497,31 @@ export class PermissionHandler {
     handleModeChange(mode: PermissionMode) {
         this.permissionMode = mode;
         this.session.setLastPermissionMode(mode);
+        this.tryAutoApprovePendingRequestsForPermissionMode(mode);
+    }
+
+    private tryAutoApprovePendingRequestsForPermissionMode(mode: PermissionMode): void {
+        if (this.pendingRequests.size === 0) return;
+
+        const effectiveMode = resolveClaudeSdkPermissionModeFromEnhancedMode({ permissionMode: mode });
+        if (effectiveMode !== 'bypassPermissions' && effectiveMode !== 'acceptEdits') return;
+
+        const idsToApprove: string[] = [];
+        for (const [id, pending] of this.pendingRequests.entries()) {
+            if (isInteractiveTool(pending.toolName)) continue;
+            if (effectiveMode === 'bypassPermissions') {
+                idsToApprove.push(id);
+                continue;
+            }
+
+            const descriptor = getToolDescriptor(pending.toolName);
+            if (descriptor.edit) idsToApprove.push(id);
+        }
+
+        for (const id of idsToApprove) {
+            if (!this.pendingRequests.has(id)) continue;
+            this.applyPermissionResponse({ id, approved: true, mode });
+        }
     }
 
     /**
@@ -414,28 +531,12 @@ export class PermissionHandler {
         response: PermissionResponse,
         pending: PendingRequest
     ): void {
-
         const updatedPermissions = response.updatedPermissions;
-        this.applyUpdatedPermissionsAllowlist(updatedPermissions);
-
-        // Update allowed tools
-        const allowedTools = response.allowedTools ?? response.allowTools;
-        applyAllowedToolsToAllowlist(this.allowedToolIdentifiers, allowedTools);
-
-        // Update permission mode
-        if (response.mode) {
-            this.permissionMode = response.mode;
-            this.session.setLastPermissionMode(response.mode);
-        }
-
-        if (response.approved) {
-            this.tryAutoApprovePendingRequests();
-        }
-
-        if (pending.toolName === 'ExitPlanMode' && response.approved) {
-            this.noteExitPlanModeApproved(pending.sourceLocalId);
-            this.clearAcpSessionModeOverrideBestEffort();
-        }
+        this.applyPermissionResponseSideEffects({
+            response,
+            toolName: pending.toolName,
+            sourceLocalId: pending.sourceLocalId,
+        });
 
         // Handle default case for all tools
         if (pending.toolName === 'AskUserQuestion' && response.approved && response.answers) {
@@ -546,7 +647,7 @@ export class PermissionHandler {
     }
 
     private rewriteToolInput(toolName: string, input: unknown): unknown {
-        if (toolName === 'Task' || toolName === 'task') {
+        if (toolName === 'task' || isGenericSubAgentToolName(toolName)) {
             if (configuration.claudeTaskAllowRunInBackground) return input;
             if (!input || typeof input !== 'object' || Array.isArray(input)) return input;
 
@@ -759,7 +860,7 @@ export class PermissionHandler {
                         if (toolCall && !toolCall.used) {
                             toolCall.used = true;
                         }
-                        if (toolCall && (toolCall.name === 'Task' || toolCall.name === 'task')) {
+                        if (toolCall && (toolCall.name === 'task' || isGenericSubAgentToolName(toolCall.name))) {
                             const text = this.coerceToolResultText((block as any).content);
                             const ids = extractAgentIdFromTaskResultText(text);
                             if (ids.agentId && ids.taskId) {
@@ -837,6 +938,13 @@ export class PermissionHandler {
         );
     }
 
+    dispose(): void {
+        this.metadataWatcherAbort?.abort();
+        this.metadataWatcherAbort = null;
+        this.permissionRequestPushNotifier?.dispose();
+        this.permissionRequestPushNotifier = null;
+    }
+
     /**
      * Gets the responses map (for compatibility with existing code)
      */
@@ -844,3 +952,4 @@ export class PermissionHandler {
         return this.responses;
     }
 }
+import { isGenericSubAgentToolName } from '@happier-dev/protocol/tools/v2';

@@ -1546,28 +1546,29 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
                                 edgeIndicators={true}
                                 initialVisibility={{ bottom: true }}
                             >
-                                {/* Action shortcuts (collapsed layout) */}
-                                {actionMenuActions.length > 0 ? (
-                                    <ActionListSection
-                                        title={t('agentInput.actionMenu.title')}
-                                        actions={actionMenuActions}
-                                    />
-                                ) : null}
-
-                                    {actionBarIsCollapsed && hasAnyActions ? (
-                                        <View style={styles.overlayDivider} />
+                                <View testID="agent-input-settings-overlay">
+                                    {/* Action shortcuts (collapsed layout) */}
+                                    {actionMenuActions.length > 0 ? (
+                                        <ActionListSection
+                                            title={t('agentInput.actionMenu.title')}
+                                            actions={actionMenuActions}
+                                        />
                                     ) : null}
 
-                                    {/* Permission Mode Section */}
-                                    <PermissionModePicker
-                                        title={getPermissionModeTitleForAgentType(agentId)}
-                                        options={permissionModeOptions}
-                                        selected={effectivePermissionPolicy.effectiveMode}
-                                        onSelect={handleSettingsSelect}
-                                        styles={styles}
-                                        effectivePermissionLabel={effectivePermissionLabel}
-                                        effectivePermissionPolicy={effectivePermissionPolicy}
-                                    />
+                                        {actionBarIsCollapsed && hasAnyActions ? (
+                                            <View style={styles.overlayDivider} />
+                                        ) : null}
+
+                                        {/* Permission Mode Section */}
+                                        <PermissionModePicker
+                                            title={getPermissionModeTitleForAgentType(agentId)}
+                                            options={permissionModeOptions}
+                                            selected={effectivePermissionPolicy.effectiveMode}
+                                            onSelect={handleSettingsSelect}
+                                            styles={styles}
+                                            effectivePermissionLabel={effectivePermissionLabel}
+                                            effectivePermissionPolicy={effectivePermissionPolicy}
+                                        />
 
                                     {sessionModePickerControl ? (
                                         <>
@@ -1577,7 +1578,7 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
                                                     {t('agentInput.mode.sectionTitle')}
                                                 </Text>
 
-                                                <Text style={styles.overlayOptionDescription}>
+                                                <Text testID="agent-input-session-mode-summary" style={styles.overlayOptionDescription}>
                                                     {sessionModePickerControl.isPending
                                                         ? t('agentInput.mode.pendingSwitching', {
                                                             from: sessionModePickerControl.currentModeName,
@@ -1593,6 +1594,7 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
                                                     const isSelected = sessionModePickerControl.effectiveModeId === option.id;
                                                     return (
                                                         <Pressable
+                                                            testID={`agent-input-session-mode-option:${option.id}`}
                                                             key={option.id}
                                                             onPress={() => {
                                                                 hapticsLight();
@@ -1649,6 +1651,7 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
                                                     typeof props.acpSessionModeOptionsOverrideProbe.onRefresh === 'function') ? (
                                                     typeof props.acpSessionModeOptionsOverrideProbe.onRefresh === 'function' ? (
                                                         <Pressable
+                                                            testID="agent-input-session-mode-refresh"
                                                             accessibilityRole="button"
                                                             accessibilityLabel={t('agentInput.mode.refreshModesA11y')}
                                                             onPress={
@@ -1677,7 +1680,7 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
                                                     )
                                                 ) : null}
 
-                                                <Text style={styles.overlayOptionDescription}>
+                                                <Text testID="agent-input-session-mode-summary" style={styles.overlayOptionDescription}>
                                                     {props.acpSessionModeOptionsOverrideProbe?.phase === 'loading'
                                                         ? t('agentInput.mode.loadingModes')
                                                         : props.acpSessionModeOptionsOverrideProbe?.phase === 'refreshing'
@@ -1691,6 +1694,7 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
                                                     const isSelected = preflightAcpSessionModeEffective.id === option.id;
                                                     return (
                                                         <Pressable
+                                                            testID={`agent-input-session-mode-option:${option.id}`}
                                                             key={option.id}
                                                             onPress={() => {
                                                                 hapticsLight();
@@ -1807,11 +1811,11 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
                                                     const isSelect = option.type === 'select';
                                                     if (!isSelect || !option.options || option.options.length === 0) {
                                                         return (
-                                                            <View key={option.id} style={styles.overlaySection}>
+                                                            <View key={option.id} testID={`agent-input-config-option:${option.id}`} style={styles.overlaySection}>
                                                                 <Text style={styles.overlayOptionLabel}>
                                                                     {option.name}
                                                                 </Text>
-                                                                <Text style={styles.overlayOptionDescription}>
+                                                                <Text testID={`agent-input-config-option-summary:${option.id}`} style={styles.overlayOptionDescription}>
                                                                     {t('agentInput.acp.currentValue', { value: formatValue(option.currentValue) })}
                                                                 </Text>
                                                                 {option.description ? (
@@ -1833,11 +1837,11 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
                                                             : null;
 
                                                     return (
-                                                        <View key={option.id} style={styles.overlaySection}>
+                                                        <View key={option.id} testID={`agent-input-config-option:${option.id}`} style={styles.overlaySection}>
                                                             <Text style={styles.overlayOptionLabel}>
                                                                 {option.name}
                                                             </Text>
-                                                            <Text style={styles.overlayOptionDescription}>
+                                                            <Text testID={`agent-input-config-option-summary:${option.id}`} style={styles.overlayOptionDescription}>
                                                                 {control.isPending && requestedLabel
                                                                     ? t('agentInput.acp.pendingValue', { current: currentLabel, requested: requestedLabel })
                                                                     : t('agentInput.acp.currentValue', { value: currentLabel })}
@@ -1850,13 +1854,14 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
 
                                                             {option.options.map((opt) => {
                                                                 const isSelected = effectiveValue === opt.value;
-                                                                return (
-                                                                    <Pressable
-                                                                        key={`${option.id}:${String(opt.value)}`}
-                                                                        onPress={() => {
-                                                                            hapticsLight();
-                                                                            props.onAcpConfigOptionChange?.(option.id, opt.value);
-                                                                        }}
+                                                                    return (
+                                                                        <Pressable
+                                                                            testID={`agent-input-config-option-option:${option.id}:${String(opt.value)}`}
+                                                                            key={`${option.id}:${String(opt.value)}`}
+                                                                            onPress={() => {
+                                                                                hapticsLight();
+                                                                                props.onAcpConfigOptionChange?.(option.id, opt.value);
+                                                                            }}
                                                                         style={({ pressed }) => [
                                                                             styles.overlayOptionRow,
                                                                             pressed ? styles.overlayOptionRowPressed : null,
@@ -1901,43 +1906,44 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
                                         </>
                                     ) : null}
 
-                                    {/* Divider */}
-                                    <View style={styles.overlayDivider} />
+                                        {/* Divider */}
+                                        <View style={styles.overlayDivider} />
 
-                                <ModelPickerOverlay
-                                    title={t('agentInput.model.title')}
-                                    effectiveLabel={effectiveModelLabel}
-                                    notes={effectiveModelPolicy.notes}
-                                    options={modelOptions.map((option) => ({
-                                        value: option.value,
-                                        label: option.label,
-                                        description: option.description,
-                                    }))}
-                                    selectedValue={effectiveModelPolicy.effectiveModelId}
-                                    emptyText={t('agentInput.model.configureInCli')}
-                                    canEnterCustomModel={canEnterCustomModel}
-                                    customLabel={`${t('profiles.custom')}…`}
-                                    customDescription={t('agentInput.model.customDescription')}
-                                    probe={props.modelOptionsOverrideProbe ?? (sessionModelOptionsProbe ?? undefined)}
-                                    onSelect={(value) => {
-                                        hapticsLight();
-                                        props.onModelModeChange?.(value);
-                                    }}
-                                    onRequestCustomModel={canEnterCustomModel ? async () => {
-                                        hapticsLight();
-                                        const next = await Modal.prompt(
-                                            t('profiles.model'),
-                                            t('agentInput.model.customPromptBody'),
-                                            {
-                                                placeholder: t('agentInput.model.customPlaceholder'),
-                                                confirmText: t('common.save'),
-                                            },
-                                        );
-                                        const normalized = typeof next === 'string' ? next.trim() : '';
-                                        if (!normalized) return;
-                                        props.onModelModeChange?.(normalized);
-                                    } : undefined}
-                                />
+                                    <ModelPickerOverlay
+                                        title={t('agentInput.model.title')}
+                                        effectiveLabel={effectiveModelLabel}
+                                        notes={effectiveModelPolicy.notes}
+                                        options={modelOptions.map((option) => ({
+                                            value: option.value,
+                                            label: option.label,
+                                            description: option.description,
+                                        }))}
+                                        selectedValue={effectiveModelPolicy.effectiveModelId}
+                                        emptyText={t('agentInput.model.configureInCli')}
+                                        canEnterCustomModel={canEnterCustomModel}
+                                        customLabel={`${t('profiles.custom')}...`}
+                                        customDescription={t('agentInput.model.customDescription')}
+                                        probe={props.modelOptionsOverrideProbe ?? (sessionModelOptionsProbe ?? undefined)}
+                                        onSelect={(value) => {
+                                            hapticsLight();
+                                            props.onModelModeChange?.(value);
+                                        }}
+                                        onRequestCustomModel={canEnterCustomModel ? async () => {
+                                            hapticsLight();
+                                            const next = await Modal.prompt(
+                                                t('profiles.model'),
+                                                t('agentInput.model.customPromptBody'),
+                                                {
+                                                    placeholder: t('agentInput.model.customPlaceholder'),
+                                                    confirmText: t('common.save'),
+                                                },
+                                            );
+                                            const normalized = typeof next === 'string' ? next.trim() : '';
+                                            if (!normalized) return;
+                                            props.onModelModeChange?.(normalized);
+                                        } : undefined}
+                                    />
+                                </View>
                             </FloatingOverlay>
                         )}
                     </Popover>
@@ -2317,6 +2323,7 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
 
                                         return (
                                             <Pressable
+                                                testID="agent-input-session-mode-chip"
                                                 key="mode"
                                                 onPress={() => {
                                                     hapticsLight();
