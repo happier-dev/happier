@@ -15,6 +15,21 @@ It also helps the CLI:
 - reconnect to and manage existing sessions
 - support remote control / orchestration features without requiring your terminal to stay open
 
+## Embedded terminal support
+
+The in-app embedded terminal also depends on the daemon.
+
+That is what allows Happier to:
+
+- create the terminal session on your machine,
+- reconnect to that same terminal after refresh/navigation,
+- stream output back into the app UI,
+- resize and restart the terminal from the app.
+
+If the daemon is not running or the machine is unreachable, the embedded terminal cannot work.
+
+Full guide: [Embedded terminal](/docs/features/embedded-terminal).
+
 ## When does it run?
 
 You can run it in two ways:
