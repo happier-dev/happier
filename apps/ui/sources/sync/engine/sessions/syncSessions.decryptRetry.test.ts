@@ -7,11 +7,13 @@ function buildEncryptedApiMessage(id: string, seq: number): ApiMessage {
         id,
         seq,
         localId: null,
+        sidechainId: null,
         content: {
             t: 'encrypted',
             c: `cipher-${id}`,
         },
         createdAt: 1_000 + seq,
+        updatedAt: 2_000 + seq,
     };
 }
 
@@ -39,7 +41,7 @@ describe('fetchAndApplyMessages (encrypted decrypt retry)', () => {
 
         const applyMessages = vi.fn();
         const markMessagesLoaded = vi.fn();
-        const sessionReceivedMessages = new Map<string, Set<string>>();
+        const sessionReceivedMessages = new Map<string, Map<string, number>>();
 
         await fetchAndApplyMessages({
             sessionId: 's1',

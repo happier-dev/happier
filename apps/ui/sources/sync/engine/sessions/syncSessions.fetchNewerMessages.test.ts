@@ -7,11 +7,13 @@ function buildApiMessage(id: string, seq: number): ApiMessage {
         id,
         seq,
         localId: null,
+        sidechainId: null,
         content: {
             t: 'encrypted',
             c: `encrypted-${id}`,
         },
         createdAt: 1_000 + seq,
+        updatedAt: 2_000 + seq,
     };
 }
 
@@ -49,7 +51,7 @@ describe('fetchAndApplyNewerMessages', () => {
             limit: 150,
             getSessionEncryption: () => ({ decryptMessages }),
             request,
-            sessionReceivedMessages: new Map(),
+            sessionReceivedMessages: new Map<string, Map<string, number>>(),
             applyMessages,
             onTaskLifecycleEvent,
             log: { log: () => {} },
@@ -92,7 +94,7 @@ describe('fetchAndApplyNewerMessages', () => {
       limit: 150,
       getSessionEncryption: () => ({ decryptMessages }),
       request,
-      sessionReceivedMessages: new Map(),
+      sessionReceivedMessages: new Map<string, Map<string, number>>(),
       applyMessages,
       log: { log: () => {} },
     });
@@ -131,7 +133,7 @@ describe('fetchAndApplyNewerMessages', () => {
       limit: 150,
       getSessionEncryption: () => ({ decryptMessages }),
       request,
-      sessionReceivedMessages: new Map(),
+      sessionReceivedMessages: new Map<string, Map<string, number>>(),
       applyMessages,
       onNormalizedMessages,
       log: { log: () => {} },

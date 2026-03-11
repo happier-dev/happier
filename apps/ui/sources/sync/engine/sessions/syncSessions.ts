@@ -1,7 +1,7 @@
 import type { NormalizedMessage, RawRecord } from '@/sync/typesRaw';
 import { normalizeRawMessage } from '@/sync/typesRaw';
 import { computeNextSessionSeqFromUpdate } from '@/sync/domains/session/sequence/realtimeSessionSeq';
-import { AgentStateSchema, MetadataSchema, type Session, type Metadata } from '@/sync/domains/state/storageTypes';
+import type { Metadata, Session } from '@/sync/domains/state/storageTypes';
 import { computeNextReadStateV1 } from '@/sync/domains/state/readStateV1';
 import type { ApiMessage, ApiSessionMessagesResponse } from '@/sync/api/types/apiTypes';
 import { ApiSessionMessagesResponseSchema } from '@/sync/api/types/apiTypes';
@@ -9,7 +9,9 @@ import { storage } from '@/sync/domains/state/storage';
 import type { Encryption } from '@/sync/encryption/encryption';
 import { nowServerMs } from '@/sync/runtime/time';
 import { getTaskLifecycleEventFromRawContent, type TaskLifecycleEvent } from './taskLifecycle';
+import { parsePlainSessionAgentState, parsePlainSessionMetadata } from './parsePlainSessionPayload';
 export { handleNewMessageSocketUpdate } from './sessionSocketUpdate';
+export { handleMessageUpdatedSocketUpdate } from './sessionSocketUpdate';
 export { fetchAndApplySessions } from './sessionSnapshot';
 export type { SessionListEncryption } from './sessionSnapshot';
 
@@ -48,43 +50,25 @@ export async function buildUpdatedSessionFromSocketUpdate(params: {
     updateBody: any;
     updateSeq: number;
     updateCreatedAt: number;
-    sessionEncryption: SessionEncryption;
+    sessionEncryption: SessionEncryption | null;
 }): Promise<{ nextSession: Session; agentState: any }> {
     const { session, updateBody, updateSeq, updateCreatedAt, sessionEncryption } = params;
 
     const encryptionMode: 'e2ee' | 'plain' = session.encryptionMode === 'plain' ? 'plain' : 'e2ee';
-
-    const parsePlainMetadata = (value: string): Metadata | null => {
-        try {
-            const parsedJson = JSON.parse(value);
-            const parsed = MetadataSchema.safeParse(parsedJson);
-            return parsed.success ? parsed.data : null;
-        } catch {
-            return null;
-        }
-    };
-
-    const parsePlainAgentState = (value: string | null): unknown => {
-        if (!value) return {};
-        try {
-            const parsedJson = JSON.parse(value);
-            const parsed = AgentStateSchema.safeParse(parsedJson);
-            return parsed.success ? parsed.data : {};
-        } catch {
-            return {};
-        }
-    };
+    if (encryptionMode === 'e2ee' && !sessionEncryption) {
+        throw new Error(`Session encryption not found for ${session.id}`);
+    }
 
     const agentState = updateBody.agentState
         ? encryptionMode === 'plain'
-            ? parsePlainAgentState(updateBody.agentState.value)
-            : await sessionEncryption.decryptAgentState(updateBody.agentState.version, updateBody.agentState.value)
+            ? parsePlainSessionAgentState(updateBody.agentState.value)
+            : await sessionEncryption!.decryptAgentState(updateBody.agentState.version, updateBody.agentState.value)
         : session.agentState;
 
     const metadata = updateBody.metadata
         ? encryptionMode === 'plain'
-            ? parsePlainMetadata(updateBody.metadata.value)
-            : await sessionEncryption.decryptMetadata(updateBody.metadata.version, updateBody.metadata.value)
+            ? parsePlainSessionMetadata(updateBody.metadata.value)
+            : await sessionEncryption!.decryptMetadata(updateBody.metadata.version, updateBody.metadata.value)
         : session.metadata;
 
     const nextSession: Session = {
@@ -156,10 +140,12 @@ type SessionMessagesEncryption = {
 
 export async function fetchAndApplyMessages(params: {
     sessionId: string;
+    scope?: 'main' | 'sidechain' | 'all';
+    sidechainId?: string | null;
     getSessionEncryption: (sessionId: string) => SessionMessagesEncryption | null;
     isSessionKnown?: (sessionId: string) => boolean;
     request: (path: string) => Promise<Response>;
-    sessionReceivedMessages: Map<string, Set<string>>;
+    sessionReceivedMessages: Map<string, Map<string, number>>;
     applyMessages: (sessionId: string, messages: NormalizedMessage[]) => void;
     onTaskLifecycleEvent?: (event: TaskLifecycleEvent) => void;
     markMessagesLoaded: (sessionId: string) => void;
@@ -191,7 +177,21 @@ export async function fetchAndApplyMessages(params: {
     }
 
     // Request (apiSocket.request calibrates server time best-effort from the HTTP Date header)
-    const response = await request(`/v1/sessions/${sessionId}/messages`);
+    const scope = params.scope ?? 'main';
+    const sidechainId = typeof params.sidechainId === 'string' && params.sidechainId.trim().length > 0 ? params.sidechainId.trim() : null;
+    if (scope === 'sidechain' && sidechainId === null) {
+        throw new Error('fetchMessages: sidechainId is required when scope=sidechain');
+    }
+    const qs = new URLSearchParams();
+    if (scope !== 'all') {
+        qs.set('scope', scope);
+    } else {
+        qs.set('scope', 'all');
+    }
+    if (scope === 'sidechain' && sidechainId) {
+        qs.set('sidechainId', sidechainId);
+    }
+    const response = await request(`/v1/sessions/${sessionId}/messages?${qs.toString()}`);
     const json = await response.json();
     const parsed = ApiSessionMessagesResponseSchema.safeParse(json);
     if (!parsed.success) {
@@ -201,10 +201,10 @@ export async function fetchAndApplyMessages(params: {
     params.onMessagesPage?.(data);
 
     // Collect existing messages
-    let eixstingMessages = sessionReceivedMessages.get(sessionId);
-    if (!eixstingMessages) {
-        eixstingMessages = new Set<string>();
-        sessionReceivedMessages.set(sessionId, eixstingMessages);
+    let existingMessages = sessionReceivedMessages.get(sessionId);
+    if (!existingMessages) {
+        existingMessages = new Map<string, number>();
+        sessionReceivedMessages.set(sessionId, existingMessages);
     }
 
     // Decrypt and normalize messages
@@ -213,7 +213,9 @@ export async function fetchAndApplyMessages(params: {
     // Filter out existing messages and prepare for batch decryption
     const messagesToDecrypt: ApiMessage[] = [];
     for (const msg of [...data.messages].reverse()) {
-        if (!eixstingMessages.has(msg.id)) {
+        const msgUpdatedAt = typeof msg.updatedAt === 'number' ? msg.updatedAt : msg.createdAt;
+        const existingUpdatedAt = existingMessages.get(msg.id);
+        if (existingUpdatedAt === undefined || msgUpdatedAt > existingUpdatedAt) {
             messagesToDecrypt.push(msg);
         }
     }
@@ -240,11 +242,15 @@ export async function fetchAndApplyMessages(params: {
             if (debugDecryptStats && decrypted.content !== null) {
                 debugDecryptStats.decryptedWithContent++;
             }
+
+            const inputUpdatedAt = inputMessage
+                ? (typeof inputMessage.updatedAt === 'number' ? inputMessage.updatedAt : inputMessage.createdAt)
+                : decrypted.createdAt;
             // IMPORTANT: Do not mark encrypted messages as "received" when decryption failed.
             // Otherwise a keyless device (or a device with delayed key init) can permanently
             // treat encrypted history as empty until runtime state is fully reset.
             if (decrypted.content !== null || !inputWasEncrypted) {
-                eixstingMessages.add(decrypted.id);
+                existingMessages.set(decrypted.id, inputUpdatedAt);
             }
 
             // Expected: encrypted history can be present even when this device lacks the secret key.
@@ -260,6 +266,11 @@ export async function fetchAndApplyMessages(params: {
             // Normalize the decrypted message
             const normalized = normalizeRawMessage(decrypted.id, decrypted.localId, decrypted.createdAt, decrypted.content, { seq: decrypted.seq ?? undefined });
             if (normalized) {
+                const rawSidechainId = inputMessage?.sidechainId;
+                if (typeof rawSidechainId === 'string' && rawSidechainId.trim().length > 0) {
+                    normalized.sidechainId = rawSidechainId.trim();
+                    normalized.isSidechain = true;
+                }
                 normalizedMessages.push(normalized);
             }
         }
@@ -286,101 +297,20 @@ export async function fetchAndApplyMessages(params: {
     // Apply to storage
     applyMessages(sessionId, normalizedMessages);
 
-    // Backfill missing sidechain parents.
-    //
-    // Sidechain child messages reference an owning tool-call via `sidechainId`. When the latest page
-    // contains sub-agent/tool chatter, the owning tool-call can fall outside the first page window.
-    // Without the owner, we can still surface sidechain children as orphan transcript rows, but that
-    // view is degraded. To attach children to their owning tool-call (and preserve the expected turn
-    // structure), fetch older pages until we encounter the owning tool-call(s), bounded to avoid
-    // unbounded paging.
-    const initialSidechainParentIds = collectMissingSidechainParentToolIds(normalizedMessages);
-    if (initialSidechainParentIds.size > 0) {
-        const MAX_PARENT_BACKFILL_PAGES = 8;
-        const PAGE_LIMIT = 150;
-        let beforeSeq: number | null =
-            typeof (data as any).nextBeforeSeq === 'number' && Number.isFinite((data as any).nextBeforeSeq)
-                ? (data as any).nextBeforeSeq
-                : null;
-
-        for (let page = 0; page < MAX_PARENT_BACKFILL_PAGES && beforeSeq !== null && initialSidechainParentIds.size > 0; page++) {
-            const result = await fetchAndApplyOlderMessages({
-                sessionId,
-                beforeSeq,
-                limit: PAGE_LIMIT,
-                getSessionEncryption,
-                isSessionKnown: params.isSessionKnown,
-                request,
-                sessionReceivedMessages,
-                applyMessages,
-                log,
-                onNormalizedMessages: (msgs) => {
-                    for (const toolId of collectToolCallIdsFromMessages(msgs)) {
-                        initialSidechainParentIds.delete(toolId);
-                    }
-                },
-            });
-
-            const nextBeforeSeq =
-                typeof (result.page as any)?.nextBeforeSeq === 'number' && Number.isFinite((result.page as any).nextBeforeSeq)
-                    ? (result.page as any).nextBeforeSeq
-                    : null;
-
-            // Stop if server indicates no more pages or cursor doesn't move.
-            if (nextBeforeSeq === null || nextBeforeSeq === beforeSeq) {
-                break;
-            }
-            beforeSeq = nextBeforeSeq;
-        }
-    }
-
     markMessagesLoaded(sessionId);
     log.log(`💬 fetchMessages completed for session ${sessionId} - processed ${normalizedMessages.length} messages`);
-}
-
-function collectToolCallIdsFromMessages(messages: NormalizedMessage[]): Set<string> {
-    const toolIds = new Set<string>();
-    for (const msg of messages) {
-        if (!msg || (msg as any).role !== 'agent') continue;
-        const content = (msg as any).content;
-        if (!Array.isArray(content)) continue;
-        for (const c of content) {
-            if (!c || typeof c !== 'object') continue;
-            if ((c as any).type === 'tool-call' && typeof (c as any).id === 'string') {
-                toolIds.add((c as any).id);
-            }
-            if ((c as any).type === 'tool-result' && typeof (c as any).tool_use_id === 'string') {
-                toolIds.add((c as any).tool_use_id);
-            }
-        }
-    }
-    return toolIds;
-}
-
-function collectMissingSidechainParentToolIds(messages: NormalizedMessage[]): Set<string> {
-    const sidechainIds = new Set<string>();
-    for (const msg of messages) {
-        if (msg?.isSidechain !== true) continue;
-        if (typeof msg.sidechainId === 'string' && msg.sidechainId.length > 0) {
-            sidechainIds.add(msg.sidechainId);
-        }
-    }
-
-    const toolIds = collectToolCallIdsFromMessages(messages);
-    for (const toolId of toolIds) {
-        sidechainIds.delete(toolId);
-    }
-    return sidechainIds;
 }
 
 export async function fetchAndApplyOlderMessages(params: {
     sessionId: string;
     beforeSeq: number;
     limit: number;
+    scope?: 'main' | 'sidechain' | 'all';
+    sidechainId?: string | null;
     getSessionEncryption: (sessionId: string) => SessionMessagesEncryption | null;
     isSessionKnown?: (sessionId: string) => boolean;
     request: (path: string) => Promise<Response>;
-    sessionReceivedMessages: Map<string, Set<string>>;
+    sessionReceivedMessages: Map<string, Map<string, number>>;
     applyMessages: (sessionId: string, messages: NormalizedMessage[]) => void;
     onTaskLifecycleEvent?: (event: TaskLifecycleEvent) => void;
     onMessagesPage?: (page: ApiSessionMessagesResponse) => void;
@@ -406,7 +336,16 @@ export async function fetchAndApplyOlderMessages(params: {
         throw new Error(`Session encryption not ready for ${sessionId}`);
     }
 
-    const qs = new URLSearchParams({ beforeSeq: String(beforeSeq), limit: String(limit) });
+    const scope = params.scope ?? 'main';
+    const sidechainId = typeof params.sidechainId === 'string' && params.sidechainId.trim().length > 0 ? params.sidechainId.trim() : null;
+    if (scope === 'sidechain' && sidechainId === null) {
+        throw new Error('fetchOlderMessages: sidechainId is required when scope=sidechain');
+    }
+
+    const qs = new URLSearchParams({ beforeSeq: String(beforeSeq), limit: String(limit), scope });
+    if (scope === 'sidechain' && sidechainId) {
+        qs.set('sidechainId', sidechainId);
+    }
     const response = await request(`/v1/sessions/${sessionId}/messages?${qs.toString()}`);
     const json = await response.json();
     const parsed = ApiSessionMessagesResponseSchema.safeParse(json);
@@ -418,13 +357,15 @@ export async function fetchAndApplyOlderMessages(params: {
 
     let eixstingMessages = sessionReceivedMessages.get(sessionId);
     if (!eixstingMessages) {
-        eixstingMessages = new Set<string>();
+        eixstingMessages = new Map<string, number>();
         sessionReceivedMessages.set(sessionId, eixstingMessages);
     }
 
     const messagesToDecrypt: ApiMessage[] = [];
     for (const msg of [...data.messages].reverse()) {
-        if (!eixstingMessages.has(msg.id)) {
+        const msgUpdatedAt = typeof msg.updatedAt === 'number' ? msg.updatedAt : msg.createdAt;
+        const existingUpdatedAt = eixstingMessages.get(msg.id);
+        if (existingUpdatedAt === undefined || msgUpdatedAt > existingUpdatedAt) {
             messagesToDecrypt.push(msg);
         }
     }
@@ -437,8 +378,12 @@ export async function fetchAndApplyOlderMessages(params: {
         if (decrypted) {
             const inputMessage = messagesToDecrypt[i];
             const inputWasEncrypted = inputMessage?.content?.t === 'encrypted';
+
+            const inputUpdatedAt = inputMessage
+                ? (typeof inputMessage.updatedAt === 'number' ? inputMessage.updatedAt : inputMessage.createdAt)
+                : decrypted.createdAt;
             if (decrypted.content !== null || !inputWasEncrypted) {
-                eixstingMessages.add(decrypted.id);
+                eixstingMessages.set(decrypted.id, inputUpdatedAt);
             }
             if (inputWasEncrypted && decrypted.content === null) {
                 continue;
@@ -448,6 +393,11 @@ export async function fetchAndApplyOlderMessages(params: {
             // newer/socket flows.
             const normalized = normalizeRawMessage(decrypted.id, decrypted.localId, decrypted.createdAt, decrypted.content, { seq: decrypted.seq ?? undefined });
             if (normalized) {
+                const rawSidechainId = inputMessage?.sidechainId;
+                if (typeof rawSidechainId === 'string' && rawSidechainId.trim().length > 0) {
+                    normalized.sidechainId = rawSidechainId.trim();
+                    normalized.isSidechain = true;
+                }
                 normalizedMessages.push(normalized);
             }
         }
@@ -463,10 +413,12 @@ export async function fetchAndApplyNewerMessages(params: {
     sessionId: string;
     afterSeq: number;
     limit: number;
+    scope?: 'main' | 'sidechain' | 'all';
+    sidechainId?: string | null;
     getSessionEncryption: (sessionId: string) => SessionMessagesEncryption | null;
     isSessionKnown?: (sessionId: string) => boolean;
     request: (path: string) => Promise<Response>;
-    sessionReceivedMessages: Map<string, Set<string>>;
+    sessionReceivedMessages: Map<string, Map<string, number>>;
     applyMessages: (sessionId: string, messages: NormalizedMessage[]) => void;
     onTaskLifecycleEvent?: (event: TaskLifecycleEvent) => void;
     onMessagesPage?: (page: ApiSessionMessagesResponse) => void;
@@ -490,7 +442,16 @@ export async function fetchAndApplyNewerMessages(params: {
         throw new Error(`Session encryption not ready for ${sessionId}`);
     }
 
-    const qs = new URLSearchParams({ afterSeq: String(afterSeq), limit: String(limit) });
+    const scope = params.scope ?? 'main';
+    const sidechainId = typeof params.sidechainId === 'string' && params.sidechainId.trim().length > 0 ? params.sidechainId.trim() : null;
+    if (scope === 'sidechain' && sidechainId === null) {
+        throw new Error('fetchNewerMessages: sidechainId is required when scope=sidechain');
+    }
+
+    const qs = new URLSearchParams({ afterSeq: String(afterSeq), limit: String(limit), scope });
+    if (scope === 'sidechain' && sidechainId) {
+        qs.set('sidechainId', sidechainId);
+    }
     const response = await request(`/v1/sessions/${sessionId}/messages?${qs.toString()}`);
     const json = await response.json();
     const parsed = ApiSessionMessagesResponseSchema.safeParse(json);
@@ -502,14 +463,16 @@ export async function fetchAndApplyNewerMessages(params: {
 
     let existingMessages = sessionReceivedMessages.get(sessionId);
     if (!existingMessages) {
-        existingMessages = new Set<string>();
+        existingMessages = new Map<string, number>();
         sessionReceivedMessages.set(sessionId, existingMessages);
     }
 
     // Server returns ascending order in forward mode; decrypt/apply in that same order.
     const messagesToDecrypt: ApiMessage[] = [];
     for (const msg of data.messages) {
-        if (!existingMessages.has(msg.id)) {
+        const msgUpdatedAt = typeof msg.updatedAt === 'number' ? msg.updatedAt : msg.createdAt;
+        const existingUpdatedAt = existingMessages.get(msg.id);
+        if (existingUpdatedAt === undefined || msgUpdatedAt > existingUpdatedAt) {
             messagesToDecrypt.push(msg);
         }
     }
@@ -522,8 +485,12 @@ export async function fetchAndApplyNewerMessages(params: {
         if (decrypted) {
             const inputMessage = messagesToDecrypt[i];
             const inputWasEncrypted = inputMessage?.content?.t === 'encrypted';
+
+            const inputUpdatedAt = inputMessage
+                ? (typeof inputMessage.updatedAt === 'number' ? inputMessage.updatedAt : inputMessage.createdAt)
+                : decrypted.createdAt;
             if (decrypted.content !== null || !inputWasEncrypted) {
-                existingMessages.add(decrypted.id);
+                existingMessages.set(decrypted.id, inputUpdatedAt);
             }
             if (inputWasEncrypted && decrypted.content === null) {
                 continue;
@@ -534,6 +501,11 @@ export async function fetchAndApplyNewerMessages(params: {
             }
             const normalized = normalizeRawMessage(decrypted.id, decrypted.localId, decrypted.createdAt, decrypted.content, { seq: decrypted.seq ?? undefined });
             if (normalized) {
+                const rawSidechainId = inputMessage?.sidechainId;
+                if (typeof rawSidechainId === 'string' && rawSidechainId.trim().length > 0) {
+                    normalized.sidechainId = rawSidechainId.trim();
+                    normalized.isSidechain = true;
+                }
                 normalizedMessages.push(normalized);
             }
         }

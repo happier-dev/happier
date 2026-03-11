@@ -7,13 +7,15 @@ function buildApiMessage(id: string, seq: number): ApiMessage {
     id,
     seq,
     localId: null,
+    sidechainId: null,
     content: { t: 'encrypted', c: `encrypted-${id}` },
     createdAt: 1_000 + seq,
+    updatedAt: 2_000 + seq,
   };
 }
 
 describe('fetchAndApplyMessages (sidechain parent backfill)', () => {
-  it('fetches older pages when the initial page contains only sidechain messages', async () => {
+  it('does not backfill older pages for sidechain-only pages (sidechains are loaded explicitly)', async () => {
     const applyMessages = vi.fn();
     const markMessagesLoaded = vi.fn();
 
@@ -89,31 +91,21 @@ describe('fetchAndApplyMessages (sidechain parent backfill)', () => {
       sessionId: 's1',
       getSessionEncryption: () => ({ decryptMessages } as any),
       request,
-      sessionReceivedMessages: new Map(),
+      sessionReceivedMessages: new Map<string, Map<string, number>>(),
       applyMessages,
       markMessagesLoaded,
       log: { log: () => {} },
     });
 
-    // Must fetch older messages after the initial page.
-    expect(request).toHaveBeenCalledTimes(2);
-    expect(String(request.mock.calls[1][0])).toContain('beforeSeq=100');
-
-    // Must apply sidechain page, then apply the parent page.
-    expect(applyMessages).toHaveBeenCalledTimes(2);
-    const firstBatch = applyMessages.mock.calls[0][1] as any[];
-    const secondBatch = applyMessages.mock.calls[1][1] as any[];
-
-    expect(firstBatch.length).toBeGreaterThan(0);
-    expect(firstBatch.every((m) => m.isSidechain === true)).toBe(true);
-
-    expect(secondBatch.length).toBeGreaterThan(0);
-    expect(secondBatch.some((m) => m.isSidechain === false)).toBe(true);
+    // Sidechain-heavy pages are handled by explicit `scope=sidechain` fetches. The main transcript
+    // fetch should not scan backwards to locate missing parents.
+    expect(request).toHaveBeenCalledTimes(1);
+    expect(applyMessages).toHaveBeenCalledTimes(1);
 
     expect(markMessagesLoaded).toHaveBeenCalledTimes(1);
   });
 
-  it('fetches older pages when sidechain messages reference a missing owning tool-call', async () => {
+  it('does not backfill older pages when sidechain messages reference a missing owning tool-call', async () => {
     const applyMessages = vi.fn();
     const markMessagesLoaded = vi.fn();
 
@@ -213,23 +205,14 @@ describe('fetchAndApplyMessages (sidechain parent backfill)', () => {
       sessionId: 's1',
       getSessionEncryption: () => ({ decryptMessages } as any),
       request,
-      sessionReceivedMessages: new Map(),
+      sessionReceivedMessages: new Map<string, Map<string, number>>(),
       applyMessages,
       markMessagesLoaded,
       log: { log: () => {} },
     });
 
-    // Must fetch older messages after the initial page to locate the parent tool-call.
-    expect(request).toHaveBeenCalledTimes(2);
-    expect(String(request.mock.calls[1][0])).toContain('beforeSeq=100');
-
-    // Must apply the initial page, then apply the parent page.
-    expect(applyMessages).toHaveBeenCalledTimes(2);
-    const firstBatch = applyMessages.mock.calls[0][1] as any[];
-    const secondBatch = applyMessages.mock.calls[1][1] as any[];
-
-    expect(firstBatch.some((m) => m.isSidechain === true)).toBe(true);
-    expect(secondBatch.some((m) => m.isSidechain === false)).toBe(true);
+    expect(request).toHaveBeenCalledTimes(1);
+    expect(applyMessages).toHaveBeenCalledTimes(1);
     expect(markMessagesLoaded).toHaveBeenCalledTimes(1);
   });
 });
