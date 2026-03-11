@@ -9,13 +9,32 @@ import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { ItemGroupSelectionContext } from '@/components/ui/lists/ItemGroup';
 import { useItemGroupRowPosition } from '@/components/ui/lists/ItemGroupRowPosition';
 import { getItemGroupRowCornerRadii } from '@/components/ui/lists/itemGroupRowCorners';
+import { normalizeNodeForView } from '@/components/ui/rendering/normalizeNodeForView';
 import { Text } from '@/components/ui/text/Text';
+import { useResolvedItemDensity } from '@/components/ui/lists/useResolvedItemDensity';
+import {
+    ITEM_CHEVRON_SIZE,
+    ITEM_ICON_BOX_SIZE,
+    ITEM_ICON_MARGIN_RIGHT,
+    ITEM_SUBTITLE_TEXT_METRICS,
+    ITEM_TITLE_TEXT_METRICS,
+} from '@/components/ui/lists/itemDensityMetrics';
 
+function resizeItemIconForDensity(icon: React.ReactNode, iconSize: number): React.ReactNode {
+    if (!React.isValidElement(icon) || icon.type === React.Fragment) {
+        return icon;
+    }
+
+    return React.cloneElement(icon, {
+        size: iconSize,
+    } as Record<string, unknown>);
+}
 
 export interface ItemProps {
     testID?: string;
     title: string;
     subtitle?: React.ReactNode;
+    subtitleAccessory?: React.ReactNode;
     subtitleLines?: number; // set 0 or undefined for auto/multiline
     detail?: string;
     icon?: React.ReactNode;
@@ -24,11 +43,16 @@ export interface ItemProps {
     onPress?: () => void;
     onDoublePress?: () => void;
     onLongPress?: () => void;
+    onMouseDownCapture?: (event: unknown) => void;
     disabled?: boolean;
     loading?: boolean;
     selected?: boolean;
     destructive?: boolean;
-    density?: 'comfortable' | 'compact' | 'tight';
+    density?: 'comfortable' | 'cozy' | 'compact' | 'tight';
+    /** Display mode: 'interactive' (default) enables press/hover feedback and chevron;
+     *  'info' renders as a plain View with no press affordances (chevron is always hidden).
+     *  Orthogonal to `disabled` — an info item stays at full opacity. */
+    mode?: 'interactive' | 'info';
     style?: StyleProp<ViewStyle>;
     titleStyle?: StyleProp<TextStyle>;
     subtitleStyle?: StyleProp<TextStyle>;
@@ -53,6 +77,10 @@ const stylesheet = StyleSheet.create((theme, runtime) => ({
         // Keep iOS slightly taller for touch affordance, but reduce desktop web density.
         minHeight: Platform.select({ ios: 38, default: 34 }),
     },
+    containerCozy: {
+        paddingHorizontal: 14,
+        minHeight: Platform.select({ ios: 42, default: 44 }),
+    },
     containerTight: {
         paddingHorizontal: 10,
         // Tight density is reserved for file trees / editor-like lists where users expect high information density.
@@ -65,6 +93,9 @@ const stylesheet = StyleSheet.create((theme, runtime) => ({
     containerWithSubtitleCompact: {
         paddingVertical: Platform.select({ ios: 7, default: 6 }),
     },
+    containerWithSubtitleCozy: {
+        paddingVertical: Platform.select({ ios: 9, default: 10 }),
+    },
     containerWithSubtitleTight: {
         paddingVertical: Platform.select({ ios: 7, default: 2 }),
     },
@@ -74,25 +105,33 @@ const stylesheet = StyleSheet.create((theme, runtime) => ({
     containerWithoutSubtitleCompact: {
         paddingVertical: Platform.select({ ios: 8, default: 5 }),
     },
+    containerWithoutSubtitleCozy: {
+        paddingVertical: Platform.select({ ios: 10, default: 10 }),
+    },
     containerWithoutSubtitleTight: {
         paddingVertical: Platform.select({ ios: 8, default: 2 }),
     },
     iconContainer: {
         marginRight: 12,
-        width: Platform.select({ ios: 29, default: 32 }),
-        height: Platform.select({ ios: 29, default: 32 }),
+        width: ITEM_ICON_BOX_SIZE.comfortable,
+        height: ITEM_ICON_BOX_SIZE.comfortable,
         alignItems: 'center',
         justifyContent: 'center',
     },
     iconContainerCompact: {
         marginRight: 10,
-        width: Platform.select({ ios: 18, default: 20 }),
-        height: Platform.select({ ios: 18, default: 20 }),
+        width: ITEM_ICON_BOX_SIZE.compact,
+        height: ITEM_ICON_BOX_SIZE.compact,
+    },
+    iconContainerCozy: {
+        marginRight: 14,
+        width: ITEM_ICON_BOX_SIZE.cozy,
+        height: ITEM_ICON_BOX_SIZE.cozy,
     },
     iconContainerTight: {
         marginRight: 8,
-        width: Platform.select({ ios: 18, default: 18 }),
-        height: Platform.select({ ios: 18, default: 18 }),
+        width: ITEM_ICON_BOX_SIZE.tight,
+        height: ITEM_ICON_BOX_SIZE.tight,
     },
     centerContent: {
         flex: 1,
@@ -100,19 +139,16 @@ const stylesheet = StyleSheet.create((theme, runtime) => ({
     },
     title: {
         ...Typography.default('regular'),
-        fontSize: Platform.select({ ios: 17, default: 16 }),
-        lineHeight: Platform.select({ ios: 22, default: 24 }),
-        letterSpacing: Platform.select({ ios: -0.41, default: 0.15 }),
+        ...ITEM_TITLE_TEXT_METRICS.comfortable,
     },
     titleCompact: {
-        fontSize: Platform.select({ ios: 14, default: 13 }),
-        lineHeight: Platform.select({ ios: 18, default: 18 }),
-        letterSpacing: Platform.select({ ios: -0.24, default: 0.1 }),
+        ...ITEM_TITLE_TEXT_METRICS.compact,
+    },
+    titleCozy: {
+        ...ITEM_TITLE_TEXT_METRICS.cozy,
     },
     titleTight: {
-        fontSize: Platform.select({ ios: 14, default: 12 }),
-        lineHeight: Platform.select({ ios: 18, default: 16 }),
-        letterSpacing: Platform.select({ ios: -0.24, default: 0.1 }),
+        ...ITEM_TITLE_TEXT_METRICS.tight,
     },
     titleNormal: {
         color: theme.colors.text,
@@ -126,19 +162,19 @@ const stylesheet = StyleSheet.create((theme, runtime) => ({
     subtitle: {
         ...Typography.default('regular'),
         color: theme.colors.textSecondary,
-        fontSize: Platform.select({ ios: 15, default: 14 }),
-        lineHeight: 20,
-        letterSpacing: Platform.select({ ios: -0.24, default: 0.1 }),
+        ...ITEM_SUBTITLE_TEXT_METRICS.comfortable,
         marginTop: Platform.select({ ios: 2, default: 0 }),
     },
     subtitleCompact: {
-        fontSize: Platform.select({ ios: 12, default: 12 }),
-        lineHeight: 16,
+        ...ITEM_SUBTITLE_TEXT_METRICS.compact,
+        marginTop: Platform.select({ ios: 1, default: 0 }),
+    },
+    subtitleCozy: {
+        ...ITEM_SUBTITLE_TEXT_METRICS.cozy,
         marginTop: Platform.select({ ios: 1, default: 0 }),
     },
     subtitleTight: {
-        fontSize: Platform.select({ ios: 12, default: 11 }),
-        lineHeight: 14,
+        ...ITEM_SUBTITLE_TEXT_METRICS.tight,
         marginTop: Platform.select({ ios: 1, default: 0 }),
     },
     rightSection: {
@@ -149,8 +185,16 @@ const stylesheet = StyleSheet.create((theme, runtime) => ({
     detail: {
         ...Typography.default('regular'),
         color: theme.colors.textSecondary,
-        fontSize: 17,
-        letterSpacing: -0.41,
+        ...ITEM_TITLE_TEXT_METRICS.comfortable,
+    },
+    detailCozy: {
+        ...ITEM_TITLE_TEXT_METRICS.cozy,
+    },
+    detailCompact: {
+        ...ITEM_TITLE_TEXT_METRICS.compact,
+    },
+    detailTight: {
+        ...ITEM_TITLE_TEXT_METRICS.tight,
     },
     divider: {
         height: Platform.select({ ios: 0.33, default: 0 }),
@@ -182,6 +226,7 @@ export const Item = React.memo<ItemProps>((props) => {
         testID,
         title,
         subtitle,
+        subtitleAccessory,
         subtitleLines,
         detail,
         icon,
@@ -190,11 +235,13 @@ export const Item = React.memo<ItemProps>((props) => {
         onPress,
         onDoublePress,
         onLongPress,
+        onMouseDownCapture,
         disabled,
         loading,
         selected,
         destructive,
-        density = 'comfortable',
+        density,
+        mode,
         style,
         titleStyle,
         subtitleStyle,
@@ -205,6 +252,9 @@ export const Item = React.memo<ItemProps>((props) => {
         pressableStyle,
         copy
     } = props;
+    const webTestIdProps = isWeb && testID
+        ? ({ 'data-testid': testID } as const)
+        : undefined;
 
     // Handle copy functionality
     const handleCopy = React.useCallback(async () => {
@@ -291,35 +341,65 @@ export const Item = React.memo<ItemProps>((props) => {
         onPress?.();
     }, [isWeb, onDoublePress, onPress]);
 
+    const isInfoMode = mode === 'info';
     const hasPrimaryPressAction = Boolean(onPress || onDoublePress || onLongPress);
     const hasCopyLongPress = Boolean(copy && !isWeb && !onPress);
-    const isInteractive = hasPrimaryPressAction || hasCopyLongPress;
+    const isInteractive = !isInfoMode && (hasPrimaryPressAction || hasCopyLongPress);
 
     // Only show the navigation chevron when the row has an actual "tap to do something" affordance.
     // Long-press copy rows (mobile) and long-press-only rows should not look like navigation.
-    const showAccessory = Boolean(showChevron && !rightElement && (onPress || onDoublePress));
-    const chevronSize = (isIOS && !isWeb) ? 17 : 24;
+    const showAccessory = Boolean(!isInfoMode && showChevron && !rightElement && (onPress || onDoublePress));
     const showSelectedBackground = !!selected && ((selectionContext?.selectableItemCount ?? 2) > 1);
     const groupCornerRadius = Platform.select({ ios: 10, default: 16 });
 
+    const resolvedDensity = useResolvedItemDensity(density);
     const titleColor = destructive ? styles.titleDestructive : (selected ? styles.titleSelected : styles.titleNormal);
-    const isCompact = density === 'compact';
-    const isTight = density === 'tight';
-    const containerPadding = subtitle
-        ? (isTight ? styles.containerWithSubtitleTight : isCompact ? styles.containerWithSubtitleCompact : styles.containerWithSubtitle)
-        : (isTight ? styles.containerWithoutSubtitleTight : isCompact ? styles.containerWithoutSubtitleCompact : styles.containerWithoutSubtitle);
+    const isCozy = resolvedDensity === 'cozy';
+    const isCompact = resolvedDensity === 'compact';
+    const isTight = resolvedDensity === 'tight';
+    const hasSubtitleContent = Boolean(subtitle || subtitleAccessory);
+    const containerPadding = hasSubtitleContent
+        ? (isTight ? styles.containerWithSubtitleTight : isCompact ? styles.containerWithSubtitleCompact : isCozy ? styles.containerWithSubtitleCozy : styles.containerWithSubtitle)
+        : (isTight ? styles.containerWithoutSubtitleTight : isCompact ? styles.containerWithoutSubtitleCompact : isCozy ? styles.containerWithoutSubtitleCozy : styles.containerWithoutSubtitle);
     const containerCore = isTight
         ? [styles.container, styles.containerTight]
         : isCompact
             ? [styles.container, styles.containerCompact]
+            : isCozy
+                ? [styles.container, styles.containerCozy]
             : styles.container;
     const iconContainerStyle = isTight
         ? [styles.iconContainer, styles.iconContainerTight]
         : isCompact
             ? [styles.iconContainer, styles.iconContainerCompact]
+            : isCozy
+                ? [styles.iconContainer, styles.iconContainerCozy]
             : styles.iconContainer;
-    const titleSizeStyle = isTight ? styles.titleTight : isCompact ? styles.titleCompact : null;
-    const subtitleSizeStyle = isTight ? styles.subtitleTight : isCompact ? styles.subtitleCompact : null;
+    const resolvedIconDensity = isTight ? 'tight' : isCompact ? 'compact' : isCozy ? 'cozy' : 'comfortable';
+    const chevronSize = ITEM_CHEVRON_SIZE[resolvedIconDensity];
+    const resolvedIconBoxSize = ITEM_ICON_BOX_SIZE[resolvedIconDensity];
+    const resolvedIconMarginRight = ITEM_ICON_MARGIN_RIGHT[resolvedIconDensity];
+    const sizedIcon = React.useMemo(() => resizeItemIconForDensity(icon, resolvedIconBoxSize), [icon, resolvedIconBoxSize]);
+    const titleSizeStyle = isTight ? styles.titleTight : isCompact ? styles.titleCompact : isCozy ? styles.titleCozy : null;
+    const subtitleSizeStyle = isTight ? styles.subtitleTight : isCompact ? styles.subtitleCompact : isCozy ? styles.subtitleCozy : null;
+    const detailSizeStyle = isTight ? styles.detailTight : isCompact ? styles.detailCompact : isCozy ? styles.detailCozy : null;
+    const leftAccessory = React.useMemo(() => {
+        const candidate = leftElement ?? sizedIcon ?? null;
+        return normalizeNodeForView(candidate);
+    }, [leftElement, sizedIcon]);
+    const rightAccessory = React.useMemo(() => normalizeNodeForView(rightElement ?? null), [rightElement]);
+    const subtitleAccessoryNode = React.useMemo(() => normalizeNodeForView(subtitleAccessory ?? null), [subtitleAccessory]);
+    const chevronAccessory = React.useMemo(() => {
+        if (!showAccessory) return null;
+        return normalizeNodeForView(
+            <Ionicons
+                name="chevron-forward"
+                size={chevronSize}
+                color={theme.colors.groupped.chevron}
+                style={{ marginLeft: 4 }}
+            />,
+        );
+    }, [chevronSize, showAccessory, theme.colors.groupped.chevron]);
 
     const isSelectableRow = React.useMemo(() => {
         // Only show hover for "selection lists" (where rows participate in a selected-state group).
@@ -339,11 +419,11 @@ export const Item = React.memo<ItemProps>((props) => {
         <>
             <View style={[containerCore, containerPadding, style]}>
                 {/* Left Section */}
-                {(icon || leftElement) && (
+                {leftAccessory ? (
                     <View style={iconContainerStyle}>
-                        {leftElement || icon}
+                        {leftAccessory}
                     </View>
-                )}
+                ) : null}
 
                 {/* Center Section */}
                 <View style={styles.centerContent}>
@@ -406,6 +486,11 @@ export const Item = React.memo<ItemProps>((props) => {
                             </Text>
                         );
                     })()}
+                    {subtitleAccessoryNode ? (
+                        <View style={{ marginTop: 0 }}>
+                            {subtitleAccessoryNode}
+                        </View>
+                    ) : null}
                 </View>
 
                 {/* Right Section */}
@@ -414,6 +499,7 @@ export const Item = React.memo<ItemProps>((props) => {
                         <Text 
                             style={[
                                 styles.detail, 
+                                detailSizeStyle,
                                 { marginRight: rightElement || showAccessory ? 8 : 0 },
                                 detailStyle
                             ]}
@@ -429,15 +515,8 @@ export const Item = React.memo<ItemProps>((props) => {
                             style={{ marginRight: showAccessory ? 6 : 0 }}
                         />
                     )}
-                    {rightElement}
-                    {showAccessory && (
-                        <Ionicons 
-                            name="chevron-forward" 
-                            size={chevronSize} 
-                            color={theme.colors.groupped.chevron}
-                            style={{ marginLeft: 4 }}
-                        />
-                    )}
+                    {rightAccessory}
+                    {chevronAccessory}
                 </View>
             </View>
 
@@ -447,7 +526,9 @@ export const Item = React.memo<ItemProps>((props) => {
                     style={[
                         styles.divider,
                         { 
-                            marginLeft: (isAndroid || isWeb) ? 0 : (dividerInset + (icon || leftElement ? (16 + ((isIOS && !isWeb) ? 29 : 32) + 15) : 16))
+                            marginLeft: (isAndroid || isWeb)
+                                ? 0
+                                : (dividerInset + (icon || leftElement ? (16 + resolvedIconBoxSize + resolvedIconMarginRight) : 16))
                         }
                     ]}
                 />
@@ -459,6 +540,7 @@ export const Item = React.memo<ItemProps>((props) => {
         return (
             <Pressable
                 testID={testID}
+                {...webTestIdProps}
                 onPress={handlePress}
                 onLongPress={onLongPress}
                 // @ts-expect-error - react-native types do not model web-only double click props; RN Web supports onDoubleClick.
@@ -476,6 +558,7 @@ export const Item = React.memo<ItemProps>((props) => {
                 onPressOut={handlePressOut}
                 onHoverIn={isWeb && isSelectableRow && !disabled && !loading ? () => setIsHovered(true) : undefined}
                 onHoverOut={isWeb ? () => setIsHovered(false) : undefined}
+                onMouseDownCapture={isWeb ? (onMouseDownCapture as any) : undefined}
                 disabled={disabled || loading}
                 style={({ pressed }) => {
                     const backgroundColor = (() => {
@@ -511,7 +594,7 @@ export const Item = React.memo<ItemProps>((props) => {
     }
 
     return (
-        <View testID={testID} style={[{ opacity: disabled ? 0.5 : 1 }, pressableStyle]}>
+        <View testID={testID} {...webTestIdProps} style={[{ opacity: disabled ? 0.5 : 1 }, pressableStyle]}>
             {content}
         </View>
     );

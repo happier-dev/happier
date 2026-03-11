@@ -37,6 +37,10 @@ function DummyModalB(_props: { onClose: () => void }) {
     return React.createElement('DummyModalB');
 }
 
+function DummyModalWithLabel(props: { onClose: () => void; label: string }) {
+    return React.createElement('DummyModalWithLabel', { label: props.label });
+}
+
 function renderProvider(modules: { ModalProvider: React.ComponentType<{ children: React.ReactNode }> }) {
     let tree: ReturnType<typeof renderer.create> | undefined;
     act(() => {
@@ -132,5 +136,27 @@ describe('ModalProvider', () => {
         expect(tree?.root.findAllByType(DummyModalA).length).toBe(0);
         expect(tree?.root.findAllByType(DummyModalB).length).toBe(0);
         expect(tree?.root.findAllByType('Backdrop' as any).length).toBe(0);
+    });
+
+    it('updates props for an open custom modal without remounting it', async () => {
+        const { ModalProvider } = await import('./ModalProvider');
+        const { Modal } = await import('./ModalManager');
+        const tree = renderProvider({ ModalProvider });
+
+        let modalId = '';
+        act(() => {
+            modalId = Modal.show({
+                component: DummyModalWithLabel,
+                props: { label: 'before' },
+            });
+        });
+
+        expect(tree?.root.findByType('DummyModalWithLabel' as any).props.label).toBe('before');
+
+        act(() => {
+            Modal.update(modalId, { label: 'after' });
+        });
+
+        expect(tree?.root.findByType('DummyModalWithLabel' as any).props.label).toBe('after');
     });
 });

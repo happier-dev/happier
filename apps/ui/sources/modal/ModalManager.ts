@@ -6,6 +6,7 @@ class ModalManagerClass implements IModal {
     private showModalFn: ((config: Omit<ModalConfig, 'id'>) => string) | null = null;
     private hideModalFn: ((id: string) => void) | null = null;
     private hideAllModalsFn: (() => void) | null = null;
+    private updateCustomModalPropsFn: ((id: string, props: Record<string, unknown>) => void) | null = null;
     private confirmResolvers: Map<string, (value: boolean) => void> = new Map();
     private promptResolvers: Map<string, (value: string | null) => void> = new Map();
     private alertResolvers: Map<string, () => void> = new Map();
@@ -13,11 +14,13 @@ class ModalManagerClass implements IModal {
     setFunctions(
         showModal: (config: Omit<ModalConfig, 'id'>) => string,
         hideModal: (id: string) => void,
-        hideAllModals: () => void
+        hideAllModals: () => void,
+        updateCustomModalProps: (id: string, props: Record<string, unknown>) => void = () => {},
     ) {
         this.showModalFn = showModal;
         this.hideModalFn = hideModal;
         this.hideAllModalsFn = hideAllModals;
+        this.updateCustomModalPropsFn = updateCustomModalProps;
     }
 
     private generateId(): string {
@@ -156,6 +159,18 @@ class ModalManagerClass implements IModal {
         };
 
         return this.showModalFn(modalConfig);
+    }
+
+    update<P extends CustomModalInjectedProps>(
+        id: string,
+        props: Partial<Omit<P, keyof CustomModalInjectedProps>>,
+    ): void {
+        if (!this.updateCustomModalPropsFn) {
+            console.error('ModalManager not initialized. Make sure ModalProvider is mounted.');
+            return;
+        }
+
+        this.updateCustomModalPropsFn(id, props as Record<string, unknown>);
     }
 
     hide(id: string): void {

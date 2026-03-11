@@ -180,6 +180,78 @@ describe('Item', () => {
         expect(texts).toContain('Detail');
     });
 
+    it('renders subtitleAccessory below the native subtitle text', async () => {
+        const { Item } = await import('./Item');
+
+        let tree: renderer.ReactTestRenderer;
+        await act(async () => {
+            tree = renderer.create(
+                <Item
+                    title="Title"
+                    subtitle="Subtitle"
+                    subtitleAccessory={React.createElement('SubtitleAccessory', { marker: 'chips' })}
+                    showChevron={false}
+                />,
+            );
+        });
+
+        const textNodes = (tree! as any).root.findAllByType('Text' as any);
+        const subtitleNode = textNodes.find((node: any) => node.props?.children === 'Subtitle');
+        expect(subtitleNode).toBeTruthy();
+
+        const accessory = (tree! as any).root.findAllByType('SubtitleAccessory' as any)[0];
+        expect(accessory).toBeTruthy();
+        expect(accessory.props.marker).toBe('chips');
+    });
+
+    it('wraps primitive accessory children before rendering them inside view slots', async () => {
+        const { Item } = await import('./Item');
+
+        let tree: renderer.ReactTestRenderer;
+        await act(async () => {
+            tree = renderer.create(
+                <Item
+                    title="Title"
+                    icon={<>{'.'}</>}
+                    rightElement={<>{'.'}</>}
+                    showChevron={false}
+                />,
+            );
+        });
+
+        const json = (tree! as any).toJSON();
+
+        const seen: { dotCount: number; badDotCount: number; badParents: Array<string | null> } = {
+            dotCount: 0,
+            badDotCount: 0,
+            badParents: [],
+        };
+        const walk = (node: any, parentType: string | null) => {
+            if (node == null) return;
+            if (typeof node === 'string') {
+                if (node === '.') {
+                    seen.dotCount += 1;
+                    if (parentType !== 'Text') {
+                        seen.badDotCount += 1;
+                        seen.badParents.push(parentType);
+                    }
+                }
+                return;
+            }
+            const nextParent = typeof node.type === 'string' ? node.type : null;
+            const children = Array.isArray(node.children) ? node.children : [];
+            for (const child of children) walk(child, nextParent);
+        };
+
+        walk(json, null);
+
+        expect(seen.dotCount).toBeGreaterThan(0);
+        expect({ badDotCount: seen.badDotCount, badParents: seen.badParents }).toEqual({
+            badDotCount: 0,
+            badParents: [],
+        });
+    });
+
     it('adds spacing between detail and rightElement', async () => {
         const { Item } = await import('./Item');
 
