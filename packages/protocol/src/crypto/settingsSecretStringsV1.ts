@@ -3,6 +3,10 @@ import { z } from 'zod';
 import tweetnacl from 'tweetnacl';
 
 import { decodeBase64, encodeBase64 } from './base64.js';
+import {
+  deriveAccountMachineKeyFromRecoverySecret,
+  type AccountScopedCryptoMaterial,
+} from './accountScopedCipher.js';
 import { deriveKey } from './keyDerivation.js';
 
 export const EncryptedStringV1Schema = z.object({
@@ -19,12 +23,45 @@ export const SecretStringV1Schema = z.object({
 });
 
 export type SecretStringV1 = z.infer<typeof SecretStringV1Schema>;
+export type SettingsSecretsKeySetV1 = Readonly<{
+  writeKey: Uint8Array;
+  readKeys: readonly Uint8Array[];
+}>;
+export type ResealSecretsDeepV1Result<T> = Readonly<{
+  value: T;
+  changed: boolean;
+}>;
 
 const SETTINGS_SECRETS_USAGE = 'Happy Settings Secrets';
 const SETTINGS_SECRETS_PATH = ['settings', 'secrets', 'v1'] as const;
 
 export function deriveSettingsSecretsKeyV1(masterSecret: Uint8Array): Uint8Array {
   return deriveKey(masterSecret, SETTINGS_SECRETS_USAGE, SETTINGS_SECRETS_PATH);
+}
+
+function byteArraysEqual(left: Uint8Array, right: Uint8Array): boolean {
+  if (left.length !== right.length) return false;
+  for (let index = 0; index < left.length; index += 1) {
+    if (left[index] !== right[index]) return false;
+  }
+  return true;
+}
+
+export function deriveSettingsSecretsKeySetV1(material: AccountScopedCryptoMaterial): SettingsSecretsKeySetV1 {
+  const canonicalSeed = material.type === 'dataKey'
+    ? material.machineKey
+    : deriveAccountMachineKeyFromRecoverySecret(material.secret);
+  const writeKey = deriveSettingsSecretsKeyV1(canonicalSeed);
+  const readKeys: Uint8Array[] = [writeKey];
+
+  if (material.type === 'legacy') {
+    const legacyFallbackKey = deriveSettingsSecretsKeyV1(material.secret);
+    if (!byteArraysEqual(legacyFallbackKey, writeKey)) {
+      readKeys.push(legacyFallbackKey);
+    }
+  }
+
+  return { writeKey, readKeys };
 }
 
 export function encryptSecretStringV1(
@@ -59,13 +96,33 @@ export function decryptSecretStringV1(enc: EncryptedStringV1, key: Uint8Array): 
   }
 }
 
+export function decryptSecretStringWithKeysV1(
+  enc: EncryptedStringV1,
+  keys: ReadonlyArray<Uint8Array | null | undefined>,
+): string | null {
+  for (const key of keys) {
+    if (!key) continue;
+    const opened = decryptSecretStringV1(enc, key);
+    if (opened !== null) {
+      return opened;
+    }
+  }
+  return null;
+}
+
 export function decryptSecretValueV1(input: SecretStringV1 | null | undefined, key: Uint8Array | null): string | null {
+  return decryptSecretValueWithKeysV1(input, key ? [key] : []);
+}
+
+export function decryptSecretValueWithKeysV1(
+  input: SecretStringV1 | null | undefined,
+  keys: ReadonlyArray<Uint8Array | null | undefined>,
+): string | null {
   if (!input) return null;
   const plaintext = typeof input.value === 'string' ? input.value.trim() : '';
   if (plaintext) return plaintext;
-  if (!key) return null;
   if (!input.encryptedValue) return null;
-  return decryptSecretStringV1(input.encryptedValue, key);
+  return decryptSecretStringWithKeysV1(input.encryptedValue, keys);
 }
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
@@ -124,13 +181,20 @@ export function sealSecretsDeepV1<T>(
 }
 
 export function unsealSecretsDeepV1<T>(input: T, key: Uint8Array | null): T {
-  if (!key) return input;
+  return unsealSecretsDeepWithKeysV1(input, key ? [key] : []);
+}
+
+export function unsealSecretsDeepWithKeysV1<T>(
+  input: T,
+  keys: ReadonlyArray<Uint8Array | null | undefined>,
+): T {
+  if (keys.length === 0) return input;
 
   if (Array.isArray(input)) {
     let out: any[] | null = null;
     for (let i = 0; i < input.length; i++) {
       const item = (input as any)[i];
-      const unsealed = unsealSecretsDeepV1(item, key);
+      const unsealed = unsealSecretsDeepWithKeysV1(item, keys);
       if (out) {
         out[i] = unsealed;
         continue;
@@ -153,7 +217,7 @@ export function unsealSecretsDeepV1<T>(input: T, key: Uint8Array | null): T {
     const parsed = EncryptedStringV1Schema.safeParse(encryptedValue);
     if (!parsed.success) return input as any;
 
-    const opened = decryptSecretStringV1(parsed.data, key);
+    const opened = decryptSecretStringWithKeysV1(parsed.data, keys);
     if (!opened) return input as any;
     const { encryptedValue: _dropped, ...rest } = input as any;
     return { ...rest, value: opened } as any;
@@ -161,7 +225,7 @@ export function unsealSecretsDeepV1<T>(input: T, key: Uint8Array | null): T {
 
   let out: any = input;
   for (const [k, v] of Object.entries(input)) {
-    const unsealedChild = unsealSecretsDeepV1(v, key);
+    const unsealedChild = unsealSecretsDeepWithKeysV1(v, keys);
     if (unsealedChild !== v) {
       if (out === input) out = { ...(input as any) };
       out[k] = unsealedChild;
@@ -170,3 +234,90 @@ export function unsealSecretsDeepV1<T>(input: T, key: Uint8Array | null): T {
   return out;
 }
 
+export function resealSecretsDeepV1<T>(
+  input: T,
+  params: Readonly<{
+    readKeys: ReadonlyArray<Uint8Array | null | undefined>;
+    writeKey: Uint8Array;
+    randomBytes: (length: number) => Uint8Array;
+  }>,
+): ResealSecretsDeepV1Result<T> {
+  if (Array.isArray(input)) {
+    let out: any[] | null = null;
+    let changed = false;
+    for (let index = 0; index < input.length; index += 1) {
+      const child = (input as any)[index];
+      const resealed = resealSecretsDeepV1(child, params);
+      if (resealed.changed) {
+        changed = true;
+      }
+      if (out) {
+        out[index] = resealed.value;
+        continue;
+      }
+      if (resealed.value !== child) {
+        out = new Array(input.length);
+        for (let copyIndex = 0; copyIndex < index; copyIndex += 1) {
+          out[copyIndex] = (input as any)[copyIndex];
+        }
+        out[index] = resealed.value;
+      }
+    }
+    return { value: (out ? out : input) as any, changed };
+  }
+
+  if (!isPlainObject(input)) {
+    return { value: input, changed: false };
+  }
+
+  if ((input as any)._isSecretValue === true) {
+    const plaintext = typeof (input as any).value === 'string' ? String((input as any).value).trim() : '';
+    if (plaintext.length > 0) {
+      const { value: _dropped, ...rest } = input as any;
+      return {
+        value: {
+          ...rest,
+          encryptedValue: encryptSecretStringV1(plaintext, params.writeKey, params.randomBytes),
+        } as any,
+        changed: true,
+      };
+    }
+
+    const parsed = EncryptedStringV1Schema.safeParse((input as any).encryptedValue);
+    if (!parsed.success) {
+      return { value: input, changed: false };
+    }
+
+    if (decryptSecretStringV1(parsed.data, params.writeKey) !== null) {
+      return { value: input, changed: false };
+    }
+
+    const opened = decryptSecretStringWithKeysV1(parsed.data, params.readKeys);
+    if (opened === null) {
+      return { value: input, changed: false };
+    }
+
+    return {
+      value: {
+        ...(input as any),
+        encryptedValue: encryptSecretStringV1(opened, params.writeKey, params.randomBytes),
+      } as any,
+      changed: true,
+    };
+  }
+
+  let out: any = input;
+  let changed = false;
+  for (const [key, child] of Object.entries(input)) {
+    const resealed = resealSecretsDeepV1(child, params);
+    if (resealed.changed) {
+      changed = true;
+    }
+    if (resealed.value !== child) {
+      if (out === input) out = { ...(input as any) };
+      out[key] = resealed.value;
+    }
+  }
+
+  return { value: out, changed };
+}

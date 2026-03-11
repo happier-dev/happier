@@ -106,12 +106,14 @@ export function createCodexMcpMessageHandler(opts: {
       opts.messageBuffer.addMessage('Starting task...', 'status');
     } else if (message?.type === 'task_complete') {
       opts.messageBuffer.addMessage('Task completed', 'status');
-      streamedTranscriptWriter.flushAll({ reason: 'turn-end' });
-      opts.sendReady();
+      void streamedTranscriptWriter.flushAll({ reason: 'turn-end' }).finally(() => {
+        opts.sendReady();
+      });
     } else if (message?.type === 'turn_aborted') {
       opts.messageBuffer.addMessage('Turn aborted', 'status');
-      streamedTranscriptWriter.flushAll({ reason: 'abort', interruptedReason: 'turn_aborted' });
-      opts.sendReady();
+      void streamedTranscriptWriter.flushAll({ reason: 'abort', interruptedReason: 'turn_aborted' }).finally(() => {
+        opts.sendReady();
+      });
     }
 
     if (message?.type === 'task_started') {
@@ -164,14 +166,13 @@ export function createCodexMcpMessageHandler(opts: {
       sawReasoningDelta = false;
     }
     if (message?.type === 'agent_message') {
-      opts.session.sendCodexMessage({
-        type: 'message',
-        message: message.message,
-        id: randomUUID(),
-      });
+      const assistantText = typeof message.message === 'string' ? message.message : '';
+      if (assistantText) {
+        streamedTranscriptWriter.appendAssistantDelta(assistantText);
+      }
     }
     if (message?.type === 'exec_command_begin' || message?.type === 'exec_approval_request') {
-      streamedTranscriptWriter.flushAll({ reason: 'tool-call-boundary' });
+      void streamedTranscriptWriter.flushAll({ reason: 'tool-call-boundary' });
       const { call_id, type, ...inputs } = message;
       opts.session.sendCodexMessage({
         type: 'tool-call',
@@ -197,7 +198,7 @@ export function createCodexMcpMessageHandler(opts: {
       });
     }
     if (message?.type === 'patch_apply_begin') {
-      streamedTranscriptWriter.flushAll({ reason: 'tool-call-boundary' });
+      void streamedTranscriptWriter.flushAll({ reason: 'tool-call-boundary' });
       const { call_id, auto_approved, changes } = message;
       const changeCount = Object.keys(changes).length;
       const filesMsg = changeCount === 1 ? '1 file' : `${changeCount} files`;
@@ -237,7 +238,7 @@ export function createCodexMcpMessageHandler(opts: {
       opts.diffProcessor.processDiff(message.unified_diff);
     }
     if (message?.type === 'mcp_tool_call_begin') {
-      streamedTranscriptWriter.flushAll({ reason: 'tool-call-boundary' });
+      void streamedTranscriptWriter.flushAll({ reason: 'tool-call-boundary' });
       const { call_id, invocation } = message;
       const toolName = `mcp__${invocation.server}__${invocation.tool}`;
       opts.session.sendCodexMessage({

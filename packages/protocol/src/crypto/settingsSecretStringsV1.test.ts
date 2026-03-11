@@ -1,12 +1,17 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  decryptSecretValueWithKeysV1,
   decryptSecretStringV1,
   decryptSecretValueV1,
+  deriveSettingsSecretsKeySetV1,
+  deriveSettingsSecretsKeyV1,
   encryptSecretStringV1,
+  resealSecretsDeepV1,
   sealSecretsDeepV1,
   unsealSecretsDeepV1,
 } from './settingsSecretStringsV1.js';
+import { deriveAccountMachineKeyFromRecoverySecret } from './accountScopedCipher.js';
 
 function deterministicRandomBytesFactory(): (length: number) => Uint8Array {
   let counter = 1;
@@ -81,5 +86,28 @@ describe('settingsSecretStringsV1', () => {
     expect(out.value).toBe('sk-test');
     expect(out.encryptedValue).toBeUndefined();
   });
-});
 
+  it('reseals legacy settings secrets onto the canonical machine-key write key while preserving legacy reads', () => {
+    const recoverySecret = new Uint8Array(32).fill(5);
+    const machineKey = deriveAccountMachineKeyFromRecoverySecret(recoverySecret);
+    const legacyKeySet = deriveSettingsSecretsKeySetV1({ type: 'legacy', secret: recoverySecret });
+    const dataKeyKeySet = deriveSettingsSecretsKeySetV1({ type: 'dataKey', machineKey });
+    const randomBytes = deterministicRandomBytesFactory();
+    const legacyFallbackKey = deriveSettingsSecretsKeyV1(recoverySecret);
+
+    const legacyEncryptedValue = encryptSecretStringV1(
+      'sk-legacy',
+      legacyFallbackKey,
+      randomBytes,
+    );
+
+    const resealed = resealSecretsDeepV1(
+      { secret: { _isSecretValue: true as const, encryptedValue: legacyEncryptedValue } },
+      { readKeys: legacyKeySet.readKeys, writeKey: legacyKeySet.writeKey, randomBytes },
+    );
+
+    expect(resealed.changed).toBe(true);
+    expect(decryptSecretValueWithKeysV1((resealed.value as any).secret, dataKeyKeySet.readKeys)).toBe('sk-legacy');
+    expect(decryptSecretValueWithKeysV1((resealed.value as any).secret, legacyKeySet.readKeys)).toBe('sk-legacy');
+  });
+});

@@ -1,9 +1,23 @@
-import { describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { registerHappierMcpBridgeTools } from './registerHappierMcpBridgeTools';
+const env = process.env;
 
 describe('registerHappierMcpBridgeTools', () => {
-  it('registers Happier MCP tools and forwards calls', async () => {
+  beforeEach(() => {
+    vi.resetModules();
+    process.env = { ...env };
+    delete process.env.HAPPIER_ACTIONS_SETTINGS_V1;
+  });
+
+  it('registers only the currently enabled Happier MCP tools and forwards calls', async () => {
+    process.env.HAPPIER_ACTIONS_SETTINGS_V1 = JSON.stringify({
+      v: 1,
+      actions: {
+        'review.start': { enabled: true, disabledSurfaces: ['mcp'], disabledPlacements: [] },
+      },
+    });
+
+    const { registerHappierMcpBridgeTools } = await import('./registerHappierMcpBridgeTools');
     const calls: any[] = [];
     const registrar = {
       registerTool: (name: string, _def: any, handler: (args: any) => Promise<any>) => {
@@ -21,11 +35,13 @@ describe('registerHappierMcpBridgeTools', () => {
 
     const names = calls.map((c) => c.name);
     expect(names).toContain('change_title');
-    expect(names).toContain('action_spec_list');
+    expect(names).toContain('action_spec_search');
     expect(names).toContain('action_spec_get');
-    expect(names).toContain('review_start');
-    expect(names).toContain('plan_start');
-    expect(names).toContain('delegate_start');
+    expect(names).toContain('action_options_resolve');
+    expect(names).toContain('action_execute');
+    expect(names).not.toContain('review_start');
+    expect(names).toContain('subagents_plan_start');
+    expect(names).toContain('subagents_delegate_start');
     expect(names).toContain('voice_agent_start');
     expect(names).toContain('execution_run_start');
     expect(names).toContain('execution_run_list');

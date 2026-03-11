@@ -1,16 +1,8 @@
 import { describe, expect, it } from 'vitest';
 
-import { CHANGE_TITLE_INSTRUCTION } from '@/agent/runtime/changeTitleInstruction';
-import { EXEC_SEQUENCING_INSTRUCTION } from '@/agent/runtime/execSequencingInstruction';
-
 import { buildCodexMcpStartConfigForMessage } from '../utils/buildCodexMcpStartConfigForMessage';
 
 describe('buildCodexMcpStartConfigForMessage', () => {
-  it('uses provider-agnostic change_title tool naming', () => {
-    expect(CHANGE_TITLE_INSTRUCTION).not.toContain('functions.happier__change_title');
-    expect(CHANGE_TITLE_INSTRUCTION).toContain('change_title');
-  });
-
   it('threads model override into the start config', () => {
     const config = buildCodexMcpStartConfigForMessage({
       message: 'Hello',
@@ -23,9 +15,40 @@ describe('buildCodexMcpStartConfigForMessage', () => {
 
     expect(config).toMatchObject({
       prompt: 'Hello',
-      'base-instructions': `${CHANGE_TITLE_INSTRUCTION}\n\n${EXEC_SEQUENCING_INSTRUCTION}`,
       model: 'gpt-5-codex-high',
     });
+    expect(Object.prototype.hasOwnProperty.call(config, 'base-instructions')).toBe(false);
+  });
+
+  it('uses the resolved system prompt as base-instructions when provided', () => {
+    const config = buildCodexMcpStartConfigForMessage({
+      message: 'Hello',
+      first: true,
+      sandbox: 'workspace-write',
+      approvalPolicy: 'untrusted',
+      mcpServers: {},
+      mode: {},
+      systemPromptText: 'SYSTEM',
+    });
+
+    expect(config).toMatchObject({
+      prompt: 'Hello',
+      'base-instructions': 'SYSTEM',
+    });
+  });
+
+  it('omits base-instructions when the resolved system prompt is absent', () => {
+    const config = buildCodexMcpStartConfigForMessage({
+      message: 'Hello',
+      first: true,
+      sandbox: 'workspace-write',
+      approvalPolicy: 'untrusted',
+      mcpServers: {},
+      mode: {},
+      systemPromptText: undefined,
+    });
+
+    expect(Object.prototype.hasOwnProperty.call(config, 'base-instructions')).toBe(false);
   });
 
   it('does not append title instruction for non-first messages', () => {

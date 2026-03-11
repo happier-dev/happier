@@ -4,13 +4,15 @@ import { execFileSync } from 'child_process';
 import { fileURLToPath } from 'url';
 import { join, dirname } from 'path';
 
+import { prepareRuntimeEntrypoint } from './_prepareRuntimeEntrypoint.mjs';
+
 // Ensure Node flags to reduce noisy warnings on stdout (which could interfere with MCP)
 const hasNoWarnings = process.execArgv.includes('--no-warnings');
 const hasNoDeprecation = process.execArgv.includes('--no-deprecation');
 
 if (!hasNoWarnings || !hasNoDeprecation) {
   const projectRoot = dirname(dirname(fileURLToPath(import.meta.url)));
-  const entrypoint = join(projectRoot, 'dist', 'backends', 'codex', 'happyMcpStdioBridge.mjs');
+  const entrypoint = await prepareRuntimeEntrypoint(projectRoot, join('backends', 'codex', 'happyMcpStdioBridge.mjs'));
 
   try {
     execFileSync(process.execPath, [
@@ -27,5 +29,6 @@ if (!hasNoWarnings || !hasNoDeprecation) {
   }
 } else {
   // Already have desired flags; import module directly
-  import('../dist/backends/codex/happyMcpStdioBridge.mjs');
+  const projectRoot = dirname(dirname(fileURLToPath(import.meta.url)));
+  import(await prepareRuntimeEntrypoint(projectRoot, join('backends', 'codex', 'happyMcpStdioBridge.mjs')));
 }

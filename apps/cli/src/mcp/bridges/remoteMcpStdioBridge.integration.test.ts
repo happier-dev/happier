@@ -1,6 +1,7 @@
 import { createServer } from 'node:http';
+import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { access, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -197,6 +198,41 @@ describe('remoteMcpStdioBridge', () => {
       await client.close();
     } finally {
       sseServer.stop();
+      await rm(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it('removes the config file when startup fails before the remote connect succeeds', async () => {
+    const tmp = await mkdtemp(join(tmpdir(), 'happier-mcp-bridge-it-'));
+    try {
+      const configPath = join(tmp, 'bridge.json');
+      await writeFile(
+        configPath,
+        JSON.stringify({
+          transport: 'http',
+          url: 'http://127.0.0.1:9',
+          headers: { Authorization: 'Bearer SHOULD_NOT_PERSIST' },
+        }),
+        { mode: 0o600 },
+      );
+
+      const bridgeEntrypoint = join(projectPath(), 'dist', 'mcp', 'bridges', 'remoteMcpStdioBridge.mjs');
+      const child = spawn(process.execPath, [bridgeEntrypoint], {
+        env: {
+          ...resolveEnvRecord(),
+          HAPPIER_MCP_REMOTE_BRIDGE_CONFIG_FILE: configPath,
+        },
+        stdio: ['ignore', 'ignore', 'pipe'],
+      });
+
+      const exitCode = await new Promise<number>((resolve, reject) => {
+        child.once('error', reject);
+        child.once('exit', (code) => resolve(code ?? -1));
+      });
+
+      expect(exitCode).not.toBe(0);
+      await expect(access(configPath)).rejects.toThrow();
+    } finally {
       await rm(tmp, { recursive: true, force: true });
     }
   });

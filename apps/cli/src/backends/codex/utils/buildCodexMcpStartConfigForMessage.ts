@@ -1,6 +1,3 @@
-import { CHANGE_TITLE_INSTRUCTION } from '@/agent/runtime/changeTitleInstruction';
-import { EXEC_SEQUENCING_INSTRUCTION } from '@/agent/runtime/execSequencingInstruction';
-
 import type { CodexSessionConfig } from '../types';
 import { buildCodexMcpStartConfig } from './buildCodexMcpStartConfig';
 
@@ -11,9 +8,12 @@ export function buildCodexMcpStartConfigForMessage(opts: Readonly<{
   approvalPolicy: NonNullable<CodexSessionConfig['approval-policy']>;
   mcpServers: unknown;
   mode: { model?: string | null | undefined };
+  systemPromptText?: string | null | undefined;
 }>): CodexSessionConfig {
+  const systemPromptText = typeof opts.systemPromptText === 'string' ? opts.systemPromptText.trim() : '';
+
   const baseInstructions = opts.first
-    ? `${CHANGE_TITLE_INSTRUCTION}\n\n${EXEC_SEQUENCING_INSTRUCTION}`
+    ? systemPromptText || null
     : null;
 
   return buildCodexMcpStartConfig({

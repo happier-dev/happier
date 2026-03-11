@@ -2,7 +2,8 @@ import { createServer, type OutgoingHttpHeaders, type ServerResponse } from "nod
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { AddressInfo } from "node:net";
 import { logger } from "@/ui/logger";
-import { createHappierMcpServer, HAPPIER_MCP_TOOL_NAMES } from "@/mcp/createHappierMcpServer";
+import { createHappierMcpServer } from "@/mcp/createHappierMcpServer";
+import { listBuiltInHappierTools } from "@/agent/tools/happierTools/listBuiltInHappierTools";
 import type { RpcHandlerManagerLike } from "@/api/rpc/types";
 import { configuration } from "@/configuration";
 
@@ -15,7 +16,7 @@ export type HappyMcpSessionClient = {
 export async function startHappyServer(client: HappyMcpSessionClient) {
     // Do not eagerly construct an MCP server on startup; only snapshot the names.
     // Full server creation is done per request inside the handler.
-    const toolNamesSnapshot = [...HAPPIER_MCP_TOOL_NAMES];
+    const toolNamesSnapshot = listBuiltInHappierTools().map((tool) => tool.name);
     const keepAliveIntervalMs = configuration.mcpSseKeepAliveIntervalMs;
 
     //

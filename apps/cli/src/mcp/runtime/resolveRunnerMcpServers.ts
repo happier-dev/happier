@@ -2,11 +2,18 @@ import type { McpServerConfig } from '@/agent';
 import { createHappierMcpBridge } from '@/agent/runtime/createHappierMcpBridge';
 import type { Credentials } from '@/persistence';
 import { logger } from '@/ui/logger';
-import type { AccountSettings } from '@happier-dev/protocol';
+import {
+  readSessionMcpSelectionV1FromMetadata,
+  type AccountSettings,
+} from '@happier-dev/protocol';
 
 import { readMcpServersSettingsFromAccountSettings } from '../servers/readMcpServersSettingsFromAccountSettings';
-import { resolveEffectiveMcpServersForDirectory } from '../servers/resolveEffectiveMcpServersForDirectory';
-import { deriveSettingsSecretsKeyForCredentials, indexSavedSecretsByIdFromAccountSettings } from '../servers/resolveMcpValueRefPlaintext';
+import { resolveManagedSessionMcpSelectionForDirectory } from '../servers/resolveManagedSessionMcpSelectionForDirectory';
+import {
+  deriveSettingsSecretsKeyForCredentials,
+  deriveSettingsSecretsReadKeysForCredentials,
+  indexSavedSecretsByIdFromAccountSettings,
+} from '../servers/resolveMcpValueRefPlaintext';
 import { materializeMcpServerConfigRecord } from '../servers/materializeMcpServerConfigRecord';
 import { mergeWithBuiltInHappierMcpServer } from '../servers/mergeWithBuiltInHappierMcpServer';
 
@@ -18,6 +25,7 @@ export async function resolveRunnerMcpServers(params: Readonly<{
   accountSettings: AccountSettings | null;
   machineId: string;
   directory: string;
+  sessionMetadata?: Readonly<Record<string, unknown>> | null;
   env?: NodeJS.ProcessEnv;
   tmpDir?: string | null;
   commandMode?: NonNullable<Parameters<typeof createHappierMcpBridge>[1]>['commandMode'];
@@ -35,19 +43,26 @@ export async function resolveRunnerMcpServers(params: Readonly<{
   }
 
   const mcpSettings = readMcpServersSettingsFromAccountSettings(accountSettings as any);
-  const resolved = resolveEffectiveMcpServersForDirectory({
+  const resolvedSelection = resolveManagedSessionMcpSelectionForDirectory({
     settings: mcpSettings,
     machineId: params.machineId,
     directory: params.directory,
+    selection: readSessionMcpSelectionV1FromMetadata(params.sessionMetadata ?? null),
   });
 
   const savedSecretsById = indexSavedSecretsByIdFromAccountSettings(accountSettings as any);
   const settingsSecretsKey = deriveSettingsSecretsKeyForCredentials(params.credentials);
+  const settingsSecretsReadKeys = deriveSettingsSecretsReadKeysForCredentials(params.credentials);
 
   const materialized = await materializeMcpServerConfigRecord({
-    resolved,
+    resolved: {
+      directory: params.directory,
+      strictMode: resolvedSelection.strictMode,
+      serversByName: resolvedSelection.selectedServersByName,
+    },
     savedSecretsById,
     settingsSecretsKey,
+    settingsSecretsReadKeys,
     processEnv: env,
     tmpDir: params.tmpDir ?? null,
     strictMode: mcpSettings.strictMode,

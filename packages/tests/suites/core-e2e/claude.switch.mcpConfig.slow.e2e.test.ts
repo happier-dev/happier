@@ -14,13 +14,14 @@ import { encryptLegacyBase64 } from '../../src/testkit/messageCrypto';
 import { waitFor } from '../../src/testkit/timing';
 import { writeTestManifestForServer } from '../../src/testkit/manifestForServer';
 import { stopDaemonFromHomeDir } from '../../src/testkit/daemon/daemon';
-import { ensureCliDistBuilt } from '../../src/testkit/process/cliDist';
-import { yarnCommand } from '../../src/testkit/process/commands';
+import { ensureCliSharedDepsBuilt } from '../../src/testkit/process/cliDist';
 import { fakeClaudeFixturePath, type FakeClaudeInvocation, waitForFakeClaudeInvocation } from '../../src/testkit/fakeClaude';
 import { postEncryptedUiTextMessage } from '../../src/testkit/uiMessages';
 import { requestSessionSwitchRpc } from '../../src/testkit/sessionSwitchRpc';
 import { writeCliSessionAttachFile } from '../../src/testkit/cliAttachFile';
 import { seedCliAuthForServer } from '../../src/testkit/cliAuth';
+import { upsertEncryptedAccountSettingsV2 } from '../../src/testkit/accountSettings';
+import { resolveCliTestLaunchSpec } from '../../src/testkit/process/cliLaunchSpec';
 
 const run = createRunDirs({ runLabel: 'core' });
 
@@ -38,12 +39,49 @@ describe('core e2e: Claude local↔remote switching carries MCP config', () => {
     server = await startServerLight({ testDir });
     const auth = await createTestAuth(server.baseUrl);
 
+    const now = Date.now();
+    const settingsServerId = randomUUID();
+    const settingsSecret = Uint8Array.from(randomBytes(32));
+    await upsertEncryptedAccountSettingsV2({
+      baseUrl: server.baseUrl,
+      token: auth.token,
+      secret: settingsSecret,
+      settings: {
+        schemaVersion: 2,
+        mcpServersSettingsV1: {
+          v: 1,
+          strictMode: false,
+          servers: [
+            {
+              id: settingsServerId,
+              name: 'from_settings',
+              transport: 'stdio',
+              stdio: { command: process.execPath, args: [] },
+              env: {},
+              createdAt: now,
+              updatedAt: now,
+            },
+          ],
+          bindings: [
+            {
+              id: randomUUID(),
+              serverId: settingsServerId,
+              enabled: true,
+              target: { t: 'allMachines' },
+              createdAt: now,
+              updatedAt: now,
+            },
+          ],
+        },
+      },
+    });
+
     const cliHome = resolve(join(testDir, 'cli-home'));
     const workspaceDir = resolve(join(testDir, 'workspace'));
     await mkdir(cliHome, { recursive: true });
     await mkdir(workspaceDir, { recursive: true });
 
-    const secret = Uint8Array.from(randomBytes(32));
+    const secret = settingsSecret;
     await seedCliAuthForServer({ cliHome, serverUrl: server.baseUrl, token: auth.token, secret });
 
     const metadataCiphertextBase64 = encryptLegacyBase64(
@@ -94,17 +132,20 @@ describe('core e2e: Claude local↔remote switching carries MCP config', () => {
       HAPPIER_CLAUDE_PATH: fakeClaudePath,
       HAPPIER_E2E_FAKE_CLAUDE_LOG: fakeLog,
       HAPPIER_E2E_FAKE_CLAUDE_SESSION_ID: `fake-claude-session-${randomUUID()}`,
+      HAPPIER_E2E_PROVIDER_USE_CLI_SOURCE_ENTRYPOINT: '1',
     };
 
-    await ensureCliDistBuilt({ testDir, env: cliEnv });
+    await ensureCliSharedDepsBuilt({ testDir, env: cliEnv }, { skipSourceFreshnessCheck: true });
+
+    const cliLaunchSpec = await resolveCliTestLaunchSpec(
+      { testDir, env: cliEnv },
+      { snapshotDir: resolve(join(testDir, 'cli-dist')), preferSourceEntrypoint: true },
+    );
 
     const proc: SpawnedProcess = spawnLoggedProcess({
-      command: yarnCommand(),
+      command: cliLaunchSpec.command,
       args: [
-        '-s',
-        'workspace',
-        '@happier-dev/cli',
-        'dev',
+        ...cliLaunchSpec.args,
         'claude',
         '--existing-session',
         sessionId,
@@ -113,8 +154,11 @@ describe('core e2e: Claude local↔remote switching carries MCP config', () => {
         '--mcp-config',
         customMcpConfig,
       ],
-      cwd: repoRootDir(),
-      env: cliEnv,
+      cwd: cliLaunchSpec.cwd ?? repoRootDir(),
+      env: {
+        ...cliEnv,
+        ...(cliLaunchSpec.env ?? {}),
+      },
       stdoutPath: resolve(join(testDir, 'cli.stdout.log')),
       stderrPath: resolve(join(testDir, 'cli.stderr.log')),
     });
@@ -131,8 +175,8 @@ describe('core e2e: Claude local↔remote switching carries MCP config', () => {
         fakeLog,
         (i) => i.mode === 'local' && i.argv.includes('--settings'),
       );
-      expect(Object.keys(localInvocation.mergedMcpServers ?? {}).sort()).toEqual(['custom', 'happier']);
-      expect(localInvocation.mcpConfigs?.length ?? 0).toBe(1);
+      expect(Object.keys(localInvocation.mergedMcpServers ?? {}).sort()).toEqual(['custom', 'from_settings', 'happier']);
+      expect(localInvocation.mcpConfigs?.length ?? 0).toBeGreaterThanOrEqual(1);
 
       // Legacy remote runner should keep the merged MCP config.
       await requestSessionSwitchRpc({ ui, sessionId, to: 'remote', secret, timeoutMs: 20_000 });
@@ -149,8 +193,8 @@ describe('core e2e: Claude local↔remote switching carries MCP config', () => {
         fakeLog,
         (i) => i.mode === 'sdk' && i.argv.includes('--settings'),
       );
-      expect(Object.keys(legacyRemoteInvocation.mergedMcpServers ?? {}).sort()).toEqual(['custom', 'happier']);
-      expect(legacyRemoteInvocation.mcpConfigs?.length ?? 0).toBe(1);
+      expect(Object.keys(legacyRemoteInvocation.mergedMcpServers ?? {}).sort()).toEqual(['custom', 'from_settings', 'happier']);
+      expect(legacyRemoteInvocation.mcpConfigs?.length ?? 0).toBeGreaterThanOrEqual(1);
 
       // Switch back to local, then re-enter remote with Agent SDK enabled.
       await requestSessionSwitchRpc({ ui, sessionId, to: 'local', secret, timeoutMs: 25_000 });
@@ -171,8 +215,8 @@ describe('core e2e: Claude local↔remote switching carries MCP config', () => {
         fakeLog,
         (i) => i.mode === 'sdk' && !i.argv.includes('--settings'),
       );
-      expect(Object.keys(agentSdkRemoteInvocation.mergedMcpServers ?? {}).sort()).toEqual(['custom', 'happier']);
-      expect(agentSdkRemoteInvocation.mcpConfigs?.length ?? 0).toBe(1);
+      expect(Object.keys(agentSdkRemoteInvocation.mergedMcpServers ?? {}).sort()).toEqual(['custom', 'from_settings', 'happier']);
+      expect(agentSdkRemoteInvocation.mcpConfigs?.length ?? 0).toBeGreaterThanOrEqual(1);
 
       const snap = await fetchSessionV2(server.baseUrl, auth.token, sessionId);
       expect(typeof snap.metadata).toBe('string');

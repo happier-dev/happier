@@ -1,6 +1,7 @@
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 
 import { logger } from '@/ui/logger';
+import { buildProviderCliUnavailableMessage } from '@/runtime/managedTools/buildProviderCliUnavailableMessage';
 
 import { getCodexMcpCommand, getCodexVersionInfo } from './version';
 
@@ -10,6 +11,7 @@ export function createCodexTransport(params: {
     codexCommand: string;
     mode: CodexMcpClientSpawnMode;
     mcpServerArgs: string[];
+    env?: NodeJS.ProcessEnv;
 }): {
     transport: StdioClientTransport;
     versionInfo: ReturnType<typeof getCodexVersionInfo>;
@@ -24,15 +26,11 @@ export function createCodexTransport(params: {
         logger.debug('[CodexMCP] Detected codex version', detectedVersionInfo);
 
         if (!detectedVersionInfo || detectedVersionInfo.raw === null) {
-            throw new Error(
-                `Codex CLI not found or not executable: ${params.codexCommand}\n` +
-                '\n' +
-                'To install codex:\n' +
-                '  npm install -g @openai/codex\n' +
-                '\n' +
-                'Alternatively, use Claude:\n' +
-                '  happy claude'
-            );
+            throw new Error(buildProviderCliUnavailableMessage({
+                agentId: 'codex',
+                resolvedCommand: params.codexCommand,
+                alternativeCommandHint: ['Alternatively, use Claude:', '  happier claude'].join('\n'),
+            }));
         }
 
         const mcpCommand = getCodexMcpCommand(params.codexCommand);
@@ -40,14 +38,23 @@ export function createCodexTransport(params: {
         return [mcpCommand];
     })();
 
+    const env = Object.keys(process.env).reduce((acc, key) => {
+        const value = process.env[key];
+        if (typeof value === 'string') acc[key] = value;
+        return acc;
+    }, {} as Record<string, string>);
+    for (const [key, value] of Object.entries(params.env ?? {})) {
+        if (typeof value === 'string') {
+            env[key] = value;
+            continue;
+        }
+        delete env[key];
+    }
+
     const transport = new StdioClientTransport({
         command: params.codexCommand,
         args: transportArgs,
-        env: Object.keys(process.env).reduce((acc, key) => {
-            const value = process.env[key];
-            if (typeof value === 'string') acc[key] = value;
-            return acc;
-        }, {} as Record<string, string>)
+        env,
     });
 
     const versionInfo = params.mode === 'mcp-server'

@@ -12,18 +12,20 @@
  * - when disabled, invalid servers are skipped and surfaced as warnings.
  */
 
-import { chmod, mkdir, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { basename, join, resolve as resolvePath } from 'node:path';
+import { realpathSync } from 'node:fs';
 
 import type { McpServerConfig } from '@/agent';
-import { projectPath } from '@/projectPath';
+import { resolveNodeBackedMcpServerCommand } from '@/mcp/runtime/resolveNodeBackedMcpServerCommand';
+import { writeSecureMcpRuntimeConfigFile } from '@/mcp/runtime/writeSecureMcpRuntimeConfigFile';
 import {
   type McpServerCatalogEntryV1,
   type ResolveEffectiveServersV1Result,
   type SecretStringV1,
 } from '@happier-dev/protocol';
 
+import { normalizePackageRunnerInvocation } from './normalizePackageRunnerInvocation';
 import { resolveMcpValueRefPlaintext } from './resolveMcpValueRefPlaintext';
 
 export type MaterializeMcpServerConfigRecordWarning = Readonly<{
@@ -38,37 +40,106 @@ export type MaterializeMcpServerConfigRecordResult = Readonly<{
 }>;
 
 type Deps = Readonly<{
-  resolveRemoteBridgeCommand?: () => Readonly<{ command: string; args: string[] }>;
+  resolveRemoteBridgeCommand?: () => Readonly<{ command: string; args: string[]; env?: Record<string, string> }> | Promise<Readonly<{ command: string; args: string[]; env?: Record<string, string> }>>;
+  resolveStdioLauncherCommand?: () => Readonly<{ command: string; args: string[]; env?: Record<string, string> }> | Promise<Readonly<{ command: string; args: string[]; env?: Record<string, string> }>>;
 }>;
 
-function resolveDefaultRemoteBridgeCommand(): Readonly<{ command: string; args: string[] }> {
-  const bridgeBin = join(projectPath(), 'bin', 'happier-mcp-remote-bridge.mjs');
-  return { command: process.execPath, args: [bridgeBin] };
+async function resolveDefaultRemoteBridgeCommand(): Promise<Readonly<{ command: string; args: string[]; env?: Record<string, string> }>> {
+  return resolveNodeBackedMcpServerCommand({
+    distEntrypointSegments: ['mcp', 'bridges', 'remoteMcpStdioBridge.mjs'],
+    sourceEntrypointSegments: ['mcp', 'bridges', 'remoteMcpStdioBridge.ts'],
+  });
 }
 
-function materializeStdioServer(params: Readonly<{
+async function resolveDefaultStdioLauncherCommand(): Promise<Readonly<{ command: string; args: string[]; env?: Record<string, string> }>> {
+  return resolveNodeBackedMcpServerCommand({
+    distEntrypointSegments: ['mcp', 'launchers', 'stdioMcpServerLauncher.mjs'],
+    sourceEntrypointSegments: ['mcp', 'launchers', 'stdioMcpServerLauncher.ts'],
+  });
+}
+
+function isPackageRunnerCommand(command: string): boolean {
+  const normalized = basename(command).toLowerCase();
+  return new Set(['npx', 'npx.cmd', 'npm', 'npm.cmd', 'pnpm', 'pnpm.cmd', 'yarn', 'yarn.cmd', 'yarnpkg', 'yarnpkg.cmd', 'bunx', 'bunx.cmd'])
+    .has(normalized);
+}
+
+function resolveNeutralLaunchCwd(processEnv: NodeJS.ProcessEnv): string {
+  const home = typeof processEnv.HOME === 'string' && processEnv.HOME.length > 0 ? processEnv.HOME : null;
+  const userProfile =
+    typeof processEnv.USERPROFILE === 'string' && processEnv.USERPROFILE.length > 0 ? processEnv.USERPROFILE : null;
+  const homeDrive = typeof processEnv.HOMEDRIVE === 'string' ? processEnv.HOMEDRIVE : '';
+  const homePath = typeof processEnv.HOMEPATH === 'string' ? processEnv.HOMEPATH : '';
+
+  const raw = home ?? userProfile ?? (homeDrive && homePath ? `${homeDrive}${homePath}` : tmpdir());
+  const resolved = resolvePath(raw);
+  try {
+    return realpathSync(resolved);
+  } catch {
+    return resolved;
+  }
+}
+
+async function materializeStdioServer(params: Readonly<{
   server: McpServerCatalogEntryV1;
+  directory: string;
   resolvedEnv: Record<string, string>;
-}>): McpServerConfig | null {
+  processEnv: NodeJS.ProcessEnv;
+  tmpDir: string | null;
+  deps: Deps;
+}>): Promise<
+  | null
+  | Readonly<{ ok: true; config: McpServerConfig }>
+  | Readonly<{ ok: false; detail: string }>
+> {
   if (params.server.transport !== 'stdio' || !params.server.stdio) return null;
+
+  if (isPackageRunnerCommand(params.server.stdio.command)) {
+    const normalizedInvocation = await normalizePackageRunnerInvocation({
+      command: params.server.stdio.command,
+      args: params.server.stdio.args,
+      processEnv: params.processEnv,
+    });
+    if (!normalizedInvocation) {
+      return {
+        ok: false,
+        detail: 'managed pnpm unavailable for package-runner command',
+      };
+    }
+    const launcherCommand = await (params.deps.resolveStdioLauncherCommand?.() ?? resolveDefaultStdioLauncherCommand());
+    const configPath = await writeSecureMcpRuntimeConfigFile({
+      prefix: 'happier-mcp-stdio-launcher',
+      tmpDir: params.tmpDir,
+      payload: {
+        command: normalizedInvocation.command,
+        args: normalizedInvocation.args,
+        env: params.resolvedEnv,
+        cwd: normalizedInvocation.cwdPolicy === 'workspace' ? params.directory : resolveNeutralLaunchCwd(params.processEnv),
+      },
+    });
+
+    return {
+      ok: true,
+      config: {
+        command: launcherCommand.command,
+        args: launcherCommand.args,
+        env: {
+          ...(launcherCommand.env ?? {}),
+          HAPPIER_MCP_STDIO_LAUNCHER_CONFIG_FILE: configPath,
+        },
+      },
+    };
+  }
+
   const env = Object.keys(params.resolvedEnv).length > 0 ? params.resolvedEnv : undefined;
   return {
-    command: params.server.stdio.command,
-    args: params.server.stdio.args,
-    env,
+    ok: true,
+    config: {
+      command: params.server.stdio.command,
+      args: params.server.stdio.args,
+      env,
+    },
   };
-}
-
-async function writeRemoteBridgeConfigFile(params: Readonly<{
-  tmpDir: string | null;
-  payload: unknown;
-}>): Promise<string> {
-  const baseDir = params.tmpDir ?? join(tmpdir(), 'happier-mcp-remote-bridge');
-  await mkdir(baseDir, { recursive: true });
-  const path = join(baseDir, `remote-bridge.${Date.now()}.${Math.random().toString(16).slice(2)}.json`);
-  await writeFile(path, JSON.stringify(params.payload), { mode: 0o600 });
-  await chmod(path, 0o600);
-  return path;
 }
 
 async function materializeRemoteServer(params: Readonly<{
@@ -80,9 +151,10 @@ async function materializeRemoteServer(params: Readonly<{
 }>): Promise<McpServerConfig | null> {
   if (params.server.transport === 'stdio' || !params.server.remote) return null;
 
-  const bridgeCommand = params.deps.resolveRemoteBridgeCommand?.() ?? resolveDefaultRemoteBridgeCommand();
+  const bridgeCommand = await (params.deps.resolveRemoteBridgeCommand?.() ?? resolveDefaultRemoteBridgeCommand());
 
-  const configPath = await writeRemoteBridgeConfigFile({
+  const configPath = await writeSecureMcpRuntimeConfigFile({
+    prefix: 'happier-mcp-remote-bridge',
     tmpDir: params.tmpDir,
     payload: {
       transport: params.server.transport,
@@ -92,6 +164,7 @@ async function materializeRemoteServer(params: Readonly<{
   });
 
   const env = {
+    ...(bridgeCommand.env ?? {}),
     ...params.resolvedEnv,
     HAPPIER_MCP_REMOTE_BRIDGE_CONFIG_FILE: configPath,
   };
@@ -107,6 +180,7 @@ export async function materializeMcpServerConfigRecord(params: Readonly<{
   resolved: ResolveEffectiveServersV1Result;
   savedSecretsById: ReadonlyMap<string, SecretStringV1>;
   settingsSecretsKey: Uint8Array | null;
+  settingsSecretsReadKeys?: ReadonlyArray<Uint8Array | null | undefined>;
   processEnv?: NodeJS.ProcessEnv;
   tmpDir: string | null;
   strictMode?: boolean;
@@ -131,6 +205,7 @@ export async function materializeMcpServerConfigRecord(params: Readonly<{
         valueRef,
         savedSecretsById: params.savedSecretsById,
         settingsSecretsKey: params.settingsSecretsKey,
+        settingsSecretsReadKeys: params.settingsSecretsReadKeys,
         processEnv,
       });
       if (resolved === null) {
@@ -154,18 +229,25 @@ export async function materializeMcpServerConfigRecord(params: Readonly<{
     }
 
     if (server.transport === 'stdio') {
-      const cfg = materializeStdioServer({ server, resolvedEnv });
-      if (!cfg) {
+      const cfg = await materializeStdioServer({
+        server,
+        directory: params.resolved.directory,
+        resolvedEnv,
+        processEnv,
+        tmpDir: params.tmpDir,
+        deps,
+      });
+      if (!cfg || cfg.ok !== true) {
         const warning: MaterializeMcpServerConfigRecordWarning = {
           serverName,
           code: 'invalid_server',
-          detail: 'missing stdio config',
+          detail: cfg?.detail ?? 'missing stdio config',
         };
         if (strictMode) throw new Error(`Failed to materialize MCP server ${serverName}: ${warning.detail}`);
         warnings.push(warning);
         continue;
       }
-      mcpServers[serverName] = cfg;
+      mcpServers[serverName] = cfg.config;
       continue;
     }
 
@@ -186,6 +268,7 @@ export async function materializeMcpServerConfigRecord(params: Readonly<{
         valueRef,
         savedSecretsById: params.savedSecretsById,
         settingsSecretsKey: params.settingsSecretsKey,
+        settingsSecretsReadKeys: params.settingsSecretsReadKeys,
         processEnv,
       });
       if (resolved === null) {

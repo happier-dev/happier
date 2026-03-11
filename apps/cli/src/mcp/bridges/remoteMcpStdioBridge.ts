@@ -19,6 +19,10 @@ import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/
 import { SSEClientTransport } from '@modelcontextprotocol/sdk/client/sse.js';
 import { z } from 'zod';
 
+import { isSafeTmpMcpConfigFilePath } from '@/mcp/runtime/isSafeTmpMcpConfigFilePath';
+
+const REMOTE_BRIDGE_CONFIG_PREFIX = 'happier-mcp-remote-bridge';
+
 const RemoteBridgeConfigSchema = z.object({
   transport: z.enum(['http', 'sse']),
   url: z.string().min(1),
@@ -71,6 +75,9 @@ async function main(): Promise<void> {
   let config: RemoteBridgeConfig;
   try {
     const raw = await readFile(configPath, 'utf8');
+    if (isSafeTmpMcpConfigFilePath(configPath, REMOTE_BRIDGE_CONFIG_PREFIX)) {
+      unlink(configPath).catch(() => {});
+    }
     config = RemoteBridgeConfigSchema.parse(JSON.parse(raw));
   } catch (err) {
     writeStderr(`[happier-mcp-remote-bridge] Failed to read config: ${err instanceof Error ? err.message : String(err)}`);
@@ -78,9 +85,6 @@ async function main(): Promise<void> {
   }
 
   const remoteClient = await connectRemoteClient(config);
-
-  // Best-effort: remove config file after connect to reduce secret exposure at rest.
-  unlink(configPath).catch(() => {});
 
   const toolList = await remoteClient.listTools();
   const tools = Array.isArray((toolList as any)?.tools) ? ((toolList as any).tools as any[]) : [];

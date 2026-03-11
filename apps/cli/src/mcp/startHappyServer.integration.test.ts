@@ -9,6 +9,7 @@ import type { ACPMessageData } from '@/api/session/sessionMessageTypes';
 import type { AgentBackend } from '@/agent/core/AgentBackend';
 import { reloadConfiguration } from '@/configuration';
 import { registerExecutionRunHandlers } from '@/rpc/handlers/executionRuns';
+import { HAPPIER_MCP_ACTION_SPECS_RESOURCE_URI } from '@/mcp/resources/registerHappierMcpResources';
 import { startHappyServer, type HappyMcpSessionClient } from '@/mcp/startHappyServer';
 
 function createStaticBackend(responseText: string): AgentBackend {
@@ -39,6 +40,28 @@ function parseMcpJsonText(result: any): any {
     throw new Error('Missing MCP text response');
   }
   return JSON.parse(text);
+}
+
+function isTextResourceContentEntry(
+  entry: unknown,
+): entry is { uri: string; text: string; mimeType?: string | undefined } {
+  if (!entry || typeof entry !== 'object' || Array.isArray(entry)) return false;
+  const record = entry as Record<string, unknown>;
+  return typeof record.uri === 'string' && typeof record.text === 'string';
+}
+
+async function withTimeout<T>(promise: Promise<T>, label: string, timeoutMs = 3_000): Promise<T> {
+  let timer: NodeJS.Timeout | null = null;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(new Error(`${label} timed out after ${timeoutMs}ms`)), timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
 }
 
 describe('startHappyServer (MCP integration)', () => {
@@ -169,11 +192,13 @@ describe('startHappyServer (MCP integration)', () => {
 
       const tools = await client.listTools();
       const names = new Set((tools.tools ?? []).map((t: any) => String(t.name)));
-      expect(names.has('action_spec_list')).toBe(true);
+      expect(names.has('action_spec_search')).toBe(true);
       expect(names.has('action_spec_get')).toBe(true);
+      expect(names.has('action_options_resolve')).toBe(true);
+      expect(names.has('action_execute')).toBe(true);
       expect(names.has('review_start')).toBe(true);
-      expect(names.has('plan_start')).toBe(true);
-      expect(names.has('delegate_start')).toBe(true);
+      expect(names.has('subagents_plan_start')).toBe(true);
+      expect(names.has('subagents_delegate_start')).toBe(true);
       expect(names.has('execution_run_start')).toBe(true);
       expect(names.has('execution_run_get')).toBe(true);
       expect(names.has('execution_run_action')).toBe(true);
@@ -267,7 +292,7 @@ describe('startHappyServer (MCP integration)', () => {
       const tools = await client.listTools();
       const names = new Set((tools.tools ?? []).map((t: any) => String(t.name)));
       expect(names.has('review_start')).toBe(false);
-      expect(names.has('plan_start')).toBe(true);
+      expect(names.has('subagents_plan_start')).toBe(true);
 
       const got = await client.callTool({
         name: 'action_spec_get',
@@ -280,6 +305,61 @@ describe('startHappyServer (MCP integration)', () => {
       server.stop();
       if (prev === undefined) delete process.env.HAPPIER_ACTIONS_SETTINGS_V1;
       else process.env.HAPPIER_ACTIONS_SETTINGS_V1 = prev;
+    }
+  });
+
+  it('lists and reads Happier MCP resources over HTTP transport', async () => {
+    const rpcHandlerManager = new RpcHandlerManager({
+      scopePrefix: 'sess_mcp_resources_1',
+      encryptionKey: new Uint8Array([1, 2, 3, 4]),
+      encryptionVariant: 'legacy',
+    });
+
+    registerExecutionRunHandlers(rpcHandlerManager, {
+      sessionId: 'sess_mcp_resources_1',
+      cwd: process.cwd(),
+      parentProvider: 'claude',
+      createBackend: () => createStaticBackend(JSON.stringify({ ok: true })),
+      sendAcp: () => {},
+    });
+
+    const fakeClient: HappyMcpSessionClient = {
+      sessionId: 'sess_mcp_resources_1',
+      rpcHandlerManager,
+      sendClaudeSessionMessage: () => {},
+    };
+
+    const server = await startHappyServer(fakeClient);
+    let client: Client | null = null;
+    try {
+      client = new Client({ name: 'mcp-test-resources', version: '1.0.0' }, { capabilities: {} });
+      await client.connect(new StreamableHTTPClientTransport(new URL(server.url)));
+
+      const resources = await withTimeout(client.listResources(), 'resources/list');
+      const actionSpecsResource = resources.resources.find(
+        (resource: any) => String(resource.uri) === HAPPIER_MCP_ACTION_SPECS_RESOURCE_URI,
+      );
+      expect(actionSpecsResource).toBeDefined();
+
+      const read = await withTimeout(
+        client.readResource({ uri: HAPPIER_MCP_ACTION_SPECS_RESOURCE_URI }),
+        'resources/read',
+      );
+      const textContent = read.contents.find(
+        (entry) => isTextResourceContentEntry(entry) && entry.uri === HAPPIER_MCP_ACTION_SPECS_RESOURCE_URI,
+      );
+      expect(textContent?.mimeType).toBe('application/json');
+      expect(textContent && 'text' in textContent).toBe(true);
+      if (!textContent || !('text' in textContent)) {
+        throw new Error('Expected text MCP resource content');
+      }
+
+      const parsed = JSON.parse(textContent.text);
+      expect(Array.isArray(parsed.actionSpecs)).toBe(true);
+      expect(parsed.actionSpecs.some((spec: any) => spec.id === 'review.start')).toBe(true);
+    } finally {
+      await (client as any)?.close?.();
+      server.stop();
     }
   });
 

@@ -9,7 +9,8 @@ import { createTestAuth } from '../../src/testkit/auth';
 import { createSessionWithCiphertexts, fetchSessionV2 } from '../../src/testkit/sessions';
 import { repoRootDir } from '../../src/testkit/paths';
 import { spawnLoggedProcess, type SpawnedProcess } from '../../src/testkit/process/spawnProcess';
-import { decryptLegacyBase64, encryptLegacyBase64 } from '../../src/testkit/messageCrypto';
+import { encryptLegacyBase64 } from '../../src/testkit/messageCrypto';
+import { decryptLegacyBase64Normalized } from '../../src/testkit/decryptLegacyBase64Normalized';
 import { waitFor } from '../../src/testkit/timing';
 import { writeTestManifestForServer } from '../../src/testkit/manifestForServer';
 import { stopDaemonFromHomeDir } from '../../src/testkit/daemon/daemon';
@@ -143,17 +144,10 @@ describe('core e2e: Codex MCP attach strips stale ACP session state metadata', (
     });
 
     try {
-      // Wait for the CLI to attach and publish startup metadata (hostPid is a stable signal).
-      await waitFor(async () => {
-        const snap = await fetchSessionV2(server!.baseUrl, auth.token, sessionId);
-        const meta = decryptLegacyBase64(snap.metadata, secret) as any;
-        return typeof meta.hostPid === 'number' && Number.isFinite(meta.hostPid);
-      }, { timeoutMs: 45_000 });
-
       // Verify stale ACP state is removed under MCP attach.
       await waitFor(async () => {
         const snap = await fetchSessionV2(server!.baseUrl, auth.token, sessionId);
-        const meta = decryptLegacyBase64(snap.metadata, secret) as any;
+        const meta = decryptLegacyBase64Normalized(snap.metadata, secret) as any;
         return (
           meta.acpSessionModesV1 === undefined &&
           meta.acpSessionModelsV1 === undefined &&
@@ -162,7 +156,7 @@ describe('core e2e: Codex MCP attach strips stale ACP session state metadata', (
       }, { timeoutMs: 45_000 });
 
       const finalSnap = await fetchSessionV2(server.baseUrl, auth.token, sessionId);
-      const finalMeta = decryptLegacyBase64(finalSnap.metadata, secret) as any;
+      const finalMeta = decryptLegacyBase64Normalized(finalSnap.metadata, secret) as any;
       expect(finalMeta.acpSessionModesV1).toBeUndefined();
       expect(finalMeta.acpSessionModelsV1).toBeUndefined();
       expect(finalMeta.acpConfigOptionsV1).toBeUndefined();

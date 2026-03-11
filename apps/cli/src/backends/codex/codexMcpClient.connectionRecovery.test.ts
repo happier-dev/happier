@@ -1,4 +1,7 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest';
+import { chmodSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 type ClientCall = {
   name: string;
@@ -14,6 +17,21 @@ const callToolSpy = vi.fn(async (_call: ClientCall) => ({
 const createdClientIds: number[] = [];
 const staleClientIds = new Set<number>();
 let nextClientId = 1;
+const ORIGINAL_ENV = {
+  PATH: process.env.PATH,
+  HAPPIER_CODEX_PATH: process.env.HAPPIER_CODEX_PATH,
+};
+const TEMP_DIRS = new Set<string>();
+
+function createFakeCodexBinary(): string {
+  const dir = mkdtempSync(join(tmpdir(), 'happier-codex-mcp-client-'));
+  TEMP_DIRS.add(dir);
+  const isWindows = process.platform === 'win32';
+  const binPath = join(dir, isWindows ? 'codex.cmd' : 'codex');
+  writeFileSync(binPath, isWindows ? '@echo off\r\necho ok\r\n' : '#!/bin/sh\necho ok\n', 'utf8');
+  if (!isWindows) chmodSync(binPath, 0o755);
+  return binPath;
+}
 
 vi.mock('@/ui/logger', () => ({
   logger: {
@@ -69,12 +87,23 @@ vi.mock('@modelcontextprotocol/sdk/client/index.js', () => {
 
 describe('CodexMcpClient connection recovery', () => {
   beforeEach(() => {
+    process.env.PATH = '';
+    process.env.HAPPIER_CODEX_PATH = createFakeCodexBinary();
     connectSpy.mockClear();
     closeSpy.mockClear();
     callToolSpy.mockReset();
     createdClientIds.length = 0;
     staleClientIds.clear();
     nextClientId = 1;
+  });
+
+  afterEach(() => {
+    if (ORIGINAL_ENV.PATH === undefined) delete process.env.PATH;
+    else process.env.PATH = ORIGINAL_ENV.PATH;
+    if (ORIGINAL_ENV.HAPPIER_CODEX_PATH === undefined) delete process.env.HAPPIER_CODEX_PATH;
+    else process.env.HAPPIER_CODEX_PATH = ORIGINAL_ENV.HAPPIER_CODEX_PATH;
+    for (const dir of TEMP_DIRS) rmSync(dir, { recursive: true, force: true });
+    TEMP_DIRS.clear();
   });
 
   it('reconnects and retries continueSession once when MCP transport is closed', async () => {

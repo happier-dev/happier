@@ -1,4 +1,7 @@
-import { describe, it, expect, vi } from 'vitest';
+import { afterEach, beforeEach, describe, it, expect, vi } from 'vitest';
+import { chmodSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { getCodexElicitationToolCallId, getCodexEventToolCallId } from './codexMcpClient';
 import type { Mock } from 'vitest';
 import { getCodexMcpCommand } from './mcp/version';
@@ -60,6 +63,36 @@ vi.mock('@modelcontextprotocol/sdk/client/index.js', () => {
     }
 
     return { Client };
+});
+
+const ORIGINAL_ENV = {
+    PATH: process.env.PATH,
+    HAPPIER_CODEX_PATH: process.env.HAPPIER_CODEX_PATH,
+};
+const TEMP_DIRS = new Set<string>();
+
+function createFakeCodexBinary(): string {
+    const dir = mkdtempSync(join(tmpdir(), 'happier-codex-mcp-client-'));
+    TEMP_DIRS.add(dir);
+    const isWindows = process.platform === 'win32';
+    const binPath = join(dir, isWindows ? 'codex.cmd' : 'codex');
+    writeFileSync(binPath, isWindows ? '@echo off\r\necho ok\r\n' : '#!/bin/sh\necho ok\n', 'utf8');
+    if (!isWindows) chmodSync(binPath, 0o755);
+    return binPath;
+}
+
+beforeEach(() => {
+    process.env.PATH = '';
+    process.env.HAPPIER_CODEX_PATH = createFakeCodexBinary();
+});
+
+afterEach(() => {
+    if (ORIGINAL_ENV.PATH === undefined) delete process.env.PATH;
+    else process.env.PATH = ORIGINAL_ENV.PATH;
+    if (ORIGINAL_ENV.HAPPIER_CODEX_PATH === undefined) delete process.env.HAPPIER_CODEX_PATH;
+    else process.env.HAPPIER_CODEX_PATH = ORIGINAL_ENV.HAPPIER_CODEX_PATH;
+    for (const dir of TEMP_DIRS) rmSync(dir, { recursive: true, force: true });
+    TEMP_DIRS.clear();
 });
 
 describe('CodexMcpClient elicitation ids', () => {
@@ -163,8 +196,17 @@ describe('CodexMcpClient command detection', () => {
         await expect(client.connect()).resolves.toBeUndefined();
 
         expect(transportInstances).toHaveLength(1);
-        expect(transportInstances[0]?.command).toBe('codex');
+        expect(transportInstances[0]?.command).toBe(process.env.HAPPIER_CODEX_PATH);
         expect(transportInstances[0]?.args).toEqual(['mcp-server']);
+    });
+
+    it('fails closed when no Codex CLI source is available', async () => {
+        vi.resetModules();
+        delete process.env.HAPPIER_CODEX_PATH;
+        process.env.PATH = '';
+
+        const mod = await import('./codexMcpClient');
+        expect(() => new mod.CodexMcpClient()).toThrow(/system install/i);
     });
 
     it('uses legacy "mcp" subcommand for older codex versions', async () => {

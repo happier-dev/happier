@@ -1,9 +1,24 @@
-import { describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { createHappierMcpServer, HAPPIER_MCP_TOOL_NAMES } from '@/mcp/createHappierMcpServer';
+const env = process.env;
 
 describe('createHappierMcpServer', () => {
-  it('returns toolNames aligned with HAPPIER_MCP_TOOL_NAMES', () => {
+  beforeEach(() => {
+    vi.resetModules();
+    process.env = { ...env };
+    delete process.env.HAPPIER_ACTIONS_SETTINGS_V1;
+  });
+
+  it('returns toolNames aligned with current MCP action settings', async () => {
+    process.env.HAPPIER_ACTIONS_SETTINGS_V1 = JSON.stringify({
+      v: 1,
+      actions: {
+        'review.start': { enabled: true, disabledSurfaces: ['mcp'], disabledPlacements: [] },
+      },
+    });
+
+    const { createHappierMcpServer } = await import('@/mcp/createHappierMcpServer');
+
     const fakeClient = {
       sessionId: 'sess_mcp_tool_names_1',
       rpcHandlerManager: { invokeLocal: async () => ({}) },
@@ -11,7 +26,7 @@ describe('createHappierMcpServer', () => {
     } as any;
 
     const { toolNames } = createHappierMcpServer(fakeClient);
-    expect(toolNames).toEqual([...HAPPIER_MCP_TOOL_NAMES]);
+    expect(toolNames).not.toContain('review_start');
+    expect(toolNames).toContain('subagents_plan_start');
   });
 });
-

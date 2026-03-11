@@ -7,6 +7,7 @@ import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
 import { z } from 'zod/v4';
 
 import { logger } from '@/ui/logger';
+import { requireProviderCliCommand } from '@/runtime/managedTools/requireProviderCliCommand';
 import type { CodexSessionConfig, CodexToolResponse } from './types';
 
 import { createCodexTransport, type CodexMcpClientSpawnMode } from './mcp/client';
@@ -34,12 +35,14 @@ export class CodexMcpClient {
     private codexCommand: string;
     private mode: CodexMcpClientSpawnMode;
     private mcpServerArgs: string[];
+    private env?: NodeJS.ProcessEnv;
     private pendingAmendments = new Map<string, string[]>();
 
-    constructor(options?: { command?: string; mode?: CodexMcpClientSpawnMode; args?: string[] }) {
-        this.codexCommand = options?.command ?? 'codex';
+    constructor(options?: { command?: string; mode?: CodexMcpClientSpawnMode; args?: string[]; env?: NodeJS.ProcessEnv }) {
+        this.codexCommand = options?.command ?? requireProviderCliCommand('codex');
         this.mode = options?.mode ?? 'codex-cli';
         this.mcpServerArgs = options?.args ?? [];
+        this.env = options?.env;
         this.client = this.createClient();
     }
 
@@ -81,6 +84,7 @@ export class CodexMcpClient {
             codexCommand: this.codexCommand,
             mode: this.mode,
             mcpServerArgs: this.mcpServerArgs,
+            env: this.env,
         });
         this.transport = transport;
 

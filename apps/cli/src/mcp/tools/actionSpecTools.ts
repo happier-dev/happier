@@ -1,6 +1,15 @@
 import { z } from 'zod';
 
-import { getActionSpec, listActionSpecs, type ActionId } from '@happier-dev/protocol';
+import { type ActionId, type ResolvedActionOption } from '@happier-dev/protocol';
+
+import {
+  actionOptionsResolveSchema,
+  actionSpecGetSchema,
+  actionSpecSearchSchema,
+  getActionSpecForMcpSurface,
+  resolveActionOptionsForMcpSurface,
+  searchActionSpecsForMcpSurface,
+} from '@/agent/tools/happierTools/actionSpecDiscovery';
 
 type McpTextResponse = {
   content: Array<{ type: 'text'; text: string }>;
@@ -15,57 +24,59 @@ function errText(code: string, message: string): McpTextResponse {
   return { content: [{ type: 'text', text: JSON.stringify({ errorCode: code, error: message }) }], isError: true };
 }
 
-function serializeActionSpec(spec: any): unknown {
-  return {
-    id: spec.id,
-    title: spec.title,
-    description: spec.description ?? null,
-    safety: spec.safety,
-    placements: spec.placements ?? [],
-    slash: spec.slash ?? null,
-    bindings: spec.bindings ?? null,
-    examples: spec.examples ?? null,
-    surfaces: spec.surfaces,
-    inputHints: spec.inputHints ?? null,
-  };
-}
-
 export function createActionSpecMcpTools(opts?: Readonly<{
   isActionEnabled?: (id: ActionId) => boolean;
+  resolveActionOptions?: (args: Readonly<{
+    actionId: ActionId | null;
+    fieldPath: string | null;
+    optionsSourceId: string | null;
+    sessionId: string | null;
+    limit: number | null;
+    query: string | null;
+  }>) => Promise<
+    | Readonly<{
+        ok: true;
+        result: Readonly<{
+          actionId: ActionId | null;
+          fieldPath: string | null;
+          optionsSourceId: string | null;
+          options: readonly ResolvedActionOption[];
+        }>;
+      }>
+    | Readonly<{ ok: false; errorCode: string; error: string }>
+    | null
+  >;
 }>): Readonly<{
-  action_spec_list: Readonly<{ inputSchema: z.ZodTypeAny; handler: (args: unknown) => Promise<McpTextResponse> }>;
+  action_spec_search: Readonly<{ inputSchema: z.ZodTypeAny; handler: (args: unknown) => Promise<McpTextResponse> }>;
   action_spec_get: Readonly<{ inputSchema: z.ZodTypeAny; handler: (args: unknown) => Promise<McpTextResponse> }>;
+  action_options_resolve: Readonly<{ inputSchema: z.ZodTypeAny; handler: (args: unknown) => Promise<McpTextResponse> }>;
 }> {
-  // Optional policy hook for hiding/rejecting disabled actions.
   const isActionEnabled = opts?.isActionEnabled ?? ((_id: ActionId) => true);
+  const resolveActionOptions = opts?.resolveActionOptions ?? (async () => null);
 
-  const listSchema = z.object({}).passthrough();
-  const getSchema = z.object({ id: z.string().min(1) }).passthrough();
-
-  const action_spec_list = {
-    inputSchema: listSchema,
-    handler: async (_args: unknown) => {
-      const all = listActionSpecs()
-        .filter((spec) => isActionEnabled(spec.id))
-        .map(serializeActionSpec);
-      return okText({ actionSpecs: all });
+  const action_spec_search = {
+    inputSchema: actionSpecSearchSchema,
+    handler: async (args: unknown) => {
+      const result = await searchActionSpecsForMcpSurface(args, isActionEnabled);
+      return result.ok ? okText(result.result) : errText(result.errorCode, result.error);
     },
   } as const;
 
   const action_spec_get = {
-    inputSchema: getSchema,
+    inputSchema: actionSpecGetSchema,
     handler: async (args: unknown) => {
-      const parsed = getSchema.safeParse(args);
-      if (!parsed.success) return errText('execution_run_invalid_action_input', 'Invalid params');
-      try {
-        const spec = getActionSpec(parsed.data.id as any);
-        if (!isActionEnabled(spec.id)) return errText('action_disabled', 'Action is disabled');
-        return okText({ actionSpec: serializeActionSpec(spec) });
-      } catch {
-        return errText('execution_run_invalid_action_input', 'Unknown action spec');
-      }
+      const result = await getActionSpecForMcpSurface(args, isActionEnabled);
+      return result.ok ? okText(result.result) : errText(result.errorCode, result.error);
     },
   } as const;
 
-  return { action_spec_list, action_spec_get };
+  const action_options_resolve = {
+    inputSchema: actionOptionsResolveSchema,
+    handler: async (args: unknown) => {
+      const result = await resolveActionOptionsForMcpSurface(args, isActionEnabled, resolveActionOptions);
+      return result.ok ? okText(result.result) : errText(result.errorCode, result.error);
+    },
+  } as const;
+
+  return { action_spec_search, action_spec_get, action_options_resolve };
 }
