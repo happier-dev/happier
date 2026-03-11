@@ -20,7 +20,7 @@ import type { Message } from '../domains/messages/messageTypes';
 import type { Settings } from '../domains/settings/settings';
 import type { SessionListViewItem } from '../domains/session/listing/sessionListViewData';
 import { computeHasUnreadActivity } from '../domains/messages/unread';
-import { sync } from '../sync';
+import { buildTranscriptDraftMessages } from '../domains/messages/buildTranscriptDraftMessages';
 import type { ReviewCommentDraft } from '../domains/input/reviewComments/reviewCommentTypes';
 import type { SessionActionDraft } from '../domains/sessionActions/sessionActionDraftTypes';
 import { getActiveServerSnapshot } from '../domains/server/serverRuntime';
@@ -76,15 +76,35 @@ export function useSessionMessages(
 }
 
 export function useSessionTranscriptIds(sessionId: string): { ids: string[]; isLoaded: boolean } {
-  return getStorage()(
+  const snapshot = getStorage()(
     useShallow((state) => {
       const session = state.sessionMessages[sessionId];
       return {
-        ids: session?.messageIdsOldestFirst ?? (emptyArray as any as string[]),
+        committedIds: session?.messageIdsOldestFirst ?? (emptyArray as any as string[]),
+        draftsByLocalId: session?.draftsByLocalId ?? emptyRecord,
+        messagesVersion: session?.messagesVersion ?? 0,
         isLoaded: session?.isLoaded ?? false,
       };
     })
   );
+
+  const ids = React.useMemo(() => {
+    const draftMessages = buildTranscriptDraftMessages({
+      draftsByLocalId: snapshot.draftsByLocalId as Record<string, {
+        text: string;
+        segmentKind: 'assistant' | 'thinking';
+        sidechainId: string | null;
+        updatedAtMs: number;
+      }>,
+      sidechainId: null,
+    });
+    if (draftMessages.length === 0) {
+      return snapshot.committedIds as string[];
+    }
+    return [...snapshot.committedIds, ...draftMessages.map((message) => message.id)];
+  }, [snapshot.committedIds, snapshot.draftsByLocalId, snapshot.messagesVersion]);
+
+  return React.useMemo(() => ({ ids, isLoaded: snapshot.isLoaded }), [ids, snapshot.isLoaded]);
 }
 
 export function useForkedTranscriptSnapshot(sessionId: string): ForkedTranscriptSnapshot | null {
@@ -94,14 +114,35 @@ export function useForkedTranscriptSnapshot(sessionId: string): ForkedTranscript
 }
 
 export function useSessionMessagesById(sessionId: string): Record<string, Message> {
-  return getStorage()(
+  const snapshot = getStorage()(
     useShallow((state) => {
       const session = state.sessionMessages[sessionId];
-      // NOTE: For streaming performance, messagesById is mutated in-place in the store.
-      // Do not rely on the returned object's identity changing to detect updates.
-      return session?.messagesById ?? (emptyRecord as Record<string, Message>);
+      return {
+        committedMessagesById: session?.messagesById ?? (emptyRecord as Record<string, Message>),
+        draftsByLocalId: session?.draftsByLocalId ?? emptyRecord,
+        messagesVersion: session?.messagesVersion ?? 0,
+      };
     })
   );
+
+  return React.useMemo(() => {
+    const draftMessages = buildTranscriptDraftMessages({
+      draftsByLocalId: snapshot.draftsByLocalId as Record<string, {
+        text: string;
+        segmentKind: 'assistant' | 'thinking';
+        sidechainId: string | null;
+        updatedAtMs: number;
+      }>,
+      sidechainId: null,
+    });
+    if (draftMessages.length === 0) {
+      return snapshot.committedMessagesById;
+    }
+    return Object.fromEntries([
+      ...Object.entries(snapshot.committedMessagesById),
+      ...draftMessages.map((message) => [message.id, message] as const),
+    ]);
+  }, [snapshot.committedMessagesById, snapshot.draftsByLocalId, snapshot.messagesVersion]);
 }
 
 export function useSessionMessagesVersion(sessionId: string, enabled: boolean = true): number {
@@ -111,6 +152,32 @@ export function useSessionMessagesVersion(sessionId: string, enabled: boolean = 
       const session = state.sessionMessages[sessionId];
       return session?.messagesVersion ?? 0;
     })
+  );
+}
+
+export function useSessionTranscriptDraftMessages(sessionId: string, sidechainId?: string | null): Message[] {
+  const draftsByLocalId = getStorage()(
+    useShallow((state) => state.sessionMessages[sessionId]?.draftsByLocalId ?? emptyRecord)
+  );
+  const version = useSessionMessagesVersion(sessionId, true);
+  const normalizedSidechainId = typeof sidechainId === 'string' && sidechainId.trim().length > 0 ? sidechainId.trim() : null;
+
+  return React.useMemo(() => {
+    return buildTranscriptDraftMessages({
+      draftsByLocalId: draftsByLocalId as Record<string, {
+        text: string;
+        segmentKind: 'assistant' | 'thinking';
+        sidechainId: string | null;
+        updatedAtMs: number;
+      }>,
+      sidechainId: normalizedSidechainId,
+    });
+  }, [draftsByLocalId, normalizedSidechainId, version]);
+}
+
+export function useSessionMessagesReducerState(sessionId: string) {
+  return getStorage()(
+    useShallow((state) => state.sessionMessages[sessionId]?.reducerState ?? null)
   );
 }
 
@@ -174,12 +241,45 @@ export function useSessionActionDrafts(sessionId: string): SessionActionDraft[] 
 }
 
 export function useMessage(sessionId: string, messageId: string): Message | null {
-  return getStorage()(
-    useShallow((state) => {
-      const session = state.sessionMessages[sessionId];
-      return session?.messagesById?.[messageId] ?? session?.messagesMap?.[messageId] ?? null;
-    })
-  );
+  // NOTE:
+  // `messagesById` (and message objects within it) are intentionally mutated in-place for streaming
+  // performance. The store always creates a new session object when updating messages, so
+  // `useSessionMessagesById` (which uses `useShallow` on the session) will detect changes.
+  // We also subscribe to `messagesVersion` to ensure re-computation when messages are updated.
+  const messagesById = useSessionMessagesById(sessionId);
+  const version = useSessionMessagesVersion(sessionId, true);
+
+  return React.useMemo(() => {
+    return messagesById?.[messageId] ?? null;
+  }, [messageId, messagesById, version]);
+}
+
+export function useResolvedSessionMessageRouteId(sessionId: string, routeMessageId: string): string | null {
+  const messagesById = useSessionMessagesById(sessionId);
+  const version = useSessionMessagesVersion(sessionId, true);
+  const reducerState = useSessionMessagesReducerState(sessionId);
+
+  return React.useMemo(() => {
+    return resolveSessionMessageRouteId({
+      routeMessageId,
+      messagesById,
+      reducerState,
+    });
+  }, [messagesById, reducerState, routeMessageId, version]);
+}
+
+export function useSessionMessageRouteId(sessionId: string, messageId: string): string | null {
+  const messagesById = useSessionMessagesById(sessionId);
+  const version = useSessionMessagesVersion(sessionId, true);
+  const reducerState = useSessionMessagesReducerState(sessionId);
+
+  return React.useMemo(() => {
+    return buildSessionMessageRouteId({
+      messageId,
+      messagesById,
+      reducerState,
+    });
+  }, [messageId, messagesById, reducerState, version]);
 }
 
 export function useMessagesByIds(sessionId: string, messageIds: readonly string[]): Message[] {
