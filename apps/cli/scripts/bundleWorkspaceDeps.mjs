@@ -8,34 +8,14 @@ import {
   vendorBundledPackageRuntimeDependencies,
 } from '../../../packages/cli-common/dist/workspaces/index.js';
 
+import { createBundledWorkspaceBundles } from './workspaceBundleManifest.mjs';
+
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
 export function bundleWorkspaceDeps(opts = {}) {
   const repoRoot = opts.repoRoot ?? findRepoRoot(__dirname);
   const happyCliDir = opts.happyCliDir ?? resolve(repoRoot, 'apps', 'cli');
-
-  const bundles = [
-    {
-      packageName: '@happier-dev/agents',
-      srcDir: resolve(repoRoot, 'packages', 'agents'),
-      destDir: resolve(happyCliDir, 'node_modules', '@happier-dev', 'agents'),
-    },
-    {
-      packageName: '@happier-dev/cli-common',
-      srcDir: resolve(repoRoot, 'packages', 'cli-common'),
-      destDir: resolve(happyCliDir, 'node_modules', '@happier-dev', 'cli-common'),
-    },
-    {
-      packageName: '@happier-dev/protocol',
-      srcDir: resolve(repoRoot, 'packages', 'protocol'),
-      destDir: resolve(happyCliDir, 'node_modules', '@happier-dev', 'protocol'),
-    },
-    {
-      packageName: '@happier-dev/release-runtime',
-      srcDir: resolve(repoRoot, 'packages', 'release-runtime'),
-      destDir: resolve(happyCliDir, 'node_modules', '@happier-dev', 'release-runtime'),
-    },
-  ];
+  const bundles = createBundledWorkspaceBundles({ repoRoot, targetRoot: happyCliDir });
   bundleWorkspacePackages({ bundles });
 
   for (const b of bundles) {

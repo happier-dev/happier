@@ -3,9 +3,10 @@ import { cpSync, existsSync, readFileSync, realpathSync, writeFileSync } from 'n
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
-const __dirname = dirname(fileURLToPath(import.meta.url));
+import { bundledWorkspacePackages } from './workspaceBundleManifest.mjs';
 
-export const bundledWorkspacePackages = ['agents', 'cli-common', 'protocol', 'release-runtime'];
+const __dirname = dirname(fileURLToPath(import.meta.url));
+export { bundledWorkspacePackages } from './workspaceBundleManifest.mjs';
 
 function findRepoRoot(startDir) {
   let dir = startDir;
