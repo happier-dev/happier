@@ -106,6 +106,21 @@ export function syncBundledWorkspaceDist(opts = {}) {
   }
 }
 
+export function resolveBundledWorkspaceBuildEntry(pkg, opts = {}) {
+  const repoRootArg = opts.repoRoot;
+  const repoRoot = typeof repoRootArg === 'string' && repoRootArg.trim() ? repoRootArg : findRepoRoot(__dirname);
+  const readFile = opts.readFileSync ?? readFileSync;
+  const packageJsonPath = resolve(repoRoot, 'packages', pkg, 'package.json');
+
+  try {
+    const packageJson = JSON.parse(readFile(packageJsonPath, 'utf8'));
+    const mainEntry = typeof packageJson?.main === 'string' && packageJson.main.trim() ? packageJson.main : './dist/index.js';
+    return resolve(repoRoot, 'packages', pkg, mainEntry);
+  } catch {
+    return resolve(repoRoot, 'packages', pkg, 'dist', 'index.js');
+  }
+}
+
 function sanitizeBundledWorkspacePackageJson(raw) {
   const {
     name,
@@ -143,7 +158,7 @@ export function main() {
   }
 
   for (const pkg of bundledWorkspacePackages) {
-    const distEntry = resolve(repoRoot, 'packages', pkg, 'dist', 'index.js');
+    const distEntry = resolveBundledWorkspaceBuildEntry(pkg, { repoRoot });
     if (!existsSync(distEntry)) {
       throw new Error(`Expected @happier-dev/${pkg} build output missing: ${distEntry}`);
     }

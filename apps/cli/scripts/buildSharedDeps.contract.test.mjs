@@ -2,7 +2,11 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { normalize, resolve } from 'node:path';
 
-import { bundledWorkspacePackages, syncBundledWorkspaceDist } from './buildSharedDeps.mjs';
+import {
+  bundledWorkspacePackages,
+  resolveBundledWorkspaceBuildEntry,
+  syncBundledWorkspaceDist,
+} from './buildSharedDeps.mjs';
 import { createBundledWorkspaceBundles } from './workspaceBundleManifest.mjs';
 
 test('buildSharedDeps builds every bundled workspace package needed by the published CLI', () => {
@@ -35,6 +39,26 @@ test('workspace bundle manifest derives bundle metadata from a single package li
       destDir: resolve(targetRoot, 'node_modules', '@happier-dev', 'release-runtime'),
     },
   ]);
+});
+
+test('buildSharedDeps verifies each package using its declared main entry when available', () => {
+  const repoRoot = resolve('repo');
+
+  assert.equal(
+    resolveBundledWorkspaceBuildEntry('release-runtime', {
+      repoRoot,
+      readFileSync: () => JSON.stringify({ main: './dist/github.js' }),
+    }),
+    resolve(repoRoot, 'packages', 'release-runtime', 'dist', 'github.js'),
+  );
+
+  assert.equal(
+    resolveBundledWorkspaceBuildEntry('release-runtime', {
+      repoRoot,
+      readFileSync: () => JSON.stringify({}),
+    }),
+    resolve(repoRoot, 'packages', 'release-runtime', 'dist', 'index.js'),
+  );
 });
 
 test('syncBundledWorkspaceDist defaults include release-runtime', () => {
