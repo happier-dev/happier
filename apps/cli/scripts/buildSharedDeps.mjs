@@ -5,6 +5,8 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
+export const bundledWorkspacePackages = ['agents', 'cli-common', 'protocol', 'release-runtime'];
+
 function findRepoRoot(startDir) {
   let dir = startDir;
   for (let i = 0; i < 10; i++) {
@@ -78,7 +80,8 @@ export function syncBundledWorkspaceDist(opts = {}) {
   const cp = opts.cpSync ?? cpSync;
   const readFile = opts.readFileSync ?? readFileSync;
   const writeFile = opts.writeFileSync ?? writeFileSync;
-  const packages = Array.isArray(opts.packages) && opts.packages.length > 0 ? opts.packages : ['agents', 'cli-common', 'protocol'];
+  const packages =
+    Array.isArray(opts.packages) && opts.packages.length > 0 ? opts.packages : bundledWorkspacePackages;
 
   for (const pkg of packages) {
     const srcDist = resolve(repoRoot, 'packages', pkg, 'dist');
@@ -134,13 +137,15 @@ function sanitizeBundledWorkspacePackageJson(raw) {
 }
 
 export function main() {
-  runTsc(resolve(repoRoot, 'packages', 'agents', 'tsconfig.json'));
-  runTsc(resolve(repoRoot, 'packages', 'cli-common', 'tsconfig.json'));
-  runTsc(resolve(repoRoot, 'packages', 'protocol', 'tsconfig.json'));
+  for (const pkg of bundledWorkspacePackages) {
+    runTsc(resolve(repoRoot, 'packages', pkg, 'tsconfig.json'));
+  }
 
-  const protocolDist = resolve(repoRoot, 'packages', 'protocol', 'dist', 'index.js');
-  if (!existsSync(protocolDist)) {
-    throw new Error(`Expected @happier-dev/protocol build output missing: ${protocolDist}`);
+  for (const pkg of bundledWorkspacePackages) {
+    const distEntry = resolve(repoRoot, 'packages', pkg, 'dist', 'index.js');
+    if (!existsSync(distEntry)) {
+      throw new Error(`Expected @happier-dev/${pkg} build output missing: ${distEntry}`);
+    }
   }
 
   // If the CLI currently has bundled workspace deps under apps/cli/node_modules,
