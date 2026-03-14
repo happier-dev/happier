@@ -140,11 +140,10 @@ function sanitizeBundledWorkspacePackageJson(raw) {
 export function main() {
   for (const pkg of bundledWorkspaceDirs) {
     runTsc(resolve(repoRoot, 'packages', pkg, 'tsconfig.json'));
-  }
-
-  const protocolDist = resolve(repoRoot, 'packages', 'protocol', 'dist', 'index.js');
-  if (!existsSync(protocolDist)) {
-    throw new Error(`Expected @happier-dev/protocol build output missing: ${protocolDist}`);
+    const distDir = resolve(repoRoot, 'packages', pkg, 'dist');
+    if (!existsSync(distDir)) {
+      throw new Error(`Expected @happier-dev/${pkg} build output missing: ${distDir}`);
+    }
   }
 
   // If the CLI currently has bundled workspace deps under apps/cli/node_modules,
