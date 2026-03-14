@@ -577,7 +577,7 @@ describe('claudeRemoteAgentSdk options and hooks', () => {
         }
     });
 
-    it('sets allowDangerouslySkipPermissions only when permissionMode is bypassPermissions', async () => {
+    it('always sets allowDangerouslySkipPermissions so permission mode can escalate to bypassPermissions at runtime', async () => {
         let capturedOptions: any = null;
 
         const createQuery = vi.fn((_params: any) => {
@@ -595,13 +595,13 @@ describe('claudeRemoteAgentSdk options and hooks', () => {
             } as any;
         });
 
-        const runOnce = async (permissionMode: any) => {
+        const runOnce = async (modeOverrides: any) => {
             capturedOptions = null;
             let didSendFirst = false;
             const nextMessage = vi.fn(async () => {
                 if (didSendFirst) return null;
                 didSendFirst = true;
-                return { message: 'hello', mode: makeMode({ permissionMode }) };
+                return { message: 'hello', mode: makeMode(modeOverrides) };
             });
 
                 await claudeRemoteAgentSdk({
@@ -622,8 +622,9 @@ describe('claudeRemoteAgentSdk options and hooks', () => {
             return capturedOptions;
         };
 
-        expect((await runOnce('default'))?.allowDangerouslySkipPermissions).toBe(false);
-        expect((await runOnce('bypassPermissions'))?.allowDangerouslySkipPermissions).toBe(true);
+        expect((await runOnce({ permissionMode: 'default' }))?.allowDangerouslySkipPermissions).toBe(true);
+        expect((await runOnce({ permissionMode: 'bypassPermissions' }))?.allowDangerouslySkipPermissions).toBe(true);
+        expect((await runOnce({ permissionMode: 'default', agentModeId: 'plan' }))?.allowDangerouslySkipPermissions).toBe(true);
     });
 
     it('prefers CLI model overrides over mode.model', async () => {
