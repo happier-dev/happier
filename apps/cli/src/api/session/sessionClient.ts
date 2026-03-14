@@ -183,6 +183,7 @@ export class ApiSessionClient extends EventEmitter {
             policy: {
                 maxConcurrentRuns: configuration.executionRunsMaxConcurrentPerSession,
                 boundedTimeoutMs: configuration.executionRunsBoundedTimeoutMs,
+                reviewBoundedTimeoutMs: configuration.executionRunsReviewBoundedTimeoutMs,
                 maxTurns: configuration.executionRunsMaxTurns,
                 maxDepth: configuration.executionRunsMaxDepth,
             },

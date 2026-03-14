@@ -46,7 +46,9 @@ export const ReviewStartInputSchema = z
     sessionId: z.string().min(1).optional(),
     engineIds: z.array(ReviewEngineIdSchema).min(1),
     instructions: z.string().trim().min(1),
-    changeType: ReviewChangeTypeSchema.default('committed'),
+    // Intentionally default to uncommitted changes: the common "review what I just changed"
+    // flow should stay narrowly scoped unless the user explicitly broadens it.
+    changeType: ReviewChangeTypeSchema.default('uncommitted'),
     base: ReviewBaseSchema.default({ kind: 'none' }),
     engines: ReviewEngineInputsSchema.prefault(DEFAULT_REVIEW_ENGINE_INPUTS),
     permissionMode: z.string().min(1).default('read_only'),

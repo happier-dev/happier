@@ -51,5 +51,29 @@ describe('coderabbit rate-limit retries', () => {
     expect(calls).toEqual([1]);
     expect(sleeps).toEqual([]);
   });
-});
 
+  it('fails fast when the provider retry delay exceeds the allowed retry budget', async () => {
+    const calls: number[] = [];
+    const sleeps: number[] = [];
+
+    const res = await runWithCodeRabbitRateLimitRetries({
+      maxAttempts: 3,
+      maxTotalRetrySleepMs: 60_000,
+      runOnce: async (attempt) => {
+        calls.push(attempt);
+        return {
+          ok: false as const,
+          stdout: '',
+          stderr: 'Rate limit exceeded, please try after 7 minutes and 21 seconds',
+        };
+      },
+      sleepMs: async (ms) => {
+        sleeps.push(ms);
+      },
+    });
+
+    expect(res.ok).toBe(false);
+    expect(calls).toEqual([1]);
+    expect(sleeps).toEqual([]);
+  });
+});

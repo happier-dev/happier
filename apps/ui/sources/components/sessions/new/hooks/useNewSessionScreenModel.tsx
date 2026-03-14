@@ -105,7 +105,7 @@ import {
     SessionMcpSelectionV1Schema,
     type WindowsRemoteSessionLaunchMode,
 } from '@happier-dev/protocol';
-import { buildActionDraftInput } from '@/sync/domains/actions/buildActionDraftInput';
+import { buildExecutionRunActionDraftInputForUi } from '@/sync/domains/actions/buildExecutionRunActionDraftInputForUi';
 import { Text } from '@/components/ui/text/Text';
 import { useNewSessionMcpSelection } from '@/components/sessions/new/hooks/useNewSessionMcpSelection';
 import { readAccountTranscriptStorageDefaults, resolveNewSessionDefaultTranscriptStorage } from '@/sync/domains/session/transcriptStorageDefaults';
@@ -2070,7 +2070,7 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
                             handleCreateSession({
                                 initialMessage: 'skip',
                                 afterCreated: async (sessionId) => {
-                                    const input = buildActionDraftInput({
+                                    const input = buildExecutionRunActionDraftInputForUi({
                                         actionId: actionId as any,
                                         sessionId,
                                         defaultBackendTarget: backendTarget,

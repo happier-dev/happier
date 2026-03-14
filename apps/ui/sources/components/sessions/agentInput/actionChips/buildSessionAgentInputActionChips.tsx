@@ -2,17 +2,19 @@ import React from 'react';
 import { Pressable, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 
-import { getActionSpec } from '@happier-dev/protocol';
+import { getActionSpec, type BackendTargetRefV1 } from '@happier-dev/protocol';
 
 import { storage } from '@/sync/domains/state/storage';
 import type { AgentInputExtraActionChip } from '@/components/sessions/agentInput/AgentInput';
 import { listAgentInputActionChipActionIds } from '@/components/sessions/agentInput/actionChips/listAgentInputActionChipActionIds';
-import { buildActionDraftInput } from '@/sync/domains/actions/buildActionDraftInput';
+import { buildExecutionRunActionDraftInputForUi } from '@/sync/domains/actions/buildExecutionRunActionDraftInputForUi';
+import { normalizeNodeForView } from '@/components/ui/rendering/normalizeNodeForView';
 import { Text } from '@/components/ui/text/Text';
 
 
 export function buildSessionAgentInputActionChips(params: Readonly<{
     sessionId: string;
+    defaultBackendTarget?: BackendTargetRefV1 | null;
     defaultBackendId: string | null;
     instructionsText: string;
 }>): ReadonlyArray<AgentInputExtraActionChip> {
@@ -27,9 +29,10 @@ export function buildSessionAgentInputActionChips(params: Readonly<{
 
     return actionIds.map((actionId) => {
         const spec = getActionSpec(actionId as any);
-        const input = buildActionDraftInput({
+        const input = buildExecutionRunActionDraftInputForUi({
             actionId: actionId as any,
             sessionId: params.sessionId,
+            defaultBackendTarget: params.defaultBackendTarget ?? null,
             defaultBackendId: backendId,
             instructions,
         });
@@ -48,7 +51,7 @@ export function buildSessionAgentInputActionChips(params: Readonly<{
                     style={(p) => chipStyle(p.pressed)}
                 >
                     <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-                        <Ionicons name="flash-outline" size={16} color={iconColor} />
+                        {normalizeNodeForView(<Ionicons name="flash-outline" size={16} color={iconColor} />)}
                         {showLabel ? (
                             <Text numberOfLines={1} style={textStyle}>
                                 {spec.title}

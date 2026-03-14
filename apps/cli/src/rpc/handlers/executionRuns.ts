@@ -20,10 +20,20 @@ import {
 
 import { ExecutionRunManager } from '@/agent/executionRuns/runtime/ExecutionRunManager';
 import type { ExecutionBudgetRegistry } from '@/daemon/executionBudget/ExecutionBudgetRegistry';
-import { isSafePermissionModeForIntent, resolveExecutionRunPolicy } from '@/agent/executionRuns/policy/ExecutionRunPolicy';
+import {
+  isSafePermissionModeForIntent,
+  resolveExecutionRunPolicy,
+  resolveExecutionRunStartBoundedTimeoutMs,
+} from '@/agent/executionRuns/policy/ExecutionRunPolicy';
 import { VoiceAgentError } from '@/agent/voice/agent/VoiceAgentManager';
 import { resolveCliFeatureDecision } from '@/features/featureDecisionService';
 import { fetchServerFeaturesSnapshot, type CliServerFeaturesSnapshot } from '@/features/serverFeaturesClient';
+import { resolveExecutionRunRuntimeBackendId } from '@/agent/executionRuns/runtime/backendTargets';
+import { preflightCodeRabbitReviewScope } from '@/agent/reviews/engines/coderabbit/preflightCodeRabbitReviewScope';
+import { readCodeRabbitReviewConfigFromEnv } from '@/agent/reviews/engines/coderabbit/readCodeRabbitReviewConfig';
+import { readCredentials } from '@/persistence';
+import { configuration } from '@/configuration';
+import { resolveReplaySeedDraft } from '@/session/replay/resolveReplaySeedDraft';
 
 function invalidParams(): { ok: false; error: string; errorCode: string } {
   return { ok: false, error: 'Invalid params', errorCode: 'execution_run_invalid_action_input' };
@@ -31,6 +41,14 @@ function invalidParams(): { ok: false; error: string; errorCode: string } {
 
 function executionRunsDisabled(): { ok: false; error: string; errorCode: string } {
   return { ok: false, error: 'Execution runs feature disabled', errorCode: 'execution_run_not_allowed' };
+}
+
+function executionRunNotAllowedError(error: unknown): { ok: false; error: string; errorCode: string } {
+  return {
+    ok: false,
+    error: error instanceof Error ? error.message : 'Execution run not allowed',
+    errorCode: 'execution_run_not_allowed',
+  };
 }
 
 export function registerExecutionRunHandlers(
@@ -67,21 +85,27 @@ export function registerExecutionRunHandlers(
     }>;
     getServerFeaturesSnapshot?: () => CliServerFeaturesSnapshot | undefined;
     policy?: Readonly<{
-      maxConcurrentRuns?: number;
-      boundedTimeoutMs?: number;
-      maxTurns?: number;
+      maxConcurrentRuns?: number | null;
+      boundedTimeoutMs?: number | null;
+      reviewBoundedTimeoutMs?: number | null;
+      maxTurns?: number | null;
       maxDepth?: number;
     }>;
     budgetRegistry?: ExecutionBudgetRegistry;
     onExecutionRunPublicStateUpdated?: (run: ExecutionRunPublicState) => void;
+    resolveAccountSettings?: () => Promise<Record<string, unknown> | null> | Record<string, unknown> | null;
   }>,
 ): void {
   const policy = resolveExecutionRunPolicy({
     defaults: {
-      maxConcurrentRuns: 4,
-      boundedTimeoutMs: null,
-      maxTurns: null,
-      maxDepth: 1,
+      // Centralized configuration is the only source of truth for execution-run defaults.
+      // Keep the fallback here wired to configuration so uncapped/no-timeout defaults cannot
+      // silently drift from the policy that sessionClient passes in normal production wiring.
+      maxConcurrentRuns: configuration.executionRunsMaxConcurrentPerSession,
+      boundedTimeoutMs: configuration.executionRunsBoundedTimeoutMs,
+      reviewBoundedTimeoutMs: configuration.executionRunsReviewBoundedTimeoutMs,
+      maxTurns: configuration.executionRunsMaxTurns,
+      maxDepth: configuration.executionRunsMaxDepth,
     },
     override: ctx.policy,
   });
@@ -97,6 +121,7 @@ export function registerExecutionRunHandlers(
     boundedTimeoutMs: policy.boundedTimeoutMs ?? undefined,
     maxTurns: policy.maxTurns ?? undefined,
     budgetRegistry: ctx.budgetRegistry,
+    resolveAccountSettings: ctx.resolveAccountSettings,
   });
 
   let cachedServerSnapshot: CliServerFeaturesSnapshot | undefined;
@@ -131,12 +156,29 @@ export function registerExecutionRunHandlers(
       }
     }
     if (!ctx.budgetRegistry) {
-      if (manager.getRunningCount() >= policy.maxConcurrentRuns) {
+      if (typeof policy.maxConcurrentRuns === 'number' && manager.getRunningCount() >= policy.maxConcurrentRuns) {
         return { ok: false, error: 'Execution run budget exceeded', errorCode: 'execution_run_budget_exceeded' };
       }
     }
     if (!isSafePermissionModeForIntent(parsed.data.intent, parsed.data.permissionMode)) {
       return { ok: false, error: 'Permission denied', errorCode: 'permission_denied' };
+    }
+    const backendId = resolveExecutionRunRuntimeBackendId(parsed.data.backendTarget);
+    if (parsed.data.intent === 'review' && backendId === 'coderabbit') {
+      const codeRabbitConfig = readCodeRabbitReviewConfigFromEnv(process.env);
+      let preflight;
+      try {
+        preflight = await preflightCodeRabbitReviewScope({
+          cwd: ctx.cwd,
+          intentInput: parsed.data.intentInput,
+          maxEligibleFiles: codeRabbitConfig.maxEligibleFiles,
+        });
+      } catch (error) {
+        return executionRunNotAllowedError(error);
+      }
+      if (!preflight.ok) {
+        return { ok: false, error: preflight.error, errorCode: 'execution_run_not_allowed' };
+      }
     }
     if (!policy.allowIoModes.has(parsed.data.ioMode)) {
       return { ok: false, error: 'Unsupported ioMode', errorCode: 'execution_run_not_allowed' };
@@ -166,10 +208,55 @@ export function registerExecutionRunHandlers(
       }
     }
     try {
+      const startParams: any = { ...(parsed.data as any) };
+      if (parsed.data.intent === 'voice_agent' && parsed.data.replay?.kind === 'voice_session.v1') {
+        const credentials = await readCredentials().catch(() => null);
+        if (credentials) {
+          const replayStrategy =
+            parsed.data.replay.strategy === 'summary_plus_recent' ? 'summary_plus_recent' : 'recent_messages';
+          const replaySeed = await resolveReplaySeedDraft({
+            credentials,
+            cwd: ctx.cwd,
+            source: {
+              kind: 'voice_session.v1',
+              previousSessionId: parsed.data.replay.previousSessionId,
+              transcriptEpoch: parsed.data.replay.transcriptEpoch,
+            },
+            strategy: replayStrategy,
+            recentMessagesCount: parsed.data.replay.recentMessagesCount ?? 16,
+            maxSeedChars:
+              typeof parsed.data.replay.maxSeedChars === 'number'
+                ? parsed.data.replay.maxSeedChars
+                : configuration.replaySeedMaxChars,
+            candidateLimit: configuration.replaySeedCandidateLimit,
+            summaryRunner: parsed.data.replay.summaryRunner ?? null,
+          }).catch(() => null);
+          if (replaySeed?.seedDraft) {
+            startParams.initialContext = [String(parsed.data.initialContext ?? '').trim(), replaySeed.seedDraft]
+              .filter((value) => value.length > 0)
+              .join('\n\n');
+            if (
+              parsed.data.bootstrapMode === 'ready_handshake'
+              && typeof startParams.initialContextMode !== 'string'
+            ) {
+              startParams.initialContextMode = 'first_turn';
+            }
+          }
+        }
+      }
+      delete startParams.replay;
+
       // Preserve passthrough fields for intent-specific configuration (e.g. voice_agent model IDs).
       const started = await manager.start({
         sessionId: ctx.sessionId,
-        ...(parsed.data as any),
+        ...startParams,
+        ...(() => {
+          const boundedTimeoutMs = resolveExecutionRunStartBoundedTimeoutMs({
+            policy,
+            intent: parsed.data.intent,
+          });
+          return typeof boundedTimeoutMs === 'number' ? { boundedTimeoutMs } : {};
+        })(),
         ...(parentRunId ? { parentRunId } : {}),
         ...(parentCallId ? { parentCallId } : {}),
       } as any);

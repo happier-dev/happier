@@ -12,6 +12,13 @@ const pendingFireAndForget = vi.hoisted((): Array<Promise<unknown>> => []);
 const applySettingsMock = vi.hoisted(() => vi.fn());
 const modalShowMock = vi.hoisted(() => vi.fn(() => 'modal-id'));
 const modalAlertMock = vi.hoisted(() => vi.fn());
+const createSessionActionDraftMock = vi.hoisted(() => vi.fn());
+const handleCreateSessionMock = vi.hoisted(() =>
+    vi.fn((opts?: { afterCreated?: (sessionId: string) => void | Promise<void> }) => opts?.afterCreated?.('session-created')),
+);
+const agentInputActionChipActionIdsState = vi.hoisted(() => ({
+    value: [] as string[],
+}));
 
 const enabledAgentIdsState = vi.hoisted(() => ({
     value: ['codex', 'claude'] as string[],
@@ -196,7 +203,7 @@ vi.mock('@/sync/domains/state/storage', () => ({
     storage: {
         getState: () => ({
             settings: settingsState,
-            createSessionActionDraft: vi.fn(),
+            createSessionActionDraft: createSessionActionDraftMock,
         }),
     },
     useSetting: (key: string) => (settingsState as any)[key],
@@ -259,8 +266,11 @@ vi.mock('@/components/sessions/new/hooks/useCreateNewSession', () => ({
     useCreateNewSession: () => ({
         canCreate: true,
         connectionStatus: 'ok',
-        handleCreateSession: vi.fn(),
+        handleCreateSession: handleCreateSessionMock,
     }),
+}));
+vi.mock('@/components/sessions/agentInput/actionChips/listAgentInputActionChipActionIds', () => ({
+    listAgentInputActionChipActionIds: () => agentInputActionChipActionIdsState.value,
 }));
 
 vi.mock('@/utils/system/fireAndForget', () => ({
@@ -431,6 +441,9 @@ vi.mock('@/components/sessions/new/hooks/useNewSessionWizardProps', () => ({
 describe('useNewSessionScreenModel (installables)', () => {
     beforeEach(() => {
         applySettingsMock.mockClear();
+        createSessionActionDraftMock.mockReset();
+        handleCreateSessionMock.mockReset();
+        agentInputActionChipActionIdsState.value = [];
         modalShowMock.mockClear();
         modalAlertMock.mockClear();
         settingsState.useEnhancedSessionWizard = false;
@@ -850,6 +863,52 @@ describe('useNewSessionScreenModel (installables)', () => {
 
         const chips = model?.simpleProps?.agentInputExtraActionChips ?? [];
         expect(chips.some((chip: { key: string }) => chip.key === 'new-session-storage')).toBe(true);
+    });
+    it('seeds execution-run action chips with UI-normalized permission defaults', async () => {
+        agentInputActionChipActionIdsState.value = ['review.start'];
+
+        let model: any = null;
+        function Probe() {
+            model = useNewSessionScreenModel();
+            return null;
+        }
+
+        await act(async () => {
+            renderer.create(React.createElement(Probe));
+            await Promise.resolve();
+            await Promise.resolve();
+        });
+
+        const chips = model?.simpleProps?.agentInputExtraActionChips ?? [];
+        const reviewChip = chips.find((chip: { key: string }) => chip.key === 'new-session-action:review.start');
+        expect(reviewChip).toBeTruthy();
+
+        const rendered = reviewChip.render({
+            chipStyle: () => null,
+            iconColor: '#000',
+            showLabel: true,
+            textStyle: {},
+            countTextStyle: {},
+            popoverAnchorRef: { current: null },
+        }) as React.ReactElement<{ onPress?: () => void }>;
+
+        await act(async () => {
+            rendered.props.onPress?.();
+            await Promise.resolve();
+            await Promise.resolve();
+        });
+
+        expect(handleCreateSessionMock).toHaveBeenCalledTimes(1);
+        expect(createSessionActionDraftMock).toHaveBeenCalledWith(
+            'session-created',
+            expect.objectContaining({
+                actionId: 'review.start',
+                input: expect.objectContaining({
+                    permissionMode: 'read-only',
+                    changeType: 'uncommitted',
+                }),
+            }),
+        );
     });
 
     it('defaults the storage chip from the global persistence setting', async () => {

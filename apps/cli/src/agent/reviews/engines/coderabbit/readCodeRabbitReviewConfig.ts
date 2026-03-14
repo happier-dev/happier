@@ -12,9 +12,10 @@ function parsePositiveInt(value: unknown): number | null {
 
 export type CodeRabbitReviewConfig = Readonly<{
   command: string;
-  timeoutMs: number;
+  timeoutMs: number | null;
   homeDir: string | null;
   rateLimitMaxAttempts: number;
+  maxEligibleFiles: number;
 }>;
 
 export function readCodeRabbitReviewConfigFromEnv(env: NodeJS.ProcessEnv): CodeRabbitReviewConfig {
@@ -22,9 +23,9 @@ export function readCodeRabbitReviewConfigFromEnv(env: NodeJS.ProcessEnv): CodeR
   // to the standard `coderabbit` binary name so a normal install "just works".
   const command = normalizeNonEmptyString(env.HAPPIER_CODERABBIT_REVIEW_CMD) ?? 'coderabbit';
 
-  const timeoutMs =
-    parsePositiveInt(env.HAPPIER_CODERABBIT_REVIEW_TIMEOUT_MS) ??
-    120_000;
+  // Intentionally unset by default so provider-local behavior cannot silently reintroduce a shorter
+  // review timeout than the execution-run policy. Operators can still opt in with an explicit override.
+  const timeoutMs = parsePositiveInt(env.HAPPIER_CODERABBIT_REVIEW_TIMEOUT_MS);
 
   const homeDir = normalizeNonEmptyString(env.HAPPIER_CODERABBIT_HOME_DIR);
 
@@ -32,5 +33,9 @@ export function readCodeRabbitReviewConfigFromEnv(env: NodeJS.ProcessEnv): CodeR
     parsePositiveInt(env.HAPPIER_CODERABBIT_REVIEW_RATE_LIMIT_MAX_ATTEMPTS) ??
     10;
 
-  return { command, timeoutMs, homeDir, rateLimitMaxAttempts };
+  const maxEligibleFiles =
+    parsePositiveInt(env.HAPPIER_CODERABBIT_REVIEW_MAX_ELIGIBLE_FILES) ??
+    300;
+
+  return { command, timeoutMs, homeDir, rateLimitMaxAttempts, maxEligibleFiles };
 }

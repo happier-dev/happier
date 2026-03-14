@@ -14,15 +14,22 @@ export function parseCodeRabbitRateLimitRetryMs(text: string): number | null {
 
 export async function runWithCodeRabbitRateLimitRetries<T extends Readonly<{ ok: boolean; stdout: string; stderr: string }>>(_args: Readonly<{
   maxAttempts: number;
+  maxTotalRetrySleepMs?: number | null;
   runOnce: (attempt: number) => Promise<T>;
   sleepMs: (ms: number) => Promise<void>;
 }>): Promise<T> {
   const maxAttempts = Number(_args.maxAttempts);
+  const maxTotalRetrySleepMsRaw = _args.maxTotalRetrySleepMs;
+  const maxTotalRetrySleepMs =
+    typeof maxTotalRetrySleepMsRaw === 'number' && Number.isFinite(maxTotalRetrySleepMsRaw) && maxTotalRetrySleepMsRaw >= 0
+      ? Math.floor(maxTotalRetrySleepMsRaw)
+      : null;
   if (!Number.isFinite(maxAttempts) || maxAttempts <= 0) {
     return _args.runOnce(1);
   }
 
   let last: T | null = null;
+  let totalRetrySleepMs = 0;
   for (let attempt = 1; attempt <= Math.floor(maxAttempts); attempt += 1) {
     // eslint-disable-next-line no-await-in-loop
     const res = await _args.runOnce(attempt);
@@ -32,9 +39,13 @@ export async function runWithCodeRabbitRateLimitRetries<T extends Readonly<{ ok:
     const retryMs = parseCodeRabbitRateLimitRetryMs(`${res.stdout ?? ''}\n${res.stderr ?? ''}`);
     if (!retryMs) return res;
     if (attempt >= maxAttempts) return res;
+    if (maxTotalRetrySleepMs !== null && totalRetrySleepMs + retryMs > maxTotalRetrySleepMs) {
+      return res;
+    }
 
     // eslint-disable-next-line no-await-in-loop
     await _args.sleepMs(retryMs);
+    totalRetrySleepMs += retryMs;
   }
 
   return last ?? _args.runOnce(1);

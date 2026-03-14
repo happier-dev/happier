@@ -10,6 +10,7 @@ import { resolveWindowsCommandInvocation } from '@happier-dev/cli-common/process
 import { readCodeRabbitReviewConfigFromEnv } from './readCodeRabbitReviewConfig.js';
 import { buildCodeRabbitEnv } from './buildCodeRabbitEnv.js';
 import { runWithCodeRabbitRateLimitRetries } from './runWithRateLimitRetries.js';
+import { resolveCodeRabbitBaseRef } from './preflightCodeRabbitReviewScope.js';
 
 type PendingProcess = Readonly<{
   kill: () => void;
@@ -47,24 +48,19 @@ export class CodeRabbitReviewBackend implements AgentBackend {
       throw new Error('CodeRabbit backend is busy');
     }
 
-    const args = (() => {
+    const args = await (async () => {
       const rawIntentInput: any = this.start?.intentInput ?? null;
       const parsed = ReviewStartInputSchema.safeParse(rawIntentInput);
-      const source: any =
-        parsed.success
-          ? parsed.data
-          : (rawIntentInput && typeof rawIntentInput === 'object')
-            ? rawIntentInput
-            : {};
+      const reviewInput = parsed.success
+        ? parsed.data
+        : ReviewStartInputSchema.parse({
+            engineIds: ['coderabbit'],
+            instructions: prompt,
+            ...(rawIntentInput && typeof rawIntentInput === 'object' ? rawIntentInput : {}),
+          });
+      const changeType = reviewInput.changeType;
 
-      const changeTypeRaw = String(source?.changeType ?? '').trim();
-      const changeType = changeTypeRaw === 'all' || changeTypeRaw === 'committed' || changeTypeRaw === 'uncommitted'
-        ? changeTypeRaw
-        : 'committed';
-
-      const base = (source?.base && typeof source.base === 'object') ? source.base : { kind: 'none' as const };
-
-      const cfg = source?.engines?.coderabbit ?? null;
+      const cfg = reviewInput.engines?.coderabbit ?? null;
       const configFiles: string[] = Array.isArray(cfg?.configFiles) ? cfg.configFiles : [];
       const plain = cfg?.plain !== false;
       const promptOnly = cfg?.promptOnly === true;
@@ -73,10 +69,11 @@ export class CodeRabbitReviewBackend implements AgentBackend {
       if (plain) out.push('--plain');
       if (promptOnly) out.push('--prompt-only');
 
-      if (base?.kind === 'branch' && typeof (base as any).baseBranch === 'string' && String((base as any).baseBranch).trim()) {
-        out.push('--base', String((base as any).baseBranch).trim());
-      } else if (base?.kind === 'commit' && typeof (base as any).baseCommit === 'string' && String((base as any).baseCommit).trim()) {
-        out.push('--base-commit', String((base as any).baseCommit).trim());
+      const resolvedBaseRef = await resolveCodeRabbitBaseRef({ cwd: this.cwd, reviewInput });
+      if (reviewInput.base.kind === 'commit' && resolvedBaseRef) {
+        out.push('--base-commit', resolvedBaseRef);
+      } else if (resolvedBaseRef) {
+        out.push('--base', resolvedBaseRef);
       }
 
       for (const file of configFiles) {
@@ -138,21 +135,24 @@ export class CodeRabbitReviewBackend implements AgentBackend {
       child.stderr.on('data', (chunk) => { stderr += String(chunk); });
 
       const res = await new Promise<AttemptResult>((resolve) => {
-        const timer = setTimeout(() => {
-          if (process.platform === 'win32') {
-            void killProcessTree(child, { graceMs: 250 }).catch(() => undefined);
-          } else {
-            try { child.kill('SIGTERM'); } catch {}
-          }
-          resolve({ ok: false, stdout, stderr: stderr || 'CodeRabbit timed out', exitCode: null });
-        }, this.config.timeoutMs);
+        const timer =
+          typeof this.config.timeoutMs === 'number'
+            ? setTimeout(() => {
+              if (process.platform === 'win32') {
+                void killProcessTree(child, { graceMs: 250 }).catch(() => undefined);
+              } else {
+                try { child.kill('SIGTERM'); } catch {}
+              }
+              resolve({ ok: false, stdout, stderr: stderr || 'CodeRabbit timed out', exitCode: null });
+            }, this.config.timeoutMs)
+            : null;
 
         child.on('error', (err) => {
-          clearTimeout(timer);
+          if (timer) clearTimeout(timer);
           resolve({ ok: false, stdout, stderr: err instanceof Error ? err.message : String(err), exitCode: null });
         });
         child.on('close', (code) => {
-          clearTimeout(timer);
+          if (timer) clearTimeout(timer);
           resolve({ ok: code === 0, stdout, stderr, exitCode: typeof code === 'number' ? code : null });
         });
       });
@@ -170,6 +170,7 @@ export class CodeRabbitReviewBackend implements AgentBackend {
     const done = (async () => {
       const res = await runWithCodeRabbitRateLimitRetries({
         maxAttempts: this.config.rateLimitMaxAttempts,
+        maxTotalRetrySleepMs: this.config.timeoutMs,
         runOnce: async (_attempt) => runOnce(),
         sleepMs: async (ms) => {
           if (aborted) return;

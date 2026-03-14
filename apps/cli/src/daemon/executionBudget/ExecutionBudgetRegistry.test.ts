@@ -11,6 +11,13 @@ describe('ExecutionBudgetRegistry', () => {
     expect(registry.tryAcquireExecutionRun('run2')).toBe(true);
   });
 
+  it('allows unlimited execution runs when maxConcurrentExecutionRuns is unset', () => {
+    const registry = new ExecutionBudgetRegistry({ maxConcurrentExecutionRuns: null as number | null, maxConcurrentEphemeralTasks: 1 });
+    expect(registry.tryAcquireExecutionRun('run1')).toBe(true);
+    expect(registry.tryAcquireExecutionRun('run2')).toBe(true);
+    expect(registry.getInFlightSnapshot().executionRuns).toBe(2);
+  });
+
   it('enforces maxConcurrentEphemeralTasks', () => {
     const registry = new ExecutionBudgetRegistry({ maxConcurrentExecutionRuns: 1, maxConcurrentEphemeralTasks: 1 });
     expect(registry.tryAcquireEphemeralTask('task1')).toBe(true);

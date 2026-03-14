@@ -2,9 +2,11 @@ import type { ActionId } from '@happier-dev/protocol';
 import { listActionSpecs } from '@happier-dev/protocol';
 
 import type { Command } from './types';
+import { getEnabledAgentIds } from '@/agents/catalog/enabled';
 import { storage } from '@/sync/domains/state/storage';
 import { isActionEnabledInState } from '@/sync/domains/settings/actionsSettings';
-import { buildActionDraftInput } from '@/sync/domains/actions/buildActionDraftInput';
+import { buildExecutionRunActionDraftInputForUi } from '@/sync/domains/actions/buildExecutionRunActionDraftInputForUi';
+import { resolveSessionActionDefaultBackend } from '@/sync/domains/session/resolveSessionActionDefaultBackend';
 
 function normalizeId(value: unknown): string {
   return String(value ?? '').trim();
@@ -140,8 +142,8 @@ export function buildCommandPaletteCommands(params: Readonly<{
 
   if (features.executionRunsEnabled) {
     const startReview = byId.get('review.start');
-    const startPlan = byId.get('plan.start');
-    const startDelegate = byId.get('delegate.start');
+    const startPlan = byId.get('subagents.plan.start');
+    const startDelegate = byId.get('subagents.delegate.start');
     for (const entry of [
       startReview ? { spec: startReview, title: 'Start review run', intent: 'review' as const } : null,
       startPlan ? { spec: startPlan, title: 'Start plan run', intent: 'plan' as const } : null,
@@ -158,14 +160,20 @@ export function buildCommandPaletteCommands(params: Readonly<{
           const sessionId = await requireSession(activeSessionId, alert);
           if (!sessionId) return;
           const session = sessionsById?.[sessionId] ?? null;
-          const agentId = normalizeId((session as any)?.metadata?.agent) || 'claude';
+          const defaultBackend = resolveSessionActionDefaultBackend({
+            session,
+            enabledAgentIds: getEnabledAgentIds({
+              backendEnabledByTargetKey: storage.getState().settings?.backendEnabledByTargetKey,
+            }),
+          });
 
           storage.getState().createSessionActionDraft(sessionId, {
             actionId: entry.spec.id as any,
-            input: buildActionDraftInput({
+            input: buildExecutionRunActionDraftInputForUi({
               actionId: entry.spec.id as any,
               sessionId,
-              defaultBackendId: agentId,
+              defaultBackendTarget: defaultBackend?.backendTarget ?? null,
+              defaultBackendId: defaultBackend?.defaultBackendId ?? null,
               instructions: '',
             }),
           });

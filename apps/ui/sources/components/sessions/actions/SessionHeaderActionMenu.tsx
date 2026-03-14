@@ -9,19 +9,14 @@ import { useEnabledAgentIds } from '@/agents/hooks/useEnabledAgentIds';
 import type { Session } from '@/sync/domains/state/storageTypes';
 import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { isActionEnabledInState } from '@/sync/domains/settings/actionsSettings';
-import { buildActionDraftInput } from '@/sync/domains/actions/buildActionDraftInput';
+import { buildExecutionRunActionDraftInputForUi } from '@/sync/domains/actions/buildExecutionRunActionDraftInputForUi';
 import { t } from '@/text';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 import { Modal } from '@/modal';
 import { createDefaultActionExecutor } from '@/sync/ops/actions/defaultActionExecutor';
 import { resolveServerIdForSessionIdFromLocalCache } from '@/sync/runtime/orchestration/serverScopedRpc/resolveServerIdForSessionIdFromLocalCache';
 import { canForkConversation } from '@/sync/domains/sessionFork/forkUiSupport';
-
-function resolveDefaultBackendId(session: Session, enabledAgentIds: readonly string[]): string | null {
-  const sessionAgent = (session as any)?.metadata?.agent;
-  if (typeof sessionAgent === 'string' && enabledAgentIds.includes(sessionAgent)) return sessionAgent;
-  return enabledAgentIds[0] ?? null;
-}
+import { resolveSessionActionDefaultBackend } from '@/sync/domains/session/resolveSessionActionDefaultBackend';
 
 export function SessionHeaderActionMenu(props: Readonly<{ sessionId: string; session: Session }>) {
   const { theme } = useUnistyles();
@@ -69,12 +64,16 @@ export function SessionHeaderActionMenu(props: Readonly<{ sessionId: string; ses
           })(), { tag: 'SessionHeaderActionMenu.execute.sessionFork' });
           return;
         }
-        const defaultBackendId = resolveDefaultBackendId(props.session, enabledAgentIds);
-        if (!defaultBackendId) return;
-        const input = buildActionDraftInput({
+        const defaultBackend = resolveSessionActionDefaultBackend({
+          session: props.session,
+          enabledAgentIds,
+        });
+        if (!defaultBackend) return;
+        const input = buildExecutionRunActionDraftInputForUi({
           actionId: actionId as any,
           sessionId: props.sessionId,
-          defaultBackendId,
+          defaultBackendTarget: defaultBackend.backendTarget,
+          defaultBackendId: defaultBackend.defaultBackendId,
           instructions: '',
         });
         storage.getState().createSessionActionDraft(props.sessionId, { actionId, input });

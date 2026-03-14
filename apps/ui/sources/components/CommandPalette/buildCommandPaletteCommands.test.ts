@@ -16,11 +16,20 @@ function commandTitles(cmds: readonly Command[]): string[] {
   return cmds.map((c) => c.title);
 }
 
+function buildSettingsWithExecutionRunsEnabled() {
+  return {
+    experiments: true,
+    featureToggles: {
+      'execution.runs': true,
+    },
+  };
+}
+
 describe('buildCommandPaletteCommands', () => {
   it('includes ActionSpec-derived commands when enabled (execution runs + voice)', async () => {
     const pushes: string[] = [];
     const executorCalls: Array<{ actionId: string }> = [];
-    mockedState = { createSessionActionDraft: createSessionActionDraftSpy, settings: {} };
+    mockedState = { createSessionActionDraft: createSessionActionDraftSpy, settings: buildSettingsWithExecutionRunsEnabled() };
 
     const cmds = buildCommandPaletteCommands({
       sessionsById: {},
@@ -67,7 +76,7 @@ describe('buildCommandPaletteCommands', () => {
   it('shows an alert when a session-scoped ActionSpec command is used without an active session', async () => {
     const alerts: Array<{ title: string; message: string }> = [];
     const pushes: string[] = [];
-    mockedState = { createSessionActionDraft: createSessionActionDraftSpy, settings: {} };
+    mockedState = { createSessionActionDraft: createSessionActionDraftSpy, settings: buildSettingsWithExecutionRunsEnabled() };
 
     const cmds = buildCommandPaletteCommands({
       sessionsById: {},
@@ -94,9 +103,9 @@ describe('buildCommandPaletteCommands', () => {
     expect(pushes).toEqual([]);
   });
 
-  it('does not inject coderabbit-specific config into review.start drafts', async () => {
+  it('keeps review engine selection explicit and does not inject coderabbit-specific config into review.start drafts', async () => {
     createSessionActionDraftSpy.mockClear();
-    mockedState = { createSessionActionDraft: createSessionActionDraftSpy, settings: {} };
+    mockedState = { createSessionActionDraft: createSessionActionDraftSpy, settings: buildSettingsWithExecutionRunsEnabled() };
 
     const cmds = buildCommandPaletteCommands({
       sessionsById: {
@@ -123,8 +132,97 @@ describe('buildCommandPaletteCommands', () => {
     const call = createSessionActionDraftSpy.mock.calls[0] ?? [];
     const created = call[1] as any;
     expect(created?.actionId).toBe('review.start');
-    expect(created?.input?.engineIds).toEqual(['coderabbit']);
+    expect(created?.input?.engineIds).toBeUndefined();
     expect(created?.input?.engines).toBeUndefined();
+  });
+
+  it('uses UI-normalized permission defaults for execution-run drafts', async () => {
+    createSessionActionDraftSpy.mockClear();
+    mockedState = { createSessionActionDraft: createSessionActionDraftSpy, settings: buildSettingsWithExecutionRunsEnabled() };
+
+    const cmds = buildCommandPaletteCommands({
+      sessionsById: {
+        'session-1': { id: 'session-1', metadata: { agent: 'codex', name: 'x' } },
+      },
+      isDev: false,
+      activeSessionId: 'session-1',
+      features: { executionRunsEnabled: true, voiceEnabled: false, memorySearchEnabled: false },
+      nav: {
+        push: () => {},
+        navigateToSession: () => {},
+      },
+      auth: { logout: async () => {} },
+      actions: { execute: async () => ({ ok: true, result: {} }) },
+      alert: async () => {},
+    });
+
+    const expectations: Array<Readonly<{ title: string; actionId: string; permissionMode: string }>> = [
+      { title: 'Start review run', actionId: 'review.start', permissionMode: 'read-only' },
+      { title: 'Start plan run', actionId: 'subagents.plan.start', permissionMode: 'read-only' },
+      { title: 'Start delegation run', actionId: 'subagents.delegate.start', permissionMode: 'safe-yolo' },
+    ];
+
+    for (const expected of expectations) {
+      createSessionActionDraftSpy.mockClear();
+      const command = cmds.find((entry) => entry.title === expected.title);
+      expect(command).toBeTruthy();
+      await command!.action();
+
+      expect(createSessionActionDraftSpy).toHaveBeenCalledTimes(1);
+      const call = createSessionActionDraftSpy.mock.calls[0] ?? [];
+      const created = call[1] as any;
+      expect(created?.actionId).toBe(expected.actionId);
+      expect(created?.input?.permissionMode).toBe(expected.permissionMode);
+    }
+  });
+
+  it('preserves configured ACP backend targets for plan run drafts', async () => {
+    createSessionActionDraftSpy.mockClear();
+    mockedState = {
+      createSessionActionDraft: createSessionActionDraftSpy,
+      settings: {
+        ...buildSettingsWithExecutionRunsEnabled(),
+        backendEnabledByTargetKey: {
+          'agent:claude': true,
+        },
+      },
+    };
+
+    const cmds = buildCommandPaletteCommands({
+      sessionsById: {
+        'session-1': {
+          id: 'session-1',
+          metadata: {
+            flavor: 'customAcp',
+            acpConfiguredBackendV1: {
+              v: 1,
+              updatedAt: 1,
+              backendId: 'review-bot',
+              title: 'Review Bot',
+            },
+          },
+        },
+      },
+      isDev: false,
+      activeSessionId: 'session-1',
+      features: { executionRunsEnabled: true, voiceEnabled: false, memorySearchEnabled: false },
+      nav: {
+        push: () => {},
+        navigateToSession: () => {},
+      },
+      auth: { logout: async () => {} },
+      actions: { execute: async () => ({ ok: true, result: {} }) },
+      alert: async () => {},
+    });
+
+    const startPlan = cmds.find((c) => c.title === 'Start plan run');
+    expect(startPlan).toBeTruthy();
+
+    await startPlan!.action();
+    const call = createSessionActionDraftSpy.mock.calls[0] ?? [];
+    const created = call[1] as any;
+    expect(created?.actionId).toBe('subagents.plan.start');
+    expect(created?.input?.backendTargetKeys).toEqual(['acpBackend:review-bot']);
   });
 
   it('omits command_palette actions when disabled for that placement', async () => {

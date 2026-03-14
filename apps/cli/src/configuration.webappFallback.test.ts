@@ -215,6 +215,7 @@ describe('configuration env url fallback', () => {
     process.env.HAPPIER_EXECUTION_RUNS_MAX_CONCURRENT_PER_SESSION = '7';
     process.env.HAPPIER_EPHEMERAL_TASKS_MAX_CONCURRENT_PER_SESSION = '3';
     process.env.HAPPIER_EXECUTION_RUNS_BOUNDED_TIMEOUT_MS = '45000';
+    process.env.HAPPIER_EXECUTION_RUNS_REVIEW_BOUNDED_TIMEOUT_MS = '180000';
     process.env.HAPPIER_EXECUTION_RUNS_MAX_TURNS = '9';
     process.env.HAPPIER_EXECUTION_RUNS_MAX_DEPTH = '2';
     process.env.HAPPIER_EXECUTION_BUDGET_MAX_CONCURRENT_TOTAL_PER_SESSION = '5';
@@ -225,9 +226,25 @@ describe('configuration env url fallback', () => {
     expect(configMod.configuration.executionRunsMaxConcurrentPerSession).toBe(7);
     expect(configMod.configuration.ephemeralTasksMaxConcurrentPerSession).toBe(3);
     expect(configMod.configuration.executionRunsBoundedTimeoutMs).toBe(45000);
+    expect(Reflect.get(configMod.configuration, 'executionRunsReviewBoundedTimeoutMs')).toBe(180000);
     expect(configMod.configuration.executionRunsMaxTurns).toBe(9);
     expect(configMod.configuration.executionRunsMaxDepth).toBe(2);
     expect(configMod.configuration.executionBudgetMaxConcurrentTotalPerSession).toBe(5);
     expect(configMod.configuration.executionBudgetMaxConcurrentByClass).toEqual({ review: 1, automation: 2 });
+  });
+
+  it('defaults execution-run concurrency and timeouts to unlimited when budget env vars are unset', async () => {
+    const homeDir = mkdtempSync(join(tmpdir(), 'happier-cli-config-budget-defaults-'));
+    tempDirs.push(homeDir);
+    process.env.HAPPIER_HOME_DIR = homeDir;
+    delete process.env.HAPPIER_EXECUTION_RUNS_MAX_CONCURRENT_PER_SESSION;
+    delete process.env.HAPPIER_EXECUTION_RUNS_BOUNDED_TIMEOUT_MS;
+    delete process.env.HAPPIER_EXECUTION_RUNS_REVIEW_BOUNDED_TIMEOUT_MS;
+
+    const configMod = await import('./configuration');
+    configMod.reloadConfiguration();
+    expect(configMod.configuration.executionRunsMaxConcurrentPerSession).toBeNull();
+    expect(configMod.configuration.executionRunsBoundedTimeoutMs).toBeNull();
+    expect(configMod.configuration.executionRunsReviewBoundedTimeoutMs).toBeNull();
   });
 });

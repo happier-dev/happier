@@ -113,9 +113,10 @@ class Configuration {
   public readonly permissionRequestPushDedupeMaxEntries: number
 
   // Execution runs and ephemeral tasks (session-process budgets).
-  public readonly executionRunsMaxConcurrentPerSession: number
+  public readonly executionRunsMaxConcurrentPerSession: number | null
   public readonly ephemeralTasksMaxConcurrentPerSession: number
-  public readonly executionRunsBoundedTimeoutMs: number
+  public readonly executionRunsBoundedTimeoutMs: number | null
+  public readonly executionRunsReviewBoundedTimeoutMs: number | null
   public readonly executionRunsMaxTurns: number
   public readonly executionRunsMaxDepth: number
   public readonly executionBudgetMaxConcurrentTotalPerSession: number | null
@@ -417,17 +418,27 @@ class Configuration {
     const maxConcurrentRunsRaw = Number.parseInt(String(process.env.HAPPIER_EXECUTION_RUNS_MAX_CONCURRENT_PER_SESSION ?? ''), 10);
     const maxConcurrentTasksRaw = Number.parseInt(String(process.env.HAPPIER_EPHEMERAL_TASKS_MAX_CONCURRENT_PER_SESSION ?? ''), 10);
     const boundedTimeoutRaw = Number.parseInt(String(process.env.HAPPIER_EXECUTION_RUNS_BOUNDED_TIMEOUT_MS ?? ''), 10);
+    const reviewBoundedTimeoutRaw = Number.parseInt(
+      String(process.env.HAPPIER_EXECUTION_RUNS_REVIEW_BOUNDED_TIMEOUT_MS ?? ''),
+      10,
+    );
     const maxTurnsRaw = Number.parseInt(String(process.env.HAPPIER_EXECUTION_RUNS_MAX_TURNS ?? ''), 10);
     const maxDepthRaw = Number.parseInt(String(process.env.HAPPIER_EXECUTION_RUNS_MAX_DEPTH ?? ''), 10);
     const budgetTotalRaw = Number.parseInt(String(process.env.HAPPIER_EXECUTION_BUDGET_MAX_CONCURRENT_TOTAL_PER_SESSION ?? ''), 10);
     const budgetByClassRaw = String(process.env.HAPPIER_EXECUTION_BUDGET_MAX_CONCURRENT_BY_CLASS_JSON ?? '').trim();
 
+    // Intentionally unlimited by default: execution runs are first-class sub-sessions and should not
+    // inherit an arbitrary product cap unless an operator explicitly configures one.
     this.executionRunsMaxConcurrentPerSession =
-      Number.isFinite(maxConcurrentRunsRaw) && maxConcurrentRunsRaw >= 1 ? maxConcurrentRunsRaw : 4;
+      Number.isFinite(maxConcurrentRunsRaw) && maxConcurrentRunsRaw >= 1 ? maxConcurrentRunsRaw : null;
     this.ephemeralTasksMaxConcurrentPerSession =
       Number.isFinite(maxConcurrentTasksRaw) && maxConcurrentTasksRaw >= 1 ? maxConcurrentTasksRaw : 2;
+    // Intentionally no wall-clock timeout by default: users should stop long-running plan/delegate/review
+    // runs explicitly, while operators can still opt into caps via env overrides.
     this.executionRunsBoundedTimeoutMs =
-      Number.isFinite(boundedTimeoutRaw) && boundedTimeoutRaw >= 1_000 ? boundedTimeoutRaw : 120_000;
+      Number.isFinite(boundedTimeoutRaw) && boundedTimeoutRaw >= 1_000 ? boundedTimeoutRaw : null;
+    this.executionRunsReviewBoundedTimeoutMs =
+      Number.isFinite(reviewBoundedTimeoutRaw) && reviewBoundedTimeoutRaw >= 1_000 ? reviewBoundedTimeoutRaw : null;
     this.executionRunsMaxTurns =
       Number.isFinite(maxTurnsRaw) && maxTurnsRaw >= 1 ? maxTurnsRaw : 32;
     // Depth 0 means "no nested runs allowed". Default 1 allows one nested hop when explicitly linked.
