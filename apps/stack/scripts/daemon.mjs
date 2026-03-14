@@ -4,6 +4,7 @@ import { getStacksStorageRoot } from './utils/paths/paths.mjs';
 import { runCaptureIfCommandExists } from './utils/proc/commands.mjs';
 import { readLastLines } from './utils/fs/tail.mjs';
 import { ensureCliBuilt } from './utils/proc/pm.mjs';
+import { resolveJavaScriptRuntimeCommand } from '@happier-dev/cli-common/providers/managedJavaScriptRuntime';
 import {
   findAnyCredentialPathInCliHome,
   findExistingStackCredentialPath,
@@ -51,6 +52,10 @@ function resolveEnvFromOptions(options) {
     return options.env;
   }
   return process.env;
+}
+
+function hasExplicitServerContext({ serverUrl = '', env = process.env }) {
+  return String(serverUrl ?? '').trim() !== '' || String(env?.HAPPIER_ACTIVE_SERVER_ID ?? '').trim() !== '';
 }
 
 export async function cleanupStaleDaemonState(homeDir, options = {}) {
@@ -145,6 +150,7 @@ export function checkDaemonState(cliHomeDir, options = {}) {
   const serverUrl = resolveServerUrlFromOptions(options);
   const env = resolveEnvFromOptions(options);
   const { statePath, lockPath } = resolvePreferredStackDaemonStatePaths({ cliHomeDir, serverUrl, env });
+  const allowAnyRunningFallback = !hasExplicitServerContext({ serverUrl, env });
 
   const alive = isPidAlive;
 
@@ -153,7 +159,11 @@ export function checkDaemonState(cliHomeDir, options = {}) {
       const state = JSON.parse(readFileSync(statePath, 'utf-8'));
       const pid = Number(state?.pid);
       if (Number.isFinite(pid) && pid > 0) {
-        return alive(pid) ? { status: 'running', pid } : { status: 'stale_state', pid };
+        if (alive(pid)) {
+          return { status: 'running', pid };
+        }
+        const fallback = resolveFallbackRunningDaemon(cliHomeDir, allowAnyRunningFallback, alive);
+        return fallback ?? { status: 'stale_state', pid };
       }
       return { status: 'bad_state', pid: null };
     } catch {
@@ -165,7 +175,11 @@ export function checkDaemonState(cliHomeDir, options = {}) {
     try {
       const pid = Number(readFileSync(lockPath, 'utf-8').trim());
       if (Number.isFinite(pid) && pid > 0) {
-        return alive(pid) ? { status: 'starting', pid } : { status: 'stale_lock', pid };
+        if (alive(pid)) {
+          return { status: 'starting', pid };
+        }
+        const fallback = resolveFallbackRunningDaemon(cliHomeDir, allowAnyRunningFallback, alive);
+        return fallback ?? { status: 'stale_lock', pid };
       }
       return { status: 'bad_lock', pid: null };
     } catch {
@@ -173,12 +187,19 @@ export function checkDaemonState(cliHomeDir, options = {}) {
     }
   }
 
-  const fallback = findRunningDaemonStateInHome(cliHomeDir, alive);
+  const fallback = resolveFallbackRunningDaemon(cliHomeDir, allowAnyRunningFallback, alive);
   if (fallback) {
     return fallback;
   }
 
   return { status: 'stopped', pid: null };
+}
+
+function resolveFallbackRunningDaemon(cliHomeDir, allowAnyRunningFallback, alive) {
+  if (!allowAnyRunningFallback) {
+    return null;
+  }
+  return findRunningDaemonStateInHome(cliHomeDir, alive);
 }
 
 function isPidAlive(pid) {
@@ -272,9 +293,98 @@ function getLatestDaemonLogPath(homeDir) {
   }
 }
 
-function resolveDaemonCommandSpec({ cliBin, cliEntrypoint = '', cliCommand = '', cliCommandArgs = [] }) {
+function resolveJavaScriptRuntimeForStackDaemon({ env = process.env } = {}) {
+  const runtimeName = String(process.release?.name ?? '').trim().toLowerCase();
+  return resolveJavaScriptRuntimeCommand({
+    isBunRuntime: runtimeName === 'bun',
+    processEnv: env,
+    currentExecPath: process.execPath,
+  });
+}
+
+function isJavaScriptEntrypoint(command) {
+  return /\.(?:cjs|js|mjs)$/i.test(String(command ?? '').trim());
+}
+
+function hasExplicitRuntimeLaunchSpec({ cliEntrypoint = '', cliNodeEntrypoint = '', cliCommand = '' }) {
+  if (String(cliEntrypoint ?? '').trim()) return true;
+  if (String(cliNodeEntrypoint ?? '').trim()) return true;
+  return isJavaScriptEntrypoint(cliCommand);
+}
+
+function looksLikeFilesystemCommandPath(command) {
+  const value = String(command ?? '').trim();
+  if (!value) return false;
+  return value.includes('/') || value.includes('\\') || value.startsWith('.');
+}
+
+function resolveExplicitRuntimeLaunchValidation({ cliEntrypoint = '', cliNodeEntrypoint = '', cliCommand = '' }) {
+  const explicitNodeEntrypoint = String(cliNodeEntrypoint ?? '').trim();
+  if (explicitNodeEntrypoint && existsSync(explicitNodeEntrypoint)) {
+    return { ok: true, source: 'node-entrypoint', path: explicitNodeEntrypoint };
+  }
+
   const explicitCommand = String(cliCommand ?? '').trim();
   if (explicitCommand) {
+    if (!looksLikeFilesystemCommandPath(explicitCommand) || existsSync(explicitCommand)) {
+      return { ok: true, source: 'command', path: explicitCommand };
+    }
+  }
+
+  const explicitEntrypoint = String(cliEntrypoint ?? '').trim();
+  if (explicitEntrypoint && existsSync(explicitEntrypoint)) {
+    return { ok: true, source: 'entrypoint', path: explicitEntrypoint };
+  }
+
+  const missingPath =
+    explicitNodeEntrypoint
+    || (looksLikeFilesystemCommandPath(explicitCommand) ? explicitCommand : '')
+    || explicitEntrypoint
+    || '';
+
+  if (!missingPath) {
+    return { ok: true, source: null, path: '' };
+  }
+
+  return {
+    ok: false,
+    source:
+      explicitNodeEntrypoint
+        ? 'node-entrypoint'
+        : looksLikeFilesystemCommandPath(explicitCommand)
+          ? 'command'
+          : 'entrypoint',
+    path: missingPath,
+    reason: `missing_runtime_launch_path:${missingPath}`,
+  };
+}
+
+function resolveDaemonCommandSpec({
+  cliBin,
+  cliEntrypoint = '',
+  cliNodeEntrypoint = '',
+  cliCommand = '',
+  cliCommandArgs = [],
+  env = process.env,
+}) {
+  const javaScriptRuntime = resolveJavaScriptRuntimeForStackDaemon({ env });
+  const explicitNodeEntrypoint = String(cliNodeEntrypoint ?? '').trim();
+  if (explicitNodeEntrypoint && javaScriptRuntime && existsSync(explicitNodeEntrypoint)) {
+    return {
+      command: javaScriptRuntime,
+      argsPrefix: ['--no-warnings', '--no-deprecation', explicitNodeEntrypoint],
+      mode: 'node',
+    };
+  }
+  const explicitCommand = String(cliCommand ?? '').trim();
+  if (explicitCommand) {
+    if (isJavaScriptEntrypoint(explicitCommand) && javaScriptRuntime) {
+      return {
+        command: javaScriptRuntime,
+        argsPrefix: ['--no-warnings', '--no-deprecation', explicitCommand, ...Array.isArray(cliCommandArgs) ? cliCommandArgs.map((value) => String(value)) : []],
+        mode: 'node',
+      };
+    }
     return {
       command: explicitCommand,
       argsPrefix: Array.isArray(cliCommandArgs) ? cliCommandArgs.map((value) => String(value)) : [],
@@ -282,9 +392,9 @@ function resolveDaemonCommandSpec({ cliBin, cliEntrypoint = '', cliCommand = '',
     };
   }
   const explicitEntrypoint = String(cliEntrypoint ?? '').trim();
-  if (explicitEntrypoint) {
+  if (explicitEntrypoint && javaScriptRuntime) {
     return {
-      command: process.execPath,
+      command: javaScriptRuntime,
       argsPrefix: ['--no-warnings', '--no-deprecation', explicitEntrypoint],
       mode: 'node',
     };
@@ -297,12 +407,12 @@ function resolveDaemonCommandSpec({ cliBin, cliEntrypoint = '', cliCommand = '',
     };
   }
   const distEntrypoint = resolveCliDistEntrypointFromBin(cliBin);
-  if (distEntrypoint && existsSync(distEntrypoint)) {
+  if (distEntrypoint && existsSync(distEntrypoint) && javaScriptRuntime) {
     // Prefer launching the daemon via dist entrypoint directly.
     // This avoids coupling stack daemon lifecycle to the dev-only bin wrapper (which may perform
     // extra preflight checks or rely on package.json subpath resolution).
     return {
-      command: process.execPath,
+      command: javaScriptRuntime,
       argsPrefix: ['--no-warnings', '--no-deprecation', distEntrypoint],
       mode: 'node',
     };
@@ -314,7 +424,11 @@ function resolveDaemonCommandSpec({ cliBin, cliEntrypoint = '', cliCommand = '',
   };
 }
 
-async function ensureHappierCliDistExists({ cliBin, cliEntrypoint = '', cliCommand = '' }) {
+async function ensureHappierCliDistExists({ cliBin, cliEntrypoint = '', cliNodeEntrypoint = '', cliCommand = '' }) {
+  const explicitRuntimeLaunch = resolveExplicitRuntimeLaunchValidation({ cliEntrypoint, cliNodeEntrypoint, cliCommand });
+  if (!explicitRuntimeLaunch.ok) {
+    return { ok: false, distEntrypoint: explicitRuntimeLaunch.path, built: false, reason: explicitRuntimeLaunch.reason };
+  }
   if (String(cliCommand ?? '').trim()) {
     return { ok: true, distEntrypoint: cliCommand, built: false, reason: 'runtime-command' };
   }
@@ -874,6 +988,7 @@ export function getDaemonEnv({
 export async function stopLocalDaemon({
   cliBin,
   cliEntrypoint = '',
+  cliNodeEntrypoint = '',
   cliCommand = '',
   cliCommandArgs = [],
   internalServerUrl,
@@ -909,16 +1024,23 @@ export async function stopLocalDaemon({
     }
   }
 
-  const distEntrypoint = String(cliCommand ?? '').trim() || String(cliEntrypoint ?? '').trim() || resolveCliDistEntrypointFromBin(cliBin);
-  const distIntegrity = String(cliCommand ?? '').trim()
-    ? { ok: true, reason: 'runtime-command' }
-    : String(cliEntrypoint ?? '').trim()
-      ? { ok: true, reason: 'runtime-entrypoint' }
-    : distEntrypoint
-      ? readCliDistIntegrity(distEntrypoint)
-      : { ok: false, reason: 'unknown_cli_bin' };
+  const explicitCommand = String(cliCommand ?? '').trim();
+  const explicitEntrypoint = String(cliEntrypoint ?? '').trim();
+  const distEntrypoint = explicitCommand ? '' : explicitEntrypoint || resolveCliDistEntrypointFromBin(cliBin);
+  const explicitRuntimeLaunch = resolveExplicitRuntimeLaunchValidation({ cliEntrypoint, cliNodeEntrypoint, cliCommand });
+  const distIntegrity = explicitCommand
+    ? explicitRuntimeLaunch.ok
+      ? { ok: true, reason: 'runtime-command' }
+      : { ok: false, reason: explicitRuntimeLaunch.reason }
+    : explicitEntrypoint
+      ? explicitRuntimeLaunch.ok
+        ? { ok: true, reason: 'runtime-entrypoint' }
+        : { ok: false, reason: explicitRuntimeLaunch.reason }
+      : distEntrypoint
+        ? readCliDistIntegrity(distEntrypoint)
+        : { ok: false, reason: 'unknown_cli_bin' };
   if (distIntegrity.ok) {
-    const daemonCommand = resolveDaemonCommandSpec({ cliBin, cliEntrypoint, cliCommand, cliCommandArgs });
+    const daemonCommand = resolveDaemonCommandSpec({ cliBin, cliEntrypoint, cliNodeEntrypoint, cliCommand, cliCommandArgs, env: daemonEnv });
     try {
       await new Promise((resolve) => {
         const proc = spawnProc('daemon', daemonCommand.command, [...daemonCommand.argsPrefix, 'daemon', 'stop'], daemonEnv, {
@@ -941,6 +1063,7 @@ export async function stopLocalDaemon({
 export async function startLocalDaemonWithAuth({
   cliBin,
   cliEntrypoint = '',
+  cliNodeEntrypoint = '',
   cliCommand = '',
   cliCommandArgs = [],
   cliHomeDir,
@@ -987,11 +1110,15 @@ export async function startLocalDaemonWithAuth({
       { checkDaemonStateImpl: checkDaemonState },
     ).catch(() => {});
   };
-  const daemonCommand = resolveDaemonCommandSpec({ cliBin, cliEntrypoint, cliCommand, cliCommandArgs });
+  const daemonCommand = resolveDaemonCommandSpec({ cliBin, cliEntrypoint, cliNodeEntrypoint, cliCommand, cliCommandArgs, env: daemonEnv });
   // Binary/runtime-started daemons can take materially longer than direct node-entrypoint starts
   // because the packaged CLI may need to warm bundled workspace/runtime state before the daemon
   // reaches a stable running state.
-  const defaultStartVerifyTimeoutMs = daemonCommand.mode === 'binary' ? 20_000 : 5_000;
+  const defaultStartVerifyTimeoutMs =
+    daemonCommand.mode === 'binary'
+      || hasExplicitRuntimeLaunchSpec({ cliEntrypoint, cliNodeEntrypoint, cliCommand })
+      ? 30_000
+      : 5_000;
   const startVerifyTimeoutMs = parseNonNegativeInt(
     baseEnv.HAPPIER_STACK_DAEMON_START_VERIFY_TIMEOUT_MS,
     defaultStartVerifyTimeoutMs,
@@ -999,10 +1126,20 @@ export async function startLocalDaemonWithAuth({
   const startVerifyPollMs = parseNonNegativeInt(baseEnv.HAPPIER_STACK_DAEMON_START_VERIFY_POLL_MS, 125);
   const startVerifyStableMs = parseNonNegativeInt(baseEnv.HAPPIER_STACK_DAEMON_START_VERIFY_STABLE_MS, 750);
 
-  const distEntrypoint = String(cliCommand ?? '').trim() || String(cliEntrypoint ?? '').trim() || resolveCliDistEntrypointFromBin(cliBin);
-  const distCheck = await ensureHappierCliDistExists({ cliBin, cliEntrypoint, cliCommand });
+  const explicitCommand = String(cliCommand ?? '').trim();
+  const explicitEntrypoint = String(cliEntrypoint ?? '').trim();
+  const distEntrypoint = explicitCommand ? '' : explicitEntrypoint || resolveCliDistEntrypointFromBin(cliBin);
+  const distCheck = await ensureHappierCliDistExists({ cliBin, cliEntrypoint, cliNodeEntrypoint, cliCommand });
   if (!distCheck.ok) {
     const reason = String(distCheck.reason ?? '').trim();
+    if (reason.startsWith('missing_runtime_launch_path:')) {
+      const missingPath = reason.slice('missing_runtime_launch_path:'.length);
+      throw new Error(
+        `[local] runtime launch path is missing (${missingPath}).\n` +
+          `[local] Refusing to start/restart daemon because the active runtime snapshot is incomplete.\n` +
+          `[local] Fix: rebuild or reactivate the stack runtime snapshot before starting the daemon.\n`,
+      );
+    }
     const missingModule = reason.startsWith('incomplete:') ? reason.slice('incomplete:'.length) : '';
     const detail = missingModule
       ? `[local] Missing module referenced by dist entrypoint: ${missingModule}\n`
@@ -1193,6 +1330,7 @@ export async function startLocalDaemonWithAuth({
   }
 
   // If state is missing and stop couldn't find it, force-stop the lock PID (otherwise repeated restarts accumulate daemons).
+  await killDaemonFromStateFile({ cliHomeDir, serverUrl: internalServerUrl, env: daemonEnv });
   await killDaemonFromLockFile({ cliHomeDir, serverUrl: internalServerUrl, env: daemonEnv });
 
   // Clean up stale lock/state files that can block daemon start.
@@ -1373,6 +1511,7 @@ export async function startLocalDaemonWithAuth({
 export async function daemonStatusSummary({
   cliBin,
   cliEntrypoint = '',
+  cliNodeEntrypoint = '',
   cliCommand = '',
   cliCommandArgs = [],
   cliHomeDir,
@@ -1391,7 +1530,16 @@ export async function daemonStatusSummary({
     cliIdentity,
   });
   const distEntrypoint = String(cliCommand ?? '').trim() || String(cliEntrypoint ?? '').trim() || resolveCliDistEntrypointFromBin(cliBin);
-  const daemonCommand = resolveDaemonCommandSpec({ cliBin, cliEntrypoint, cliCommand, cliCommandArgs });
+  const explicitRuntimeLaunch = resolveExplicitRuntimeLaunchValidation({ cliEntrypoint, cliNodeEntrypoint, cliCommand });
+  if (!explicitRuntimeLaunch.ok) {
+    return buildRuntimeMissingStatusFallback({
+      cliHomeDir,
+      internalServerUrl,
+      env: daemonEnv,
+      missingPath: explicitRuntimeLaunch.path,
+    });
+  }
+  const daemonCommand = resolveDaemonCommandSpec({ cliBin, cliEntrypoint, cliNodeEntrypoint, cliCommand, cliCommandArgs, env: daemonEnv });
   try {
     return await runCapture(daemonCommand.command, [...daemonCommand.argsPrefix, 'daemon', 'status'], { env: daemonEnv });
   } catch (error) {
@@ -1484,4 +1632,14 @@ function buildDistMissingStatusFallback({ cliHomeDir, internalServerUrl, env, di
   lines.push('');
   lines.push('✅ Doctor diagnosis complete!');
   return lines.join('\n');
+}
+
+function buildRuntimeMissingStatusFallback({ cliHomeDir, internalServerUrl, env, missingPath }) {
+  const fallback = buildDistMissingStatusFallback({
+    cliHomeDir,
+    internalServerUrl,
+    env,
+    distEntrypoint: missingPath,
+  });
+  return `${fallback}\n[runtime] active runtime launch path is missing: ${missingPath}`;
 }

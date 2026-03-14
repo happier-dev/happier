@@ -10,6 +10,21 @@ description: How hstack starts server/daemon/UI, browser auto-open, watch mode, 
 
 If you’re unsure, use `hstack tui stack dev <stack>` (or `hstack stack dev <stack>` in non-interactive environments).
 
+For **named stacks only**, `start` can also run from an activated runtime snapshot stored under the stack folder instead of the live repo checkout:
+
+```bash
+hstack stack build exp1 --activate-runtime
+hstack stack start exp1 --runtime
+```
+
+Use this when you want:
+
+- stack-local production artifacts for `web + server + daemon`
+- service installs that are insulated from source rebuild churn in the same checkout
+- a production-like stack against the same worktree you are editing in another stack
+
+Keep using `dev` when you want watchers, Metro, or rapid source iteration.
+
 ---
 
 ## TUI mode (recommended for interactive development)
@@ -65,6 +80,93 @@ Control flags:
 - Disable: `hstack dev --no-watch`
 
 If hstack prints that a restart is disabled because the PID is unknown, re-run with `--restart` so hstack can spawn and track the process.
+
+---
+
+## Runtime-backed named stacks
+
+Build targets:
+
+```bash
+hstack stack build exp1 --web
+hstack stack build exp1 --server
+hstack stack build exp1 --daemon
+hstack stack build exp1 --all
+```
+
+Full runtime activation:
+
+```bash
+hstack stack build exp1 --activate-runtime
+```
+
+Partial runtime activation:
+
+```bash
+hstack stack runtime exp1 activate --web
+hstack stack runtime exp1 activate --server
+hstack stack runtime exp1 activate --daemon
+hstack stack runtime exp1 activate --all
+```
+
+Typical production-like named-stack update flow:
+
+```bash
+hstack stack build exp1 --activate-runtime
+hstack stack service exp1 restart
+```
+
+Component-only update flows:
+
+```bash
+# UI-only: build the artifact, activate only web, then reload the browser
+hstack stack build exp1 --web
+hstack stack runtime exp1 activate --web
+```
+
+```bash
+# Server-only: build + activate only server, then restart
+hstack stack build exp1 --server
+hstack stack runtime exp1 activate --server
+hstack stack service exp1 restart
+```
+
+```bash
+# CLI/daemon-only: build + activate only daemon, then restart
+hstack stack build exp1 --daemon
+hstack stack runtime exp1 activate --daemon
+hstack stack service exp1 restart
+```
+
+Launch selection:
+
+```bash
+hstack stack start exp1 --runtime
+hstack stack start exp1 --source
+```
+
+Persistent mode:
+
+```bash
+hstack stack env exp1 set HAPPIER_STACK_RUNTIME_MODE=prefer
+```
+
+Mode meanings:
+
+- `source`: always use the live checkout
+- `prefer`: use the active runtime snapshot when present, otherwise source
+- `require`: fail unless an active runtime snapshot is valid
+
+Important:
+
+- `hstack stack build <name>` with no flags still builds the web bundle only for backward compatibility.
+- `hstack stack build <name> --web|--server|--daemon` only updates artifacts. It does not switch the running stack to those artifacts until you activate a new runtime snapshot.
+- `--tauri` still belongs to the legacy local `hstack build` flow and is not part of named-stack artifact/runtime builds in v1.
+- Runtime snapshots are currently a **named stack** feature. Repo-local `yarn tui`, `hstack dev`, and repo-local `hstack start` are still source-backed flows.
+- `hstack stack dev <name>` remains source-only; runtime snapshots are for `start` and stack services.
+- Web-only activation updates the stable `runtime/current/ui` path, so a browser reload is enough.
+- Server-only or daemon-only activation requires a restart so the process re-resolves the active runtime.
+- A running named-stack service does not switch server/daemon processes in place. Rebuild or activate first, then restart the service or stack process so it re-resolves the active snapshot.
 
 ---
 

@@ -204,6 +204,39 @@ test('watch does not include cliDir/yarn.lock in watched paths (prevents rebuild
   assert.ok(!capturedPaths.includes('/tmp/happy-cli/yarn.lock'));
 });
 
+test('watch includes shared CLI runtime packages so daemon restarts on shared source edits', async () => {
+  let capturedPaths = null;
+
+  watchHappyCliAndRestartDaemon(
+    {
+      enabled: true,
+      startDaemon: true,
+      buildCli: true,
+      cliDir: '/tmp/repo/apps/cli',
+      cliBin: '/tmp/repo/apps/cli/bin/happier.mjs',
+      cliHomeDir: '/tmp/happy-cli-home',
+      internalServerUrl: 'http://127.0.0.1:3009',
+      publicServerUrl: 'http://localhost:3009',
+      isShuttingDown: () => false,
+    },
+    {
+      watchDebouncedImpl: ({ paths }) => {
+        capturedPaths = paths;
+        return { close() {} };
+      },
+      ensureCliBuiltImpl: async () => ({ built: true, reason: 'test' }),
+      startLocalDaemonWithAuthImpl: async () => {},
+      existsSyncImpl: () => true,
+      logger: { log() {}, warn() {}, error() {} },
+    },
+  );
+
+  assert.ok(Array.isArray(capturedPaths));
+  assert.ok(capturedPaths.includes('/tmp/repo/packages/agents/src'));
+  assert.ok(capturedPaths.includes('/tmp/repo/packages/cli-common/src'));
+  assert.ok(capturedPaths.includes('/tmp/repo/packages/protocol/src'));
+});
+
 test('ensureDevCliReady keeps existing dist output when build fails', async (t) => {
   const root = await mkdtemp(join(tmpdir(), 'hs-daemon-cli-ready-'));
   t.after(async () => {

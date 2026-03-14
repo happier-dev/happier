@@ -3,7 +3,6 @@ import { run, runCapture } from './utils/proc/proc.mjs';
 import { getComponentDir, getDefaultAutostartPaths, getRootDir, getSystemdUnitInfo, resolveStackEnvPath } from './utils/paths/paths.mjs';
 import { getInternalServerUrl, getPublicServerUrlEnvOverride } from './utils/server/urls.mjs';
 import { resolveServerUrls } from './utils/server/urls.mjs';
-import { ensureMacAutostartDisabled, ensureMacAutostartEnabled } from './utils/service/autostart_darwin.mjs';
 import { installService as installManagedService, uninstallService as uninstallManagedService } from './utils/service/service_manager.mjs';
 import { getCanonicalHomeDir } from './utils/env/config.mjs';
 import { isSandboxed, sandboxAllowsGlobalSideEffects } from './utils/env/sandbox.mjs';
@@ -31,6 +30,7 @@ import {
   resolveAutostartWorkingDirectory,
 } from './utils/service/stack_autostart_resolution.mjs';
 import { buildServiceAuthGuidance } from './utils/service/auth_guidance.mjs';
+import { recordStackRuntimeStopRequest } from './utils/stack/runtime_state.mjs';
 
 /**
  * Manage the autostart service installed by `hstack bootstrap -- --autostart`.
@@ -120,7 +120,7 @@ function ensureLinuxSystemModeSupported({ mode }) {
   }
 }
 
-async function resolveStackAutostartProgramArgs({ rootDir, mode, systemUser }) {
+export async function resolveStackAutostartProgramArgs({ rootDir, mode, systemUser }) {
   const base = getCanonicalHomeDir();
   const candidates =
     process.platform === 'win32'
@@ -143,8 +143,8 @@ async function resolveStackAutostartProgramArgs({ rootDir, mode, systemUser }) {
     }
   }
 
-  if (shimPath) return [shimPath, 'start'];
-  return [process.execPath, resolveInstalledPath(rootDir, 'bin/hstack.mjs'), 'start'];
+  if (shimPath) return [shimPath, 'start', '--restart'];
+  return [process.execPath, resolveInstalledPath(rootDir, 'bin/hstack.mjs'), 'start', '--restart'];
 }
 
 export async function installService({ mode = 'user', systemUser = null } = {}) {
@@ -537,12 +537,25 @@ async function postStartDiagnostics() {
   }
 }
 
-async function stopLaunchAgent({ persistent }) {
+async function stopLaunchAgent({ persistent, requestedBy = 'service stop', reason = '' }) {
   const { plistPath } = getDefaultAutostartPaths();
   if (!existsSync(plistPath)) {
     // Service isn't installed for this stack (common for ad-hoc stacks). Treat as a no-op.
     return;
   }
+
+  const envFile = resolveAutostartEnvFilePath({
+    mode: 'user',
+    explicitEnvFilePath: process.env.HAPPIER_STACK_ENV_FILE?.trim() ? process.env.HAPPIER_STACK_ENV_FILE.trim() : '',
+    defaultMainEnvFilePath: resolveStackEnvPath('main').envPath,
+    systemUserHomeDir: null,
+  });
+  const runtimeStatePath = join(dirname(envFile), 'stack.runtime.json');
+  await recordStackRuntimeStopRequest(runtimeStatePath, {
+    signal: 'SIGTERM',
+    requestedBy,
+    reason,
+  }).catch(() => {});
 
   const { label } = getDefaultAutostartPaths();
 
@@ -823,7 +836,7 @@ async function main() {
         return;
       }
       if (process.platform === 'darwin') {
-        await stopLaunchAgent({ persistent: false });
+        await stopLaunchAgent({ persistent: false, requestedBy: 'service stop', reason: 'explicit service stop' });
       } else {
         if (mode === 'system') {
           const { unitName } = getSystemdUnitInfo({ mode });
@@ -845,7 +858,7 @@ async function main() {
       }
       if (process.platform === 'darwin') {
         if (!(await restartLaunchAgentBestEffort())) {
-          await stopLaunchAgent({ persistent: false });
+          await stopLaunchAgent({ persistent: false, requestedBy: 'service restart', reason: 'explicit service restart' });
           await waitForLaunchAgentStopped();
           await startLaunchAgent({ persistent: false });
         }
@@ -903,7 +916,7 @@ async function main() {
         return;
       }
       if (process.platform === 'darwin') {
-        await stopLaunchAgent({ persistent: true });
+        await stopLaunchAgent({ persistent: true, requestedBy: 'service disable', reason: 'explicit service disable' });
       } else {
         if (mode === 'system') {
           const { unitName } = getSystemdUnitInfo({ mode });

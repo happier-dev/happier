@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { rmSync } from 'node:fs';
 
-import { commandExistsInPath } from './commandExistsInPath';
+import { commandExistsInPath } from './commandExistsInPath.js';
 
 describe('commandExistsInPath', () => {
   it('detects unix commands by exact filename', async () => {
@@ -30,4 +30,3 @@ describe('commandExistsInPath', () => {
     }
   });
 });
-

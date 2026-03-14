@@ -1,31 +1,7 @@
-import { dirname } from 'node:path';
-
-function splitPath(p: string): string[] {
-  return String(p ?? '')
-    .split(':')
-    .map((s) => s.trim())
-    .filter(Boolean);
-}
+import { buildServicePath } from './path.js';
 
 export function buildLaunchdPath(params: Readonly<{ execPath?: string; basePath?: string }> = {}): string {
-  // launchd starts with a minimal environment; ensure common tool paths exist,
-  // and include the current Node binary directory so shell shims that exec `node`
-  // still work (e.g. nvm-managed installs).
-  const execPath = String(params.execPath ?? '').trim();
-  const basePath = String(params.basePath ?? '').trim();
-  const nodeDir = execPath ? dirname(execPath) : '';
-  const defaults = splitPath('/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin');
-  const fromNode = nodeDir ? [nodeDir] : [];
-  const fromEnv = splitPath(basePath);
-
-  const seen = new Set<string>();
-  const out: string[] = [];
-  for (const part of [...fromNode, ...fromEnv, ...defaults]) {
-    if (seen.has(part)) continue;
-    seen.add(part);
-    out.push(part);
-  }
-  return out.join(':') || '/usr/bin:/bin:/usr/sbin:/sbin';
+  return buildServicePath({ ...params, platform: 'darwin' });
 }
 
 function xmlEscape(s: string): string {

@@ -14,6 +14,9 @@ import { applyStackTauriOverrides } from './utils/tauri/stack_overrides.mjs';
 import { buildIntoTempThenReplace } from './utils/fs/atomic_dir_swap.mjs';
 import { pathExists } from './utils/fs/fs.mjs';
 import { buildStackTauriExportEnv, buildStackWebExportEnv } from './utils/ui/ui_export_env.mjs';
+import { parseBuildSelection } from './build/build_targets.mjs';
+import { shouldBuildStackArtifacts } from './build/build_mode.mjs';
+import { buildStackArtifacts } from './build/build_stack_artifacts.mjs';
 
 /**
  * Build a lightweight static web UI bundle (no Expo dev server).
@@ -30,14 +33,18 @@ async function main() {
   if (wantsHelp(argv, { flags })) {
     printResult({
       json,
-      data: { flags: ['--tauri', '--no-tauri', '--no-ui'], json: true },
+      data: { flags: ['--web', '--server', '--daemon', '--all', '--activate-runtime', '--force-rebuild', '--tauri', '--no-tauri', '--no-ui'], json: true },
       text: [
         '[build] usage:',
         '  hstack build [--tauri] [--json]',
-        '  node scripts/build.mjs [--tauri|--no-tauri] [--no-ui] [--json]',
+        '  hstack stack build <name> [--web|--server|--daemon|--all] [--activate-runtime] [--force-rebuild] [--json]',
+        '  node scripts/build.mjs [--web|--server|--daemon|--all] [--activate-runtime] [--tauri|--no-tauri] [--no-ui] [--json]',
         '',
         'note:',
         '  If run from inside the Happier UI checkout/worktree, the build uses that checkout.',
+        '  Explicit component flags build stack-local artifacts for named stacks in v1.',
+        '  Building artifacts alone does not switch the active runtime; use `hstack stack runtime <name> activate ...` or `--activate-runtime`.',
+        '  --tauri remains a legacy local UI/Tauri build flag and cannot be mixed with stack-local artifact/runtime flags in v1.',
       ].join('\n'),
     });
     return;
@@ -54,6 +61,24 @@ async function main() {
     if (!(process.env.HAPPIER_STACK_REPO_DIR ?? '').toString().trim()) {
       process.env.HAPPIER_STACK_REPO_DIR = inferred.repoDir;
     }
+  }
+
+  const selection = parseBuildSelection({ argv });
+  const wantsArtifactBuild = shouldBuildStackArtifacts({ selection, argv, env: process.env });
+  if (wantsArtifactBuild) {
+    const result = await buildStackArtifacts({ rootDir, argv, env: process.env });
+    if (json) {
+      printResult({ json, data: result });
+    } else {
+      console.log(`[build] stack artifacts ready for ${result.stackName}`);
+      for (const [component, artifact] of Object.entries(result.artifacts ?? {})) {
+        console.log(`[build] ${component}: ${artifact.artifactDir}`);
+      }
+      if (result.runtime?.snapshotPath) {
+        console.log(`[build] runtime snapshot activated: ${result.runtime.snapshotPath}`);
+      }
+    }
+    return;
   }
 
   // Optional: skip building the web UI bundle.

@@ -69,7 +69,7 @@ async function main() {
   const cmd = helpScopeArgv.find((a) => a && a !== '--' && !a.startsWith('-')) || 'help';
   const wantsHelpFlag = wantsHelp(helpScopeArgv, { flags });
   const usageByCmd = new Map([
-    ['install', 'hstack menubar install [--json]'],
+    ['install', 'hstack menubar install [--stack=<name>] [--mode=selfhost|dev] [--json]'],
     ['uninstall', 'hstack menubar uninstall [--json]'],
     ['open', 'hstack menubar open [--json]'],
     ['mode', 'hstack menubar mode <selfhost|dev> [--json]'],
@@ -96,7 +96,7 @@ async function main() {
         banner('menubar', { subtitle: 'SwiftBar menu bar plugin (macOS).' }),
         '',
         sectionTitle('usage:'),
-        `  ${cyan('hstack menubar')} install [--json]`,
+        `  ${cyan('hstack menubar')} install [--stack=<name>] [--mode=selfhost|dev] [--json]`,
         `  ${cyan('hstack menubar')} uninstall [--json]`,
         `  ${cyan('hstack menubar')} open [--json]`,
         `  ${cyan('hstack menubar')} mode <selfhost|dev> [--json]`,
@@ -191,6 +191,12 @@ async function main() {
     if (explicitStackRaw && !explicitStack) {
       throw new Error('[menubar] invalid --stack name (expected letters, numbers, and dashes)');
     }
+    const explicitModeRaw = String(kvFlags.get('--mode') ?? '').trim();
+    const explicitMode = explicitModeRaw ? normalizeProfile(explicitModeRaw) : null;
+    if (explicitModeRaw && !explicitMode) {
+      throw new Error('[menubar] invalid --mode (expected selfhost or dev)');
+    }
+    const effectiveMode = explicitMode || String(process.env.HAPPIER_STACK_MENUBAR_MODE ?? 'dev').trim() || 'dev';
     const stackName = explicitStack || String((process.env.HAPPIER_STACK_STACK ?? '').trim() || 'main');
     const normalizedStack = sanitizeStackName(stackName, { fallback: 'main', maxLen: 64 });
     const stackScoped = normalizedStack !== 'main';
@@ -203,11 +209,14 @@ async function main() {
     const pluginFile = `${pluginBasename}.${interval}.sh`;
 
     const defaultEnvFile = (process.env.HAPPIER_STACK_ENV_FILE ?? '').toString().trim();
-    const resolvedEnvFile = defaultEnvFile || resolveStackEnvPath(normalizedStack, process.env).envPath;
+    const resolvedEnvFile = explicitStack
+      ? resolveStackEnvPath(normalizedStack, process.env).envPath
+      : (defaultEnvFile || resolveStackEnvPath(normalizedStack, process.env).envPath);
 
     const env = {
       ...process.env,
       HAPPIER_STACK_HOME_DIR: getHappyStacksHomeDir(),
+      HAPPIER_STACK_MENUBAR_MODE: effectiveMode,
       ...(pluginBasename ? { HAPPIER_STACK_SWIFTBAR_PLUGIN_BASENAME: pluginBasename } : {}),
       ...((isSandboxed() || stackScoped)
         ? {
@@ -230,6 +239,7 @@ async function main() {
           scoped: stackScoped,
           envFile: resolvedEnvFile || null,
         },
+        mode: effectiveMode,
         swiftbar: {
           pluginBasename,
           pluginInterval: interval,
@@ -253,6 +263,13 @@ async function main() {
         ].join('\n'),
       });
       return;
+    }
+
+    if (explicitMode) {
+      await ensureEnvLocalUpdated({
+        rootDir: cliRootDir,
+        updates: [{ key: 'HAPPIER_STACK_MENUBAR_MODE', value: explicitMode }],
+      });
     }
 
     const res = spawnSync('bash', [installer, '--force'], { stdio: 'inherit', env });

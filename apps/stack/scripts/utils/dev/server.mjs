@@ -4,7 +4,7 @@ import { ensureDepsInstalled, pmSpawnScript } from '../proc/pm.mjs';
 import { applyHappyServerMigrations, ensureHappyServerManagedInfra } from '../server/infra/happy_server_infra.mjs';
 import { applyServerLightEnvDefaults } from '../server/apply_server_light_env_defaults.mjs';
 import { resolveServerDevScript } from '../server/flavor_scripts.mjs';
-import { waitForServerReady } from '../server/server.mjs';
+import { resolveServerReadyTimeoutMs, waitForServerReady } from '../server/server.mjs';
 import { isTcpPortFree, pickNextFreeTcpPort } from '../net/ports.mjs';
 import { readStackRuntimeStateFile, recordStackRuntimeUpdate } from '../stack/runtime_state.mjs';
 import { killProcessGroupOwnedByStack } from '../proc/ownership.mjs';
@@ -121,7 +121,10 @@ export async function startDevServer({
   if (stackMode && runtimeStatePath) {
     await recordStackRuntimeUpdate(runtimeStatePath, { processes: { serverPid: server.pid } }).catch(() => {});
   }
-  await waitForServerReady(internalServerUrl);
+  await waitForServerReady(internalServerUrl, {
+    timeoutMs: resolveServerReadyTimeoutMs({ serverComponentName, env: serverEnv }),
+    childProcess: server,
+  });
   return { serverEnv, serverScript, serverProc: server };
 }
 
@@ -165,7 +168,10 @@ export function watchDevServerAndRestart({
         if (stackMode && runtimeStatePath) {
           await recordStackRuntimeUpdate(runtimeStatePath, { processes: { serverPid: next.pid } }).catch(() => {});
         }
-        await waitForServerReady(internalServerUrl);
+        await waitForServerReady(internalServerUrl, {
+          timeoutMs: resolveServerReadyTimeoutMs({ serverComponentName, env: serverEnv }),
+          childProcess: next,
+        });
         // eslint-disable-next-line no-console
         console.log(`[local] watch: server restarted (pid=${next.pid}, port=${serverPort})`);
       } catch (e) {

@@ -35,6 +35,7 @@ test('createServiceDaemonAutostarter does nothing when disabled', async () => {
   const autostarter = createServiceDaemonAutostarter({
     enabled: false,
     isShuttingDown: () => false,
+    isServerReady: async () => true,
     pollMs: 5000,
     maxAttemptsPerCredentials: 2,
     retryBaseMs: 1000,
@@ -63,6 +64,7 @@ test('createServiceDaemonAutostarter polls until credentials exist, then starts 
   const autostarter = createServiceDaemonAutostarter({
     enabled: true,
     isShuttingDown: () => false,
+    isServerReady: async () => true,
     pollMs: 5000,
     maxAttemptsPerCredentials: 2,
     retryBaseMs: 1000,
@@ -105,6 +107,7 @@ test('createServiceDaemonAutostarter rate limits retries per credential fingerpr
   const autostarter = createServiceDaemonAutostarter({
     enabled: true,
     isShuttingDown: () => false,
+    isServerReady: async () => true,
     pollMs: 5000,
     maxAttemptsPerCredentials: 2,
     retryBaseMs: 1000,
@@ -157,6 +160,7 @@ test('createServiceDaemonAutostarter stops once daemon is running', async () => 
   const autostarter = createServiceDaemonAutostarter({
     enabled: true,
     isShuttingDown: () => false,
+    isServerReady: async () => true,
     pollMs: 5000,
     maxAttemptsPerCredentials: 2,
     retryBaseMs: 1000,
@@ -177,6 +181,43 @@ test('createServiceDaemonAutostarter stops once daemon is running', async () => 
   daemonRunning = true;
   await scheduler.advanceOne();
   assert.equal(calls.start, 0);
+  assert.equal(scheduler.queued().length, 0);
+});
+
+test('createServiceDaemonAutostarter waits for server readiness before starting daemon', async () => {
+  const scheduler = createFakeScheduler();
+  const calls = { start: 0 };
+  let serverReady = false;
+
+  const autostarter = createServiceDaemonAutostarter({
+    enabled: true,
+    isShuttingDown: () => false,
+    isServerReady: async () => true,
+    pollMs: 5000,
+    maxAttemptsPerCredentials: 2,
+    retryBaseMs: 1000,
+    retryMaxMs: 10_000,
+    nowMs: scheduler.now,
+    schedule: scheduler.schedule,
+    cancel: scheduler.cancel,
+    getCredentialFingerprint: async () => 'cred:a',
+    isServerReady: async () => serverReady,
+    isDaemonRunning: () => false,
+    startDaemon: async () => {
+      calls.start += 1;
+    },
+    logger: { log: () => {}, warn: () => {}, error: () => {} },
+  });
+
+  autostarter.start();
+  await scheduler.advanceOne();
+  assert.equal(calls.start, 0);
+  assert.equal(scheduler.queued().length, 1);
+  assert.equal(scheduler.queued()[0].delayMs, 5000);
+
+  serverReady = true;
+  await scheduler.advanceOne();
+  assert.equal(calls.start, 1);
   assert.equal(scheduler.queued().length, 0);
 });
 

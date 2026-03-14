@@ -6,6 +6,27 @@ import { watchDebounced } from '../proc/watch.mjs';
 import { getAccountCountForServerComponent, prepareDaemonAuthSeedIfNeeded } from '../stack/startup.mjs';
 import { startLocalDaemonWithAuth } from '../../daemon.mjs';
 
+function resolveHappyCliWatchPaths({ cliDir, existsSyncImpl = existsSync }) {
+  const repoRoot = resolve(cliDir, '..', '..');
+  const sharedPackages = ['agents', 'cli-common', 'protocol'];
+  const cliPaths = [
+    join(cliDir, 'src'),
+    join(cliDir, 'bin'),
+    join(cliDir, 'codex'),
+    join(cliDir, 'package.json'),
+    join(cliDir, 'tsconfig.json'),
+    join(cliDir, 'tsconfig.build.json'),
+    join(cliDir, 'pkgroll.config.mjs'),
+  ];
+  const sharedPaths = sharedPackages.flatMap((pkg) => ([
+    join(repoRoot, 'packages', pkg, 'src'),
+    join(repoRoot, 'packages', pkg, 'package.json'),
+    join(repoRoot, 'packages', pkg, 'tsconfig.json'),
+  ]));
+
+  return [...cliPaths, ...sharedPaths].filter((p) => existsSyncImpl(p));
+}
+
 export async function ensureDevCliReady(
   { cliDir, buildCli, env = process.env },
   { logger = console } = {}
@@ -98,6 +119,7 @@ export async function startDevDaemon({
   cliHomeDir,
   internalServerUrl,
   publicServerUrl,
+  runtimeStatePath = null,
   restart,
   isShuttingDown,
   env = process.env,
@@ -113,6 +135,7 @@ export async function startDevDaemon({
     cliHomeDir,
     internalServerUrl,
     publicServerUrl,
+    runtimeStatePath,
     isShuttingDown,
     forceRestart: Boolean(restart),
     env,
@@ -130,6 +153,7 @@ export function watchHappyCliAndRestartDaemon({
   cliHomeDir,
   internalServerUrl,
   publicServerUrl,
+  runtimeStatePath = null,
   isShuttingDown,
   env = process.env,
   stackName = null,
@@ -150,15 +174,7 @@ export function watchHappyCliAndRestartDaemon({
   // Watch only source/config paths, not build outputs. Watching the whole repo can
   // trigger rebuild loops because `yarn build` writes to `dist/` (and may touch other
   // generated files), which then retriggers the watcher.
-    const watchPaths = [
-      join(cliDir, 'src'),
-      join(cliDir, 'bin'),
-      join(cliDir, 'codex'),
-      join(cliDir, 'package.json'),
-      join(cliDir, 'tsconfig.json'),
-      join(cliDir, 'tsconfig.build.json'),
-      join(cliDir, 'pkgroll.config.mjs'),
-    ].filter((p) => existsSyncImpl(p));
+  const watchPaths = resolveHappyCliWatchPaths({ cliDir, existsSyncImpl });
 
   return watchDebouncedImpl({
     paths: (watchPaths.length ? watchPaths : [cliDir]).map((p) => resolve(p)),
@@ -205,6 +221,7 @@ export function watchHappyCliAndRestartDaemon({
               cliHomeDir,
               internalServerUrl,
               publicServerUrl,
+              runtimeStatePath,
               isShuttingDown,
               forceRestart: true,
               env,

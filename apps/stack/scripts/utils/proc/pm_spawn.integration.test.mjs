@@ -59,6 +59,30 @@ async function writeStubYarnCaptureKind({ binDir }) {
   await chmod(yarnPath, 0o755);
 }
 
+async function writeStubYarnCaptureEnv({ binDir }) {
+  await mkdir(binDir, { recursive: true });
+  const yarnPath = join(binDir, 'yarn');
+  await writeFile(
+    yarnPath,
+    [
+      '#!/usr/bin/env node',
+      'const fs = require("fs");',
+      'const args = process.argv.slice(2);',
+      "if (args.includes('--version')) { console.log('1.22.22'); process.exit(0); }",
+      'if (args[0] === "run") {',
+      '  const out = process.env.TEST_OUT_FILE || "";',
+      '  if (out) {',
+      '    fs.writeFileSync(out, JSON.stringify({ TSX_TSCONFIG_PATH: process.env.TSX_TSCONFIG_PATH || "" }), "utf-8");',
+      '  }',
+      '  process.exit(0);',
+      '}',
+      'process.exit(0);',
+    ].join('\n') + '\n',
+    'utf-8'
+  );
+  await chmod(yarnPath, 0o755);
+}
+
 test('pmSpawnScript does not reference effectiveEnv before initialization', async (t) => {
   const root = await mkdtemp(join(tmpdir(), 'hs-pm-spawn-script-'));
   t.after(async () => {
@@ -128,4 +152,34 @@ test('pmSpawnScript marks stack-owned infra processes with HAPPIER_STACK_PROCESS
 
   const kind = (await readFile(outFile, 'utf-8')).trim();
   assert.equal(kind, 'infra');
+});
+
+test('pmSpawnScript scopes TSX_TSCONFIG_PATH to the component tsconfig', async (t) => {
+  const root = await mkdtemp(join(tmpdir(), 'hs-pm-spawn-tsx-tsconfig-'));
+  t.after(async () => {
+    await rm(root, { recursive: true, force: true });
+  });
+
+  const componentDir = join(root, 'component');
+  await mkdir(componentDir, { recursive: true });
+  await writeJson(join(componentDir, 'package.json'), { name: 'component', version: '0.0.0' });
+  await writeFile(join(componentDir, 'yarn.lock'), '# yarn\n', 'utf-8');
+  await writeFile(join(componentDir, 'tsconfig.json'), '{ "compilerOptions": {} }\n', 'utf-8');
+
+  const outFile = join(root, 'tsx-env.json');
+  const binDir = join(root, 'bin');
+  await writeStubYarnCaptureEnv({ binDir });
+
+  const env = {
+    ...process.env,
+    PATH: `${binDir}:${process.env.PATH ?? ''}`,
+    TEST_OUT_FILE: outFile,
+    TSX_TSCONFIG_PATH: '/tmp/foreign-component/tsconfig.json',
+  };
+  const child = await pmSpawnScript({ dir: componentDir, label: 'spawn-test', script: 'noop', env, quiet: true, options: { silent: true } });
+  const res = await waitExit(child);
+  assert.equal(res.code, 0);
+
+  const captured = JSON.parse(await readFile(outFile, 'utf-8'));
+  assert.equal(captured.TSX_TSCONFIG_PATH, join(componentDir, 'tsconfig.json'));
 });

@@ -23,6 +23,8 @@ import { banner, bullets, cmd, kv, sectionTitle } from './utils/ui/layout.mjs';
 import { cyan, dim, green, red, yellow } from './utils/ui/ansi.mjs';
 import { detectSwiftbarPluginInstalled } from './utils/menubar/swiftbar.mjs';
 import { expandHome } from './utils/paths/canonical_home.mjs';
+import { resolveStackRuntimeLaunchContext } from './runtime/launch/resolveStackRuntimeLaunchContext.mjs';
+import { inspectActiveRuntimeSnapshot } from './runtime/launch/inspectActiveRuntimeSnapshot.mjs';
 
 /**
  * Doctor script for common happy-stacks failure modes.
@@ -103,6 +105,9 @@ async function main() {
   const autostart = getDefaultAutostartPaths();
   const stackCtx = resolveStackContext({ env: process.env, autostart });
   const stackMode = stackCtx.stackMode;
+  const runtimeLaunchContext = await resolveStackRuntimeLaunchContext({ argv, env: process.env });
+  const runtimeInspection = await inspectActiveRuntimeSnapshot({ stackBaseDir: runtimeLaunchContext.stackBaseDir });
+  const runtimeSnapshot = runtimeLaunchContext.snapshot;
 
   const serverPort = resolveServerPortFromEnv({ defaultPort: 3005 });
   const resolvedUrls = await resolveServerUrls({ serverPort, allowEnable: false });
@@ -114,9 +119,12 @@ async function main() {
     : join(autostart.baseDir, 'cli');
 
   const serveUi = (process.env.HAPPIER_STACK_SERVE_UI ?? '1') !== '0';
-  const uiBuildDir = process.env.HAPPIER_STACK_UI_BUILD_DIR?.trim()
+  const sourceUiBuildDir = process.env.HAPPIER_STACK_UI_BUILD_DIR?.trim()
     ? process.env.HAPPIER_STACK_UI_BUILD_DIR.trim()
     : join(autostart.baseDir, 'ui');
+  const uiBuildDir = runtimeSnapshot
+    ? join(runtimeSnapshot.launchPath ?? runtimeSnapshot.snapshotPath, 'ui')
+    : sourceUiBuildDir;
 
 	  const serverComponentName = getServerComponentName({ kv: argsKv });
 	  if (serverComponentName === 'both') {
@@ -142,6 +150,13 @@ async function main() {
       version: runtimeVersion,
       packageJson: runtimePkgJson,
       updateCache,
+      mode: runtimeLaunchContext.runtimeMode.mode,
+      activeSnapshotId: runtimeInspection.activeSnapshotId,
+      snapshotPath: runtimeInspection.snapshotPath,
+      sourceFingerprint: runtimeInspection.sourceFingerprint,
+      valid: runtimeInspection.valid,
+      errors: runtimeInspection.errors,
+      components: runtimeInspection.manifest?.components ?? null,
     },
     env: {
       homeEnv: join(homeDir, '.env'),
@@ -169,6 +184,7 @@ async function main() {
       kv('cliHome:', cliHomeDir),
       kv('home:', homeDir),
       kv('runtime:', runtimeVersion ? `${runtimeDir} (${runtimeVersion})` : `${runtimeDir} (${yellow('not installed')})`),
+      kv('stackRuntime:', runtimeSnapshot?.snapshotId ? `${runtimeSnapshot.snapshotId} (${runtimeLaunchContext.runtimeMode.mode})` : `(${dim(runtimeLaunchContext.runtimeMode.mode)})`),
       kv('workspace:', workspaceDir),
     ]));
     console.log('');

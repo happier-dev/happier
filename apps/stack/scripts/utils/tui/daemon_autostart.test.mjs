@@ -101,6 +101,23 @@ test('shouldAttemptTuiDaemonAutostart fails closed when daemon is not expected, 
     }),
     false
   );
+
+  assert.equal(
+    shouldAttemptTuiDaemonAutostart({
+      stackName: 'repo-dev-abc',
+      isStartLike: true,
+      startDaemon: true,
+      internalServerUrl: 'http://127.0.0.1:1234',
+      authed: true,
+      daemonPid: null,
+      daemonRunning: true,
+      inProgress: false,
+      lastAttemptAtMs: 0,
+      nowMs: 1000,
+      minIntervalMs: 10_000,
+    }),
+    false
+  );
 });
 
 test('shouldAttemptTuiDaemonAutostart rate limits and de-dupes concurrent attempts', () => {
@@ -154,4 +171,3 @@ test('shouldAttemptTuiDaemonAutostart allows attempt when all conditions are sat
     true
   );
 });
-

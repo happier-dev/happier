@@ -119,6 +119,14 @@ brew install --cask swiftbar
 hstack menubar install
 ```
 
+For a named stack running as a service, prefer a stack-scoped install in selfhost mode:
+
+```bash
+hstack menubar install --stack=dev-built --mode=selfhost
+```
+
+This makes the menu bar target that stack’s service/runtime state instead of the generic main-stack view.
+
 If you want a different default refresh interval at install time:
 
 ```bash
@@ -237,6 +245,37 @@ stack-specific CLI home directory.
 
 ```bash
 hstack auth login
+```
+
+For a named stack:
+
+```bash
+hstack stack auth dev-built login
+```
+
+If the named stack prefers a runtime snapshot, guided login uses the runtime-backed stack UI when a valid snapshot is active.
+
+### Menu bar says daemon/autostart is wrong for a named stack
+
+If you installed a stack-scoped menu bar plugin, it should reflect the same stack service state as:
+
+```bash
+hstack stack auth dev-built status
+hstack stack service dev-built status
+```
+
+If the stack was rebuilt with a new runtime snapshot, restart the service so the menu bar observes the new running process:
+
+```bash
+hstack stack build dev-built --activate-runtime
+hstack stack service dev-built restart
+```
+
+If you only activated a new web bundle, the service keeps serving the updated runtime UI and the menu bar should not need a restart:
+
+```bash
+hstack stack build dev-built --web
+hstack stack runtime dev-built activate --web
 ```
 
 ### “Daemon stale” even though it’s running

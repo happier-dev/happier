@@ -6,7 +6,7 @@ import { getComponentDir } from '../paths/paths.mjs';
 import { isPidAlive, killPid, readPidState } from '../expo/expo.mjs';
 import { stopLocalDaemon } from '../../daemon.mjs';
 import { stopHappyServerManagedInfra } from '../server/infra/happy_server_infra.mjs';
-import { deleteStackRuntimeStateFile, readStackRuntimeStateFile } from './runtime_state.mjs';
+import { deleteStackRuntimeStateFile, readStackRuntimeStateFile, recordStackRuntimeStopRequest } from './runtime_state.mjs';
 import { getProcessGroupId, getPsEnvLine, killPidOwnedByStack, killProcessGroupOwnedByStack, listPidsWithEnvNeedles } from '../proc/ownership.mjs';
 import { terminateProcessGroup } from '../proc/terminate.mjs';
 import { coercePort } from '../server/port.mjs';
@@ -177,6 +177,13 @@ export async function stopStackWithEnv({
   // This is safer than killing whatever happens to listen on a port, and doesn't rely on the runner's shutdown handler.
   const runtimeStatePath = join(baseDir, 'stack.runtime.json');
   const runtimeState = await readStackRuntimeStateFile(runtimeStatePath);
+  if (runtimeState) {
+    await recordStackRuntimeStopRequest(runtimeStatePath, {
+      signal: 'SIGTERM',
+      requestedBy: 'stack stop',
+      reason: persistentReason(aggressive, sweepOwned, autoSweep),
+    }).catch(() => {});
+  }
   const runnerPid = Number(runtimeState?.ownerPid);
   const processes = runtimeState?.processes && typeof runtimeState.processes === 'object' ? runtimeState.processes : {};
 
@@ -386,4 +393,11 @@ export async function stopStackWithEnv({
   }
 
   return actions;
+}
+
+function persistentReason(aggressive, sweepOwned, autoSweep) {
+  if (aggressive) return 'explicit stack stop (aggressive)';
+  if (sweepOwned) return 'explicit stack stop (sweep-owned)';
+  if (autoSweep === false) return 'explicit stack stop (no-auto-sweep)';
+  return 'explicit stack stop';
 }

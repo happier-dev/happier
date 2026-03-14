@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
+import { spawn } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 
@@ -32,6 +33,31 @@ process.exit(0);
 
   await writeFile(join(cliDir, 'dist', 'index.mjs'), script, 'utf-8');
   return join(cliDir, 'bin', 'happier.mjs');
+}
+
+async function spawnDaemonLikeProcess({ cliHomeDir, internalServerUrl }) {
+  const logDir = join(cliHomeDir, 'logs');
+  await mkdir(logDir, { recursive: true });
+  const child = spawn(
+    process.execPath,
+    [
+      '-e',
+      "const { createWriteStream } = require('node:fs'); const { join } = require('node:path'); const s = createWriteStream(join(process.env.HAPPIER_HOME_DIR, 'logs', 'daemon-owned.log'), { flags: 'a' }); s.write('ready\\n'); setInterval(() => {}, 1000);",
+      'daemon',
+      'start-sync',
+    ],
+    {
+      detached: true,
+      stdio: 'ignore',
+      env: {
+        ...process.env,
+        HAPPIER_HOME_DIR: cliHomeDir,
+        HAPPIER_SERVER_URL: internalServerUrl,
+      },
+    },
+  );
+  child.unref();
+  return child.pid;
 }
 
 test('stopLocalDaemon skips stop when expectedPid does not match current daemon state pid', async () => {
@@ -69,3 +95,38 @@ test('stopLocalDaemon skips stop when expectedPid does not match current daemon 
   }
 });
 
+test('stopLocalDaemon stops a live daemon from daemon.state.json when cli dist is missing', async () => {
+  const tmp = await mkdtemp(join(tmpdir(), 'hstack-stop-daemon-missing-dist-'));
+  try {
+    const cliDir = join(tmp, 'apps', 'cli');
+    const cliHomeDir = join(tmp, 'cli-home');
+    const cliBin = join(cliDir, 'bin', 'happier.mjs');
+    const internalServerUrl = 'http://127.0.0.1:3005';
+
+    await mkdir(join(cliDir, 'bin'), { recursive: true });
+    await writeFile(join(cliDir, 'package.json'), '{}\n', 'utf-8');
+    await writeFile(join(cliBin), "throw new Error('cli bin should not run when dist is missing');\n", 'utf-8');
+
+    const daemonPid = await spawnDaemonLikeProcess({ cliHomeDir, internalServerUrl });
+    const { statePath } = resolvePreferredStackDaemonStatePaths({ cliHomeDir, serverUrl: internalServerUrl, env: {} });
+    await mkdir(dirname(statePath), { recursive: true });
+    await writeFile(statePath, JSON.stringify({ pid: daemonPid, httpPort: 0 }) + '\n', 'utf-8');
+
+    await stopLocalDaemon({
+      cliBin,
+      cliHomeDir,
+      internalServerUrl,
+      env: process.env,
+    });
+
+    let alive = true;
+    try {
+      process.kill(daemonPid, 0);
+    } catch {
+      alive = false;
+    }
+    assert.equal(alive, false, `expected daemon pid ${daemonPid} to be stopped`);
+  } finally {
+    await rm(tmp, { recursive: true, force: true });
+  }
+});

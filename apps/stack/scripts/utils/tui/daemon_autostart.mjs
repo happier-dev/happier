@@ -5,6 +5,7 @@ export function shouldAttemptTuiDaemonAutostart({
   internalServerUrl,
   authed,
   daemonPid,
+  daemonRunning = null,
   inProgress,
   lastAttemptAtMs,
   nowMs,
@@ -18,8 +19,10 @@ export function shouldAttemptTuiDaemonAutostart({
   if (!url) return false;
   if (!authed) return false;
   const pid = Number(daemonPid);
-  const daemonRunning = Number.isFinite(pid) && pid > 1;
-  if (daemonRunning) return false;
+  const isRunning = typeof daemonRunning === 'boolean'
+    ? daemonRunning
+    : Number.isFinite(pid) && pid > 1;
+  if (isRunning) return false;
   if (inProgress) return false;
 
   const now = Number(nowMs);
@@ -31,4 +34,3 @@ export function shouldAttemptTuiDaemonAutostart({
 
   return true;
 }
-

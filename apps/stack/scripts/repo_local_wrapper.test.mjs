@@ -228,6 +228,27 @@ test('repo-local wrapper maps `mobile:install` to stack mobile:install for the r
   );
 });
 
+test('repo-local wrapper uses a development-friendly default name for `mobile:install --app-env=development`', async () => {
+  const scriptsDir = dirname(fileURLToPath(import.meta.url));
+  const packageRoot = dirname(scriptsDir);
+  const repoRoot = dirname(dirname(packageRoot));
+
+  const res = await runNode(
+    [join(packageRoot, 'scripts', 'repo_local.mjs'), 'mobile:install', '--app-env=development', '--dry-run'],
+    {
+      cwd: repoRoot,
+      env: process.env,
+    }
+  );
+  assert.equal(res.code, 0, `expected exit 0, got ${res.code}\nstdout:\n${res.stdout}\nstderr:\n${res.stderr}`);
+
+  const data = JSON.parse(res.stdout);
+  assert.ok(
+    data.args.includes('--name=Happier Dev (Local)'),
+    `expected development install to default to a development-friendly app name:\n${JSON.stringify(data.args, null, 2)}`
+  );
+});
+
 test('repo-local wrapper auto-installs deps when node_modules are missing', async () => {
   const scriptsDir = dirname(fileURLToPath(import.meta.url));
   const packageRoot = dirname(scriptsDir); // apps/stack
@@ -437,6 +458,7 @@ test('repo-local wrapper persists a stable pinned server port when none is prese
             HAPPIER_STACK_STORAGE_DIR: stacksRoot,
             HAPPIER_STACK_SERVER_PORT_BASE: String(reserved.base),
             HAPPIER_STACK_SERVER_PORT_RANGE: String(reserved.range),
+            HAPPIER_STACK_REPO_LOCAL_AUTO_INSTALL: '0',
             HAPPIER_STACK_REPO_LOCAL_PREFLIGHT_ONLY: '1',
           },
         }

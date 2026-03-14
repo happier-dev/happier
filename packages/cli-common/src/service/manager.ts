@@ -3,7 +3,9 @@ import { chmod, mkdir, rename, writeFile } from 'node:fs/promises';
 import { spawnSync, type SpawnSyncReturns } from 'node:child_process';
 import { userInfo } from 'node:os';
 
-import { buildLaunchdPath, buildLaunchdPlistXml } from './launchd.js';
+import { commandExistsOnPath } from '../process/index.js';
+import { buildLaunchdPlistXml } from './launchd.js';
+import { mergeServiceEnvWithPath } from './path.js';
 import { renderSystemdServiceUnit } from './systemd.js';
 import { renderWindowsScheduledTaskWrapperPs1 } from './windows.js';
 
@@ -90,6 +92,19 @@ function windowsWrapperPathForLabel(params: Readonly<{ homeDir: string; label: s
 export function buildServiceDefinition(params: Readonly<{ backend: ServiceBackend; homeDir: string; spec: ServiceSpec }>): ServiceDefinition {
   const s = normalizeSpec(params.spec);
   const backend = String(params.backend ?? '').trim() as ServiceBackend;
+  const platform: NodeJS.Platform =
+    backend === 'launchd-user' || backend === 'launchd-system'
+      ? 'darwin'
+      : backend === 'systemd-user' || backend === 'systemd-system'
+        ? 'linux'
+        : 'win32';
+  const mergedEnv = mergeServiceEnvWithPath({
+    env: s.env,
+    execPath: s.programArgs[0],
+    basePath: process.env.PATH,
+    homeDir: params.homeDir,
+    platform,
+  });
 
   if (backend === 'systemd-user' || backend === 'systemd-system') {
     const mode: ServiceMode = backend === 'systemd-system' ? 'system' : 'user';
@@ -98,7 +113,7 @@ export function buildServiceDefinition(params: Readonly<{ backend: ServiceBacken
       description: s.description,
       execStart: s.programArgs,
       workingDirectory: s.workingDirectory,
-      env: s.env,
+      env: mergedEnv,
       restart: 'always',
       runAsUser: s.runAsUser,
       stdoutPath: s.stdoutPath,
@@ -111,10 +126,6 @@ export function buildServiceDefinition(params: Readonly<{ backend: ServiceBacken
   if (backend === 'launchd-user' || backend === 'launchd-system') {
     const mode: ServiceMode = backend === 'launchd-system' ? 'system' : 'user';
     const path = launchdPlistPathForLabel({ homeDir: params.homeDir, label: s.label, mode });
-    const mergedEnv = {
-      ...(s.env ?? {}),
-      PATH: buildLaunchdPath({ execPath: process.execPath, basePath: process.env.PATH }),
-    };
     const contents = buildLaunchdPlistXml({
       label: s.label,
       programArgs: s.programArgs,
@@ -133,7 +144,7 @@ export function buildServiceDefinition(params: Readonly<{ backend: ServiceBacken
     const contents = renderWindowsScheduledTaskWrapperPs1({
       workingDirectory: s.workingDirectory,
       programArgs: s.programArgs,
-      env: s.env,
+      env: mergedEnv,
       stdoutPath: s.stdoutPath,
       stderrPath: s.stderrPath,
     });
@@ -305,17 +316,6 @@ export function planServiceAction(params: Readonly<{
   throw new Error(`Unsupported plan: ${backend} ${action}`);
 }
 
-function commandExists(cmd: string, envPath: string | undefined): boolean {
-  const name = String(cmd ?? '').trim();
-  if (!name) return false;
-  if (process.platform === 'win32') {
-    const res = spawnSync('where', [name], { stdio: 'ignore', env: { ...process.env, PATH: envPath ?? process.env.PATH } });
-    return (res.status ?? 1) === 0;
-  }
-  const res = spawnSync('sh', ['-lc', `command -v ${name} >/dev/null 2>&1`], { stdio: 'ignore', env: { ...process.env, PATH: envPath ?? process.env.PATH } });
-  return (res.status ?? 1) === 0;
-}
-
 export async function applyServicePlan(plan: ServicePlan, options: Readonly<{ runCommands?: boolean }> = {}): Promise<void> {
   let launchdUsedLegacyLoadFallback = false;
   for (const w of plan.writes) {
@@ -329,7 +329,7 @@ export async function applyServicePlan(plan: ServicePlan, options: Readonly<{ ru
         continue;
       }
     }
-    if (!commandExists(c.cmd, process.env.PATH)) {
+    if (!commandExistsOnPath(c.cmd, { path: process.env.PATH })) {
       throw new Error(`[service] command not found: ${c.cmd}`);
     }
     let res = spawnSync(c.cmd, [...c.args], { encoding: 'utf8', env: process.env });

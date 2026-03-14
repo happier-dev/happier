@@ -10,10 +10,13 @@ import { getComponentDir, resolveStackEnvPath } from '../utils/paths/paths.mjs';
 import { run } from '../utils/proc/proc.mjs';
 import { resolveServerPortFromEnv, resolveServerUrls } from '../utils/server/urls.mjs';
 import { parseCliIdentityOrThrow, resolveCliHomeDirForIdentity } from '../utils/stack/cli_identities.mjs';
-import { readStackRuntimeStateFile, recordStackRuntimeUpdate, isPidAlive } from '../utils/stack/runtime_state.mjs';
+import { readStackRuntimeStateFile, isPidAlive } from '../utils/stack/runtime_state.mjs';
+import { syncStackRuntimeDaemonPidFromDaemonState } from '../utils/stack/runtime_daemon_state.mjs';
 import { withStackEnv } from './stack_environment.mjs';
 import { banner, cmd as cmdFmt, sectionTitle } from '../utils/ui/layout.mjs';
 import { cyan, green } from '../utils/ui/ansi.mjs';
+import { resolveStackRuntimeLaunchContext } from '../runtime/launch/resolveStackRuntimeLaunchContext.mjs';
+import { resolveCliRuntimeLaunchSpec } from '../runtime/launch/resolveCliRuntimeLaunchSpec.mjs';
 
 export async function runStackDaemonCommand({ rootDir, stackName, argv, json }) {
   const { flags, kv } = parseArgs(argv);
@@ -62,8 +65,15 @@ export async function runStackDaemonCommand({ rootDir, stackName, argv, json }) 
   const res = await withStackEnv({
     stackName,
     fn: async ({ env }) => {
-      const cliDir = getComponentDir(rootDir, 'happier-cli', env);
+      const runtimeLaunchContext = await resolveStackRuntimeLaunchContext({ argv, env });
+      const runtimeSnapshot = runtimeLaunchContext.snapshot;
+      const cliLaunchSpec = runtimeSnapshot ? resolveCliRuntimeLaunchSpec({ snapshot: runtimeSnapshot }) : null;
+      const cliDir = cliLaunchSpec?.cliDir ?? getComponentDir(rootDir, 'happier-cli', env);
       const cliBin = join(cliDir, 'bin', 'happier.mjs');
+      const cliEntrypoint = cliLaunchSpec?.entrypoint ?? '';
+      const cliNodeEntrypoint = cliLaunchSpec?.nodeEntrypoint ?? '';
+      const cliCommand = cliLaunchSpec?.command ?? '';
+      const cliCommandArgs = cliLaunchSpec?.args ?? [];
       const baseCliHomeDir = (env.HAPPIER_STACK_CLI_HOME_DIR ?? join(resolveStackEnvPath(stackName).baseDir, 'cli')).toString();
       const cliHomeDir = resolveCliHomeDirForIdentity({ cliHomeDir: baseCliHomeDir, identity });
 
@@ -95,18 +105,6 @@ export async function runStackDaemonCommand({ rootDir, stackName, argv, json }) 
           : {}),
       };
       await mkdir(cliHomeDir, { recursive: true }).catch(() => {});
-
-      const maybeRecordDaemonPid = async ({ pid, clear = false } = {}) => {
-        const path = (runtimePath ?? '').toString().trim();
-        if (!path) return;
-        if (clear) {
-          await recordStackRuntimeUpdate(path, { processes: { daemonPid: null } }).catch(() => {});
-          return;
-        }
-        const n = Number(pid);
-        if (!Number.isFinite(n) || n <= 1) return;
-        await recordStackRuntimeUpdate(path, { processes: { daemonPid: n } }).catch(() => {});
-      };
 
       if (action === 'start' || action === 'restart') {
         // UX: if this identity is not authenticated yet and we're in a real TTY, offer to run the
@@ -159,9 +157,14 @@ export async function runStackDaemonCommand({ rootDir, stackName, argv, json }) 
 
         await startLocalDaemonWithAuth({
           cliBin,
+          cliEntrypoint,
+          cliNodeEntrypoint,
+          cliCommand,
+          cliCommandArgs,
           cliHomeDir,
           internalServerUrl,
           publicServerUrl,
+          runtimeStatePath: runtimePath,
           isShuttingDown: () => false,
           forceRestart: action === 'restart',
           env: envForIdentity,
@@ -169,15 +172,12 @@ export async function runStackDaemonCommand({ rootDir, stackName, argv, json }) 
           cliIdentity: identity,
         });
 
-        // Record the daemon PID in stack.runtime.json so `hstack tui` and other tools can
-        // display correct daemon state even when the daemon is started outside `hstack dev`.
-        const state = checkDaemonState(cliHomeDir, { serverUrl: internalServerUrl, env: envForIdentity });
-        if ((state?.status === 'running' || state?.status === 'starting') && typeof state?.pid === 'number') {
-          await maybeRecordDaemonPid({ pid: state.pid });
-        }
-
         const status = await daemonStatusSummary({
           cliBin,
+          cliEntrypoint,
+          cliNodeEntrypoint,
+          cliCommand,
+          cliCommandArgs,
           cliHomeDir,
           internalServerUrl,
           publicServerUrl,
@@ -191,16 +191,24 @@ export async function runStackDaemonCommand({ rootDir, stackName, argv, json }) 
       if (action === 'stop') {
         await stopLocalDaemon({
           cliBin,
+          cliEntrypoint,
+          cliNodeEntrypoint,
+          cliCommand,
+          cliCommandArgs,
           internalServerUrl,
           publicServerUrl,
           cliHomeDir,
+          runtimeStatePath: runtimePath,
           env: envForIdentity,
           stackName,
           cliIdentity: identity,
         });
-        await maybeRecordDaemonPid({ clear: true });
         const status = await daemonStatusSummary({
           cliBin,
+          cliEntrypoint,
+          cliNodeEntrypoint,
+          cliCommand,
+          cliCommandArgs,
           cliHomeDir,
           internalServerUrl,
           publicServerUrl,
@@ -213,6 +221,10 @@ export async function runStackDaemonCommand({ rootDir, stackName, argv, json }) 
 
       const status = await daemonStatusSummary({
         cliBin,
+        cliEntrypoint,
+        cliNodeEntrypoint,
+        cliCommand,
+        cliCommandArgs,
         cliHomeDir,
         internalServerUrl,
         publicServerUrl,
@@ -223,10 +235,15 @@ export async function runStackDaemonCommand({ rootDir, stackName, argv, json }) 
 
       // Best-effort: when someone runs `status`, persist the observed PID so the TUI can show
       // "running" even if the daemon was started outside of stack orchestration.
-      const state = checkDaemonState(cliHomeDir, { serverUrl: internalServerUrl, env: envForIdentity });
-      if ((state?.status === 'running' || state?.status === 'starting') && typeof state?.pid === 'number') {
-        await maybeRecordDaemonPid({ pid: state.pid });
-      }
+      await syncStackRuntimeDaemonPidFromDaemonState(
+        {
+          runtimeStatePath: runtimePath,
+          cliHomeDir,
+          internalServerUrl,
+          env: envForIdentity,
+        },
+        { checkDaemonStateImpl: checkDaemonState },
+      ).catch(() => {});
 
       return { ok: true, action, cliIdentity: identity, cliHomeDir, status: status.trim() };
     },

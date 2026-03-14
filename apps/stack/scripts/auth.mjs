@@ -60,11 +60,15 @@ function resolveGuidedStartAction({ healthOk = false, runtimeOwnerAlive = false,
   return 'prompt';
 }
 
-function resolveGuidedStackStartCommand({ stackName, useRuntimeStart = false } = {}) {
+function resolveGuidedStackStartCommand({ stackName, startKind = 'dev' } = {}) {
   const name = String(stackName ?? '').trim() || 'main';
-  return useRuntimeStart
-    ? `hstack stack start ${name} --background --runtime`
-    : `hstack stack dev ${name} --background`;
+  if (startKind === 'runtime') {
+    return `hstack stack start ${name} --background --runtime`;
+  }
+  if (startKind === 'start') {
+    return `hstack stack start ${name} --background`;
+  }
+  return `hstack stack dev ${name} --background`;
 }
 
 async function getInternalServerUrlCompat() {
@@ -1600,9 +1604,10 @@ async function cmdLogin({ argv, json }) {
     !runtimeSnapshotActive;
   const effectiveWebappMode = wantsDefaultExpoInAuto ? 'expo' : requestedWebappMode;
   const shouldUseRuntimeStart = runtimeSnapshotActive && effectiveWebappMode !== 'expo';
+  const guidedStartKind = shouldUseRuntimeStart ? 'runtime' : effectiveWebappMode === 'expo' ? 'dev' : 'start';
   const guidedStartCommand = resolveGuidedStackStartCommand({
     stackName,
-    useRuntimeStart: shouldUseRuntimeStart,
+    startKind: guidedStartKind,
   });
 
   let webappUrlRaw = '';
@@ -1712,14 +1717,6 @@ async function cmdLogin({ argv, json }) {
     throw new Error('[auth] login: --json is supported only with --print');
   }
 
-  if (force) {
-    await clearStackForceLoginCredentialPaths({
-      cliHomeDir,
-      serverUrl: internalServerUrl,
-      env,
-    });
-  }
-
   const shouldAutoStart = flags.has('--start-if-needed');
   const guidedReadyTimeoutMs = resolveGuidedServerReadyTimeoutMs(process.env);
   const waitForGuidedServerReadyOrThrow = async (reason) => {
@@ -1809,6 +1806,18 @@ async function cmdLogin({ argv, json }) {
     stackName,
     cliIdentity: identity,
   });
+  let clearedForceCredentials = false;
+  const runLogin = async (runEnv) => {
+    if (force && !clearedForceCredentials) {
+      await clearStackForceLoginCredentialPaths({
+        cliHomeDir,
+        serverUrl: internalServerUrl,
+        env,
+      });
+      clearedForceCredentials = true;
+    }
+    await run(loginCommand, loginArgs, { cwd: rootDir, env: runEnv });
+  };
 
   let webappUrlForDaemon = webappUrl;
   if (method !== 'mobile' && effectiveWebappMode === 'expo') {
@@ -1868,7 +1877,7 @@ async function cmdLogin({ argv, json }) {
               `[auth] Falling back to hosted web app (${HOSTED_WEBAPP_URL}) for the approval UI (targets: ${publicServerUrl}).`
           );
           const hostedEnv = { ...scopedEnv, HAPPIER_WEBAPP_URL: HOSTED_WEBAPP_URL };
-          await run(loginCommand, loginArgs, { cwd: rootDir, env: hostedEnv });
+          await runLogin(hostedEnv);
           webappUrlForDaemon = HOSTED_WEBAPP_URL;
           break;
         }
@@ -1901,7 +1910,7 @@ async function cmdLogin({ argv, json }) {
             `[auth] ${stackName}: falling back to hosted web app (${HOSTED_WEBAPP_URL}) for the approval UI (targets: ${publicServerUrl}).`
           );
           const hostedEnv = { ...scopedEnv, HAPPIER_WEBAPP_URL: HOSTED_WEBAPP_URL };
-          await run(loginCommand, loginArgs, { cwd: rootDir, env: hostedEnv });
+          await runLogin(hostedEnv);
           webappUrlForDaemon = HOSTED_WEBAPP_URL;
           break;
         }
@@ -1916,6 +1925,14 @@ async function cmdLogin({ argv, json }) {
             if (idx >= 0) {
               mobileArgs[idx + 1] = 'mobile';
             }
+          }
+          if (force && !clearedForceCredentials) {
+            await clearStackForceLoginCredentialPaths({
+              cliHomeDir,
+              serverUrl: internalServerUrl,
+              env,
+            });
+            clearedForceCredentials = true;
           }
           await run(loginCommand, mobileArgs, { cwd: rootDir, env: scopedEnv });
           break;
@@ -1932,7 +1949,7 @@ async function cmdLogin({ argv, json }) {
       }
     }
   } else {
-    await run(loginCommand, loginArgs, { cwd: rootDir, env: scopedEnv });
+    await runLogin(scopedEnv);
   }
 
   try {

@@ -30,7 +30,7 @@ describe('resolveDaemonServiceCliRuntimeFromEnv', () => {
 
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     try {
-      const { resolveDaemonServiceCliRuntimeFromEnv } = await import('./cli');
+      const { resolveDaemonServiceCliRuntimeFromEnv } = await import('./cli.js');
       const runtime = resolveDaemonServiceCliRuntimeFromEnv();
       expect(runtime.uid).toBe(0);
     } finally {

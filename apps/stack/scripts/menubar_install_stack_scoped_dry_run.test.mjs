@@ -71,3 +71,47 @@ test('hstack menubar install --dry-run keeps the default plugin basename for mai
   assert.equal(data.swiftbar?.pluginFile, 'hstack.5m.sh');
 });
 
+test('hstack menubar install --dry-run uses the explicit stack env file instead of a stale exported env file', async (t) => {
+  const tmp = await mkdtemp(join(tmpdir(), 'hstack-menubar-explicit-stack-'));
+  t.after(async () => {
+    await rm(tmp, { recursive: true, force: true }).catch(() => {});
+  });
+
+  const storageDir = join(tmp, 'stacks');
+  const mainDir = join(storageDir, 'main');
+  const devBuiltDir = join(storageDir, 'dev-built');
+  await mkdir(mainDir, { recursive: true });
+  await mkdir(devBuiltDir, { recursive: true });
+
+  const mainEnvFile = join(mainDir, 'env');
+  const devBuiltEnvFile = join(devBuiltDir, 'env');
+  await writeFile(mainEnvFile, 'HAPPIER_STACK_STACK=main\n', 'utf8');
+  await writeFile(devBuiltEnvFile, 'HAPPIER_STACK_STACK=dev-built\n', 'utf8');
+
+  const res = runHstack(['menubar', 'install', '--stack=dev-built', '--dry-run', '--json'], {
+    env: {
+      HAPPIER_STACK_STACK: 'main',
+      HAPPIER_STACK_ENV_FILE: mainEnvFile,
+      HAPPIER_STACK_STORAGE_DIR: storageDir,
+    },
+  });
+  assert.equal(res.status, 0, `expected exit 0\nstdout:\n${res.stdout}\nstderr:\n${res.stderr}`);
+
+  const data = JSON.parse(res.stdout);
+  assert.equal(data.ok, true);
+  assert.equal(data.stack?.name, 'dev-built');
+  assert.equal(data.stack?.envFile, devBuiltEnvFile);
+});
+
+test('hstack menubar install --dry-run honors an explicit mode flag', () => {
+  const res = runHstack(['menubar', 'install', '--stack=dev-built', '--mode=selfhost', '--dry-run', '--json'], {
+    env: {
+      HAPPIER_STACK_STACK: 'main',
+    },
+  });
+  assert.equal(res.status, 0, `expected exit 0\nstdout:\n${res.stdout}\nstderr:\n${res.stderr}`);
+
+  const data = JSON.parse(res.stdout);
+  assert.equal(data.ok, true);
+  assert.equal(data.mode, 'selfhost');
+});

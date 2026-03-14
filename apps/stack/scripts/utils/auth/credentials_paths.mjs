@@ -29,6 +29,10 @@ function resolveActiveServerIdOverride(env = process.env) {
   return sanitizeServerIdForFilesystem(raw, '');
 }
 
+function hasExplicitServerContext({ serverUrl = '', env = process.env }) {
+  return normalizeServerUrl(serverUrl) !== '' || resolveActiveServerIdOverride(env) !== '';
+}
+
 function deriveServerIdFromUrl(url) {
   const normalized = normalizeServerUrl(url);
   let h = 2166136261;
@@ -153,7 +157,9 @@ export function resolveStackDaemonStatePaths({ cliHomeDir, serverUrl = '', env =
 }
 
 export function resolvePreferredStackDaemonStatePaths({ cliHomeDir, serverUrl = '', env = process.env }) {
+  const home = requireCliHomeDir(cliHomeDir);
   const resolved = resolveStackDaemonStatePaths({ cliHomeDir, serverUrl, env });
+  const allowAnyServerScopedFallback = !hasExplicitServerContext({ serverUrl, env });
   const serverScopedExists =
     fileHasContent(resolved.serverScopedStatePath) || existsSync(resolved.serverScopedLockPath);
   if (serverScopedExists) {
@@ -176,12 +182,68 @@ export function resolvePreferredStackDaemonStatePaths({ cliHomeDir, serverUrl = 
     }
   }
 
+  if (allowAnyServerScopedFallback) {
+    const anyServerScoped = findAnyDaemonStatePairInCliHome({ cliHomeDir: home });
+    if (anyServerScoped) {
+      return anyServerScoped;
+    }
+  }
+
   const legacyExists = fileHasContent(resolved.legacyStatePath) || existsSync(resolved.legacyLockPath);
   if (legacyExists) {
     return { statePath: resolved.legacyStatePath, lockPath: resolved.legacyLockPath };
   }
 
   return { statePath: resolved.serverScopedStatePath, lockPath: resolved.serverScopedLockPath };
+}
+
+export function findAnyDaemonStatePairInCliHome({ cliHomeDir }) {
+  const home = requireCliHomeDir(cliHomeDir);
+
+  const serversDir = join(home, 'servers');
+  try {
+    const entries = readdirSync(serversDir, { withFileTypes: true })
+      .filter((ent) => ent.isDirectory())
+      .map((ent) => ent.name)
+      .sort();
+    let best = null;
+    let bestMtimeMs = -1;
+    for (const id of entries) {
+      const statePath = join(serversDir, id, 'daemon.state.json');
+      const lockPath = join(serversDir, id, 'daemon.state.json.lock');
+      const stateExists = fileHasContent(statePath);
+      const lockExists = existsSync(lockPath);
+      if (!stateExists && !lockExists) continue;
+
+      let mtimeMs = 0;
+      try {
+        if (stateExists) {
+          mtimeMs = Math.max(mtimeMs, Number(statSync(statePath).mtimeMs) || 0);
+        }
+      } catch {
+        // ignore
+      }
+      try {
+        if (lockExists) {
+          mtimeMs = Math.max(mtimeMs, Number(statSync(lockPath).mtimeMs) || 0);
+        }
+      } catch {
+        // ignore
+      }
+      if (mtimeMs >= bestMtimeMs) {
+        bestMtimeMs = mtimeMs;
+        best = { statePath, lockPath };
+      }
+    }
+    if (best) return best;
+  } catch {
+    // ignore
+  }
+
+  const legacyStatePath = join(home, 'daemon.state.json');
+  const legacyLockPath = join(home, 'daemon.state.json.lock');
+  const legacyExists = fileHasContent(legacyStatePath) || existsSync(legacyLockPath);
+  return legacyExists ? { statePath: legacyStatePath, lockPath: legacyLockPath } : null;
 }
 
 export function findExistingStackCredentialPath({ cliHomeDir, serverUrl = '', env = process.env }) {

@@ -2,11 +2,14 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 
 import { configuration } from '@/configuration';
-import { projectPath } from '@/projectPath';
+import { ensureJavaScriptRuntimeExecutable } from '@/runtime/js/ensureJavaScriptRuntimeExecutable';
+import { buildMissingJavaScriptRuntimeMessage } from '@/runtime/js/buildMissingJavaScriptRuntimeMessage';
+import { isBun } from '@/utils/runtime';
 
 import { applyDaemonServiceInstallPlan, applyDaemonServiceUninstallPlan } from './apply';
 import { planDaemonServiceInstall, planDaemonServiceUninstall } from './plan';
 import type { DaemonServiceMode } from './plan';
+import { resolveDaemonServiceRuntimeTarget } from './runtimeTarget';
 
 type SupportedPlatform = 'darwin' | 'linux' | 'win32';
 
@@ -15,11 +18,6 @@ function resolveSupportedPlatform(p: string): SupportedPlatform | null {
   if (p === 'linux') return 'linux';
   if (p === 'win32') return 'win32';
   return null;
-}
-
-function looksLikeNodeExecPath(execPath: string): boolean {
-  const base = execPath.replaceAll('\\', '/').split('/').at(-1) ?? '';
-  return base === 'node' || base === 'node.exe';
 }
 
 export async function installDaemonService(options: Readonly<{
@@ -52,8 +50,23 @@ export async function installDaemonService(options: Readonly<{
   const serverUrl = options.serverUrl ?? configuration.apiServerUrl;
   const webappUrl = options.webappUrl ?? configuration.webappUrl;
   const publicServerUrl = options.publicServerUrl ?? configuration.serverUrl;
-  const nodePath = options.nodePath ?? process.execPath;
-  const entryPath = options.entryPath ?? (looksLikeNodeExecPath(nodePath) ? join(projectPath(), 'dist', 'index.mjs') : '');
+  const explicitNodePath = options.nodePath ?? null;
+  const explicitEntryPath = options.entryPath ?? null;
+  const runtimeExecutable = explicitNodePath
+    ? null
+    : await ensureJavaScriptRuntimeExecutable({
+        isBunRuntime: isBun(),
+        currentExecPath: process.execPath,
+      });
+  if (!explicitNodePath && !runtimeExecutable && !explicitEntryPath) {
+    throw new ReferenceError(buildMissingJavaScriptRuntimeMessage('Daemon service installation'));
+  }
+  const runtimeTarget = resolveDaemonServiceRuntimeTarget({
+    currentExecPath: process.execPath,
+    runtimeExecutable,
+    explicitNodePath,
+    explicitEntryPath,
+  });
 
   const plan = planDaemonServiceInstall({
     platform,
@@ -66,8 +79,8 @@ export async function installDaemonService(options: Readonly<{
     serverUrl,
     webappUrl,
     publicServerUrl,
-    nodePath,
-    entryPath,
+    nodePath: runtimeTarget.nodePath,
+    entryPath: runtimeTarget.entryPath,
   });
   await applyDaemonServiceInstallPlan(plan, { runCommands: options.runCommands });
 }

@@ -11,6 +11,7 @@ import { commandExists } from './commands.mjs';
 import { coerceHappyMonorepoRootFromPath, getDefaultAutostartPaths, getHappyStacksHomeDir } from '../paths/paths.mjs';
 import { resolveInstalledPath, resolveInstalledCliRoot } from '../paths/runtime.mjs';
 import { expandHome } from '../paths/canonical_home.mjs';
+import { withCliDistBuildLock } from './cliDistBuildLock.mjs';
 
 function sha256Hex(s) {
   return createHash('sha256').update(String(s ?? ''), 'utf-8').digest('hex');
@@ -39,6 +40,13 @@ function resolveBuildStatePath({ label, dir }) {
   const homeDir = getHappyStacksHomeDir();
   const key = sha256Hex(resolve(dir));
   return join(homeDir, 'cache', 'build', label, `${key}.json`);
+}
+
+function buildStateMatchesGitSignature(buildState, gitSig) {
+  if (!buildState?.signature || !gitSig?.signature) {
+    return false;
+  }
+  return buildState.signature === gitSig.signature;
 }
 
 function extractLocalImportSpecifiersFromJs(text) {
@@ -165,6 +173,71 @@ async function getComponentPm(dir, env = process.env) {
   }
 
   throw new Error(`[local] yarn is required for component at ${dir}. Install it via Corepack: \`corepack enable\``);
+}
+
+function prependPathEntry(env, entry) {
+  const candidate = String(entry ?? '').trim();
+  if (!candidate) return env;
+  const delimiter = process.platform === 'win32' ? ';' : ':';
+  const current = String(env.PATH ?? '')
+    .split(delimiter)
+    .map((value) => String(value ?? '').trim())
+    .filter(Boolean);
+  env.PATH = [candidate, ...current.filter((value) => value !== candidate)].join(delimiter);
+  return env;
+}
+
+function normalizeNvmNodeVersion(raw) {
+  const version = String(raw ?? '').trim();
+  if (!version) return null;
+  return version.startsWith('v') ? version : `v${version}`;
+}
+
+async function resolvePreferredNodeBinDir(dir, env = process.env) {
+  const candidateDirs = [];
+  const monorepoRoot = coerceHappyMonorepoRootFromPath(dir);
+  if (monorepoRoot) candidateDirs.push(monorepoRoot);
+  candidateDirs.push(dir);
+
+  const nvmDir = String(env.NVM_DIR ?? '').trim() || join(homedir(), '.nvm');
+  const nodeBinaryName = process.platform === 'win32' ? 'node.exe' : 'node';
+  const seenDirs = new Set();
+
+  for (const candidateDir of candidateDirs) {
+    const resolvedDir = resolve(candidateDir);
+    if (seenDirs.has(resolvedDir)) continue;
+    seenDirs.add(resolvedDir);
+
+    let requestedVersion = null;
+    try {
+      requestedVersion = normalizeNvmNodeVersion(await readFile(join(resolvedDir, '.nvmrc'), 'utf-8'));
+    } catch {
+      requestedVersion = null;
+    }
+    if (!requestedVersion) continue;
+
+    const binDir = join(nvmDir, 'versions', 'node', requestedVersion, 'bin');
+    if (existsSync(join(binDir, nodeBinaryName))) {
+      return binDir;
+    }
+  }
+
+  return null;
+}
+
+async function preparePmEnv(dir, envIn = process.env) {
+  const env = await applyStackCacheEnv(envIn);
+  const preferredNodeBinDir = await resolvePreferredNodeBinDir(dir, env);
+  if (preferredNodeBinDir) {
+    prependPathEntry(env, preferredNodeBinDir);
+  }
+  const componentTsconfigPath = join(dir, 'tsconfig.json');
+  if (existsSync(componentTsconfigPath)) {
+    env.TSX_TSCONFIG_PATH = componentTsconfigPath;
+  } else {
+    delete env.TSX_TSCONFIG_PATH;
+  }
+  return env;
 }
 
 const _yarnReadyKeys = new Set();
@@ -313,7 +386,7 @@ export async function ensureDepsInstalled(dir, label, { quiet = false, env: envI
   const installPkgJson = join(installDir, 'package.json');
   const nodeModules = join(installDir, 'node_modules');
   const stdio = quiet ? 'ignore' : 'inherit';
-  const env = await applyStackCacheEnv(envIn);
+  const env = await preparePmEnv(installDir, envIn);
   const pm = await getComponentPm(installDir, env);
   if (pm.name === 'yarn') {
     await ensureYarnReady({ dir: installDir, env, quiet });
@@ -321,6 +394,13 @@ export async function ensureDepsInstalled(dir, label, { quiet = false, env: envI
   const installArgs = pm.name === 'yarn' ? ['install', '--production=false'] : ['install'];
 
   if (await pathExists(nodeModules)) {
+    const skipRefresh =
+      String(env?.HAPPIER_STACK_SKIP_REFRESH_DEPS ?? '').trim() === '1' ||
+      String(env?.HAPPIER_STACK_DISABLE_REFRESH_DEPS ?? '').trim() === '1';
+    if (skipRefresh) {
+      return;
+    }
+
     // In service contexts (launchd/systemd), avoid doing surprise dependency refreshes just because
     // files changed on disk. This keeps long-running stacks resilient even if the checkout becomes
     // temporarily un-buildable (e.g. mid-rebase / failing typecheck).
@@ -380,7 +460,8 @@ export async function ensureDepsInstalled(dir, label, { quiet = false, env: envI
       const componentPkgM = await componentPkgMtimeMs();
       const intM = await mtimeMs(yarnIntegrity);
       const patchM = await patchesMtimeMs();
-      if (!intM || lockM > intM || pkgM > intM || componentPkgM > intM || patchM > intM) {
+      const nodeModulesM = intM || await mtimeMs(nodeModules);
+      if (!nodeModulesM || lockM > nodeModulesM || pkgM > nodeModulesM || componentPkgM > nodeModulesM || patchM > nodeModulesM) {
         if (!quiet) {
           // eslint-disable-next-line no-console
           console.log(`[local] refreshing ${label} dependencies (yarn.lock/package.json/patches changed)...`);
@@ -435,7 +516,7 @@ async function ensureWorkspacePackageBuilt(pkgDir, { quiet = false, env: envIn =
   const pkgJsonPath = join(pkgDir, 'package.json');
   if (!(await pathExists(pkgJsonPath))) return { built: false, reason: 'missing-package-json' };
 
-  const env = await applyStackCacheEnv(envIn);
+  const env = await preparePmEnv(pkgDir, envIn);
   const stdio = quiet ? 'ignore' : 'inherit';
   const pkgJson = await readJson(pkgJsonPath);
   const expectedFiles = collectExpectedPackageFilesFromPackageJson(pkgJson).map((p) => join(pkgDir, p));
@@ -513,107 +594,123 @@ export async function ensureWorkspacePackagesBuiltForComponent(componentDir, { q
 
 export async function ensureCliBuilt(cliDir, { buildCli, quiet = false, env: envIn = process.env } = {}) {
   await ensureDepsInstalled(cliDir, 'happier-cli', { quiet, env: envIn });
-  if (!buildCli) {
-    return { built: false, reason: 'disabled' };
-  }
-  // Default: build only when needed (fast + reliable for worktrees that haven't been built yet).
-  //
-  // You can force always-build by setting:
-  // - HAPPIER_STACK_CLI_BUILD_MODE=always
-  // Or disable via:
-  // - HAPPIER_STACK_CLI_BUILD=0
-  const serviceDefaultMode = isServiceMode(envIn) ? 'never' : 'auto';
-  const modeRaw = (envIn.HAPPIER_STACK_CLI_BUILD_MODE ?? serviceDefaultMode).trim().toLowerCase();
-  const mode = modeRaw === 'always' || modeRaw === 'auto' || modeRaw === 'never' ? modeRaw : 'auto';
-  const distEntrypoint = join(cliDir, 'dist', 'index.mjs');
-  const distDir = join(cliDir, 'dist');
-  const distBackupDir = join(cliDir, '.dist.hstack-backup');
-  const buildStatePath = resolveBuildStatePath({ label: 'happier-cli', dir: cliDir });
-  const gitSig = await computeGitWorktreeSignature(cliDir);
-  const prev = await readJsonIfExists(buildStatePath);
+  const repoRoot = coerceHappyMonorepoRootFromPath(cliDir);
+  const lockPath = repoRoot
+    ? join(repoRoot, '.project', 'tmp', 'cli-dist-build.lock')
+    : join(cliDir, '.dist.hstack-build.lock');
 
-  // Recovery: if a previous build was interrupted after moving dist/ aside, we can be left with
-  // dist/ missing but .dist.hstack-backup/ present. Restore it so the stack remains runnable
-  // (and so subsequent "auto" mode checks can correctly treat the CLI as already built).
-  if (!(await pathExists(distDir)) && (await pathExists(distBackupDir))) {
-    await rename(distBackupDir, distDir);
-  }
-
-  // "never" should prevent rebuild churn, but it must not make the stack unrunnable.
-  // If the dist entrypoint is missing, build once even in "never" mode.
-  if (mode === 'never') {
-    if (await pathExists(distEntrypoint)) {
-      return { built: false, reason: 'mode_never' };
+  return await withCliDistBuildLock(async ({ waited }) => {
+    if (!buildCli) {
+      return { built: false, reason: 'disabled' };
     }
-    // fallthrough to build
-  }
+    // Default: build only when needed (fast + reliable for worktrees that haven't been built yet).
+    //
+    // You can force always-build by setting:
+    // - HAPPIER_STACK_CLI_BUILD_MODE=always
+    // Or disable via:
+    // - HAPPIER_STACK_CLI_BUILD=0
+    const serviceDefaultMode = isServiceMode(envIn) ? 'never' : 'auto';
+    const modeRaw = (envIn.HAPPIER_STACK_CLI_BUILD_MODE ?? serviceDefaultMode).trim().toLowerCase();
+    const mode = modeRaw === 'always' || modeRaw === 'auto' || modeRaw === 'never' ? modeRaw : 'auto';
+    const distEntrypoint = join(cliDir, 'dist', 'index.mjs');
+    const distDir = join(cliDir, 'dist');
+    const distBackupDir = join(cliDir, '.dist.hstack-backup');
+    const buildStatePath = resolveBuildStatePath({ label: 'happier-cli', dir: cliDir });
+    const gitSig = await computeGitWorktreeSignature(cliDir);
+    const prev = await readJsonIfExists(buildStatePath);
 
-  if (mode === 'auto') {
-    // If dist doesn't exist, we must build.
-    if (!(await pathExists(distEntrypoint))) {
-      // fallthrough to build
-    } else if (gitSig && prev?.signature && prev.signature === gitSig.signature) {
-      return { built: false, reason: 'up_to_date' };
-    } else if (!gitSig) {
-      // No git info: best-effort skip if dist exists (keeps this fast outside git worktrees).
-      return { built: false, reason: 'no_git_info' };
-    }
-  }
-
-  if (!quiet) {
-    // eslint-disable-next-line no-console
-    console.log('[local] building happier-cli...');
-  }
-  const pm = await getComponentPm(cliDir, envIn);
-  const hadDistBeforeBuild = await pathExists(distDir);
-  if (hadDistBeforeBuild) {
-    await rm(distBackupDir, { recursive: true, force: true });
-    await rename(distDir, distBackupDir);
-  }
-
-  try {
-    await run(pm.cmd, ['build'], { cwd: cliDir, env: envIn, stdio: quiet ? 'ignore' : 'inherit' });
-
-    // Sanity check: happier-cli daemon entrypoint must exist after a successful build.
-    // Without this, watch-based rebuilds can restart the daemon into a MODULE_NOT_FOUND crash,
-    // which looks like the UI "dies out of nowhere" even though the root cause is missing build output.
-    if (!(await pathExists(distEntrypoint))) {
-      throw new Error(
-        `[local] happier-cli build finished but did not produce expected entrypoint.\n` +
-          `Expected: ${distEntrypoint}\n` +
-          `Fix: run the component build directly and inspect its output:\n` +
-          `  cd "${cliDir}" && ${pm.cmd} build`
-      );
-    }
-
-    // Dist integrity: ensure that local import specifiers reachable from the daemon entrypoint exist.
-    // This prevents restarting the daemon into a runtime MODULE_NOT_FOUND crash if the build is partial.
-    await assertNoMissingLocalImports({ distDir, entryPath: distEntrypoint });
-
-    if (hadDistBeforeBuild) {
-      await rm(distBackupDir, { recursive: true, force: true });
-    }
-  } catch (error) {
-    if (hadDistBeforeBuild && (await pathExists(distBackupDir))) {
-      await rm(distDir, { recursive: true, force: true });
+    // Recovery: if a previous build was interrupted after moving dist/ aside, we can be left with
+    // dist/ missing but .dist.hstack-backup/ present. Restore it so the stack remains runnable
+    // (and so subsequent "auto" mode checks can correctly treat the CLI as already built).
+    if (!(await pathExists(distDir)) && (await pathExists(distBackupDir))) {
       await rename(distBackupDir, distDir);
     }
-    throw error;
-  }
 
-  // Persist new build state (best-effort).
-  const nowSig = gitSig ?? (await computeGitWorktreeSignature(cliDir));
-  if (nowSig) {
-    await writeJsonAtomic(buildStatePath, {
-      label: 'happier-cli',
-      dir: resolve(cliDir),
-      signature: nowSig.signature,
-      head: nowSig.head,
-      statusHash: nowSig.statusHash,
-      builtAt: new Date().toISOString(),
-    }).catch(() => {});
-  }
-  return { built: true, reason: mode === 'always' ? 'mode_always' : 'changed' };
+    if (waited && mode === 'always' && (await pathExists(distEntrypoint))) {
+      const latestBuildState = await readJsonIfExists(buildStatePath);
+      if (buildStateMatchesGitSignature(latestBuildState, gitSig)) {
+        await assertNoMissingLocalImports({ distDir, entryPath: distEntrypoint });
+        return { built: false, reason: 'concurrent_build_already_completed' };
+      }
+    }
+
+    // "never" should prevent rebuild churn, but it must not make the stack unrunnable.
+    // If the dist entrypoint is missing, build once even in "never" mode.
+    if (mode === 'never') {
+      if (await pathExists(distEntrypoint)) {
+        return { built: false, reason: 'mode_never' };
+      }
+      // fallthrough to build
+    }
+
+    if (mode === 'auto') {
+      // If dist doesn't exist, we must build.
+      if (!(await pathExists(distEntrypoint))) {
+        // fallthrough to build
+      } else if (gitSig && prev?.signature && prev.signature === gitSig.signature) {
+        return { built: false, reason: 'up_to_date' };
+      } else if (!gitSig) {
+        // No git info: best-effort skip if dist exists (keeps this fast outside git worktrees).
+        return { built: false, reason: 'no_git_info' };
+      }
+    }
+
+    if (!quiet) {
+      // eslint-disable-next-line no-console
+      console.log('[local] building happier-cli...');
+    }
+    const env = await preparePmEnv(cliDir, envIn);
+    const pm = await getComponentPm(cliDir, env);
+    const hadDistBeforeBuild = await pathExists(distDir);
+    if (hadDistBeforeBuild) {
+      await rm(distBackupDir, { recursive: true, force: true });
+      await rename(distDir, distBackupDir);
+    }
+
+    try {
+      await run(pm.cmd, ['build'], { cwd: cliDir, env, stdio: quiet ? 'ignore' : 'inherit' });
+
+      // Sanity check: happier-cli daemon entrypoint must exist after a successful build.
+      // Without this, watch-based rebuilds can restart the daemon into a MODULE_NOT_FOUND crash,
+      // which looks like the UI "dies out of nowhere" even though the root cause is missing build output.
+      if (!(await pathExists(distEntrypoint))) {
+        throw new Error(
+          `[local] happier-cli build finished but did not produce expected entrypoint.\n` +
+            `Expected: ${distEntrypoint}\n` +
+            `Fix: run the component build directly and inspect its output:\n` +
+            `  cd "${cliDir}" && ${pm.cmd} build`
+        );
+      }
+
+      // Dist integrity: ensure that local import specifiers reachable from the daemon entrypoint exist.
+      // This prevents restarting the daemon into a runtime MODULE_NOT_FOUND crash if the build is partial.
+      await assertNoMissingLocalImports({ distDir, entryPath: distEntrypoint });
+
+      if (hadDistBeforeBuild) {
+        await rm(distBackupDir, { recursive: true, force: true });
+      }
+    } catch (error) {
+      if (hadDistBeforeBuild && (await pathExists(distBackupDir))) {
+        await rm(distDir, { recursive: true, force: true });
+        await rename(distBackupDir, distDir);
+      }
+      throw error;
+    }
+
+    // Persist new build state (best-effort).
+    const nowSig = gitSig ?? (await computeGitWorktreeSignature(cliDir));
+    if (nowSig) {
+      await writeJsonAtomic(buildStatePath, {
+        label: 'happier-cli',
+        dir: resolve(cliDir),
+        signature: nowSig.signature,
+        head: nowSig.head,
+        statusHash: nowSig.statusHash,
+        builtAt: new Date().toISOString(),
+      }).catch(() => {});
+    }
+    return { built: true, reason: mode === 'always' ? 'mode_always' : 'changed' };
+  }, { lockPath });
 }
 
 function getPathEntries() {
@@ -706,7 +803,7 @@ export async function pmExecBin(dirOrOpts, binArg, argsArg, optsArg) {
   const args = usesObjectStyle ? (dirOrOpts.args ?? []) : (argsArg ?? []);
 
   const envIn = usesObjectStyle ? (dirOrOpts.env ?? process.env) : (optsArg?.env ?? process.env);
-  const env = await applyStackCacheEnv(envIn);
+  const env = await preparePmEnv(dir, envIn);
   const quiet = usesObjectStyle ? Boolean(dirOrOpts.quiet) : Boolean(optsArg?.quiet);
   const stdio = quiet ? 'ignore' : 'inherit';
 
@@ -727,7 +824,7 @@ export async function pmSpawnBin(dir, label, bin, args, { env = process.env } = 
   const options = usesObjectStyle ? (dir.options ?? {}) : {};
   const quiet = usesObjectStyle ? Boolean(dir.quiet) : false;
 
-  const effectiveEnv = await applyStackCacheEnv(componentEnv);
+  const effectiveEnv = await preparePmEnv(componentDir, componentEnv);
   const pm = await getComponentPm(componentDir, effectiveEnv);
   if (pm.name === 'yarn') {
     await ensureYarnReady({ dir: componentDir, env: effectiveEnv, quiet });
@@ -750,7 +847,7 @@ export async function pmSpawnScript(dir, label, script, args, { env = process.en
   const options = usesObjectStyle ? (dir.options ?? {}) : {};
   const quiet = usesObjectStyle ? Boolean(dir.quiet) : false;
 
-  const effectiveEnv = await applyStackCacheEnv(componentEnv);
+  const effectiveEnv = await preparePmEnv(componentDir, componentEnv);
   const pm = await getComponentPm(componentDir, effectiveEnv);
   if (pm.name === 'yarn') {
     await ensureYarnReady({ dir: componentDir, env: effectiveEnv, quiet });

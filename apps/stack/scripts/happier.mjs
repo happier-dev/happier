@@ -9,6 +9,13 @@ import { getComponentDir, getRootDir, getStackName } from './utils/paths/paths.m
 import { resolveCliHomeDir } from './utils/stack/dirs.mjs';
 import { getPublicServerUrlEnvOverride, resolveServerPortFromEnv } from './utils/server/urls.mjs';
 import { applyStackActiveServerScopeEnv } from './utils/auth/stable_scope_id.mjs';
+import { readCliDistIntegrity } from './utils/cli/cliDistIntegrity.mjs';
+import { resolveStackRuntimeLaunchContext } from './runtime/launch/resolveStackRuntimeLaunchContext.mjs';
+import { resolveCliRuntimeLaunchSpec } from './runtime/launch/resolveCliRuntimeLaunchSpec.mjs';
+
+function isNodeRuntimeEntrypoint(entrypoint) {
+  return /\.(?:cjs|js|mjs)$/i.test(String(entrypoint ?? '').trim());
+}
 
 function printHstackHappierHelp({ json }) {
   printResult({
@@ -28,32 +35,80 @@ function printHstackHappierHelp({ json }) {
   });
 }
 
-function hasExplicitServerSelectionArg(argv) {
-  const args = Array.isArray(argv) ? argv.map((a) => String(a ?? '')) : [];
-  const check = (name) => args.includes(name) || args.some((a) => a.startsWith(`${name}=`));
-  return (
-    check('--server') ||
-    check('--server-url') ||
-    check('--webapp-url') ||
-    check('--public-server-url')
-  );
+function takePrefixFlagValue(args, name) {
+  const a0 = String(args[0] ?? '');
+  if (a0 === name) {
+    const next = String(args[1] ?? '');
+    const value = next.trim();
+    if (!value || value.startsWith('--')) {
+      throw new Error(`Missing value for ${name}`);
+    }
+    return { value, consumed: 2 };
+  }
+  if (a0.startsWith(`${name}=`)) {
+    const value = a0.slice(name.length + 1).trim();
+    if (!value) {
+      throw new Error(`Missing value for ${name}`);
+    }
+    return { value, consumed: 1 };
+  }
+  return { value: null, consumed: 0 };
 }
 
-function readArgValue(argv, flagName) {
+function readPrefixServerSelection(argv) {
   const args = Array.isArray(argv) ? argv.map((a) => String(a ?? '')) : [];
-  for (let i = args.length - 1; i >= 0; i -= 1) {
-    const arg = args[i];
-    if (arg === flagName) {
-      const next = args[i + 1];
-      const value = String(next ?? '').trim();
-      return value || null;
+  const readExplicitServerFlags = (scanArgs, { includeServer }) => {
+    let server = null;
+    let serverUrl = null;
+    let webappUrl = null;
+    let publicServerUrl = null;
+    let localServerUrl = null;
+
+    for (let i = 0; i < scanArgs.length; i += 1) {
+      const slice = scanArgs.slice(i);
+
+      if (includeServer) {
+        const serverFlag = takePrefixFlagValue(slice, '--server');
+        if (serverFlag.consumed) {
+          server = serverFlag.value;
+          i += serverFlag.consumed - 1;
+          continue;
+        }
+      }
+      const serverUrlFlag = takePrefixFlagValue(slice, '--server-url');
+      if (serverUrlFlag.consumed) {
+        serverUrl = serverUrlFlag.value;
+        i += serverUrlFlag.consumed - 1;
+        continue;
+      }
+      const webappUrlFlag = takePrefixFlagValue(slice, '--webapp-url');
+      if (webappUrlFlag.consumed) {
+        webappUrl = webappUrlFlag.value;
+        i += webappUrlFlag.consumed - 1;
+        continue;
+      }
+      const localServerUrlFlag = takePrefixFlagValue(slice, '--local-server-url');
+      if (localServerUrlFlag.consumed) {
+        localServerUrl = localServerUrlFlag.value;
+        i += localServerUrlFlag.consumed - 1;
+        continue;
+      }
+      const publicServerUrlFlag = takePrefixFlagValue(slice, '--public-server-url');
+      if (publicServerUrlFlag.consumed) {
+        publicServerUrl = publicServerUrlFlag.value;
+        i += publicServerUrlFlag.consumed - 1;
+      }
     }
-    if (arg.startsWith(`${flagName}=`)) {
-      const value = arg.slice(flagName.length + 1).trim();
-      return value || null;
-    }
-  }
-  return null;
+
+    return { server, serverUrl, webappUrl, publicServerUrl, localServerUrl };
+  };
+
+  const { server, serverUrl, webappUrl, publicServerUrl, localServerUrl } = readExplicitServerFlags(args, { includeServer: true });
+
+  return {
+    hasExplicitSelection: Boolean(server || serverUrl || webappUrl || publicServerUrl || localServerUrl),
+    explicitServerUrl: serverUrl || publicServerUrl || null,
+  };
 }
 
 function normalizeServerUrl(url) {
@@ -109,7 +164,8 @@ function readActiveServerUrlsFromCliSettings(homeDir) {
 
 function resolveCliEntrypoint(cliDir) {
   const distEntrypoint = join(cliDir, 'dist', 'index.mjs');
-  if (existsSync(distEntrypoint)) {
+  const distIntegrity = readCliDistIntegrity(distEntrypoint);
+  if (distIntegrity.ok) {
     return { kind: 'dist', nodeArgs: [distEntrypoint], distEntrypoint };
   }
 
@@ -148,14 +204,30 @@ async function main() {
 
   const stackName = (process.env.HAPPIER_STACK_STACK ?? '').toString().trim() || getStackName();
   const serverPort = resolveServerPortFromEnv({ env: process.env, defaultPort: 3005 });
+  const prefixServerSelection = readPrefixServerSelection(argv);
+  const runtimeLaunchContext = await resolveStackRuntimeLaunchContext({ argv, env: process.env });
 
   const internalServerUrl = `http://127.0.0.1:${serverPort}`;
   const { publicServerUrl } = getPublicServerUrlEnvOverride({ env: process.env, serverPort, stackName });
 
   const cliHomeDir = resolveCliHomeDir();
 
-  const cliDir = getComponentDir(rootDir, 'happier-cli');
-  const resolvedCli = resolveCliEntrypoint(cliDir);
+  const cliLaunchSpec = runtimeLaunchContext.snapshot ? resolveCliRuntimeLaunchSpec({ snapshot: runtimeLaunchContext.snapshot }) : null;
+  const cliDir = cliLaunchSpec?.cliDir ?? getComponentDir(rootDir, 'happier-cli');
+  const resolvedCli = cliLaunchSpec
+    ? isNodeRuntimeEntrypoint(cliLaunchSpec.entrypoint)
+      ? {
+          kind: 'runtime-node',
+          nodeArgs: [cliLaunchSpec.entrypoint],
+          distEntrypoint: cliLaunchSpec.entrypoint,
+        }
+      : {
+          kind: 'runtime',
+          command: cliLaunchSpec.command,
+          args: cliLaunchSpec.args,
+          distEntrypoint: cliLaunchSpec.entrypoint,
+        }
+    : resolveCliEntrypoint(cliDir);
   if (wantsHelp(argv, { flags }) && !resolvedCli) {
     printHstackHappierHelp({ json });
     return;
@@ -169,7 +241,7 @@ async function main() {
 
   let env = { ...process.env };
   env.HAPPIER_HOME_DIR = env.HAPPIER_HOME_DIR || cliHomeDir;
-  if (!hasExplicitServerSelectionArg(argv) && !env.HAPPIER_SERVER_URL && !env.HAPPIER_WEBAPP_URL) {
+  if (!prefixServerSelection.hasExplicitSelection && !env.HAPPIER_SERVER_URL && !env.HAPPIER_WEBAPP_URL) {
     const settingsDefaults = readActiveServerUrlsFromCliSettings(env.HAPPIER_HOME_DIR);
     if (settingsDefaults) {
       if (settingsDefaults.localServerUrl && settingsDefaults.localServerUrl !== settingsDefaults.serverUrl) {
@@ -184,22 +256,23 @@ async function main() {
       env.HAPPIER_WEBAPP_URL = settingsDefaults.webappUrl;
     }
   }
-  env.HAPPIER_SERVER_URL = env.HAPPIER_SERVER_URL || internalServerUrl;
-  env.HAPPIER_WEBAPP_URL = env.HAPPIER_WEBAPP_URL || publicServerUrl;
+  // Only set default env vars when no explicit server selection flags are present
+  if (!prefixServerSelection.hasExplicitSelection) {
+    env.HAPPIER_SERVER_URL = env.HAPPIER_SERVER_URL || internalServerUrl;
+    env.HAPPIER_WEBAPP_URL = env.HAPPIER_WEBAPP_URL || publicServerUrl;
+  }
   if (resolvedCli.kind === 'tsx') {
     // TSX resolves path aliases (`@/...`) using the tsconfig it finds. When the CLI runs from arbitrary
     // working directories (common in stack + daemon flows), it can pick up the wrong tsconfig unless
     // we provide an explicit path.
     env.TSX_TSCONFIG_PATH = env.TSX_TSCONFIG_PATH || resolvedCli.tsconfigPath;
   }
-  if (hasExplicitServerSelectionArg(argv)) {
+  if (prefixServerSelection.hasExplicitSelection) {
     // If the user explicitly selects a server/profile, do not force a stack-stable active server id.
     // Otherwise credentials can be resolved from the wrong per-server directory, causing 401s.
-    const explicitServerUrl =
-      readArgValue(argv, '--server-url')
-      || readArgValue(argv, '--public-server-url')
-      || null;
-    const derived = explicitServerUrl ? deriveEnvServerIdFromUrl(explicitServerUrl) : null;
+    const derived = prefixServerSelection.explicitServerUrl
+      ? deriveEnvServerIdFromUrl(prefixServerSelection.explicitServerUrl)
+      : null;
     if (derived) {
       env.HAPPIER_ACTIVE_SERVER_ID = derived;
     } else {
@@ -214,10 +287,16 @@ async function main() {
   }
 
   const forwardedArgv = argv.filter((a) => a !== '--stack-help');
-  const res = spawnSync(process.execPath, ['--no-warnings', '--no-deprecation', ...resolvedCli.nodeArgs, ...forwardedArgv], {
-    stdio: 'inherit',
-    env,
-  });
+  const res =
+    resolvedCli.kind === 'runtime'
+      ? spawnSync(resolvedCli.command, [...resolvedCli.args, ...forwardedArgv], {
+          stdio: 'inherit',
+          env,
+        })
+      : spawnSync(process.execPath, ['--no-warnings', '--no-deprecation', ...resolvedCli.nodeArgs, ...forwardedArgv], {
+          stdio: 'inherit',
+          env,
+        });
 
   if (res.error) {
     const msg = res.error instanceof Error ? res.error.message : String(res.error);

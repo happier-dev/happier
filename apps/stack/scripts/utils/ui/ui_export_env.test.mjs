@@ -9,6 +9,7 @@ test('buildStackWebExportEnv forces stack server context and leaves server URL e
   assert.equal(env.NODE_ENV, 'production');
   assert.equal(env.EXPO_PUBLIC_DEBUG, '0');
   assert.equal(env.EXPO_PUBLIC_HAPPY_SERVER_CONTEXT, 'stack');
+  assert.equal(env.EXPO_PUBLIC_HAPPIER_SERVER_URL, '');
   assert.equal(env.EXPO_PUBLIC_HAPPY_SERVER_URL, '');
 });
 
@@ -19,7 +20,7 @@ test('buildStackTauriExportEnv forces stack server context and hardcodes API bas
   assert.equal(env.NODE_ENV, 'production');
   assert.equal(env.EXPO_PUBLIC_DEBUG, '0');
   assert.equal(env.EXPO_PUBLIC_HAPPY_SERVER_CONTEXT, 'stack');
+  assert.equal(env.EXPO_PUBLIC_HAPPIER_SERVER_URL, tauriServerUrl);
   assert.equal(env.EXPO_PUBLIC_HAPPY_SERVER_URL, tauriServerUrl);
   assert.equal(env.EXPO_PUBLIC_SERVER_URL, tauriServerUrl);
 });
-

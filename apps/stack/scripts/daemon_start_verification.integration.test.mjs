@@ -527,6 +527,103 @@ process.exit(0);
   }
 });
 
+test('startLocalDaemonWithAuth allows slower runtime JS daemon startups by default', async () => {
+  const tmp = await mkdtemp(join(tmpdir(), 'happy-stacks-daemon-runtime-js-start-'));
+  const cliHomeDir = join(tmp, 'stack', 'cli');
+  const cliBin = join(tmp, 'bin', 'happier');
+  const cliCommandScript = join(tmp, 'cli-command.mjs');
+
+  try {
+    await mkdir(dirname(cliBin), { recursive: true });
+    await mkdir(cliHomeDir, { recursive: true });
+    await writeFile(join(cliHomeDir, 'access.key'), 'seed-access-key\n', 'utf-8');
+    await writeFile(join(cliHomeDir, 'settings.json'), JSON.stringify({ machineId: 'test-machine' }) + '\n', 'utf-8');
+    await writeFile(cliBin, '#!/bin/sh\nexit 0\n', 'utf-8');
+    await chmod(cliBin, 0o755);
+
+    await writeFile(
+      cliCommandScript,
+      `
+import { spawn } from 'node:child_process';
+
+const args = process.argv.slice(2);
+const home = process.env.HAPPIER_HOME_DIR || process.env.HAPPIER_STACK_CLI_HOME_DIR;
+if (!home) process.exit(2);
+
+if (args[0] !== 'daemon') process.exit(0);
+const sub = args[1] || '';
+if (sub === 'stop') process.exit(0);
+if (sub === 'status') process.exit(1);
+
+if (sub === 'start') {
+  const child = spawn(
+    process.execPath,
+    [
+      '-e',
+      \`
+const { mkdirSync, writeFileSync } = require('node:fs');
+const { join } = require('node:path');
+setTimeout(() => {
+  const serverDir = join(${JSON.stringify(cliHomeDir)}, 'servers', 'stack_dev__id_default');
+  mkdirSync(serverDir, { recursive: true });
+  writeFileSync(
+    join(serverDir, 'daemon.state.json'),
+    JSON.stringify({ pid: process.pid, httpPort: 1, startedAt: Date.now(), startedWithCliVersion: 'test' }) + '\\\\n',
+    'utf-8'
+  );
+}, 12000);
+setInterval(() => {}, 1000);
+\`,
+    ],
+    {
+      detached: true,
+      stdio: 'ignore',
+      env: process.env,
+    }
+  );
+  child.unref();
+  process.exit(0);
+}
+
+process.exit(0);
+      `.trimStart(),
+      'utf-8'
+    );
+
+    await startLocalDaemonWithAuth({
+      cliBin,
+      cliCommand: cliCommandScript,
+      cliHomeDir,
+      internalServerUrl: 'http://127.0.0.1:4301',
+      publicServerUrl: 'http://localhost:4301',
+      isShuttingDown: () => false,
+      forceRestart: true,
+      env: {
+        ...process.env,
+        HAPPIER_STACK_STACK: 'dev',
+        HAPPIER_STACK_AUTO_AUTH_SEED: '0',
+        HAPPIER_STACK_MIGRATE_CREDENTIALS: '0',
+        HAPPIER_STACK_CLI_BUILD: '0',
+        HAPPIER_STACK_DAEMON_START_VERIFY_POLL_MS: '50',
+        HAPPIER_STACK_DAEMON_START_VERIFY_STABLE_MS: '0',
+      },
+      stackName: 'dev',
+      cliIdentity: 'default',
+    });
+
+    const statePath = join(cliHomeDir, 'servers', 'stack_dev__id_default', 'daemon.state.json');
+    const state = JSON.parse(await readFile(statePath, 'utf-8'));
+    assert.equal(typeof state.pid, 'number');
+    try {
+      process.kill(state.pid, 'SIGKILL');
+    } catch {
+      // ignore
+    }
+  } finally {
+    await rm(tmp, { recursive: true, force: true });
+  }
+});
+
 test('startLocalDaemonWithAuth tolerates transient non-zero direct-executable starts when the daemon becomes running', async () => {
   const tmp = await mkdtemp(join(tmpdir(), 'happy-stacks-daemon-runtime-nonzero-'));
   const cliHomeDir = join(tmp, 'stack', 'cli');
@@ -625,7 +722,7 @@ process.exit(0);
   }
 });
 
-test('checkDaemonState falls back to any running daemon state when active server scope differs', async () => {
+test('checkDaemonState ignores running daemon state from a different active server scope', async () => {
   const tmp = await mkdtemp(join(tmpdir(), 'happy-stacks-daemon-state-fallback-'));
   const cliHomeDir = join(tmp, 'stack', 'cli');
   await mkdir(cliHomeDir, { recursive: true });
@@ -655,8 +752,7 @@ test('checkDaemonState falls back to any running daemon state when active server
       HAPPIER_ACTIVE_SERVER_ID: 'stack_dev2__id_default',
     };
     const state = checkDaemonState(cliHomeDir, { serverUrl: 'http://127.0.0.1:4301', env });
-    assert.equal(state.status, 'running');
-    assert.equal(state.pid, dummy.pid);
+    assert.deepEqual(state, { status: 'stopped', pid: null });
   } finally {
     try {
       process.kill(-dummy.pid, 'SIGTERM');

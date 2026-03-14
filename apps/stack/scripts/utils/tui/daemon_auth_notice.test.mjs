@@ -28,6 +28,18 @@ test('buildDaemonAuthNotice returns no notice when daemon is running', () => {
   assert.equal(notice.show, false);
 });
 
+test('buildDaemonAuthNotice returns no notice when caller already knows the daemon is running even without a pid', () => {
+  const notice = buildDaemonAuthNotice({
+    stackName: 'repo-dev-abc123',
+    internalServerUrl: 'http://127.0.0.1:53288',
+    daemonPid: null,
+    daemonRunning: true,
+    authed: false,
+    startDaemon: true,
+  });
+  assert.equal(notice.show, false);
+});
+
 test('buildDaemonAuthNotice indicates waiting when server url is missing', () => {
   const notice = buildDaemonAuthNotice({
     stackName: 'repo-dev-abc123',

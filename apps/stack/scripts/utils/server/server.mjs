@@ -1,5 +1,15 @@
 import { setTimeout as delay } from 'node:timers/promises';
 
+function isCanonicalHappierHealthPayload(payload) {
+  return payload?.service === 'happier-server' && payload?.status === 'ok';
+}
+
+function isServerStartupReadyHealthPayload(payload) {
+  if (!payload || typeof payload !== 'object') return false;
+  if (isCanonicalHappierHealthPayload(payload)) return true;
+  return payload?.status === 'ok';
+}
+
 export function getServerComponentName({ kv } = {}) {
   const fromArgRaw = kv?.get('--server')?.trim() ? kv.get('--server').trim() : '';
   const fromEnvRaw = process.env.HAPPIER_STACK_SERVER_COMPONENT?.trim() ? process.env.HAPPIER_STACK_SERVER_COMPONENT.trim() : '';
@@ -31,9 +41,15 @@ export async function fetchHappierHealth(baseUrl) {
     } catch {
       json = null;
     }
-    return { ok: res.ok, status: res.status, json, text };
+    return {
+      ok: res.ok && isCanonicalHappierHealthPayload(json),
+      ready: res.ok && isServerStartupReadyHealthPayload(json),
+      status: res.status,
+      json,
+      text,
+    };
   } catch {
-    return { ok: false, status: null, json: null, text: null };
+    return { ok: false, ready: false, status: null, json: null, text: null };
   } finally {
     clearTimeout(t);
   }
@@ -41,18 +57,7 @@ export async function fetchHappierHealth(baseUrl) {
 
 export async function isHappierServerRunning(baseUrl) {
   const health = await fetchHappierHealth(baseUrl);
-  if (!health.ok) return false;
-  // Both happier-server and happier-server-light use `service: 'happier-server'` today.
-  // Treat any ok health response as "running" to avoid duplicate spawns.
-  const svc = typeof health.json?.service === 'string' ? health.json.service : '';
-  const status = typeof health.json?.status === 'string' ? health.json.status : '';
-  if (svc && svc !== 'happier-server') {
-    return false;
-  }
-  if (status && status !== 'ok') {
-    return false;
-  }
-  return true;
+  return health.ok;
 }
 
 export async function waitForHappierHealthOk(baseUrl, { timeoutMs = 60_000, intervalMs = 300 } = {}) {
@@ -67,21 +72,73 @@ export async function waitForHappierHealthOk(baseUrl, { timeoutMs = 60_000, inte
   return false;
 }
 
-export async function waitForServerReady(url) {
-  const deadline = Date.now() + 60_000;
-  while (Date.now() < deadline) {
-    try {
-      const res = await fetch(url, { method: 'GET' });
-      const text = await res.text();
-      if (res.ok && text.includes('Welcome to Happier Server!')) {
+function formatServerReadyEarlyExit(url, code, signal) {
+  const suffix = [
+    code !== null && code !== undefined ? `code=${code}` : null,
+    signal ? `signal=${signal}` : null,
+  ].filter(Boolean).join(', ');
+  return suffix
+    ? `Server process exited before becoming ready at ${url} (${suffix})`
+    : `Server process exited before becoming ready at ${url}`;
+}
+
+export function resolveServerReadyTimeoutMs({ serverComponentName = '', env = process.env } = {}) {
+  const configured = Number.parseInt(String(env?.HAPPIER_STACK_SERVER_READY_TIMEOUT_MS ?? '').trim(), 10);
+  if (Number.isFinite(configured) && configured >= 1_000) {
+    return configured;
+  }
+  return serverComponentName === 'happier-server-light' ? 120_000 : 60_000;
+}
+
+export async function waitForServerReady(url, { timeoutMs = 60_000, intervalMs = 300, childProcess = null } = {}) {
+  const deadline = Date.now() + timeoutMs;
+  let earlyExitError = null;
+  const onExit = (code, signal) => {
+    earlyExitError = new Error(formatServerReadyEarlyExit(url, code, signal));
+  };
+
+  if (childProcess && typeof childProcess.once === 'function') {
+    if (childProcess.exitCode !== null && childProcess.exitCode !== undefined) {
+      throw new Error(formatServerReadyEarlyExit(url, childProcess.exitCode, null));
+    }
+    childProcess.once('exit', onExit);
+  }
+
+  try {
+    while (Date.now() < deadline) {
+      if (earlyExitError) {
+        throw earlyExitError;
+      }
+      // Runtime-backed stacks and modern server builds expose readiness on /health even when
+      // the root route serves the app shell instead of the legacy welcome page.
+      // Prefer that contract, but keep the older root-page probe as a fallback for source/dev flows.
+      // eslint-disable-next-line no-await-in-loop
+      const health = await fetchHappierHealth(url);
+      if (health.ready) {
         return;
       }
-    } catch {
-      // ignore
+      try {
+        const res = await fetch(url, { method: 'GET' });
+        const text = await res.text();
+        if (res.ok && text.includes('Welcome to Happier Server!')) {
+          return;
+        }
+      } catch {
+        // ignore
+      }
+      await delay(intervalMs);
     }
-    await delay(300);
+    if (earlyExitError) {
+      throw earlyExitError;
+    }
+    throw new Error(`Timed out waiting for server at ${url}`);
+  } finally {
+    if (childProcess && typeof childProcess.off === 'function') {
+      childProcess.off('exit', onExit);
+    } else if (childProcess && typeof childProcess.removeListener === 'function') {
+      childProcess.removeListener('exit', onExit);
+    }
   }
-  throw new Error(`Timed out waiting for server at ${url}`);
 }
 
 // Used for UI readiness checks (Expo / gateway / server). Treat any HTTP response as "up".

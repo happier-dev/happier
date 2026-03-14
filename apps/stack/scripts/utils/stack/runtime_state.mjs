@@ -54,7 +54,18 @@ export async function updateStackRuntimeStateFile(statePath, patch) {
 export async function recordStackRuntimeStart(statePath, { stackName, script, ephemeral, ownerPid, ports, ...rest } = {}) {
   const now = new Date().toISOString();
   const existing = (await readStackRuntimeStateFile(statePath)) ?? {};
-  const startedAt = typeof existing.startedAt === 'string' && existing.startedAt.trim() ? existing.startedAt : now;
+  const existingOwnerPid = Number(existing.ownerPid);
+  const ownerPidNum = Number(ownerPid);
+  const shouldRefreshStartedAt =
+    !(
+      typeof existing.startedAt === 'string' &&
+      existing.startedAt.trim()
+    ) ||
+    !Number.isFinite(existingOwnerPid) ||
+    existingOwnerPid <= 1 ||
+    !isPidAlive(existingOwnerPid) ||
+    (Number.isFinite(ownerPidNum) && ownerPidNum > 1 && ownerPidNum !== existingOwnerPid);
+  const startedAt = shouldRefreshStartedAt ? now : existing.startedAt;
   const next = deepMerge(existing, {
     version: 1,
     stackName,
@@ -64,6 +75,7 @@ export async function recordStackRuntimeStart(statePath, { stackName, script, ep
     ports: ports ?? {},
     startedAt,
     updatedAt: now,
+    stopRequest: null,
     ...(rest ?? {}),
   });
   await writeStackRuntimeStateFile(statePath, next);
@@ -77,6 +89,21 @@ export async function recordStackRuntimeUpdate(statePath, patch = {}) {
   });
 }
 
+export async function recordStackRuntimeStopRequest(
+  statePath,
+  { signal = 'SIGTERM', requestedBy = 'unknown', reason = '' } = {},
+) {
+  return await updateStackRuntimeStateFile(statePath, {
+    stopRequest: {
+      signal: String(signal ?? 'SIGTERM'),
+      requestedBy: String(requestedBy ?? 'unknown'),
+      reason: String(reason ?? ''),
+      requestedAt: new Date().toISOString(),
+    },
+    updatedAt: new Date().toISOString(),
+  });
+}
+
 export async function deleteStackRuntimeStateFile(statePath) {
   try {
     if (!statePath || !existsSync(statePath)) return;
@@ -85,4 +112,3 @@ export async function deleteStackRuntimeStateFile(statePath) {
     // ignore
   }
 }
-

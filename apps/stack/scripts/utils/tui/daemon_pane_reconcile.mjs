@@ -23,9 +23,12 @@ function looksLikeNoticeTitle(title) {
  * When the daemon transitions from "sign-in required" -> running, the TUI should
  * clear stale guidance so users don't think auth failed.
  */
-export function reconcileDaemonPaneAfterDaemonStarts({ title, lines, daemonPid }) {
+export function reconcileDaemonPaneAfterDaemonStarts({ title, lines, daemonPid, daemonRunning = null }) {
   const pid = Number(daemonPid);
-  if (!Number.isFinite(pid) || pid <= 1) {
+  const isRunning = typeof daemonRunning === 'boolean'
+    ? daemonRunning
+    : Number.isFinite(pid) && pid > 1;
+  if (!isRunning) {
     return { title, lines };
   }
 
@@ -37,7 +40,6 @@ export function reconcileDaemonPaneAfterDaemonStarts({ title, lines, daemonPid }
 
   return {
     title: nextTitle,
-    lines: [`Daemon is running`, `PID: ${pid}`],
+    lines: Number.isFinite(pid) && pid > 1 ? [`Daemon is running`, `PID: ${pid}`] : ['Daemon is running'],
   };
 }
-

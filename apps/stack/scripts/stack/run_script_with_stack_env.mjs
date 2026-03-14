@@ -27,6 +27,7 @@ import { openUrlInBrowser } from '../utils/ui/browser.mjs';
 
 import { collectReservedStackPorts, getDefaultPortStart } from './port_reservation.mjs';
 import { withStackEnv } from './stack_environment.mjs';
+import { resolveStackRuntimeLaunchContext } from '../runtime/launch/resolveStackRuntimeLaunchContext.mjs';
 
 export function hasRecordedRuntimePortsForRestart(runtimeState = null) {
   const ports = runtimeState?.ports && typeof runtimeState.ports === 'object' ? runtimeState.ports : null;
@@ -42,6 +43,11 @@ export async function runStackScriptWithStackEnv({ rootDir, stackName, scriptPat
     stackName,
     extraEnv,
     fn: async ({ env, envPath, stackEnv, runtimeStatePath, runtimeState }) => {
+      const runtimeLaunchContext =
+        scriptPath === 'run.mjs'
+          ? await resolveStackRuntimeLaunchContext({ argv: args, env })
+          : { snapshot: null };
+      const runtimeSnapshotId = runtimeLaunchContext.snapshot?.snapshotId ?? null;
       const isStartLike = scriptPath === 'dev.mjs' || scriptPath === 'run.mjs';
       if (!isStartLike) {
         await run(process.execPath, [join(rootDir, 'scripts', scriptPath), ...args], { cwd: rootDir, env });
@@ -378,6 +384,7 @@ export async function runStackScriptWithStackEnv({ rootDir, stackName, scriptPat
           ephemeral: true,
           ownerPid: child.pid,
           ports,
+          runtimeSnapshotId,
           ...(background ? { logs: { runner: logPath } } : {}),
         }).catch(() => {});
 
@@ -552,6 +559,7 @@ export async function runStackScriptWithStackEnv({ rootDir, stackName, scriptPat
           ephemeral: false,
           ownerPid: child.pid,
           ports: { server: pinnedPort },
+          runtimeSnapshotId,
           logs: { runner: logPath },
         }).catch(() => {});
 

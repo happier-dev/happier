@@ -33,3 +33,13 @@ test('reconcileDaemonPaneAfterDaemonStarts is a no-op when daemonPid is missing'
   assert.deepEqual(out.lines, ['Sign-in required']);
 });
 
+test('reconcileDaemonPaneAfterDaemonStarts clears stale notice when caller knows the daemon is running but does not have a pid yet', () => {
+  const out = reconcileDaemonPaneAfterDaemonStarts({
+    title: 'daemon (SIGN-IN REQUIRED)',
+    lines: ['Sign-in required'],
+    daemonPid: null,
+    daemonRunning: true,
+  });
+  assert.equal(out.title, 'daemon (RUNNING)');
+  assert.deepEqual(out.lines, ['Daemon is running']);
+});
