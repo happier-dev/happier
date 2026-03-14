@@ -121,9 +121,9 @@ Happier is designed with privacy as a foundation, not an afterthought.
 
 ### Step 1: Download App
 
-<a href="https://apps.apple.com/us/app/happier-claude-codex-opencode/id6758554297"><img width="135" height="39" alt="appstore" src="https://github.com/user-attachments/assets/45e31a11-cf6b-40a2-a083-6dc8d1f01291" /></a>
+<a href="https://apps.apple.com/us/app/happier-claude-codex-opencode/id6758554297"><img width="135" height="39" alt="appstore" src="https://github.com/user-attachments/assets/45e31a11-cf6b-40a2-a083-6dc8d1f01291" /></a>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<a href="https://play.google.com/apps/testing/dev.happier.app"><img width="135" height="39" alt="googleplay" src="https://github.com/user-attachments/assets/acbba639-858f-4c74-85c7-92a4096efbf5" /></a>
 
-#### Android
+#### Android APK
 
 [Download the APK](https://github.com/happier-dev/happier/releases/download/ui-mobile-preview/happier-preview.apk) from the releases page.
 
