@@ -521,8 +521,8 @@ function SessionViewLoaded({ sessionId, session, isEncryptedSessionLocked, jumpT
     // Unread is driven by committed transcript `session.seq` only (pending queue does not affect unread).
     const lastMarkedRef = React.useRef<{ sessionSeq: number } | null>(null);
 
-    const markSessionViewed = React.useCallback(() => {
-        fireAndForget(sync.markSessionViewed(sessionId), { tag: 'SessionView.markSessionViewed' });
+    const markSessionViewed = React.useCallback((opts?: { sessionSeq?: number }) => {
+        fireAndForget(sync.markSessionViewed(sessionId, opts), { tag: 'SessionView.markSessionViewed' });
     }, [sessionId]);
 
     useFocusEffect(React.useCallback(() => {
@@ -543,7 +543,10 @@ function SessionViewLoaded({ sessionId, session, isEncryptedSessionLocked, jumpT
                 clearTimeout(markViewedTimeoutRef.current);
                 markViewedTimeoutRef.current = null;
             }
-            runAfterInteractionsWithFallback(markSessionViewed);
+            const sessionSeqAtBlur = storage.getState().sessions[sessionId]?.seq ?? 0;
+            runAfterInteractionsWithFallback(() => {
+                markSessionViewed({ sessionSeq: sessionSeqAtBlur });
+            });
         };
     }, [markSessionViewed, sessionId]));
 

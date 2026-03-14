@@ -5,7 +5,11 @@ import { withServerUrlInPushData } from './pushNotificationData'
 import { serializeAxiosErrorForLog } from './client/serializeAxiosErrorForLog'
 import { summarizeExpoPushTicketErrorsForLog } from './pushTicketLogSummary'
 import { isPushDebugEnabled, readPushFetchTokensTimeoutMs } from './pushNotificationsConfig'
-import { PUSH_NOTIFICATION_ANDROID_CHANNEL_IDS, PUSH_NOTIFICATION_CATEGORY_IDS } from '@happier-dev/protocol'
+import {
+    collectExpoPushTokensMarkedUnregistered,
+    PUSH_NOTIFICATION_ANDROID_CHANNEL_IDS,
+    PUSH_NOTIFICATION_CATEGORY_IDS,
+} from '@happier-dev/protocol'
 
 export interface PushToken {
     id: string
@@ -13,6 +17,10 @@ export interface PushToken {
     clientServerUrl?: string | null
     createdAt: number
     updatedAt: number
+}
+
+interface AccountActivityBadgeSnapshotResponse {
+    badgeCount: number
 }
 
 function normalizeClientServerUrl(raw: unknown): string | null {
@@ -74,7 +82,6 @@ function resolveIosSubtitleFromPushData(data: Record<string, unknown> | undefine
     return tool ? tool : undefined
 }
 
-
 export class PushNotificationClient {
     private readonly token: string
     private readonly baseUrl: string
@@ -119,13 +126,69 @@ export class PushNotificationClient {
         }
     }
 
+    async fetchAccountActivityBadgeCount(): Promise<number | null> {
+        const debugPush = isPushDebugEnabled()
+        try {
+            const response = await axios.get<AccountActivityBadgeSnapshotResponse>(
+                `${this.baseUrl}/v1/account/activity/badge-snapshot`,
+                {
+                    headers: {
+                        'Authorization': `Bearer ${this.token}`,
+                        'Content-Type': 'application/json'
+                    },
+                    timeout: readPushFetchTokensTimeoutMs(),
+                }
+            )
+
+            const badgeCount = Number.isInteger(response.data?.badgeCount) && response.data.badgeCount >= 0
+                ? response.data.badgeCount
+                : null
+            if (debugPush) logger.debug(`[PUSH] Fetched badge snapshot count: ${badgeCount ?? 'null'}`)
+            return badgeCount
+        } catch (error) {
+            logger.debug('[PUSH] Failed to fetch badge snapshot:', serializeAxiosErrorForLog(error))
+            return null
+        }
+    }
+
+    async deletePushToken(token: string): Promise<void> {
+        await axios.delete(
+            `${this.baseUrl}/v1/push-tokens/${encodeURIComponent(token)}`,
+            {
+                headers: {
+                    'Authorization': `Bearer ${this.token}`,
+                    'Content-Type': 'application/json'
+                },
+                timeout: readPushFetchTokensTimeoutMs(),
+            }
+        )
+    }
+
+    async deletePushTokens(tokens: ReadonlyArray<string>): Promise<void> {
+        const uniqueTokens = [...new Set(tokens.filter((token): token is string => typeof token === 'string' && token.trim().length > 0))]
+        if (uniqueTokens.length === 0) return
+
+        const debugPush = isPushDebugEnabled()
+        const results = await Promise.allSettled(uniqueTokens.map((token) => this.deletePushToken(token)))
+        for (const [index, result] of results.entries()) {
+            if (result.status === 'fulfilled') continue
+            logger.debug('[PUSH] Failed to delete invalid push token:', {
+                tokenIndex: index,
+                total: uniqueTokens.length,
+                error: serializeAxiosErrorForLog(result.reason),
+            })
+        }
+        if (debugPush) logger.debug(`[PUSH] Deleted ${results.filter((result) => result.status === 'fulfilled').length} invalid push token(s)`)
+    }
+
     /**
      * Send push notification via Expo Push API with retry
      * @param messages - Array of push messages to send
      */
-    async sendPushNotifications(messages: ExpoPushMessage[]): Promise<void> {
+    async sendPushNotifications(messages: ExpoPushMessage[]): Promise<Readonly<{ invalidTokens: ReadonlyArray<string> }>> {
         const debugPush = isPushDebugEnabled()
         if (debugPush) logger.debug(`Sending ${messages.length} push notifications`)
+        const invalidTokens = new Set<string>()
 
         // Filter out invalid push tokens
         const validMessages = messages.filter(message => {
@@ -137,7 +200,7 @@ export class PushNotificationClient {
 
         if (validMessages.length === 0) {
             if (debugPush) logger.debug('No valid Expo push tokens found')
-            return
+            return { invalidTokens: [] }
         }
 
         // Create chunks to respect Expo's rate limits
@@ -148,10 +211,41 @@ export class PushNotificationClient {
             const startTime = Date.now()
             const timeout = 300000 // 5 minutes
             let attempt = 0
+            let retryChunk = [...chunk]
             
             while (true) {
                 try {
-                    const ticketChunk = await this.expo.sendPushNotificationsAsync(chunk)
+                    const ticketChunk = await this.expo.sendPushNotificationsAsync(retryChunk)
+                    let receipts: Record<string, unknown> | undefined
+                    const receiptIds = ticketChunk
+                        .map((ticket) => typeof (ticket as { id?: unknown })?.id === 'string' ? (ticket as { id: string }).id : null)
+                        .filter((ticketId): ticketId is string => typeof ticketId === 'string' && ticketId.length > 0)
+
+                    if (receiptIds.length > 0) {
+                        try {
+                            receipts = await this.expo.getPushNotificationReceiptsAsync(receiptIds)
+                        } catch (error) {
+                            logger.debug('[PUSH] Failed to fetch Expo push receipts:', serializeAxiosErrorForLog(error))
+                        }
+                    }
+
+                    const chunkInvalidTokens = collectExpoPushTokensMarkedUnregistered({
+                        messages: retryChunk,
+                        tickets: ticketChunk,
+                        receipts,
+                    })
+                    for (const token of chunkInvalidTokens) {
+                        invalidTokens.add(token)
+                    }
+                    if (chunkInvalidTokens.length > 0) {
+                        const deadTokens = new Set(chunkInvalidTokens)
+                        retryChunk = retryChunk.filter((message) => {
+                            if (Array.isArray(message.to)) {
+                                return message.to.some((token) => !deadTokens.has(token))
+                            }
+                            return !deadTokens.has(message.to)
+                        })
+                    }
                     
                     // Log any errors but don't throw
                     const errors = ticketChunk.filter(ticket => ticket.status === 'error')
@@ -161,6 +255,12 @@ export class PushNotificationClient {
                     
                     // If all notifications failed, throw to trigger retry
                     if (errors.length === ticketChunk.length) {
+                        if (retryChunk.length === 0) {
+                            if (debugPush) {
+                                logger.debug('[PUSH] Not retrying terminal DeviceNotRegistered failures')
+                            }
+                            break
+                        }
                         throw new Error('All push notifications in chunk failed')
                     }
                     
@@ -188,6 +288,7 @@ export class PushNotificationClient {
         }
 
         if (debugPush) logger.debug(`Push notifications sent successfully`)
+        return { invalidTokens: [...invalidTokens] }
     }
 
     /**
@@ -218,6 +319,8 @@ export class PushNotificationClient {
                 return
             }
 
+            const badgeCount = await this.fetchAccountActivityBadgeCount()
+
             // Create messages for all tokens
             const messages: ExpoPushMessage[] = tokens.map((token, index) => {
                 if (debugPush) logger.debug(`[PUSH] Creating message ${index + 1} for token`)
@@ -235,12 +338,14 @@ export class PushNotificationClient {
                     categoryId,
                     channelId,
                     subtitle,
+                    badge: badgeCount ?? undefined,
                 }
             })
 
             // Send notifications
             if (debugPush) logger.debug(`[PUSH] Sending ${messages.length} push notifications...`)
-            await this.sendPushNotifications(messages)
+            const sendResult = await this.sendPushNotifications(messages)
+            await this.deletePushTokens(sendResult.invalidTokens)
             if (debugPush) logger.debug('[PUSH] Push notifications sent successfully')
         } catch (error) {
             logger.debug('[PUSH] Error sending to all devices:', serializeAxiosErrorForLog(error))

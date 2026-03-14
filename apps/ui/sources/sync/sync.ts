@@ -59,6 +59,7 @@ import { scmStatusSync } from '@/scm/scmStatusSync';
 import { ingestWorkspaceMutationMessages } from '@/scm/refresh/workspaceMutationIngestionRuntime';
 import { projectManager } from './runtime/orchestration/projectManager';
 import { voiceHooks } from '@/voice/context/voiceHooks';
+import { notifyActivityReady } from '@/activity/notifications/runtime/activityLocalNotificationBus';
 import { Message } from './domains/messages/messageTypes';
 import { EncryptionCache } from './encryption/encryptionCache';
 import { resolveSessionAppendSystemPromptV1 } from '../agents/prompt/resolveSessionAppendSystemPromptV1';
@@ -1263,14 +1264,19 @@ class Sync {
 
     async markSessionViewed(sessionId: string, opts?: { sessionSeq?: number; pendingActivityAt?: number }): Promise<void> {
         const session = storage.getState().sessions[sessionId];
-        if (!session?.metadata) return;
+        if (!session) return;
 
         const sessionSeq = opts?.sessionSeq ?? session.seq ?? 0;
         // Pending queue does not affect unread; keep pendingActivityAt at 0 for backwards compatibility.
         const pendingActivityAt = 0;
-        const existing = session.metadata.readStateV1;
+        const existing = session.metadata?.readStateV1;
         const existingSeq = existing?.sessionSeq ?? 0;
         const needsRepair = existingSeq > sessionSeq;
+        const existingAuthoritativeSeq =
+            typeof session.lastViewedSessionSeq === 'number' && Number.isFinite(session.lastViewedSessionSeq)
+                ? Math.max(0, Math.trunc(session.lastViewedSessionSeq))
+                : 0;
+        const nextAuthoritativeSeq = Math.max(existingAuthoritativeSeq, sessionSeq);
 
         const early = computeNextReadStateV1({
             prev: existing,
@@ -1278,7 +1284,34 @@ class Sync {
             pendingActivityAt,
             now: nowServerMs(),
         });
-        if (!needsRepair && !early.didChange) return;
+
+        const shouldPublishReadCursor = nextAuthoritativeSeq > existingAuthoritativeSeq;
+        if (!needsRepair && !early.didChange && !shouldPublishReadCursor) return;
+
+        if (shouldPublishReadCursor) {
+            const result = await apiSocket.emitWithAck<{
+                result: 'success' | 'forbidden' | 'error';
+                lastViewedSessionSeq?: number;
+            }>('update-read-cursor', {
+                sid: sessionId,
+                lastViewedSessionSeq: nextAuthoritativeSeq,
+            });
+
+            if (result.result === 'success') {
+                const acknowledgedSeq =
+                    typeof result.lastViewedSessionSeq === 'number' && Number.isFinite(result.lastViewedSessionSeq)
+                        ? Math.max(0, Math.trunc(result.lastViewedSessionSeq))
+                        : nextAuthoritativeSeq;
+                storage.getState().applySessions([{
+                    ...session,
+                    lastViewedSessionSeq: acknowledgedSeq,
+                }]);
+            }
+        }
+
+        if (!session.metadata) {
+            return;
+        }
 
         await this.updateSessionMetadataWithRetry(sessionId, (metadata) => {
             const result = computeNextReadStateV1({
@@ -3019,7 +3052,8 @@ class Sync {
                 voiceHooks.onMessages(sessionId, m);
             }
             if (result.hasReadyEvent) {
-                voiceHooks.onReady(sessionId);
+                voiceHooks.onReady(sessionId, m);
+                notifyActivityReady(sessionId, m);
             }
         }
     }

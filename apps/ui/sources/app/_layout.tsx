@@ -28,7 +28,6 @@ import { tracking } from '@/track/tracking';
 import { syncRestore } from '@/sync/sync';
 import { storage } from '@/sync/domains/state/storage';
 import { getActiveViewingSessionId } from '@/sync/domains/session/activeViewingSession';
-import { NotificationsSettingsV1Schema } from '@happier-dev/protocol';
 import { useTrackScreens } from '@/track/useTrackScreens';
 import { RealtimeProvider } from '@/realtime/RealtimeProvider';
 import { FaviconPermissionIndicator } from '@/components/web/FaviconPermissionIndicator';
@@ -48,6 +47,7 @@ import { t } from '@/text';
 import { AppCrashRecoveryBoundary } from '@/components/appShell/AppCrashRecoveryBoundary';
 import { WebCryptoStartupGate } from '@/components/web/WebCryptoStartupGate';
 import { consumeRestartBugReportIntent } from '@/utils/system/restartBugReportIntent';
+import { resolveForegroundNotificationBehavior } from '@/activity/notifications/resolveForegroundNotificationBehavior';
 
 initializeSentryOnce();
 
@@ -293,10 +293,11 @@ Notifications.setNotificationHandler({
             return { shouldPlaySound: false, shouldSetBadge: true, shouldShowBanner: false, shouldShowList: false };
         }
 
-        // NotificationsSettingsV1Schema uses .catch(), so parse always succeeds.
-        const { foregroundBehavior } = NotificationsSettingsV1Schema.parse(
-            storage.getState().settings.notificationsSettingsV1,
-        );
+        // Foreground behavior is resolved from local + synced account settings.
+        const foregroundBehavior = resolveForegroundNotificationBehavior({
+            localSettings: storage.getState().localSettings,
+            accountSettings: storage.getState().settings,
+        });
 
         switch (foregroundBehavior) {
             case 'off':
@@ -317,6 +318,7 @@ if (Platform.OS === 'android') {
         importance: Notifications.AndroidImportance.MAX,
         vibrationPattern: [0, 250, 250, 250],
         lightColor: '#FF231F7C',
+        showBadge: true,
     }).catch(() => {});
 
     void Notifications.setNotificationChannelAsync(PUSH_NOTIFICATION_ANDROID_CHANNEL_IDS.permissionRequestsV1, {
@@ -324,6 +326,7 @@ if (Platform.OS === 'android') {
         importance: Notifications.AndroidImportance.MAX,
         vibrationPattern: [0, 250, 250, 250],
         lightColor: '#FF231F7C',
+        showBadge: true,
     }).catch(() => {});
 
     void Notifications.setNotificationChannelAsync(PUSH_NOTIFICATION_ANDROID_CHANNEL_IDS.userActionRequestsV1, {
@@ -331,6 +334,7 @@ if (Platform.OS === 'android') {
         importance: Notifications.AndroidImportance.HIGH,
         vibrationPattern: [0, 250, 250, 250],
         lightColor: '#FF231F7C',
+        showBadge: true,
     }).catch(() => {});
 }
 

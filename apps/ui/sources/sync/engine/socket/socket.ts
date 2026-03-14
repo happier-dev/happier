@@ -10,8 +10,9 @@ import { projectManager } from '@/sync/runtime/orchestration/projectManager';
 import { notifyExecutionRunActivity } from '@/sync/runtime/executionRuns/executionRunActivityBus';
 import { scmStatusSync } from '@/scm/scmStatusSync';
 import { ingestWorkspaceMutationMessages } from '@/scm/refresh/workspaceMutationIngestionRuntime';
-import { voiceHooks } from '@/voice/context/voiceHooks';
-import { deriveNewPermissionRequests } from '@/sync/domains/permissions/deriveNewPermissionRequests';
+import { reportNewAgentRequestsFromSessionTransition } from '@/voice/context/reportNewAgentRequestsFromSessionTransition';
+import { deriveNewAgentRequests } from '@/sync/domains/permissions/deriveNewAgentRequests';
+import { notifyActivityAgentRequest } from '@/activity/notifications/runtime/activityLocalNotificationBus';
 import { didControlReturnToMobile } from '@/sync/domains/session/control/controlledByUserTransitions';
 import { createSessionMessageApplyCoalescer } from '@/sync/engine/sessions/sessionMessageApplyCoalescer';
 import { settingsDefaults } from '@/sync/domains/settings/settings';
@@ -329,15 +330,21 @@ export async function handleUpdateContainer(params: {
             // SCM refresh cadence is handled by screen-scoped intervals (session/files views) and
             // by explicit invalidations after SCM mutations.
             if (updateData.body.agentState) {
-                // Check for new permission requests and notify voice assistant
-                for (const nextRequest of deriveNewPermissionRequests(session.agentState?.requests, agentState?.requests)) {
-                    voiceHooks.onPermissionRequested(
-                        updateData.body.id,
-                        nextRequest.requestId,
-                        nextRequest.toolName,
-                        nextRequest.toolArgs,
-                    );
+                for (const nextRequest of deriveNewAgentRequests(session.agentState?.requests, agentState?.requests)) {
+                    notifyActivityAgentRequest({
+                        sessionId: updateData.body.id,
+                        requestId: nextRequest.requestId,
+                        requestKind: nextRequest.requestKind,
+                        toolName: nextRequest.toolName,
+                        toolArgs: nextRequest.toolArgs,
+                    });
                 }
+
+                // Check for new permission requests and notify voice assistant
+                reportNewAgentRequestsFromSessionTransition(
+                    { id: updateData.body.id, agentState: session.agentState ?? null } as Session,
+                    { id: updateData.body.id, agentState: agentState ?? null } as Session,
+                );
 
                 // Re-fetch messages when control returns to mobile (local -> remote mode switch)
                 // This catches up on any messages that were exchanged while desktop had control

@@ -25,6 +25,7 @@ type Entry = {
 export class PermissionRequestPushNotifier {
   private readonly pushSender: PermissionRequestPushSender;
   private readonly getSettings: () => AccountSettings | null;
+  private readonly getSettingsSecretsReadKeys: () => ReadonlyArray<Uint8Array | null | undefined>;
   private readonly sessionId: string;
   private readonly logPrefix: string;
   private readonly retryDelaysMs: readonly number[];
@@ -38,6 +39,7 @@ export class PermissionRequestPushNotifier {
   constructor(params: {
     pushSender: PermissionRequestPushSender;
     getSettings: () => AccountSettings | null;
+    getSettingsSecretsReadKeys?: () => ReadonlyArray<Uint8Array | null | undefined>;
     sessionId: string;
     logPrefix: string;
     retryDelaysMs?: readonly number[];
@@ -48,6 +50,7 @@ export class PermissionRequestPushNotifier {
   }) {
     this.pushSender = params.pushSender;
     this.getSettings = params.getSettings;
+    this.getSettingsSecretsReadKeys = params.getSettingsSecretsReadKeys ?? (() => []);
     this.sessionId = params.sessionId;
     this.logPrefix = params.logPrefix;
     this.retryDelaysMs = params.retryDelaysMs ?? configuration.permissionRequestPushRetryDelaysMs;
@@ -164,6 +167,7 @@ export class PermissionRequestPushNotifier {
       toolName: entry.toolName,
       kind: entry.kind,
       settings,
+      settingsSecretsReadKeys: this.getSettingsSecretsReadKeys(),
       toolDetails: entry.toolDetails,
     });
 

@@ -1,4 +1,6 @@
 import {
+    NotificationChannelsV1Schema,
+    deriveExpoPushNotificationChannelFromLegacySettings,
     DEFAULT_NOTIFICATIONS_SETTINGS_V1,
     NotificationsSettingsV1Schema,
     buildSettingArtifacts,
@@ -46,9 +48,27 @@ export const ACCOUNT_WORKFLOW_SETTING_DEFINITIONS = defineSettingDefinitions({
             serializeCurrentProperties: (value: z.infer<typeof NotificationsSettingsV1Schema>) => ({
                 pushEnabled: value.pushEnabled,
                 ready: value.ready,
+                readyIncludeMessageText: value.readyIncludeMessageText,
                 permissionRequest: value.permissionRequest,
                 userActionRequest: value.userActionRequest,
                 foregroundBehavior: value.foregroundBehavior,
+            }),
+        },
+    },
+    notificationChannelsV1: {
+        schema: NotificationChannelsV1Schema,
+        default: [deriveExpoPushNotificationChannelFromLegacySettings(DEFAULT_NOTIFICATIONS_SETTINGS_V1)],
+        description: 'Canonical outbound notification channels (account-level)',
+        storageScope: 'account',
+        analytics: {
+            trackCurrentState: true,
+            trackChanges: true,
+            valueKind: 'enum',
+            privacy: 'safe',
+            identityScope: 'person',
+            serializeCurrentProperties: (value: z.infer<typeof NotificationChannelsV1Schema>) => ({
+                channelCount: value.length,
+                kinds: value.map((channel) => channel.kind).join(','),
             }),
         },
     },

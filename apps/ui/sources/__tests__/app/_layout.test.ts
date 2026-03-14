@@ -96,6 +96,14 @@ vi.mock('@/text', () => {
     return { t: (key: string) => key };
 });
 
+vi.mock('@/activity/badges/ActivityBadgeRuntime', () => ({
+    ActivityBadgeRuntime: () => null,
+}));
+
+vi.mock('@/activity/notifications/runtime/ActivityLocalNotificationRuntime', () => ({
+    ActivityLocalNotificationRuntime: () => null,
+}));
+
 vi.mock('react-native', () => {
     const React = require('react');
     type NativeChildrenProps = React.PropsWithChildren<Record<string, unknown>>;

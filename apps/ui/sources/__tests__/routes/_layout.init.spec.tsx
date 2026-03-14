@@ -290,11 +290,11 @@ describe('app/_layout init resilience', () => {
         const Notifications = await import('expo-notifications');
         expect((Notifications as any).setNotificationChannelAsync).toHaveBeenCalledWith(
             PUSH_NOTIFICATION_ANDROID_CHANNEL_IDS.permissionRequestsV1,
-            expect.any(Object),
+            expect.objectContaining({ showBadge: true }),
         );
         expect((Notifications as any).setNotificationChannelAsync).toHaveBeenCalledWith(
             PUSH_NOTIFICATION_ANDROID_CHANNEL_IDS.userActionRequestsV1,
-            expect.any(Object),
+            expect.objectContaining({ showBadge: true }),
         );
     });
 

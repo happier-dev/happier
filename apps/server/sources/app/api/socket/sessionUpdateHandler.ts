@@ -14,7 +14,7 @@ import { AsyncLock } from "@/utils/runtime/lock";
 import { log } from "@/utils/logging/log";
 import { randomKeyNaked } from "@/utils/keys/randomKeyNaked";
 import { Socket } from "socket.io";
-import { createSessionMessage, updateSessionAgentState, updateSessionMetadata } from "@/app/session/sessionWriteService";
+import { createSessionMessage, updateSessionAgentState, updateSessionMetadata, updateSessionReadCursor } from "@/app/session/sessionWriteService";
 import { recordSessionAlive } from "@/app/presence/presenceRecorder";
 import { materializeNextPendingMessage } from "@/app/session/pending/pendingMessageService";
 import { normalizeIncomingSessionMessageContent } from "@/app/session/messageContent/normalizeIncomingSessionMessageContent";
@@ -23,6 +23,8 @@ import { getSessionParticipantUserIds } from "@/app/share/sessionParticipants";
 import { parseIntEnv } from "@/config/env";
 import { parseSessionMessageSidechainId } from "@/app/session/parseSessionMessageSidechainId";
 import { ExecutionRunPublicStateSchema } from "@happier-dev/protocol";
+import { refreshSessionParticipantBadgePushes } from "@/app/activity/refreshAccountActivityBadgePushes";
+import { didSessionActivityBadgeContributionChange } from "@/app/activity/accountActivityBadge";
 
 const DEFAULT_TRANSCRIPT_DRAFT_PARTICIPANTS_CACHE_TTL_MS = 5_000;
 const DEFAULT_TRANSCRIPT_DRAFT_PARTICIPANTS_CACHE_MAX_ENTRIES = 200;
@@ -69,6 +71,11 @@ export function sessionUpdateHandler(userId: string, socket: Socket, connection:
     socket.on('update-metadata', async (data: any, callback: (response: any) => void) => {
         try {
             const { sid, metadata, expectedVersion } = data;
+            const readCursorHintV1Raw = (data as any)?.readCursorHintV1;
+            const lastViewedSessionSeqHint =
+                typeof readCursorHintV1Raw?.lastViewedSessionSeq === "number" && Number.isFinite(readCursorHintV1Raw.lastViewedSessionSeq)
+                    ? Math.max(0, Math.floor(readCursorHintV1Raw.lastViewedSessionSeq))
+                    : null;
 
             // Validate input
             if (!sid || typeof metadata !== 'string' || typeof expectedVersion !== 'number') {
@@ -83,6 +90,9 @@ export function sessionUpdateHandler(userId: string, socket: Socket, connection:
                 sessionId: sid,
                 expectedVersion,
                 metadataCiphertext: metadata,
+                ...(typeof lastViewedSessionSeqHint === "number"
+                    ? { readCursorHintV1: { lastViewedSessionSeq: lastViewedSessionSeqHint } }
+                    : {}),
             });
 
             if (!result.ok) {
@@ -105,7 +115,16 @@ export function sessionUpdateHandler(userId: string, socket: Socket, connection:
 
             const metadataUpdate = { value: result.metadata, version: result.version };
             await Promise.all(result.participantCursors.map(async ({ accountId, cursor }) => {
-                const payload = buildUpdateSessionUpdate(sid, cursor, randomKeyNaked(12), metadataUpdate);
+                const payload = buildUpdateSessionUpdate(
+                    sid,
+                    cursor,
+                    randomKeyNaked(12),
+                    metadataUpdate,
+                    undefined,
+                    typeof result.lastViewedSessionSeq === 'number'
+                        ? { lastViewedSessionSeq: result.lastViewedSessionSeq }
+                        : undefined,
+                );
                 eventRouter.emitUpdate({
                     userId: accountId,
                     payload,
@@ -113,6 +132,10 @@ export function sessionUpdateHandler(userId: string, socket: Socket, connection:
                     skipSenderConnection: accountId === userId ? connection : undefined,
                 });
             }));
+            await refreshSessionParticipantBadgePushes({
+                badgeAttentionChanged: result.badgeAttentionChanged,
+                participantCursors: result.participantCursors,
+            });
 
             callback?.({ result: 'success', version: result.version, metadata: result.metadata });
         } catch (error) {
@@ -126,6 +149,15 @@ export function sessionUpdateHandler(userId: string, socket: Socket, connection:
     socket.on('update-state', async (data: any, callback: (response: any) => void) => {
         try {
             const { sid, agentState, expectedVersion } = data;
+            const activitySummaryV1 = (data as any)?.activitySummaryV1;
+            const pendingPermissionRequestCount =
+                typeof activitySummaryV1?.pendingPermissionRequestCount === "number" && Number.isFinite(activitySummaryV1.pendingPermissionRequestCount)
+                    ? Math.max(0, Math.floor(activitySummaryV1.pendingPermissionRequestCount))
+                    : undefined;
+            const pendingUserActionRequestCount =
+                typeof activitySummaryV1?.pendingUserActionRequestCount === "number" && Number.isFinite(activitySummaryV1.pendingUserActionRequestCount)
+                    ? Math.max(0, Math.floor(activitySummaryV1.pendingUserActionRequestCount))
+                    : undefined;
 
             // Validate input
             if (!sid || (typeof agentState !== 'string' && agentState !== null) || typeof expectedVersion !== 'number') {
@@ -140,6 +172,8 @@ export function sessionUpdateHandler(userId: string, socket: Socket, connection:
                 sessionId: sid,
                 expectedVersion,
                 agentStateCiphertext: agentState,
+                ...(typeof pendingPermissionRequestCount === "number" ? { pendingPermissionRequestCount } : {}),
+                ...(typeof pendingUserActionRequestCount === "number" ? { pendingUserActionRequestCount } : {}),
             });
 
             if (!result.ok) {
@@ -162,7 +196,26 @@ export function sessionUpdateHandler(userId: string, socket: Socket, connection:
 
             const agentStateUpdate = { value: result.agentState, version: result.version };
             await Promise.all(result.participantCursors.map(async ({ accountId, cursor }) => {
-                const payload = buildUpdateSessionUpdate(sid, cursor, randomKeyNaked(12), undefined, agentStateUpdate);
+                const payload = buildUpdateSessionUpdate(
+                    sid,
+                    cursor,
+                    randomKeyNaked(12),
+                    undefined,
+                    agentStateUpdate,
+                    (
+                        typeof result.pendingPermissionRequestCount === 'number'
+                        || typeof result.pendingUserActionRequestCount === 'number'
+                    )
+                        ? {
+                            ...(typeof result.pendingPermissionRequestCount === 'number'
+                                ? { pendingPermissionRequestCount: result.pendingPermissionRequestCount }
+                                : {}),
+                            ...(typeof result.pendingUserActionRequestCount === 'number'
+                                ? { pendingUserActionRequestCount: result.pendingUserActionRequestCount }
+                                : {}),
+                        }
+                        : undefined,
+                );
                 eventRouter.emitUpdate({
                     userId: accountId,
                     payload,
@@ -170,6 +223,10 @@ export function sessionUpdateHandler(userId: string, socket: Socket, connection:
                     skipSenderConnection: accountId === userId ? connection : undefined,
                 });
             }));
+            await refreshSessionParticipantBadgePushes({
+                badgeAttentionChanged: result.badgeAttentionChanged,
+                participantCursors: result.participantCursors,
+            });
 
             callback?.({ result: 'success', version: result.version, agentState: result.agentState });
         } catch (error) {
@@ -177,6 +234,61 @@ export function sessionUpdateHandler(userId: string, socket: Socket, connection:
             if (callback) {
                 callback({ result: 'error' });
             }
+        }
+    });
+    socket.on('update-read-cursor', async (data: any, callback: (response: any) => void) => {
+        try {
+            const sid = typeof data?.sid === 'string' ? data.sid : '';
+            const lastViewedSessionSeq =
+                typeof data?.lastViewedSessionSeq === 'number' && Number.isFinite(data.lastViewedSessionSeq)
+                    ? Math.max(0, Math.floor(data.lastViewedSessionSeq))
+                    : NaN;
+
+            if (!sid || !Number.isFinite(lastViewedSessionSeq)) {
+                callback?.({ result: 'error' });
+                return;
+            }
+
+            const result = await updateSessionReadCursor({
+                actorUserId: userId,
+                sessionId: sid,
+                lastViewedSessionSeq,
+            });
+
+            if (!result.ok) {
+                if (result.error === 'forbidden') {
+                    callback?.({ result: 'forbidden' });
+                    return;
+                }
+                callback?.({ result: 'error' });
+                return;
+            }
+
+            await Promise.all(result.participantCursors.map(async ({ accountId, cursor }) => {
+                const payload = buildUpdateSessionUpdate(
+                    sid,
+                    cursor,
+                    randomKeyNaked(12),
+                    undefined,
+                    undefined,
+                    { lastViewedSessionSeq: result.lastViewedSessionSeq },
+                );
+                eventRouter.emitUpdate({
+                    userId: accountId,
+                    payload,
+                    recipientFilter: { type: 'all-interested-in-session', sessionId: sid },
+                    skipSenderConnection: accountId === userId ? connection : undefined,
+                });
+            }));
+            await refreshSessionParticipantBadgePushes({
+                badgeAttentionChanged: result.badgeAttentionChanged,
+                participantCursors: result.participantCursors,
+            });
+
+            callback?.({ result: 'success', lastViewedSessionSeq: result.lastViewedSessionSeq });
+        } catch (error) {
+            log({ module: 'websocket', level: 'error' }, `Error in update-read-cursor: ${error}`);
+            callback?.({ result: 'error' });
         }
     });
     socket.on('session-alive', async (data: {
@@ -287,7 +399,7 @@ export function sessionUpdateHandler(userId: string, socket: Socket, connection:
                     userId: participantUserId,
                     payload,
                     recipientFilter: { type: 'all-interested-in-session', sessionId: sid },
-                    skipSenderConnection: connection,
+                    skipSenderConnection: participantUserId === userId ? connection : undefined,
                 });
             }
         } catch (error) {
@@ -376,6 +488,10 @@ export function sessionUpdateHandler(userId: string, socket: Socket, connection:
                         skipSenderConnection: participantUserId === userId && !echoToSender ? connection : undefined,
                     });
                 }));
+                await refreshSessionParticipantBadgePushes({
+                    badgeAttentionChanged: result.badgeAttentionChanged,
+                    participantCursors: result.participantCursors,
+                });
             } catch (error) {
                 log({ module: 'websocket', level: 'error' }, `Error in message handler: ${error}`);
                 socketMessageAckCounter.inc({ result: 'error', error: 'internal' });
@@ -555,6 +671,10 @@ export function sessionUpdateHandler(userId: string, socket: Socket, connection:
                         });
                     }),
                 );
+                await refreshSessionParticipantBadgePushes({
+                    badgeAttentionChanged: result.badgeAttentionChanged,
+                    participantCursors: [...result.participantCursorsMessage, ...result.participantCursorsPending],
+                });
             } catch (error) {
                 log({ module: 'websocket', level: 'error' }, `Error in pending-materialize-next: ${error}`);
                 respond({ ok: false, error: 'internal' });
@@ -581,7 +701,17 @@ export function sessionUpdateHandler(userId: string, socket: Socket, connection:
 
             // Resolve session
             const session = await db.session.findUnique({
-                where: { id: sid, accountId: userId }
+                where: { id: sid, accountId: userId },
+                select: {
+                    id: true,
+                    seq: true,
+                    pendingCount: true,
+                    lastViewedSessionSeq: true,
+                    pendingPermissionRequestCount: true,
+                    pendingUserActionRequestCount: true,
+                    active: true,
+                    archivedAt: true,
+                },
             });
             if (!session) {
                 return;
@@ -591,6 +721,13 @@ export function sessionUpdateHandler(userId: string, socket: Socket, connection:
             await db.session.update({
                 where: { id: sid },
                 data: { lastActiveAt: new Date(t), active: false }
+            });
+            await refreshSessionParticipantBadgePushes({
+                badgeAttentionChanged: didSessionActivityBadgeContributionChange(session, {
+                    ...session,
+                    active: false,
+                }),
+                participantCursors: [{ accountId: userId }],
             });
 
             // Emit session activity update

@@ -29,6 +29,8 @@ import { bootstrapActiveServerFromWebLocation, readWebServerUrlOverrideFromLocat
 import { PUSH_NOTIFICATION_ACTION_IDS } from '@happier-dev/protocol';
 import { buildTerminalConnectWebHref } from '@/utils/path/terminalConnectUrl';
 import { useWebInitialRouteReconcile } from '@/hooks/ui/useWebInitialRouteReconcile';
+import { ActivityBadgeRuntime } from '@/activity/badges/ActivityBadgeRuntime';
+import { ActivityLocalNotificationRuntime } from '@/activity/notifications/runtime/ActivityLocalNotificationRuntime';
 
 const bootstrappedWebServerOverride = bootstrapActiveServerFromWebLocation({ scope: 'device' });
 
@@ -507,6 +509,8 @@ export default function RootLayout() {
 
     return (
         <>
+            <ActivityBadgeRuntime />
+            <ActivityLocalNotificationRuntime />
             {debugRouterEnabled && Platform.OS === 'web' ? (
                 <View
                     testID="debug-router-pathname"

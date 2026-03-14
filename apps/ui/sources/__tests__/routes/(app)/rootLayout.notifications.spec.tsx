@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { createRootLayoutFeaturesResponse } from '@/dev/testkit/rootLayoutTestkit';
 import { PUSH_NOTIFICATION_ACTION_IDS } from '@happier-dev/protocol';
+import { settingsDefaults } from '@/sync/domains/settings/settings';
 
 type ReactActEnvironmentGlobal = typeof globalThis & {
     IS_REACT_ACT_ENVIRONMENT?: boolean;
@@ -33,6 +34,14 @@ let pendingTerminalConnectValue: { publicKeyB64Url: string; serverUrl: string } 
 let pendingNotificationNavValue: { serverUrl: string; route: string } | null = null;
 let pendingNotificationActionValue: { serverUrl: string; sessionId: string; requestId: string; action: 'allow' | 'deny' } | null = null;
 let lastRenderer: renderer.ReactTestRenderer | null = null;
+
+const mockSettings = {
+    ...settingsDefaults,
+    voice: {
+        ...settingsDefaults.voice,
+        providerId: 'off',
+    },
+};
 
 vi.mock('expo-router', () => ({
     Stack: Object.assign(
@@ -91,9 +100,11 @@ vi.mock('@/hooks/server/useFriendsAllowUsernameSupport', () => ({
 
 vi.mock('@/sync/domains/state/storage', () => ({
     storage: {
-        getState: () => ({ settings: { voice: { providerId: 'off' } } }),
+        getState: () => ({ settings: mockSettings }),
     },
     useProfile: () => ({ linkedProviders: [], username: 'u' }),
+    useSettings: () => mockSettings,
+    useSetting: (key: keyof typeof mockSettings) => mockSettings[key],
 }));
 
 vi.mock('@/sync/domains/state/storageStore', () => {

@@ -79,6 +79,31 @@ export {
 } from './crypto/settingsSecretStringsV1.js';
 
 export {
+  BUILT_IN_EXPO_PUSH_NOTIFICATION_CHANNEL_ID,
+  DEFAULT_NOTIFICATION_CHANNEL_TOPICS_V1,
+  ExpoPushNotificationChannelV1Schema,
+  hasConfiguredSecretStringValue,
+  NotificationChannelsV1Schema,
+  NotificationChannelTopicsV1Schema,
+  NotificationChannelV1Schema,
+  WebhookNotificationChannelV1Schema,
+  deriveExpoPushNotificationChannelFromLegacySettings,
+  type ExpoPushNotificationChannelV1,
+  type NotificationChannelsV1,
+  type NotificationChannelTopicsV1,
+  type NotificationChannelV1,
+  type WebhookNotificationChannelV1,
+} from './account/settings/notificationChannels.js';
+
+export {
+  resolveNotificationChannelsV1FromAccountSettings,
+} from './account/settings/accountSettings.js';
+
+export {
+  collectExpoPushTokensMarkedUnregistered,
+} from './push/expoPushDelivery.js';
+
+export {
   ConnectedServiceCredentialFormatSchema,
   ConnectedServiceCredentialKindSchema,
   ConnectedServiceCredentialRecordV1Schema,
@@ -118,6 +143,18 @@ export { buildConnectedServiceCredentialRecord } from './connect/buildConnectedS
 
 export { parseBooleanEnv, parseOptionalBooleanEnv } from './env/parseBooleanEnv.js';
 export type { ServerRetentionCapabilities } from './features/payload/capabilities/serverRetentionCapabilities.js';
+
+export {
+  buildReadyNotificationContent,
+} from './push/readyNotificationContent.js';
+
+export {
+  ActivityWebhookPayloadV1Schema,
+  ActivityWebhookTopicSchema,
+  buildActivityWebhookPayload,
+  type ActivityWebhookPayloadV1,
+  type ActivityWebhookTopic,
+} from './activity/webhookPayload.js';
 
 export {
   WorkspaceCheckoutKindSchema,
