@@ -1,6 +1,6 @@
 import { EnhancedMode } from "./loop";
 import { query, type QueryOptions, type SDKMessage, type SDKSystemMessage, AbortError, SDKUserMessage } from '@/backends/claude/sdk'
-import { mapToClaudeMode } from "./utils/permissionMode";
+import { resolveClaudeSdkPermissionModeFromEnhancedMode } from "./utils/permissionMode";
 import { join, resolve } from 'node:path';
 import { projectPath } from "@/projectPath";
 import { parseSpecialCommand } from "@/cli/parsers/specialCommands";
@@ -11,6 +11,57 @@ import type { JsRuntime } from "./runClaude";
 import { getClaudeRemoteSystemPrompt } from "./utils/remoteSystemPrompt";
 import { parseClaudeSdkFlagOverridesFromArgs } from "./remote/sdkFlagOverrides";
 import { resolveClaudeRemoteSessionStartPlan } from "./remote/sessionStartPlan";
+import { resolveClaudeConfigDirOverride } from "./utils/resolveClaudeConfigDirOverride";
+import { resolveClaudeCodeExperimentalEnvOverlay } from "./spawn/resolveClaudeCodeExperimentalEnvOverlay";
+
+function extractMcpConfigPassthroughArgs(args?: string[]): string[] | undefined {
+    const input = args ?? [];
+    const out: string[] = [];
+    for (let i = 0; i < input.length; i++) {
+        const arg = input[i];
+        if (typeof arg === 'string' && arg.startsWith('--mcp-config=')) {
+            // Support the equals form (`--mcp-config=<json>`).
+            out.push(arg);
+            continue;
+        }
+        if (arg !== '--mcp-config') continue;
+        const next = i + 1 < input.length ? input[i + 1] : undefined;
+        // Pass the flag through as-is; do not parse/merge.
+        out.push('--mcp-config');
+        if (typeof next === 'string' && next.length > 0 && !next.startsWith('-')) {
+            out.push(next);
+            i++;
+        }
+    }
+    return out.length > 0 ? out : undefined;
+}
+
+function resolveSettingSourcesPassthroughArgs(mode: EnhancedMode): string[] | null {
+    const rawV2 = mode.claudeRemoteSettingSourcesV2;
+    if (Array.isArray(rawV2)) {
+        const set = new Set<string>();
+        for (const value of rawV2) {
+            if (typeof value === 'string') set.add(value);
+        }
+        const normalized: Array<'user' | 'project' | 'local'> = [];
+        for (const key of ['user', 'project', 'local'] as const) {
+            if (set.has(key)) normalized.push(key);
+        }
+        if (normalized.length === 3) return null;
+        // Claude Code CLI does not accept an explicit "none" value for --setting-sources.
+        // If no sources are selected, omit the override so we don't break the invocation.
+        if (normalized.length === 0) return null;
+        const value = normalized.join(',');
+        return ['--setting-sources', value];
+    }
+
+    const legacy = mode.claudeRemoteSettingSources;
+    // Legacy "none" can't be represented as a Claude Code CLI flag; avoid passing an invalid value.
+    if (legacy === 'none') return null;
+    if (legacy === 'project') return ['--setting-sources', 'project'];
+    if (legacy === 'user_project') return ['--setting-sources', 'user,project'];
+    return null;
+}
 
 export async function claudeRemote(opts: {
 
@@ -18,10 +69,17 @@ export async function claudeRemote(opts: {
     sessionId: string | null,
     transcriptPath: string | null,
     path: string,
-    mcpServers?: Record<string, any>,
-    claudeEnvVars?: Record<string, string>,
     claudeArgs?: string[],
-    allowedTools: string[],
+    /**
+     * Optional MCP config JSON to inject into the Claude Code CLI invocation (e.g. Happier MCP).
+     *
+     * Claude Code merges multiple `--mcp-config` inputs additively and uses last-write-wins
+     * when the same server name appears more than once.
+     *
+     * We intentionally append Happier's injected MCP config AFTER any user-provided `--mcp-config`
+     * passthrough args so Happier wins on collisions (and so we don't need to parse/merge user JSON).
+     */
+    happierMcpConfigJson?: string,
     signal?: AbortSignal,
     canCallTool: (toolName: string, input: unknown, mode: EnhancedMode, options: { signal: AbortSignal }) => Promise<PermissionResult>,
     /** Path to temporary settings file with SessionStart hook (required for session tracking) */
@@ -31,7 +89,7 @@ export async function claudeRemote(opts: {
 
     // Dynamic parameters
     nextMessage: () => Promise<{ message: string, mode: EnhancedMode } | null>,
-    onReady: () => void,
+    onReady: () => void | Promise<void>,
     isAborted: (toolCallId: string) => boolean,
 
     // Callbacks
@@ -52,16 +110,9 @@ export async function claudeRemote(opts: {
         sessionId: opts.sessionId,
         transcriptPath: opts.transcriptPath,
         path: opts.path,
-        claudeConfigDir: opts.claudeEnvVars?.CLAUDE_CONFIG_DIR ?? null,
+        claudeConfigDir: resolveClaudeConfigDirOverride(process.env),
         claudeArgs: opts.claudeArgs,
     });
-
-    // Set environment variables for Claude Code SDK
-    if (opts.claudeEnvVars) {
-        Object.entries(opts.claudeEnvVars).forEach(([key, value]) => {
-            process.env[key] = value;
-        });
-    }
 
     // Get initial message
     const initial = await opts.nextMessage();
@@ -98,23 +149,27 @@ export async function claudeRemote(opts: {
     const argOverrides = parseClaudeSdkFlagOverridesFromArgs(opts.claudeArgs);
     const customSystemPrompt = argOverrides.customSystemPrompt ?? initial.mode.customSystemPrompt;
     const appendSystemPrompt = argOverrides.appendSystemPrompt ?? initial.mode.appendSystemPrompt;
-    const allowedTools = argOverrides.allowedTools ?? initial.mode.allowedTools;
-    const disallowedTools = argOverrides.disallowedTools ?? initial.mode.disallowedTools;
     const remoteSystemPrompt = getClaudeRemoteSystemPrompt({ disableTodos: initial.mode.claudeRemoteDisableTodos === true });
+
+    const settingSourcesArgs = resolveSettingSourcesPassthroughArgs(mode);
+    const passthroughMcpArgs = extractMcpConfigPassthroughArgs(opts.claudeArgs);
+    const injectedMcpArgs =
+        typeof opts.happierMcpConfigJson === 'string' && opts.happierMcpConfigJson.trim().length > 0
+            ? ['--mcp-config', opts.happierMcpConfigJson.trim()]
+            : null;
+    const extraArgs = [...(settingSourcesArgs ?? []), ...(passthroughMcpArgs ?? []), ...(injectedMcpArgs ?? [])];
 
     const sdkOptions: QueryOptions = {
         cwd: opts.path,
         continue: shouldContinue || undefined,
         resume: startFrom ?? undefined,
-        mcpServers: opts.mcpServers,
-        permissionMode: mapToClaudeMode(initial.mode.permissionMode),
+        permissionMode: resolveClaudeSdkPermissionModeFromEnhancedMode(initial.mode),
         model: argOverrides.model ?? initial.mode.model,
         fallbackModel: argOverrides.fallbackModel ?? initial.mode.fallbackModel,
         maxTurns: argOverrides.maxTurns,
         customSystemPrompt: customSystemPrompt || undefined,
         appendSystemPrompt: (appendSystemPrompt ? appendSystemPrompt + '\n\n' : '') + remoteSystemPrompt,
-        allowedTools: allowedTools ? allowedTools.concat(opts.allowedTools) : opts.allowedTools,
-        disallowedTools,
+        extraArgs: extraArgs.length > 0 ? extraArgs : undefined,
         strictMcpConfig: argOverrides.strictMcpConfig,
         canCallTool: (toolName: string, input: unknown, options: { signal: AbortSignal }) =>
             opts.canCallTool(toolName, input, mode, options),
@@ -123,6 +178,9 @@ export async function claudeRemote(opts: {
         pathToClaudeCodeExecutable: (() => {
             return resolve(join(projectPath(), 'scripts', 'claude_remote_launcher.cjs'));
         })(),
+        env: resolveClaudeCodeExperimentalEnvOverlay({
+            claudeCodeExperimentalAgentTeamsEnabled: mode.claudeCodeExperimentalAgentTeamsEnabled,
+        }),
         settingsPath: opts.hookSettingsPath,
     }
 
@@ -153,6 +211,10 @@ export async function claudeRemote(opts: {
     const response = query({
         prompt: messages,
         options: sdkOptions,
+        onMessageReceived: (message) => {
+            logger.debugLargeJson(`[claudeRemote] Message ${message.type}`, message);
+            opts.onMessage(message);
+        },
     });
 
     updateThinking(true);
@@ -160,10 +222,8 @@ export async function claudeRemote(opts: {
         logger.debug(`[claudeRemote] Starting to iterate over response`);
 
         for await (const message of response) {
-            logger.debugLargeJson(`[claudeRemote] Message ${message.type}`, message);
-
-            // Handle messages
-            opts.onMessage(message);
+            // NOTE: opts.onMessage is already called via onMessageReceived above.
+            // This loop handles control flow only (result/init/abort).
 
             // Handle special system messages
             if (message.type === 'system' && message.subtype === 'init') {
@@ -194,7 +254,7 @@ export async function claudeRemote(opts: {
                 }
 
                 // Send ready event
-                opts.onReady();
+                await opts.onReady();
 
                 // Push next message
                 const next = await opts.nextMessage();

@@ -114,13 +114,25 @@ export const UI_FEATURE_REGISTRY = {
     'auth.recovery.providerReset': {
         settingsToggle: undefined,
     },
+    'auth.pairing.desktopQrMobileScan': {
+        settingsToggle: undefined,
+    },
     'auth.login.keyChallenge': {
+        settingsToggle: undefined,
+    },
+    'auth.mtls': {
         settingsToggle: undefined,
     },
     'auth.ui.recoveryKeyReminder': {
         settingsToggle: undefined,
     },
+    'e2ee.keylessAccounts': {
+        settingsToggle: undefined,
+    },
     'app.analytics': {
+        settingsToggle: undefined,
+    },
+    'app.crashReports': {
         settingsToggle: undefined,
     },
     'app.ui.storeReviewPrompts': {
@@ -168,7 +180,7 @@ export const UI_FEATURE_REGISTRY = {
     'files.diffSyntaxHighlighting': {
         settingsToggle: {
             showInSettings: true,
-            isExperimental: true,
+            isExperimental: false,
             defaultEnabled: true,
             titleKey: 'settingsFeatures.expFilesDiffSyntaxHighlighting',
             subtitleKey: 'settingsFeatures.expFilesDiffSyntaxHighlightingSubtitle',
@@ -198,8 +210,8 @@ export const UI_FEATURE_REGISTRY = {
     'files.editor': {
         settingsToggle: {
             showInSettings: true,
-            isExperimental: true,
-            defaultEnabled: false,
+            isExperimental: false,
+            defaultEnabled: true,
             titleKey: 'settingsFeatures.expFilesEditor',
             subtitleKey: 'settingsFeatures.expFilesEditorSubtitle',
             icon: { ioniconName: 'create-outline', color: '#FF9500' },
@@ -233,16 +245,6 @@ export const UI_FEATURE_REGISTRY = {
             titleKey: 'settingsFeatures.expUsageReporting',
             subtitleKey: 'settingsFeatures.expUsageReportingSubtitle',
             icon: { ioniconName: 'analytics-outline', color: '#007AFF' },
-        },
-    },
-    'messages.thinkingVisibility': {
-        settingsToggle: {
-            showInSettings: true,
-            isExperimental: true,
-            defaultEnabled: true,
-            titleKey: 'settingsFeatures.expShowThinkingMessages',
-            subtitleKey: 'settingsFeatures.expShowThinkingMessagesSubtitle',
-            icon: { ioniconName: 'chatbubbles-outline', color: '#34C759' },
         },
     },
     'codex.resume.mcp': {

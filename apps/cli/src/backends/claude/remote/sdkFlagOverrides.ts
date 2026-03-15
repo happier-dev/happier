@@ -5,8 +5,6 @@ export type ClaudeSdkFlagOverrides = {
   customSystemPrompt?: string;
   model?: string;
   fallbackModel?: string;
-  allowedTools?: string[];
-  disallowedTools?: string[];
 };
 
 export function parseClaudeSdkFlagOverridesFromArgs(args?: string[]): ClaudeSdkFlagOverrides {
@@ -17,8 +15,6 @@ export function parseClaudeSdkFlagOverridesFromArgs(args?: string[]): ClaudeSdkF
   let customSystemPrompt: string | undefined;
   let model: string | undefined;
   let fallbackModel: string | undefined;
-  let allowedTools: string[] | undefined;
-  let disallowedTools: string[] | undefined;
 
   const nextValue = (index: number): string | undefined => {
     const next = index + 1 < input.length ? input[index + 1] : undefined;
@@ -82,32 +78,6 @@ export function parseClaudeSdkFlagOverridesFromArgs(args?: string[]): ClaudeSdkF
       }
       continue;
     }
-
-    if (arg === '--allowedTools') {
-      const next = nextValue(i);
-      if (typeof next === 'string') {
-        const parsed = next
-          .split(',')
-          .map((s) => s.trim())
-          .filter(Boolean);
-        allowedTools = parsed.length > 0 ? parsed : allowedTools;
-        i++;
-      }
-      continue;
-    }
-
-    if (arg === '--disallowedTools') {
-      const next = nextValue(i);
-      if (typeof next === 'string') {
-        const parsed = next
-          .split(',')
-          .map((s) => s.trim())
-          .filter(Boolean);
-        disallowedTools = parsed.length > 0 ? parsed : disallowedTools;
-        i++;
-      }
-      continue;
-    }
   }
 
   return {
@@ -117,7 +87,5 @@ export function parseClaudeSdkFlagOverridesFromArgs(args?: string[]): ClaudeSdkF
     customSystemPrompt,
     model,
     fallbackModel,
-    allowedTools,
-    disallowedTools,
   };
 }

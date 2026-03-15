@@ -1,4 +1,5 @@
-import { createBackoff } from "@/utils/timing/time";
+import { createBackoff, delay, linearBackoffDelay } from "@/utils/timing/time";
+import type { PauseController } from "@/utils/timing/pauseController";
 
 export class InvalidateSync {
     private _invalidated = false;
@@ -9,7 +10,13 @@ export class InvalidateSync {
     private _onError?: (e: any) => void;
     private _onSuccess?: () => void;
     private _onRetry?: (info: { failuresCount: number; nextDelayMs: number; nextRetryAt: number }) => void;
-    private _backoff!: ReturnType<typeof createBackoff>;
+    private _pause?: PauseController;
+    private _backoff: {
+        minDelayMs: number;
+        maxDelayMs: number;
+        maxFailureCount: number | 'infinite';
+    };
+    private _shouldRetry: (e: any, failuresCount: number) => boolean;
 
     constructor(
         command: () => Promise<void>,
@@ -17,19 +24,37 @@ export class InvalidateSync {
             onError?: (e: any) => void;
             onSuccess?: () => void;
             onRetry?: (info: { failuresCount: number; nextDelayMs: number; nextRetryAt: number }) => void;
+            pause?: PauseController;
+            backoff?: { minDelayMs: number; maxDelayMs: number; maxFailureCount: number | 'infinite' };
+            shouldRetry?: (e: any, failuresCount: number) => boolean;
         }
     ) {
         this._command = command;
         this._onError = opts?.onError;
         this._onSuccess = opts?.onSuccess;
         this._onRetry = opts?.onRetry;
-        this._backoff = createBackoff({
-            maxFailureCount: Number.POSITIVE_INFINITY,
-            onError: (e) => console.warn(e),
-            onRetry: (_e, failuresCount, nextDelayMs) => {
-                this._onRetry?.({ failuresCount, nextDelayMs, nextRetryAt: Date.now() + nextDelayMs });
-            }
-        });
+        this._pause = opts?.pause;
+        const backoff = opts?.backoff;
+        this._backoff = {
+            minDelayMs: Math.max(0, Math.trunc(Number.isFinite(backoff?.minDelayMs) ? backoff!.minDelayMs : 500)),
+            maxDelayMs: Math.max(0, Math.trunc(Number.isFinite(backoff?.maxDelayMs) ? backoff!.maxDelayMs : 30_000)),
+            maxFailureCount: backoff?.maxFailureCount ?? 'infinite',
+        };
+        this._shouldRetry =
+            opts?.shouldRetry
+            ?? ((e: any) => {
+                // Default: do not retry explicitly non-retryable errors.
+                // Duck-typed to avoid coupling this util to higher-level error classes.
+                if (e && typeof e === 'object') {
+                    if ((e as any).retryable === false) {
+                        return false;
+                    }
+                    if (typeof (e as any).canTryAgain === 'boolean' && (e as any).canTryAgain === false) {
+                        return false;
+                    }
+                }
+                return true;
+            });
     }
 
     invalidate() {
@@ -116,21 +141,55 @@ export class InvalidateSync {
         this._pendings = [];
     }
 
+    private _runWithBackoff = async (): Promise<void> => {
+        let failuresCount = 0;
+        while (true) {
+            if (this._stopped) {
+                return;
+            }
+            if (this._pause) {
+                await this._pause.waitUntilResumed();
+            }
+
+            try {
+                await this._command();
+                return;
+            } catch (e) {
+                failuresCount += 1;
+
+                if (!this._shouldRetry(e, failuresCount)) {
+                    throw e;
+                }
+
+                const maxFailureCount = this._backoff.maxFailureCount === 'infinite'
+                    ? Number.POSITIVE_INFINITY
+                    : Math.max(1, Math.trunc(this._backoff.maxFailureCount));
+                if (failuresCount >= maxFailureCount) {
+                    throw e;
+                }
+
+                // Pause-aware: do not schedule retry timers while paused.
+                if (this._pause) {
+                    await this._pause.waitUntilResumed();
+                }
+
+                const minDelayMs = this._backoff.minDelayMs;
+                const maxDelayMs = this._backoff.maxDelayMs;
+                const nextDelayMs = linearBackoffDelay(failuresCount, minDelayMs, Math.max(minDelayMs, maxDelayMs), Math.min(50, maxFailureCount));
+                this._onRetry?.({ failuresCount, nextDelayMs, nextRetryAt: Date.now() + nextDelayMs });
+                await delay(nextDelayMs);
+            }
+        }
+    };
 
     private _doSync = async () => {
         try {
-            await this._backoff(async () => {
-                if (this._stopped) {
-                    return;
-                }
-                await this._command();
-            });
+            await this._runWithBackoff();
             this._onSuccess?.();
         } catch (e) {
             // Non-retryable errors (e.g. auth/config) should not brick the sync queue.
             // We treat this as a "give up for now" and allow future invalidations to retry.
             this._onError?.(e);
-            console.warn(e);
         }
         if (this._stopped) {
             this._notifyPendings();
@@ -233,7 +292,12 @@ export class ValueSync<T> {
             this._hasValue = false;
             
             try {
-                const backoffForever = createBackoff({ maxFailureCount: Number.POSITIVE_INFINITY, onError: (e) => console.warn(e) });
+                const backoffForever = createBackoff({
+                    maxFailureCount: Number.POSITIVE_INFINITY,
+                    onError: (e: unknown) => {
+                        console.warn(e);
+                    },
+                });
                 await backoffForever(async () => {
                     if (this._stopped) {
                         return;

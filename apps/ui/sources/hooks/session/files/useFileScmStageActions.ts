@@ -33,9 +33,9 @@ export function useFileScmStageActions(input: {
     diffMode: DiffMode;
     diffContent: string | null;
     lineSelectionEnabled: boolean;
-    selectedLineIndexes: Set<number>;
+    selectedLineKeys: Set<string>;
     refreshAll: () => Promise<void>;
-    setSelectedLineIndexes: React.Dispatch<React.SetStateAction<Set<number>>>;
+    setSelectedLineKeys: React.Dispatch<React.SetStateAction<Set<string>>>;
 }) {
     const {
         sessionId,
@@ -48,9 +48,9 @@ export function useFileScmStageActions(input: {
         diffMode,
         diffContent,
         lineSelectionEnabled,
-        selectedLineIndexes,
+        selectedLineKeys,
         refreshAll,
-        setSelectedLineIndexes,
+        setSelectedLineKeys,
     } = input;
 
     const [isApplyingStage, setIsApplyingStage] = React.useState(false);
@@ -102,7 +102,7 @@ export function useFileScmStageActions(input: {
 
     const applySelectedLines = React.useCallback(async () => {
         if (!sessionId || !sessionPath || !diffContent) return;
-        if (selectedLineIndexes.size === 0) return;
+        if (selectedLineKeys.size === 0) return;
         if (!lineSelectionEnabled) return;
         const atomicVirtualLineSelectionEnabled = isAtomicCommitStrategy(scmCommitStrategy)
             && scmSnapshot?.capabilities?.writeCommitLineSelection === true;
@@ -110,15 +110,15 @@ export function useFileScmStageActions(input: {
 
         const stageSelected = diffMode !== 'included';
         if (atomicVirtualLineSelectionEnabled && diffMode !== 'pending') {
-            Modal.alert(t('common.error'), 'Select Pending diff mode to pick lines for commit.');
+            Modal.alert(t('common.error'), t('files.stageActions.selectPendingDiffMode'));
             return;
         }
 
-        const patch = buildPatchFromSelectedDiffLines(diffContent, selectedLineIndexes, {
+        const patch = buildPatchFromSelectedDiffLines(diffContent, selectedLineKeys, {
             mode: stageSelected ? 'stage' : 'unstage',
         });
         if (!patch) {
-            Modal.alert(t('common.error'), 'Unable to build patch from selected lines.');
+            Modal.alert(t('common.error'), t('files.stageActions.unableToBuildPatchFromSelection'));
             return;
         }
 
@@ -127,18 +127,18 @@ export function useFileScmStageActions(input: {
             storage.getState().upsertSessionProjectScmCommitSelectionPatch(sessionId, {
                 path: filePath,
                 patch,
-            });
-            reportSessionScmOperation({
-                state: storage.getState(),
-                sessionId,
-                operation: 'stage',
-                status: 'success',
-                path: filePath,
-                detail: `${filePath} (${selectedLineIndexes.size} selected lines)`,
-                surface: 'file',
-                tracking,
-            });
-            setSelectedLineIndexes(new Set());
+                });
+                reportSessionScmOperation({
+                    state: storage.getState(),
+                    sessionId,
+                    operation: 'stage',
+                    status: 'success',
+                    path: filePath,
+                    detail: `${filePath} (${selectedLineKeys.size} selected lines)`,
+                    surface: 'file',
+                    tracking,
+                });
+                setSelectedLineKeys(new Set());
             return;
         }
 
@@ -176,7 +176,7 @@ export function useFileScmStageActions(input: {
                         const errorMessage = getScmUserFacingError({
                             errorCode: response.errorCode,
                             error: response.error,
-                            fallback: response.error || 'Diff changed, refresh and reselect lines.',
+                            fallback: response.error || t('files.stageActions.diffChangedRefreshAndReselect'),
                         });
                         reportSessionScmOperation({
                             state: storage.getState(),
@@ -208,12 +208,12 @@ export function useFileScmStageActions(input: {
                         operation: stageSelected ? 'stage' : 'unstage',
                         status: 'success',
                         path: filePath,
-                        detail: `${filePath} (${selectedLineIndexes.size} selected lines)`,
+                        detail: `${filePath} (${selectedLineKeys.size} selected lines)`,
                         surface: 'file',
                         tracking,
                     });
                     if (mountedRef.current) {
-                        setSelectedLineIndexes(new Set());
+                        setSelectedLineKeys(new Set());
                     }
                     await scmStatusSync.invalidateFromMutationAndAwait(sessionId);
                     if (mountedRef.current) {
@@ -244,10 +244,10 @@ export function useFileScmStageActions(input: {
         lineSelectionEnabled,
         includeExcludeEnabled,
         refreshAll,
-        selectedLineIndexes,
+        selectedLineKeys,
         sessionId,
         sessionPath,
-        setSelectedLineIndexes,
+        setSelectedLineKeys,
         mountedRef,
         setIsApplyingStageSafe,
     ]);

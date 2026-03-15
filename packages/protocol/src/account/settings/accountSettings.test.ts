@@ -13,6 +13,7 @@ describe('accountSettingsParse', () => {
 
     expect(parsed.notificationsSettingsV1).toEqual(DEFAULT_NOTIFICATIONS_SETTINGS_V1);
     expect(parsed.actionsSettingsV1).toEqual(DEFAULT_ACTIONS_SETTINGS_V1);
+    expect(parsed.notificationsSettingsV1.userActionRequest).toBe(true);
   });
 
   it('preserves unknown keys', () => {
@@ -42,4 +43,3 @@ describe('accountSettingsParse', () => {
     expect(typeof parsed.schemaVersion).toBe('number');
   });
 });
-

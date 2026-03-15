@@ -9,6 +9,8 @@ import { join } from 'node:path';
 
 import { createManagedChildProcess } from '@/subprocess/supervision/managedChildProcess';
 import { updateAgentStateBestEffort, updateMetadataBestEffort } from '@/api/session/sessionWritesBestEffort';
+import { killProcessTree } from '@/agent/acp/killProcessTree';
+import { resolveWindowsCommandInvocation } from '@happier-dev/cli-common/process';
 
 import { CodexRolloutMirror } from './localControl/codexRolloutMirror';
 import { discoverCodexRolloutFileOnce } from './localControl/rolloutDiscovery';
@@ -62,7 +64,8 @@ function resolveCodexTuiCommand(): string {
       : typeof process.env.HAPPY_CODEX_TUI_BIN === 'string'
         ? process.env.HAPPY_CODEX_TUI_BIN.trim()
         : '';
-  return override || 'codex';
+  if (override) return override;
+  return 'codex';
 }
 
 function buildCodexTuiArgs(opts: { cwd: string; resumeId?: string | null; permissionMode: PermissionMode }): string[] {
@@ -122,6 +125,7 @@ export async function codexLocalLauncher<TMode>(opts: {
   let lastMetadataPublishAttemptMs = 0;
   let inFlightMetadataPublish: Promise<void> | null = null;
   const debug = opts.debugMirroring === true;
+  const isWindows = process.platform === 'win32';
 
   let exitReason: CodexLauncherResult | null = null;
   let switchRequested = false;
@@ -233,7 +237,6 @@ export async function codexLocalLauncher<TMode>(opts: {
       return true;
     });
 
-    // Spawn Codex TUI process.
     const command = resolveCodexTuiCommand();
     const args = buildCodexTuiArgs({
       cwd: opts.path,
@@ -241,14 +244,21 @@ export async function codexLocalLauncher<TMode>(opts: {
       permissionMode: opts.permissionMode ?? 'default',
     });
 
+    const invocation = resolveWindowsCommandInvocation({
+      command,
+      args,
+      resolveCommandOnPath: true,
+    });
+
     const interactive = Boolean(process.stdout.isTTY && process.stdin.isTTY);
     let bufferedStderr = '';
     const maxBufferedStderrChars = 16_000;
-    child = spawn(command, args, {
+    child = spawn(invocation.command, invocation.args, {
       cwd: opts.path,
       env: process.env,
       stdio: interactive ? 'inherit' : 'pipe',
       windowsHide: true,
+      windowsVerbatimArguments: invocation.windowsVerbatimArguments,
     });
     const managedChild = createManagedChildProcess(child);
     child.once('error', (error) => {
@@ -374,10 +384,14 @@ export async function codexLocalLauncher<TMode>(opts: {
       }
       if (child && child.exitCode === null) {
         childStopRequested = true;
-        try {
-          child.kill('SIGTERM');
-        } catch {
-          // ignore
+        if (isWindows) {
+          void killProcessTree(child, { graceMs: 250 }).catch(() => undefined);
+        } else {
+          try {
+            child.kill('SIGTERM');
+          } catch {
+            // ignore
+          }
         }
       }
     }
@@ -404,10 +418,14 @@ export async function codexLocalLauncher<TMode>(opts: {
             exitReason = { type: 'switch', resumeId };
             if (child && child.exitCode === null) {
               childStopRequested = true;
-              try {
-                child.kill('SIGTERM');
-              } catch {
-                // ignore
+              if (isWindows) {
+                void killProcessTree(child, { graceMs: 250 }).catch(() => undefined);
+              } else {
+                try {
+                  child.kill('SIGTERM');
+                } catch {
+                  // ignore
+                }
               }
             }
           }
@@ -457,10 +475,14 @@ export async function codexLocalLauncher<TMode>(opts: {
     }
     if (child && child.exitCode === null) {
       childStopRequested = true;
-      try {
-        child.kill('SIGTERM');
-      } catch {
-        // ignore
+      if (isWindows) {
+        void killProcessTree(child, { graceMs: 250 }).catch(() => undefined);
+      } else {
+        try {
+          child.kill('SIGTERM');
+        } catch {
+          // ignore
+        }
       }
     }
   }

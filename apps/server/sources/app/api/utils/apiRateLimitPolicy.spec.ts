@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import {
     createApiRateLimitKeyGenerator,
@@ -7,6 +7,14 @@ import {
     resolveApiTrustProxy,
     resolveRouteRateLimit,
 } from "./apiRateLimitPolicy";
+
+import { auth } from "@/app/auth/auth";
+
+vi.mock("@/app/auth/auth", () => ({
+    auth: {
+        verifyToken: vi.fn(async (token: string) => (token === "valid-token" ? { userId: "user-123" } : null)),
+    },
+}));
 
 describe("apiRateLimitPolicy", () => {
     it("disables all rate limiting when HAPPIER_API_RATE_LIMITS_ENABLED=0", () => {
@@ -47,46 +55,59 @@ describe("apiRateLimitPolicy", () => {
     it("parses HAPPIER_SERVER_TRUST_PROXY as a boolean or hop count", () => {
         expect(resolveApiTrustProxy({})).toBeUndefined();
         expect(resolveApiTrustProxy({ HAPPIER_SERVER_TRUST_PROXY: "true" })).toBe(true);
-        expect(resolveApiTrustProxy({ HAPPIER_SERVER_TRUST_PROXY: "1" })).toBe(true);
+        expect(resolveApiTrustProxy({ HAPPIER_SERVER_TRUST_PROXY: "1" })).toBe(1);
         expect(resolveApiTrustProxy({ HAPPIER_SERVER_TRUST_PROXY: "false" })).toBe(false);
-        expect(resolveApiTrustProxy({ HAPPIER_SERVER_TRUST_PROXY: "0" })).toBe(false);
+        expect(resolveApiTrustProxy({ HAPPIER_SERVER_TRUST_PROXY: "0" })).toBe(0);
         expect(resolveApiTrustProxy({ HAPPIER_SERVER_TRUST_PROXY: "2" })).toBe(2);
     });
 
-    it("builds a stable rate limit key from Authorization when present", () => {
+    it("keys authenticated requests by verified user id (not by raw Authorization header)", async () => {
+        const verifySpy = vi.spyOn(auth, "verifyToken");
         const keyGen = createApiRateLimitKeyGenerator();
-        const token = "Bearer secret-token-value";
-        const key = keyGen({ headers: { authorization: token }, ip: "203.0.113.9" });
-        expect(key).toMatch(/^auth:/);
-        expect(key).not.toContain("secret-token-value");
+        const key = await keyGen({ headers: { authorization: "Bearer valid-token" }, ip: "203.0.113.9" });
+        expect(key).toBe("uid:user-123");
+        expect(verifySpy).toHaveBeenCalledWith("valid-token");
 
-        const fallback = keyGen({ headers: {}, ip: "203.0.113.9" });
+        const fallback = await keyGen({ headers: { authorization: "Bearer invalid-token" }, ip: "203.0.113.9" });
         expect(fallback).toBe("ip:203.0.113.9");
     });
 
-    it("can derive the IP rate limit key from X-Forwarded-For when configured", () => {
-        const keyGen = createApiRateLimitKeyGenerator({
-            HAPPIER_API_RATE_LIMIT_CLIENT_IP_SOURCE: "x-forwarded-for",
-        });
-        const key = keyGen({
-            headers: { "x-forwarded-for": "203.0.113.10, 10.0.0.2" },
-            ip: "10.0.0.2",
-        });
-        expect(key).toBe("ip:203.0.113.10");
-    });
+    it("fails closed to the ip key without verifying absurdly large bearer tokens", async () => {
+        const verifySpy = vi.spyOn(auth, "verifyToken");
+        verifySpy.mockClear();
 
-    it("falls back to request.ip when configured forwarded IP header is missing", () => {
-        const keyGen = createApiRateLimitKeyGenerator({
-            HAPPIER_API_RATE_LIMIT_CLIENT_IP_SOURCE: "x-forwarded-for",
-        });
-        const key = keyGen({ headers: {}, ip: "203.0.113.9" });
+        const keyGen = createApiRateLimitKeyGenerator();
+        const hugeToken = "x".repeat(5000);
+        const key = await keyGen({ headers: { authorization: `Bearer ${hugeToken}` }, ip: "203.0.113.9" });
+
         expect(key).toBe("ip:203.0.113.9");
+        expect(verifySpy).not.toHaveBeenCalled();
     });
 
-    it("supports auth-only keying mode (unauth requests share a bucket)", () => {
-        const keyGen = createApiRateLimitKeyGenerator({ HAPPIER_API_RATE_LIMIT_KEY_MODE: "auth-only" });
-        expect(keyGen({ headers: {}, ip: "203.0.113.9" })).toBe("auth:missing");
-        expect(keyGen({ headers: { authorization: "Bearer a" }, ip: "203.0.113.9" })).toMatch(/^auth:/);
+    it("truncates untrusted ip strings used in rate limit keys", async () => {
+        const keyGen = createApiRateLimitKeyGenerator({ HAPPIER_API_RATE_LIMITS_ROUTE_KEY_STRATEGY: "ip-only" });
+        const hugeIp = "203.0.113.9," + "a".repeat(5000);
+        const key = await keyGen({ headers: {}, ip: hugeIp });
+
+        expect(key.startsWith("ip:")).toBe(true);
+        expect(key.length).toBeLessThanOrEqual("ip:".length + 256);
+    });
+
+    it("fails closed to the ip key when the verified user id is excessively large", async () => {
+        const verifySpy = vi.spyOn(auth, "verifyToken");
+        verifySpy.mockResolvedValue({ userId: "x".repeat(10_000) } as any);
+
+        const keyGen = createApiRateLimitKeyGenerator();
+        const key = await keyGen({ headers: { authorization: "Bearer valid-token" }, ip: "203.0.113.9" });
+
+        expect(key).toBe("ip:203.0.113.9");
+        verifySpy.mockRestore();
+    });
+
+    it("can force ip-only keying strategy via env", async () => {
+        const keyGen = createApiRateLimitKeyGenerator({ HAPPIER_API_RATE_LIMITS_ROUTE_KEY_STRATEGY: "ip-only" });
+        const key = await keyGen({ headers: { authorization: "Bearer valid-token" }, ip: "203.0.113.9" });
+        expect(key).toBe("ip:203.0.113.9");
     });
 
     it("gates fixed route rate limits behind HAPPIER_API_RATE_LIMITS_ENABLED", () => {

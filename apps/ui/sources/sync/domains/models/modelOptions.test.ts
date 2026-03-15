@@ -31,6 +31,9 @@ describe('modelOptions', () => {
             'gemini-2.5-pro',
             'gemini-2.5-flash',
             'gemini-2.5-flash-lite',
+            'gemini-3-flash-preview',
+            'gemini-3-pro-preview',
+            'gemini-3.1-pro-preview',
         ]);
     });
 
@@ -92,7 +95,8 @@ describe('modelOptions', () => {
     it('treats static Gemini models as selectable', () => {
         expect(isModelSelectableForSession('gemini', null, 'gemini-2.5-pro')).toBe(true);
         expect(isModelSelectableForSession('gemini', null, 'default')).toBe(true);
-        expect(isModelSelectableForSession('gemini', null, 'model-a')).toBe(false);
+        expect(isModelSelectableForSession('gemini', null, 'model-a')).toBe(true);
+        expect(isModelSelectableForSession('gemini', null, '   ')).toBe(false);
     });
 
     it('treats Claude models as freeform-selectable when configured', () => {
@@ -112,7 +116,7 @@ describe('modelOptions', () => {
         expect(out.some((option) => option.value === 'claude-custom-model')).toBe(true);
     });
 
-    it('does not add metadata override model for providers without freeform selection', () => {
+    it('adds metadata override model into options for Gemini when freeform is enabled', () => {
         const out = getModelOptionsForSession(
             'gemini',
             withMetadata({
@@ -120,7 +124,7 @@ describe('modelOptions', () => {
             }),
         );
 
-        expect(out.some((option) => option.value === 'gemini-custom-model')).toBe(false);
+        expect(out.some((option) => option.value === 'gemini-custom-model')).toBe(true);
     });
 
     it('falls back to static options when dynamic list provider does not match agent', () => {

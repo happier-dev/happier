@@ -10,6 +10,23 @@ type ClaudeRemoteDispatchDependencies = Readonly<{
     claudeRemoteAgentSdk: typeof claudeRemoteAgentSdk;
 }>;
 
+function isClaudeAgentSdkAuthenticationError(error: unknown): boolean {
+    if (!error || typeof error !== 'object') return false;
+    const message = (error as { message?: unknown }).message;
+    if (typeof message !== 'string') return false;
+
+    // Heuristic matching:
+    // - Agent SDK often forwards the underlying API error JSON in the message.
+    // - We only use this to decide whether it is safe to fall back to the legacy runner.
+    //
+    // Keep this conservative: only match known auth/401 indicators.
+    if (message.includes('API Error: 401')) return true;
+    if (message.includes('"type":"authentication_error"')) return true;
+    if (message.includes('OAuth token has expired')) return true;
+    if (message.includes('Failed to authenticate')) return true;
+    return false;
+}
+
 export async function claudeRemoteDispatch<T extends { nextMessage: NextMessage }>(
     opts: T,
     deps?: Partial<ClaudeRemoteDispatchDependencies>,
@@ -17,27 +34,34 @@ export async function claudeRemoteDispatch<T extends { nextMessage: NextMessage 
     const first = await opts.nextMessage();
     if (!first) return;
 
-    let usedFirst = false;
-    const nextMessage: NextMessage = async () => {
-        if (!usedFirst) {
-            usedFirst = true;
-            return first;
-        }
-        return opts.nextMessage();
-    };
-
-    const runnerOpts = {
-        ...opts,
-        nextMessage,
+    let consumedBeyondFirst = false;
+    const createNextMessage = (): NextMessage => {
+        let usedFirst = false;
+        return async () => {
+            if (!usedFirst) {
+                usedFirst = true;
+                return first;
+            }
+            consumedBeyondFirst = true;
+            return opts.nextMessage();
+        };
     };
 
     const resolvedLegacy = deps?.claudeRemote ?? claudeRemote;
     const resolvedAgentSdk = deps?.claudeRemoteAgentSdk ?? claudeRemoteAgentSdk;
 
     if (first.mode.claudeRemoteAgentSdkEnabled === true) {
-        await resolvedAgentSdk(runnerOpts as any);
-        return;
+        try {
+            await resolvedAgentSdk({ ...opts, nextMessage: createNextMessage() } as any);
+            return;
+        } catch (error) {
+            if (!consumedBeyondFirst && isClaudeAgentSdkAuthenticationError(error)) {
+                await resolvedLegacy({ ...opts, nextMessage: createNextMessage() } as any);
+                return;
+            }
+            throw error;
+        }
     }
 
-    await resolvedLegacy(runnerOpts as any);
+    await resolvedLegacy({ ...opts, nextMessage: createNextMessage() } as any);
 }

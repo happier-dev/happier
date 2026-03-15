@@ -151,6 +151,23 @@ describe('SDKToLogConverter core conversion', () => {
 
       expect(converter.convert(sdkMessage)).toBeNull();
     });
+
+    it('normalizes Claude Agent Teams tool_use names to canonical tool names', () => {
+      const sdkMessage: SDKAssistantMessage = {
+        type: 'assistant',
+        message: {
+          role: 'assistant',
+          content: [{ type: 'tool_use', id: 'tool_1', name: 'TeamCreate', input: {} }],
+        },
+      } as any;
+
+      const logMessage = converter.convert(sdkMessage) as any;
+      expect(logMessage?.type).toBe('assistant');
+      const content = logMessage?.message?.content;
+      expect(Array.isArray(content)).toBe(true);
+      const toolUse = Array.isArray(content) ? content.find((c: any) => c?.type === 'tool_use') : null;
+      expect(toolUse?.name).toBe('AgentTeamCreate');
+    });
   });
 
   describe('System messages', () => {

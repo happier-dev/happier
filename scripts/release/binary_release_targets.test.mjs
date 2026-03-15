@@ -31,3 +31,13 @@ test('SERVER_TARGETS covers linux/darwin/windows defaults', () => {
   assert.ok(set.has('darwin-arm64'));
   assert.ok(set.has('windows-x64'));
 });
+
+test('linux-x64 binaries use baseline bun target (avoid SIGILL on older CPUs)', () => {
+  const cliLinuxX64 = CLI_STACK_TARGETS.find((t) => t.os === 'linux' && t.arch === 'x64');
+  assert.ok(cliLinuxX64, 'expected linux-x64 CLI target');
+  assert.equal(cliLinuxX64.bunTarget, 'bun-linux-x64-baseline');
+
+  const serverLinuxX64 = SERVER_TARGETS.find((t) => t.os === 'linux' && t.arch === 'x64');
+  assert.ok(serverLinuxX64, 'expected linux-x64 server target');
+  assert.equal(serverLinuxX64.bunTarget, 'bun-linux-x64-baseline');
+});

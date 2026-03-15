@@ -1,9 +1,10 @@
 # Release process
 
-This repo uses a simple two-branch model:
+This repo uses a simple three-branch model:
 
-- `dev` is the integration branch where changes land first.
-- `main` is the stable/release branch.
+- `dev` is the integration branch where changes land first (default branch; can be unstable).
+- `preview` is the release candidate branch used for preview builds/deploys.
+- `main` is the stable/production release branch.
 - `deploy/**` branches are managed by automation for deployments (do not push to these manually).
 
 ## Contributing flow (recommended)
@@ -19,12 +20,28 @@ Notes:
 
 ## Release flow (maintainers)
 
-When `dev` is stable and you want to ship:
+### Preview release (dev → preview)
 
-1. Run the **RELEASE — Dev → Main** workflow.
-2. The workflow runs the repo test suite and typecheck, builds the website/docs (if enabled), and runs a CLI smoke test (if enabled).
-3. If checks pass, it promotes `dev` → `main` using a fast-forward (no merge commit). If `main` has diverged, it can optionally perform a guarded reset.
-4. Optionally bumps versions on `main`, promotes deploy branches for the selected environment, and (optionally) publishes the CLI.
+When you want to publish/deploy a new preview build:
+
+1. Run **RELEASE — Publish (preview + production)** with:
+   - `environment=preview`
+   - `confirm=release dev to preview`
+2. The workflow runs the configured checks, optionally bumps versions (commit on `dev`), then promotes `dev` → `preview` (fast-forward).
+3. Deploy/publish steps for the preview environment build from `preview` (not `dev`).
+
+### Production release (preview → main)
+
+When you want to ship what’s currently in `preview` to production:
+
+1. Run **RELEASE — Publish (preview + production)** with:
+   - `environment=production`
+   - `confirm=release preview to main`
+2. The workflow promotes `preview` → `main` (fast-forward by default; guarded reset is available), then deploys/publishes from `main`.
+
+Notes:
+
+- Urgent path (avoid preview): `confirm=release dev to main` (or `reset main from dev`).
 
 Deploy branches typically include `deploy/<env>/ui`, `deploy/<env>/server`, `deploy/<env>/website`, and `deploy/<env>/docs` (depending on what changed and which options you select).
 
@@ -58,16 +75,15 @@ The `HAPPIER_*_DEPLOY_WEBHOOKS` values can be either:
 If you only need to move branches (no deploy/publish):
 
 - Use **PROMOTE — Branch (fast-forward or reset)** to move `source` → `target` in a safe, explicit way.
-- Use **PROMOTE — Main from Dev** as a shortcut wrapper for `dev` → `main`.
 
 ## Why fast-forward?
 
-Fast-forwarding `main` to `dev` is the safest “no merge commit” promotion:
+Fast-forwarding is the safest “no merge commit” promotion:
 
 - It never rewrites history.
 - It fails if branches diverged (so you can decide what to do next).
 
-The reset option exists for rare cases where you intentionally want `main` to match `dev` exactly.
+The reset option exists for rare cases where you intentionally want `target` to match `source` exactly.
 
 ## Database migrations (server)
 

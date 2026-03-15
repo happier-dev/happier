@@ -57,14 +57,14 @@ describe('getPermissionModeOverrideForSpawn', () => {
         });
     });
 
-    it('preserves plan mode for claude sessions', () => {
+    it('maps legacy plan mode to read-only for claude sessions', () => {
         expect(getPermissionModeOverrideForSpawn({
             id: 's1',
             permissionMode: 'plan',
             permissionModeUpdatedAt: 11,
             metadata: { permissionModeUpdatedAt: 10, flavor: 'claude' },
         } as any)).toEqual({
-            permissionMode: 'plan',
+            permissionMode: 'read-only',
             permissionModeUpdatedAt: 11,
         });
     });

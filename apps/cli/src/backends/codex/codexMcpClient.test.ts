@@ -122,6 +122,20 @@ describe('CodexMcpClient event ids', () => {
 });
 
 describe('CodexMcpClient command detection', () => {
+    async function withPlatform<T>(platform: NodeJS.Platform, run: () => Promise<T> | T): Promise<T> {
+        const descriptor = Object.getOwnPropertyDescriptor(process, 'platform');
+        if (!descriptor) {
+            return run();
+        }
+
+        Object.defineProperty(process, 'platform', { ...descriptor, value: platform });
+        try {
+            return await run();
+        } finally {
+            Object.defineProperty(process, 'platform', descriptor);
+        }
+    }
+
     async function getTransportInstances() {
         const stdioModule = await import('@modelcontextprotocol/sdk/client/stdio.js') as unknown as {
             __transportInstances: Array<{ command: string; args: string[]; env: Record<string, string> }>;
@@ -181,6 +195,62 @@ describe('CodexMcpClient command detection', () => {
         const mod = await import('./codexMcpClient');
         const client = new mod.CodexMcpClient();
         await expect(client.connect()).rejects.toThrow(/not found or not executable/i);
+    });
+
+    it('wraps .cmd codex CLIs with cmd.exe on Windows', async () => {
+        await withPlatform('win32', async () => {
+            vi.resetModules();
+
+            const execFileSync = await getExecFileSyncMock();
+            execFileSync.mockReturnValue('codex 0.43.0-alpha.5\n');
+            execFileSync.mockClear();
+
+            const transportInstances = await getTransportInstances();
+            transportInstances.length = 0;
+
+            const codexCmdPath = 'C:\\Users\\herbz\\AppData\\Roaming\\npm\\codex.CMD';
+            const mod = await import('./codexMcpClient');
+            const client = new mod.CodexMcpClient({ command: codexCmdPath });
+            await expect(client.connect()).resolves.toBeUndefined();
+
+            expect(execFileSync).toHaveBeenCalled();
+            const [command, args, options] = execFileSync.mock.calls[0] ?? [];
+            expect(command).toBe('cmd.exe');
+            expect(args?.slice?.(0, 3)).toEqual(['/d', '/s', '/c']);
+            expect(args?.[3]).toContain(codexCmdPath);
+            expect(args?.[3]).toContain('--version');
+            expect(options).toEqual(expect.objectContaining({ encoding: 'utf8', windowsHide: true, windowsVerbatimArguments: true }));
+
+            expect(transportInstances).toHaveLength(1);
+            expect(transportInstances[0]?.command).toBe(codexCmdPath);
+            expect(transportInstances[0]?.args).toEqual(['mcp-server']);
+        });
+    });
+
+    it('wraps .cmd mcp-server commands with cmd.exe on Windows', async () => {
+        await withPlatform('win32', async () => {
+            vi.resetModules();
+
+            const execFileSync = await getExecFileSyncMock();
+            execFileSync.mockClear();
+
+            const transportInstances = await getTransportInstances();
+            transportInstances.length = 0;
+
+            const resumeCmdPath = 'C:\\Users\\herbz\\AppData\\Local\\Happier\\codex-mcp-resume.CMD';
+            const mod = await import('./codexMcpClient');
+            const client = new mod.CodexMcpClient({
+                mode: 'mcp-server',
+                command: resumeCmdPath,
+                args: ['--stdio'],
+            });
+            await expect(client.connect()).resolves.toBeUndefined();
+
+            expect(execFileSync).not.toHaveBeenCalled();
+            expect(transportInstances).toHaveLength(1);
+            expect(transportInstances[0]?.command).toBe(resumeCmdPath);
+            expect(transportInstances[0]?.args).toEqual(['--stdio']);
+        });
     });
 
     it('does not run version detection in mcp-server mode and forwards configured args', async () => {

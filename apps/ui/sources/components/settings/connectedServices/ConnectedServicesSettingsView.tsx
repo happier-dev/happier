@@ -18,6 +18,7 @@ import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
 import { ConnectedServiceQuotaBadgesView } from '@/components/settings/connectedServices/ConnectedServiceQuotaBadgesView';
 import { useConnectedServiceQuotaBadges } from '@/hooks/server/connectedServices/useConnectedServiceQuotaBadges';
 import { connectedServiceProfileKey, resolveConnectedServiceDefaultProfileId } from '@/sync/domains/connectedServices/connectedServiceProfilePreferences';
+import { resolveConnectedServiceDisplayName } from './model/resolveConnectedServiceDisplayName';
 
 export const ConnectedServicesSettingsView = React.memo(function ConnectedServicesSettingsView() {
   const { theme } = useUnistyles();
@@ -56,21 +57,12 @@ export const ConnectedServicesSettingsView = React.memo(function ConnectedServic
   if (!connectedServicesEnabled) {
     return (
       <ItemList>
-        <ItemGroup title={t('settings.connectedAccounts') ?? 'Connected Services'}>
+        <ItemGroup title={t('connectedServices.title')}>
           <View style={{ paddingHorizontal: 16, paddingVertical: 12 }}>
-            <Text style={{ opacity: 0.7 }}>
-              {t('settings.connectedAccountsDisabled') ?? 'Connected services are disabled.'}
+            <Text style={{ color: theme.colors.textSecondary }}>
+              {t('settings.connectedAccountsDisabled')}
             </Text>
           </View>
-        </ItemGroup>
-
-        <ItemGroup>
-          <Item
-            title={t('common.close') ?? 'Done'}
-            icon={<Ionicons name="close-outline" size={22} color={theme.colors.accent.blue} />}
-            onPress={() => router.back()}
-            showChevron={false}
-          />
         </ItemGroup>
       </ItemList>
     );
@@ -78,10 +70,10 @@ export const ConnectedServicesSettingsView = React.memo(function ConnectedServic
 
   return (
     <ItemList>
-      <ItemGroup title={t('settings.connectedAccounts') ?? 'Connected Services'}>
+      <ItemGroup title={t('connectedServices.title')}>
         {services.length === 0 ? (
           <View style={{ paddingHorizontal: 16, paddingVertical: 12 }}>
-            <Text style={{ opacity: 0.7 }}>No connected services yet.</Text>
+            <Text style={{ color: theme.colors.textSecondary }}>{t('connectedServices.list.empty')}</Text>
           </View>
         ) : null}
 
@@ -89,7 +81,7 @@ export const ConnectedServicesSettingsView = React.memo(function ConnectedServic
           const serviceId = serviceIdRaw;
           const svc = services.find((s) => s.serviceId === serviceId) ?? null;
           const entry = getConnectedServiceRegistryEntry(serviceId);
-          const label = entry.displayName;
+          const label = resolveConnectedServiceDisplayName(serviceId);
           const profiles = svc?.profiles ?? [];
           const connected = profiles.filter((p) => p.status === 'connected');
           const connectedIds = connected
@@ -103,10 +95,10 @@ export const ConnectedServicesSettingsView = React.memo(function ConnectedServic
           const badges = quotaKey ? (quotaBadgesByKey[quotaKey] ?? []) : [];
           const subtitle =
             connected.length > 0
-              ? `${connected.length} connected`
+              ? t('connectedServices.list.connectedCount', { count: connected.length })
               : profiles.length > 0
-                ? 'needs re-auth'
-                : 'not connected';
+                ? t('connectedServices.list.needsReauth')
+                : t('connectedServices.list.notConnected');
 
           return (
             <Item
@@ -121,24 +113,15 @@ export const ConnectedServicesSettingsView = React.memo(function ConnectedServic
                 } catch {
                   // Fallback for environments without route support.
                   await Modal.alert(
-                    t('connect.unsupported.connectTitle', { name: label }) ?? `Connect ${label}`,
-                    t('connect.unsupported.runCommandInTerminal') ?? 'Run this in your terminal:',
-                    [{ text: entry.connectCommand, style: 'default' }, { text: t('common.ok') ?? 'OK', style: 'cancel' }],
+                    t('connect.unsupported.connectTitle', { name: label }),
+                    t('connect.unsupported.runCommandInTerminal'),
+                    [{ text: entry.connectCommand, style: 'default' }, { text: t('common.ok'), style: 'cancel' }],
                   );
                 }
               }}
             />
           );
         })}
-      </ItemGroup>
-
-      <ItemGroup>
-        <Item
-          title={t('common.close') ?? 'Done'}
-          icon={<Ionicons name="close-outline" size={22} color={theme.colors.accent.blue} />}
-          onPress={() => router.back()}
-          showChevron={false}
-        />
       </ItemGroup>
     </ItemList>
   );

@@ -143,6 +143,11 @@ function parsePreconfiguredServersFromEnv(): PreconfiguredServer[] {
         }
     }
 
+    // On native builds, never start "serverless": seed Happier Cloud when no preconfigured server exists.
+    if (entries.length === 0 && !isWebRuntime()) {
+        append('https://api.happier.dev', 'Happier Cloud', 'preconfigured');
+    }
+
     return entries;
 }
 

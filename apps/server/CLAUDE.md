@@ -209,7 +209,8 @@ The project includes a multi-stage Dockerfile:
 #### Environment Variables
 - CLI: Use `yarn dev:local-server` (NOT `yarn dev`) to load `.env.dev-local-server`
 - Server: Use `yarn dev` to start with proper env files
-- **Tell**: Wrong server URL = check `HAPPIER_SERVER_URL` env var
+- **Tell**: Wrong server URL in QR/deep links = check `HAPPIER_PUBLIC_SERVER_URL` (canonical/share URL)
+- **Tell**: CLI hitting wrong local API URL = check `HAPPIER_LOCAL_SERVER_URL` / `HAPPIER_SERVER_URL` (legacy/local override)
 - **Tell**: Wrong home dir = check `HAPPIER_HOME_DIR` (should be `~/.happier-dev` for local)
 
 ### Quick Diagnostic Commands

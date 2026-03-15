@@ -23,10 +23,28 @@ const sessionFindUnique = vi.fn(async () => ({
     lastActiveAt: new Date(sessionLastActiveAtMs),
     active: sessionActive,
 }));
-const sessionUpdateMany = vi.fn(async () => ({ count: 1 }));
+const sessionUpdateMany = vi.fn(async (_args: any) => ({ count: 1 }));
+const dbTransaction = vi.fn(async (ops: any) => {
+    if (typeof ops === "function") {
+        return ops({
+            session: {
+                findUnique: sessionFindUnique,
+                updateMany: sessionUpdateMany,
+            },
+            machine: {
+                findUnique: vi.fn(),
+                updateMany: vi.fn(),
+            },
+        });
+    }
+    const out: unknown[] = [];
+    for (const op of ops) out.push(await op);
+    return out;
+});
 
 vi.mock("@/storage/db", () => ({
     db: {
+        $transaction: dbTransaction,
         session: {
             findUnique: sessionFindUnique,
             updateMany: sessionUpdateMany,
@@ -78,5 +96,71 @@ describe("ActivityCache session presence", () => {
         const queuedAgain = activityCache.queueSessionUpdate("s1", "u1", Date.now());
         expect(queuedAgain).toBe(false);
     });
-});
 
+    it("does not issue concurrent session update queries while flushing pending updates", async () => {
+        const { log } = await import("@/utils/logging/log");
+        let inFlight = 0;
+        sessionUpdateMany.mockImplementation(async () => {
+            inFlight += 1;
+            if (inFlight > 1) {
+                throw new Error("concurrent_session_update");
+            }
+            await Promise.resolve();
+            inFlight -= 1;
+            return { count: 1 };
+        });
+
+        ({ activityCache } = await import("./sessionCache"));
+        activityCache.enableDbFlush();
+
+        await activityCache.isSessionValid("s1", "u1");
+        await activityCache.isSessionValid("s2", "u1");
+
+        expect(activityCache.queueSessionUpdate("s1", "u1", Date.now())).toBe(true);
+        expect(activityCache.queueSessionUpdate("s2", "u1", Date.now())).toBe(true);
+
+        await (activityCache as any).flushPendingUpdates();
+
+        expect(log).not.toHaveBeenCalledWith(
+            expect.objectContaining({ level: "error" }),
+            expect.stringContaining("Error updating sessions"),
+        );
+    });
+
+    it("continues flushing other sessions and retries failed updates on the next flush", async () => {
+        const { log } = await import("@/utils/logging/log");
+
+        let sawFailure = false;
+        sessionUpdateMany.mockImplementation(async (args: any) => {
+            if (args?.where?.id === "s1" && !sawFailure) {
+                sawFailure = true;
+                throw new Error("sqlite_busy");
+            }
+            return { count: 1 };
+        });
+
+        ({ activityCache } = await import("./sessionCache"));
+        activityCache.enableDbFlush();
+
+        await activityCache.isSessionValid("s1", "u1");
+        await activityCache.isSessionValid("s2", "u1");
+
+        expect(activityCache.queueSessionUpdate("s1", "u1", Date.now())).toBe(true);
+        expect(activityCache.queueSessionUpdate("s2", "u1", Date.now())).toBe(true);
+
+        await (activityCache as any).flushPendingUpdates();
+
+        // First flush attempts both sessions (even though the first fails).
+        expect(sessionUpdateMany).toHaveBeenCalledTimes(2);
+
+        // It should log the error, but not abort the full flush.
+        expect(log).toHaveBeenCalledWith(
+            expect.objectContaining({ level: "error" }),
+            expect.stringContaining("Error updating session"),
+        );
+
+        // Second flush retries s1 (now succeeds).
+        await (activityCache as any).flushPendingUpdates();
+        expect(sessionUpdateMany).toHaveBeenCalledTimes(3);
+    });
+});

@@ -110,4 +110,40 @@ describe('SDKToLogConverter tool result mode metadata', () => {
     const record = asRecord(logMessage);
     expect(record.mode).toBe('plan');
   });
+
+  it('embeds tool_use_result into tool_result content for downstream consumers', () => {
+    const converter = createConverter(new Map());
+
+    const sdkMessage: SDKUserMessage = {
+      type: 'user',
+      tool_use_result: { status: 'teammate_spawned', agent_id: 'agent_1', team_name: 'probe', name: 'alpha' } as any,
+      message: {
+        role: 'user',
+        content: [
+          {
+            type: 'tool_result',
+            tool_use_id: 'tool_task_1',
+            content: 'Agent is now running and will receive instructions via mailbox.',
+          },
+        ],
+      },
+    } as any;
+
+    const logMessage = converter.convert(sdkMessage);
+    expect(logMessage).toBeTruthy();
+
+    const record = asRecord(logMessage);
+    const message = record.message as any;
+    expect(message?.role).toBe('user');
+    expect(Array.isArray(message?.content)).toBe(true);
+    const block = (message.content as any[])[0];
+    expect(block.type).toBe('tool_result');
+    expect(block.tool_use_id).toBe('tool_task_1');
+    expect(block.content).toEqual(
+      expect.objectContaining({
+        content: 'Agent is now running and will receive instructions via mailbox.',
+        tool_use_result: expect.objectContaining({ status: 'teammate_spawned', agent_id: 'agent_1', team_name: 'probe' }),
+      }),
+    );
+  });
 });

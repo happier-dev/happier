@@ -111,6 +111,35 @@ describe('sapling backend integration', () => {
         expect(exclude.errorCode).toBe(SCM_OPERATION_ERROR_CODES.FEATURE_UNSUPPORTED);
     });
 
+    it('discards pending modifications and removes untracked files', async () => {
+        const workspace = createSaplingWorkspace();
+        writeFileSync(join(workspace, 'a.txt'), 'base\n');
+        runSapling(workspace, ['add', 'a.txt']);
+        runSapling(workspace, ['commit', '-m', 'init']);
+
+        writeFileSync(join(workspace, 'a.txt'), 'changed\n');
+        writeFileSync(join(workspace, 'b.txt'), 'tmp\n');
+
+        const { call } = createTestRpcManager({ workingDirectory: workspace });
+        const discard = await call<any, { cwd?: string; entries: Array<{ path: string; kind: string }> }>(
+            RPC_METHODS.SCM_CHANGE_DISCARD,
+            {
+                cwd: '.',
+                entries: [
+                    { path: 'a.txt', kind: 'modified' },
+                    { path: 'b.txt', kind: 'untracked' },
+                ],
+            }
+        );
+
+        expect(discard.success).toBe(true);
+        expect(readFileSync(join(workspace, 'a.txt'), 'utf8')).toBe('base\n');
+
+        const status = await call<any, { cwd?: string }>(RPC_METHODS.SCM_STATUS_SNAPSHOT, { cwd: '.' });
+        expect(status.success).toBe(true);
+        expect((status.snapshot.entries as Array<{ path: string }>).some((e) => e.path === 'b.txt')).toBe(false);
+    });
+
     it('creates commits and returns commit sha', async () => {
         const workspace = createSaplingWorkspace();
         writeFileSync(join(workspace, 'a.txt'), 'hello\n');

@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { ActivityIndicator, View } from 'react-native';
+import { ActivityIndicator, Image, Pressable, View } from 'react-native';
 
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
@@ -9,7 +9,14 @@ type FileStateProps = {
     theme: any;
 };
 
-export function FileLoadingState({ theme, fileName }: FileStateProps & { fileName: string }) {
+function getBasename(path: string): string {
+    const parts = path.split('/');
+    const last = parts.at(-1) ?? path;
+    return last || path;
+}
+
+export function FileLoadingState({ theme, filePath }: FileStateProps & { filePath: string }) {
+    const fileName = getBasename(filePath);
     return (
         <View
             style={{
@@ -34,7 +41,7 @@ export function FileLoadingState({ theme, fileName }: FileStateProps & { fileNam
     );
 }
 
-export function FileErrorState({ theme, message }: FileStateProps & { message: string }) {
+export function FileErrorState({ theme, filePath, error, onRetry }: FileStateProps & { filePath: string; error: string; onRetry: () => void }) {
     return (
         <View
             style={{
@@ -63,13 +70,41 @@ export function FileErrorState({ theme, message }: FileStateProps & { message: s
                     ...Typography.default(),
                 }}
             >
-                {message}
+                {error}
             </Text>
+            <Text
+                style={{
+                    fontSize: 14,
+                    color: theme.colors.textSecondary,
+                    textAlign: 'center',
+                    marginTop: 8,
+                    ...Typography.default(),
+                }}
+            >
+                {filePath}
+            </Text>
+            <Pressable
+                accessibilityRole="button"
+                onPress={onRetry}
+                style={{
+                    marginTop: 16,
+                    paddingHorizontal: 14,
+                    paddingVertical: 10,
+                    borderRadius: 10,
+                    borderWidth: 1,
+                    borderColor: theme.colors.divider,
+                    backgroundColor: theme.colors.surfaceHigh ?? theme.colors.surface,
+                }}
+            >
+                <Text style={{ fontSize: 14, color: theme.colors.text, ...Typography.default('semiBold') }}>
+                    {t('common.retry')}
+                </Text>
+            </Pressable>
         </View>
     );
 }
 
-export function FileBinaryState({ theme, fileName }: FileStateProps & { fileName: string }) {
+export function FileBinaryState({ theme, filePath, imagePreviewUri }: FileStateProps & { filePath: string; imagePreviewUri?: string | null }) {
     return (
         <View
             style={{
@@ -80,6 +115,28 @@ export function FileBinaryState({ theme, fileName }: FileStateProps & { fileName
                 padding: 20,
             }}
         >
+            {typeof imagePreviewUri === 'string' && imagePreviewUri.trim().length > 0 ? (
+                <View
+                    style={{
+                        width: '100%',
+                        maxWidth: 720,
+                        height: 320,
+                        borderRadius: 12,
+                        overflow: 'hidden',
+                        borderWidth: 1,
+                        borderColor: theme.colors.divider,
+                        backgroundColor: theme.colors.surfaceHigh ?? theme.colors.surface,
+                        marginBottom: 14,
+                    }}
+                >
+                    <Image
+                        source={{ uri: imagePreviewUri }}
+                        resizeMode="contain"
+                        style={{ width: '100%', height: '100%' }}
+                        accessibilityLabel={t('files.binaryFile')}
+                    />
+                </View>
+            ) : null}
             <Text
                 style={{
                     fontSize: 18,
@@ -109,7 +166,7 @@ export function FileBinaryState({ theme, fileName }: FileStateProps & { fileName
                     ...Typography.default(),
                 }}
             >
-                {fileName}
+                {filePath}
             </Text>
         </View>
     );

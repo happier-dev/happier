@@ -30,8 +30,87 @@ export class ToolTraceWriter {
     }
 
     record(event: ToolTraceEventV1): void {
-        appendFileSync(this.filePath, `${JSON.stringify(event)}\n`, 'utf8');
+        let line = '';
+        try {
+            line = `${safeJsonStringifyToolTraceEvent(event)}\n`;
+        } catch {
+            // Tool trace must never crash the CLI; drop the event if stringification fails unexpectedly.
+            return;
+        }
+
+        try {
+            appendFileSync(this.filePath, line, 'utf8');
+        } catch {
+            // Best-effort only; never throw from tracing.
+        }
     }
+}
+
+function safeJsonStringifyToolTraceEvent(event: ToolTraceEventV1): string {
+    const replacer = createSafeJsonReplacer();
+    try {
+        return JSON.stringify(event, replacer);
+    } catch (error) {
+        const details =
+            error instanceof Error
+                ? (error.message || String(error))
+                : String(error);
+        try {
+            return JSON.stringify(
+                {
+                    ...event,
+                    payload: `[unserializable payload: ${details}]`,
+                } satisfies ToolTraceEventV1,
+                createSafeJsonReplacer(),
+            );
+        } catch {
+            return JSON.stringify({
+                v: event.v,
+                ts: event.ts,
+                direction: event.direction,
+                sessionId: event.sessionId,
+                protocol: event.protocol,
+                provider: event.provider,
+                kind: event.kind,
+                localId: event.localId,
+                payload: '[unserializable payload]',
+                serializationError: details,
+            });
+        }
+    }
+}
+
+function createSafeJsonReplacer(): (key: string, value: unknown) => unknown {
+    const seen = new WeakSet<object>();
+    return (_key: string, value: unknown): unknown => {
+        if (typeof value === 'bigint') {
+            return `${value.toString()}n`;
+        }
+
+        if (value instanceof Error) {
+            return {
+                name: value.name,
+                message: value.message,
+                stack: value.stack,
+            };
+        }
+
+        if (typeof value === 'object' && value !== null) {
+            if (seen.has(value)) return '[Circular]';
+            seen.add(value);
+
+            // Cross-realm Error-like objects (where instanceof Error fails).
+            const rec = value as Record<string, unknown>;
+            const stack = typeof rec.stack === 'string' ? rec.stack : undefined;
+            const message = typeof rec.message === 'string' ? rec.message : undefined;
+            const name = typeof rec.name === 'string' ? rec.name : undefined;
+            // Only treat objects as Error-like when they include a stack trace. Many non-error payloads
+            // legitimately contain a `name` field (e.g. tool-call `name`) and must not be collapsed.
+            if (stack) return { name, message, stack };
+        }
+
+        return value;
+    };
 }
 
 function isTruthyEnv(value: string | undefined): boolean {

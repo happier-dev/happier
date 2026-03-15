@@ -4,6 +4,7 @@ import type { AttachmentsUploadFileSource } from '@/sync/domains/attachments/att
 import type { PickedAttachment, AttachmentFilePickerHandle } from '@/components/sessions/attachments/AttachmentFilePicker.types';
 import type { AgentInputAttachment } from '@/components/sessions/agentInput/AgentInput';
 import { Modal } from '@/modal';
+import { t } from '@/text';
 import { randomUUID } from '@/platform/randomUUID';
 import type { AttachmentDraft } from './attachmentDraftModel';
 
@@ -52,7 +53,10 @@ export function useAttachmentDraftManager(params: Readonly<{
         }
 
         if (skippedOversizeCount > 0) {
-            Modal.alert('File too large', `Skipped ${skippedOversizeCount} file(s) that exceed the max attachment size.`);
+            Modal.alert(
+                t('attachments.alerts.fileTooLargeTitle'),
+                t('attachments.alerts.fileTooLargeBody', { count: skippedOversizeCount }),
+            );
         }
         if (next.length === 0) return;
         setDrafts((prev) => [...prev, ...next]);

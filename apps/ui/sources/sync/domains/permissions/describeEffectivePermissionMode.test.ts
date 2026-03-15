@@ -29,7 +29,7 @@ describe('describeEffectivePermissionMode', () => {
         expect(reasonCodes(res)).toContain('plan_not_supported_for_provider');
     });
 
-    it('keeps plan for Claude and does not emit codex-like plan fallback reason', () => {
+    it('maps legacy plan to read-only for Claude and emits plan fallback reason', () => {
         const res = describeEffectivePermissionMode({
             agentType: 'claude',
             selectedMode: 'plan',
@@ -37,8 +37,8 @@ describe('describeEffectivePermissionMode', () => {
             applyTiming: 'immediate',
         });
 
-        expect(res.effectiveMode).toBe('plan');
-        expect(reasonCodes(res)).not.toContain('plan_not_supported_for_provider');
+        expect(res.effectiveMode).toBe('read-only');
+        expect(reasonCodes(res)).toContain('plan_not_supported_for_provider');
     });
 
     it('emits mapping reason when provider canonicalization changes the mode', () => {

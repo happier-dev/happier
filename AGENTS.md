@@ -284,6 +284,14 @@ This repo has a single canonical feature gating system. New code must use it ins
 - Server must apply build-policy denies centrally when assembling `/v1/features` (see `apps/server/sources/app/features/catalog/resolveServerFeaturePayload.ts`).
 - Route handlers must NOT re-evaluate build policy ad hoc. If a route needs to distinguish “disabled by build policy” vs “disabled by config”, carry that as a diagnostic capability computed centrally (capabilities are allowed to explain, not to gate).
 
+### Default enablement policy (experimental UI toggles)
+When a feature is intended to be **user-opt-in via the UI Experimental Features toggles**:
+- **Server-represented gate should default to allow** so the server does not reject it by default.
+  - Otherwise the UI may hide the toggle entirely (the UI hides server-represented toggles that are hard-disabled by the selected server snapshot).
+- **Client/UI should default to disabled** (toggle off by default) so the user must explicitly opt in.
+- Prefer using **build policy denies** (`HAPPIER_BUILD_FEATURES_DENY` / embedded policy) to remove/ship-deny features in certain builds, rather than defaulting server env gates to disabled.
+- Exceptions: security/compliance-sensitive features may still default fail-closed on the server; document the exception in the feature’s server env reader and tests.
+
 ### Server implementation rules
 - `/v1/features` assembly is centralized in `apps/server/sources/app/features/catalog/resolveServerFeaturePayload.ts`.
 - Route gating must use the shared helper in `apps/server/sources/app/features/catalog/serverFeatureGate.ts`:

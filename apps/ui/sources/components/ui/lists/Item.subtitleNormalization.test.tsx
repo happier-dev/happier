@@ -77,6 +77,40 @@ vi.mock('@/components/ui/lists/itemGroupRowCorners', () => ({
 }));
 
 describe('Item', () => {
+    it('does not render a chevron or pressable wrapper when not interactive', async () => {
+        const { Item } = await import('./Item');
+
+        let tree: renderer.ReactTestRenderer;
+        await act(async () => {
+            tree = renderer.create(
+                <Item title="Title" />,
+            );
+        });
+
+        // Non-interactive rows should not be pressable on web.
+        expect(() => (tree! as any).root.findByType('Pressable' as any)).toThrow();
+
+        const ionicons = (tree! as any).root.findAllByType('Ionicons' as any);
+        expect(ionicons).toHaveLength(0);
+    });
+
+    it('renders a chevron only when onPress is provided', async () => {
+        const { Item } = await import('./Item');
+
+        let tree: renderer.ReactTestRenderer;
+        await act(async () => {
+            tree = renderer.create(
+                <Item title="Title" onPress={() => {}} />,
+            );
+        });
+
+        const pressable = (tree! as any).root.findByType('Pressable' as any);
+        expect(pressable).toBeTruthy();
+
+        const ionicons = (tree! as any).root.findAllByType('Ionicons' as any);
+        expect(ionicons).toHaveLength(1);
+    });
+
   it('wraps primitive children when subtitle is a ReactNode', async () => {
         const { Item } = await import('./Item');
 

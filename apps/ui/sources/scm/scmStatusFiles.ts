@@ -30,6 +30,8 @@ export interface ScmStatusFiles {
     totalPending: number;
 }
 
+const snapshotStatusFilesCache = new WeakMap<ScmWorkingSnapshot, ScmStatusFiles>();
+
 function toFileStatus(entry: ScmWorkingEntry, isIncluded: boolean): ScmFileStatus {
     const segments = entry.path.split('/');
     const fileName = segments[segments.length - 1] || entry.path;
@@ -49,6 +51,9 @@ function toFileStatus(entry: ScmWorkingEntry, isIncluded: boolean): ScmFileStatu
 }
 
 export function snapshotToScmStatusFiles(snapshot: ScmWorkingSnapshot): ScmStatusFiles {
+    const cached = snapshotStatusFilesCache.get(snapshot);
+    if (cached) return cached;
+
     const includedFiles = snapshot.entries
         .filter((entry) => entry.hasIncludedDelta)
         .map((entry) => toFileStatus(entry, true));
@@ -57,7 +62,7 @@ export function snapshotToScmStatusFiles(snapshot: ScmWorkingSnapshot): ScmStatu
         .filter((entry) => entry.hasPendingDelta)
         .map((entry) => toFileStatus(entry, false));
 
-    return {
+    const result: ScmStatusFiles = {
         includedFiles,
         pendingFiles,
         changeSetModel: snapshot.capabilities?.changeSetModel ?? 'index',
@@ -69,4 +74,7 @@ export function snapshotToScmStatusFiles(snapshot: ScmWorkingSnapshot): ScmStatu
         totalIncluded: includedFiles.length,
         totalPending: pendingFiles.length,
     };
+
+    snapshotStatusFilesCache.set(snapshot, result);
+    return result;
 }

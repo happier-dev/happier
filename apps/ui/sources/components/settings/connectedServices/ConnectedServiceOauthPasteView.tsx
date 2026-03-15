@@ -1,139 +1,59 @@
 import * as React from 'react';
 import { View } from 'react-native';
 import tweetnacl from 'tweetnacl';
+import { StyleSheet, useUnistyles } from 'react-native-unistyles';
+import { Ionicons } from '@expo/vector-icons';
 
+import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { ItemList } from '@/components/ui/lists/ItemList';
-import { Text } from '@/components/ui/text/Text';
+import { Text, TextInput } from '@/components/ui/text/Text';
 import { Modal } from '@/modal';
 import { useAuth } from '@/auth/context/AuthContext';
 import { sync } from '@/sync/sync';
-import { exchangeConnectedServiceOauthViaProxy, registerConnectedServiceCredentialSealed } from '@/sync/api/account/apiConnectedServicesV2';
-import { sealConnectedServiceCredential } from '@/sync/domains/connectedServices/sealConnectedServiceCredential';
+import { exchangeConnectedServiceOauthViaProxy } from '@/sync/api/account/apiConnectedServicesV2';
+import { storeConnectedServiceCredentialForAccount } from '@/sync/domains/connectedServices/storeConnectedServiceCredentialForAccount';
 import { generateOauthState, generatePkceCodes, parseOauthCallbackUrl } from '@/utils/auth/oauthCore';
 import { fireAndForget } from '@/utils/system/fireAndForget';
+import { t } from '@/text';
+import { openExternalUrl } from '@/utils/url/openExternalUrl';
 
 import {
-  buildConnectedServiceCredentialRecord,
   ConnectedServiceIdSchema,
-  decodeBase64,
   encodeBase64,
-  openBoxBundle,
-  type ConnectedServiceCredentialRecordV1,
   type ConnectedServiceId,
 } from '@happier-dev/protocol';
 
-import {
-  buildOpenAiCodexAuthorizationUrl,
-  OPENAI_CODEX_OAUTH,
-} from '@/sync/domains/connectedServices/oauth/openAiCodexOauth';
-import {
-  buildAnthropicAuthorizationUrl,
-  ANTHROPIC_OAUTH,
-} from '@/sync/domains/connectedServices/oauth/anthropicOauth';
-import {
-  buildGeminiAuthorizationUrl,
-  GEMINI_OAUTH,
-} from '@/sync/domains/connectedServices/oauth/geminiOauth';
-
-type ProxyExchangePayload = Readonly<{
-  serviceId: ConnectedServiceId;
-  accessToken: string;
-  refreshToken: string;
-  idToken: string | null;
-  scope: string | null;
-  tokenType: string | null;
-  providerEmail: string | null;
-  providerAccountId: string | null;
-  expiresAt: number | null;
-  raw: unknown;
-}>;
+import { getConnectedServiceOauthAdapter } from '@/sync/domains/connectedServices/oauth/connectedServiceOauthAdapters';
+import { buildOauthRecordFromProxyPayload, parseConnectedServiceOauthProxyBundle } from '@/sync/domains/connectedServices/oauth/connectedServiceOauthProxyBundle';
+import { resolveConnectedServiceOauthPasteCopy } from './oauth/resolveConnectedServiceOauthPasteCopy';
+import { resolveConnectedServiceOauthErrorMessage } from './oauth/resolveConnectedServiceOauthErrorMessage';
 
 function asStringParam(value: unknown): string {
   if (Array.isArray(value)) return typeof value[0] === 'string' ? value[0] : '';
   return typeof value === 'string' ? value : '';
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
-}
-
-function tryOpenInNewTab(url: string): void {
-  try {
-    const openFn = (globalThis as unknown as { open?: unknown }).open;
-    if (typeof openFn === 'function') {
-      (openFn as (url: string, target?: string, features?: string) => unknown)(url, '_blank', 'noopener,noreferrer');
-      return;
-    }
-  } catch {
-    // ignore
-  }
-}
-
-function parseProxyPayload(params: Readonly<{ bundleB64Url: string; recipientSecretKey: Uint8Array }>): ProxyExchangePayload {
-  const bytes = decodeBase64(params.bundleB64Url, 'base64url');
-  const opened = openBoxBundle({ bundle: bytes, recipientSecretKeyOrSeed: params.recipientSecretKey });
-  if (!opened) throw new Error('Failed to decrypt OAuth bundle');
-  const json: unknown = JSON.parse(new TextDecoder().decode(opened));
-  if (!isRecord(json)) throw new Error('OAuth bundle payload is not an object');
-  const serviceId = ConnectedServiceIdSchema.parse(json.serviceId);
-  return {
-    serviceId,
-    accessToken: String(json.accessToken ?? ''),
-    refreshToken: String(json.refreshToken ?? ''),
-    idToken: typeof json.idToken === 'string' ? json.idToken : null,
-    scope: typeof json.scope === 'string' ? json.scope : null,
-    tokenType: typeof json.tokenType === 'string' ? json.tokenType : null,
-    providerEmail: typeof json.providerEmail === 'string' ? json.providerEmail : null,
-    providerAccountId: typeof json.providerAccountId === 'string' ? json.providerAccountId : null,
-    expiresAt: typeof json.expiresAt === 'number' ? json.expiresAt : null,
-    raw: json.raw ?? null,
-  };
-}
-
-function buildOauthRecordFromProxyPayload(params: Readonly<{
-  now: number;
-  serviceId: ConnectedServiceId;
-  profileId: string;
-  payload: ProxyExchangePayload;
-}>): Extract<ConnectedServiceCredentialRecordV1, { kind: 'oauth' }> {
-  const record = buildConnectedServiceCredentialRecord({
-    now: params.now,
-    serviceId: params.serviceId,
-    profileId: params.profileId,
-    kind: 'oauth',
-    expiresAt: params.payload.expiresAt,
-    oauth: {
-      accessToken: params.payload.accessToken,
-      refreshToken: params.payload.refreshToken,
-      idToken: params.payload.idToken,
-      scope: params.payload.scope,
-      tokenType: params.payload.tokenType,
-      providerAccountId: params.payload.providerAccountId,
-      providerEmail: params.payload.providerEmail,
-    },
-  });
-  if (record.kind !== 'oauth') {
-    throw new Error(`Unexpected credential record kind: ${record.kind}`);
-  }
-  return record;
-}
-
 export const ConnectedServiceOauthPasteView = React.memo(function ConnectedServiceOauthPasteView(props: Readonly<{
   serviceId: string;
   profileId: string;
   onDone: () => void;
+  fallbackAction?: Readonly<{ title: string; onPress: () => void }>;
 }>) {
+  const { theme } = useUnistyles();
   const auth = useAuth();
   const parsedServiceId = ConnectedServiceIdSchema.safeParse(asStringParam(props.serviceId).trim());
   const serviceId: ConnectedServiceId | null = parsedServiceId.success ? parsedServiceId.data : null;
   const profileId = asStringParam(props.profileId).trim();
+  const adapter = React.useMemo(() => (serviceId ? getConnectedServiceOauthAdapter(serviceId) : null), [serviceId]);
+  const copy = React.useMemo(() => (serviceId ? resolveConnectedServiceOauthPasteCopy(serviceId) : null), [serviceId]);
 
   const [state, setState] = React.useState<string>('');
   const [pkce, setPkce] = React.useState<{ verifier: string; challenge: string } | null>(null);
   const [busy, setBusy] = React.useState(false);
-
+  const [redirectUrlInput, setRedirectUrlInput] = React.useState('');
+  const [didShowOpenInstructions, setDidShowOpenInstructions] = React.useState(false);
   const keyPairRef = React.useRef<tweetnacl.BoxKeyPair | null>(null);
   if (!keyPairRef.current) {
     keyPairRef.current = tweetnacl.box.keyPair();
@@ -154,26 +74,14 @@ export const ConnectedServiceOauthPasteView = React.memo(function ConnectedServi
   }, []);
 
   const redirectUri = React.useMemo(() => {
-    if (!serviceId) return '';
-    if (serviceId === 'openai-codex') return OPENAI_CODEX_OAUTH.defaultRedirectUri;
-    if (serviceId === 'anthropic') return ANTHROPIC_OAUTH.defaultRedirectUri;
-    if (serviceId === 'gemini') return GEMINI_OAUTH.defaultRedirectUri;
-    return '';
-  }, [serviceId]);
+    if (!adapter) return '';
+    return adapter.defaultRedirectUri;
+  }, [adapter]);
 
   const authorizationUrl = React.useMemo(() => {
-    if (!serviceId || !pkce || !state || !redirectUri) return '';
-    if (serviceId === 'openai-codex') {
-      return buildOpenAiCodexAuthorizationUrl({ redirectUri, state, challenge: pkce.challenge });
-    }
-    if (serviceId === 'anthropic') {
-      return buildAnthropicAuthorizationUrl({ redirectUri, state, challenge: pkce.challenge });
-    }
-    if (serviceId === 'gemini') {
-      return buildGeminiAuthorizationUrl({ redirectUri, state, challenge: pkce.challenge });
-    }
-    return '';
-  }, [pkce, redirectUri, serviceId, state]);
+    if (!adapter || !pkce || !state || !redirectUri) return '';
+    return adapter.buildAuthorizationUrl({ redirectUri, state, challenge: pkce.challenge });
+  }, [adapter, pkce, redirectUri, state]);
 
   const ensureCredentials = () => {
     if (!auth.credentials) throw new Error('Not authenticated');
@@ -181,25 +89,21 @@ export const ConnectedServiceOauthPasteView = React.memo(function ConnectedServi
   };
 
   const handlePaste = React.useCallback(async () => {
-    if (!serviceId || !pkce || !state || !profileId) return;
+    if (!serviceId || !adapter || !pkce || !state || !profileId) return;
+    const pastedUrl = redirectUrlInput.trim();
+    if (!pastedUrl) return;
     setBusy(true);
     try {
-      const pasted = await Modal.prompt(
-        'Paste redirect URL',
-        'After completing OAuth, copy the final redirected URL from your browser address bar and paste it here.',
-        { placeholder: redirectUri, confirmText: 'Continue', cancelText: 'Cancel' },
-      );
-      const pastedUrl = typeof pasted === 'string' ? pasted.trim() : '';
-      if (!pastedUrl) return;
-
       const parsed = parseOauthCallbackUrl({ url: pastedUrl, redirectUri });
       if (parsed.error) throw new Error(`OAuth error: ${parsed.error}`);
       const code = parsed.code ?? '';
       const returnedState = parsed.state ?? '';
       if (!code) throw new Error('Missing code');
-      if (!returnedState || returnedState !== state) throw new Error('State mismatch');
+      if (!returnedState) throw new Error(copy?.missingStateError ?? t('connectedServices.oauthPaste.errors.missingState'));
+      if (returnedState !== state) throw new Error(t('connectedServices.oauthPaste.errors.stateMismatch'));
 
       const credentials = ensureCredentials();
+      const now = Date.now();
       const publicKeyB64Url = encodeBase64(keyPairRef.current!.publicKey, 'base64url');
 
       const exchanged = await exchangeConnectedServiceOauthViaProxy(credentials, {
@@ -208,15 +112,17 @@ export const ConnectedServiceOauthPasteView = React.memo(function ConnectedServi
         code,
         verifier: pkce.verifier,
         redirectUri,
-        state: serviceId === 'anthropic' ? returnedState : null,
+        state: returnedState,
       });
 
-      const payload = parseProxyPayload({
+      const payload = parseConnectedServiceOauthProxyBundle({
         bundleB64Url: exchanged.bundle,
         recipientSecretKey: keyPairRef.current!.secretKey,
       });
+      if (payload.serviceId !== serviceId) {
+        throw new Error('OAuth bundle service mismatch');
+      }
 
-      const now = Date.now();
       const record = buildOauthRecordFromProxyPayload({
         now,
         serviceId,
@@ -224,35 +130,55 @@ export const ConnectedServiceOauthPasteView = React.memo(function ConnectedServi
         payload,
       });
 
-      const ciphertext = sealConnectedServiceCredential({ credentials, record });
-      await registerConnectedServiceCredentialSealed(credentials, {
-        serviceId,
-        profileId,
-        sealed: { format: 'account_scoped_v1', ciphertext },
-        metadata: {
-          kind: record.kind,
-          providerEmail: record.oauth.providerEmail,
-          providerAccountId: record.oauth.providerAccountId,
-          expiresAt: record.expiresAt,
-        },
-      });
+      await storeConnectedServiceCredentialForAccount(credentials, { serviceId, profileId, record });
 
       await sync.refreshProfile();
-      await Modal.alert('Connected', `${serviceId} (${profileId}) is connected.`);
+      await Modal.alert(
+        t('connectedServices.oauthPaste.alerts.connectedTitle'),
+        t('connectedServices.oauthPaste.alerts.connectedBody', { serviceId, profileId })
+      );
       props.onDone();
     } catch (e: unknown) {
-      await Modal.alert('Error', e instanceof Error ? e.message : 'Failed to connect');
+      const message = resolveConnectedServiceOauthErrorMessage(
+        e,
+        t('connectedServices.oauthPaste.alerts.failedToConnect'),
+      );
+      await Modal.alert(
+        t('common.error'),
+        message,
+      );
     } finally {
       setBusy(false);
     }
-  }, [auth.credentials, pkce, profileId, props, redirectUri, serviceId, state]);
+  }, [adapter, auth.credentials, copy?.missingStateError, pkce, profileId, props, redirectUri, serviceId, state, redirectUrlInput]);
 
-  if (!serviceId || !profileId) {
+  const handleOpenAuthorization = React.useCallback(() => {
+    if (!authorizationUrl) return;
+    fireAndForget((async () => {
+      if (!didShowOpenInstructions) {
+        setDidShowOpenInstructions(true);
+        await Modal.alertAsync(
+          copy?.connectWebDescription ?? t('connectedServices.oauthPaste.connectWebDescription'),
+          copy?.pasteRedirectUrlPromptBody ?? t('connectedServices.oauthPaste.pasteRedirectUrlPromptBody'),
+          [{ text: t('connectedServices.oauthPaste.openAuthorizationUrl') }],
+        );
+      }
+      const ok = await openExternalUrl(authorizationUrl);
+      if (!ok) {
+        await Modal.alert(
+          t('common.error'),
+          t('connectedServices.oauthPaste.alerts.failedToOpenUrl'),
+        );
+      }
+    })(), { tag: 'ConnectedServiceOauthPasteView.openAuthorizationUrl' });
+  }, [authorizationUrl, copy?.connectWebDescription, copy?.pasteRedirectUrlPromptBody, didShowOpenInstructions]);
+
+  if (!serviceId || !profileId || !adapter) {
     return (
       <ItemList>
-        <ItemGroup title="Connected Services">
+        <ItemGroup title={t('connectedServices.title')}>
           <View style={{ paddingHorizontal: 16, paddingVertical: 12 }}>
-            <Text style={{ opacity: 0.7 }}>Invalid connected service configuration.</Text>
+            <Text style={{ color: theme.colors.textSecondary }}>{t('connectedServices.oauthPaste.invalidConfig')}</Text>
           </View>
         </ItemGroup>
       </ItemList>
@@ -261,29 +187,89 @@ export const ConnectedServiceOauthPasteView = React.memo(function ConnectedServi
 
   return (
     <ItemList>
-      <ItemGroup title="Connect (web)">
+      <ItemGroup title={t('connectedServices.oauthPaste.connectWebGroupTitle')}>
         <View style={{ paddingHorizontal: 16, paddingVertical: 12 }}>
-          <Text style={{ opacity: 0.7 }}>
-            This flow uses a copy/paste redirect step (like OpenClaw) and a Happier server proxy to exchange tokens safely.
+          <Text style={{ color: theme.colors.textSecondary }}>
+            {copy?.connectWebDescription ?? t('connectedServices.oauthPaste.connectWebDescription')}
           </Text>
         </View>
-
-        <Item
-          title="Open authorization URL"
-          subtitle={authorizationUrl ? 'Opens in a new tab' : 'Preparing…'}
-          onPress={() => {
-            if (!authorizationUrl) return;
-            tryOpenInNewTab(authorizationUrl);
-          }}
-        />
-
-        <Item
-          title={busy ? 'Working…' : 'Paste redirect URL'}
-          subtitle={redirectUri}
-          onPress={busy ? undefined : handlePaste}
-          showChevron={false}
-        />
       </ItemGroup>
+
+      <ItemGroup title={t('connectedServices.oauthPaste.openAuthorizationUrl')}>
+        <View style={{ paddingHorizontal: 16, paddingVertical: 12 }}>
+          <Text style={{ color: theme.colors.textSecondary, marginBottom: 6 }}>{t('connectedServices.oauthPaste.openAuthorizationUrl')}</Text>
+          <Text selectable={true} style={{ color: theme.colors.textSecondary }}>
+            {authorizationUrl || t('connectedServices.oauthPaste.preparing')}
+          </Text>
+          <View style={{ marginTop: 12 }}>
+            <RoundButton
+              testID="connectedServices.oauthPaste.openAuthorizationButton"
+              size="normal"
+              title={t('connectedServices.oauthPaste.openAuthorizationUrl')}
+              disabled={!authorizationUrl}
+              onPress={handleOpenAuthorization}
+            />
+          </View>
+          <View style={{ marginTop: 8 }}>
+            <Text style={{ color: theme.colors.textSecondary }}>
+              {authorizationUrl ? t('connectedServices.oauthPaste.opensInNewTab') : t('connectedServices.oauthPaste.preparing')}
+            </Text>
+          </View>
+        </View>
+      </ItemGroup>
+
+      <ItemGroup title={t('connectedServices.oauthPaste.pasteRedirectUrl')}>
+        <View style={{ paddingHorizontal: 16, paddingVertical: 12 }}>
+          <Text style={{ color: theme.colors.textSecondary, marginBottom: 8 }}>
+            {copy?.pasteRedirectUrlPromptBody ?? t('connectedServices.oauthPaste.pasteRedirectUrlPromptBody')}
+          </Text>
+          <TextInput
+            testID="connectedServices.oauthPaste.redirectUrlInput"
+            value={redirectUrlInput}
+            onChangeText={setRedirectUrlInput}
+            placeholder={copy?.pasteRedirectUrlPlaceholder ?? redirectUri}
+            placeholderTextColor={theme.colors.input.placeholder}
+            autoCapitalize="none"
+            autoCorrect={false}
+            style={styles.redirectInput}
+          />
+          <RoundButton
+            testID="connectedServices.oauthPaste.validateRedirectButton"
+            size="normal"
+            title={busy ? t('connectedServices.oauthPaste.working') : t('common.continue')}
+            disabled={busy || !redirectUrlInput.trim()}
+            onPress={busy ? undefined : handlePaste}
+          />
+          <View style={{ marginTop: 8 }}>
+            <Text selectable={true} style={{ color: theme.colors.textSecondary }}>{redirectUri}</Text>
+          </View>
+        </View>
+      </ItemGroup>
+
+      {props.fallbackAction ? (
+        <ItemGroup title={t('connectedServices.detail.actionsGroupTitle')}>
+          <Item
+            testID="connectedServices.oauthPaste.switchMethodItem"
+            title={props.fallbackAction.title}
+            icon={<Ionicons name="swap-horizontal-outline" size={22} color={theme.colors.accent.blue} />}
+            onPress={props.fallbackAction.onPress}
+          />
+        </ItemGroup>
+      ) : null}
     </ItemList>
   );
 });
+
+const styles = StyleSheet.create((theme) => ({
+  redirectInput: {
+    minHeight: 42,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: theme.colors.divider,
+    backgroundColor: theme.colors.input.background,
+    color: theme.colors.input.text,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    marginBottom: 12,
+  },
+}));

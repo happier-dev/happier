@@ -1,6 +1,6 @@
 import type { ConnectedServiceQuotaFetcher } from './types';
 
-import { createAnthropicQuotaFetcher } from './fetchers/anthropicQuotaFetcher';
+import { createClaudeSubscriptionQuotaFetcher } from './fetchers/claudeSubscriptionQuotaFetcher';
 import { createGeminiQuotaFetcher } from './fetchers/geminiQuotaFetcher';
 import { createOpenAiCodexQuotaFetcher } from './fetchers/openAiCodexQuotaFetcher';
 
@@ -18,7 +18,7 @@ function parseNonEmptyStringEnv(raw: string | undefined): string | undefined {
 }
 
 export function createConnectedServiceQuotaFetchers(env: NodeJS.ProcessEnv): Array<ConnectedServiceQuotaFetcher> {
-  const staleAfterMs = parsePositiveIntEnv(env.HAPPIER_CONNECTED_SERVICES_QUOTAS_STALE_AFTER_MS, 5 * 60_000, {
+  const staleAfterMs = parsePositiveIntEnv(env.HAPPIER_CONNECTED_SERVICES_QUOTAS_STALE_AFTER_MS, 30 * 60_000, {
     min: 5_000,
     max: 24 * 60 * 60_000,
   });
@@ -29,12 +29,11 @@ export function createConnectedServiceQuotaFetchers(env: NodeJS.ProcessEnv): Arr
       staleAfterMs,
       userAgent: parseNonEmptyStringEnv(env.HAPPIER_CONNECTED_SERVICES_QUOTAS_USER_AGENT),
     }),
-    createAnthropicQuotaFetcher({
-      usageUrl: parseNonEmptyStringEnv(env.HAPPIER_CONNECTED_SERVICES_ANTHROPIC_USAGE_URL),
+    createClaudeSubscriptionQuotaFetcher({
+      usageUrl: parseNonEmptyStringEnv(env.HAPPIER_CONNECTED_SERVICES_CLAUDE_SUBSCRIPTION_USAGE_URL ?? env.HAPPIER_CONNECTED_SERVICES_ANTHROPIC_USAGE_URL),
       staleAfterMs,
       userAgent: parseNonEmptyStringEnv(env.HAPPIER_CONNECTED_SERVICES_QUOTAS_USER_AGENT),
     }),
     createGeminiQuotaFetcher(),
   ];
 }
-

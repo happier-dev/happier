@@ -53,5 +53,36 @@ describe('updateExistingSessionAutomationTemplateMessage', () => {
             }),
         );
     });
-});
 
+    it('updates plaintext envelopes without decrypting or encrypting', async () => {
+        const decryptRaw = async (_ciphertext: string) => {
+            throw new Error('unexpected decryptRaw');
+        };
+        const encryptRaw = async (_value: unknown) => {
+            throw new Error('unexpected encryptRaw');
+        };
+
+        const originalCiphertext = JSON.stringify({
+            kind: 'happier_automation_template_plain_v1',
+            payload: {
+                directory: '/tmp/project',
+                prompt: 'Old',
+                displayText: 'Old',
+                existingSessionId: 's1',
+            },
+            existingSessionId: 's1',
+        });
+
+        const nextCiphertext = await updateExistingSessionAutomationTemplateMessage({
+            templateCiphertext: originalCiphertext,
+            message: 'New message',
+            decryptRaw,
+            encryptRaw,
+        });
+
+        const envelope = JSON.parse(nextCiphertext);
+        expect(envelope.kind).toBe('happier_automation_template_plain_v1');
+        expect(envelope.payload).toEqual(expect.objectContaining({ prompt: 'New message', displayText: 'New message', existingSessionId: 's1' }));
+        expect(envelope.existingSessionId).toBe('s1');
+    });
+});

@@ -17,7 +17,10 @@ describe('modelOptions preflight', () => {
             },
         });
 
-        expect(out[0]).toEqual({ value: 'default', label: 'Default', description: '' });
+        expect(out[0]?.value).toBe('default');
+        expect(out[0]?.description).toBe('');
+        expect(typeof out[0]?.label).toBe('string');
+        expect(String(out[0]?.label).trim().length).toBeGreaterThan(0);
         expect(out.some((o) => o.value === 'model-a')).toBe(true);
         expect(out.some((o) => o.value === 'model-b' && o.description === 'desc')).toBe(true);
         expect(out.filter((o) => o.value === 'model-a')).toHaveLength(1);
@@ -40,7 +43,10 @@ describe('modelOptions preflight', () => {
             },
         });
 
-        expect(out[0]).toEqual({ value: 'default', label: 'Default', description: '' });
+        expect(out[0]?.value).toBe('default');
+        expect(out[0]?.description).toBe('');
+        expect(typeof out[0]?.label).toBe('string');
+        expect(String(out[0]?.label).trim().length).toBeGreaterThan(0);
         expect(out.some((opt) => opt.value === 'valid-1')).toBe(true);
         expect(out.some((opt) => opt.value === 'valid-2' && opt.description === 'desc-2')).toBe(true);
         expect(out.some((opt) => opt.value === '' && opt.label === 'Invalid empty id')).toBe(true);

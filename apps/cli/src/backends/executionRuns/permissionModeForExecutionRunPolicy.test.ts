@@ -6,6 +6,7 @@ describe('permissionModeForExecutionRunPolicy', () => {
   it('maps execution-run safe policies to PermissionMode', () => {
     expect(permissionModeForExecutionRunPolicy('read_only')).toBe('read-only');
     expect(permissionModeForExecutionRunPolicy('no_tools')).toBe('read-only');
+    expect(permissionModeForExecutionRunPolicy('workspace_write')).toBe('safe-yolo');
   });
 
   it('passes through canonical PermissionMode tokens', () => {
@@ -20,4 +21,3 @@ describe('permissionModeForExecutionRunPolicy', () => {
     expect(permissionModeForExecutionRunPolicy('not-a-mode')).toBe('default');
   });
 });
-

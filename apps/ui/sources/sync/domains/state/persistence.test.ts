@@ -314,6 +314,27 @@ describe('persistence', () => {
     });
 
     describe('new session draft', () => {
+        it('roundtrips acpSessionModeId when persisted', () => {
+            store.set(
+                'new-session-draft-v1',
+                JSON.stringify({
+                    input: '',
+                    selectedMachineId: null,
+                    selectedPath: null,
+                    selectedProfileId: null,
+                    agentType: 'claude',
+                    permissionMode: 'default',
+                    modelMode: 'default',
+                    sessionType: 'simple',
+                    acpSessionModeId: 'plan',
+                    updatedAt: Date.now(),
+                }),
+            );
+
+            const draft = loadNewSessionDraft();
+            expect((draft as any)?.acpSessionModeId).toBe('plan');
+        });
+
         it('preserves valid non-session modelMode values', () => {
             store.set(
                 'new-session-draft-v1',

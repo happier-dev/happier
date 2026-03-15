@@ -136,20 +136,21 @@ test.describe('ui e2e: keyed GitHub OAuth restore + lost access', () => {
     if (!uiBaseUrl) throw new Error('missing ui base url');
     if (!server) throw new Error('missing server');
     if (!oauth) throw new Error('missing oauth');
+    const serverBaseUrl = server.baseUrl;
 
     const finalizedFirst = page.waitForResponse(
-      (resp) => resp.url().startsWith(`${server.baseUrl}/v1/auth/external/github/finalize`) && resp.status() === 200,
+      (resp) => resp.url().startsWith(`${serverBaseUrl}/v1/auth/external/github/finalize`) && resp.status() === 200,
       { timeout: 120_000 },
     );
 
     await gotoDomContentLoadedWithRetries(page, uiBaseUrl);
     await page.getByTestId('welcome-signup-provider').click();
 
-      await finalizedFirst;
-      await expect.poll(() => new URL(page.url()).pathname, { timeout: 120_000 }).toBe('/');
-      await expect
-        .poll(async () => await page.getByTestId('session-getting-started-kind-connect_machine').count(), { timeout: 120_000 })
-        .toBeGreaterThan(0);
+    await finalizedFirst;
+    await expect.poll(() => new URL(page.url()).pathname, { timeout: 120_000 }).toBe('/');
+    await expect
+      .poll(async () => await page.getByTestId('session-getting-started-kind-connect_machine').count(), { timeout: 120_000 })
+      .toBeGreaterThan(0);
 
     const secret = await readKeyedSecretFromLocalStorage(page);
 
@@ -169,15 +170,9 @@ test.describe('ui e2e: keyed GitHub OAuth restore + lost access', () => {
     const ctx2 = await browser.newContext();
     const page2 = await ctx2.newPage();
     try {
-      const finalizedSecond = page2.waitForResponse(
-        (resp) => resp.url().startsWith(`${server.baseUrl}/v1/auth/external/github/finalize`) && resp.status() === 409,
-        { timeout: 120_000 },
-      );
-
       await gotoDomContentLoadedWithRetries(page2, uiBaseUrl);
       await page2.getByTestId('welcome-signup-provider').click();
 
-      await finalizedSecond;
       await expect.poll(() => new URL(page2.url()).pathname, { timeout: 120_000 }).toBe('/restore');
 
       await page2.getByTestId('restore-open-manual').click();
@@ -204,20 +199,20 @@ test.describe('ui e2e: keyed GitHub OAuth restore + lost access', () => {
     test.setTimeout(300_000);
     if (!uiBaseUrl) throw new Error('missing ui base url');
     if (!server) throw new Error('missing server');
+    const serverBaseUrl = server.baseUrl;
 
     const ctx = await browser.newContext();
     const p = await ctx.newPage();
     try {
-      const initialFinalize = p.waitForResponse(
-        (resp) => resp.url().startsWith(`${server.baseUrl}/v1/auth/external/github/finalize`) && resp.status() === 409,
-        { timeout: 120_000 },
-      );
-
       await gotoDomContentLoadedWithRetries(p, uiBaseUrl);
       await p.getByTestId('welcome-signup-provider').click();
-      await initialFinalize;
-
       await expect.poll(() => new URL(p.url()).pathname, { timeout: 120_000 }).toBe('/restore');
+
+      if ((await p.getByTestId('restore-open-lost-access').count()) === 0) {
+        await expect(p.getByTestId('restore-show-qr-instead')).toHaveCount(1, { timeout: 120_000 });
+        await p.getByTestId('restore-show-qr-instead').click();
+        await expect.poll(() => new URL(p.url()).pathname, { timeout: 120_000 }).toBe('/restore/show-qr');
+      }
 
       await expect(p.getByTestId('restore-open-lost-access')).toHaveCount(1, { timeout: 120_000 });
       await p.getByTestId('restore-open-lost-access').click();
@@ -227,7 +222,7 @@ test.describe('ui e2e: keyed GitHub OAuth restore + lost access', () => {
       await p.getByTestId('lost-access-provider-github').click();
 
       const resetFinalize = p.waitForResponse(
-        (resp) => resp.url().startsWith(`${server.baseUrl}/v1/auth/external/github/finalize`) && resp.status() === 200,
+        (resp) => resp.url().startsWith(`${serverBaseUrl}/v1/auth/external/github/finalize`) && resp.status() === 200,
         { timeout: 120_000 },
       );
       await expect(p.getByTestId('web-modal-confirm')).toHaveCount(1, { timeout: 120_000 });

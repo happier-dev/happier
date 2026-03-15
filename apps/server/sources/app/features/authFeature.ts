@@ -101,23 +101,22 @@ export function resolveAuthFeature(env: NodeJS.ProcessEnv): FeaturesPayloadDelta
         } else {
             const availability = resolveKeylessAccountsAvailability(env);
             if (!availability.ok) {
-                misconfig.push({
-                    code: "auth_mtls_keyless_unavailable",
-                    message:
-                        availability.reason === "e2ee-required"
-                            ? "mTLS is enabled, but keyless accounts are unavailable because the server storage policy requires E2EE. Set HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY=optional|plaintext_only and HAPPIER_FEATURE_ENCRYPTION__DEFAULT_ACCOUNT_MODE=plain."
+                    misconfig.push({
+                        code: "auth_mtls_keyless_unavailable",
+                        message:
+                            availability.reason === "e2ee-required"
+                            ? "mTLS is enabled, but keyless accounts are unavailable because the server storage policy requires E2EE. Set HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY=optional|plaintext_only and enable HAPPIER_FEATURE_E2EE__KEYLESS_ACCOUNTS_ENABLED=1."
                             : "mTLS is enabled, but keyless accounts are disabled. Enable HAPPIER_FEATURE_E2EE__KEYLESS_ACCOUNTS_ENABLED=1 and ensure plaintext storage is allowed.",
-                    kind: "auth-mtls-keyless",
-                    envVars: [
-                        "HAPPIER_FEATURE_AUTH_MTLS__ENABLED",
-                        "HAPPIER_FEATURE_E2EE__KEYLESS_ACCOUNTS_ENABLED",
-                        "HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY",
-                        "HAPPIER_FEATURE_ENCRYPTION__DEFAULT_ACCOUNT_MODE",
-                    ],
-                });
+                        kind: "auth-mtls-keyless",
+                        envVars: [
+                            "HAPPIER_FEATURE_AUTH_MTLS__ENABLED",
+                            "HAPPIER_FEATURE_E2EE__KEYLESS_ACCOUNTS_ENABLED",
+                            "HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY",
+                        ],
+                    });
+                }
             }
         }
-    }
 
     const providers: FeaturesResponse["capabilities"]["auth"]["providers"] = {};
     for (const provider of authProviderRegistry) {
@@ -234,6 +233,11 @@ export function resolveAuthFeature(env: NodeJS.ProcessEnv): FeaturesPayloadDelta
                 login: {
                     keyChallenge: {
                         enabled: keyChallengeLoginEnabled,
+                    },
+                },
+                pairing: {
+                    desktopQrMobileScan: {
+                        enabled: featureEnv.pairingDesktopQrMobileScanEnabled,
                     },
                 },
                 ui: {

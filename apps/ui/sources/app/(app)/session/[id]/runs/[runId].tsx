@@ -28,6 +28,14 @@ function normalizeParam(value: unknown): string | null {
     return null;
 }
 
+function isSessionEncryptionNotFoundError(input: unknown): boolean {
+    if (!input || typeof input !== 'object') return false;
+    const code = typeof (input as any).errorCode === 'string' ? String((input as any).errorCode) : '';
+    if (code === 'session_encryption_not_found') return true;
+    const message = typeof (input as any).error === 'string' ? String((input as any).error) : '';
+    return /session encryption not found/i.test(message);
+}
+
 export default function SessionRunDetailsScreen() {
     const { theme } = useUnistyles();
     const params = useLocalSearchParams();
@@ -45,19 +53,23 @@ export default function SessionRunDetailsScreen() {
 
     const load = React.useCallback(async () => {
         if (!sessionId || !runId) {
-            setState({ status: 'error', error: 'missing_params' });
+            setState({ status: 'error', error: t('runs.runDetails.failedToLoad') });
             return;
         }
         setState({ status: 'loading' });
         setDaemonProcessLine(null);
-        const res = await sessionExecutionRunGet(sessionId, { runId, includeStructured: true });
+        const first = await sessionExecutionRunGet(sessionId, { runId, includeStructured: true });
+        const res =
+            (first as any)?.ok === false && isSessionEncryptionNotFoundError(first)
+                ? await sessionExecutionRunGet(sessionId, { runId, includeStructured: true })
+                : first;
         if ((res as any)?.ok === false) {
-            setState({ status: 'error', error: String((res as any).error ?? 'failed_to_load_run') });
+            setState({ status: 'error', error: String((res as any).error ?? t('runs.runDetails.failedToLoad')) });
             return;
         }
         const run = (res as any)?.run;
         if (!run || typeof run.runId !== 'string') {
-            setState({ status: 'error', error: 'unsupported_response' });
+            setState({ status: 'error', error: t('runs.runDetails.failedToLoad') });
             return;
         }
         setState({
@@ -90,9 +102,9 @@ export default function SessionRunDetailsScreen() {
 
             const memMb = typeof memory === 'number' && Number.isFinite(memory) ? Math.round((memory / (1024 * 1024)) * 10) / 10 : null;
             const parts = [
-                typeof pid === 'number' ? `pid ${pid}` : null,
-                typeof cpu === 'number' ? `cpu ${cpu}` : null,
-                typeof memMb === 'number' ? `mem ${memMb}MB` : null,
+                typeof pid === 'number' ? t('runs.detail.pid', { pid }) : null,
+                typeof cpu === 'number' ? t('runs.detail.cpu', { percent: String(cpu) }) : null,
+                typeof memMb === 'number' ? t('runs.detail.memory', { megabytes: memMb }) : null,
             ].filter(Boolean) as string[];
             if (parts.length > 0) setDaemonProcessLine(parts.join(' · '));
         } catch {
@@ -117,7 +129,7 @@ export default function SessionRunDetailsScreen() {
     const headerRight = React.useCallback(() => (
         <Pressable
             accessibilityRole="button"
-            accessibilityLabel="Refresh run"
+            accessibilityLabel={t('runs.runDetails.a11y.refreshRun')}
             onPress={() => void load()}
             hitSlop={10}
             style={({ pressed }) => ({ padding: 4, opacity: pressed ? 0.7 : 1 })}
@@ -128,9 +140,9 @@ export default function SessionRunDetailsScreen() {
 
     const screenOptions = React.useMemo(() => ({
         headerShown: true,
-        headerTitle: 'Run',
+        headerTitle: runId ? t('runs.runLabel', { runId }) : t('runs.title'),
         headerRight,
-    }), [headerRight]);
+    }), [headerRight, runId]);
 
     return (
         <View style={{ flex: 1, backgroundColor: theme.colors.groupped?.background ?? theme.colors.surface }}>
@@ -161,7 +173,7 @@ export default function SessionRunDetailsScreen() {
                             {stopError ? <Text style={{ color: theme.colors.textSecondary }}>{stopError}</Text> : null}
                             <Pressable
                                 accessibilityRole="button"
-                                accessibilityLabel="Stop run"
+                                accessibilityLabel={t('runs.stop.stopRunA11y')}
                                 onPress={() => {
                                     if (!sessionId || !runId) return;
                                     fireAndForget((async () => {
@@ -170,12 +182,12 @@ export default function SessionRunDetailsScreen() {
                                         try {
                                             const res = await sessionExecutionRunStop(sessionId, { runId });
                                             if ((res as any)?.ok === false) {
-                                                setStopError(String((res as any).error ?? 'Failed to stop run'));
+                                                setStopError(String((res as any).error ?? t('runs.stop.failedToStopRun')));
                                             } else {
                                                 await load();
                                             }
                                         } catch (e) {
-                                            setStopError(e instanceof Error ? e.message : 'Failed to stop run');
+                                            setStopError(e instanceof Error ? e.message : t('runs.stop.failedToStopRun'));
                                         } finally {
                                             setIsStopping(false);
                                         }
@@ -193,7 +205,7 @@ export default function SessionRunDetailsScreen() {
                                 }}
                             >
                                 <Text style={{ color: theme.colors.text, fontWeight: '600' }}>
-                                    {isStopping ? 'Stopping…' : 'Stop run'}
+                                    {isStopping ? t('runs.stop.stoppingLabel') : t('runs.stop.stopLabel')}
                                 </Text>
                             </Pressable>
                         </View>
@@ -206,7 +218,7 @@ export default function SessionRunDetailsScreen() {
                                 <TextInput
                                     value={sendText}
                                     onChangeText={setSendText}
-                                    placeholder="Send to run…"
+                                    placeholder={t('runs.send.placeholder')}
                                     placeholderTextColor={theme.colors.textSecondary}
                                     style={{
                                         flex: 1,
@@ -221,7 +233,7 @@ export default function SessionRunDetailsScreen() {
                                 />
                                 <Pressable
                                     accessibilityRole="button"
-                                    accessibilityLabel="Send to run"
+                                    accessibilityLabel={t('runs.send.a11y.sendToRun')}
                                     onPress={() => {
                                         if (!sessionId || !runId) return;
                                         const msg = sendText.trim();
@@ -232,12 +244,12 @@ export default function SessionRunDetailsScreen() {
                                             try {
                                                 const res = await sessionExecutionRunSend(sessionId, { runId, message: msg });
                                                 if ((res as any)?.ok === false) {
-                                                    setSendError(String((res as any).error ?? 'Failed to send'));
+                                                    setSendError(String((res as any).error ?? t('runs.send.failedToSend')));
                                                 } else {
                                                     setSendText('');
                                                 }
                                             } catch (e) {
-                                                setSendError(e instanceof Error ? e.message : 'Failed to send');
+                                                setSendError(e instanceof Error ? e.message : t('runs.send.failedToSend'));
                                             } finally {
                                                 setIsSending(false);
                                             }
@@ -255,7 +267,7 @@ export default function SessionRunDetailsScreen() {
                                     }}
                                 >
                                     <Text style={{ color: theme.colors.text, fontWeight: '600' }}>
-                                        {isSending ? 'Sending…' : 'Send'}
+                                        {isSending ? t('runs.send.sendingLabel') : t('runs.send.sendLabel')}
                                     </Text>
                                 </Pressable>
                             </View>
@@ -271,7 +283,7 @@ export default function SessionRunDetailsScreen() {
                             borderColor: theme.colors.divider,
                             gap: 6,
                         }}>
-                            <Text style={{ color: theme.colors.text, fontWeight: '600' }}>latestToolResult</Text>
+                            <Text style={{ color: theme.colors.text, fontWeight: '600' }}>{t('runs.runDetails.latestToolResultTitle')}</Text>
                             <Text style={{ color: theme.colors.textSecondary, fontFamily: 'Menlo' }}>
                                 {JSON.stringify(state.latestToolResult, null, 2)}
                             </Text>

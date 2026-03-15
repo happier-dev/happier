@@ -35,6 +35,14 @@ import {
   writeExecutionRunActivityMarker,
 } from '@/agent/executionRuns/runtime/executionRunManager/activityMarkers';
 
+function readBoundedExternalSendAckTimeoutMs(): number {
+  const raw = process.env.HAPPIER_EXECUTION_RUN_BOUNDED_SEND_ACK_TIMEOUT_MS;
+  if (typeof raw !== 'string' || raw.trim().length === 0) return 20_000;
+  const parsed = Number.parseInt(raw, 10);
+  if (!Number.isFinite(parsed) || parsed < 1) return 20_000;
+  return Math.min(parsed, 120_000);
+}
+
 export class ExecutionRunManager {
   private readonly parentProvider: ACPProvider;
   private readonly cwd: string;
@@ -294,7 +302,85 @@ export class ExecutionRunManager {
     });
   }
 
-  async send(runId: string, params: Readonly<{ message: string; resume?: boolean }>): Promise<{ ok: boolean; errorCode?: string; error?: string }> {
+  async send(
+    runId: string,
+    params: Readonly<{ message: string; resume?: boolean; delivery?: unknown }>,
+  ): Promise<{ ok: boolean; errorCode?: string; error?: string }> {
+    const run = this.runs.get(runId) ?? null;
+    if (!run) return { ok: false, errorCode: 'execution_run_not_found', error: 'Not found' };
+
+    if (params.resume === true) {
+      // Resume semantics are already centralized in the long-lived sender; preserve that behavior for resumable bounded runs.
+      return sendBackendLongLivedRun({
+        runId,
+        params,
+        runs: this.runs,
+        controllers: this.controllers,
+        budgetRegistry: this.budgetRegistry,
+        createBackend: ({ backendId, permissionMode }) => this.createBackend({ backendId, permissionMode }),
+        maxTurns: this.maxTurns,
+        getNowMs: this.getNowMs,
+        finishRun: this.finishRun.bind(this),
+        sendAcp: this.sendAcp,
+        parentProvider: this.parentProvider,
+        writeActivityMarker: this.writeActivityMarker.bind(this),
+      });
+    }
+
+    if (run.runClass === 'bounded') {
+      const ctrl = this.controllers.get(runId) ?? null;
+      if (!ctrl || ctrl.kind !== 'backend' || !ctrl.childSessionId) {
+        return { ok: false, errorCode: 'execution_run_not_allowed', error: 'Not running' };
+      }
+      if (ctrl.cancelled) return { ok: false, errorCode: 'execution_run_not_allowed', error: 'Not running' };
+      if (!ctrl.turnInFlight) return { ok: false, errorCode: 'execution_run_not_allowed', error: 'Not in flight' };
+
+      const delivery = params.delivery;
+      const normalized = delivery === undefined ? 'prompt' : delivery;
+      if (normalized === 'prompt') {
+        return { ok: false, errorCode: 'execution_run_busy', error: 'Run is busy' };
+      }
+      // enqueue: bounded runner will implement delivery semantics while the turn is running
+      return new Promise((resolve) => {
+        let timeoutHandle: ReturnType<typeof setTimeout> | null = null;
+        let settled = false;
+        const finish = (result: { ok: boolean; errorCode?: string; error?: string }) => {
+          if (settled) return;
+          settled = true;
+          if (timeoutHandle) {
+            clearTimeout(timeoutHandle);
+            timeoutHandle = null;
+          }
+          resolve(result);
+        };
+        const queuedMessage = {
+          message: params.message,
+          delivery: (normalized === 'prompt' || normalized === 'steer_if_supported' || normalized === 'interrupt')
+            ? normalized
+            : 'prompt',
+          resolve: () => finish({ ok: true }),
+          reject: (e: Error) => finish({ ok: false, errorCode: 'execution_run_failed', error: e.message }),
+        } as const;
+        ctrl.pendingExternalMessages.push(queuedMessage);
+        if (ctrl.pendingExternalMessagesSignal) {
+          ctrl.pendingExternalMessagesSignal.resolve();
+          ctrl.pendingExternalMessagesSignal = null;
+        }
+        const timeoutMs = readBoundedExternalSendAckTimeoutMs();
+        timeoutHandle = setTimeout(() => {
+          const index = ctrl.pendingExternalMessages.indexOf(queuedMessage);
+          if (index >= 0) {
+            ctrl.pendingExternalMessages.splice(index, 1);
+          }
+          finish({
+            ok: false,
+            errorCode: 'execution_run_busy',
+            error: 'Run is busy',
+          });
+        }, timeoutMs);
+      });
+    }
+
     return sendBackendLongLivedRun({
       runId,
       params,

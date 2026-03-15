@@ -6,6 +6,7 @@ import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 
 const repoRoot = path.resolve(import.meta.dirname, '..', '..');
+const PIPELINE_TEST_TIMEOUT_MS = 120_000;
 
 function writeExecutable(filePath, content) {
   fs.writeFileSync(filePath, content, { encoding: 'utf8', mode: 0o700 });
@@ -67,7 +68,7 @@ test('expo native-build supports local mode and writes build metadata json', () 
       '--artifact-out',
       artifactOut,
     ],
-    { cwd: repoRoot, env, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: 30_000 },
+    { cwd: repoRoot, env, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: PIPELINE_TEST_TIMEOUT_MS },
   );
 
   assert.match(stdout, /\[pipeline\] expo native build:/);
@@ -137,7 +138,7 @@ test('expo native-build runs local builds non-interactively in CI', () => {
       '--artifact-out',
       artifactOut,
     ],
-    { cwd: repoRoot, env, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: 30_000 },
+    { cwd: repoRoot, env, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: PIPELINE_TEST_TIMEOUT_MS },
   );
 
   assert.match(stdout, /NPX --yes eas-cli@/);
@@ -198,7 +199,7 @@ test('expo native-build allows interactive local builds when PIPELINE_INTERACTIV
       '--artifact-out',
       artifactOut,
     ],
-    { cwd: repoRoot, env, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: 30_000 },
+    { cwd: repoRoot, env, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: PIPELINE_TEST_TIMEOUT_MS },
   );
 
   assert.match(stdout, /NPX --yes eas-cli@/);

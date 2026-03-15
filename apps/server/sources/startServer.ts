@@ -30,6 +30,8 @@ import { startPresenceRedisWorker } from '@/app/presence/presenceRedisQueue';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { startVoiceSessionLeaseCleanupFromEnv } from '@/app/voice/voiceSessionLeaseCleanup';
+import { initializeServerSentry } from '@/app/monitoring/sentry';
+import { inferAndApplyTailscaleServePublicServerUrl } from '@/app/integrations/tailscale/tailscaleServePublicUrlInference';
 
 export type ServerFlavor = 'full' | 'light';
 export type ServerRole = 'all' | 'api' | 'worker';
@@ -49,6 +51,7 @@ function shouldEnableRedisAdapterFromEnv(env: NodeJS.ProcessEnv, flavor: ServerF
 export async function startServer(flavor: ServerFlavor): Promise<void> {
     process.env.HAPPY_SERVER_FLAVOR = flavor;
     process.env.HAPPIER_SERVER_FLAVOR = flavor;
+    initializeServerSentry(process.env);
     const role = getServerRoleFromEnv(process.env);
     const shouldEnableRedisAdapter = shouldEnableRedisAdapterFromEnv(process.env, flavor);
     const dbProvider = getDbProviderFromEnv(process.env, flavor === 'light' ? 'sqlite' : 'postgres');
@@ -175,6 +178,7 @@ export async function startServer(flavor: ServerFlavor): Promise<void> {
     await startMetricsServer();
 
     if (role === 'all' || role === 'api') {
+        void inferAndApplyTailscaleServePublicServerUrl(process.env);
         await startApi();
     }
 

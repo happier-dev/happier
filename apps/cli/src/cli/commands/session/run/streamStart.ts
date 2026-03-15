@@ -6,7 +6,7 @@ import { SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc';
 
 import { fetchSessionById } from '@/sessionControl/sessionsHttp';
 import { wantsJson, printJsonEnvelope } from '@/sessionControl/jsonOutput';
-import { resolveSessionEncryptionContextFromCredentials } from '@/sessionControl/sessionEncryptionContext';
+import { resolveSessionEncryptionContextFromCredentials, resolveSessionStoredContentEncryptionMode } from '@/sessionControl/sessionEncryptionContext';
 import { callSessionRpc } from '@/sessionControl/sessionRpc';
 import { hasFlag } from '@/sessionControl/argvFlags';
 import { resolveSessionIdOrPrefix } from '@/sessionControl/resolveSessionId';
@@ -60,9 +60,10 @@ export async function cmdSessionRunStreamStart(
   }
 
   const ctx = resolveSessionEncryptionContextFromCredentials(credentials, rawSession);
+  const mode = resolveSessionStoredContentEncryptionMode(rawSession);
   const request = ExecutionRunTurnStreamStartRequestSchema.parse({ runId, message, ...(resume ? { resume: true } : {}) });
   const method = `${sessionId}:${SESSION_RPC_METHODS.EXECUTION_RUN_STREAM_START}`;
-  const result = await callSessionRpc({ token: credentials.token, sessionId, ctx, method, request });
+  const result = await callSessionRpc({ token: credentials.token, sessionId, mode, ctx, method, request });
 
   if (json) {
     printJsonEnvelope({ ok: true, kind: 'session_run_stream_start', data: { sessionId, runId, ...(result as any) } });
@@ -72,4 +73,3 @@ export async function cmdSessionRunStreamStart(
   console.log(chalk.green('✓'), 'run stream started');
   console.log(JSON.stringify(result, null, 2));
 }
-

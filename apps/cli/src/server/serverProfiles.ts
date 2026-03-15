@@ -1,10 +1,12 @@
 import { readSettings, updateSettings } from '@/persistence';
 import { deriveServerIdFromName, sanitizeServerIdForFilesystem } from '@/server/serverId';
+import { isLocalishServerUrl } from '@/server/serverUrlClassification';
 
 export type ServerProfile = Readonly<{
   id: string;
   name: string;
   serverUrl: string;
+  localServerUrl?: string;
   webappUrl: string;
   createdAt: number;
   updatedAt: number;
@@ -29,17 +31,39 @@ function coerceProfile(value: any): ServerProfile | null {
   const idRaw = typeof value.id === 'string' ? value.id.trim() : '';
   const id = sanitizeServerIdForFilesystem(idRaw, '');
   const name = typeof value.name === 'string' ? value.name.trim() : '';
-  const serverUrl = typeof value.serverUrl === 'string' ? value.serverUrl.trim() : '';
+  const serverUrlRaw = typeof value.serverUrl === 'string' ? value.serverUrl.trim() : '';
+  const localServerUrlRaw = typeof (value as any).localServerUrl === 'string' ? String((value as any).localServerUrl).trim() : '';
+  const legacyPublicServerUrlRaw = typeof (value as any).publicServerUrl === 'string' ? String((value as any).publicServerUrl).trim() : '';
   const webappUrl = typeof value.webappUrl === 'string' ? value.webappUrl.trim() : '';
   const createdAt = Number.isFinite(value.createdAt) ? Number(value.createdAt) : 0;
   const updatedAt = Number.isFinite(value.updatedAt) ? Number(value.updatedAt) : 0;
   const lastUsedAt = Number.isFinite(value.lastUsedAt) ? Number(value.lastUsedAt) : 0;
+
+  const serverUrl =
+    legacyPublicServerUrlRaw && legacyPublicServerUrlRaw !== serverUrlRaw
+      ? legacyPublicServerUrlRaw
+      : serverUrlRaw;
+
+  const localServerUrl =
+    localServerUrlRaw
+      ? localServerUrlRaw
+      : (legacyPublicServerUrlRaw && legacyPublicServerUrlRaw !== serverUrlRaw && isLocalishServerUrl(serverUrlRaw) ? serverUrlRaw : '');
+
   if (!id || !serverUrl || !webappUrl) return null;
   const displayName = id === 'cloud'
     ? 'Happier Cloud'
     : name;
   if (!displayName) return null;
-  return { id, name: displayName, serverUrl, webappUrl, createdAt, updatedAt, lastUsedAt };
+  return {
+    id,
+    name: displayName,
+    serverUrl,
+    ...(localServerUrl ? { localServerUrl } : {}),
+    webappUrl,
+    createdAt,
+    updatedAt,
+    lastUsedAt,
+  };
 }
 
 function findProfileIdByIdOrName(servers: Record<string, any>, identifierRaw: string): string | null {
@@ -120,6 +144,7 @@ export async function useServerProfile(idRaw: string): Promise<ServerProfile> {
 export async function addServerProfile(opts: Readonly<{
   name: string;
   serverUrl: string;
+  localServerUrl?: string;
   webappUrl: string;
   use?: boolean;
 }>): Promise<ServerProfile> {
@@ -132,6 +157,7 @@ export async function addServerProfile(opts: Readonly<{
     throw new Error('Failed to derive a safe server profile id');
   }
   const serverUrl = String(opts.serverUrl ?? '').trim();
+  const localServerUrl = String(opts.localServerUrl ?? '').trim();
   const webappUrl = String(opts.webappUrl ?? '').trim();
   const shouldUse = opts.use === true;
   const now = Date.now();
@@ -153,6 +179,7 @@ export async function addServerProfile(opts: Readonly<{
       id,
       name,
       serverUrl,
+      ...(localServerUrl && localServerUrl !== serverUrl ? { localServerUrl } : {}),
       webappUrl,
       createdAt,
       updatedAt: now,

@@ -154,3 +154,61 @@ export function sealSecretsDeep<T>(input: T, key: Uint8Array | null): T {
     }
     return out;
 }
+
+/**
+ * Unseal encrypted-at-rest secrets in an arbitrary object graph into plaintext `value` fields.
+ *
+ * This is used for plaintext-account server storage, where settings must be usable across devices
+ * without relying on per-device at-rest ciphertext.
+ *
+ * Contract:
+ * - Any object with `_isSecretValue: true` is treated as a secret container.
+ * - If it contains `encryptedValue` and no plaintext `value`, we decrypt and write `value`, and drop `encryptedValue`.
+ * - If the key is missing or decryption fails, the container is left unchanged (fail closed).
+ */
+export function unsealSecretsDeep<T>(input: T, key: Uint8Array | null): T {
+    if (!key) return input;
+
+    if (Array.isArray(input)) {
+        let out: any[] | null = null;
+        for (let i = 0; i < input.length; i++) {
+            const item = (input as any)[i];
+            const unsealed = unsealSecretsDeep(item, key);
+            if (out) {
+                out[i] = unsealed;
+                continue;
+            }
+            if (unsealed !== item) {
+                out = new Array(input.length);
+                for (let j = 0; j < i; j++) out[j] = (input as any)[j];
+                out[i] = unsealed;
+            }
+        }
+        return (out ? out : input) as any;
+    }
+
+    if (!isPlainObject(input)) return input;
+
+    if ((input as any)._isSecretValue === true) {
+        const hasPlain = typeof (input as any).value === 'string' && String((input as any).value).trim().length > 0;
+        if (hasPlain) return input as any;
+        const encryptedValue = (input as any).encryptedValue;
+        const parsed = EncryptedStringSchema.safeParse(encryptedValue);
+        if (!parsed.success) return input as any;
+
+        const opened = decryptSecretString(parsed.data, key);
+        if (!opened) return input as any;
+        const { encryptedValue: _dropped, ...rest } = input as any;
+        return { ...rest, value: opened } as any;
+    }
+
+    let out: any = input;
+    for (const [k, v] of Object.entries(input)) {
+        const unsealedChild = unsealSecretsDeep(v, key);
+        if (unsealedChild !== v) {
+            if (out === input) out = { ...(input as any) };
+            out[k] = unsealedChild;
+        }
+    }
+    return out;
+}

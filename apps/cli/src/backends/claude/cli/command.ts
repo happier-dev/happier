@@ -136,19 +136,6 @@ export async function handleClaudeCliCommand(context: CommandContext): Promise<v
     } else if (arg === '--existing-session') {
       // Used by daemon to reconnect to an existing session (for inactive session resume)
       options.existingSessionId = strippedArgs[++i];
-    } else if (arg === '--claude-env') {
-      // Parse KEY=VALUE environment variable to pass to Claude
-      const envArg = strippedArgs[++i];
-      if (envArg && envArg.includes('=')) {
-        const eqIndex = envArg.indexOf('=');
-        const key = envArg.substring(0, eqIndex);
-        const value = envArg.substring(eqIndex + 1);
-        options.claudeEnvVars = options.claudeEnvVars || {};
-        options.claudeEnvVars[key] = value;
-      } else {
-        console.error(chalk.red(`Invalid --claude-env format: ${envArg}. Expected KEY=VALUE`));
-        process.exit(1);
-      }
     } else if (arg === '--chrome') {
       chromeOverride = true;
     } else if (arg === '--no-chrome') {
@@ -201,10 +188,12 @@ ${chalk.bold('Examples:')}
   happier --chrome           Enable Chrome browser access for this session
   happier --no-chrome        Disable Chrome even if default is on
   happier --js-runtime bun   Use bun instead of node to spawn Claude Code
-  happier --claude-env ANTHROPIC_BASE_URL=http://127.0.0.1:3456
-                             Use a custom API endpoint (e.g., claude-code-router)
   happier auth login --force Authenticate
   happier doctor             Run diagnostics
+
+${chalk.bold('Server selection (global flags; prefix-only; no persistence):')}
+  happier --server <name-or-id> ...
+  happier --server-url <url> [--webapp-url <url>] [--public-server-url <url>] ...
 
 ${chalk.bold('Happier supports ALL Claude options!')}
   Use any claude flag with happier as you would with claude. Our favorite:
@@ -217,7 +206,7 @@ ${chalk.bold.cyan('Claude Code Options (from `claude --help`):')}
 
     // Run claude --help and display its output
     try {
-      const claudeHelp = execFileSync(claudeCliPath, ['--help'], { encoding: 'utf8', windowsHide: true });
+      const claudeHelp = execFileSync(process.execPath, [claudeCliPath, '--help'], { encoding: 'utf8', windowsHide: true });
       console.log(claudeHelp);
     } catch {
       console.log(chalk.yellow('Could not retrieve claude help. Make sure claude is installed.'));
@@ -268,6 +257,7 @@ ${chalk.bold.cyan('Claude Code Options (from `claude --help`):')}
       settings: snapshot.settings,
       session: null,
     });
+    options.accountSettings = snapshot.settings;
     options.terminalRuntime = context.terminalRuntime;
     await runClaude(credentials, options);
   } catch (error) {

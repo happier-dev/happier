@@ -1,9 +1,15 @@
 import * as React from 'react';
 import renderer, { act } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
+import { AppPaneProvider } from '@/components/appShell/panes/AppPaneProvider';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 (globalThis as any).__DEV__ = false;
+
+const shouldRenderChatTimelineForSessionMock = vi.fn((_args: any) => true);
+const realtimeStatusValue = vi.hoisted(() => ({ current: { status: 'connected' } as any }));
+const onSessionVisibleSpy = vi.hoisted(() => vi.fn());
+let authCredentials: any = { token: 't', secret: 's' };
 
 vi.mock('react-native-reanimated', () => ({}));
 vi.mock('expo-linear-gradient', () => ({
@@ -35,21 +41,53 @@ vi.mock('react-native-safe-area-context', () => ({
   useSafeAreaInsets: () => ({ top: 0, bottom: 0, left: 0, right: 0 }),
 }));
 vi.mock('react-native-unistyles', () => ({
+  __esModule: true,
   useUnistyles: () => ({
     theme: {
       dark: false,
       colors: {
         text: '#000',
         textSecondary: '#666',
+        textLink: '#00f',
         surface: '#fff',
+        surfaceHigh: '#f5f5f5',
+        divider: '#ddd',
+        border: '#ddd',
+        indigo: '#5856D6',
+        modal: { border: '#ddd' },
+        input: { background: '#f5f5f5' },
         header: { tint: '#000' },
         status: { error: '#f00' },
         shadow: { color: '#000', opacity: 0.2 },
+        groupped: { background: '#F5F5F5', chevron: '#C7C7CC', sectionTitle: '#8E8E93' },
       },
     },
   }),
   StyleSheet: {
-    create: (styles: any) => (typeof styles === 'function' ? styles({ colors: {} }) : styles),
+    create: (styles: any) =>
+      typeof styles === 'function'
+        ? styles(
+            {
+              colors: {
+                text: '#000',
+                textSecondary: '#666',
+                textLink: '#00f',
+                surface: '#fff',
+                surfaceHigh: '#f5f5f5',
+                divider: '#ddd',
+                border: '#ddd',
+                indigo: '#5856D6',
+                modal: { border: '#ddd' },
+                input: { background: '#f5f5f5' },
+                header: { tint: '#000' },
+                status: { error: '#f00' },
+                shadow: { color: '#000', opacity: 0.2 },
+                groupped: { background: '#F5F5F5', chevron: '#C7C7CC', sectionTitle: '#8E8E93' },
+              },
+            },
+            {}
+          )
+        : styles,
     absoluteFillObject: {},
   },
 }));
@@ -59,7 +97,12 @@ vi.mock('@react-navigation/native', () => ({
 }));
 
 vi.mock('expo-router', () => ({
-  useRouter: () => ({ push: vi.fn(), back: vi.fn() }),
+    useRouter: () => ({ push: vi.fn(), back: vi.fn() }),
+    usePathname: () => '/',
+}));
+
+vi.mock('@/auth/context/AuthContext', () => ({
+  useAuth: () => ({ credentials: authCredentials }),
 }));
 
 vi.mock('@/text', () => ({
@@ -75,6 +118,22 @@ vi.mock('@/components/sessions/transcript/AgentContentView', () => ({
       props.content ?? null,
       props.input ?? null,
     ),
+}));
+vi.mock('@/components/appShell/panes/AppPaneScopeHost', () => ({
+  AppPaneScopeHost: (props: any) => React.createElement('AppPaneScopeHost', props, props.main ?? null),
+}));
+vi.mock('@/components/sessions/panes/useRegisterSessionPaneDriver', () => ({
+  useRegisterSessionPaneDriver: () => 'pane-scope-test',
+}));
+vi.mock('@/components/appShell/panes/hooks/useAppPaneScope', () => ({
+  useAppPaneScope: () => ({
+    openRight: vi.fn(),
+    setRightTab: vi.fn(),
+    scopeState: null,
+  }),
+}));
+vi.mock('@/components/sessions/panes/url/useSessionPaneUrlSync', () => ({
+  useSessionPaneUrlSync: () => {},
 }));
 vi.mock('@/components/sessions/transcript/ChatHeaderView', () => ({
   ChatHeaderView: () => null,
@@ -103,6 +162,7 @@ vi.mock('@/hooks/server/useFeatureEnabled', () => ({
 }));
 
 vi.mock('@/utils/platform/responsive', () => ({
+  getDeviceType: () => 'phone',
   useDeviceType: () => 'phone',
   useHeaderHeight: () => 0,
   useIsLandscape: () => false,
@@ -116,6 +176,9 @@ vi.mock('@/components/sessions/model/inactiveSessionUi', () => ({
 }));
 vi.mock('@/components/sessions/model/resolveSessionMachineReachability', () => ({
   resolveSessionMachineReachability: () => true,
+}));
+vi.mock('@/components/sessions/model/useSessionMachineReachability', () => ({
+  useSessionMachineReachability: () => ({ machineReachable: true, machineOnline: true }),
 }));
 
 vi.mock('@/sync/domains/server/serverRuntime', () => ({
@@ -135,7 +198,7 @@ vi.mock('@/sync/sync', () => ({
     publishSessionAcpConfigOptionOverrideToMetadata: async () => {},
     publishSessionModelOverrideToMetadata: async () => {},
     refreshSessions: async () => {},
-    onSessionVisible: () => {},
+    onSessionVisible: onSessionVisibleSpy,
     sendMessage: async () => {},
     enqueuePendingMessage: async () => {},
     submitMessage: async () => {},
@@ -223,16 +286,27 @@ vi.mock('@/sync/domains/state/storage', () => {
       sessionListViewDataByServerId: {},
     }),
   };
-  return {
-    storage,
-    useSession: () => session,
-    useIsDataReady: () => true,
-    useRealtimeStatus: () => ({ status: 'connected' }),
-    useSessionMessages: () => ({ messages: [], isLoaded: true }),
-    useSessionPendingMessages: () => ({ messages: [] }),
-    useSessionReviewCommentsDrafts: () => [],
-    useSessionUsage: () => null,
-    useLocalSetting: () => ({}),
+    return {
+      storage,
+      useSession: () => session,
+      useIsDataReady: () => true,
+      useRealtimeStatus: () => realtimeStatusValue.current,
+      useSessionMessages: () => ({ messages: [], isLoaded: true }),
+      useSessionTranscriptIds: () => ({ ids: [], isLoaded: true }),
+      useSessionPendingMessages: () => ({ messages: [] }),
+      useSessionReviewCommentsDrafts: () => [],
+      useSessionUsage: () => null,
+      useLocalSetting: (key: string) => {
+      if (key === 'acknowledgedCliVersions') return {};
+      if (key === 'uiMultiPanePanelsEnabled') return false;
+      if (key === 'detailsPaneTabsBehavior') return 'preview';
+      if (key === 'rightPaneWidthPx') return 360;
+      if (key === 'rightPaneWidthBasisPx') return 1200;
+      if (key === 'detailsPaneWidthPx') return 520;
+      if (key === 'detailsPaneWidthBasisPx') return 1200;
+      return {};
+    },
+    useLocalSettingMutable: () => [null, vi.fn()],
     useSetting: () => null,
     useSettings: () => ({ experiments: true, featureToggles: {} }),
     useAutomations: () => [],
@@ -261,7 +335,11 @@ vi.mock('@/sync/domains/permissions/permissionModeApply', () => ({
 }));
 
 vi.mock('@/sync/acp/sessionModeControl', () => ({
-  supportsAcpAgentModeOverrides: () => false,
+  supportsSessionModeOverrides: () => false,
+}));
+vi.mock('@/sync/domains/session/control/localControlSwitch', () => ({
+  shouldRenderChatTimelineForSession: (args: any) => shouldRenderChatTimelineForSessionMock(args),
+  shouldRequestRemoteControlAfterPendingEnqueue: () => false,
 }));
 
 vi.mock('@/sync/runtime/time', () => ({
@@ -274,15 +352,116 @@ vi.mock('@/utils/system/fireAndForget', () => ({
 
 describe('SessionView (transcript rendering for seq-only sessions)', () => {
   it('renders ChatList when session.seq > 0 even if visible committed messages are empty', async () => {
+    shouldRenderChatTimelineForSessionMock.mockClear();
+    onSessionVisibleSpy.mockClear();
+    realtimeStatusValue.current = { status: 'connected' };
     const { SessionView } = await import('./SessionView');
     let tree: renderer.ReactTestRenderer;
     await act(async () => {
-      tree = renderer.create(<SessionView id="s1" />);
+      tree = renderer.create(
+        <AppPaneProvider>
+          <SessionView id="s1" />
+        </AppPaneProvider>
+      );
     });
 
-    expect(tree!.root.findAllByType('ChatList')).toHaveLength(1);
-    expect(tree!.root.findAllByType('EmptyMessages')).toHaveLength(0);
+    expect(shouldRenderChatTimelineForSessionMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        committedMessagesCount: 0,
+        pendingMessagesCount: 0,
+        forceRenderFooter: true,
+      })
+    );
 
+    await act(async () => {
+      tree!.unmount();
+    });
+  });
+
+  it('forces transcript render for forked sessions even when child has no messages', async () => {
+    shouldRenderChatTimelineForSessionMock.mockClear();
+    onSessionVisibleSpy.mockClear();
+    realtimeStatusValue.current = { status: 'connected' };
+    const storageMod = await import('@/sync/domains/state/storage');
+    (storageMod as any).useSession().seq = 0;
+    (storageMod as any).useSession().metadata.forkV1 = { v: 1, parentSessionId: 'parent-1', parentCutoffSeqInclusive: 9 };
+
+    const { SessionView } = await import('./SessionView');
+    let tree: renderer.ReactTestRenderer;
+    await act(async () => {
+      tree = renderer.create(
+        <AppPaneProvider>
+          <SessionView id="s1" />
+        </AppPaneProvider>
+      );
+    });
+
+    expect(shouldRenderChatTimelineForSessionMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        committedMessagesCount: 0,
+        pendingMessagesCount: 0,
+        forceRenderFooter: true,
+      })
+    );
+
+    await act(async () => {
+      tree!.unmount();
+    });
+
+    delete (storageMod as any).useSession().metadata.forkV1;
+    (storageMod as any).useSession().seq = 25;
+  });
+
+  it('does not re-run onSessionVisible when realtimeStatus changes', async () => {
+    shouldRenderChatTimelineForSessionMock.mockClear();
+    onSessionVisibleSpy.mockClear();
+    realtimeStatusValue.current = { status: 'connected' };
+    const { SessionView } = await import('./SessionView');
+
+    let tree: renderer.ReactTestRenderer;
+    await act(async () => {
+      tree = renderer.create(
+        <AppPaneProvider>
+          <SessionView id="s1" />
+        </AppPaneProvider>
+      );
+    });
+
+    expect(onSessionVisibleSpy).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      realtimeStatusValue.current = { status: 'disconnected' };
+      tree!.update(
+        <AppPaneProvider>
+          <SessionView id="s1" />
+        </AppPaneProvider>
+      );
+    });
+
+    expect(onSessionVisibleSpy).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      tree!.unmount();
+    });
+  });
+
+  it('does not render a restore prompt for encrypted sessions when credentials include dataKey material', async () => {
+    authCredentials = { token: 't', encryption: { publicKey: 'pk', machineKey: 'mk' } };
+    const { SessionView } = await import('./SessionView');
+
+    let tree: renderer.ReactTestRenderer;
+    await act(async () => {
+      tree = renderer.create(
+        <AppPaneProvider>
+          <SessionView id="s1" />
+        </AppPaneProvider>
+      );
+    });
+
+    expect(tree!.root.findAllByProps({ testID: 'session-encrypted-locked' }).length).toBe(0);
+    expect(tree!.root.findAllByProps({ testID: 'session-encrypted-locked-restore' }).length).toBe(0);
+
+    authCredentials = { token: 't', secret: 's' };
     await act(async () => {
       tree!.unmount();
     });

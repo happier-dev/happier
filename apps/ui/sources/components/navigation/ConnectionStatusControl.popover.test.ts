@@ -232,6 +232,33 @@ afterEach(() => {
 });
 
 describe('ConnectionStatusControl (native popover config)', () => {
+    it('toggles the popover when pressing the trigger twice', async () => {
+        const ConnectionStatusControl = await importConnectionStatusControl();
+        let tree: renderer.ReactTestRenderer | undefined;
+        await act(async () => {
+            tree = renderer.create(React.createElement(ConnectionStatusControl, { variant: 'sidebar' }));
+        });
+
+        expect(capture.popoverProps?.open).toBe(false);
+
+        const trigger = tree!.root.findByType('Pressable');
+        await act(async () => {
+            trigger.props.onPress();
+        });
+
+        expect(capture.popoverProps?.open).toBe(true);
+
+        await act(async () => {
+            trigger.props.onPress();
+        });
+
+        expect(capture.popoverProps?.open).toBe(false);
+
+        await act(async () => {
+            tree?.unmount();
+        });
+    });
+
     it('enables a native portal so the menu is not width-constrained to the trigger', async () => {
         const ConnectionStatusControl = await importConnectionStatusControl();
         let tree: renderer.ReactTestRenderer | undefined;

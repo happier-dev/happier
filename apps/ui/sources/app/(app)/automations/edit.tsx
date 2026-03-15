@@ -67,9 +67,11 @@ export default React.memo(function AutomationEditScreen() {
                 setMessageLoading(true);
                 const envelope = tryDecodeAutomationTemplateEnvelope(automation.templateCiphertext);
                 if (!envelope) {
-                    throw new Error('Invalid encrypted automation template envelope payload');
+                    throw new Error('Invalid automation template envelope payload');
                 }
-                const raw = await sync.encryption.decryptAutomationTemplateRaw(envelope.payloadCiphertext);
+                const raw = envelope.kind === 'happier_automation_template_plain_v1'
+                    ? envelope.payload
+                    : await sync.encryption.decryptAutomationTemplateRaw(envelope.payloadCiphertext);
                 const decoded = decodeAutomationTemplate(JSON.stringify(raw));
                 if (!decoded) {
                     throw new Error('Invalid decrypted automation template payload');
@@ -79,7 +81,10 @@ export default React.memo(function AutomationEditScreen() {
                 setMessage(initial);
             } catch (error) {
                 if (!alive) return;
-                await Modal.alert('Error', error instanceof Error ? error.message : 'Failed to load automation template.');
+                await Modal.alert(
+                    t('common.error'),
+                    error instanceof Error ? error.message : t('automations.edit.loadTemplateFailed'),
+                );
             } finally {
                 if (!alive) return;
                 setMessageLoading(false);
@@ -131,7 +136,10 @@ export default React.memo(function AutomationEditScreen() {
             await sync.refreshAutomations();
             router.back();
         } catch (error) {
-            await Modal.alert('Error', error instanceof Error ? error.message : 'Failed to update automation.');
+            await Modal.alert(
+                t('common.error'),
+                error instanceof Error ? error.message : t('automations.edit.updateFailed')
+            );
         }
     }, [automation, automationId, form, isValid, router]);
 
@@ -154,7 +162,7 @@ export default React.memo(function AutomationEditScreen() {
             hitSlop={10}
             style={({ pressed }) => ({ padding: 2, opacity: !isValid ? 0.4 : pressed ? 0.7 : 1 })}
             accessibilityRole="button"
-            accessibilityLabel="Save automation"
+            accessibilityLabel={t('automations.edit.saveAutomationLabel')}
         >
             <Ionicons name="checkmark" size={22} color={theme.colors.header.tint} />
         </Pressable>
@@ -162,7 +170,7 @@ export default React.memo(function AutomationEditScreen() {
 
     const screenOptions = React.useMemo(() => ({
         headerShown: true,
-        title: 'Edit automation',
+        title: t('automations.edit.title'),
         headerBackTitle: t('common.back'),
         presentation: Platform.OS === 'ios' ? ('containedModal' as const) : undefined,
         headerLeft,
@@ -176,14 +184,14 @@ export default React.memo(function AutomationEditScreen() {
                 <ItemList>
                     <View style={{ maxWidth: layout.maxWidth, alignSelf: 'center', width: '100%' }}>
                         {automation?.targetType === 'existing_session' ? (
-                            <ItemGroup title="Message">
+                            <ItemGroup title={t('common.message')}>
                                 <View style={stylesMessage.contentContainer}>
-                                    <Text style={stylesMessage.label}>MESSAGE</Text>
+                                    <Text style={stylesMessage.label}>{t('automations.edit.messageLabel')}</Text>
                                     <TextInput
                                         style={stylesMessage.textInput}
                                         value={message}
                                         onChangeText={setMessage}
-                                        placeholder="Message to send"
+                                        placeholder={t('automations.edit.messagePlaceholder')}
                                         placeholderTextColor={theme.colors.input.placeholder}
                                         autoCapitalize="sentences"
                                         autoCorrect={true}
@@ -191,7 +199,7 @@ export default React.memo(function AutomationEditScreen() {
                                         editable={!messageLoading}
                                     />
                                     <Text style={stylesMessage.helpText}>
-                                        This message will be queued into the session as a pending user message.
+                                        {t('automations.edit.messageHelpText')}
                                     </Text>
                                 </View>
                             </ItemGroup>

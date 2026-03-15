@@ -55,6 +55,28 @@ describe('EditView', () => {
         );
     });
 
+    it('passes filePath to ToolDiffView when present in input', async () => {
+        diffSpy.mockClear();
+        const { EditView } = await import('./EditView');
+
+        const tool = makeToolCall({
+            name: 'Edit',
+            state: 'completed',
+            input: { file_path: '/tmp/a.ts', old_string: 'const x = 1', new_string: 'const x = 2' },
+            result: null,
+        });
+
+        await act(async () => {
+            renderer.create(React.createElement(EditView, makeToolViewProps(tool)));
+        });
+
+        expect(diffSpy).toHaveBeenCalledWith(
+            expect.objectContaining({
+                filePath: '/tmp/a.ts',
+            }),
+        );
+    });
+
     it('shows full edit content when detailLevel=full', async () => {
         diffSpy.mockClear();
         const { EditView } = await import('./EditView');

@@ -23,9 +23,12 @@ import { computeHasUnreadActivity } from '../domains/messages/unread';
 import { sync } from '../sync';
 import type { ReviewCommentDraft } from '../domains/input/reviewComments/reviewCommentTypes';
 import type { SessionActionDraft } from '../domains/sessionActions/sessionActionDraftTypes';
+import { getActiveServerSnapshot } from '../domains/server/serverRuntime';
 
 import { getStorage } from '../domains/state/storageStore';
 import type { KnownEntitlements } from '../domains/state/storageStore';
+import type { ForkedTranscriptSnapshot } from '../domains/sessionFork/forkedTranscriptSnapshot';
+import { getForkedTranscriptSnapshotCached } from '../domains/sessionFork/forkedTranscriptSnapshot';
 
 export function useSessions() {
   return getStorage()(useShallow((state) => (state.isDataReady ? state.sessionsData : null)));
@@ -36,19 +39,95 @@ export function useSession(id: string): Session | null {
 }
 
 const emptyArray: unknown[] = [];
+const emptyRecord: Record<string, any> = {};
 const emptyReviewCommentDrafts: ReviewCommentDraft[] = [];
 const emptyActionDrafts: SessionActionDraft[] = [];
+
+function isVisibleMachine(machine: Machine): boolean {
+  const revokedAt = machine.revokedAt;
+  return !(typeof revokedAt === 'number' && Number.isFinite(revokedAt) && revokedAt > 0);
+}
 
 export function useSessionMessages(
   sessionId: string
 ): { messages: Message[]; isLoaded: boolean } {
+  // IMPORTANT:
+  // Do not derive new arrays inside the Zustand selector. React 18 can call getSnapshot twice, and if the
+  // selector allocates new references for unchanged store state it can trigger:
+  // - "The result of getSnapshot should be cached…"
+  // - "Maximum update depth exceeded"
+  //
+  // Subscribe to stable primitives instead (ids + version), then derive via useMemo.
+  const { ids, isLoaded } = useSessionTranscriptIds(sessionId);
+  const messagesById = useSessionMessagesById(sessionId);
+  const version = useSessionMessagesVersion(sessionId, true);
+
+  const messages = React.useMemo(() => {
+    if (!Array.isArray(ids) || ids.length === 0) return emptyArray as any as Message[];
+    const out: Message[] = [];
+    for (const id of ids) {
+      const m = messagesById[id];
+      if (m) out.push(m);
+    }
+    return out;
+  }, [ids, messagesById, version]);
+
+  return React.useMemo(() => ({ messages, isLoaded }), [isLoaded, messages]);
+}
+
+export function useSessionTranscriptIds(sessionId: string): { ids: string[]; isLoaded: boolean } {
   return getStorage()(
     useShallow((state) => {
       const session = state.sessionMessages[sessionId];
       return {
-        messages: session?.messages ?? emptyArray,
+        ids: session?.messageIdsOldestFirst ?? (emptyArray as any as string[]),
         isLoaded: session?.isLoaded ?? false,
       };
+    })
+  );
+}
+
+export function useForkedTranscriptSnapshot(sessionId: string): ForkedTranscriptSnapshot | null {
+  return getStorage()(
+    useShallow((state) => getForkedTranscriptSnapshotCached(state, sessionId))
+  );
+}
+
+export function useSessionMessagesById(sessionId: string): Record<string, Message> {
+  return getStorage()(
+    useShallow((state) => {
+      const session = state.sessionMessages[sessionId];
+      // NOTE: For streaming performance, messagesById is mutated in-place in the store.
+      // Do not rely on the returned object's identity changing to detect updates.
+      return session?.messagesById ?? (emptyRecord as Record<string, Message>);
+    })
+  );
+}
+
+export function useSessionMessagesVersion(sessionId: string, enabled: boolean = true): number {
+  return getStorage()(
+    useShallow((state) => {
+      if (!enabled) return 0;
+      const session = state.sessionMessages[sessionId];
+      return session?.messagesVersion ?? 0;
+    })
+  );
+}
+
+export function useSessionLatestThinkingMessageId(sessionId: string): string | null {
+  return getStorage()(
+    useShallow((state) => {
+      const session = state.sessionMessages[sessionId];
+      return session?.latestThinkingMessageId ?? null;
+    })
+  );
+}
+
+export function useSessionLatestThinkingMessageActivityAtMs(sessionId: string): number | null {
+  return getStorage()(
+    useShallow((state) => {
+      const session = state.sessionMessages[sessionId];
+      return session?.latestThinkingMessageActivityAtMs ?? null;
     })
   );
 }
@@ -98,9 +177,29 @@ export function useMessage(sessionId: string, messageId: string): Message | null
   return getStorage()(
     useShallow((state) => {
       const session = state.sessionMessages[sessionId];
-      return session?.messagesMap[messageId] ?? null;
+      return session?.messagesById?.[messageId] ?? session?.messagesMap?.[messageId] ?? null;
     })
   );
+}
+
+export function useMessagesByIds(sessionId: string, messageIds: readonly string[]): Message[] {
+  // IMPORTANT:
+  // Avoid allocating arrays inside the Zustand selector. React 18 can call getSnapshot twice, and if the
+  // selector allocates new references for unchanged store state it can trigger:
+  // - "The result of getSnapshot should be cached…"
+  // - "Maximum update depth exceeded"
+  const messagesById = useSessionMessagesById(sessionId);
+  const version = useSessionMessagesVersion(sessionId, true);
+
+  return React.useMemo(() => {
+    if (!Array.isArray(messageIds) || messageIds.length === 0) return emptyArray as any as Message[];
+    const out: Message[] = [];
+    for (const id of messageIds) {
+      const m = messagesById[id];
+      if (m) out.push(m);
+    }
+    return out;
+  }, [messageIds, messagesById, version]);
 }
 
 export function useSessionUsage(sessionId: string) {
@@ -141,7 +240,13 @@ export function useAllMachines(): Machine[] {
   return getStorage()(
     useShallow((state) => {
       if (!state.isDataReady) return [];
-      return Object.values(state.machines).sort((a, b) => {
+      const activeServerId = String(getActiveServerSnapshot().serverId ?? '').trim();
+      const activeServerMachines = activeServerId ? state.machineListByServerId[activeServerId] : null;
+      const sourceMachines = Array.isArray(activeServerMachines)
+        ? activeServerMachines
+        : Object.values(state.machines);
+
+      return sourceMachines.filter(isVisibleMachine).sort((a, b) => {
         // Keep offline machines visible (reduces confusion + avoids flicker when presence flaps).
         if (a.active !== b.active) return a.active ? -1 : 1;
         if (b.createdAt !== a.createdAt) return b.createdAt - a.createdAt;
@@ -152,7 +257,29 @@ export function useAllMachines(): Machine[] {
 }
 
 export function useMachineListByServerId(): Record<string, Machine[] | null> {
-  return getStorage()(useShallow((state) => state.machineListByServerId));
+  const machineListByServerId = getStorage()(useShallow((state) => state.machineListByServerId));
+  return React.useMemo(() => {
+    let hasChanges = false;
+    const nextByServerId: Record<string, Machine[] | null> = {};
+
+    for (const [serverId, machines] of Object.entries(machineListByServerId)) {
+      if (!Array.isArray(machines)) {
+        nextByServerId[serverId] = machines;
+        continue;
+      }
+
+      const visibleMachines = machines.filter(isVisibleMachine);
+      if (visibleMachines.length !== machines.length) {
+        hasChanges = true;
+        nextByServerId[serverId] = visibleMachines;
+        continue;
+      }
+
+      nextByServerId[serverId] = machines;
+    }
+
+    return hasChanges ? nextByServerId : machineListByServerId;
+  }, [machineListByServerId]);
 }
 
 export function useMachineListStatusByServerId(): Record<string, 'idle' | 'loading' | 'signedOut' | 'error'> {

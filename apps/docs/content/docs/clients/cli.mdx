@@ -21,13 +21,29 @@ npm fallback (power-user / Node workflow):
 npm install -g @happier-dev/cli
 ```
 
+## Updates
+
+How you update depends on how you installed the CLI:
+
+- **Installer (binary) install**: `happier self check` / `happier self update` (or rerun `curl -fsSL https://happier.dev/install | bash`)
+- **npm install**: `npm install -g @happier-dev/cli@latest` (or `@next` for preview)
+
+The CLI can also show periodic update notices in TTY sessions; disable with:
+
+```bash
+HAPPIER_CLI_UPDATE_CHECK=0
+```
+
+Full matrix (all apps/assets): [Updates](/docs/advanced/updates).
+
 ## Authenticate
 
 ```bash
 happier auth login
 ```
 
-`happier auth login` prints both web and mobile connection options.  
+`happier auth login` prints both web and mobile connection options (URLs).
+By default it prints a single QR code for the mobile deep link, plus the web URL as a fallback.
 When using self-hosted servers, run login against the correct server profile (see below).
 
 Recommended first-run flow:
@@ -35,6 +51,13 @@ Recommended first-run flow:
 - Use the mobile app path first (QR/deep link) to sign in/create account and approve terminal connection.
 - If you already use Happier on another device, sign in with that same account.
 - If you open a terminal-connect link while logged out, Happier routes you through sign in and then returns you to terminal approval automatically.
+
+Notes:
+- The CLI never needs your secret key directly. For device-key accounts, restore happens in the app (mobile/web UI).
+- On enterprise/keyless deployments (mTLS or keyless OAuth), the same `happier auth login` flow works; the browser/app will use whatever the server advertises via `GET /v1/features`.
+
+Advanced:
+- To also print optional “configure server” links (rarely needed): `happier auth login --print-configure-links`
 
 ### Remote machine pairing (SSH, automated)
 

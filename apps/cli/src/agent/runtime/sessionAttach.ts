@@ -1,32 +1,32 @@
 import { decodeBase64 } from '@/api/encryption';
+import { assertSessionAttachFilePathWithinBaseDir, resolveSessionAttachBaseDir } from '@/agent/runtime/sessionAttachPaths';
+import { SessionAttachPayloadSchema } from '@/agent/runtime/sessionAttachPayload';
 import { configuration } from '@/configuration';
 import { logger } from '@/ui/logger';
-import { readFile, unlink, stat } from 'node:fs/promises';
-import { resolve, sep } from 'node:path';
-import * as z from 'zod';
+import { lstat, readFile, unlink } from 'node:fs/promises';
+import { resolve } from 'node:path';
 
-const SessionAttachPayloadSchema = z.object({
-  encryptionKeyBase64: z.string().min(1),
-  encryptionVariant: z.union([z.literal('legacy'), z.literal('dataKey')]),
-});
+export type SessionAttachSecret =
+  | Readonly<{ encryptionMode: 'plain' }>
+  | Readonly<{ encryptionMode: 'e2ee'; encryptionKey: Uint8Array; encryptionVariant: 'legacy' | 'dataKey' }>;
 
-export type SessionAttachPayload = z.infer<typeof SessionAttachPayloadSchema>;
-
-export async function readSessionAttachFromEnv(): Promise<{ encryptionKey: Uint8Array; encryptionVariant: 'legacy' | 'dataKey' } | null> {
+export async function readSessionAttachFromEnv(): Promise<SessionAttachSecret | null> {
   const rawPath = typeof process.env.HAPPIER_SESSION_ATTACH_FILE === 'string' ? process.env.HAPPIER_SESSION_ATTACH_FILE.trim() : '';
   if (!rawPath) return null;
 
   const filePath = resolve(rawPath);
+  const baseDir = resolveSessionAttachBaseDir(configuration.happyHomeDir);
 
-  // Basic safety: require attach file to live within HAPPIER_HOME_DIR.
+  // Safety: require attach file to live within the session-attach temp dir.
   // This prevents accidental reads from arbitrary locations when a user sets env vars manually.
-  if (!filePath.startsWith(resolve(configuration.happyHomeDir) + sep)) {
-    throw new Error('Invalid session attach file location');
-  }
+  assertSessionAttachFilePathWithinBaseDir(baseDir, filePath);
 
   try {
+    const s = await lstat(filePath);
+    if (!s.isFile()) {
+      throw new Error('Invalid session attach file');
+    }
     if (process.platform !== 'win32') {
-      const s = await stat(filePath);
       // Ensure file is not readable by group/others (0600).
       if ((s.mode & 0o077) !== 0) {
         throw new Error('Session attach file permissions are too permissive');
@@ -41,12 +41,17 @@ export async function readSessionAttachFromEnv(): Promise<{ encryptionKey: Uint8
     }
 
     const payload = parsed.data;
-    const key = decodeBase64(payload.encryptionKeyBase64, 'base64');
+    if ('encryptionMode' in payload && payload.encryptionMode === 'plain') {
+      return { encryptionMode: 'plain' };
+    }
+
+    const keyBase64 = payload.encryptionKeyBase64;
+    const key = decodeBase64(keyBase64, 'base64');
     if (key.length !== 32) {
       throw new Error('Invalid session encryption key length');
     }
 
-    return { encryptionKey: key, encryptionVariant: payload.encryptionVariant };
+    return { encryptionMode: 'e2ee', encryptionKey: key, encryptionVariant: payload.encryptionVariant };
   } finally {
     // Best-effort cleanup to keep the key short-lived on disk.
     try {

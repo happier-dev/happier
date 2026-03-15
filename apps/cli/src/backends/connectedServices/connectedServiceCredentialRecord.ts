@@ -2,6 +2,7 @@ import type { ConnectedServiceCredentialRecordV1 } from '@happier-dev/protocol';
 
 export type ConnectedServiceOauthCredentialRecord = ConnectedServiceCredentialRecordV1 & { kind: 'oauth' };
 export type ConnectedServiceOauthCredentialRecordWithExpiry = ConnectedServiceOauthCredentialRecord & { expiresAt: number };
+export type ConnectedServiceTokenCredentialRecord = ConnectedServiceCredentialRecordV1 & { kind: 'token' };
 
 export function requireConnectedServiceOauthCredentialRecord(
   record: ConnectedServiceCredentialRecordV1,
@@ -20,6 +21,15 @@ export function requireConnectedServiceOauthCredentialRecordWithExpiry(
     throw new Error(`Expected oauth credential record with expiresAt for ${oauth.serviceId}/${oauth.profileId}`);
   }
   return oauth as ConnectedServiceOauthCredentialRecordWithExpiry;
+}
+
+export function requireConnectedServiceTokenCredentialRecord(
+  record: ConnectedServiceCredentialRecordV1,
+): ConnectedServiceTokenCredentialRecord {
+  if (record.kind !== 'token') {
+    throw new Error(`Expected token credential record for ${record.serviceId}/${record.profileId}`);
+  }
+  return record;
 }
 
 export function buildConnectedServiceOauthAuthEntry(record: ConnectedServiceOauthCredentialRecordWithExpiry): Record<string, unknown> {

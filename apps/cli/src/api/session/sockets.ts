@@ -5,8 +5,8 @@ import { resolveLoopbackHttpUrl } from '../client/loopbackUrl';
 import { getSocketIoProxyOptions } from '@/utils/proxy/socketIoProxy';
 
 export function createSessionScopedSocket(opts: { token: string; sessionId: string }): Socket<ServerToClientEvents, ClientToServerEvents> {
-    const serverUrl = resolveLoopbackHttpUrl(configuration.serverUrl).replace(/\/+$/, '');
-    const transports = configuration.socketForceWebsocketOnly ? ['websocket'] : undefined;
+    const serverUrl = resolveLoopbackHttpUrl(configuration.apiServerUrl).replace(/\/+$/, '');
+    const transports = configuration.socketIoTransports;
     return io(serverUrl, {
         auth: {
             token: opts.token,
@@ -26,8 +26,8 @@ export function createSessionScopedSocket(opts: { token: string; sessionId: stri
 }
 
 export function createUserScopedSocket(opts: { token: string }): Socket<ServerToClientEvents, ClientToServerEvents> {
-    const serverUrl = resolveLoopbackHttpUrl(configuration.serverUrl).replace(/\/+$/, '');
-    const transports = configuration.socketForceWebsocketOnly ? ['websocket'] : undefined;
+    const serverUrl = resolveLoopbackHttpUrl(configuration.apiServerUrl).replace(/\/+$/, '');
+    const transports = configuration.socketIoTransports;
     return io(serverUrl, {
         auth: {
             token: opts.token,

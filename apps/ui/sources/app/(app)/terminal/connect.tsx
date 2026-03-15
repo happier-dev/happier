@@ -13,7 +13,7 @@ import { t } from '@/text';
 import { useAuth } from '@/auth/context/AuthContext';
 import { getActiveServerUrl } from '@/sync/domains/server/serverProfiles';
 import { normalizeServerUrl, upsertActivateAndSwitchServer } from '@/sync/domains/server/activeServerSwitch';
-import { clearPendingTerminalConnect, setPendingTerminalConnect } from '@/sync/domains/pending/pendingTerminalConnect';
+import { clearPendingTerminalConnect, getPendingTerminalConnect, setPendingTerminalConnect } from '@/sync/domains/pending/pendingTerminalConnect';
 import { buildTerminalConnectDeepLink } from '@/utils/path/terminalConnectUrl';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 import { useUnistyles } from 'react-native-unistyles';
@@ -42,9 +42,26 @@ export default function TerminalConnectScreen() {
                 const server = (params.get('server') ?? '').trim();
                 if (key) setPublicKey(key);
                 if (server) setServerUrlFromHash(server);
+
+                // Persist the connect link in storage so dev strict-mode remounts still have access
+                // after we clear the URL hash.
+                if (key) {
+                    const desiredServerUrl = normalizeServerUrl(server) || getActiveServerUrl();
+                    setPendingTerminalConnect({
+                        publicKeyB64Url: key,
+                        serverUrl: desiredServerUrl,
+                    });
+                    setServerUrlFromHash(desiredServerUrl);
+                }
                 
                 // Clear the hash from URL to prevent exposure in browser history
                 window.history.replaceState(null, '', window.location.pathname + window.location.search);
+            } else {
+                const pending = getPendingTerminalConnect();
+                if (pending?.publicKeyB64Url) {
+                    setPublicKey(pending.publicKeyB64Url);
+                    setServerUrlFromHash(pending.serverUrl);
+                }
             }
             setHashProcessed(true);
         }

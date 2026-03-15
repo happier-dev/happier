@@ -4,7 +4,6 @@ import type { ActionId } from '@happier-dev/protocol';
 export type SessionComposerSendResolution =
     | { kind: 'noop' }
     | { kind: 'send'; text: string }
-    | { kind: 'client.clear_input' }
     | { kind: 'action'; actionId: ActionId; rest: string };
 
 export function resolveSessionComposerSend(args: {
@@ -22,10 +21,6 @@ export function resolveSessionComposerSend(args: {
 
     const parsedSlash = parseSessionSlashCommand(args.input);
     if (!parsedSlash) return { kind: 'send', text: args.input };
-
-    if (parsedSlash.kind === 'client.clear_input') {
-        return { kind: 'client.clear_input' };
-    }
 
     if (parsedSlash.kind === 'action') {
         const actionId = String(parsedSlash.actionId ?? '').trim();

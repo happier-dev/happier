@@ -14,10 +14,12 @@ import { logAutomationInfo, logAutomationWarn } from './automationTelemetry';
 import type { AutomationClaimRunResponse } from './automationTypes';
 import type { ExecutionBudgetRegistry } from '@/daemon/executionBudget/ExecutionBudgetRegistry';
 import { startSingleFlightIntervalLoop, type SingleFlightIntervalLoopHandle } from '@/daemon/lifecycle/singleFlightIntervalLoop';
+import type { Update } from '@/api/types';
 
 export type AutomationWorkerHandle = Readonly<{
   stop: () => void;
   refreshAssignments: () => Promise<void>;
+  handleServerUpdate: (update: Update) => void;
 }>;
 
 function toClaimableRunPayload(claimResult: AutomationClaimRunResponse): ClaimableRunPayload | null {
@@ -83,6 +85,7 @@ export function startAutomationWorker(params: {
         });
       },
       refreshAssignments: async () => {},
+      handleServerUpdate: () => {},
     };
   }
 
@@ -94,15 +97,113 @@ export function startAutomationWorker(params: {
   let stopped = false;
   let consecutiveFailures = 0;
   let retryAfter = 0;
+  let noWorkCooldownUntil = 0;
 
-  let claimLoop: SingleFlightIntervalLoopHandle | null = null;
   let assignmentsLoop: SingleFlightIntervalLoopHandle | null = null;
+  let claimTimer: NodeJS.Timeout | null = null;
+  let claimTimerAt = 0;
+  let claimInFlight = false;
+  let refreshSoonTimer: NodeJS.Timeout | null = null;
+
+  const nullClaimBackoffMs = Math.min(
+    60_000,
+    Math.max(5_000, Math.floor(scheduler.leaseDurationMs / 2)),
+  );
+
+  function clearClaimTimer() {
+    if (claimTimer) {
+      clearTimeout(claimTimer);
+      claimTimer = null;
+      claimTimerAt = 0;
+    }
+  }
+
+  function scheduleClaimAt(whenMs: number, reason: string) {
+    if (stopped) return;
+    const at = Math.max(Date.now(), Math.floor(whenMs));
+    if (claimTimer && claimTimerAt > 0 && claimTimerAt <= at) {
+      return;
+    }
+    clearClaimTimer();
+    claimTimerAt = at;
+    claimTimer = setTimeout(() => {
+      claimTimer = null;
+      claimTimerAt = 0;
+      void runTick(reason);
+    }, Math.max(0, at - Date.now()));
+  }
+
+  function scheduleClaimSoon(reason: string) {
+    scheduleClaimAt(Date.now(), reason);
+  }
+
+  function scheduleAssignmentsRefreshSoon(reason: string) {
+    if (stopped) return;
+    if (refreshSoonTimer) return;
+    refreshSoonTimer = setTimeout(() => {
+      refreshSoonTimer = null;
+      void refreshAssignments().catch((error) => {
+        logAutomationWarn('Failed to refresh automation assignments (scheduled)', error, {
+          machineId: params.machineId,
+          reason,
+        });
+      });
+    }, 250);
+  }
+
+  function getNextAssignedRunAtMs(): number | null {
+    const rows = assignments.getAll();
+    let next: number | null = null;
+    for (const row of rows) {
+      const candidate = row.automation.nextRunAt;
+      if (typeof candidate !== 'number' || !Number.isFinite(candidate)) continue;
+      if (next === null || candidate < next) {
+        next = candidate;
+      }
+    }
+    return next;
+  }
+
+  function rescheduleClaim(reason: string) {
+    if (stopped) return;
+    const rows = assignments.getAll();
+    if (rows.length === 0) {
+      clearClaimTimer();
+      return;
+    }
+
+    const now = Date.now();
+    const blockedUntil = Math.max(retryAfter, noWorkCooldownUntil);
+    if (blockedUntil > now) {
+      scheduleClaimAt(blockedUntil, `${reason}:blocked`);
+      return;
+    }
+
+    const nextRunAt = getNextAssignedRunAtMs();
+    if (nextRunAt === null) {
+      // If the server isn't providing a nextRunAt (invalid schedule, etc), avoid tight polling but keep a
+      // periodic safety check for missed socket hints / reconnect gaps.
+      scheduleClaimAt(now + Math.max(scheduler.leaseDurationMs, scheduler.assignmentsRefreshMs), `${reason}:safety`);
+      return;
+    }
+
+    if (nextRunAt <= now) {
+      scheduleClaimSoon(`${reason}:due`);
+      return;
+    }
+
+    scheduleClaimAt(nextRunAt, `${reason}:scheduled`);
+  }
 
   const stopWorker = (reason: 'manual' | 'unsupported-endpoint') => {
     if (stopped) return;
     stopped = true;
-    claimLoop?.stop();
     assignmentsLoop?.stop();
+    clearClaimTimer();
+    if (refreshSoonTimer) {
+      clearTimeout(refreshSoonTimer);
+      refreshSoonTimer = null;
+    }
     logAutomationInfo('Automation worker stopped', {
       machineId: params.machineId,
       reason,
@@ -118,6 +219,7 @@ export function startAutomationWorker(params: {
         machineId: params.machineId,
         count: response.assignments.length,
       });
+      rescheduleClaim('assignments-refreshed');
     } catch (error) {
       if (isMissingAutomationEndpointError(error, '/v2/automations/daemon/assignments')) {
         // Backwards compatibility: older servers/daemons won't have the automation routes. Treat this as
@@ -131,17 +233,34 @@ export function startAutomationWorker(params: {
     }
   };
 
-  const runTick = async () => {
+  const runTick = async (_reason: string) => {
     if (stopped) return;
-    if (Date.now() < retryAfter) return;
+    if (claimInFlight) return;
+    const assignmentCount = assignments.getAll().length;
+    if (assignmentCount === 0) {
+      clearClaimTimer();
+      return;
+    }
+
+    if (Date.now() < retryAfter) {
+      rescheduleClaim('retry-after');
+      return;
+    }
+    if (Date.now() < noWorkCooldownUntil) {
+      rescheduleClaim('no-work-cooldown');
+      return;
+    }
 
     const budgetRegistry = params.budgetRegistry;
     // Automation runs should respect the shared daemon ephemeral-task budget so we don't
     // starve other daemon work (and vice-versa).
     if (budgetRegistry && !budgetRegistry.tryAcquireEphemeralTask(budgetTokenId, 'ephemeral_task')) {
+      // Try again on the next schedule tick.
+      rescheduleClaim('budget-blocked');
       return;
     }
     try {
+      claimInFlight = true;
       const claimResult = await claimClient.claimRun({
         machineId: params.machineId,
         leaseDurationMs: scheduler.leaseDurationMs,
@@ -151,6 +270,14 @@ export function startAutomationWorker(params: {
       if (!claimed) {
         consecutiveFailures = 0;
         retryAfter = 0;
+        const nextRunAt = getNextAssignedRunAtMs();
+        if (nextRunAt !== null && nextRunAt <= Date.now()) {
+          // Another machine likely claimed (or our clock is ahead). Back off to avoid a thundering herd.
+          noWorkCooldownUntil = Date.now() + nullClaimBackoffMs;
+          scheduleAssignmentsRefreshSoon('no-work-due-refresh');
+        } else {
+          noWorkCooldownUntil = 0;
+        }
         return;
       }
 
@@ -165,8 +292,18 @@ export function startAutomationWorker(params: {
         claimed,
       });
 
+      // Pull a fresh assignments snapshot so we have an updated nextRunAt after the run transitions/enqueue.
+      await refreshAssignments().catch((error) => {
+        logAutomationWarn('Failed to refresh automation assignments after run', error, {
+          machineId: params.machineId,
+          runId: claimed.run.id,
+          automationId: claimed.automation.id,
+        });
+      });
+
       consecutiveFailures = 0;
       retryAfter = 0;
+      noWorkCooldownUntil = 0;
     } catch (error) {
       if (isMissingAutomationEndpointError(error, '/v2/automations/runs/claim')) {
         stopWorker('unsupported-endpoint');
@@ -191,27 +328,24 @@ export function startAutomationWorker(params: {
         assignmentCount: assignments.getAll().length,
       });
     } finally {
+      claimInFlight = false;
       if (budgetRegistry) {
         budgetRegistry.releaseEphemeralTask(budgetTokenId);
       }
+
+      rescheduleClaim('tick-complete');
     }
   };
 
-  claimLoop = startSingleFlightIntervalLoop({
-    intervalMs: scheduler.claimPollMs,
-    task: runTick,
-  });
   assignmentsLoop = startSingleFlightIntervalLoop({
     intervalMs: scheduler.assignmentsRefreshMs,
     task: refreshAssignments,
   });
 
   assignmentsLoop.trigger();
-  claimLoop.trigger();
 
   logAutomationInfo('Automation worker started', {
     machineId: params.machineId,
-    claimPollMs: scheduler.claimPollMs,
     assignmentsRefreshMs: scheduler.assignmentsRefreshMs,
     leaseDurationMs: scheduler.leaseDurationMs,
     heartbeatMs: scheduler.heartbeatMs,
@@ -221,6 +355,20 @@ export function startAutomationWorker(params: {
     stop: () => stopWorker('manual'),
     refreshAssignments: async () => {
       await refreshAssignments();
+    },
+    handleServerUpdate: (update: Update) => {
+      if (stopped) return;
+      const body: any = update?.body as any;
+      if (!body || typeof body !== 'object') return;
+
+      if (body.t === 'automation-assignment-updated' && body.machineId === params.machineId) {
+        scheduleAssignmentsRefreshSoon('socket-assignment-updated');
+        return;
+      }
+
+      if (body.t === 'automation-run-updated' && body.state === 'queued') {
+        scheduleClaimSoon('socket-run-queued');
+      }
     },
   };
 }

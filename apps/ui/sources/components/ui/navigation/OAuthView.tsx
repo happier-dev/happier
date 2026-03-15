@@ -13,6 +13,8 @@ import { t } from '@/text';
 import { Modal } from '@/modal';
 import { Text } from '@/components/ui/text/Text';
 
+const TERMINAL_PROMPT = '$ ';
+
 
 const styles = StyleSheet.create((theme) => ({
     container: {
@@ -21,7 +23,7 @@ const styles = StyleSheet.create((theme) => ({
     },
     webview: {
         flex: 1,
-        backgroundColor: 'rgba(255, 255, 255, 0)',
+        backgroundColor: 'transparent',
     },
     loadingContainer: {
         ...StyleSheet.absoluteFillObject,
@@ -121,6 +123,8 @@ export const OAuthView = React.memo((props: {
     foregroundColor?: string;
     config: OAuthViewConfig
 }) => {
+    const { theme } = useUnistyles();
+    const resolvedBackgroundColor = props.backgroundColor ?? theme.colors.surface;
     // Unsupported on web
     if (Platform.OS === 'web') {
         return <OAuthViewUnsupported {...props} />;
@@ -155,11 +159,11 @@ export const OAuthView = React.memo((props: {
 
     if (!parameters) {
         // Return empty view while initializing (almost instant)
-        return <View style={styles.container} />;
+        return <View style={[styles.container, { backgroundColor: resolvedBackgroundColor }]} />;
     }
 
     return (
-        <View style={styles.container}>
+        <View style={[styles.container, { backgroundColor: resolvedBackgroundColor }]}>
             <OAuthViewRender
                 key={`${props.name}-${generation}`}
                 name={props.name}
@@ -185,6 +189,10 @@ export const OAuthViewRender = React.memo((props: {
     foregroundColor?: string;
 }) => {
     const { theme } = useUnistyles();
+    const resolvedBackgroundColor = props.backgroundColor ?? theme.colors.surface;
+    const resolvedForegroundColor = props.foregroundColor ?? theme.colors.text;
+    const resolvedErrorColor = props.foregroundColor ?? theme.colors.textDestructive;
+    const resolvedRetryTextColor = props.foregroundColor ?? theme.colors.button.primary.tint;
     const [exchangingTokens, setExchangingTokens] = React.useState(false);
     const [webViewLoading, setWebViewLoading] = React.useState(true);
     const [error, setError] = React.useState<string | null>(null);
@@ -210,10 +218,20 @@ export const OAuthViewRender = React.memo((props: {
         });
     }, [webViewLoadingOpacity]);
 
+    const redactUrlForLogs = React.useCallback((value: unknown): string => {
+        if (typeof value !== 'string') return '';
+        try {
+            const url = new URL(value);
+            return `${url.protocol}//${url.host}${url.pathname}`;
+        } catch {
+            return '';
+        }
+    }, []);
+
     const handleNavigationStateChange = React.useCallback(async (navState: any) => {
         if (process.env.EXPO_PUBLIC_DEBUG) {
             // eslint-disable-next-line no-console
-            console.log('handleNavigationStateChange', navState.url);
+            console.log('handleNavigationStateChange', redactUrlForLogs(navState?.url));
         }
         // Prevent processing the same URL multiple times
         if (isProcessingRef.current) {
@@ -262,7 +280,7 @@ export const OAuthViewRender = React.memo((props: {
             } catch (err: unknown) {
                 if (process.env.EXPO_PUBLIC_DEBUG) {
                     // eslint-disable-next-line no-console
-                    console.error('Token exchange failed:', err);
+                    console.error('Token exchange failed');
                 }
                 const errorMessage =
                     err instanceof Error && err.message ? err.message : t('errors.tokenExchangeFailed');
@@ -288,17 +306,21 @@ export const OAuthViewRender = React.memo((props: {
         }
 
         return true;
-    }, [props.parameters, props.config]);
+    }, [props.parameters, props.config, redactUrlForLogs]);
 
     const handleWebViewError = React.useCallback((syntheticEvent: any) => {
         if (process.env.EXPO_PUBLIC_DEBUG) {
             // eslint-disable-next-line no-console
-            console.log('handleWebViewError', syntheticEvent);
+            console.log('handleWebViewError');
         }
         const { nativeEvent } = syntheticEvent;
         if (process.env.EXPO_PUBLIC_DEBUG) {
             // eslint-disable-next-line no-console
-            console.error('WebView error:', nativeEvent);
+            console.error('WebView error', {
+                code: nativeEvent?.code,
+                description: nativeEvent?.description,
+                url: redactUrlForLogs(nativeEvent?.url),
+            });
         }
 
         // Ignore localhost connection errors (expected)
@@ -309,17 +331,17 @@ export const OAuthViewRender = React.memo((props: {
         const errorMessage = t('errors.webViewLoadFailed');
         setError(errorMessage);
         props.config.onError?.(errorMessage);
-    }, [props.config]);
+    }, [props.config, redactUrlForLogs]);
 
     if (error) {
         return (
             <View style={[styles.errorContainer]}>
-                <Text style={[styles.errorText, { color: props.foregroundColor }]}>{error}</Text>
+                <Text style={[styles.errorText, { color: resolvedErrorColor }]}>{error}</Text>
                 <TouchableOpacity
                     style={styles.retryButton}
                     onPress={props.onRetry}
                 >
-                    <Text style={[styles.retryButtonText, { color: props.foregroundColor }]}>{t('common.retry')}</Text>
+                    <Text style={[styles.retryButtonText, { color: resolvedRetryTextColor }]}>{t('common.retry')}</Text>
                 </TouchableOpacity>
             </View>
         );
@@ -329,7 +351,7 @@ export const OAuthViewRender = React.memo((props: {
         <>
             <WebView
                 source={{ uri: props.parameters.url }}
-                style={[styles.webview, { backgroundColor: props.backgroundColor }]}
+                style={[styles.webview, { backgroundColor: resolvedBackgroundColor }]}
                 originWhitelist={['*']}
                 limitsNavigationsToAppBoundDomains={false}
                 onNavigationStateChange={handleNavigationStateChange}
@@ -351,15 +373,15 @@ export const OAuthViewRender = React.memo((props: {
                 userAgent='Mozilla/5.0 (iPhone; CPU iPhone OS 10_3 like Mac OS X) AppleWebKit/602.1.50 (KHTML, like Gecko) CriOS/56.0.2924.75 Mobile/14E5239e Safari/602.1'
             />
             {webViewLoading && (
-                <Animated.View style={[styles.loadingOverlay, webViewLoadingAnimatedStyle, { backgroundColor: props.backgroundColor }]}>
-                    <ActivityIndicator size="large" color={props.foregroundColor || theme.colors.text} />
-                    <Text style={[styles.loadingText, { color: props.foregroundColor }]}>{t('common.loading')}</Text>
+                <Animated.View style={[styles.loadingOverlay, webViewLoadingAnimatedStyle, { backgroundColor: resolvedBackgroundColor }]}>
+                    <ActivityIndicator size="large" color={resolvedForegroundColor} />
+                    <Text style={[styles.loadingText, { color: resolvedForegroundColor }]}>{t('common.loading')}</Text>
                 </Animated.View>
             )}
             {exchangingTokens && (
-                <Animated.View style={[styles.loadingOverlay, tokenExchangeAnimatedStyle, { backgroundColor: props.backgroundColor }]}>
-                    <ActivityIndicator size="large" color={props.foregroundColor || theme.colors.text} />
-                    <Text style={[styles.loadingText, { color: props.foregroundColor }]}>{t('settings.exchangingTokens')}</Text>
+                <Animated.View style={[styles.loadingOverlay, tokenExchangeAnimatedStyle, { backgroundColor: resolvedBackgroundColor }]}>
+                    <ActivityIndicator size="large" color={resolvedForegroundColor} />
+                    <Text style={[styles.loadingText, { color: resolvedForegroundColor }]}>{t('settings.exchangingTokens')}</Text>
                 </Animated.View>
             )}
         </>
@@ -370,7 +392,7 @@ export const OAuthViewUnsupported = React.memo((props: {
     name: string;
     command?: string;
 }) => {
-    const command = props.command || `happier connect ${props.name.toLowerCase()}`;
+    const command = props.command || t('connect.unsupported.command', { name: props.name.toLowerCase() });
 
     return (
         <View style={styles.unsupportedContainer}>
@@ -380,7 +402,7 @@ export const OAuthViewUnsupported = React.memo((props: {
             </Text>
             <View style={styles.terminalContainer}>
                 <Text style={styles.terminalCommand}>
-                    <Text style={styles.terminalPrompt}>$ </Text>
+                    <Text style={styles.terminalPrompt}>{TERMINAL_PROMPT}</Text>
                     {command}
                 </Text>
             </View>

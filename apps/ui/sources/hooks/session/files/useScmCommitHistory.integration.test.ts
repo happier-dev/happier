@@ -215,4 +215,43 @@ describe('useScmCommitHistory integration', () => {
             hook.unmount();
         });
     });
+
+    it('keeps last-known history entries visible when a reset reload fails', async () => {
+        const workspace = createRepoWithCommits(25);
+        const harness = createGitSessionRpcHarness(workspace);
+        let failReset = false;
+
+        mockSessionRPC.mockImplementation(async (sessionId: string, method: string, request: any) => {
+            if (method === 'scm.log.list' && failReset) {
+                return { success: false, error: 'offline' };
+            }
+            return harness(sessionId, method, request);
+        });
+
+        const hook = mountHook({
+            sessionId: 'session-history-swr-reset',
+            readLogEnabled: true,
+            sessionPath: workspace,
+        });
+
+        await act(async () => {
+            await hook.getCurrent().loadCommitHistory({ reset: true });
+        });
+
+        const firstPage = hook.getCurrent();
+        expect(firstPage.historyEntries).toHaveLength(20);
+
+        failReset = true;
+        await act(async () => {
+            await hook.getCurrent().loadCommitHistory({ reset: true });
+        });
+
+        const afterFailedReset = hook.getCurrent();
+        expect(afterFailedReset.historyEntries).toHaveLength(20);
+        expect(afterFailedReset.historyHasMore).toBe(false);
+
+        act(() => {
+            hook.unmount();
+        });
+    });
 });

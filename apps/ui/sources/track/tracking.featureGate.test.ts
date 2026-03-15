@@ -11,7 +11,7 @@ vi.mock('posthog-react-native', () => ({
 }));
 
 vi.mock('@/config', () => ({
-    config: { postHogKey: 'ph_test_key' },
+    config: { postHogKey: 'ph_test_key', postHogHost: 'https://example.posthog.test' },
 }));
 
 describe('tracking (feature gate)', () => {
@@ -33,5 +33,17 @@ describe('tracking (feature gate)', () => {
         expect(mod.tracking).toBeNull();
         expect(posthogConstructorSpy).not.toHaveBeenCalled();
     });
-});
 
+    it('initializes PostHog with the configured host when analytics are allowed', async () => {
+        process.env.EXPO_PUBLIC_HAPPIER_BUILD_FEATURES_DENY = '';
+        vi.resetModules();
+
+        await import('./tracking');
+        expect(posthogConstructorSpy).toHaveBeenCalledTimes(1);
+        const args = posthogConstructorSpy.mock.calls[0] ?? [];
+        expect(args[0]).toBe('ph_test_key');
+        expect(args[1]).toEqual(expect.objectContaining({
+            host: 'https://example.posthog.test',
+        }));
+    });
+});

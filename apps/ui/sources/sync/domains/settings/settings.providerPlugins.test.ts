@@ -7,7 +7,8 @@ describe('settingsParse provider plugin defaults', () => {
         const settings = settingsParse({});
 
         expect((settings as any).claudeRemoteAgentSdkEnabled).toBe(true);
-        expect((settings as any).claudeRemoteSettingSources).toBe('project');
+        expect((settings as any).claudeRemoteSettingSources).toBe('user_project');
+        expect((settings as any).claudeRemoteSettingSourcesV2).toEqual(['user', 'project', 'local']);
         expect((settings as any).claudeRemoteIncludePartialMessages).toBe(false);
         expect((settings as any).claudeLocalPermissionBridgeEnabled).toBe(true);
         expect((settings as any).claudeLocalPermissionBridgeWaitIndefinitely).toBe(false);
@@ -17,6 +18,7 @@ describe('settingsParse provider plugin defaults', () => {
         expect((settings as any).claudeRemoteDisableTodos).toBe(false);
         expect((settings as any).claudeRemoteStrictMcpServerConfig).toBe(false);
         expect((settings as any).claudeRemoteAdvancedOptionsJson).toBe('');
+        expect((settings as any).claudeCodeExperimentalAgentTeamsEnabled).toBe(false);
         expect((settings as any).codexBackendMode).toBe('mcp');
         expect((settings as any).codexMcpResumeInstallSpec).toBe('');
         expect((settings as any).codexAcpInstallSpec).toBe('');

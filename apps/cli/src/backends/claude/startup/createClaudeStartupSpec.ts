@@ -3,15 +3,12 @@ import type { BackendStartupSpec, StartupTask } from '@/agent/runtime/startup/st
 import { configuration } from '@/configuration';
 import { createClaudeInitializeSessionInBackgroundTask } from './tasks/initializeSessionInBackgroundTask';
 import { createClaudeRegisterRpcHandlersTask } from './tasks/registerRpcHandlersTask';
-import { createClaudeStartHappyMcpServerTask } from './tasks/startHappyMcpServerTask';
 import { createClaudeStartHookServerTask } from './tasks/startHookServerTask';
 
 type HookServer = Readonly<{ port: number; stop: () => void }>;
-type HappyServer = Readonly<{ url: string; toolNames: string[]; stop: () => void }>;
 
 export type ClaudeStartupArtifacts = {
   deferredSession: DeferredApiSessionClient;
-  happyServer: HappyServer | null;
   hookServer: HookServer | null;
   hookSettingsPath: string | null;
   exitCode: number | null;
@@ -21,7 +18,6 @@ type CreateClaudeStartupSpecDeps = Readonly<{
   startHookServer: () => Promise<HookServer>;
   generateHookSettingsFile: (port: number) => string;
   cleanupHookSettingsFile: (path: string) => void;
-  startHappyServer: (client: DeferredApiSessionClient) => Promise<HappyServer>;
   registerRpcHandlers: (args: { artifacts: ClaudeStartupArtifacts }) => void;
   initializeSessionInBackground: (args: { artifacts: ClaudeStartupArtifacts; signal: AbortSignal }) => Promise<void>;
   spawnLoop: (args: { artifacts: ClaudeStartupArtifacts; signal: AbortSignal }) => Promise<number>;
@@ -35,9 +31,6 @@ const defaultDeps: CreateClaudeStartupSpecDeps = {
     throw new Error('generateHookSettingsFile not wired');
   },
   cleanupHookSettingsFile: () => {},
-  startHappyServer: async () => {
-    throw new Error('startHappyServer not wired');
-  },
   registerRpcHandlers: () => {},
   initializeSessionInBackground: async () => {},
   spawnLoop: async () => 0,
@@ -48,7 +41,6 @@ export function createClaudeStartupSpec(params: { deps?: Partial<CreateClaudeSta
 
   const tasks: Array<StartupTask<ClaudeStartupArtifacts>> = [
     createClaudeRegisterRpcHandlersTask({ registerRpcHandlers: deps.registerRpcHandlers }),
-    createClaudeStartHappyMcpServerTask({ startHappyServer: deps.startHappyServer }),
     createClaudeStartHookServerTask({
       startHookServer: deps.startHookServer,
       generateHookSettingsFile: deps.generateHookSettingsFile,
@@ -70,7 +62,6 @@ export function createClaudeStartupSpec(params: { deps?: Partial<CreateClaudeSta
 
       return {
         deferredSession,
-        happyServer: null,
         hookServer: null,
         hookSettingsPath: null,
         exitCode: null,

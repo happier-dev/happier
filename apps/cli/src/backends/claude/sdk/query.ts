@@ -27,6 +27,7 @@ import type { Writable } from 'node:stream'
 import { logger } from '@/ui/logger'
 import { createManagedChildProcess } from '@/subprocess/supervision/managedChildProcess'
 import { stripNestedSessionDetectionEnv } from '@/utils/processEnv/stripNestedSessionDetectionEnv'
+import { resolveWindowsCommandInvocation } from '@happier-dev/cli-common/process'
 
 /**
  * Query class manages Claude Code process interaction
@@ -37,14 +38,22 @@ export class Query implements AsyncIterableIterator<SDKMessage> {
     private sdkMessages: AsyncIterableIterator<SDKMessage>
     private inputStream = new Stream<SDKMessage>()
     private canCallTool?: CanCallToolCallback
+    /**
+     * Optional callback fired for every non-control message as soon as it's read from stdout.
+     * This is invoked before enqueuing into the iterator stream so callers can forward messages
+     * even when the AsyncIterable consumer is blocked.
+     */
+    onMessageReceived?: (message: SDKMessage) => void
 
     constructor(
         private childStdin: Writable | null,
         private childStdout: NodeJS.ReadableStream,
         private processExitPromise: Promise<void>,
-        canCallTool?: CanCallToolCallback
+        canCallTool?: CanCallToolCallback,
+        onMessageReceived?: (message: SDKMessage) => void,
     ) {
         this.canCallTool = canCallTool
+        this.onMessageReceived = onMessageReceived
         this.readMessages()
         this.sdkMessages = this.readSdkMessages()
     }
@@ -108,6 +117,11 @@ export class Query implements AsyncIterableIterator<SDKMessage> {
                             continue
                         }
 
+                        try {
+                            this.onMessageReceived?.(message)
+                        } catch (e) {
+                            logDebug(`onMessageReceived callback error: ${e}`)
+                        }
                         this.inputStream.enqueue(message)
                     } catch (e) {
                         logger.debug(line)
@@ -255,35 +269,34 @@ export class Query implements AsyncIterableIterator<SDKMessage> {
 export function query(config: {
     prompt: QueryPrompt
     options?: QueryOptions
+    onMessageReceived?: (message: SDKMessage) => void
 }): Query {
-    const {
-        prompt,
-        options: {
-            allowedTools = [],
-            appendSystemPrompt,
-            customSystemPrompt,
-            cwd,
-            disallowedTools = [],
-            // Prefer the currently-running Node binary when available to avoid PATH-dependent
-            // failures on Windows (and GUI-launched shells). When running under Bun we keep
-            // the historical default ("node") because process.execPath would be Bun.
-            executable = typeof process.versions.bun === 'string' ? 'node' : process.execPath,
-            executableArgs = [],
-            maxTurns,
-            mcpServers,
-            pathToClaudeCodeExecutable = getDefaultClaudeCodePath(),
-            permissionMode = 'default',
-            continue: continueConversation,
-            resume,
-            model,
-            fallbackModel,
-            strictMcpConfig,
-            canCallTool,
-            settingsPath,
-            env,
-            stderr,
-        } = {}
-    } = config
+	    const {
+	        prompt,
+	        options: {
+	            appendSystemPrompt,
+	            customSystemPrompt,
+	            cwd,
+	            // Prefer the currently-running Node binary when available to avoid PATH-dependent
+	            // failures on Windows (and GUI-launched shells). When running under Bun we keep
+	            // the historical default ("node") because process.execPath would be Bun.
+	            executable = typeof process.versions.bun === 'string' ? 'node' : process.execPath,
+	            executableArgs = [],
+	            maxTurns,
+	            pathToClaudeCodeExecutable = getDefaultClaudeCodePath(),
+	            permissionMode = 'default',
+	            continue: continueConversation,
+	            resume,
+	            model,
+	            fallbackModel,
+	            strictMcpConfig,
+	            canCallTool,
+	            settingsPath,
+	            extraArgs,
+	            env,
+	            stderr,
+	        } = {}
+	    } = config
 
     const envOverlay = env ?? {}
 
@@ -300,34 +313,34 @@ export function query(config: {
         }
         args.push('--permission-prompt-tool', 'stdio')
     }
-    if (continueConversation) args.push('--continue')
-    if (resume) args.push('--resume', resume)
-    if (allowedTools.length > 0) args.push('--allowedTools', allowedTools.join(','))
-    if (disallowedTools.length > 0) args.push('--disallowedTools', disallowedTools.join(','))
-    if (mcpServers && Object.keys(mcpServers).length > 0) {
-        args.push('--mcp-config', JSON.stringify({ mcpServers }))
-    }
-    if (strictMcpConfig) args.push('--strict-mcp-config')
-    if (permissionMode) args.push('--permission-mode', permissionMode)
-    if (settingsPath) args.push('--settings', settingsPath)
+	    if (continueConversation) args.push('--continue')
+	    if (resume) args.push('--resume', resume)
+	    if (strictMcpConfig) args.push('--strict-mcp-config')
+	    if (permissionMode) args.push('--permission-mode', permissionMode)
+	    if (settingsPath) args.push('--settings', settingsPath)
 
-    if (fallbackModel) {
+	    if (fallbackModel) {
         if (model && fallbackModel === model) {
             throw new Error('Fallback model cannot be the same as the main model. Please specify a different model for fallbackModel option.')
         }
         args.push('--fallback-model', fallbackModel)
-    }
+	    }
 
-    // Handle prompt input
-    if (typeof prompt === 'string') {
-        args.push('--print', prompt.trim())
-    } else {
+	    if (Array.isArray(extraArgs) && extraArgs.length > 0) {
+	        // Forward raw args before the prompt/positional payload is appended.
+	        args.push(...extraArgs);
+	    }
+
+	    // Handle prompt input
+	    if (typeof prompt === 'string') {
+	        args.push('--print', prompt.trim())
+	    } else {
         args.push('--input-format', 'stream-json')
     }
 
     // Determine how to spawn Claude Code
     // - If it's a .js/.cjs file → spawn('node', [path, ...args])
-    // - If it's just 'claude' command → spawn('claude', args) with shell on Windows
+    // - If it's just 'claude' command → resolve + wrap on Windows (PATHEXT .cmd/.bat)
     // - If it's a full path to binary → spawn(path, args)
     const isJsFile = pathToClaudeCodeExecutable.endsWith('.js') || pathToClaudeCodeExecutable.endsWith('.cjs')
     const isCommandOnly = pathToClaudeCodeExecutable === 'claude'
@@ -348,23 +361,24 @@ export function query(config: {
     // Use clean env for global claude to avoid local node_modules/.bin taking precedence
     const baseEnv = isCommandOnly ? getCleanEnv() : process.env
     const spawnEnv: NodeJS.ProcessEnv = stripNestedSessionDetectionEnv({ ...baseEnv, ...envOverlay })
+    // Internal daemon→CLI marker used for strict env filtering in Agent SDK remote mode.
+    // Never forward it into the Claude Code subprocess environment.
+    delete spawnEnv.HAPPIER_SPAWN_EXPLICIT_ENV_KEYS_JSON;
     logDebug(`Spawning Claude Code process: ${spawnCommand} ${spawnArgs.join(' ')} (using ${isCommandOnly ? 'clean' : 'normal'} env)`)
 
-    const lowerSpawnCommand = typeof spawnCommand === 'string' ? spawnCommand.toLowerCase() : '';
-    const shouldUseShell =
-        process.platform === 'win32' &&
-        !isJsFile &&
-        (isCommandOnly || lowerSpawnCommand.endsWith('.cmd') || lowerSpawnCommand.endsWith('.bat'));
+    const invocation = resolveWindowsCommandInvocation({
+        command: spawnCommand,
+        args: spawnArgs,
+        env: spawnEnv,
+    });
 
-    const child = spawn(spawnCommand, spawnArgs, {
+    const child = spawn(invocation.command, invocation.args, {
         cwd,
         stdio: ['pipe', 'pipe', 'pipe'],
         signal: config.options?.abort,
         env: spawnEnv,
-        // Use a shell on Windows only when needed to execute command-only or shell-script entrypoints.
-        // Avoid shell for native binaries to reduce quoting and spawn-surface variability.
-        shell: shouldUseShell,
         windowsHide: true,
+        ...(invocation.windowsVerbatimArguments ? { windowsVerbatimArguments: true } : {}),
     }) as ChildProcessWithoutNullStreams
     const managedChild = createManagedChildProcess(child)
 
@@ -430,7 +444,7 @@ export function query(config: {
     })
 
     // Create query instance
-    const query = new Query(childStdin, child.stdout, processExitPromise, canCallTool)
+    const query = new Query(childStdin, child.stdout, processExitPromise, canCallTool, config.onMessageReceived)
 
     // Handle process errors
     child.on('error', (error) => {

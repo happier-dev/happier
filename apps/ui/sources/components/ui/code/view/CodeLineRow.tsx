@@ -10,6 +10,7 @@ import { tokenizeSimpleSyntaxLine } from '@/components/ui/code/tokenization/simp
 
 import { CodeGutter } from './CodeGutter';
 import { Text } from '@/components/ui/text/Text';
+import { t } from '@/text';
 
 
 export function CodeLineRow(props: {
@@ -39,6 +40,10 @@ export function CodeLineRow(props: {
     const commentActive = props.commentActive === true;
     const highlighted = props.highlighted === true;
 
+    const intraLineSegments = (Array.isArray(line.renderIntraLineDiffSegments) && line.renderIntraLineDiffSegments.length > 0)
+        ? line.renderIntraLineDiffSegments
+        : null;
+
     const onPress = line.selectable && onPressLine ? () => onPressLine(line) : undefined;
     const onLongPress = !isWeb && onPressAddComment && !line.renderIsHeaderLine ? () => onPressAddComment(line) : undefined;
 
@@ -60,6 +65,14 @@ export function CodeLineRow(props: {
             ? theme.colors.diff.hunkHeaderText
             : theme.colors.diff.contextText;
 
+    const resolveTokenColorWithFallback = React.useCallback((fallback: string, tokenType: string): string => {
+        if (tokenType === 'keyword') return theme.colors.syntaxKeyword ?? fallback;
+        if (tokenType === 'string') return theme.colors.syntaxString ?? fallback;
+        if (tokenType === 'number') return theme.colors.syntaxNumber ?? fallback;
+        if (tokenType === 'comment') return theme.colors.syntaxComment ?? fallback;
+        return fallback;
+    }, [theme.colors]);
+
     const simpleTokens = React.useMemo(() => {
         const mode = props.syntaxHighlighting?.mode ?? 'off';
         const language = props.syntaxHighlighting?.language ?? null;
@@ -70,18 +83,47 @@ export function CodeLineRow(props: {
         if (mode !== 'simple' && mode !== 'advanced') return null;
         if (!language) return null;
         if (line.renderIsHeaderLine) return null;
+        // Prefer intra-line diff rendering if segments are available.
+        if (intraLineSegments) return null;
         if ((line.renderCodeText ?? '').length > maxLineLength) return null;
 
         return tokenizeSimpleSyntaxLine({ line: line.renderCodeText ?? '', language });
-    }, [line.renderCodeText, line.renderIsHeaderLine, props.syntaxHighlighting?.language, props.syntaxHighlighting?.maxLineLength, props.syntaxHighlighting?.mode]);
+    }, [intraLineSegments, line.renderCodeText, line.renderIsHeaderLine, props.syntaxHighlighting?.language, props.syntaxHighlighting?.maxLineLength, props.syntaxHighlighting?.mode]);
 
     const renderTokenColor = React.useCallback((type: string): string => {
-        if (type === 'keyword') return theme.colors.syntaxKeyword ?? textColor;
-        if (type === 'string') return theme.colors.syntaxString ?? textColor;
-        if (type === 'number') return theme.colors.syntaxNumber ?? textColor;
-        if (type === 'comment') return theme.colors.syntaxComment ?? textColor;
-        return textColor;
-    }, [theme.colors, textColor]);
+        return resolveTokenColorWithFallback(textColor, type);
+    }, [resolveTokenColorWithFallback, textColor]);
+
+    const intraLineTokensBySegment = React.useMemo(() => {
+        const mode = props.syntaxHighlighting?.mode ?? 'off';
+        const language = props.syntaxHighlighting?.language ?? null;
+        const maxLineLength = props.syntaxHighlighting?.maxLineLength ?? 0;
+
+        if (!intraLineSegments) return null;
+        if (line.renderIsHeaderLine) return null;
+        if (line.kind !== 'add' && line.kind !== 'remove') return null;
+
+        // Advanced tokens should take precedence (web Pierre/modern Shiki path).
+        if (mode === 'advanced' && props.advancedTokens && props.advancedTokens.length > 0) return null;
+
+        const shouldTokenize = (mode === 'simple' || mode === 'advanced')
+            && Boolean(language)
+            && ((line.renderCodeText ?? '').length <= maxLineLength);
+
+        return intraLineSegments.map((seg) => ({
+            segment: seg,
+            tokens: shouldTokenize && language ? tokenizeSimpleSyntaxLine({ line: seg.text, language }) : null,
+        }));
+    }, [
+        intraLineSegments,
+        line.kind,
+        line.renderCodeText,
+        line.renderIsHeaderLine,
+        props.advancedTokens,
+        props.syntaxHighlighting?.language,
+        props.syntaxHighlighting?.maxLineLength,
+        props.syntaxHighlighting?.mode,
+    ]);
 
     const webWhitespaceStyle: TextStyle | null = React.useMemo(() => {
         if (!isWeb) return null;
@@ -130,9 +172,56 @@ export function CodeLineRow(props: {
                                     {token.text}
                                 </Text>
                             ))
+                            : intraLineTokensBySegment
+                                ? intraLineTokensBySegment.map(({ segment, tokens }, segIndex) => {
+                                    const segmentBg = segment.kind === 'added'
+                                        ? theme.colors.diff.inlineAddedBg
+                                        : segment.kind === 'removed'
+                                            ? theme.colors.diff.inlineRemovedBg
+                                            : 'transparent';
+
+                                    const segmentFg = segment.kind === 'added'
+                                        ? (theme.colors.diff.inlineAddedText ?? textColor)
+                                        : segment.kind === 'removed'
+                                            ? (theme.colors.diff.inlineRemovedText ?? textColor)
+                                            : textColor;
+
+                                    return (
+                                        <Text
+                                            key={segIndex}
+                                            selectable={line.selectable}
+                                            style={segment.kind === 'context' ? null : { backgroundColor: segmentBg, borderRadius: 3 }}
+                                        >
+                                            {Array.isArray(tokens)
+                                                ? tokens.map((tok, tokIndex) => (
+                                                    <Text
+                                                        key={tokIndex}
+                                                        selectable={line.selectable}
+                                                        style={{
+                                                            color: resolveTokenColorWithFallback(segmentFg, tok.type),
+                                                            fontWeight: tok.type === 'keyword' ? '600' : '400',
+                                                        }}
+                                                    >
+                                                        {tok.text}
+                                                    </Text>
+                                                ))
+                                                : (
+                                                    <Text selectable={line.selectable} style={{ color: segmentFg }}>
+                                                        {segment.text}
+                                                    </Text>
+                                                )}
+                                        </Text>
+                                    );
+                                })
                             : simpleTokens
                                 ? simpleTokens.map((token, idx) => (
-                                    <Text key={idx} style={{ color: renderTokenColor(token.type) }}>
+                                    <Text
+                                        key={idx}
+                                        style={{
+                                            color: renderTokenColor(token.type),
+                                            fontWeight: token.type === 'keyword' ? '600' : '400',
+                                        }}
+                                    >
                                         {token.text}
                                     </Text>
                                 ))
@@ -146,11 +235,13 @@ export function CodeLineRow(props: {
                     onHoverIn={() => setIsHovered(true)}
                     onHoverOut={() => setIsHovered(false)}
                     onPress={() => onPressAddComment(line)}
-                    hitSlop={8}
-                    style={styles(theme).commentButton}
-                    accessibilityRole="button"
-                    accessibilityLabel={commentActive ? 'Close comment' : 'Add comment'}
-                >
+                      hitSlop={8}
+                      style={styles(theme).commentButton}
+                      accessibilityRole="button"
+                      accessibilityLabel={
+                          commentActive ? t('files.reviewComments.closeCommentA11y') : t('files.reviewComments.addCommentA11y')
+                      }
+                  >
                     <Ionicons
                         name={commentActive ? 'close-circle-outline' : 'add-circle-outline'}
                         size={16}

@@ -7,7 +7,7 @@ describe('resolveConnectedServiceQuotasDaemonOptions', () => {
     const opts = resolveConnectedServiceQuotasDaemonOptions({});
     expect(opts.fetchTimeoutMs).toBe(15_000);
     expect(opts.discoveryEnabled).toBe(true);
-    expect(opts.discoveryIntervalMs).toBe(60_000);
+    expect(opts.discoveryIntervalMs).toBe(15 * 60_000);
     expect(opts.failureBackoffMinMs).toBe(30_000);
     expect(opts.failureBackoffMaxMs).toBe(10 * 60_000);
     expect(opts.failureBackoffJitterPct).toBeCloseTo(0.2, 5);

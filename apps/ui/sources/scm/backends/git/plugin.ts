@@ -17,9 +17,24 @@ export const gitScmUiPlugin: ScmUiBackendPlugin = {
         };
     },
     diffModeConfig(snapshot) {
-        const availableModes = snapshot?.capabilities
+        let availableModes: Array<'included' | 'pending' | 'both'> = snapshot?.capabilities
             ? resolveSupportedDiffAreas(snapshot.capabilities)
             : (['included', 'pending'] as const);
+
+        const includedFiles = Number(snapshot?.totals?.includedFiles ?? 0);
+        const pendingFiles = Number(snapshot?.totals?.pendingFiles ?? 0);
+
+        // Even when write operations are disabled, Git can still surface staged (included) changes
+        // read-only via `git diff --cached`. Some legacy/limited capability payloads infer
+        // `supportedDiffAreas` as pending-only; make the diff selector reflect reality when the
+        // snapshot already reports staged deltas.
+        if (includedFiles > 0 && !availableModes.includes('included')) {
+            availableModes = ['included', ...availableModes];
+        }
+        if (pendingFiles > 0 && !availableModes.includes('pending')) {
+            availableModes = [...availableModes, 'pending'];
+        }
+
         const defaultMode = availableModes.includes('pending') ? 'pending' : (availableModes[0] ?? 'pending');
         return {
             defaultMode,

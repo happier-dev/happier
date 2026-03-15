@@ -11,6 +11,9 @@ import { ClaudePermissionRpcRouter } from './utils/permissionRpcRouter';
 import { updateMetadataBestEffort } from '@/api/session/sessionWritesBestEffort';
 import type { SessionClientPort } from '@/api/session/sessionClientPort';
 import type { PushNotificationClient } from '@/api/pushNotifications';
+import { createHappierMcpBridge } from '@/agent/runtime/createHappierMcpBridge';
+import type { McpServerConfig } from '@/agent';
+import type { AccountSettings } from '@happier-dev/protocol';
 
 export type SessionFoundInfo = {
     sessionId: string;
@@ -22,11 +25,9 @@ export class Session {
     readonly logPath: string;
     readonly client: SessionClientPort;
     pushSender: PushNotificationClient | null;
+    accountSettings: AccountSettings | null;
     readonly queue: MessageQueue2<EnhancedMode>;
-    readonly claudeEnvVars?: Record<string, string>;
     claudeArgs?: string[];  // Made mutable to allow filtering
-    readonly mcpServers: Record<string, any>;
-    readonly allowedTools?: string[];
     readonly _onModeChange: (mode: 'local' | 'remote') => void;
     /** Path to temporary settings file with SessionStart hook (required for session tracking) */
     readonly hookSettingsPath: string;
@@ -41,6 +42,14 @@ export class Session {
     thinking: boolean = false;
     private currentTaskId: string | null = null;
     private permissionRpcRouter: ClaudePermissionRpcRouter | null = null;
+    private happierMcpBridge:
+        | {
+              mcpServers: Record<string, McpServerConfig>;
+              mcpConfigJson: string;
+              stop: () => void;
+          }
+        | null = null;
+    private happierMcpBridgePromise: Promise<NonNullable<Session['happierMcpBridge']>> | null = null;
 
     /**
      * Last known permission mode for this session, derived from message metadata / permission responses.
@@ -48,6 +57,21 @@ export class Session {
      */
     lastPermissionMode: PermissionMode = 'default';
     lastPermissionModeUpdatedAt: number = 0;
+
+    /**
+     * Claude Code experimental feature toggles derived from provider settings.
+     * Applied on the next Claude subprocess spawn (local + remote).
+     */
+    claudeCodeExperimentalAgentTeamsEnabled: boolean = false;
+
+    /**
+     * Timestamp of the most recent user-initiated abort request (UI abort, Ctrl-C exit,
+     * or mode-switch abort).
+     *
+     * Used as a narrow safety valve to avoid treating known "abort" cancellation signals
+     * as crashes when they surface as process-level unhandled rejections.
+     */
+    private lastUserAbortRequestedAtMs: number = 0;
     
     /** Callbacks to be notified when session ID is found/changed */
     private sessionFoundCallbacks: ((info: SessionFoundInfo) => void)[] = [];
@@ -60,15 +84,13 @@ export class Session {
     constructor(opts: {
         client: SessionClientPort,
         pushSender?: PushNotificationClient | null,
+        accountSettings?: AccountSettings | null,
         path: string,
         logPath: string,
         sessionId: string | null,
-        claudeEnvVars?: Record<string, string>,
         claudeArgs?: string[],
-        mcpServers: Record<string, any>,
         messageQueue: MessageQueue2<EnhancedMode>,
         onModeChange: (mode: 'local' | 'remote') => void,
-        allowedTools?: string[],
         /** Path to temporary settings file with SessionStart hook (required for session tracking) */
         hookSettingsPath: string,
         /** JavaScript runtime to use for spawning Claude Code (default: 'node') */
@@ -78,13 +100,11 @@ export class Session {
         this.path = opts.path;
         this.client = opts.client;
         this.pushSender = opts.pushSender ?? null;
+        this.accountSettings = opts.accountSettings ?? null;
         this.logPath = opts.logPath;
         this.sessionId = opts.sessionId;
         this.queue = opts.messageQueue;
-        this.claudeEnvVars = opts.claudeEnvVars;
         this.claudeArgs = opts.claudeArgs;
-        this.mcpServers = opts.mcpServers;
-        this.allowedTools = opts.allowedTools;
         this._onModeChange = opts.onModeChange;
         this.hookSettingsPath = opts.hookSettingsPath;
         this.jsRuntime = opts.jsRuntime ?? 'node';
@@ -98,8 +118,24 @@ export class Session {
         this.scheduleNextKeepAlive();
     }
 
+    noteUserAbortRequested(): void {
+        this.lastUserAbortRequestedAtMs = Date.now();
+    }
+
+    wasUserAbortRequestedRecently(withinMs: number): boolean {
+        const windowMs = Number.isFinite(withinMs) ? Math.max(0, Math.trunc(withinMs)) : 0;
+        if (windowMs === 0) return false;
+        const last = this.lastUserAbortRequestedAtMs;
+        if (last <= 0) return false;
+        return Date.now() - last <= windowMs;
+    }
+
     setPushSender(pushSender: PushNotificationClient | null): void {
         this.pushSender = pushSender;
+    }
+
+    setAccountSettings(settings: AccountSettings | null): void {
+        this.accountSettings = settings;
     }
 
     private scheduleNextKeepAlive(): void {
@@ -124,9 +160,41 @@ export class Session {
             clearTimeout(this.keepAliveTimer);
             this.keepAliveTimer = null;
         }
+        if (this.happierMcpBridge) {
+            try {
+                this.happierMcpBridge.stop();
+            } catch {
+                // ignore
+            }
+            this.happierMcpBridge = null;
+            this.happierMcpBridgePromise = null;
+        }
         this.sessionFoundCallbacks = [];
         this.permissionRpcRouter = null;
         logger.debug('[Session] Cleaned up resources');
+    }
+
+    async getOrCreateHappierMcpBridge(): Promise<{ mcpServers: Record<string, McpServerConfig>; mcpConfigJson: string }> {
+        if (this.happierMcpBridge) {
+            return { mcpServers: this.happierMcpBridge.mcpServers, mcpConfigJson: this.happierMcpBridge.mcpConfigJson };
+        }
+
+        if (!this.happierMcpBridgePromise) {
+            this.happierMcpBridgePromise = (async () => {
+                const bridge = await createHappierMcpBridge(this.client);
+                const mcpConfigJson = JSON.stringify({ mcpServers: bridge.mcpServers });
+                const stored = {
+                    mcpServers: bridge.mcpServers,
+                    mcpConfigJson,
+                    stop: bridge.happierMcpServer.stop,
+                };
+                this.happierMcpBridge = stored;
+                return stored;
+            })();
+        }
+
+        const stored = await this.happierMcpBridgePromise;
+        return { mcpServers: stored.mcpServers, mcpConfigJson: stored.mcpConfigJson };
     }
 
     getOrCreatePermissionRpcRouter(): ClaudePermissionRpcRouter {

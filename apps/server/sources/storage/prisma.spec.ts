@@ -25,6 +25,14 @@ describe("storage/prisma", () => {
         expect(() => (db as any).user).toThrow(/not initialized/i);
     });
 
+    it("includes linux binaryTargets in prisma/schema.prisma (cross-compiled self-host)", () => {
+        const root = join(process.cwd());
+        const fullSchema = readFileSync(join(root, "prisma", "schema.prisma"), "utf-8");
+        expect(fullSchema).toMatch(
+            /binaryTargets\s*=\s*\["native",\s*"debian-openssl-3\.0\.x",\s*"linux-arm64-openssl-3\.0\.x"\]/,
+        );
+    });
+
     it("RelationshipStatus matches prisma/schema.prisma", () => {
         const root = join(process.cwd());
         const fullSchema = readFileSync(join(root, "prisma", "schema.prisma"), "utf-8");

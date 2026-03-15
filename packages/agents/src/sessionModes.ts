@@ -1,6 +1,6 @@
 import type { AgentId } from './types.js';
 
-export type AgentSessionModesKind = 'none' | 'acpPolicyPresets' | 'acpAgentModes';
+export type AgentSessionModesKind = 'none' | 'acpPolicyPresets' | 'acpAgentModes' | 'staticAgentModes';
 
 /**
  * Session mode surfacing intent for each agent.
@@ -10,7 +10,7 @@ export type AgentSessionModesKind = 'none' | 'acpPolicyPresets' | 'acpAgentModes
  * - avoid duplicating “does this agent expose ACP modes?” logic across packages
  */
 export const AGENT_SESSION_MODES: Readonly<Record<AgentId, AgentSessionModesKind>> = Object.freeze({
-  claude: 'none',
+  claude: 'staticAgentModes',
   codex: 'acpPolicyPresets',
   opencode: 'acpAgentModes',
   gemini: 'none',

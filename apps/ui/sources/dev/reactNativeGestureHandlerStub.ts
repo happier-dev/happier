@@ -13,3 +13,5 @@ export const Gesture = {
 
 export const GestureDetector = 'GestureDetector' as any;
 
+// Many UI components use gesture-handler's ScrollView for better nested gesture interop.
+export const ScrollView = 'GestureHandlerScrollView' as any;

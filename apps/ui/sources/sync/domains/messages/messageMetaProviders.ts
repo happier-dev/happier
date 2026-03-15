@@ -32,7 +32,12 @@ export function addProviderMessageMetaExtras(args: {
     for (const [key, value] of Object.entries(extras as Record<string, unknown>)) {
         if (key === '__proto__' || key === 'constructor' || key === 'prototype') continue;
         if (Object.prototype.hasOwnProperty.call(merged, key)) continue;
-        if (!(typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean' || value === null)) continue;
+        const isPrimitive = typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean' || value === null;
+        const isSmallStringArray =
+            Array.isArray(value)
+            && value.length <= 16
+            && value.every((entry) => typeof entry === 'string');
+        if (!(isPrimitive || isSmallStringArray)) continue;
         (merged as Record<string, unknown>)[key] = value;
     }
 

@@ -8,7 +8,9 @@ import { useMountedShouldContinue } from './useMountedShouldContinue';
 
 describe('useMountedShouldContinue', () => {
     it('returns true while mounted and false after unmount', async () => {
-        let shouldContinue: (() => boolean) | null = null;
+        let shouldContinue: () => boolean = () => {
+            throw new Error('expected shouldContinue to be set');
+        };
         let root: renderer.ReactTestRenderer | null = null;
 
         function Test() {
@@ -21,14 +23,13 @@ describe('useMountedShouldContinue', () => {
             await Promise.resolve();
         });
 
-        expect(shouldContinue?.()).toBe(true);
+        expect(shouldContinue()).toBe(true);
 
         await act(async () => {
             root?.unmount();
             await Promise.resolve();
         });
 
-        expect(shouldContinue?.()).toBe(false);
+        expect(shouldContinue()).toBe(false);
     });
 });
-

@@ -28,8 +28,8 @@ Use these env vars on the Happier server:
 - `HAPPIER_SERVER_OWNER_USER_IDS` (comma-separated server owner account ids for owner-gated features)
 - `HAPPIER_BUG_REPORTS_SERVER_LOG_PATH` (optional explicit server log path)
 - `HAPPIER_BUG_REPORTS_SERVER_LOG_MAX_BYTES` (default `262144`, max tail bytes read from server log snapshot)
-- `HAPPIER_BUG_REPORTS_SERVER_DIAGNOSTICS_RATE_LIMIT_MAX` (default `30`)
-- `HAPPIER_BUG_REPORTS_SERVER_DIAGNOSTICS_RATE_LIMIT_WINDOW` (default `1 minute`)
+- `HAPPIER_DIAGNOSTICS_BUG_REPORT_SNAPSHOT_RATE_LIMIT_MAX` (default `30`)
+- `HAPPIER_DIAGNOSTICS_BUG_REPORT_SNAPSHOT_RATE_LIMIT_WINDOW` (default `1 minute`)
 
 To hard-disable server log exfiltration, keep `HAPPIER_BUG_REPORTS_SERVER_DIAGNOSTICS_ENABLED=0` and/or remove `server` from `HAPPIER_FEATURE_BUG_REPORTS__ACCEPTED_ARTIFACT_KINDS`.
 

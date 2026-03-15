@@ -1,6 +1,6 @@
 import * as React from 'react';
-import { ActivityIndicator, Platform, View } from 'react-native';
-import { Octicons } from '@expo/vector-icons';
+import { ActivityIndicator, FlatList, Platform, View, type ScrollViewProps } from 'react-native';
+import { Ionicons, Octicons } from '@expo/vector-icons';
 
 import { Text } from '@/components/ui/text/Text';
 import { Item } from '@/components/ui/lists/Item';
@@ -8,6 +8,7 @@ import { FileIcon } from '@/components/ui/media/FileIcon';
 import { Typography } from '@/constants/Typography';
 import type { FileItem } from '@/sync/domains/input/suggestionFile';
 import { t } from '@/text';
+import { normalizeRepoPathParts } from '@/utils/path/normalizeRepoPathParts';
 
 type SearchResultsListProps = {
     theme: any;
@@ -15,23 +16,34 @@ type SearchResultsListProps = {
     searchQuery: string;
     searchResults: FileItem[];
     onFilePress: (file: FileItem) => void;
+    onFilePressPinned?: (file: FileItem) => void;
+    onLayout?: ScrollViewProps['onLayout'];
+    onContentSizeChange?: ScrollViewProps['onContentSizeChange'];
+    onScroll?: ScrollViewProps['onScroll'];
+    scrollEventThrottle?: number;
 };
 
 function renderFileIconForSearch(file: FileItem, theme: any) {
     if (file.fileType === 'folder') {
-        return <Octicons name="file-directory" size={29} color={theme.colors.accent.blue} />;
+        return <Ionicons name="folder-outline" size={18} color={theme.colors.textSecondary} />;
     }
 
-    return <FileIcon fileName={file.fileName} size={29} />;
+    const { name } = normalizeRepoPathParts({ fileName: file.fileName, filePath: file.filePath, fullPath: file.fullPath });
+    return <FileIcon fileName={name || file.fileName} size={18} />;
 }
 
-export function SearchResultsList({
+export const SearchResultsList = React.memo(({
     theme,
     isSearching,
     searchQuery,
     searchResults,
     onFilePress,
-}: SearchResultsListProps) {
+    onFilePressPinned,
+    onLayout,
+    onContentSizeChange,
+    onScroll,
+    scrollEventThrottle,
+}: SearchResultsListProps) => {
     if (isSearching) {
         return (
             <View
@@ -103,40 +115,98 @@ export function SearchResultsList({
     }
 
     return (
-        <>
-            {Boolean(searchQuery) && (
-                <View
-                    style={{
-                        backgroundColor: theme.colors.surfaceHigh,
-                        paddingHorizontal: 16,
-                        paddingVertical: 12,
-                        borderBottomWidth: Platform.select({ ios: 0.33, default: 1 }),
-                        borderBottomColor: theme.colors.divider,
-                    }}
-                >
-                    <Text
+        <FlatList
+            data={searchResults}
+            keyExtractor={(file) => `file-${file.fullPath}`}
+            style={{ flex: 1, minHeight: 0 }}
+            ListHeaderComponent={
+                Boolean(searchQuery) ? (
+                    <View
                         style={{
-                            fontSize: 14,
-                            fontWeight: '600',
-                            color: theme.colors.textLink,
-                            ...Typography.default(),
+                            backgroundColor: theme.colors.surfaceHigh,
+                            paddingHorizontal: 16,
+                            paddingVertical: 12,
+                            borderBottomWidth: Platform.select({ ios: 0.33, default: 1 }),
+                            borderBottomColor: theme.colors.divider,
                         }}
                     >
-                        {t('files.searchResults', { count: searchResults.length })}
-                    </Text>
-                </View>
-            )}
-            {searchResults.map((file, index) => (
-                <Item
-                    key={`file-${file.fullPath}-${index}`}
-                    title={file.fileName}
-                    subtitle={file.filePath || t('files.projectRoot')}
-                    icon={renderFileIconForSearch(file, theme)}
-                    density="compact"
-                    onPress={file.fileType === 'file' ? () => onFilePress(file) : undefined}
-                    showDivider={index < searchResults.length - 1}
-                />
-            ))}
-        </>
+                        <Text
+                            style={{
+                                fontSize: 14,
+                                fontWeight: '600',
+                                color: theme.colors.textLink,
+                                ...Typography.default(),
+                            }}
+                        >
+                            {t('files.searchResults', { count: searchResults.length })}
+                        </Text>
+                    </View>
+                ) : null
+            }
+            contentContainerStyle={{ paddingBottom: 20 }}
+            renderItem={({ item: file, index }) => {
+                const { dir, name } = normalizeRepoPathParts({
+                    fileName: file.fileName,
+                    filePath: file.filePath,
+                    fullPath: file.fullPath,
+                });
+                const left = dir ? `${dir}/` : '';
+                const right = file.fileType === 'folder' ? `${name}/` : name;
+                return (
+                    <Item
+                        title={left}
+                        titleStyle={{
+                            color: theme.colors.textSecondary,
+                            ...Typography.default(),
+                        }}
+                        rightElement={
+                            right ? (
+                                <Text
+                                    style={{
+                                        fontSize: 13,
+                                        color: theme.colors.text,
+                                        ...Typography.default('semiBold'),
+                                        maxWidth: 220,
+                                    }}
+                                    numberOfLines={1}
+                                    ellipsizeMode="middle"
+                                >
+                                    {right}
+                                </Text>
+                            ) : null
+                        }
+                        icon={renderFileIconForSearch(file, theme)}
+                        density="compact"
+                        onPress={file.fileType === 'file' ? () => onFilePress(file) : undefined}
+                        onDoublePress={
+                            file.fileType === 'file' && onFilePressPinned
+                                ? () => onFilePressPinned(file)
+                                : undefined
+                        }
+                        showChevron={false}
+                        showDivider={index < searchResults.length - 1}
+                        style={{
+                            paddingHorizontal: 12,
+                        }}
+                    />
+                );
+            }}
+            initialNumToRender={Math.min(32, searchResults.length)}
+            maxToRenderPerBatch={32}
+            windowSize={7}
+            removeClippedSubviews={Platform.OS !== 'web'}
+            onLayout={onLayout}
+            onContentSizeChange={onContentSizeChange}
+            onScroll={onScroll}
+            scrollEventThrottle={scrollEventThrottle ?? 16}
+            getItemLayout={
+                Platform.OS === 'web'
+                    ? (_data, index) => {
+                        const length = 38;
+                        return { length, offset: length * index, index };
+                    }
+                    : undefined
+            }
+        />
     );
-}
+});

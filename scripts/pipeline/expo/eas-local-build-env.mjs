@@ -15,6 +15,28 @@ export function createEasLocalBuildEnv(opts) {
   if (!Object.prototype.hasOwnProperty.call(env, 'EAS_BUILD_DISABLE_EXPO_DOCTOR_STEP')) {
     env.EAS_BUILD_DISABLE_EXPO_DOCTOR_STEP = '1';
   }
+
+  // External contributors (and many local setups) won't have Sentry credentials configured.
+  // The Sentry React Native integrations can fail the build when upload is attempted without auth.
+  // Default to skipping auto upload unless the auth token is explicitly provided (or the operator overrides).
+  if (!Object.prototype.hasOwnProperty.call(env, 'SENTRY_DISABLE_AUTO_UPLOAD')) {
+    const sentryAuthToken = String(env.SENTRY_AUTH_TOKEN ?? '').trim();
+    if (!sentryAuthToken) env.SENTRY_DISABLE_AUTO_UPLOAD = 'true';
+  }
+
+  if (opts.platform === 'android') {
+    const preferIpv4Raw = String(env.HAPPIER_EAS_ANDROID_PREFER_IPV4 ?? '').trim().toLowerCase();
+    const preferIpv4 = preferIpv4Raw ? preferIpv4Raw !== '0' && preferIpv4Raw !== 'false' : true;
+    if (preferIpv4) {
+      const preferStack = '-Djava.net.preferIPv4Stack=true';
+      const preferAddrs = '-Djava.net.preferIPv4Addresses=true';
+      const existing = String(env.JAVA_TOOL_OPTIONS ?? '').trim();
+      const parts = existing ? existing.split(/\s+/).filter(Boolean) : [];
+      if (!parts.includes(preferStack)) parts.push(preferStack);
+      if (!parts.includes(preferAddrs)) parts.push(preferAddrs);
+      env.JAVA_TOOL_OPTIONS = parts.join(' ');
+    }
+  }
   if (opts.platform === 'ios') {
     if (!Object.prototype.hasOwnProperty.call(env, 'FASTLANE_XCODEBUILD_SETTINGS_TIMEOUT')) {
       env.FASTLANE_XCODEBUILD_SETTINGS_TIMEOUT = '30';

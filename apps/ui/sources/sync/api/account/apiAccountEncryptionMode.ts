@@ -25,6 +25,11 @@ export async function fetchAccountEncryptionMode(
             { includeAuth: false },
         );
 
+        // Back-compat: older servers may not implement this endpoint. Fail closed to E2EE.
+        if (response.status === 404) {
+            return { mode: 'e2ee', updatedAt: 0 };
+        }
+
         if (!response.ok) {
             if (response.status >= 400 && response.status < 500 && response.status !== 408 && response.status !== 429) {
                 throw new HappyError('Failed to load encryption setting', false, { status: response.status, kind: 'server' });

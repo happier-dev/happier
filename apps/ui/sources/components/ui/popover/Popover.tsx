@@ -50,6 +50,12 @@ type PopoverCommonProps = Readonly<{
     edgePadding?: number | Readonly<{ horizontal?: number; vertical?: number }>;
     /** Extra styles applied to the positioned popover container. */
     containerStyle?: StyleProp<ViewStyle>;
+    /**
+     * When true (web only), clicking the anchor while the popover is open will also close it.
+     * Useful for trigger chips that behave like toggles, especially when global pointerdown-capture
+     * close handlers run before the anchor's press handler.
+     */
+    closeOnAnchorPress?: boolean;
     children: (render: PopoverRenderProps) => React.ReactNode;
 }>;
 
@@ -308,10 +314,20 @@ export function Popover(props: PopoverWithBackdrop | PopoverWithoutBackdrop) {
                         ? availableLeft
                         : effectiveBoundaryRect.width - gap * 2;
 
+            const nextMaxHeight = Math.max(0, Math.min(maxHeightCap, Math.floor(maxHeightAvailable)));
+            const nextMaxWidth = Math.max(0, Math.min(maxWidthCap, Math.floor(maxWidthAvailable)));
+            // Treat "no available space" as an invalid transient measurement. On native (especially Android),
+            // early measurements can occasionally report temporary boundary/anchor geometry that would yield
+            // maxHeight/maxWidth = 0, which makes popovers appear collapsed. Retrying a couple frames later
+            // avoids getting stuck at 0-height.
+            if (nextMaxHeight < 1 || nextMaxWidth < 1) {
+                return false;
+            }
+
             setComputed({
                 placement: resolvedPlacement,
-                maxHeight: Math.max(0, Math.min(maxHeightCap, Math.floor(maxHeightAvailable))),
-                maxWidth: Math.max(0, Math.min(maxWidthCap, Math.floor(maxWidthAvailable))),
+                maxHeight: nextMaxHeight,
+                maxWidth: nextMaxWidth,
             });
             setAnchorRectState(anchorRect);
             setBoundaryRectState(effectiveBoundaryRect);
@@ -331,12 +347,6 @@ export function Popover(props: PopoverWithBackdrop | PopoverWithoutBackdrop) {
             }
             setTimeout(cb, 0);
         };
-
-        const shouldRetry = Platform.OS === 'web' || shouldPortalNative;
-        if (!shouldRetry) {
-            void measureOnce();
-            return;
-        }
 
         // On web and native portal overlays, layout can "settle" a frame later (especially when opening).
         // If the initial measurement returns invalid values, retry a couple times so we don't get stuck
@@ -486,10 +496,35 @@ export function Popover(props: PopoverWithBackdrop | PopoverWithoutBackdrop) {
                 Math.max(boundaryRect.x, left),
             );
 
+            const verticalStyle: ViewStyle = (() => {
+                // Prefer anchoring the edge closest to the anchor so the popover doesn’t “jiggle”
+                // when its content height changes after opening (e.g. async-loaded trees/lists).
+                //
+                // For top-placed portals we can pin the bottom edge to (anchorTop - gap) using `bottom`,
+                // which avoids depending on the measured content height for vertical positioning.
+                if (computed.placement === 'top') {
+                    const anchorTopInPortalSpace =
+                        position === 'absolute'
+                            ? (anchorRectState.y - webPortalOffsetY)
+                            : anchorRectState.y;
+                    const portalHeight =
+                        position === 'absolute'
+                            ? (webPortalTargetRect?.height ?? windowHeight)
+                            : windowHeight;
+                    return {
+                        bottom: Math.floor(portalHeight - (anchorTopInPortalSpace - gap)),
+                    } as any;
+                }
+
+                return {
+                    top: Math.floor(top - (position === 'absolute' ? webPortalOffsetY : 0)),
+                } as any;
+            })();
+
             return {
                 position,
                 left: Math.floor(clampedLeft - (position === 'absolute' ? webPortalOffsetX : 0)),
-                top: Math.floor(top - (position === 'absolute' ? webPortalOffsetY : 0)),
+                ...verticalStyle,
                 zIndex: 1000,
                 width:
                     computed.placement === 'top' ||
@@ -518,6 +553,13 @@ export function Popover(props: PopoverWithBackdrop | PopoverWithoutBackdrop) {
         // Hide them until we have enough layout info to position them correctly.
         if (!shouldPortalWeb && !shouldPortalNative) return 1;
         if (!anchorRectState) return 0;
+        if (
+            (computed.placement === 'top' || computed.placement === 'bottom') &&
+            shouldPortalWeb &&
+            (!contentRectState || contentRectState.height < 1)
+        ) {
+            return 0;
+        }
         if (
             (computed.placement === 'left' || computed.placement === 'right') &&
             anchorAlignVerticalOnPortal !== 'start' &&
@@ -592,7 +634,12 @@ export function Popover(props: PopoverWithBackdrop | PopoverWithoutBackdrop) {
             const contentEl = getDomElementFromNode(contentContainerRef.current);
             if (contentEl && contentEl.contains(target)) return;
             const anchorEl = getDomElementFromNode(anchorRef.current);
-            if (anchorEl && anchorEl.contains(target)) return;
+            if (anchorEl && anchorEl.contains(target)) {
+                if (props.closeOnAnchorPress) {
+                    onRequestClose();
+                }
+                return;
+            }
             onRequestClose();
         };
 

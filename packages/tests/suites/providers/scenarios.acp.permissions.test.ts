@@ -215,7 +215,7 @@ describe('providers: ACP scenario builders (permissions)', () => {
         decision: 'approve',
       });
 
-      await scenario.setup?.({ workspaceDir });
+      await scenario.setup?.({ workspaceDir, cliHome: workspaceDir });
       await writeFile(join(workspaceDir, 'e2e-patch-perm.txt'), 'PATCH_AFTER\n', 'utf8');
 
       await scenario.verify?.(buildVerifyContext({ workspaceDir, traceEvents: [tracePermissionRequestEvent()] }));
@@ -235,7 +235,7 @@ describe('providers: ACP scenario builders (permissions)', () => {
         decision: 'deny',
       });
 
-      await scenario.setup?.({ workspaceDir });
+      await scenario.setup?.({ workspaceDir, cliHome: workspaceDir });
       await scenario.verify?.(buildVerifyContext({ workspaceDir, traceEvents: [tracePermissionRequestEvent()] }));
     } finally {
       await rm(workspaceDir, { recursive: true, force: true });
@@ -254,7 +254,7 @@ describe('providers: ACP scenario builders (permissions)', () => {
         expectPermissionRequest: false,
       });
 
-      await scenario.setup?.({ workspaceDir });
+      await scenario.setup?.({ workspaceDir, cliHome: workspaceDir });
       await writeFile(join(workspaceDir, 'e2e-patch-perm.txt'), 'PATCH_AFTER\n', 'utf8');
       expect((scenario.requiredTraceSubstrings ?? []).some((value) => value.includes('permission-request'))).toBe(false);
 

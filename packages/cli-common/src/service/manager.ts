@@ -1,6 +1,7 @@
 import { dirname, join } from 'node:path';
 import { chmod, mkdir, rename, writeFile } from 'node:fs/promises';
 import { spawnSync, type SpawnSyncReturns } from 'node:child_process';
+import { userInfo } from 'node:os';
 
 import { buildLaunchdPath, buildLaunchdPlistXml } from './launchd.js';
 import { renderSystemdServiceUnit } from './systemd.js';
@@ -145,6 +146,14 @@ export function buildServiceDefinition(params: Readonly<{ backend: ServiceBacken
 function resolveUid(uid: number | null | undefined): number | null {
   if (typeof uid === 'number' && Number.isFinite(uid) && uid >= 0) return Math.floor(uid);
   if (typeof process.getuid === 'function') return process.getuid();
+  try {
+    const info = userInfo();
+    if (typeof info?.uid === 'number' && Number.isFinite(info.uid) && info.uid >= 0) return Math.floor(info.uid);
+  } catch {
+    // ignore
+  }
+  const envUid = Number(String(process.env.UID ?? '').trim());
+  if (Number.isFinite(envUid) && envUid >= 0) return Math.floor(envUid);
   return null;
 }
 
@@ -308,11 +317,18 @@ function commandExists(cmd: string, envPath: string | undefined): boolean {
 }
 
 export async function applyServicePlan(plan: ServicePlan, options: Readonly<{ runCommands?: boolean }> = {}): Promise<void> {
+  let launchdUsedLegacyLoadFallback = false;
   for (const w of plan.writes) {
     await writeAtomicTextFile(w.path, w.contents, w.mode ?? 0o644);
   }
   if (options.runCommands === false) return;
   for (const c of plan.commands) {
+    if (launchdUsedLegacyLoadFallback && c.cmd === 'launchctl') {
+      const first = Array.isArray(c.args) ? String(c.args[0] ?? '').trim() : '';
+      if (first === 'enable' || first === 'kickstart') {
+        continue;
+      }
+    }
     if (!commandExists(c.cmd, process.env.PATH)) {
       throw new Error(`[service] command not found: ${c.cmd}`);
     }
@@ -326,6 +342,31 @@ export async function applyServicePlan(plan: ServicePlan, options: Readonly<{ ru
     if (status !== 0 && !c.allowFail && shouldRetryLaunchctlKickstart({ cmd: c.cmd, args: c.args, status, stderr: res.stderr })) {
       res = await retryLaunchctlKickstart({ cmd: c.cmd, args: c.args });
       status = typeof res.status === 'number' ? res.status : null;
+    }
+
+    // Some macOS setups return a generic EIO (exit 5) when bootstrapping into the GUI launchd domain.
+    // Fall back to the legacy load/unload flow, which is more permissive and still supported.
+    if (status !== 0 && !c.allowFail && c.cmd === 'launchctl') {
+      const args = Array.isArray(c.args) ? c.args.map((a) => String(a ?? '')) : [];
+      if (args[0] === 'bootstrap' && /^gui\/\d+$/.test(args[1] ?? '') && typeof status === 'number' && status === 5 && args[2]) {
+        spawnSync('launchctl', ['unload', '-w', args[2]], { encoding: 'utf8', env: process.env });
+        const loadRes = spawnSync('launchctl', ['load', '-w', args[2]], { encoding: 'utf8', env: process.env });
+        const loadStatus = typeof loadRes.status === 'number' ? loadRes.status : null;
+        if (loadRes.error) {
+          throw new Error(`[service] failed to run launchctl load: ${loadRes.error.message}`);
+        }
+        if (loadStatus === 0) {
+          launchdUsedLegacyLoadFallback = true;
+          continue;
+        }
+        const loadStderr = String(loadRes.stderr ?? '').trim();
+        const loadStdout = String(loadRes.stdout ?? '').trim();
+        const loadSuffix = [loadStdout ? `stdout:\n${loadStdout}` : '', loadStderr ? `stderr:\n${loadStderr}` : '']
+          .filter(Boolean)
+          .join('\n');
+        const loadDetails = loadSuffix ? `\n${loadSuffix}` : '';
+        throw new Error(`[service] launchctl bootstrap failed (exit ${status}); fallback to launchctl load also failed (${loadStatus ?? 'unknown'}): launchctl load -w ${args[2]}${loadDetails}`.trim());
+      }
     }
 
     if (status !== 0) {

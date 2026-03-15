@@ -45,6 +45,7 @@ export class ClaudeRemoteTaskOutputCollector {
     const content = (message as any)?.message?.content;
     if (!Array.isArray(content)) return { imported: [], taskOutputToolResults: [] };
 
+    const toolUseResult = (message as any)?.tool_use_result;
     const imported: ClaudeTaskOutputImportedMessage[] = [];
     const taskOutputToolResults: ClaudeTaskOutputToolResultSummary[] = [];
 
@@ -55,7 +56,9 @@ export class ClaudeRemoteTaskOutputCollector {
       const toolUseId = String((item as any).tool_use_id ?? '').trim();
       if (!toolUseId) continue;
 
-      const toolResultText = coerceToolResultText((item as any).content);
+      const toolResultText = coerceToolResultText(
+        toolUseResult !== undefined ? { content: (item as any).content, tool_use_result: toolUseResult } : (item as any).content,
+      );
       const result = this.importer.ingestToolResult({ toolUseId, toolResultText });
       imported.push(...result.imported);
 

@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -14,7 +14,109 @@ import {
   readUpdateCache,
   writeUpdateCache,
   resolveSpawnDetachedNodeInvocation,
+  readNpmDistTagVersion,
+  installRuntimeFromNpm,
 } from '../dist/update/index.js';
+
+async function withPlatform(platform, run) {
+  const descriptor = Object.getOwnPropertyDescriptor(process, 'platform');
+  if (!descriptor) return await run();
+
+  Object.defineProperty(process, 'platform', { ...descriptor, value: platform });
+  try {
+    return await run();
+  } finally {
+    Object.defineProperty(process, 'platform', descriptor);
+  }
+}
+
+async function createWindowsNpmShimFixture() {
+  const dir = await mkdtemp(join(tmpdir(), 'happier-cli-common-winshim-'));
+  const binDir = join(dir, 'bin');
+  await mkdir(binDir, { recursive: true });
+
+  const nodeExecPath = process.execPath.replace(/\\/g, '\\\\');
+  const cmdExePath = join(binDir, 'cmd.exe');
+  const npmCmdPath = join(binDir, 'npm.cmd');
+
+  const cmdExeScript = `#!${nodeExecPath}
+const cp = require('node:child_process');
+
+function splitCommandLine(raw) {
+  const tokens = [];
+  let current = '';
+  let inQuotes = false;
+  for (let i = 0; i < raw.length; i += 1) {
+    let ch = raw[i];
+    if (ch === '^' && i + 1 < raw.length) {
+      const next = raw[i + 1];
+      i += 1;
+      if (next === ' ' || next === '\\t') {
+        current += next;
+        continue;
+      }
+      ch = next;
+    }
+    if (ch === '"') {
+      inQuotes = !inQuotes;
+      continue;
+    }
+    if (!inQuotes && (ch === ' ' || ch === '\\t')) {
+      if (current) tokens.push(current);
+      current = '';
+      continue;
+    }
+    current += ch;
+  }
+  if (current) tokens.push(current);
+  return tokens;
+}
+
+const args = process.argv.slice(2);
+const cIndex = args.findIndex((a) => String(a).toLowerCase() === '/c');
+const rest = cIndex === -1 ? [] : args.slice(cIndex + 1);
+if (rest.length === 0) process.exit(1);
+
+let commandLine = rest.join(' ');
+if (rest.length === 1) commandLine = rest[0];
+if (commandLine.startsWith('"') && commandLine.endsWith('"')) commandLine = commandLine.slice(1, -1);
+
+const tokens = splitCommandLine(commandLine);
+if (tokens.length === 0) process.exit(1);
+
+const command = tokens[0];
+const commandArgs = tokens.slice(1);
+const child = cp.spawn(command, commandArgs, { stdio: 'inherit', env: process.env });
+
+child.on('exit', (code) => process.exit(code ?? 1));
+child.on('error', () => process.exit(127));
+`;
+
+  const npmCmdScript = `#!${nodeExecPath}
+const args = process.argv.slice(2);
+if (args[0] === 'view' && typeof args[1] === 'string' && args[2] === 'version') {
+  process.stdout.write('1.2.3\\n');
+  process.exit(0);
+}
+if (args[0] === 'install') {
+  process.exit(0);
+}
+process.exit(1);
+`;
+
+  await writeFile(cmdExePath, cmdExeScript, 'utf8');
+  await chmod(cmdExePath, 0o755);
+  await writeFile(npmCmdPath, npmCmdScript, 'utf8');
+  await chmod(npmCmdPath, 0o755);
+
+  return {
+    dir,
+    binDir,
+    async cleanup() {
+      await rm(dir, { recursive: true, force: true });
+    },
+  };
+}
 
 test('normalizeSemverBase strips prerelease', () => {
   assert.equal(normalizeSemverBase('1.2.3-preview.4'), '1.2.3');
@@ -156,4 +258,47 @@ test('resolveSpawnDetachedNodeInvocation omits script when execPath is a self-co
     }),
     { file: '/home/user/.happier/bin/happier', args: ['self', 'check', '--quiet'], isRuntime: false },
   );
+});
+
+test('readNpmDistTagVersion resolves npm.cmd shims on Windows', async () => {
+  const fixture = await createWindowsNpmShimFixture();
+  try {
+    await withPlatform('win32', async () => {
+      const version = readNpmDistTagVersion({
+        packageName: '@happier-dev/cli',
+        distTag: 'latest',
+        cwd: fixture.dir,
+        env: {
+          PATH: fixture.binDir,
+          PATHEXT: '.CMD;.EXE',
+          ComSpec: 'cmd.exe',
+        },
+      });
+      assert.equal(version, '1.2.3');
+    });
+  } finally {
+    await fixture.cleanup();
+  }
+});
+
+test('installRuntimeFromNpm resolves npm.cmd shims on Windows', async () => {
+  const fixture = await createWindowsNpmShimFixture();
+  try {
+    await withPlatform('win32', async () => {
+      const runtimeDir = join(fixture.dir, 'runtime');
+      const result = installRuntimeFromNpm({
+        runtimeDir,
+        spec: '@happier-dev/cli@1.2.3',
+        cwd: fixture.dir,
+        env: {
+          PATH: fixture.binDir,
+          PATHEXT: '.CMD;.EXE',
+          ComSpec: 'cmd.exe',
+        },
+      });
+      assert.equal(result.ok, true);
+    });
+  } finally {
+    await fixture.cleanup();
+  }
 });

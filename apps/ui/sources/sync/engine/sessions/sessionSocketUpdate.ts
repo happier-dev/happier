@@ -27,12 +27,14 @@ export async function handleNewMessageSocketUpdate(params: {
     applySessions: (sessions: Array<Omit<Session, 'presence'> & { presence?: 'online' | number }>) => void;
     fetchSessions: () => void;
     applyMessages: (sessionId: string, messages: NormalizedMessage[]) => void;
+    enqueueMessages?: (sessionId: string, messages: NormalizedMessage[]) => void;
+    onNormalizedMessagesApplied?: (sessionId: string, messages: NormalizedMessage[]) => void;
     isMutableToolCall: (sessionId: string, toolUseId: string) => boolean;
     invalidateScmStatus: (sessionId: string) => void;
     isSessionMessagesLoaded: (sessionId: string) => boolean;
     getSessionMaterializedMaxSeq: (sessionId: string) => number;
     markSessionMaterializedMaxSeq: (sessionId: string, seq: number) => void;
-    invalidateMessagesForSession: (sessionId: string) => void;
+    onMessageGapDetected: (sessionId: string, info: { prevMaterializedMaxSeq: number; messageSeq: number | null }) => void;
     onTaskLifecycleEvent?: (sessionId: string, event: TaskLifecycleEvent) => void;
 }): Promise<void> {
     const {
@@ -42,12 +44,13 @@ export async function handleNewMessageSocketUpdate(params: {
         applySessions,
         fetchSessions,
         applyMessages,
+        enqueueMessages,
         isMutableToolCall,
         invalidateScmStatus,
         isSessionMessagesLoaded,
         getSessionMaterializedMaxSeq,
         markSessionMaterializedMaxSeq,
-        invalidateMessagesForSession,
+        onMessageGapDetected,
     } = params;
 
     const body = updateData?.body;
@@ -65,7 +68,10 @@ export async function handleNewMessageSocketUpdate(params: {
 
     const encryption = getSessionEncryption(sessionId);
     if (!encryption) {
-        console.error(`Session ${sessionId} not found`);
+        const session = getSession(sessionId);
+        if (session) {
+            console.error(`Session encryption not found for ${sessionId} - this should never happen`);
+        }
         fetchSessions();
         return;
     }
@@ -74,7 +80,15 @@ export async function handleNewMessageSocketUpdate(params: {
     if ((body as any).message) {
         const decrypted = await encryption.decryptMessage((body as any).message);
         if (decrypted) {
-            lastMessage = normalizeRawMessage(decrypted.id, decrypted.localId, decrypted.createdAt, decrypted.content, { seq: decrypted.seq ?? undefined });
+            const normalizedSeq =
+                typeof messageSeq === 'number' && Number.isFinite(messageSeq)
+                    ? Math.trunc(messageSeq)
+                    : (
+                        typeof decrypted.seq === 'number' && Number.isFinite(decrypted.seq)
+                            ? Math.trunc(decrypted.seq)
+                            : undefined
+                    );
+            lastMessage = normalizeRawMessage(decrypted.id, decrypted.localId, decrypted.createdAt, decrypted.content, { seq: normalizedSeq });
 
             const { isTaskComplete, isTaskStarted, lifecycleEvent } = inferTaskLifecycleFromMessageContent(decrypted.content, decrypted.createdAt);
             if (lifecycleEvent) {
@@ -104,9 +118,14 @@ export async function handleNewMessageSocketUpdate(params: {
             }
 
             if (lastMessage) {
-                applyMessages(sessionId, [lastMessage]);
-                if (typeof messageSeq === 'number') {
-                    markSessionMaterializedMaxSeq(sessionId, messageSeq);
+                if (enqueueMessages) {
+                    enqueueMessages(sessionId, [lastMessage]);
+                } else {
+                    applyMessages(sessionId, [lastMessage]);
+                    params.onNormalizedMessagesApplied?.(sessionId, [lastMessage]);
+                    if (typeof messageSeq === 'number') {
+                        markSessionMaterializedMaxSeq(sessionId, messageSeq);
+                    }
                 }
 
                 let hasMutableTool = false;
@@ -130,11 +149,11 @@ export async function handleNewMessageSocketUpdate(params: {
                 messageSeq > prevMaterializedMaxSeq + 1 &&
                 isSessionMessagesLoaded(sessionId)
             ) {
-                invalidateMessagesForSession(sessionId);
+                onMessageGapDetected(sessionId, { prevMaterializedMaxSeq, messageSeq });
             }
         } else {
             if (isSessionMessagesLoaded(sessionId)) {
-                invalidateMessagesForSession(sessionId);
+                onMessageGapDetected(sessionId, { prevMaterializedMaxSeq, messageSeq: typeof messageSeq === 'number' ? messageSeq : null });
             } else {
                 fetchSessions();
             }

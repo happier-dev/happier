@@ -99,4 +99,29 @@ describe('createOnChildExited', () => {
 
     expect(onUnexpectedExit).toHaveBeenCalledTimes(1);
   });
+
+  it('removes both wrapper and runner session markers when runner pid is known', async () => {
+    const wrapperPid = 123;
+    const runnerPid = 456;
+    const tracked = { pid: wrapperPid, startedBy: 'daemon', happySessionId: 'session-1', sessionRunnerPid: runnerPid };
+
+    const pidToTrackedSession = new Map<number, any>([[wrapperPid, tracked]]);
+    const spawnResourceCleanupByPid = new Map<number, () => void>();
+    const sessionAttachCleanupByPid = new Map<number, () => Promise<void>>();
+
+    const removeSessionMarkerFn = vi.fn(async () => {});
+
+    const onChildExited = createOnChildExited({
+      pidToTrackedSession,
+      spawnResourceCleanupByPid,
+      sessionAttachCleanupByPid,
+      getApiMachineForSessions: () => null,
+      removeSessionMarkerFn,
+    } as any);
+
+    onChildExited(wrapperPid, { reason: 'process-exited', code: 0, signal: null });
+
+    expect(removeSessionMarkerFn).toHaveBeenCalledWith(wrapperPid);
+    expect(removeSessionMarkerFn).toHaveBeenCalledWith(runnerPid);
+  });
 });

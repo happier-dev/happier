@@ -125,13 +125,17 @@ export function getWorkspaceDir(cliRootDir = null, env = process.env) {
 export function getRepoDir(rootDir, env = process.env) {
   const fromEnv = normalizePathForEnv(rootDir, env.HAPPIER_STACK_REPO_DIR, env);
   const workspaceDir = getWorkspaceDir(rootDir, env);
+  const sandboxed = Boolean((env.HAPPIER_STACK_SANDBOX_DIR ?? '').trim());
 
   // Prefer explicitly configured repo dir (if set).
   // Otherwise:
   // - If this CLI root is inside a Happier monorepo checkout, treat that checkout as the repo dir.
   //   This enables "repo-local / stackless" usage without requiring a workspace/main checkout.
   // - Else, fall back to <workspace>/main.
-  const inferredFromCliRoot = fromEnv ? '' : coerceHappyMonorepoRootFromPath(rootDir);
+  //
+  // Sandbox mode: never infer a repo-local checkout. Sandboxes must be fully isolated, and callers
+  // expect all repo clones to land under the sandbox workspace directory.
+  const inferredFromCliRoot = fromEnv || sandboxed ? '' : coerceHappyMonorepoRootFromPath(rootDir);
   const fallback = inferredFromCliRoot || join(workspaceDir, 'main');
 
   const candidate = fromEnv || fallback;
@@ -144,7 +148,7 @@ export function getRepoDir(rootDir, env = process.env) {
 }
 
 export function getDevRepoDir(rootDir, env = process.env) {
-  // The "dev" checkout is a first-class worktree created by `hstack setup --profile=dev`.
+  // The "dev" checkout is a first-class worktree created by `hstack setup-from-source --profile=dev`.
   // It is not treated as the default repo dir (that is always <workspace>/main).
   const workspaceDir = getWorkspaceDir(rootDir, env);
   return join(workspaceDir, 'dev');

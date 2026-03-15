@@ -158,4 +158,66 @@ describe('executeSessionComposerResolution', () => {
     expect(setMessage).toHaveBeenCalledWith('');
     expect(setMessage).toHaveBeenCalledWith('/h.review Review this.');
   });
+
+  it('defaults delegate.start permissionMode to safe-yolo when executing', async () => {
+    const actionExecutor = { execute: vi.fn(async () => ({ ok: true as const, result: { runId: 'r1' } })) };
+    const clearDraft = vi.fn();
+    const trackMessageSent = vi.fn();
+    const setMessage = vi.fn();
+
+    const handled = await executeSessionComposerResolution({
+      resolved: { kind: 'action', actionId: 'delegate.start', rest: 'Do the thing.' },
+      sessionId: 's1',
+      agentId: 'claude',
+      permissionMode: null,
+      actionExecutor,
+      setMessage,
+      clearDraft,
+      trackMessageSent,
+      navigateToRuns: vi.fn(),
+      modalAlert: vi.fn(),
+      previousMessage: '/h.delegate Do the thing.',
+    });
+
+    expect(handled).toBe(true);
+    expect(actionExecutor.execute).toHaveBeenCalledWith(
+      'delegate.start',
+      expect.objectContaining({
+        sessionId: 's1',
+        backendIds: ['claude'],
+        instructions: 'Do the thing.',
+        permissionMode: 'safe-yolo',
+      }),
+      { defaultSessionId: 's1', surface: 'ui_slash_command', placement: 'slash_command' },
+    );
+  });
+
+  it('defaults delegate.start draft permissionMode to safe-yolo when instructions are missing', async () => {
+    const actionExecutor = { execute: vi.fn(async () => ({ ok: true as const, result: { ok: true } })) };
+    createSessionActionDraft.mockClear();
+
+    const handled = await executeSessionComposerResolution({
+      resolved: { kind: 'action', actionId: 'delegate.start', rest: '   ' },
+      sessionId: 's1',
+      agentId: 'claude',
+      permissionMode: null,
+      actionExecutor,
+      setMessage: vi.fn(),
+      clearDraft: vi.fn(),
+      trackMessageSent: vi.fn(),
+      navigateToRuns: vi.fn(),
+      modalAlert: vi.fn(),
+    });
+
+    expect(handled).toBe(true);
+    expect(actionExecutor.execute).not.toHaveBeenCalled();
+    expect(createSessionActionDraft).toHaveBeenCalledWith(
+      's1',
+      expect.objectContaining({
+        actionId: 'delegate.start',
+      }),
+    );
+    const draftArgs = createSessionActionDraft.mock.calls[0]?.[1] as any;
+    expect(draftArgs?.input?.permissionMode).toBe('safe-yolo');
+  });
 });

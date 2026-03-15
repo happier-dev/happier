@@ -1,16 +1,13 @@
-import { createApiRateLimitKeyGenerator, gateRateLimitConfig } from "@/app/api/utils/apiRateLimitPolicy";
+import { resolveApiHotEndpointRateLimit } from "@/app/api/utils/apiRateLimitCatalog";
 
-export function oauthExternalRateLimitPerIp() {
-    return gateRateLimitConfig(process.env, {
-        max: 60,
-        timeWindow: "1 minute",
-    });
+export function oauthExternalRateLimitAuthParamsPerIp() {
+    return resolveApiHotEndpointRateLimit(process.env, "oauthExternal.authParams");
 }
 
-export function oauthExternalRateLimitPerUser() {
-    return gateRateLimitConfig(process.env, {
-        max: 60,
-        timeWindow: "1 minute",
-        keyGenerator: createApiRateLimitKeyGenerator(),
-    });
+export function oauthExternalRateLimitCallbackPerIp() {
+    return resolveApiHotEndpointRateLimit(process.env, "oauthExternal.callback");
+}
+
+export function oauthExternalRateLimitConnectParamsPerUser() {
+    return resolveApiHotEndpointRateLimit(process.env, "oauthExternal.connectParams");
 }

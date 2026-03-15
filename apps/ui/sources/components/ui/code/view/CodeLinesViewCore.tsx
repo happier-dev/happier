@@ -23,6 +23,11 @@ export type CodeLinesViewProps = {
     syntaxHighlighting?: CodeLinesSyntaxHighlightingConfig;
     scrollToLineId?: string;
     highlightLineId?: string;
+    testID?: string;
+    onLayout?: (e: any) => void;
+    onContentSizeChange?: (width: number, height: number) => void;
+    onScroll?: (e: any) => void;
+    scrollEventThrottle?: number;
 };
 
 type InlineToken = Readonly<{ text: string; color: string }>;
@@ -228,6 +233,8 @@ export function CodeLinesViewCore(
             keyExtractor={(item) => item.id}
             renderItem={({ item, index }) => renderLine(item, index)}
             extraData={listExtraData}
+            testID={props.testID}
+            style={{ flex: 1, minHeight: 0 }}
             disableVirtualization={!virtualized}
             initialScrollIndex={scrollIndex >= 0 ? scrollIndex : undefined}
             getItemLayout={wrapLines ? undefined : getItemLayout}
@@ -236,6 +243,10 @@ export function CodeLinesViewCore(
                 paddingVertical,
             }}
             ListFooterComponent={<View style={{ height: 16 }} />}
+            onLayout={props.onLayout}
+            onContentSizeChange={props.onContentSizeChange}
+            onScroll={props.onScroll}
+            scrollEventThrottle={props.scrollEventThrottle}
             onScrollToIndexFailed={(info) => {
                 // Best-effort retry: FlatList can fail if measurement hasn't completed yet.
                 try {

@@ -13,6 +13,7 @@ type FixtureOverrides = {
     connectedServicesEnabled?: boolean;
     connectedServicesQuotasEnabled?: boolean;
     updatesOtaEnabled?: boolean;
+    pairingDesktopQrMobileScanEnabled?: boolean;
     oauthProviders?: Record<string, { enabled: boolean; configured: boolean }>;
     authProviders?: Record<string, { enabled: boolean; configured: boolean }>;
 };
@@ -97,6 +98,9 @@ export function buildServerFeaturesResponse(overrides: FixtureOverrides = {}): F
                 login: {
                     keyChallenge: { enabled: true },
                 },
+                pairing: {
+                    desktopQrMobileScan: { enabled: overrides.pairingDesktopQrMobileScanEnabled ?? true },
+                },
                 ui: {
                     recoveryKeyReminder: { enabled: true },
                 },
@@ -111,22 +115,25 @@ export function buildServerFeaturesResponse(overrides: FixtureOverrides = {}): F
                 uploadTimeoutMs: 20_000,
                 contextWindowMs: 30 * 60 * 1_000,
             },
-            voice: {
-                configured: voiceConfigured,
-                provider: voiceConfigured ? 'elevenlabs' : null,
-                requested: voiceEnabled,
-                disabledByBuildPolicy: false,
-            },
-            encryption: {
-                storagePolicy: 'required_e2ee',
-                allowAccountOptOut: false,
-                defaultAccountMode: 'e2ee',
-            },
-            social: {
-                friends: {
-                    allowUsername: overrides.friendsAllowUsername ?? false,
-                    requiredIdentityProviderId: overrides.friendsRequiredIdentityProviderId ?? null,
-                },
+              voice: {
+                  configured: voiceConfigured,
+                  provider: voiceConfigured ? 'elevenlabs' : null,
+                  requested: voiceEnabled,
+                  disabledByBuildPolicy: false,
+              },
+              encryption: {
+                  storagePolicy: 'required_e2ee',
+                  allowAccountOptOut: false,
+                  defaultAccountMode: 'e2ee',
+                  plainAccountSettingsAtRest: 'server_sealed',
+                  plainAccountCredentialsAtRest: 'server_sealed',
+              },
+              server: {},
+              social: {
+                  friends: {
+                      allowUsername: overrides.friendsAllowUsername ?? false,
+                      requiredIdentityProviderId: overrides.friendsRequiredIdentityProviderId ?? null,
+                  },
             },
             oauth: {
                 providers: oauthProviders,

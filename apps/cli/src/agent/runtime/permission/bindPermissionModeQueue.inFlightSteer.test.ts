@@ -2,17 +2,26 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { MessageQueue2 } from '@/agent/runtime/modeMessageQueue';
 import { registerPermissionModeMessageQueueBinding } from './bindPermissionModeQueue';
+import type { PermissionModeQueuedPrompt } from '@/agent/runtime/permission/permissionModeQueuedPrompt';
 
 function createSessionHarness() {
   let handler: ((message: any) => void) | null = null;
+  let metadataSnapshot: any = null;
   const session = {
     onUserMessage: (fn: (message: any) => void) => {
       handler = fn;
     },
-    updateMetadata: vi.fn(),
+    getMetadataSnapshot: () => metadataSnapshot,
+    refreshSessionSnapshotFromServerBestEffort: vi.fn(async () => {}),
+    updateMetadata: vi.fn(async (updater: (m: any) => any) => {
+      metadataSnapshot = updater(metadataSnapshot ?? {});
+    }),
   };
   return {
     session,
+    setMetadataSnapshot: (next: any) => {
+      metadataSnapshot = next;
+    },
     emitUserMessage: (message: any) => {
       if (!handler) throw new Error('onUserMessage handler not registered');
       handler(message);
@@ -22,7 +31,7 @@ function createSessionHarness() {
 
 function createQueue() {
   // MessageQueue2 already implements push + pushIsolateAndClear.
-  const queue = new MessageQueue2<{ permissionMode: any }>((mode) => mode.permissionMode);
+  const queue = new MessageQueue2<{ permissionMode: any }, PermissionModeQueuedPrompt>((mode) => mode.permissionMode);
   const spyPush = vi.spyOn(queue, 'push');
   const spyIsolate = vi.spyOn(queue, 'pushIsolateAndClear');
   return { queue, spyPush, spyIsolate };
@@ -41,7 +50,7 @@ describe('registerPermissionModeMessageQueueBinding (in-flight steer)', () => {
     });
 
     emitUserMessage({ content: { text: 'hello' }, meta: {} });
-    expect(spyPush).toHaveBeenCalledWith('hello', { permissionMode: 'default' });
+    expect(spyPush).toHaveBeenCalledWith({ text: 'hello', localId: null }, { permissionMode: 'default' });
   });
 
   it('steers a message during an in-flight turn and does not queue it when steer succeeds', async () => {
@@ -65,10 +74,50 @@ describe('registerPermissionModeMessageQueueBinding (in-flight steer)', () => {
     } as any);
 
     emitUserMessage({ content: { text: 'steer me' }, meta: {} });
-    await Promise.resolve();
+    await new Promise<void>((resolve) => setImmediate(resolve));
 
     expect(steerText).toHaveBeenCalledWith('steer me');
     expect(spyPush).not.toHaveBeenCalled();
+  });
+
+  it('prefixes replaySeedV1 when steering and consumes it exactly once', async () => {
+    const { session, emitUserMessage, setMetadataSnapshot } = createSessionHarness();
+    const { queue, spyPush } = createQueue();
+
+    setMetadataSnapshot({
+      replaySeedV1: {
+        v: 1,
+        seedText: 'SEED',
+        sourceSessionId: 'sess_parent',
+        sourceCutoffSeqInclusive: 3,
+        createdAtMs: 123,
+      },
+    });
+
+    const steerText = vi.fn(async () => {});
+
+    registerPermissionModeMessageQueueBinding({
+      session: session as any,
+      queue,
+      getCurrentPermissionMode: () => 'default',
+      setCurrentPermissionMode: () => {},
+      inFlightSteer: {
+        isTurnInFlight: () => true,
+        supportsInFlightSteer: () => true,
+        steerText,
+      },
+    } as any);
+
+    emitUserMessage({ content: { text: 'steer me' }, localId: 'local-1', meta: {} });
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    await new Promise<void>((resolve) => setImmediate(resolve));
+
+    expect(steerText).toHaveBeenCalledWith('SEED\n\nsteer me');
+    expect(spyPush).not.toHaveBeenCalled();
+
+    const finalMeta = session.getMetadataSnapshot();
+    expect(finalMeta?.replaySeedV1?.seedText).toBe('');
+    expect(finalMeta?.replaySeedV1?.appliedToLocalId).toBe('local-1');
   });
 
   it('falls back to queueing when steering fails', async () => {
@@ -92,10 +141,10 @@ describe('registerPermissionModeMessageQueueBinding (in-flight steer)', () => {
     } as any);
 
     emitUserMessage({ content: { text: 'queue me' }, meta: {} });
-    await Promise.resolve();
-    await Promise.resolve();
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    await new Promise<void>((resolve) => setImmediate(resolve));
 
-    expect(spyPush).toHaveBeenCalledWith('queue me', { permissionMode: 'default' });
+    expect(spyPush).toHaveBeenCalledWith({ text: 'queue me', localId: null }, { permissionMode: 'default' });
   });
 
   it('does not leak unhandledRejection when fallback queueing throws', async () => {
@@ -212,7 +261,7 @@ describe('registerPermissionModeMessageQueueBinding (in-flight steer)', () => {
     await Promise.resolve();
 
     expect(steerText).not.toHaveBeenCalled();
-    expect(spyPush).toHaveBeenCalledWith('mode change', { permissionMode: 'read-only' });
+    expect(spyPush).toHaveBeenCalledWith({ text: 'mode change', localId: null }, { permissionMode: 'read-only' });
   });
 
   it('does not steer /clear (it must be isolated+clearing)', async () => {
@@ -238,7 +287,7 @@ describe('registerPermissionModeMessageQueueBinding (in-flight steer)', () => {
 
     expect(steerText).not.toHaveBeenCalled();
     expect(spyPush).not.toHaveBeenCalled();
-    expect(spyIsolate).toHaveBeenCalledWith('/clear', { permissionMode: 'default' });
+    expect(spyIsolate).toHaveBeenCalledWith({ text: '/clear', localId: null }, { permissionMode: 'default' });
   });
 
   it('does not steer /compact (it must be handled by the main loop)', async () => {
@@ -264,6 +313,6 @@ describe('registerPermissionModeMessageQueueBinding (in-flight steer)', () => {
 
     expect(steerText).not.toHaveBeenCalled();
     expect(spyIsolate).not.toHaveBeenCalled();
-    expect(spyPush).toHaveBeenCalledWith('/compact', { permissionMode: 'default' });
+    expect(spyPush).toHaveBeenCalledWith({ text: '/compact', localId: null }, { permissionMode: 'default' });
   });
 });

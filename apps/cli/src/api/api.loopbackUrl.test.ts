@@ -89,4 +89,40 @@ describe('ApiClient loopback url resolution', () => {
     expect(String(calledUrl)).toContain('http://127.0.0.1:3005');
     expect(String(calledUrl)).toContain('/v1/sessions');
   });
+
+  it('uses apiServerUrl for http requests when HAPPIER_PUBLIC_SERVER_URL is set', async () => {
+    process.env.HAPPIER_SERVER_URL = 'http://localhost:3005';
+    process.env.HAPPIER_PUBLIC_SERVER_URL = 'https://my-stack.example.test';
+    reloadConfiguration();
+
+    mockPost.mockRejectedValue({ code: 'ECONNREFUSED' });
+
+    const credential: Credentials = {
+      token: 'fake-token',
+      encryption: { type: 'legacy' as const, secret: new Uint8Array(32) },
+    };
+    const { ApiClient } = await import('./api');
+    const api = await ApiClient.create(credential);
+
+    const metadata: Metadata = {
+      path: '/tmp',
+      host: 'localhost',
+      homeDir: '/tmp',
+      happyHomeDir: '/tmp/happier-cli-test-loopback',
+      happyLibDir: '/tmp/happier-cli-test-loopback/lib',
+      happyToolsDir: '/tmp/happier-cli-test-loopback/tools',
+      machineId: 'test-machine',
+    };
+    await api.getOrCreateSession({
+      tag: 'test-tag',
+      metadata,
+      state: null,
+    });
+
+    expect(mockPost).toHaveBeenCalled();
+    const calledUrl = mockPost.mock.calls[0]?.[0];
+    expect(String(calledUrl)).toContain('http://127.0.0.1:3005');
+    expect(String(calledUrl)).toContain('/v1/sessions');
+    expect(String(calledUrl)).not.toContain('my-stack.example.test');
+  });
 });

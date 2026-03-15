@@ -16,6 +16,14 @@ describe('sessionMetadata overrides v1', () => {
     expect((parsed as any).extra).toBe('x');
   });
 
+  it('accepts cleared override values (null) for forward/backward compatibility', () => {
+    const modelParsed = (protocol as any).ModelOverrideV1Schema.parse({ v: 1, updatedAt: 10, modelId: null });
+    expect(modelParsed.modelId).toBe(null);
+
+    const modeParsed = (protocol as any).AcpSessionModeOverrideV1Schema.parse({ v: 1, updatedAt: 11, modeId: null });
+    expect(modeParsed.modeId).toBe(null);
+  });
+
   it('builds and parses acpConfigOptionOverridesV1', () => {
     const built = (protocol as any).buildAcpConfigOptionOverridesV1({
       updatedAt: 3,
@@ -32,4 +40,3 @@ describe('sessionMetadata overrides v1', () => {
     expect(Object.keys((parsed as any).overrides ?? {})).toEqual(['opt_a', 'opt_b', 'opt_c', 'opt_d']);
   });
 });
-

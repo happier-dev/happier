@@ -9,7 +9,7 @@ import type {
 } from '@happier-dev/protocol';
 import { SCM_OPERATION_ERROR_CODES } from '@happier-dev/protocol';
 import type { ScmBackendContext } from '../../../types';
-import { normalizeCommitRef, normalizeRepoRootPathspec, runScmCommand } from '../../../runtime';
+import { normalizeCommitRef, normalizeRepoRootRelativePath, runScmCommand } from '../../../runtime';
 
 const GIT_LOG_FIELDS_PER_ENTRY = 7;
 
@@ -52,29 +52,73 @@ export async function gitDiffFile(input: {
     request: ScmDiffFileRequest;
 }): Promise<ScmDiffFileResponse> {
     const { context, request } = input;
-    const pathspec = normalizeRepoRootPathspec(request.path);
-    if (!pathspec.ok) {
+    const normalized = normalizeRepoRootRelativePath(request.path);
+    if (!normalized.ok) {
         return {
             success: false,
             errorCode: SCM_OPERATION_ERROR_CODES.INVALID_PATH,
-            error: pathspec.error,
+            error: normalized.error,
         };
     }
     const area = request.area ?? 'pending';
     const args =
         area === 'included'
-            ? ['diff', '--no-ext-diff', '--cached', '--', pathspec.pathspec]
+            ? ['diff', '--no-ext-diff', '--cached', '--', normalized.pathspec]
             : area === 'both'
-                ? ['diff', '--no-ext-diff', 'HEAD', '--', pathspec.pathspec]
-                : ['diff', '--no-ext-diff', '--', pathspec.pathspec];
+                ? ['diff', '--no-ext-diff', 'HEAD', '--', normalized.pathspec]
+                : ['diff', '--no-ext-diff', '--', normalized.pathspec];
     const result = await runScmCommand({ bin: 'git', cwd: context.cwd, args, timeoutMs: 10_000 });
-    return result.success
-        ? { success: true, diff: result.stdout }
-        : {
+    // git diff uses exit code 1 to indicate "differences found". Treat that as success so
+    // callers can still render patches.
+    const diffCommandOk =
+        result.success || (result.exitCode === 1 && !result.timedOut && !result.outputLimitExceeded);
+    if (!diffCommandOk) {
+        return {
             success: false,
             errorCode: SCM_OPERATION_ERROR_CODES.COMMAND_FAILED,
             error: result.stderr || 'Failed to load file diff',
         };
+    }
+
+    const diff = result.stdout ?? '';
+    if (diff.trim().length > 0) {
+        return { success: true, diff };
+    }
+
+    const repoRoot = context.detection.rootPath ?? context.cwd;
+    const relativePath = normalized.relativePath;
+    if (!repoRoot || !relativePath || relativePath === '.') {
+        return { success: true, diff };
+    }
+
+    // git diff does not report untracked file diffs. Detect untracked files and synthesize
+    // an add diff against /dev/null so UI can show a meaningful patch.
+    const untrackedCheck = await runScmCommand({
+        bin: 'git',
+        cwd: repoRoot,
+        args: ['ls-files', '--others', '--exclude-standard', '--', relativePath],
+        timeoutMs: 10_000,
+    });
+    const isUntracked =
+        untrackedCheck.success
+        && typeof untrackedCheck.stdout === 'string'
+        && untrackedCheck.stdout.split(/\r?\n/).some((line) => line.trim() === relativePath);
+
+    if (!isUntracked) {
+        return { success: true, diff };
+    }
+
+    const untrackedDiff = await runScmCommand({
+        bin: 'git',
+        cwd: repoRoot,
+        args: ['diff', '--no-ext-diff', '--no-index', '--', '/dev/null', relativePath],
+        timeoutMs: 10_000,
+    });
+    const untrackedDiffOk =
+        untrackedDiff.success || (untrackedDiff.exitCode === 1 && !untrackedDiff.timedOut && !untrackedDiff.outputLimitExceeded);
+    return untrackedDiffOk
+        ? { success: true, diff: untrackedDiff.stdout }
+        : { success: true, diff };
 }
 
 export async function gitDiffCommit(input: {

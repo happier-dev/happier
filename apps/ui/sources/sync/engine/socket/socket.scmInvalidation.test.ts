@@ -78,7 +78,7 @@ describe('socket scm invalidation', () => {
       isSessionMessagesLoaded: vi.fn(() => false),
       getSessionMaterializedMaxSeq: vi.fn(() => 0),
       markSessionMaterializedMaxSeq: vi.fn(),
-      invalidateMessagesForSession: vi.fn(),
+      onMessageGapDetected: vi.fn(),
       assumeUsers: vi.fn(async () => {}),
       applyTodoSocketUpdates: vi.fn(async () => {}),
       invalidateMachines: vi.fn(),

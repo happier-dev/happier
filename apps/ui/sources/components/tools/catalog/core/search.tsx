@@ -8,15 +8,14 @@ import { CodeSearchInputV2Schema, GlobInputV2Schema, GrepInputV2Schema, LSInputV
 
 export const coreSearchTools = {
     'Glob': {
-        title: (opts: { metadata: Metadata | null, tool: ToolCall }) => {
-            if (typeof opts.tool.input.pattern === 'string') {
-                return opts.tool.input.pattern;
-            }
-            return t('tools.names.searchFiles');
-        },
+        title: () => t('tools.names.searchFiles'),
         icon: ICON_SEARCH,
         minimal: true,
         input: GlobInputV2Schema,
+        extractSubtitle: (opts: { metadata: Metadata | null, tool: ToolCall }) => {
+            const pattern = typeof opts.tool.input.pattern === 'string' ? opts.tool.input.pattern.trim() : '';
+            return pattern.length > 0 ? pattern : null;
+        },
         extractDescription: (opts: { metadata: Metadata | null, tool: ToolCall }) => {
             if (typeof opts.tool.input.pattern === 'string') {
                 return t('tools.desc.searchPattern', { pattern: opts.tool.input.pattern });
@@ -25,15 +24,14 @@ export const coreSearchTools = {
         }
     },
     'Grep': {
-        title: (opts: { metadata: Metadata | null, tool: ToolCall }) => {
-            if (typeof opts.tool.input.pattern === 'string') {
-                return `grep(pattern: ${opts.tool.input.pattern})`;
-            }
-            return 'Search Content';
-        },
+        title: () => t('tools.names.searchContent'),
         icon: ICON_READ,
         minimal: true,
         input: GrepInputV2Schema,
+        extractSubtitle: (opts: { metadata: Metadata | null, tool: ToolCall }) => {
+            const pattern = typeof opts.tool.input.pattern === 'string' ? opts.tool.input.pattern.trim() : '';
+            return pattern.length > 0 ? pattern : null;
+        },
         extractDescription: (opts: { metadata: Metadata | null, tool: ToolCall }) => {
             if (typeof opts.tool.input.pattern === 'string') {
                 const pattern = opts.tool.input.pattern.length > 20
@@ -45,15 +43,16 @@ export const coreSearchTools = {
         }
     },
     'LS': {
-        title: (opts: { metadata: Metadata | null, tool: ToolCall }) => {
-            if (typeof opts.tool.input.path === 'string') {
-                return resolvePath(opts.tool.input.path, opts.metadata);
-            }
-            return t('tools.names.listFiles');
-        },
+        title: () => t('tools.names.listFiles'),
         icon: ICON_SEARCH,
         minimal: true,
         input: LSInputV2Schema,
+        extractSubtitle: (opts: { metadata: Metadata | null, tool: ToolCall }) => {
+            if (typeof opts.tool.input.path !== 'string') return null;
+            const resolved = resolvePath(opts.tool.input.path, opts.metadata);
+            const trimmed = resolved.trim();
+            return trimmed.length > 0 ? trimmed : null;
+        },
         extractDescription: (opts: { metadata: Metadata | null, tool: ToolCall }) => {
             if (typeof opts.tool.input.path === 'string') {
                 const path = resolvePath(opts.tool.input.path, opts.metadata);
@@ -64,18 +63,19 @@ export const coreSearchTools = {
         }
     },
     'CodeSearch': {
-        title: (opts: { metadata: Metadata | null, tool: ToolCall }) => {
+        title: () => t('tools.names.search'),
+        icon: ICON_SEARCH,
+        minimal: true,
+        input: CodeSearchInputV2Schema,
+        extractSubtitle: (opts: { metadata: Metadata | null, tool: ToolCall }) => {
             const query = typeof opts.tool.input?.query === 'string'
                 ? opts.tool.input.query
                 : typeof opts.tool.input?.pattern === 'string'
                     ? opts.tool.input.pattern
-                    : null;
-            if (query && query.trim()) return query.trim();
-            return 'Code Search';
+                    : '';
+            const trimmed = typeof query === 'string' ? query.trim() : '';
+            return trimmed.length > 0 ? trimmed : null;
         },
-        icon: ICON_SEARCH,
-        minimal: true,
-        input: CodeSearchInputV2Schema,
         extractDescription: (opts: { metadata: Metadata | null, tool: ToolCall }) => {
             const query = typeof opts.tool.input?.query === 'string'
                 ? opts.tool.input.query

@@ -10,6 +10,7 @@ import { Switch } from '@/components/ui/forms/Switch';
 import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { Text } from '@/components/ui/text/Text';
 import { Modal } from '@/modal';
+import { t } from '@/text';
 
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 import { useAllMachines } from '@/sync/domains/state/storage';
@@ -88,48 +89,40 @@ export const MemorySettingsView = React.memo(function MemorySettingsView() {
         }));
     }, [machines, theme.colors.textSecondary]);
 
-    const indexModeItems = React.useMemo(() => ([
-        { id: 'hints', title: 'Light (recommended)', subtitle: 'Summary shards only' },
-        { id: 'deep', title: 'Deep', subtitle: 'Index message chunks locally' },
-    ] as const), []);
+    const indexModeItems = [
+        { id: 'hints', title: t('memorySearchSettings.indexMode.options.lightTitle'), subtitle: t('memorySearchSettings.indexMode.options.lightSubtitle') },
+        { id: 'deep', title: t('memorySearchSettings.indexMode.options.deepTitle'), subtitle: t('memorySearchSettings.indexMode.options.deepSubtitle') },
+    ] as const;
 
-    const backfillItems = React.useMemo(() => ([
-        { id: 'new_only', title: 'New only (recommended)', subtitle: 'Index only content created after enabling' },
-        { id: 'last_30_days', title: 'Last 30 days', subtitle: 'Backfill recent sessions' },
-        { id: 'all_history', title: 'All history', subtitle: 'Backfill everything (can take time)' },
-    ] as const), []);
+    const backfillItems = [
+        { id: 'new_only', title: t('memorySearchSettings.backfill.options.newOnlyTitle'), subtitle: t('memorySearchSettings.backfill.options.newOnlySubtitle') },
+        { id: 'last_30_days', title: t('memorySearchSettings.backfill.options.last30DaysTitle'), subtitle: t('memorySearchSettings.backfill.options.last30DaysSubtitle') },
+        { id: 'all_history', title: t('memorySearchSettings.backfill.options.allHistoryTitle'), subtitle: t('memorySearchSettings.backfill.options.allHistorySubtitle') },
+    ] as const;
 
-    const summarizerPermissionItems = React.useMemo(() => ([
-        {
-            id: 'no_tools',
-            title: 'No tools (recommended)',
-            subtitle: 'Summarize text only',
-        },
-        {
-            id: 'read_only',
-            title: 'Read-only',
-            subtitle: 'Allow non-mutating tools when supported',
-        },
-    ] as const), []);
+    const summarizerPermissionItems = [
+        { id: 'no_tools', title: t('memorySearchSettings.hints.permissions.options.noToolsTitle'), subtitle: t('memorySearchSettings.hints.permissions.options.noToolsSubtitle') },
+        { id: 'read_only', title: t('memorySearchSettings.hints.permissions.options.readOnlyTitle'), subtitle: t('memorySearchSettings.hints.permissions.options.readOnlySubtitle') },
+    ] as const;
 
     const selectedMachineTitle = React.useMemo(() => {
         const machine = machines.find((m) => m.id === selectedMachineId);
         const label = machine?.metadata?.displayName || machine?.metadata?.host || selectedMachineId;
-        return label && label.trim().length > 0 ? label : 'No machine';
+        return label && label.trim().length > 0 ? label : t('memorySearchSettings.machine.noMachine');
     }, [machines, selectedMachineId]);
 
     if (!memorySearchEnabled) {
         return (
             <ItemList style={{ paddingTop: 0 }}>
                 <ItemGroup
-                    title="Local Memory Search"
-                    footer="Enable memory search in Features to configure local indexing."
+                    title={t('settings.memorySearch')}
+                    footer={t('memorySearchSettings.disabled.footer')}
                 >
                     <Item
-                        title="Memory search is disabled"
-                        subtitle="Open Settings → Features to enable memory.search"
+                        title={t('memorySearchSettings.disabled.title')}
+                        subtitle={t('memorySearchSettings.disabled.subtitle')}
                         icon={<Ionicons name="search-outline" size={29} color={theme.colors.success} />}
-                        onPress={() => { void Modal.alert('Memory search disabled', 'Enable memory.search in Settings → Features.'); }}
+                        onPress={() => { void Modal.alert(t('memorySearchSettings.disabled.alertTitle'), t('memorySearchSettings.disabled.alertBody')); }}
                     />
                 </ItemGroup>
             </ItemList>
@@ -139,14 +132,14 @@ export const MemorySettingsView = React.memo(function MemorySettingsView() {
     return (
         <ItemList style={{ paddingTop: 0 }}>
             <ItemGroup
-                title="Local Memory Search"
-                footer="When enabled, Happier builds a device-local index derived from decrypted transcripts to support fast recall and search."
+                title={t('settings.memorySearch')}
+                footer={t('memorySearchSettings.enabled.footer')}
             >
                 <Item
-                    title="Machine"
+                    title={t('memorySearchSettings.machine.title')}
                     subtitle={selectedMachineTitle}
                     icon={<Ionicons name="desktop-outline" size={29} color={theme.colors.accent.blue} />}
-                    rightElement={loading ? <Text>Loading…</Text> : null}
+                    rightElement={loading ? <Text>{t('common.loading')}</Text> : null}
                     showChevron={false}
                 />
                 <View style={{ paddingHorizontal: 16, paddingBottom: 8 }}>
@@ -161,14 +154,14 @@ export const MemorySettingsView = React.memo(function MemorySettingsView() {
                             setMachineMenuOpen(false);
                         }}
                         itemTrigger={{
-                            title: 'Change machine',
+                            title: t('memorySearchSettings.machine.changeTitle'),
                             icon: <Ionicons name="swap-horizontal-outline" size={29} color={theme.colors.accent.indigo} />,
                         }}
                     />
                 </View>
                 <Item
-                    title="Enabled"
-                    subtitle="Build and maintain a local index on this machine"
+                    title={t('memorySearchSettings.enabled.title')}
+                    subtitle={t('memorySearchSettings.enabled.subtitle')}
                     icon={<Ionicons name="search-outline" size={29} color={theme.colors.success} />}
                     rightElement={(
                         <Switch
@@ -183,8 +176,8 @@ export const MemorySettingsView = React.memo(function MemorySettingsView() {
             </ItemGroup>
 
             <ItemGroup
-                title="Index mode"
-                footer="Light mode stores small summary shards. Deep mode can find more but uses more disk."
+                title={t('memorySearchSettings.indexMode.title')}
+                footer={t('memorySearchSettings.indexMode.footer')}
             >
                 <DropdownMenu
                     open={indexModeMenuOpen}
@@ -197,15 +190,15 @@ export const MemorySettingsView = React.memo(function MemorySettingsView() {
                         setIndexModeMenuOpen(false);
                     }}
                     itemTrigger={{
-                        title: 'Mode',
+                        title: t('memorySearchSettings.indexMode.triggerTitle'),
                         icon: <Ionicons name="options-outline" size={29} color={theme.colors.accent.orange} />,
                     }}
                 />
             </ItemGroup>
 
             <ItemGroup
-                title="Backfill"
-                footer="Controls how much history is indexed when enabling local memory."
+                title={t('memorySearchSettings.backfill.title')}
+                footer={t('memorySearchSettings.backfill.footer')}
             >
                 <DropdownMenu
                     open={backfillMenuOpen}
@@ -223,7 +216,7 @@ export const MemorySettingsView = React.memo(function MemorySettingsView() {
                         setBackfillMenuOpen(false);
                     }}
                     itemTrigger={{
-                        title: 'Policy',
+                        title: t('memorySearchSettings.backfill.triggerTitle'),
                         icon: <Ionicons name="time-outline" size={29} color={theme.colors.accent.purple} />,
                     }}
                 />
@@ -232,23 +225,23 @@ export const MemorySettingsView = React.memo(function MemorySettingsView() {
             <MemorySettingsBudgetsSection settings={settings} writeSettings={writeSettings} />
 
             <ItemGroup
-                title="Memory hint generation"
-                footer="Controls how summary shards are generated for light memory search."
+                title={t('memorySearchSettings.hints.title')}
+                footer={t('memorySearchSettings.hints.footer')}
             >
                 <Item
                     testID="memory-settings-summarizer-backend"
-                    title="Summarizer backend"
+                    title={t('memorySearchSettings.hints.backend.title')}
                     subtitle={settings.hints.summarizerBackendId}
                     icon={<Ionicons name="server-outline" size={29} color={theme.colors.accent.blue} />}
                     onPress={async () => {
                         const next = await Modal.prompt(
-                            'Summarizer backend',
-                            'Enter an execution-run backend id (e.g. claude, codex).',
+                            t('memorySearchSettings.hints.backend.promptTitle'),
+                            t('memorySearchSettings.hints.backend.promptBody'),
                             {
                                 defaultValue: settings.hints.summarizerBackendId,
                                 placeholder: 'claude',
-                                confirmText: 'Save',
-                                cancelText: 'Cancel',
+                                confirmText: t('common.save'),
+                                cancelText: t('common.cancel'),
                             },
                         );
                         if (typeof next === 'string' && next.trim()) {
@@ -262,18 +255,18 @@ export const MemorySettingsView = React.memo(function MemorySettingsView() {
                 />
                 <Item
                     testID="memory-settings-summarizer-model"
-                    title="Summarizer model"
+                    title={t('memorySearchSettings.hints.model.title')}
                     subtitle={settings.hints.summarizerModelId}
                     icon={<Ionicons name="cube-outline" size={29} color={theme.colors.accent.indigo} />}
                     onPress={async () => {
                         const next = await Modal.prompt(
-                            'Summarizer model',
-                            'Enter a model id to pass through to the backend.',
+                            t('memorySearchSettings.hints.model.promptTitle'),
+                            t('memorySearchSettings.hints.model.promptBody'),
                             {
                                 defaultValue: settings.hints.summarizerModelId,
                                 placeholder: 'default',
-                                confirmText: 'Save',
-                                cancelText: 'Cancel',
+                                confirmText: t('common.save'),
+                                cancelText: t('common.cancel'),
                             },
                         );
                         if (typeof next === 'string' && next.trim()) {
@@ -299,7 +292,7 @@ export const MemorySettingsView = React.memo(function MemorySettingsView() {
                         setSummarizerPermissionMenuOpen(false);
                     }}
                     itemTrigger={{
-                        title: 'Summarizer permissions',
+                        title: t('memorySearchSettings.hints.permissions.triggerTitle'),
                         icon: <Ionicons name="lock-closed-outline" size={29} color={theme.colors.warningCritical} />,
                     }}
                 />

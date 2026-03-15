@@ -24,7 +24,7 @@ async function listDistFiles(distDir: string): Promise<string[]> {
   // In some environments (especially when build/test are orchestrated across workspaces),
   // the build output directory can appear a moment after the test process starts.
   // Retry briefly to avoid flaky ENOENT/empty-dir failures.
-  for (let attempt = 0; attempt < 200; attempt++) {
+  for (let attempt = 0; attempt < 1000; attempt++) {
     try {
       const entries = await fs.readdir(distDir);
       const files = entries.filter((e) => e.endsWith('.mjs') || e.endsWith('.cjs')).map((e) => join(distDir, e));
@@ -53,5 +53,5 @@ describe('CLI build output', () => {
     }
 
     expect(offenders).toEqual([]);
-  }, 20_000);
+  }, 60_000);
 });

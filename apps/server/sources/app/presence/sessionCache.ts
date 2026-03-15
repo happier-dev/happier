@@ -234,66 +234,98 @@ class ActivityCache {
     }
 
     private async flushPendingUpdates(): Promise<void> {
-        const sessionUpdatesById = new Map<string, number>();
-        const machineUpdates: { id: string, timestamp: number, userId: string }[] = [];
+        const sessionUpdatesById = new Map<string, { timestamp: number; entries: SessionCacheEntry[] }>();
+        const machineUpdates: { machineId: string; timestamp: number; entry: MachineCacheEntry }[] = [];
         
         // Collect session updates
         for (const entry of this.sessionCache.values()) {
-            if (entry.pendingUpdate) {
-                sessionUpdatesById.set(entry.sessionId, Math.max(sessionUpdatesById.get(entry.sessionId) ?? 0, entry.pendingUpdate));
-                entry.lastUpdateSent = entry.pendingUpdate;
-                entry.pendingUpdate = null;
+            if (entry.pendingUpdate !== null) {
+                const timestamp = entry.pendingUpdate;
+                const existing = sessionUpdatesById.get(entry.sessionId);
+                if (!existing) {
+                    sessionUpdatesById.set(entry.sessionId, { timestamp, entries: [entry] });
+                } else {
+                    existing.timestamp = Math.max(existing.timestamp, timestamp);
+                    existing.entries.push(entry);
+                }
             }
         }
         
         // Collect machine updates
         for (const [machineId, entry] of this.machineCache.entries()) {
-            if (entry.pendingUpdate) {
-                machineUpdates.push({ 
-                    id: machineId, 
-                    timestamp: entry.pendingUpdate, 
-                    userId: entry.userId 
+            if (entry.pendingUpdate !== null) {
+                machineUpdates.push({
+                    machineId,
+                    timestamp: entry.pendingUpdate,
+                    entry,
                 });
-                entry.active = true;
-                entry.lastUpdateSent = entry.pendingUpdate;
-                entry.pendingUpdate = null;
             }
         }
         
-        // Batch update sessions
+        // Flush session presence updates (best-effort).
         if (sessionUpdatesById.size > 0) {
-            try {
-                await Promise.all(Array.from(sessionUpdatesById.entries()).map(([sessionId, timestamp]) =>
-                    db.session.updateMany({
+            let okCount = 0;
+            for (const [sessionId, update] of sessionUpdatesById.entries()) {
+                const { timestamp, entries } = update;
+                try {
+                    // On SQLite, concurrent write bursts can trigger busy contention and delay unrelated
+                    // control-plane requests (e.g. machine registration). Flush sequentially to reduce lock pressure.
+                    await db.session.updateMany({
                         where: { id: sessionId },
                         data: { lastActiveAt: new Date(timestamp), active: true }
-                    })
-                ));
-                
-                log({ module: 'session-cache' }, `Flushed ${sessionUpdatesById.size} session updates`);
-            } catch (error) {
-                log({ module: 'session-cache', level: 'error' }, `Error updating sessions: ${error}`);
+                    });
+
+                    for (const entry of entries) {
+                        entry.lastUpdateSent = timestamp;
+                        entry.pendingUpdate = null;
+                        entry.active = true;
+                    }
+                    okCount += 1;
+                } catch (error) {
+                    // Keep the pending update so the next flush can retry.
+                    for (const entry of entries) {
+                        entry.pendingUpdate = Math.max(entry.pendingUpdate ?? 0, timestamp);
+                    }
+                    log(
+                        { module: 'session-cache', level: 'error', sessionId },
+                        `Error updating session: ${error}`,
+                    );
+                }
             }
+
+            log({ module: 'session-cache' }, `Flushed ${okCount}/${sessionUpdatesById.size} session updates`);
         }
         
-        // Batch update machines
+        // Flush machine presence updates (best-effort).
         if (machineUpdates.length > 0) {
-            try {
-                await Promise.all(machineUpdates.map(update =>
-                    db.machine.updateMany({
+            let okCount = 0;
+            for (const update of machineUpdates) {
+                try {
+                    // See sessions flush above: keep presence updates sequential to reduce lock contention.
+                    await db.machine.updateMany({
                         where: {
-                            accountId: update.userId,
-                            id: update.id,
+                            accountId: update.entry.userId,
+                            id: update.machineId,
                             revokedAt: null,
                         },
                         data: { lastActiveAt: new Date(update.timestamp), active: true }
-                    })
-                ));
-                
-                log({ module: 'session-cache' }, `Flushed ${machineUpdates.length} machine updates`);
-            } catch (error) {
-                log({ module: 'session-cache', level: 'error' }, `Error updating machines: ${error}`);
+                    });
+
+                    update.entry.lastUpdateSent = update.timestamp;
+                    update.entry.pendingUpdate = null;
+                    update.entry.active = true;
+                    okCount += 1;
+                } catch (error) {
+                    // Keep the pending update so the next flush can retry.
+                    update.entry.pendingUpdate = Math.max(update.entry.pendingUpdate ?? 0, update.timestamp);
+                    log(
+                        { module: 'session-cache', level: 'error', machineId: update.machineId },
+                        `Error updating machine: ${error}`,
+                    );
+                }
             }
+
+            log({ module: 'session-cache' }, `Flushed ${okCount}/${machineUpdates.length} machine updates`);
         }
     }
 

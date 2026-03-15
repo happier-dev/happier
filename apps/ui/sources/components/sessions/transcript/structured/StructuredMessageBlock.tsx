@@ -19,7 +19,11 @@ export function renderStructuredMessage(params: {
     const parsed = entry.schema.safeParse(envelope.payload);
     if (!parsed.success) return null;
 
-    return entry.render(parsed.data, { sessionId: params.sessionId, onJumpToAnchor: params.onJumpToAnchor });
+    return entry.render(parsed.data, {
+        sessionId: params.sessionId,
+        message: params.message,
+        onJumpToAnchor: params.onJumpToAnchor,
+    });
 }
 
 export function StructuredMessageBlock(props: {

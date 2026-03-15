@@ -203,7 +203,7 @@ describe('MachineDetailScreen (execution runs section)', () => {
 
         const installablesItem = itemSpy.mock.calls
             .map((c) => c[0])
-            .find((p) => p?.title === 'Installables');
+            .find((p) => p?.title === 'machine.tools.installablesTitle');
         expect(installablesItem).toBeTruthy();
 
         await act(async () => {

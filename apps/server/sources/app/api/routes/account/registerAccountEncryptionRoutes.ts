@@ -45,7 +45,7 @@ export function registerAccountEncryptionRoutes(app: Fastify): void {
                 body: AccountEncryptionModeUpdateRequestSchema,
                 response: {
                     200: AccountEncryptionModeResponseSchema,
-                    400: z.object({ error: z.literal("invalid-params") }),
+                    400: z.object({ error: z.enum(["invalid-params", "migration-required"]) }),
                     404: z.object({ error: z.literal("not_found") }),
                     500: z.object({ error: z.literal("internal") }),
                 },
@@ -56,14 +56,23 @@ export function registerAccountEncryptionRoutes(app: Fastify): void {
             const mode = requestedMode === "plain" ? "plain" : "e2ee";
 
             try {
+                const account = await db.account.findUnique({
+                    where: { id: request.userId },
+                    select: { publicKey: true, settings: true },
+                });
+                if (!account) {
+                    return reply.code(500).send({ error: "internal" });
+                }
+
+                const hasSettings = typeof account.settings === "string" && account.settings.trim().length > 0;
+                const connectedServicesCount = await db.serviceAccountToken.count({ where: { accountId: request.userId } });
+                const automationsCount = await db.automation.count({ where: { accountId: request.userId } });
+                const requiresMigration = hasSettings || connectedServicesCount > 0 || automationsCount > 0;
+                if (requiresMigration) {
+                    return reply.code(400).send({ error: "migration-required" });
+                }
+
                 if (mode === "e2ee") {
-                    const account = await db.account.findUnique({
-                        where: { id: request.userId },
-                        select: { publicKey: true },
-                    });
-                    if (!account) {
-                        return reply.code(500).send({ error: "internal" });
-                    }
                     if (!account.publicKey) {
                         return reply.code(400).send({ error: "invalid-params" });
                     }

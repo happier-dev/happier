@@ -11,6 +11,19 @@ export type AccountSettingsCacheV1 = Readonly<{
   settingsVersion: number;
 }>;
 
+export type AccountSettingsContentEnvelope =
+  | Readonly<{ t: 'plain'; v: unknown }>
+  | Readonly<{ t: 'encrypted'; c: string }>;
+
+export type AccountSettingsCacheV2 = Readonly<{
+  version: 2;
+  cachedAt: number;
+  settingsContent: AccountSettingsContentEnvelope | null;
+  settingsVersion: number;
+}>;
+
+export type AccountSettingsCache = AccountSettingsCacheV1 | AccountSettingsCacheV2;
+
 function bestEffortChmod0600(path: string): Promise<void> {
   if (process.platform === 'win32') return Promise.resolve();
   return chmod(path, 0o600).catch(() => {});
@@ -20,17 +33,36 @@ export function resolveAccountSettingsCachePath(): string {
   return `${configuration.activeServerDir}/account.settings.cache.json`;
 }
 
-export async function readAccountSettingsCache(path: string): Promise<AccountSettingsCacheV1 | null> {
+export async function readAccountSettingsCache(path: string): Promise<AccountSettingsCache | null> {
   try {
     if (!existsSync(path)) return null;
     const raw = JSON.parse(await readFile(path, 'utf8')) as unknown;
     if (!raw || typeof raw !== 'object') return null;
     const v = raw as any;
-    if (v.version !== 1) return null;
-    if (typeof v.cachedAt !== 'number' || !Number.isFinite(v.cachedAt)) return null;
-    if (typeof v.settingsVersion !== 'number' || !Number.isFinite(v.settingsVersion)) return null;
-    if (!(typeof v.settingsCiphertext === 'string' || v.settingsCiphertext === null)) return null;
-    return v as AccountSettingsCacheV1;
+    if (v.version === 1) {
+      if (typeof v.cachedAt !== 'number' || !Number.isFinite(v.cachedAt)) return null;
+      if (typeof v.settingsVersion !== 'number' || !Number.isFinite(v.settingsVersion)) return null;
+      if (!(typeof v.settingsCiphertext === 'string' || v.settingsCiphertext === null)) return null;
+      return v as AccountSettingsCacheV1;
+    }
+    if (v.version === 2) {
+      if (typeof v.cachedAt !== 'number' || !Number.isFinite(v.cachedAt)) return null;
+      if (typeof v.settingsVersion !== 'number' || !Number.isFinite(v.settingsVersion)) return null;
+      const content = v.settingsContent;
+      if (content === null) {
+        return v as AccountSettingsCacheV2;
+      }
+      if (!content || typeof content !== 'object') return null;
+      if (content.t === 'encrypted') {
+        if (typeof content.c !== 'string') return null;
+        return v as AccountSettingsCacheV2;
+      }
+      if (content.t === 'plain') {
+        return v as AccountSettingsCacheV2;
+      }
+      return null;
+    }
+    return null;
   } catch {
     return null;
   }
@@ -72,7 +104,7 @@ async function acquireLock(lockFile: string): Promise<{ close: () => Promise<voi
   throw new Error('Failed to acquire account settings cache lock');
 }
 
-export async function writeAccountSettingsCacheAtomic(path: string, cache: AccountSettingsCacheV1): Promise<void> {
+export async function writeAccountSettingsCacheAtomic(path: string, cache: AccountSettingsCache): Promise<void> {
   const lockFile = `${path}.lock`;
   const tmpFile = `${path}.tmp`;
   await mkdir(dirname(path), { recursive: true });

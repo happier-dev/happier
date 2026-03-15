@@ -1,6 +1,14 @@
 import { sessionAliveEventsCounter, socketMessageAckCounter, websocketEventsCounter } from "@/app/monitoring/metrics2";
 import { activityCache } from "@/app/presence/sessionCache";
-import { buildNewMessageUpdate, buildPendingChangedUpdate, buildSessionActivityEphemeral, buildUpdateSessionUpdate, ClientConnection, eventRouter } from "@/app/events/eventRouter";
+import {
+    buildMessageUpdatedUpdate,
+    buildNewMessageUpdate,
+    buildPendingChangedUpdate,
+    buildSessionActivityEphemeral,
+    buildUpdateSessionUpdate,
+    ClientConnection,
+    eventRouter,
+} from "@/app/events/eventRouter";
 import { db } from "@/storage/db";
 import { AsyncLock } from "@/utils/runtime/lock";
 import { log } from "@/utils/logging/log";
@@ -10,6 +18,51 @@ import { createSessionMessage, updateSessionAgentState, updateSessionMetadata } 
 import { recordSessionAlive } from "@/app/presence/presenceRecorder";
 import { materializeNextPendingMessage } from "@/app/session/pending/pendingMessageService";
 import { normalizeIncomingSessionMessageContent } from "@/app/session/messageContent/normalizeIncomingSessionMessageContent";
+import { checkSessionAccess, requireAccessLevel } from "@/app/share/accessControl";
+import { getSessionParticipantUserIds } from "@/app/share/sessionParticipants";
+import { parseIntEnv } from "@/config/env";
+import { parseSessionMessageSidechainId } from "@/app/session/parseSessionMessageSidechainId";
+
+const DEFAULT_TRANSCRIPT_DRAFT_PARTICIPANTS_CACHE_TTL_MS = 5_000;
+const DEFAULT_TRANSCRIPT_DRAFT_PARTICIPANTS_CACHE_MAX_ENTRIES = 200;
+const DEFAULT_TRANSCRIPT_DRAFT_CREATED_AT_MAX_SKEW_MS = 60_000;
+const DEFAULT_TRANSCRIPT_DRAFT_MAX_BYTES = 64 * 1024;
+
+function resolveTranscriptDraftParticipantsCacheTtlMs(): number {
+    return parseIntEnv(
+        process.env.HAPPIER_TRANSCRIPT_DRAFT_PARTICIPANTS_CACHE_TTL_MS,
+        DEFAULT_TRANSCRIPT_DRAFT_PARTICIPANTS_CACHE_TTL_MS,
+        { min: 0 },
+    );
+}
+
+function resolveTranscriptDraftParticipantsCacheMaxEntries(): number {
+    return parseIntEnv(
+        process.env.HAPPIER_TRANSCRIPT_DRAFT_PARTICIPANTS_CACHE_MAX_ENTRIES,
+        DEFAULT_TRANSCRIPT_DRAFT_PARTICIPANTS_CACHE_MAX_ENTRIES,
+        { min: 1 },
+    );
+}
+
+function resolveTranscriptDraftCreatedAtMaxSkewMs(): number {
+    return parseIntEnv(
+        process.env.HAPPIER_TRANSCRIPT_DRAFT_CREATED_AT_MAX_SKEW_MS,
+        DEFAULT_TRANSCRIPT_DRAFT_CREATED_AT_MAX_SKEW_MS,
+        { min: 0 },
+    );
+}
+
+function resolveTranscriptDraftMaxBytes(): number {
+    return parseIntEnv(process.env.HAPPIER_TRANSCRIPT_DRAFT_MAX_BYTES, DEFAULT_TRANSCRIPT_DRAFT_MAX_BYTES, { min: 1 });
+}
+
+type TranscriptDraftParticipantsCacheEntry = Readonly<{
+    userIds: string[];
+    sessionEncryptionMode: "e2ee" | "plain";
+    expiresAtMs: number;
+}>;
+
+const transcriptDraftParticipantsCache = new Map<string, TranscriptDraftParticipantsCacheEntry>();
 
 export function sessionUpdateHandler(userId: string, socket: Socket, connection: ClientConnection) {
     socket.on('update-metadata', async (data: any, callback: (response: any) => void) => {
@@ -186,6 +239,13 @@ export function sessionUpdateHandler(userId: string, socket: Socket, connection:
                 const content = normalizeIncomingSessionMessageContent(data?.message);
                 const localId = typeof data?.localId === 'string' ? data.localId : null;
                 const echoToSender = data?.echoToSender === true;
+                const parsedSidechainId = parseSessionMessageSidechainId(data?.sidechainId, { emptyString: "invalid" });
+                if (!parsedSidechainId.ok) {
+                    socketMessageAckCounter.inc({ result: 'error', error: 'invalid-params' });
+                    respond({ ok: false, error: 'invalid-params' });
+                    return;
+                }
+                const sidechainId = parsedSidechainId.sidechainId;
 
                 if (!sid || !content) {
                     socketMessageAckCounter.inc({ result: 'error', error: 'invalid-params' });
@@ -211,6 +271,7 @@ export function sessionUpdateHandler(userId: string, socket: Socket, connection:
                     sessionId: sid,
                     content,
                     localId,
+                    sidechainId,
                 });
 
                 if (!result.ok) {
@@ -220,14 +281,23 @@ export function sessionUpdateHandler(userId: string, socket: Socket, connection:
                 }
 
                 socketMessageAckCounter.inc({ result: 'ok', error: 'none' });
-                respond({ ok: true, id: result.message.id, seq: result.message.seq, localId: result.message.localId, didWrite: result.didWrite });
+                respond({
+                    ok: true,
+                    id: result.message.id,
+                    seq: result.message.seq,
+                    localId: result.message.localId,
+                    didWrite: result.didWrite,
+                    ...(result.didUpdate ? { didUpdate: true } : {}),
+                });
 
-                if (result.didWrite === false) {
+                if (!result.didWrite && !result.didUpdate) {
                     return;
                 }
 
                 await Promise.all(result.participantCursors.map(async ({ accountId: participantUserId, cursor }) => {
-                    const payload = buildNewMessageUpdate(result.message, sid, cursor, randomKeyNaked(12));
+                    const payload = result.didWrite
+                        ? buildNewMessageUpdate(result.message, sid, cursor, randomKeyNaked(12))
+                        : buildMessageUpdatedUpdate(result.message, sid, cursor, randomKeyNaked(12));
                     eventRouter.emitUpdate({
                         userId: participantUserId,
                         payload,
@@ -241,6 +311,108 @@ export function sessionUpdateHandler(userId: string, socket: Socket, connection:
                 respond({ ok: false, error: 'internal' });
             }
         });
+    });
+
+    socket.on('transcript-draft', async (data: any) => {
+        try {
+            websocketEventsCounter.inc({ event_type: 'transcript-draft' });
+
+            const sid = typeof data?.sid === 'string' ? data.sid : null;
+            const localId = typeof data?.localId === 'string' ? data.localId.trim() : '';
+            const segmentKind = data?.segmentKind === 'assistant' || data?.segmentKind === 'thinking' ? data.segmentKind : null;
+            const parsedSidechainId = parseSessionMessageSidechainId(data?.sidechainId, { emptyString: "invalid" });
+            const sidechainId = parsedSidechainId.ok ? parsedSidechainId.sidechainId : '';
+            const delta = normalizeIncomingSessionMessageContent(data?.delta);
+
+            if (!sid || !localId || !segmentKind || sidechainId === '' || !delta) {
+                return;
+            }
+
+            if (connection.connectionType === 'session-scoped' && connection.sessionId && connection.sessionId !== sid) {
+                return;
+            }
+
+            const access = await checkSessionAccess(userId, sid);
+            if (!access || !requireAccessLevel(access, 'edit')) {
+                return;
+            }
+
+            const nowMs = Date.now();
+            const createdAtRaw = data?.createdAt;
+            const createdAtUnclamped =
+                typeof createdAtRaw === 'number' && Number.isFinite(createdAtRaw) && createdAtRaw >= 0 ? Math.trunc(createdAtRaw) : nowMs;
+            const maxSkewMs = resolveTranscriptDraftCreatedAtMaxSkewMs();
+            const createdAt = Math.min(nowMs + maxSkewMs, Math.max(nowMs - maxSkewMs, createdAtUnclamped));
+            const ttlMs = resolveTranscriptDraftParticipantsCacheTtlMs();
+            const cached = transcriptDraftParticipantsCache.get(sid);
+            const cacheEntry =
+                cached && cached.expiresAtMs > nowMs
+                    ? cached
+                    : await (async (): Promise<TranscriptDraftParticipantsCacheEntry | null> => {
+                        const [userIds, session] = await Promise.all([
+                            getSessionParticipantUserIds({ sessionId: sid }),
+                            db.session.findUnique({ where: { id: sid }, select: { encryptionMode: true } }),
+                        ]);
+                        if (!session) return null;
+                        const sessionEncryptionMode: "e2ee" | "plain" = session.encryptionMode === "plain" ? "plain" : "e2ee";
+                        const entry: TranscriptDraftParticipantsCacheEntry = {
+                            userIds,
+                            sessionEncryptionMode,
+                            expiresAtMs: nowMs + ttlMs,
+                        };
+                        transcriptDraftParticipantsCache.set(sid, entry);
+                        const maxEntries = resolveTranscriptDraftParticipantsCacheMaxEntries();
+                        while (transcriptDraftParticipantsCache.size > maxEntries) {
+                            const oldestKey = transcriptDraftParticipantsCache.keys().next().value as string | undefined;
+                            if (!oldestKey) break;
+                            transcriptDraftParticipantsCache.delete(oldestKey);
+                        }
+                        return entry;
+                    })();
+
+            if (!cacheEntry) {
+                return;
+            }
+
+            const expectedDeltaKind = cacheEntry.sessionEncryptionMode === "plain" ? "plain" : "encrypted";
+            if (delta.t !== expectedDeltaKind) {
+                return;
+            }
+
+            const maxBytes = resolveTranscriptDraftMaxBytes();
+            const deltaLength = (() => {
+                if (delta.t === "encrypted") return Buffer.byteLength(delta.c, "utf8");
+                try {
+                    return Buffer.byteLength(JSON.stringify(delta.v ?? null), "utf8");
+                } catch {
+                    // Fail closed: if we cannot reliably size the payload, do not relay it.
+                    return maxBytes + 1;
+                }
+            })();
+            if (deltaLength > maxBytes) {
+                return;
+            }
+
+            const payload = {
+                type: 'transcript-draft' as const,
+                sessionId: sid,
+                localId,
+                segmentKind,
+                sidechainId,
+                delta,
+                createdAt,
+            };
+
+            for (const participantUserId of cacheEntry.userIds) {
+                eventRouter.emitEphemeral({
+                    userId: participantUserId,
+                    payload,
+                    recipientFilter: { type: 'all-interested-in-session', sessionId: sid },
+                });
+            }
+        } catch (error) {
+            log({ module: 'websocket', level: 'error' }, `Error in transcript-draft handler: ${error}`);
+        }
     });
 
     socket.on('pending-materialize-next', async (data: any, callback?: (response: any) => void) => {

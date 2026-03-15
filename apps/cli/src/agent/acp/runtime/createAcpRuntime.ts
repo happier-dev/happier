@@ -20,8 +20,11 @@ import { createCatalogAcpBackend } from '@/agent/acp/createCatalogAcpBackend';
 import type { AcpRuntimeSessionClient } from '@/agent/acp/sessionClient';
 import { getAgentModelConfig, type AgentId } from '@happier-dev/agents';
 import { updateMetadataBestEffort } from '@/api/session/sessionWritesBestEffort';
+import { CHANGE_TITLE_INSTRUCTION } from '@/agent/runtime/changeTitleInstruction';
+import { CHANGE_TITLE_TOOL_NAME_ALIASES } from '@happier-dev/protocol/tools/v2';
 
 const DEFAULT_STREAM_DELTA_FLUSH_INTERVAL_MS = 50;
+const DEFAULT_SESSION_CONTROL_TIMEOUT_MS = 15_000;
 
 function resolveStreamDeltaFlushIntervalMs(input: unknown): number {
   if (typeof input === 'number' && Number.isFinite(input) && input >= 0) {
@@ -33,6 +36,14 @@ function resolveStreamDeltaFlushIntervalMs(input: unknown): number {
 
   const parsed = Number(raw);
   if (!Number.isFinite(parsed) || parsed < 0) return DEFAULT_STREAM_DELTA_FLUSH_INTERVAL_MS;
+  return Math.trunc(parsed);
+}
+
+function resolveSessionControlTimeoutMs(): number {
+  const raw = (process.env.HAPPIER_ACP_SESSION_CONTROL_TIMEOUT_MS ?? '').toString().trim();
+  if (!raw) return DEFAULT_SESSION_CONTROL_TIMEOUT_MS;
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed) || parsed <= 0) return DEFAULT_SESSION_CONTROL_TIMEOUT_MS;
   return Math.trunc(parsed);
 }
 
@@ -208,6 +219,7 @@ export function createAcpRuntime(params: {
   let backend: AcpRuntimeBackend | null = null;
   let backendPromise: Promise<AcpRuntimeBackend> | null = null;
   let sessionId: string | null = null;
+  let didSendChangeTitleInstructionForSession = false;
 
   let accumulatedResponse = '';
   let isResponseInProgress = false;
@@ -464,6 +476,11 @@ export function createAcpRuntime(params: {
     b.onMessage((msg: AgentMessage) => {
       if (loadingSession) {
         if (msg.type === 'status' && msg.status === 'error') {
+          const detail = typeof msg.detail === 'string' ? msg.detail.trim() : '';
+          if (detail) {
+            const message = /^error[:\\s]/i.test(detail) ? detail : `Error: ${detail}`;
+            params.session.sendAgentMessage(params.provider, { type: 'message', message });
+          }
           turnAborted = true;
           params.session.sendAgentMessage(params.provider, { type: 'turn_aborted', id: randomUUID() });
         }
@@ -514,8 +531,6 @@ export function createAcpRuntime(params: {
             handleAcpStatusRunning({
               session: params.session,
               agent: params.provider,
-              messageBuffer: params.messageBuffer,
-              onThinkingChange: params.onThinkingChange,
               getTaskStartedSent: () => taskStartedSent,
               setTaskStartedSent: (value) => { taskStartedSent = value; },
               makeId: () => randomUUID(),
@@ -536,6 +551,13 @@ export function createAcpRuntime(params: {
           }
 
           if (msg.status === 'error') {
+            if (!turnAborted) {
+              const detail = typeof msg.detail === 'string' ? msg.detail.trim() : '';
+              if (detail) {
+                const message = /^error[:\\s]/i.test(detail) ? detail : `Error: ${detail}`;
+                params.session.sendAgentMessage(params.provider, { type: 'message', message });
+              }
+            }
             turnAborted = true;
             clearToolCallCache();
             params.onThinkingChange(false);
@@ -965,6 +987,8 @@ export function createAcpRuntime(params: {
       turnAborted = false;
       resetTurnState();
       startPendingPumpIfNeeded();
+      params.onThinkingChange(true);
+      params.session.keepAlive(true, 'remote');
       try {
         params.hooks?.onBeginTurn?.();
       } catch (e) {
@@ -990,6 +1014,7 @@ export function createAcpRuntime(params: {
 
     async reset(): Promise<void> {
       sessionId = null;
+      didSendChangeTitleInstructionForSession = false;
       turnInFlight = false;
       resetTurnState();
       loadingSession = false;
@@ -1011,6 +1036,7 @@ export function createAcpRuntime(params: {
 
     async startOrLoad(opts: { resumeId?: string | null; importHistory?: boolean } = {}): Promise<string> {
       const b = await ensureBackend();
+      didSendChangeTitleInstructionForSession = false;
 
       const resumeId = typeof opts.resumeId === 'string' ? opts.resumeId.trim() : '';
       const importHistory = opts.importHistory !== false;
@@ -1074,6 +1100,7 @@ export function createAcpRuntime(params: {
       if (!normalizedModelId) return;
       if (!sessionId) return;
 
+      const controlTimeoutMs = resolveSessionControlTimeoutMs();
       const modelConfigOptionId = (() => {
         try {
           return getAgentModelConfig(params.provider as AgentId).acpModelConfigOptionId ?? 'model';
@@ -1088,30 +1115,34 @@ export function createAcpRuntime(params: {
 
       const b = await ensureBackend();
       if (b.setSessionModel) {
+        const timeoutPromise = new Promise<{ ok: false; error: Error }>((resolve) => {
+          const timer = setTimeout(
+            () => resolve({ ok: false, error: new Error('ACP session/set_model timed out') }),
+            controlTimeoutMs,
+          );
+          timer.unref?.();
+        });
+
+        const outcome = await Promise.race([
+          b
+            .setSessionModel(sessionId, normalizedModelId)
+            .then(() => ({ ok: true as const }))
+            .catch((error) => ({ ok: false as const, error })),
+          timeoutPromise,
+        ]);
+        if (outcome.ok) return;
+
+        const e = outcome.error;
+        // Some ACP agents may not support `session/set_model` but may expose an equivalent
+        // `model` config option. Fall back best-effort; callers already treat this as non-fatal.
+        if (!b.setSessionConfigOption) throw e;
+
         try {
-          await b.setSessionModel(sessionId, normalizedModelId);
-          return;
-        } catch (e: any) {
-          // Some ACP agents may not support `session/set_model` but may expose an equivalent
-          // `model` config option. Fall back best-effort; callers already treat this as non-fatal.
-          if (!b.setSessionConfigOption) throw e;
-
-          const msg = typeof e?.message === 'string' ? e.message : '';
-          const codeCandidate =
-            typeof e?.code === 'number'
-              ? e.code
-              : (typeof e?.error?.code === 'number' ? e.error.code : null);
-          const isMethodNotFound = codeCandidate === -32601 || /method not found/i.test(msg);
-          const isUnsupported =
-            isMethodNotFound ||
-            msg.includes('session/set_model') ||
-            msg.includes('set_model') ||
-            msg.includes('unstable_setSessionModel') ||
-            msg.includes('setSessionModel');
-          if (!isUnsupported) throw e;
-
           await b.setSessionConfigOption(sessionId, modelConfigOptionId, normalizedModelId);
           return;
+        } catch {
+          // If the fallback also fails, surface the original error so callers can retry.
+          throw e;
         }
       }
 
@@ -1178,8 +1209,21 @@ export function createAcpRuntime(params: {
         throw new Error(`${params.provider} ACP session was not started`);
       }
 
+      const effectivePrompt = (() => {
+        const raw = typeof prompt === 'string' ? prompt : '';
+        if (!raw.trim()) return raw;
+
+        if (didSendChangeTitleInstructionForSession) return raw;
+
+        const lower = raw.toLowerCase();
+        const alreadyMentionsChangeTitle = CHANGE_TITLE_TOOL_NAME_ALIASES.some((alias) => lower.includes(alias));
+        didSendChangeTitleInstructionForSession = true;
+        if (alreadyMentionsChangeTitle) return raw;
+        return `${raw}\n\n${CHANGE_TITLE_INSTRUCTION}`;
+      })();
+
       const b = await ensureBackend();
-      await b.sendPrompt(sessionId, prompt);
+      await b.sendPrompt(sessionId, effectivePrompt);
       if (b.waitForResponseComplete) {
         await b.waitForResponseComplete(120_000);
       }

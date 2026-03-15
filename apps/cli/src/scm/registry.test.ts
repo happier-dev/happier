@@ -39,6 +39,9 @@ function backend(input: {
         changeExclude: async () => {
             throw new Error('not needed in this test');
         },
+        changeDiscard: async () => {
+            throw new Error('not needed in this test');
+        },
         commitCreate: async () => {
             throw new Error('not needed in this test');
         },

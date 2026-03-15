@@ -214,7 +214,7 @@ describe('VoiceSurface', () => {
       tree = renderer.create(React.createElement(VoiceSurface, { variant: 'session', sessionId: 's1' }));
     });
 
-    const teleport = tree.root.findByProps({ accessibilityLabel: 'teleport_voice_agent' });
+    const teleport = tree.root.findByProps({ accessibilityLabel: 'voiceSurface.a11y.teleport' });
     expect(teleport).toBeTruthy();
 
     await act(async () => {
@@ -426,7 +426,7 @@ describe('VoiceSurface', () => {
     const texts = tree.root.findAllByType('Text' as any).map((n) => String(n.props.children ?? ''));
     expect(texts).toContain('2');
 
-    const clear = tree.root.findByProps({ accessibilityLabel: 'clear_voice_activity' });
+    const clear = tree.root.findByProps({ accessibilityLabel: 'voiceSurface.a11y.clearActivity' });
     expect(clear.props.disabled).toBe(false);
 
     await act(async () => {
@@ -480,7 +480,7 @@ describe('VoiceSurface', () => {
       tree = renderer.create(React.createElement(VoiceSurface, { variant: 'sidebar' }));
     });
 
-    const toggle = tree.root.findByProps({ accessibilityLabel: 'toggle_voice_activity' });
+    const toggle = tree.root.findByProps({ accessibilityLabel: 'voiceSurface.a11y.toggleActivity' });
     await act(async () => {
       toggle.props.onPress();
     });
@@ -490,8 +490,8 @@ describe('VoiceSurface', () => {
       .filter((n) => n.props.numberOfLines === 3)
       .map((n) => String(n.props.children ?? ''));
 
-    expect(eventTexts[0]).toContain('[Voice agent]');
-    expect(eventTexts[0]).toContain('Error:');
+    expect(eventTexts[0]).toContain('[voiceActivity.format.voiceAgent]');
+    expect(eventTexts[0]).toContain('voiceActivity.format.error');
     expect(eventTexts[0]).not.toContain(VOICE_AGENT_GLOBAL_SESSION_ID);
     expect(eventTexts[1]).toContain('new');
     expect(eventTexts[2]).toContain('old');

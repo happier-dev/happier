@@ -33,3 +33,28 @@ test('buildConfigureServerLinks encodes server URL', () => {
     'happier://server?url=https%3A%2F%2Fstack.example.test',
   );
 });
+
+test('buildTerminalConnectLinks omits loopback server URL from shareable links', () => {
+  const webappUrl = 'https://app.happier.dev';
+  const serverUrl = 'http://localhost:3010';
+  const publicKeyB64Url = 'abcDEF_123-zzz';
+
+  const out = buildTerminalConnectLinks({ webappUrl, serverUrl, publicKeyB64Url });
+  assert.equal(
+    out.webUrl,
+    'https://app.happier.dev/terminal/connect#key=abcDEF_123-zzz',
+  );
+  assert.equal(
+    out.mobileUrl,
+    'happier://terminal?key=abcDEF_123-zzz',
+  );
+});
+
+test('buildConfigureServerLinks omits loopback server URL from shareable links', () => {
+  const webappUrl = 'https://app.happier.dev';
+  const serverUrl = 'http://127.0.0.1:3010';
+
+  const out = buildConfigureServerLinks({ webappUrl, serverUrl });
+  assert.equal(out.webUrl, 'https://app.happier.dev');
+  assert.equal(out.mobileUrl, 'happier://server');
+});

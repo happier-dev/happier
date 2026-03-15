@@ -185,4 +185,125 @@ describe('ConnectedServiceRefreshCoordinator', () => {
       affectedTargets: [expect.objectContaining({ pid: 123, agentId: 'pi' })],
     }));
   });
+
+  it('continues refreshing other bindings when one binding refresh fails', async () => {
+    const baseDir = await mkdtemp(join(tmpdir(), 'happier-connected-services-refresh-'));
+
+    const credentials: Credentials = {
+      token: 'happy-token',
+      encryption: { type: 'legacy', secret: new Uint8Array(32).fill(9) },
+    };
+    if (credentials.encryption.type !== 'legacy') throw new Error('fixture');
+
+    const now = 1_000_000;
+    const openaiRecord = buildConnectedServiceCredentialRecord({
+      now,
+      serviceId: 'openai-codex',
+      profileId: 'work',
+      kind: 'oauth',
+      expiresAt: now + 30_000,
+      oauth: {
+        accessToken: 'old-access',
+        refreshToken: 'old-refresh',
+        idToken: null,
+        scope: null,
+        tokenType: null,
+        providerAccountId: 'acct',
+        providerEmail: null,
+      },
+    });
+    const geminiRecord = buildConnectedServiceCredentialRecord({
+      now,
+      serviceId: 'gemini',
+      profileId: 'work',
+      kind: 'oauth',
+      expiresAt: now + 30_000,
+      oauth: {
+        accessToken: 'g-old-access',
+        refreshToken: 'g-old-refresh',
+        idToken: null,
+        scope: null,
+        tokenType: null,
+        providerAccountId: null,
+        providerEmail: null,
+      },
+    });
+
+    const sealedByServiceId = new Map<string, string>();
+    sealedByServiceId.set('openai-codex', sealAccountScopedBlobCiphertext({
+      kind: 'connected_service_credential',
+      material: { type: 'legacy', secret: credentials.encryption.secret },
+      payload: openaiRecord,
+      randomBytes: (length) => randomBytes(length),
+    }));
+    sealedByServiceId.set('gemini', sealAccountScopedBlobCiphertext({
+      kind: 'connected_service_credential',
+      material: { type: 'legacy', secret: credentials.encryption.secret },
+      payload: geminiRecord,
+      randomBytes: (length) => randomBytes(length),
+    }));
+
+    const api = {
+      getConnectedServiceCredentialSealed: vi.fn(async (params: { serviceId: string }) => ({
+        sealed: { format: 'account_scoped_v1', ciphertext: sealedByServiceId.get(params.serviceId)! },
+        metadata: { kind: 'oauth', providerEmail: null, providerAccountId: null, expiresAt: now + 30_000 },
+      })),
+      acquireConnectedServiceRefreshLease: vi.fn(async () => ({ acquired: true, leaseUntil: now + 60_000 })),
+      registerConnectedServiceCredentialSealed: vi.fn(async (params: { serviceId: string; sealed: { ciphertext: string } }) => {
+        sealedByServiceId.set(params.serviceId, params.sealed.ciphertext);
+      }),
+    } as unknown as ApiClient;
+
+    const fetchMock = vi.fn(async (input: any) => {
+      const url = String(input);
+      if (url.includes('auth.openai.com')) {
+        return { ok: false, status: 500, statusText: 'fail', text: async () => 'boom' } as any;
+      }
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({
+          access_token: 'g-new-access',
+          refresh_token: 'g-new-refresh',
+          expires_in: 3600,
+        }),
+        text: async () => '',
+      } as any;
+    });
+    vi.stubGlobal('fetch', fetchMock as unknown as typeof fetch);
+
+    const coordinator = new ConnectedServiceRefreshCoordinator({
+      api,
+      credentials,
+      machineIdProvider: () => 'machine-1',
+      baseDir,
+      refreshWindowMs: 60_000,
+      refreshLeaseMs: 30_000,
+      now: () => now,
+    });
+
+    coordinator.registerSpawnTarget({
+      pid: 1,
+      agentId: 'codex',
+      connectedServicesBindingsRaw: {
+        v: 1,
+        bindingsByServiceId: { 'openai-codex': { source: 'connected', profileId: 'work' } },
+      },
+      materializationKey: 'session-openai',
+    });
+    coordinator.registerSpawnTarget({
+      pid: 2,
+      agentId: 'gemini',
+      connectedServicesBindingsRaw: {
+        v: 1,
+        bindingsByServiceId: { gemini: { source: 'connected', profileId: 'work' } },
+      },
+      materializationKey: 'session-gemini',
+    });
+
+    await expect(coordinator.tickOnce()).rejects.toThrow();
+
+    // Even though OpenAI refresh failed, Gemini should still have been refreshed and registered.
+    expect(api.registerConnectedServiceCredentialSealed).toHaveBeenCalledWith(expect.objectContaining({ serviceId: 'gemini' }));
+  });
 });

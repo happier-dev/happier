@@ -46,6 +46,7 @@ export type ScmProjectOperationKind =
     | 'refresh'
     | 'stage'
     | 'unstage'
+    | 'discard'
     | 'commit'
     | 'fetch'
     | 'pull'

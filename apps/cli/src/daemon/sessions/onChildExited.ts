@@ -15,6 +15,7 @@ export function createOnChildExited(params: Readonly<{
   getApiMachineForSessions: () => ApiMachineClient | null;
   onUnexpectedExit?: (trackedSession: TrackedSession, exit: ChildExit) => void;
   isExitUnexpectedOverride?: (trackedSession: TrackedSession, exit: ChildExit) => boolean | null | undefined;
+  removeSessionMarkerFn?: typeof removeSessionMarker;
 }>): (pid: number, exit: ChildExit) => void {
   const {
     pidToTrackedSession,
@@ -23,6 +24,7 @@ export function createOnChildExited(params: Readonly<{
     getApiMachineForSessions,
     onUnexpectedExit,
     isExitUnexpectedOverride,
+    removeSessionMarkerFn = removeSessionMarker,
   } = params;
 
   return (pid: number, exit: ChildExit) => {
@@ -83,6 +85,10 @@ export function createOnChildExited(params: Readonly<{
       });
     }
     pidToTrackedSession.delete(pid);
-    void removeSessionMarker(pid);
+    void removeSessionMarkerFn(pid);
+    const runnerPid = tracked?.sessionRunnerPid;
+    if (typeof runnerPid === 'number' && runnerPid !== pid) {
+      void removeSessionMarkerFn(runnerPid);
+    }
   };
 }

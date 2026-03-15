@@ -1,5 +1,3 @@
-import { resolveEffectiveDefaultAccountEncryptionMode } from "@happier-dev/protocol";
-
 import { readEncryptionFeatureEnv } from "@/app/features/catalog/readFeatureEnv";
 import { resolveKeylessAccountsEnabled } from "@/app/features/e2ee/resolveKeylessAccountsEnabled";
 
@@ -9,12 +7,8 @@ export type KeylessAutoProvisionEligibility =
 
 export function resolveKeylessAutoProvisionEligibility(env: NodeJS.ProcessEnv): KeylessAutoProvisionEligibility {
     const encryptionEnv = readEncryptionFeatureEnv(env);
-    const effectiveDefaultEncryptionMode = resolveEffectiveDefaultAccountEncryptionMode(
-        encryptionEnv.storagePolicy,
-        encryptionEnv.defaultAccountMode,
-    );
-    const canProvisionKeyless = resolveKeylessAccountsEnabled(env) && effectiveDefaultEncryptionMode === "plain";
+    const canProvisionKeyless =
+        resolveKeylessAccountsEnabled(env) && encryptionEnv.storagePolicy !== "required_e2ee";
     if (!canProvisionKeyless) return { ok: false, error: "e2ee-required" };
     return { ok: true, encryptionMode: "plain" };
 }
-

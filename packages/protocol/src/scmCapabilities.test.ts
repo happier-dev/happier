@@ -12,6 +12,7 @@ describe('scmCapabilities', () => {
     expect(capabilities.changeSetModel).toBe('working-copy');
     expect(capabilities.supportedDiffAreas).toEqual(['pending', 'both']);
     expect(capabilities.writeCommit).toBe(false);
+    expect(capabilities.writeDiscard).toBe(false);
   });
 
   it('creates git capability defaults', () => {
@@ -19,6 +20,7 @@ describe('scmCapabilities', () => {
     expect(capabilities.changeSetModel).toBe('index');
     expect(capabilities.supportedDiffAreas).toEqual(['included', 'pending', 'both']);
     expect(capabilities.writeInclude).toBe(true);
+    expect(capabilities.writeDiscard).toBe(true);
   });
 
   it('creates sapling capability defaults', () => {
@@ -26,5 +28,6 @@ describe('scmCapabilities', () => {
     expect(capabilities.changeSetModel).toBe('working-copy');
     expect(capabilities.supportedDiffAreas).toEqual(['pending', 'both']);
     expect(capabilities.writeInclude).toBe(false);
+    expect(capabilities.writeDiscard).toBe(true);
   });
 });

@@ -6,6 +6,7 @@ import { ToolSectionView } from '../../shell/presentation/ToolSectionView';
 import { CodeView } from '@/components/ui/media/CodeView';
 import { maybeParseJson } from '../../normalization/parse/parseJson';
 import { Text } from '@/components/ui/text/Text';
+import { t } from '@/text';
 
 
 type UnknownRecord = Record<string, unknown>;
@@ -75,7 +76,7 @@ export const UnknownToolView = React.memo<ToolViewProps>(({ tool, detailLevel })
         <ToolSectionView fullWidth>
             <View style={styles.container}>
                 <Text style={styles.title} numberOfLines={2}>
-                    Tool: {tool.name}
+                    {tool.name}
                 </Text>
                 {subtitle ? (
                     <Text style={styles.subtitle} numberOfLines={3}>
@@ -83,12 +84,12 @@ export const UnknownToolView = React.memo<ToolViewProps>(({ tool, detailLevel })
                     </Text>
                 ) : null}
                 <View style={styles.section}>
-                    <Text style={styles.sectionTitle}>Input</Text>
+                    <Text style={styles.sectionTitle}>{t('toolView.input')}</Text>
                     <CodeView code={JSON.stringify(maybeParseJson(tool.input), null, 2)} />
                 </View>
                 {tool.state === 'completed' && tool.result != null ? (
                     <View style={styles.section}>
-                        <Text style={styles.sectionTitle}>Output</Text>
+                        <Text style={styles.sectionTitle}>{t('toolView.output')}</Text>
                         <CodeView code={JSON.stringify(maybeParseJson(tool.result), null, 2)} />
                     </View>
                 ) : null}
@@ -123,4 +124,3 @@ const styles = StyleSheet.create((theme) => ({
         fontFamily: 'Menlo',
     },
 }));
-

@@ -43,7 +43,7 @@ describe('scenarioCatalog (claude permissions)', () => {
     expect(typeof scenario.verify).toBe('function');
 
     const workspaceDir = await mkdtemp(join(tmpdir(), 'happier-claude-deny-'));
-    await scenario.setup?.({ workspaceDir });
+    await scenario.setup?.({ workspaceDir, cliHome: workspaceDir });
     const prompt = scenario.prompt?.({ workspaceDir }) ?? '';
     const pathLine = prompt.split('\n').find((line) => line.startsWith('- Absolute path: '));
     const outsidePath = pathLine?.replace('- Absolute path: ', '').trim() ?? '';

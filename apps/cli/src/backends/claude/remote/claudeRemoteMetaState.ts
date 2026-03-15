@@ -1,7 +1,20 @@
 export type ClaudeRemoteMetaState = Readonly<{
     claudeRemoteAgentSdkEnabled: boolean;
+    /**
+     * v2 multi-select representation of Claude Code setting sources.
+     *
+     * Default: ['user','project','local'] which represents "Claude default behavior" and
+     * should generally NOT force an explicit override in the runner.
+     */
+    claudeRemoteSettingSourcesV2: readonly ('user' | 'project' | 'local')[];
+    /**
+     * Legacy (v1) setting sources.
+     *
+     * Kept for back-compat with older clients. New code should prefer `claudeRemoteSettingSourcesV2`.
+     */
     claudeRemoteSettingSources: 'project' | 'user_project' | 'none';
     claudeRemoteIncludePartialMessages: boolean;
+    claudeCodeExperimentalAgentTeamsEnabled: boolean;
     claudeLocalPermissionBridgeEnabled: boolean;
     claudeLocalPermissionBridgeWaitIndefinitely: boolean;
     claudeLocalPermissionBridgeTimeoutSeconds: number;
@@ -12,10 +25,30 @@ export type ClaudeRemoteMetaState = Readonly<{
     claudeRemoteAdvancedOptionsJson: string;
 }>;
 
+const SETTING_SOURCES_V2_ORDER = ['user', 'project', 'local'] as const;
+
+function normalizeSettingSourcesV2(raw: unknown): ('user' | 'project' | 'local')[] | null {
+    if (!Array.isArray(raw)) return null;
+    const set = new Set<string>();
+    for (const value of raw) {
+        if (typeof value !== 'string') continue;
+        set.add(value);
+    }
+    const out: ('user' | 'project' | 'local')[] = [];
+    for (const key of SETTING_SOURCES_V2_ORDER) {
+        if (set.has(key)) out.push(key);
+    }
+    return out;
+}
+
 export const DEFAULT_CLAUDE_REMOTE_META_STATE: ClaudeRemoteMetaState = Object.freeze({
     claudeRemoteAgentSdkEnabled: true,
-    claudeRemoteSettingSources: 'project',
+    claudeRemoteSettingSourcesV2: ['user', 'project', 'local'] as const,
+    // Default to loading BOTH user + project settings so Claude Code can see the user's
+    // globally configured MCP servers (and other preferences) when launched by Happier.
+    claudeRemoteSettingSources: 'user_project',
     claudeRemoteIncludePartialMessages: false,
+    claudeCodeExperimentalAgentTeamsEnabled: false,
     claudeLocalPermissionBridgeEnabled: true,
     claudeLocalPermissionBridgeWaitIndefinitely: false,
     claudeLocalPermissionBridgeTimeoutSeconds: 600,
@@ -43,6 +76,11 @@ export function applyClaudeRemoteMetaState(prev: ClaudeRemoteMetaState, meta: un
         next.claudeRemoteAgentSdkEnabled = record.claudeRemoteAgentSdkEnabled;
     }
 
+    const normalizedV2 = normalizeSettingSourcesV2((record as any).claudeRemoteSettingSourcesV2);
+    if (normalizedV2 !== null) {
+        next.claudeRemoteSettingSourcesV2 = normalizedV2;
+    }
+
     if (typeof record.claudeRemoteSettingSources === 'string') {
         const value = record.claudeRemoteSettingSources;
         if (value === 'project' || value === 'user_project' || value === 'none') {
@@ -52,6 +90,10 @@ export function applyClaudeRemoteMetaState(prev: ClaudeRemoteMetaState, meta: un
 
     if (typeof record.claudeRemoteIncludePartialMessages === 'boolean') {
         next.claudeRemoteIncludePartialMessages = record.claudeRemoteIncludePartialMessages;
+    }
+
+    if (typeof record.claudeCodeExperimentalAgentTeamsEnabled === 'boolean') {
+        next.claudeCodeExperimentalAgentTeamsEnabled = record.claudeCodeExperimentalAgentTeamsEnabled;
     }
 
     if (typeof record.claudeLocalPermissionBridgeEnabled === 'boolean') {

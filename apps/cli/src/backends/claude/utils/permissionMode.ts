@@ -24,3 +24,12 @@ export function mapToClaudeMode(mode: PermissionMode): ClaudeSdkPermissionMode {
     };
     return codexToClaudeMap[mode] ?? (mode as ClaudeSdkPermissionMode);
 }
+
+export function resolveClaudeSdkPermissionModeFromEnhancedMode(mode: {
+    permissionMode: PermissionMode;
+    agentModeId?: string | null | undefined;
+}): ClaudeSdkPermissionMode {
+    const agentModeId = typeof mode.agentModeId === 'string' ? mode.agentModeId.trim() : '';
+    if (agentModeId === 'plan') return 'plan';
+    return mapToClaudeMode(mode.permissionMode);
+}

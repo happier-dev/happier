@@ -21,19 +21,24 @@ vi.mock('@expo/vector-icons', () => ({
     Ionicons: 'Ionicons',
 }));
 
+vi.mock('@/components/ui/text/Text', () => ({
+    Text: 'Text',
+}));
+
 describe('CompactSourceControlStatus', () => {
     beforeEach(() => {
         snapshotMock = null;
     });
 
-    it('renders compact file count when there are non-line changes', async () => {
-        snapshotMock = {
-            repo: { isRepo: true, rootPath: '/repo' },
-            branch: { head: 'main', upstream: 'origin/main', ahead: 0, behind: 0, detached: false },
-            totals: {
-                includedFiles: 0,
-                pendingFiles: 0,
-                untrackedFiles: 3,
+      it('renders compact file count when there are non-line changes', async () => {
+          snapshotMock = {
+              repo: { isRepo: true, rootPath: '/repo' },
+              branch: { head: 'main', upstream: 'origin/main', ahead: 0, behind: 0, detached: false },
+              entries: [{}, {}, {}],
+              totals: {
+                  includedFiles: 0,
+                  pendingFiles: 0,
+                  untrackedFiles: 3,
                 includedAdded: 0,
                 includedRemoved: 0,
                 pendingAdded: 0,

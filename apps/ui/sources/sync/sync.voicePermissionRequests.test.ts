@@ -76,18 +76,25 @@ describe('sync: voice permission request announcements', () => {
         storage.setState(initialStorageState, true);
         kvStore.clear();
         sendTextMessage.mockClear();
-        storage.setState((state) => ({
-            ...state,
-            sessionMessages: {
-                ...state.sessionMessages,
-                s1: {
-                    messages: [],
-                    messagesMap: {},
-                    reducerState: createReducer(),
-                    isLoaded: true,
+        storage.setState((state) => {
+            const messagesById: Record<string, any> = {};
+            return {
+                ...state,
+                sessionMessages: {
+                    ...state.sessionMessages,
+                    s1: {
+                        messageIdsOldestFirst: [],
+                        messagesById,
+                        messagesMap: messagesById,
+                        reducerState: createReducer(),
+                        latestThinkingMessageId: null,
+                        latestThinkingMessageActivityAtMs: null,
+                        messagesVersion: 0,
+                        isLoaded: true,
+                    },
                 },
-            },
-        }));
+            };
+        });
     });
 
     afterEach(() => {

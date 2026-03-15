@@ -13,6 +13,38 @@ describe('SessionContinueWithReplayRequestSchema', () => {
     expect(parsed.success).toBe(true);
   });
 
+  it('accepts larger recentMessagesCount values (bounded by server/seed budget)', () => {
+    const parsed = SessionContinueWithReplayRequestSchema.safeParse({
+      previousSessionId: 'sess-prev',
+      strategy: 'recent_messages',
+      recentMessagesCount: 500,
+      seedMode: 'draft',
+    });
+    expect(parsed.success).toBe(true);
+  });
+
+  it('accepts an optional maxSeedChars budget hint', () => {
+    const parsed = SessionContinueWithReplayRequestSchema.safeParse({
+      previousSessionId: 'sess-prev',
+      strategy: 'recent_messages',
+      recentMessagesCount: 100,
+      maxSeedChars: 50_000,
+      seedMode: 'draft',
+    });
+    expect(parsed.success).toBe(true);
+  });
+
+  it('accepts an optional summary runner config for on-demand replay summary', () => {
+    const parsed = SessionContinueWithReplayRequestSchema.safeParse({
+      previousSessionId: 'sess-prev',
+      strategy: 'summary_plus_recent',
+      recentMessagesCount: 16,
+      seedMode: 'draft',
+      summaryRunner: { v: 1, backendId: 'claude', modelId: 'default', permissionMode: 'no_tools' },
+    });
+    expect(parsed.success).toBe(true);
+  });
+
   it('rejects legacy dialog field', () => {
     const parsed = SessionContinueWithReplayRequestSchema.safeParse({
       previousSessionId: 'sess-prev',

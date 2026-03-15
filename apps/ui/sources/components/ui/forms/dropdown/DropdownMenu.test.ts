@@ -80,6 +80,7 @@ vi.mock('@/components/ui/forms/dropdown/useSelectableMenu', () => ({
             handleKeyPress: () => {},
         };
     },
+    CREATE_ITEM_ID: '__create__',
 }));
 
 vi.mock('@/components/ui/forms/dropdown/SelectableMenuResults', () => ({
@@ -180,6 +181,61 @@ describe('DropdownMenu', () => {
             pressable2?.props?.onPress?.();
         });
         expect(onOpenChange).toHaveBeenCalledWith(false);
+    });
+
+    it('closes the menu when an item is selected by default', async () => {
+        const { DropdownMenu } = await import('./DropdownMenu');
+        const onOpenChange = vi.fn();
+        const onSelect = vi.fn();
+
+        let tree: ReturnType<typeof renderer.create> | undefined;
+        act(() => {
+            tree = renderer.create(
+                React.createElement(DropdownMenu, {
+                    open: true,
+                    onOpenChange,
+                    items: [{ id: 'a', title: 'A' }],
+                    onSelect,
+                    trigger: React.createElement('View'),
+                }),
+            );
+        });
+
+        const selectableResults = tree?.root.findByType('SelectableMenuResults' as any);
+        act(() => {
+            selectableResults?.props?.onPressItem?.({ id: 'a' });
+        });
+
+        expect(onSelect).toHaveBeenCalledWith('a');
+        expect(onOpenChange).toHaveBeenCalledWith(false);
+    });
+
+    it('keeps the menu open when closeOnSelect is false', async () => {
+        const { DropdownMenu } = await import('./DropdownMenu');
+        const onOpenChange = vi.fn();
+        const onSelect = vi.fn();
+
+        let tree: ReturnType<typeof renderer.create> | undefined;
+        act(() => {
+            tree = renderer.create(
+                React.createElement(DropdownMenu as any, {
+                    open: true,
+                    onOpenChange,
+                    closeOnSelect: false,
+                    items: [{ id: 'a', title: 'A' }],
+                    onSelect,
+                    trigger: React.createElement('View'),
+                }),
+            );
+        });
+
+        const selectableResults = tree?.root.findByType('SelectableMenuResults' as any);
+        act(() => {
+            selectableResults?.props?.onPressItem?.({ id: 'a' });
+        });
+
+        expect(onSelect).toHaveBeenCalledWith('a');
+        expect(onOpenChange).not.toHaveBeenCalledWith(false);
     });
 
     it('supports a static trigger node and keeps popover unmounted when closed', async () => {

@@ -40,7 +40,7 @@ describe('ApiMachineClient transports', () => {
     reloadConfiguration();
   });
 
-  it('uses the Engine.IO defaults by default (polling then upgrade)', async () => {
+  it('uses websocket-first transports by default (fallback to polling)', async () => {
     const mod = await import('./apiMachine');
 
     const machine: Machine = {
@@ -58,7 +58,7 @@ describe('ApiMachineClient transports', () => {
 
     const opts = mockIo.mock.calls[0]?.[1] as any;
     expect(opts.path).toBe('/v1/updates');
-    expect(opts).not.toHaveProperty('transports');
+    expect(opts.transports).toEqual(['websocket', 'polling']);
   });
 
   it('can force websocket-only via config flag', async () => {

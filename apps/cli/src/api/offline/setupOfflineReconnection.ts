@@ -94,7 +94,7 @@ export function setupOfflineReconnection(opts: SetupOfflineReconnectionOptions):
 
         // Start background reconnection
         reconnectionHandle = startOfflineReconnection<ApiSessionClient>({
-            serverUrl: configuration.serverUrl,
+            serverUrl: configuration.apiServerUrl,
             onReconnected: async () => {
                 const resp = await api.getOrCreateSession({ tag: sessionTag, metadata, state });
                 if (!resp) throw new Error('Server unavailable');

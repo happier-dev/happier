@@ -2,6 +2,7 @@ import { TokenStorage } from '@/auth/storage/tokenStorage';
 import { createEncryptionFromAuthCredentials } from '@/auth/encryption/createEncryptionFromAuthCredentials';
 import { listServerProfiles } from '@/sync/domains/server/serverProfiles';
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
+import { createServerUrlComparableKey } from '@/sync/domains/server/url/serverUrlCanonical';
 
 import type { ScopedRpcSessionEncryptionContext } from './serverScopedRpcTypes';
 
@@ -29,9 +30,16 @@ export async function resolveServerScopedSessionContext(params: Readonly<{ serve
     return { scope: 'active', timeoutMs };
   }
 
-  const targetProfile = listServerProfiles().find((profile) => normalizeId(profile.id) === targetServerId) ?? null;
+  const profiles = listServerProfiles();
+  const targetProfile = profiles.find((profile) => normalizeId(profile.id) === targetServerId) ?? null;
   if (!targetProfile) {
     throw new Error(`Target server profile not found for serverId "${targetServerId}"`);
+  }
+
+  const activeUrlKey = createServerUrlComparableKey(activeSnapshot.serverUrl);
+  const targetUrlKey = createServerUrlComparableKey(targetProfile.serverUrl);
+  if (activeUrlKey && targetUrlKey && activeUrlKey === targetUrlKey) {
+    return { scope: 'active', timeoutMs };
   }
 
   const credentials = await TokenStorage.getCredentialsForServerUrl(targetProfile.serverUrl);

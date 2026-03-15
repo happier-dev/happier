@@ -27,7 +27,9 @@ import { DeleteView } from '../fileOps/DeleteView';
 import { MCPToolView } from '../system/MCPToolView';
 import { UnknownToolView } from '../system/UnknownToolView';
 import { SubAgentRunView } from '../workflow/SubAgentRunView';
+import { AgentTeamView } from '../workflow/AgentTeamView';
 import { KnownCanonicalToolNameV2Schema, type KnownCanonicalToolNameV2 } from '@happier-dev/protocol';
+import { normalizeToolNameForView } from '@/components/tools/normalization/policy/normalizeToolNameForView';
 
 export type ToolViewDetailLevel = 'title' | 'summary' | 'full';
 
@@ -36,11 +38,12 @@ export type ToolViewProps = {
     metadata: Metadata | null;
     messages: Message[];
     sessionId?: string;
+    messageId?: string;
     detailLevel?: ToolViewDetailLevel;
     interaction?: {
         canSendMessages: boolean;
         canApprovePermissions: boolean;
-        permissionDisabledReason?: 'public' | 'readOnly' | 'notGranted';
+        permissionDisabledReason?: 'public' | 'readOnly' | 'notGranted' | 'inactive';
     };
 }
 
@@ -74,38 +77,10 @@ export const toolViewRegistry: Record<KnownCanonicalToolNameV2, ToolViewComponen
     WorkspaceIndexingPermission: WorkspaceIndexingPermissionView,
     change_title: ChangeTitleView,
     SubAgentRun: SubAgentRunView,
+    AgentTeamCreate: AgentTeamView,
+    AgentTeamDelete: AgentTeamView,
+    AgentTeamSendMessage: AgentTeamView,
 };
-
-const legacyToolNameToCanonical: Record<string, KnownCanonicalToolNameV2> = {
-    // Provider-branded historical names.
-    CodexBash: 'Bash',
-    CodexPatch: 'Patch',
-    CodexDiff: 'Diff',
-    GeminiReasoning: 'Reasoning',
-    CodexReasoning: 'Reasoning',
-    TaskCreate: 'Task',
-    TaskList: 'Task',
-    TaskUpdate: 'Task',
-
-    // Legacy lowercase names (ACP + older sessions).
-    edit: 'Edit',
-    execute: 'Bash',
-    read: 'Read',
-    write: 'Write',
-    search: 'CodeSearch',
-    glob: 'Glob',
-    grep: 'Grep',
-    ls: 'LS',
-    delete: 'Delete',
-    remove: 'Delete',
-    exit_plan_mode: 'ExitPlanMode',
-    think: 'Reasoning',
-};
-
-export function normalizeToolNameForView(toolName: string): string {
-    if (toolName.startsWith('mcp__')) return toolName;
-    return legacyToolNameToCanonical[toolName] ?? toolName;
-}
 
 // Helper function to get the appropriate view component for a tool
 export function getToolViewComponent(toolName: string): ToolViewComponent | null {

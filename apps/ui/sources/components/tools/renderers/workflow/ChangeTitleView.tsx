@@ -4,6 +4,7 @@ import { StyleSheet } from 'react-native-unistyles';
 import type { ToolViewProps } from '../core/_registry';
 import { ToolSectionView } from '../../shell/presentation/ToolSectionView';
 import { Text } from '@/components/ui/text/Text';
+import { t } from '@/text';
 
 
 export const ChangeTitleView = React.memo<ToolViewProps>(({ tool, detailLevel }) => {
@@ -14,7 +15,7 @@ export const ChangeTitleView = React.memo<ToolViewProps>(({ tool, detailLevel })
     return (
         <ToolSectionView>
             <View style={styles.container}>
-                <Text style={styles.label}>Title</Text>
+                <Text style={styles.label}>{t('tools.changeTitleView.titleLabel')}</Text>
                 <Text style={styles.title} numberOfLines={detailLevel === 'full' ? undefined : 2}>
                     {title}
                 </Text>

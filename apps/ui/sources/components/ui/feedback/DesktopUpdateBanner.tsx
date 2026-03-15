@@ -6,6 +6,8 @@ import { t } from '@/text';
 import { getDesktopUpdateBannerModel } from './desktopUpdateBannerModel';
 import { Text } from '@/components/ui/text/Text';
 
+const CLOSE_GLYPH = '×';
+
 
 export function DesktopUpdateBanner() {
     const styles = stylesheet;
@@ -62,7 +64,7 @@ export function DesktopUpdateBanner() {
                 accessibilityLabel={t('common.cancel')}
             >
                 <Text style={styles.dismissLabel}>
-                    ×
+                    {CLOSE_GLYPH}
                 </Text>
             </Pressable>
         </View>

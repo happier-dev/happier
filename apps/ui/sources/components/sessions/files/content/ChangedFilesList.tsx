@@ -2,14 +2,13 @@ import * as React from 'react';
 import { Platform, View } from 'react-native';
 
 import { Text } from '@/components/ui/text/Text';
-import { Item } from '@/components/ui/lists/Item';
 import { Typography } from '@/constants/Typography';
 import type { SessionAttributedFile, SessionAttributionReliability, ChangedFilesViewMode } from '@/scm/scmAttribution';
 import type { ScmFileStatus } from '@/scm/scmStatusFiles';
 import { t } from '@/text';
-import { formatFileSubtitle } from '@/components/sessions/files/filesUtils';
-import { ChangedFileIcon, ChangedFileStatusIcon } from '@/components/sessions/files/changedFiles/ChangedFileRowIcons';
 import { ChangedFilesSectionHeader } from '@/components/sessions/files/changedFiles/ChangedFilesSectionHeader';
+import { ScmChangeRow } from '@/components/sessions/sourceControl/changes/ScmChangeRow';
+import { filterDirectoryLikeScmFileStatuses, isDirectoryLikeScmFileStatus } from '@/scm/isDirectoryLikeScmFileStatus';
 
 type ChangedFilesListProps = {
     theme: any;
@@ -20,19 +19,12 @@ type ChangedFilesListProps = {
     repositoryOnlyFiles: ScmFileStatus[];
     suppressedInferredCount: number;
     onFilePress: (file: ScmFileStatus) => void;
+    onFilePressPinned?: (file: ScmFileStatus) => void;
+    onToggleSelectionForFile?: (file: ScmFileStatus) => void;
     renderFileActions?: (file: ScmFileStatus) => React.ReactNode;
+    renderFileTrailingActions?: (file: ScmFileStatus) => React.ReactNode;
     rowDensity?: 'comfortable' | 'compact';
 };
-
-function renderFileSubtitle(file: ScmFileStatus) {
-    return formatFileSubtitle(file, t('files.projectRoot'));
-}
-
-function renderSessionAttributionSubtitle(file: ScmFileStatus, confidence: 'high' | 'inferred') {
-    const base = renderFileSubtitle(file);
-    const confidenceLabel = confidence === 'high' ? 'direct' : 'inferred';
-    return `${base} • ${confidenceLabel}`;
-}
 
 export function ChangedFilesList({
     theme,
@@ -43,33 +35,45 @@ export function ChangedFilesList({
     repositoryOnlyFiles,
     suppressedInferredCount,
     onFilePress,
+    onFilePressPinned,
+    onToggleSelectionForFile,
     renderFileActions,
+    renderFileTrailingActions,
     rowDensity = 'comfortable',
 }: ChangedFilesListProps) {
-    const isDarkTheme = theme.dark === true;
-    const iconSize = rowDensity === 'compact' ? 20 : 32;
+    const repositoryChangedFiles = React.useMemo(() => {
+        return filterDirectoryLikeScmFileStatuses(allRepositoryChangedFiles);
+    }, [allRepositoryChangedFiles]);
+
+    const filteredSessionAttributedFiles = React.useMemo(() => {
+        return sessionAttributedFiles.filter((entry) => {
+            if (!entry?.file) return false;
+            return !isDirectoryLikeScmFileStatus(entry.file);
+        });
+    }, [sessionAttributedFiles]);
+
+    const filteredRepositoryOnlyFiles = React.useMemo(() => {
+        return filterDirectoryLikeScmFileStatuses(repositoryOnlyFiles);
+    }, [repositoryOnlyFiles]);
 
     if (changedFilesViewMode === 'repository') {
         return (
             <>
                 <ChangedFilesSectionHeader theme={theme} color={theme.colors.textSecondary}>
-                    {t('files.repositoryChangedFiles', { count: allRepositoryChangedFiles.length })}
+                    {t('files.repositoryChangedFiles', { count: repositoryChangedFiles.length })}
                 </ChangedFilesSectionHeader>
-                {allRepositoryChangedFiles.map((file, index) => (
-                    <Item
+                {repositoryChangedFiles.map((file, index) => (
+                    <ScmChangeRow
                         key={`repo-all-${file.fullPath}-${index}`}
-                        title={file.fileName}
-                        subtitle={renderFileSubtitle(file)}
-                        icon={<ChangedFileIcon file={file} size={iconSize} />}
+                        theme={theme}
+                        file={file}
                         density={rowDensity}
-                        rightElement={(
-                            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
-                                {renderFileActions ? renderFileActions(file) : null}
-                                <ChangedFileStatusIcon file={file} theme={theme} isDarkTheme={isDarkTheme} />
-                            </View>
-                        )}
+                        leadingElement={renderFileActions ? renderFileActions(file) : null}
+                        trailingElement={renderFileTrailingActions ? renderFileTrailingActions(file) : null}
                         onPress={() => onFilePress(file)}
-                        showDivider={index < allRepositoryChangedFiles.length - 1}
+                        onPressPinned={onFilePressPinned ? () => onFilePressPinned(file) : undefined}
+                        onToggleSelection={onToggleSelectionForFile ? () => onToggleSelectionForFile(file) : undefined}
+                        showDivider={index < repositoryChangedFiles.length - 1}
                     />
                 ))}
             </>
@@ -134,52 +138,46 @@ export function ChangedFilesList({
                 )}
             </View>
 
-            {sessionAttributedFiles.length === 0 ? (
+            {filteredSessionAttributedFiles.length === 0 ? (
                 <View style={{ paddingHorizontal: 16, paddingVertical: 12 }}>
                     <Text style={{ color: theme.colors.textSecondary, fontSize: 12, ...Typography.default() }}>
                         {t('files.noSessionAttributedChanges')}
                     </Text>
                 </View>
             ) : (
-                sessionAttributedFiles.map((entry, index) => (
-                    <Item
+                filteredSessionAttributedFiles.map((entry, index) => (
+                    <ScmChangeRow
                         key={`session-${entry.file.fullPath}-${index}`}
-                        title={entry.file.fileName}
-                        subtitle={renderSessionAttributionSubtitle(entry.file, entry.confidence)}
-                        icon={<ChangedFileIcon file={entry.file} size={iconSize} />}
+                        theme={theme}
+                        file={entry.file}
                         density={rowDensity}
-                        rightElement={(
-                            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
-                                {renderFileActions ? renderFileActions(entry.file) : null}
-                                <ChangedFileStatusIcon file={entry.file} theme={theme} isDarkTheme={isDarkTheme} />
-                            </View>
-                        )}
+                        leadingElement={renderFileActions ? renderFileActions(entry.file) : null}
+                        trailingElement={renderFileTrailingActions ? renderFileTrailingActions(entry.file) : null}
                         onPress={() => onFilePress(entry.file)}
-                        showDivider={index < sessionAttributedFiles.length - 1}
+                        onPressPinned={onFilePressPinned ? () => onFilePressPinned(entry.file) : undefined}
+                        onToggleSelection={onToggleSelectionForFile ? () => onToggleSelectionForFile(entry.file) : undefined}
+                        showDivider={index < filteredSessionAttributedFiles.length - 1}
                     />
                 ))
             )}
 
-            {repositoryOnlyFiles.length > 0 && (
+            {filteredRepositoryOnlyFiles.length > 0 && (
                 <>
                     <ChangedFilesSectionHeader theme={theme} color={theme.colors.textSecondary}>
-                        {t('files.otherRepositoryChanges', { count: repositoryOnlyFiles.length })}
+                        {t('files.otherRepositoryChanges', { count: filteredRepositoryOnlyFiles.length })}
                     </ChangedFilesSectionHeader>
-                    {repositoryOnlyFiles.map((file, index) => (
-                        <Item
+                    {filteredRepositoryOnlyFiles.map((file, index) => (
+                        <ScmChangeRow
                             key={`repo-${file.fullPath}-${index}`}
-                            title={file.fileName}
-                            subtitle={renderFileSubtitle(file)}
-                            icon={<ChangedFileIcon file={file} size={iconSize} />}
+                            theme={theme}
+                            file={file}
                             density={rowDensity}
-                            rightElement={(
-                                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
-                                    {renderFileActions ? renderFileActions(file) : null}
-                                    <ChangedFileStatusIcon file={file} theme={theme} isDarkTheme={isDarkTheme} />
-                                </View>
-                            )}
+                            leadingElement={renderFileActions ? renderFileActions(file) : null}
+                            trailingElement={renderFileTrailingActions ? renderFileTrailingActions(file) : null}
                             onPress={() => onFilePress(file)}
-                            showDivider={index < repositoryOnlyFiles.length - 1}
+                            onPressPinned={onFilePressPinned ? () => onFilePressPinned(file) : undefined}
+                            onToggleSelection={onToggleSelectionForFile ? () => onToggleSelectionForFile(file) : undefined}
+                            showDivider={index < filteredRepositoryOnlyFiles.length - 1}
                         />
                     ))}
                 </>

@@ -10,6 +10,7 @@ describe('RPC_METHODS scm surface', () => {
         expect(RPC_METHODS.SCM_DIFF_COMMIT).toBe('scm.diff.commit');
         expect(RPC_METHODS.SCM_CHANGE_INCLUDE).toBe('scm.change.include');
         expect(RPC_METHODS.SCM_CHANGE_EXCLUDE).toBe('scm.change.exclude');
+        expect(RPC_METHODS.SCM_CHANGE_DISCARD).toBe('scm.change.discard');
         expect(RPC_METHODS.SCM_COMMIT_CREATE).toBe('scm.commit.create');
         expect(RPC_METHODS.SCM_COMMIT_BACKOUT).toBe('scm.commit.backout');
         expect(RPC_METHODS.SCM_LOG_LIST).toBe('scm.log.list');

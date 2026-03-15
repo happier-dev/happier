@@ -6,6 +6,8 @@ import { log } from "@/utils/logging/log";
 import { readEncryptionFeatureEnv } from "@/app/features/catalog/readFeatureEnv";
 import { isStoredContentKindAllowedForSessionByStoragePolicy, type SessionStoredContentKind } from "@happier-dev/protocol";
 import { resolveEncryptionWriteRejectionCode, type EncryptionPolicyRejectionCode } from "@/app/session/encryptionRejectionCodes";
+import { isDeepStrictEqual } from "node:util";
+import { parseSessionMessageSidechainId } from "./parseSessionMessageSidechainId";
 
 type ParticipantCursor = SessionParticipantCursor;
 
@@ -53,13 +55,46 @@ export type CreateSessionMessageResult =
     | {
         ok: true;
         didWrite: true;
-        message: { id: string; seq: number; localId: string | null; content: PrismaJson.SessionMessageContent; createdAt: Date; updatedAt: Date };
+        didUpdate: false;
+        message: {
+            id: string;
+            seq: number;
+            localId: string | null;
+            sidechainId: string | null;
+            content: PrismaJson.SessionMessageContent;
+            createdAt: Date;
+            updatedAt: Date;
+        };
         participantCursors: ParticipantCursor[];
       }
     | {
         ok: true;
         didWrite: false;
-        message: { id: string; seq: number; localId: string | null; createdAt: Date };
+        didUpdate: true;
+        message: {
+            id: string;
+            seq: number;
+            localId: string | null;
+            sidechainId: string | null;
+            content: PrismaJson.SessionMessageContent;
+            createdAt: Date;
+            updatedAt: Date;
+        };
+        participantCursors: ParticipantCursor[];
+      }
+    | {
+        ok: true;
+        didWrite: false;
+        didUpdate: false;
+        message: {
+            id: string;
+            seq: number;
+            localId: string | null;
+            sidechainId: string | null;
+            content: PrismaJson.SessionMessageContent;
+            createdAt: Date;
+            updatedAt: Date;
+        };
         participantCursors: [];
       }
     | { ok: false; error: "invalid-params" | "forbidden" | "session-not-found" | "internal"; code?: EncryptionPolicyRejectionCode };
@@ -68,6 +103,7 @@ type CreateSessionMessageParamsBase = Readonly<{
     actorUserId: string;
     sessionId: string;
     localId?: string | null;
+    sidechainId?: string | null;
 }>;
 
 export async function createSessionMessage(
@@ -81,6 +117,11 @@ export async function createSessionMessage(
     const actorUserId = typeof params.actorUserId === "string" ? params.actorUserId : "";
     const ciphertext = "ciphertext" in params && typeof params.ciphertext === "string" ? params.ciphertext : "";
     const localId = typeof params.localId === "string" ? params.localId : null;
+    const parsedSidechainId = parseSessionMessageSidechainId(params.sidechainId, { emptyString: "invalid" });
+    if (!parsedSidechainId.ok) {
+        return { ok: false, error: "invalid-params" };
+    }
+    const sidechainId = parsedSidechainId.sidechainId;
 
     const content = "content" in params ? params.content : ciphertext ? ({ t: "encrypted", c: ciphertext } satisfies PrismaJson.SessionMessageContent) : null;
 
@@ -121,10 +162,39 @@ export async function createSessionMessage(
             if (localId) {
                 const existing = await tx.sessionMessage.findUnique({
                     where: { sessionId_localId: { sessionId, localId } },
-                    select: { id: true, seq: true, localId: true, createdAt: true },
+                    select: { id: true, seq: true, localId: true, sidechainId: true, content: true, createdAt: true, updatedAt: true },
                 });
                 if (existing) {
-                    return { ok: true, didWrite: false, message: existing, participantCursors: [] };
+                    if ((existing.sidechainId ?? null) !== sidechainId) {
+                        return { ok: false, error: "invalid-params" };
+                    }
+
+                    if (isDeepStrictEqual(existing.content, content)) {
+                        return { ok: true, didWrite: false, didUpdate: false, message: existing, participantCursors: [] };
+                    }
+
+                    const updated = await tx.sessionMessage.update({
+                        where: { id: existing.id },
+                        data: {
+                            content,
+                            sidechainId,
+                        },
+                        select: { id: true, seq: true, localId: true, sidechainId: true, content: true, createdAt: true, updatedAt: true },
+                    });
+
+                    const participantCursors = await markSessionParticipantsChanged({
+                        tx,
+                        sessionId,
+                        hint: { updatedMessageSeq: updated.seq, updatedMessageId: updated.id },
+                    });
+
+                    return {
+                        ok: true,
+                        didWrite: false,
+                        didUpdate: true,
+                        message: updated,
+                        participantCursors,
+                    };
                 }
             }
 
@@ -140,8 +210,9 @@ export async function createSessionMessage(
                     seq: next.seq,
                     content,
                     localId,
+                    sidechainId,
                 },
-                select: { id: true, seq: true, localId: true, content: true, createdAt: true, updatedAt: true },
+                select: { id: true, seq: true, localId: true, sidechainId: true, content: true, createdAt: true, updatedAt: true },
             });
 
             const participantCursors = await markSessionParticipantsChanged({
@@ -153,6 +224,7 @@ export async function createSessionMessage(
             return {
                 ok: true,
                 didWrite: true,
+                didUpdate: false,
                 message: created,
                 participantCursors,
             };
@@ -176,10 +248,36 @@ export async function createSessionMessage(
             }
             const existing = await db.sessionMessage.findUnique({
                 where: { sessionId_localId: { sessionId, localId } },
-                select: { id: true, seq: true, localId: true, createdAt: true },
+                select: { id: true, seq: true, localId: true, sidechainId: true, content: true, createdAt: true, updatedAt: true },
             });
             if (existing) {
-                return { ok: true, didWrite: false, message: existing, participantCursors: [] };
+                if ((existing.sidechainId ?? null) !== sidechainId) {
+                    return { ok: false, error: "invalid-params" };
+                }
+
+                if (isDeepStrictEqual(existing.content, content)) {
+                    return { ok: true, didWrite: false, didUpdate: false, message: existing, participantCursors: [] };
+                }
+
+                try {
+                    return await inTx(async (tx) => {
+                        const updated = await tx.sessionMessage.update({
+                            where: { id: existing.id },
+                            data: { content, sidechainId },
+                            select: { id: true, seq: true, localId: true, sidechainId: true, content: true, createdAt: true, updatedAt: true },
+                        });
+
+                        const participantCursors = await markSessionParticipantsChanged({
+                            tx,
+                            sessionId,
+                            hint: { updatedMessageSeq: updated.seq, updatedMessageId: updated.id },
+                        });
+
+                        return { ok: true, didWrite: false, didUpdate: true, message: updated, participantCursors };
+                    });
+                } catch {
+                    return { ok: false, error: "internal" };
+                }
             }
         }
         return { ok: false, error: "internal" };

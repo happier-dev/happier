@@ -21,7 +21,7 @@ export async function listPendingQueueV2LocalIdsFromServer(params: {
     sessionId: string;
 }): Promise<string[]> {
     try {
-        const serverUrl = resolveLoopbackHttpUrl(configuration.serverUrl).replace(/\/+$/, '');
+        const serverUrl = resolveLoopbackHttpUrl(configuration.apiServerUrl).replace(/\/+$/, '');
         const response = await axios.get(`${serverUrl}/v2/sessions/${params.sessionId}/pending`, {
             headers: { Authorization: `Bearer ${params.token}` },
             timeout: 10_000,
@@ -43,7 +43,7 @@ export async function discardPendingQueueV2Messages(params: {
     reason: 'switch_to_local' | 'manual';
 }): Promise<number> {
     let discarded = 0;
-    const serverUrl = resolveLoopbackHttpUrl(configuration.serverUrl).replace(/\/+$/, '');
+    const serverUrl = resolveLoopbackHttpUrl(configuration.apiServerUrl).replace(/\/+$/, '');
     for (const localId of params.localIds) {
         try {
             await axios.post(
@@ -81,7 +81,7 @@ async function tryMaterializeNextViaHttp(params: {
     sessionId: string;
 }): Promise<PendingQueueSocketMaterializeResult> {
     try {
-        const serverUrl = resolveLoopbackHttpUrl(configuration.serverUrl).replace(/\/+$/, '');
+        const serverUrl = resolveLoopbackHttpUrl(configuration.apiServerUrl).replace(/\/+$/, '');
         const response = await axios.post(
             `${serverUrl}/v2/sessions/${params.sessionId}/pending/materialize-next`,
             {},

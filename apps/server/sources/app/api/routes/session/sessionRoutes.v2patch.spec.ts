@@ -1,15 +1,20 @@
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeAll, beforeEach, describe, expect, it } from "vitest";
 
 import {
     buildUpdateSessionUpdate,
     createSessionRouteReply,
     emitUpdate,
     patchSession,
+    preloadSessionRoutes,
     registerSessionRoutesAndGetHandler,
     resetSessionRouteMocks,
 } from "./sessionRoutes.testkit";
 
 describe("sessionRoutes v2 patch", () => {
+    beforeAll(async () => {
+        await preloadSessionRoutes();
+    }, 120_000);
+
     beforeEach(() => {
         resetSessionRouteMocks();
     });

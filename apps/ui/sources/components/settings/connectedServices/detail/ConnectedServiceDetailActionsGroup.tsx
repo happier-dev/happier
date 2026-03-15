@@ -4,44 +4,77 @@ import { useUnistyles } from 'react-native-unistyles';
 
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
+import { t } from '@/text';
 
 export const ConnectedServiceDetailActionsGroup = React.memo(function ConnectedServiceDetailActionsGroup(props: Readonly<{
-  defaultProfileId: string;
-  supportsSetupToken: boolean;
-  onSetDefaultProfile: () => void;
-  onSetProfileLabel: () => void;
-  onAddOauthProfile: () => void;
-  onConnectSetupToken: () => void;
+  supportsOauth: boolean;
+  oauthAddActionModes?: ReadonlyArray<'device' | 'paste' | 'browser'>;
+  supportsToken: boolean;
+  tokenKind: 'api-key' | 'setup-token' | null;
+  onAddOauthProfile: (method: 'device' | 'paste' | 'browser' | null) => void;
+  onConnectToken: () => void;
 }>) {
   const { theme } = useUnistyles();
+  const oauthModes = props.oauthAddActionModes ?? [];
+  const showExplicitOauthModes = oauthModes.length > 0;
+  const singleOauthMode: 'device' | 'paste' | 'browser' | null = oauthModes[0] ?? null;
 
   return (
-    <ItemGroup title="Actions">
-      <Item
-        title="Set default profile"
-        subtitle={props.defaultProfileId ? `Default: ${props.defaultProfileId}` : 'Choose which profile is selected by default'}
-        icon={<Ionicons name="star-outline" size={22} color={theme.colors.accent.blue} />}
-        onPress={props.onSetDefaultProfile}
-      />
-      <Item
-        title="Set profile label"
-        subtitle="Optional label shown in auth pickers"
-        icon={<Ionicons name="pencil-outline" size={22} color={theme.colors.accent.blue} />}
-        onPress={props.onSetProfileLabel}
-      />
-      <Item
-        title="Add OAuth profile"
-        subtitle="Connect a new account profile"
-        icon={<Ionicons name="add-circle-outline" size={22} color={theme.colors.accent.blue} />}
-        onPress={props.onAddOauthProfile}
-      />
-      {props.supportsSetupToken ? (
+    <ItemGroup title={t('connectedServices.detail.actionsGroupTitle')}>
+      {props.supportsToken ? (
         <Item
-          title="Connect via setup-token"
-          subtitle="Paste a Claude setup-token"
+          testID="connected-services-action:connect-token"
+          title={
+            props.tokenKind === 'setup-token'
+              ? t('connectedServices.detail.connectSetupTokenTitle')
+              : t('connectedServices.detail.connectApiKeyTitle')
+          }
+          subtitle={
+            props.tokenKind === 'setup-token'
+              ? t('connectedServices.detail.connectSetupTokenSubtitle')
+              : t('connectedServices.detail.connectApiKeySubtitle')
+          }
           icon={<Ionicons name="key-outline" size={22} color={theme.colors.accent.blue} />}
-          onPress={props.onConnectSetupToken}
+          onPress={props.onConnectToken}
         />
+      ) : null}
+      {props.supportsOauth ? (
+        <>
+          {showExplicitOauthModes ? (
+            oauthModes.map((mode) => {
+              const titleKey =
+                mode === 'device'
+                  ? t('connectedServices.detail.addOauthProfileDeviceTitle')
+                  : mode === 'paste'
+                    ? t('connectedServices.detail.addOauthProfilePasteTitle')
+                    : t('connectedServices.detail.addOauthProfileBrowserTitle');
+              const subtitleKey =
+                mode === 'device'
+                  ? t('connectedServices.detail.addOauthProfileDeviceSubtitle')
+                  : mode === 'paste'
+                    ? t('connectedServices.detail.addOauthProfilePasteSubtitle')
+                    : t('connectedServices.detail.addOauthProfileBrowserSubtitle');
+              return (
+                <Item
+                  key={`add-oauth:${mode}`}
+                  testID={`connected-services-action:add-oauth-profile-${mode}`}
+                  title={titleKey}
+                  subtitle={subtitleKey}
+                  icon={<Ionicons name="add-circle-outline" size={22} color={theme.colors.accent.blue} />}
+                  onPress={() => props.onAddOauthProfile(mode)}
+                />
+              );
+            })
+          ) : (
+            <Item
+              testID="connected-services-action:add-oauth-profile"
+              title={t('connectedServices.detail.addOauthProfileTitle')}
+              subtitle={t('connectedServices.detail.addOauthProfileSubtitle')}
+              icon={<Ionicons name="add-circle-outline" size={22} color={theme.colors.accent.blue} />}
+              onPress={() => props.onAddOauthProfile(singleOauthMode)}
+            />
+          )}
+        </>
       ) : null}
     </ItemGroup>
   );

@@ -53,6 +53,10 @@ vi.mock('react-native', () => {
     };
 });
 
+vi.mock('@/text', () => ({
+    t: (key: string) => key,
+}));
+
 describe('ItemRowActions', () => {
     beforeEach(() => {
         vi.useFakeTimers();
@@ -81,7 +85,7 @@ describe('ItemRowActions', () => {
         });
 
         const trigger = (tree?.root.findAllByType('Pressable' as any) ?? []).find(
-            (node: any) => node.props?.accessibilityLabel === 'More actions',
+            (node: any) => node.props?.accessibilityLabel === 'common.moreActions',
         );
         expect(trigger).toBeTruthy();
 
@@ -120,7 +124,7 @@ describe('ItemRowActions', () => {
         });
 
         const trigger = (tree?.root.findAllByType('Pressable' as any) ?? []).find(
-            (node: any) => node.props?.accessibilityLabel === 'More actions',
+            (node: any) => node.props?.accessibilityLabel === 'common.moreActions',
         );
         expect(trigger).toBeUndefined();
         expect(tree?.root.findAllByType('Popover' as any).length).toBe(0);

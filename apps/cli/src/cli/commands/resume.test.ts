@@ -1,17 +1,18 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import tweetnacl from 'tweetnacl';
-import { mkdtemp, realpath, rm } from 'node:fs/promises';
+import { mkdtemp, readdir, realpath, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { sealEncryptedDataKeyEnvelopeV1 } from '@happier-dev/protocol';
+import { accountSettingsParse, sealEncryptedDataKeyEnvelopeV1 } from '@happier-dev/protocol';
 
 import { reloadConfiguration } from '@/configuration';
 import type { Credentials } from '@/persistence';
 import { encodeBase64, encrypt } from '@/api/encryption';
 import { readSessionAttachFromEnv } from '@/agent/runtime/sessionAttach';
 import { makeSessionFixtureRow } from '@/sessionControl/testFixtures';
+import type { CommandHandler } from '@/cli/commandRegistry';
 
 import { handleResumeCommand } from './resume';
 
@@ -36,7 +37,29 @@ describe('happier resume', () => {
     exitSpy.mockClear();
   });
 
-  it('creates an attach file from dataEncryptionKey and dispatches to the session flavor command', async () => {
+  it('prints usage for --help without requiring authentication', async () => {
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const readCredentialsFn = vi.fn(async () => null);
+
+    try {
+      await handleResumeCommand(['--help'], {
+        readCredentialsFn,
+        fetchSessionByIdFn: async () => null,
+      });
+
+      expect(readCredentialsFn).not.toHaveBeenCalled();
+      expect(exitSpy).not.toHaveBeenCalled();
+
+      const output = logSpy.mock.calls.flat().join('\n');
+      expect(output).toContain('happier resume');
+    } finally {
+      logSpy.mockRestore();
+      errorSpy.mockRestore();
+    }
+  });
+
+  it('creates an attach file and dispatches to the agent handler with --resume', async () => {
     const home = await mkdtemp(join(tmpdir(), 'happier-resume-'));
     const directory = await mkdtemp(join(tmpdir(), 'happier-resume-dir-'));
     const prevHome = process.env.HAPPIER_HOME_DIR;
@@ -61,6 +84,7 @@ describe('happier resume', () => {
         randomBytes: deterministicRandomBytesFactory(),
       });
 
+      const vendorResumeId = 'codex_vendor_session_1';
       const rawSession = {
         ...makeSessionFixtureRow({
           id: 'sid_1',
@@ -70,28 +94,29 @@ describe('happier resume', () => {
               path: directory,
               host: 'test',
               flavor: 'codex',
+              codexSessionId: vendorResumeId,
             }),
           ),
-          active: true,
-          activeAt: 1,
+          active: false,
+          activeAt: 0,
         }),
       };
 
       const dispatched: { args: string[] }[] = [];
-      const agentHandler = vi.fn(async (context: { args: string[] }) => {
+      const agentHandler: CommandHandler = vi.fn(async (context) => {
         dispatched.push({ args: [...context.args] });
         expect(await realpath(process.cwd())).toBe(await realpath(directory));
 
         const attach = await readSessionAttachFromEnv();
         expect(attach).not.toBeNull();
-        expect(attach?.encryptionVariant).toBe('dataKey');
-        expect(Array.from(attach?.encryptionKey ?? [])).toEqual(Array.from(sessionEncryptionKey));
+        expect(attach).toEqual({ encryptionMode: 'e2ee', encryptionVariant: 'dataKey', encryptionKey: sessionEncryptionKey });
       });
 
       await handleResumeCommand(['sid_1'], {
         readCredentialsFn: async () => credentials,
         fetchSessionByIdFn: async () => rawSession,
-        resolveAgentHandlerFn: async () => agentHandler as any,
+        readAccountSettingsFn: async () => accountSettingsParse({ schemaVersion: 6, codexBackendMode: 'acp' }),
+        resolveAgentHandlerFn: async () => agentHandler,
         chdirFn: (next: string) => process.chdir(next),
       });
 
@@ -99,7 +124,13 @@ describe('happier resume', () => {
       expect(dispatched[0]?.args[0]).toBe('codex');
       expect(dispatched[0]?.args).toContain('--existing-session');
       expect(dispatched[0]?.args).toContain('sid_1');
+      expect(dispatched[0]?.args).toContain('--resume');
+      expect(dispatched[0]?.args).toContain(vendorResumeId);
       expect(process.env.HAPPIER_SESSION_ATTACH_FILE ?? '').toBe('');
+
+      const attachDir = join(home, 'tmp', 'session-attach');
+      const attachFiles = await readdir(attachDir).catch(() => []);
+      expect(attachFiles).toEqual([]);
     } finally {
       try {
         process.chdir(prevCwd);
@@ -113,6 +144,147 @@ describe('happier resume', () => {
       reloadConfiguration();
       await rm(home, { recursive: true, force: true });
       await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it('supports plaintext sessions by creating an attach payload without a data encryption key', async () => {
+    const home = await mkdtemp(join(tmpdir(), 'happier-resume-plain-'));
+    const directory = await mkdtemp(join(tmpdir(), 'happier-resume-plain-dir-'));
+    const prevHome = process.env.HAPPIER_HOME_DIR;
+    const prevAttach = process.env.HAPPIER_SESSION_ATTACH_FILE;
+    const prevCwd = process.cwd();
+
+    try {
+      process.env.HAPPIER_HOME_DIR = home;
+      reloadConfiguration();
+
+      const credentials: Credentials = {
+        token: 'token-1',
+        encryption: { type: 'legacy', secret: new Uint8Array(32).fill(11) },
+      };
+
+      const vendorResumeId = 'claude_vendor_session_1';
+      const rawSession = {
+        ...makeSessionFixtureRow({
+          id: 'sid_plain_1',
+          encryptionMode: 'plain',
+          dataEncryptionKey: null,
+          metadata: JSON.stringify({
+            path: directory,
+            host: 'test',
+            flavor: 'claude',
+            claudeSessionId: vendorResumeId,
+          }),
+          active: false,
+          activeAt: 0,
+        }),
+      };
+
+      const dispatched: { args: string[] }[] = [];
+      const agentHandler: CommandHandler = vi.fn(async (context) => {
+        dispatched.push({ args: [...context.args] });
+        expect(await realpath(process.cwd())).toBe(await realpath(directory));
+
+        const attach = await readSessionAttachFromEnv();
+        expect(attach).toEqual({ encryptionMode: 'plain' });
+      });
+
+      await handleResumeCommand(['sid_plain_1'], {
+        readCredentialsFn: async () => credentials,
+        fetchSessionByIdFn: async () => rawSession,
+        readAccountSettingsFn: async () => accountSettingsParse({ schemaVersion: 6, codexBackendMode: 'acp' }),
+        resolveAgentHandlerFn: async () => agentHandler,
+        chdirFn: (next: string) => process.chdir(next),
+      });
+
+      expect(agentHandler).toHaveBeenCalledTimes(1);
+      expect(dispatched[0]?.args[0]).toBe('claude');
+      expect(dispatched[0]?.args).toContain('--existing-session');
+      expect(dispatched[0]?.args).toContain('sid_plain_1');
+      expect(dispatched[0]?.args).toContain('--resume');
+      expect(dispatched[0]?.args).toContain(vendorResumeId);
+
+      const attachDir = join(home, 'tmp', 'session-attach');
+      const attachFiles = await readdir(attachDir).catch(() => []);
+      expect(attachFiles).toEqual([]);
+    } finally {
+      try {
+        process.chdir(prevCwd);
+      } catch {
+        // ignore
+      }
+      if (prevAttach === undefined) delete process.env.HAPPIER_SESSION_ATTACH_FILE;
+      else process.env.HAPPIER_SESSION_ATTACH_FILE = prevAttach;
+      if (prevHome === undefined) delete process.env.HAPPIER_HOME_DIR;
+      else process.env.HAPPIER_HOME_DIR = prevHome;
+      reloadConfiguration();
+      await rm(home, { recursive: true, force: true });
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it('treats interactive cancellation as a cancel (not as "no resumable sessions")', async () => {
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    try {
+      const credentials: Credentials = {
+        token: 'token-1',
+        encryption: { type: 'legacy', secret: new Uint8Array(32).fill(11) },
+      };
+
+      const fetchSessionByIdFn = vi.fn(async () => {
+        throw new Error('fetchSessionByIdFn should not be called');
+      });
+
+      await handleResumeCommand([], {
+        readCredentialsFn: async () => credentials,
+        readAccountSettingsFn: async () => accountSettingsParse({ schemaVersion: 6, codexBackendMode: 'acp' }),
+        fetchSessionByIdFn,
+        canUseInkSelectorFn: () => true,
+        selectResumableSessionIdFn: async () => ({ type: 'cancelled' }),
+      });
+
+      expect(fetchSessionByIdFn).not.toHaveBeenCalled();
+
+      const output = logSpy.mock.calls.flat().join('\n');
+      expect(output).toContain('cancel');
+      expect(output).not.toContain('No resumable sessions found.');
+    } finally {
+      logSpy.mockRestore();
+      errorSpy.mockRestore();
+    }
+  });
+
+  it('prints a "No resumable sessions" message when there are none in interactive mode', async () => {
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    try {
+      const credentials: Credentials = {
+        token: 'token-1',
+        encryption: { type: 'legacy', secret: new Uint8Array(32).fill(11) },
+      };
+
+      const fetchSessionByIdFn = vi.fn(async () => {
+        throw new Error('fetchSessionByIdFn should not be called');
+      });
+
+      await handleResumeCommand([], {
+        readCredentialsFn: async () => credentials,
+        readAccountSettingsFn: async () => accountSettingsParse({ schemaVersion: 6, codexBackendMode: 'acp' }),
+        fetchSessionByIdFn,
+        canUseInkSelectorFn: () => true,
+        selectResumableSessionIdFn: async () => ({ type: 'none' }),
+      });
+
+      expect(fetchSessionByIdFn).not.toHaveBeenCalled();
+
+      const output = logSpy.mock.calls.flat().join('\n');
+      expect(output).toContain('No resumable sessions found.');
+    } finally {
+      logSpy.mockRestore();
+      errorSpy.mockRestore();
     }
   });
 });

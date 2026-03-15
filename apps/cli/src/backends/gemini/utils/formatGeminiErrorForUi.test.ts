@@ -13,7 +13,10 @@ describe('formatGeminiErrorForUi', () => {
   });
 
   it('formats model-not-found errors', () => {
-    expect(formatGeminiErrorForUi({ code: 404 }, 'gemini-x')).toContain('Model "gemini-x" not found');
+    const out = formatGeminiErrorForUi({ code: 404 }, 'gemini-x');
+    expect(out).toContain('Model "gemini-x" not found');
+    expect(out).toContain('Available models:');
+    expect(out).toContain('gemini-3.1-pro-preview');
   });
 
   it('formats rate-limit errors by numeric status', () => {

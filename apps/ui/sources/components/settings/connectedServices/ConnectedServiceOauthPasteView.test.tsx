@@ -6,12 +6,11 @@ import { decodeBase64, encodeBase64, sealBoxBundle } from '@happier-dev/protocol
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
-const promptSpy = vi.fn(async () => 'http://localhost:1455/auth/callback?code=code-1&state=state-1');
 const alertSpy = vi.fn(async () => {});
 const refreshProfileSpy = vi.fn(async () => {});
-const registerSpy = vi.fn(async () => {});
+const storeCredentialSpy = vi.fn(async () => {});
 
-const exchangeSpy = vi.fn(async (_credentials: any, params: any) => {
+const defaultExchangeImpl = async (_credentials: any, params: any) => {
   const recipientPublicKey = decodeBase64(params.publicKey, 'base64url');
   const plaintextJson = JSON.stringify({
     serviceId: params.serviceId,
@@ -32,7 +31,9 @@ const exchangeSpy = vi.fn(async (_credentials: any, params: any) => {
     randomBytes: (n) => new Uint8Array(n).fill(7),
   });
   return { bundle: encodeBase64(bundle, 'base64url') };
-});
+};
+
+const exchangeSpy = vi.fn(defaultExchangeImpl);
 
 const legacySecretB64Url = Buffer.from(new Uint8Array(32).fill(3)).toString('base64url');
 
@@ -42,8 +43,8 @@ vi.mock('@/auth/context/AuthContext', () => ({
 
 vi.mock('@/modal', () => ({
   Modal: {
-    prompt: promptSpy,
     alert: alertSpy,
+    alertAsync: vi.fn(async () => {}),
   },
 }));
 
@@ -53,7 +54,11 @@ vi.mock('@/sync/sync', () => ({
 
 vi.mock('@/sync/api/account/apiConnectedServicesV2', () => ({
   exchangeConnectedServiceOauthViaProxy: exchangeSpy,
-  registerConnectedServiceCredentialSealed: registerSpy,
+}));
+
+vi.mock('@/sync/domains/connectedServices/storeConnectedServiceCredentialForAccount', () => ({
+  storeConnectedServiceCredentialForAccount: storeCredentialSpy,
+  deleteConnectedServiceCredentialForAccount: vi.fn(async () => {}),
 }));
 
 vi.mock('@/utils/auth/oauthCore', async (importOriginal) => {
@@ -66,7 +71,27 @@ vi.mock('@/utils/auth/oauthCore', async (importOriginal) => {
 });
 
 describe('ConnectedServiceOauthPasteView', () => {
+  async function flushAsyncEffects(): Promise<void> {
+    // `ConnectedServiceOauthPasteView` initializes PKCE/state in a fire-and-forget effect.
+    // Flush a couple microtasks so the `handlePaste` handler is armed with pkce/state.
+    await act(async () => {
+      await Promise.resolve();
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+  }
+
+  function resetMocks(): void {
+    alertSpy.mockClear();
+    refreshProfileSpy.mockClear();
+    storeCredentialSpy.mockClear();
+    exchangeSpy.mockClear();
+    exchangeSpy.mockImplementation(defaultExchangeImpl);
+  }
+
   it('uses the proxy exchange endpoint and registers a sealed credential', async () => {
+    resetMocks();
     const { ConnectedServiceOauthPasteView } = await import('./ConnectedServiceOauthPasteView');
 
     const onDone = vi.fn();
@@ -75,8 +100,14 @@ describe('ConnectedServiceOauthPasteView', () => {
     await act(async () => {
       tree = renderer.create(<ConnectedServiceOauthPasteView serviceId="openai-codex" profileId="work" onDone={onDone} />);
     });
+    await flushAsyncEffects();
 
-    const pasteItem = tree.root.find((n) => n.props?.title === 'Paste redirect URL');
+    const redirectInput = tree.root.findByProps({ testID: 'connectedServices.oauthPaste.redirectUrlInput' });
+    await act(async () => {
+      redirectInput.props.onChangeText?.('http://localhost:1455/auth/callback?code=code-1&state=state-1');
+    });
+
+    const pasteItem = tree.root.find((n) => n.props?.testID === 'connectedServices.oauthPaste.validateRedirectButton');
     await act(async () => {
       await pasteItem.props.onPress?.();
     });
@@ -88,17 +119,80 @@ describe('ConnectedServiceOauthPasteView', () => {
         code: 'code-1',
         verifier: 'verifier-1',
         redirectUri: 'http://localhost:1455/auth/callback',
+        state: 'state-1',
       }),
     );
-    expect(registerSpy).toHaveBeenCalledWith(
+    expect(storeCredentialSpy).toHaveBeenCalledWith(
       expect.anything(),
       expect.objectContaining({
         serviceId: 'openai-codex',
         profileId: 'work',
-        sealed: expect.objectContaining({ format: 'account_scoped_v1', ciphertext: expect.any(String) }),
+        record: expect.objectContaining({
+          kind: 'oauth',
+          oauth: expect.objectContaining({ accessToken: 'access-1', refreshToken: 'refresh-1' }),
+        }),
       }),
     );
     expect(refreshProfileSpy).toHaveBeenCalled();
     expect(onDone).toHaveBeenCalled();
+
+    await act(async () => {
+      tree.unmount();
+    });
+  });
+
+  it('rejects proxy bundles that claim a different serviceId', async () => {
+    resetMocks();
+    const { ConnectedServiceOauthPasteView } = await import('./ConnectedServiceOauthPasteView');
+
+    exchangeSpy.mockImplementationOnce(async (_credentials: any, params: any) => {
+      const recipientPublicKey = decodeBase64(params.publicKey, 'base64url');
+      const plaintextJson = JSON.stringify({
+        serviceId: 'gemini',
+        accessToken: 'access-1',
+        refreshToken: 'refresh-1',
+        idToken: 'id-1',
+        scope: null,
+        tokenType: null,
+        providerEmail: null,
+        providerAccountId: 'acct-1',
+        expiresAt: 123,
+        raw: { ok: true },
+      });
+      const plaintext = new TextEncoder().encode(plaintextJson);
+      const bundle = sealBoxBundle({
+        plaintext,
+        recipientPublicKey,
+        randomBytes: (n) => new Uint8Array(n).fill(7),
+      });
+      return { bundle: encodeBase64(bundle, 'base64url') };
+    });
+
+    const onDone = vi.fn();
+
+    let tree!: renderer.ReactTestRenderer;
+    await act(async () => {
+      tree = renderer.create(<ConnectedServiceOauthPasteView serviceId="openai-codex" profileId="work" onDone={onDone} />);
+    });
+    await flushAsyncEffects();
+
+    const redirectInput = tree.root.findByProps({ testID: 'connectedServices.oauthPaste.redirectUrlInput' });
+    await act(async () => {
+      redirectInput.props.onChangeText?.('http://localhost:1455/auth/callback?code=code-1&state=state-1');
+    });
+
+    const pasteItem = tree.root.find((n) => n.props?.testID === 'connectedServices.oauthPaste.validateRedirectButton');
+    await act(async () => {
+      await pasteItem.props.onPress?.();
+    });
+
+    expect(storeCredentialSpy).not.toHaveBeenCalled();
+    expect(refreshProfileSpy).not.toHaveBeenCalled();
+    expect(onDone).not.toHaveBeenCalled();
+    expect(alertSpy).toHaveBeenCalled();
+
+    await act(async () => {
+      tree.unmount();
+    });
   });
 });

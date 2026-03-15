@@ -4,6 +4,8 @@ import { randomUUID } from 'node:crypto';
 import { ReviewStartInputSchema } from '@happier-dev/protocol';
 
 import type { AgentBackend, AgentMessageHandler, SessionId } from '@/agent/core/AgentBackend';
+import { killProcessTree } from '@/agent/acp/killProcessTree';
+import { resolveWindowsCommandInvocation } from '@happier-dev/cli-common/process';
 
 import { readCodeRabbitReviewConfigFromEnv } from './readCodeRabbitReviewConfig.js';
 import { buildCodeRabbitEnv } from './buildCodeRabbitEnv.js';
@@ -93,11 +95,11 @@ export class CodeRabbitReviewBackend implements AgentBackend {
       aborted = true;
       const child = childRef.current;
       if (!child) return;
-      try {
-        child.kill('SIGTERM');
-      } catch {
-        // best-effort
+      if (process.platform === 'win32') {
+        void killProcessTree(child, { graceMs: 250 }).catch(() => undefined);
+        return;
       }
+      try { child.kill('SIGTERM'); } catch { /* best-effort */ }
     };
 
     type AttemptResult = Readonly<{ ok: boolean; stdout: string; stderr: string; exitCode: number | null }>;
@@ -105,11 +107,20 @@ export class CodeRabbitReviewBackend implements AgentBackend {
     const runOnce = async (): Promise<AttemptResult> => {
       if (aborted) return { ok: false, stdout: '', stderr: 'cancelled', exitCode: null };
 
-      const child = spawn(this.config.command, args, {
+      const env = buildCodeRabbitEnv({ baseEnv: this.env, homeDir: this.config.homeDir });
+      const invocation = resolveWindowsCommandInvocation({
+        command: this.config.command,
+        args,
+        env,
+        resolveCommandOnPath: true,
+      });
+
+      const child = spawn(invocation.command, invocation.args, {
         cwd: this.cwd,
-        env: buildCodeRabbitEnv({ baseEnv: this.env, homeDir: this.config.homeDir }),
+        env,
         stdio: 'pipe',
         windowsHide: true,
+        windowsVerbatimArguments: invocation.windowsVerbatimArguments,
       });
 
       childRef.current = child;
@@ -128,7 +139,11 @@ export class CodeRabbitReviewBackend implements AgentBackend {
 
       const res = await new Promise<AttemptResult>((resolve) => {
         const timer = setTimeout(() => {
-          try { child.kill('SIGTERM'); } catch {}
+          if (process.platform === 'win32') {
+            void killProcessTree(child, { graceMs: 250 }).catch(() => undefined);
+          } else {
+            try { child.kill('SIGTERM'); } catch {}
+          }
           resolve({ ok: false, stdout, stderr: stderr || 'CodeRabbit timed out', exitCode: null });
         }, this.config.timeoutMs);
 

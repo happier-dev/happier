@@ -43,6 +43,17 @@ function parseBoolString(value, name) {
 /**
  * @param {unknown} value
  * @param {string} name
+ * @param {boolean} defaultValue
+ */
+function resolveBoolEnv(value, name, defaultValue) {
+  const raw = String(value ?? '').trim();
+  if (!raw) return defaultValue;
+  return parseBoolString(raw, name);
+}
+
+/**
+ * @param {unknown} value
+ * @param {string} name
  * @param {boolean} autoValue
  */
 function resolveAutoBool(value, name, autoValue) {
@@ -82,7 +93,7 @@ function main() {
   });
 
   const profile = String(values.profile ?? '').trim();
-  if (!profile) fail('--profile is required (full|fast|none|custom)');
+  if (!profile) fail('--profile is required (full|fast|none|custom|release-assets)');
   const customChecks = String(values['custom-checks'] ?? '').trim();
 
   const plan = resolveChecksProfilePlan({
@@ -137,6 +148,91 @@ function main() {
   if (plan.runBuildWebsite) run({ dryRun }, 'yarn', ['website:build']);
   if (plan.runBuildDocs) run({ dryRun }, 'yarn', ['docs:build']);
   if (plan.runCliSmokeLinux) run({ dryRun }, process.execPath, ['scripts/pipeline/run.mjs', 'smoke-cli']);
+
+  if (plan.runReleaseAssetsE2e) {
+    const modeRaw = String(process.env.HAPPIER_RELEASE_ASSETS_E2E_MODE ?? '').trim().toLowerCase();
+    const mode = modeRaw === 'npm' || modeRaw === 'local' ? modeRaw : modeRaw ? null : 'local';
+    if (!mode) {
+      fail(`HAPPIER_RELEASE_ASSETS_E2E_MODE must be 'npm' or 'local' (got: ${modeRaw || '<empty>'})`);
+    }
+
+    const monorepoRaw = String(process.env.HAPPIER_RELEASE_ASSETS_E2E_MONOREPO ?? '').trim().toLowerCase();
+    const monorepoDefault = mode === 'local' ? 'local' : 'github';
+    const monorepo =
+      monorepoRaw === 'github' || monorepoRaw === 'local' ? monorepoRaw : monorepoRaw ? null : monorepoDefault;
+    if (!monorepo) {
+      fail(`HAPPIER_RELEASE_ASSETS_E2E_MONOREPO must be 'github' or 'local' (got: ${monorepoRaw || '<empty>'})`);
+    }
+
+    const withRelayUpgrade = resolveBoolEnv(
+      process.env.HAPPIER_RELEASE_ASSETS_E2E_WITH_RELAY_UPGRADE,
+      'HAPPIER_RELEASE_ASSETS_E2E_WITH_RELAY_UPGRADE',
+      true,
+    );
+
+    if (!dryRun) {
+      if (!commandExists('docker')) {
+        fail("release-assets-e2e requires Docker. Fix: start Docker Desktop (macOS) or install docker engine.");
+      }
+      try {
+        execFileSync('docker', ['info'], { encoding: 'utf8', stdio: ['ignore', 'ignore', 'ignore'], timeout: 10_000 });
+      } catch {
+        fail('release-assets-e2e requires Docker to be running. Fix: start Docker Desktop and retry.');
+      }
+    }
+
+    run({ dryRun }, 'bash', [
+      'scripts/release/release-assets-e2e/run.sh',
+      `--mode=${mode}`,
+      `--monorepo=${monorepo}`,
+      withRelayUpgrade ? '--with-relay-upgrade' : '--no-relay-upgrade',
+    ]);
+  }
+
+  if (plan.runSelfHostSystemd) {
+    if (!dryRun) {
+      if (process.platform !== 'linux') fail(`self_host_systemd is linux-only (current: ${process.platform})`);
+      if (process.arch !== 'x64') fail(`self_host_systemd requires linux-x64 (current: ${process.platform}-${process.arch})`);
+      if (!commandExists('systemctl')) fail('self_host_systemd requires systemctl');
+      if (!commandExists('bun')) fail('self_host_systemd requires bun (needed to build compiled binaries)');
+      if (typeof process.getuid === 'function' && process.getuid() !== 0 && !commandExists('sudo')) {
+        fail('self_host_systemd requires sudo/root access');
+      }
+    }
+    run({ dryRun }, process.execPath, ['--test', 'apps/stack/scripts/self_host_systemd.real.integration.test.mjs']);
+  }
+
+  if (plan.runSelfHostLaunchd) {
+    if (!dryRun) {
+      if (process.platform !== 'darwin') fail(`self_host_launchd is macOS-only (current: ${process.platform})`);
+      if (!commandExists('launchctl')) fail('self_host_launchd requires launchctl');
+      if (!commandExists('bun')) fail('self_host_launchd requires bun (needed to build compiled binaries)');
+    }
+    run({ dryRun }, process.execPath, ['--test', 'apps/stack/scripts/self_host_launchd.real.integration.test.mjs']);
+  }
+
+  if (plan.runSelfHostSchtasks) {
+    if (!dryRun) {
+      if (process.platform !== 'win32') fail(`self_host_schtasks is Windows-only (current: ${process.platform})`);
+    }
+    run({ dryRun }, process.execPath, ['--test', 'apps/stack/scripts/self_host_schtasks.real.integration.test.mjs']);
+  }
+
+  if (plan.runSelfHostDaemon) {
+    if (!dryRun) {
+      if (process.platform !== 'linux' && process.platform !== 'darwin') {
+        fail(`self_host_daemon supports linux and macOS only (current: ${process.platform})`);
+      }
+      if (!commandExists('bun')) fail('self_host_daemon requires bun (needed to build compiled binaries)');
+      if (process.platform === 'linux') {
+        if (!commandExists('systemctl')) fail('self_host_daemon requires systemctl on linux');
+        if (typeof process.getuid === 'function' && process.getuid() !== 0 && !commandExists('sudo')) {
+          fail('self_host_daemon requires sudo/root access on linux');
+        }
+      }
+    }
+    run({ dryRun }, process.execPath, ['--test', 'apps/stack/scripts/self_host_daemon.real.integration.test.mjs']);
+  }
 }
 
 main();

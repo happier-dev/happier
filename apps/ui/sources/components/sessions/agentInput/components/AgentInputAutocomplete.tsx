@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { Pressable } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
-import { FloatingOverlay } from '@/components/ui/overlays/FloatingOverlay';
+import { AgentInputPopoverSurface } from './AgentInputPopoverSurface';
 
 interface AgentInputAutocompleteProps {
     suggestions: React.ReactElement[];
@@ -20,7 +20,7 @@ export const AgentInputAutocomplete = React.memo((props: AgentInputAutocompleteP
     }
 
     return (
-        <FloatingOverlay maxHeight={maxHeight} keyboardShouldPersistTaps="handled">
+        <AgentInputPopoverSurface maxHeight={maxHeight} keyboardShouldPersistTaps="handled">
             {suggestions.map((suggestion, index) => (
                 <Pressable
                     key={index}
@@ -37,6 +37,6 @@ export const AgentInputAutocomplete = React.memo((props: AgentInputAutocompleteP
                     {suggestion}
                 </Pressable>
             ))}
-        </FloatingOverlay>
+        </AgentInputPopoverSurface>
     );
 });

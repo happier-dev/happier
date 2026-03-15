@@ -18,10 +18,14 @@ describe('settingsDefaults provider plugin default guards', () => {
             ],
         }));
 
-        const { settingsDefaults, settingsParse } = await import('./settings');
+        try {
+            const { settingsDefaults, settingsParse } = await import('./settings');
 
-        expect((settingsDefaults as any).attachmentsUploadsUploadLocation).toBe('workspace');
-        expect((settingsParse({}) as any).attachmentsUploadsUploadLocation).toBe('workspace');
+            expect((settingsDefaults as any).attachmentsUploadsUploadLocation).toBe('workspace');
+            expect((settingsParse({}) as any).attachmentsUploadsUploadLocation).toBe('workspace');
+        } finally {
+            vi.unmock('@/agents/providers/_registry/providerSettingsRegistry');
+            vi.resetModules();
+        }
     });
 });
-

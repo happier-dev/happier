@@ -14,6 +14,7 @@ import { listServerProfiles } from '@/sync/domains/server/serverProfiles';
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 import { serverFetch } from '@/sync/http/client';
 import { openAccountScopedBlobCiphertext } from '@happier-dev/protocol';
+import { deriveSettingsSecretsKey, sealSecretsDeep } from '@/sync/encryption/secretSettings';
 
 export async function handleUpdateAccountSocketUpdate(params: {
     accountUpdate: any;
@@ -51,7 +52,44 @@ export async function handleUpdateAccountSocketUpdate(params: {
     applyProfile(updatedProfile);
 
     // Handle settings updates (new for profile sync)
-    if (accountUpdate.settings?.value) {
+    if (accountUpdate.settingsV2?.content || accountUpdate.settingsV2?.content === null) {
+        try {
+            const version = Number(accountUpdate.settingsV2?.version ?? 0);
+            const content = accountUpdate.settingsV2?.content;
+            let decryptedSettings: unknown = null;
+
+            if (!content) {
+                decryptedSettings = null;
+            } else if (content.t === 'plain') {
+                decryptedSettings = content.v;
+            } else if (content.t === 'encrypted') {
+                const machineKey = encryption.getContentPrivateKey();
+                const opened = openAccountScopedBlobCiphertext({
+                    kind: 'account_settings',
+                    material: { type: 'dataKey', machineKey },
+                    ciphertext: content.c,
+                });
+                decryptedSettings = opened?.value ?? (await encryption.decryptRaw(content.c));
+            }
+
+            const parsedSettings = decryptedSettings ? settingsParse(decryptedSettings) : settingsParse({});
+            const secretsKey = await deriveSettingsSecretsKey(encryption.getContentPrivateKey());
+            const sealedSettings = sealSecretsDeep(parsedSettings, secretsKey);
+
+            const localSettings = settingsParse(getLocalSettings ? getLocalSettings() : {});
+            const localServerSelectionSettings = pickLocalOnlyServerSelectionSettings(localSettings);
+            const mergedSettings = {
+                ...sealedSettings,
+                ...localServerSelectionSettings,
+            };
+
+            applySettings(mergedSettings, version);
+            log.log(`📋 Settings synced from server (v2, version ${version})`);
+        } catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+            log.log(`Failed to process settings v2 update: ${message}`);
+        }
+    } else if (accountUpdate.settings?.value) {
         try {
             const machineKey = encryption.getContentPrivateKey();
             const opened = openAccountScopedBlobCiphertext({
@@ -83,7 +121,8 @@ export async function handleUpdateAccountSocketUpdate(params: {
                 `📋 Settings synced from server (schema v${settingsSchemaVersion}, version ${accountUpdate.settings.version})`,
             );
         } catch (error) {
-            console.error('❌ Failed to process settings update:', error);
+            const message = error instanceof Error ? error.message : String(error);
+            log.log(`Failed to process settings update: ${message}`);
             // Don't crash on settings sync errors, just log
         }
     }

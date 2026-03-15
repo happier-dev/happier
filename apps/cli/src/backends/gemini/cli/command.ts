@@ -3,6 +3,7 @@ import chalk from 'chalk';
 import { ApiClient } from '@/api/api';
 import { runBackendSessionCliCommand } from '@/cli/runBackendSessionCliCommand';
 import { DEFAULT_GEMINI_MODEL, GEMINI_MODEL_ENV } from '@/backends/gemini/constants';
+import { readGeminiLocalConfig, saveGeminiModelToConfig, saveGoogleCloudProjectToConfig } from '@/backends/gemini/utils/config';
 
 import type { CommandContext } from '@/cli/commandRegistry';
 
@@ -11,17 +12,15 @@ export async function handleGeminiCliCommand(context: CommandContext): Promise<v
   const geminiSubcommand = args[1];
 
   if (geminiSubcommand === 'model' && args[2] === 'set' && args[3]) {
-    const modelName = args[3];
-    const validModels = ['gemini-2.5-pro', 'gemini-2.5-flash', 'gemini-2.5-flash-lite'];
-
-    if (!validModels.includes(modelName)) {
-      console.error(`Invalid model: ${modelName}`);
-      console.error(`Available models: ${validModels.join(', ')}`);
+    const raw = args[3];
+    const modelName = typeof raw === 'string' ? raw.trim() : '';
+    if (!modelName) {
+      console.error('Invalid model: (empty)');
       process.exit(1);
+      return;
     }
 
     try {
-      const { saveGeminiModelToConfig } = await import('@/backends/gemini/utils/config');
       saveGeminiModelToConfig(modelName);
       const { join } = await import('node:path');
       const { homedir } = await import('node:os');
@@ -30,15 +29,16 @@ export async function handleGeminiCliCommand(context: CommandContext): Promise<v
       console.log(`  Config saved to: ${configPath}`);
       console.log('  This model will be used in future sessions.');
       process.exit(0);
+      return;
     } catch (error) {
       console.error('Failed to save model configuration:', error);
       process.exit(1);
+      return;
     }
   }
 
   if (geminiSubcommand === 'model' && args[2] === 'get') {
     try {
-      const { readGeminiLocalConfig } = await import('@/backends/gemini/utils/config');
       const local = readGeminiLocalConfig();
       if (local.model) {
         console.log(`Current model: ${local.model}`);
@@ -48,9 +48,11 @@ export async function handleGeminiCliCommand(context: CommandContext): Promise<v
         console.log(`Current model: ${DEFAULT_GEMINI_MODEL} (default)`);
       }
       process.exit(0);
+      return;
     } catch (error) {
       console.error('Failed to read model configuration:', error);
       process.exit(1);
+      return;
     }
   }
 
@@ -58,8 +60,6 @@ export async function handleGeminiCliCommand(context: CommandContext): Promise<v
     const projectId = args[3];
 
     try {
-      const { saveGoogleCloudProjectToConfig } = await import('@/backends/gemini/utils/config');
-
       let userEmail: string | undefined = undefined;
       try {
         const { readCredentials } = await import('@/persistence');
@@ -90,15 +90,16 @@ export async function handleGeminiCliCommand(context: CommandContext): Promise<v
       }
       console.log('  This project will be used for Google Workspace accounts.');
       process.exit(0);
+      return;
     } catch (error) {
       console.error('Failed to save project configuration:', error);
       process.exit(1);
+      return;
     }
   }
 
   if (geminiSubcommand === 'project' && args[2] === 'get') {
     try {
-      const { readGeminiLocalConfig } = await import('@/backends/gemini/utils/config');
       const config = readGeminiLocalConfig();
 
       if (config.googleCloudProject) {
@@ -120,9 +121,11 @@ export async function handleGeminiCliCommand(context: CommandContext): Promise<v
         console.log('Guide: https://goo.gle/gemini-cli-auth-docs#workspace-gca');
       }
       process.exit(0);
+      return;
     } catch (error) {
       console.error('Failed to read project configuration:', error);
       process.exit(1);
+      return;
     }
   }
 
@@ -138,6 +141,7 @@ export async function handleGeminiCliCommand(context: CommandContext): Promise<v
     console.log('');
     console.log('Guide: https://goo.gle/gemini-cli-auth-docs#workspace-gca');
     process.exit(0);
+    return;
   }
 
   await runBackendSessionCliCommand({

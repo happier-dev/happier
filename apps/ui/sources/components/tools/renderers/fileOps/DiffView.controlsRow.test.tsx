@@ -11,10 +11,16 @@ vi.mock('@/sync/domains/state/storage', () => ({
         if (key === 'wrapLinesInDiffs') return true;
         return undefined;
     },
+    useSessionReviewCommentsDrafts: () => [],
+    storage: { getState: () => ({ upsertSessionReviewCommentDraft: () => {}, deleteSessionReviewCommentDraft: () => {} }) },
 }));
 
 vi.mock('@/text', () => ({
     t: (key: string) => key,
+}));
+
+vi.mock('@/hooks/server/useFeatureEnabled', () => ({
+    useFeatureEnabled: () => false,
 }));
 
 vi.mock('@/components/ui/code/model/diff/diffViewModel', () => ({

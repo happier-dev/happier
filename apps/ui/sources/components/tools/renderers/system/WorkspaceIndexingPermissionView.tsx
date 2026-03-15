@@ -4,6 +4,7 @@ import { StyleSheet } from 'react-native-unistyles';
 import type { ToolViewProps } from '../core/_registry';
 import { ToolSectionView } from '../../shell/presentation/ToolSectionView';
 import { Text } from '@/components/ui/text/Text';
+import { t } from '@/text';
 
 
 type IndexingOption = { id?: string; name?: string; kind?: string };
@@ -37,7 +38,7 @@ export const WorkspaceIndexingPermissionView = React.memo<ToolViewProps>(({ tool
             ? input.title.trim()
             : typeof input?.toolCall?.title === 'string' && input.toolCall.title.trim().length > 0
                 ? input.toolCall.title.trim()
-                : null) ?? 'Workspace indexing';
+                : null) ?? t('tools.workspaceIndexingPermission.defaultTitle');
 
     const options = asOptions(tool.input);
     const visibleOptions = detailLevel === 'full' ? options : options.slice(0, 2);
@@ -49,23 +50,25 @@ export const WorkspaceIndexingPermissionView = React.memo<ToolViewProps>(({ tool
                 <Text style={styles.title}>{title}</Text>
                 {detailLevel === 'full' ? (
                     <Text style={styles.body}>
-                        Indexing helps the agent search your codebase faster and provide more accurate answers. This may scan files in your workspace.
+                        {t('tools.workspaceIndexingPermission.description')}
                     </Text>
                 ) : null}
                 {visibleOptions.length > 0 ? (
                     <View style={styles.options}>
                         {visibleOptions.map((opt, idx) => (
                             <Text key={`${opt.id ?? 'opt'}-${idx}`} style={styles.optionLine}>
-                                • {opt.name ?? opt.id ?? 'Option'}
+                                • {opt.name ?? opt.id ?? t('tools.workspaceIndexingPermission.optionFallback')}
                             </Text>
                         ))}
                         {remainingOptions > 0 ? (
-                            <Text style={styles.optionMore}>+ {remainingOptions} more</Text>
+                            <Text style={styles.optionMore}>
+                                {t('tools.structuredResult.more', { count: remainingOptions })}
+                            </Text>
                         ) : null}
                     </View>
                 ) : null}
                 {detailLevel === 'full' ? (
-                    <Text style={styles.hint}>Choose an option below to continue.</Text>
+                    <Text style={styles.hint}>{t('tools.workspaceIndexingPermission.chooseOptionHint')}</Text>
                 ) : null}
             </View>
         </ToolSectionView>

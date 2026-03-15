@@ -30,7 +30,7 @@ import { configuration } from '@/configuration';
 import { isExperimentalCodexAcpEnabled, isExperimentalCodexVendorResumeEnabled } from '@/backends/codex/experiments';
 import { maybeUpdatePermissionModeMetadata } from '@/agent/runtime/permission/permissionModeMetadata';
 import { parseSpecialCommand } from '@/cli/parsers/specialCommands';
-import { pushTextToMessageQueueWithSpecialCommands } from '@/agent/runtime/queueSpecialCommands';
+import { pushMessageToQueueWithSpecialCommands } from '@/agent/runtime/queueSpecialCommands';
 import { normalizePermissionModeToIntent, resolvePermissionModeUpdatedAtFromMessage } from '@/agent/runtime/permission/permissionModeCanonical';
 import { publishCodexSessionIdMetadata } from './utils/codexSessionIdMetadata';
 import { createCodexAcpRuntime } from './acp/runtime';
@@ -58,7 +58,9 @@ import {
     forwardCodexErrorToUi as forwardCodexErrorToUiShared,
     forwardCodexStatusToUi as forwardCodexStatusToUiShared,
 } from './runtime/mcpMessageHandler';
+import { createCodexRequestUserInputBridge } from './runtime/codexRequestUserInputBridge';
 import { runCodexLocalModePass } from './runtime/localModePass';
+import { resolveCodexQueuedPromptWithReplaySeed } from './runtime/resolveCodexQueuedPromptWithReplaySeed';
 import { cleanupCodexRunResources } from './runtime/cleanupRunResources';
 import {
     emitReadyIfIdle,
@@ -77,8 +79,8 @@ import {
     readStartupOverridesCacheForBackend,
     writeStartupOverridesCacheForBackend,
 } from '@/agent/runtime/startup/startupOverridesCache';
-import { getActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 import { resolvePermissionModeSeedForAgentStart } from '@/settings/permissions/permissionModeSeed';
+import { shouldSendReadyPushNotification } from '@/settings/notifications/notificationsPolicy';
 import { runStartupCoordinator } from '@/agent/runtime/startup/startupCoordinator';
 import type { BackendStartupSpec, StartupContext } from '@/agent/runtime/startup/startupSpec';
 
@@ -98,6 +100,7 @@ export async function runCodex(opts: {
     existingSessionId?: string;
     resume?: string;
     startingMode?: 'local' | 'remote';
+    accountSettingsContext?: import('@/settings/accountSettings/bootstrapAccountSettingsContext').AccountSettingsContext | null;
 }): Promise<void> {
     // Use shared PermissionMode type for cross-agent compatibility
     type PermissionMode = import('@/api/types').PermissionMode;
@@ -123,7 +126,7 @@ export async function runCodex(opts: {
 
     const explicitPermissionMode = opts.permissionMode;
     const hasResumeArg = typeof opts.resume === 'string' && opts.resume.trim().length > 0;
-    const accountSettings = hasResumeArg ? null : (getActiveAccountSettingsSnapshot()?.settings ?? null);
+    const accountSettings = hasResumeArg ? null : (opts.accountSettingsContext?.settings ?? null);
     const permissionModeSeed = resolvePermissionModeSeedForAgentStart({
         agentId: 'codex',
         explicitPermissionMode: opts.permissionMode,
@@ -492,8 +495,9 @@ export async function runCodex(opts: {
             // This message will not go through the main prompt loop queue; display it immediately.
             messageBuffer.addMessage(text, 'user');
             void runtime.steerPrompt(text).catch(() => {
-                pushTextToMessageQueueWithSpecialCommands({
+                pushMessageToQueueWithSpecialCommands({
                     queue: messageQueue,
+                    message: text,
                     text,
                     mode: enhancedMode,
                 });
@@ -501,8 +505,9 @@ export async function runCodex(opts: {
             return;
         }
 
-        pushTextToMessageQueueWithSpecialCommands({
+        pushMessageToQueueWithSpecialCommands({
             queue: messageQueue,
+            message: text,
             text,
             mode: enhancedMode,
         });
@@ -510,6 +515,7 @@ export async function runCodex(opts: {
 
     let thinking = false;
     let currentTaskId: string | null = null;
+    let didReplaySeedBootstrap = false;
     if (localModeFallbackMessage) {
         session.sendSessionEvent({ type: 'message', message: localModeFallbackMessage });
     }
@@ -547,6 +553,7 @@ export async function runCodex(opts: {
             pushSender: api.push(),
             waitingForCommandLabel: 'Codex',
             logPrefix: '[Codex]',
+            shouldSendPush: () => shouldSendReadyPushNotification(opts.accountSettingsContext?.settings ?? null),
         });
     };
 
@@ -758,6 +765,13 @@ export async function runCodex(opts: {
     // Start Context 
     //
 
+    // Codex ACP session resume intentionally skips a separate capabilities probe.
+    // The probe requires spawning an ACP agent and waiting for initialize, which can be slower than
+    // just attempting `loadSession` directly (and it duplicates work the runtime must do anyway).
+    //
+    // We still fail closed: if a resume id is provided and Codex ACP cannot load it, the subsequent
+    // session load attempt will throw and we will not silently start a new session.
+
     // Start Happier MCP server (HTTP) and prepare STDIO bridge config for Codex
     const happierBridge = await createHappierMcpBridge(session, { commandMode: 'current-process' });
     happierMcpServer = happierBridge.happierMcpServer;
@@ -783,6 +797,8 @@ export async function runCodex(opts: {
             // NOTE: Codex resume support varies by build; forks may seed `codex-reply` with a stored session id.
             permissionHandler = createCodexPermissionHandler({
                 session,
+                pushSender: api.push(),
+                getAccountSettings: () => opts.accountSettingsContext?.settings ?? null,
                 onAbortRequested: handleAbort,
                 toolTrace: { protocol: useCodexAcp ? 'acp' : 'codex', provider: 'codex' },
                 triggerAbortCallbackOnAbortDecision: useCodexAcp,
@@ -828,7 +844,6 @@ export async function runCodex(opts: {
         codexAcpRuntime = createCodexAcpRuntime({
             directory,
             session,
-            pushSender: api.push(),
             messageBuffer,
             mcpServers,
             permissionHandler,
@@ -844,6 +859,14 @@ export async function runCodex(opts: {
     }
 
     if (client) {
+        const requestUserInputBridge = createCodexRequestUserInputBridge({
+            permissionHandler,
+            continueSession: async (prompt) => {
+                await client.continueSession(prompt);
+            },
+            logger,
+        });
+
         const handleMcpMessage = createCodexMcpMessageHandler({
             logger,
             session,
@@ -860,7 +883,10 @@ export async function runCodex(opts: {
                 thinking = next;
             },
         });
-        client.setHandler(handleMcpMessage);
+        client.setHandler((msg) => {
+            handleMcpMessage(msg);
+            void requestUserInputBridge.onCodexEvent(msg);
+        });
     }
 
     let first = true;
@@ -1068,6 +1094,20 @@ export async function runCodex(opts: {
             }
 
             try {
+                const localId =
+                    typeof message.mode.localId === 'string' && message.mode.localId
+                        ? message.mode.localId
+                        : null;
+                const replaySeedResolution = await resolveCodexQueuedPromptWithReplaySeed({
+                    sessionClient: session,
+                    text: message.message,
+                    localId,
+                    replaySeedAllowed: specialCommand.type === null,
+                    didBootstrap: didReplaySeedBootstrap,
+                });
+                didReplaySeedBootstrap = replaySeedResolution.didBootstrap;
+                const providerPromptText = replaySeedResolution.text;
+
                 if (useCodexAcp) {
                     const codexAcp = codexAcpRuntime;
                     if (!codexAcp) {
@@ -1153,7 +1193,7 @@ export async function runCodex(opts: {
                     } catch (e) {
                         logger.debug('[CodexACP] Failed to sync session mode before prompt (non-fatal)', e);
                     }
-                    await codexAcp.sendPrompt(message.message);
+                    await codexAcp.sendPrompt(providerPromptText);
                     if (shouldLogAcpDebug) {
                         logger.debug('[CodexACP] sendPrompt complete');
                     }
@@ -1175,7 +1215,7 @@ export async function runCodex(opts: {
 
                     if (!wasCreated) {
                     const startConfig: CodexSessionConfig = buildCodexMcpStartConfigForMessage({
-                        message: message.message,
+                        message: providerPromptText,
                         first,
                         sandbox,
                         approvalPolicy,
@@ -1188,7 +1228,7 @@ export async function runCodex(opts: {
                         const resumeId = storedSessionIdForResume;
                         messageBuffer.addMessage('Resuming previous context…', 'status');
                         mcpClient.setSessionIdForResume(resumeId);
-                        const resumeResponse = await mcpClient.continueSession(message.message, { signal: abortController.signal });
+                        const resumeResponse = await mcpClient.continueSession(providerPromptText, { signal: abortController.signal });
                         const resumeError = extractCodexToolErrorText(resumeResponse);
                         if (resumeError) {
                             forwardCodexErrorToUi(resumeError);
@@ -1220,7 +1260,7 @@ export async function runCodex(opts: {
                     first = false;
                 } else {
                     const response = await mcpClient.continueSession(
-                        message.message,
+                        providerPromptText,
                         { signal: abortController.signal }
                     );
                     logger.debug('[Codex] continueSession response:', response);

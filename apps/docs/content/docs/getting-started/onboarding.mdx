@@ -37,10 +37,11 @@ You run your own server (remote machine, LAN box, or even your own computer), bu
 
 1. Install your server (examples):
    - Proxmox: see [Proxmox deployment](../deployment/proxmox).
-   - Any machine: use `hstack setup` (recommended) to install the stack.
+   - Any machine (managed service + rollback): `curl -fsSL https://happier.dev/self-host | bash`
+   - Docker: see [Deployment → Docker](../deployment/docker).
 
 2. Configure the Happier app/web UI to your server.
-   - If you used `hstack setup`, it prints **configure-server** links/QRs you can open/scan.
+   - Some installers (for example Proxmox and `hstack setup-from-source`) print **configure-server** links/QRs you can open/scan.
    - Otherwise, open the app and add/select your server in **Server** settings.
 
 3. Create an account / sign in on your server (in the app or web UI).
@@ -63,7 +64,7 @@ Then use the same mobile-first flow:
 ### Option C — Devbox (server + daemon on the same machine)
 You install both the server and the daemon on one box.
 
-1. Install the stack (for example via `hstack setup` or the Proxmox “devbox” option).
+1. Install the stack (for example via `hstack setup-from-source --profile=selfhost` or the Proxmox “devbox” option).
 2. Configure the app/web UI to your server (use the printed configure-server link/QR).
 3. Sign in / create an account.
 4. Approve the daemon connection when prompted.

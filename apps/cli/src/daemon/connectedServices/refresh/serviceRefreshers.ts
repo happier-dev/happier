@@ -1,13 +1,14 @@
 import { URLSearchParams } from 'node:url';
 
-const OPENAI_CLIENT_ID = 'app_EMoamEEZ73f0CkXaXp7hrann';
-const OPENAI_TOKEN_URL = 'https://auth.openai.com/oauth/token';
-
-const ANTHROPIC_CLIENT_ID = '9d1c250a-e61b-44d9-88ed-5944d1962f5e';
-const ANTHROPIC_TOKEN_URL = 'https://console.anthropic.com/v1/oauth/token';
-
-const GEMINI_CLIENT_ID = '681255809395-oo8ft2oprdrnp9e3aqf6av3hmdib135j.apps.googleusercontent.com';
-const GEMINI_TOKEN_URL = 'https://oauth2.googleapis.com/token';
+import {
+  resolveClaudeSubscriptionOauthClientId,
+  resolveClaudeSubscriptionOauthTokenUrl,
+  resolveGeminiOauthClientId,
+  resolveGeminiOauthClientSecret,
+  resolveGeminiOauthTokenUrl,
+  resolveOpenAiCodexOauthClientId,
+  resolveOpenAiCodexOauthTokenUrl,
+} from '@/backends/connectedServices/oauthConfig';
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
@@ -22,12 +23,14 @@ export async function refreshOpenAiCodexOauthTokens(params: Readonly<{
   idToken: string | null;
   expiresAt: number | null;
 }>> {
-  const response = await fetch(OPENAI_TOKEN_URL, {
+  const tokenUrl = resolveOpenAiCodexOauthTokenUrl(process.env);
+  const clientId = resolveOpenAiCodexOauthClientId(process.env);
+  const response = await fetch(tokenUrl, {
     method: 'POST',
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
     body: new URLSearchParams({
       grant_type: 'refresh_token',
-      client_id: OPENAI_CLIENT_ID,
+      client_id: clientId,
       refresh_token: params.refreshToken,
     }),
   });
@@ -37,19 +40,23 @@ export async function refreshOpenAiCodexOauthTokens(params: Readonly<{
   }
   const json: unknown = await response.json();
   const data = isRecord(json) ? json : {};
+  const accessToken = typeof data.access_token === 'string' ? data.access_token.trim() : '';
+  if (!accessToken) {
+    throw new Error('OpenAI refresh response missing access_token');
+  }
   const expiresAt =
     typeof data.expires_in === 'number' && Number.isFinite(data.expires_in)
       ? params.now + Math.max(0, Math.trunc(data.expires_in)) * 1000
       : null;
   return {
-    accessToken: String(data.access_token ?? ''),
-    refreshToken: String(data.refresh_token ?? params.refreshToken),
+    accessToken,
+    refreshToken: typeof data.refresh_token === 'string' && data.refresh_token.trim() ? data.refresh_token : params.refreshToken,
     idToken: typeof data.id_token === 'string' ? data.id_token : null,
     expiresAt,
   };
 }
 
-export async function refreshAnthropicOauthTokens(params: Readonly<{
+export async function refreshClaudeSubscriptionOauthTokens(params: Readonly<{
   refreshToken: string;
   now: number;
 }>): Promise<Readonly<{
@@ -57,28 +64,34 @@ export async function refreshAnthropicOauthTokens(params: Readonly<{
   refreshToken: string;
   expiresAt: number | null;
 }>> {
-  const response = await fetch(ANTHROPIC_TOKEN_URL, {
+  const tokenUrl = resolveClaudeSubscriptionOauthTokenUrl(process.env);
+  const clientId = resolveClaudeSubscriptionOauthClientId(process.env);
+  const response = await fetch(tokenUrl, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       grant_type: 'refresh_token',
       refresh_token: params.refreshToken,
-      client_id: ANTHROPIC_CLIENT_ID,
+      client_id: clientId,
     }),
   });
   if (!response.ok) {
     const body = await response.text().catch(() => '');
-    throw new Error(`Anthropic refresh failed (${response.status}): ${body || response.statusText}`);
+    throw new Error(`Claude subscription refresh failed (${response.status}): ${body || response.statusText}`);
   }
   const json: unknown = await response.json();
   const data = isRecord(json) ? json : {};
+  const accessToken = typeof data.access_token === 'string' ? data.access_token.trim() : '';
+  if (!accessToken) {
+    throw new Error('Claude subscription refresh response missing access_token');
+  }
   const expiresAt =
     typeof data.expires_in === 'number' && Number.isFinite(data.expires_in)
       ? params.now + Math.max(0, Math.trunc(data.expires_in)) * 1000
       : null;
   return {
-    accessToken: String(data.access_token ?? ''),
-    refreshToken: String(data.refresh_token ?? params.refreshToken),
+    accessToken,
+    refreshToken: typeof data.refresh_token === 'string' && data.refresh_token.trim() ? data.refresh_token : params.refreshToken,
     expiresAt,
   };
 }
@@ -92,12 +105,16 @@ export async function refreshGeminiOauthTokens(params: Readonly<{
   idToken: string | null;
   expiresAt: number | null;
 }>> {
-  const response = await fetch(GEMINI_TOKEN_URL, {
+  const tokenUrl = resolveGeminiOauthTokenUrl(process.env);
+  const clientId = resolveGeminiOauthClientId(process.env);
+  const clientSecret = resolveGeminiOauthClientSecret(process.env);
+  const response = await fetch(tokenUrl, {
     method: 'POST',
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
     body: new URLSearchParams({
       grant_type: 'refresh_token',
-      client_id: GEMINI_CLIENT_ID,
+      client_id: clientId,
+      client_secret: clientSecret,
       refresh_token: params.refreshToken,
     }),
   });
@@ -107,13 +124,17 @@ export async function refreshGeminiOauthTokens(params: Readonly<{
   }
   const json: unknown = await response.json();
   const data = isRecord(json) ? json : {};
+  const accessToken = typeof data.access_token === 'string' ? data.access_token.trim() : '';
+  if (!accessToken) {
+    throw new Error('Gemini refresh response missing access_token');
+  }
   const expiresAt =
     typeof data.expires_in === 'number' && Number.isFinite(data.expires_in)
       ? params.now + Math.max(0, Math.trunc(data.expires_in)) * 1000
       : null;
   return {
-    accessToken: String(data.access_token ?? ''),
-    refreshToken: String(data.refresh_token ?? params.refreshToken),
+    accessToken,
+    refreshToken: typeof data.refresh_token === 'string' && data.refresh_token.trim() ? data.refresh_token : params.refreshToken,
     idToken: typeof data.id_token === 'string' ? data.id_token : null,
     expiresAt,
   };

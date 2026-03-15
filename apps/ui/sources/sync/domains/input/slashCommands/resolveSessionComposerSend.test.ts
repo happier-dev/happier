@@ -22,9 +22,10 @@ describe('resolveSessionComposerSend', () => {
         expect(resolveSessionComposerSend({ input: '   //   ', executionRunsEnabled: true })).toEqual({ kind: 'noop' });
     });
 
-    it('intercepts /clear as a client-only clear action', () => {
+    it('does not intercept /clear (it should be forwarded to the daemon as a normal message)', () => {
         expect(resolveSessionComposerSend({ input: '/clear', executionRunsEnabled: true })).toEqual({
-            kind: 'client.clear_input',
+            kind: 'send',
+            text: '/clear',
         });
     });
 

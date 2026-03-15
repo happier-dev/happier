@@ -21,7 +21,7 @@ On your macOS host (this repo, from `apps/stack/`):
 ```
 
 What it validates (best-effort):
-- `hstack setup --profile=selfhost` in a fully isolated sandbox (no auth / tailscale / autostart / menubar)
+- `hstack setup-from-source --profile=selfhost` in a fully isolated sandbox (no auth / tailscale / autostart / menubar)
 - server health endpoint (`/health`)
 - UI is served by server-light (`/` returns HTML)
 - monorepo worktree creation (`hstack wt new ...`)
@@ -141,7 +141,7 @@ curl -fsSL https://raw.githubusercontent.com/happier-dev/happier/main/apps/stack
 If your goal is to **work on changes** (not just review a PR), you can run the dev profile:
 
 ```bash
-npx --yes -p @happier-dev/stack@latest hstack setup --profile=dev --bind=loopback
+npx --yes -p @happier-dev/stack@latest hstack setup-from-source --profile=dev --bind=loopback
 ```
 
 Notes:
@@ -233,7 +233,7 @@ Why these paths:
 - `~/.happier`: stack storage root (`~/.happier/stacks/<name>/...` env/state/data).
 - `~/.happy`: legacy pre-monorepo location that older migrations/import tooling may still reference.
 
-If you used `hstack setup --profile=dev` and picked a custom workspace directory (outside `~/.happier-stack/workspace`), delete that directory too.
+If you used `hstack setup-from-source --profile=dev` and picked a custom workspace directory (outside `~/.happier-stack/workspace`), delete that directory too.
 
 ---
 

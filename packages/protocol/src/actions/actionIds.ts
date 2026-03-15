@@ -3,6 +3,7 @@ import { z } from 'zod';
 export const ACTION_IDS = [
   // Session lifecycle / navigation
   'session.open',
+  'session.fork',
   'session.spawn_new',
   'session.spawn_picker',
   // Local inventory + discovery (voice)

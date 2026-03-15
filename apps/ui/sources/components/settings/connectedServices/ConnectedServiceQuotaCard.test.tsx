@@ -3,10 +3,15 @@ import renderer, { act } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
 
 import { ConnectedServiceQuotaSnapshotV1Schema, sealAccountScopedBlobCiphertext } from '@happier-dev/protocol';
+import type { fetchAccountEncryptionMode } from '@/sync/api/account/apiAccountEncryptionMode';
 import type {
   getConnectedServiceQuotaSnapshotSealed,
   requestConnectedServiceQuotaSnapshotRefresh,
 } from '@/sync/api/account/apiConnectedServicesQuotasV2';
+import type {
+  getConnectedServiceQuotaSnapshotPlain,
+  requestConnectedServiceQuotaSnapshotRefreshV3,
+} from '@/sync/api/account/apiConnectedServicesQuotasV3';
 
 import { ConnectedServiceQuotaCard } from './ConnectedServiceQuotaCard';
 
@@ -18,20 +23,45 @@ vi.mock('@/auth/context/AuthContext', () => ({
 }));
 
 const {
+  fetchAccountEncryptionModeSpy,
+  getConnectedServiceQuotaSnapshotPlainSpy,
   getConnectedServiceQuotaSnapshotSealedSpy,
   requestConnectedServiceQuotaSnapshotRefreshSpy,
+  requestConnectedServiceQuotaSnapshotRefreshV3Spy,
 } = vi.hoisted(() => ({
+  fetchAccountEncryptionModeSpy: vi.fn<
+    (...args: Parameters<typeof fetchAccountEncryptionMode>) => ReturnType<typeof fetchAccountEncryptionMode>
+  >(async () => ({ mode: 'e2ee', updatedAt: 0 })),
+  getConnectedServiceQuotaSnapshotPlainSpy: vi.fn<
+    (...args: Parameters<typeof getConnectedServiceQuotaSnapshotPlain>) => ReturnType<typeof getConnectedServiceQuotaSnapshotPlain>
+  >(async () => null),
   getConnectedServiceQuotaSnapshotSealedSpy: vi.fn<
     (...args: Parameters<typeof getConnectedServiceQuotaSnapshotSealed>) => ReturnType<typeof getConnectedServiceQuotaSnapshotSealed>
   >(async () => null),
   requestConnectedServiceQuotaSnapshotRefreshSpy: vi.fn<
     (...args: Parameters<typeof requestConnectedServiceQuotaSnapshotRefresh>) => ReturnType<typeof requestConnectedServiceQuotaSnapshotRefresh>
   >(async () => true),
+  requestConnectedServiceQuotaSnapshotRefreshV3Spy: vi.fn<
+    (...args: Parameters<typeof requestConnectedServiceQuotaSnapshotRefreshV3>) => ReturnType<typeof requestConnectedServiceQuotaSnapshotRefreshV3>
+  >(async () => false),
+}));
+vi.mock('@/sync/api/account/apiAccountEncryptionMode', () => ({
+  fetchAccountEncryptionMode: fetchAccountEncryptionModeSpy,
 }));
 vi.mock('@/sync/api/account/apiConnectedServicesQuotasV2', () => ({
   getConnectedServiceQuotaSnapshotSealed: getConnectedServiceQuotaSnapshotSealedSpy,
   requestConnectedServiceQuotaSnapshotRefresh: requestConnectedServiceQuotaSnapshotRefreshSpy,
 }));
+vi.mock('@/sync/api/account/apiConnectedServicesQuotasV3', () => ({
+  getConnectedServiceQuotaSnapshotPlain: getConnectedServiceQuotaSnapshotPlainSpy,
+  requestConnectedServiceQuotaSnapshotRefreshV3: requestConnectedServiceQuotaSnapshotRefreshV3Spy,
+}));
+
+async function flushAsyncEffects(turns: number = 3) {
+  for (let index = 0; index < turns; index += 1) {
+    await Promise.resolve();
+  }
+}
 
 describe('ConnectedServiceQuotaCard', () => {
   it('loads a snapshot and toggles pinned meter ids', async () => {
@@ -85,7 +115,7 @@ describe('ConnectedServiceQuotaCard', () => {
     });
 
     await act(async () => {
-      await Promise.resolve();
+      await flushAsyncEffects();
     });
 
     expect(tree.root.findAll((n) => n.props?.title === 'Weekly')).toHaveLength(1);
@@ -152,7 +182,7 @@ describe('ConnectedServiceQuotaCard', () => {
       refreshItem.props.onPress?.();
     });
     await act(async () => {
-      await Promise.resolve();
+      await flushAsyncEffects();
     });
 
     expect(requestConnectedServiceQuotaSnapshotRefreshSpy).toHaveBeenCalledWith(

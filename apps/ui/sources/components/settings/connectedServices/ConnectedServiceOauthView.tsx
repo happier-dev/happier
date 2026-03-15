@@ -5,18 +5,21 @@ import { useLocalSearchParams, useRouter } from 'expo-router';
 import { OAuthView, OAuthViewUnsupported, type OAuthViewConfig } from '@/components/ui/navigation/OAuthView';
 import { Modal } from '@/modal';
 import { useAuth } from '@/auth/context/AuthContext';
+import { t } from '@/text';
 import { sync } from '@/sync/sync';
-import { registerConnectedServiceCredentialSealed } from '@/sync/api/account/apiConnectedServicesV2';
-import { sealConnectedServiceCredential } from '@/sync/domains/connectedServices/sealConnectedServiceCredential';
+import { storeConnectedServiceCredentialForAccount } from '@/sync/domains/connectedServices/storeConnectedServiceCredentialForAccount';
 import { getConnectedServiceRegistryEntry } from '@/sync/domains/connectedServices/connectedServiceRegistry';
-import { buildConnectedServiceCredentialRecord, ConnectedServiceCredentialRecordV1Schema, ConnectedServiceIdSchema, type ConnectedServiceCredentialRecordV1, type ConnectedServiceId } from '@happier-dev/protocol';
+import { ConnectedServiceCredentialRecordV1Schema, ConnectedServiceIdSchema, type ConnectedServiceCredentialRecordV1, type ConnectedServiceId } from '@happier-dev/protocol';
 import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 
-import { buildOpenAiCodexAuthorizationUrl, exchangeOpenAiCodexTokens, OPENAI_CODEX_OAUTH } from '@/sync/domains/connectedServices/oauth/openAiCodexOauth';
-import { buildAnthropicAuthorizationUrl, exchangeAnthropicTokens, ANTHROPIC_OAUTH } from '@/sync/domains/connectedServices/oauth/anthropicOauth';
-import { buildGeminiAuthorizationUrl, exchangeGeminiTokens, GEMINI_OAUTH } from '@/sync/domains/connectedServices/oauth/geminiOauth';
+import { getConnectedServiceOauthAdapter } from '@/sync/domains/connectedServices/oauth/connectedServiceOauthAdapters';
 import { ConnectedServiceOauthPasteView } from './ConnectedServiceOauthPasteView';
+import { OpenAiCodexDeviceAuthView } from './oauth/openai/OpenAiCodexDeviceAuthView';
+import { ConnectedServiceOauthEmbeddedView } from './oauth/ConnectedServiceOauthEmbeddedView';
+import { resolveConnectedServiceOauthMode } from './oauth/resolveConnectedServiceOauthMode';
+import { resolveConnectedServiceOauthErrorMessage } from './oauth/resolveConnectedServiceOauthErrorMessage';
+import { resolveConnectedServiceDisplayName } from './model/resolveConnectedServiceDisplayName';
 
 function asStringParam(value: unknown): string {
   if (Array.isArray(value)) return typeof value[0] === 'string' ? value[0] : '';
@@ -33,13 +36,15 @@ export const ConnectedServiceOauthView = React.memo(function ConnectedServiceOau
   const parsedServiceId = ConnectedServiceIdSchema.safeParse(rawServiceId);
   const serviceId: ConnectedServiceId | null = parsedServiceId.success ? parsedServiceId.data : null;
   const profileId = asStringParam(params.profileId).trim();
+  const method = asStringParam((params as any).method).trim().toLowerCase();
 
   const entry = serviceId ? getConnectedServiceRegistryEntry(serviceId) : null;
+  const serviceLabel = serviceId ? resolveConnectedServiceDisplayName(serviceId) : (rawServiceId || t('connectedServices.fallbackName'));
 
   if (!serviceId || !entry || !profileId) {
     return (
       <View style={{ flex: 1 }}>
-        <OAuthViewUnsupported name={rawServiceId || 'Connected service'} command={entry?.connectCommand} />
+        <OAuthViewUnsupported name={serviceLabel} command={entry?.connectCommand} />
       </View>
     );
   }
@@ -47,17 +52,78 @@ export const ConnectedServiceOauthView = React.memo(function ConnectedServiceOau
   if (!connectedServicesEnabled) {
     return (
       <View style={{ flex: 1 }}>
-        <OAuthViewUnsupported name={entry.displayName} command={entry.connectCommand} />
+        <OAuthViewUnsupported name={serviceLabel} command={entry.connectCommand} />
       </View>
     );
   }
 
-  if (Platform.OS === 'web') {
+  if (!entry.supportsOauth) {
+    return (
+      <View style={{ flex: 1 }}>
+        <OAuthViewUnsupported name={serviceLabel} command={entry.connectCommand} />
+      </View>
+    );
+  }
+
+  const mode = resolveConnectedServiceOauthMode({
+    platformOS: Platform.OS,
+    serviceId,
+    method,
+    oauthAddActionModes: entry.oauthAddActionModes,
+  });
+  const isWeb = Platform.OS === 'web';
+  const adapter = getConnectedServiceOauthAdapter(serviceId);
+
+  if (mode === 'device') {
+    return (
+      <OpenAiCodexDeviceAuthView
+        serviceId={rawServiceId}
+        profileId={profileId}
+        onDone={() => router.back()}
+        fallbackAction={{
+          title: t('connectedServices.deviceAuth.usePasteInstead'),
+          onPress: () => router.push({
+            pathname: '/(app)/settings/connected-services/oauth',
+            params: {
+              serviceId: rawServiceId,
+              profileId,
+              method: 'paste',
+            },
+          }),
+        }}
+      />
+    );
+  }
+
+  if (mode === 'paste') {
+    const fallbackAction = (() => {
+      if ((entry.oauthAddActionModes ?? []).includes('device')) {
+        return {
+          title: t('connectedServices.oauthPaste.tryDeviceInstead'),
+          onPress: () => router.push({
+            pathname: '/(app)/settings/connected-services/oauth',
+            params: { serviceId: rawServiceId, profileId },
+          }),
+        };
+      }
+      if (!isWeb) {
+        return {
+          title: t('connectedServices.oauthPaste.tryEmbeddedInstead'),
+          onPress: () => router.push({
+            pathname: '/(app)/settings/connected-services/oauth',
+            params: { serviceId: rawServiceId, profileId, method: 'browser' },
+          }),
+        };
+      }
+      return undefined;
+    })();
+
     return (
       <ConnectedServiceOauthPasteView
         serviceId={rawServiceId}
         profileId={profileId}
         onDone={() => router.back()}
+        fallbackAction={fallbackAction}
       />
     );
   }
@@ -69,18 +135,7 @@ export const ConnectedServiceOauthView = React.memo(function ConnectedServiceOau
 
   const registerRecord = async (record: ConnectedServiceCredentialRecordV1) => {
     const credentials = ensureCredentials();
-    const ciphertext = sealConnectedServiceCredential({ credentials, record });
-    await registerConnectedServiceCredentialSealed(credentials, {
-      serviceId,
-      profileId,
-      sealed: { format: 'account_scoped_v1', ciphertext },
-      metadata: {
-        kind: record.kind,
-        providerEmail: record.kind === 'oauth' ? record.oauth.providerEmail : record.token.providerEmail,
-        providerAccountId: record.kind === 'oauth' ? record.oauth.providerAccountId : record.token.providerAccountId,
-        expiresAt: record.expiresAt,
-      },
-    });
+    await storeConnectedServiceCredentialForAccount(credentials, { serviceId, profileId, record });
     await sync.refreshProfile();
   };
 
@@ -90,166 +145,63 @@ export const ConnectedServiceOauthView = React.memo(function ConnectedServiceOau
     await registerRecord(parsed.data);
   };
 
-  const buildOAuthConfig = () => {
-    if (serviceId === 'openai-codex') {
-      const redirectUri = OPENAI_CODEX_OAUTH.defaultRedirectUri;
-      const config: OAuthViewConfig = {
-        redirectUri,
-        authUrl: (pkce, state: string, uri: string) =>
-          buildOpenAiCodexAuthorizationUrl({ redirectUri: uri, state, challenge: pkce.challenge }),
-        tokenExchange: async (code: string, verifier: string, _state: string) => {
-          const now = Date.now();
-          const tokens = await exchangeOpenAiCodexTokens({ code, verifier, redirectUri, now });
-          return buildConnectedServiceCredentialRecord({
-            now,
-            serviceId,
-            profileId,
-            kind: 'oauth',
-            expiresAt: tokens.expiresAt,
-            oauth: {
-              accessToken: tokens.accessToken,
-              refreshToken: tokens.refreshToken,
-              idToken: tokens.idToken,
-              scope: null,
-              tokenType: null,
-              providerAccountId: tokens.providerAccountId,
-              providerEmail: null,
-            },
-          });
-        },
-        onSuccess: (record: unknown) => {
-          fireAndForget((async () => {
-            try {
-              await registerMaybeRecord(record);
-              await Modal.alert('Connected', `${entry.displayName} (${profileId}) is connected.`);
-              router.back();
-            } catch (e: unknown) {
-              await Modal.alert('Error', e instanceof Error ? e.message : 'Failed to connect');
-            }
-          })(), { tag: 'ConnectedServiceOauthView.onSuccess.openai' });
-        },
-      };
-
-      return {
-        name: entry.displayName,
-        command: entry.connectCommand,
-        backgroundColor: '#0B0B0C',
-        foregroundColor: '#FFFFFF',
-        config,
-      };
-    }
-
-    if (serviceId === 'anthropic') {
-      const redirectUri = ANTHROPIC_OAUTH.defaultRedirectUri;
-      const config: OAuthViewConfig = {
-        redirectUri,
-        authUrl: (pkce, state: string, uri: string) =>
-          buildAnthropicAuthorizationUrl({ redirectUri: uri, state, challenge: pkce.challenge }),
-        tokenExchange: async (code: string, verifier: string, state: string) => {
-          const now = Date.now();
-          const tokens = await exchangeAnthropicTokens({ code, verifier, state, redirectUri, now });
-          return buildConnectedServiceCredentialRecord({
-            now,
-            serviceId,
-            profileId,
-            kind: 'oauth',
-            expiresAt: tokens.expiresAt,
-            oauth: {
-              accessToken: tokens.accessToken,
-              refreshToken: tokens.refreshToken,
-              idToken: null,
-              scope: tokens.scope,
-              tokenType: tokens.tokenType,
-              providerAccountId: tokens.providerAccountId,
-              providerEmail: tokens.providerEmail,
-            },
-          });
-        },
-        onSuccess: (record: unknown) => {
-          fireAndForget((async () => {
-            try {
-              await registerMaybeRecord(record);
-              await Modal.alert('Connected', `${entry.displayName} (${profileId}) is connected.`);
-              router.back();
-            } catch (e: unknown) {
-              await Modal.alert('Error', e instanceof Error ? e.message : 'Failed to connect');
-            }
-          })(), { tag: 'ConnectedServiceOauthView.onSuccess.anthropic' });
-        },
-      };
-
-      return {
-        name: entry.displayName,
-        command: entry.connectCommand,
-        backgroundColor: '#1F1E1C',
-        foregroundColor: '#FFFFFF',
-        config,
-      };
-    }
-
-    if (serviceId === 'gemini') {
-      const redirectUri = GEMINI_OAUTH.defaultRedirectUri;
-      const config: OAuthViewConfig = {
-        redirectUri,
-        authUrl: (pkce, state: string, uri: string) =>
-          buildGeminiAuthorizationUrl({ redirectUri: uri, state, challenge: pkce.challenge }),
-        tokenExchange: async (code: string, verifier: string, _state: string) => {
-          const now = Date.now();
-          const tokens = await exchangeGeminiTokens({ code, verifier, redirectUri, now });
-          return buildConnectedServiceCredentialRecord({
-            now,
-            serviceId,
-            profileId,
-            kind: 'oauth',
-            expiresAt: tokens.expiresAt,
-            oauth: {
-              accessToken: tokens.accessToken,
-              refreshToken: tokens.refreshToken,
-              idToken: tokens.idToken,
-              scope: tokens.scope,
-              tokenType: tokens.tokenType,
-              providerAccountId: null,
-              providerEmail: null,
-            },
-          });
-        },
-        onSuccess: (record: unknown) => {
-          fireAndForget((async () => {
-            try {
-              await registerMaybeRecord(record);
-              await Modal.alert('Connected', `${entry.displayName} (${profileId}) is connected.`);
-              router.back();
-            } catch (e: unknown) {
-              await Modal.alert('Error', e instanceof Error ? e.message : 'Failed to connect');
-            }
-          })(), { tag: 'ConnectedServiceOauthView.onSuccess.gemini' });
-        },
-      };
-
-      return {
-        name: entry.displayName,
-        command: entry.connectCommand,
-        backgroundColor: '#0B1A2B',
-        foregroundColor: '#FFFFFF',
-        config,
-      };
-    }
-
-    return null;
-  };
-
-  const cfg = buildOAuthConfig();
-  if (!cfg) {
-    return <OAuthViewUnsupported name={entry.displayName} command={entry.connectCommand} />;
+  if (!adapter) {
+    return <OAuthViewUnsupported name={serviceLabel} command={entry.connectCommand} />;
   }
 
+  const redirectUri = adapter.defaultRedirectUri;
+  const config: OAuthViewConfig = {
+    redirectUri,
+    authUrl: (pkce, state: string, uri: string) =>
+      adapter.buildAuthorizationUrl({ redirectUri: uri, state, challenge: pkce.challenge }),
+    tokenExchange: async (code: string, verifier: string, state: string) => {
+      const now = Date.now();
+      const credentials = ensureCredentials();
+      return await adapter.exchangeAuthorizationCodeForRecord({
+        credentials,
+        profileId,
+        code,
+        verifier,
+        redirectUri,
+        state,
+        now,
+      });
+    },
+    onSuccess: (record: unknown) => {
+      fireAndForget((async () => {
+        try {
+          await registerMaybeRecord(record);
+          await Modal.alert(
+            t('connectedServices.oauthPaste.alerts.connectedTitle'),
+            t('connectedServices.oauthPaste.alerts.connectedBody', { serviceId: serviceLabel, profileId }),
+          );
+          router.back();
+        } catch (e: unknown) {
+          const message = resolveConnectedServiceOauthErrorMessage(
+            e,
+            t('connectedServices.oauthPaste.alerts.failedToConnect'),
+          );
+          await Modal.alert(
+            t('common.error'),
+            message,
+          );
+        }
+      })(), { tag: 'ConnectedServiceOauthView.onSuccess' });
+    },
+  };
+
   return (
-    <OAuthView
-      name={cfg.name}
-      command={cfg.command}
-      backgroundColor={cfg.backgroundColor}
-      foregroundColor={cfg.foregroundColor}
-      config={cfg.config}
+    <ConnectedServiceOauthEmbeddedView
+      name={serviceLabel}
+      command={entry.connectCommand}
+      config={config}
+      fallbackAction={{
+        title: t('connectedServices.deviceAuth.usePasteInstead'),
+        onPress: () => router.push({
+          pathname: '/(app)/settings/connected-services/oauth',
+          params: { serviceId: rawServiceId, profileId, method: 'paste' },
+        }),
+      }}
     />
   );
 });

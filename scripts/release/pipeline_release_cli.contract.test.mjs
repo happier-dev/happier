@@ -14,7 +14,7 @@ test('pipeline CLI can run release deploy dry-run (promote deploy branches + tri
       resolve(repoRoot, 'scripts', 'pipeline', 'run.mjs'),
       'release',
       '--confirm',
-      'release preview from dev',
+      'release dev to preview',
       '--deploy-environment',
       'preview',
       '--deploy-targets',
@@ -46,7 +46,7 @@ test('pipeline CLI can run release deploy dry-run (promote deploy branches + tri
     },
   );
 
-  assert.match(out, /\[pipeline\] release: environment=preview confirm=release preview from dev/);
+  assert.match(out, /\[pipeline\] release: environment=preview confirm=release dev to preview/);
   assert.match(out, /\[pipeline\] dry-run: would run/);
   assert.match(out, /- runDeployServer: true/);
 });

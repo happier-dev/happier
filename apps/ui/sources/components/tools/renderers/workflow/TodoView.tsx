@@ -4,6 +4,7 @@ import { StyleSheet } from 'react-native-unistyles';
 import type { ToolViewProps } from '../core/_registry';
 import { ToolSectionView } from '../../shell/presentation/ToolSectionView';
 import { Text } from '@/components/ui/text/Text';
+import { t } from '@/text';
 
 
 export interface Todo {
@@ -56,7 +57,7 @@ export const TodoView = React.memo<ToolViewProps>(({ tool, detailLevel }) => {
                         </View>
                     );
                 })}
-                {more > 0 ? <Text style={styles.more}>+{more} more</Text> : null}
+                {more > 0 ? <Text style={styles.more}>{t('tools.structuredResult.more', { count: more })}</Text> : null}
             </View>
         </ToolSectionView>
     );

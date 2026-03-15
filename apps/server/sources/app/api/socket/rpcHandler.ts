@@ -111,6 +111,34 @@ export function rpcHandler(
                 if (redisRegistry.enabled) {
                     const targetSocketId = await redisRegistry.lookupSocketId(targetUserId, method);
                     if (!targetSocketId) {
+                        // Fallback: Redis registry can briefly miss registrations (e.g. during reconnect or cleanup),
+                        // but the in-process registry may still know the correct socket. Prefer keeping UX stable
+                        // over failing fast with METHOD_NOT_AVAILABLE.
+                        const fallbackSocket = targetSocket ?? userRpcListeners.get(method);
+                        if (fallbackSocket && fallbackSocket.connected) {
+                            if (fallbackSocket === socket) {
+                                if (callback) {
+                                    callback({
+                                        ok: false,
+                                        error: 'Cannot call RPC on the same socket',
+                                    });
+                                }
+                                return;
+                            }
+
+                            const response = await fallbackSocket.timeout(forwardTimeoutMs).emitWithAck(SOCKET_RPC_EVENTS.REQUEST, {
+                                method,
+                                params: callParams,
+                            });
+                            if (callback) {
+                                callback({
+                                    ok: true,
+                                    result: response,
+                                });
+                            }
+                            return;
+                        }
+
                         if (callback) {
                             callback({
                                 ok: false,

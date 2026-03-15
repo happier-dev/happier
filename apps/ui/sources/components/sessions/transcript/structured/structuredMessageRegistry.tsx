@@ -6,6 +6,7 @@ import { ReviewCommentsMessageCard } from '@/components/sessions/reviews/message
 import {
     DelegateOutputV1Schema,
     PlanOutputV1Schema,
+    ParticipantMessageV1Schema,
     ReviewFindingsV1Schema,
     SessionSummaryShardV1Schema,
     SessionSynopsisV1Schema,
@@ -14,9 +15,12 @@ import {
 import { ReviewFindingsMessageCard } from '@/components/sessions/reviews/messages/ReviewFindingsMessageCard';
 import { PlanOutputMessageCard } from '@/components/sessions/plans/messages/PlanOutputMessageCard';
 import { DelegateOutputMessageCard } from '@/components/sessions/delegations/messages/DelegateOutputMessageCard';
+import type { Message } from '@/sync/domains/messages/messageTypes';
 import type { ReviewCommentAnchor, ReviewCommentSource } from '@/sync/domains/input/reviewComments/reviewCommentTypes';
+import { ParticipantMessageCard } from '@/components/sessions/participants/messages/ParticipantMessageCard';
 
 export type StructuredMessageKind =
+    | 'participant_message.v1'
     | 'review_comments.v1'
     | 'review_findings.v1'
     | 'plan_output.v1'
@@ -27,6 +31,7 @@ export type StructuredMessageKind =
 
 export type StructuredMessageRendererParams = Readonly<{
     sessionId: string;
+    message: Message;
     onJumpToAnchor: (target: { filePath: string; source: ReviewCommentSource; anchor: ReviewCommentAnchor }) => void;
 }>;
 
@@ -37,6 +42,11 @@ export type StructuredMessageRegistryEntry<T> = Readonly<{
 }>;
 
 export const STRUCTURED_MESSAGE_REGISTRY: readonly StructuredMessageRegistryEntry<any>[] = Object.freeze([
+    {
+        kind: 'participant_message.v1',
+        schema: ParticipantMessageV1Schema,
+        render: (payload, params) => <ParticipantMessageCard payload={payload} message={params.message} />,
+    },
     {
         kind: 'review_comments.v1',
         schema: ReviewCommentsV1Schema,

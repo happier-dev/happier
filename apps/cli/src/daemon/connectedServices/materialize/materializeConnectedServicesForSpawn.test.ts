@@ -40,7 +40,13 @@ describe('materializeConnectedServicesForSpawn', () => {
 
     const authPath = join(result!.env.CODEX_HOME, 'auth.json');
     const auth = JSON.parse(await readFile(authPath, 'utf8'));
-    expect(auth).toEqual({
+    expect(auth).toMatchObject({
+      access_token: 'access',
+      refresh_token: 'refresh',
+      id_token: 'id',
+      account_id: 'acct',
+    });
+    expect(auth.tokens).toEqual({
       access_token: 'access',
       refresh_token: 'refresh',
       id_token: 'id',
@@ -49,6 +55,32 @@ describe('materializeConnectedServicesForSpawn', () => {
 
     result!.cleanupOnFailure?.();
     result!.cleanupOnExit?.();
+  });
+
+  it('materializes Codex OPENAI_API_KEY when OpenAI API key connected service is selected', async () => {
+    const baseDir = await mkdtemp(join(tmpdir(), 'happier-connected-services-test-'));
+    const record = buildConnectedServiceCredentialRecord({
+      now: 10,
+      serviceId: 'openai',
+      profileId: 'work',
+      kind: 'token',
+      token: {
+        token: 'sk-openai-test',
+        providerAccountId: null,
+        providerEmail: null,
+      },
+    });
+
+    const result = await materializeConnectedServicesForSpawn({
+      agentId: 'codex',
+      materializationKey: 'session-openai-token',
+      baseDir,
+      recordsByServiceId: new Map([['openai', record]]),
+    });
+
+    expect(result).not.toBeNull();
+    expect(result!.env.OPENAI_API_KEY).toBe('sk-openai-test');
+    expect(result!.env.CODEX_HOME).toBeUndefined();
   });
 
   it('does not allow materializationKey to affect filesystem path resolution', async () => {
@@ -82,7 +114,7 @@ describe('materializeConnectedServicesForSpawn', () => {
     expect(resolve(codexHome).startsWith(resolve(baseDir))).toBe(true);
   });
 
-  it('materializes OpenCode auth.json with openai-codex + anthropic oauth credentials', async () => {
+  it('materializes OpenCode auth.json with openai-codex oauth + anthropic api key credentials', async () => {
     const baseDir = await mkdtemp(join(tmpdir(), 'happier-connected-services-test-'));
     const codex = buildConnectedServiceCredentialRecord({
       now: 10,
@@ -104,17 +136,8 @@ describe('materializeConnectedServicesForSpawn', () => {
       now: 10,
       serviceId: 'anthropic',
       profileId: 'personal',
-      kind: 'oauth',
-      expiresAt: 456,
-      oauth: {
-        accessToken: 'claude-access',
-        refreshToken: 'claude-refresh',
-        idToken: null,
-        scope: null,
-        tokenType: null,
-        providerAccountId: null,
-        providerEmail: 'user@example.com',
-      },
+      kind: 'token',
+      token: { token: 'sk-ant-123', providerAccountId: null, providerEmail: 'user@example.com' },
     });
 
     const result = await materializeConnectedServicesForSpawn({
@@ -141,10 +164,8 @@ describe('materializeConnectedServicesForSpawn', () => {
         accountId: 'acct',
       },
       anthropic: {
-        type: 'oauth',
-        refresh: 'claude-refresh',
-        access: 'claude-access',
-        expires: 456,
+        type: 'api',
+        key: 'sk-ant-123',
       },
     });
 
@@ -152,7 +173,72 @@ describe('materializeConnectedServicesForSpawn', () => {
     result!.cleanupOnExit?.();
   });
 
-  it('materializes Pi auth.json with openai-codex oauth and injects Anthropic setup-token via env', async () => {
+  it('materializes OpenCode auth.json with OpenAI API key credentials', async () => {
+    const baseDir = await mkdtemp(join(tmpdir(), 'happier-connected-services-test-'));
+    const openai = buildConnectedServiceCredentialRecord({
+      now: 10,
+      serviceId: 'openai',
+      profileId: 'work',
+      kind: 'token',
+      token: {
+        token: 'sk-openai-test',
+        providerAccountId: null,
+        providerEmail: null,
+      },
+    });
+
+    const result = await materializeConnectedServicesForSpawn({
+      agentId: 'opencode',
+      materializationKey: 'session-2-openai',
+      baseDir,
+      recordsByServiceId: new Map([
+        ['openai', openai],
+      ]),
+    });
+
+    expect(result).not.toBeNull();
+    expect(typeof result!.env.XDG_DATA_HOME).toBe('string');
+
+    const authPath = join(result!.env.XDG_DATA_HOME, 'opencode', 'auth.json');
+    const auth = JSON.parse(await readFile(authPath, 'utf8'));
+    expect(auth).toEqual({
+      openai: {
+        type: 'api',
+        key: 'sk-openai-test',
+      },
+    });
+  });
+
+  it('rejects OpenCode anthropic oauth credentials', async () => {
+    const baseDir = await mkdtemp(join(tmpdir(), 'happier-connected-services-test-'));
+    const claude = buildConnectedServiceCredentialRecord({
+      now: 10,
+      serviceId: 'anthropic',
+      profileId: 'personal',
+      kind: 'oauth',
+      expiresAt: 456,
+      oauth: {
+        accessToken: 'claude-access',
+        refreshToken: 'claude-refresh',
+        idToken: null,
+        scope: null,
+        tokenType: null,
+        providerAccountId: null,
+        providerEmail: 'user@example.com',
+      },
+    });
+
+    await expect(materializeConnectedServicesForSpawn({
+      agentId: 'opencode',
+      materializationKey: 'session-2b',
+      baseDir,
+      recordsByServiceId: new Map([
+        ['anthropic', claude],
+      ]),
+    })).rejects.toThrow(/anthropic oauth/i);
+  });
+
+  it('materializes Pi auth.json with openai-codex oauth and injects Anthropic API key via env', async () => {
     const baseDir = await mkdtemp(join(tmpdir(), 'happier-connected-services-test-'));
     const codex = buildConnectedServiceCredentialRecord({
       now: 10,
@@ -175,7 +261,7 @@ describe('materializeConnectedServicesForSpawn', () => {
       serviceId: 'anthropic',
       profileId: 'work',
       kind: 'token',
-      token: { token: 'setup-token', providerAccountId: null, providerEmail: null },
+      token: { token: 'sk-ant-123', providerAccountId: null, providerEmail: null },
     });
 
     const result = await materializeConnectedServicesForSpawn({
@@ -190,7 +276,7 @@ describe('materializeConnectedServicesForSpawn', () => {
 
     expect(result).not.toBeNull();
     expect(result!.env.PI_CODING_AGENT_DIR).toContain(baseDir);
-    expect(result!.env.ANTHROPIC_OAUTH_TOKEN).toBe('setup-token');
+    expect(result!.env.ANTHROPIC_API_KEY).toBe('sk-ant-123');
 
     const authPath = join(result!.env.PI_CODING_AGENT_DIR, 'auth.json');
     const auth = JSON.parse(await readFile(authPath, 'utf8'));
@@ -206,6 +292,42 @@ describe('materializeConnectedServicesForSpawn', () => {
 
     result!.cleanupOnFailure?.();
     result!.cleanupOnExit?.();
+  });
+
+  it('materializes Pi auth.json with OpenAI API key credentials', async () => {
+    const baseDir = await mkdtemp(join(tmpdir(), 'happier-connected-services-test-'));
+    const openai = buildConnectedServiceCredentialRecord({
+      now: 10,
+      serviceId: 'openai',
+      profileId: 'work',
+      kind: 'token',
+      token: {
+        token: 'sk-openai-test',
+        providerAccountId: null,
+        providerEmail: null,
+      },
+    });
+
+    const result = await materializeConnectedServicesForSpawn({
+      agentId: 'pi',
+      materializationKey: 'session-3-openai',
+      baseDir,
+      recordsByServiceId: new Map([
+        ['openai', openai],
+      ]),
+    });
+
+    expect(result).not.toBeNull();
+    expect(result!.env.PI_CODING_AGENT_DIR).toContain(baseDir);
+
+    const authPath = join(result!.env.PI_CODING_AGENT_DIR, 'auth.json');
+    const auth = JSON.parse(await readFile(authPath, 'utf8'));
+    expect(auth).toEqual({
+      openai: {
+        type: 'api_key',
+        key: 'sk-openai-test',
+      },
+    });
   });
 
   it('materializes Gemini API key env vars from a gemini oauth credential', async () => {
@@ -245,7 +367,7 @@ describe('materializeConnectedServicesForSpawn', () => {
     expect(creds.id_token).toBe('id');
   });
 
-  it('materializes Claude oauth access token via CLAUDE_CODE_OAUTH_TOKEN only', async () => {
+  it('rejects Claude anthropic oauth credentials', async () => {
     const baseDir = await mkdtemp(join(tmpdir(), 'happier-connected-services-test-'));
     const claude = buildConnectedServiceCredentialRecord({
       now: 10,
@@ -264,26 +386,77 @@ describe('materializeConnectedServicesForSpawn', () => {
       },
     });
 
-    const result = await materializeConnectedServicesForSpawn({
+    await expect(materializeConnectedServicesForSpawn({
       agentId: 'claude',
       materializationKey: 'session-5',
       baseDir,
       recordsByServiceId: new Map([['anthropic', claude]]),
+    })).rejects.toThrow(/anthropic oauth/i);
+  });
+
+  it('materializes Claude subscription setup-token via CLAUDE_CODE_SETUP_TOKEN only', async () => {
+    const baseDir = await mkdtemp(join(tmpdir(), 'happier-connected-services-test-'));
+    const setup = buildConnectedServiceCredentialRecord({
+      now: 10,
+      serviceId: 'claude-subscription',
+      profileId: 'work',
+      kind: 'token',
+      token: { token: 'sk-ant-oat01-123', providerAccountId: null, providerEmail: null },
+    });
+
+    const result = await materializeConnectedServicesForSpawn({
+      agentId: 'claude',
+      materializationKey: 'session-6a',
+      baseDir,
+      recordsByServiceId: new Map([['claude-subscription', setup]]),
+    });
+
+    expect(result).not.toBeNull();
+    expect(result!.env.CLAUDE_CODE_SETUP_TOKEN).toBe('sk-ant-oat01-123');
+    expect('CLAUDE_CODE_OAUTH_TOKEN' in result!.env).toBe(false);
+    expect('ANTHROPIC_API_KEY' in result!.env).toBe(false);
+  });
+
+  it('materializes Claude subscription oauth via CLAUDE_CODE_OAUTH_TOKEN only', async () => {
+    const baseDir = await mkdtemp(join(tmpdir(), 'happier-connected-services-test-'));
+    const oauth = buildConnectedServiceCredentialRecord({
+      now: 10,
+      serviceId: 'claude-subscription',
+      profileId: 'work',
+      kind: 'oauth',
+      expiresAt: 123,
+      oauth: {
+        accessToken: 'claude-access',
+        refreshToken: 'claude-refresh',
+        idToken: null,
+        scope: 'user:inference',
+        tokenType: 'Bearer',
+        providerAccountId: 'acct',
+        providerEmail: 'user@example.com',
+      },
+    });
+
+    const result = await materializeConnectedServicesForSpawn({
+      agentId: 'claude',
+      materializationKey: 'session-6b',
+      baseDir,
+      recordsByServiceId: new Map([['claude-subscription', oauth]]),
     });
 
     expect(result).not.toBeNull();
     expect(result!.env.CLAUDE_CODE_OAUTH_TOKEN).toBe('claude-access');
     expect('CLAUDE_CODE_SETUP_TOKEN' in result!.env).toBe(false);
+    expect('ANTHROPIC_API_KEY' in result!.env).toBe(false);
   });
 
-  it('materializes Claude setup-token via CLAUDE_CODE_SETUP_TOKEN only', async () => {
+  it('materializes Claude Anthropic API key via ANTHROPIC_API_KEY only', async () => {
     const baseDir = await mkdtemp(join(tmpdir(), 'happier-connected-services-test-'));
     const setup = buildConnectedServiceCredentialRecord({
       now: 10,
       serviceId: 'anthropic',
       profileId: 'work',
       kind: 'token',
-      token: { token: 'setup-token', providerAccountId: null, providerEmail: null },
+      token: { token: 'sk-ant-123', providerAccountId: null, providerEmail: null },
     });
 
     const result = await materializeConnectedServicesForSpawn({
@@ -294,7 +467,8 @@ describe('materializeConnectedServicesForSpawn', () => {
     });
 
     expect(result).not.toBeNull();
-    expect(result!.env.CLAUDE_CODE_SETUP_TOKEN).toBe('setup-token');
+    expect(result!.env.ANTHROPIC_API_KEY).toBe('sk-ant-123');
+    expect('CLAUDE_CODE_SETUP_TOKEN' in result!.env).toBe(false);
     expect('CLAUDE_CODE_OAUTH_TOKEN' in result!.env).toBe(false);
   });
 });

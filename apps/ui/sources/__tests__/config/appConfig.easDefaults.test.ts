@@ -17,11 +17,13 @@ function getPublicConfig() {
 function withCleanEnv<T>(fn: () => T): T {
     const keys = [
         'APP_ENV',
+        'HAPPIER_APP_VARIANT_OVERRIDE',
         'EXPO_PUBLIC_EAS_PROJECT_ID',
         'EAS_PROJECT_ID',
         'EXPO_EAS_PROJECT_ID',
         'EXPO_UPDATES_URL',
         'EXPO_UPDATES_CHANNEL',
+        'EXPO_APP_VERSION',
         'EXPO_APP_OWNER',
         'EXPO_APP_SLUG',
         'EXPO_APP_LOCAL_CONFIG_PATH',
@@ -67,6 +69,29 @@ describe('app.config.js', () => {
         });
 
         expect(exp.extra?.app?.variant).toBe('preview');
+    });
+
+    it('allows overriding extra.app.variant without changing production identity config', () => {
+        const exp = withCleanEnv(() => {
+            process.env.APP_ENV = 'production';
+            process.env.HAPPIER_APP_VARIANT_OVERRIDE = 'preview';
+            return getPublicConfig();
+        });
+
+        expect(exp.extra?.app?.variant).toBe('preview');
+        // Production identity still enables universal links / app links.
+        expect(exp.ios?.associatedDomains).toEqual(['applinks:app.happier.dev']);
+        const data = exp.android?.intentFilters?.[0]?.data;
+        const dataItems = Array.isArray(data) ? data : data ? [data] : [];
+        expect(dataItems[0]?.host).toBe('app.happier.dev');
+    });
+
+    it('uses the ui package.json version for expo.version by default', () => {
+        const exp = withCleanEnv(() => getPublicConfig());
+        // Avoid pinning a literal version; keep config tied to the package version.
+        // eslint-disable-next-line @typescript-eslint/no-var-requires
+        const pkg = require('../../../package.json');
+        expect(exp.version).toBe(pkg.version);
     });
 
     it('defaults EXPO_PUBLIC_HAPPIER_FEATURE_POLICY_ENV based on the app variant', () => {

@@ -11,6 +11,7 @@ import type { Credentials } from '@/persistence';
 import { resolveSessionEncryptionContext } from '@/api/client/encryptionKey';
 import { encodeBase64, encrypt } from '@/api/encryption';
 import { resolveSessionCreateEncryptionMode } from '@/api/session/resolveSessionCreateEncryptionMode';
+import { configuration } from '@/configuration';
 import { resolveServerHttpBaseUrl } from './serverHttpBaseUrl';
 
 export type RawSessionRecord = V2SessionByIdResponse['session'];
@@ -31,7 +32,7 @@ export async function fetchSessionById(params: Readonly<{ token: string; session
       Authorization: `Bearer ${params.token}`,
       'Content-Type': 'application/json',
     },
-    timeout: 10_000,
+    timeout: configuration.sessionControlHttpTimeoutMs,
     validateStatus: () => true,
   });
 
@@ -64,7 +65,7 @@ export async function fetchSessionByIdCompat(params: Readonly<{ token: string; s
       Authorization: `Bearer ${params.token}`,
       'Content-Type': 'application/json',
     },
-    timeout: 10_000,
+    timeout: configuration.sessionControlHttpTimeoutMs,
     validateStatus: () => true,
   });
 
@@ -118,7 +119,7 @@ export async function fetchSessionsPage(params: Readonly<{
     params: params.activeOnly
       ? { ...(limit ? { limit } : {}) }
       : { ...(params.cursor ? { cursor: params.cursor } : {}), ...(limit ? { limit } : {}) },
-    timeout: 10_000,
+    timeout: configuration.sessionControlHttpTimeoutMs,
     validateStatus: () => true,
   });
 

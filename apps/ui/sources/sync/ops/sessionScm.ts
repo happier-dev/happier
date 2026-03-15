@@ -1,6 +1,8 @@
 import type {
     ScmChangeApplyRequest,
     ScmChangeApplyResponse,
+    ScmChangeDiscardRequest,
+    ScmChangeDiscardResponse,
     ScmCommitBackoutRequest,
     ScmCommitBackoutResponse,
     ScmCommitCreateRequest,
@@ -22,8 +24,15 @@ import { RPC_ERROR_MESSAGES, RPC_METHODS } from '@happier-dev/protocol/rpc';
 
 import { storage } from '../domains/state/storage';
 import { apiSocket } from '../api/session/apiSocket';
+import { canUseSessionRpc, readMachineTargetForSession, resolveMachinePathFromSessionBase, shouldFallbackToSessionRpc } from './sessionMachineTarget';
 
 const SCM_UNSUPPORTED_RESPONSE_ERROR = 'SCM_UNSUPPORTED_RESPONSE_ERROR';
+const SCM_DIFF_COMMIT_TIMEOUT_MS = 120_000;
+
+function resolveScmRpcTimeoutMs(method: string): number | undefined {
+    if (method === RPC_METHODS.SCM_DIFF_COMMIT) return SCM_DIFF_COMMIT_TIMEOUT_MS;
+    return undefined;
+}
 
 function scmFallbackError<T extends { success: boolean; error?: string; errorCode?: string }>(error: unknown): T {
     if (error instanceof Error && error.message === SCM_UNSUPPORTED_RESPONSE_ERROR) {
@@ -93,178 +102,185 @@ function withScmBackendPreference<T extends { backendPreference?: unknown }>(req
     return request;
 }
 
+async function callScmPreferMachine<
+    T extends { success: boolean; error?: string; errorCode?: string },
+    R extends { cwd?: string; backendPreference?: unknown }
+>(
+    sessionId: string,
+    method: string,
+    request: R,
+): Promise<T> {
+    const machineTarget = readMachineTargetForSession(sessionId);
+
+    if (machineTarget) {
+        const cwd = resolveMachinePathFromSessionBase({ basePath: machineTarget.basePath, requestPath: request.cwd });
+        const machineRequest = withScmBackendPreference({ ...request, cwd } as R);
+        const timeoutMs = resolveScmRpcTimeoutMs(method);
+        try {
+            const response = timeoutMs
+                ? await apiSocket.machineRPC<T, R>(
+                    machineTarget.machineId,
+                    method,
+                    machineRequest as R,
+                    { timeoutMs },
+                )
+                : await apiSocket.machineRPC<T, R>(
+                    machineTarget.machineId,
+                    method,
+                    machineRequest as R,
+                );
+            return assertScmResponse<T>(response);
+        } catch (error) {
+            if (!shouldFallbackToSessionRpc(sessionId, error)) {
+                return scmFallbackError<T>(error);
+            }
+        }
+    }
+
+    if (!canUseSessionRpc(sessionId)) {
+        return {
+            success: false,
+            error: RPC_ERROR_MESSAGES.METHOD_NOT_AVAILABLE,
+            errorCode: SCM_OPERATION_ERROR_CODES.BACKEND_UNAVAILABLE,
+        } as T;
+    }
+
+    try {
+        const response = await apiSocket.sessionRPC<T, R>(sessionId, method, withScmBackendPreference(request));
+        return assertScmResponse<T>(response);
+    } catch (error) {
+        return scmFallbackError<T>(error);
+    }
+}
+
 export async function sessionScmStatusSnapshot(
     sessionId: string,
     request: ScmStatusSnapshotRequest
 ): Promise<ScmStatusSnapshotResponse> {
-    try {
-        const response = await apiSocket.sessionRPC<ScmStatusSnapshotResponse, ScmStatusSnapshotRequest>(
-            sessionId,
-            RPC_METHODS.SCM_STATUS_SNAPSHOT,
-            withScmBackendPreference(request)
-        );
-        return assertScmResponse<ScmStatusSnapshotResponse>(response);
-    } catch (error) {
-        return scmFallbackError<ScmStatusSnapshotResponse>(error);
-    }
+    return await callScmPreferMachine<ScmStatusSnapshotResponse, ScmStatusSnapshotRequest>(
+        sessionId,
+        RPC_METHODS.SCM_STATUS_SNAPSHOT,
+        request
+    );
 }
 
 export async function sessionScmDiffFile(
     sessionId: string,
     request: ScmDiffFileRequest
 ): Promise<ScmDiffFileResponse> {
-    try {
-        const response = await apiSocket.sessionRPC<ScmDiffFileResponse, ScmDiffFileRequest>(
-            sessionId,
-            RPC_METHODS.SCM_DIFF_FILE,
-            withScmBackendPreference(request)
-        );
-        return assertScmResponse<ScmDiffFileResponse>(response);
-    } catch (error) {
-        return scmFallbackError<ScmDiffFileResponse>(error);
-    }
+    return await callScmPreferMachine<ScmDiffFileResponse, ScmDiffFileRequest>(
+        sessionId,
+        RPC_METHODS.SCM_DIFF_FILE,
+        request
+    );
 }
 
 export async function sessionScmDiffCommit(
     sessionId: string,
     request: ScmDiffCommitRequest
 ): Promise<ScmDiffCommitResponse> {
-    try {
-        const response = await apiSocket.sessionRPC<ScmDiffCommitResponse, ScmDiffCommitRequest>(
-            sessionId,
-            RPC_METHODS.SCM_DIFF_COMMIT,
-            withScmBackendPreference(request)
-        );
-        return assertScmResponse<ScmDiffCommitResponse>(response);
-    } catch (error) {
-        return scmFallbackError<ScmDiffCommitResponse>(error);
-    }
+    return await callScmPreferMachine<ScmDiffCommitResponse, ScmDiffCommitRequest>(
+        sessionId,
+        RPC_METHODS.SCM_DIFF_COMMIT,
+        request
+    );
 }
 
 export async function sessionScmChangeInclude(
     sessionId: string,
     request: ScmChangeApplyRequest
 ): Promise<ScmChangeApplyResponse> {
-    try {
-        const response = await apiSocket.sessionRPC<ScmChangeApplyResponse, ScmChangeApplyRequest>(
-            sessionId,
-            RPC_METHODS.SCM_CHANGE_INCLUDE,
-            withScmBackendPreference(request)
-        );
-        return assertScmResponse<ScmChangeApplyResponse>(response);
-    } catch (error) {
-        return scmFallbackError<ScmChangeApplyResponse>(error);
-    }
+    return await callScmPreferMachine<ScmChangeApplyResponse, ScmChangeApplyRequest>(
+        sessionId,
+        RPC_METHODS.SCM_CHANGE_INCLUDE,
+        request
+    );
 }
 
 export async function sessionScmChangeExclude(
     sessionId: string,
     request: ScmChangeApplyRequest
 ): Promise<ScmChangeApplyResponse> {
-    try {
-        const response = await apiSocket.sessionRPC<ScmChangeApplyResponse, ScmChangeApplyRequest>(
-            sessionId,
-            RPC_METHODS.SCM_CHANGE_EXCLUDE,
-            withScmBackendPreference(request)
-        );
-        return assertScmResponse<ScmChangeApplyResponse>(response);
-    } catch (error) {
-        return scmFallbackError<ScmChangeApplyResponse>(error);
-    }
+    return await callScmPreferMachine<ScmChangeApplyResponse, ScmChangeApplyRequest>(
+        sessionId,
+        RPC_METHODS.SCM_CHANGE_EXCLUDE,
+        request
+    );
+}
+
+export async function sessionScmChangeDiscard(
+    sessionId: string,
+    request: ScmChangeDiscardRequest
+): Promise<ScmChangeDiscardResponse> {
+    return await callScmPreferMachine<ScmChangeDiscardResponse, ScmChangeDiscardRequest>(
+        sessionId,
+        RPC_METHODS.SCM_CHANGE_DISCARD,
+        request
+    );
 }
 
 export async function sessionScmCommitCreate(
     sessionId: string,
     request: ScmCommitCreateRequest
 ): Promise<ScmCommitCreateResponse> {
-    try {
-        const response = await apiSocket.sessionRPC<ScmCommitCreateResponse, ScmCommitCreateRequest>(
-            sessionId,
-            RPC_METHODS.SCM_COMMIT_CREATE,
-            withScmBackendPreference(request)
-        );
-        return assertScmResponse<ScmCommitCreateResponse>(response);
-    } catch (error) {
-        return scmFallbackError<ScmCommitCreateResponse>(error);
-    }
+    return await callScmPreferMachine<ScmCommitCreateResponse, ScmCommitCreateRequest>(
+        sessionId,
+        RPC_METHODS.SCM_COMMIT_CREATE,
+        request
+    );
 }
 
 export async function sessionScmLogList(
     sessionId: string,
     request: ScmLogListRequest
 ): Promise<ScmLogListResponse> {
-    try {
-        const response = await apiSocket.sessionRPC<ScmLogListResponse, ScmLogListRequest>(
-            sessionId,
-            RPC_METHODS.SCM_LOG_LIST,
-            withScmBackendPreference(request)
-        );
-        return assertScmResponse<ScmLogListResponse>(response);
-    } catch (error) {
-        return scmFallbackError<ScmLogListResponse>(error);
-    }
+    return await callScmPreferMachine<ScmLogListResponse, ScmLogListRequest>(
+        sessionId,
+        RPC_METHODS.SCM_LOG_LIST,
+        request
+    );
 }
 
 export async function sessionScmCommitBackout(
     sessionId: string,
     request: ScmCommitBackoutRequest
 ): Promise<ScmCommitBackoutResponse> {
-    try {
-        const response = await apiSocket.sessionRPC<ScmCommitBackoutResponse, ScmCommitBackoutRequest>(
-            sessionId,
-            RPC_METHODS.SCM_COMMIT_BACKOUT,
-            withScmBackendPreference(request)
-        );
-        return assertScmResponse<ScmCommitBackoutResponse>(response);
-    } catch (error) {
-        return scmFallbackError<ScmCommitBackoutResponse>(error);
-    }
+    return await callScmPreferMachine<ScmCommitBackoutResponse, ScmCommitBackoutRequest>(
+        sessionId,
+        RPC_METHODS.SCM_COMMIT_BACKOUT,
+        request
+    );
 }
 
 export async function sessionScmRemoteFetch(
     sessionId: string,
     request: ScmRemoteRequest
 ): Promise<ScmRemoteResponse> {
-    try {
-        const response = await apiSocket.sessionRPC<ScmRemoteResponse, ScmRemoteRequest>(
-            sessionId,
-            RPC_METHODS.SCM_REMOTE_FETCH,
-            withScmBackendPreference(request)
-        );
-        return assertScmResponse<ScmRemoteResponse>(response);
-    } catch (error) {
-        return scmFallbackError<ScmRemoteResponse>(error);
-    }
+    return await callScmPreferMachine<ScmRemoteResponse, ScmRemoteRequest>(
+        sessionId,
+        RPC_METHODS.SCM_REMOTE_FETCH,
+        request
+    );
 }
 
 export async function sessionScmRemotePush(
     sessionId: string,
     request: ScmRemoteRequest
 ): Promise<ScmRemoteResponse> {
-    try {
-        const response = await apiSocket.sessionRPC<ScmRemoteResponse, ScmRemoteRequest>(
-            sessionId,
-            RPC_METHODS.SCM_REMOTE_PUSH,
-            withScmBackendPreference(request)
-        );
-        return assertScmResponse<ScmRemoteResponse>(response);
-    } catch (error) {
-        return scmFallbackError<ScmRemoteResponse>(error);
-    }
+    return await callScmPreferMachine<ScmRemoteResponse, ScmRemoteRequest>(
+        sessionId,
+        RPC_METHODS.SCM_REMOTE_PUSH,
+        request
+    );
 }
 
 export async function sessionScmRemotePull(
     sessionId: string,
     request: ScmRemoteRequest
 ): Promise<ScmRemoteResponse> {
-    try {
-        const response = await apiSocket.sessionRPC<ScmRemoteResponse, ScmRemoteRequest>(
-            sessionId,
-            RPC_METHODS.SCM_REMOTE_PULL,
-            withScmBackendPreference(request)
-        );
-        return assertScmResponse<ScmRemoteResponse>(response);
-    } catch (error) {
-        return scmFallbackError<ScmRemoteResponse>(error);
-    }
+    return await callScmPreferMachine<ScmRemoteResponse, ScmRemoteRequest>(
+        sessionId,
+        RPC_METHODS.SCM_REMOTE_PULL,
+        request
+    );
 }

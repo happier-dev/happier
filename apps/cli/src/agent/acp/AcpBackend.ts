@@ -19,11 +19,14 @@ import {
   type InitializeRequest,
   type InitializeResponse,
   type NewSessionRequest,
+  type ForkSessionRequest,
+  type ForkSessionResponse,
   type LoadSessionRequest,
   type PromptRequest,
   type SetSessionModeRequest,
   type ContentBlock,
 } from '@agentclientprotocol/sdk';
+import { redactBugReportSensitiveText } from '@happier-dev/protocol';
 import { randomUUID } from 'node:crypto';
 import { createWriteStream, promises as fs } from 'node:fs';
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
@@ -81,6 +84,32 @@ function makeAbortError(message: string): Error {
   const err = new Error(message);
   err.name = 'AbortError';
   return err;
+}
+
+const DEFAULT_POST_PROMPT_NO_UPDATES_TIMEOUT_MS = 30_000;
+
+function readPositiveIntEnv(name: string): number | null {
+  const raw = typeof process.env[name] === 'string' ? process.env[name]!.trim() : '';
+  if (!raw) return null;
+  const n = Number(raw);
+  if (!Number.isFinite(n)) return null;
+  if (!Number.isInteger(n)) return null;
+  if (n <= 0) return null;
+  return n;
+}
+
+function resolvePostPromptNoUpdatesTimeoutMs(transport: TransportHandler): number {
+  const transportValue = transport.getPostPromptNoUpdatesTimeoutMs?.();
+  if (typeof transportValue === 'number' && Number.isFinite(transportValue) && transportValue > 0) {
+    return Math.trunc(transportValue);
+  }
+
+  const envValue =
+    readPositiveIntEnv('HAPPIER_ACP_POST_PROMPT_NO_UPDATES_TIMEOUT_MS') ??
+    readPositiveIntEnv('HAPPY_ACP_POST_PROMPT_NO_UPDATES_TIMEOUT_MS');
+  if (envValue != null) return envValue;
+
+  return DEFAULT_POST_PROMPT_NO_UPDATES_TIMEOUT_MS;
 }
 
 /**
@@ -744,6 +773,60 @@ export class AcpBackend implements AgentBackend {
       onDroppedLine: (entry) => {
         filteredCount++;
         droppedStdoutCapture?.write(entry);
+
+        // Some ACP agents incorrectly emit error output to stdout (instead of stderr), which gets
+        // filtered out as non-JSON and can otherwise leave the UI "stuck" with no visible failure.
+        // Best-effort: classify error-like dropped stdout lines during an in-flight prompt turn and
+        // surface them as status:error + a rejected waitForResponseComplete().
+        if (this.waitingForResponse && !this.responseCompletionError && entry.reason === 'transport_filter_null') {
+          const raw = entry.line;
+          const trimmed = raw.trim();
+          if (trimmed) {
+            const context: StderrContext = {
+              activeToolCalls: this.activeToolCalls,
+              hasActiveInvestigation: this.transport.isInvestigationTool
+                ? Array.from(this.activeToolCalls).some((id) => this.transport.isInvestigationTool!(id))
+                : false,
+            };
+
+            const transportResult = this.transport.handleStderr?.(raw, context);
+            const transportMessage = transportResult?.message ?? null;
+            if (transportMessage) {
+              this.emit(transportMessage);
+              if (transportMessage.type === 'status' && transportMessage.status === 'error') {
+                const detailRaw =
+                  typeof transportMessage.detail === 'string' && transportMessage.detail.trim()
+                    ? transportMessage.detail
+                    : trimmed;
+                const detail = redactBugReportSensitiveText(detailRaw);
+                this.failPendingResponseWait(new Error(detail));
+              }
+              return;
+            }
+
+            const analysisText = trimmed.length > 5000 ? trimmed.slice(0, 5000) : trimmed;
+            const lower = analysisText.toLowerCase();
+            const looksLikeError =
+              lower.startsWith('error') ||
+              lower.includes('error:') ||
+              lower.includes('exception') ||
+              lower.includes('traceback') ||
+              lower.includes('invalid_request') ||
+              lower.includes('invalid request') ||
+              lower.includes('unauthorized') ||
+              lower.includes('forbidden') ||
+              lower.includes('permission denied') ||
+              (/\b(4\d\d|5\d\d)\b/.test(lower) &&
+                (lower.includes('http') || lower.includes('status') || lower.includes('error') || lower.includes('request'))) ||
+              (lower.includes('exceeds') && lower.includes('bytes') && trimmed.includes('>'));
+            if (!looksLikeError) return;
+
+            const redacted = redactBugReportSensitiveText(trimmed);
+            const detail = redacted.length > 500 ? `${redacted.slice(0, 500)}…` : redacted;
+            this.emit({ type: 'status', status: 'error', detail });
+            this.failPendingResponseWait(new Error(detail));
+          }
+        }
       },
       onDone: () => {
         if (filteredCount > 0) {
@@ -1235,6 +1318,65 @@ export class AcpBackend implements AgentBackend {
   }
 
   /**
+   * Fork an existing session using ACP session/fork (UNSTABLE).
+   *
+   * This is only available when the agent advertises session.fork; callers should
+   * treat failures as "not supported" and fall back to other mechanisms.
+   */
+  async forkSession(params: Readonly<{ sessionId: SessionId; cwd?: string }>): Promise<StartSessionResult> {
+    if (this.disposed) {
+      throw new Error('Backend has been disposed');
+    }
+
+    const normalized = typeof params.sessionId === 'string' ? params.sessionId.trim() : '';
+    if (!normalized) {
+      throw new Error('Session ID is required');
+    }
+
+    this.emit({ type: 'status', status: 'starting' });
+
+    try {
+      if (!this.connection) {
+        await this.createConnectionAndInitialize({ operationId: randomUUID() });
+      }
+      const connection = this.connection;
+      const unstableForkSession = (connection as unknown as { unstable_forkSession?: (req: ForkSessionRequest) => Promise<ForkSessionResponse> })
+        ?.unstable_forkSession;
+      if (!connection || typeof unstableForkSession !== 'function') {
+        throw new Error(`${this.transport.agentName} does not support ACP session/fork`);
+      }
+
+      const request: ForkSessionRequest = {
+        sessionId: normalized,
+        cwd: typeof params.cwd === 'string' && params.cwd.trim().length > 0 ? params.cwd.trim() : this.options.cwd,
+        mcpServers: this.buildAcpMcpServersForSessionRequest() as unknown as ForkSessionRequest['mcpServers'],
+      };
+
+      const response = await unstableForkSession.call(connection, request);
+      const forkedSessionId = typeof response?.sessionId === 'string' ? response.sessionId.trim() : '';
+      if (!forkedSessionId) {
+        throw new Error('Fork response did not include a session id');
+      }
+
+      this.acpSessionId = forkedSessionId;
+      this.seedSessionModesFromSessionResponse(response);
+      this.seedSessionModelsFromSessionResponse(response);
+      this.seedSessionConfigOptionsFromSessionResponse(response);
+      this.emitIdleStatus();
+
+      return { sessionId: forkedSessionId };
+    } catch (error) {
+      logger.debug('[AcpBackend] Error forking session:', error);
+      this.emit({
+        type: 'status',
+        status: 'error',
+        detail: error instanceof Error ? error.message : String(error),
+      });
+      throw error;
+    }
+  }
+
+  /**
    * Create handler context for session update processing
    */
   private createHandlerContext(): HandlerContext {
@@ -1313,6 +1455,14 @@ export class AcpBackend implements AgentBackend {
     if (updateCandidates.length === 0) {
       logger.debug('[AcpBackend] Received session update without update field:', params);
       return;
+    }
+
+    if (this.waitingForResponse) {
+      this.sawSessionUpdateSincePrompt = true;
+      if (this.postPromptCompletionIdleTimeout) {
+        clearTimeout(this.postPromptCompletionIdleTimeout);
+        this.postPromptCompletionIdleTimeout = null;
+      }
     }
 
     const isGeminiAcpDebugEnabled = (() => {
@@ -1760,6 +1910,7 @@ export class AcpBackend implements AgentBackend {
   private waitingForResponse = false;
   private responseCompletionError: Error | null = null;
   private postPromptCompletionIdleTimeout: NodeJS.Timeout | null = null;
+  private sawSessionUpdateSincePrompt = false;
 
   private failPendingResponseWait(error: Error): void {
     // Multiple sources can surface the same underlying failure (stderr parsing, transport errors, process exit).
@@ -1803,6 +1954,11 @@ export class AcpBackend implements AgentBackend {
     this.emit({ type: 'status', status: 'running' });
     this.waitingForResponse = true;
     this.responseCompletionError = null;
+    this.sawSessionUpdateSincePrompt = false;
+    if (this.postPromptCompletionIdleTimeout) {
+      clearTimeout(this.postPromptCompletionIdleTimeout);
+      this.postPromptCompletionIdleTimeout = null;
+    }
 
     try {
       // Never log prompt contents (can include secrets).
@@ -1870,23 +2026,22 @@ export class AcpBackend implements AgentBackend {
       // events (no message chunks, no tool calls). In that case, we must still unblock
       // `waitForResponseComplete()` so callers don't degrade into a generic timeout.
       //
-      // Guard: only emit when we are still waiting (i.e. no idle was already observed) and
-      // there are no active tool calls left to wait on.
-      if (this.waitingForResponse && this.activeToolCalls.size === 0) {
+      // Guard: only emit when we are still waiting (i.e. no idle was already observed), there are
+      // no active tool calls, and we have *not yet observed any session/update traffic* for this prompt.
+      if (this.waitingForResponse && this.activeToolCalls.size === 0 && this.sawSessionUpdateSincePrompt === false) {
         // Don't resolve immediately: give stderr/process-exit handlers a chance to surface errors
         // before we declare the turn complete (prevents swallowing "exit non-zero" or auth errors).
-        const transportIdleTimeoutMs = this.transport.getIdleTimeout?.() ?? DEFAULT_IDLE_TIMEOUT_MS;
+        const noUpdatesTimeoutMs = resolvePostPromptNoUpdatesTimeoutMs(this.transport);
         // NOTE: When an ACP agent crashes/exits shortly after responding to session/prompt, the
         // subprocess exit can race with our "no updates" idle fallback. Use a small minimum grace
         // to reduce flakes and avoid incorrectly treating a failed turn as complete.
-        const graceMs = Math.max(35, transportIdleTimeoutMs);
-        if (this.postPromptCompletionIdleTimeout) {
-          clearTimeout(this.postPromptCompletionIdleTimeout);
-        }
+        const graceMs = Math.max(100, noUpdatesTimeoutMs);
+
         this.postPromptCompletionIdleTimeout = setTimeout(() => {
           this.postPromptCompletionIdleTimeout = null;
           if (this.responseCompletionError) return;
           if (!this.waitingForResponse) return;
+          if (this.sawSessionUpdateSincePrompt) return;
           if (this.activeToolCalls.size > 0) return;
           // If the subprocess has already exited (but the exit handler hasn't run yet),
           // prefer surfacing the exit as a response completion error instead of declaring
@@ -2122,6 +2277,10 @@ export class AcpBackend implements AgentBackend {
    * Helper to emit idle status and resolve any waiting promises
    */
   private emitIdleStatus(): void {
+    if (this.postPromptCompletionIdleTimeout) {
+      clearTimeout(this.postPromptCompletionIdleTimeout);
+      this.postPromptCompletionIdleTimeout = null;
+    }
     this.emit({ type: 'status', status: 'idle' });
     // Avoid races where the idle signal arrives before `waitForResponseComplete()` starts waiting.
     // In that case, `idleResolver` is still null, so we must also clear `waitingForResponse` here.

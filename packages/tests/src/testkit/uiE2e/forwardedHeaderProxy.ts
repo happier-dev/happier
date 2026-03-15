@@ -83,14 +83,8 @@ export async function startForwardedHeaderProxy(params: {
 
   srv.on('upgrade', (req, socket, head) => {
     // Tunnel websocket upgrades directly to the upstream server to support daemon + UI socket clients.
-    const connectFn = isHttps ? tlsConnect : netConnect;
-    const upstream = connectFn(
-      {
-        host: targetUrl.hostname,
-        port: targetPort,
-        servername: isHttps ? targetUrl.hostname : undefined,
-      } as any,
-      () => {
+    let upstream: ReturnType<typeof netConnect> | ReturnType<typeof tlsConnect>;
+    const onConnect = () => {
         const headers = coerceHeaders(req.headers);
         for (const [k, v] of Object.entries(params.identityHeaders)) {
           headers[k] = v;
@@ -108,8 +102,24 @@ export async function startForwardedHeaderProxy(params: {
 
         socket.pipe(upstream);
         upstream.pipe(socket);
-      },
-    );
+    };
+
+    upstream = isHttps
+      ? tlsConnect(
+          {
+            host: targetUrl.hostname,
+            port: targetPort,
+            servername: targetUrl.hostname,
+          },
+          onConnect,
+        )
+      : netConnect(
+          {
+            host: targetUrl.hostname,
+            port: targetPort,
+          },
+          onConnect,
+        );
 
     upstream.on('error', () => {
       try {
@@ -134,4 +144,3 @@ export async function startForwardedHeaderProxy(params: {
     },
   };
 }
-

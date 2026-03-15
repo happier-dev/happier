@@ -53,8 +53,8 @@ describe('SourceControlBranchSummary', () => {
 
         const texts = tree!.root.findAllByType('Text' as any).map((node) => node.props.children);
         expect(texts).toContain('main');
-        expect(texts).toContain('Staged');
-        expect(texts).toContain('Unstaged');
+        expect(texts).toContain('files.branchSummary.staged');
+        expect(texts).toContain('files.branchSummary.unstaged');
     });
 
     it('renders upstream tracking and ahead/behind counters when available', async () => {
@@ -98,9 +98,9 @@ describe('SourceControlBranchSummary', () => {
                 return String(value);
             });
 
-        expect(textContent.some((text) => text.includes('origin/feature/refactor'))).toBe(true);
-        expect(textContent.some((text) => text.includes('Ahead'))).toBe(true);
-        expect(textContent.some((text) => text.includes('Behind'))).toBe(true);
+        expect(textContent.some((text) => text.includes('files.branchSummary.upstreamLabel'))).toBe(true);
+        expect(textContent.some((text) => text.includes('files.branchSummary.ahead'))).toBe(true);
+        expect(textContent.some((text) => text.includes('files.branchSummary.behind'))).toBe(true);
     });
 
     it('renders included/pending labels for working-copy change set model', async () => {
@@ -132,9 +132,9 @@ describe('SourceControlBranchSummary', () => {
         });
 
         const texts = tree!.root.findAllByType('Text' as any).map((node) => node.props.children);
-        expect(texts).toContain('Included');
-        expect(texts).toContain('Pending');
-        expect(texts).not.toContain('Staged');
-        expect(texts).not.toContain('Unstaged');
+        expect(texts).toContain('files.branchSummary.included');
+        expect(texts).toContain('files.branchSummary.pending');
+        expect(texts).not.toContain('files.branchSummary.staged');
+        expect(texts).not.toContain('files.branchSummary.unstaged');
     });
 });

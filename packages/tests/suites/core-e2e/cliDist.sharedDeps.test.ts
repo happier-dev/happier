@@ -68,4 +68,55 @@ describe('core e2e: cli dist build', () => {
     expect(runCommand).toHaveBeenCalledTimes(1);
     expect(await exists(resolve(repoRoot, 'packages', 'protocol', 'dist', 'index.js'))).toBe(true);
   });
+
+  it('creates a stable CLI dist snapshot for spawned processes', async () => {
+    dir = await mkdtemp(join(tmpdir(), 'happier-cli-dist-snapshot-'));
+    const repoRoot = dir;
+
+    const cliDistDir = resolve(repoRoot, 'apps', 'cli', 'dist');
+    await mkdir(cliDistDir, { recursive: true });
+    await writeFile(resolve(cliDistDir, 'index.mjs'), "export {};\n", 'utf8');
+
+    const runCommand = vi.fn<RunLoggedCommand>(async () => {
+      // Simulate build:shared producing dist outputs in the workspace packages.
+      const outputs = [
+        resolve(repoRoot, 'packages', 'agents', 'dist', 'index.js'),
+        resolve(repoRoot, 'packages', 'cli-common', 'dist', 'index.js'),
+        resolve(repoRoot, 'packages', 'protocol', 'dist', 'index.js'),
+      ];
+      for (const out of outputs) {
+        await mkdir(resolve(out, '..'), { recursive: true });
+        await writeFile(out, 'export {};\n', 'utf8');
+      }
+    });
+
+    vi.resetModules();
+    const { ensureCliDistSnapshotEntrypoint } = await import('../../src/testkit/process/cliDist');
+
+    const snapshotDir = resolve(repoRoot, '.project', 'tmp', 'cli-dist-snapshot');
+    const entrypoint = await ensureCliDistSnapshotEntrypoint(
+      { testDir: repoRoot, env: { ...process.env, CI: '1' } },
+      {
+        repoRoot,
+        runCommand,
+        snapshotDir,
+        lockPath: resolve(repoRoot, '.project', 'tmp', 'cli-dist-build.lock'),
+      },
+    );
+
+    expect(entrypoint).toBe(resolve(snapshotDir, 'dist', 'index.mjs'));
+    expect(await exists(entrypoint)).toBe(true);
+
+    const entrypoint2 = await ensureCliDistSnapshotEntrypoint(
+      { testDir: repoRoot, env: { ...process.env, CI: '1' } },
+      {
+        repoRoot,
+        runCommand,
+        snapshotDir,
+        lockPath: resolve(repoRoot, '.project', 'tmp', 'cli-dist-build.lock'),
+      },
+    );
+
+    expect(entrypoint2).toBe(entrypoint);
+  });
 });

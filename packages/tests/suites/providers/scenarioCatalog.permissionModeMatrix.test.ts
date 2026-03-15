@@ -83,6 +83,7 @@ describe('scenarioCatalog: ACP permission mode matrix scenarios', () => {
     const yoloKeys = (yoloScenario.requiredAnyFixtureKeys ?? []).flat();
 
     expect(defaultKeys.some((key) => key.includes('/permission-request/'))).toBe(true);
+    expect(defaultKeys).toContain('acp/opencode/permission-request/Patch');
     expect(readonlyKeys.some((key) => key.includes('/permission-request/'))).toBe(false);
     expect(yoloKeys.some((key) => key.includes('/permission-request/'))).toBe(false);
 

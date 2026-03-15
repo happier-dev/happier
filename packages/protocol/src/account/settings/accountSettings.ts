@@ -13,6 +13,7 @@ export const NotificationsSettingsV1Schema = z
     pushEnabled: z.boolean().default(true),
     ready: z.boolean().default(true),
     permissionRequest: z.boolean().default(true),
+    userActionRequest: z.boolean().default(true),
     foregroundBehavior: ForegroundBehaviorSchema.default('full'),
   })
   .catch({
@@ -20,6 +21,7 @@ export const NotificationsSettingsV1Schema = z
     pushEnabled: true,
     ready: true,
     permissionRequest: true,
+    userActionRequest: true,
     foregroundBehavior: 'full',
   });
 
@@ -66,4 +68,3 @@ export function getNotificationsSettingsV1FromAccountSettings(settingsLike: unkn
     : null;
   return NotificationsSettingsV1Schema.parse(rec?.notificationsSettingsV1);
 }
-

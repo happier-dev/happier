@@ -68,7 +68,7 @@ export const ChatFooter = React.memo((props: ChatFooterProps) => {
                                 size={16}
                                 color={theme.colors.box.warning.text}
                             />
-                            <Text style={warningTextStyle}>
+                            <Text selectable style={warningTextStyle}>
                                 {t(
                                     props.permissionsInUiWhileLocal
                                         ? 'chatFooter.sessionRunningLocally'

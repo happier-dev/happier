@@ -63,7 +63,7 @@ function getSubprocessRuntime(): 'node' | 'bun' {
   return isBun() ? 'bun' : 'node';
 }
 
-function resolveTsxImportHookPath(): string | null {
+export function resolveTsxImportHookPath(): string | null {
   // `node --import tsx` resolves `tsx` relative to the current working directory.
   // Daemon-spawned sessions intentionally run in arbitrary `cwd`s (e.g. /Users/leeroy),
   // so we must use an absolute path to the tsx ESM register hook.
@@ -97,7 +97,7 @@ function resolveDevTsxFallbackEntrypoint(entrypoint: string): string {
   return join(projectPath(), 'src', 'index.ts');
 }
 
-function resolveCliTsxTsconfigPath(): string {
+export function resolveCliTsxTsconfigPath(): string {
   // The TSX loader resolves TS path aliases (`@/...`) using the tsconfig it finds.
   // Daemon-spawned subprocesses intentionally run in arbitrary `cwd`s, so TSX may
   // pick up the wrong tsconfig (or none) unless we provide an explicit path.

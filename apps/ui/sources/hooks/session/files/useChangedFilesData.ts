@@ -15,11 +15,18 @@ import { buildAllRepositoryChangedFiles } from '@/components/sessions/files/file
 type UseChangedFilesDataInput = {
     sessionId: string;
     scmSnapshot: ScmWorkingSnapshot | null;
-    touchedPaths: string[];
-    operationLog: ScmProjectOperationLogEntry[];
-    projectSessionIds: string[];
+    touchedPaths: readonly string[];
+    operationLog: readonly ScmProjectOperationLogEntry[];
+    projectSessionIds: readonly string[];
     searchQuery: string;
     showAllRepositoryFiles: boolean;
+    /**
+     * Optional performance knob for repository-only surfaces (e.g. SCM sidebar commit list)
+     * that never need session attribution. When false, skip attribution work entirely.
+     *
+     * Defaults to true to preserve existing behavior.
+     */
+    computeAttribution?: boolean;
 };
 
 export type UseChangedFilesDataResult = {
@@ -43,6 +50,7 @@ export function useChangedFilesData(input: UseChangedFilesDataInput): UseChanged
         projectSessionIds,
         searchQuery,
         showAllRepositoryFiles,
+        computeAttribution = true,
     } = input;
 
     const otherSessionCountInProject = React.useMemo(
@@ -80,28 +88,35 @@ export function useChangedFilesData(input: UseChangedFilesDataInput): UseChanged
         [operationLog, sessionId]
     );
 
-    const { sessionAttributedFiles, repositoryOnlyFiles, suppressedInferredCount } = React.useMemo(
-        () =>
-            buildChangedFilesAttribution({
-                allChangedFiles: allRepositoryChangedFiles,
-                touchedPaths,
-                operationLog: sessionOperationLog,
-                includeInferred: includeInferredAttribution,
-            }),
-        [allRepositoryChangedFiles, includeInferredAttribution, sessionOperationLog, touchedPaths]
-    );
-    const highConfidenceAttributionCount = React.useMemo(
-        () => sessionAttributedFiles.filter((entry) => entry.confidence === 'high').length,
-        [sessionAttributedFiles]
-    );
-    const showSessionViewToggle = React.useMemo(
-        () =>
-            canOfferSessionChangedFilesView({
-                reliability: attributionReliability,
-                highConfidenceAttributionCount,
-            }),
-        [attributionReliability, highConfidenceAttributionCount]
-    );
+    const { sessionAttributedFiles, repositoryOnlyFiles, suppressedInferredCount } = React.useMemo(() => {
+        if (!computeAttribution) {
+            return {
+                sessionAttributedFiles: [],
+                repositoryOnlyFiles: allRepositoryChangedFiles,
+                suppressedInferredCount: 0,
+            } satisfies Pick<UseChangedFilesDataResult, 'sessionAttributedFiles' | 'repositoryOnlyFiles' | 'suppressedInferredCount'>;
+        }
+
+        return buildChangedFilesAttribution({
+            allChangedFiles: allRepositoryChangedFiles,
+            touchedPaths,
+            operationLog: sessionOperationLog,
+            includeInferred: includeInferredAttribution,
+        });
+    }, [allRepositoryChangedFiles, computeAttribution, includeInferredAttribution, sessionOperationLog, touchedPaths]);
+
+    const highConfidenceAttributionCount = React.useMemo(() => {
+        if (!computeAttribution) return 0;
+        return sessionAttributedFiles.filter((entry) => entry.confidence === 'high').length;
+    }, [computeAttribution, sessionAttributedFiles]);
+
+    const showSessionViewToggle = React.useMemo(() => {
+        if (!computeAttribution) return false;
+        return canOfferSessionChangedFilesView({
+            reliability: attributionReliability,
+            highConfidenceAttributionCount,
+        });
+    }, [attributionReliability, computeAttribution, highConfidenceAttributionCount]);
 
     return {
         attributionReliability,

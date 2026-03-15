@@ -1,13 +1,18 @@
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeAll, beforeEach, describe, expect, it } from "vitest";
 
 import {
     createSessionRouteReply,
+    preloadSessionRoutes,
     registerSessionRoutesAndGetHandler,
     resetSessionRouteMocks,
     sessionFindMany,
 } from "./sessionRoutes.testkit";
 
 describe("sessionRoutes v2 archived sessions listing", () => {
+    beforeAll(async () => {
+        await preloadSessionRoutes();
+    }, 120_000);
+
     beforeEach(() => {
         resetSessionRouteMocks();
         sessionFindMany.mockReset();

@@ -63,6 +63,7 @@ vi.mock('@/hooks/ui/useHappyAction', () => ({
 vi.mock('@/sync/domains/state/storage', () => ({
     useHasUnreadMessages: () => false,
     useProfile: () => ({ id: 'u1' }),
+    useSession: () => null,
 }));
 
 const promptSpy = vi.fn(async () => 'new-tag');
@@ -123,6 +124,14 @@ describe('SessionItem tags (new tag)', () => {
             return node.type === 'Pressable' && node.props?.testID === 'session-list-item-sess_1';
         });
         expect(stableItemLocator).toHaveLength(1);
+
+        const tagButton = (tree as any).root.findAll((node: any) => {
+            return node.type === 'Pressable' && node.props?.accessibilityLabel === 'sessionTags.editTagsLabel';
+        })[0];
+        expect(tagButton).toBeTruthy();
+        await act(async () => {
+            tagButton.props.onPress();
+        });
 
         const dropdown = (tree as any).root.findByType('DropdownMenu');
         expect(dropdown.props.emptyLabel).toBe(null);

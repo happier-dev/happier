@@ -329,9 +329,11 @@ export type Metadata = {
   claudeSessionId?: string, // Claude Code session ID
   claudeTranscriptPath?: string | null, // Claude Code transcript path (hooks)
   claudeLastCheckpointId?: string | null, // Claude SDK file checkpoint UUID (remote)
+  claudeLastAssistantUuid?: string | null, // Claude SDK assistant message UUID (resume anchoring)
   codexSessionId?: string, // Codex session/conversation ID (uuid)
   geminiSessionId?: string, // Gemini ACP session ID (opaque)
   opencodeSessionId?: string, // OpenCode ACP session ID (opaque)
+  opencodeBackendMode?: 'server' | 'acp',
   auggieSessionId?: string, // Auggie ACP session ID (opaque)
   qwenSessionId?: string, // Qwen Code ACP session ID (opaque)
   kimiSessionId?: string, // Kimi ACP session ID (opaque)
@@ -457,25 +459,44 @@ export type AgentState = {
     inFlightSteer?: boolean | null | undefined
     localPermissionBridgeInLocalMode?: boolean | null | undefined
   } | null | undefined
-  requests?: {
-    [id: string]: {
-      tool: string,
-      arguments: any,
-      createdAt: number
-    }
-  }
-  completedRequests?: {
-    [id: string]: {
-      tool: string,
-      arguments: any,
-      createdAt: number,
-      completedAt: number,
-      status: 'canceled' | 'denied' | 'approved',
+      requests?: {
+        [id: string]: {
+          tool: string,
+        /**
+         * Categorizes pending agent requests for UI/notifications.
+         *
+         * - `permission`: classic tool approval prompts (Bash/Edit/etc)
+         * - `user_action`: structured user input prompts (AskUserQuestion/ExitPlanMode/etc)
+         */
+          kind?: 'permission' | 'user_action' | string,
+          arguments: any,
+          createdAt: number
+          /**
+           * Optional provider-provided permission suggestions for this request.
+           * (e.g. Claude Agent SDK `permission_suggestions`).
+           */
+          permissionSuggestions?: unknown
+          /**
+           * Timestamp (ms) when a push notification was sent for this permission request.
+           * Used to avoid duplicate notifications across restarts/resumes.
+           */
+          pushNotifiedAt?: number
+        }
+      }
+      completedRequests?: {
+        [id: string]: {
+        tool: string,
+        kind?: 'permission' | 'user_action' | string,
+        arguments: any,
+        createdAt: number,
+        completedAt: number,
+        status: 'canceled' | 'denied' | 'approved',
       reason?: string,
       mode?: PermissionMode,
-      decision?: 'approved' | 'approved_for_session' | 'approved_execpolicy_amendment' | 'denied' | 'abort',
-      allowedTools?: string[]
-      allowTools?: string[] // legacy alias
+        decision?: 'approved' | 'approved_for_session' | 'approved_execpolicy_amendment' | 'denied' | 'abort',
+        allowedTools?: string[]
+        allowTools?: string[] // legacy alias
+        updatedPermissions?: unknown
+      }
     }
   }
-}

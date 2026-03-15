@@ -9,8 +9,10 @@ import { promisify } from 'util';
 
 import { AGENTS, type CatalogAgentId, type CliDetectSpec } from '@/backends/catalog';
 import { AsyncTtlCache } from '@happier-dev/protocol';
+import { resolveWindowsCommandInvocation, resolveWindowsCommandOnPath } from '@happier-dev/cli-common/process';
 
 const execFileAsync = promisify(execFile);
+type ExecFileBestEffortOptions = ExecOptions & Readonly<{ windowsVerbatimArguments?: boolean }>;
 
 function resolveHomeDir(): string {
     const envHome =
@@ -90,28 +92,22 @@ function buildCliSnapshotCacheKey(params: DetectCliRequest, pathEnv: string | nu
 async function resolveCommandOnPath(command: string, pathEnv: string | null): Promise<string | null> {
     if (!pathEnv) return null;
 
+    if (process.platform === 'win32') {
+        return resolveWindowsCommandOnPath(command, { ...process.env, PATH: pathEnv });
+    }
+
     const segments = pathEnv
         .split(PATH_DELIMITER)
         .map((p) => p.trim())
         .filter(Boolean);
 
-    const isWindows = process.platform === 'win32';
-    const extensions = isWindows
-        ? (process.env.PATHEXT || '.EXE;.CMD;.BAT;.COM')
-            .split(';')
-            .map((e) => e.trim())
-            .filter(Boolean)
-        : [''];
-
     for (const dir of segments) {
-        for (const ext of extensions) {
-            const candidate = join(dir, isWindows ? `${command}${ext}` : command);
-            try {
-                await access(candidate, isWindows ? fsConstants.F_OK : fsConstants.X_OK);
-                return candidate;
-            } catch {
-                // continue
-            }
+        const candidate = join(dir, command);
+        try {
+            await access(candidate, fsConstants.X_OK);
+            return candidate;
+        } catch {
+            // continue
         }
     }
 
@@ -250,7 +246,7 @@ async function detectCliVersion(params: { name: DetectCliName; resolvedPath: str
 
         const argsToTry: Array<string[]> = await resolveCliVersionArgsToTry(params.name);
 
-        const execFileBestEffort = async (file: string, args: string[], options: ExecOptions): Promise<{ stdout: string; stderr: string }> => {
+        const execFileBestEffort = async (file: string, args: string[], options: ExecFileBestEffortOptions): Promise<{ stdout: string; stderr: string }> => {
             try {
                 const { stdout, stderr } = await execFileAsync(file, args, options);
                 return { stdout: asString(stdout), stderr: asString(stderr) };
@@ -277,13 +273,18 @@ async function detectCliVersion(params: { name: DetectCliName; resolvedPath: str
         }
 
         if (isCmdScript) {
-            // .cmd/.bat require cmd.exe (best-effort, only --version is supported here)
+            // .cmd/.bat require cmd.exe.
             const primary = argsToTry.find((args) => args.includes('--version')) ?? ['--version'];
-            const { stdout, stderr } = await execFileBestEffort(
-                'cmd.exe',
-                ['/d', '/s', '/c', `"${params.resolvedPath}" ${primary.join(' ')}`],
-                { timeout: timeoutMs, windowsHide: true },
-            );
+            const invocation = resolveWindowsCommandInvocation({
+                command: params.resolvedPath,
+                args: primary,
+                resolveCommandOnPath: false,
+            });
+            const { stdout, stderr } = await execFileBestEffort(invocation.command, invocation.args, {
+                timeout: timeoutMs,
+                windowsHide: true,
+                windowsVerbatimArguments: invocation.windowsVerbatimArguments,
+            });
             return extractSemver(getFirstLine(`${stdout}\n${stderr}`));
         }
 
@@ -317,7 +318,7 @@ async function detectTmuxVersion(params: { resolvedPath: string }): Promise<stri
             return '';
         };
 
-        const execFileBestEffort = async (file: string, args: string[], options: ExecOptions): Promise<{ stdout: string; stderr: string }> => {
+        const execFileBestEffort = async (file: string, args: string[], options: ExecFileBestEffortOptions): Promise<{ stdout: string; stderr: string }> => {
             try {
                 const { stdout, stderr } = await execFileAsync(file, args, options);
                 return { stdout: asString(stdout), stderr: asString(stderr) };
@@ -329,11 +330,16 @@ async function detectTmuxVersion(params: { resolvedPath: string }): Promise<stri
         };
 
         if (isCmdScript) {
-            const { stdout, stderr } = await execFileBestEffort(
-                'cmd.exe',
-                ['/d', '/s', '/c', `"${params.resolvedPath}" -V`],
-                { timeout: timeoutMs, windowsHide: true },
-            );
+            const invocation = resolveWindowsCommandInvocation({
+                command: params.resolvedPath,
+                args: ['-V'],
+                resolveCommandOnPath: false,
+            });
+            const { stdout, stderr } = await execFileBestEffort(invocation.command, invocation.args, {
+                timeout: timeoutMs,
+                windowsHide: true,
+                windowsVerbatimArguments: invocation.windowsVerbatimArguments,
+            });
             return extractTmuxVersion(getFirstLine(`${stdout}\n${stderr}`));
         }
 
@@ -361,9 +367,9 @@ async function detectCliLoginStatus(params: { name: DetectCliName; resolvedPath:
         const isWindows = process.platform === 'win32';
         const isCmdScript = isWindows && /\.(cmd|bat)$/i.test(params.resolvedPath);
 
-        const runStatus = async (file: string, args: string[]): Promise<boolean | null> => {
+        const runStatus = async (file: string, args: string[], windowsVerbatimArguments?: boolean): Promise<boolean | null> => {
             try {
-                await execFileAsync(file, args, { timeout: timeoutMs, windowsHide: true });
+                await execFileAsync(file, args, { timeout: timeoutMs, windowsHide: true, windowsVerbatimArguments });
                 return true;
             } catch (error) {
                 // execFileAsync throws on non-zero exit; check exit code via various properties.
@@ -377,7 +383,12 @@ async function detectCliLoginStatus(params: { name: DetectCliName; resolvedPath:
         };
 
         if (isCmdScript) {
-            return await runStatus('cmd.exe', ['/d', '/s', '/c', `"${params.resolvedPath}" ${loginArgs.join(' ')}`]);
+            const invocation = resolveWindowsCommandInvocation({
+                command: params.resolvedPath,
+                args: loginArgs,
+                resolveCommandOnPath: false,
+            });
+            return await runStatus(invocation.command, invocation.args, invocation.windowsVerbatimArguments);
         }
         return await runStatus(params.resolvedPath, loginArgs);
     } catch {

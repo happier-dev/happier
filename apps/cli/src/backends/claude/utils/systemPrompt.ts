@@ -1,12 +1,11 @@
 import { trimIdent } from "@/utils/trimIdent";
 import { shouldIncludeCoAuthoredBy } from "./claudeSettings";
+import { CHANGE_TITLE_INSTRUCTION } from "@/agent/runtime/changeTitleInstruction";
 
 /**
  * Base system prompt shared across all configurations
  */
 const BASE_SYSTEM_PROMPT = (() => trimIdent(`
-		    Use the tool "mcp__happier__change_title" to set (or update) a short, descriptive chat title so the user can find this chat later.
-
 	    RELIABILITY RULES (IMPORTANT):
 	    - Tool-use sequencing is strict. If you use "AskUserQuestion", do NOT include any other tool_use in the same assistant turn. Wait for the user's answer before calling other tools.
 
@@ -34,15 +33,15 @@ const CO_AUTHORED_CREDITS = (() => trimIdent(`
 	`))();
 
 /**
- * System prompt with conditional Co-Authored-By lines based on Claude's settings.json configuration.
- * Settings are read once on startup for performance.
+ * System prompt with optional Co-Authored-By credits based on Happier settings.
  */
 export function getClaudeSystemPrompt(): string {
   const includeCoAuthored = shouldIncludeCoAuthoredBy();
+  const base = BASE_SYSTEM_PROMPT + '\n\n' + CHANGE_TITLE_INSTRUCTION;
   if (includeCoAuthored) {
-    return BASE_SYSTEM_PROMPT + '\n\n' + CO_AUTHORED_CREDITS;
+    return base + '\n\n' + CO_AUTHORED_CREDITS;
   }
-  return BASE_SYSTEM_PROMPT;
+  return base;
 }
 
 // Backwards-compatible export name, but evaluated at call time (not module init).

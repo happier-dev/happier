@@ -27,6 +27,8 @@ export function resolveEncryptionFeature(env: NodeJS.ProcessEnv): FeaturesPayloa
                 storagePolicy: featureEnv.storagePolicy,
                 allowAccountOptOut: accountOptOutEnabled,
                 defaultAccountMode: effectiveDefaultAccountMode,
+                plainAccountSettingsAtRest: featureEnv.plainAccountSettingsAtRest,
+                plainAccountCredentialsAtRest: featureEnv.plainAccountCredentialsAtRest,
             },
         },
     };

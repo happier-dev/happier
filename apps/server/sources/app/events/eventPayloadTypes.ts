@@ -33,6 +33,9 @@ export type RecipientFilter =
     // Note: despite the name, this intentionally includes the user's `user-scoped:*` room as well as their per-account
     // machine room. This avoids relying on the global `user:*` room for machine-daemon connections.
     | { type: 'machine-scoped-only'; machineId: string }
+    // Machine daemon only (excludes user-scoped connections). Use this for daemon-only wakeups/hints that would otherwise
+    // duplicate in user-scoped channels.
+    | { type: 'machine-only'; machineId: string }
     | { type: 'all-user-authenticated-connections' };
 
 // === UPDATE EVENT TYPES (Persistent) ===
@@ -45,6 +48,19 @@ export type UpdateEvent = {
         seq: number;
         content: any;
         localId: string | null;
+        sidechainId?: string | null;
+        createdAt: number;
+        updatedAt: number;
+    }
+} | {
+    type: 'message-updated';
+    sessionId: string;
+    message: {
+        id: string;
+        seq: number;
+        content: any;
+        localId: string | null;
+        sidechainId?: string | null;
         createdAt: number;
         updatedAt: number;
     }
@@ -239,6 +255,14 @@ export type EphemeralEvent = {
     active: boolean;
     activeAt: number;
     thinking?: boolean;
+} | {
+    type: 'transcript-draft';
+    sessionId: string;
+    localId: string;
+    segmentKind: 'assistant' | 'thinking';
+    sidechainId?: string | null;
+    delta: any;
+    createdAt: number;
 } | {
     type: 'machine-activity';
     id: string;

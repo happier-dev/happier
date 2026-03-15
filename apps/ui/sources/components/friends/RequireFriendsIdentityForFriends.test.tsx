@@ -55,7 +55,7 @@ vi.mock('@/auth/providers/registry', () => {
         id: 'fake',
         displayName: 'FakeHub',
         connectButtonColor: '#000000',
-        getExternalSignupUrl: async () => 'https://example.test/auth',
+        getExternalAuthUrl: async () => 'https://example.test/auth',
         getConnectUrl: async () => 'https://example.test/connect',
         finalizeConnect: async () => {},
         cancelConnectPending: async () => {},

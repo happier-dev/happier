@@ -661,8 +661,8 @@ export function ProfileEditForm({
             </ItemGroup>
 
             <ItemGroup
-                title="Default permissions"
-                footer="Overrides the account-level default permissions for new sessions when this profile is selected."
+                title={t('profiles.defaultPermissions.title')}
+                footer={t('profiles.defaultPermissions.footer')}
             >
                 {enabledAgentIds
                     .filter((agentId) => compatibility[agentId] === true)
@@ -692,7 +692,7 @@ export function ProfileEditForm({
                                         title={t(core.displayNameKey)}
                                         subtitle={override
                                             ? getPermissionModeLabelForAgentType(agentId, override)
-                                            : `Account default: ${getPermissionModeLabelForAgentType(agentId, accountDefault)}`
+                                            : t('profiles.defaultPermissions.accountDefaultSubtitle', { label: getPermissionModeLabelForAgentType(agentId, accountDefault) })
                                         }
                                         icon={<Ionicons name={core.ui.agentPickerIconName as any} size={29} color={theme.colors.textSecondary} />}
                                         rightElement={(
@@ -717,8 +717,8 @@ export function ProfileEditForm({
                                 items={[
                                     {
                                         id: '__account__',
-                                        title: 'Use account default',
-                                        subtitle: `Currently: ${getPermissionModeLabelForAgentType(agentId, accountDefault)}`,
+                                        title: t('profiles.defaultPermissions.useAccountDefault'),
+                                        subtitle: t('profiles.defaultPermissions.currently', { label: getPermissionModeLabelForAgentType(agentId, accountDefault) }),
                                         icon: (
                                             <View style={{ width: 32, height: 32, alignItems: 'center', justifyContent: 'center' }}>
                                                 <Ionicons name="settings-outline" size={22} color={theme.colors.textSecondary} />

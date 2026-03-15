@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 
 vi.mock('@/configuration', () => ({
-  configuration: { serverUrl: 'http://example.test' },
+  configuration: { serverUrl: 'http://example.test', apiServerUrl: 'http://example.test' },
 }))
 
 vi.mock('@/ui/logger', () => ({

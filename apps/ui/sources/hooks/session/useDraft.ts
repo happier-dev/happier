@@ -16,7 +16,13 @@ export function useDraft(
     const { autoSaveInterval = 2000 } = options;
     const saveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
     const lastSavedValue = useRef<string>('');
+    const lastSessionId = useRef<string | null>(null);
+    const latestValue = useRef<string>(value);
     const isFocused = useIsFocused();
+
+    useEffect(() => {
+        latestValue.current = value;
+    }, [value]);
 
     // Save draft to storage
     const saveDraft = useCallback((draft: string) => {
@@ -26,15 +32,36 @@ export function useDraft(
         lastSavedValue.current = draft;
     }, [sessionId]);
 
-    // Load draft on mount and when focused
+    // Load draft on mount and when focused. When switching sessions, always sync the composer
+    // to the target session (draft or empty) to avoid leaking the previous session's text.
     useEffect(() => {
         if (!sessionId || !isFocused) return;
 
+        const previousSessionId = lastSessionId.current;
+        lastSessionId.current = sessionId;
+        const didSessionChange = previousSessionId !== null && previousSessionId !== sessionId;
+
         const session = storage.getState().sessions[sessionId];
-        if (session?.draft && !value) {
-            onChange(session.draft);
-            lastSavedValue.current = session.draft;
-        } else if (!session?.draft) {
+        const draft = typeof session?.draft === 'string' ? session.draft : null;
+        const currentValue = latestValue.current;
+
+        if (didSessionChange) {
+            if (draft && draft.trim()) {
+                onChange(draft);
+                lastSavedValue.current = draft;
+            } else if (currentValue.trim()) {
+                onChange('');
+                lastSavedValue.current = '';
+            } else {
+                lastSavedValue.current = '';
+            }
+            return;
+        }
+
+        if (draft && draft.trim() && !currentValue.trim()) {
+            onChange(draft);
+            lastSavedValue.current = draft;
+        } else if (!draft) {
             // Ensure lastSavedValue is empty if there's no draft
             lastSavedValue.current = '';
         }

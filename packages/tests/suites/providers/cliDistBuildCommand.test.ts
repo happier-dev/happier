@@ -6,6 +6,7 @@ import { describe, expect, it } from 'vitest';
 
 import { ensureCliDistBuilt, ensureCliSharedDepsBuilt, resolveCliDistBuildInvocation, withCliDistBuildLock } from '../../src/testkit/process/cliDist';
 import { sleep } from '../../src/testkit/timing';
+import { yarnCommand } from '../../src/testkit/process/commands';
 
 function writeSharedDepsOutputs(repoRoot: string) {
   const outputs = [
@@ -21,25 +22,13 @@ function writeSharedDepsOutputs(repoRoot: string) {
 }
 
 describe('providers: CLI dist build invocation', () => {
-  it('prefers local pkgroll binary over yarn workspace build', () => {
-    const repoRoot = mkdtempSync(join(tmpdir(), 'happier-cli-dist-cmd-'));
-    const pkgrollBin = resolve(repoRoot, 'node_modules', '.bin', process.platform === 'win32' ? 'pkgroll.cmd' : 'pkgroll');
-    mkdirSync(dirname(pkgrollBin), { recursive: true });
-    writeFileSync(pkgrollBin, '#!/bin/sh\n', 'utf8');
-
-    const invocation = resolveCliDistBuildInvocation({ repoRoot });
-    expect(invocation.command).toBe(pkgrollBin);
-    expect(invocation.args).toEqual([]);
-    expect(invocation.cwd).toBe(resolve(repoRoot, 'apps', 'cli'));
-  });
-
-  it('falls back to npx pkgroll when local binary is missing', () => {
+  it('uses the canonical yarn workspace build script', () => {
     const repoRoot = mkdtempSync(join(tmpdir(), 'happier-cli-dist-cmd-'));
     const invocation = resolveCliDistBuildInvocation({ repoRoot });
 
-    expect(invocation.command).toBe('npx');
-    expect(invocation.args).toEqual(['pkgroll']);
-    expect(invocation.cwd).toBe(resolve(repoRoot, 'apps', 'cli'));
+    expect(invocation.command).toBe(yarnCommand());
+    expect(invocation.args).toEqual(['-s', 'workspace', '@happier-dev/cli', 'build']);
+    expect(invocation.cwd).toBe(repoRoot);
   });
 });
 

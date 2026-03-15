@@ -40,8 +40,8 @@ function getRuleTitle(entry: ExecutionRunsGuidanceEntry): string {
     const title = typeof entry.title === 'string' ? entry.title.trim() : '';
     if (title) return title;
     const desc = String(entry.description ?? '').trim();
-    if (!desc) return 'Untitled rule';
-    return truncateForTitle(desc.split('\n')[0]?.trim() || 'Untitled rule', 56);
+    if (!desc) return t('subAgentGuidance.settings.rules.untitled');
+    return truncateForTitle(desc.split('\n')[0]?.trim() || t('subAgentGuidance.settings.rules.untitled'), 56);
 }
 
 function getRuleSubtitle(entry: ExecutionRunsGuidanceEntry): string {
@@ -57,15 +57,15 @@ function getRuleSubtitle(entry: ExecutionRunsGuidanceEntry): string {
             const displayName = t(core.displayNameKey).trim();
             label = displayName ? `${displayName} (${raw})` : raw;
         }
-        metaParts.push(`Target: ${label}`);
+        metaParts.push(t('subAgentGuidance.settings.rules.meta.target', { value: label }));
     }
-    if (entry.suggestedModelId) metaParts.push(`Model: ${entry.suggestedModelId}`);
-    if (entry.suggestedIntent) metaParts.push(`Intent: ${entry.suggestedIntent}`);
+    if (entry.suggestedModelId) metaParts.push(t('subAgentGuidance.settings.rules.meta.model', { value: entry.suggestedModelId }));
+    if (entry.suggestedIntent) metaParts.push(t('subAgentGuidance.settings.rules.meta.intent', { value: entry.suggestedIntent }));
     const meta = metaParts.length > 0 ? metaParts.join('  •  ') : '';
 
-    const descBody = desc || (title ? '' : 'Describe when to delegate.');
+    const descBody = desc || (title ? '' : t('subAgentGuidance.settings.rules.descriptionFallback'));
     if (descBody && meta) return `${descBody}\n${meta}`;
-    return descBody || meta || 'Tap to edit';
+    return descBody || meta || t('subAgentGuidance.settings.rules.tapToEdit');
 }
 
 export const SubAgentSettingsView = React.memo(function SubAgentSettingsView() {
@@ -121,12 +121,12 @@ export const SubAgentSettingsView = React.memo(function SubAgentSettingsView() {
         return (
             <ItemList style={{ paddingTop: 0 }}>
                 <ItemGroup
-                    title="Sub-agent"
-                    footer="Execution runs are disabled. Enable Execution Runs in Settings → Features to use delegation guidance."
+                    title={t('subAgentGuidance.settings.groupTitle')}
+                    footer={t('subAgentGuidance.settings.disabled.footer')}
                 >
                     <Item
-                        title="Enable Execution Runs"
-                        subtitle="Open Features settings"
+                        title={t('subAgentGuidance.settings.disabled.enableExecutionRuns.title')}
+                        subtitle={t('subAgentGuidance.settings.disabled.enableExecutionRuns.subtitle')}
                         icon={<Ionicons name="flask-outline" size={29} color={theme.colors.accent.orange} />}
                         onPress={() => router.push('/(app)/settings/features')}
                     />
@@ -138,12 +138,16 @@ export const SubAgentSettingsView = React.memo(function SubAgentSettingsView() {
     return (
         <ItemList style={{ paddingTop: 0 }}>
             <ItemGroup
-                title="Sub-agent"
-                footer="Rules are appended to the system prompt so the main agent knows when and how you prefer it to launch sub-agent runs."
+                title={t('subAgentGuidance.settings.groupTitle')}
+                footer={t('subAgentGuidance.settings.footer')}
             >
                 <Item
-                    title="Enable guidance injection"
-                    subtitle={enabled === true ? 'Enabled' : 'Disabled'}
+                    title={t('subAgentGuidance.settings.enableInjection.title')}
+                    subtitle={
+                        enabled === true
+                            ? t('subAgentGuidance.ruleEditor.enabledState.enabled')
+                            : t('subAgentGuidance.ruleEditor.enabledState.disabled')
+                    }
                     icon={<Ionicons name="sparkles-outline" size={29} color={theme.colors.accent.orange} />}
                     rightElement={<Switch value={enabled === true} onValueChange={(v) => setEnabled(v as any)} />}
                     showChevron={false}
@@ -151,11 +155,14 @@ export const SubAgentSettingsView = React.memo(function SubAgentSettingsView() {
                 />
 
                 <Item
-                    title="Character budget"
-                    subtitle={`${maxChars.toLocaleString()} chars`}
+                    title={t('subAgentGuidance.settings.characterBudget.title')}
+                    subtitle={t('subAgentGuidance.settings.characterBudget.subtitle', { value: maxChars.toLocaleString() })}
                     icon={<Ionicons name="text-outline" size={29} color={theme.colors.textSecondary} />}
                     onPress={async () => {
-                        const raw = await Modal.prompt('Character budget', 'Max characters to inject into the system prompt.');
+                        const raw = await Modal.prompt(
+                            t('subAgentGuidance.settings.characterBudget.promptTitle'),
+                            t('subAgentGuidance.settings.characterBudget.promptBody'),
+                        );
                         if (raw == null) return;
                         const parsed = Number(String(raw).replace(/[^0-9]/g, ''));
                         if (!Number.isFinite(parsed)) return;
@@ -165,13 +172,17 @@ export const SubAgentSettingsView = React.memo(function SubAgentSettingsView() {
             </ItemGroup>
 
             <ItemGroup
-                title="Guidance rules"
-                footer={enabled === true ? 'Tap a rule to edit. The agent uses these as delegation hints.' : 'Enable injection to activate rules.'}
+                title={t('subAgentGuidance.settings.rules.groupTitle')}
+                footer={
+                    enabled === true
+                        ? t('subAgentGuidance.settings.rules.footerEnabled')
+                        : t('subAgentGuidance.settings.rules.footerDisabled')
+                }
             >
                 {entries.length === 0 ? (
                     <Item
-                        title="No rules yet"
-                        subtitle="Add a rule to guide delegation."
+                        title={t('subAgentGuidance.settings.rules.emptyTitle')}
+                        subtitle={t('subAgentGuidance.settings.rules.emptySubtitle')}
                         icon={<Ionicons name="information-circle-outline" size={29} color={theme.colors.textSecondary} />}
                         onPress={() => {
                             void addRule();
@@ -199,8 +210,8 @@ export const SubAgentSettingsView = React.memo(function SubAgentSettingsView() {
                 )}
 
                 <Item
-                    title="Add rule"
-                    subtitle="Create a new guidance rule"
+                    title={t('subAgentGuidance.settings.rules.addRuleTitle')}
+                    subtitle={t('subAgentGuidance.settings.rules.addRuleSubtitle')}
                     icon={<Ionicons name="add-circle-outline" size={29} color={theme.colors.textSecondary} />}
                     onPress={() => {
                         void addRule();
@@ -209,7 +220,7 @@ export const SubAgentSettingsView = React.memo(function SubAgentSettingsView() {
             </ItemGroup>
 
             {enabled === true && previewText ? (
-                <ItemGroup title="Preview" footer="This is the (truncated) text appended to the system prompt.">
+                <ItemGroup title={t('subAgentGuidance.settings.preview.title')} footer={t('subAgentGuidance.settings.preview.footer')}>
                     <View style={{ paddingHorizontal: 16, paddingVertical: 12 }}>
                         <View
                             style={{
@@ -221,7 +232,7 @@ export const SubAgentSettingsView = React.memo(function SubAgentSettingsView() {
                             }}
                         >
                             <Text style={{ fontSize: 12, color: theme.colors.textSecondary }}>
-                                System prompt (appended)
+                                {t('subAgentGuidance.settings.preview.systemPromptLabel')}
                             </Text>
                             <Text
                                 style={{

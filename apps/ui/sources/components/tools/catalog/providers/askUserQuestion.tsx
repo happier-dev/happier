@@ -8,13 +8,6 @@ import type { KnownToolDefinition } from '../_types';
 export const providerAskUserQuestionTools = {
     'AskUserQuestion': {
         title: (opts: { metadata: Metadata | null, tool: ToolCall }) => {
-            // Use first question header as title if available
-            if (opts.tool.input?.questions && Array.isArray(opts.tool.input.questions) && opts.tool.input.questions.length > 0) {
-                const firstQuestion = opts.tool.input.questions[0];
-                if (firstQuestion.header) {
-                    return firstQuestion.header;
-                }
-            }
             return t('tools.names.question');
         },
         icon: ICON_QUESTION,
@@ -35,7 +28,14 @@ export const providerAskUserQuestionTools = {
             if (opts.tool.input?.questions && Array.isArray(opts.tool.input.questions)) {
                 const count = opts.tool.input.questions.length;
                 if (count === 1) {
-                    return opts.tool.input.questions[0].question;
+                    const onlyQuestion = opts.tool.input.questions[0];
+                    if (typeof onlyQuestion.header === 'string' && onlyQuestion.header.trim() !== '') {
+                        return onlyQuestion.header;
+                    }
+                    if (typeof onlyQuestion.question === 'string' && onlyQuestion.question.trim() !== '') {
+                        return onlyQuestion.question;
+                    }
+                    return null;
                 }
                 return t('tools.askUserQuestion.multipleQuestions', { count });
             }
@@ -43,4 +43,3 @@ export const providerAskUserQuestionTools = {
         }
     }
 } satisfies Record<string, KnownToolDefinition>;
-

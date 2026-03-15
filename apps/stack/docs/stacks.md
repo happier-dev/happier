@@ -174,7 +174,8 @@ These commands run with the stack env file applied:
 
 Global/non-stack commands:
 
-- `hstack setup` (recommended; installs shims/runtime and bootstraps the monorepo)
+- `hstack setup-from-source` (recommended; installs shims/runtime and bootstraps the monorepo)
+  - Deprecated alias: `hstack setup`
 - (advanced) `hstack init` (plumbing: shims/runtime/pointer env)
 - (advanced) `hstack bootstrap` (clone/install monorepo + deps)
 

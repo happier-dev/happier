@@ -77,5 +77,23 @@ describe('resolveServerScopedSessionContext', () => {
       encryption: fakeEncryption,
     });
   });
-});
 
+  it('returns active scope when serverId differs but resolves to the same active serverUrl', async () => {
+    getActiveServerSnapshotSpy.mockReturnValue({
+      serverId: 'server-a',
+      serverUrl: 'https://server-a.example.test/',
+      generation: 1,
+    });
+    listServerProfilesSpy.mockReturnValue([
+      { id: 'server-b', serverUrl: 'https://server-a.example.test', name: 'Server A (alt id)' },
+    ]);
+
+    const { resolveServerScopedSessionContext } = await import('./resolveServerScopedSessionContext');
+    const context = await resolveServerScopedSessionContext({ serverId: 'server-b' });
+
+    expect(context).toEqual({
+      scope: 'active',
+      timeoutMs: 30000,
+    });
+  });
+});

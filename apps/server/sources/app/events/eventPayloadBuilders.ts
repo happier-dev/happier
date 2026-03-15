@@ -2,6 +2,28 @@ import { AccountProfile } from "@/types";
 import { getPublicUrl } from "@/storage/blob/files";
 import { type UpdatePayload, type EphemeralPayload } from "./eventPayloadTypes";
 
+type UpdateMessagePayloadInput = Readonly<{
+    id: string;
+    seq: number;
+    content: any;
+    localId: string | null;
+    sidechainId?: string | null;
+    createdAt: Date;
+    updatedAt: Date;
+}>;
+
+function serializeUpdateMessage(message: UpdateMessagePayloadInput) {
+    return {
+        id: message.id,
+        seq: message.seq,
+        content: message.content,
+        localId: message.localId,
+        ...(typeof message.sidechainId === "string" && message.sidechainId ? { sidechainId: message.sidechainId } : {}),
+        createdAt: message.createdAt.getTime(),
+        updatedAt: message.updatedAt.getTime(),
+    };
+}
+
 export function buildNewSessionUpdate(session: {
     id: string;
     seq: number;
@@ -38,14 +60,7 @@ export function buildNewSessionUpdate(session: {
     };
 }
 
-export function buildNewMessageUpdate(message: {
-    id: string;
-    seq: number;
-    content: any;
-    localId: string | null;
-    createdAt: Date;
-    updatedAt: Date;
-}, sessionId: string, updateSeq: number, updateId: string): UpdatePayload {
+export function buildNewMessageUpdate(message: UpdateMessagePayloadInput, sessionId: string, updateSeq: number, updateId: string): UpdatePayload {
     return {
         id: updateId,
         seq: updateSeq,
@@ -54,14 +69,22 @@ export function buildNewMessageUpdate(message: {
             sid: sessionId,
             // Compatibility: some clients use `id` for sessionId.
             id: sessionId,
-            message: {
-                id: message.id,
-                seq: message.seq,
-                content: message.content,
-                localId: message.localId,
-                createdAt: message.createdAt.getTime(),
-                updatedAt: message.updatedAt.getTime()
-            }
+            message: serializeUpdateMessage(message),
+        },
+        createdAt: Date.now()
+    };
+}
+
+export function buildMessageUpdatedUpdate(message: UpdateMessagePayloadInput, sessionId: string, updateSeq: number, updateId: string): UpdatePayload {
+    return {
+        id: updateId,
+        seq: updateSeq,
+        body: {
+            t: 'message-updated',
+            sid: sessionId,
+            // Compatibility: some clients use `id` for sessionId.
+            id: sessionId,
+            message: serializeUpdateMessage(message),
         },
         createdAt: Date.now()
     };

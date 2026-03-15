@@ -2,8 +2,10 @@ import { RPC_ERROR_CODES } from '@happier-dev/protocol/rpc';
 import { isRpcMethodNotAvailableError, readRpcErrorCode } from '@happier-dev/protocol/rpcErrors';
 
 import { Modal } from '@/modal';
-import { t } from '@/text';
+import { t, type TranslationKey } from '@/text';
 import { formatLastSeen } from '@/utils/sessions/sessionUtils';
+import { isMachineOnline } from '@/utils/sessions/machineUtils';
+import type { Machine } from '@/sync/domains/state/storageTypes';
 
 export type MachineStatusLineInput =
     | Readonly<{
@@ -23,11 +25,25 @@ function resolveMachineName(machine: MachineStatusLineInput): string | null {
 
 export function buildMachineStatusLine(machine: MachineStatusLineInput): string {
     const machineStatus = (() => {
-        const activeAt = typeof machine?.activeAt === 'number' ? machine.activeAt : null;
+        const activeAt = typeof machine?.activeAt === 'number' && Number.isFinite(machine.activeAt) && machine.activeAt > 0 ? machine.activeAt : null;
         if (activeAt !== null) {
-            if (machine?.active === true) return t('status.online');
+            const statusMachine: Machine = {
+                id: 'status-line-machine',
+                seq: 0,
+                createdAt: 0,
+                updatedAt: 0,
+                active: machine?.active === true,
+                activeAt,
+                revokedAt: null,
+                metadata: null,
+                metadataVersion: 0,
+                daemonState: null,
+                daemonStateVersion: 0,
+            };
+            if (isMachineOnline(statusMachine)) return t('status.online');
             return t('status.lastSeen', { time: formatLastSeen(activeAt, false) });
         }
+        if (machine?.active === true) return t('status.online');
         return t('status.unknown');
     })();
 
@@ -36,8 +52,8 @@ export function buildMachineStatusLine(machine: MachineStatusLineInput): string 
 }
 
 export function showDaemonUnavailableAlert(params: Readonly<{
-    titleKey: string;
-    bodyKey: string;
+    titleKey: TranslationKey;
+    bodyKey: TranslationKey;
     machine?: MachineStatusLineInput;
     onRetry?: (() => void) | null;
     shouldContinue?: (() => boolean) | null;
@@ -75,8 +91,8 @@ export function tryShowDaemonUnavailableAlertForRpcError(params: Readonly<{
     machine?: MachineStatusLineInput;
     onRetry?: (() => void) | null;
     shouldContinue?: (() => boolean) | null;
-    titleKey?: string;
-    bodyKey?: string;
+    titleKey?: TranslationKey;
+    bodyKey?: TranslationKey;
 }>): boolean {
     const rpcErrorCode = readRpcErrorCode(params.error);
     if (typeof rpcErrorCode === 'string' && rpcErrorCode.trim() && rpcErrorCode.trim() !== DAEMON_UNAVAILABLE_RPC_ERROR_CODE) {
@@ -103,8 +119,8 @@ export function tryShowDaemonUnavailableAlertForRpcFailure(params: Readonly<{
     machine?: MachineStatusLineInput;
     onRetry?: (() => void) | null;
     shouldContinue?: (() => boolean) | null;
-    titleKey?: string;
-    bodyKey?: string;
+    titleKey?: TranslationKey;
+    bodyKey?: TranslationKey;
 }>): boolean {
     const normalizedCode = typeof params.rpcErrorCode === 'string' ? params.rpcErrorCode.trim() : '';
     if (normalizedCode && normalizedCode !== DAEMON_UNAVAILABLE_RPC_ERROR_CODE) {

@@ -1,4 +1,16 @@
-import { closeSync, existsSync, mkdirSync, openSync, readFileSync, readdirSync, unlinkSync, writeFileSync } from 'node:fs';
+import {
+  closeSync,
+  existsSync,
+  mkdirSync,
+  openSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  symlinkSync,
+  unlinkSync,
+  writeFileSync,
+} from 'node:fs';
+import { cp } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
 
 import { repoRootDir } from '../paths';
@@ -53,6 +65,10 @@ type CliDistBuildInvocation = {
   command: string;
   args: string[];
   cwd: string;
+};
+
+type EnsureCliDistSnapshotOptions = EnsureCliDistBuiltOptions & {
+  snapshotDir: string;
 };
 
 function describeCliDistBuildLockOwner(lockPath: string, nowMs: number): string {
@@ -180,12 +196,11 @@ function hasCliSharedDepsOutputs(rootDir: string): boolean {
 
 export function resolveCliDistBuildInvocation(params: { repoRoot?: string } = {}): CliDistBuildInvocation {
   const rootDir = params.repoRoot ?? repoRootDir();
-  const pkgrollBin = resolve(rootDir, 'node_modules', '.bin', process.platform === 'win32' ? 'pkgroll.cmd' : 'pkgroll');
   const cwd = resolve(rootDir, 'apps', 'cli');
-  if (existsSync(pkgrollBin)) {
-    return { command: pkgrollBin, args: [], cwd };
-  }
-  return { command: 'npx', args: ['pkgroll'], cwd };
+  // Use the canonical workspace build script. Some E2E lanes run multiple daemons concurrently and
+  // rely on hashed-chunk stability; building via pkgroll directly can leave partial dist folders.
+  // The workspace build is expected to produce a fully coherent dist/ output.
+  return { command: yarnCommand(), args: ['-s', 'workspace', '@happier-dev/cli', 'build'], cwd: rootDir };
 }
 
 export async function ensureCliSharedDepsBuilt(
@@ -364,4 +379,121 @@ export async function ensureCliDistBuilt(
   });
 
   return await _ensurePromise;
+}
+
+function isHealthyCliDist(dir: string): boolean {
+  const entrypoint = resolve(dir, 'index.mjs');
+  if (!existsSync(entrypoint)) return false;
+  return findMissingDistChunkImports(dir).length === 0;
+}
+
+function ensureSnapshotNodeModulesLink(snapshotDir: string, rootDir: string): void {
+  const linkPath = resolve(snapshotDir, 'node_modules');
+  if (existsSync(linkPath)) return;
+
+  const target = resolve(rootDir, 'apps', 'cli', 'node_modules');
+  if (!existsSync(target)) return;
+
+  try {
+    symlinkSync(target, linkPath, process.platform === 'win32' ? 'junction' : 'dir');
+  } catch {
+    // Best-effort only. Some environments disallow symlinks; in those cases, dependencies must be hoisted.
+  }
+}
+
+function ensureSnapshotProjectFile(snapshotDir: string, rootDir: string, relPath: string): void {
+  const target = resolve(rootDir, 'apps', 'cli', relPath);
+  if (!existsSync(target)) return;
+  const dest = resolve(snapshotDir, relPath);
+  if (existsSync(dest)) return;
+  mkdirSync(dirname(dest), { recursive: true });
+  try {
+    // Keep snapshots immutable: copy small files, and symlink large folders elsewhere.
+    writeFileSync(dest, readFileSync(target));
+  } catch {
+    // Best-effort only. Tests can still proceed if the file isn't required by the current lane.
+  }
+}
+
+function ensureSnapshotProjectLink(snapshotDir: string, rootDir: string, relPath: string): void {
+  const target = resolve(rootDir, 'apps', 'cli', relPath);
+  if (!existsSync(target)) return;
+  const dest = resolve(snapshotDir, relPath);
+  if (existsSync(dest)) return;
+  mkdirSync(dirname(dest), { recursive: true });
+  try {
+    symlinkSync(target, dest, process.platform === 'win32' ? 'junction' : 'dir');
+  } catch {
+    // Best-effort only. Some environments disallow symlinks; callers must tolerate missing links.
+  }
+}
+
+export async function ensureCliDistSnapshotEntrypoint(
+  params: { testDir: string; env: NodeJS.ProcessEnv },
+  options: EnsureCliDistSnapshotOptions,
+): Promise<string> {
+  const rootDir = options.repoRoot ?? repoRootDir();
+  const distLockPath = options.lockPath ?? resolve(rootDir, '.project', 'tmp', 'cli-dist-build.lock');
+  const snapshotDistDir = resolve(options.snapshotDir, 'dist');
+  const snapshotEntrypoint = resolve(snapshotDistDir, 'index.mjs');
+
+  // Ensure dist is available first. We intentionally do this outside the snapshot lock to avoid
+  // re-entering the same lock from ensureCliDistBuilt.
+  await ensureCliDistBuilt(params, { ...options, repoRoot: rootDir, lockPath: distLockPath });
+
+  return await withCliDistBuildLock(
+    async () => {
+      if (isHealthyCliDist(snapshotDistDir)) {
+        ensureSnapshotNodeModulesLink(options.snapshotDir, rootDir);
+        ensureSnapshotProjectFile(options.snapshotDir, rootDir, 'package.json');
+        ensureSnapshotProjectLink(options.snapshotDir, rootDir, 'scripts');
+        ensureSnapshotProjectLink(options.snapshotDir, rootDir, 'tools');
+        ensureSnapshotProjectLink(options.snapshotDir, rootDir, 'bin');
+        ensureSnapshotProjectFile(options.snapshotDir, rootDir, 'tsconfig.json');
+        return snapshotEntrypoint;
+      }
+      if (existsSync(options.snapshotDir)) {
+        throw new Error(`CLI dist snapshot exists but is incomplete: ${options.snapshotDir}`);
+      }
+
+      const distDir = resolve(rootDir, 'apps', 'cli', 'dist');
+      if (!isHealthyCliDist(distDir)) {
+        const missing = findMissingDistChunkImports(distDir);
+        throw new Error(
+          missing.length > 0
+            ? `Refusing to snapshot an incomplete CLI dist (missing chunk imports): ${missing.join(', ')}`
+            : `Refusing to snapshot an incomplete CLI dist (missing index.mjs): ${resolve(distDir, 'index.mjs')}`,
+        );
+      }
+
+      mkdirSync(dirname(options.snapshotDir), { recursive: true });
+      // Ensure we never mutate an existing snapshot (which could be in-use by a running daemon).
+      rmSync(options.snapshotDir, { recursive: true, force: true });
+      mkdirSync(options.snapshotDir, { recursive: true });
+      await cp(distDir, snapshotDistDir, { recursive: true });
+      ensureSnapshotNodeModulesLink(options.snapshotDir, rootDir);
+      ensureSnapshotProjectFile(options.snapshotDir, rootDir, 'package.json');
+      ensureSnapshotProjectLink(options.snapshotDir, rootDir, 'scripts');
+      ensureSnapshotProjectLink(options.snapshotDir, rootDir, 'tools');
+      ensureSnapshotProjectLink(options.snapshotDir, rootDir, 'bin');
+      ensureSnapshotProjectFile(options.snapshotDir, rootDir, 'tsconfig.json');
+
+      if (!isHealthyCliDist(snapshotDistDir)) {
+        const missing = findMissingDistChunkImports(snapshotDistDir);
+        throw new Error(
+          missing.length > 0
+            ? `CLI dist snapshot missing chunk imports: ${missing.join(', ')}`
+            : `CLI dist snapshot missing entrypoint: ${snapshotEntrypoint}`,
+        );
+      }
+
+      return snapshotEntrypoint;
+    },
+    {
+      lockPath: distLockPath,
+      timeoutMs: options.timeoutMs,
+      pollIntervalMs: options.pollIntervalMs,
+      staleAfterMs: options.staleAfterMs,
+    },
+  );
 }

@@ -27,6 +27,10 @@ export const KNOWN_CANONICAL_TOOL_NAMES_V2 = [
   'WorkspaceIndexingPermission',
   'change_title',
   'SubAgentRun',
+  // Agent teams / swarm orchestration events (provider-agnostic).
+  'AgentTeamCreate',
+  'AgentTeamDelete',
+  'AgentTeamSendMessage',
 ] as const;
 
 export const KnownCanonicalToolNameV2Schema = z.enum(KNOWN_CANONICAL_TOOL_NAMES_V2);

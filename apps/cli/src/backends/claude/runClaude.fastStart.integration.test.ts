@@ -219,12 +219,16 @@ describe('runClaude fast-start', () => {
       testError = e;
     });
 
-    try {
-      await expect(waitFor(loopStarted.promise, 75)).resolves.toBeUndefined();
-      expect(initResolved).toBe(false);
-    } catch (e) {
-      testError = e;
-    } finally {
+	    try {
+	      await expect(waitFor(loopStarted.promise, 75)).resolves.toBeUndefined();
+	      expect(initResolved).toBe(false);
+	      expect(lastLoopOpts?.mcpServers).toBeUndefined();
+
+	      const { startHappyServer } = await import('@/mcp/startHappyServer');
+	      expect(startHappyServer).not.toHaveBeenCalled();
+	    } catch (e) {
+	      testError = e;
+	    } finally {
       loopExit.resolve(0);
       await runPromise;
     }

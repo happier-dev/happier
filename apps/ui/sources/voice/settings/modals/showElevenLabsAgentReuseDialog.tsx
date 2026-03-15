@@ -5,6 +5,7 @@ import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { Typography } from '@/constants/Typography';
 import { Modal } from '@/modal';
 import { Text } from '@/components/ui/text/Text';
+import { t } from '@/text';
 
 
 export type ElevenLabsAgentReuseDecision = 'create_new' | 'update_existing' | 'cancel';
@@ -160,11 +161,11 @@ export async function showElevenLabsAgentReuseDialog(params: Readonly<{
     type WrapperProps = Readonly<{ onClose: () => void; onRequestClose?: () => void }>;
     const Wrapper: React.FC<WrapperProps> = ({ onClose }) => (
       <ElevenLabsAgentReuseDialog
-        title="Happier agent already exists"
+        title={t('settingsVoice.byo.agentReuseDialog.title')}
         message={
           existingAgentId
-            ? `We found an existing ElevenLabs agent (“${existingAgentName}”, id: ${existingAgentId}).\n\nDo you want to update it, or create a new one?`
-            : `We found an existing ElevenLabs agent (“${existingAgentName}”).\n\nDo you want to update it, or create a new one?`
+            ? t('settingsVoice.byo.agentReuseDialog.messageWithId', { name: existingAgentName, id: existingAgentId })
+            : t('settingsVoice.byo.agentReuseDialog.messageNoId', { name: existingAgentName })
         }
         onResolve={resolveOnce}
         onClose={onClose}

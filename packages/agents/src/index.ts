@@ -17,6 +17,8 @@ export {
     type VendorResumeSupportLevel,
 } from './types.js';
 export { AGENTS_CORE, DEFAULT_AGENT_ID } from './manifest.js';
+export { resolveAgentIdFromFlavor } from './resolveAgentIdFromFlavor.js';
+export { inferAgentIdFromSessionMetadata } from './resolveAgentIdFromSessionMetadata.js';
 export {
   AGENT_MODEL_CONFIG,
   getAgentModelConfig,
@@ -55,6 +57,12 @@ export {
   computeNextPermissionIntentMetadata,
   computeNextMetadataConfigOptionOverrideV1,
 } from './sessionControls/publish.js';
+export {
+  resolveVendorResumeIdFromSessionMetadata,
+  evaluateVendorResumeEligibility,
+  type VendorResumeEligibility,
+  type VendorResumeEligibilityReasonCode,
+} from './sessionControls/vendorResumePolicy.js';
 
 export {
   buildHappierReplayPromptFromDialog,

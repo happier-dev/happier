@@ -209,6 +209,13 @@ export async function killProcessGroupOwnedByStack(
     await killPid(pid);
     return { killed: true, reason: 'killed_pid_only' };
   }
+  const selfPgid = await getProcessGroupId(process.pid);
+  // Safety: never signal our own process group from stack stop helpers.
+  // If target PGID matches ours, kill only the target PID to avoid self-termination.
+  if (selfPgid && selfPgid === pgid) {
+    await killPid(pid);
+    return { killed: true, reason: 'killed_pid_only', pgid };
+  }
   const terminated = await terminateProcessGroup(pgid, { graceMs, signal });
   if (!terminated.ok) {
     return { killed: false, reason: 'kill_timeout', pgid, signal: terminated.signal ?? 'SIGKILL' };

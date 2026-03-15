@@ -27,6 +27,13 @@ describe('OpenCodeTransport determineToolName', () => {
       expected: 'Task',
     },
     {
+      label: 'maps change_title task alias to Task when input is task-shaped without ACP metadata',
+      toolName: 'change_title',
+      toolCallId: 'tool-3',
+      input: { prompt: 'Respond with EXACTLY: SUBTASK_OK', subagent_type: 'assistant' },
+      expected: 'Task',
+    },
+    {
       label: 'uses toolCallId pattern mapping (case-insensitive)',
       toolName: 'other',
       toolCallId: 'BASH-123',
@@ -46,6 +53,29 @@ describe('OpenCodeTransport determineToolName', () => {
       toolCallId: 'unknown-2',
       input: { oldString: 'a', newString: 'b' },
       expected: 'edit',
+    },
+    {
+      label: 'infers apply_patch from patchText input (avoids misclassifying as change_title via title)',
+      toolName: 'other',
+      toolCallId: 'call-123',
+      input: {
+        patchText: '*** Begin Patch\n*** End Patch',
+        title: 'apply_patch',
+        description: 'apply_patch',
+        _acp: { title: 'apply_patch' },
+      },
+      expected: 'apply_patch',
+    },
+    {
+      label: 'infers apply_patch from ACP title even before patchText is present',
+      toolName: 'other',
+      toolCallId: 'call-124',
+      input: {
+        title: 'apply_patch',
+        description: 'apply_patch',
+        _acp: { title: 'apply_patch' },
+      },
+      expected: 'apply_patch',
     },
     {
       label: 'does not guess when input is empty and id has no mapping',
@@ -114,6 +144,22 @@ describe('OpenCodeTransport handleStderr', () => {
     expect(asStatusErrorMessage(result.message).detail).toContain('Model not found');
   });
 
+  it('emits actionable model-not-found errors for OpenCode ProviderModelNotFoundError stack traces', () => {
+    const transport = new OpenCodeTransport();
+    const result = transport.handleStderr(
+      `
+ProviderModelNotFoundError: ProviderModelNotFoundError
+ data: {
+  providerID: "openai",
+  modelID: "does_not_exist",
+  suggestions: [],
+}
+`,
+      { activeToolCalls: new Set(), hasActiveInvestigation: false },
+    );
+    expect(asStatusErrorMessage(result.message).detail).toContain('Model not found');
+  });
+
   it('keeps rate-limit diagnostics in stderr without turning them into UI errors', () => {
     const transport = new OpenCodeTransport();
     expect(
@@ -132,6 +178,44 @@ describe('OpenCodeTransport handleStderr', () => {
     const transport = new OpenCodeTransport();
     expect(transport.handleStderr('non-actionable warning', { activeToolCalls: new Set(), hasActiveInvestigation: false }))
       .toEqual({ message: null });
+  });
+
+  it('emits request errors surfaced by provider logs (e.g. invalid_request_error)', () => {
+    const transport = new OpenCodeTransport();
+    const result = transport.handleStderr(
+      'invalid_request_error: image exceeds 5 MB maximum: 6348660 bytes > 5242880 bytes',
+      { activeToolCalls: new Set(), hasActiveInvestigation: false },
+    );
+    expect(asStatusErrorMessage(result.message).detail).toContain('image exceeds 5 MB maximum');
+  });
+
+  it('emits CLI invocation errors (e.g. unknown flag)', () => {
+    const transport = new OpenCodeTransport();
+    const result = transport.handleStderr('unknown flag: --print-logs', {
+      activeToolCalls: new Set(),
+      hasActiveInvestigation: false,
+    });
+    expect(asStatusErrorMessage(result.message).detail).toContain('unknown flag');
+  });
+
+  it('redacts sensitive values in emitted stderr errors', () => {
+    const transport = new OpenCodeTransport();
+    const result = transport.handleStderr('bad request: x-api-key: super-secret-value', {
+      activeToolCalls: new Set(),
+      hasActiveInvestigation: false,
+    });
+    const detail = asStatusErrorMessage(result.message).detail;
+    expect(detail).toContain('x-api-key: [REDACTED]');
+    expect(detail).not.toContain('super-secret-value');
+  });
+
+  it('emits network/connection failures surfaced by provider logs', () => {
+    const transport = new OpenCodeTransport();
+    const result = transport.handleStderr(
+      'ERROR 2026-02-26T14:50:56 service=session.processor error=Unable to connect. Is the computer able to access the url? process',
+      { activeToolCalls: new Set(), hasActiveInvestigation: false },
+    );
+    expect(asStatusErrorMessage(result.message).detail).toContain('Unable to connect');
   });
 });
 

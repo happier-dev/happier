@@ -7,6 +7,8 @@ import { CodeView } from '@/components/ui/media/CodeView';
 import { maybeParseJson } from '../../normalization/parse/parseJson';
 import { Text } from '@/components/ui/text/Text';
 
+const TEXT_ELLIPSIS = '…';
+
 
 function extractReadContent(result: unknown): { content: string; numLines?: number } | null {
     const parsed = maybeParseJson(result);
@@ -49,7 +51,7 @@ export const ReadView = React.memo<ToolViewProps>(({ tool, detailLevel }) => {
         <ToolSectionView fullWidth>
             <View style={styles.container}>
                 <CodeView code={text} />
-                {truncated ? <Text style={styles.more}>…</Text> : null}
+                {truncated ? <Text style={styles.more}>{TEXT_ELLIPSIS}</Text> : null}
             </View>
         </ToolSectionView>
     );

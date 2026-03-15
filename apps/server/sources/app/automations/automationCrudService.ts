@@ -2,7 +2,7 @@ import { afterTx, inTx, type Tx } from "@/storage/inTx";
 import { db } from "@/storage/db";
 import { markAccountChanged } from "@/app/changes/markAccountChanged";
 
-import { emitAutomationAssignmentUpdated, emitAutomationDelete, emitAutomationRunUpdated, emitAutomationUpsert } from "./automationChangePublisher";
+import { emitAutomationAssignmentUpdated, emitAutomationDelete, emitAutomationRunUpdated, emitAutomationRunUpdatedToMachineOnly, emitAutomationUpsert } from "./automationChangePublisher";
 import { replaceAutomationAssignmentsTx } from "./automationAssignmentService";
 import { enqueueImmediateRunTx, enqueueNextScheduledRunIfMissingTx, resolveScheduledRunDueAt } from "./automationRunQueueService";
 import { validateExistingSessionAutomationTargetTx } from "./automationExistingSessionValidation";
@@ -461,6 +461,14 @@ export async function runAutomationNow(params: {
             now,
         });
 
+        const assignedMachines = await tx.automationAssignment.findMany({
+            where: {
+                automationId: automation.id,
+                enabled: true,
+            },
+            select: { machineId: true },
+        });
+
         const cursor = await markAutomationChangedTx(tx, {
             accountId: params.accountId,
             automationId: automation.id,
@@ -472,6 +480,16 @@ export async function runAutomationNow(params: {
                 run,
                 cursor,
             });
+
+            // Daemon-only hint: wake assigned machines so a run-now doesn't wait for the next scheduled poll.
+            for (const assignment of assignedMachines) {
+                emitAutomationRunUpdatedToMachineOnly({
+                    accountId: params.accountId,
+                    machineId: assignment.machineId,
+                    run,
+                    cursor,
+                });
+            }
         });
 
         return run as AutomationRunItem;

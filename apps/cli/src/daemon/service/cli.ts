@@ -14,10 +14,12 @@ import {
   planDaemonServiceUninstall,
   resolveLaunchAgentPlistPath,
   resolveSystemdUserUnitPath,
+  resolveSystemdSystemUnitPath,
   resolveWindowsDaemonWrapperPath,
   resolveWindowsDaemonTaskName,
   resolveDaemonServiceLaunchdLabel,
   resolveDaemonServiceSystemdUnitName,
+  type DaemonServiceMode,
 } from './plan';
 import { commandExistsInPath } from './commandExistsInPath';
 
@@ -61,6 +63,72 @@ function parseCliFlags(argv: readonly string[]): Readonly<{ json: boolean; dryRu
     dryRun: flags.has('--dry-run') || flags.has('--plan'),
     help: flags.has('--help') || flags.has('-h'),
   };
+}
+
+function resolveModeFromText(raw: string): DaemonServiceMode {
+  const value = String(raw ?? '').trim().toLowerCase();
+  return value === 'system' ? 'system' : 'user';
+}
+
+function parseDaemonServiceCliInvocation(argv: readonly string[]): Readonly<{
+  argvFiltered: string[];
+  flags: Readonly<{ json: boolean; dryRun: boolean; help: boolean }>;
+  action: DaemonServiceCliAction;
+  mode: DaemonServiceMode;
+  systemUser: string;
+}> {
+  const filtered: string[] = [];
+  let modeFromArgs: DaemonServiceMode | null = null;
+  let systemUserFromArgs: string | null = null;
+
+  for (let i = 0; i < argv.length; i += 1) {
+    const a = String(argv[i] ?? '');
+
+    if (a === '--mode') {
+      const next = String(argv[i + 1] ?? '');
+      if (!next || next.startsWith('-')) {
+        throw new Error('Missing value for --mode (expected user|system)');
+      }
+      modeFromArgs = resolveModeFromText(next);
+      i += 1;
+      continue;
+    }
+    if (a.startsWith('--mode=')) {
+      modeFromArgs = resolveModeFromText(a.slice('--mode='.length));
+      continue;
+    }
+    if (a === '--system') {
+      modeFromArgs = 'system';
+      continue;
+    }
+    if (a === '--user') {
+      modeFromArgs = 'user';
+      continue;
+    }
+
+    if (a === '--system-user') {
+      const next = String(argv[i + 1] ?? '');
+      if (!next || next.startsWith('-')) {
+        throw new Error('Missing value for --system-user');
+      }
+      systemUserFromArgs = next.trim();
+      i += 1;
+      continue;
+    }
+    if (a.startsWith('--system-user=')) {
+      systemUserFromArgs = a.slice('--system-user='.length).trim();
+      continue;
+    }
+
+    filtered.push(a);
+  }
+
+  const flags = parseCliFlags(filtered);
+  const action = resolveAction(filtered);
+  const mode = modeFromArgs ?? resolveModeFromText(process.env.HAPPIER_DAEMON_SERVICE_MODE ?? '');
+  const systemUser = systemUserFromArgs ?? String(process.env.HAPPIER_DAEMON_SERVICE_SYSTEM_USER ?? '').trim();
+
+  return { argvFiltered: filtered, flags, action, mode, systemUser };
 }
 
 function resolveAction(argv: readonly string[]): DaemonServiceCliAction {
@@ -139,7 +207,10 @@ export function resolveDaemonServiceCliRuntimeFromEnv(): DaemonServiceCliRuntime
   return { platform, instanceId, uid, userHomeDir, happierHomeDir, serverUrl, webappUrl, publicServerUrl, nodePath, entryPath };
 }
 
-export function resolveDaemonServicePaths(runtime: DaemonServiceCliRuntime): Readonly<{
+export function resolveDaemonServicePaths(
+  runtime: DaemonServiceCliRuntime,
+  options: Readonly<{ mode?: DaemonServiceMode }> = {},
+): Readonly<{
   platform: SupportedPlatform;
   label: string;
   unitName: string;
@@ -151,10 +222,14 @@ export function resolveDaemonServicePaths(runtime: DaemonServiceCliRuntime): Rea
   stdoutPath: string;
   stderrPath: string;
 }> {
+  const mode: DaemonServiceMode = options.mode === 'system' ? 'system' : 'user';
   const label = resolveDaemonServiceLaunchdLabel(runtime.instanceId);
   const unitName = resolveDaemonServiceSystemdUnitName(runtime.instanceId);
   const plistPath = resolveLaunchAgentPlistPath({ userHomeDir: runtime.userHomeDir, instanceId: runtime.instanceId });
-  const unitPath = resolveSystemdUserUnitPath({ userHomeDir: runtime.userHomeDir, instanceId: runtime.instanceId });
+  const unitPath =
+    runtime.platform === 'linux' && mode === 'system'
+      ? resolveSystemdSystemUnitPath({ instanceId: runtime.instanceId })
+      : resolveSystemdUserUnitPath({ userHomeDir: runtime.userHomeDir, instanceId: runtime.instanceId });
   const wrapperPath = runtime.platform === 'win32'
     ? resolveWindowsDaemonWrapperPath({ happierHomeDir: runtime.happierHomeDir, instanceId: runtime.instanceId })
     : '';
@@ -181,10 +256,13 @@ export function resolveDaemonServicePaths(runtime: DaemonServiceCliRuntime): Rea
 }
 
 export async function runDaemonServiceCliCommand(params: Readonly<{ argv: readonly string[] }>): Promise<void> {
-  const flags = parseCliFlags(params.argv);
+  const parsed = parseDaemonServiceCliInvocation(params.argv);
+  const flags = parsed.flags;
+  const mode = parsed.mode;
+  const systemUser = parsed.systemUser;
   const runtime = resolveDaemonServiceCliRuntimeFromEnv();
-  const paths = resolveDaemonServicePaths(runtime);
-  const action = resolveAction(params.argv);
+  const paths = resolveDaemonServicePaths(runtime, { mode });
+  const action = parsed.action;
 
   if (flags.help) {
     if (flags.json) {
@@ -239,8 +317,19 @@ export async function runDaemonServiceCliCommand(params: Readonly<{ argv: readon
   }
 
   if (action === 'install') {
+    if (runtime.platform === 'linux' && mode === 'system') {
+      if (typeof process.getuid === 'function' && process.getuid() !== 0) {
+        throw new Error('Root privileges are required for system mode service install');
+      }
+      if (!systemUser) {
+        throw new Error('Missing --system-user (required for system mode)');
+      }
+    }
+
     const plan = planDaemonServiceInstall({
       platform: runtime.platform,
+      mode,
+      systemUser,
       instanceId: runtime.instanceId,
       uid: runtime.uid ?? undefined,
       userHomeDir: runtime.userHomeDir,
@@ -267,6 +356,8 @@ export async function runDaemonServiceCliCommand(params: Readonly<{ argv: readon
       uid: runtime.uid ?? undefined,
       userHomeDir: runtime.userHomeDir,
       happierHomeDir: runtime.happierHomeDir,
+      mode,
+      systemUser,
       instanceId: runtime.instanceId,
       serverUrl: runtime.serverUrl,
       webappUrl: runtime.webappUrl,
@@ -285,8 +376,15 @@ export async function runDaemonServiceCliCommand(params: Readonly<{ argv: readon
   }
 
   if (action === 'uninstall') {
+    if (runtime.platform === 'linux' && mode === 'system') {
+      if (typeof process.getuid === 'function' && process.getuid() !== 0) {
+        throw new Error('Root privileges are required for system mode service uninstall');
+      }
+    }
+
     const plan = planDaemonServiceUninstall({
       platform: runtime.platform,
+      mode,
       instanceId: runtime.instanceId,
       uid: runtime.uid ?? undefined,
       userHomeDir: runtime.userHomeDir,
@@ -308,6 +406,7 @@ export async function runDaemonServiceCliCommand(params: Readonly<{ argv: readon
       uid: runtime.uid ?? undefined,
       userHomeDir: runtime.userHomeDir,
       happierHomeDir: runtime.happierHomeDir,
+      mode,
       instanceId: runtime.instanceId,
       runCommands: true,
     });
@@ -321,6 +420,12 @@ export async function runDaemonServiceCliCommand(params: Readonly<{ argv: readon
   }
 
   if (action === 'start' || action === 'stop' || action === 'restart') {
+    if (runtime.platform === 'linux' && mode === 'system') {
+      if (typeof process.getuid === 'function' && process.getuid() !== 0) {
+        throw new Error('Root privileges are required for system mode service lifecycle actions');
+      }
+    }
+
     if (!existsSync(paths.installedPath)) {
       const msg = `Daemon service is not installed (${paths.installedPath}). Run: happier daemon service install`;
       if (flags.json) printJson({ ok: false, error: 'not_installed', message: msg, platform: runtime.platform });
@@ -331,6 +436,7 @@ export async function runDaemonServiceCliCommand(params: Readonly<{ argv: readon
     const plan = planDaemonServiceLifecycle({
       platform: runtime.platform,
       action,
+      mode,
       instanceId: runtime.instanceId,
       userHomeDir: runtime.userHomeDir,
       happierHomeDir: runtime.happierHomeDir,
@@ -374,6 +480,7 @@ export async function runDaemonServiceCliCommand(params: Readonly<{ argv: readon
     const systemPlan = planDaemonServiceLifecycle({
       platform: runtime.platform,
       action: 'status',
+      mode,
       instanceId: runtime.instanceId,
       userHomeDir: runtime.userHomeDir,
       happierHomeDir: runtime.happierHomeDir,

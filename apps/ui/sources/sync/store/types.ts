@@ -100,6 +100,7 @@ export interface MessagesDomainSlice {
     sessionMessages: Record<string, SessionMessages>;
     applyMessages: (sessionId: string, messages: NormalizedMessage[]) => { changed: string[]; hasReadyEvent: boolean };
     applyMessagesLoaded: (sessionId: string) => void;
+    resetSessionMessages: (sessionId: string) => void;
     isMutableToolCall: (sessionId: string, callId: string) => boolean;
 }
 

@@ -37,7 +37,7 @@ export const MultiEditView = React.memo<ToolViewProps>(({ tool, detailLevel }) =
     if (detailLevel === 'title') {
         return (
             <ToolSectionView>
-                <Text>{`${edits.length} edit${edits.length === 1 ? '' : 's'}`}</Text>
+                <Text>{t('tools.multiEdit.summaryEdits', { count: edits.length })}</Text>
             </ToolSectionView>
         );
     }
@@ -79,7 +79,7 @@ export const MultiEditView = React.memo<ToolViewProps>(({ tool, detailLevel }) =
                         </View>
                     );
                 })}
-                {!isFull && remaining > 0 ? <Text style={styles.more}>{`+${remaining} more`}</Text> : null}
+                {!isFull && remaining > 0 ? <Text style={styles.more}>{t('tools.common.more', { count: remaining })}</Text> : null}
             </View>
         </ToolSectionView>
     );

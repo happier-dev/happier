@@ -26,13 +26,17 @@ vi.mock('@/auth/context/AuthContext', () => ({
   useAuth: () => ({ credentials: { token: 't', secret: 's' } }),
 }));
 
+vi.mock('@/text', () => ({
+  t: (key: string) => key,
+}));
+
 vi.mock('@/components/ui/navigation/OAuthView', () => ({
   OAuthView: () => React.createElement('OAuthView'),
   OAuthViewUnsupported: (props: unknown) => React.createElement('OAuthViewUnsupported', props as Record<string, unknown>),
 }));
 
 vi.mock('@/sync/domains/connectedServices/connectedServiceRegistry', () => ({
-  getConnectedServiceRegistryEntry: (_serviceId: string) => ({ displayName: 'Codex', connectCommand: 'happier connect codex' }),
+  getConnectedServiceRegistryEntry: (_serviceId: string) => ({ serviceId: 'openai-codex', connectCommand: 'happier connect codex', supportsOauth: true }),
 }));
 
 describe('ConnectedServiceOauthView gating', () => {

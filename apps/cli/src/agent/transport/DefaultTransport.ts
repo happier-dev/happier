@@ -14,7 +14,9 @@ import type {
   StderrResult,
   ToolNameContext,
 } from './TransportHandler';
+import type { AgentMessage } from '@/agent/core';
 import { filterJsonObjectOrArrayLine } from './utils/jsonStdoutFilter';
+import { redactBugReportSensitiveText } from '@happier-dev/protocol';
 
 /**
  * Default timeout values (in milliseconds)
@@ -64,8 +66,90 @@ export class DefaultTransport implements TransportHandler {
   /**
    * Default: no special stderr handling
    */
-  handleStderr(_text: string, _context: StderrContext): StderrResult {
-    return { message: null };
+  handleStderr(text: string, context: StderrContext): StderrResult {
+    const trimmed = text.trim();
+    if (!trimmed) return { message: null, suppress: true };
+
+    const lower = trimmed.toLowerCase();
+
+    // During long-running investigations, keep stderr as diagnostics but avoid noisy UI errors.
+    if (context.hasActiveInvestigation) {
+      return { message: null, suppress: false };
+    }
+
+    // Rate limits are useful diagnostics and may be retried by the agent.
+    if (trimmed.includes('429') || lower.includes('rate limit') || lower.includes('rate_limit')) {
+      return { message: null, suppress: false };
+    }
+
+    // Authentication errors - surface an actionable message.
+    if (lower.includes('unauthorized') || lower.includes('authentication') || lower.includes('api key') || trimmed.includes('401')) {
+      const message: AgentMessage = {
+        type: 'status',
+        status: 'error',
+        detail: 'Authentication error. Configure your provider CLI credentials, then retry.',
+      };
+      return { message };
+    }
+
+    // Model not found - common across many ACP CLIs/providers.
+    if (lower.includes('model not found') || lower.includes('unknown model') || lower.includes('providermodelnotfounderror')) {
+      const message: AgentMessage = {
+        type: 'status',
+        status: 'error',
+        detail: 'Model not found. Check available models in your provider CLI, then retry.',
+      };
+      return { message };
+    }
+
+    const redacted = redactBugReportSensitiveText(trimmed);
+    const detail = redacted.length > 500 ? `${redacted.slice(0, 500)}…` : redacted;
+
+    const looksLikeCliInvocationError =
+      lower.startsWith('error:') ||
+      lower.includes('unknown flag') ||
+      lower.includes('unknown option') ||
+      lower.includes('unrecognized option') ||
+      lower.includes('unknown argument') ||
+      lower.includes('flag provided but not defined') ||
+      lower.includes('invalid value') ||
+      lower.includes('invalid argument') ||
+      lower.includes('unknown command');
+
+    const looksLikeNetworkError =
+      lower.includes('unable to connect') ||
+      lower.includes('connectionrefused') ||
+      lower.includes('connection refused') ||
+      lower.includes('econnrefused') ||
+      lower.includes('fetch failed') ||
+      lower.includes('network error') ||
+      lower.includes('socket hang up');
+
+    const looksLikeProviderRequestError =
+      lower.includes('invalid_request_error') ||
+      lower.includes('apierror') ||
+      lower.includes('statuscode') ||
+      lower.includes('request failed') ||
+      lower.includes('bad request') ||
+      (lower.includes('http') && (lower.includes(' 4') || lower.includes(' 5'))) ||
+      (/\b(4\d\d|5\d\d)\b/.test(lower) && lower.includes('error'));
+
+    const looksLikeStackOrException =
+      lower.startsWith('error') ||
+      lower.includes('exception') ||
+      lower.includes('traceback') ||
+      lower.includes('stack trace');
+
+    if (looksLikeCliInvocationError || looksLikeNetworkError || looksLikeProviderRequestError || looksLikeStackOrException) {
+      const message: AgentMessage = {
+        type: 'status',
+        status: 'error',
+        detail,
+      };
+      return { message, suppress: false };
+    }
+
+    return { message: null, suppress: false };
   }
 
   /**

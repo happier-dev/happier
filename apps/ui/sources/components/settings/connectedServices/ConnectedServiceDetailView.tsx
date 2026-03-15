@@ -1,10 +1,8 @@
 import * as React from 'react';
-import { View } from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
+import { Platform, View } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useUnistyles } from 'react-native-unistyles';
 
-import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { ItemList } from '@/components/ui/lists/ItemList';
 import { Text } from '@/components/ui/text/Text';
@@ -14,8 +12,7 @@ import { useAuth } from '@/auth/context/AuthContext';
 import { sync } from '@/sync/sync';
 import { useProfile } from '@/sync/store/hooks';
 import { useSettings } from '@/sync/store/hooks';
-import { deleteConnectedServiceCredential, registerConnectedServiceCredentialSealed } from '@/sync/api/account/apiConnectedServicesV2';
-import { sealConnectedServiceCredential } from '@/sync/domains/connectedServices/sealConnectedServiceCredential';
+import { deleteConnectedServiceCredentialForAccount, storeConnectedServiceCredentialForAccount } from '@/sync/domains/connectedServices/storeConnectedServiceCredentialForAccount';
 import { getConnectedServiceRegistryEntry } from '@/sync/domains/connectedServices/connectedServiceRegistry';
 import { connectedServiceProfileKey, resolveConnectedServiceProfileLabel } from '@/sync/domains/connectedServices/connectedServiceProfilePreferences';
 import {
@@ -30,6 +27,8 @@ import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
 import { ConnectedServiceDetailActionsGroup } from './detail/ConnectedServiceDetailActionsGroup';
 import { ConnectedServiceDetailProfilesGroup } from './detail/ConnectedServiceDetailProfilesGroup';
 import { ConnectedServiceDetailQuotasSection } from './detail/ConnectedServiceDetailQuotasSection';
+import { resolveConnectedServiceDisplayName } from './model/resolveConnectedServiceDisplayName';
+import { resolveConnectedServiceOauthAddActionModesForPlatform } from './oauth/resolveConnectedServiceOauthAddActionModesForPlatform';
 
 function asStringParam(value: unknown): string {
   if (Array.isArray(value)) return typeof value[0] === 'string' ? value[0] : '';
@@ -45,40 +44,19 @@ export const ConnectedServiceDetailView = React.memo(function ConnectedServiceDe
   const quotasEnabled = useFeatureEnabled('connectedServices.quotas');
   const profile = useProfile();
   const settings = useSettings();
+  const [quotaSnapshotsByKey, setQuotaSnapshotsByKey] = React.useState<Record<string, ConnectedServiceQuotaSnapshotV1 | null>>({});
 
   const rawServiceId = asStringParam((params as Record<string, unknown>).serviceId).trim();
   const parsedServiceId = ConnectedServiceIdSchema.safeParse(rawServiceId);
   const serviceId: ConnectedServiceId | null = parsedServiceId.success ? parsedServiceId.data : null;
   const entry = serviceId ? getConnectedServiceRegistryEntry(serviceId) : null;
+  const serviceLabel = serviceId ? resolveConnectedServiceDisplayName(serviceId) : t('connectedServices.fallbackName');
 
   const services = profile.connectedServicesV2;
   const svc = serviceId ? (services.find((s) => s.serviceId === serviceId) ?? null) : null;
   const profiles = svc?.profiles ?? [];
   const defaultProfileIdRaw = serviceId ? settings.connectedServicesDefaultProfileByServiceId[serviceId] : undefined;
   const defaultProfileId = typeof defaultProfileIdRaw === 'string' ? defaultProfileIdRaw.trim() : '';
-
-  if (!connectedServicesEnabled) {
-    return (
-      <ItemList>
-        <ItemGroup title={t('settings.connectedAccounts') ?? 'Connected Services'}>
-          <View style={{ paddingHorizontal: 16, paddingVertical: 12 }}>
-            <Text style={{ opacity: 0.7 }}>
-              {t('settings.connectedAccountsDisabled') ?? 'Connected services are disabled.'}
-            </Text>
-          </View>
-        </ItemGroup>
-
-        <ItemGroup>
-          <Item
-            title={t('common.close') ?? 'Done'}
-            icon={<Ionicons name="close-outline" size={22} color={theme.colors.accent.blue} />}
-            onPress={() => router.back()}
-            showChevron={false}
-          />
-        </ItemGroup>
-      </ItemList>
-    );
-  }
 
   const ensureCredentials = () => {
     if (!auth.credentials) {
@@ -89,20 +67,23 @@ export const ConnectedServiceDetailView = React.memo(function ConnectedServiceDe
 
   const promptProfileId = async (opts?: { defaultValue?: string }) => {
     const res = await Modal.prompt(
-      'Profile id',
-      'Use a short label like work, personal, alt.',
+      t('connectedServices.detail.prompts.profileIdTitle'),
+      t('connectedServices.detail.prompts.profileIdBody'),
       {
         placeholder: 'work',
         defaultValue: opts?.defaultValue,
-        confirmText: t('common.save') ?? 'Save',
-        cancelText: t('common.cancel') ?? 'Cancel',
+        confirmText: t('common.save'),
+        cancelText: t('common.cancel'),
       },
     );
     const profileId = typeof res === 'string' ? res.trim() : '';
     if (!profileId) return null;
     const parsed = ConnectedServiceProfileIdSchema.safeParse(profileId);
     if (!parsed.success) {
-      await Modal.alert('Invalid profile id', 'Use letters, numbers, hyphen, or underscore (max 64).');
+      await Modal.alert(
+        t('connectedServices.detail.alerts.invalidProfileIdTitle'),
+        t('connectedServices.detail.alerts.invalidProfileIdBody'),
+      );
       return null;
     }
     return parsed.data;
@@ -110,31 +91,67 @@ export const ConnectedServiceDetailView = React.memo(function ConnectedServiceDe
 
   const handleDisconnect = async (profileId: string) => {
     const ok = await Modal.confirm(
-      'Disconnect',
-      `Disconnect ${entry?.displayName ?? serviceId} (${profileId})?`,
-      { confirmText: t('modals.disconnect') ?? 'Disconnect', cancelText: t('common.cancel') ?? 'Cancel' },
+      t('modals.disconnect'),
+      t('connectedServices.detail.disconnectConfirmBody', { service: serviceLabel, profileId }),
+      { confirmText: t('modals.disconnect'), cancelText: t('common.cancel') },
     );
     if (!ok) return;
-    const credentials = ensureCredentials();
-    await deleteConnectedServiceCredential(credentials, { serviceId: serviceId!, profileId });
-    await sync.refreshProfile();
+    try {
+      const credentials = ensureCredentials();
+      await deleteConnectedServiceCredentialForAccount(credentials, { serviceId: serviceId!, profileId });
+      await sync.refreshProfile();
+    } catch (e: unknown) {
+      const message = e instanceof Error && e.message ? e.message : t('common.error');
+      await Modal.alert(
+        t('common.error'),
+        message,
+      );
+    }
   };
 
-  const handleConnectOauth = async (profileId: string) => {
-    router.push({ pathname: '/(app)/settings/connected-services/oauth', params: { serviceId: serviceId!, profileId } });
+  const handleConnectOauth = async (profileId: string, method: 'device' | 'paste' | 'browser' | null = null) => {
+    if (!serviceId || !entry) return;
+    if (!entry?.supportsOauth) {
+      await Modal.alert(
+        t('connect.unsupported.connectTitle', { name: serviceLabel }),
+        t('connect.unsupported.runCommandInTerminalWithCommand', { command: entry.connectCommand }),
+        [{ text: t('common.ok'), style: 'cancel' }],
+      );
+      return;
+    }
+    try {
+      router.push({
+        pathname: '/(app)/settings/connected-services/oauth',
+        params: { serviceId: serviceId!, profileId, ...(method ? { method } : {}) },
+      });
+    } catch {
+      await Modal.alert(
+        t('connect.unsupported.connectTitle', { name: serviceLabel }),
+        t('connect.unsupported.runCommandInTerminalWithCommand', { command: entry.connectCommand }),
+        [{ text: t('common.ok'), style: 'cancel' }],
+      );
+    }
   };
 
-  const handleConnectSetupToken = async () => {
+  const handleConnectToken = async () => {
+    if (!serviceId || !entry) return;
     const profileId = await promptProfileId();
     if (!profileId) return;
 
+    const tokenKind = entry?.tokenKind ?? null;
     const token = await Modal.prompt(
-      'Setup token',
-      'Paste your Claude setup-token.',
+      tokenKind === 'setup-token'
+        ? t('connectedServices.detail.prompts.setupTokenTitle')
+        : t('connectedServices.detail.prompts.apiKeyTitle'),
+      tokenKind === 'setup-token'
+        ? t('connectedServices.detail.prompts.setupTokenBody')
+        : t('connectedServices.detail.prompts.apiKeyBody'),
       {
-        placeholder: 'setup-token',
-        confirmText: t('common.save') ?? 'Save',
-        cancelText: t('common.cancel') ?? 'Cancel',
+        placeholder: tokenKind === 'setup-token'
+          ? t('connectedServices.detail.prompts.setupTokenPlaceholder')
+          : t('connectedServices.detail.prompts.apiKeyPlaceholder'),
+        confirmText: t('common.save'),
+        cancelText: t('common.cancel'),
       },
     );
     const tokenValue = typeof token === 'string' ? token.trim() : '';
@@ -153,59 +170,63 @@ export const ConnectedServiceDetailView = React.memo(function ConnectedServiceDe
         providerEmail: null,
       },
     });
-    const ciphertext = sealConnectedServiceCredential({ credentials, record });
-    await registerConnectedServiceCredentialSealed(credentials, {
+    await storeConnectedServiceCredentialForAccount(credentials, {
       serviceId: serviceId!,
       profileId,
-      sealed: { format: 'account_scoped_v1', ciphertext },
-      metadata: {
-        kind: record.kind,
-        providerEmail: record.kind === 'oauth' ? record.oauth.providerEmail : record.token.providerEmail,
-        providerAccountId: record.kind === 'oauth' ? record.oauth.providerAccountId : record.token.providerAccountId,
-        expiresAt: record.expiresAt,
-      },
+      record,
     });
     await sync.refreshProfile();
-    router.back();
+    await Modal.alert(
+      t('connectedServices.oauthPaste.alerts.connectedTitle'),
+      t('connectedServices.oauthPaste.alerts.connectedBody', {
+        serviceId: serviceLabel,
+        profileId,
+      }),
+    );
   };
 
-  const handleAddOauthProfile = async () => {
+  const handleAddOauthProfile = async (method: 'device' | 'paste' | 'browser' | null) => {
     const profileId = await promptProfileId();
     if (!profileId) return;
-    await handleConnectOauth(profileId);
+    await handleConnectOauth(profileId, method);
   };
 
-  const handleSetDefaultProfile = async () => {
+  const handleOpenProfile = (profileId: string) => {
     if (!serviceId) return;
-    if (profiles.length === 0) return;
-
-    const profileId = await promptProfileId({ defaultValue: defaultProfileId || profiles[0]?.profileId });
-    if (!profileId) return;
-    const exists = profiles.some((p: any) => p?.profileId === profileId);
-    if (!exists) {
-      await Modal.alert('Unknown profile', `No profile named "${profileId}" exists for ${entry?.displayName ?? serviceId}.`);
-      return;
-    }
-    await sync.applySettings({
-      connectedServicesDefaultProfileByServiceId: {
-        ...settings.connectedServicesDefaultProfileByServiceId,
-        [serviceId]: profileId,
-      },
+    router.push({
+      pathname: '/(app)/settings/connected-services/profile',
+      params: { serviceId, profileId },
     });
   };
 
-  const handleSetProfileLabel = async () => {
+  const handleSetDefaultProfile = async (profileId: string) => {
     if (!serviceId) return;
-    if (profiles.length === 0) return;
-
-    const profileId = await promptProfileId({ defaultValue: profiles[0]?.profileId });
-    if (!profileId) return;
     const exists = profiles.some((p: any) => p?.profileId === profileId);
-    if (!exists) {
-      await Modal.alert('Unknown profile', `No profile named "${profileId}" exists for ${entry?.displayName ?? serviceId}.`);
+    const nextMap = { ...settings.connectedServicesDefaultProfileByServiceId };
+    if (!profileId) {
+      delete nextMap[serviceId];
+    } else if (exists) {
+      nextMap[serviceId] = profileId;
+    } else {
+      await Modal.alert(
+        t('connectedServices.detail.alerts.unknownProfileTitle'),
+        t('connectedServices.detail.alerts.unknownProfileBody', { profileId, service: serviceLabel }),
+      );
       return;
     }
+    await sync.applySettings({ connectedServicesDefaultProfileByServiceId: nextMap });
+  };
 
+  const handleEditProfileLabel = async (profileId: string) => {
+    if (!serviceId) return;
+    const exists = profiles.some((p: any) => p?.profileId === profileId);
+    if (!exists) {
+      await Modal.alert(
+        t('connectedServices.detail.alerts.unknownProfileTitle'),
+        t('connectedServices.detail.alerts.unknownProfileBody', { profileId, service: serviceLabel }),
+      );
+      return;
+    }
     const key = connectedServiceProfileKey({ serviceId, profileId });
     const currentLabelRaw =
       resolveConnectedServiceProfileLabel({
@@ -215,13 +236,13 @@ export const ConnectedServiceDetailView = React.memo(function ConnectedServiceDe
       }) ?? settings.connectedServicesProfileLabelByKey[key];
     const currentLabel = typeof currentLabelRaw === 'string' ? currentLabelRaw : '';
     const next = await Modal.prompt(
-      'Profile label',
-      'Optional. Shown in auth pickers.',
+      t('connectedServices.detail.prompts.profileLabelTitle'),
+      t('connectedServices.detail.prompts.profileLabelBody'),
       {
-        placeholder: 'Work account',
+        placeholder: t('connectedServices.detail.prompts.profileLabelPlaceholder'),
         defaultValue: currentLabel,
-        confirmText: t('common.save') ?? 'Save',
-        cancelText: t('common.cancel') ?? 'Cancel',
+        confirmText: t('common.save'),
+        cancelText: t('common.cancel'),
       },
     );
     if (typeof next !== 'string') return;
@@ -233,8 +254,6 @@ export const ConnectedServiceDetailView = React.memo(function ConnectedServiceDe
 
     await sync.applySettings({ connectedServicesProfileLabelByKey: nextMap });
   };
-
-  const [quotaSnapshotsByKey, setQuotaSnapshotsByKey] = React.useState<Record<string, ConnectedServiceQuotaSnapshotV1 | null>>({});
 
   const setPinnedQuotaMeters = async (profileId: string, nextPinned: ReadonlyArray<string>) => {
     if (!serviceId) return;
@@ -248,30 +267,39 @@ export const ConnectedServiceDetailView = React.memo(function ConnectedServiceDe
     await sync.applySettings({ connectedServicesQuotaPinnedMeterIdsByKey: nextMap });
   };
 
-  if (!serviceId || !entry) {
+  if (!connectedServicesEnabled) {
     return (
       <ItemList>
-        <ItemGroup title="Connected Services">
+        <ItemGroup title={t('settings.connectedAccounts')}>
           <View style={{ paddingHorizontal: 16, paddingVertical: 12 }}>
-            <Text style={{ opacity: 0.7 }}>Unknown connected service.</Text>
+            <Text style={{ color: theme.colors.textSecondary }}>{t('settings.connectedAccountsDisabled')}</Text>
           </View>
-        </ItemGroup>
-        <ItemGroup>
-          <Item
-            title={t('common.close') ?? 'Done'}
-            icon={<Ionicons name="close-outline" size={22} color={theme.colors.accent.blue} />}
-            onPress={() => router.back()}
-            showChevron={false}
-          />
         </ItemGroup>
       </ItemList>
     );
   }
 
+  if (!serviceId || !entry) {
+    return (
+      <ItemList>
+        <ItemGroup title={t('connectedServices.title')}>
+          <View style={{ paddingHorizontal: 16, paddingVertical: 12 }}>
+            <Text style={{ color: theme.colors.textSecondary }}>{t('connectedServices.detail.unknownService')}</Text>
+          </View>
+        </ItemGroup>
+      </ItemList>
+    );
+  }
+
+  const oauthAddActionModes = resolveConnectedServiceOauthAddActionModesForPlatform({
+    platformOS: Platform.OS,
+    oauthAddActionModes: entry.oauthAddActionModes,
+  });
+
   return (
     <ItemList>
       <ConnectedServiceDetailProfilesGroup
-        title={entry.displayName}
+        title={serviceLabel}
         serviceId={serviceId}
         profiles={profiles}
         defaultProfileId={defaultProfileId}
@@ -282,6 +310,9 @@ export const ConnectedServiceDetailView = React.memo(function ConnectedServiceDe
         quotasEnabled={quotasEnabled}
         onDisconnect={(profileId) => void handleDisconnect(profileId)}
         onConnectOauth={(profileId) => void handleConnectOauth(profileId)}
+        onOpenProfile={(profileId) => handleOpenProfile(profileId)}
+        onSetDefaultProfile={(profileId) => void handleSetDefaultProfile(profileId)}
+        onEditProfileLabel={(profileId) => void handleEditProfileLabel(profileId)}
       />
 
       {quotasEnabled ? (
@@ -296,22 +327,14 @@ export const ConnectedServiceDetailView = React.memo(function ConnectedServiceDe
       ) : null}
 
       <ConnectedServiceDetailActionsGroup
-        defaultProfileId={defaultProfileId}
-        supportsSetupToken={Boolean(entry.supportsSetupToken)}
-        onSetDefaultProfile={() => void handleSetDefaultProfile()}
-        onSetProfileLabel={() => void handleSetProfileLabel()}
-        onAddOauthProfile={() => void handleAddOauthProfile()}
-        onConnectSetupToken={() => void handleConnectSetupToken()}
+        supportsOauth={Boolean(entry.supportsOauth)}
+        oauthAddActionModes={oauthAddActionModes}
+        supportsToken={Boolean(entry.supportsToken)}
+        tokenKind={entry.tokenKind ?? null}
+        onAddOauthProfile={(method) => void handleAddOauthProfile(method)}
+        onConnectToken={() => void handleConnectToken()}
       />
 
-      <ItemGroup>
-        <Item
-          title={t('common.close') ?? 'Done'}
-          icon={<Ionicons name="close-outline" size={22} color={theme.colors.accent.blue} />}
-          onPress={() => router.back()}
-          showChevron={false}
-        />
-      </ItemGroup>
     </ItemList>
   );
 });

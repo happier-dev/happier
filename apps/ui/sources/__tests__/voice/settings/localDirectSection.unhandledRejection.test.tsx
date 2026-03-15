@@ -69,7 +69,9 @@ describe('LocalDirectSection', () => {
 
       // @ts-expect-error assigned in act() above
       const networkTimeoutRow = tree.root.find(
-        (node) => (node.type as any) === 'Item' && node.props?.title === 'Network timeout (ms)',
+        (node) =>
+          (node.type as any) === 'Item' &&
+          node.props?.title === 'settingsVoice.local.conversation.network.timeoutTitle',
       );
 
       await act(async () => {

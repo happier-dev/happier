@@ -61,15 +61,15 @@ export default function VoiceSettingsScreen() {
               subtitle: t('settingsVoice.preferredLanguageSubtitle'),
               showSelectedSubtitle: false,
             }}
-            items={[
-              {
-                id: '',
-                title: t('settingsVoice.language.autoDetect'),
-                subtitle: 'Use device language (recommended).',
-                icon: (
-                  <View style={{ width: 32, height: 32, alignItems: 'center', justifyContent: 'center' }}>
-                    <Ionicons name="sparkles-outline" size={20} color={theme.colors.textSecondary} />
-                  </View>
+                items={[
+                  {
+                    id: '',
+                    title: t('settingsVoice.language.autoDetect'),
+                    subtitle: t('settingsVoice.language.autoDetectSubtitle'),
+                    icon: (
+                      <View style={{ width: 32, height: 32, alignItems: 'center', justifyContent: 'center' }}>
+                        <Ionicons name="sparkles-outline" size={20} color={theme.colors.textSecondary} />
+                      </View>
                 ),
               },
               ...LANGUAGES.flatMap((lang) => {

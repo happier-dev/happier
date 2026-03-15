@@ -25,6 +25,7 @@ vi.mock('@/text', () => ({
 type ItemGroupProps = React.PropsWithChildren<Record<string, never>>;
 type PathSelectorProps = {
     onChangeSearchQuery?: (value: string) => void;
+    onChangeSelectedPath?: (value: string) => void;
 };
 
 vi.mock('@/constants/Typography', () => ({
@@ -46,6 +47,7 @@ vi.mock('@/components/sessions/new/components/PathSelector', () => ({
             if (didTriggerRef.current) return;
             didTriggerRef.current = true;
             // Trigger a state update that should NOT require updating Stack.Screen options.
+            props.onChangeSelectedPath?.('/tmp/typing');
             props.onChangeSearchQuery?.('abc');
         }, [props]);
         return null;

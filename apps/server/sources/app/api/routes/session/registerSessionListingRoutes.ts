@@ -8,7 +8,7 @@ import {
   decodeV2SessionListCursorV1,
   encodeV2SessionListCursorV1,
 } from "@happier-dev/protocol";
-import { resolveRouteRateLimit } from "@/app/api/utils/apiRateLimitPolicy";
+import { resolveApiHotEndpointRateLimit } from "@/app/api/utils/apiRateLimitCatalog";
 import { PROFILE_SELECT, toShareUserProfile } from "@/app/share/types";
 import { db } from "@/storage/db";
 import { type Fastify } from "../../types";
@@ -21,12 +21,7 @@ export function registerSessionListingRoutes(app: Fastify) {
     app.get('/v1/sessions', {
         preHandler: app.authenticate,
         config: {
-            rateLimit: resolveRouteRateLimit(process.env, {
-                maxEnvKey: "HAPPIER_SESSIONS_LIST_RATE_LIMIT_MAX",
-                windowEnvKey: "HAPPIER_SESSIONS_LIST_RATE_LIMIT_WINDOW",
-                defaultMax: 300,
-                defaultWindow: "1 minute",
-            }),
+            rateLimit: resolveApiHotEndpointRateLimit(process.env, "sessions.list"),
         },
     }, async (request, reply) => {
         const userId = request.userId;
@@ -211,12 +206,7 @@ export function registerSessionListingRoutes(app: Fastify) {
             }).optional()
         },
         config: {
-            rateLimit: resolveRouteRateLimit(process.env, {
-                maxEnvKey: "HAPPIER_SESSIONS_LIST_RATE_LIMIT_MAX",
-                windowEnvKey: "HAPPIER_SESSIONS_LIST_RATE_LIMIT_WINDOW",
-                defaultMax: 300,
-                defaultWindow: "1 minute",
-            }),
+            rateLimit: resolveApiHotEndpointRateLimit(process.env, "sessions.list"),
         },
     }, async (request, reply) => {
         const userId = request.userId;

@@ -90,6 +90,7 @@ vi.mock('@/sync/domains/state/storage', () => ({
         if (key === 'toolViewDetailLevelDefaultLocalControl') return 'title';
         if (key === 'toolViewDetailLevelByToolName') return {};
         if (key === 'toolViewShowDebugByDefault') return false;
+        if (key === 'permissionPromptSurface') return 'transcript';
         return null;
     },
 }));

@@ -1,4 +1,5 @@
 import { formatErrorForUi } from '@/ui/formatErrorForUi';
+import { getSuggestedGeminiModelsForUi } from '@/backends/gemini/models/suggestedGeminiModelsForUi';
 
 export function formatGeminiErrorForUi(error: unknown, displayedModel?: string | null): string {
     // Parse error message (keep existing UX-focused heuristics; avoid dumping stacks unless needed)
@@ -27,8 +28,10 @@ export function formatGeminiErrorForUi(error: unknown, displayedModel?: string |
             errorMessage.includes('not found') ||
             errorMessage.includes('404')
         ) {
-            const currentModel = displayedModel || 'gemini-2.5-pro';
-            errorMsg = `Model "${currentModel}" not found. Available models: gemini-2.5-pro, gemini-2.5-flash, gemini-2.5-flash-lite`;
+            const currentModel = typeof displayedModel === 'string' && displayedModel.trim() ? displayedModel.trim() : null;
+            const suggested = getSuggestedGeminiModelsForUi();
+            const header = currentModel ? `Model "${currentModel}" not found.` : 'Model not found.';
+            errorMsg = `${header} Available models: ${suggested.join(', ')}`;
         }
         // Check for empty response / internal error after retries exhausted
         else if (

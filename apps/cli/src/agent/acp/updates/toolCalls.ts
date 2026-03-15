@@ -256,8 +256,8 @@ function emitToolCallRefresh(
   const parsedArgs = parseArgsFromContent(effectiveRawInput);
   const args = { ...parsedArgs };
 
-  if (update.locations && Array.isArray(update.locations)) {
-    args.locations = update.locations;
+  if (!('locations' in args) || Array.isArray(update.locations)) {
+    args.locations = Array.isArray(update.locations) ? update.locations : [];
   }
   attachAcpMetadataToArgs(args, update, toolKindStr || 'unknown', effectiveRawInput);
 
@@ -358,8 +358,8 @@ export function startToolCall(
   const args = { ...parsedArgs };
 
   // Extract locations if present.
-  if (update.locations && Array.isArray(update.locations)) {
-    args.locations = update.locations;
+  if (!('locations' in args) || Array.isArray(update.locations)) {
+    args.locations = Array.isArray(update.locations) ? update.locations : [];
   }
 
   attachAcpMetadataToArgs(args, update, toolKindStr || 'unknown', effectiveRawInput);
@@ -408,16 +408,20 @@ export function completeToolCall(
     `[AcpBackend] ✅ Tool call COMPLETED: ${toolCallId} (${resolvedToolName}) - Duration: ${duration}. Active tool calls: ${ctx.activeToolCalls.size}`,
   );
 
-  const output = extractToolOutput(update);
-  const record = asRecord(output);
-  if (record) {
-    const meta = extractMeta(update);
-    const acp: Record<string, unknown> = { kind: toolKindStr };
-    if (typeof update.title === 'string' && update.title.trim().length > 0) acp.title = update.title;
-    if (Array.isArray(update.locations) && update.locations.length > 0) acp.locations = update.locations;
-    if (meta) acp.meta = meta;
-    record._acp = { ...(asRecord(record._acp) ?? {}), ...acp };
-  }
+  const outputRaw = extractToolOutput(update);
+  const meta = extractMeta(update);
+  const acp: Record<string, unknown> = { kind: toolKindStr };
+  if (typeof update.title === 'string' && update.title.trim().length > 0) acp.title = update.title;
+  if (Array.isArray(update.locations) && update.locations.length > 0) acp.locations = update.locations;
+  if (meta) acp.meta = meta;
+
+  const output = (() => {
+    const record = asRecord(outputRaw);
+    if (record) {
+      return { ...record, _acp: { ...(asRecord(record._acp) ?? {}), ...acp } };
+    }
+    return { output: outputRaw, _acp: acp };
+  })();
 
   ctx.emit({
     type: 'tool-result',

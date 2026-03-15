@@ -47,6 +47,63 @@ describe('sessionUpdateHandlers tool call tracking', () => {
     expect(toolCall.args?._acp?.title).toBe('Run echo hello');
   });
 
+  it('attaches minimal _acp metadata and default locations for tool calls that omit input', () => {
+    const ctx = createCtx();
+
+    handleToolCall(
+      {
+        sessionUpdate: 'tool_call',
+        toolCallId: 'call_minimal',
+        status: 'in_progress',
+        kind: 'execute',
+      },
+      ctx,
+    );
+
+    const toolCall = ctx.emitted.find((m) => m.type === 'tool-call' && m.callId === 'call_minimal');
+    expect(toolCall).toBeTruthy();
+    expect(toolCall.toolName).toBe('execute');
+    expect(toolCall.args).toMatchObject({
+      locations: [],
+      _acp: { kind: 'execute' },
+    });
+  });
+
+  it('includes _acp metadata on successful tool results even when output is a primitive', () => {
+    const ctx = createCtx();
+
+    handleToolCall(
+      {
+        sessionUpdate: 'tool_call',
+        toolCallId: 'call_primitive_output',
+        status: 'in_progress',
+        kind: 'execute',
+      },
+      ctx,
+    );
+
+    handleToolCallUpdate(
+      {
+        sessionUpdate: 'tool_call_update',
+        toolCallId: 'call_primitive_output',
+        status: 'completed',
+        kind: 'execute',
+        content: 'TRACE_OK\n',
+        meta: {},
+      },
+      ctx,
+    );
+
+    const toolResult = ctx.emitted.find(
+      (m) => m.type === 'tool-result' && m.callId === 'call_primitive_output',
+    );
+    expect(toolResult).toBeTruthy();
+    expect(toolResult.toolName).toBe('execute');
+    expect(toolResult.result).toMatchObject({
+      _acp: { kind: 'execute' },
+    });
+  });
+
   it('does not start an execution timeout while status is pending, but arms timeout when in_progress arrives', () => {
     vi.useFakeTimers();
     const ctx = createCtx();

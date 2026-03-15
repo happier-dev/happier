@@ -36,7 +36,7 @@ describe('WebSearchView', () => {
         expect(renderedText).toContain('https://example.com/0');
         expect(renderedText).toContain('https://example.com/4');
         expect(renderedText).not.toContain('https://example.com/5');
-        expect(renderedText).toContain('+ 5 more');
+        expect(renderedText).toContain('+5 more');
     });
 
     it('expands to show more results when detailLevel=full', async () => {
@@ -49,7 +49,7 @@ describe('WebSearchView', () => {
 
         expect(renderedText).toContain('https://example.com/0');
         expect(renderedText).toContain('https://example.com/9');
-        expect(renderedText).not.toContain('+ 5 more');
+        expect(renderedText).not.toContain('+5 more');
     });
 
     it('supports item-object payloads and returns null for malformed payloads', async () => {

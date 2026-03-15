@@ -142,6 +142,8 @@ test('npm-e2e-smoke stack run checks daemon registers a machine on the server', 
 test('npm-e2e-smoke cli smoke waits for daemon to register a machine (connected check)', async () => {
   const cliSmokePath = join(smokeDir, 'bin', 'cli-smoke.sh');
   const raw = await readFile(cliSmokePath, 'utf8');
+  assert.match(raw, /find\s+"\$CLIENT_HOME_DIR"\s+-mindepth\s+1\s+-maxdepth\s+1\s+-exec\s+rm\s+-rf\s+\{\}\s+\+/, 'expected cli smoke to clear client home contents and avoid stale auth tokens across reruns');
+  assert.match(raw, /find\s+"\$APPROVER_HOME_DIR"\s+-mindepth\s+1\s+-maxdepth\s+1\s+-exec\s+rm\s+-rf\s+\{\}\s+\+/, 'expected cli smoke to clear approver home contents and avoid stale auth tokens across reruns');
   assert.match(raw, /\/v1\/machines/, 'expected cli smoke to probe /v1/machines for daemon connectivity');
   assert.match(raw, /machine_count_before/, 'expected cli smoke to capture machines count before starting daemon');
   assert.match(raw, /machine_count_after/, 'expected cli smoke to observe machines count after starting daemon');
@@ -153,8 +155,14 @@ test('npm-e2e-smoke includes a second CLI machine smoke', async () => {
   assert.match(composeRaw, /\n  cli2:\n/, 'expected a cli2 service in docker compose');
   assert.match(composeRaw, /\n  cli-home:\n/, 'expected a cli-home volume for cross-container account reuse');
 
-  const cli2Smoke = join(smokeDir, 'bin', 'cli2-smoke.sh');
-  assert.ok(existsSync(cli2Smoke), `missing cli2 smoke script: ${cli2Smoke}`);
+  const cli2SmokePath = join(smokeDir, 'bin', 'cli2-smoke.sh');
+  assert.ok(existsSync(cli2SmokePath), `missing cli2 smoke script: ${cli2SmokePath}`);
+  const cli2Raw = await readFile(cli2SmokePath, 'utf8');
+  assert.match(
+    cli2Raw,
+    /find\s+"\$CLIENT_HOME_DIR"\s+-mindepth\s+1\s+-maxdepth\s+1\s+-exec\s+rm\s+-rf\s+\{\}\s+\+/,
+    'expected cli2 smoke to clear client home contents and avoid stale auth tokens across reruns'
+  );
 
   const runnerPath = join(smokeDir, 'run.sh');
   const runnerRaw = await readFile(runnerPath, 'utf8');
@@ -207,20 +215,168 @@ test('npm-e2e-smoke local monorepo mode uses a self-contained git clone (worktre
 
   const runnerPath = join(smokeDir, 'run.sh');
   const runnerRaw = await readFile(runnerPath, 'utf8');
-  assert.match(runnerRaw, /git\s+clone/, 'expected runner to create a self-contained git clone for --monorepo=local');
   assert.match(
     runnerRaw,
-    /apply\s+--allow-empty/,
-    'expected runner to allow empty git apply when the working tree has no diffs'
+    /prepare-local-monorepo\.mjs/,
+    'expected runner to prepare a self-contained git clone via prepare-local-monorepo.mjs for --monorepo=local'
   );
+  assert.match(runnerRaw, /--src\s+"\$repo_root"/, 'expected runner to pass --src "$repo_root" to prepare-local-monorepo');
   assert.match(
     runnerRaw,
-    /branch\s+-f\s+main\s+HEAD/,
-    'expected runner to ensure a local "main" branch exists (hstack installer expects it)'
+    /--dst\s+"\$local_monorepo_dir"/,
+    'expected runner to pass --dst "$local_monorepo_dir" to prepare-local-monorepo'
   );
   assert.match(
     runnerRaw,
     /LOCAL_MONOREPO_MOUNT=/,
     'expected runner to pass LOCAL_MONOREPO_MOUNT via env-file for compose.local-monorepo.yml'
+  );
+});
+
+test('npm-e2e-smoke local mode prepares a local linux server binary for remote server setup', async () => {
+  const runnerPath = join(smokeDir, 'run.sh');
+  const runnerRaw = await readFile(runnerPath, 'utf8');
+  assert.match(
+    runnerRaw,
+    /build-server-binaries\.mjs/,
+    'expected local mode runner to build a local happier-server release binary for remote server smoke'
+  );
+  assert.match(
+    runnerRaw,
+    /REMOTE_SELF_HOST_SERVER_BINARY=/,
+    'expected runner to export REMOTE_SELF_HOST_SERVER_BINARY for remote-server-smoke'
+  );
+  assert.match(
+    runnerRaw,
+    /REMOTE_SELF_HOST_PRISMA_ENGINE_PATH=/,
+    'expected runner to export REMOTE_SELF_HOST_PRISMA_ENGINE_PATH for local binary runtime Prisma loading'
+  );
+  assert.match(
+    runnerRaw,
+    /server_runtime_root="\$\(dirname "\$server_binary"\)"/,
+    'expected runner to stage the extracted server runtime root, not only the bare binary'
+  );
+  assert.match(
+    runnerRaw,
+    /REMOTE_SELF_HOST_SERVER_BINARY=\/packs\/happier-server-\$\{server_target\}-runtime\/happier-server/,
+    'expected runner to point remote setup at the staged runtime binary path'
+  );
+});
+
+test('npm-e2e-smoke remote server smoke forwards self-host server binary override to hstack remote setup', async () => {
+  const remoteServerSmokePath = join(smokeDir, 'bin', 'remote-server-smoke.sh');
+  const raw = await readFile(remoteServerSmokePath, 'utf8');
+  assert.match(
+    raw,
+    /REMOTE_SSH_WAIT_SECONDS="\$\{REMOTE_SSH_WAIT_SECONDS:-180\}"/,
+    'expected remote server smoke to expose a configurable ssh wait timeout for slow systemd host boot'
+  );
+  assert.match(
+    raw,
+    /for _ in \$\(seq 1 "\$REMOTE_SSH_WAIT_SECONDS"\); do/,
+    'expected remote server smoke ssh readiness loop to use REMOTE_SSH_WAIT_SECONDS'
+  );
+  assert.match(
+    raw,
+    /--self-host-server-binary/,
+    'expected remote server smoke to forward a self-host binary override when provided'
+  );
+  assert.match(
+    raw,
+    /PRISMA_QUERY_ENGINE_LIBRARY/,
+    'expected remote server smoke to pass Prisma engine env overrides for local binary runs'
+  );
+});
+
+test('npm-e2e-smoke compose remote server smoke forwards local self-host env overrides', async () => {
+  const composeRemotePath = join(smokeDir, 'compose.remote.yml');
+  const raw = await readFile(composeRemotePath, 'utf8');
+  assert.match(
+    raw,
+    /REMOTE_SELF_HOST_SERVER_BINARY:\s*\$\{REMOTE_SELF_HOST_SERVER_BINARY:-\}/,
+    'expected compose remote server smoke env to include REMOTE_SELF_HOST_SERVER_BINARY'
+  );
+  assert.match(
+    raw,
+    /REMOTE_SELF_HOST_PRISMA_ENGINE_PATH:\s*\$\{REMOTE_SELF_HOST_PRISMA_ENGINE_PATH:-\}/,
+    'expected compose remote server smoke env to include REMOTE_SELF_HOST_PRISMA_ENGINE_PATH'
+  );
+});
+
+test('hstack remote server setup supports self-host server binary override flag', async () => {
+  const remoteCmdPath = join(repoRoot, 'apps', 'stack', 'scripts', 'remote_cmd.mjs');
+  const raw = await readFile(remoteCmdPath, 'utf8');
+  assert.match(
+    raw,
+    /--self-host-server-binary/,
+    'expected remote setup usage and parser to include --self-host-server-binary'
+  );
+  assert.match(
+    raw,
+    /HAPPIER_SELF_HOST_SERVER_BINARY=/,
+    'expected remote setup to pass HAPPIER_SELF_HOST_SERVER_BINARY to remote self-host install env'
+  );
+});
+
+test('build-server-binaries stages Prisma postgres engine files for packaged server runtime', async () => {
+  const buildScriptPath = join(repoRoot, 'scripts', 'pipeline', 'release', 'build-server-binaries.mjs');
+  const raw = await readFile(buildScriptPath, 'utf8');
+  assert.match(
+    raw,
+    /node_modules['"],\s*['"]\.prisma['"],\s*['"]client['"]/,
+    'expected server binary packaging to stage node_modules/.prisma/client for postgres Prisma runtime engines'
+  );
+});
+
+test('remote install shims keep npm cache bounded across repeated setup runs', async () => {
+  const remoteHostPath = join(smokeDir, 'bin', 'remote-host-entrypoint.sh');
+  const remoteHostSystemdPath = join(smokeDir, 'bin', 'remote-host-systemd-entrypoint.sh');
+
+  const hostRaw = await readFile(remoteHostPath, 'utf8');
+  const hostSystemdRaw = await readFile(remoteHostSystemdPath, 'utf8');
+  assert.match(
+    hostRaw,
+    /cache_dir="\$\(mktemp -d "\$HOME\/\.happier\/\.npm-cache\.[X]{6}"\)"/,
+    'expected remote daemon host shim to allocate an isolated npm cache directory per install run'
+  );
+  assert.match(
+    hostRaw,
+    /npm config set cache/,
+    'expected remote daemon host shim to configure npm cache explicitly'
+  );
+  assert.match(
+    hostRaw,
+    /npm install -g \/packs\/cli\.tgz --no-audit --no-fund/,
+    'expected remote daemon host shim to install cli tarball through npm so runtime dependencies are present'
+  );
+  assert.match(
+    hostRaw,
+    /rm -rf "\$cache_dir" "\$HOME\/\.npm\/_cacache"/,
+    'expected remote daemon host shim to remove temporary npm cache after install'
+  );
+  assert.match(
+    hostSystemdRaw,
+    /npm config set cache/,
+    'expected remote systemd install shim to configure an explicit npm cache directory'
+  );
+  assert.match(
+    hostSystemdRaw,
+    /npm cache clean --force/,
+    'expected remote systemd install shim to clear npm cache to avoid ENOSPC across repeated installs'
+  );
+  assert.match(
+    hostSystemdRaw,
+    /rm -rf "\$prefix\/lib\/node_modules\/@happier-dev\/cli"/,
+    'expected remote systemd install shim to remove existing @happier-dev/cli before reinstall'
+  );
+});
+
+test('remote daemon host install shim avoids unnecessary hstack install', async () => {
+  const remoteHostPath = join(smokeDir, 'bin', 'remote-host-entrypoint.sh');
+  const raw = await readFile(remoteHostPath, 'utf8');
+  assert.doesNotMatch(
+    raw,
+    /npm install -g \/packs\/stack\.tgz/,
+    'expected remote daemon host shim to skip /packs/stack.tgz install to reduce disk usage and avoid ENOSPC'
   );
 });

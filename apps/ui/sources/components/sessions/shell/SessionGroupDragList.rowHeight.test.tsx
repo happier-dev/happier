@@ -33,6 +33,7 @@ vi.mock('react-native-gesture-handler', () => ({
         Pan: () => {
             const chain: any = {};
             chain.activateAfterLongPress = () => chain;
+            chain.minDistance = () => chain;
             chain.onStart = () => chain;
             chain.onUpdate = () => chain;
             chain.onEnd = () => chain;
@@ -83,4 +84,3 @@ describe('SessionGroupDragList row height', () => {
         expect(heightStyle.height).toBe(88 * 3);
     });
 });
-

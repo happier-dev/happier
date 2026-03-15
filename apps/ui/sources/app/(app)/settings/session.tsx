@@ -10,6 +10,7 @@ import { ItemList } from '@/components/ui/lists/ItemList';
 import { Switch } from '@/components/ui/forms/Switch';
 import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { Text, TextInput } from '@/components/ui/text/Text';
+import { LlmTaskRunnerConfigV1BackendModelPicker } from '@/components/settings/llmTasks/LlmTaskRunnerConfigV1BackendModelPicker';
 import { Typography } from '@/constants/Typography';
 import { t } from '@/text';
 import { useSettingMutable } from '@/sync/domains/state/storage';
@@ -21,7 +22,6 @@ export default React.memo(function SessionSettingsScreen() {
     const router = useRouter();
     const popoverBoundaryRef = React.useRef<any>(null);
     const executionRunsEnabled = useFeatureEnabled('execution.runs');
-    const thinkingVisibilityEnabled = useFeatureEnabled('messages.thinkingVisibility');
 
     const [useTmux, setUseTmux] = useSettingMutable('sessionUseTmux');
     const [tmuxSessionName, setTmuxSessionName] = useSettingMutable('sessionTmuxSessionName');
@@ -34,19 +34,18 @@ export default React.memo(function SessionSettingsScreen() {
     const [agentInputEnterToSend, setAgentInputEnterToSend] = useSettingMutable('agentInputEnterToSend');
     const [agentInputHistoryScope, setAgentInputHistoryScope] = useSettingMutable('agentInputHistoryScope');
 
-    const [sessionThinkingDisplayMode, setSessionThinkingDisplayMode] = useSettingMutable('sessionThinkingDisplayMode');
-
     const [terminalConnectLegacySecretExportEnabled, setTerminalConnectLegacySecretExportEnabled] = useSettingMutable('terminalConnectLegacySecretExportEnabled');
 
     const [sessionReplayEnabled, setSessionReplayEnabled] = useSettingMutable('sessionReplayEnabled');
     const [sessionReplayStrategy, setSessionReplayStrategy] = useSettingMutable('sessionReplayStrategy');
     const [sessionReplayRecentMessagesCount, setSessionReplayRecentMessagesCount] = useSettingMutable('sessionReplayRecentMessagesCount');
+    const [sessionReplayMaxSeedChars, setSessionReplayMaxSeedChars] = useSettingMutable('sessionReplayMaxSeedChars');
+    const [sessionReplaySummaryRunnerV1, setSessionReplaySummaryRunnerV1] = useSettingMutable('sessionReplaySummaryRunnerV1');
 
     const [sessionTagsEnabled, setSessionTagsEnabled] = useSettingMutable('sessionTagsEnabled');
 
     const [openHistoryScopeMenu, setOpenHistoryScopeMenu] = React.useState<boolean>(false);
     const [openReplayMenu, setOpenReplayMenu] = React.useState<boolean>(false);
-    const [openThinkingDisplayMenu, setOpenThinkingDisplayMenu] = React.useState<boolean>(false);
 
     const options: Array<{ key: MessageSendMode; title: string; subtitle: string }> = [
         {
@@ -89,24 +88,6 @@ export default React.memo(function SessionSettingsScreen() {
             key: 'summary_plus_recent',
             title: t('settingsSession.replayResume.strategy.summaryRecentTitle'),
             subtitle: t('settingsSession.replayResume.strategy.summaryRecentSubtitle'),
-        },
-    ];
-
-    const thinkingDisplayOptions: Array<{ key: 'inline' | 'tool' | 'hidden'; title: string; subtitle: string }> = [
-        {
-            key: 'inline',
-            title: t('settingsSession.thinking.displayMode.inlineTitle'),
-            subtitle: t('settingsSession.thinking.displayMode.inlineSubtitle'),
-        },
-        {
-            key: 'tool',
-            title: t('settingsSession.thinking.displayMode.toolTitle'),
-            subtitle: t('settingsSession.thinking.displayMode.toolSubtitle'),
-        },
-        {
-            key: 'hidden',
-            title: t('settingsSession.thinking.displayMode.hiddenTitle'),
-            subtitle: t('settingsSession.thinking.displayMode.hiddenSubtitle'),
         },
     ];
 
@@ -224,50 +205,12 @@ export default React.memo(function SessionSettingsScreen() {
                 </ItemGroup>
             ) : null}
 
-            {thinkingVisibilityEnabled ? (
-                <ItemGroup title={t('settingsSession.thinking.title')} footer={t('settingsSession.thinking.footer')}>
-                    <DropdownMenu
-                        open={openThinkingDisplayMenu}
-                        onOpenChange={setOpenThinkingDisplayMenu}
-                        variant="selectable"
-                        search={false}
-                        selectedId={String(sessionThinkingDisplayMode ?? 'inline')}
-                        showCategoryTitles={false}
-                        matchTriggerWidth={true}
-                        connectToTrigger={true}
-                        rowKind="item"
-                        popoverBoundaryRef={popoverBoundaryRef}
-                        itemTrigger={{
-                            title: t('settingsSession.thinking.displayModeTitle'),
-                            icon: <Ionicons name="bulb-outline" size={29} color={theme.colors.accent.blue} />,
-                        }}
-                        items={thinkingDisplayOptions.map((opt) => ({
-                            id: opt.key,
-                            title: opt.title,
-                            subtitle: opt.subtitle,
-                            icon: (
-                                <View style={{ width: 32, height: 32, alignItems: 'center', justifyContent: 'center' }}>
-                                    <Ionicons name="bulb-outline" size={22} color={theme.colors.textSecondary} />
-                                </View>
-                            ),
-                        }))}
-                        onSelect={(id) => {
-                            setSessionThinkingDisplayMode(id as any);
-                            setOpenThinkingDisplayMenu(false);
-                        }}
-                    />
-                </ItemGroup>
-            ) : null}
-
-            <ItemGroup
-                title={t('settingsSession.toolRendering.title')}
-                footer={t('settingsSession.toolRendering.footer')}
-            >
+            <ItemGroup title={t('settingsSession.transcript.title')} footer={t('settingsSession.transcript.footer')}>
                 <Item
-                    title={t('settingsSession.toolRendering.title')}
-                    subtitle={t('settingsSession.toolDetailOverrides.title')}
-                    icon={<Ionicons name="construct-outline" size={29} color={theme.colors.accent.blue} />}
-                    onPress={() => router.push('/(app)/settings/session/tool-rendering')}
+                    title={t('settingsSession.transcript.title')}
+                    subtitle={t('settingsSession.transcript.entrySubtitle')}
+                    icon={<Ionicons name="chatbubble-ellipses-outline" size={29} color={theme.colors.accent.blue} />}
+                    onPress={() => router.push('/(app)/settings/session/transcript')}
                 />
             </ItemGroup>
 
@@ -285,6 +228,7 @@ export default React.memo(function SessionSettingsScreen() {
                 footer={t('settingsSession.replayResume.footer')}
             >
                 <Item
+                    testID="settings-session-replay-enabled-item"
                     title={t('settingsSession.replayResume.enabledTitle')}
                     subtitle={sessionReplayEnabled ? t('settingsSession.replayResume.enabledSubtitleOn') : t('settingsSession.replayResume.enabledSubtitleOff')}
                     icon={<Ionicons name="refresh-outline" size={29} color={theme.colors.success} />}
@@ -339,33 +283,69 @@ export default React.memo(function SessionSettingsScreen() {
                                 onChangeText={(value) => {
                                     const next = Number(String(value).replace(/[^0-9]/g, ''));
                                     if (!Number.isFinite(next)) return;
-                                    const clamped = Math.max(1, Math.min(100, Math.floor(next)));
+                                    const clamped = Math.max(1, Math.min(500, Math.floor(next)));
                                     setSessionReplayRecentMessagesCount(clamped as any);
                                 }}
                             />
                         </View>
+
+                        <View style={[styles.inputContainer, { paddingTop: 0 }]}>
+                            <Text style={styles.fieldLabel}>
+                                {t('settingsSession.replayResume.maxSeedCharsTitle')}
+                            </Text>
+                            <TextInput
+                                testID="settings-session-replay-maxSeedChars-input"
+                                style={styles.textInput}
+                                placeholder={t('settingsSession.replayResume.maxSeedCharsPlaceholder')}
+                                placeholderTextColor={theme.colors.input.placeholder}
+                                value={String(sessionReplayMaxSeedChars ?? '')}
+                                keyboardType={Platform.select({ ios: 'number-pad', default: 'numeric' }) as any}
+                                onChangeText={(value) => {
+                                    const next = Number(String(value).replace(/[^0-9]/g, ''));
+                                    if (!Number.isFinite(next)) return;
+                                    const clamped = Math.max(500, Math.min(200_000, Math.floor(next)));
+                                    setSessionReplayMaxSeedChars(clamped as any);
+                                }}
+                            />
+                        </View>
+
+                        {executionRunsEnabled && sessionReplayStrategy === 'summary_plus_recent' ? (
+                            <View style={[styles.inputContainer, { paddingTop: 0 }]}>
+                                <Text style={styles.fieldLabel}>
+                                    {t('settingsSession.replayResume.summaryRunner.title')}
+                                </Text>
+
+                                <LlmTaskRunnerConfigV1BackendModelPicker
+                                    value={(sessionReplaySummaryRunnerV1 as any) ?? null}
+                                    onChange={(next) => setSessionReplaySummaryRunnerV1((next as any) ?? null)}
+                                    backendTestID="settings-session-replay-summaryRunner-backend"
+                                    modelTestID="settings-session-replay-summaryRunner-model"
+                                    popoverBoundaryRef={popoverBoundaryRef}
+                                />
+                            </View>
+                        ) : null}
                     </>
                 ) : null}
             </ItemGroup>
 
             {executionRunsEnabled ? (
                 <ItemGroup
-                    title="Sub-agent"
-                    footer="Configure delegation guidance rules (backend/model/intent hints) used by the main agent."
+                    title={t('subAgentGuidance.settings.groupTitle')}
+                    footer={t('subAgentGuidance.settings.footer')}
                 >
                     <Item
-                        title="Guidance rules"
-                        subtitle="Open Sub-agent settings"
+                        title={t('subAgentGuidance.settings.rules.groupTitle')}
+                        subtitle={t('settingsSession.subAgentGuidanceEntry.openSubtitle')}
                         icon={<Ionicons name="git-network-outline" size={29} color={theme.colors.accent.orange} />}
                         onPress={() => router.push('/(app)/settings/sub-agent')}
                     />
                 </ItemGroup>
             ) : null}
 
-            <ItemGroup title="Actions" footer="Enable actions per surface and placement (UI, voice, MCP) and control where they appear.">
+            <ItemGroup title={t('common.actions')} footer={t('settingsSession.actionsEntry.footer')}>
                 <Item
-                    title="Actions"
-                    subtitle="Open actions settings"
+                    title={t('common.actions')}
+                    subtitle={t('settingsSession.actionsEntry.openSubtitle')}
                     icon={<Ionicons name="flash-outline" size={29} color={theme.colors.accent.orange} />}
                     onPress={() => router.push('/(app)/settings/actions')}
                 />
@@ -460,6 +440,12 @@ const styles = StyleSheet.create((theme) => ({
         ...Typography.default('semiBold'),
         fontSize: 13,
         color: theme.colors.groupped.sectionTitle,
+        marginBottom: 4,
+    },
+    fieldLabelMuted: {
+        ...Typography.default('regular'),
+        fontSize: 12,
+        color: theme.colors.textSecondary,
         marginBottom: 4,
     },
     textInput: {

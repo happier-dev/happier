@@ -7,6 +7,7 @@ import type { Machine } from '@/sync/domains/state/storageTypes';
 import { t } from '@/text';
 import { clearBugReportUserActionTrail, recordBugReportUserAction } from '@/utils/system/bugReportActionTrail';
 import { clearBugReportLogBuffer } from '@/utils/system/bugReportLogBuffer';
+import { clearPreRestartBugReportSnapshot } from '@/utils/system/preRestartBugReportSnapshot';
 
 import { collectBugReportDiagnosticsArtifacts } from '../bugReportDiagnostics';
 import type { BugReportsFeature } from '../bugReportFeatureDefaults';
@@ -25,6 +26,7 @@ export function useBugReportComposerSubmit(input: Readonly<{
   issueRepo: string;
   existingIssueNumber: number | null;
   openFallbackIssue: (environment: BugReportComposerSubmissionInput['environment']) => Promise<void>;
+  collectDiagnosticsArtifacts?: typeof collectBugReportDiagnosticsArtifacts;
   buildDraftInput: (input: Readonly<{
     includeDiagnostics: boolean;
     diagnosticsKinds: string[];
@@ -46,6 +48,7 @@ export function useBugReportComposerSubmit(input: Readonly<{
     issueRepo,
     existingIssueNumber,
     openFallbackIssue,
+    collectDiagnosticsArtifacts,
     buildDraftInput,
   } = input;
 
@@ -82,7 +85,7 @@ export function useBugReportComposerSubmit(input: Readonly<{
         issueRepo,
         existingIssueNumber: existingIssueNumber ?? undefined,
         openFallbackIssue,
-        collectDiagnosticsArtifacts: collectBugReportDiagnosticsArtifacts,
+        collectDiagnosticsArtifacts: collectDiagnosticsArtifacts ?? collectBugReportDiagnosticsArtifacts,
         submitBugReport: submitBugReportToService,
       });
 
@@ -91,9 +94,9 @@ export function useBugReportComposerSubmit(input: Readonly<{
       }
 
       const submittedMessage = existingIssueNumber
-        ? `A comment has been posted on issue #${result.issueNumber}.\n\nReport ID: ${result.reportId}`
-        : `Issue #${result.issueNumber} has been created.\n\nReport ID: ${result.reportId}`;
-      await Modal.alert('Bug report submitted', submittedMessage);
+        ? t('bugReports.composer.alerts.submittedExistingIssueBody', { issueNumber: result.issueNumber, reportId: result.reportId })
+        : t('bugReports.composer.alerts.submittedNewIssueBody', { issueNumber: result.issueNumber, reportId: result.reportId });
+      await Modal.alert(t('bugReports.composer.alerts.submittedTitle'), submittedMessage);
       recordBugReportUserAction('bug-report.submit-succeeded', {
         route,
         metadata: {
@@ -107,13 +110,16 @@ export function useBugReportComposerSubmit(input: Readonly<{
       void openBugReportIssueUrlSilently(result.issueUrl);
       clearBugReportUserActionTrail();
       clearBugReportLogBuffer();
+      void clearPreRestartBugReportSnapshot();
       router.back();
     } catch (error) {
+      const baseMessage =
+        error instanceof Error ? error.message : t('bugReports.composer.alerts.submitFailedFallbackMessage');
       const fallback = await Modal.confirm(
-        'Submission failed',
-        `${error instanceof Error ? error.message : 'Could not submit this report.'}\n\nDo you want to open a prefilled GitHub issue instead?`,
+        t('bugReports.composer.alerts.submitFailedTitle'),
+        t('bugReports.composer.alerts.submitFailedBody', { message: baseMessage }),
         {
-          confirmText: 'Open fallback issue',
+          confirmText: t('bugReports.composer.alerts.openFallbackIssueButton'),
           cancelText: t('common.cancel'),
         },
       );
@@ -144,6 +150,7 @@ export function useBugReportComposerSubmit(input: Readonly<{
     route,
     router,
     submitting,
+    collectDiagnosticsArtifacts,
   ]);
 
   return {

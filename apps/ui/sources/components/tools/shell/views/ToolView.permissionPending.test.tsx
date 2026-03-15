@@ -76,7 +76,10 @@ vi.mock('../permissions/PermissionFooter', () => ({
 }));
 
 vi.mock('@/text', () => ({
-    t: (key: string) => key,
+    t: (key: string, params?: any) => {
+        if (key === 'tools.common.elapsedSeconds') return `${params?.seconds}s`;
+        return key;
+    },
 }));
 
 vi.mock('@/sync/domains/state/storage', () => ({

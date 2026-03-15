@@ -1,15 +1,21 @@
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeAll, beforeEach, describe, expect, it } from "vitest";
 
 import {
     buildNewMessageUpdate,
+    buildMessageUpdatedUpdate,
     createSessionMessage,
     createSessionRouteReply,
     emitUpdate,
+    preloadSessionRoutes,
     registerSessionRoutesAndGetHandler,
     resetSessionRouteMocks,
 } from "./sessionRoutes.testkit";
 
 describe("sessionRoutes v2 messages", () => {
+    beforeAll(async () => {
+        await preloadSessionRoutes();
+    }, 120_000);
+
     beforeEach(() => {
         resetSessionRouteMocks();
     });
@@ -22,6 +28,7 @@ describe("sessionRoutes v2 messages", () => {
             id: "m1",
             seq: 10,
             localId: "l1",
+            sidechainId: "sc-1",
             content: { t: "encrypted", c: "cipher" },
             createdAt,
             updatedAt,
@@ -50,6 +57,7 @@ describe("sessionRoutes v2 messages", () => {
                 id: "m1",
                 seq: 10,
                 localId: "l1",
+                sidechainId: "sc-1",
                 content: { t: "encrypted", c: "cipher" },
                 createdAt: createdAt.getTime(),
                 updatedAt: updatedAt.getTime(),
@@ -83,6 +91,7 @@ describe("sessionRoutes v2 messages", () => {
         createSessionMessage.mockResolvedValue({
             ok: true,
             didWrite: true,
+            didUpdate: false,
             message: { id: "m1", seq: 10, localId: "l1", content: { t: "encrypted", c: "c" }, createdAt, updatedAt: createdAt },
             participantCursors: [
                 { accountId: "u1", cursor: 111 },
@@ -108,6 +117,7 @@ describe("sessionRoutes v2 messages", () => {
             sessionId: "s1",
             ciphertext: "cipher",
             localId: "l1",
+            sidechainId: null,
         });
 
         expect(buildNewMessageUpdate).toHaveBeenCalledTimes(2);
@@ -121,12 +131,90 @@ describe("sessionRoutes v2 messages", () => {
         });
     });
 
+    it("forwards sidechainId to the message write service when provided", async () => {
+        const createdAt = new Date("2020-01-01T00:00:00.000Z");
+        createSessionMessage.mockResolvedValue({
+            ok: true,
+            didWrite: true,
+            didUpdate: false,
+            message: { id: "m1", seq: 10, localId: "l1", sidechainId: "sc-1", content: { t: "encrypted", c: "c" }, createdAt, updatedAt: createdAt },
+            participantCursors: [],
+        });
+
+        const { handler } = await registerSessionRoutesAndGetHandler("POST", "/v2/sessions/:sessionId/messages");
+        const reply = createSessionRouteReply();
+
+        await handler(
+            {
+                userId: "u1",
+                params: { sessionId: "s1" },
+                headers: {},
+                body: { ciphertext: "cipher", localId: "l1", sidechainId: "sc-1" },
+            },
+            reply,
+        );
+
+        expect(createSessionMessage).toHaveBeenCalledWith({
+            actorUserId: "u1",
+            sessionId: "s1",
+            ciphertext: "cipher",
+            localId: "l1",
+            sidechainId: "sc-1",
+        });
+    });
+
+    it("emits message-updated when the service updates an existing message row", async () => {
+        const createdAt = new Date("2020-01-01T00:00:00.000Z");
+        const updatedAt = new Date("2020-01-01T00:00:01.000Z");
+
+        createSessionMessage.mockResolvedValue({
+            ok: true,
+            didWrite: false,
+            didUpdate: true,
+            message: {
+                id: "m1",
+                seq: 10,
+                localId: "l1",
+                sidechainId: null,
+                content: { t: "encrypted", c: "c" },
+                createdAt,
+                updatedAt,
+            },
+            participantCursors: [{ accountId: "u1", cursor: 111 }],
+        });
+
+        const { handler } = await registerSessionRoutesAndGetHandler("POST", "/v2/sessions/:sessionId/messages");
+        const reply = createSessionRouteReply();
+
+        const res = await handler(
+            {
+                userId: "u1",
+                params: { sessionId: "s1" },
+                headers: {},
+                body: { ciphertext: "cipher", localId: "l1" },
+            },
+            reply,
+        );
+
+        expect(buildNewMessageUpdate).not.toHaveBeenCalled();
+        expect(buildMessageUpdatedUpdate).toHaveBeenCalledTimes(1);
+        expect(buildMessageUpdatedUpdate).toHaveBeenCalledWith(expect.anything(), "s1", 111, expect.any(String));
+        expect(emitUpdate).toHaveBeenCalledTimes(1);
+
+        expect(res).toEqual({
+            didWrite: false,
+            didUpdate: true,
+            message: { id: "m1", seq: 10, localId: "l1", createdAt: createdAt.getTime() },
+        });
+    });
+
     it("uses Idempotency-Key header as localId when body.localId is missing", async () => {
         const createdAt = new Date(1);
         createSessionMessage.mockResolvedValue({
             ok: true,
             didWrite: false,
-            message: { id: "m1", seq: 10, localId: "idem-1", createdAt },
+            didUpdate: false,
+            message: { id: "m1", seq: 10, localId: "idem-1", content: { t: "encrypted", c: "c" }, sidechainId: null, createdAt, updatedAt: createdAt },
             participantCursors: [],
         });
 
@@ -148,6 +236,7 @@ describe("sessionRoutes v2 messages", () => {
             sessionId: "s1",
             ciphertext: "cipher",
             localId: "idem-1",
+            sidechainId: null,
         });
         expect(emitUpdate).not.toHaveBeenCalled();
 
@@ -162,7 +251,8 @@ describe("sessionRoutes v2 messages", () => {
         createSessionMessage.mockResolvedValue({
             ok: true,
             didWrite: true,
-            message: { id: "m1", seq: 10, localId: null, content: { t: "plain", v: { type: "user", text: "hi" } }, createdAt, updatedAt: createdAt },
+            didUpdate: false,
+            message: { id: "m1", seq: 10, localId: null, sidechainId: null, content: { t: "plain", v: { type: "user", text: "hi" } }, createdAt, updatedAt: createdAt },
             participantCursors: [{ accountId: "u1", cursor: 111 }],
         });
 
@@ -184,6 +274,7 @@ describe("sessionRoutes v2 messages", () => {
             sessionId: "s1",
             content: { t: "plain", v: { type: "user", text: "hi" } },
             localId: null,
+            sidechainId: null,
         });
 
         expect(res).toEqual({

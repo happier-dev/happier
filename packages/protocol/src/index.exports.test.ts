@@ -65,4 +65,13 @@ describe('protocol package root exports', () => {
     it('exports connected service profile id schema', () => {
         expect(protocol.ConnectedServiceProfileIdSchema.parse('work')).toBe('work');
     });
+
+    it('exports account encryption migrate schemas', () => {
+        expect(protocol.AccountEncryptionMigrateInvalidParamsReasonSchema.parse('restore_required')).toBe('restore_required');
+        const parsed = protocol.AccountEncryptionMigrateBadRequestResponseSchema.parse({
+            error: 'invalid-params',
+            reason: 'key_proof_required',
+        });
+        expect(parsed.error).toBe('invalid-params');
+    });
 });

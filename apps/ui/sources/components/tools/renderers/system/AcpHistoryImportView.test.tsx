@@ -72,7 +72,7 @@ describe('AcpHistoryImportView', () => {
         sessionAllow.mockResolvedValueOnce(undefined);
         const tree = await renderView(makeTool());
 
-        const importButton = findPressableByText(tree, 'Import');
+        const importButton = findPressableByText(tree, 'tools.acpHistoryImport.actions.import');
         expect(importButton).toBeTruthy();
         await act(async () => {
             await importButton!.props.onPress();
@@ -86,7 +86,7 @@ describe('AcpHistoryImportView', () => {
         sessionDeny.mockResolvedValueOnce(undefined);
         const tree = await renderView(makeTool());
 
-        const skipButton = findPressableByText(tree, 'Skip');
+        const skipButton = findPressableByText(tree, 'tools.acpHistoryImport.actions.skip');
         expect(skipButton).toBeTruthy();
         await act(async () => {
             await skipButton!.props.onPress();
@@ -100,7 +100,7 @@ describe('AcpHistoryImportView', () => {
         sessionAllow.mockRejectedValueOnce(new Error('network-down'));
         const tree = await renderView(makeTool());
 
-        const importButton = findPressableByText(tree, 'Import');
+        const importButton = findPressableByText(tree, 'tools.acpHistoryImport.actions.import');
         expect(importButton).toBeTruthy();
         await act(async () => {
             await importButton!.props.onPress();
@@ -118,8 +118,8 @@ describe('AcpHistoryImportView', () => {
             },
         });
 
-        const importButton = findPressableByText(tree, 'Import');
-        const skipButton = findPressableByText(tree, 'Skip');
+        const importButton = findPressableByText(tree, 'tools.acpHistoryImport.actions.import');
+        const skipButton = findPressableByText(tree, 'tools.acpHistoryImport.actions.skip');
         expect(importButton).toBeTruthy();
         expect(skipButton).toBeTruthy();
 

@@ -1,40 +1,9 @@
-const FILE_LANGUAGE_BY_EXTENSION: Record<string, string> = {
-    js: 'javascript',
-    jsx: 'javascript',
-    ts: 'typescript',
-    tsx: 'typescript',
-    py: 'python',
-    html: 'html',
-    htm: 'html',
-    css: 'css',
-    json: 'json',
-    md: 'markdown',
-    xml: 'xml',
-    svg: 'xml',
-    yaml: 'yaml',
-    yml: 'yaml',
-    sh: 'bash',
-    bash: 'bash',
-    sql: 'sql',
-    go: 'go',
-    rust: 'rust',
-    rs: 'rust',
-    java: 'java',
-    c: 'c',
-    cpp: 'cpp',
-    cc: 'cpp',
-    cxx: 'cpp',
-    php: 'php',
-    rb: 'ruby',
-    swift: 'swift',
-    kt: 'kotlin',
-};
-
 const KNOWN_BINARY_EXTENSIONS = new Set([
     'png',
     'jpg',
     'jpeg',
     'gif',
+    'webp',
     'bmp',
     'ico',
     'mp4',
@@ -71,7 +40,18 @@ const KNOWN_BINARY_EXTENSIONS = new Set([
     'db',
     'sqlite',
     'sqlite3',
+    'lockb',
 ]);
+
+const IMAGE_MIME_BY_EXTENSION: Record<string, string> = {
+    png: 'image/png',
+    jpg: 'image/jpeg',
+    jpeg: 'image/jpeg',
+    gif: 'image/gif',
+    webp: 'image/webp',
+    bmp: 'image/bmp',
+    ico: 'image/x-icon',
+};
 
 function getPathExtension(path: string): string | null {
     const basename = path.split('/').pop() ?? path;
@@ -80,25 +60,37 @@ function getPathExtension(path: string): string | null {
     return basename.slice(lastDotIndex + 1).toLowerCase();
 }
 
-export function getFileLanguageFromPath(path: string): string | null {
-    const extension = getPathExtension(path);
-    if (!extension) return null;
-    return FILE_LANGUAGE_BY_EXTENSION[extension] ?? null;
-}
-
 export function isKnownBinaryPath(path: string): boolean {
     const extension = getPathExtension(path);
     return extension ? KNOWN_BINARY_EXTENSIONS.has(extension) : false;
+}
+
+export function getImageMimeTypeFromPath(path: string): string | null {
+    const extension = getPathExtension(path);
+    if (!extension) return null;
+    return IMAGE_MIME_BY_EXTENSION[extension] ?? null;
+}
+
+export function isKnownImagePath(path: string): boolean {
+    return getImageMimeTypeFromPath(path) != null;
 }
 
 export function isBinaryContent(content: string): boolean {
     if (!content) return false;
     if (content.includes('\0')) return true;
 
-    const nonPrintableCount = content.split('').filter((char) => {
-        const code = char.charCodeAt(0);
-        return code < 32 && code !== 9 && code !== 10 && code !== 13;
-    }).length;
+    const len = content.length;
+    if (len === 0) return false;
+    const maxAllowed = Math.floor(len * 0.1);
 
-    return nonPrintableCount / content.length > 0.1;
+    let nonPrintableCount = 0;
+    for (let i = 0; i < len; i++) {
+        const code = content.charCodeAt(i);
+        if (code < 32 && code !== 9 && code !== 10 && code !== 13) {
+            nonPrintableCount += 1;
+            if (nonPrintableCount > maxAllowed) return true;
+        }
+    }
+
+    return false;
 }

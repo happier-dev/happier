@@ -8,25 +8,27 @@ export const AGENTS_CORE = {
         cliSubcommand: 'claude',
         detectKey: 'claude',
         flavorAliases: [],
-        cloudConnect: { vendorKey: 'anthropic', status: 'experimental' },
+        cloudConnect: { vendorKey: 'anthropic', status: 'wired' },
         connectedServices: {
-            supportedServiceIds: ['anthropic'],
+            supportedServiceIds: ['claude-subscription', 'anthropic'],
             supportedKindsByServiceId: {
-                anthropic: ['oauth', 'token'],
+                'claude-subscription': ['oauth', 'token'],
+                anthropic: ['token'],
             },
         },
-        resume: { vendorResume: 'supported', vendorResumeIdField: null, runtimeGate: null },
+        resume: { vendorResume: 'supported', vendorResumeIdField: 'claudeSessionId', runtimeGate: null },
     },
     codex: {
         id: 'codex',
         cliSubcommand: 'codex',
         detectKey: 'codex',
-        flavorAliases: ['codex-acp', 'codex-mcp'],
-        cloudConnect: { vendorKey: 'openai', status: 'experimental' },
+        flavorAliases: ['codex-acp', 'codex-mcp', 'openai', 'gpt'],
+        cloudConnect: { vendorKey: 'openai', status: 'wired' },
         connectedServices: {
-            supportedServiceIds: ['openai-codex'],
+            supportedServiceIds: ['openai-codex', 'openai'],
             supportedKindsByServiceId: {
                 'openai-codex': ['oauth'],
+                openai: ['token'],
             },
         },
         resume: { vendorResume: 'experimental', vendorResumeIdField: 'codexSessionId', runtimeGate: null },
@@ -35,16 +37,17 @@ export const AGENTS_CORE = {
         id: 'opencode',
         cliSubcommand: 'opencode',
         detectKey: 'opencode',
-        flavorAliases: [],
+        flavorAliases: ['open-code'],
         cloudConnect: null,
         connectedServices: {
-            supportedServiceIds: ['openai-codex', 'anthropic'],
+            supportedServiceIds: ['openai-codex', 'openai', 'anthropic'],
             supportedKindsByServiceId: {
                 'openai-codex': ['oauth'],
-                anthropic: ['oauth'],
+                openai: ['token'],
+                anthropic: ['token'],
             },
         },
-        resume: { vendorResume: 'supported', vendorResumeIdField: 'opencodeSessionId', runtimeGate: 'acpLoadSession' },
+        resume: { vendorResume: 'supported', vendorResumeIdField: 'opencodeSessionId', runtimeGate: null },
     },
     gemini: {
         id: 'gemini',
@@ -58,7 +61,7 @@ export const AGENTS_CORE = {
                 gemini: ['oauth'],
             },
         },
-        resume: { vendorResume: 'supported', vendorResumeIdField: 'geminiSessionId', runtimeGate: 'acpLoadSession' },
+        resume: { vendorResume: 'supported', vendorResumeIdField: 'geminiSessionId', runtimeGate: null },
     },
     auggie: {
         id: 'auggie',
@@ -67,7 +70,7 @@ export const AGENTS_CORE = {
         flavorAliases: [],
         cloudConnect: null,
         connectedServices: null,
-        resume: { vendorResume: 'supported', vendorResumeIdField: 'auggieSessionId', runtimeGate: 'acpLoadSession' },
+        resume: { vendorResume: 'supported', vendorResumeIdField: 'auggieSessionId', runtimeGate: null },
     },
     qwen: {
         id: 'qwen',
@@ -76,7 +79,7 @@ export const AGENTS_CORE = {
         flavorAliases: ['qwen-code'],
         cloudConnect: null,
         connectedServices: null,
-        resume: { vendorResume: 'supported', vendorResumeIdField: 'qwenSessionId', runtimeGate: 'acpLoadSession' },
+        resume: { vendorResume: 'supported', vendorResumeIdField: 'qwenSessionId', runtimeGate: null },
     },
     kimi: {
         id: 'kimi',
@@ -85,7 +88,7 @@ export const AGENTS_CORE = {
         flavorAliases: ['kimi-cli'],
         cloudConnect: null,
         connectedServices: null,
-        resume: { vendorResume: 'supported', vendorResumeIdField: 'kimiSessionId', runtimeGate: 'acpLoadSession' },
+        resume: { vendorResume: 'supported', vendorResumeIdField: 'kimiSessionId', runtimeGate: null },
     },
     kilo: {
         id: 'kilo',
@@ -94,7 +97,7 @@ export const AGENTS_CORE = {
         flavorAliases: ['kilocode'],
         cloudConnect: null,
         connectedServices: null,
-        resume: { vendorResume: 'supported', vendorResumeIdField: 'kiloSessionId', runtimeGate: 'acpLoadSession' },
+        resume: { vendorResume: 'supported', vendorResumeIdField: 'kiloSessionId', runtimeGate: null },
     },
     pi: {
         id: 'pi',
@@ -103,9 +106,11 @@ export const AGENTS_CORE = {
         flavorAliases: ['pi-coding-agent'],
         cloudConnect: null,
         connectedServices: {
-            supportedServiceIds: ['openai-codex', 'anthropic'],
+            supportedServiceIds: ['openai-codex', 'openai', 'claude-subscription', 'anthropic'],
             supportedKindsByServiceId: {
                 'openai-codex': ['oauth'],
+                openai: ['token'],
+                'claude-subscription': ['token'],
                 anthropic: ['token'],
             },
         },
@@ -118,6 +123,6 @@ export const AGENTS_CORE = {
         flavorAliases: ['github-copilot', 'copilot-cli'],
         cloudConnect: null,
         connectedServices: null,
-        resume: { vendorResume: 'supported', vendorResumeIdField: 'copilotSessionId', runtimeGate: 'acpLoadSession' },
+        resume: { vendorResume: 'supported', vendorResumeIdField: 'copilotSessionId', runtimeGate: null },
     },
 } as const satisfies Record<AgentId, AgentCore>;

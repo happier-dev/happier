@@ -14,7 +14,7 @@
  * To undo: yarn unlink:dev
  */
 
-const { execFileSync } = require('child_process');
+const childProcess = require('node:child_process');
 const { join, dirname } = require('path');
 const fs = require('fs');
 const { withWindowsHide } = require('./childProcessOptions.cjs');
@@ -22,15 +22,18 @@ const { withWindowsHide } = require('./childProcessOptions.cjs');
 const projectRoot = dirname(__dirname);
 const binSource = join(projectRoot, 'bin', 'happier-dev.mjs');
 
-// Get the action from command line args
-const action = process.argv[2] || 'link';
 const targetBins = ['happier-dev'];
 
-function getGlobalBinDir() {
+function getGlobalBinDir(opts = {}) {
+    const execFileSync = typeof opts.execFileSync === 'function' ? opts.execFileSync : childProcess.execFileSync;
+    const existsSync = typeof opts.existsSync === 'function' ? opts.existsSync : fs.existsSync;
+
     // Try npm global bin first using execFileSync (safer than execSync)
     try {
-        const npmBin = execFileSync('npm', ['bin', '-g'], withWindowsHide({ encoding: 'utf8' })).trim();
-        if (fs.existsSync(npmBin)) {
+        const npmBin = process.platform === 'win32'
+            ? execFileSync(process.env.ComSpec || 'cmd.exe', ['/d', '/s', '/c', '"npm bin -g"'], withWindowsHide({ encoding: 'utf8' })).trim()
+            : execFileSync('npm', ['bin', '-g'], withWindowsHide({ encoding: 'utf8' })).trim();
+        if (existsSync(npmBin)) {
             return npmBin;
         }
     } catch (e) {
@@ -125,9 +128,17 @@ function unlink() {
     console.log('\nTo restore npm version: npm install -g @happier-dev/cli');
 }
 
-// Main
-if (action === 'unlink') {
-    unlink();
-} else {
-    link();
+function main() {
+    const action = process.argv[2] || 'link';
+    if (action === 'unlink') {
+        unlink();
+    } else {
+        link();
+    }
 }
+
+if (require.main === module) {
+    main();
+}
+
+module.exports = { getGlobalBinDir };

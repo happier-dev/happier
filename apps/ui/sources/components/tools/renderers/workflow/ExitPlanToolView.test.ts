@@ -1,5 +1,5 @@
 import React from 'react';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import renderer, { act } from 'react-test-renderer';
 import type { ToolCall } from '@/sync/domains/messages/messageTypes';
 import { collectHostText, makeToolCall, makeToolViewProps } from '../../shell/views/ToolView.testHelpers';
@@ -7,6 +7,7 @@ import { collectHostText, makeToolCall, makeToolViewProps } from '../../shell/vi
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 const sessionAllow = vi.fn();
+const sessionAllowWithPermissionUpdates = vi.fn();
 const sessionDeny = vi.fn();
 const sendMessage = vi.fn();
 const modalAlert = vi.fn();
@@ -46,6 +47,7 @@ vi.mock('../../catalog', () => ({
 
 vi.mock('@/sync/ops', () => ({
     sessionAllow: (...args: any[]) => sessionAllow(...args),
+    sessionAllowWithPermissionUpdates: (...args: any[]) => sessionAllowWithPermissionUpdates(...args),
     sessionDeny: (...args: any[]) => sessionDeny(...args),
 }));
 
@@ -56,6 +58,8 @@ vi.mock('@/sync/sync', () => ({
 }));
 
 describe('ExitPlanToolView', () => {
+    let ExitPlanToolView: React.ComponentType<any>;
+
     function makeRunningTool(overrides: Partial<ToolCall> = {}): ToolCall {
         return makeToolCall({
             name: 'ExitPlanMode',
@@ -68,7 +72,6 @@ describe('ExitPlanToolView', () => {
     }
 
     async function renderView(tool: ToolCall, overrides: Record<string, unknown> = {}) {
-        const { ExitPlanToolView } = await import('./ExitPlanToolView');
         let tree: renderer.ReactTestRenderer | undefined;
         await act(async () => {
             tree = renderer.create(
@@ -81,8 +84,13 @@ describe('ExitPlanToolView', () => {
         return tree!;
     }
 
+    beforeAll(async () => {
+        ({ ExitPlanToolView } = await import('./ExitPlanToolView'));
+    });
+
     beforeEach(() => {
         sessionAllow.mockReset();
+        sessionAllowWithPermissionUpdates.mockReset();
         sessionDeny.mockReset();
         sendMessage.mockReset();
         modalAlert.mockReset();
@@ -102,6 +110,91 @@ describe('ExitPlanToolView', () => {
         expect(sessionAllow).toHaveBeenCalledWith('s1', 'perm1');
         expect(sendMessage).toHaveBeenCalledTimes(0);
         expect(collectHostText(tree)).toContain('tools.exitPlanMode.responded');
+    });
+
+    it('approves with acceptEdits via approve options menu', async () => {
+        sessionAllowWithPermissionUpdates.mockResolvedValueOnce(undefined);
+        const tree = await renderView(makeRunningTool());
+
+        await act(async () => {
+            await tree.root.findByProps({ testID: 'exit-plan-approve-menu' }).props.onPress();
+        });
+
+        const buttons = modalAlert.mock.calls.at(-1)?.[2] as Array<{ text?: string; onPress?: () => void }> | undefined;
+        const acceptEdits = buttons?.find((b) => typeof b.text === 'string' && b.text.includes('agentInput.permissionMode.acceptEdits'));
+        expect(acceptEdits?.onPress).toBeTypeOf('function');
+
+        await act(async () => {
+            acceptEdits!.onPress!();
+        });
+
+        expect(sessionAllowWithPermissionUpdates).toHaveBeenCalledTimes(1);
+        expect(sessionAllowWithPermissionUpdates).toHaveBeenCalledWith(
+            's1',
+            'perm1',
+            expect.objectContaining({
+                mode: 'acceptEdits',
+                updatedPermissions: [{ type: 'setMode', mode: 'acceptEdits', destination: 'session' }],
+            }),
+        );
+    });
+
+    it('approves with bypassPermissions via approve options menu', async () => {
+        sessionAllowWithPermissionUpdates.mockResolvedValueOnce(undefined);
+        const tree = await renderView(makeRunningTool());
+
+        await act(async () => {
+            await tree.root.findByProps({ testID: 'exit-plan-approve-menu' }).props.onPress();
+        });
+
+        const buttons = modalAlert.mock.calls.at(-1)?.[2] as Array<{ text?: string; onPress?: () => void }> | undefined;
+        const bypassPermissions = buttons?.find((b) => typeof b.text === 'string' && b.text.includes('agentInput.permissionMode.badgeBypassAllPermissions'));
+        expect(bypassPermissions?.onPress).toBeTypeOf('function');
+
+        await act(async () => {
+            bypassPermissions!.onPress!();
+        });
+
+        expect(sessionAllowWithPermissionUpdates).toHaveBeenCalledTimes(1);
+        expect(sessionAllowWithPermissionUpdates).toHaveBeenCalledWith(
+            's1',
+            'perm1',
+            expect.objectContaining({
+                mode: 'bypassPermissions',
+                updatedPermissions: [{ type: 'setMode', mode: 'bypassPermissions', destination: 'session' }],
+            }),
+        );
+    });
+
+    it('surfaces provider setMode suggestions as additional approve options', async () => {
+        sessionAllowWithPermissionUpdates.mockResolvedValueOnce(undefined);
+        const providerSuggestion = { type: 'setMode', mode: 'customMode', destination: 'session' };
+        const tree = await renderView(
+            makeRunningTool({
+                permission: { id: 'perm1', status: 'pending', suggestions: [providerSuggestion] } as any,
+            }),
+        );
+
+        await act(async () => {
+            await tree.root.findByProps({ testID: 'exit-plan-approve-menu' }).props.onPress();
+        });
+
+        const buttons = modalAlert.mock.calls.at(-1)?.[2] as Array<{ text?: string; onPress?: () => void }> | undefined;
+        const customModeButton = buttons?.find((b) => typeof b.text === 'string' && b.text.includes('customMode'));
+        expect(customModeButton?.onPress).toBeTypeOf('function');
+
+        await act(async () => {
+            customModeButton!.onPress!();
+        });
+
+        expect(sessionAllowWithPermissionUpdates).toHaveBeenCalledTimes(1);
+        expect(sessionAllowWithPermissionUpdates).toHaveBeenCalledWith(
+            's1',
+            'perm1',
+            expect.objectContaining({
+                updatedPermissions: [providerSuggestion],
+            }),
+        );
     });
 
     it('rejects via permission RPC and does not send a follow-up user message', async () => {
@@ -222,11 +315,19 @@ describe('ExitPlanToolView', () => {
         expect(collectHostText(tree)).toContain('session.sharing.permissionApprovalsDisabledNotGranted');
     });
 
-    it('falls back to <empty> when plan input schema parse fails', async () => {
+    it('shows a placeholder when no plan text is provided', async () => {
+        safeParsePlan.mockReturnValueOnce({ success: true, data: {} });
+        const tree = await renderView(makeRunningTool({ input: {} }));
+
+        const markdownNode = tree.root.findByType('MarkdownView' as any);
+        expect(markdownNode.props.markdown).toBe('tools.exitPlanMode.planMissing');
+    });
+
+    it('shows a placeholder when plan input schema parse fails', async () => {
         safeParsePlan.mockReturnValueOnce({ success: false });
         const tree = await renderView(makeRunningTool({ input: { unexpected: true } }));
 
         const markdownNode = tree.root.findByType('MarkdownView' as any);
-        expect(markdownNode.props.markdown).toBe('<empty>');
+        expect(markdownNode.props.markdown).toBe('tools.exitPlanMode.planMissing');
     });
 });

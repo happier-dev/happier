@@ -97,6 +97,7 @@ export async function applyEphemeralServerSelectionFromPrefixArgs(argsRaw: strin
   let serverUrl: string | null = null;
   let webappUrl: string | null = null;
   let publicServerUrl: string | null = null;
+  let localServerUrl: string | null = null;
 
   let i = 0;
   while (i < args.length) {
@@ -119,6 +120,12 @@ export async function applyEphemeralServerSelectionFromPrefixArgs(argsRaw: strin
       i += webappUrlFlag.consumed;
       continue;
     }
+    const localUrlFlag = takePrefixFlagValue(slice, '--local-server-url');
+    if (localUrlFlag.consumed) {
+      localServerUrl = localUrlFlag.value;
+      i += localUrlFlag.consumed;
+      continue;
+    }
     const publicUrlFlag = takePrefixFlagValue(slice, '--public-server-url');
     if (publicUrlFlag.consumed) {
       publicServerUrl = publicUrlFlag.value;
@@ -128,49 +135,71 @@ export async function applyEphemeralServerSelectionFromPrefixArgs(argsRaw: strin
     break;
   }
 
-  if (!server && !serverUrl && !webappUrl && !publicServerUrl) {
+  if (!server && !serverUrl && !webappUrl && !publicServerUrl && !localServerUrl) {
     return argsRaw;
   }
 
   if (server && serverUrl) {
     throw new Error('Cannot use --server and --server-url together');
   }
+  if (server && localServerUrl) {
+    throw new Error('Cannot use --server and --local-server-url together');
+  }
   if (webappUrl && !serverUrl) {
     throw new Error('Cannot use --webapp-url without --server-url');
   }
 
+  // Compatibility: legacy `--public-server-url` (canonical) + legacy `--server-url` (local).
+  if (publicServerUrl) {
+    if (serverUrl && !localServerUrl) {
+      localServerUrl = serverUrl;
+      serverUrl = publicServerUrl;
+    } else if (!serverUrl) {
+      serverUrl = publicServerUrl;
+    }
+  }
+
+  const applyEphemeralSelectionEnv = (params: Readonly<{ serverUrl: string; webappUrl: string; localServerUrl?: string | null }>) => {
+    const canonical = normalizeUrlOrThrow(params.serverUrl, '--server-url');
+    const local = params.localServerUrl ? normalizeUrlOrThrow(params.localServerUrl, '--local-server-url') : '';
+
+    if (local && local !== canonical) {
+      process.env.HAPPIER_PUBLIC_SERVER_URL = canonical;
+      process.env.HAPPIER_LOCAL_SERVER_URL = local;
+      process.env.HAPPIER_SERVER_URL = local;
+    } else {
+      delete process.env.HAPPIER_PUBLIC_SERVER_URL;
+      delete process.env.HAPPIER_LOCAL_SERVER_URL;
+      process.env.HAPPIER_SERVER_URL = canonical;
+    }
+    process.env.HAPPIER_WEBAPP_URL = normalizeUrlOrThrow(params.webappUrl, '--webapp-url');
+  };
+
   if (server) {
     const profile = await getServerProfile(server);
-    process.env.HAPPIER_SERVER_URL = profile.serverUrl;
-    process.env.HAPPIER_WEBAPP_URL = profile.webappUrl;
-    if (publicServerUrl) {
-      process.env.HAPPIER_PUBLIC_SERVER_URL = normalizeUrlOrThrow(publicServerUrl, '--public-server-url');
-    }
+    applyEphemeralSelectionEnv({
+      serverUrl: profile.serverUrl,
+      webappUrl: profile.webappUrl,
+      localServerUrl: (profile as any).localServerUrl ?? null,
+    });
     reloadConfiguration();
     return args.slice(i);
   }
 
   if (serverUrl) {
-    const normalizedServerUrl = normalizeUrlOrThrow(serverUrl, '--server-url');
     let normalizedWebappUrl: string | null = null;
     if (webappUrl) {
       normalizedWebappUrl = normalizeUrlOrThrow(webappUrl, '--webapp-url');
     } else {
       // Avoid noisy config warnings by defaulting to the server origin.
-      normalizedWebappUrl = new URL(normalizedServerUrl).origin;
+      normalizedWebappUrl = new URL(normalizeUrlOrThrow(serverUrl, '--server-url')).origin;
     }
-
-    process.env.HAPPIER_SERVER_URL = normalizedServerUrl;
-    process.env.HAPPIER_WEBAPP_URL = normalizedWebappUrl;
-    if (publicServerUrl) {
-      process.env.HAPPIER_PUBLIC_SERVER_URL = normalizeUrlOrThrow(publicServerUrl, '--public-server-url');
-    }
+    applyEphemeralSelectionEnv({ serverUrl, webappUrl: normalizedWebappUrl, localServerUrl });
     reloadConfiguration();
     return args.slice(i);
   }
 
-  // Only public server url without selection is ambiguous; treat as error.
-  throw new Error('Cannot use --public-server-url without --server or --server-url');
+  throw new Error('Cannot use --local-server-url without --server-url');
 }
 
 /**
@@ -181,8 +210,8 @@ export async function applyEphemeralServerSelectionFromPrefixArgs(argsRaw: strin
  * - --server-url <url> [--webapp-url <url>] [--persist|--no-persist]
  *
  * Side effects:
- * - May update persisted settings (when --server or --server-url default persist)
- * - May set env vars (when --no-persist)
+ * - May update persisted settings (when --server is used, or when --server-url is combined with --persist)
+ * - May set env vars (when --no-persist is used, or when --server-url is used without --persist)
  * - Always reloads configuration if selection is applied
  */
 export async function applyServerSelectionFromArgs(argsRaw: string[]): Promise<string[]> {
@@ -192,6 +221,8 @@ export async function applyServerSelectionFromArgs(argsRaw: string[]): Promise<s
   args = server.rest;
   const serverUrl = takeFlagValue(args, '--server-url');
   args = serverUrl.rest;
+  const localServerUrl = takeFlagValue(args, '--local-server-url');
+  args = localServerUrl.rest;
   const webappUrl = takeFlagValue(args, '--webapp-url');
   args = webappUrl.rest;
   const persist = takeFlagBool(args, '--persist');
@@ -203,20 +234,37 @@ export async function applyServerSelectionFromArgs(argsRaw: string[]): Promise<s
     throw new Error('Cannot use --server and --server-url together');
   }
 
+  if (server.value && localServerUrl.value) {
+    throw new Error('Cannot use --server and --local-server-url together');
+  }
+
   if (webappUrl.value && !serverUrl.value) {
     throw new Error('Cannot use --webapp-url without --server-url');
+  }
+  if (localServerUrl.value && !serverUrl.value) {
+    throw new Error('Cannot use --local-server-url without --server-url');
   }
 
   if (persist.present && noPersist.present) {
     throw new Error('Cannot use --persist and --no-persist together');
   }
 
-  const shouldPersist = noPersist.present ? false : persist.present ? true : true;
+  const shouldPersistProfileSelection = noPersist.present ? false : true;
+  const shouldPersistServerUrlSelection = persist.present ? true : false;
 
   if (server.value) {
-    if (!shouldPersist) {
+    if (!shouldPersistProfileSelection) {
       const profile = await getServerProfile(server.value);
-      process.env.HAPPIER_SERVER_URL = profile.serverUrl;
+      const local = (profile as any).localServerUrl ? String((profile as any).localServerUrl).trim() : '';
+      if (local && local !== profile.serverUrl) {
+        process.env.HAPPIER_PUBLIC_SERVER_URL = profile.serverUrl;
+        process.env.HAPPIER_LOCAL_SERVER_URL = local;
+        process.env.HAPPIER_SERVER_URL = local;
+      } else {
+        delete process.env.HAPPIER_PUBLIC_SERVER_URL;
+        delete process.env.HAPPIER_LOCAL_SERVER_URL;
+        process.env.HAPPIER_SERVER_URL = profile.serverUrl;
+      }
       process.env.HAPPIER_WEBAPP_URL = profile.webappUrl;
     } else {
       await useServerProfile(server.value);
@@ -228,8 +276,17 @@ export async function applyServerSelectionFromArgs(argsRaw: string[]): Promise<s
   if (serverUrl.value) {
     const normalizedServerUrl = normalizeUrlOrThrow(serverUrl.value, '--server-url');
     const normalizedWebappUrl = webappUrl.value ? normalizeUrlOrThrow(webappUrl.value, '--webapp-url') : null;
-    if (!shouldPersist) {
-      process.env.HAPPIER_SERVER_URL = normalizedServerUrl;
+    const normalizedLocalServerUrl = localServerUrl.value ? normalizeUrlOrThrow(localServerUrl.value, '--local-server-url') : null;
+    if (!shouldPersistServerUrlSelection) {
+      if (normalizedLocalServerUrl && normalizedLocalServerUrl !== normalizedServerUrl) {
+        process.env.HAPPIER_PUBLIC_SERVER_URL = normalizedServerUrl;
+        process.env.HAPPIER_LOCAL_SERVER_URL = normalizedLocalServerUrl;
+        process.env.HAPPIER_SERVER_URL = normalizedLocalServerUrl;
+      } else {
+        delete process.env.HAPPIER_PUBLIC_SERVER_URL;
+        delete process.env.HAPPIER_LOCAL_SERVER_URL;
+        process.env.HAPPIER_SERVER_URL = normalizedServerUrl;
+      }
       process.env.HAPPIER_WEBAPP_URL = normalizedWebappUrl ?? deriveDefaultWebappUrl(normalizedServerUrl);
       reloadConfiguration();
       return args;
@@ -239,6 +296,7 @@ export async function applyServerSelectionFromArgs(argsRaw: string[]): Promise<s
     await addServerProfile({
       name,
       serverUrl: normalizedServerUrl,
+      ...(normalizedLocalServerUrl && normalizedLocalServerUrl !== normalizedServerUrl ? { localServerUrl: normalizedLocalServerUrl } : {}),
       webappUrl: normalizedWebappUrl ?? deriveDefaultWebappUrl(normalizedServerUrl),
       use: true,
     });

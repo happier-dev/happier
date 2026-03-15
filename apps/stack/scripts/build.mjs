@@ -7,7 +7,7 @@ import { dirname, join } from 'node:path';
 import { readFile, rm, mkdir, writeFile } from 'node:fs/promises';
 import { tailscaleServeHttpsUrl } from './tailscale.mjs';
 import { printResult, wantsHelp, wantsJson } from './utils/cli/cli.mjs';
-import { ensureExpoIsolationEnv, getExpoStatePaths, wantsExpoClearCache } from './utils/expo/expo.mjs';
+import { ensureExpoIsolationEnv, getExpoStatePaths, resolveExpoTmpDir, wantsExpoClearCache } from './utils/expo/expo.mjs';
 import { expoExec } from './utils/expo/command.mjs';
 import { getInvokedCwd, inferComponentFromCwd } from './utils/cli/cwd_scope.mjs';
 import { applyStackTauriOverrides } from './utils/tauri/stack_overrides.mjs';
@@ -108,7 +108,8 @@ async function main() {
       projectDir: uiDir,
       stateFileName: 'ui.export.state.json',
     });
-    await ensureExpoIsolationEnv({ env, stateDir: paths.stateDir, expoHomeDir: paths.expoHomeDir, tmpDir: paths.tmpDir });
+    const tmpDir = resolveExpoTmpDir({ env, defaultTmpDir: paths.tmpDir, kind: 'ui-export', projectDir: uiDir });
+    await ensureExpoIsolationEnv({ env, stateDir: paths.stateDir, expoHomeDir: paths.expoHomeDir, tmpDir });
     const args = ['export', '--platform', 'web', '--output-dir', tmpOutDir, ...(wantsExpoClearCache({ env }) ? ['-c'] : [])];
     await expoExec({ dir: uiDir, args, env, ensureDepsLabel: 'happier-ui' });
 
@@ -169,14 +170,15 @@ async function main() {
   delete tauriEnv.EXPO_PUBLIC_WEB_BASE_URL;
 
   {
-    const paths = getExpoStatePaths({
-      baseDir: getDefaultAutostartPaths().baseDir,
-      kind: 'ui-export-tauri',
-      projectDir: uiDir,
-      stateFileName: 'ui.export.tauri.state.json',
-    });
-    await ensureExpoIsolationEnv({ env: tauriEnv, stateDir: paths.stateDir, expoHomeDir: paths.expoHomeDir, tmpDir: paths.tmpDir });
-  }
+      const paths = getExpoStatePaths({
+        baseDir: getDefaultAutostartPaths().baseDir,
+        kind: 'ui-export-tauri',
+        projectDir: uiDir,
+        stateFileName: 'ui.export.tauri.state.json',
+      });
+      const tmpDir = resolveExpoTmpDir({ env: tauriEnv, defaultTmpDir: paths.tmpDir, kind: 'ui-export-tauri', projectDir: uiDir });
+      await ensureExpoIsolationEnv({ env: tauriEnv, stateDir: paths.stateDir, expoHomeDir: paths.expoHomeDir, tmpDir });
+    }
 
   await expoExec({
     dir: uiDir,

@@ -35,6 +35,16 @@ vi.mock('./utils/remoteSystemPrompt', () => ({
 }));
 
 type RemoteOptions = Parameters<(typeof import('./claudeRemote'))['claudeRemote']>[0];
+type QueryCall = Readonly<{
+  options?: Readonly<{
+    resume?: string;
+    continue?: boolean;
+    extraArgs?: readonly string[];
+    env?: Readonly<Record<string, string>>;
+    customSystemPrompt?: string;
+    appendSystemPrompt?: string;
+  }>;
+}>;
 
 function resultMessage(): SDKMessage {
   return { type: 'result' };
@@ -62,9 +72,8 @@ function createBaseOptions(overrides?: Partial<RemoteOptions>): RemoteOptions {
     sessionId: null,
     transcriptPath: null,
     path: '/tmp',
-    allowedTools: [],
-    mcpServers: {},
     hookSettingsPath: '/tmp/hooks.json',
+    happierMcpConfigJson: undefined,
     canCallTool: vi.fn(async () => ({ behavior: 'allow' as const, updatedInput: {} })),
     isAborted: () => false,
     nextMessage: async () => ({ message: 'hello', mode: defaultMode() }),
@@ -92,7 +101,7 @@ describe('claudeRemote', () => {
     );
 
     expect(mockQuery).toHaveBeenCalledTimes(1);
-    const call = mockQuery.mock.calls[0]?.[0];
+    const call = mockQuery.mock.calls[0]?.[0] as QueryCall | undefined;
     expect(call?.options?.resume).toBe('sess_should_resume');
   });
 
@@ -108,8 +117,160 @@ describe('claudeRemote', () => {
     );
 
     expect(mockQuery).toHaveBeenCalledTimes(1);
-    const call = mockQuery.mock.calls[0]?.[0];
+    const call = mockQuery.mock.calls[0]?.[0] as QueryCall | undefined;
     expect(call?.options?.continue).toBe(true);
+  });
+
+  it('passes through --mcp-config to the underlying Claude Code CLI (no parsing/merging)', async () => {
+    mockQuery.mockReturnValue(messageStream(resultMessage()));
+
+    const { claudeRemote } = await import('./claudeRemote');
+
+    const mcpRaw = JSON.stringify({ mcpServers: { fixture: { type: 'stdio', command: 'node', args: ['server.mjs'] } } });
+    await claudeRemote(
+      createBaseOptions({
+        claudeArgs: ['--mcp-config', mcpRaw],
+      }),
+    );
+
+    expect(mockQuery).toHaveBeenCalledTimes(1);
+    const call = mockQuery.mock.calls[0]?.[0] as QueryCall | undefined;
+    expect(call?.options?.extraArgs).toEqual(['--mcp-config', mcpRaw]);
+  });
+
+  it('passes through --mcp-config=<json> to the underlying Claude Code CLI (no parsing/merging)', async () => {
+    mockQuery.mockReturnValue(messageStream(resultMessage()));
+
+    const { claudeRemote } = await import('./claudeRemote');
+
+    const mcpRaw = JSON.stringify({ mcpServers: { fixture: { type: 'stdio', command: 'node', args: ['server.mjs'] } } });
+    const arg = `--mcp-config=${mcpRaw}`;
+    await claudeRemote(
+      createBaseOptions({
+        claudeArgs: [arg],
+      }),
+    );
+
+    expect(mockQuery).toHaveBeenCalledTimes(1);
+    const call = mockQuery.mock.calls[0]?.[0] as QueryCall | undefined;
+    expect(call?.options?.extraArgs).toEqual([arg]);
+  });
+
+  it('injects Claude Code experimental Agent Teams env var when enabled on the mode', async () => {
+    mockQuery.mockReturnValue(messageStream(resultMessage()));
+
+    const { claudeRemote } = await import('./claudeRemote');
+
+    await claudeRemote(
+      createBaseOptions({
+        nextMessage: async () => ({
+          message: 'hello',
+          mode: defaultMode({ claudeCodeExperimentalAgentTeamsEnabled: true }),
+        }),
+      }),
+    );
+
+    expect(mockQuery).toHaveBeenCalledTimes(1);
+    const call = mockQuery.mock.calls[0]?.[0] as QueryCall | undefined;
+    expect(call?.options?.env?.CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS).toBe('1');
+  });
+
+  it('forwards --setting-sources when claudeRemoteSettingSourcesV2 selects a subset', async () => {
+    mockQuery.mockReturnValue(messageStream(resultMessage()));
+
+    const { claudeRemote } = await import('./claudeRemote');
+
+    await claudeRemote(
+      createBaseOptions({
+        nextMessage: async () => ({
+          message: 'hello',
+          mode: defaultMode({ claudeRemoteSettingSourcesV2: ['project'] as any }),
+        }),
+      }),
+    );
+
+    expect(mockQuery).toHaveBeenCalledTimes(1);
+    const call = mockQuery.mock.calls[0]?.[0] as QueryCall | undefined;
+    expect(call?.options?.extraArgs).toEqual(['--setting-sources', 'project']);
+  });
+
+  it('does not force --setting-sources when claudeRemoteSettingSourcesV2 selects all sources', async () => {
+    mockQuery.mockReturnValue(messageStream(resultMessage()));
+
+    const { claudeRemote } = await import('./claudeRemote');
+
+    await claudeRemote(
+      createBaseOptions({
+        nextMessage: async () => ({
+          message: 'hello',
+          mode: defaultMode({ claudeRemoteSettingSourcesV2: ['user', 'project', 'local'] as any }),
+        }),
+      }),
+    );
+
+    expect(mockQuery).toHaveBeenCalledTimes(1);
+    const call = mockQuery.mock.calls[0]?.[0] as QueryCall | undefined;
+    expect(call?.options?.extraArgs).toBeUndefined();
+  });
+
+  it('does not forward an invalid --setting-sources override when claudeRemoteSettingSourcesV2 selects no sources', async () => {
+    mockQuery.mockReturnValue(messageStream(resultMessage()));
+
+    const { claudeRemote } = await import('./claudeRemote');
+
+    await claudeRemote(
+      createBaseOptions({
+        nextMessage: async () => ({
+          message: 'hello',
+          mode: defaultMode({ claudeRemoteSettingSourcesV2: [] as any }),
+        }),
+      }),
+    );
+
+    expect(mockQuery).toHaveBeenCalledTimes(1);
+    const call = mockQuery.mock.calls[0]?.[0] as QueryCall | undefined;
+    expect(call?.options?.extraArgs).toBeUndefined();
+  });
+
+  it('does not forward a legacy "none" setting-sources override to the Claude Code CLI', async () => {
+    mockQuery.mockReturnValue(messageStream(resultMessage()));
+
+    const { claudeRemote } = await import('./claudeRemote');
+
+    await claudeRemote(
+      createBaseOptions({
+        nextMessage: async () => ({
+          message: 'hello',
+          mode: defaultMode({ claudeRemoteSettingSources: 'none' as any }),
+        }),
+      }),
+    );
+
+    expect(mockQuery).toHaveBeenCalledTimes(1);
+    const call = mockQuery.mock.calls[0]?.[0] as QueryCall | undefined;
+    expect(call?.options?.extraArgs).toBeUndefined();
+  });
+
+  it('appends Happier MCP config when provided, while preserving user --mcp-config passthrough', async () => {
+    mockQuery.mockReturnValue(messageStream(resultMessage()));
+
+    const { claudeRemote } = await import('./claudeRemote');
+
+    const happierMcp = JSON.stringify({
+      mcpServers: { happier: { type: 'stdio', command: 'node', args: ['happier-mcp.mjs', '--url', 'http://127.0.0.1:1234'] } },
+    });
+    const userMcp = JSON.stringify({ mcpServers: { fixture: { type: 'stdio', command: 'node', args: ['server.mjs'] } } });
+
+    await claudeRemote(
+      createBaseOptions({
+        happierMcpConfigJson: happierMcp,
+        claudeArgs: ['--mcp-config', userMcp],
+      }),
+    );
+
+    expect(mockQuery).toHaveBeenCalledTimes(1);
+    const call = mockQuery.mock.calls[0]?.[0] as QueryCall | undefined;
+    expect(call?.options?.extraArgs).toEqual(['--mcp-config', userMcp, '--mcp-config', happierMcp]);
   });
 
   it('treats --resume (no id) as resume-last-session in remote mode', async () => {
@@ -124,7 +285,7 @@ describe('claudeRemote', () => {
     );
 
     expect(mockQuery).toHaveBeenCalledTimes(1);
-    const call = mockQuery.mock.calls[0]?.[0];
+    const call = mockQuery.mock.calls[0]?.[0] as QueryCall | undefined;
     expect(call?.options?.resume).toBe('last-session-id');
   });
 
@@ -169,7 +330,7 @@ describe('claudeRemote', () => {
       }),
     );
 
-    const call = mockQuery.mock.calls[0]?.[0];
+    const call = mockQuery.mock.calls[0]?.[0] as QueryCall | undefined;
     const custom = String(call?.options?.customSystemPrompt ?? '');
     const append = String(call?.options?.appendSystemPrompt ?? '');
     const occurrences = (custom + '\n' + append).split('REMOTE_PROMPT').length - 1;
@@ -178,5 +339,17 @@ describe('claudeRemote', () => {
     expect(custom).not.toContain('REMOTE_PROMPT');
     expect(append).toContain('APPEND');
     expect(append).toContain('REMOTE_PROMPT');
+  });
+
+  it('does not pass an explicit allowedTools allowlist by default (so user MCP tools are not hidden)', async () => {
+    mockQuery.mockReturnValue(messageStream(resultMessage()));
+
+    const { claudeRemote } = await import('./claudeRemote');
+
+    await claudeRemote(createBaseOptions());
+
+    expect(mockQuery).toHaveBeenCalledTimes(1);
+    const call = mockQuery.mock.calls[0]?.[0];
+    expect(call?.options?.allowedTools).toBeUndefined();
   });
 });

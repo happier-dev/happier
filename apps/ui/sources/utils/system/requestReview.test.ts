@@ -27,9 +27,10 @@ vi.mock('react-native-mmkv', () => {
     return { MMKV };
 });
 
+const modalConfirmSpy = vi.hoisted(() => vi.fn(async () => true));
 vi.mock('@/modal', () => ({
     Modal: {
-        confirm: vi.fn(async () => true),
+        confirm: modalConfirmSpy,
     },
 }));
 
@@ -44,9 +45,10 @@ vi.mock('@/track', () => ({
     trackReviewRetryScheduled: vi.fn(),
 }));
 
+const syncApplySettingsSpy = vi.hoisted(() => vi.fn());
 vi.mock('@/sync/sync', () => ({
     sync: {
-        applySettings: vi.fn(),
+        applySettings: syncApplySettingsSpy,
     },
 }));
 
@@ -86,6 +88,8 @@ describe('requestReview', () => {
         vi.resetModules();
         storeReview.isAvailableAsync.mockClear();
         storeReview.requestReview.mockClear();
+        modalConfirmSpy.mockClear();
+        syncApplySettingsSpy.mockClear();
         kvStore.clear();
         delete process.env.EXPO_PUBLIC_HAPPIER_BUILD_FEATURES_DENY;
     });
@@ -106,5 +110,15 @@ describe('requestReview', () => {
         expect(storeReview.isAvailableAsync).not.toHaveBeenCalled();
         expect(storeReview.requestReview).not.toHaveBeenCalled();
     });
-});
 
+    it('requests store review directly without modal pre-prompt or synced review flags', async () => {
+        const { requestReview } = await loadRequestReview({ platformOs: 'ios' });
+
+        requestReview();
+        await flushMicrotasks();
+
+        expect(storeReview.requestReview).toHaveBeenCalledTimes(1);
+        expect(modalConfirmSpy).not.toHaveBeenCalled();
+        expect(syncApplySettingsSpy).not.toHaveBeenCalled();
+    });
+});

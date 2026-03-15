@@ -31,12 +31,16 @@ const existingMachine = {
 };
 
 const dbMachineFindFirst = vi.fn(async () => existingMachine);
+const dbAccountFindUnique = vi.fn(async () => ({ contentPublicKey: new Uint8Array(32).fill(7) }));
 
 vi.mock("@/storage/db", () => ({
     db: {
         machine: {
             findFirst: dbMachineFindFirst,
             findUnique: vi.fn(async () => null),
+        },
+        account: {
+            findUnique: dbAccountFindUnique,
         },
     },
     isPrismaErrorCode: () => false,
@@ -86,6 +90,7 @@ describe("machinesRoutes (update existing machine)", () => {
                     daemonState: undefined,
                     // base64 for bytes [0,1,2,3]
                     dataEncryptionKey: "AAECAw==",
+                    contentPublicKey: Buffer.from(new Uint8Array(32).fill(7)).toString("base64"),
                 },
             },
             reply,

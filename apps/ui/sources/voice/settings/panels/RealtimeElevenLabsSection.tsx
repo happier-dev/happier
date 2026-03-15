@@ -26,6 +26,12 @@ function normalizeSecretStringPromptInput(value: string | null): SecretString | 
   return trimmed.length > 0 ? { _isSecretValue: true, value: trimmed } : null;
 }
 
+const ELEVENLABS_TTS_MODEL_OPTIONS = [
+  { id: 'eleven_multilingual_v2', subtitleKey: 'settingsVoice.byo.realtime.modelPicker.options.multilingualV2Subtitle' },
+  { id: 'eleven_turbo_v2', subtitleKey: 'settingsVoice.byo.realtime.modelPicker.options.turboV2Subtitle' },
+  { id: 'eleven_turbo_v2_5', subtitleKey: 'settingsVoice.byo.realtime.modelPicker.options.turboV25Subtitle' },
+] as const;
+
 export function RealtimeElevenLabsSection(props: {
   voice: VoiceSettings;
   setVoice: (next: VoiceSettings) => void;
@@ -192,7 +198,7 @@ export function RealtimeElevenLabsSection(props: {
 
   return (
     <>
-      <ItemGroup title="Call">
+      <ItemGroup title={t('settingsVoice.byo.realtime.call.title')}>
         <DropdownMenu
           open={openMenu === 'welcomeMode'}
           onOpenChange={(next) => setOpenMenu(next ? 'welcomeMode' : null)}
@@ -205,15 +211,19 @@ export function RealtimeElevenLabsSection(props: {
           rowKind="item"
           popoverBoundaryRef={props.popoverBoundaryRef}
           itemTrigger={{
-            title: 'Welcome message',
-            subtitle: 'Optional greeting at the start of the call.',
+            title: t('settingsVoice.byo.realtime.call.welcome.title'),
+            subtitle: t('settingsVoice.byo.realtime.call.welcome.subtitle'),
             showSelectedSubtitle: false,
-            detailFormatter: () => (welcome.enabled ? (welcome.mode === 'on_first_turn' ? 'On first turn' : 'Immediate') : 'Off'),
+            detailFormatter: () => (welcome.enabled
+              ? (welcome.mode === 'on_first_turn'
+                ? t('settingsVoice.byo.realtime.call.welcome.detail.onFirstTurn')
+                : t('settingsVoice.byo.realtime.call.welcome.detail.immediate'))
+              : t('settingsVoice.byo.realtime.call.welcome.detail.off')),
           }}
           items={[
-            { id: 'off', title: 'Off', subtitle: 'No greeting.' },
-            { id: 'immediate', title: 'Immediate', subtitle: 'Greet as soon as the call connects.' },
-            { id: 'on_first_turn', title: 'On first turn', subtitle: 'Greet at the start of the first reply.' },
+            { id: 'off', title: t('settingsVoice.byo.realtime.call.welcome.detail.off'), subtitle: t('settingsVoice.byo.realtime.call.welcome.options.offSubtitle') },
+            { id: 'immediate', title: t('settingsVoice.byo.realtime.call.welcome.detail.immediate'), subtitle: t('settingsVoice.byo.realtime.call.welcome.options.immediateSubtitle') },
+            { id: 'on_first_turn', title: t('settingsVoice.byo.realtime.call.welcome.detail.onFirstTurn'), subtitle: t('settingsVoice.byo.realtime.call.welcome.options.onFirstTurnSubtitle') },
           ]}
           onSelect={(id) => {
             if (id === 'off') {
@@ -275,31 +285,31 @@ export function RealtimeElevenLabsSection(props: {
           matchTriggerWidth={true}
           connectToTrigger={true}
           rowKind="item"
-	          popoverBoundaryRef={props.popoverBoundaryRef}
-	          itemTrigger={{
-	            title: 'Voice',
-	            subtitle: 'Choose the ElevenLabs voice used for replies.',
-	            showSelectedSubtitle: false,
-	            detailFormatter: () => (!apiKey ? t('settingsVoice.byo.apiKeyNotSet') : (selectedVoice?.name ?? String(tts.voiceId))),
-	          }}
+            popoverBoundaryRef={props.popoverBoundaryRef}
+            itemTrigger={{
+              title: t('settingsVoice.byo.realtime.voicePicker.title'),
+              subtitle: t('settingsVoice.byo.realtime.voicePicker.subtitle'),
+              showSelectedSubtitle: false,
+              detailFormatter: () => (!apiKey ? t('settingsVoice.byo.apiKeyNotSet') : (selectedVoice?.name ?? String(tts.voiceId))),
+            }}
           items={
             !apiKey
               ? [{
                 id: tts.voiceId,
-                title: 'Add API key to load voices',
+                title: t('settingsVoice.byo.realtime.voicePicker.missingApiKeyTitle'),
                 disabled: true,
               }]
               : voiceCatalogStatus === 'loading'
                 ? [{
                   id: tts.voiceId,
-                  title: 'Loading voices…',
+                  title: t('settingsVoice.byo.realtime.voicePicker.loadingTitle'),
                   disabled: true,
                 }]
                 : voiceCatalogStatus === 'error'
                   ? [{
                     id: tts.voiceId,
-                    title: 'Failed to load voices',
-                    subtitle: 'Check your API key and try again.',
+                    title: t('settingsVoice.byo.realtime.voicePicker.errorTitle'),
+                    subtitle: t('settingsVoice.byo.realtime.voicePicker.errorSubtitle'),
                     disabled: true,
                   }]
                   : (voiceCatalog ?? []).map((voice) => ({
@@ -344,24 +354,22 @@ export function RealtimeElevenLabsSection(props: {
           rowKind="item"
           popoverBoundaryRef={props.popoverBoundaryRef}
           itemTrigger={{
-            title: 'Model',
-            subtitle: 'Optional: override the ElevenLabs TTS model id.',
+            title: t('settingsVoice.byo.realtime.modelPicker.title'),
+            subtitle: t('settingsVoice.byo.realtime.modelPicker.subtitle'),
             showSelectedSubtitle: false,
-            detailFormatter: () => (tts.modelId ?? 'Auto'),
+            detailFormatter: () => (tts.modelId ?? t('settingsVoice.byo.realtime.modelPicker.detailAuto')),
           }}
           items={[
-            { id: '', title: 'Auto', subtitle: 'Use the ElevenLabs default model.' },
-            { id: 'eleven_multilingual_v2', title: 'eleven_multilingual_v2', subtitle: 'Common default (multilingual).' },
-            { id: 'eleven_turbo_v2', title: 'eleven_turbo_v2', subtitle: 'Lower latency (if available on your plan).' },
-            { id: 'eleven_turbo_v2_5', title: 'eleven_turbo_v2_5', subtitle: 'Turbo 2.5 (if available).' },
-            { id: 'custom', title: 'Custom…', subtitle: 'Enter a model id.' },
+            { id: '', title: t('settingsVoice.byo.realtime.modelPicker.options.autoTitle'), subtitle: t('settingsVoice.byo.realtime.modelPicker.options.autoSubtitle') },
+            ...ELEVENLABS_TTS_MODEL_OPTIONS.map((opt) => ({ id: opt.id, title: opt.id, subtitle: t(opt.subtitleKey) })),
+            { id: 'custom', title: t('settingsVoice.byo.realtime.modelPicker.options.customTitle'), subtitle: t('settingsVoice.byo.realtime.modelPicker.options.customSubtitle') },
           ]}
           onSelect={(id) => {
             if (id === 'custom') {
               fireAndForget((async () => {
                 const raw = await Modal.prompt(
-                  'Model id',
-                  'Enter an ElevenLabs model id, or leave blank to use the default.',
+                  t('settingsVoice.byo.realtime.modelPicker.prompt.title'),
+                  t('settingsVoice.byo.realtime.modelPicker.prompt.body'),
                   { placeholder: tts.modelId ?? 'eleven_multilingual_v2' },
                 );
                 if (raw === null) return;
@@ -422,14 +430,14 @@ export function RealtimeElevenLabsSection(props: {
         />
 
         <Item
-          title="Stability"
-          subtitle="0–1. Leave blank for default."
-          detail={tts.voiceSettings.stability === null ? 'Default' : String(tts.voiceSettings.stability)}
+          title={t('settingsVoice.byo.realtime.voiceSettings.stability.title')}
+          subtitle={t('settingsVoice.byo.realtime.voiceSettings.stability.subtitle')}
+          detail={tts.voiceSettings.stability === null ? t('settingsVoice.byo.realtime.voiceSettings.default') : String(tts.voiceSettings.stability)}
           onPress={() => {
             fireAndForget((async () => {
               const raw = await Modal.prompt(
-                'Stability (0–1)',
-                'Enter a number between 0 and 1. Leave blank to use the default.',
+                t('settingsVoice.byo.realtime.voiceSettings.stability.promptTitle'),
+                t('settingsVoice.byo.realtime.voiceSettings.stability.promptBody'),
                 { inputType: 'numeric', placeholder: tts.voiceSettings.stability === null ? '' : String(tts.voiceSettings.stability) },
               );
               if (raw === null) return;
@@ -440,7 +448,7 @@ export function RealtimeElevenLabsSection(props: {
               }
               const n = Number(trimmed);
               if (!Number.isFinite(n) || n < 0 || n > 1) {
-                Modal.alert(t('common.error'), 'Please enter a number between 0 and 1.');
+                Modal.alert(t('common.error'), t('settingsVoice.byo.realtime.voiceSettings.stability.invalid'));
                 return;
               }
               setTts({ voiceSettings: { ...tts.voiceSettings, stability: n } });
@@ -449,14 +457,14 @@ export function RealtimeElevenLabsSection(props: {
         />
 
         <Item
-          title="Similarity boost"
-          subtitle="0–1. Leave blank for default."
-          detail={tts.voiceSettings.similarityBoost === null ? 'Default' : String(tts.voiceSettings.similarityBoost)}
+          title={t('settingsVoice.byo.realtime.voiceSettings.similarityBoost.title')}
+          subtitle={t('settingsVoice.byo.realtime.voiceSettings.similarityBoost.subtitle')}
+          detail={tts.voiceSettings.similarityBoost === null ? t('settingsVoice.byo.realtime.voiceSettings.default') : String(tts.voiceSettings.similarityBoost)}
           onPress={() => {
             fireAndForget((async () => {
               const raw = await Modal.prompt(
-                'Similarity boost (0–1)',
-                'Enter a number between 0 and 1. Leave blank to use the default.',
+                t('settingsVoice.byo.realtime.voiceSettings.similarityBoost.promptTitle'),
+                t('settingsVoice.byo.realtime.voiceSettings.similarityBoost.promptBody'),
                 { inputType: 'numeric', placeholder: tts.voiceSettings.similarityBoost === null ? '' : String(tts.voiceSettings.similarityBoost) },
               );
               if (raw === null) return;
@@ -467,7 +475,7 @@ export function RealtimeElevenLabsSection(props: {
               }
               const n = Number(trimmed);
               if (!Number.isFinite(n) || n < 0 || n > 1) {
-                Modal.alert(t('common.error'), 'Please enter a number between 0 and 1.');
+                Modal.alert(t('common.error'), t('settingsVoice.byo.realtime.voiceSettings.similarityBoost.invalid'));
                 return;
               }
               setTts({ voiceSettings: { ...tts.voiceSettings, similarityBoost: n } });
@@ -476,14 +484,14 @@ export function RealtimeElevenLabsSection(props: {
         />
 
         <Item
-          title="Style"
-          subtitle="0–1. Leave blank for default."
-          detail={tts.voiceSettings.style === null ? 'Default' : String(tts.voiceSettings.style)}
+          title={t('settingsVoice.byo.realtime.voiceSettings.style.title')}
+          subtitle={t('settingsVoice.byo.realtime.voiceSettings.style.subtitle')}
+          detail={tts.voiceSettings.style === null ? t('settingsVoice.byo.realtime.voiceSettings.default') : String(tts.voiceSettings.style)}
           onPress={() => {
             fireAndForget((async () => {
               const raw = await Modal.prompt(
-                'Style (0–1)',
-                'Enter a number between 0 and 1. Leave blank to use the default.',
+                t('settingsVoice.byo.realtime.voiceSettings.style.promptTitle'),
+                t('settingsVoice.byo.realtime.voiceSettings.style.promptBody'),
                 { inputType: 'numeric', placeholder: tts.voiceSettings.style === null ? '' : String(tts.voiceSettings.style) },
               );
               if (raw === null) return;
@@ -494,7 +502,7 @@ export function RealtimeElevenLabsSection(props: {
               }
               const n = Number(trimmed);
               if (!Number.isFinite(n) || n < 0 || n > 1) {
-                Modal.alert(t('common.error'), 'Please enter a number between 0 and 1.');
+                Modal.alert(t('common.error'), t('settingsVoice.byo.realtime.voiceSettings.style.invalid'));
                 return;
               }
               setTts({ voiceSettings: { ...tts.voiceSettings, style: n } });
@@ -503,14 +511,14 @@ export function RealtimeElevenLabsSection(props: {
         />
 
         <Item
-          title="Speed"
-          subtitle="0.5–2. Leave blank for default."
-          detail={tts.voiceSettings.speed === null ? 'Default' : String(tts.voiceSettings.speed)}
+          title={t('settingsVoice.byo.realtime.voiceSettings.speed.title')}
+          subtitle={t('settingsVoice.byo.realtime.voiceSettings.speed.subtitle')}
+          detail={tts.voiceSettings.speed === null ? t('settingsVoice.byo.realtime.voiceSettings.default') : String(tts.voiceSettings.speed)}
           onPress={() => {
             fireAndForget((async () => {
               const raw = await Modal.prompt(
-                'Speed (0.5–2)',
-                'Enter a number between 0.5 and 2. Leave blank to use the default.',
+                t('settingsVoice.byo.realtime.voiceSettings.speed.promptTitle'),
+                t('settingsVoice.byo.realtime.voiceSettings.speed.promptBody'),
                 { inputType: 'numeric', placeholder: tts.voiceSettings.speed === null ? '' : String(tts.voiceSettings.speed) },
               );
               if (raw === null) return;
@@ -521,7 +529,7 @@ export function RealtimeElevenLabsSection(props: {
               }
               const n = Number(trimmed);
               if (!Number.isFinite(n) || n < 0.5 || n > 2) {
-                Modal.alert(t('common.error'), 'Please enter a number between 0.5 and 2.');
+                Modal.alert(t('common.error'), t('settingsVoice.byo.realtime.voiceSettings.speed.invalid'));
                 return;
               }
               setTts({ voiceSettings: { ...tts.voiceSettings, speed: n } });
@@ -535,54 +543,54 @@ export function RealtimeElevenLabsSection(props: {
           title={t('settingsVoice.byo.autoprovCreate')}
           subtitle={t('settingsVoice.byo.autoprovCreateSubtitle')}
           detail={busy === 'autoprovCreate' ? t('common.loading') : undefined}
-	          disabled={busy !== null || !apiKey}
-	          onPress={() => {
-	            fireAndForget((async () => {
-	              if (!apiKey) {
-	                Modal.alert(t('common.error'), t('settingsVoice.byo.notConfigured'));
-	                return;
-	              }
-	              setBusy('autoprovCreate');
-	              try {
-	                const existing = await findExistingHappierElevenLabsAgents({ apiKey });
-	                if (existing.length > 0) {
-	                  const reuse = existing[0]!;
-	                  const decision = await showElevenLabsAgentReuseDialog({
-	                    existingAgentId: reuse.agentId,
-	                    existingAgentName: reuse.name,
-	                  });
-	                  if (decision === 'cancel') return;
-	                  if (decision === 'update_existing') {
-	                    await updateHappierElevenLabsAgent({
-	                      apiKey,
-	                      agentId: reuse.agentId,
-	                      tts: {
-	                        voiceId: cfg.tts.voiceId,
-	                        modelId: cfg.tts.modelId,
-	                        voiceSettings: cfg.tts.voiceSettings,
-	                      },
-	                    });
-	                    setByo({ agentId: reuse.agentId });
-	                    Modal.alert(t('common.success'), t('settingsVoice.byo.autoprovUpdated'));
-	                    return;
-	                  }
-	                }
+            disabled={busy !== null || !apiKey}
+            onPress={() => {
+              fireAndForget((async () => {
+                if (!apiKey) {
+                  Modal.alert(t('common.error'), t('settingsVoice.byo.notConfigured'));
+                  return;
+                }
+                setBusy('autoprovCreate');
+                try {
+                  const existing = await findExistingHappierElevenLabsAgents({ apiKey });
+                  if (existing.length > 0) {
+                    const reuse = existing[0]!;
+                    const decision = await showElevenLabsAgentReuseDialog({
+                      existingAgentId: reuse.agentId,
+                      existingAgentName: reuse.name,
+                    });
+                    if (decision === 'cancel') return;
+                    if (decision === 'update_existing') {
+                      await updateHappierElevenLabsAgent({
+                        apiKey,
+                        agentId: reuse.agentId,
+                        tts: {
+                          voiceId: cfg.tts.voiceId,
+                          modelId: cfg.tts.modelId,
+                          voiceSettings: cfg.tts.voiceSettings,
+                        },
+                      });
+                      setByo({ agentId: reuse.agentId });
+                      Modal.alert(t('common.success'), t('settingsVoice.byo.autoprovUpdated'));
+                      return;
+                    }
+                  }
 
-	                const res = await createHappierElevenLabsAgent({
-	                  apiKey,
-	                  tts: {
-	                    voiceId: cfg.tts.voiceId,
-	                    modelId: cfg.tts.modelId,
-	                    voiceSettings: cfg.tts.voiceSettings,
-	                  },
-	                });
-	                setByo({ agentId: res.agentId });
-	                Modal.alert(t('common.success'), t('settingsVoice.byo.autoprovCreated', { agentId: res.agentId }));
-	              } catch {
-	                Modal.alert(t('common.error'), t('settingsVoice.byo.autoprovFailed'));
-	              } finally {
-	                setBusy(null);
-	              }
+                  const res = await createHappierElevenLabsAgent({
+                    apiKey,
+                    tts: {
+                      voiceId: cfg.tts.voiceId,
+                      modelId: cfg.tts.modelId,
+                      voiceSettings: cfg.tts.voiceSettings,
+                    },
+                  });
+                  setByo({ agentId: res.agentId });
+                  Modal.alert(t('common.success'), t('settingsVoice.byo.autoprovCreated', { agentId: res.agentId }));
+                } catch {
+                  Modal.alert(t('common.error'), t('settingsVoice.byo.autoprovFailed'));
+                } finally {
+                  setBusy(null);
+                }
             })(), { tag: 'RealtimeElevenLabsSection.autoprov.create' });
           }}
         />
@@ -617,7 +625,7 @@ export function RealtimeElevenLabsSection(props: {
         />
       </ItemGroup>
 
-      <ItemGroup title="Get started" footer={configured ? undefined : t('settingsVoice.byo.notConfigured')}>
+      <ItemGroup title={t('settingsVoice.byo.realtime.getStartedTitle')} footer={configured ? undefined : t('settingsVoice.byo.notConfigured')}>
         <Item
           title={t('settingsVoice.byo.createAccount')}
           subtitle={t('settingsVoice.byo.createAccountSubtitle')}

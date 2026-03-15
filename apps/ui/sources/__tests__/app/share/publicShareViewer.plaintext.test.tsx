@@ -185,4 +185,79 @@ describe('PublicShareViewerScreen (plaintext)', () => {
         );
         expect(transcriptListSpy).toHaveBeenCalled();
     });
+
+    it('normalizes and reduces messages in deterministic oldest-first order by seq when available', async () => {
+        transcriptListSpy.mockClear();
+        serverFetchSpy.mockReset();
+
+        serverFetchSpy
+            .mockResolvedValueOnce({
+                ok: true,
+                status: 200,
+                json: async () => ({
+                    session: {
+                        id: 's1',
+                        seq: 1,
+                        encryptionMode: 'plain',
+                        createdAt: 1,
+                        updatedAt: 2,
+                        active: true,
+                        activeAt: 2,
+                        metadata: JSON.stringify({ path: '/repo', host: 'devbox', name: 'Plain Session' }),
+                        metadataVersion: 1,
+                        agentState: JSON.stringify({}),
+                        agentStateVersion: 1,
+                    },
+                    owner: { id: 'u1', username: 'alice', firstName: null, lastName: null, avatar: null },
+                    accessLevel: 'view',
+                    encryptedDataKey: null,
+                    isConsentRequired: false,
+                }),
+            })
+            .mockResolvedValueOnce({
+                ok: true,
+                status: 200,
+                json: async () => ({
+                    messages: [
+                        {
+                            id: 'm2',
+                            seq: 2,
+                            localId: null,
+                            content: {
+                                t: 'plain',
+                                v: { role: 'user', content: { type: 'text', text: 'second' } },
+                            },
+                            createdAt: 1,
+                            updatedAt: 1,
+                        },
+                        {
+                            id: 'm1',
+                            seq: 1,
+                            localId: null,
+                            content: {
+                                t: 'plain',
+                                v: { role: 'user', content: { type: 'text', text: 'first' } },
+                            },
+                            createdAt: 100,
+                            updatedAt: 100,
+                        },
+                    ],
+                }),
+            });
+
+        const { default: PublicShareViewerScreen } = await import('@/app/(app)/share/[token]');
+
+        await act(async () => {
+            renderer.create(<PublicShareViewerScreen />);
+        });
+
+        // Allow async effect to resolve.
+        await act(async () => {
+            await Promise.resolve();
+        });
+
+        const last = transcriptListSpy.mock.calls[transcriptListSpy.mock.calls.length - 1]?.[0];
+        const seqs = Array.isArray(last?.messages) ? last.messages.map((m: any) => (m as any)?.seq ?? null) : [];
+        expect(seqs).toEqual([1, 2]);
+    });
 });

@@ -89,8 +89,12 @@ export default defineConfig({
             { find: 'expo-speech-recognition', replacement: resolve('./sources/dev/expoSpeechRecognitionStub.ts') },
             // `expo-clipboard` expects native modules in node/Vitest.
             { find: 'expo-clipboard', replacement: resolve('./sources/dev/expoClipboardStub.ts') },
+            // `expo-linear-gradient` ships JSX in its build output; stub it in node/Vitest.
+            { find: 'expo-linear-gradient', replacement: resolve('./sources/dev/expoLinearGradientStub.ts') },
             // `react-native-device-info` is native and pulls in RN internals.
             { find: 'react-native-device-info', replacement: resolve('./sources/dev/reactNativeDeviceInfoStub.ts') },
+            // Sentry's React Native SDK depends on native modules; stub it in node/Vitest.
+            { find: '@sentry/react-native', replacement: resolve('./sources/dev/sentryReactNativeStub.ts') },
             // `@react-native/virtualized-lists` ships Flow sources (`import typeof`) that Node can't parse.
             { find: /^@react-native\/virtualized-lists(\/.*)?$/, replacement: resolve('./sources/dev/reactNativeVirtualizedListsStub.ts') },
             // Some deps import the abort-controller polyfill, which uses extensionless ESM imports that Node can't resolve.

@@ -5,18 +5,13 @@ import { type Fastify } from "../../types";
 import { isServerFeatureEnabledForRequest } from "@/app/features/catalog/serverFeatureGate";
 import { ConnectedServiceIdSchema } from "@happier-dev/protocol";
 import { isConnectedServiceCredentialMetadataV2 } from "../connect/connectedServicesV2/credentialMetadataV2";
-import { resolveRouteRateLimit } from "@/app/api/utils/apiRateLimitPolicy";
+import { resolveApiHotEndpointRateLimit } from "@/app/api/utils/apiRateLimitCatalog";
 
 export function registerAccountProfileRoute(app: Fastify): void {
     app.get('/v1/account/profile', {
         preHandler: app.authenticate,
         config: {
-            rateLimit: resolveRouteRateLimit(process.env, {
-                maxEnvKey: "HAPPIER_ACCOUNT_PROFILE_RATE_LIMIT_MAX",
-                windowEnvKey: "HAPPIER_ACCOUNT_PROFILE_RATE_LIMIT_WINDOW",
-                defaultMax: 300,
-                defaultWindow: "1 minute",
-            }),
+            rateLimit: resolveApiHotEndpointRateLimit(process.env, "account.profile"),
         },
     }, async (request, reply) => {
         const userId = request.userId;

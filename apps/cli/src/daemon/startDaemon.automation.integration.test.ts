@@ -15,11 +15,13 @@ const harness = vi.hoisted(() => {
     return {
       stop: automationWorkerStop,
       refreshAssignments: automationWorkerRefreshAssignments,
+      handleServerUpdate: vi.fn(),
     };
   });
 
   const apiMachine = {
     setRPCHandlers: vi.fn(),
+    onUpdate: vi.fn(),
     connect: vi.fn((params?: { onConnect?: () => void | Promise<void> }) => {
       // Simulate a reconnect so we can assert automation assignment refresh isn't
       // blocked after the one-time metadata refresh.

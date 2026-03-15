@@ -4,15 +4,20 @@ import { Session, type SessionFoundInfo } from "./session";
 import { Future } from "@/utils/future";
 import { createSessionScanner } from "./utils/sessionScanner";
 import { formatErrorForUi } from '@/ui/formatErrorForUi';
-import type { PermissionMode } from "@/api/types";
-import { mapToClaudeMode } from "./utils/permissionMode";
+import type { Metadata, PermissionMode } from "@/api/types";
+import { resolveClaudeSdkPermissionModeFromEnhancedMode } from "./utils/permissionMode";
 import { discardQueuedAndPendingForLocalSwitch } from '@/agent/localControl/discardQueuedAndPendingForLocalSwitch';
 import { resolveSwitchRequestTarget } from '@/agent/localControl/switchRequestTarget';
-import { resolvePermissionIntentFromMetadataSnapshot } from '@/agent/runtime/permission/permissionModeFromMetadata';
+import { resolveAcpSessionModeOverrideFromMetadataSnapshot, resolvePermissionIntentFromMetadataSnapshot } from '@/agent/runtime/permission/permissionModeFromMetadata';
 import { ensureSessionInfoBeforeSwitch } from '@/backends/claude/utils/ensureSessionInfoBeforeSwitch';
 import { configuration } from '@/configuration';
+import { resolveClaudeConfigDirOverride } from './utils/resolveClaudeConfigDirOverride';
+import { resolveClaudeCodeExperimentalEnvOverlay } from './spawn/resolveClaudeCodeExperimentalEnvOverlay';
 
-function upsertClaudePermissionModeArgs(args: string[] | undefined, mode: PermissionMode): string[] | undefined {
+function upsertClaudePermissionModeArgs(
+    args: string[] | undefined,
+    mode: { permissionMode: PermissionMode; agentModeId?: string | null },
+): string[] | undefined {
     const filtered: string[] = [];
     const input = args ?? [];
 
@@ -33,7 +38,7 @@ function upsertClaudePermissionModeArgs(args: string[] | undefined, mode: Permis
         filtered.push(arg);
     }
 
-    const claudeMode = mapToClaudeMode(mode);
+    const claudeMode = resolveClaudeSdkPermissionModeFromEnhancedMode(mode);
     if (claudeMode !== 'default') {
         filtered.push('--permission-mode', claudeMode);
     }
@@ -58,11 +63,11 @@ export async function claudeLocalLauncher(
 
         const entry = opts?.entry ?? 'initial';
 
-	    // Create scanner
-	    const scanner = await createSessionScanner({
+        // Create scanner
+            const scanner = await createSessionScanner({
         sessionId: session.sessionId,
         transcriptPath: session.transcriptPath,
-        claudeConfigDir: session.claudeEnvVars?.CLAUDE_CONFIG_DIR ?? null,
+        claudeConfigDir: resolveClaudeConfigDirOverride(process.env),
         workingDirectory: session.path,
         onMessage: (message) => { 
             // Block SDK summary messages - we generate our own
@@ -85,37 +90,40 @@ export async function claudeLocalLauncher(
     };
     session.addSessionFoundCallback(scannerSessionCallback);
 
+    // Handle abort
+    let exitReason: LauncherResult | null = null;
+    let abortingForModeSwitch = false;
+    const processAbortController = new AbortController();
+    let exitFuture = new Future<void>();
+    let syncLastPermissionModeFromMetadata: (() => void) | null = null;
+    try {
+        const clientEmitter = session.client as unknown as {
+            getMetadataSnapshot?: () => Metadata | null | undefined;
+            on?: (event: string, listener: () => void) => void;
+            off?: (event: string, listener: () => void) => void;
+        };
 
-	    // Handle abort
-	    let exitReason: LauncherResult | null = null;
-	    let abortingForModeSwitch = false;
-	    const processAbortController = new AbortController();
-	    let exitFuture = new Future<void>();
-        let syncLastPermissionModeFromMetadata: (() => void) | null = null;
-	    try {
-            const clientEmitter = session.client as any;
-
-            syncLastPermissionModeFromMetadata = () => {
-                if (!clientEmitter || typeof clientEmitter.getMetadataSnapshot !== 'function') {
-                    return;
-                }
-                const resolved = resolvePermissionIntentFromMetadataSnapshot({
-                    metadata: clientEmitter.getMetadataSnapshot(),
-                });
-                if (!resolved) return;
-                session.adoptLastPermissionModeFromMetadata(resolved.intent, resolved.updatedAt);
-            };
-
-            // Seed from metadata so local Claude spawns always reflect the latest app-selected mode.
-            syncLastPermissionModeFromMetadata();
-
-            // While we can't change Claude's local permission mode mid-process, we still adopt updates
-            // so that any subsequent spawn (fork/retry/local restart) uses the latest intent.
-            if (clientEmitter && typeof clientEmitter.on === 'function') {
-                clientEmitter.on('metadata-updated', syncLastPermissionModeFromMetadata);
+        syncLastPermissionModeFromMetadata = () => {
+            if (!clientEmitter || typeof clientEmitter.getMetadataSnapshot !== 'function') {
+                return;
             }
+            const resolved = resolvePermissionIntentFromMetadataSnapshot({
+                metadata: clientEmitter.getMetadataSnapshot(),
+            });
+            if (!resolved) return;
+            session.adoptLastPermissionModeFromMetadata(resolved.intent, resolved.updatedAt);
+        };
 
-	        async function abort() {
+        // Seed from metadata so local Claude spawns always reflect the latest app-selected mode.
+        syncLastPermissionModeFromMetadata();
+
+        // While we can't change Claude's local permission mode mid-process, we still adopt updates
+        // so that any subsequent spawn (fork/retry/local restart) uses the latest intent.
+        if (clientEmitter && typeof clientEmitter.on === 'function') {
+            clientEmitter.on('metadata-updated', syncLastPermissionModeFromMetadata);
+        }
+
+        async function abort() {
 
             // Send abort signal
             if (!processAbortController.signal.aborted) {
@@ -128,6 +136,7 @@ export async function claudeLocalLauncher(
 
         async function doAbort() {
             logger.debug('[local]: doAbort');
+            session.noteUserAbortRequested();
 
             // Switching to remote mode
             if (!exitReason) {
@@ -199,13 +208,13 @@ export async function claudeLocalLauncher(
         // Handle session start
         const handleSessionStart = (sessionId: string) => {
             session.onSessionFound(sessionId);
-            scanner.onNewSession(sessionId);
-        }
+            scanner.onNewSession({ sessionId, transcriptPath: session.transcriptPath });
+        };
 
-	        // Run local mode
-	        let errorCount = 0;
-	        const maxRetries = 5;
-	        while (true) {
+        // Run local mode
+        let errorCount = 0;
+        const maxRetries = 5;
+        while (true) {
             // If we already have an exit reason, return it
             if (exitReason) {
                 return exitReason;
@@ -222,14 +231,26 @@ export async function claudeLocalLauncher(
                 session.clearSessionId();
             }
 
-	            // Launch
-	            logger.debug('[local]: launch');
-	            try {
-                    syncLastPermissionModeFromMetadata?.();
+            // Launch
+            logger.debug('[local]: launch');
+            try {
+                syncLastPermissionModeFromMetadata?.();
 
-	                // Ensure local Claude Code is spawned with the current session permission mode.
-	                // This is essential for remote → local switches where the app-selected mode must carry over.
-	                session.claudeArgs = upsertClaudePermissionModeArgs(session.claudeArgs, session.lastPermissionMode);
+                // Ensure local Claude Code is spawned with the current session permission mode.
+                // This is essential for remote → local switches where the app-selected mode must carry over.
+                const metadataSnapshot =
+                    typeof clientEmitter?.getMetadataSnapshot === 'function'
+                        ? clientEmitter.getMetadataSnapshot()
+                        : null;
+                const resolvedAgentMode = resolveAcpSessionModeOverrideFromMetadataSnapshot({
+                    metadata: metadataSnapshot,
+                });
+                session.claudeArgs = upsertClaudePermissionModeArgs(session.claudeArgs, {
+                    permissionMode: session.lastPermissionMode,
+                    agentModeId: resolvedAgentMode ? resolvedAgentMode.modeId : null,
+                });
+
+                const { mcpConfigJson: baseMcpConfigJson } = await session.getOrCreateHappierMcpBridge();
 
                 await claudeLocal({
                     path: session.path,
@@ -237,10 +258,11 @@ export async function claudeLocalLauncher(
                     onSessionFound: handleSessionStart,
                     onThinkingChange: session.onThinkingChange,
                     abort: processAbortController.signal,
-                    claudeEnvVars: session.claudeEnvVars,
                     claudeArgs: session.claudeArgs,
-                    mcpServers: session.mcpServers,
-                    allowedTools: session.allowedTools,
+                    envOverlay: resolveClaudeCodeExperimentalEnvOverlay({
+                        claudeCodeExperimentalAgentTeamsEnabled: session.claudeCodeExperimentalAgentTeamsEnabled,
+                    }),
+                    happierMcpConfigJson: baseMcpConfigJson,
                     hookSettingsPath: session.hookSettingsPath,
                 });
 
@@ -298,15 +320,17 @@ export async function claudeLocalLauncher(
             }
             logger.debug('[local]: launch done');
         }
-	    } finally {
-            const clientEmitter = session.client as any;
-            if (clientEmitter && typeof clientEmitter.off === 'function' && syncLastPermissionModeFromMetadata) {
-                // Best-effort: some test stubs don't implement EventEmitter.
-                clientEmitter.off('metadata-updated', syncLastPermissionModeFromMetadata);
-            }
+    } finally {
+        const clientEmitter = session.client as unknown as {
+            off?: (event: string, listener: () => void) => void;
+        };
+        if (clientEmitter && typeof clientEmitter.off === 'function' && syncLastPermissionModeFromMetadata) {
+            // Best-effort: some test stubs don't implement EventEmitter.
+            clientEmitter.off('metadata-updated', syncLastPermissionModeFromMetadata);
+        }
 
-	        // Resolve future
-	        exitFuture.resolve(undefined);
+        // Resolve future
+        exitFuture.resolve(undefined);
 
         // Set handlers to no-op
         session.client.rpcHandlerManager.registerHandler('abort', async () => { });

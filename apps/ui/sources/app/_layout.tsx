@@ -6,6 +6,12 @@ import * as Fonts from 'expo-font';
 import { Asset } from 'expo-asset';
 import * as Notifications from 'expo-notifications';
 import { FontAwesome } from '@expo/vector-icons';
+import { useRouter } from 'expo-router';
+import {
+    PUSH_NOTIFICATION_ACTION_IDS,
+    PUSH_NOTIFICATION_ANDROID_CHANNEL_IDS,
+    PUSH_NOTIFICATION_CATEGORY_IDS,
+} from '@happier-dev/protocol';
 import { TokenStorage, type AuthCredentials } from '@/auth/storage/tokenStorage';
 import { AuthProvider } from '@/auth/context/AuthContext';
 import { DarkTheme, DefaultTheme, ThemeProvider } from '@react-navigation/native';
@@ -15,8 +21,9 @@ import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { SidebarNavigator } from '@/components/navigation/shell/SidebarNavigator';
 import sodium from '@/encryption/libsodium.lib';
 import { View, Platform } from 'react-native';
-import { ModalProvider } from '@/modal';
+import { AppPaneModalProvider } from '@/components/appShell/providers/AppPaneModalProvider';
 import { PostHogProvider } from 'posthog-react-native';
+import * as Sentry from '@sentry/react-native';
 import { tracking } from '@/track/tracking';
 import { syncRestore } from '@/sync/sync';
 import { storage } from '@/sync/domains/state/storage';
@@ -35,6 +42,14 @@ import { configureBugReportUserActionTrail } from '@/utils/system/bugReportActio
 import { useUnistyles } from 'react-native-unistyles';
 import { AsyncLock } from '@/utils/system/lock';
 import { useWebUiFontScale } from '@/components/ui/text/useWebUiFontScale';
+import { usePierreDiffWorkerPoolWarmup } from '@/components/ui/code/diff/pierre/usePierreDiffWorkerPoolWarmup';
+import { initializeSentryOnce, wrapWithSentryIfEnabled } from '@/utils/system/sentry';
+import { t } from '@/text';
+import { AppCrashRecoveryBoundary } from '@/components/appShell/AppCrashRecoveryBoundary';
+import { WebCryptoStartupGate } from '@/components/web/WebCryptoStartupGate';
+import { consumeRestartBugReportIntent } from '@/utils/system/restartBugReportIntent';
+
+initializeSentryOnce();
 
 function shouldCaptureRnwUnexpectedTextNodeStacks(): boolean {
     // Dev-only diagnostics: enable via `?debugRnwTextNode=1` on web.
@@ -297,12 +312,53 @@ Notifications.setNotificationHandler({
 
 // Setup Android notification channel (required for Android 8.0+)
 if (Platform.OS === 'android') {
-    Notifications.setNotificationChannelAsync('default', {
-        name: 'Default',
+    void Notifications.setNotificationChannelAsync(PUSH_NOTIFICATION_ANDROID_CHANNEL_IDS.defaultV1, {
+        name: t('notifications.channels.default'),
         importance: Notifications.AndroidImportance.MAX,
         vibrationPattern: [0, 250, 250, 250],
         lightColor: '#FF231F7C',
-    });
+    }).catch(() => {});
+
+    void Notifications.setNotificationChannelAsync(PUSH_NOTIFICATION_ANDROID_CHANNEL_IDS.permissionRequestsV1, {
+        name: t('notifications.channels.permissionRequests'),
+        importance: Notifications.AndroidImportance.MAX,
+        vibrationPattern: [0, 250, 250, 250],
+        lightColor: '#FF231F7C',
+    }).catch(() => {});
+
+    void Notifications.setNotificationChannelAsync(PUSH_NOTIFICATION_ANDROID_CHANNEL_IDS.userActionRequestsV1, {
+        name: t('notifications.channels.userActionRequests'),
+        importance: Notifications.AndroidImportance.HIGH,
+        vibrationPattern: [0, 250, 250, 250],
+        lightColor: '#FF231F7C',
+    }).catch(() => {});
+}
+
+// Register interactive notification actions.
+//
+// Note: Expo docs recommend avoiding ':' and '-' in category identifiers.
+// Our category ids live in `@happier-dev/protocol` so the CLI push payload and app registration stay in sync.
+if (Platform.OS !== 'web') {
+    void Notifications.setNotificationCategoryAsync(PUSH_NOTIFICATION_CATEGORY_IDS.permissionRequestV1, [
+        {
+            identifier: PUSH_NOTIFICATION_ACTION_IDS.permissionAllowV1,
+            buttonTitle: t('notifications.actions.allow'),
+            options: { opensAppToForeground: true },
+        },
+        {
+            identifier: PUSH_NOTIFICATION_ACTION_IDS.permissionDenyV1,
+            buttonTitle: t('notifications.actions.deny'),
+            options: { opensAppToForeground: true, isDestructive: true },
+        },
+    ]).catch(() => {});
+
+    void Notifications.setNotificationCategoryAsync(PUSH_NOTIFICATION_CATEGORY_IDS.userActionRequestV1, [
+        {
+            identifier: PUSH_NOTIFICATION_ACTION_IDS.userActionOpenV1,
+            buttonTitle: t('notifications.actions.answer'),
+            options: { opensAppToForeground: true },
+        },
+    ]).catch(() => {});
 }
 
 export {
@@ -537,9 +593,10 @@ async function loadFonts() {
     });
 }
 
-export default function RootLayout() {
+function RootLayout() {
     const { theme } = useUnistyles();
     useWebUiFontScale();
+    usePierreDiffWorkerPoolWarmup();
     const navigationTheme = React.useMemo(() => {
         if (theme.dark) {
             return {
@@ -559,10 +616,42 @@ export default function RootLayout() {
         };
     }, [theme.dark]);
 
+    const onRestart = React.useCallback(() => {
+        if (Platform.OS === 'web') {
+            try {
+                (globalThis as any).location?.reload?.();
+            } catch {
+                // ignore
+            }
+            return;
+        }
+
+        void import('expo-updates')
+            .then((Updates) => Updates.reloadAsync())
+            .catch(() => {});
+    }, []);
+
+    return (
+        <WebCryptoStartupGate>
+            <AppBoot
+                navigationTheme={navigationTheme}
+                onRestart={onRestart}
+            />
+        </WebCryptoStartupGate>
+    );
+}
+
+function AppBoot(props: {
+    navigationTheme: any;
+    onRestart: () => void;
+}) {
     //
     // Init sequence
     //
+    const router = useRouter();
     const [initState, setInitState] = React.useState<{ credentials: AuthCredentials | null } | null>(null);
+    const restartBugReportCheckedRef = React.useRef(false);
+
     React.useEffect(() => {
         let cancelled = false;
         (async () => {
@@ -598,6 +687,28 @@ export default function RootLayout() {
     }, []);
 
     React.useEffect(() => {
+        if (!initState) return;
+        if (restartBugReportCheckedRef.current) return;
+        restartBugReportCheckedRef.current = true;
+
+        let cancelled = false;
+        (async () => {
+            try {
+                const shouldOpenBugReport = await consumeRestartBugReportIntent();
+                if (!shouldOpenBugReport) return;
+                if (cancelled) return;
+                router.push('/(app)/settings/report-issue');
+            } catch {
+                // ignore
+            }
+        })();
+
+        return () => {
+            cancelled = true;
+        };
+    }, [initState, router]);
+
+    React.useEffect(() => {
         if (initState) {
             setTimeout(() => {
                 SplashScreen.hideAsync();
@@ -626,9 +737,9 @@ export default function RootLayout() {
             <KeyboardProvider>
                 <GestureHandlerRootView style={{ flex: 1 }}>
                     <AuthProvider initialCredentials={initState.credentials}>
-                        <ThemeProvider value={navigationTheme}>
+                        <ThemeProvider value={props.navigationTheme}>
                             <StatusBarProvider />
-                            <ModalProvider>
+                            <AppPaneModalProvider>
                                 <CommandPaletteProvider>
                                     <RealtimeProvider>
                                         <HorizontalSafeAreaWrapper>
@@ -639,7 +750,7 @@ export default function RootLayout() {
                                         </HorizontalSafeAreaWrapper>
                                     </RealtimeProvider>
                                 </CommandPaletteProvider>
-                            </ModalProvider>
+                            </AppPaneModalProvider>
                         </ThemeProvider>
                     </AuthProvider>
                 </GestureHandlerRootView>
@@ -657,7 +768,20 @@ export default function RootLayout() {
     return (
         <>
             <FaviconPermissionIndicator />
-            {providers}
+            <AppCrashRecoveryBoundary
+                onRestart={props.onRestart}
+                onError={(error) => {
+                    try {
+                        (Sentry as any).captureException?.(error);
+                    } catch {
+                        // ignore
+                    }
+                }}
+            >
+                {providers}
+            </AppCrashRecoveryBoundary>
         </>
     );
 }
+
+export default wrapWithSentryIfEnabled(RootLayout);

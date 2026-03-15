@@ -37,7 +37,7 @@ describe('canCreateNewSession', () => {
     });
 
     it('returns true when selected machine is online', () => {
-        const onlineMachine: any = { id: 'm1', active: true, activeAt: 0 };
+        const onlineMachine: any = { id: 'm1', active: true, activeAt: Date.now() };
         expect(canCreateNewSession({
             selectedMachineId: 'm1',
             selectedMachine: onlineMachine,
@@ -45,4 +45,3 @@ describe('canCreateNewSession', () => {
         })).toBe(true);
     });
 });
-

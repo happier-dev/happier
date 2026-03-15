@@ -5,6 +5,7 @@ import { PromptModalConfig } from '../types';
 import { Typography } from '@/constants/Typography';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { Text, TextInput } from '@/components/ui/text/Text';
+import { t } from '@/text';
 
 
 interface WebPromptModalProps {
@@ -164,7 +165,7 @@ export function WebPromptModal({ config, onClose, onConfirm, showBackdrop = true
                             pressed && styles.buttonPressed
                         ]}
                         accessibilityRole="button"
-                        accessibilityLabel={config.cancelText || 'Cancel'}
+                        accessibilityLabel={config.cancelText || t('common.cancel')}
                         onPress={handleCancel}
                     >
                         <Text style={[
@@ -172,7 +173,7 @@ export function WebPromptModal({ config, onClose, onConfirm, showBackdrop = true
                             styles.cancelText,
                             Typography.default()
                         ]}>
-                            {config.cancelText || 'Cancel'}
+                            {config.cancelText || t('common.cancel')}
                         </Text>
                     </Pressable>
                     <View style={styles.buttonSeparator} />
@@ -182,14 +183,14 @@ export function WebPromptModal({ config, onClose, onConfirm, showBackdrop = true
                             pressed && styles.buttonPressed
                         ]}
                         accessibilityRole="button"
-                        accessibilityLabel={config.confirmText || 'OK'}
+                        accessibilityLabel={config.confirmText || t('common.ok')}
                         onPress={handleConfirm}
                     >
                         <Text style={[
                             styles.buttonText,
                             Typography.default('semiBold')
                         ]}>
-                            {config.confirmText || 'OK'}
+                            {config.confirmText || t('common.ok')}
                         </Text>
                     </Pressable>
                 </View>

@@ -3,73 +3,16 @@ import { Ionicons } from '@expo/vector-icons';
 import { View } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
 
-import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { ItemList } from '@/components/ui/lists/ItemList';
-import { Switch } from '@/components/ui/forms/Switch';
 import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { t } from '@/text';
 import { useSettingMutable } from '@/sync/domains/state/storage';
-
-type ToolViewDetailLevel = 'title' | 'summary' | 'full';
-type ToolDetailLevelTranslationKey =
-    | 'settingsSession.toolDetailLevel.defaultTitle'
-    | 'settingsSession.toolDetailLevel.defaultSubtitle'
-    | 'settingsSession.toolDetailLevel.titleOnlyTitle'
-    | 'settingsSession.toolDetailLevel.titleOnlySubtitle'
-    | 'settingsSession.toolDetailLevel.summaryTitle'
-    | 'settingsSession.toolDetailLevel.summarySubtitle'
-    | 'settingsSession.toolDetailLevel.fullTitle'
-    | 'settingsSession.toolDetailLevel.fullSubtitle';
-
-const TOOL_DETAIL_LEVEL_OPTIONS = [
-    {
-        key: 'title',
-        titleKey: 'settingsSession.toolDetailLevel.titleOnlyTitle',
-        subtitleKey: 'settingsSession.toolDetailLevel.titleOnlySubtitle',
-    },
-    {
-        key: 'summary',
-        titleKey: 'settingsSession.toolDetailLevel.summaryTitle',
-        subtitleKey: 'settingsSession.toolDetailLevel.summarySubtitle',
-    },
-    {
-        key: 'full',
-        titleKey: 'settingsSession.toolDetailLevel.fullTitle',
-        subtitleKey: 'settingsSession.toolDetailLevel.fullSubtitle',
-    },
-] as const satisfies ReadonlyArray<{
-    key: ToolViewDetailLevel;
-    titleKey:
-        | 'settingsSession.toolDetailLevel.titleOnlyTitle'
-        | 'settingsSession.toolDetailLevel.summaryTitle'
-        | 'settingsSession.toolDetailLevel.fullTitle';
-    subtitleKey:
-        | 'settingsSession.toolDetailLevel.titleOnlySubtitle'
-        | 'settingsSession.toolDetailLevel.summarySubtitle'
-        | 'settingsSession.toolDetailLevel.fullSubtitle';
-}>;
-
-const TOOL_DETAIL_LEVEL_WITH_DEFAULT_OPTIONS = [
-    {
-        key: 'default',
-        titleKey: 'settingsSession.toolDetailLevel.defaultTitle',
-        subtitleKey: 'settingsSession.toolDetailLevel.defaultSubtitle',
-    },
-    ...TOOL_DETAIL_LEVEL_OPTIONS,
-] as const satisfies ReadonlyArray<{
-    key: ToolViewDetailLevel | 'default';
-    titleKey:
-        | 'settingsSession.toolDetailLevel.defaultTitle'
-        | 'settingsSession.toolDetailLevel.titleOnlyTitle'
-        | 'settingsSession.toolDetailLevel.summaryTitle'
-        | 'settingsSession.toolDetailLevel.fullTitle';
-    subtitleKey:
-        | 'settingsSession.toolDetailLevel.defaultSubtitle'
-        | 'settingsSession.toolDetailLevel.titleOnlySubtitle'
-        | 'settingsSession.toolDetailLevel.summarySubtitle'
-        | 'settingsSession.toolDetailLevel.fullSubtitle';
-}>;
+import {
+    TOOL_DETAIL_LEVEL_WITH_DEFAULT_OPTIONS,
+    TOOL_EXPANDED_DETAIL_LEVEL_WITH_STYLE_DEFAULT_OPTIONS,
+    type ToolViewDetailLevel,
+} from '@/components/settings/session/toolRendering/toolRenderingSettingOptions';
 
 const TOOL_OVERRIDE_KEYS: Array<{ toolName: string; title: string }> = [
     { toolName: 'Bash', title: 'Bash' },
@@ -92,107 +35,20 @@ const TOOL_OVERRIDE_KEYS: Array<{ toolName: string; title: string }> = [
     { toolName: 'ExitPlanMode', title: 'ExitPlanMode' },
     { toolName: 'AskUserQuestion', title: 'AskUserQuestion' },
     { toolName: 'change_title', title: 'change_title' },
-];
+] as const;
 
 export const ToolRenderingSettingsView = React.memo(function ToolRenderingSettingsView() {
     const { theme } = useUnistyles();
     const popoverBoundaryRef = React.useRef<any>(null);
 
-    const [toolViewDetailLevelDefault, setToolViewDetailLevelDefault] = useSettingMutable('toolViewDetailLevelDefault');
-    const [toolViewDetailLevelDefaultLocalControl, setToolViewDetailLevelDefaultLocalControl] = useSettingMutable('toolViewDetailLevelDefaultLocalControl');
     const [toolViewDetailLevelByToolName, setToolViewDetailLevelByToolName] = useSettingMutable('toolViewDetailLevelByToolName');
-    const [toolViewShowDebugByDefault, setToolViewShowDebugByDefault] = useSettingMutable('toolViewShowDebugByDefault');
+    const [toolViewExpandedDetailLevelByToolName, setToolViewExpandedDetailLevelByToolName] = useSettingMutable('toolViewExpandedDetailLevelByToolName');
 
     const [openToolDetailMenu, setOpenToolDetailMenu] = React.useState<null | string>(null);
-    const tToolDetail = t as (key: ToolDetailLevelTranslationKey) => string;
+    const tToolDetail = t as (key: any) => string;
 
     return (
         <ItemList ref={popoverBoundaryRef} style={{ paddingTop: 0 }}>
-            <ItemGroup
-                title={t('settingsSession.toolRendering.title')}
-                footer={t('settingsSession.toolRendering.footer')}
-            >
-                <DropdownMenu
-                    open={openToolDetailMenu === 'toolViewDetailLevelDefault'}
-                    onOpenChange={(next) => setOpenToolDetailMenu(next ? 'toolViewDetailLevelDefault' : null)}
-                    variant="selectable"
-                    search={false}
-                    selectedId={toolViewDetailLevelDefault as any}
-                    showCategoryTitles={false}
-                    matchTriggerWidth={true}
-                    connectToTrigger={true}
-                    rowKind="item"
-                    popoverBoundaryRef={popoverBoundaryRef}
-                    itemTrigger={{
-                        title: t('settingsSession.toolRendering.defaultToolDetailLevelTitle'),
-                        icon: <Ionicons name="construct-outline" size={29} color={theme.colors.accent.blue} />,
-                        // Preserve the compact label as fallback; selected option subtitle will override by default.
-                        subtitle: (() => {
-                            const key = TOOL_DETAIL_LEVEL_OPTIONS.find((opt) => opt.key === toolViewDetailLevelDefault)?.titleKey;
-                            return key ? tToolDetail(key) : String(toolViewDetailLevelDefault);
-                        })(),
-                    }}
-                    items={TOOL_DETAIL_LEVEL_OPTIONS.map((opt) => ({
-                        id: opt.key,
-                        title: tToolDetail(opt.titleKey),
-                        subtitle: tToolDetail(opt.subtitleKey),
-                        icon: (
-                            <View style={{ width: 32, height: 32, alignItems: 'center', justifyContent: 'center' }}>
-                                <Ionicons name="list-outline" size={22} color={theme.colors.textSecondary} />
-                            </View>
-                        ),
-                    }))}
-                    onSelect={(id) => {
-                        setToolViewDetailLevelDefault(id as any);
-                        setOpenToolDetailMenu(null);
-                    }}
-                />
-
-                <DropdownMenu
-                    open={openToolDetailMenu === 'toolViewDetailLevelDefaultLocalControl'}
-                    onOpenChange={(next) => setOpenToolDetailMenu(next ? 'toolViewDetailLevelDefaultLocalControl' : null)}
-                    variant="selectable"
-                    search={false}
-                    selectedId={toolViewDetailLevelDefaultLocalControl as any}
-                    showCategoryTitles={false}
-                    matchTriggerWidth={true}
-                    connectToTrigger={true}
-                    rowKind="item"
-                    popoverBoundaryRef={popoverBoundaryRef}
-                    itemTrigger={{
-                        title: t('settingsSession.toolRendering.localControlDefaultTitle'),
-                        icon: <Ionicons name="shield-outline" size={29} color={theme.colors.accent.orange} />,
-                        subtitle: (() => {
-                            const key = TOOL_DETAIL_LEVEL_OPTIONS.find((opt) => opt.key === toolViewDetailLevelDefaultLocalControl)?.titleKey;
-                            return key ? tToolDetail(key) : String(toolViewDetailLevelDefaultLocalControl);
-                        })(),
-                    }}
-                    items={TOOL_DETAIL_LEVEL_OPTIONS.map((opt) => ({
-                        id: opt.key,
-                        title: tToolDetail(opt.titleKey),
-                        subtitle: tToolDetail(opt.subtitleKey),
-                        icon: (
-                            <View style={{ width: 32, height: 32, alignItems: 'center', justifyContent: 'center' }}>
-                                <Ionicons name="list-outline" size={22} color={theme.colors.textSecondary} />
-                            </View>
-                        ),
-                    }))}
-                    onSelect={(id) => {
-                        setToolViewDetailLevelDefaultLocalControl(id as any);
-                        setOpenToolDetailMenu(null);
-                    }}
-                />
-
-                <Item
-                    title={t('settingsSession.toolRendering.showDebugByDefaultTitle')}
-                    subtitle={t('settingsSession.toolRendering.showDebugByDefaultSubtitle')}
-                    icon={<Ionicons name="code-slash-outline" size={29} color={theme.colors.accent.indigo} />}
-                    rightElement={<Switch value={toolViewShowDebugByDefault} onValueChange={setToolViewShowDebugByDefault} />}
-                    showChevron={false}
-                    onPress={() => setToolViewShowDebugByDefault(!toolViewShowDebugByDefault)}
-                />
-            </ItemGroup>
-
             <ItemGroup
                 title={t('settingsSession.toolDetailOverrides.title')}
                 footer={t('settingsSession.toolDetailOverrides.footer')}
@@ -244,6 +100,64 @@ export const ToolRenderingSettingsView = React.memo(function ToolRenderingSettin
                                     nextRecord[toolKey.toolName] = next;
                                 }
                                 setToolViewDetailLevelByToolName(nextRecord as any);
+                                setOpenToolDetailMenu(null);
+                            }}
+                        />
+                    );
+                })}
+            </ItemGroup>
+
+            <ItemGroup
+                title={t('settingsSession.toolDetailOverrides.expandedTitle')}
+                footer={t('settingsSession.toolDetailOverrides.expandedFooter')}
+            >
+                {TOOL_OVERRIDE_KEYS.map((toolKey, index) => {
+                    const override = (toolViewExpandedDetailLevelByToolName as any)?.[toolKey.toolName] as 'summary' | 'full' | undefined;
+                    const selected = override ?? 'default';
+                    const showDivider = index < TOOL_OVERRIDE_KEYS.length - 1;
+
+                    return (
+                        <DropdownMenu
+                            key={toolKey.toolName}
+                            open={openToolDetailMenu === `toolExpandedOverride:${toolKey.toolName}`}
+                            onOpenChange={(next) => setOpenToolDetailMenu(next ? `toolExpandedOverride:${toolKey.toolName}` : null)}
+                            variant="selectable"
+                            search={false}
+                            selectedId={selected as any}
+                            showCategoryTitles={false}
+                            matchTriggerWidth={true}
+                            connectToTrigger={true}
+                            rowKind="item"
+                            popoverBoundaryRef={popoverBoundaryRef}
+                            itemTrigger={{
+                                title: toolKey.title,
+                                icon: <Ionicons name="expand-outline" size={29} color={theme.colors.textSecondary} />,
+                                subtitle: (() => {
+                                    const key = TOOL_EXPANDED_DETAIL_LEVEL_WITH_STYLE_DEFAULT_OPTIONS.find((opt) => opt.key === selected)?.titleKey;
+                                    return key ? tToolDetail(key) : String(selected);
+                                })(),
+                                itemProps: { showDivider },
+                            }}
+                            items={TOOL_EXPANDED_DETAIL_LEVEL_WITH_STYLE_DEFAULT_OPTIONS.map((opt) => ({
+                                id: opt.key,
+                                title: tToolDetail(opt.titleKey),
+                                subtitle: tToolDetail(opt.subtitleKey),
+                                icon: (
+                                    <View style={{ width: 32, height: 32, alignItems: 'center', justifyContent: 'center' }}>
+                                        <Ionicons name="expand-outline" size={22} color={theme.colors.textSecondary} />
+                                    </View>
+                                ),
+                            }))}
+                            onSelect={(id) => {
+                                const next = id as 'default' | 'summary' | 'full';
+                                const current = (toolViewExpandedDetailLevelByToolName ?? {}) as Record<string, 'summary' | 'full'>;
+                                const nextRecord: Record<string, 'summary' | 'full'> = { ...current };
+                                if (next === 'default') {
+                                    delete nextRecord[toolKey.toolName];
+                                } else {
+                                    nextRecord[toolKey.toolName] = next;
+                                }
+                                setToolViewExpandedDetailLevelByToolName(nextRecord as any);
                                 setOpenToolDetailMenu(null);
                             }}
                         />

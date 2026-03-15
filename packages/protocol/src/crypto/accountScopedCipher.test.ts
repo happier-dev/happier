@@ -152,6 +152,29 @@ describe('accountScopedCipher', () => {
     expect(opened?.value).toEqual(payload);
   });
 
+  it('falls back to legacy secretbox opening even when nonce collides with account-scoped magic bytes', () => {
+    const kind: AccountScopedBlobKind = 'account_settings';
+    const recoverySecret = new Uint8Array(32).fill(3);
+    const payload = { analyticsOptOut: false };
+
+    // Collision case: legacy nonce begins with the account-scoped magic byte and kind byte.
+    const nonce = new Uint8Array(24).fill(4);
+    nonce[0] = 0xa1;
+    nonce[1] = 1; // account_settings kind byte
+
+    const plaintext = new TextEncoder().encode(JSON.stringify(payload));
+    const boxed = tweetnacl.secretbox(plaintext, nonce, recoverySecret);
+    const legacyBytes = new Uint8Array(nonce.length + boxed.length);
+    legacyBytes.set(nonce, 0);
+    legacyBytes.set(boxed, nonce.length);
+    const legacyCiphertext = encodeBase64(legacyBytes, 'base64');
+
+    const material: AccountScopedCryptoMaterial = { type: 'legacy', secret: recoverySecret };
+    const opened = openAccountScopedBlobCiphertext({ kind, material, ciphertext: legacyCiphertext });
+    expect(opened?.format).toBe('legacy_secretbox');
+    expect(opened?.value).toEqual(payload);
+  });
+
   it('returns null when kind does not match', () => {
     const payload = { x: 1 };
     const machineKey = new Uint8Array(32).fill(8);

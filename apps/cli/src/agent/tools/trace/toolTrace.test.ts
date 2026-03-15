@@ -57,6 +57,67 @@ describe('ToolTraceWriter', () => {
       kind: 'tool-call',
     });
   });
+
+  it('does not treat non-Error payloads with a name field as Error-like', () => {
+    const dir = createTempDir('happy-tool-trace-name-field-');
+    const filePath = join(dir, 'trace.jsonl');
+    const writer = new ToolTraceWriter({ filePath });
+
+    writer.record({
+      v: 1,
+      ts: 1700000000000,
+      direction: 'outbound',
+      sessionId: 'sess_123',
+      protocol: 'acp',
+      provider: 'opencode',
+      kind: 'tool-call',
+      payload: {
+        type: 'tool-call',
+        callId: 'call_123',
+        name: 'Bash',
+        input: { command: 'echo TRACE_OK' },
+      },
+    });
+
+    const raw = readFileSync(filePath, 'utf8');
+    const lines = raw.trim().split('\n');
+    expect(lines).toHaveLength(1);
+
+    const parsed = JSON.parse(lines[0] as string) as { payload?: any };
+    expect(parsed.payload).toMatchObject({
+      type: 'tool-call',
+      callId: 'call_123',
+      name: 'Bash',
+    });
+  });
+
+  it('does not throw when payload contains circular references', () => {
+    const dir = createTempDir('happy-tool-trace-circular-');
+    const filePath = join(dir, 'trace.jsonl');
+    const writer = new ToolTraceWriter({ filePath });
+
+    const circular: Record<string, unknown> = { ok: true };
+    circular.self = circular;
+
+    expect(() => {
+      writer.record({
+        v: 1,
+        ts: 1700000000000,
+        direction: 'outbound',
+        sessionId: 'sess_123',
+        protocol: 'acp',
+        provider: 'codex',
+        kind: 'tool-call',
+        payload: circular,
+      });
+    }).not.toThrow();
+
+    const raw = readFileSync(filePath, 'utf8');
+    const lines = raw.trim().split('\n');
+    expect(lines).toHaveLength(1);
+    const parsed = JSON.parse(lines[0] as string) as { payload?: unknown };
+    expect(typeof parsed.payload).toBe('object');
+  });
 });
 
 describe('recordToolTraceEvent', () => {

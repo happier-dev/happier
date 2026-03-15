@@ -15,6 +15,11 @@ export function permissionModeForExecutionRunPolicy(raw: string): PermissionMode
     return 'read-only';
   }
 
+  if (mode === 'workspace_write') {
+    // Execution runs default delegate intent policy to workspace-write. Map it to the closest
+    // canonical PermissionMode understood by ACP backends.
+    return 'safe-yolo';
+  }
+
   return isPermissionMode(mode) ? mode : 'default';
 }
-

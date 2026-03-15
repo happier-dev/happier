@@ -4,6 +4,8 @@ import type {
     ScmCapabilities,
     ScmChangeApplyRequest,
     ScmChangeApplyResponse,
+    ScmChangeDiscardRequest,
+    ScmChangeDiscardResponse,
     ScmCommitBackoutRequest,
     ScmCommitBackoutResponse,
     ScmCommitCreateRequest,
@@ -68,6 +70,10 @@ export interface ScmBackend {
         context: ScmBackendContext;
         request: ScmChangeApplyRequest;
     }): Promise<ScmChangeApplyResponse>;
+    changeDiscard(input: {
+        context: ScmBackendContext;
+        request: ScmChangeDiscardRequest;
+    }): Promise<ScmChangeDiscardResponse>;
     commitCreate(input: {
         context: ScmBackendContext;
         request: ScmCommitCreateRequest;

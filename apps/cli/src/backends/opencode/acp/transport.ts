@@ -13,6 +13,8 @@
  * Agent-specific stderr parsing can be added later if needed.
  */
 
+import { redactBugReportSensitiveText } from '@happier-dev/protocol';
+import { CHANGE_TITLE_TOOL_NAME_ALIASES, isChangeTitleToolNameAlias } from '@happier-dev/protocol/tools/v2';
 import type {
   TransportHandler,
   ToolPattern,
@@ -44,18 +46,6 @@ export const OPENCODE_TIMEOUTS = {
 
 const OPENCODE_TOOL_PATTERNS: readonly ToolPatternWithInputFields[] = [
   {
-    name: 'change_title',
-    patterns: [
-      'change_title',
-      'change-title',
-      'happier__change_title',
-      'mcp__happier__change_title',
-      'happier__change_title',
-      'mcp__happier__change_title',
-    ],
-    inputFields: ['title'],
-  },
-  {
     name: 'save_memory',
     patterns: ['save_memory', 'save-memory'],
     inputFields: ['memory', 'content'],
@@ -64,6 +54,13 @@ const OPENCODE_TOOL_PATTERNS: readonly ToolPatternWithInputFields[] = [
     name: 'think',
     patterns: ['think'],
     inputFields: ['thought', 'thinking'],
+  },
+  // OpenCode sometimes reports file edits as kind="other" with a title/description like "apply_patch".
+  // Match these before generic patterns like change_title (which can otherwise match via inferred `title`).
+  {
+    name: 'apply_patch',
+    patterns: ['apply_patch', 'apply-diff', 'apply_diff', 'apply-patch', 'patch'],
+    inputFields: ['patchText', 'patch_text', 'patch', 'changes', 'diff'],
   },
   // OpenCode CLI tool conventions
   {
@@ -101,6 +98,11 @@ const OPENCODE_TOOL_PATTERNS: readonly ToolPatternWithInputFields[] = [
     patterns: ['task'],
     inputFields: ['prompt', 'subagent_type'],
   },
+  {
+    name: 'change_title',
+    patterns: CHANGE_TITLE_TOOL_NAME_ALIASES,
+    inputFields: ['title'],
+  },
 ] as const;
 
 export class OpenCodeTransport implements TransportHandler {
@@ -119,11 +121,12 @@ export class OpenCodeTransport implements TransportHandler {
   handleStderr(text: string, context: StderrContext): StderrResult {
     const trimmed = text.trim();
     if (!trimmed) return { message: null, suppress: true };
+    const lower = trimmed.toLowerCase();
 
     // Rate limit errors - OpenCode (or its providers) may retry; keep logs for debugging.
     if (
       trimmed.includes('429') ||
-      trimmed.toLowerCase().includes('rate limit') ||
+      lower.includes('rate limit') ||
       trimmed.includes('RATE_LIMIT')
     ) {
       return { message: null, suppress: false };
@@ -131,9 +134,9 @@ export class OpenCodeTransport implements TransportHandler {
 
     // Authentication error - show actionable message.
     if (
-      trimmed.toLowerCase().includes('authentication') ||
-      trimmed.toLowerCase().includes('unauthorized') ||
-      trimmed.toLowerCase().includes('api key')
+      lower.includes('authentication') ||
+      lower.includes('unauthorized') ||
+      lower.includes('api key')
     ) {
       const errorMessage: AgentMessage = {
         type: 'status',
@@ -144,13 +147,70 @@ export class OpenCodeTransport implements TransportHandler {
     }
 
     // Model not found - show actionable message.
-    if (trimmed.toLowerCase().includes('model not found')) {
+    if (lower.includes('model not found') || lower.includes('providermodelnotfounderror')) {
       const errorMessage: AgentMessage = {
         type: 'status',
         status: 'error',
         detail: 'Model not found. Check available models in your CLI (for example: `opencode models`).',
       };
       return { message: errorMessage };
+    }
+
+    const redacted = redactBugReportSensitiveText(trimmed);
+    const detail = redacted.length > 500 ? `${redacted.slice(0, 500)}…` : redacted;
+
+    // CLI invocation/config errors (flags/args/etc) should be surfaced directly so misconfiguration
+    // doesn't appear as a "silent" failure.
+    const looksLikeCliInvocationError =
+      lower.startsWith('error:') ||
+      lower.includes('unknown flag') ||
+      lower.includes('unknown option') ||
+      lower.includes('unrecognized option') ||
+      lower.includes('unknown argument') ||
+      lower.includes('flag provided but not defined') ||
+      lower.includes('invalid value') ||
+      lower.includes('invalid argument') ||
+      lower.includes('unknown command');
+
+    if (looksLikeCliInvocationError) {
+      const errorMessage: AgentMessage = {
+        type: 'status',
+        status: 'error',
+        detail,
+      };
+      return { message: errorMessage, suppress: false };
+    }
+
+    // Provider request failures (e.g. Anthropic/OpenAI invalid_request_error) often only show up as
+    // OpenCode logs when `opencode acp --print-logs` is enabled. Surface these as user-visible errors
+    // so the UI doesn't appear stuck with no response.
+    const looksLikeNetworkError =
+      lower.includes('unable to connect') ||
+      lower.includes('connectionrefused') ||
+      lower.includes('connection refused') ||
+      lower.includes('econnrefused') ||
+      lower.includes('fetch failed') ||
+      lower.includes('network error') ||
+      lower.includes('socket hang up');
+
+    const looksLikeProviderRequestError =
+      lower.includes('invalid_request_error') ||
+      lower.includes('apierror') ||
+      lower.includes('statuscode') ||
+      lower.includes('image exceeds') ||
+      (lower.includes('exceeds') && lower.includes('maximum')) ||
+      lower.includes('request failed') ||
+      lower.includes('bad request') ||
+      (lower.includes('http') && (lower.includes(' 4') || lower.includes(' 5'))) ||
+      (/\b(4\d\d|5\d\d)\b/.test(lower) && lower.includes('error'));
+
+    if (looksLikeNetworkError || looksLikeProviderRequestError) {
+      const errorMessage: AgentMessage = {
+        type: 'status',
+        status: 'error',
+        detail,
+      };
+      return { message: errorMessage, suppress: false };
     }
 
     // During long-running tools, keep stderr available for debugging but avoid noisy UI messages.
@@ -181,16 +241,48 @@ export class OpenCodeTransport implements TransportHandler {
     input: Record<string, unknown>,
     _context: ToolNameContext
   ): string {
+    const inferredTitle = (() => {
+      const rawAcpTitle = input?._acp;
+      const acpTitle =
+        rawAcpTitle && typeof rawAcpTitle === 'object' && !Array.isArray(rawAcpTitle) && typeof (rawAcpTitle as any).title === 'string'
+          ? String((rawAcpTitle as any).title).trim()
+          : '';
+      const title = typeof input.title === 'string' ? input.title.trim() : '';
+      const description = typeof input.description === 'string' ? input.description.trim() : '';
+      return (acpTitle || description || title).toLowerCase();
+    })();
+
+    // OpenCode sometimes sends kind="other" tool calls with no structured input on the first update,
+    // but sets the tool title/description to "apply_patch". In that case, treat it as Patch immediately
+    // so subsequent tool_call_update events don't get stuck under a generic name like change_title.
+    if (
+      (toolName === 'other' || toolName === 'Unknown tool') &&
+      (inferredTitle === 'apply_patch' || inferredTitle === 'apply-patch' || inferredTitle === 'apply_diff' || inferredTitle === 'apply-diff' || inferredTitle === 'patch')
+    ) {
+      return 'apply_patch';
+    }
+
     // OpenCode uses `change_title` as the task/subagent tool in some ACP implementations.
     // Map it to `Task` when ACP metadata indicates this is the task tool so that downstream
     // features (like sidechain replay import) can key off a stable name.
-    if (toolName === 'change_title') {
+    if (isChangeTitleToolNameAlias(toolName)) {
       const acp = input?._acp;
       const acpTitle =
         acp && typeof acp === 'object' && !Array.isArray(acp) && typeof (acp as any).title === 'string'
           ? String((acp as any).title).trim().toLowerCase()
           : '';
       if (acpTitle === 'task') return 'Task';
+
+      const title = typeof input.title === 'string' ? input.title.trim() : '';
+      const memory = typeof input.memory === 'string' ? input.memory.trim() : '';
+      const prompt = typeof input.prompt === 'string' ? input.prompt.trim() : '';
+      const subagentType = typeof input.subagent_type === 'string' ? input.subagent_type.trim() : '';
+
+      const looksLikeTaskTool = Boolean(prompt) && Boolean(subagentType);
+      const looksLikeChangeTitle = Boolean(title);
+      const looksLikeSaveMemory = Boolean(memory);
+
+      if (looksLikeTaskTool && !looksLikeChangeTitle && !looksLikeSaveMemory) return 'Task';
     }
 
     const directToolName = findToolNameFromId(toolName, OPENCODE_TOOL_PATTERNS, { preferLongestMatch: true });

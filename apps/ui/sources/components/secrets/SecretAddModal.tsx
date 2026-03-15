@@ -74,7 +74,7 @@ export function SecretAddModal(props: SecretAddModalProps) {
                             <Text style={styles.fieldLabel}>{t('secrets.fields.value')}</Text>
                             <TextInput
                                 style={styles.textInput}
-                                placeholder="sk-..."
+                                placeholder={t('secrets.placeholders.valueExample')}
                                 placeholderTextColor={theme.colors.input.placeholder}
                                 value={value}
                                 onChangeText={setValue}
@@ -200,4 +200,3 @@ const stylesheet = StyleSheet.create((theme) => ({
         }) as object),
     },
 }));
-

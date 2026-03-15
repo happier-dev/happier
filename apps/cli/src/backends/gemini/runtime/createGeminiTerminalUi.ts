@@ -4,6 +4,7 @@ import React from 'react';
 import { MessageBuffer } from '@/ui/ink/messageBuffer';
 import { createNonBlockingStdout } from '@/ui/ink/nonBlockingStdout';
 import { GeminiTerminalDisplay } from '@/backends/gemini/ui/GeminiTerminalDisplay';
+import { DEFAULT_GEMINI_MODEL } from '@/backends/gemini/constants';
 
 export function createGeminiTerminalUi(params: {
   messageBuffer: MessageBuffer;
@@ -46,7 +47,7 @@ export function createGeminiTerminalUi(params: {
     console.clear();
 
     const DisplayComponent = () => {
-      const currentModelValue = displayedModel || 'gemini-2.5-pro';
+      const currentModelValue = displayedModel || DEFAULT_GEMINI_MODEL;
       return React.createElement(GeminiTerminalDisplay, {
         messageBuffer: params.messageBuffer,
         logPath: params.logPath,
@@ -61,7 +62,7 @@ export function createGeminiTerminalUi(params: {
       stdout: createNonBlockingStdout(process.stdout as any),
     });
 
-    const initialModelName = displayedModel || 'gemini-2.5-pro';
+    const initialModelName = displayedModel || DEFAULT_GEMINI_MODEL;
     params.onDebug(`[gemini] Sending initial model to UI: ${initialModelName}`);
     params.messageBuffer.addMessage(`[MODEL:${initialModelName}]`, 'system');
 

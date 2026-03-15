@@ -6,7 +6,7 @@ import type { Credentials } from '@/persistence';
 import { readCredentials, readSettings } from '@/persistence';
 import { authAndSetupMachineIfNeeded, ensureMachineIdInSettings } from '@/ui/auth';
 import type { CommandContext } from '@/cli/commandRegistry';
-import { bootstrapAccountSettingsContext } from '@/settings/accountSettings/bootstrapAccountSettingsContext';
+import { bootstrapAccountSettingsContext, type AccountSettingsContext } from '@/settings/accountSettings/bootstrapAccountSettingsContext';
 import { ensureDaemonRunningForSessionCommand, shouldAutoStartDaemonAfterAuth } from '@/daemon/ensureDaemon';
 import { configuration } from '@/configuration';
 import { logger } from '@/ui/logger';
@@ -16,12 +16,14 @@ import {
   readOptionalFlagValue,
   type ParsedSessionStartArgs,
 } from '@/cli/sessionStartArgs';
+import { acquireSessionRunnerLock } from '@/daemon/sessionRunnerLock';
 
 type CommonBackendRunOptions = ParsedSessionStartArgs & {
   credentials: Credentials;
   terminalRuntime: CommandContext['terminalRuntime'];
   existingSessionId: string | undefined;
   resume: string | undefined;
+  accountSettingsContext: AccountSettingsContext | null;
 };
 
 export async function runBackendSessionCliCommand<Extra extends Record<string, unknown>>(params: {
@@ -31,6 +33,8 @@ export async function runBackendSessionCliCommand<Extra extends Record<string, u
   agentIdForAccountSettings?: AgentId;
   resolveExtraOptions?: (args: string[]) => Extra;
 }): Promise<void> {
+  let releaseSessionRunnerLock: (() => Promise<void>) | null = null;
+
   try {
     const refreshSettings = params.context.args.includes('--refresh-settings');
 
@@ -46,6 +50,20 @@ export async function runBackendSessionCliCommand<Extra extends Record<string, u
     const existingSessionId = readOptionalFlagValue(params.context.args, '--existing-session');
     const resume = readOptionalFlagValue(params.context.args, '--resume');
     const extraOptions = params.resolveExtraOptions ? params.resolveExtraOptions(params.context.args) : ({} as Extra);
+
+    const normalizedExistingSessionId = typeof existingSessionId === 'string' ? existingSessionId.trim() : '';
+    if (normalizedExistingSessionId) {
+      const lock = await acquireSessionRunnerLock({ sessionId: normalizedExistingSessionId });
+      if (!lock.ok) {
+        if (lock.reason === 'already_running') {
+          throw new Error(
+            `Session ${normalizedExistingSessionId} is already running on this machine (pid=${lock.heldByPid}).`,
+          );
+        }
+        throw new Error(`Failed to acquire session runner lock for ${normalizedExistingSessionId} (${lock.reason}).`);
+      }
+      releaseSessionRunnerLock = lock.release;
+    }
 
     const runPromise = params.loadRun();
 
@@ -67,6 +85,7 @@ export async function runBackendSessionCliCommand<Extra extends Record<string, u
 
     const run = await runPromise;
 
+    let accountSettingsContext: AccountSettingsContext | null = null;
     if (params.agentIdForAccountSettings) {
       const snapshot = await bootstrapAccountSettingsContext({
         agentId: params.agentIdForAccountSettings,
@@ -74,6 +93,7 @@ export async function runBackendSessionCliCommand<Extra extends Record<string, u
         mode: resolved.startedBy === 'daemon' ? 'blocking' : 'fast',
         refresh: refreshSettings ? 'force' : 'auto',
       });
+      accountSettingsContext = snapshot;
 
       if (params.agentIdForAccountSettings === 'codex' && resolved.startedBy !== 'daemon' && snapshot.whenRefreshed) {
         await snapshot.whenRefreshed;
@@ -90,8 +110,9 @@ export async function runBackendSessionCliCommand<Extra extends Record<string, u
       agentModeUpdatedAt: resolved.agentModeUpdatedAt,
       modelId: resolved.modelId,
       modelUpdatedAt: resolved.modelUpdatedAt,
-      existingSessionId,
+      existingSessionId: normalizedExistingSessionId || undefined,
       resume,
+      accountSettingsContext,
       ...extraOptions,
     });
   } catch (error) {
@@ -99,6 +120,10 @@ export async function runBackendSessionCliCommand<Extra extends Record<string, u
     if (process.env.DEBUG) {
       console.error(error);
     }
+    await releaseSessionRunnerLock?.().catch(() => {});
+    releaseSessionRunnerLock = null;
     process.exit(1);
+  } finally {
+    await releaseSessionRunnerLock?.().catch(() => {});
   }
 }

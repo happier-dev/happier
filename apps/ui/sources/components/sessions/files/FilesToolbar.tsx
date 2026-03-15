@@ -133,14 +133,14 @@ export function FilesToolbar(props: FilesToolbarProps) {
             <View style={{ flexDirection: 'row', marginTop: 10, gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
                 <Chip
                     active={!showAllRepositoryFiles}
-                    label="Changed files"
+                    label={t('files.toolbar.changedFiles')}
                     icon={<Octicons name="diff" size={14} color={theme.colors.textSecondary} />}
                     badge={!showAllRepositoryFiles ? <CountBadge count={changedFilesCount} /> : undefined}
                     onPress={onShowChangedFiles}
                 />
                 <Chip
                     active={showAllRepositoryFiles}
-                    label="All repository files"
+                    label={t('files.toolbar.allRepositoryFiles')}
                     icon={<Octicons name="repo" size={14} color={theme.colors.textSecondary} />}
                     onPress={onShowAllRepositoryFiles}
                 />
@@ -149,14 +149,14 @@ export function FilesToolbar(props: FilesToolbarProps) {
                     <>
                         <Chip
                             active={changedFilesViewMode === 'repository'}
-                            label="Repository view"
+                            label={t('files.toolbar.repositoryView')}
                             icon={<Octicons name="list-unordered" size={14} color={theme.colors.textSecondary} />}
                             onPress={() => onChangedFilesViewMode('repository')}
                         />
                         {showSessionViewToggle && (
                             <Chip
                                 active={changedFilesViewMode === 'session'}
-                                label="Session view"
+                                label={t('files.toolbar.sessionView')}
                                 icon={<Octicons name="history" size={14} color={theme.colors.textSecondary} />}
                                 onPress={() => onChangedFilesViewMode('session')}
                             />
@@ -164,13 +164,13 @@ export function FilesToolbar(props: FilesToolbarProps) {
 
                         <Chip
                             active={changedFilesPresentation === 'review'}
-                            label="Review"
+                            label={t('files.toolbar.review')}
                             icon={<Octicons name="diff" size={14} color={theme.colors.textSecondary} />}
                             onPress={() => onChangedFilesPresentationChange('review')}
                         />
                         <Chip
                             active={changedFilesPresentation === 'list'}
-                            label="List"
+                            label={t('files.toolbar.list')}
                             icon={<Octicons name="list-unordered" size={14} color={theme.colors.textSecondary} />}
                             onPress={() => onChangedFilesPresentationChange('list')}
                         />
@@ -179,7 +179,7 @@ export function FilesToolbar(props: FilesToolbarProps) {
 
                 <Chip
                     active={scmPanelExpanded}
-                    label="SCM"
+                    label={t('files.toolbar.scm')}
                     icon={<Octicons name="git-branch" size={14} color={theme.colors.textSecondary} />}
                     onPress={onToggleScmPanel}
                 />

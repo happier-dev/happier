@@ -8,6 +8,7 @@ import { resolveMtlsIdentityFromForwardedHeaders } from "@/app/auth/providers/mt
 import { resolveKeylessAutoProvisionEligibility } from "@/app/auth/keyless/resolveKeylessAutoProvisionEligibility";
 import { resolveKeylessAccountsEnabled } from "@/app/features/e2ee/resolveKeylessAccountsEnabled";
 import { randomKeyNaked } from "@/utils/keys/randomKeyNaked";
+import { resolveEffectiveAccountEncryptionModeFromAccountRow } from "@/app/encryption/accountEncryptionMode";
 
 type ForwardedMtlsIdentity = NonNullable<ReturnType<typeof resolveMtlsIdentityFromForwardedHeaders>>;
 
@@ -22,7 +23,7 @@ function isMtlsLoginEnabled(env: NodeJS.ProcessEnv): boolean {
 
 async function resolveOrProvisionMtlsAccount(params: {
     identity: ForwardedMtlsIdentity;
-}): Promise<{ accountId: string } | { error: "not-eligible" | "e2ee-required" }> {
+}): Promise<{ accountId: string } | { error: "not-eligible" | "e2ee-required" | "restore-required" }> {
     const mtlsEnv = readAuthMtlsFeatureEnv(process.env);
 
     const existing = await db.accountIdentity.findFirst({
@@ -30,6 +31,17 @@ async function resolveOrProvisionMtlsAccount(params: {
         select: { accountId: true },
     });
     if (existing) {
+        const account = await db.account.findUnique({
+            where: { id: existing.accountId },
+            select: { publicKey: true, encryptionMode: true },
+        });
+        if (!account) {
+            return { error: "not-eligible" };
+        }
+        const mode = resolveEffectiveAccountEncryptionModeFromAccountRow(account);
+        if (mode === "e2ee") {
+            return { error: "restore-required" };
+        }
         return { accountId: existing.accountId };
     }
 
@@ -306,6 +318,11 @@ export function registerMtlsAuthRoutes(app: Fastify): void {
 
             const account = await resolveOrProvisionMtlsAccount({ identity });
             if ("error" in account) {
+                if (account.error === "restore-required") {
+                    const url = new URL(returnTo);
+                    url.searchParams.set("error", "restore_required");
+                    return reply.redirect(url.toString());
+                }
                 return reply.code(403).send({ error: account.error });
             }
 
@@ -325,6 +342,7 @@ export function registerMtlsAuthRoutes(app: Fastify): void {
                     200: z.object({ success: z.literal(true), token: z.string() }),
                     401: z.object({ error: z.literal("mtls-required") }),
                     403: z.object({ error: z.union([z.literal("e2ee-required"), z.literal("not-eligible")]) }),
+                    409: z.object({ error: z.literal("restore-required") }),
                 },
             },
         },
@@ -349,6 +367,9 @@ export function registerMtlsAuthRoutes(app: Fastify): void {
 
             const account = await resolveOrProvisionMtlsAccount({ identity });
             if ("error" in account) {
+                if (account.error === "restore-required") {
+                    return reply.code(409).send({ error: "restore-required" });
+                }
                 return reply.code(403).send({ error: account.error });
             }
 
@@ -365,6 +386,7 @@ export function registerMtlsAuthRoutes(app: Fastify): void {
                 response: {
                     200: z.object({ success: z.literal(true), token: z.string() }),
                     401: z.object({ error: z.literal("invalid-code") }),
+                    409: z.object({ error: z.literal("restore-required") }),
                 },
             },
         },
@@ -373,6 +395,17 @@ export function registerMtlsAuthRoutes(app: Fastify): void {
             const verified = await consumeMtlsClaimCode(code);
             if (!verified?.userId) {
                 return reply.code(401).send({ error: "invalid-code" });
+            }
+            const account = await db.account.findUnique({
+                where: { id: verified.userId },
+                select: { publicKey: true, encryptionMode: true },
+            });
+            if (!account) {
+                return reply.code(401).send({ error: "invalid-code" });
+            }
+            const mode = resolveEffectiveAccountEncryptionModeFromAccountRow(account);
+            if (mode === "e2ee") {
+                return reply.code(409).send({ error: "restore-required" });
             }
             const token = await auth.createToken(verified.userId);
             return reply.send({ success: true, token });

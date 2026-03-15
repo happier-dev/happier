@@ -128,18 +128,40 @@ test(
     const serverErrLog = join(logDir, 'server.err.log');
 
     let installSucceeded = false;
-    t.after(() => {
-      run(
-        hstackPath,
-        ['self-host', 'uninstall', '--channel=preview', '--mode=user', '--yes', '--purge-data', '--json'],
-        {
-          env: commonEnv,
-          allowFail: true,
-          timeoutMs: 120_000,
-          stdio: 'ignore',
-          cwd: sandboxDir,
+    t.after(async () => {
+      try {
+        run(
+          hstackPath,
+          ['self-host', 'uninstall', '--channel=preview', '--mode=user', '--yes', '--purge-data', '--json'],
+          {
+            env: commonEnv,
+            allowFail: true,
+            timeoutMs: 120_000,
+            stdio: 'ignore',
+            cwd: sandboxDir,
+          }
+        );
+      } catch {
+        // ignore
+      }
+
+      // Extra best-effort cleanup: if the uninstall path fails early (or the test aborts mid-install),
+      // ensure the LaunchAgent is removed so we don't leave behind Background Items / launchd jobs.
+      try {
+        const home = String(commonEnv.HOME ?? '').trim();
+        if (!home) return;
+        const uid = typeof process.getuid === 'function' ? process.getuid() : null;
+        const plistPath = join(home, 'Library', 'LaunchAgents', `${serviceName}.plist`);
+
+        run('launchctl', ['remove', serviceName], { allowFail: true, timeoutMs: 20_000, stdio: 'ignore' });
+        if (uid != null) {
+          run('launchctl', ['bootout', `gui/${uid}`, plistPath], { allowFail: true, timeoutMs: 20_000, stdio: 'ignore' });
         }
-      );
+        run('launchctl', ['unload', '-w', plistPath], { allowFail: true, timeoutMs: 20_000, stdio: 'ignore' });
+        await rm(plistPath, { force: true });
+      } catch {
+        // best-effort only
+      }
     });
 
     const installResult = run(

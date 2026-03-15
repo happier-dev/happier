@@ -6,6 +6,18 @@ import { Session } from './session';
 import { EventEmitter } from 'node:events';
 import type { EnhancedMode } from './loop';
 
+vi.mock('@/agent/runtime/createHappierMcpBridge', () => ({
+  createHappierMcpBridge: vi.fn(async () => ({
+    happierMcpServer: { url: 'http://127.0.0.1:1234', stop: vi.fn() },
+    mcpServers: {
+      happier: {
+        command: 'node',
+        args: ['happier-mcp.mjs', '--url', 'http://127.0.0.1:1234'],
+      },
+    },
+  })),
+}));
+
 type MetadataSnapshot = { permissionMode?: PermissionMode; permissionModeUpdatedAt?: number };
 type RpcHandler = (params?: unknown) => unknown | Promise<unknown>;
 type SessionFoundHookData = NonNullable<Parameters<Session['onSessionFound']>[1]>;
@@ -140,7 +152,6 @@ function createLocalHarness(options?: { metadataSnapshot?: MetadataSnapshot }): 
     path: '/tmp',
     logPath: '/tmp/log',
     sessionId: null,
-    mcpServers: {},
     messageQueue: new MessageQueue2<EnhancedMode>(() => 'mode'),
     onModeChange: () => {},
     hookSettingsPath: '/tmp/hooks.json',
@@ -225,6 +236,52 @@ describe('claudeLocalLauncher', () => {
     const { claudeLocalLauncher } = await import('./claudeLocalLauncher');
     const result = await claudeLocalLauncher(session);
 
+    expect(result).toEqual({ type: 'exit', code: 0 });
+  });
+
+  it('does not pass a strict allowedTools allowlist to local Claude spawns by default', async () => {
+    const { session } = createLocalHarness();
+
+    let captured: LocalLaunchOptions | null = null;
+    mockClaudeLocal.mockImplementationOnce(async (opts: LocalLaunchOptions) => {
+      captured = opts;
+    });
+
+    const { claudeLocalLauncher } = await import('./claudeLocalLauncher');
+    const result = await claudeLocalLauncher(session);
+
+    expect(mockClaudeLocal).toHaveBeenCalledTimes(1);
+    expect((captured as any)?.allowedTools).toBeUndefined();
+    expect(typeof (captured as any)?.happierMcpConfigJson).toBe('string');
+    const parsed = JSON.parse(String((captured as any)?.happierMcpConfigJson ?? 'null'));
+    expect(parsed?.mcpServers?.happier).toBeTruthy();
+    expect(result).toEqual({ type: 'exit', code: 0 });
+  });
+
+  it('passes through user --mcp-config args and does not parse/merge them into happierMcpConfigJson', async () => {
+    const { session } = createLocalHarness();
+
+    const userMcpConfig = JSON.stringify({
+      mcpServers: {
+        custom: { type: 'http', url: 'http://127.0.0.1:9999' },
+      },
+    });
+    session.claudeArgs = ['--mcp-config', userMcpConfig, '--max-turns', '3'];
+
+    let captured: LocalLaunchOptions | null = null;
+    mockClaudeLocal.mockImplementationOnce(async (opts: LocalLaunchOptions) => {
+      captured = opts;
+    });
+
+    const { claudeLocalLauncher } = await import('./claudeLocalLauncher');
+    const result = await claudeLocalLauncher(session);
+
+    expect(mockClaudeLocal).toHaveBeenCalledTimes(1);
+    expect((captured as any)?.claudeArgs).toEqual(['--mcp-config', userMcpConfig, '--max-turns', '3']);
+
+    const parsed = JSON.parse(String((captured as any)?.happierMcpConfigJson ?? 'null'));
+    expect(parsed?.mcpServers?.happier).toBeTruthy();
+    expect(parsed?.mcpServers?.custom).toBeUndefined();
     expect(result).toEqual({ type: 'exit', code: 0 });
   });
 

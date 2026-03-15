@@ -35,7 +35,17 @@ export function createCustomDebounce<T>(
         if (timeoutId) {
             clearTimeout(timeoutId);
         }
-        
+
+        // `delay <= 0` is effectively "no debounce": execute immediately and avoid timers.
+        if (!(typeof delay === 'number') || delay <= 0) {
+            if (pendingArgs !== null) {
+                fn(pendingArgs);
+                pendingArgs = null;
+            }
+            timeoutId = null;
+            return;
+        }
+
         // Set new timeout
         timeoutId = setTimeout(() => {
             if (pendingArgs !== null) {
@@ -107,7 +117,17 @@ export function createAdvancedDebounce<T>(
         if (timeoutId) {
             clearTimeout(timeoutId);
         }
-        
+
+        // `delay <= 0` is effectively "no debounce": execute immediately and avoid timers.
+        if (!(typeof delay === 'number') || delay <= 0) {
+            if (pendingArgs !== null) {
+                fn(pendingArgs);
+                pendingArgs = null;
+            }
+            timeoutId = null;
+            return;
+        }
+
         // Set new timeout
         timeoutId = setTimeout(() => {
             if (pendingArgs !== null) {

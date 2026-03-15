@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { afterEach, describe, expect, it } from 'vitest';
+import { CHANGE_TITLE_INSTRUCTION } from '@/agent/runtime/changeTitleInstruction';
 
 function createFakeClaudeEntrypointSource(): string {
   return `
@@ -34,16 +35,32 @@ process.stdout.write(JSON.stringify({ type: 'system', subtype: 'init', session_i
 didInit = true;
 
 const rl = readline.createInterface({ input: process.stdin });
-rl.on('line', (line) => {
-  const trimmed = String(line || '').trim();
-  if (!trimmed) return;
-  let msg;
-  try { msg = JSON.parse(trimmed); } catch { return; }
-  if (!msg || msg.type !== 'user') return;
-  turn += 1;
-  if (toolName && turn === 1) {
-    // Request permission for a tool call; the parent will reply with a control_response.
-    const reqId = 'req-1';
+	rl.on('line', (line) => {
+	    const trimmed = String(line || '').trim();
+	    if (!trimmed) return;
+	    let msg;
+	    try { msg = JSON.parse(trimmed); } catch { return; }
+    if (msg && msg.type === 'control_request' && msg.request && msg.request.subtype === 'interrupt') {
+      // Acknowledge the interrupt so the query wrapper unblocks, then emit a non-success result
+      // to signal turn cancellation (mirrors real Claude Code behavior closely enough for tests).
+      process.stdout.write(JSON.stringify({ type: 'control_response', response: { request_id: msg.request_id, subtype: 'success' } }) + '\\n');
+      if (hangTurn && turn === 1) {
+        process.stdout.write(JSON.stringify({ type: 'result', subtype: 'error', result: 'INTERRUPTED', num_turns: turn, total_cost_usd: 0, usage: undefined, duration_ms: 1, duration_api_ms: 1, is_error: true, session_id: sessionId }) + '\\n');
+      }
+      return;
+	    }
+	    if (!msg || msg.type !== 'user') return;
+	    turn += 1;
+	    if (logPath) {
+	      fs.appendFileSync(
+	        logPath,
+	        JSON.stringify({ kind: 'user', turn, content: msg.message && msg.message.content }) + '\\n',
+	        'utf8',
+	      );
+	    }
+	    if (toolName && turn === 1) {
+	      // Request permission for a tool call; the parent will reply with a control_response.
+	      const reqId = 'req-1';
     process.stdout.write(JSON.stringify({ type: 'control_request', request_id: reqId, request: { subtype: 'can_use_tool', tool_name: toolName, input: {} } }) + '\\n');
     const onControl = (line2) => {
       const t2 = String(line2 || '').trim();
@@ -89,6 +106,8 @@ type BackendRunContext = {
     onMessage: (handler: (msg: unknown) => void) => void;
     startSession: () => Promise<{ sessionId: string }>;
     sendPrompt: (sessionId: string, prompt: string) => Promise<void>;
+    sendSteerPrompt: (sessionId: string, prompt: string) => Promise<void>;
+    cancel: (sessionId: string) => Promise<void>;
     dispose: () => Promise<void>;
   };
   dir: string;
@@ -98,7 +117,7 @@ type BackendRunContext = {
 async function withFakeClaudeBackend(
   params: Readonly<{
     dirPrefix: string;
-    permissionPolicy: 'no_tools' | 'read_only';
+    permissionPolicy: 'no_tools' | 'read_only' | 'workspace_write';
     toolName?: string;
     hangTurn?: boolean;
     multiChunk?: boolean;
@@ -204,6 +223,7 @@ describe('ClaudeSdkAgentBackend', () => {
 
         const { sessionId } = await backend.startSession();
         await backend.sendPrompt(sessionId, 'hi');
+        await (backend as any).waitForResponseComplete?.();
 
         expect(fullTexts.length).toBeGreaterThan(0);
         const last = fullTexts[fullTexts.length - 1]!;
@@ -237,7 +257,9 @@ describe('ClaudeSdkAgentBackend', () => {
 
         const { sessionId } = await backend.startSession();
         await backend.sendPrompt(sessionId, 'hi');
+        await (backend as any).waitForResponseComplete?.();
         await backend.sendPrompt(sessionId, 'again');
+        await (backend as any).waitForResponseComplete?.();
 
         expect(seen.join(' ')).toContain('FAKE_ASSIST_1');
         expect(seen.join(' ')).toContain('FAKE_ASSIST_2');
@@ -269,6 +291,7 @@ describe('ClaudeSdkAgentBackend', () => {
         async ({ backend, logPath }) => {
           const { sessionId } = await backend.startSession();
           await backend.sendPrompt(sessionId, 'hi');
+          await (backend as any).waitForResponseComplete?.();
 
           const argvLog = await (await import('node:fs/promises')).readFile(logPath, 'utf8');
           const firstLine = argvLog.trim().split('\n')[0] ?? '';
@@ -280,6 +303,33 @@ describe('ClaudeSdkAgentBackend', () => {
       if (previousState === undefined) delete process.env.XDG_STATE_HOME;
       else process.env.XDG_STATE_HOME = previousState;
     }
+  });
+
+  it('appends CHANGE_TITLE_INSTRUCTION to the first prompt only', async () => {
+    delete process.env.DEBUG;
+
+    await withFakeClaudeBackend(
+      {
+        dirPrefix: 'happier-claude-sdk-title-',
+        permissionPolicy: 'no_tools',
+      },
+      async ({ backend, logPath }) => {
+        const { sessionId } = await backend.startSession();
+        await backend.sendPrompt(sessionId, 'hello');
+        await (backend as any).waitForResponseComplete?.();
+        await backend.sendPrompt(sessionId, 'again');
+        await (backend as any).waitForResponseComplete?.();
+
+        const raw = await (await import('node:fs/promises')).readFile(logPath, 'utf8');
+        const lines = raw.trim().split('\n').map((l) => l.trim()).filter(Boolean);
+        const second = JSON.parse(lines[1] ?? 'null') as any;
+        const third = JSON.parse(lines[2] ?? 'null') as any;
+        expect(second).toMatchObject({ kind: 'user', turn: 1 });
+        expect(String(second?.content ?? '')).toContain(`hello\n\n${CHANGE_TITLE_INSTRUCTION}`);
+        expect(third).toMatchObject({ kind: 'user', turn: 2 });
+        expect(String(third?.content ?? '')).toBe('again');
+      },
+    );
   });
 
   it('emits token-count telemetry when Claude result includes usage and cost', async () => {
@@ -299,6 +349,7 @@ describe('ClaudeSdkAgentBackend', () => {
 
         const { sessionId } = await backend.startSession();
         await backend.sendPrompt(sessionId, 'hi');
+        await (backend as any).waitForResponseComplete?.();
 
         expect(tokens.length).toBeGreaterThan(0);
         const last = tokens[tokens.length - 1] as any;
@@ -330,6 +381,7 @@ describe('ClaudeSdkAgentBackend', () => {
 
         const { sessionId } = await backend.startSession();
         await backend.sendPrompt(sessionId, 'hi');
+        await (backend as any).waitForResponseComplete?.();
         expect(seen.join(' ')).toContain('TOOL_ALLOWED');
       },
     );
@@ -354,6 +406,7 @@ describe('ClaudeSdkAgentBackend', () => {
 
         const { sessionId } = await backend.startSession();
         await backend.sendPrompt(sessionId, 'hi');
+        await (backend as any).waitForResponseComplete?.();
         expect(seen.join(' ')).toContain('TOOL_DENIED');
       },
     );
@@ -378,7 +431,109 @@ describe('ClaudeSdkAgentBackend', () => {
 
         const { sessionId } = await backend.startSession();
         await backend.sendPrompt(sessionId, 'hi');
+        await (backend as any).waitForResponseComplete?.();
         expect(seen.join(' ')).toContain('TOOL_DENIED');
+      },
+    );
+  });
+
+  it('allows write-like tool calls in workspace_write policy', async () => {
+    delete process.env.DEBUG;
+
+    await withFakeClaudeBackend(
+      {
+        dirPrefix: 'happier-claude-sdk-tools-',
+        permissionPolicy: 'workspace_write',
+        toolName: 'Bash',
+      },
+      async ({ backend }) => {
+        const seen: string[] = [];
+        backend.onMessage((msg: any) => {
+          if (msg.type === 'model-output' && typeof msg.fullText === 'string') {
+            seen.push(msg.fullText);
+          }
+        });
+
+        const { sessionId } = await backend.startSession();
+        await backend.sendPrompt(sessionId, 'hi');
+        await (backend as any).waitForResponseComplete?.();
+        expect(seen.join(' ')).toContain('TOOL_ALLOWED');
+      },
+    );
+  });
+
+  it('cancel interrupts a hanging turn so subsequent prompts can proceed', async () => {
+    delete process.env.DEBUG;
+
+    await withFakeClaudeBackend(
+      {
+        dirPrefix: 'happier-claude-sdk-cancel-',
+        permissionPolicy: 'no_tools',
+        hangTurn: true,
+      },
+      async ({ backend }) => {
+        const seen: string[] = [];
+        backend.onMessage((msg: any) => {
+          if (msg.type === 'model-output' && typeof msg.fullText === 'string') {
+            seen.push(msg.fullText);
+          }
+        });
+
+        const { sessionId } = await backend.startSession();
+        await backend.sendPrompt(sessionId, 'this will hang');
+        expect(typeof (backend as any).waitForResponseComplete).toBe('function');
+
+        const firstCompletion = (backend as any).waitForResponseComplete();
+        const firstOutcome = firstCompletion.then(
+          () => 'resolved',
+          (error: unknown) => `rejected:${error instanceof Error ? error.message : String(error)}`,
+        );
+
+        await new Promise((resolve) => setTimeout(resolve, 30));
+        await backend.cancel(sessionId);
+
+        await backend.sendPrompt(sessionId, 'second turn');
+        await (backend as any).waitForResponseComplete();
+
+        const settled = await Promise.race([
+          firstOutcome,
+          new Promise<string>((resolve) => setTimeout(() => resolve('timeout'), 300)),
+        ]);
+
+        expect(settled.startsWith('rejected:')).toBe(true);
+        expect(seen.join(' ')).toContain('FAKE_ASSIST_2');
+      },
+    );
+  });
+
+  it('sendSteerPrompt does not surface an interrupt-style error when a turn is in-flight', async () => {
+    delete process.env.DEBUG;
+
+    await withFakeClaudeBackend(
+      {
+        dirPrefix: 'happier-claude-sdk-steer-',
+        permissionPolicy: 'no_tools',
+        hangTurn: true,
+      },
+      async ({ backend }) => {
+        const { sessionId } = await backend.startSession();
+        await backend.sendPrompt(sessionId, 'this will hang');
+        expect(typeof (backend as any).waitForResponseComplete).toBe('function');
+
+        const pending = (backend as any).waitForResponseComplete().then(
+          () => 'resolved',
+          (error: unknown) => `rejected:${error instanceof Error ? error.message : String(error)}`,
+        );
+
+        await new Promise((resolve) => setTimeout(resolve, 30));
+        await backend.sendSteerPrompt(sessionId, 'steer message');
+
+        const settled = await Promise.race([
+          pending,
+          new Promise<string>((resolve) => setTimeout(() => resolve('timeout'), 250)),
+        ]);
+
+        expect(settled.startsWith('rejected:')).toBe(false);
       },
     );
   });
@@ -394,7 +549,9 @@ describe('ClaudeSdkAgentBackend', () => {
       },
       async ({ backend }) => {
         const { sessionId } = await backend.startSession();
-        const pending = backend.sendPrompt(sessionId, 'this will hang');
+        await backend.sendPrompt(sessionId, 'this will hang');
+        expect(typeof (backend as any).waitForResponseComplete).toBe('function');
+        const pending = (backend as any).waitForResponseComplete();
 
         await new Promise((resolve) => setTimeout(resolve, 30));
         await backend.dispose();
@@ -402,7 +559,7 @@ describe('ClaudeSdkAgentBackend', () => {
         const settled = await Promise.race([
           pending.then(
             () => 'resolved',
-            (error) => `rejected:${error instanceof Error ? error.message : String(error)}`,
+            (error: unknown) => `rejected:${error instanceof Error ? error.message : String(error)}`,
           ),
           new Promise<string>((resolve) => setTimeout(() => resolve('timeout'), 300)),
         ]);
@@ -463,6 +620,7 @@ describe('ClaudeSdkAgentBackend', () => {
 
         const { sessionId } = await backend.startSession();
         await backend.sendPrompt(sessionId, 'hi');
+        await (backend as any).waitForResponseComplete?.();
 
         expect(toolCalls).toHaveLength(1);
         expect(toolCalls[0]).toMatchObject({

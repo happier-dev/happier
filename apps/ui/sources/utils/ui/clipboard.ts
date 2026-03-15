@@ -8,3 +8,11 @@ export async function getClipboardStringTrimmedSafe(): Promise<string> {
     }
 }
 
+export async function setClipboardStringSafe(value: string): Promise<boolean> {
+    try {
+        await Clipboard.setStringAsync(value);
+        return true;
+    } catch {
+        return false;
+    }
+}

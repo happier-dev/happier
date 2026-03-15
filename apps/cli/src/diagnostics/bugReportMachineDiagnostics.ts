@@ -5,6 +5,7 @@ import { dirname, join, sep } from 'node:path';
 import { readDaemonState } from '@/persistence';
 import { listDaemonLogFiles } from '@/ui/logger';
 import { redactBugReportSensitiveText } from '@happier-dev/protocol';
+import { buildDoctorSnapshot, type DoctorSnapshot } from '@/ui/doctorSnapshot';
 
 export type BugReportMachineDiagnosticsSnapshot = {
   daemonState: {
@@ -16,6 +17,7 @@ export type BugReportMachineDiagnosticsSnapshot = {
     daemonLogPath: string | null;
   } | null;
   daemonLogs: Array<{ file: string; path: string; modifiedAt: string }>;
+  doctorSnapshot: DoctorSnapshot | null;
   runtime: {
     cwd: string;
     platform: string;
@@ -169,6 +171,13 @@ export async function collectBugReportMachineDiagnosticsSnapshot(
   const daemonLogs = await listDaemonLogFiles(daemonLogLimit);
   const stackContext = await collectStackBugReportContext({ stackLogLimit, stackRuntimeMaxChars });
 
+  let doctorSnapshot: DoctorSnapshot | null = null;
+  try {
+    doctorSnapshot = await buildDoctorSnapshot();
+  } catch {
+    doctorSnapshot = null;
+  }
+
   return {
     daemonState: daemonState
       ? {
@@ -185,6 +194,7 @@ export async function collectBugReportMachineDiagnosticsSnapshot(
       path: entry.path,
       modifiedAt: entry.modified.toISOString(),
     })),
+    doctorSnapshot,
     runtime: {
       cwd: process.cwd(),
       platform: process.platform,

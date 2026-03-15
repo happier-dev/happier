@@ -1,5 +1,5 @@
 import * as React from "react";
-import { View, Pressable, Platform } from 'react-native';
+import { View, Pressable, Platform, ActivityIndicator } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import * as Clipboard from 'expo-clipboard';
 import { Modal } from '@/modal';
@@ -10,29 +10,43 @@ import { Message, UserTextMessage, AgentTextMessage, ToolCallMessage } from "@/s
 import { Metadata } from "@/sync/domains/state/storageTypes";
 import { layout } from "@/components/ui/layout/layout";
 import { ToolView } from '@/components/tools/shell/views/ToolView';
+import { ToolTimelineRow } from '@/components/tools/shell/views/ToolTimelineRow';
 import { AgentEvent } from "@/sync/typesRaw";
 import { sync } from '@/sync/sync';
 import { Option } from '@/components/markdown/MarkdownView';
-import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
 import { isCommittedMessageDiscarded } from "@/utils/sessions/discardedCommittedMessages";
 import { shouldShowMessageCopyButton } from '@/components/sessions/transcript/messageCopyVisibility';
 import { renderStructuredMessage, StructuredMessageBlock } from '@/components/sessions/transcript/structured/StructuredMessageBlock';
 import { useRouter } from 'expo-router';
 import { buildSessionFileDeepLink } from '@/utils/url/sessionFileDeepLink';
 import { fireAndForget } from '@/utils/system/fireAndForget';
-import { useSetting } from '@/sync/domains/state/storage';
+import { storage, useSession, useSetting } from '@/sync/domains/state/storage';
 import { Text } from '@/components/ui/text/Text';
+import { extractWorkspaceFileMentions } from '@/components/sessions/linkedFiles/extractWorkspaceFileMentions';
+import { LinkedWorkspaceFilesRow } from '@/components/sessions/linkedFiles/LinkedWorkspaceFilesRow';
+import { useTranscriptMotion } from '@/components/sessions/transcript/motion/TranscriptMotionContext';
+import { ThinkingTimelineRow } from '@/components/sessions/transcript/thinking/ThinkingTimelineRow';
+import { parseHappierMetaEnvelope } from '@/components/sessions/transcript/structured/happierMetaEnvelope';
+import { AttachmentsMessageMetaV1Schema } from '@/sync/domains/attachments/attachmentsMessageMeta';
+import { AttachmentsMessageRow } from '@/components/sessions/attachments/messages/AttachmentsMessageRow';
+import { forkSession } from '@/sync/ops';
+import { canForkFromMessage } from '@/sync/domains/sessionFork/forkUiSupport';
+import { resolveForkFromMessageSemantics } from '@/sync/domains/sessionFork/forkFromMessageSemantics';
+import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
 
 
 export const MessageView = (props: {
   message: Message;
   metadata: Metadata | null;
   sessionId: string;
+  activeThinkingMessageId?: string | null;
+  thinkingExpanded?: boolean;
+  onThinkingExpandedChange?: (next: boolean) => void;
   getMessageById?: (id: string) => Message | null;
   interaction?: {
     canSendMessages: boolean;
     canApprovePermissions: boolean;
-    permissionDisabledReason?: 'public' | 'readOnly' | 'notGranted';
+    permissionDisabledReason?: 'public' | 'readOnly' | 'notGranted' | 'inactive';
     disableToolNavigation?: boolean;
   };
 }) => {
@@ -43,6 +57,9 @@ export const MessageView = (props: {
           message={props.message}
           metadata={props.metadata}
           sessionId={props.sessionId}
+          activeThinkingMessageId={props.activeThinkingMessageId ?? null}
+          thinkingExpanded={props.thinkingExpanded}
+          onThinkingExpandedChange={props.onThinkingExpandedChange}
           getMessageById={props.getMessageById}
           interaction={props.interaction}
         />
@@ -56,11 +73,14 @@ function RenderBlock(props: {
   message: Message;
   metadata: Metadata | null;
   sessionId: string;
+  activeThinkingMessageId: string | null;
+  thinkingExpanded?: boolean;
+  onThinkingExpandedChange?: (next: boolean) => void;
   getMessageById?: (id: string) => Message | null;
   interaction?: {
     canSendMessages: boolean;
     canApprovePermissions: boolean;
-    permissionDisabledReason?: 'public' | 'readOnly' | 'notGranted';
+    permissionDisabledReason?: 'public' | 'readOnly' | 'notGranted' | 'inactive';
     disableToolNavigation?: boolean;
   };
 }): React.ReactElement {
@@ -69,13 +89,24 @@ function RenderBlock(props: {
       return <UserTextBlock message={props.message} metadata={props.metadata} sessionId={props.sessionId} canSendMessages={props.interaction?.canSendMessages ?? true} />;
 
     case 'agent-text':
-      return <AgentTextBlock message={props.message} metadata={props.metadata} sessionId={props.sessionId} canSendMessages={props.interaction?.canSendMessages ?? true} />;
+      return (
+        <AgentTextBlock
+          message={props.message}
+          metadata={props.metadata}
+          sessionId={props.sessionId}
+          canSendMessages={props.interaction?.canSendMessages ?? true}
+          activeThinkingMessageId={props.activeThinkingMessageId}
+          thinkingExpanded={props.thinkingExpanded}
+          onThinkingExpandedChange={props.onThinkingExpandedChange}
+        />
+      );
 
     case 'tool-call':
       return <ToolCallBlock
         message={props.message}
         metadata={props.metadata}
         sessionId={props.sessionId}
+        activeThinkingMessageId={props.activeThinkingMessageId}
         getMessageById={props.getMessageById}
         interaction={props.interaction}
       />;
@@ -117,6 +148,50 @@ function UserTextBlock(props: {
   });
   const isStructuredOnly = structuredNode != null;
 
+  const attachmentsMeta = React.useMemo(() => {
+    const envelope = parseHappierMetaEnvelope(props.message.meta);
+    if (!envelope || envelope.kind !== 'attachments.v1') return null;
+    const parsed = AttachmentsMessageMetaV1Schema.safeParse(envelope.payload);
+    if (!parsed.success) return null;
+    if (parsed.data.attachments.length === 0) return null;
+    return parsed.data;
+  }, [props.message.meta]);
+
+  const stripAttachmentsBlock = React.useCallback((text: string): string => {
+    const startTag = '[attachments]';
+    const endTag = '[/attachments]';
+    const start = text.indexOf(startTag);
+    const end = text.indexOf(endTag);
+    if (start < 0 || end < 0 || end <= start) return text;
+
+    // Prefer stripping from the start of the "Attachments:" line when present.
+    let stripStart = start;
+    const intro = text.lastIndexOf('Attachments:', start);
+    if (intro >= 0) {
+      const lineStart = text.lastIndexOf('\n', intro - 1) + 1;
+      if (lineStart === intro || text.slice(lineStart, intro).trim() === '') {
+        stripStart = lineStart;
+      }
+    }
+
+    const before = text.slice(0, stripStart).trimEnd();
+    const after = text.slice(end + endTag.length).trimStart();
+    if (!before) return after;
+    if (!after) return before;
+    return `${before}\n\n${after}`;
+  }, []);
+
+  const markdownText = React.useMemo(() => {
+    if (props.message.displayText !== undefined) return props.message.displayText;
+    if (attachmentsMeta) return stripAttachmentsBlock(props.message.text);
+    return props.message.text;
+  }, [attachmentsMeta, props.message.displayText, props.message.text, stripAttachmentsBlock]);
+
+  const linkedWorkspaceFiles = React.useMemo(
+    () => extractWorkspaceFileMentions(markdownText),
+    [markdownText],
+  );
+
   const handleOptionPress = React.useCallback((option: Option) => {
     fireAndForget((async () => {
       try {
@@ -126,36 +201,68 @@ function UserTextBlock(props: {
         }
         await sync.submitMessage(props.sessionId, option.title);
       } catch (e) {
-        Modal.alert(t('common.error'), e instanceof Error ? e.message : 'Failed to send message');
+        Modal.alert(t('common.error'), e instanceof Error ? e.message : t('errors.failedToSendMessage'));
       }
     })(), { tag: 'MessageView.handleOptionPress.userMessage' });
   }, [props.canSendMessages, props.sessionId]);
 
   const showCopyButton = shouldShowMessageCopyButton({ platformOS: Platform.OS, isMessageHovered, isCopyButtonHovered });
   const copyText = isStructuredOnly ? props.message.text : (props.message.displayText || props.message.text);
+  const actionPointerEvents = resolveMessageActionPointerEvents({ isWeb, showCopyButton });
+  const sessionReplayEnabled = useSetting('sessionReplayEnabled');
+  const session = useSession(props.sessionId);
+  const seq =
+    typeof (props.message as any).seq === 'number' && Number.isFinite((props.message as any).seq)
+      ? Math.trunc((props.message as any).seq)
+      : null;
+  const showForkButton = canForkFromMessage({ session, messageSeq: seq, replayEnabled: sessionReplayEnabled });
+  const forkSemantics = React.useMemo(() => {
+    if (seq == null) return null;
+    return resolveForkFromMessageSemantics({ message: props.message, messageSeqInclusive: seq });
+  }, [props.message, seq]);
 
   // Structured user messages should render as standalone blocks (tool-card style),
   // not inside a chat bubble background, and without echoing displayText fallback.
   if (isStructuredOnly) {
     return (
-      <View style={styles.structuredUserMessageContainer}>
+      <View
+        style={styles.structuredUserMessageContainer}
+        {...(isWeb
+          ? {
+              onPointerEnter: () => setIsMessageHovered(true),
+              onPointerLeave: () => setIsMessageHovered(false),
+            }
+          : null)}
+      >
         <View style={styles.structuredUserMessageContent}>
           {structuredNode}
           {isDiscarded ? (
-            <Text style={styles.discardedCommittedMessageLabel}>{t('message.discarded')}</Text>
+            <Text selectable style={styles.discardedCommittedMessageLabel}>{t('message.discarded')}</Text>
           ) : null}
         </View>
         <View
-          pointerEvents={showCopyButton ? 'auto' : 'none'}
+          {...(isWeb ? {} : { pointerEvents: actionPointerEvents })}
           accessibilityElementsHidden={!showCopyButton}
           importantForAccessibility={showCopyButton ? 'auto' : 'no-hide-descendants'}
           style={[
             styles.messageActionContainer,
             !showCopyButton && styles.messageActionContainerHidden,
+            isWeb ? { pointerEvents: actionPointerEvents } : null,
           ]}
         >
+          {showForkButton ? (
+            <ForkMessageButton
+              sessionId={props.sessionId}
+              upToSeqInclusive={(forkSemantics?.upToSeqInclusive ?? seq!)}
+              restoredDraftText={forkSemantics?.restoredDraftText ?? null}
+              messageId={props.message.id}
+              onHoverIn={isWeb ? () => setIsCopyButtonHovered(true) : undefined}
+              onHoverOut={isWeb ? () => setIsCopyButtonHovered(false) : undefined}
+            />
+          ) : null}
           <CopyMessageButton
             markdown={copyText}
+            testID={`transcript-message-copy:${props.message.id}`}
             onHoverIn={isWeb ? () => setIsCopyButtonHovered(true) : undefined}
             onHoverOut={isWeb ? () => setIsCopyButtonHovered(false) : undefined}
           />
@@ -165,11 +272,18 @@ function UserTextBlock(props: {
   }
 
   return (
-    <View style={styles.userMessageContainer}>
-      <Pressable
+    <View
+      style={styles.userMessageContainer}
+      {...(isWeb
+        ? {
+            onPointerEnter: () => setIsMessageHovered(true),
+            onPointerLeave: () => setIsMessageHovered(false),
+          }
+        : null)}
+    >
+      <View
         style={styles.userMessageWrapper}
-        onHoverIn={isWeb ? () => setIsMessageHovered(true) : undefined}
-        onHoverOut={isWeb ? () => setIsMessageHovered(false) : undefined}
+        {...(isWeb ? {} : { pointerEvents: 'box-none' as const })}
       >
         <View style={[styles.userMessageBubble, isDiscarded && styles.userMessageBubbleDiscarded]}>
           <StructuredMessageBlock
@@ -184,30 +298,52 @@ function UserTextBlock(props: {
               }));
             }}
           />
-          <MarkdownView markdown={props.message.displayText || props.message.text} onOptionPress={handleOptionPress} />
+          <MarkdownView markdown={markdownText} onOptionPress={handleOptionPress} textStyle={styles.transcriptMarkdownText} />
+          {attachmentsMeta ? (
+            <AttachmentsMessageRow
+              attachments={attachmentsMeta.attachments}
+              onOpenPath={(filePath) => {
+                router.push(buildSessionFileDeepLink({ sessionId: props.sessionId, filePath }) as any);
+              }}
+            />
+          ) : null}
+          {linkedWorkspaceFiles.length > 0 ? (
+            <LinkedWorkspaceFilesRow sessionId={props.sessionId} paths={linkedWorkspaceFiles} />
+          ) : null}
           {isDiscarded && (
-            <Text style={styles.discardedCommittedMessageLabel}>{t('message.discarded')}</Text>
+            <Text selectable style={styles.discardedCommittedMessageLabel}>{t('message.discarded')}</Text>
           )}
           {/* {__DEV__ && (
             <Text style={styles.debugText}>{JSON.stringify(props.message.meta)}</Text>
           )} */}
         </View>
         <View
-          pointerEvents={showCopyButton ? 'auto' : 'none'}
+          {...(isWeb ? {} : { pointerEvents: actionPointerEvents })}
           accessibilityElementsHidden={!showCopyButton}
           importantForAccessibility={showCopyButton ? 'auto' : 'no-hide-descendants'}
           style={[
             styles.messageActionContainer,
             !showCopyButton && styles.messageActionContainerHidden,
+            isWeb ? { pointerEvents: actionPointerEvents } : null,
           ]}
         >
+          {showForkButton ? (
+            <ForkMessageButton
+              sessionId={props.sessionId}
+              upToSeqInclusive={(forkSemantics?.upToSeqInclusive ?? seq!)}
+              restoredDraftText={forkSemantics?.restoredDraftText ?? null}
+              messageId={props.message.id}
+              onHoverIn={isWeb ? () => setIsCopyButtonHovered(true) : undefined}
+              onHoverOut={isWeb ? () => setIsCopyButtonHovered(false) : undefined}
+            />
+          ) : null}
           <CopyMessageButton
             markdown={copyText}
             onHoverIn={isWeb ? () => setIsCopyButtonHovered(true) : undefined}
             onHoverOut={isWeb ? () => setIsCopyButtonHovered(false) : undefined}
           />
         </View>
-      </Pressable>
+      </View>
     </View>
   );
 }
@@ -217,13 +353,23 @@ function AgentTextBlock(props: {
   metadata: Metadata | null;
   sessionId: string;
   canSendMessages: boolean;
+  activeThinkingMessageId: string | null;
+  thinkingExpanded?: boolean;
+  onThinkingExpandedChange?: (next: boolean) => void;
 }) {
   const [isMessageHovered, setIsMessageHovered] = React.useState(false);
   const [isCopyButtonHovered, setIsCopyButtonHovered] = React.useState(false);
   const isWeb = Platform.OS === 'web';
   const router = useRouter();
-  const showThinkingMessages = useFeatureEnabled('messages.thinkingVisibility');
   const sessionThinkingDisplayMode = useSetting('sessionThinkingDisplayMode');
+  const sessionThinkingInlinePresentation = useSetting('sessionThinkingInlinePresentation');
+  const sessionThinkingInlineChrome = useSetting('sessionThinkingInlineChrome');
+  const motion = useTranscriptMotion();
+  const thinkingPulseEnabled =
+    props.message.isThinking === true &&
+    props.activeThinkingMessageId === props.message.id &&
+    motion?.config.preset !== 'off' &&
+    motion?.config.animateThinkingEnabled === true;
 
   const structuredNode = renderStructuredMessage({
     message: props.message,
@@ -243,7 +389,23 @@ function AgentTextBlock(props: {
     return match ? match[1] : text;
   };
   const markdown = props.message.isThinking ? unwrapLegacyThinkingWrapper(props.message.text) : props.message.text;
+  const deriveThinkingSummary = (text: string) => {
+    const trimmed = String(text ?? '').trim();
+    if (!trimmed) return '';
+    const firstLine = trimmed.split('\n').find((line) => line.trim().length > 0) ?? '';
+    const cleaned = firstLine
+      .trim()
+      .replace(/^#+\s+/, '')
+      .replace(/^[-*]\s+/, '')
+      .replace(/\s+/g, ' ');
+    if (cleaned.length <= 120) return cleaned;
+    return cleaned.slice(0, 117) + '…';
+  };
   const copyText = isStructuredOnly ? props.message.text : markdown;
+  const linkedWorkspaceFiles = React.useMemo(
+    () => extractWorkspaceFileMentions(markdown),
+    [markdown],
+  );
 
   const handleOptionPress = React.useCallback((option: Option) => {
     fireAndForget((async () => {
@@ -254,31 +416,47 @@ function AgentTextBlock(props: {
         }
         await sync.submitMessage(props.sessionId, option.title);
       } catch (e) {
-        Modal.alert(t('common.error'), e instanceof Error ? e.message : 'Failed to send message');
+        Modal.alert(t('common.error'), e instanceof Error ? e.message : t('errors.failedToSendMessage'));
       }
     })(), { tag: 'MessageView.handleOptionPress.agentMessage' });
   }, [props.canSendMessages, props.sessionId]);
 
-  // Hide thinking messages unless the feature flag is enabled.
-  if (props.message.isThinking && !showThinkingMessages) {
-    return null;
-  }
   if (props.message.isThinking && sessionThinkingDisplayMode === 'hidden') {
     return null;
   }
 
   const showCopyButton = shouldShowMessageCopyButton({ platformOS: Platform.OS, isMessageHovered, isCopyButtonHovered });
+  const actionPointerEvents = resolveMessageActionPointerEvents({ isWeb, showCopyButton });
+  const sessionReplayEnabled = useSetting('sessionReplayEnabled');
+  const session = useSession(props.sessionId);
+  const seq =
+    typeof (props.message as any).seq === 'number' && Number.isFinite((props.message as any).seq)
+      ? Math.trunc((props.message as any).seq)
+      : null;
+  const showForkButton = canForkFromMessage({ session, messageSeq: seq, replayEnabled: sessionReplayEnabled });
+  const forkSemantics = React.useMemo(() => {
+    if (seq == null) return null;
+    return resolveForkFromMessageSemantics({ message: props.message, messageSeqInclusive: seq });
+  }, [props.message, seq]);
   const renderThinkingAsToolCard = props.message.isThinking && sessionThinkingDisplayMode === 'tool';
+  const renderThinkingInline = props.message.isThinking === true && !renderThinkingAsToolCard;
+    const normalizedThinkingInlinePresentation: 'full' | 'summary' =
+      sessionThinkingInlinePresentation === 'full' ? 'full' : 'summary';
+    const normalizedThinkingInlineChrome: 'plain' | 'card' =
+      sessionThinkingInlineChrome === 'plain' ? 'plain' : 'card';
+    const thinkingMarkdownTextStyle =
+      normalizedThinkingInlineChrome === 'card' ? styles.thinkingMarkdownTextCard : styles.thinkingMarkdownText;
+
+  const handleHoverIn = isWeb ? () => setIsMessageHovered(true) : undefined;
+  const handleHoverOut = isWeb ? () => setIsMessageHovered(false) : undefined;
 
   return (
-    <Pressable
-      style={styles.agentMessageContainer}
-      onHoverIn={isWeb ? () => setIsMessageHovered(true) : undefined}
-      onHoverOut={isWeb ? () => setIsMessageHovered(false) : undefined}
+    <View
+      style={[styles.agentMessageContainer, props.message.isThinking === true ? styles.agentMessageContainerThinking : null]}
+      {...(isWeb ? {} : { pointerEvents: 'box-none' as const })}
+      onPointerEnter={handleHoverIn}
+      onPointerLeave={handleHoverOut}
     >
-      {props.message.isThinking && !renderThinkingAsToolCard ? (
-        <Text style={styles.thinkingLabel}>{t('sessionInfo.thinking')}</Text>
-      ) : null}
       {structuredNode}
       {isStructuredOnly ? null : (
         renderThinkingAsToolCard ? (
@@ -298,32 +476,168 @@ function AgentTextBlock(props: {
             messages={[]}
           />
         ) : (
-          <MarkdownView markdown={markdown} onOptionPress={handleOptionPress} />
+            renderThinkingInline ? (
+              <ThinkingTimelineRow
+                id={props.message.id}
+                createdAt={props.message.createdAt}
+                label={t('sessionInfo.thinking')}
+                summary={deriveThinkingSummary(markdown)}
+                expandedByDefault={normalizedThinkingInlinePresentation === 'full'}
+                pulseEnabled={thinkingPulseEnabled}
+                chrome={normalizedThinkingInlineChrome}
+                expanded={props.thinkingExpanded}
+                onExpandedChange={props.onThinkingExpandedChange}
+              >
+                <MarkdownView
+                  testID="transcript-thinking-body-markdown"
+                  markdown={markdown}
+                  onOptionPress={handleOptionPress}
+                  textStyle={thinkingMarkdownTextStyle}
+                  variant="thinking"
+                />
+              </ThinkingTimelineRow>
+          ) : (
+            <MarkdownView
+              markdown={markdown}
+              onOptionPress={handleOptionPress}
+              textStyle={props.message.isThinking ? styles.thinkingMarkdownText : styles.transcriptMarkdownText}
+              variant={props.message.isThinking ? 'thinking' : undefined}
+            />
+          )
         )
       )}
+      {linkedWorkspaceFiles.length > 0 && !isStructuredOnly ? (
+        <LinkedWorkspaceFilesRow sessionId={props.sessionId} paths={linkedWorkspaceFiles} />
+      ) : null}
       <View
-        pointerEvents={showCopyButton ? 'auto' : 'none'}
+        {...(isWeb ? {} : { pointerEvents: actionPointerEvents })}
         accessibilityElementsHidden={!showCopyButton}
         importantForAccessibility={showCopyButton ? 'auto' : 'no-hide-descendants'}
         style={[
           styles.messageActionContainer,
           !showCopyButton && styles.messageActionContainerHidden,
+          isWeb ? { pointerEvents: actionPointerEvents } : null,
         ]}
       >
+        {showForkButton ? (
+          <ForkMessageButton
+            sessionId={props.sessionId}
+            upToSeqInclusive={(forkSemantics?.upToSeqInclusive ?? seq!)}
+            restoredDraftText={forkSemantics?.restoredDraftText ?? null}
+            messageId={props.message.id}
+            onHoverIn={isWeb ? () => setIsCopyButtonHovered(true) : undefined}
+            onHoverOut={isWeb ? () => setIsCopyButtonHovered(false) : undefined}
+          />
+        ) : null}
         <CopyMessageButton
           markdown={copyText}
+          testID={`transcript-message-copy:${props.message.id}`}
           onHoverIn={isWeb ? () => setIsCopyButtonHovered(true) : undefined}
           onHoverOut={isWeb ? () => setIsCopyButtonHovered(false) : undefined}
         />
       </View>
+    </View>
+  );
+}
+
+function ForkMessageButton(props: {
+  sessionId: string;
+  upToSeqInclusive: number;
+  restoredDraftText?: string | null;
+  messageId: string;
+  onHoverIn?: () => void;
+  onHoverOut?: () => void;
+}) {
+  const { theme } = useUnistyles();
+  const router = useRouter();
+  const session = useSession(props.sessionId);
+  const [isForking, setIsForking] = React.useState(false);
+  const hitSlop = Platform.OS === 'web' ? undefined : 15;
+  const executionRunsEnabled = useFeatureEnabled('execution.runs');
+  const sessionReplayStrategy = useSetting('sessionReplayStrategy');
+  const sessionReplaySummaryRunner = useSetting('sessionReplaySummaryRunnerV1');
+  const sessionReplayMaxSeedChars = useSetting('sessionReplayMaxSeedChars');
+
+  const handlePress = React.useCallback(async () => {
+    if (isForking) return;
+    setIsForking(true);
+    try {
+      const replaySummaryRunner =
+        executionRunsEnabled && sessionReplayStrategy === 'summary_plus_recent' && sessionReplaySummaryRunner
+          ? sessionReplaySummaryRunner
+          : undefined;
+      const result = await forkSession({
+        machineId: session?.metadata?.machineId,
+        parentSessionId: props.sessionId,
+        forkPoint: { type: 'seq', upToSeqInclusive: props.upToSeqInclusive },
+        ...(typeof sessionReplayMaxSeedChars === 'number' ? { replayMaxSeedChars: sessionReplayMaxSeedChars } : {}),
+        ...(replaySummaryRunner ? { replaySummaryRunner } : {}),
+      } as any);
+      if (result.ok !== true) {
+        Modal.alert(t('common.error'), result.errorMessage || t('errors.failedToForkSession'));
+        return;
+      }
+      const restored = typeof props.restoredDraftText === 'string' ? props.restoredDraftText : null;
+      if (restored && restored.trim().length > 0) {
+        try {
+          // Persist immediately so the child session composer can initialize from drafts even if the session
+          // is not yet hydrated into local state.
+          storage.getState().updateSessionDraft(result.childSessionId, restored);
+        } catch {
+          // best-effort
+        }
+      }
+      router.push((`/session/${result.childSessionId}`) as any);
+      fireAndForget((async () => {
+        try {
+          await (sync as any).ensureSessionVisibleForMessageRoute?.(result.childSessionId);
+        } catch {
+          // best-effort
+        }
+      })(), { tag: 'ForkMessageButton.ensureChildVisible' });
+    } catch (e) {
+      Modal.alert(t('common.error'), e instanceof Error ? e.message : t('errors.failedToForkSession'));
+    } finally {
+      setIsForking(false);
+    }
+  }, [isForking, executionRunsEnabled, props.restoredDraftText, props.sessionId, props.upToSeqInclusive, router, session?.metadata?.machineId, sessionReplayMaxSeedChars, sessionReplayStrategy, sessionReplaySummaryRunner]);
+
+  if (!session) return null;
+
+  return (
+    <Pressable
+      testID={`transcript-message-fork:${props.messageId}`}
+      onPress={handlePress}
+      onHoverIn={props.onHoverIn}
+      onHoverOut={props.onHoverOut}
+      hitSlop={hitSlop}
+      accessibilityRole="button"
+      accessibilityLabel={t('session.forking.forkFromMessageA11y')}
+      style={({ pressed }) => [
+        styles.forkMessageButton,
+        Platform.OS === 'web' ? styles.webActionButton : null,
+        pressed && styles.copyMessageButtonPressed,
+        isForking && styles.copyMessageButtonPressed,
+      ]}
+    >
+      {isForking ? (
+        <ActivityIndicator size="small" color={theme.colors.textSecondary} />
+      ) : (
+        <Ionicons
+          name="git-branch-outline"
+          size={12}
+          color={theme.colors.textSecondary}
+        />
+      )}
     </Pressable>
   );
 }
 
-function CopyMessageButton(props: { markdown: string; onHoverIn?: () => void; onHoverOut?: () => void }) {
+function CopyMessageButton(props: { markdown: string; testID?: string; onHoverIn?: () => void; onHoverOut?: () => void }) {
   const { theme } = useUnistyles();
   const [copied, setCopied] = React.useState(false);
   const resetTimer = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+  const hitSlop = Platform.OS === 'web' ? undefined : 15;
 
   const markdown = props.markdown || '';
   const isCopyable = markdown.trim().length > 0;
@@ -361,14 +675,16 @@ function CopyMessageButton(props: { markdown: string; onHoverIn?: () => void; on
 
   return (
     <Pressable
+      testID={props.testID}
       onPress={handlePress}
       onHoverIn={props.onHoverIn}
       onHoverOut={props.onHoverOut}
-      hitSlop={8}
+      hitSlop={hitSlop}
       accessibilityRole="button"
       accessibilityLabel={t('common.copy')}
       style={({ pressed }) => [
         styles.copyMessageButton,
+        Platform.OS === 'web' ? styles.webActionButton : null,
         pressed && styles.copyMessageButtonPressed,
       ]}
     >
@@ -381,6 +697,11 @@ function CopyMessageButton(props: { markdown: string; onHoverIn?: () => void; on
   );
 }
 
+function resolveMessageActionPointerEvents(params: { isWeb: boolean; showCopyButton: boolean }) {
+  const { showCopyButton } = params;
+  return showCopyButton ? ('auto' as const) : ('none' as const);
+}
+
 function AgentEventBlock(props: {
   event: AgentEvent;
   metadata: Metadata | null;
@@ -388,14 +709,14 @@ function AgentEventBlock(props: {
   if (props.event.type === 'switch') {
     return (
       <View style={styles.agentEventContainer}>
-        <Text style={styles.agentEventText}>{t('message.switchedToMode', { mode: props.event.mode })}</Text>
+        <Text selectable style={styles.agentEventText}>{t('message.switchedToMode', { mode: props.event.mode })}</Text>
       </View>
     );
   }
   if (props.event.type === 'message') {
     return (
       <View style={styles.agentEventContainer}>
-        <Text style={styles.agentEventText}>{props.event.message}</Text>
+        <Text selectable style={styles.agentEventText}>{props.event.message}</Text>
       </View>
     );
   }
@@ -411,7 +732,7 @@ function AgentEventBlock(props: {
 
     return (
       <View style={styles.agentEventContainer}>
-        <Text style={styles.agentEventText}>
+        <Text selectable style={styles.agentEventText}>
           {t('message.usageLimitUntil', { time: formatTime(props.event.endsAt) })}
         </Text>
       </View>
@@ -419,7 +740,7 @@ function AgentEventBlock(props: {
   }
   return (
     <View style={styles.agentEventContainer}>
-      <Text style={styles.agentEventText}>{t('message.unknownEvent')}</Text>
+      <Text selectable style={styles.agentEventText}>{t('message.unknownEvent')}</Text>
     </View>
   );
 }
@@ -428,20 +749,27 @@ function ToolCallBlock(props: {
   message: ToolCallMessage;
   metadata: Metadata | null;
   sessionId: string;
+  activeThinkingMessageId: string | null;
   getMessageById?: (id: string) => Message | null;
-  interaction?: {
-    canSendMessages: boolean;
-    canApprovePermissions: boolean;
-    permissionDisabledReason?: 'public' | 'readOnly' | 'notGranted';
-    disableToolNavigation?: boolean;
-  };
-}) {
+	  interaction?: {
+	    canSendMessages: boolean;
+	    canApprovePermissions: boolean;
+	    permissionDisabledReason?: 'public' | 'readOnly' | 'inactive' | 'notGranted';
+	    disableToolNavigation?: boolean;
+	  };
+	}) {
   const router = useRouter();
+  const toolViewTimelineChromeMode = useSetting('toolViewTimelineChromeMode');
   if (!props.message.tool) {
     return null;
   }
   return (
-    <View style={styles.toolContainer}>
+    <View
+      style={[
+        styles.toolContainer,
+        toolViewTimelineChromeMode === 'activity_feed' ? styles.toolContainerFeed : styles.toolContainerCards,
+      ]}
+    >
         <StructuredMessageBlock
           message={props.message as any}
           sessionId={props.sessionId}
@@ -454,14 +782,25 @@ function ToolCallBlock(props: {
             }));
           }}
         />
-      <ToolView
-        tool={props.message.tool}
-        metadata={props.metadata}
-        messages={props.message.children}
-        sessionId={props.sessionId}
-        messageId={props.interaction?.disableToolNavigation ? undefined : props.message.id}
-        interaction={props.interaction}
-      />
+      {toolViewTimelineChromeMode === 'activity_feed' ? (
+        <ToolTimelineRow
+          tool={props.message.tool}
+          metadata={props.metadata}
+          messages={props.message.children}
+          sessionId={props.sessionId}
+          messageId={props.interaction?.disableToolNavigation ? undefined : props.message.id}
+          interaction={props.interaction}
+        />
+      ) : (
+        <ToolView
+          tool={props.message.tool}
+          metadata={props.metadata}
+          messages={props.message.children}
+          sessionId={props.sessionId}
+          messageId={props.interaction?.disableToolNavigation ? undefined : props.message.id}
+          interaction={props.interaction}
+        />
+      )}
     </View>
   );
 }
@@ -489,25 +828,25 @@ const styles = StyleSheet.create((theme) => ({
     flexDirection: 'column',
     alignSelf: 'stretch',
     paddingHorizontal: 16,
-    paddingBottom: 18,
+    paddingBottom: 22,
     position: 'relative',
   },
   structuredUserMessageContent: {
     maxWidth: '100%',
   },
-  userMessageWrapper: {
-    maxWidth: '100%',
-    alignSelf: 'flex-end',
-    position: 'relative',
-    paddingBottom: 18,
-  },
-  userMessageBubble: {
-    backgroundColor: theme.colors.userMessageBackground,
-    paddingHorizontal: 12,
-    paddingVertical: 4,
-    borderRadius: 12,
-    maxWidth: '100%',
-  },
+    userMessageWrapper: {
+      maxWidth: '100%',
+      alignSelf: 'flex-end',
+      position: 'relative',
+      paddingBottom: 22,
+    },
+    userMessageBubble: {
+      backgroundColor: theme.colors.userMessageBackground,
+      paddingHorizontal: 14,
+      paddingVertical: 8,
+      borderRadius: 12,
+      maxWidth: '100%',
+    },
   userStructuredMessageWrapper: {
     maxWidth: '100%',
   },
@@ -521,11 +860,14 @@ const styles = StyleSheet.create((theme) => ({
   },
   agentMessageContainer: {
     marginHorizontal: 16,
-    paddingBottom: 18,
+    paddingBottom: 22,
     borderRadius: 16,
-    alignSelf: 'flex-start',
+    alignSelf: 'stretch',
     position: 'relative',
     maxWidth: '100%',
+  },
+  agentMessageContainerThinking: {
+    alignSelf: 'stretch',
   },
   agentEventContainer: {
     marginHorizontal: 8,
@@ -537,7 +879,13 @@ const styles = StyleSheet.create((theme) => ({
     fontSize: 14,
   },
   toolContainer: {
-    marginHorizontal: 8,
+    marginHorizontal: 16,
+  },
+  toolContainerCards: {
+    paddingBottom: 0,
+  },
+  toolContainerFeed: {
+    paddingBottom: 22,
   },
   messageActionContainer: {
     position: 'absolute',
@@ -545,10 +893,19 @@ const styles = StyleSheet.create((theme) => ({
     bottom: 0,
     flexDirection: 'row',
     justifyContent: 'flex-end',
-    zIndex: 10,
   },
   messageActionContainerHidden: {
     opacity: 0,
+  },
+  webActionButton: {
+    padding: 6,
+  },
+  forkMessageButton: {
+    padding: 2,
+    borderRadius: 6,
+    opacity: 0.6,
+    cursor: 'pointer',
+    marginRight: 6,
   },
   copyMessageButton: {
     padding: 2,
@@ -563,11 +920,50 @@ const styles = StyleSheet.create((theme) => ({
     color: theme.colors.agentEventText,
     fontSize: 12,
   },
-  thinkingLabel: {
-    marginBottom: 6,
-    marginLeft: 2,
-    color: theme.colors.agentEventText,
-    fontSize: 12,
-    fontStyle: 'italic',
+  transcriptMarkdownText: {
+    fontSize: 14,
+    lineHeight: 20,
+    marginTop: 0,
+    marginBottom: 0,
   },
-}));
+    thinkingLabel: {
+      marginBottom: 6,
+      marginLeft: 2,
+      color: theme.colors.agentEventText,
+      fontSize: 12,
+      fontStyle: 'italic',
+      opacity: 0.78,
+    },
+      thinkingMarkdownText: {
+        color: theme.colors.textSecondary,
+        fontStyle: 'italic',
+        opacity: 0.9,
+            fontSize: 14,
+            lineHeight: 20,
+            marginTop: 0,
+            marginBottom: 0,
+      },
+      thinkingPlainText: {
+        color: theme.colors.textSecondary,
+        fontStyle: 'italic',
+        opacity: 0.9,
+        fontSize: 14,
+        lineHeight: 20,
+      },
+      thinkingMarkdownTextCard: {
+        color: theme.colors.textSecondary,
+        fontStyle: 'italic',
+        opacity: 0.95,
+            fontSize: 14,
+            lineHeight: 20,
+            marginTop: 0,
+            marginBottom: 0,
+      },
+      thinkingPlainTextCard: {
+        color: theme.colors.textSecondary,
+        fontStyle: 'italic',
+        opacity: 0.95,
+        fontSize: 14,
+        lineHeight: 20,
+      },
+    }));

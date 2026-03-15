@@ -6,7 +6,7 @@ import { run, runCapture, spawnProc } from './utils/proc/proc.mjs';
 import { getComponentDir, getDefaultAutostartPaths, getRootDir } from './utils/paths/paths.mjs';
 import { ensureDepsInstalled, pmExecBin, pmSpawnBin, requireDir } from './utils/proc/pm.mjs';
 import { printResult, wantsHelp, wantsJson } from './utils/cli/cli.mjs';
-import { ensureExpoIsolationEnv, getExpoStatePaths } from './utils/expo/expo.mjs';
+import { ensureExpoIsolationEnv, getExpoStatePaths, resolveExpoTmpDir } from './utils/expo/expo.mjs';
 import { resolveServerPortFromEnv, resolveServerUrls } from './utils/server/urls.mjs';
 import { resolveMobileExpoConfig } from './utils/mobile/config.mjs';
 import { resolveStackContext } from './utils/stack/context.mjs';
@@ -50,6 +50,7 @@ async function main() {
           '--app-env=development|production',
           '--prebuild [--platform=ios|all] [--clean]',
           '--run-ios [--device=<id-or-name>] [--configuration=Debug|Release]',
+          '--run-android [--device=<id-or-name>]',
           '--metro / --no-metro',
           '--restart',
           '--no-signing-fix',
@@ -61,6 +62,7 @@ async function main() {
         '  hstack mobile [--host=lan|localhost|tunnel] [--port=8081] [--scheme=...] [--json]',
         '  hstack mobile --restart   # force-restart Metro for this stack/worktree',
         '  hstack mobile --run-ios [--device=...] [--configuration=Debug|Release]',
+        '  hstack mobile --run-android [--device=...]',
         '  hstack mobile --prebuild [--platform=ios|all] [--clean]',
         '  hstack mobile --no-metro   # just build/install (if --run-ios) without starting Metro',
         '',
@@ -114,7 +116,7 @@ async function main() {
   // - `hstack mobile --run-ios` / `hstack mobile:ios` just builds/installs and exits (unless --metro is provided).
   const shouldStartMetro =
     flags.has('--metro') ||
-    (!flags.has('--no-metro') && !flags.has('--run-ios') && !flags.has('--prebuild'));
+    (!flags.has('--no-metro') && !flags.has('--run-ios') && !flags.has('--run-android') && !flags.has('--prebuild'));
 
   const env = {
     ...process.env,
@@ -136,7 +138,7 @@ async function main() {
   // Strategy:
   // - If the user explicitly sets --port or HAPPIER_STACK_MOBILE_PORT, honor it.
   // - Otherwise pick a stable, collision-resistant port in a higher range for build-only steps.
-  const needsNativeBuildPort = flags.has('--prebuild') || flags.has('--run-ios');
+  const needsNativeBuildPort = flags.has('--prebuild') || flags.has('--run-ios') || flags.has('--run-android');
   if (needsNativeBuildPort) {
     const forcedPort = (portFromArg || portFromEnv).toString().trim();
     const stableKey = (stackMode && stackName ? stackName : '') || iosBundleId || scheme || 'happier';
@@ -172,11 +174,12 @@ async function main() {
     projectDir: uiDir,
     stateFileName: 'expo.state.json',
   });
+  const tmpDir = resolveExpoTmpDir({ env, defaultTmpDir: expoPaths.tmpDir, kind: 'expo-dev', projectDir: uiDir });
   await ensureExpoIsolationEnv({
     env,
     stateDir: expoPaths.stateDir,
     expoHomeDir: expoPaths.expoHomeDir,
-    tmpDir: expoPaths.tmpDir,
+    tmpDir,
   });
 
   // Allow happy-stacks to define the default server URL baked into the app bundle.
@@ -341,6 +344,18 @@ async function main() {
     // Ensure CocoaPods doesn't crash due to locale issues.
     env.LANG = env.LANG ?? 'en_US.UTF-8';
     env.LC_ALL = env.LC_ALL ?? 'en_US.UTF-8';
+    await expoExec({ dir: happyDir, projectDir: uiDir, args, env, ensureDepsLabel: 'happy' });
+  }
+
+  if (flags.has('--run-android')) {
+    const device = (kv.get('--device') ?? '').toString().trim();
+    if (device) {
+      // Prefer ANDROID_SERIAL over passing Expo CLI flags (keeps this robust across Expo versions).
+      env.ANDROID_SERIAL = device;
+    }
+
+    const metroPort = String(env.RCT_METRO_PORT ?? portRaw ?? '8081');
+    const args = ['run:android', '--port', metroPort, '--no-build-cache'];
     await expoExec({ dir: happyDir, projectDir: uiDir, args, env, ensureDepsLabel: 'happy' });
   }
 

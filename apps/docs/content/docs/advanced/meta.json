@@ -2,6 +2,7 @@
   "title": "Advanced (optional)",
   "pages": [
     "index",
+    "provider-integrations",
     "custom-mobile-build",
     "notifications",
     "updates"

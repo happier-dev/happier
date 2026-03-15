@@ -23,6 +23,21 @@ function buildEncryptedTemplateCiphertext(
   });
 }
 
+function buildPlainTemplateCiphertext(
+  payload: Record<string, unknown>,
+  envelope?: { existingSessionId?: string },
+): string {
+  return JSON.stringify({
+    kind: 'happier_automation_template_plain_v1',
+    payload,
+    ...(typeof envelope?.existingSessionId === 'string' && envelope.existingSessionId.trim().length > 0
+      ? { existingSessionId: envelope.existingSessionId.trim() }
+      : typeof payload.existingSessionId === 'string' && payload.existingSessionId.trim().length > 0
+        ? { existingSessionId: payload.existingSessionId.trim() }
+        : {}),
+  });
+}
+
 function buildClaimedRun(override?: Partial<AutomationClaimedRunPayload>): AutomationClaimedRunPayload {
   return {
     run: {
@@ -134,6 +149,29 @@ describe('parseAutomationTemplateExecution', () => {
     expect(parsed.ok).toBe(false);
     if (parsed.ok) return;
     expect(parsed.error).toMatch(/envelope/i);
+  });
+
+  it('parses plaintext envelope templates without requiring encryption context', () => {
+    const parsed = parseAutomationTemplateExecution(
+      buildClaimedRun({
+        automation: {
+          id: 'a1',
+          name: 'Plain envelope',
+          enabled: true,
+          targetType: 'new_session',
+          templateCiphertext: buildPlainTemplateCiphertext({
+            directory: '/tmp/project',
+            agent: 'codex',
+            prompt: 'Hello',
+          }),
+        },
+      }),
+      undefined,
+    );
+    expect(parsed.ok).toBe(true);
+    if (!parsed.ok) return;
+    expect(parsed.value.directory).toBe('/tmp/project');
+    expect(parsed.value.prompt).toBe('Hello');
   });
 
   it('parses new-session encrypted templates and normalizes defaults', () => {

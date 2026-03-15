@@ -1,10 +1,10 @@
-import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import process from 'node:process';
 import url from 'node:url';
 import { resolveUiPostinstallTasks } from './resolveUiPostinstallTasks.mjs';
 import { ensureNohoistPeerLinks } from './ensureNohoistPeerLinks.mjs';
+import { runCommandBestEffort, runCommandOrExit } from './postinstall/runCommand.mjs';
 
 // Yarn workspaces can execute this script via a symlinked path (e.g. repoRoot/node_modules/happy/...).
 // Resolve symlinks so repoRootDir/expoAppDir are computed from the real filesystem location.
@@ -60,13 +60,6 @@ if (!patchPackageCliPath) {
     process.exit(1);
 }
 
-function run(command, args, options) {
-    const result = spawnSync(command, args, { stdio: 'inherit', ...options });
-    if (result.status !== 0) {
-        process.exit(result.status ?? 1);
-    }
-}
-
 const tasks = resolveUiPostinstallTasks({ env: process.env });
 const wants = (id) => tasks.includes(id);
 
@@ -75,17 +68,17 @@ if (wants('patch-package')) {
     // patch-package only patches packages present in the current working directory's
     // node_modules, so we run it from the repo root but keep patch files in expo-app/patches.
     if (fs.existsSync(repoRootNodeModulesDir)) {
-        run(process.execPath, [patchPackageCliPath, '--patch-dir', patchDirFromRepoRoot], {
+        runCommandOrExit({ command: process.execPath, args: [patchPackageCliPath, '--patch-dir', patchDirFromRepoRoot], options: {
             cwd: repoRootDir,
-        });
+        } });
     }
 
     // Some dependencies are not hoisted (e.g. expo-router) and are installed under expo-app/node_modules.
     // Run patch-package again scoped to expo-app to apply those patches.
     if (fs.existsSync(expoAppNodeModulesDir)) {
-        run(process.execPath, [patchPackageCliPath, '--patch-dir', patchDirFromExpoApp], {
+        runCommandOrExit({ command: process.execPath, args: [patchPackageCliPath, '--patch-dir', patchDirFromExpoApp], options: {
             cwd: expoAppDir,
-        });
+        } });
     }
 }
 
@@ -127,7 +120,7 @@ if (wants('verify-expo-router-web-modal-patch')) {
 }
 
 if (wants('setup-skia-web')) {
-    run('npx', ['setup-skia-web', 'public'], { cwd: expoAppDir });
+    runCommandOrExit({ command: 'npx', args: ['setup-skia-web', 'public'], options: { cwd: expoAppDir } });
 }
 
 // Vendor Monaco static assets for web/desktop code editor. Metro can't bundle Monaco workers reliably, so we serve
@@ -194,5 +187,33 @@ if (wants('vendor-kokoro-web')) {
         }
     } catch (e) {
         // Best-effort: Kokoro GS is optional and should not break installs.
+    }
+}
+
+// Vendor Pierre diffs worker assets for web/desktop. Metro can't reliably resolve worker-module URLs for ESM workers,
+// so we copy Pierre's "portable worker" bundle into `public/` and load it via `new Worker(url, { type: 'module' })`.
+if (wants('vendor-pierre-diffs-worker')) {
+    try {
+        runCommandBestEffort({
+            command: process.execPath,
+            args: [path.resolve(expoAppDir, 'tools', 'diffs', 'buildPierreWorker.mjs')],
+            options: { cwd: expoAppDir },
+        });
+    } catch (e) {
+        // Best-effort: Pierre diffs have a runtime fallback when workers cannot be created.
+    }
+}
+
+// Bundle CodeMirror for the native CodeMirror WebView editor. We embed the resulting bundle as a JS string to avoid
+// runtime CDN imports (offline + deterministic). Kept best-effort: the editor has a runtime CDN fallback when empty.
+if (wants('vendor-codemirror-webview-bundle')) {
+    try {
+        runCommandBestEffort({
+            command: process.execPath,
+            args: [path.resolve(expoAppDir, 'tools', 'codemirror', 'buildCodeMirrorWebViewBundle.mjs')],
+            options: { cwd: expoAppDir },
+        });
+    } catch (e) {
+        // Best-effort: CodeMirror editor has a runtime fallback when the embedded bundle is missing.
     }
 }

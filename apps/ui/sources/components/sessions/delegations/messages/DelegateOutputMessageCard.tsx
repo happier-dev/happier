@@ -4,6 +4,7 @@ import { StyleSheet } from 'react-native-unistyles';
 
 import type { DelegateOutputV1 } from '@happier-dev/protocol';
 import { Text } from '@/components/ui/text/Text';
+import { t } from '@/text';
 
 
 export function DelegateOutputMessageCard(props: Readonly<{ payload: DelegateOutputV1 }>) {
@@ -11,16 +12,16 @@ export function DelegateOutputMessageCard(props: Readonly<{ payload: DelegateOut
 
     return (
         <View style={styles.container}>
-            <Text style={styles.headerText}>Delegation</Text>
-            <Text style={styles.summaryText}>{props.payload.summary}</Text>
+            <Text selectable style={styles.headerText}>{t('delegation.output.title')}</Text>
+            <Text selectable style={styles.summaryText}>{props.payload.summary}</Text>
 
             {deliverables.length > 0 ? (
                 <View style={styles.section}>
-                    <Text style={styles.sectionTitle}>Deliverables</Text>
+                    <Text selectable style={styles.sectionTitle}>{t('delegation.output.deliverablesTitle')}</Text>
                     {deliverables.slice(0, 30).map((d) => (
                         <View key={d.id} style={styles.deliverableRow}>
-                            <Text style={styles.deliverableTitle}>{d.title}</Text>
-                            {d.details ? <Text style={styles.deliverableDetails}>{d.details}</Text> : null}
+                            <Text selectable style={styles.deliverableTitle}>{d.title}</Text>
+                            {d.details ? <Text selectable style={styles.deliverableDetails}>{d.details}</Text> : null}
                         </View>
                     ))}
                 </View>
@@ -72,4 +73,3 @@ const styles = StyleSheet.create((theme) => ({
         fontFamily: 'Menlo',
     },
 }));
-

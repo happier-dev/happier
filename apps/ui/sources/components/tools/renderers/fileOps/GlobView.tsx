@@ -5,6 +5,7 @@ import { ToolSectionView } from '../../shell/presentation/ToolSectionView';
 import type { ToolViewProps } from '../core/_registry';
 import { coerceToolResultRecord } from '../../legacy/coerceToolResultRecord';
 import { Text } from '@/components/ui/text/Text';
+import { t } from '@/text';
 
 
 function getMatches(result: unknown): string[] {
@@ -36,7 +37,7 @@ export const GlobView = React.memo<ToolViewProps>(({ tool, detailLevel }) => {
                 ))}
                 {more > 0 && (
                     <Text style={[styles.path, { color: theme.colors.textSecondary }]}>
-                        +{more} more
+                        {t('tools.structuredResult.more', { count: more })}
                     </Text>
                 )}
             </View>

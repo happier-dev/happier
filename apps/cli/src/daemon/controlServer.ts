@@ -157,16 +157,20 @@ export function createDaemonControlApp({
   });
 
   // Spawn new session
-  typed.post('/spawn-session', {
-    schema: {
-      body: z.object({
-        directory: z.string(),
-        sessionId: z.string().optional(),
-        agent: z.enum(asNonEmptyStringTuple(CATALOG_AGENT_IDS as readonly CatalogAgentId[])).optional(),
-        terminal: z.object({
-          mode: z.enum(['plain', 'tmux']).optional(),
-          tmux: z.object({
-            sessionName: z.string().optional(),
+      typed.post('/spawn-session', {
+        schema: {
+          body: z.object({
+            directory: z.string(),
+            sessionId: z.string().optional(),
+            existingSessionId: z.string().optional(),
+            agent: z.enum(asNonEmptyStringTuple(CATALOG_AGENT_IDS as readonly CatalogAgentId[])).optional(),
+            token: z.string().optional(),
+            experimentalCodexResume: z.boolean().optional(),
+            experimentalCodexAcp: z.boolean().optional(),
+            terminal: z.object({
+              mode: z.enum(['plain', 'tmux']).optional(),
+              tmux: z.object({
+                sessionName: z.string().optional(),
             isolated: z.boolean().optional(),
             tmpDir: z.union([z.string(), z.null()]).optional(),
           }).optional(),
@@ -194,18 +198,44 @@ export function createDaemonControlApp({
         })
       }
     },
-    preHandler: requireAuth,
-  }, async (request, reply) => {
-    const { directory, sessionId, agent, terminal, environmentVariables, connectedServices } = request.body;
+        preHandler: requireAuth,
+      }, async (request, reply) => {
+        const {
+          directory,
+          sessionId,
+          existingSessionId,
+          agent,
+          token,
+          experimentalCodexResume,
+          experimentalCodexAcp,
+          terminal,
+          environmentVariables,
+          connectedServices,
+        } = request.body;
 
     logger.debug(`[CONTROL SERVER] Spawn session request: dir=${directory}, sessionId=${sessionId || 'new'}`);
-    let result: SpawnSessionResult;
-    try {
-      result = await spawnSession({ directory, sessionId, agent, terminal, environmentVariables, connectedServices });
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      reply.code(500);
-      return {
+        let result: SpawnSessionResult;
+        try {
+          const normalizedExistingSessionId = typeof existingSessionId === 'string' && existingSessionId.trim().length > 0
+            ? existingSessionId.trim()
+            : typeof sessionId === 'string' && sessionId.trim().length > 0
+              ? sessionId.trim()
+              : undefined;
+          result = await spawnSession({
+            directory,
+            ...(normalizedExistingSessionId ? { existingSessionId: normalizedExistingSessionId } : {}),
+            agent,
+            token,
+            experimentalCodexResume,
+            experimentalCodexAcp,
+            terminal,
+            environmentVariables,
+            connectedServices,
+          });
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          reply.code(500);
+          return {
         success: false,
         error: `Failed to spawn session: ${message}`,
         errorCode: SPAWN_SESSION_ERROR_CODES.SPAWN_FAILED,
@@ -250,6 +280,11 @@ export function createDaemonControlApp({
   // Stop daemon
   typed.post('/stop', {
     schema: {
+      body: z
+        .object({
+          stopSessions: z.boolean().optional(),
+        })
+        .nullish(),
       response: {
         200: z.object({
           status: z.string()
@@ -258,13 +293,41 @@ export function createDaemonControlApp({
       }
     },
     preHandler: requireAuth,
-  }, async () => {
-    logger.debug('[CONTROL SERVER] Stop daemon request received');
+  }, async (request) => {
+    const stopSessions = request.body?.stopSessions === true;
+    logger.debug('[CONTROL SERVER] Stop daemon request received', { stopSessions });
 
     // Give time for response to arrive
     setTimeout(() => {
       logger.debug('[CONTROL SERVER] Triggering daemon shutdown');
-      requestShutdown();
+      if (!stopSessions) {
+        requestShutdown();
+        return;
+      }
+
+      void (async () => {
+        try {
+          const children = getChildren();
+          logger.debug(`[CONTROL SERVER] stopSessions requested: stopping ${children.length} tracked sessions`);
+          for (const child of children) {
+            const sessionId = typeof child.happySessionId === 'string' ? child.happySessionId.trim() : '';
+            const fallbackSessionId =
+              Number.isFinite(child.pid) && child.pid > 1 ? `PID-${Math.trunc(child.pid)}` : '';
+            const id = sessionId || fallbackSessionId;
+            if (!id) continue;
+            try {
+              // eslint-disable-next-line no-await-in-loop
+              await stopSession(id);
+            } catch (error) {
+              logger.debug(`[CONTROL SERVER] Failed to stop session ${id}`, error);
+            }
+          }
+        } catch (error) {
+          logger.debug('[CONTROL SERVER] stopSessions failed', error);
+        } finally {
+          requestShutdown();
+        }
+      })();
     }, 50);
 
     return { status: 'stopping' };

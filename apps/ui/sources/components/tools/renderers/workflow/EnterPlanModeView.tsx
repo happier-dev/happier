@@ -4,6 +4,7 @@ import { StyleSheet } from 'react-native-unistyles';
 import type { ToolViewProps } from '../core/_registry';
 import { ToolSectionView } from '../../shell/presentation/ToolSectionView';
 import { Text } from '@/components/ui/text/Text';
+import { t } from '@/text';
 
 
 export const EnterPlanModeView = React.memo<ToolViewProps>(({ detailLevel }) => {
@@ -12,10 +13,10 @@ export const EnterPlanModeView = React.memo<ToolViewProps>(({ detailLevel }) => 
     return (
         <ToolSectionView>
             <View style={styles.container}>
-                <Text style={styles.title}>Entered plan mode</Text>
+                <Text style={styles.title}>{t('tools.enterPlanMode.title')}</Text>
                 {detailLevel === 'full' ? (
                     <Text style={styles.body}>
-                        The agent will now provide a structured plan before taking action. You can exit plan mode or request changes when ready.
+                        {t('tools.enterPlanMode.body')}
                     </Text>
                 ) : null}
             </View>
@@ -39,4 +40,3 @@ const styles = StyleSheet.create((theme) => ({
         color: theme.colors.textSecondary,
     },
 }));
-

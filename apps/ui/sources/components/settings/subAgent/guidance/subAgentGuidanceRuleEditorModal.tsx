@@ -149,6 +149,24 @@ export function SubAgentGuidanceRuleEditorModal(props: Readonly<{
         overflow: 'hidden' as const,
     };
 
+    const enabledSubtitle = enabled
+        ? t('subAgentGuidance.ruleEditor.enabledState.enabled')
+        : t('subAgentGuidance.ruleEditor.enabledState.disabled');
+
+    const intentSubtitle = (() => {
+        if (!intent) return t('subAgentGuidance.ruleEditor.common.noPreference');
+        switch (intent) {
+            case 'review':
+                return t('subAgentGuidance.ruleEditor.intent.options.review.title');
+            case 'plan':
+                return t('subAgentGuidance.ruleEditor.intent.options.plan.title');
+            case 'delegate':
+                return t('subAgentGuidance.ruleEditor.intent.options.delegate.title');
+            default:
+                return String(intent);
+        }
+    })();
+
     return (
         <View ref={popoverBoundaryRef} style={containerStyle}>
             <View
@@ -162,7 +180,9 @@ export function SubAgentGuidanceRuleEditorModal(props: Readonly<{
                 }}
             >
                 <Text style={{ fontSize: 16, color: theme.colors.text, fontWeight: '600' }}>
-                    {props.mode === 'create' ? 'New rule' : 'Edit rule'}
+                    {props.mode === 'create'
+                        ? t('subAgentGuidance.ruleEditor.header.newRule')
+                        : t('subAgentGuidance.ruleEditor.header.editRule')}
                 </Text>
             </View>
 
@@ -180,8 +200,8 @@ export function SubAgentGuidanceRuleEditorModal(props: Readonly<{
             >
                 <View style={cardStyle}>
                     <Item
-                        title="Enabled"
-                        subtitle={enabled ? 'Enabled' : 'Disabled'}
+                        title={t('subAgentGuidance.ruleEditor.enabled.title')}
+                        subtitle={enabledSubtitle}
                         icon={<Ionicons name="sparkles-outline" size={24} color={theme.colors.accent.orange} />}
                         rightElement={<Switch value={enabled} onValueChange={setEnabled} />}
                         showChevron={false}
@@ -192,12 +212,12 @@ export function SubAgentGuidanceRuleEditorModal(props: Readonly<{
 
                 <View style={cardStyle}>
                     <View style={{ paddingHorizontal: 12, paddingTop: 10 }}>
-                        <Text style={sectionLabelStyle}>Title (optional)</Text>
+                        <Text style={sectionLabelStyle}>{t('subAgentGuidance.ruleEditor.titleField.label')}</Text>
                     </View>
                     <View style={{ paddingHorizontal: 12, paddingTop: 8, paddingBottom: 12 }}>
                         <TextInput
                             style={[fieldInputStyle, Typography.default()]}
-                            placeholder="e.g. UI work"
+                            placeholder={t('subAgentGuidance.ruleEditor.titleField.placeholder')}
                             placeholderTextColor={theme.colors.input.placeholder}
                             value={title}
                             onChangeText={setTitle}
@@ -207,12 +227,12 @@ export function SubAgentGuidanceRuleEditorModal(props: Readonly<{
 
                 <View style={cardStyle}>
                     <View style={{ paddingHorizontal: 12, paddingTop: 10 }}>
-                        <Text style={sectionLabelStyle}>When should the agent delegate?</Text>
+                        <Text style={sectionLabelStyle}>{t('subAgentGuidance.ruleEditor.descriptionField.label')}</Text>
                     </View>
                     <View style={{ paddingHorizontal: 12, paddingTop: 8, paddingBottom: 12 }}>
                         <TextInput
                             style={[fieldInputStyle, Typography.default(), { minHeight: 92 }]}
-                            placeholder="Describe when/how to delegate…"
+                            placeholder={t('subAgentGuidance.ruleEditor.descriptionField.placeholder')}
                             placeholderTextColor={theme.colors.input.placeholder}
                             value={description}
                             onChangeText={setDescription}
@@ -226,7 +246,7 @@ export function SubAgentGuidanceRuleEditorModal(props: Readonly<{
                     onOpenChange={(next) => setOpenPicker(next ? 'backend' : null)}
                     variant="selectable"
                     search={true}
-                    searchPlaceholder="Search backends"
+                    searchPlaceholder={t('subAgentGuidance.ruleEditor.backendPicker.searchPlaceholder')}
                     selectedId={backendId ?? ''}
                     showCategoryTitles={false}
                     matchTriggerWidth={true}
@@ -236,8 +256,8 @@ export function SubAgentGuidanceRuleEditorModal(props: Readonly<{
                     trigger={({ open, toggle }) => (
                         <View style={cardStyle}>
                             <Item
-                                title="Target backend (optional)"
-                                subtitle={backendId ?? 'No preference'}
+                                title={t('subAgentGuidance.ruleEditor.backendPicker.title')}
+                                subtitle={backendId ?? t('subAgentGuidance.ruleEditor.common.noPreference')}
                                 icon={<Ionicons name="hardware-chip-outline" size={24} color={theme.colors.textSecondary} />}
                                 rightElement={<Ionicons name={open ? 'chevron-up' : 'chevron-down'} size={18} color={theme.colors.textSecondary} />}
                                 onPress={toggle}
@@ -246,23 +266,23 @@ export function SubAgentGuidanceRuleEditorModal(props: Readonly<{
                             />
                         </View>
                     )}
-	                    items={[
-	                        {
-	                            id: '',
-	                            title: 'No preference',
-	                            subtitle: 'Let the agent choose a backend.',
+                      items={[
+                          {
+                              id: '',
+                              title: t('subAgentGuidance.ruleEditor.common.noPreference'),
+                              subtitle: t('subAgentGuidance.ruleEditor.backendPicker.noPreference.subtitle'),
                             icon: (
                                 <View style={{ width: 32, height: 32, alignItems: 'center', justifyContent: 'center' }}>
                                     <Ionicons name="remove-circle-outline" size={22} color={theme.colors.textSecondary} />
                                 </View>
-	                            ),
-	                        },
-	                        ...getAgentDropdownMenuItems({
+                              ),
+                          },
+                          ...getAgentDropdownMenuItems({
                                 agentIds: enabledAgentIds as any,
                                 iconColor: theme.colors.textSecondary,
                             }),
-	                    ]}
-	                    onSelect={(id) => {
+                      ]}
+                      onSelect={(id) => {
                         const next = String(id ?? '').trim();
                         if (!next) {
                             setBackendId(undefined);
@@ -282,7 +302,7 @@ export function SubAgentGuidanceRuleEditorModal(props: Readonly<{
                         onOpenChange={(next) => setOpenPicker(next ? 'model' : null)}
                         variant="selectable"
                         search={true}
-                        searchPlaceholder="Search models"
+                        searchPlaceholder={t('subAgentGuidance.ruleEditor.modelPicker.searchPlaceholder')}
                         selectedId={modelId ?? ''}
                         showCategoryTitles={false}
                         matchTriggerWidth={true}
@@ -292,8 +312,8 @@ export function SubAgentGuidanceRuleEditorModal(props: Readonly<{
                         trigger={({ open, toggle }) => (
                             <View style={cardStyle}>
                                 <Item
-                                    title="Target model (optional)"
-                                    subtitle={modelId ?? 'No preference'}
+                                    title={t('subAgentGuidance.ruleEditor.modelPicker.title')}
+                                    subtitle={modelId ?? t('subAgentGuidance.ruleEditor.common.noPreference')}
                                     icon={<Ionicons name="layers-outline" size={24} color={theme.colors.textSecondary} />}
                                     rightElement={<Ionicons name={open ? 'chevron-up' : 'chevron-down'} size={18} color={theme.colors.textSecondary} />}
                                     onPress={toggle}
@@ -302,18 +322,18 @@ export function SubAgentGuidanceRuleEditorModal(props: Readonly<{
                                 />
                             </View>
                         )}
-	                        items={[
-	                            {
-	                                id: '',
-	                                title: 'No preference',
-	                                subtitle: 'Let the backend pick a default model.',
+                          items={[
+                              {
+                                  id: '',
+                                  title: t('subAgentGuidance.ruleEditor.common.noPreference'),
+                                  subtitle: t('subAgentGuidance.ruleEditor.modelPicker.noPreference.subtitle'),
                                 icon: (
                                     <View style={{ width: 32, height: 32, alignItems: 'center', justifyContent: 'center' }}>
                                         <Ionicons name="remove-circle-outline" size={22} color={theme.colors.textSecondary} />
                                     </View>
-	                                ),
-	                            },
-	                            ...getModelDropdownMenuItems({
+                                  ),
+                              },
+                              ...getModelDropdownMenuItems({
                                     modelOptions: preflightModels.modelOptions,
                                     iconColor: theme.colors.textSecondary,
                                     probe: {
@@ -321,8 +341,8 @@ export function SubAgentGuidanceRuleEditorModal(props: Readonly<{
                                         onRefresh: preflightModels.probe.refresh,
                                     },
                                 }),
-	                        ]}
-	                        onSelect={(id) => {
+                          ]}
+                          onSelect={(id) => {
                             if (id === REFRESH_MODELS_DROPDOWN_ITEM_ID) {
                                 preflightModels.probe.refresh();
                                 return;
@@ -347,8 +367,8 @@ export function SubAgentGuidanceRuleEditorModal(props: Readonly<{
                     trigger={({ open, toggle }) => (
                         <View style={cardStyle}>
                             <Item
-                                title="Suggested intent (optional)"
-                                subtitle={intent ?? 'No preference'}
+                                title={t('subAgentGuidance.ruleEditor.intent.title')}
+                                subtitle={intentSubtitle}
                                 icon={<Ionicons name="navigate-outline" size={24} color={theme.colors.textSecondary} />}
                                 rightElement={<Ionicons name={open ? 'chevron-up' : 'chevron-down'} size={18} color={theme.colors.textSecondary} />}
                                 onPress={toggle}
@@ -358,10 +378,26 @@ export function SubAgentGuidanceRuleEditorModal(props: Readonly<{
                         </View>
                     )}
                     items={[
-                        { id: '', title: 'No preference', subtitle: 'Let the agent decide intent.' },
-                        { id: 'review', title: 'review', subtitle: 'Code review / findings.' },
-                        { id: 'plan', title: 'plan', subtitle: 'Planning / architecture.' },
-                        { id: 'delegate', title: 'delegate', subtitle: 'Delegation / execution.' },
+                        {
+                            id: '',
+                            title: t('subAgentGuidance.ruleEditor.common.noPreference'),
+                            subtitle: t('subAgentGuidance.ruleEditor.intent.noPreference.subtitle'),
+                        },
+                        {
+                            id: 'review',
+                            title: t('subAgentGuidance.ruleEditor.intent.options.review.title'),
+                            subtitle: t('subAgentGuidance.ruleEditor.intent.options.review.subtitle'),
+                        },
+                        {
+                            id: 'plan',
+                            title: t('subAgentGuidance.ruleEditor.intent.options.plan.title'),
+                            subtitle: t('subAgentGuidance.ruleEditor.intent.options.plan.subtitle'),
+                        },
+                        {
+                            id: 'delegate',
+                            title: t('subAgentGuidance.ruleEditor.intent.options.delegate.title'),
+                            subtitle: t('subAgentGuidance.ruleEditor.intent.options.delegate.subtitle'),
+                        },
                     ].map((it) => ({
                         ...it,
                         icon: (
@@ -378,12 +414,12 @@ export function SubAgentGuidanceRuleEditorModal(props: Readonly<{
 
                 <View style={cardStyle}>
                     <View style={{ paddingHorizontal: 12, paddingTop: 10 }}>
-                        <Text style={sectionLabelStyle}>Example tool calls (optional, one per line)</Text>
+                        <Text style={sectionLabelStyle}>{t('subAgentGuidance.ruleEditor.exampleToolCalls.label')}</Text>
                     </View>
                     <View style={{ paddingHorizontal: 12, paddingTop: 8, paddingBottom: 12 }}>
                         <TextInput
                             style={[fieldInputStyle, Typography.default(), { minHeight: 92 }]}
-                            placeholder="execution.run.start …"
+                            placeholder={t('subAgentGuidance.ruleEditor.exampleToolCalls.placeholder')}
                             placeholderTextColor={theme.colors.input.placeholder}
                             value={exampleToolCalls}
                             onChangeText={setExampleToolCalls}
@@ -407,18 +443,23 @@ export function SubAgentGuidanceRuleEditorModal(props: Readonly<{
                 }}
             >
                 <View style={{ flexDirection: 'row', gap: 10 }}>
-                    <RoundButton size="normal" display="inverted" title="Cancel" onPress={() => props.onResolve(null)} />
+                    <RoundButton
+                        size="normal"
+                        display="inverted"
+                        title={t('common.cancel')}
+                        onPress={() => props.onResolve(null)}
+                    />
                     {props.mode === 'edit' ? (
                         <RoundButton
                             size="normal"
                             display="inverted"
-                            title="Delete"
+                            title={t('common.delete')}
                             textStyle={{ color: theme.colors.textDestructive }}
                             onPress={() => props.onResolve({ kind: 'delete' })}
                         />
                     ) : null}
                 </View>
-                <RoundButton size="normal" title="Save" disabled={!canSave} onPress={save} />
+                <RoundButton size="normal" title={t('common.save')} disabled={!canSave} onPress={save} />
             </View>
         </View>
     );

@@ -132,4 +132,29 @@ describe("userRoutes (profile badges) (integration)", () => {
 
         await app.close();
     });
+
+    it("returns publicKey=null for keyless accounts", async () => {
+        const app = createTestApp();
+        await userRoutes(app as any);
+        await app.ready();
+
+        const viewer = await db.account.create({ data: { publicKey: "pk-viewer-keyless", username: "viewer_keyless" }, select: { id: true } });
+        const target = await db.account.create({
+            // TDD: keyless accounts allow publicKey to be null.
+            data: { publicKey: null as any, username: "target_keyless" },
+            select: { id: true },
+        });
+
+        const res = await app.inject({
+            method: "GET",
+            url: `/v1/user/${encodeURIComponent(target.id)}`,
+            headers: { "x-test-user-id": viewer.id },
+        });
+
+        expect(res.statusCode).toBe(200);
+        const body = res.json() as any;
+        expect(body.user?.publicKey).toBeNull();
+
+        await app.close();
+    });
 });

@@ -199,6 +199,10 @@ const SessionOpenInputSchema = z.object({
   sessionId: z.string().min(1),
 }).passthrough();
 
+const SessionForkInputSchema = z.object({
+  sessionId: z.string().min(1).optional(),
+}).passthrough();
+
 const SessionSpawnNewInputSchema = z.object({
   tag: z.string().min(1).optional(),
   workspaceId: z.string().min(1).optional(),
@@ -664,6 +668,32 @@ export const ACTION_SPECS: readonly ActionSpec[] = Object.freeze([
       fields: [{ path: 'sessionId', title: 'Session id', widget: 'text', required: true }],
     },
     inputSchema: SessionOpenInputSchema,
+  },
+  {
+    id: 'session.fork',
+    title: 'Fork session',
+    description: 'Create a new session from the latest state of the selected session.',
+    safety: 'safe',
+    placements: ['session_action_menu', 'session_info', 'command_palette', 'slash_command', 'voice_panel', 'agent_input_chips'],
+    slash: { tokens: ['fork'] },
+    bindings: { voiceClientToolName: 'forkSession' },
+    examples: {
+      voice: { argsExample: '{"sessionId":"...optional..."}' },
+    },
+    surfaces: {
+      ui_button: true,
+      ui_slash_command: true,
+      voice_tool: true,
+      voice_action_block: true,
+      mcp: false,
+      session_control_cli: false,
+    },
+    inputHints: {
+      title: 'Fork a session',
+      description: 'Forks from the latest message in the session.',
+      fields: [{ path: 'sessionId', title: 'Session id', widget: 'text' }],
+    },
+    inputSchema: SessionForkInputSchema,
   },
   {
     id: 'session.spawn_new',

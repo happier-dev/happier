@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { mapToClaudeMode } from './permissionMode';
+import { mapToClaudeMode, resolveClaudeSdkPermissionModeFromEnhancedMode } from './permissionMode';
 import type { PermissionMode } from '@/api/types';
 
 describe('mapToClaudeMode', () => {
@@ -49,5 +49,16 @@ describe('mapToClaudeMode', () => {
                 expect(validClaudeModes).toContain(result);
             });
         });
+    });
+});
+
+describe('resolveClaudeSdkPermissionModeFromEnhancedMode', () => {
+    it('forces plan when agentModeId=plan (even if permissionMode is read-only)', () => {
+        expect(
+            resolveClaudeSdkPermissionModeFromEnhancedMode({
+                permissionMode: 'read-only',
+                agentModeId: 'plan',
+            }),
+        ).toBe('plan');
     });
 });

@@ -55,6 +55,7 @@ export class Encryption {
     private sessionEncryptions = new Map<string, SessionEncryption>();
     private sessionKeyFingerprints = new Map<string, string>();
     private machineEncryptions = new Map<string, MachineEncryption>();
+    private machineKeyFingerprints = new Map<string, string>();
     private cache: EncryptionCache;
 
     private constructor(
@@ -156,8 +157,11 @@ export class Encryption {
      */
     async initializeMachines(machines: Map<string, Uint8Array | null>): Promise<void> {
         for (const [machineId, dataKey] of machines) {
-            // Skip if already initialized
-            if (this.machineEncryptions.has(machineId)) {
+            const fingerprint = dataKey ? encodeBase64(dataKey, 'base64') : '__no_key__';
+            const existing = this.machineEncryptions.get(machineId);
+            const existingFingerprint = this.machineKeyFingerprints.get(machineId);
+            // Skip if already initialized with the same key (or both missing).
+            if (existing && existingFingerprint === fingerprint) {
                 continue;
             }
 
@@ -171,6 +175,7 @@ export class Encryption {
                 this.cache
             );
             this.machineEncryptions.set(machineId, machineEnc);
+            this.machineKeyFingerprints.set(machineId, fingerprint);
         }
     }
 

@@ -4,6 +4,14 @@ import { describe, it, expect, vi } from 'vitest';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
+vi.mock('@shopify/flash-list', () => ({
+    FlashList: () => null,
+}));
+
+vi.mock('react-native-safe-area-context', () => ({
+    useSafeAreaInsets: () => ({ top: 0, bottom: 0, left: 0, right: 0 }),
+}));
+
 vi.mock('react-native', async (importOriginal) => {
     const ReactMod = await import('react');
     const actual = await importOriginal<any>();
@@ -17,14 +25,28 @@ vi.mock('react-native', async (importOriginal) => {
 });
 
 vi.mock('@/sync/domains/state/storage', () => ({
+    getStorage: () => ({
+        getState: () => ({
+            sessionMessages: {
+                'session-1': { messagesById: {}, messagesMap: {} },
+            },
+        }),
+    }),
     useSession: () => null,
-    useSessionMessages: () => ({ messages: [], isLoaded: true }),
+    useSessionTranscriptIds: () => ({ ids: [], isLoaded: true }),
+    useSessionMessagesById: () => ({}),
+    useForkedTranscriptSnapshot: () => null,
     useSessionPendingMessages: () => ({ messages: [] }),
     useSessionActionDrafts: () => ([]),
+    useSessionLatestThinkingMessageId: () => null,
+    useSessionLatestThinkingMessageActivityAtMs: () => null,
+    useMessage: () => null,
+    useSetting: (key: string) => (key === 'transcriptListImplementation' ? 'flatlist_legacy' : undefined),
 }));
 
 vi.mock('@/components/sessions/chatListItems', () => ({
     buildChatListItems: () => [],
+    buildChatListItemsCached: () => ({ cache: null, items: [] }),
 }));
 
 vi.mock('./ChatFooter', () => ({
@@ -35,8 +57,12 @@ vi.mock('./MessageView', () => ({
     MessageView: () => React.createElement('MessageView'),
 }));
 
-vi.mock('@/components/sessions/pending/PendingUserTextMessageView', () => ({
-    PendingUserTextMessageView: () => React.createElement('PendingUserTextMessageView'),
+vi.mock('@/components/sessions/transcript/turns/TurnView', () => ({
+    TurnView: () => React.createElement('TurnView'),
+}));
+
+vi.mock('@/components/sessions/pending/PendingMessagesTranscriptBlock', () => ({
+    PendingMessagesTranscriptBlock: () => React.createElement('PendingMessagesTranscriptBlock'),
 }));
 
 vi.mock('@/components/sessions/actions/SessionActionDraftCard', () => ({

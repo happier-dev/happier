@@ -20,7 +20,7 @@ export async function getOrCreateSecretKey(): Promise<Uint8Array> {
 export async function authGetToken(secret: Uint8Array): Promise<string> {
   const { challenge, publicKey, signature } = authChallenge(secret);
   
-  const serverUrl = resolveLoopbackHttpUrl(configuration.serverUrl).replace(/\/+$/, '');
+  const serverUrl = resolveLoopbackHttpUrl(configuration.apiServerUrl).replace(/\/+$/, '');
   const response = await axios.post(`${serverUrl}/v1/auth`, {
     challenge: encodeBase64(challenge),
     publicKey: encodeBase64(publicKey),

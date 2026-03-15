@@ -23,6 +23,13 @@ type EmittedHunkLine = {
 
 type PatchSelectionMode = 'stage' | 'unstage';
 
+type SelectedDiffLineKey = `${'additions' | 'deletions'}:${number}`;
+
+export function buildSelectedDiffLineKey(side: 'additions' | 'deletions', lineNumber: number): SelectedDiffLineKey | null {
+    if (!Number.isFinite(lineNumber) || lineNumber <= 0) return null;
+    return `${side}:${Math.floor(lineNumber)}` as SelectedDiffLineKey;
+}
+
 function parseHunkHeader(line: string): {
     oldStart: number;
     newStart: number;
@@ -39,11 +46,25 @@ function parseHunkHeader(line: string): {
 
 function emitHunk(
     lines: ParsedHunkLine[],
-    selectedLineIndexes: Set<number>,
+    selectedLineKeys: Set<string>,
     mode: PatchSelectionMode
 ): EmittedHunkLine[] | null {
     const emitted: EmittedHunkLine[] = [];
     let hasSelectedChange = false;
+
+    const isSelected = (line: ParsedHunkLine): boolean => {
+        if (line.kind === 'add') {
+            if (typeof line.newRef !== 'number') return false;
+            const key = buildSelectedDiffLineKey('additions', line.newRef);
+            return key ? selectedLineKeys.has(key) : false;
+        }
+        if (line.kind === 'delete') {
+            if (typeof line.oldRef !== 'number') return false;
+            const key = buildSelectedDiffLineKey('deletions', line.oldRef);
+            return key ? selectedLineKeys.has(key) : false;
+        }
+        return false;
+    };
 
     for (const line of lines) {
         switch (line.kind) {
@@ -57,7 +78,7 @@ function emitHunk(
                 break;
             }
             case 'add': {
-                if (selectedLineIndexes.has(line.index)) {
+                if (isSelected(line)) {
                     hasSelectedChange = true;
                     emitted.push({
                         text: line.text,
@@ -77,7 +98,7 @@ function emitHunk(
                 break;
             }
             case 'delete': {
-                if (selectedLineIndexes.has(line.index)) {
+                if (isSelected(line)) {
                     hasSelectedChange = true;
                     emitted.push({
                         text: line.text,
@@ -153,11 +174,11 @@ function computeHunkHeaderLines(emitted: EmittedHunkLine[]): {
 
 export function buildPatchFromSelectedDiffLines(
     unifiedDiff: string,
-    selectedLineIndexes: Set<number>,
+    selectedLineKeys: Set<string>,
     options: { mode?: PatchSelectionMode } = {}
 ): string | null {
     const mode = options.mode ?? 'stage';
-    if (!unifiedDiff || selectedLineIndexes.size === 0) {
+    if (!unifiedDiff || selectedLineKeys.size === 0) {
         return null;
     }
 
@@ -273,7 +294,7 @@ export function buildPatchFromSelectedDiffLines(
 
     const renderedHunks: string[] = [];
     for (const parsedHunk of hunks) {
-        const emitted = emitHunk(parsedHunk.lines, selectedLineIndexes, mode);
+        const emitted = emitHunk(parsedHunk.lines, selectedLineKeys, mode);
         if (!emitted) continue;
         const rendered = computeHunkHeaderLines(emitted);
         if (!rendered) continue;

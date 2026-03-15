@@ -24,6 +24,14 @@ export async function createWorktree(
     );
     
     if (!gitCheck.success) {
+        if (gitCheck.exitCode === -1) {
+            return {
+                success: false,
+                worktreePath: '',
+                branchName: '',
+                error: gitCheck.stderr || 'Failed to reach daemon',
+            };
+        }
         return {
             success: false,
             worktreePath: '',

@@ -1,6 +1,7 @@
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { collectTestFiles } from './utils/test/collect_test_files.mjs';
+import { shouldRunRealIntegrationTests, splitRealIntegrationTests } from './utils/test/integration_test_runner.mjs';
 
 async function main() {
   const packageRoot = fileURLToPath(new URL('..', import.meta.url));
@@ -23,8 +24,30 @@ async function main() {
   }
 
   const { spawnSync } = await import('node:child_process');
-  const res = spawnSync(process.execPath, ['--test', ...testFiles], { stdio: 'inherit' });
-  process.exit(res.status ?? 1);
+  const { regular, real } = splitRealIntegrationTests(testFiles);
+  const runReal = shouldRunRealIntegrationTests(process.env);
+
+  if (regular.length > 0) {
+    const res = spawnSync(process.execPath, ['--test', ...regular], { stdio: 'inherit' });
+    if ((res.status ?? 1) !== 0) process.exit(res.status ?? 1);
+  }
+
+  if (real.length > 0 && !runReal) {
+    process.stdout.write(
+      `[stack:test:integration] skipping ${real.length} real integration test file(s). ` +
+        `To run them: HAPPIER_STACK_RUN_REAL_INTEGRATION_TESTS=1\n`,
+    );
+    process.exit(0);
+  }
+
+  // Real integration tests may install/uninstall OS services and build global release assets,
+  // which is not safe under Node's default parallel test file execution.
+  for (const file of real) {
+    const res = spawnSync(process.execPath, ['--test', '--test-concurrency=1', file], { stdio: 'inherit' });
+    if ((res.status ?? 1) !== 0) process.exit(res.status ?? 1);
+  }
+
+  process.exit(0);
 }
 
 main().catch((e) => {

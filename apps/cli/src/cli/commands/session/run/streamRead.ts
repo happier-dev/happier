@@ -6,7 +6,7 @@ import { SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc';
 
 import { fetchSessionById } from '@/sessionControl/sessionsHttp';
 import { wantsJson, printJsonEnvelope } from '@/sessionControl/jsonOutput';
-import { resolveSessionEncryptionContextFromCredentials } from '@/sessionControl/sessionEncryptionContext';
+import { resolveSessionEncryptionContextFromCredentials, resolveSessionStoredContentEncryptionMode } from '@/sessionControl/sessionEncryptionContext';
 import { callSessionRpc } from '@/sessionControl/sessionRpc';
 import { readIntFlagValue } from '@/sessionControl/argvFlags';
 import { resolveSessionIdOrPrefix } from '@/sessionControl/resolveSessionId';
@@ -63,6 +63,7 @@ export async function cmdSessionRunStreamRead(
   }
 
   const ctx = resolveSessionEncryptionContextFromCredentials(credentials, rawSession);
+  const mode = resolveSessionStoredContentEncryptionMode(rawSession);
   const request = ExecutionRunTurnStreamReadRequestSchema.parse({
     runId,
     streamId,
@@ -70,7 +71,7 @@ export async function cmdSessionRunStreamRead(
     ...(typeof maxEvents === 'number' && Number.isFinite(maxEvents) && maxEvents > 0 ? { maxEvents } : {}),
   });
   const method = `${sessionId}:${SESSION_RPC_METHODS.EXECUTION_RUN_STREAM_READ}`;
-  const result = await callSessionRpc({ token: credentials.token, sessionId, ctx, method, request });
+  const result = await callSessionRpc({ token: credentials.token, sessionId, mode, ctx, method, request });
 
   if (json) {
     printJsonEnvelope({ ok: true, kind: 'session_run_stream_read', data: { sessionId, runId, ...(result as any) } });
@@ -80,4 +81,3 @@ export async function cmdSessionRunStreamRead(
   console.log(chalk.green('✓'), 'run stream read');
   console.log(JSON.stringify(result, null, 2));
 }
-

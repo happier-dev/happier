@@ -1,6 +1,6 @@
 import * as React from 'react';
-import { ActivityIndicator, Pressable, View } from 'react-native';
-import { Octicons } from '@expo/vector-icons';
+import { ActivityIndicator, FlatList, Platform, Pressable, View, type ScrollViewProps } from 'react-native';
+import { Ionicons } from '@expo/vector-icons';
 
 import { Item } from '@/components/ui/lists/Item';
 import { FileIcon } from '@/components/ui/media/FileIcon';
@@ -9,40 +9,58 @@ import { Typography } from '@/constants/Typography';
 import { useRepositoryTreeBrowser } from '@/hooks/session/files/useRepositoryTreeBrowser';
 import { SourceControlUnavailableState } from '@/components/sessions/sourceControl/states';
 import { t } from '@/text';
+import type { ScmWorkingSnapshot } from '@/sync/domains/state/storageTypes';
+import { useScmTreeBadgeIndex } from '@/components/sessions/files/repositoryTree/useScmTreeBadgeIndex';
 
 type RepositoryTreeListProps = {
     theme: any;
     sessionId: string;
+    reloadToken?: number;
     expandedPaths: readonly string[];
     onExpandedPathsChange: (paths: string[]) => void;
     onOpenFile: (fullPath: string) => void;
+    onOpenFilePinned?: (fullPath: string) => void;
+    scmSnapshot?: ScmWorkingSnapshot | null;
+    onLayout?: ScrollViewProps['onLayout'];
+    onContentSizeChange?: ScrollViewProps['onContentSizeChange'];
+    onScroll?: ScrollViewProps['onScroll'];
+    scrollEventThrottle?: number;
 };
 
 function isDirectoryNode(node: { type: 'file' | 'directory' | 'error' }): boolean {
     return node.type === 'directory';
 }
 
-function renderEntryIcon(node: { type: 'file' | 'directory' | 'error'; name: string }, theme: any) {
+function renderEntryIcon(node: { type: 'file' | 'directory' | 'error'; name: string; isExpanded?: boolean }, theme: any) {
     if (node.type === 'directory') {
         // Keep icons small so the compact Item density actually stays compact.
-        return <Octicons name="file-directory" size={18} color={theme.colors.textLink} />;
+        return (
+            <Ionicons
+                name={node.isExpanded ? 'folder-open-outline' : 'folder-outline'}
+                size={16}
+                color={theme.colors.textLink}
+            />
+        );
     }
     if (node.type === 'error') {
-        return <Octicons name="alert" size={16} color={theme.colors.textSecondary} />;
+        return <Ionicons name="alert-circle-outline" size={16} color={theme.colors.textSecondary} />;
     }
-    return <FileIcon fileName={node.name} size={18} />;
+    return <FileIcon fileName={node.name} size={16} />;
 }
 
 export function RepositoryTreeList(props: RepositoryTreeListProps): React.ReactElement {
     const { theme, sessionId, expandedPaths, onExpandedPathsChange, onOpenFile } = props;
-    const { rootLoading, rootError, nodes, toggleDirectory, collapseAll, expandedCount, retryRoot, retryDirectory } = useRepositoryTreeBrowser({
+    const { rootLoading, rootError, nodes, toggleDirectory, retryRoot, retryDirectory } = useRepositoryTreeBrowser({
         sessionId,
         enabled: true,
         expandedPaths,
         onExpandedPathsChange,
+        reloadToken: props.reloadToken,
     });
 
-    if (rootLoading) {
+    const badgeIndex = useScmTreeBadgeIndex(props.scmSnapshot ?? null);
+
+    if (rootLoading && nodes.length === 0) {
         return (
             <View
                 style={{
@@ -68,7 +86,7 @@ export function RepositoryTreeList(props: RepositoryTreeListProps): React.ReactE
         );
     }
 
-    if (rootError) {
+    if (rootError && nodes.length === 0) {
         return (
             <View testID="repository-tree-error" style={{ flex: 1 }}>
                 <SourceControlUnavailableState
@@ -90,10 +108,10 @@ export function RepositoryTreeList(props: RepositoryTreeListProps): React.ReactE
                     justifyContent: 'center',
                     alignItems: 'center',
                     paddingTop: 40,
-                    paddingHorizontal: 20,
+                paddingHorizontal: 20,
                 }}
             >
-                <Octicons name="file-directory" size={48} color={theme.colors.textSecondary} />
+                <Ionicons name="folder-outline" size={48} color={theme.colors.textSecondary} />
                 <Text
                     style={{
                         fontSize: 16,
@@ -110,47 +128,76 @@ export function RepositoryTreeList(props: RepositoryTreeListProps): React.ReactE
     }
 
     return (
-        <>
-            {expandedCount > 0 && (
-                <View
-                    style={{
-                        flexDirection: 'row',
-                        justifyContent: 'flex-end',
-                        paddingHorizontal: 16,
-                        paddingTop: 8,
-                        paddingBottom: 4,
-                    }}
-                >
-                    <Pressable
-                        onPress={collapseAll}
+        <FlatList
+            data={nodes}
+            keyExtractor={(node) => `${node.type}:${node.path}`}
+            style={{ flex: 1, minHeight: 0 }}
+            contentContainerStyle={{ paddingBottom: 20 }}
+            ListHeaderComponent={
+                rootLoading ? (
+                    <View
                         style={{
-                            paddingHorizontal: 10,
-                            paddingVertical: 6,
-                            borderRadius: 10,
-                            borderWidth: 1,
-                            borderColor: theme.colors.divider,
-                            backgroundColor: theme.colors.surfaceHigh,
+                            paddingHorizontal: 12,
+                            paddingVertical: 10,
+                            flexDirection: 'row',
+                            alignItems: 'center',
+                            gap: 10,
                         }}
                     >
-                        <Text style={{ fontSize: 12, color: theme.colors.textSecondary, ...Typography.default('semiBold') }}>
-                            {t('files.repositoryCollapseAll')}
+                        <ActivityIndicator size="small" color={theme.colors.textSecondary} />
+                        <Text style={{ fontSize: 12, color: theme.colors.textSecondary, ...Typography.default() }}>
+                            {t('common.loading')}
                         </Text>
-                    </Pressable>
-                </View>
-            )}
-            {nodes.map((node, index) => {
+                    </View>
+                ) : rootError ? (
+                    <View
+                        testID="repository-tree-error-inline"
+                        style={{
+                            paddingHorizontal: 12,
+                            paddingVertical: 10,
+                            flexDirection: 'row',
+                            alignItems: 'center',
+                            gap: 10,
+                        }}
+                    >
+                        <Ionicons name="alert-circle-outline" size={16} color={theme.colors.textSecondary} />
+                        <Text style={{ fontSize: 12, color: theme.colors.textSecondary, ...Typography.default() }}>
+                            {t('errors.tryAgain')}
+                        </Text>
+                        <View style={{ flex: 1 }} />
+                        <Pressable
+                            accessibilityRole="button"
+                            accessibilityLabel={t('common.retry')}
+                            onPress={() => {
+                                void retryRoot();
+                            }}
+                            style={{ paddingHorizontal: 10, paddingVertical: 6 }}
+                        >
+                            <Text style={{ fontSize: 12, color: theme.colors.textLink, ...Typography.default('semiBold') }}>
+                                {t('common.retry')}
+                            </Text>
+                        </Pressable>
+                    </View>
+                ) : null
+            }
+            renderItem={({ item: node, index }) => {
                 const indent = Math.min(6, Math.max(0, node.depth));
                 const paddingLeft = 12 + indent * 12;
                 const showDivider = index < nodes.length - 1;
+                const badge = (() => {
+                    if (!props.scmSnapshot || !badgeIndex) return null;
+                    if (node.type === 'file') return badgeIndex.getFileBadge(node.path);
+                    if (node.type === 'directory') return badgeIndex.getDirectoryBadge(node.path);
+                    return null;
+                })();
 
                 if (node.type === 'error') {
                     return (
                         <Item
-                            key={`error:${node.parentDirectoryPath ?? node.path}`}
                             title={t('files.repositoryFolderLoadFailed')}
                             subtitle={t('errors.tryAgain')}
-                            icon={<Octicons name="alert" size={18} color={theme.colors.textSecondary} />}
-                            density="compact"
+                            icon={<Ionicons name="alert-circle-outline" size={18} color={theme.colors.textSecondary} />}
+                            density="tight"
                             showChevron={false}
                             onPress={() => {
                                 if (node.parentDirectoryPath) {
@@ -166,35 +213,48 @@ export function RepositoryTreeList(props: RepositoryTreeListProps): React.ReactE
                     );
                 }
 
-                const right = isDirectoryNode(node) ? (
-                    <Pressable
-                        onPress={() => {
-                            void toggleDirectory(node.path);
-                        }}
-                        style={{ paddingHorizontal: 6, paddingVertical: 4 }}
-                    >
-                        {node.isLoadingChildren ? (
+                const shouldShowRight = Boolean(badge) || (isDirectoryNode(node) && node.isLoadingChildren);
+
+                const right = shouldShowRight ? (
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                        {badge ? (
+                            <View style={{ flexDirection: 'row', alignItems: 'baseline', gap: 6 }}>
+                                <Text style={{ fontSize: 12, color: theme.colors.warning, ...Typography.mono('semiBold') }}>
+                                    {node.type === 'directory' ? `${badge.kindLetter}${badge.changedCount}` : badge.kindLetter}
+                                </Text>
+                                {badge.added > 0 ? (
+                                    <Text style={{ fontSize: 12, color: theme.colors.success, ...Typography.mono('semiBold') }}>
+                                        {`+${badge.added}`}
+                                    </Text>
+                                ) : null}
+                                {badge.removed > 0 ? (
+                                    <Text
+                                        style={{
+                                            fontSize: 12,
+                                            color: theme.colors.danger ?? theme.colors.textDestructive ?? theme.colors.warning,
+                                            ...Typography.mono('semiBold'),
+                                        }}
+                                    >
+                                        {`-${badge.removed}`}
+                                    </Text>
+                                ) : null}
+                            </View>
+                        ) : null}
+                        {isDirectoryNode(node) && node.isLoadingChildren ? (
                             <ActivityIndicator size="small" color={theme.colors.textSecondary} />
-                        ) : (
-                            <Octicons
-                                name={node.isExpanded ? 'chevron-down' : 'chevron-right'}
-                                size={16}
-                                color={theme.colors.textSecondary}
-                            />
-                        )}
-                    </Pressable>
-                ) : null;
+                        ) : null}
+                    </View>
+                ) : undefined;
 
                 const title = node.type === 'directory' ? `${node.name}/` : node.name;
 
                 return (
                     <Item
-                        key={`${node.type}:${node.path}`}
                         title={title}
                         icon={renderEntryIcon(node, theme)}
-                        density="compact"
-                        rightElement={right ?? undefined}
-                        showChevron={node.type === 'file'}
+                        density="tight"
+                        rightElement={right}
+                        showChevron={false}
                         onPress={
                             node.type === 'file'
                                 ? () => onOpenFile(node.path)
@@ -202,15 +262,35 @@ export function RepositoryTreeList(props: RepositoryTreeListProps): React.ReactE
                                     void toggleDirectory(node.path);
                                 }
                         }
+                        onDoublePress={
+                            node.type === 'file'
+                                ? () => (props.onOpenFilePinned ?? onOpenFile)(node.path)
+                                : undefined
+                        }
                         showDivider={showDivider}
                         style={{
                             paddingLeft,
-                            paddingRight: 12,
-                            paddingVertical: 0,
+                            paddingRight: 8,
                         }}
                     />
                 );
-            })}
-        </>
+            }}
+            initialNumToRender={Math.min(32, nodes.length)}
+            maxToRenderPerBatch={32}
+            windowSize={7}
+            removeClippedSubviews={Platform.OS !== 'web'}
+            onLayout={props.onLayout}
+            onContentSizeChange={props.onContentSizeChange}
+            onScroll={props.onScroll}
+            scrollEventThrottle={props.scrollEventThrottle ?? 16}
+            getItemLayout={
+                Platform.OS === 'web'
+                    ? (_data, index) => {
+                        const length = 38;
+                        return { length, offset: length * index, index };
+                    }
+                    : undefined
+            }
+        />
     );
 }

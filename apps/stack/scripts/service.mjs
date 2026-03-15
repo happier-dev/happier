@@ -2,6 +2,7 @@ import './utils/env/env.mjs';
 import { run, runCapture } from './utils/proc/proc.mjs';
 import { getComponentDir, getDefaultAutostartPaths, getRootDir, getSystemdUnitInfo, resolveStackEnvPath } from './utils/paths/paths.mjs';
 import { getInternalServerUrl, getPublicServerUrlEnvOverride } from './utils/server/urls.mjs';
+import { resolveServerUrls } from './utils/server/urls.mjs';
 import { ensureMacAutostartDisabled, ensureMacAutostartEnabled } from './utils/service/autostart_darwin.mjs';
 import { installService as installManagedService, uninstallService as uninstallManagedService } from './utils/service/service_manager.mjs';
 import { getCanonicalHomeDir } from './utils/env/config.mjs';
@@ -29,6 +30,7 @@ import {
   resolveAutostartLogPaths,
   resolveAutostartWorkingDirectory,
 } from './utils/service/stack_autostart_resolution.mjs';
+import { buildServiceAuthGuidance } from './utils/service/auth_guidance.mjs';
 
 /**
  * Manage the autostart service installed by `hstack bootstrap -- --autostart`.
@@ -76,6 +78,9 @@ function getAutostartEnv({ mode, systemUserHomeDir } = {}) {
 
   return {
     HAPPIER_STACK_ENV_FILE: envFile,
+    // Service-mode behavior: keep server/UI up and start the daemon only once auth exists.
+    HAPPIER_STACK_DAEMON_WAIT_FOR_AUTH: '1',
+    HAPPIER_STACK_SERVICE_MODE: '1',
   };
 }
 
@@ -368,7 +373,12 @@ async function postStartDiagnostics() {
   } catch {
     port = 3005;
   }
-  const { publicServerUrl: publicUrl } = getPublicServerUrlEnvOverride({ env: process.env, serverPort: port });
+  const resolvedUrls = await resolveServerUrls({ env: process.env, serverPort: port, allowEnable: false }).catch(() => null);
+  const publicUrl =
+    resolvedUrls?.publicServerUrl
+      ? String(resolvedUrls.publicServerUrl)
+      : getPublicServerUrlEnvOverride({ env: process.env, serverPort: port }).publicServerUrl;
+  const publicServerUrlSource = String(resolvedUrls?.publicServerUrlSource ?? '').trim();
 
   const cliDir = getComponentDir(rootDir, 'happier-cli');
   const cliBin = join(cliDir, 'bin', 'happier.mjs');
@@ -456,7 +466,12 @@ async function postStartDiagnostics() {
   console.log(banner('service', { subtitle: `Post-start diagnostics (${stackName})` }));
   console.log('');
 
-  const authCmd = stackName === 'main' ? 'hstack auth login' : `hstack stack auth ${stackName} login`;
+  const authGuidance = buildServiceAuthGuidance({
+    stackName,
+    publicServerUrl: publicUrl,
+    tailscaleServeEnabled: (process.env.HAPPIER_STACK_TAILSCALE_SERVE ?? '0') === '1',
+    publicServerUrlSource,
+  });
 
   if (res.ok && res.kind === 'running') {
     console.log(sectionTitle('Daemon'));
@@ -470,13 +485,37 @@ async function postStartDiagnostics() {
   } else if (!existingCredentialPath) {
     console.log(bullets([`${yellow('!')} auth required ${dim(`(missing ${accessKey})`)}`]));
     console.log('');
+    if (authGuidance.warnings.length > 0) {
+      console.log(sectionTitle('Warning'));
+      for (const w of authGuidance.warnings) {
+        console.log(w);
+        console.log('');
+      }
+    }
     console.log(sectionTitle('Authenticate'));
-    console.log(bullets([`${dim('run:')} ${cmdFmt(authCmd)}`]));
+    console.log(
+      bullets([
+        `${dim('headless (recommended):')} ${cmdFmt(authGuidance.headlessCmd)}`,
+        `${dim('laptop (web):')} ${cmdFmt(authGuidance.laptopCmd)}`,
+      ])
+    );
   } else if (res.kind === 'auth_required') {
     console.log(bullets([`${yellow('!')} waiting for auth ${dim(`(pid=${res.pid ?? 'unknown'})`)}`]));
     console.log('');
+    if (authGuidance.warnings.length > 0) {
+      console.log(sectionTitle('Warning'));
+      for (const w of authGuidance.warnings) {
+        console.log(w);
+        console.log('');
+      }
+    }
     console.log(sectionTitle('Authenticate'));
-    console.log(bullets([`${dim('run:')} ${cmdFmt(authCmd)}`]));
+    console.log(
+      bullets([
+        `${dim('headless (recommended):')} ${cmdFmt(authGuidance.headlessCmd)}`,
+        `${dim('laptop (web):')} ${cmdFmt(authGuidance.laptopCmd)}`,
+      ])
+    );
   } else {
     console.log(bullets([`${yellow('!')} not running`]));
   }
@@ -610,13 +649,18 @@ async function main() {
   const argv = process.argv.slice(2);
   const helpSepIdx = argv.indexOf('--');
   const helpScopeArgv = helpSepIdx === -1 ? argv : argv.slice(0, helpSepIdx);
+  const passthrough = helpSepIdx === -1 ? [] : argv.slice(helpSepIdx + 1);
   const mode = resolveServiceMode(helpScopeArgv);
   const systemUser = resolveSystemUser(helpScopeArgv);
   ensureLinuxSystemModeSupported({ mode });
+  const authNow =
+    helpScopeArgv.includes('--auth-now') ||
+    helpScopeArgv.includes('--auth');
 
   if (process.platform !== 'darwin' && process.platform !== 'linux' && process.platform !== 'win32') {
     throw new Error('[local] service commands are only supported on macOS (launchd), Linux (systemd), and Windows (schtasks).');
   }
+  const rootDir = getRootDir(import.meta.url);
   const positionals = helpScopeArgv.filter((a) => a && a !== '--' && !a.startsWith('-'));
   const cmd = positionals[0] ?? 'help';
   const json = wantsJson(helpScopeArgv);
@@ -626,10 +670,10 @@ async function main() {
     ['install', 'hstack service install [--json]'],
     ['uninstall', 'hstack service uninstall [--json]'],
     ['status', 'hstack service status [--json]'],
-    ['start', 'hstack service start [--json]'],
+    ['start', 'hstack service start [--auth-now] [-- <auth login args...>] [--json]'],
     ['stop', 'hstack service stop [--json]'],
-    ['restart', 'hstack service restart [--json]'],
-    ['enable', 'hstack service enable [--json]'],
+    ['restart', 'hstack service restart [--auth-now] [-- <auth login args...>] [--json]'],
+    ['enable', 'hstack service enable [--auth-now] [-- <auth login args...>] [--json]'],
     ['disable', 'hstack service disable [--json]'],
     ['logs', 'hstack service logs [--json]'],
     ['tail', 'hstack service tail'],
@@ -657,8 +701,8 @@ async function main() {
         sectionTitle('usage:'),
         `  ${cyan('hstack service')} install|uninstall [--mode=system|user] [--system-user=<name>] [--json]`,
         `  ${cyan('hstack service')} status [--mode=system|user] [--json]`,
-        `  ${cyan('hstack service')} start|stop|restart [--mode=system|user] [--json]`,
-        `  ${cyan('hstack service')} enable|disable [--mode=system|user] [--json]`,
+        `  ${cyan('hstack service')} start|stop|restart [--mode=system|user] [--auth-now] [-- <auth login args...>] [--json]`,
+        `  ${cyan('hstack service')} enable|disable [--mode=system|user] [--auth-now] [-- <auth login args...>] [--json]`,
         `  ${cyan('hstack service')} logs [--mode=system|user] [--json]`,
         `  ${cyan('hstack service')} tail`,
         '',
@@ -763,6 +807,12 @@ async function main() {
         }
       }
       await postStartDiagnostics();
+      if (authNow) {
+        await run(process.execPath, [join(rootDir, 'scripts', 'auth.mjs'), 'login', ...passthrough], {
+          cwd: rootDir,
+          env: process.env,
+        });
+      }
       if (json) printResult({ json, data: { ok: true, action: 'start' } });
       return;
     case 'stop':
@@ -808,6 +858,12 @@ async function main() {
         }
       }
       await postStartDiagnostics();
+      if (authNow) {
+        await run(process.execPath, [join(rootDir, 'scripts', 'auth.mjs'), 'login', ...passthrough], {
+          cwd: rootDir,
+          env: process.env,
+        });
+      }
       if (json) printResult({ json, data: { ok: true, action: 'restart' } });
       return;
     case 'enable':
@@ -830,6 +886,12 @@ async function main() {
         }
       }
       await postStartDiagnostics();
+      if (authNow) {
+        await run(process.execPath, [join(rootDir, 'scripts', 'auth.mjs'), 'login', ...passthrough], {
+          cwd: rootDir,
+          env: process.env,
+        });
+      }
       if (json) printResult({ json, data: { ok: true, action: 'enable' } });
       return;
     case 'disable':

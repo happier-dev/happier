@@ -1,31 +1,14 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import { accountSettingsParse } from '@happier-dev/protocol';
-
-import { setActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
+import { shouldSendReadyPushNotification } from '@/settings/notifications/notificationsPolicy';
 
 import { createClaudeRemoteReadyHandler } from './claudeRemoteLauncher';
 
 describe('createClaudeRemoteReadyHandler', () => {
-  const defaultSnapshot = {
-    source: 'none' as const,
-    settings: accountSettingsParse({}),
-    settingsVersion: 0,
-    loadedAtMs: 0,
-  };
-
-  afterEach(() => {
-    setActiveAccountSettingsSnapshot(defaultSnapshot);
-  });
-
   it('sends ready event but suppresses push when account settings disables ready pushes', () => {
-    setActiveAccountSettingsSnapshot({
-      source: 'cache',
-      settings: accountSettingsParse({
-        notificationsSettingsV1: { v: 1, pushEnabled: true, ready: false, permissionRequest: true },
-      }),
-      settingsVersion: 1,
-      loadedAtMs: 123,
+    const settings = accountSettingsParse({
+      notificationsSettingsV1: { v: 1, pushEnabled: true, ready: false, permissionRequest: true },
     });
 
     const sendSessionEvent = vi.fn();
@@ -38,6 +21,7 @@ describe('createClaudeRemoteReadyHandler', () => {
       waitingForCommandLabel: 'Claude',
       getPending: () => null,
       getQueueSize: () => 0,
+      shouldSendPush: () => shouldSendReadyPushNotification(settings),
     });
 
     onReady();
@@ -47,13 +31,8 @@ describe('createClaudeRemoteReadyHandler', () => {
   });
 
   it('sends push when idle and ready pushes are enabled', () => {
-    setActiveAccountSettingsSnapshot({
-      source: 'cache',
-      settings: accountSettingsParse({
-        notificationsSettingsV1: { v: 1, pushEnabled: true, ready: true, permissionRequest: true },
-      }),
-      settingsVersion: 1,
-      loadedAtMs: 123,
+    const settings = accountSettingsParse({
+      notificationsSettingsV1: { v: 1, pushEnabled: true, ready: true, permissionRequest: true },
     });
 
     const sendSessionEvent = vi.fn();
@@ -66,6 +45,7 @@ describe('createClaudeRemoteReadyHandler', () => {
       waitingForCommandLabel: 'Claude',
       getPending: () => null,
       getQueueSize: () => 0,
+      shouldSendPush: () => shouldSendReadyPushNotification(settings),
     });
 
     onReady();
@@ -93,4 +73,3 @@ describe('createClaudeRemoteReadyHandler', () => {
     expect(sendToAllDevices).not.toHaveBeenCalled();
   });
 });
-

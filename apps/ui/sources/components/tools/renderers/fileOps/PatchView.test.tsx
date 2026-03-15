@@ -23,8 +23,12 @@ vi.mock('@/sync/domains/state/storage', () => ({
     useSetting: () => true,
 }));
 
+const diffSpy = vi.fn();
 vi.mock('@/components/tools/shell/presentation/ToolDiffView', () => ({
-    ToolDiffView: () => React.createElement('ToolDiffView', null),
+    ToolDiffView: (props: any) => {
+        diffSpy(props);
+        return React.createElement('ToolDiffView', props);
+    },
 }));
 
 describe('PatchView', () => {
@@ -72,6 +76,7 @@ describe('PatchView', () => {
     });
 
     it('renders a diff preview when detailLevel=full', async () => {
+        diffSpy.mockClear();
         const tree = await renderView(
             makeCompletedTool(
                 'Patch',
@@ -89,6 +94,7 @@ describe('PatchView', () => {
         );
 
         expect(tree.root.findAllByType('ToolDiffView' as any)).toHaveLength(1);
+        expect(diffSpy).toHaveBeenCalledWith(expect.objectContaining({ filePath: '/tmp/a.txt' }));
     });
 
     it('falls back to summary rendering in full mode when diff extraction is not possible', async () => {

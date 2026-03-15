@@ -14,13 +14,13 @@ describe('hashClaudeEnhancedModeForQueue', () => {
     it('does not change when only model changes (Agent SDK enabled)', () => {
         const base = hashClaudeEnhancedModeForQueue(makeMode({
             claudeRemoteAgentSdkEnabled: true,
-            claudeRemoteSettingSources: 'project',
+            claudeRemoteSettingSourcesV2: ['project'],
             model: 'claude-sonnet',
         }));
 
         const next = hashClaudeEnhancedModeForQueue(makeMode({
             claudeRemoteAgentSdkEnabled: true,
-            claudeRemoteSettingSources: 'project',
+            claudeRemoteSettingSourcesV2: ['project'],
             model: 'claude-opus',
         }));
 
@@ -30,13 +30,13 @@ describe('hashClaudeEnhancedModeForQueue', () => {
     it('changes when claudeRemoteDisableTodos changes (Agent SDK enabled)', () => {
         const base = hashClaudeEnhancedModeForQueue(makeMode({
             claudeRemoteAgentSdkEnabled: true,
-            claudeRemoteSettingSources: 'project',
+            claudeRemoteSettingSourcesV2: ['project'],
             claudeRemoteDisableTodos: false,
         }));
 
         const next = hashClaudeEnhancedModeForQueue(makeMode({
             claudeRemoteAgentSdkEnabled: true,
-            claudeRemoteSettingSources: 'project',
+            claudeRemoteSettingSourcesV2: ['project'],
             claudeRemoteDisableTodos: true,
         }));
 
@@ -46,12 +46,12 @@ describe('hashClaudeEnhancedModeForQueue', () => {
     it('changes when settingSources changes (Agent SDK enabled)', () => {
         const base = hashClaudeEnhancedModeForQueue(makeMode({
             claudeRemoteAgentSdkEnabled: true,
-            claudeRemoteSettingSources: 'project',
+            claudeRemoteSettingSourcesV2: ['project'],
         }));
 
         const next = hashClaudeEnhancedModeForQueue(makeMode({
             claudeRemoteAgentSdkEnabled: true,
-            claudeRemoteSettingSources: 'none',
+            claudeRemoteSettingSourcesV2: [],
         }));
 
         expect(next).not.toBe(base);
@@ -74,28 +74,45 @@ describe('hashClaudeEnhancedModeForQueue', () => {
     it('changes when fallbackModel changes (Agent SDK enabled)', () => {
         const base = hashClaudeEnhancedModeForQueue(makeMode({
             claudeRemoteAgentSdkEnabled: true,
-            claudeRemoteSettingSources: 'project',
+            claudeRemoteSettingSourcesV2: ['project'],
             fallbackModel: 'claude-haiku',
         }));
 
         const next = hashClaudeEnhancedModeForQueue(makeMode({
             claudeRemoteAgentSdkEnabled: true,
-            claudeRemoteSettingSources: 'project',
+            claudeRemoteSettingSourcesV2: ['project'],
             fallbackModel: 'claude-opus',
         }));
 
         expect(next).not.toBe(base);
     });
 
-    it('changes when permission mode toggles between plan and non-plan (Agent SDK disabled)', () => {
+    it('changes when agent mode toggles between plan and non-plan (Agent SDK disabled)', () => {
         const base = hashClaudeEnhancedModeForQueue(makeMode({
             permissionMode: 'default',
             claudeRemoteAgentSdkEnabled: false,
         }));
 
         const next = hashClaudeEnhancedModeForQueue(makeMode({
-            permissionMode: 'plan',
+            permissionMode: 'read-only',
+            agentModeId: 'plan',
             claudeRemoteAgentSdkEnabled: false,
+        }));
+
+        expect(next).not.toBe(base);
+    });
+
+    it('changes when replaySeedAllowed changes', () => {
+        const base = hashClaudeEnhancedModeForQueue(makeMode({
+            claudeRemoteAgentSdkEnabled: true,
+            claudeRemoteSettingSourcesV2: ['project'],
+            replaySeedAllowed: true,
+        }));
+
+        const next = hashClaudeEnhancedModeForQueue(makeMode({
+            claudeRemoteAgentSdkEnabled: true,
+            claudeRemoteSettingSourcesV2: ['project'],
+            replaySeedAllowed: false,
         }));
 
         expect(next).not.toBe(base);

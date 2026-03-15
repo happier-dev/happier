@@ -1,23 +1,14 @@
 import React from 'react';
 import renderer, { act } from 'react-test-renderer';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
-
-function createDeferred<T>() {
-  let resolve!: (value: T) => void;
-  let reject!: (error: unknown) => void;
-  const promise = new Promise<T>((res, rej) => {
-    resolve = res;
-    reject = rej;
-  });
-  return { promise, resolve, reject };
-}
 
 const modalAlertSpy = vi.fn();
 vi.mock('@/modal', () => ({
   Modal: {
     alert: modalAlertSpy,
+    alertAsync: modalAlertSpy,
   },
 }));
 
@@ -25,29 +16,34 @@ vi.mock('@/text', () => ({
   t: (key: string) => key,
 }));
 
-vi.mock('react-native', () => ({
-  Platform: { OS: 'ios' },
-}));
+let platformOS: 'ios' | 'web' = 'ios';
+let windowDimensions: { width: number; height: number } = { width: 390, height: 844 };
 
-const cameraRemoveSpy = vi.fn();
-const cameraDismissSpy = vi.fn(async () => {});
-const cameraLaunchSpy = vi.fn();
-let onBarcodeScannedHandler: ((event: { data: string }) => unknown | Promise<unknown>) | null = null;
+vi.mock('react-native', () => ({
+  Platform: {
+    get OS() {
+      return platformOS;
+    },
+    select: (options: any) => options?.[platformOS] ?? options?.default ?? options?.ios ?? options?.android,
+  },
+  Dimensions: {
+    get: () => ({ width: windowDimensions.width, height: windowDimensions.height, scale: 2, fontScale: 1 }),
+  },
+  useWindowDimensions: () => ({ width: windowDimensions.width, height: windowDimensions.height, scale: 2, fontScale: 1 }),
+}));
 
 vi.mock('expo-camera', () => ({
-  CameraView: {
-    isModernBarcodeScannerAvailable: true,
-    launchScanner: cameraLaunchSpy,
-    dismissScanner: cameraDismissSpy,
-    onModernBarcodeScanned: vi.fn((handler: (event: { data: string }) => unknown) => {
-      onBarcodeScannedHandler = handler;
-      return { remove: cameraRemoveSpy };
-    }),
-  },
+  CameraView: {},
+  useCameraPermissions: () => [{ granted: true }, vi.fn(async () => ({ granted: true }))],
 }));
 
-vi.mock('@/hooks/ui/useCheckCameraPermissions', () => ({
-  useCheckScannerPermissions: () => vi.fn(async () => true),
+vi.mock('@/utils/platform/platform', () => ({
+  isRunningOnMac: () => false,
+}));
+
+const routerPushSpy = vi.fn();
+vi.mock('expo-router', () => ({
+  router: { push: routerPushSpy },
 }));
 
 vi.mock('@/auth/context/AuthContext', () => ({
@@ -68,47 +64,32 @@ vi.mock('@/encryption/libsodium', () => ({
   encryptBox: vi.fn(() => new Uint8Array([9, 9, 9])),
 }));
 
+vi.mock('@/auth/flows/buildAccountLinkResponse', () => ({
+  buildAccountLinkResponse: vi.fn(() => ({ t: 'stub' })),
+}));
+
+vi.mock('@/auth/flows/accountApprove', () => ({
+  authAccountApprove: vi.fn(async () => {}),
+}));
+
 describe('useConnectAccount (scanner lifecycle)', () => {
   beforeEach(() => {
     vi.resetModules();
-    onBarcodeScannedHandler = null;
+    platformOS = 'ios';
+    windowDimensions = { width: 390, height: 844 };
+    routerPushSpy.mockClear();
   });
 
-  it('dismisses the scanner on unmount on iOS', async () => {
-    cameraDismissSpy.mockClear();
-    cameraRemoveSpy.mockClear();
-
-    const { useConnectAccount } = await import('./useConnectAccount');
-
-    let tree: ReturnType<typeof renderer.create> | undefined;
-    function Probe() {
-      useConnectAccount();
-      return null;
-    }
-
-    await act(async () => {
-      tree = renderer.create(<Probe />);
-    });
-
-    act(() => {
-      tree?.unmount();
-    });
-
-    expect(cameraRemoveSpy).toHaveBeenCalledTimes(1);
-    expect(cameraDismissSpy).toHaveBeenCalledTimes(1);
+  afterEach(() => {
+    vi.unstubAllGlobals();
   });
 
-  it('debounces duplicate barcode scans while processing', async () => {
-    const deferred = createDeferred<void>();
-    const authAccountApproveSpy = vi.fn(async () => deferred.promise);
-    vi.doMock('@/auth/flows/accountApprove', () => ({
-      authAccountApprove: authAccountApproveSpy,
-    }));
-
+  it('navigates to the in-app QR scanner when starting account link', async () => {
     const { useConnectAccount } = await import('./useConnectAccount');
 
+    let hookApi: ReturnType<typeof useConnectAccount> | null = null;
     function Probe() {
-      useConnectAccount();
+      hookApi = useConnectAccount();
       return null;
     }
 
@@ -116,26 +97,93 @@ describe('useConnectAccount (scanner lifecycle)', () => {
       renderer.create(<Probe />);
     });
 
-    expect(typeof onBarcodeScannedHandler).toBe('function');
-    authAccountApproveSpy.mockClear();
-    cameraDismissSpy.mockClear();
-
-    const event = { data: 'happier:///account?abc123' };
-    // Fire twice before the approval promise resolves.
-    let firstResult: unknown;
-    let secondResult: unknown;
     await act(async () => {
-      firstResult = onBarcodeScannedHandler!(event);
-      secondResult = onBarcodeScannedHandler!(event);
+      await hookApi!.connectAccount();
     });
 
-    expect(authAccountApproveSpy).toHaveBeenCalledTimes(1);
+    expect(routerPushSpy).toHaveBeenCalledWith('/scan/account');
+  });
+
+  it('navigates to the in-app QR scanner on phone-sized web', async () => {
+    platformOS = 'web';
+    windowDimensions = { width: 360, height: 800 };
+    vi.stubGlobal('navigator', { maxTouchPoints: 5, userAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 18_0)' } as any);
+
+    const { useConnectAccount } = await import('./useConnectAccount');
+
+    let hookApi: ReturnType<typeof useConnectAccount> | null = null;
+    function Probe() {
+      hookApi = useConnectAccount();
+      return null;
+    }
 
     await act(async () => {
-      deferred.resolve(undefined);
-      await Promise.resolve();
-      await (firstResult instanceof Promise ? firstResult : Promise.resolve());
-      await (secondResult instanceof Promise ? secondResult : Promise.resolve());
+      renderer.create(<Probe />);
     });
+
+    await act(async () => {
+      await hookApi!.connectAccount();
+    });
+
+    expect(routerPushSpy).toHaveBeenCalledWith('/scan/account');
+  });
+
+  it('does not open the scanner on desktop web even when the viewport is narrow', async () => {
+    platformOS = 'web';
+    windowDimensions = { width: 480, height: 700 };
+    vi.stubGlobal('navigator', { maxTouchPoints: 0, userAgent: 'Mozilla/5.0 (X11; Linux x86_64)' } as any);
+    vi.stubGlobal('window', { matchMedia: () => ({ matches: false }) } as any);
+
+    const { useConnectAccount } = await import('./useConnectAccount');
+
+    let hookApi: ReturnType<typeof useConnectAccount> | null = null;
+    function Probe() {
+      hookApi = useConnectAccount();
+      return null;
+    }
+
+    await act(async () => {
+      renderer.create(<Probe />);
+    });
+
+    modalAlertSpy.mockClear();
+
+    await act(async () => {
+      await hookApi!.connectAccount();
+    });
+
+    expect(routerPushSpy).not.toHaveBeenCalled();
+    expect(modalAlertSpy).toHaveBeenCalled();
+  });
+
+  it('accepts account URLs that match the configured app scheme', async () => {
+    vi.doMock('expo-constants', () => ({
+      default: {
+        expoConfig: {
+          scheme: 'happier-dev',
+        },
+      },
+    }));
+
+    const { useConnectAccount } = await import('./useConnectAccount');
+
+    let hookApi: ReturnType<typeof useConnectAccount> | null = null;
+    function Probe() {
+      hookApi = useConnectAccount();
+      return null;
+    }
+
+    await act(async () => {
+      renderer.create(<Probe />);
+    });
+
+    modalAlertSpy.mockClear();
+
+    let ok = false;
+    await act(async () => {
+      ok = await hookApi!.processAuthUrl('happier-dev:///account?abc123');
+    });
+    expect(ok).toBe(true);
+    expect(modalAlertSpy).not.toHaveBeenCalledWith('common.error', 'modals.invalidAuthUrl', expect.anything());
   });
 });

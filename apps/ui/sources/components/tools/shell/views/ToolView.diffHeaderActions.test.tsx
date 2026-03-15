@@ -103,19 +103,23 @@ vi.mock('@/components/ui/code/model/diff/diffViewModel', () => ({
     ]),
 }));
 
-vi.mock('@/sync/domains/state/storage', () => ({
-    useSetting: (key: string) => {
-        if (key === 'toolViewDetailLevelDefault') return 'summary';
-        if (key === 'toolViewDetailLevelDefaultLocalControl') return 'summary';
-        if (key === 'toolViewDetailLevelByToolName') return {};
-        if (key === 'toolViewExpandedDetailLevelDefault') return 'summary';
-        if (key === 'toolViewExpandedDetailLevelByToolName') return {};
-        if (key === 'toolViewTapAction') return 'expand';
-        if (key === 'showLineNumbersInToolViews') return false;
-        if (key === 'wrapLinesInDiffs') return true;
-        return null;
-    },
-}));
+vi.mock('@/sync/domains/state/storage', async (importOriginal) => {
+    const actual = await importOriginal<typeof import('@/sync/domains/state/storage')>();
+    return {
+        ...actual,
+        useSetting: (key: string) => {
+            if (key === 'toolViewDetailLevelDefault') return 'summary';
+            if (key === 'toolViewDetailLevelDefaultLocalControl') return 'summary';
+            if (key === 'toolViewDetailLevelByToolName') return {};
+            if (key === 'toolViewExpandedDetailLevelDefault') return 'summary';
+            if (key === 'toolViewExpandedDetailLevelByToolName') return {};
+            if (key === 'toolViewTapAction') return 'expand';
+            if (key === 'showLineNumbersInToolViews') return false;
+            if (key === 'wrapLinesInDiffs') return true;
+            return null;
+        },
+    };
+});
 
 vi.mock('@/components/tools/renderers/core/_registry', async () => {
     const actual = await vi.importActual<any>('@/components/tools/renderers/fileOps/DiffView');

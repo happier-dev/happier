@@ -1,10 +1,10 @@
-import { Stack, router, useSegments } from 'expo-router';
+import { Stack, router, usePathname, useSegments } from 'expo-router';
 import 'react-native-reanimated';
 import * as React from 'react';
 import * as Notifications from 'expo-notifications';
 import { Typography } from '@/constants/Typography';
 import { createHeader } from '@/components/navigation/Header';
-import { Platform, TouchableOpacity } from 'react-native';
+import { Platform, TouchableOpacity, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { isRunningOnMac } from '@/utils/platform/platform';
 import { coerceRelativeRoute } from '@/utils/path/routeUtils';
@@ -16,15 +16,21 @@ import { useFriendsIdentityReadiness } from '@/hooks/server/useFriendsIdentityRe
 import { getActiveServerUrl, listServerProfiles } from '@/sync/domains/server/serverProfiles';
 import { normalizeServerUrl, setActiveServerAndSwitch, upsertActivateAndSwitchServer } from '@/sync/domains/server/activeServerSwitch';
 import { clearPendingNotificationNav, getPendingNotificationNav, setPendingNotificationNav } from '@/sync/domains/pending/pendingNotificationNav';
+import {
+    clearPendingNotificationAction,
+    getPendingNotificationAction,
+    setPendingNotificationAction,
+} from '@/sync/domains/pending/pendingNotificationAction';
 import { getPendingTerminalConnect } from '@/sync/domains/pending/pendingTerminalConnect';
 import { createServerUrlComparableKey } from '@/sync/domains/server/url/serverUrlCanonical';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 import { Text } from '@/components/ui/text/Text';
+import { bootstrapActiveServerFromWebLocation, readWebServerUrlOverrideFromLocation } from '@/sync/domains/server/url/bootstrapActiveServerFromWebLocation';
+import { PUSH_NOTIFICATION_ACTION_IDS } from '@happier-dev/protocol';
+import { buildTerminalConnectWebHref } from '@/utils/path/terminalConnectUrl';
+import { useWebInitialRouteReconcile } from '@/hooks/ui/useWebInitialRouteReconcile';
 
-
-export const unstable_settings = {
-    initialRouteName: 'index',
-};
+const bootstrappedWebServerOverride = bootstrapActiveServerFromWebLocation({ scope: 'device' });
 
 function extractServerUrlFromNotificationData(data: unknown): string | null {
     if (!data || typeof data !== 'object') return null;
@@ -57,31 +63,6 @@ function findSavedServerProfileForUrl(serverUrl: string): { id: string; serverUr
     return null;
 }
 
-function readServerUrlOverrideFromWebLocation(): Readonly<{ serverUrl: string; cleanedRelativeUrl: string }> | null {
-    if (typeof window === 'undefined') return null;
-    if (typeof window.location?.href !== 'string') return null;
-
-    try {
-        const current = new URL(window.location.href);
-        const rawServer = (current.searchParams.get('server') ?? '').trim();
-        const rawLegacyUrl = (current.searchParams.get('url') ?? '').trim();
-        const rawLegacyAuto = (current.searchParams.get('auto') ?? '').trim().toLowerCase();
-        const legacyAutoEnabled = rawLegacyAuto === '1' || rawLegacyAuto === 'true' || rawLegacyAuto === 'yes' || rawLegacyAuto === 'on';
-
-        const serverUrl = normalizeServerUrl(rawServer) || (legacyAutoEnabled ? normalizeServerUrl(rawLegacyUrl) : null);
-        if (!serverUrl) return null;
-
-        current.searchParams.delete('server');
-        current.searchParams.delete('url');
-        current.searchParams.delete('auto');
-        const search = current.searchParams.toString();
-        const cleanedRelativeUrl = `${current.pathname}${search ? `?${search}` : ''}${current.hash ?? ''}`;
-        return { serverUrl, cleanedRelativeUrl };
-    } catch {
-        return null;
-    }
-}
-
 function readLegacySessionIdFromWebLocation(): Readonly<{ sessionId: string; cleanedRelativeUrl: string }> | null {
     if (typeof window === 'undefined') return null;
     if (typeof window.location?.href !== 'string') return null;
@@ -106,14 +87,18 @@ function readLegacySessionIdFromWebLocation(): Readonly<{ sessionId: string; cle
 export default function RootLayout() {
     const auth = useAuth();
     const segments = useSegments();
+    const pathname = usePathname();
     const { theme } = useUnistyles();
     const friendsIdentityReadiness = useFriendsIdentityReadiness();
     const friendsIdentityReady = friendsIdentityReadiness.isReady;
+    const debugRouterEnabled = process.env.EXPO_PUBLIC_DEBUG === '1';
+
+    useWebInitialRouteReconcile({ routerPathname: pathname });
 
     const webServerOverrideHandledRef = React.useRef(false);
     React.useEffect(() => {
         if (webServerOverrideHandledRef.current) return;
-        const override = readServerUrlOverrideFromWebLocation();
+        const override = readWebServerUrlOverrideFromLocation();
         if (!override) return;
         webServerOverrideHandledRef.current = true;
 
@@ -122,6 +107,9 @@ export default function RootLayout() {
 
         const current = normalizeServerUrl(getActiveServerUrl());
         if (desired === current) {
+            if (bootstrappedWebServerOverride && bootstrappedWebServerOverride.serverUrl === desired) {
+                fireAndForget(auth.refreshFromActiveServer(), { tag: 'RootLayout.webServerOverrideBootstrapped.refreshAuth' });
+            }
             try {
                 window.history.replaceState(null, '', override.cleanedRelativeUrl);
             } catch {
@@ -184,7 +172,16 @@ export default function RootLayout() {
         const pendingTerminalConnect = getPendingTerminalConnect();
         if (pendingTerminalConnect) {
             if (pendingTerminalHandledRef.current) return;
-            const route = `/terminal?key=${encodeURIComponent(pendingTerminalConnect.publicKeyB64Url)}&server=${encodeURIComponent(pendingTerminalConnect.serverUrl)}`;
+            // Avoid leaking the terminal connect key via query params; use hash params on the dedicated
+            // `/terminal/connect` route instead.
+            const route = buildTerminalConnectWebHref({
+                publicKeyB64Url: pendingTerminalConnect.publicKeyB64Url,
+                serverUrl: pendingTerminalConnect.serverUrl,
+            });
+
+            // If we are already on the terminal-connect page (which persists a pending connect while
+            // clearing the URL hash for safety), do not navigate away.
+            if (segments.includes('terminal') && segments.includes('connect')) return;
 
             const active = normalizeServerUrl(getActiveServerUrl());
             const target = normalizeServerUrl(pendingTerminalConnect.serverUrl);
@@ -214,6 +211,40 @@ export default function RootLayout() {
         pendingTerminalHandledRef.current = false;
         if (Platform.OS === 'web') return;
 
+        const performPermissionAction = async (params: {
+            sessionId: string;
+            requestId: string;
+            action: 'allow' | 'deny';
+        }): Promise<void> => {
+            const { sessionAllow, sessionDeny } = await import('@/sync/ops');
+            if (params.action === 'allow') {
+                await sessionAllow(params.sessionId, params.requestId, undefined, undefined, 'approved');
+            } else {
+                await sessionDeny(params.sessionId, params.requestId, undefined, undefined, 'denied', 'Denied from notification');
+            }
+        };
+
+        const pendingAction = getPendingNotificationAction();
+        if (pendingAction) {
+            const active = normalizeServerUrl(getActiveServerUrl());
+            if (normalizeServerUrl(pendingAction.serverUrl) === active) {
+                clearPendingNotificationAction();
+                fireAndForget((async () => {
+                    try {
+                        await performPermissionAction({
+                            sessionId: pendingAction.sessionId,
+                            requestId: pendingAction.requestId,
+                            action: pendingAction.action,
+                        });
+                    } catch {
+                        // best-effort; navigation still proceeds
+                    }
+                    router.push(`/session/${encodeURIComponent(pendingAction.sessionId)}`);
+                })(), { tag: 'RootLayout.pendingNotificationAction' });
+                return;
+            }
+        }
+
         const pending = getPendingNotificationNav();
         if (pending) {
             const active = normalizeServerUrl(getActiveServerUrl());
@@ -236,64 +267,186 @@ export default function RootLayout() {
             return null;
         };
 
-        const maybeRedirectFromResponse = (response: any) => {
-            if (!response || typeof response !== 'object') return;
-            if (response.actionIdentifier && response.actionIdentifier !== Notifications.DEFAULT_ACTION_IDENTIFIER) {
-                return;
-            }
-            const notification = response.notification;
-            const data = notification?.request?.content?.data;
-            const route = toRoute(data);
-            if (route) {
-                const serverUrl = extractServerUrlFromNotificationData(data);
-                if (serverUrl) {
-                    const active = normalizeServerUrl(getActiveServerUrl());
-                    if (serverUrl !== active) {
-                        const saved = findSavedServerProfileForUrl(serverUrl);
-                        if (saved) {
-                            setPendingNotificationNav({ serverUrl: saved.serverUrl, route });
-                            fireAndForget((async () => {
-                                try {
-                                    await setActiveServerAndSwitch({
-                                        serverId: saved.id,
-                                        scope: 'device',
-                                        refreshAuth: auth.refreshFromActiveServer,
-                                    });
-                                    clearPendingNotificationNav();
-                                    router.push(route);
-                                } catch {
-                                    // keep pending notification nav as fallback
-                                }
-                            })(), { tag: 'RootLayout.notificationNav.savedServer' });
-                            return;
-                        }
+		        const maybeRedirectFromResponse = (response: any) => {
+		            if (!response || typeof response !== 'object') return;
+		            const actionIdentifier = typeof response.actionIdentifier === 'string' ? response.actionIdentifier : '';
+		            const notification = response.notification;
+		            const data = notification?.request?.content?.data;
+		            const isDefaultTap = !actionIdentifier || actionIdentifier === Notifications.DEFAULT_ACTION_IDENTIFIER;
+		            const route = toRoute(data);
+	            const actionSessionId =
+	                data && typeof data === 'object' && typeof (data as any).sessionId === 'string'
+	                    ? String((data as any).sessionId).trim()
+	                    : '';
+	            const actionRequestId =
+	                data && typeof data === 'object'
+	                    ? typeof (data as any).requestId === 'string'
+	                        ? String((data as any).requestId).trim()
+	                        : typeof (data as any).permissionId === 'string'
+	                            ? String((data as any).permissionId).trim()
+	                            : ''
+	                    : '';
 
-                        if (isUnsafeNotificationServerUrl(serverUrl)) {
-                            router.push(route);
-                            return;
-                        }
+		            const action =
+		                actionIdentifier === PUSH_NOTIFICATION_ACTION_IDS.permissionAllowV1
+		                    ? ('allow' as const)
+		                    : actionIdentifier === PUSH_NOTIFICATION_ACTION_IDS.permissionDenyV1
+		                        ? ('deny' as const)
+		                        : null;
+		            const isKnownActionIdentifier =
+		                isDefaultTap
+		                || action !== null
+		                || actionIdentifier === PUSH_NOTIFICATION_ACTION_IDS.userActionOpenV1;
+		            if (!isKnownActionIdentifier) return;
 
-                        if (listServerProfiles().length === 0) {
-                            setPendingNotificationNav({ serverUrl, route });
-                            fireAndForget((async () => {
-                                try {
-                                    await upsertActivateAndSwitchServer({
-                                        serverUrl,
-                                        source: 'notification',
-                                        scope: 'device',
-                                        refreshAuth: auth.refreshFromActiveServer,
-                                    });
-                                    clearPendingNotificationNav();
-                                    router.push(route);
-                                } catch {
-                                    // keep pending notification nav as fallback
-                                }
-                            })(), { tag: 'RootLayout.notificationNav.autoAddServer' });
-                            return;
+			            if (route) {
+			                const serverUrl = extractServerUrlFromNotificationData(data);
+			                const routeToServerSettingsForUrl = (url: string) => {
+			                    router.push(`/server?url=${encodeURIComponent(url)}&source=notification`);
+			                };
+		
+		                // Permission action buttons are security-sensitive. Only perform allow/deny when:
+		                // - the server is already active, OR
+		                // - the server is already saved (we can switch safely), OR
+		                // - (otherwise) navigate only and let the user handle it in-app.
+		                if (!isDefaultTap && action && actionSessionId && actionRequestId) {
+		                    if (!serverUrl) {
+		                        router.push(route);
+		                        return;
+		                    }
+		
+		                    const active = normalizeServerUrl(getActiveServerUrl());
+		                    if (serverUrl !== active) {
+		                        const saved = findSavedServerProfileForUrl(serverUrl);
+		                        if (!saved) {
+		                            if (isUnsafeNotificationServerUrl(serverUrl)) {
+		                                router.push(route);
+		                                return;
+		                            }
+		                            // If the app has no servers, we can auto-add/switch to restore a working deep link,
+		                            // but never perform the allow/deny action on an unsaved server.
+		                            if (listServerProfiles().length === 0) {
+		                                setPendingNotificationNav({ serverUrl, route });
+		                                fireAndForget((async () => {
+		                                    try {
+		                                        await upsertActivateAndSwitchServer({
+		                                            serverUrl,
+		                                            source: 'notification',
+		                                            scope: 'device',
+		                                            refreshAuth: auth.refreshFromActiveServer,
+		                                        });
+		                                        clearPendingNotificationNav();
+		                                        router.push(route);
+		                                    } catch {
+		                                        // keep pending notification nav as fallback
+		                                    }
+		                                })(), { tag: 'RootLayout.notificationNav.autoAddServer.actionTap' });
+		                                return;
+		                            }
+		                            // Servers exist but the target isn't saved: redirect to server settings with a prefilled url.
+		                            setPendingNotificationNav({ serverUrl, route });
+		                            routeToServerSettingsForUrl(serverUrl);
+		                            return;
+		                        }
+		
+		                        setPendingNotificationAction({
+		                            serverUrl: saved.serverUrl,
+	                            sessionId: actionSessionId,
+	                            requestId: actionRequestId,
+	                            action,
+	                        });
+	                        fireAndForget((async () => {
+	                            try {
+	                                await setActiveServerAndSwitch({
+	                                    serverId: saved.id,
+	                                    scope: 'device',
+	                                    refreshAuth: auth.refreshFromActiveServer,
+	                                });
+	                                clearPendingNotificationAction();
+	                                try {
+	                                    await performPermissionAction({ sessionId: actionSessionId, requestId: actionRequestId, action });
+	                                } catch {
+	                                    // best-effort
+	                                }
+	                                router.push(`/session/${encodeURIComponent(actionSessionId)}`);
+	                            } catch {
+	                                // keep pending notification action as fallback
+	                            }
+	                        })(), { tag: 'RootLayout.notificationAction.savedServer' });
+	                        return;
+	                    }
+	                }
+	
+	                if (serverUrl) {
+	                    const active = normalizeServerUrl(getActiveServerUrl());
+	                    if (serverUrl !== active) {
+		                        const saved = findSavedServerProfileForUrl(serverUrl);
+		                        if (saved) {
+		                            setPendingNotificationNav({ serverUrl: saved.serverUrl, route });
+		                            fireAndForget((async () => {
+	                                try {
+	                                    await setActiveServerAndSwitch({
+	                                        serverId: saved.id,
+	                                        scope: 'device',
+	                                        refreshAuth: auth.refreshFromActiveServer,
+	                                    });
+	                                    clearPendingNotificationNav();
+	                                    router.push(route);
+	                                } catch {
+	                                    // keep pending notification nav as fallback
+	                                }
+	                            })(), { tag: 'RootLayout.notificationNav.savedServer' });
+	                            return;
+		                        }
+
+		                        if (isUnsafeNotificationServerUrl(serverUrl)) {
+		                            if (isDefaultTap || actionIdentifier === PUSH_NOTIFICATION_ACTION_IDS.userActionOpenV1) {
+		                                router.push(route);
+		                                return;
+	                            }
+	                            // Unsafe/mismatched server url: fail closed for actions; navigate only.
+	                            router.push(route);
+	                            return;
+	                        }
+
+		                        if (listServerProfiles().length === 0) {
+		                            setPendingNotificationNav({ serverUrl, route });
+		                            fireAndForget((async () => {
+	                                try {
+	                                    await upsertActivateAndSwitchServer({
+	                                        serverUrl,
+	                                        source: 'notification',
+	                                        scope: 'device',
+	                                        refreshAuth: auth.refreshFromActiveServer,
+	                                    });
+	                                    clearPendingNotificationNav();
+	                                    router.push(route);
+	                                } catch {
+	                                    // keep pending notification nav as fallback
+	                                }
+		                            })(), { tag: 'RootLayout.notificationNav.autoAddServer' });
+		                            return;
+		                        }
+		                        // Servers exist but the target isn't saved: redirect to server settings with a prefilled url.
+		                        setPendingNotificationNav({ serverUrl, route });
+		                        routeToServerSettingsForUrl(serverUrl);
+		                        return;
+		                    }
+		                }
+		                if (!isDefaultTap && action && actionSessionId && actionRequestId) {
+		                    fireAndForget((async () => {
+	                        try {
+                            await performPermissionAction({ sessionId: actionSessionId, requestId: actionRequestId, action });
+                        } catch {
+                            // best-effort
                         }
-                    }
+                        router.push(`/session/${encodeURIComponent(actionSessionId)}`);
+                    })(), { tag: 'RootLayout.notificationAction.activeServer' });
+                    return;
                 }
-                router.push(route);
+                if (isDefaultTap || actionIdentifier === PUSH_NOTIFICATION_ACTION_IDS.userActionOpenV1) {
+                    router.push(route);
+                }
             }
         };
 
@@ -353,26 +506,34 @@ export default function RootLayout() {
     const shouldUseCustomHeader = Platform.OS === 'android' || isRunningOnMac() || Platform.OS === 'web';
 
     return (
-        <Stack
-            initialRouteName='index'
-            screenOptions={{
-                header: shouldUseCustomHeader ? createHeader : undefined,
-                headerBackTitle: t('common.back'),
-                headerShadowVisible: false,
-                contentStyle: {
-                    backgroundColor: theme.colors.surface,
-                },
-                headerStyle: {
-                    backgroundColor: theme.colors.header.background,
-                },
-                headerTintColor: theme.colors.header.tint,
-                headerTitleStyle: {
-                    color: theme.colors.header.tint,
-                    ...Typography.default('semiBold'),
-                },
+        <>
+            {debugRouterEnabled && Platform.OS === 'web' ? (
+                <View
+                    testID="debug-router-pathname"
+                    style={{ position: 'absolute', top: 0, left: 0, opacity: 0, pointerEvents: 'none' }}
+                >
+                    <Text>{pathname}</Text>
+                </View>
+            ) : null}
+            <Stack
+                screenOptions={{
+                    header: shouldUseCustomHeader ? createHeader : undefined,
+                    headerBackTitle: t('common.back'),
+                    headerShadowVisible: false,
+                    contentStyle: {
+                        backgroundColor: theme.colors.surface,
+                    },
+                    headerStyle: {
+                        backgroundColor: theme.colors.header.background,
+                    },
+                    headerTintColor: theme.colors.header.tint,
+                    headerTitleStyle: {
+                        color: theme.colors.header.tint,
+                        ...Typography.default('semiBold'),
+                    },
 
-            }}
-        >
+                }}
+            >
             <Stack.Screen
                 name="index"
                 options={{
@@ -414,7 +575,7 @@ export default function RootLayout() {
                 name="automations/index"
                 options={{
                     headerShown: true,
-                    headerTitle: 'Automations',
+                    headerTitle: t('navigation.automations'),
                     headerBackTitle: t('common.back'),
                 }}
             />
@@ -422,7 +583,7 @@ export default function RootLayout() {
                 name="automations/[id]"
                 options={{
                     headerShown: true,
-                    headerTitle: 'Automation',
+                    headerTitle: t('navigation.automation'),
                     headerBackTitle: t('common.back'),
                 }}
             />
@@ -430,22 +591,8 @@ export default function RootLayout() {
                 name="automations/new"
                 options={{
                     headerShown: true,
-                    headerTitle: 'New Automation',
+                    headerTitle: t('navigation.newAutomation'),
                     headerBackTitle: t('common.back'),
-                }}
-            />
-            <Stack.Screen
-                name="session/[id]"
-                options={{
-                    headerShown: false
-                }}
-            />
-            <Stack.Screen
-                name="session/[id]/message/[messageId]"
-                options={{
-                    headerShown: true,
-                    headerBackTitle: t('common.back'),
-                    headerTitle: t('common.message')
                 }}
             />
             <Stack.Screen
@@ -453,6 +600,14 @@ export default function RootLayout() {
                 options={{
                     headerShown: true,
                     headerTitle: '',
+                    headerBackTitle: t('common.back'),
+                }}
+            />
+            <Stack.Screen
+                name="session/[id]/runs"
+                options={{
+                    headerShown: true,
+                    headerTitle: t('runs.title'),
                     headerBackTitle: t('common.back'),
                 }}
             />
@@ -465,18 +620,16 @@ export default function RootLayout() {
                 }}
             />
             <Stack.Screen
-                name="session/[id]/file"
+                name="session/[id]/index"
                 options={{
-                    headerShown: true,
-                    headerTitle: t('common.fileViewer'),
-                    headerBackTitle: t('common.files'),
+                    headerShown: false
                 }}
             />
             <Stack.Screen
-                name="session/[id]/sharing"
+                name="session/recent"
                 options={{
                     headerShown: true,
-                    headerTitle: t('session.sharing.title'),
+                    headerTitle: t('sessionHistory.title'),
                     headerBackTitle: t('common.back'),
                 }}
             />
@@ -484,6 +637,12 @@ export default function RootLayout() {
                 name="settings/account"
                 options={{
                     headerTitle: t('settings.account'),
+                }}
+            />
+            <Stack.Screen
+                name="settings/add-phone"
+                options={{
+                    headerTitle: t('settings.addYourPhone'),
                 }}
             />
             <Stack.Screen
@@ -501,13 +660,25 @@ export default function RootLayout() {
             <Stack.Screen
                 name="settings/source-control"
                 options={{
-                    headerTitle: 'Source control',
+                    headerTitle: t('navigation.sourceControl'),
                 }}
             />
             <Stack.Screen
                 name="settings/report-issue"
                 options={{
                     headerTitle: t('settings.reportIssue'),
+                }}
+            />
+            <Stack.Screen
+                name="settings/system-status"
+                options={{
+                    headerTitle: t('settings.systemStatus'),
+                }}
+            />
+            <Stack.Screen
+                name="settings/diagnosis"
+                options={{
+                    headerTitle: t('diagnosis.title'),
                 }}
             />
             <Stack.Screen
@@ -541,7 +712,27 @@ export default function RootLayout() {
                 }}
             />
             <Stack.Screen
+                name="scan/terminal"
+                options={{
+                    headerShown: false,
+                }}
+            />
+            <Stack.Screen
+                name="scan/account"
+                options={{
+                    headerShown: false,
+                }}
+            />
+            <Stack.Screen
                 name="restore/index"
+                options={{
+                    headerShown: true,
+                    headerTitle: t('connect.restoreAccount'),
+                    headerBackTitle: t('common.back'),
+                }}
+            />
+            <Stack.Screen
+                name="restore/show-qr"
                 options={{
                     headerShown: true,
                     headerTitle: t('navigation.linkNewDevice'),
@@ -603,14 +794,6 @@ export default function RootLayout() {
                 }}
             />
             <Stack.Screen
-                name="text-selection"
-                options={{
-                    headerShown: true,
-                    headerTitle: t('textSelection.title'),
-                    headerBackTitle: t('common.back'),
-                }}
-            />
-            <Stack.Screen
                 name="friends/manage"
                 options={({ navigation }) => ({
                     headerShown: true,
@@ -650,65 +833,51 @@ export default function RootLayout() {
             <Stack.Screen
                 name="dev/index"
                 options={{
-                    headerTitle: 'Developer Tools',
+                    headerTitle: t('navigation.developerTools'),
                 }}
             />
 
             <Stack.Screen
                 name="dev/list-demo"
                 options={{
-                    headerTitle: 'List Components Demo',
+                    headerTitle: t('navigation.listComponentsDemo'),
                 }}
             />
             <Stack.Screen
                 name="dev/typography"
                 options={{
-                    headerTitle: 'Typography',
+                    headerTitle: t('navigation.typography'),
                 }}
             />
             <Stack.Screen
                 name="dev/colors"
                 options={{
-                    headerTitle: 'Colors',
+                    headerTitle: t('navigation.colors'),
                 }}
             />
             <Stack.Screen
                 name="dev/tools2"
                 options={{
-                    headerTitle: 'Tool Views Demo',
-                }}
-            />
-            <Stack.Screen
-                name="dev/masked-progress"
-                options={{
-                    headerTitle: 'Masked Progress',
+                    headerTitle: t('navigation.toolViewsDemo'),
                 }}
             />
             <Stack.Screen
                 name="dev/shimmer-demo"
                 options={{
-                    headerTitle: 'Shimmer View Demo',
+                    headerTitle: t('navigation.shimmerViewDemo'),
                 }}
             />
             <Stack.Screen
                 name="dev/multi-text-input"
                 options={{
-                    headerTitle: 'Multi Text Input',
-                }}
-            />
-            <Stack.Screen
-                name="session/recent"
-                options={{
-                    headerShown: true,
-                    headerTitle: t('sessionHistory.title'),
-                    headerBackTitle: t('common.back'),
+                    headerTitle: t('navigation.multiTextInput'),
                 }}
             />
             <Stack.Screen
                 name="settings/connect/claude"
                 options={{
                     headerShown: true,
-                    headerTitle: 'Connect to Claude',
+                    headerTitle: t('navigation.connectClaude'),
                     headerBackTitle: t('common.back'),
                     // headerStyle: {
                     //     backgroundColor: Platform.OS === 'web' ? theme.colors.header.background : '#1F1E1C',
@@ -798,7 +967,7 @@ export default function RootLayout() {
                 name="zen/new"
                 options={{
                     presentation: 'modal',
-                    headerTitle: 'New Task',
+                    headerTitle: t('navigation.zenNewTask'),
                     headerBackTitle: t('common.cancel'),
                 }}
             />
@@ -806,10 +975,11 @@ export default function RootLayout() {
                 name="zen/view"
                 options={{
                     presentation: 'modal',
-                    headerTitle: 'Task Details',
+                    headerTitle: t('navigation.zenTaskDetails'),
                     headerBackTitle: t('common.back'),
                 }}
             />
-        </Stack>
+            </Stack>
+        </>
     );
 }

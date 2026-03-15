@@ -47,6 +47,7 @@ import { scenarioCatalog } from '../scenarios/scenarioCatalog';
 import { resolveProviderAuthOverlay } from './providerAuthOverlay';
 import { applyCliDevTsxTsconfigEnv, applyHomeIsolationEnv } from './harnessEnv';
 import { resolveAcpToolPermissionPromptExpectation } from '../permissions/acpPermissionPrompts';
+import { stopOpenCodeManagedServerFromHomeDir } from '../opencode/stopOpenCodeManagedServerFromHomeDir';
 import {
   extractFatalAgentErrorMessage,
   isSkippableProviderUnavailabilityError,
@@ -66,6 +67,33 @@ import {
   shouldAutoApprovePermissionRequest,
   waitForSessionActiveBestEffort,
 } from './harnessSignals';
+
+export function buildProviderDevCommandArgs(params: Readonly<{
+  providerSubcommand: string;
+  sessionId: string;
+  yoloCliArgs: readonly string[];
+  permissionCliArgs: readonly string[];
+  modelCliArgs: readonly string[];
+  extraCliArgs: readonly string[];
+  scenarioCliArgs: readonly string[];
+  providerCliExtraArgs: readonly string[];
+}>): string[] {
+  return [
+    '-s',
+    'workspace',
+    '@happier-dev/cli',
+    'dev',
+    params.providerSubcommand,
+    '--existing-session',
+    params.sessionId,
+    ...params.yoloCliArgs,
+    ...params.permissionCliArgs,
+    ...params.modelCliArgs,
+    ...params.extraCliArgs,
+    ...params.scenarioCliArgs,
+    ...params.providerCliExtraArgs,
+  ];
+}
 
 export {
   extractFatalAgentErrorMessage,
@@ -757,6 +785,53 @@ async function waitForSessionActive(params: {
   throw new Error('Timed out waiting for session to become active');
 }
 
+function isProviderReadyEventMessage(message: unknown): boolean {
+  if (!message || typeof message !== 'object' || Array.isArray(message)) return false;
+  const record = message as Record<string, unknown>;
+  if (record.role !== 'agent') return false;
+  const content = record.content;
+  if (!content || typeof content !== 'object' || Array.isArray(content)) return false;
+  const contentRecord = content as Record<string, unknown>;
+  if (contentRecord.type !== 'event') return false;
+  const data = contentRecord.data;
+  if (!data || typeof data !== 'object' || Array.isArray(data)) return false;
+  return (data as Record<string, unknown>).type === 'ready';
+}
+
+async function waitForProviderReady(params: {
+  baseUrl: string;
+  token: string;
+  sessionId: string;
+  secret: Uint8Array;
+  timeoutMs: number;
+}): Promise<void> {
+  const startedAt = Date.now();
+  let afterSeq = 0;
+  while (Date.now() - startedAt < params.timeoutMs) {
+    const newMessages = await fetchMessagesSince({
+      baseUrl: params.baseUrl,
+      token: params.token,
+      sessionId: params.sessionId,
+      afterSeq,
+    }).catch(() => []);
+
+    if (newMessages.length > 0) {
+      afterSeq = Math.max(afterSeq, ...newMessages.map((m) => m.seq));
+      const decoded = newMessages.flatMap((m) => {
+        try {
+          return [decryptLegacyBase64(m.content.c, params.secret)];
+        } catch {
+          return [];
+        }
+      });
+      if (decoded.some(isProviderReadyEventMessage)) return;
+    }
+
+    await sleep(250);
+  }
+  throw new Error(`Timed out waiting for provider ready event (${params.sessionId})`);
+}
+
 async function waitForPermissionRpcReady(params: {
   baseUrl: string;
   token: string;
@@ -941,8 +1016,9 @@ async function runOneScenario(params: {
   await mkdir(cliHome, { recursive: true });
   await mkdir(workspaceDir, { recursive: true });
 
+  try {
   if (scenario.setup) {
-    await scenario.setup({ workspaceDir });
+    await scenario.setup({ workspaceDir, cliHome });
   }
 
   const startedAt = new Date().toISOString();
@@ -1076,6 +1152,18 @@ async function runOneScenario(params: {
       });
       const modelIdFromCliArgs = resolveModelIdFromCliArgs(modelCliArgs);
 
+      const scenarioCliArgs: string[] = (() => {
+        const raw = scenario.cliArgs;
+        if (!raw) return [];
+        try {
+          const resolved = typeof raw === 'function' ? raw({ workspaceDir }) : raw;
+          if (!Array.isArray(resolved)) return [];
+          return resolved.map((v) => (typeof v === 'string' ? v.trim() : '')).filter((v) => v.length > 0);
+        } catch {
+          return [];
+        }
+      })();
+
       const attachFile = await writeCliSessionAttachFile({
         cliHome,
         sessionId: params.sessionId,
@@ -1119,20 +1207,16 @@ async function runOneScenario(params: {
 
       const proc: SpawnedProcess = spawnLoggedProcess({
         command: yarnCommand(),
-        args: [
-          '-s',
-          'workspace',
-          '@happier-dev/cli',
-          'dev',
-          provider.cli.subcommand,
-          '--existing-session',
-          params.sessionId,
-          ...yoloCliArgs,
-          ...cliPermissionArgs,
-          ...modelCliArgs,
-          ...(params.extraCliArgs ?? []),
-          ...(provider.cli.extraArgs ?? []),
-        ],
+        args: buildProviderDevCommandArgs({
+          providerSubcommand: provider.cli.subcommand,
+          sessionId: params.sessionId,
+          yoloCliArgs,
+          permissionCliArgs: cliPermissionArgs,
+          modelCliArgs,
+          extraCliArgs: params.extraCliArgs ?? [],
+          scenarioCliArgs,
+          providerCliExtraArgs: provider.cli.extraArgs ?? [],
+        }),
         cwd: repoRootDir(),
       env: cliEnv,
       stdoutPath: params.stdoutPath,
@@ -1296,6 +1380,19 @@ async function runOneScenario(params: {
       };
 
       let stepIndex = 0;
+      if (provider.protocol === 'claude') {
+        // Claude does not always replay historical messages on initial attach. When possible,
+        // wait for the CLI to emit a ready event before enqueueing the first prompt so the
+        // onUserMessage bridge is definitely attached. Best-effort to avoid deadlocks if the
+        // provider does not emit the event in a particular build/configuration.
+        await waitForProviderReady({
+          baseUrl: server.baseUrl,
+          token: auth.token,
+          sessionId: params.sessionId,
+          secret,
+          timeoutMs: 20_000,
+        }).catch(() => undefined);
+      }
       await enqueuePrompt(
         steps[0]!.prompt({ workspaceDir }),
         resolveMeta(steps[0]!.messageMeta),
@@ -1779,6 +1876,14 @@ async function runOneScenario(params: {
       secret,
       resumeId: resumeIdForVerify,
     });
+  }
+  } finally {
+    // OpenCode server-native backend starts a detached managed `opencode serve` process.
+    // Provider harness runs each scenario with its own isolated happy home; without cleanup,
+    // we'd accumulate one server process per scenario and eventually hit resource exhaustion.
+    if (provider.id === 'opencode_server') {
+      await stopOpenCodeManagedServerFromHomeDir(cliHome).catch(() => {});
+    }
   }
 }
 

@@ -219,6 +219,7 @@ export default React.memo(function ProviderSettingsScreen() {
         none: t('settingsProviders.sessionModeNone'),
         acpPolicyPresets: t('settingsProviders.sessionModeAcpPolicyPresets'),
         acpAgentModes: t('settingsProviders.sessionModeAcpAgentModes'),
+        staticAgentModes: t('settingsProviders.sessionModeStaticAgentModes'),
     }[sessionModeKind];
     const runtimeSwitchKind = classifyRuntimeSwitchKind(advanced.supportsRuntimeModeSwitch);
     const runtimeSwitchSupport = {
@@ -345,6 +346,85 @@ export default React.memo(function ProviderSettingsScreen() {
                                         rightElement={<Switch value={boolValue} onValueChange={(v) => setSetting(field.key, v)} />}
                                         showChevron={false}
                                         onPress={() => setSetting(field.key, !boolValue)}
+                                    />
+                                );
+                            }
+
+                            if (field.kind === 'multiEnum') {
+                                const options = field.enumOptions ?? [];
+                                if (options.length === 0) {
+                                    return (
+                                        <Item
+                                            key={field.key}
+                                            title={field.title}
+                                            subtitle={field.subtitle ?? t('settingsProviders.noOptionsAvailable')}
+                                            icon={<Ionicons name="list-outline" size={29} color={theme.colors.textSecondary} />}
+                                            showChevron={false}
+                                            disabled={true}
+                                        />
+                                    );
+                                }
+
+                                const selectedRaw = Array.isArray(value) ? value : [];
+                                const selectedSet = new Set<string>(
+                                    selectedRaw.filter((v): v is string => typeof v === 'string'),
+                                );
+                                const orderedSelectedOptions = options.filter((opt) => selectedSet.has(opt.id));
+                                const detail =
+                                    orderedSelectedOptions.length === 0
+                                        ? t('common.none')
+                                        : orderedSelectedOptions.map((opt) => opt.title).join(', ');
+
+                                return (
+                                    <DropdownMenu
+                                        key={field.key}
+                                        open={openMenu === field.key}
+                                        onOpenChange={(next) => setOpenMenu(next ? field.key : null)}
+                                        variant="selectable"
+                                        search={false}
+                                        selectedId={null}
+                                        showCategoryTitles={false}
+                                        matchTriggerWidth={true}
+                                        connectToTrigger={true}
+                                        rowKind="item"
+                                        popoverBoundaryRef={popoverBoundaryRef}
+                                        closeOnSelect={false}
+                                        trigger={({ toggle, open }: any) => (
+                                            <Item
+                                                title={field.title}
+                                                subtitle={field.subtitle}
+                                                detail={detail}
+                                                icon={<Ionicons name="list-outline" size={29} color={theme.colors.textSecondary} />}
+                                                rightElement={<Ionicons name={open ? 'chevron-up' : 'chevron-down'} size={20} color={theme.colors.textSecondary} />}
+                                                onPress={toggle}
+                                                showChevron={false}
+                                                selected={false}
+                                            />
+                                        )}
+                                        items={options.map((opt) => {
+                                            const checked = selectedSet.has(opt.id);
+                                            return {
+                                                id: opt.id,
+                                                title: opt.title,
+                                                subtitle: opt.subtitle,
+                                                icon: (
+                                                    <View style={{ width: 32, height: 32, alignItems: 'center', justifyContent: 'center' }}>
+                                                        <Ionicons
+                                                            name={checked ? 'checkbox-outline' : 'square-outline'}
+                                                            size={22}
+                                                            color={theme.colors.textSecondary}
+                                                        />
+                                                    </View>
+                                                ),
+                                            };
+                                        })}
+                                        onSelect={(id) => {
+                                            const next = new Set(selectedSet);
+                                            if (next.has(id)) next.delete(id);
+                                            else next.add(id);
+                                            const ordered = options.map((opt) => opt.id).filter((optId) => next.has(optId));
+                                            setSetting(field.key, ordered);
+                                        }}
                                     />
                                 );
                             }
@@ -492,7 +572,7 @@ export default React.memo(function ProviderSettingsScreen() {
 
                 <ItemGroup title={t('settingsProviders.cliConnectionTitle')}>
                     <Item
-                        title="Target machine"
+                        title={t('settingsProviders.targetMachineTitle')}
                         subtitle={primaryMachineLabel ?? t('machine.detectedCliUnknown')}
                         icon={<Ionicons name="desktop-outline" size={29} color={theme.colors.textSecondary} />}
                         showChevron={false}

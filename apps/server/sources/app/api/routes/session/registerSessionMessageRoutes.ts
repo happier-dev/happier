@@ -1,15 +1,18 @@
 import type { Prisma } from "@prisma/client";
 import { z } from "zod";
 
-import { buildNewMessageUpdate, eventRouter } from "@/app/events/eventRouter";
+import { buildMessageUpdatedUpdate, buildNewMessageUpdate, eventRouter } from "@/app/events/eventRouter";
 import { catchupFollowupFetchesCounter, catchupFollowupReturnedCounter } from "@/app/monitoring/metrics2";
 import { SessionStoredMessageContentSchema } from "@happier-dev/protocol";
 import { createSessionMessage } from "@/app/session/sessionWriteService";
+import { parseSessionMessageSidechainId } from "@/app/session/parseSessionMessageSidechainId";
 import { checkSessionAccess } from "@/app/share/accessControl";
 import { db } from "@/storage/db";
 import { randomKeyNaked } from "@/utils/keys/randomKeyNaked";
-import { resolveRouteRateLimit } from "@/app/api/utils/apiRateLimitPolicy";
+import { resolveApiHotEndpointRateLimit } from "@/app/api/utils/apiRateLimitCatalog";
 import { type Fastify } from "../../types";
+
+type SessionStoredMessageContent = z.infer<typeof SessionStoredMessageContentSchema>;
 
 export function registerSessionMessageRoutes(app: Fastify) {
     app.get('/v2/sessions/:sessionId/messages/by-local-id/:localId', {
@@ -24,6 +27,7 @@ export function registerSessionMessageRoutes(app: Fastify) {
                         id: z.string(),
                         seq: z.number().int().min(0),
                         localId: z.string().nullable(),
+                        sidechainId: z.string().nullable().optional(),
                         content: SessionStoredMessageContentSchema,
                         createdAt: z.number().int().min(0),
                         updatedAt: z.number().int().min(0),
@@ -34,12 +38,7 @@ export function registerSessionMessageRoutes(app: Fastify) {
         },
         preHandler: app.authenticate,
         config: {
-            rateLimit: resolveRouteRateLimit(process.env, {
-                maxEnvKey: "HAPPIER_SESSION_MESSAGES_BY_LOCAL_ID_RATE_LIMIT_MAX",
-                windowEnvKey: "HAPPIER_SESSION_MESSAGES_BY_LOCAL_ID_RATE_LIMIT_WINDOW",
-                defaultMax: 600,
-                defaultWindow: "1 minute",
-            }),
+            rateLimit: resolveApiHotEndpointRateLimit(process.env, "session.messages.byLocalId"),
         },
     }, async (request, reply) => {
         const userId = request.userId;
@@ -56,6 +55,7 @@ export function registerSessionMessageRoutes(app: Fastify) {
                 id: true,
                 seq: true,
                 localId: true,
+                sidechainId: true,
                 content: true,
                 createdAt: true,
                 updatedAt: true,
@@ -70,6 +70,7 @@ export function registerSessionMessageRoutes(app: Fastify) {
                 id: row.id,
                 seq: row.seq,
                 localId: row.localId,
+                ...(typeof row.sidechainId === "string" && row.sidechainId ? { sidechainId: row.sidechainId } : {}),
                 content: row.content,
                 createdAt: row.createdAt.getTime(),
                 updatedAt: row.updatedAt.getTime(),
@@ -83,6 +84,8 @@ export function registerSessionMessageRoutes(app: Fastify) {
                 sessionId: z.string()
             }),
             querystring: z.object({
+                scope: z.enum(["main", "sidechain", "all"]).optional(),
+                sidechainId: z.string().min(1).optional(),
                 limit: z.coerce.number().int().min(1).max(500).default(150),
                 beforeSeq: z.coerce.number().int().min(1).optional(),
                 afterSeq: z.coerce.number().int().min(0).optional(),
@@ -93,21 +96,44 @@ export function registerSessionMessageRoutes(app: Fastify) {
                         message: 'beforeSeq and afterSeq are mutually exclusive',
                     });
                 }
+                if (value.scope === "sidechain" && typeof value.sidechainId !== "string") {
+                    ctx.addIssue({
+                        code: z.ZodIssueCode.custom,
+                        message: "sidechainId is required when scope=sidechain",
+                    });
+                }
             }).optional(),
         },
         preHandler: app.authenticate,
         config: {
-            rateLimit: resolveRouteRateLimit(process.env, {
-                maxEnvKey: "HAPPIER_SESSION_MESSAGES_RATE_LIMIT_MAX",
-                windowEnvKey: "HAPPIER_SESSION_MESSAGES_RATE_LIMIT_WINDOW",
-                defaultMax: 600,
-                defaultWindow: "1 minute",
-            }),
+            rateLimit: resolveApiHotEndpointRateLimit(process.env, "session.messages"),
         },
     }, async (request, reply) => {
         const userId = request.userId;
         const { sessionId } = request.params;
-        const { limit = 150, beforeSeq, afterSeq } = request.query || {};
+        const query = request.query as
+            | Readonly<{
+                  scope?: unknown;
+                  sidechainId?: unknown;
+                  limit?: number;
+                  beforeSeq?: number;
+                  afterSeq?: number;
+              }>
+            | undefined;
+        const { limit = 150, beforeSeq, afterSeq } = query ?? {};
+
+        const scope = (() => {
+            const raw = query?.scope;
+            if (raw === "all" || raw === "sidechain" || raw === "main") return raw;
+            return "main";
+        })();
+
+        const parsedSidechainId = parseSessionMessageSidechainId(query?.sidechainId, { emptyString: "null" });
+        const sidechainId = parsedSidechainId.ok ? parsedSidechainId.sidechainId : null;
+
+        if (scope === "sidechain" && sidechainId === null) {
+            return reply.code(400).send({ error: "Invalid parameters", code: "missing-sidechain-id" });
+        }
 
         const access = await checkSessionAccess(userId, sessionId);
         if (!access) {
@@ -119,6 +145,8 @@ export function registerSessionMessageRoutes(app: Fastify) {
         }
 
         const where: Prisma.SessionMessageWhereInput = { sessionId };
+        if (scope === "main") where.sidechainId = null;
+        if (scope === "sidechain") where.sidechainId = sidechainId;
         if (beforeSeq !== undefined) {
             where.seq = { lt: beforeSeq };
         }
@@ -134,6 +162,7 @@ export function registerSessionMessageRoutes(app: Fastify) {
                 id: true,
                 seq: true,
                 localId: true,
+                sidechainId: true,
                 content: true,
                 createdAt: true,
                 updatedAt: true
@@ -165,6 +194,7 @@ export function registerSessionMessageRoutes(app: Fastify) {
                 seq: v.seq,
                 content: v.content,
                 localId: v.localId,
+                ...(typeof v.sidechainId === "string" && v.sidechainId ? { sidechainId: v.sidechainId } : {}),
                 createdAt: v.createdAt.getTime(),
                 updatedAt: v.updatedAt.getTime()
             })),
@@ -184,16 +214,19 @@ export function registerSessionMessageRoutes(app: Fastify) {
                 z.object({
                     ciphertext: z.string().min(1),
                     localId: z.string().optional(),
+                    sidechainId: z.string().min(1).nullable().optional(),
                 }),
                 z.object({
                     content: SessionStoredMessageContentSchema,
                     localId: z.string().optional(),
+                    sidechainId: z.string().min(1).nullable().optional(),
                 }),
             ]),
             response: {
                 200: z
                     .object({
                         didWrite: z.boolean(),
+                        didUpdate: z.boolean().optional(),
                         message: z.object({
                             id: z.string(),
                             seq: z.number().int().min(0),
@@ -211,8 +244,13 @@ export function registerSessionMessageRoutes(app: Fastify) {
     }, async (request, reply) => {
         const userId = request.userId;
         const { sessionId } = request.params;
-        const body = request.body as Readonly<{ localId?: string } & ({ ciphertext: string } | { content: PrismaJson.SessionMessageContent })>;
+        const body = request.body as Readonly<{ localId?: string; sidechainId?: string | null } & ({ ciphertext: string } | { content: SessionStoredMessageContent })>;
         const localId = typeof body.localId === "string" ? body.localId : undefined;
+        const parsedSidechainId = parseSessionMessageSidechainId(body.sidechainId, { emptyString: "invalid" });
+        if (!parsedSidechainId.ok) {
+            return reply.code(400).send({ error: "Invalid parameters", code: "invalid-sidechain-id" });
+        }
+        const sidechainId = parsedSidechainId.sidechainId;
 
         const headerKey = request.headers["idempotency-key"];
         const idempotencyKey =
@@ -231,12 +269,14 @@ export function registerSessionMessageRoutes(app: Fastify) {
                       sessionId,
                       content: body.content,
                       localId: effectiveLocalId,
+                      sidechainId,
                   })
                 : await createSessionMessage({
                       actorUserId: userId,
                       sessionId,
                       ciphertext: body.ciphertext,
                       localId: effectiveLocalId,
+                      sidechainId,
                   });
 
         if (!result.ok) {
@@ -259,10 +299,20 @@ export function registerSessionMessageRoutes(app: Fastify) {
                     recipientFilter: { type: 'all-interested-in-session', sessionId },
                 });
             }));
+        } else if (result.didUpdate) {
+            await Promise.all(result.participantCursors.map(async ({ accountId, cursor }) => {
+                const payload = buildMessageUpdatedUpdate(result.message, sessionId, cursor, randomKeyNaked(12));
+                eventRouter.emitUpdate({
+                    userId: accountId,
+                    payload,
+                    recipientFilter: { type: 'all-interested-in-session', sessionId },
+                });
+            }));
         }
 
         return reply.send({
             didWrite: result.didWrite,
+            ...(result.didUpdate ? { didUpdate: true } : {}),
             message: {
                 id: result.message.id,
                 seq: result.message.seq,

@@ -10,7 +10,7 @@ export type SessionEncryptionContext = Readonly<{
 export type SessionStoredContentEncryptionMode = 'e2ee' | 'plain';
 
 export function resolveSessionStoredContentEncryptionMode(rawSession?: Readonly<{ encryptionMode?: unknown }>): SessionStoredContentEncryptionMode {
-  return rawSession && (rawSession as any).encryptionMode === 'plain' ? 'plain' : 'e2ee';
+  return rawSession?.encryptionMode === 'plain' ? 'plain' : 'e2ee';
 }
 
 export function resolveSessionEncryptionContextFromCredentials(

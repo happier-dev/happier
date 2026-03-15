@@ -1,10 +1,13 @@
 import * as React from 'react';
-import { ScrollView, View } from 'react-native';
-import { buildCodeLinesFromTextDiff } from '@/components/ui/code/model/buildCodeLinesFromTextDiff';
-import { CodeLinesView } from '@/components/ui/code/view/CodeLinesView';
+import { View, useWindowDimensions } from 'react-native';
+import { DiffViewer } from '@/components/ui/code/diff/DiffViewer';
 import { useSetting } from '@/sync/domains/state/storage';
+import { resolveInlineDiffVirtualization } from '@/components/ui/code/diff/resolveInlineDiffVirtualization';
+import { useInlineDiffVirtualizationThresholds } from '@/components/ui/code/diff/useInlineDiffVirtualizationThresholds';
+import { resolveInlineDiffVirtualizedMaxHeight } from '@/components/ui/code/diff/resolveInlineDiffVirtualizedMaxHeight';
 
 interface ToolDiffViewProps {
+    filePath?: string | null;
     oldText: string;
     newText: string;
     style?: any;
@@ -13,6 +16,7 @@ interface ToolDiffViewProps {
 }
 
 export const ToolDiffView = React.memo<ToolDiffViewProps>(({ 
+    filePath,
     oldText, 
     newText, 
     style, 
@@ -20,40 +24,43 @@ export const ToolDiffView = React.memo<ToolDiffViewProps>(({
     showPlusMinusSymbols = false 
 }) => {
     const wrapLines = useSetting('wrapLinesInDiffs');
+    const { lineThreshold: virtualizationLineThreshold, byteThreshold: virtualizationByteThreshold } = useInlineDiffVirtualizationThresholds();
+    const { height: windowHeight } = useWindowDimensions();
 
-    const lines = React.useMemo(() => {
-        return buildCodeLinesFromTextDiff({
-            oldText,
-            newText,
-            contextLines: 3,
-        });
+    const presentationStyleOverride = React.useMemo<'unified' | undefined>(() => {
+        const hasOld = typeof oldText === 'string' && oldText.length > 0;
+        const hasNew = typeof newText === 'string' && newText.length > 0;
+        // Split diffs waste half the horizontal space (blank left/right columns) when one side is empty.
+        // Force unified in those cases for a better compact UX.
+        if (!hasOld || !hasNew) return 'unified';
+        return undefined;
     }, [newText, oldText]);
 
-    const diffView = (
-        <View style={{ flex: 1, ...(style ?? null) }}>
-            <CodeLinesView
-                lines={lines}
+    const maxVirtualizedHeight = resolveInlineDiffVirtualizedMaxHeight(windowHeight);
+    const virtualized = React.useMemo(() => {
+        return resolveInlineDiffVirtualization({
+            unifiedDiff: null,
+            oldText: typeof oldText === 'string' ? oldText : null,
+            newText: typeof newText === 'string' ? newText : null,
+            lineThreshold: virtualizationLineThreshold,
+            byteThreshold: virtualizationByteThreshold,
+        });
+    }, [newText, oldText, virtualizationByteThreshold, virtualizationLineThreshold]);
+
+    return (
+        <View style={[{ flex: 1, ...(style ?? null) }, virtualized ? { maxHeight: maxVirtualizedHeight } : null]}>
+            <DiffViewer
+                mode="text"
+                filePath={filePath}
+                oldText={oldText}
+                newText={newText}
+                contextLines={3}
                 wrapLines={wrapLines}
-                virtualized={false}
+                virtualized={virtualized}
+                presentationStyleOverride={presentationStyleOverride}
                 showLineNumbers={showLineNumbers}
                 showPrefix={showPlusMinusSymbols}
             />
         </View>
-    );
-
-    if (wrapLines) {
-        // When wrapping lines, no horizontal scroll needed
-        return <View style={{ flex: 1 }}>{diffView}</View>;
-    }
-    
-    // When not wrapping, use horizontal scroll
-    return (
-        <ScrollView 
-            horizontal 
-            showsHorizontalScrollIndicator={true}
-            contentContainerStyle={{ flexGrow: 1 }}
-        >
-            {diffView}
-        </ScrollView>
     );
 });

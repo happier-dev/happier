@@ -28,13 +28,20 @@ export default React.memo(function PathPickerScreen() {
     const [favoriteDirectoriesRaw, setFavoriteDirectories] = useSettingMutable('favoriteDirectories');
     const favoriteDirectories = favoriteDirectoriesRaw ?? [];
 
-    const [customPath, setCustomPath] = useState(params.selectedPath || '');
+    const [customPath, setCustomPathState] = useState(params.selectedPath || '');
+    const customPathRef = React.useRef(customPath);
+    const setCustomPath = React.useCallback((next: string) => {
+        customPathRef.current = next;
+        setCustomPathState(next);
+    }, []);
     const [pathSearchQuery, setPathSearchQuery] = useState('');
 
     // Get the selected machine
     const machine = useMemo(() => {
         return machines.find(m => m.id === params.machineId);
     }, [machines, params.machineId]);
+
+    const machineHomeDir = machine?.metadata?.homeDir || '/home';
 
     // Get recent paths for this machine - prioritize from settings, then fall back to sessions
     const recentPaths = useMemo(() => {
@@ -48,8 +55,8 @@ export default React.memo(function PathPickerScreen() {
 
 
     const handleSelectPath = React.useCallback((pathOverride?: string) => {
-        const rawPath = typeof pathOverride === 'string' ? pathOverride : customPath;
-        const pathToUse = rawPath.trim() || machine?.metadata?.homeDir || '/home';
+        const rawPath = typeof pathOverride === 'string' ? pathOverride : customPathRef.current;
+        const pathToUse = rawPath.trim() || machineHomeDir;
         const state = navigation.getState();
         const previousRoute = state?.routes?.[state.index - 1];
         if (state && state.index > 0 && previousRoute) {
@@ -62,7 +69,7 @@ export default React.memo(function PathPickerScreen() {
         } else {
             router.setParams({ path: pathToUse });
         }
-    }, [customPath, machine, navigation, router]);
+    }, [machineHomeDir, navigation, router]);
 
     const handleBackPress = React.useCallback(() => {
         router.back();
@@ -87,13 +94,14 @@ export default React.memo(function PathPickerScreen() {
         );
     }, [handleBackPress, theme.colors.header.tint]);
 
-    const canConfirmCustomPath = customPath.trim().length > 0;
-
+    // NOTE: Keep the header actions stable across keystrokes.
+    // On iOS containedModal, frequently re-creating `headerRight` as the user types can cause
+    // the picker to dismiss/re-present (losing the in-progress TextInput value).
+    // The confirm action is safe even when the input is empty because we fall back to homeDir.
     const headerRight = React.useCallback(() => {
         return (
             <Pressable
                 onPress={() => handleSelectPath()}
-                disabled={!canConfirmCustomPath}
                 style={({ pressed }) => ({
                     opacity: pressed ? 0.7 : 1,
                     padding: 4,
@@ -106,7 +114,7 @@ export default React.memo(function PathPickerScreen() {
                 />
             </Pressable>
         );
-    }, [canConfirmCustomPath, handleSelectPath, theme.colors.header.tint]);
+    }, [handleSelectPath, theme.colors.header.tint]);
 
     const screenOptions = React.useMemo(() => {
         return {
@@ -150,7 +158,7 @@ export default React.memo(function PathPickerScreen() {
                 )}
                 <View style={styles.contentWrapper}>
                     <PathSelector
-                        machineHomeDir={machine.metadata?.homeDir || '/home'}
+                        machineHomeDir={machineHomeDir}
                         selectedPath={customPath}
                         onChangeSelectedPath={setCustomPath}
                         submitBehavior="confirm"

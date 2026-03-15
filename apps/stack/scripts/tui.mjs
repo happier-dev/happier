@@ -4,6 +4,7 @@ import { mkdir } from 'node:fs/promises';
 import { join, resolve, sep } from 'node:path';
 
 import { printResult } from './utils/cli/cli.mjs';
+import { resolveCommandInvocation } from './utils/process/resolveCommandInvocation.mjs';
 import { readEnvObjectFromFile } from './utils/env/read.mjs';
 import { getComponentDir, getRepoDir, getRootDir, resolveStackEnvPath } from './utils/paths/paths.mjs';
 import { getStackRuntimeStatePath, readStackRuntimeStateFile } from './utils/stack/runtime_state.mjs';
@@ -23,6 +24,8 @@ import {
   normalizeTuiForwardedArgs,
 } from './utils/tui/args.mjs';
 import { terminateProcessGroup } from './utils/proc/terminate.mjs';
+import { getProcessGroupId } from './utils/proc/ownership.mjs';
+import { killPid } from './utils/expo/expo.mjs';
 import { getInvokedCwd, inferComponentFromCwd } from './utils/cli/cwd_scope.mjs';
 import { mergeEnvForTuiSummary } from './utils/tui/summary_env.mjs';
 import { hasStackCredentials } from './utils/auth/daemon_gate.mjs';
@@ -34,6 +37,8 @@ import { buildTuiAuthArgs, buildTuiDaemonStartArgs, shouldHoldAfterAuthExit } fr
 import { shouldAttemptTuiDaemonAutostart } from './utils/tui/daemon_autostart.mjs';
 import { reconcileDaemonPaneAfterDaemonStarts } from './utils/tui/daemon_pane_reconcile.mjs';
 import { buildScriptPtyArgs } from './utils/tui/script_pty_command.mjs';
+import { resolveTuiChildTerminationPlan } from './utils/tui/child_termination_plan.mjs';
+import { installTuiStdinErrorGuard } from './utils/tui/stdin_error_guard.mjs';
 
 function nowTs() {
   const d = new Date();
@@ -202,12 +207,16 @@ async function preflightCorepackYarnForStack({ envPath }) {
   await mkdir(env.COREPACK_HOME, { recursive: true }).catch(() => {});
 
   await new Promise((resolvePromise) => {
-    const proc = spawn('yarn', ['--version'], {
+    const invocation = resolveCommandInvocation({ command: 'yarn', args: ['--version'], env });
+    const proc = spawn(invocation.command, invocation.args, {
       env,
       cwd: baseDir,
       // Non-tty stdio: Corepack typically won't prompt; if it does, we still provide "y\n".
       stdio: ['pipe', 'ignore', 'ignore'],
       shell: false,
+      ...(process.platform === 'win32'
+        ? { windowsHide: true, windowsVerbatimArguments: invocation.windowsVerbatimArguments }
+        : null),
     });
     try {
       proc.stdin?.write('y\n');
@@ -520,6 +529,16 @@ async function main() {
   const logOrch = (msg) => {
     pushLine(panes[paneIndexById.get('orch')], `[${nowTs()}] ${msg}`);
   };
+
+  // Prevent rare TTY `read EIO` crashes during restart/shutdown transitions.
+  // Without an 'error' listener, Node treats stdin errors as unhandled and aborts the TUI.
+  installTuiStdinErrorGuard({
+    stdin: process.stdin,
+    onError: (err) => {
+      const code = err && typeof err === 'object' ? String(err.code ?? '') : '';
+      logOrch(`stdin error ignored${code ? ` (${code})` : ''}`);
+    },
+  });
 
   // Preflight Yarn/Corepack for this stack before spawning the pty child.
   // This prevents Corepack "download yarn? [Y/n]" prompts from deadlocking the TUI.
@@ -942,7 +961,13 @@ async function main() {
 
     const childPid = Number(child?.pid);
     if (child && child.exitCode == null && Number.isFinite(childPid) && childPid > 1) {
-      await terminateProcessGroup(childPid, { graceMs: 900 });
+      const [childPgid, selfPgid] = await Promise.all([getProcessGroupId(childPid), getProcessGroupId(process.pid)]);
+      const plan = resolveTuiChildTerminationPlan({ childPid, childPgid, selfPgid });
+      if (plan.strategy === 'pgid') {
+        await terminateProcessGroup(plan.target, { graceMs: 900 });
+      } else if (plan.strategy === 'pid') {
+        await killPid(plan.target);
+      }
     }
 
     try {
@@ -1323,7 +1348,13 @@ async function main() {
     if (child.exitCode == null && Number.isFinite(childPid) && childPid > 1) {
       // Ensure the child is actually gone before stack infra cleanup, otherwise a still-running
       // watch process can immediately respawn server/daemon and re-lock the DB.
-      await terminateProcessGroup(childPid, { graceMs: 900 });
+      const [childPgid, selfPgid] = await Promise.all([getProcessGroupId(childPid), getProcessGroupId(process.pid)]);
+      const plan = resolveTuiChildTerminationPlan({ childPid, childPgid, selfPgid });
+      if (plan.strategy === 'pgid') {
+        await terminateProcessGroup(plan.target, { graceMs: 900 });
+      } else if (plan.strategy === 'pid') {
+        await killPid(plan.target);
+      }
     }
 
     // Best-effort cleanup: when the TUI runs a long-lived `dev/start` command, ensure all

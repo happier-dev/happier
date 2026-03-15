@@ -2,7 +2,7 @@ import type { ZodTypeAny } from 'zod';
 
 import type { AgentId } from '@/agents/catalog/catalog';
 
-export type ProviderSettingFieldKind = 'boolean' | 'enum' | 'number' | 'text' | 'json';
+export type ProviderSettingFieldKind = 'boolean' | 'enum' | 'multiEnum' | 'number' | 'text' | 'json';
 
 export type ProviderSettingEnumOption = Readonly<{
     id: string;
@@ -64,4 +64,3 @@ export type ProviderSettingsPlugin = Readonly<{
         agentId: AgentId;
     }) => Record<string, unknown>;
 }>;
-

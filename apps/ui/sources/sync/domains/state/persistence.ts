@@ -51,6 +51,11 @@ export interface NewSessionDraft {
     agentType: NewSessionAgentType;
     permissionMode: PermissionMode;
     modelMode: ModelMode;
+    /**
+     * ACP-only session mode selection (e.g. "plan") for the new-session wizard.
+     * UI-only draft state (not sent to server unless supported by the selected agent).
+     */
+    acpSessionModeId: string | null;
     sessionType: NewSessionSessionType;
     resumeSessionId?: string;
     /**
@@ -392,6 +397,12 @@ export function loadNewSessionDraft(): NewSessionDraft | null {
         const modelMode: ModelMode = isModelMode(parsed.modelMode)
             ? String(parsed.modelMode).trim()
             : 'default';
+        const rawAcpSessionModeId = (parsed as any).acpSessionModeId;
+        const acpSessionModeId = rawAcpSessionModeId === null
+            ? null
+            : typeof rawAcpSessionModeId === 'string'
+                ? (rawAcpSessionModeId.trim() || null)
+                : null;
         const sessionType: NewSessionSessionType = parsed.sessionType === 'worktree' ? 'worktree' : 'simple';
         const resumeSessionId = typeof parsed.resumeSessionId === 'string' ? parsed.resumeSessionId : undefined;
         const agentNewSessionOptionStateByAgentId = parseDraftAgentNewSessionOptionStateByAgentId(
@@ -426,6 +437,7 @@ export function loadNewSessionDraft(): NewSessionDraft | null {
             agentType,
             permissionMode,
             modelMode,
+            acpSessionModeId,
             sessionType,
             ...(resumeSessionId ? { resumeSessionId } : {}),
             ...(Object.keys(migratedAgentOptions).length > 0 ? { agentNewSessionOptionStateByAgentId: migratedAgentOptions } : {}),
@@ -724,23 +736,6 @@ export function loadProfile(): Profile {
 
 export function saveProfile(profile: Profile) {
     mmkv.set('profile', JSON.stringify(profile));
-}
-
-// Simple temporary text storage for passing large strings between screens
-export function storeTempText(content: string): string {
-    const id = `temp_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-    mmkv.set(`temp_text_${id}`, content);
-    return id;
-}
-
-export function retrieveTempText(id: string): string | null {
-    const content = mmkv.getString(`temp_text_${id}`);
-    if (content) {
-        // Auto-delete after retrieval
-        mmkv.delete(`temp_text_${id}`);
-        return content;
-    }
-    return null;
 }
 
 export function clearPersistence() {

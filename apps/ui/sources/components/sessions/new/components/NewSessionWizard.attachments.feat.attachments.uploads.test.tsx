@@ -234,4 +234,159 @@ describe('NewSessionWizard (attachments.uploads)', () => {
         expect(Array.isArray(props.extraActionChips)).toBe(true);
         expect(props.extraActionChips.some((c: any) => c?.key === 'attachments-add')).toBe(true);
     });
+
+    it('shows an inline warning when the selected machine is offline', async () => {
+        const { NewSessionWizard } = await import('./NewSessionWizard');
+
+        let tree: renderer.ReactTestRenderer | null = null;
+        await act(async () => {
+            tree = renderer.create(
+                React.createElement(NewSessionWizard, {
+                    layout: {
+                        theme: {
+                            colors: {
+                                divider: '#ddd',
+                                shadow: { color: '#000' },
+                                groupped: { background: '#fff' },
+                                text: '#000',
+                                textSecondary: '#666',
+                                input: { background: '#fff' },
+                                button: { secondary: { tint: '#000' } },
+                                warning: '#d97706',
+                                box: { warning: { background: '#fff8e1', border: '#f5d38f' } },
+                            },
+                        },
+                        styles: {},
+                        safeAreaBottom: 0,
+                        headerHeight: 44,
+                        newSessionSidePadding: 0,
+                        newSessionBottomPadding: 0,
+                    },
+                    profiles: {
+                        useProfiles: false,
+                        profiles: [],
+                        favoriteProfileIds: [],
+                        setFavoriteProfileIds: () => {},
+                        selectedProfileId: null,
+                        onPressDefaultEnvironment: () => {},
+                        onPressProfile: () => {},
+                        selectedMachineId: 'machine-offline',
+                        getProfileDisabled: () => false,
+                        getProfileSubtitleExtra: () => null,
+                        handleAddProfile: () => {},
+                        openProfileEdit: () => {},
+                        handleDuplicateProfile: () => {},
+                        handleDeleteProfile: () => {},
+                        openProfileEnvVarsPreview: () => {},
+                        suppressNextSecretAutoPromptKeyRef: { current: null },
+                        openSecretRequirementModal: () => {},
+                        profilesGroupTitles: { favorites: '', custom: '', builtIn: '' },
+                        getSecretOverrideReady: () => false,
+                        getSecretSatisfactionForProfile: () => ({ isSatisfied: true, hasSecretRequirements: false, items: [] }),
+                        getSecretMachineEnvOverride: () => null,
+                        secretBindingsByProfileId: {},
+                        selectedSecretIdByProfileIdByEnvVarName: {},
+                        setSecretBindingChoice: () => {},
+                        setSessionOnlySecretValueEnc: () => {},
+                    } as any,
+                    agent: {
+                        cliAvailability: { available: true },
+                        tmuxRequested: false,
+                        enabledAgentIds: ['codex'],
+                        isCliBannerDismissed: () => true,
+                        dismissCliBanner: () => {},
+                        agentType: 'codex',
+                        setAgentType: () => {},
+                        selectedIndicatorColor: '#000',
+                        permissionMode: 'default',
+                        handlePermissionModeChange: () => {},
+                        modelOptions: [{ value: 'default', label: 'Default', description: '' }],
+                        modelMode: 'default',
+                        setModelMode: () => {},
+                    } as any,
+	                    machine: {
+		                        machines: [{
+		                            id: 'machine-offline',
+		                            seq: 1,
+		                            createdAt: 0,
+		                            updatedAt: 0,
+		                            active: false,
+		                            activeAt: 0,
+		                            revokedAt: null,
+		                            metadata: {
+		                                host: 'offline-box',
+		                                platform: 'test',
+		                                happyCliVersion: '0.0.0-test',
+		                                happyHomeDir: '/tmp/happy-home',
+		                                homeDir: '/tmp',
+		                                displayName: 'Offline Box',
+		                            },
+		                            metadataVersion: 1,
+		                            daemonState: null,
+		                            daemonStateVersion: 0,
+		                        }],
+	                        serverId: null,
+		                        selectedMachine: {
+		                            id: 'machine-offline',
+		                            seq: 1,
+		                            createdAt: 0,
+		                            updatedAt: 0,
+		                            active: false,
+		                            activeAt: 0,
+		                            revokedAt: null,
+		                            metadata: {
+		                                host: 'offline-box',
+		                                platform: 'test',
+		                                happyCliVersion: '0.0.0-test',
+		                                happyHomeDir: '/tmp/happy-home',
+		                                homeDir: '/tmp',
+		                                displayName: 'Offline Box',
+		                            },
+		                            metadataVersion: 1,
+		                            daemonState: null,
+		                            daemonStateVersion: 0,
+		                        },
+	                        recentMachines: [],
+	                        favoriteMachineItems: [],
+	                        useMachinePickerSearch: false,
+                        onRefreshMachines: () => {},
+                        setSelectedMachineId: () => {},
+                        getBestPathForMachine: () => '',
+                        setSelectedPath: () => {},
+                        favoriteMachines: [],
+                        setFavoriteMachines: () => {},
+                        selectedPath: '',
+                        recentPaths: [],
+                        usePathPickerSearch: false,
+                        favoriteDirectories: [],
+                        setFavoriteDirectories: () => {},
+                    },
+                    footer: {
+                        sessionPrompt: '',
+                        setSessionPrompt: () => {},
+                        handleCreateSession: () => {},
+                        canCreate: false,
+                        isCreating: false,
+                        emptyAutocompletePrefixes: [],
+                        emptyAutocompleteSuggestions: async () => [],
+                        selectedProfileEnvVarsCount: 0,
+                        handleEnvVarsClick: () => {},
+                        agentInputExtraActionChips: [],
+                    },
+                }),
+            );
+        });
+
+        const textValues = tree!.root
+            .findAllByType('Text')
+            .map((node: any) => {
+                const children = node?.props?.children;
+                if (Array.isArray(children)) return children.join('');
+                return typeof children === 'string' ? children : '';
+            })
+            .filter(Boolean);
+
+        expect(textValues).toContain('newSession.machineOfflineInlineTitle');
+        expect(textValues).toContain('newSession.machineOfflineInlineBody');
+    });
 });

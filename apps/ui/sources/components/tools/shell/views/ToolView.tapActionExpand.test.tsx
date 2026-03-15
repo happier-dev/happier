@@ -113,4 +113,25 @@ describe('ToolView (tap action: expand)', () => {
 
         expect(tree.root.findAllByType('SpecificToolView' as any)).toHaveLength(1);
     });
+
+    it('uses hitSlop for the secondary action icon to keep it easy to tap', async () => {
+        renderedToolViewSpy.mockReset();
+
+        const { ToolView } = await import('./ToolView');
+
+        const tool = makeToolCall({
+            name: 'Read',
+            input: { file_path: '/tmp/a.txt' },
+            result: { file: { content: 'hello' } },
+        });
+
+        let tree!: renderer.ReactTestRenderer;
+        await act(async () => {
+            tree = renderer.create(React.createElement(ToolView, { tool, metadata: null, sessionId: 's1', messageId: 'm1' }));
+        });
+
+        const touchables = tree.root.findAllByType('TouchableOpacity' as any);
+        const secondaryAction = touchables.find((t) => t.props.accessibilityLabel === 'toolView.open');
+        expect(secondaryAction?.props.hitSlop).toBe(15);
+    });
 });

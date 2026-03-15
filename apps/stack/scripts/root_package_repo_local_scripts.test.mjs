@@ -32,7 +32,7 @@ test('repo root package.json exposes repo-local hstack scripts', async () => {
   assert.equal(scripts.providers, 'node ./apps/stack/scripts/repo_local.mjs providers');
   assert.equal(scripts['self-host'], 'node ./apps/stack/scripts/repo_local.mjs self-host');
   assert.equal(scripts.remote, 'node ./apps/stack/scripts/repo_local.mjs remote');
-  assert.equal(scripts.setup, 'node ./apps/stack/scripts/repo_local.mjs setup');
+  assert.equal(scripts.setup, 'node ./apps/stack/scripts/repo_local.mjs setup-from-source');
   assert.equal(scripts.service, 'node ./apps/stack/scripts/repo_local.mjs service');
   assert.equal(scripts.logs, 'node ./apps/stack/scripts/repo_local.mjs logs --follow');
   assert.equal(scripts['logs:all'], 'node ./apps/stack/scripts/repo_local.mjs logs --follow --component=all');

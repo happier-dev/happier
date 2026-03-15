@@ -11,6 +11,7 @@ import {
     clearPendingExternalAuthMock,
     runWithOAuthScreen,
     setPendingExternalAuthState,
+    setStoredCredentialsState,
     setActiveServerSnapshot,
     upsertAndActivateServerSpy,
 } from './test/oauthReturnHarness';
@@ -200,6 +201,31 @@ describe('/oauth/[provider] (auth flow)', () => {
                 expect.anything(),
             );
             expect(loginSpy).toHaveBeenCalledWith('tok_1', OAUTH_SECRET);
+            expect(replaceSpy).toHaveBeenCalledWith('/');
+        });
+    });
+
+    it('does not show an initialization error when pending state is missing but credentials already exist', async () => {
+        setPendingExternalAuthState(null);
+        setStoredCredentialsState({ token: 'tok_existing', secret: 'sec_existing' });
+        replaceSpy.mockReset();
+        loginSpy.mockClear();
+        modal.alert.mockClear();
+
+        localSearchParamsMock.mockReturnValue({
+            provider: 'github',
+            flow: 'auth',
+            pending: 'p1',
+        });
+
+        stubFetch(async (url) => {
+            throw new Error(`Unexpected fetch: ${url}`);
+        });
+
+        await runWithOAuthScreen(async () => {
+            await flushOAuthEffects();
+            expect(modal.alert).not.toHaveBeenCalled();
+            expect(loginSpy).not.toHaveBeenCalled();
             expect(replaceSpy).toHaveBeenCalledWith('/');
         });
     });

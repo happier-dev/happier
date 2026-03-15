@@ -1,6 +1,7 @@
 import { type Fastify } from "../../types";
 import { registerTerminalAuthRequestRoutes } from "./registerTerminalAuthRequestRoutes";
 import { registerAccountAuthRoutes } from "./registerAccountAuthRoutes";
+import { registerPairingAuthRoutes } from "./registerPairingAuthRoutes";
 import { resolveTerminalAuthRequestPolicyFromEnv } from "./terminalAuthRequestPolicy";
 import { readAuthFeatureEnv } from "@/app/features/catalog/readFeatureEnv";
 import { resolveAuthFeature } from "@/app/features/authFeature";
@@ -38,4 +39,5 @@ export function authRoutes(app: Fastify): void {
     }
     registerTerminalAuthRequestRoutes(app, { terminalAuthPolicy, isTerminalAuthExpired });
     registerAccountAuthRoutes(app);
+    registerPairingAuthRoutes(app);
 }

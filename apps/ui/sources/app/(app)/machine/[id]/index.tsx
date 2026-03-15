@@ -312,7 +312,7 @@ export default function MachineDetailScreen() {
     }, [recentPaths, showAllPaths]);
 
     // Determine daemon status from metadata
-    const daemonStatus = useMemo(() => {
+    const daemonStatus = useMemo((): 'unknown' | 'stopped' | 'likelyAlive' => {
         if (!machine) return 'unknown';
 
         if (machine.metadata?.daemonLastKnownStatus === 'shutting-down') {
@@ -320,8 +320,14 @@ export default function MachineDetailScreen() {
         }
 
         // Use machine online status as proxy for daemon status
-        return isMachineOnline(machine) ? 'likely alive' : 'stopped';
+        return isMachineOnline(machine) ? 'likelyAlive' : 'stopped';
     }, [machine]);
+    const daemonStatusLabel =
+        daemonStatus === 'likelyAlive'
+            ? t('machine.daemonStatus.likelyAlive')
+            : daemonStatus === 'stopped'
+                ? t('machine.daemonStatus.stopped')
+                : t('machine.daemonStatus.unknown');
 
     const handleStopDaemon = async () => {
         const runStopDaemon = async () => {
@@ -732,7 +738,7 @@ export default function MachineDetailScreen() {
                                         ref={inputRef}
                                         value={customPath}
                                         onChangeText={setCustomPath}
-                                        placeholder={'Enter custom path'}
+                                        placeholder={t('machine.customPathPlaceholder')}
                                         maxHeight={76}
                                         paddingTop={8}
                                         paddingBottom={8}
@@ -900,10 +906,10 @@ export default function MachineDetailScreen() {
                     <DetectedClisList state={detectedCapabilities} />
                 </ItemGroup>
 
-                <ItemGroup title="Tools">
+                <ItemGroup title={t('machine.tools.title')}>
                     <Item
-                        title="Installables"
-                        subtitle="Manage installable tools for this machine."
+                        title={t('machine.tools.installablesTitle')}
+                        subtitle={t('machine.tools.installablesSubtitle')}
                         showChevron={true}
                         onPress={() => {
                             if (!machineId) return;
@@ -916,9 +922,9 @@ export default function MachineDetailScreen() {
                 <ItemGroup title={t('machine.daemon')}>
                         <Item
                             title={t('machine.status')}
-                            detail={daemonStatus}
+                            detail={daemonStatusLabel}
                             detailStyle={{
-                                color: daemonStatus === 'likely alive' ? '#34C759' : '#FF9500'
+                                color: daemonStatus === 'likelyAlive' ? '#34C759' : '#FF9500'
                             }}
                             showChevron={false}
                         />
@@ -982,7 +988,7 @@ export default function MachineDetailScreen() {
                 {executionRunsState.status !== 'idle' && (
                     <ItemGroup title={t('runs.title')}>
                         <Item
-                            title={'Show finished'}
+                            title={t('runs.showFinished')}
                             showChevron={false}
                             rightElement={(
                                 <Switch
@@ -1008,7 +1014,7 @@ export default function MachineDetailScreen() {
                         ) : (showFinishedRuns ? executionRunsState.runs : executionRunsState.runs.filter((r) => r.status === 'running')).length === 0 ? (
                             <Item
                                 title={t('runs.empty')}
-                                subtitle={t('runs.empty') ?? 'No runs yet.'}
+                                subtitle={t('runs.empty')}
                                 subtitleStyle={{ color: theme.colors.textSecondary }}
                                 showChevron={false}
                             />
@@ -1034,8 +1040,8 @@ export default function MachineDetailScreen() {
                                     const header = (
                                         <Item
                                             key={`sess-${sessionId}`}
-                                            title={`Session ${sessionId}`}
-                                            subtitle={'Open session'}
+                                            title={t('runs.sessionTitle', { sessionId })}
+                                            subtitle={t('runs.openSession')}
                                             subtitleStyle={{ color: theme.colors.textSecondary }}
                                             onPress={() => navigateToSession(sessionId)}
                                             rightElement={<Ionicons name="chevron-forward" size={20} color={theme.colors.groupped.chevron} />}
@@ -1043,14 +1049,14 @@ export default function MachineDetailScreen() {
                                     );
 
                                     const rows = runs.slice(0, 20).map((run) => {
-                                        const detailParts: string[] = [`pid ${run.pid}`];
+                                        const detailParts: string[] = [t('runs.detail.pid', { pid: run.pid })];
                                         const cpu = (run as any).process?.cpu;
                                         const memory = (run as any).process?.memory;
                                         if (typeof cpu === 'number' && Number.isFinite(cpu)) {
-                                            detailParts.push(`${cpu.toFixed(1)}% cpu`);
+                                            detailParts.push(t('runs.detail.cpu', { percent: cpu.toFixed(1) }));
                                         }
                                         if (typeof memory === 'number' && Number.isFinite(memory)) {
-                                            detailParts.push(`${Math.round(memory / (1024 * 1024))} MB`);
+                                            detailParts.push(t('runs.detail.memory', { megabytes: Math.round(memory / (1024 * 1024)) }));
                                         }
 
                                         const canStop = run.status === 'running';
@@ -1072,7 +1078,7 @@ export default function MachineDetailScreen() {
                                                     shouldContinue,
                                                 });
                                                 if (!shownDaemonUnavailable) {
-                                                    Modal.alert(t('common.error'), stopResult.error || 'Failed to stop session');
+                                                    Modal.alert(t('common.error'), stopResult.error || t('runs.stop.failedToStopSession'));
                                                 }
                                             };
                                             try {
@@ -1083,26 +1089,29 @@ export default function MachineDetailScreen() {
                                                 );
                                                 if ((res as any)?.ok === false) {
                                                     const confirmed = await Modal.confirm(
-                                                        'Stop run failed',
-                                                        'Stopping this run via session RPC failed. Do you want to stop the entire session process instead? This is destructive and will stop all runs in that session.',
-                                                        { confirmText: 'Stop session', cancelText: 'Cancel', destructive: true },
+                                                        t('runs.stop.stopRunFailedTitle'),
+                                                        t('runs.stop.stopRunFailedBody'),
+                                                        { confirmText: t('runs.stop.stopSession'), cancelText: t('common.cancel'), destructive: true },
                                                     );
                                                     if (confirmed) {
                                                         await stopSessionProcess();
                                                     } else {
-                                                        Modal.alert(t('common.error'), String((res as any).error ?? 'Failed to stop run'));
+                                                        Modal.alert(t('common.error'), String((res as any).error ?? t('runs.stop.failedToStopRun')));
                                                     }
                                                 }
                                             } catch (error) {
                                                 const confirmed = await Modal.confirm(
-                                                    'Stop run failed',
-                                                    'Stopping this run via session RPC failed. Do you want to stop the entire session process instead? This is destructive and will stop all runs in that session.',
-                                                    { confirmText: 'Stop session', cancelText: 'Cancel', destructive: true },
+                                                    t('runs.stop.stopRunFailedTitle'),
+                                                    t('runs.stop.stopRunFailedBody'),
+                                                    { confirmText: t('runs.stop.stopSession'), cancelText: t('common.cancel'), destructive: true },
                                                 );
                                                 if (confirmed) {
                                                     await stopSessionProcess();
                                                 } else {
-                                                    Modal.alert(t('common.error'), error instanceof Error ? error.message : 'Failed to stop run');
+                                                    Modal.alert(
+                                                        t('common.error'),
+                                                        error instanceof Error ? error.message : t('runs.stop.failedToStopRun'),
+                                                    );
                                                 }
                                             } finally {
                                                 setStoppingRunId(null);
@@ -1117,12 +1126,12 @@ export default function MachineDetailScreen() {
                                             <ExecutionRunRow
                                                 key={run.runId}
                                                 run={run as any}
-                                                subtitle={`run ${run.runId} · ${detailParts.join(' · ')}`}
+                                                subtitle={`${t('runs.runLabel', { runId: run.runId })} · ${detailParts.join(' · ')}`}
                                                 onPress={() => router.push(`/session/${run.happySessionId}/runs/${run.runId}` as any)}
                                                 rightAccessory={canStop ? (
                                                     <Pressable
                                                         accessibilityRole="button"
-                                                        accessibilityLabel="Stop run"
+                                                        accessibilityLabel={t('runs.stop.stopRunA11y')}
                                                         onPress={onStop}
                                                         disabled={stoppingRunId === run.runId}
                                                         style={({ pressed }) => ({
@@ -1149,7 +1158,7 @@ export default function MachineDetailScreen() {
 
                 {/* Previous Sessions (debug view) */}
                 {previousSessions.length > 0 && (
-                    <ItemGroup title={'Previous Sessions (up to 5 most recent)'}>
+                    <ItemGroup title={t('machine.previousSessionsTitle')}>
                         {previousSessions.map(session => (
                             <Item
                                 key={session.id}

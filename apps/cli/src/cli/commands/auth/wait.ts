@@ -88,7 +88,7 @@ export async function handleAuthWait(argsRaw: string[]): Promise<void> {
   const pollIntervalMs = Number.isFinite(pollIntervalMsRaw) && pollIntervalMsRaw > 0 ? pollIntervalMsRaw : 1000;
 
   while (true) {
-    const statusRes = await axios.get(`${configuration.serverUrl}/v1/auth/request/status`, {
+    const statusRes = await axios.get(`${configuration.apiServerUrl}/v1/auth/request/status`, {
       params: { publicKey: state.publicKey },
     });
     const status = statusRes?.data?.status;
@@ -98,7 +98,7 @@ export async function handleAuthWait(argsRaw: string[]): Promise<void> {
     }
 
     if (status === 'authorized') {
-      const claimRes = await axios.post(`${configuration.serverUrl}/v1/auth/request/claim`, {
+      const claimRes = await axios.post(`${configuration.apiServerUrl}/v1/auth/request/claim`, {
         publicKey: state.publicKey,
         claimSecret: state.claimSecret,
       });
@@ -143,4 +143,3 @@ export async function handleAuthWait(argsRaw: string[]): Promise<void> {
     await new Promise((r) => setTimeout(r, pollIntervalMs));
   }
 }
-

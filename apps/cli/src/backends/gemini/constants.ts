@@ -6,6 +6,7 @@
  */
 
 import { CHANGE_TITLE_INSTRUCTION } from '@/agent/runtime/changeTitleInstruction';
+import { getAgentModelConfig } from '@happier-dev/agents';
 
 /** Environment variable name for Gemini API key */
 export const GEMINI_API_KEY_ENV = 'GEMINI_API_KEY';
@@ -17,7 +18,7 @@ export const GOOGLE_API_KEY_ENV = 'GOOGLE_API_KEY';
 export const GEMINI_MODEL_ENV = 'GEMINI_MODEL';
 
 /** Default Gemini model */
-export const DEFAULT_GEMINI_MODEL = 'gemini-2.5-pro';
+export const DEFAULT_GEMINI_MODEL = getAgentModelConfig('gemini').defaultMode;
 
 // Back-compat export (this constant is shared across agents, not Gemini-specific).
 export { CHANGE_TITLE_INSTRUCTION };

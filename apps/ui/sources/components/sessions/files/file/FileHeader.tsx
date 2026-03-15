@@ -9,9 +9,10 @@ type FileHeaderProps = {
     theme: any;
     fileName: string;
     filePathDir: string;
+    rightElement?: React.ReactNode;
 };
 
-export function FileHeader({ theme, fileName, filePathDir }: FileHeaderProps) {
+export function FileHeader({ theme, fileName, filePathDir, rightElement }: FileHeaderProps) {
     const pathLabel = filePathDir || fileName;
 
     return (
@@ -37,6 +38,11 @@ export function FileHeader({ theme, fileName, filePathDir }: FileHeaderProps) {
             >
                 {pathLabel}
             </Text>
+            {rightElement ? (
+                <View testID="file-header-right" style={{ flexDirection: 'row', alignItems: 'center' }}>
+                    {rightElement}
+                </View>
+            ) : null}
         </View>
     );
 }

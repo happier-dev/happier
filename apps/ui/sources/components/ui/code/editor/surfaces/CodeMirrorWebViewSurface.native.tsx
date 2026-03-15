@@ -7,6 +7,7 @@ import { useLocalSetting } from '@/sync/store/hooks';
 import type { CodeEditorProps } from '../codeEditorTypes';
 import { encodeChunkedEnvelope, decodeChunkedEnvelope } from '../bridge/chunkedBridge';
 import { buildCodeMirrorWebViewHtml } from '../bridge/codemirrorWebViewHtml';
+import { resolveCodeMirrorWebViewLanguageSpec } from '../bridge/resolveCodeMirrorWebViewLanguageSpec';
 
 function createMessageId(): string {
     return Math.random().toString(36).slice(2);
@@ -73,7 +74,7 @@ export function CodeMirrorWebViewSurface(props: CodeEditorProps) {
             type: 'init',
             payload: {
                 doc,
-                language: props.language,
+                language: resolveCodeMirrorWebViewLanguageSpec(props.language),
                 readOnly,
             },
         });

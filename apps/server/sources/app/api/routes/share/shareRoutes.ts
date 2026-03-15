@@ -8,7 +8,7 @@ import { eventRouter, buildSessionSharedUpdate, buildSessionShareUpdatedUpdate, 
 import { randomKeyNaked } from "@/utils/keys/randomKeyNaked";
 import { afterTx, inTx } from "@/storage/inTx";
 import { markAccountChanged } from "@/app/changes/markAccountChanged";
-import { gateRateLimitConfig } from "@/app/api/utils/apiRateLimitPolicy";
+import { resolveApiHotEndpointRateLimit } from "@/app/api/utils/apiRateLimitCatalog";
 
 type SessionShareRow = Awaited<ReturnType<typeof db.sessionShare.findFirst>>;
 
@@ -82,10 +82,7 @@ export function shareRoutes(app: Fastify) {
     app.post('/v1/sessions/:sessionId/shares', {
         preHandler: app.authenticate,
         config: {
-            rateLimit: gateRateLimitConfig(process.env, {
-                max: 20,
-                timeWindow: '1 minute'
-            })
+            rateLimit: resolveApiHotEndpointRateLimit(process.env, "share.session.create"),
         },
         schema: {
             params: z.object({

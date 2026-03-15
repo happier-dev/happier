@@ -2,6 +2,8 @@ import { spawnSync, spawn } from 'node:child_process';
 import { mkdirSync, readFileSync, writeFileSync, unlinkSync } from 'node:fs';
 import { basename, dirname } from 'node:path';
 
+import { resolveWindowsCommandInvocation } from '../process/index.js';
+
 export type UpdateCache = {
   checkedAt: number | null;
   latest: string | null;
@@ -245,11 +247,19 @@ export function readNpmDistTagVersion(params: Readonly<{
     const pkg = String(params.packageName ?? '').trim();
     const tag = String(params.distTag ?? '').trim();
     if (!pkg || !tag) return null;
-    const res = spawnSync('npm', ['view', `${pkg}@${tag}`, 'version'], {
+    const invocation = resolveWindowsCommandInvocation({
+      command: 'npm',
+      args: ['view', `${pkg}@${tag}`, 'version'],
+      env: params.env,
+      resolveCommandOnPath: true,
+    });
+    const res = spawnSync(invocation.command, invocation.args, {
       encoding: 'utf8',
       cwd: params.cwd,
       env: params.env,
       stdio: ['ignore', 'pipe', 'ignore'],
+      windowsHide: true,
+      windowsVerbatimArguments: invocation.windowsVerbatimArguments,
     });
     if (typeof res.status === 'number' && res.status !== 0) return null;
     const out = String(res.stdout ?? '').trim();
@@ -273,11 +283,19 @@ export function installRuntimeFromNpm(params: Readonly<{
     // ignore
   }
   try {
-    const res = spawnSync(
-      'npm',
-      ['install', '--no-audit', '--no-fund', '--silent', '--prefix', params.runtimeDir, spec],
-      { cwd: params.cwd, env: params.env, stdio: 'inherit' },
-    );
+    const invocation = resolveWindowsCommandInvocation({
+      command: 'npm',
+      args: ['install', '--no-audit', '--no-fund', '--silent', '--prefix', params.runtimeDir, spec],
+      env: params.env,
+      resolveCommandOnPath: true,
+    });
+    const res = spawnSync(invocation.command, invocation.args, {
+      cwd: params.cwd,
+      env: params.env,
+      stdio: 'inherit',
+      windowsHide: true,
+      windowsVerbatimArguments: invocation.windowsVerbatimArguments,
+    });
     if (typeof res.status === 'number' && res.status !== 0) {
       return { ok: false, errorMessage: `npm install exited with status ${res.status}` };
     }

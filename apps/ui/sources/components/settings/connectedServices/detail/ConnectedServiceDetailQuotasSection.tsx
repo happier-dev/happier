@@ -2,6 +2,7 @@ import * as React from 'react';
 
 import { connectedServiceProfileKey, resolveConnectedServiceProfileLabel } from '@/sync/domains/connectedServices/connectedServiceProfilePreferences';
 import type { ConnectedServiceId, ConnectedServiceQuotaSnapshotV1 } from '@happier-dev/protocol';
+import { t } from '@/text';
 
 import { ConnectedServiceQuotaCard } from '../ConnectedServiceQuotaCard';
 
@@ -30,6 +31,7 @@ export const ConnectedServiceDetailQuotasSection = React.memo(function Connected
             serviceId: props.serviceId,
             profileId,
           });
+          const titleLabel = label || profileId;
           const key = connectedServiceProfileKey({ serviceId: props.serviceId, profileId });
           const pinnedMeterIds = props.pinnedMeterIdsByKey[key] ?? [];
           return (
@@ -37,7 +39,7 @@ export const ConnectedServiceDetailQuotasSection = React.memo(function Connected
               key={`quota:${profileId}`}
               serviceId={props.serviceId}
               profileId={profileId}
-              title={`Quotas${label ? ` — ${label}` : ` — ${profileId}`}`}
+              title={titleLabel}
               pinnedMeterIds={pinnedMeterIds}
               onSetPinnedMeterIds={(next) => props.onSetPinnedMeterIds(profileId, next)}
               onSnapshot={(snapshot) => props.onSnapshot(key, snapshot)}
@@ -47,4 +49,3 @@ export const ConnectedServiceDetailQuotasSection = React.memo(function Connected
     </React.Fragment>
   );
 });
-

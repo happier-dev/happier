@@ -14,20 +14,22 @@ import { validateUsername } from "@/app/social/usernamePolicy";
 import { deleteOAuthStateAttemptBestEffort, loadValidOAuthStateAttempt } from "../connectRoutes.oauthStateAttempt";
 import { log } from "@/utils/logging/log";
 import { isServerFeatureEnabledForRequest } from "@/app/features/catalog/serverFeatureGate";
-import { readAuthOauthKeylessFeatureEnv } from "@/app/features/catalog/readFeatureEnv";
+import { readAuthOauthKeylessFeatureEnv, readEncryptionFeatureEnv } from "@/app/features/catalog/readFeatureEnv";
 import { resolveKeylessAccountsAvailability } from "@/app/features/e2ee/resolveKeylessAccountsEnabled";
+import { resolveAuthPolicyFromEnv } from "@/app/auth/authPolicy";
+import { resolveEffectiveAccountEncryptionModeFromAccountRow } from "@/app/encryption/accountEncryptionMode";
 import {
     buildRedirectUrl,
     resolveOAuthPendingTtlMsFromEnv,
     resolveWebAppOAuthReturnUrlFromEnv,
 } from "./oauthExternalConfig";
 import { OAUTH_NOT_CONFIGURED_ERROR } from "./oauthExternalErrors";
-import { oauthExternalRateLimitPerIp } from "./oauthExternalRateLimits";
+import { oauthExternalRateLimitCallbackPerIp } from "./oauthExternalRateLimits";
 import { oauthStateAttemptSchema } from "./oauthExternalSchemas";
 
 export function registerOAuthCallbackRoute(app: Fastify) {
     app.get("/v1/oauth/:provider/callback", {
-        config: { rateLimit: oauthExternalRateLimitPerIp() },
+        config: { rateLimit: oauthExternalRateLimitCallbackPerIp() },
         schema: {
             params: z.object({ provider: z.string() }),
             querystring: z
@@ -45,10 +47,10 @@ export function registerOAuthCallbackRoute(app: Fastify) {
     }, async (request, reply) => {
         const providerId = request.params.provider.toString().trim().toLowerCase();
         const provider = findOAuthProviderById(process.env, providerId);
-        const webAppUrl = resolveWebAppOAuthReturnUrlFromEnv(process.env, providerId);
+        const fallbackWebAppUrl = resolveWebAppOAuthReturnUrlFromEnv(process.env, providerId);
 
         if (!provider) {
-            return reply.redirect(buildRedirectUrl(webAppUrl, { error: "unsupported-provider" }));
+            return reply.redirect(buildRedirectUrl(fallbackWebAppUrl, { error: "unsupported-provider" }));
         }
 
         const { code, state, iss } = request.query;
@@ -58,31 +60,36 @@ export function registerOAuthCallbackRoute(app: Fastify) {
         if (!oauthState || oauthState.provider !== providerId) {
             const stateHash = createHash("sha256").update(state, "utf8").digest("hex").slice(0, 12);
             log({ module: "oauth" }, `Invalid state token (sha256:${stateHash})`);
-            return reply.redirect(buildRedirectUrl(webAppUrl, { error: "invalid_state" }));
+            return reply.redirect(buildRedirectUrl(fallbackWebAppUrl, { error: "invalid_state" }));
         }
 
         const sid = oauthState.sid?.toString().trim() || "";
         if (!sid) {
-            return reply.redirect(buildRedirectUrl(webAppUrl, { flow: oauthState.flow, error: "invalid_state" }));
+            return reply.redirect(buildRedirectUrl(fallbackWebAppUrl, { flow: oauthState.flow, error: "invalid_state" }));
         }
         const attempt = await loadValidOAuthStateAttempt(sid);
         if (!attempt) {
-            return reply.redirect(buildRedirectUrl(webAppUrl, { flow: oauthState.flow, error: "invalid_state" }));
+            return reply.redirect(buildRedirectUrl(fallbackWebAppUrl, { flow: oauthState.flow, error: "invalid_state" }));
         }
         await deleteOAuthStateAttemptBestEffort(sid);
         let attemptJson: unknown;
         try {
             attemptJson = JSON.parse(attempt.value);
         } catch {
-            return reply.redirect(buildRedirectUrl(webAppUrl, { flow: oauthState.flow, error: "invalid_state" }));
+            return reply.redirect(buildRedirectUrl(fallbackWebAppUrl, { flow: oauthState.flow, error: "invalid_state" }));
         }
         const attemptParsed = oauthStateAttemptSchema.safeParse(attemptJson);
         if (!attemptParsed.success) {
-            return reply.redirect(buildRedirectUrl(webAppUrl, { flow: oauthState.flow, error: "invalid_state" }));
+            return reply.redirect(buildRedirectUrl(fallbackWebAppUrl, { flow: oauthState.flow, error: "invalid_state" }));
         }
         if (attemptParsed.data.provider.toString().trim().toLowerCase() !== providerId) {
-            return reply.redirect(buildRedirectUrl(webAppUrl, { flow: oauthState.flow, error: "invalid_state" }));
+            return reply.redirect(buildRedirectUrl(fallbackWebAppUrl, { flow: oauthState.flow, error: "invalid_state" }));
         }
+
+        const webAppUrl =
+            typeof attemptParsed.data.webAppOAuthReturnUrl === "string" && attemptParsed.data.webAppOAuthReturnUrl.trim()
+                ? attemptParsed.data.webAppOAuthReturnUrl.trim()
+                : fallbackWebAppUrl;
 
         const flow = oauthState.flow;
         const authMode = flow === "auth" && oauthState.publicKey ? "keyed" : flow === "auth" ? "keyless" : null;
@@ -90,12 +97,17 @@ export function registerOAuthCallbackRoute(app: Fastify) {
             flow === "auth" && authMode === "keyless" ? { flow, mode: "keyless" } : { flow };
 
         if (flow === "auth" && authMode === "keyless") {
+            const policy = resolveAuthPolicyFromEnv(process.env);
+            const keyedAllowed = policy.signupProviders.includes(providerId);
+
             const keyless = readAuthOauthKeylessFeatureEnv(process.env);
-            if (!(keyless.enabled && keyless.providers.includes(providerId))) {
+            const keylessAllowed = keyless.enabled && keyless.providers.includes(providerId);
+            if (!keylessAllowed && !keyedAllowed) {
                 return reply.redirect(buildRedirectUrl(webAppUrl, { ...redirectBaseParams, error: "keyless_disabled" }));
             }
+
             const availability = resolveKeylessAccountsAvailability(process.env);
-            if (!availability.ok) {
+            if (!availability.ok && !keyedAllowed) {
                 return reply.redirect(buildRedirectUrl(webAppUrl, {
                     ...redirectBaseParams,
                     error: availability.reason === "e2ee-required" ? "e2ee_required" : "keyless_disabled",
@@ -148,7 +160,7 @@ export function registerOAuthCallbackRoute(app: Fastify) {
                               provider: providerId,
                               providerUserId,
                           },
-                          select: { id: true },
+                          select: { id: true, accountId: true },
                       })
                     : null;
                 const isAlreadyLinked = Boolean(alreadyLinked);
@@ -195,16 +207,16 @@ export function registerOAuthCallbackRoute(app: Fastify) {
 
                 if (authMode === "keyless") {
                     const tokenEnc = privacyKit.encodeBase64(
-                        encryptString(["auth", "external", providerId, "pending_keyless", pendingKey, "token"], accessToken),
+                        encryptString(["auth", "external", providerId, "pending_v2", pendingKey, "token"], accessToken),
                     );
                     const profileEnc = privacyKit.encodeBase64(
-                        encryptString(["auth", "external", providerId, "pending_keyless", pendingKey, "profile"], profileJson),
+                        encryptString(["auth", "external", providerId, "pending_v2", pendingKey, "profile"], profileJson),
                     );
                     const refreshTokenEnc =
                         typeof refreshToken === "string" && refreshToken.trim()
                             ? privacyKit.encodeBase64(
                                   encryptString(
-                                      ["auth", "external", providerId, "pending_keyless", pendingKey, "refresh"],
+                                      ["auth", "external", providerId, "pending_v2", pendingKey, "refresh"],
                                       refreshToken,
                                   ),
                               )
@@ -214,9 +226,9 @@ export function registerOAuthCallbackRoute(app: Fastify) {
                         data: {
                             key: pendingKey,
                             value: JSON.stringify({
+                                v: 2,
                                 flow: "auth",
                                 provider: providerId,
-                                authMode: "keyless",
                                 proofHash: proofHash!,
                                 profileEnc,
                                 accessTokenEnc: tokenEnc,
@@ -229,16 +241,54 @@ export function registerOAuthCallbackRoute(app: Fastify) {
                         },
                     });
 
+                    const encryptionEnv = readEncryptionFeatureEnv(process.env);
+                    const policy = resolveAuthPolicyFromEnv(process.env);
+                    const keyedAllowed = policy.signupProviders.includes(providerId);
+
+                    const keylessEnv = readAuthOauthKeylessFeatureEnv(process.env);
+                    const keylessAllowed = keylessEnv.enabled && keylessEnv.providers.includes(providerId);
+                    const availability = resolveKeylessAccountsAvailability(process.env);
+
+                    const provisioningModes = (() => {
+                        const modes: string[] = [];
+                        const canProvisionPlain =
+                            keylessAllowed &&
+                            keylessEnv.autoProvision &&
+                            availability.ok &&
+                            encryptionEnv.storagePolicy !== "required_e2ee";
+                        if (canProvisionPlain) modes.push("plain");
+                        const canProvisionE2ee =
+                            keyedAllowed &&
+                            encryptionEnv.storagePolicy !== "plaintext_only";
+                        if (canProvisionE2ee) modes.push("e2ee");
+                        return modes.join(",");
+                    })();
+
+                    const redirectParams: Record<string, string> = {
+                        ...redirectBaseParams,
+                        storagePolicy: encryptionEnv.storagePolicy,
+                        ...(isAlreadyLinked ? {} : { provisioning: "required", provisioningModes }),
+                    };
+                    if (isAlreadyLinked && alreadyLinked?.accountId) {
+                        const account = await db.account.findUnique({
+                            where: { id: alreadyLinked.accountId },
+                            select: { publicKey: true, encryptionMode: true },
+                        });
+                        if (account) {
+                            redirectParams.accountMode = resolveEffectiveAccountEncryptionModeFromAccountRow(account);
+                        }
+                    }
+
                     if (usernameRequired) {
                         return reply.redirect(buildRedirectUrl(webAppUrl, {
-                            ...redirectBaseParams,
+                            ...redirectParams,
                             status: "username_required",
                             reason: usernameReason ?? "invalid_login",
                             login,
                             pending: pendingKey,
                         }));
                     }
-                    return reply.redirect(buildRedirectUrl(webAppUrl, { ...redirectBaseParams, pending: pendingKey }));
+                    return reply.redirect(buildRedirectUrl(webAppUrl, { ...redirectParams, pending: pendingKey }));
                 }
 
                 const tokenEnc = privacyKit.encodeBase64(

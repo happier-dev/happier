@@ -54,7 +54,11 @@ function compareMessageChronology(left: SessionMessageLike, right: SessionMessag
 
 export function buildLatestSessionSnapshot(input: {
     sessions: Record<string, SessionLike>;
-    sessionMessages: Record<string, { messages?: SessionMessageLike[] }>;
+    sessionMessages: Record<string, {
+        messages?: SessionMessageLike[];
+        messageIdsOldestFirst?: string[];
+        messagesById?: Record<string, SessionMessageLike | undefined>;
+    }>;
     sessionPending: Record<string, SessionPendingLike>;
 }): LatestSessionSnapshot | null {
     const sessions = Object.values(input.sessions);
@@ -64,7 +68,16 @@ export function buildLatestSessionSnapshot(input: {
         .sort((left, right) => (right.updatedAt ?? 0) - (left.updatedAt ?? 0))[0];
     if (!latestSession) return null;
 
-    const sessionMessages = input.sessionMessages[latestSession.id]?.messages ?? [];
+    const sessionMessagesState = input.sessionMessages[latestSession.id];
+    const sessionMessages = (() => {
+        if (!sessionMessagesState) return [];
+        if (Array.isArray(sessionMessagesState.messages)) return sessionMessagesState.messages;
+        const ids = Array.isArray(sessionMessagesState.messageIdsOldestFirst)
+            ? sessionMessagesState.messageIdsOldestFirst
+            : [];
+        const byId = sessionMessagesState.messagesById ?? {};
+        return ids.map((id) => byId[id]).filter(Boolean) as SessionMessageLike[];
+    })();
     const pendingMessages = input.sessionPending[latestSession.id]?.messages ?? [];
 
     const recentMessages = sessionMessages

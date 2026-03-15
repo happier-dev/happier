@@ -71,6 +71,91 @@ describe('changesApplier', () => {
         expect(invalidateScmStatusForSession).toHaveBeenCalledWith('s1');
     });
 
+    it('respects concurrencyLimit when applying planned invalidations', async () => {
+        let resolveFirst: () => void = () => {};
+        const firstStarted: { value: boolean } = { value: false };
+        const secondStarted: { value: boolean } = { value: false };
+
+        const invalidateSettings = vi.fn(async () => {
+            firstStarted.value = true;
+            await new Promise<void>((resolve) => {
+                resolveFirst = () => resolve();
+            });
+        });
+
+        const invalidateProfile = vi.fn(async () => {
+            secondStarted.value = true;
+        });
+
+        const p = applyPlannedChangeActions({
+            planned: buildPlanned({ invalidate: { settings: true, profile: true } }),
+            credentials,
+            isSessionMessagesLoaded: () => false,
+            invalidate: {
+                settings: invalidateSettings,
+                profile: invalidateProfile,
+            },
+            invalidateMessagesForSession: async () => {},
+            invalidateScmStatusForSession: () => {},
+            applyTodoSocketUpdates: async () => {},
+            kvBulkGet: async () => ({ values: [] }),
+            concurrencyLimit: 1,
+        });
+
+        // Let the first task start.
+        await Promise.resolve();
+
+        expect(firstStarted.value).toBe(true);
+        expect(secondStarted.value).toBe(false);
+
+        resolveFirst();
+        await p;
+
+        expect(invalidateSettings).toHaveBeenCalledTimes(1);
+        expect(invalidateProfile).toHaveBeenCalledTimes(1);
+    });
+
+    it('waits for sessions invalidation before catching up session messages', async () => {
+        let resolveSessions: () => void = () => {};
+        let sessionsInvalidated = false;
+
+        const invalidateSessions = vi.fn(async () => {
+            await new Promise<void>((resolve) => {
+                resolveSessions = resolve;
+            });
+            sessionsInvalidated = true;
+        });
+
+        const invalidateMessagesForSession = vi.fn(async () => {
+            expect(sessionsInvalidated).toBe(true);
+        });
+
+        const p = applyPlannedChangeActions({
+            planned: buildPlanned({ sessionIdsToCatchUp: ['s1'], invalidate: { sessions: true } }),
+            credentials,
+            isSessionMessagesLoaded: () => true,
+            invalidate: {
+                sessions: invalidateSessions,
+            },
+            invalidateMessagesForSession,
+            invalidateScmStatusForSession: () => {},
+            applyTodoSocketUpdates: async () => {},
+            kvBulkGet: async () => ({ values: [] }),
+            concurrencyLimit: 2,
+        });
+
+        // Let the sessions invalidation task start and block.
+        await Promise.resolve();
+        expect(invalidateSessions).toHaveBeenCalledTimes(1);
+        expect(invalidateMessagesForSession).not.toHaveBeenCalled();
+
+        resolveSessions();
+        await p;
+
+        expect(invalidateMessagesForSession).toHaveBeenCalledTimes(1);
+        expect(invalidateMessagesForSession).toHaveBeenCalledWith('s1');
+    });
+
     it('applies todo KV updates when all requested keys are present', async () => {
         const applyTodoSocketUpdates = vi.fn(async () => {});
         const invalidateTodos = vi.fn(async () => {});

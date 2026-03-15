@@ -2,11 +2,12 @@ import { describe, expect, it } from 'vitest';
 
 import type { Metadata, PermissionMode, UserMessage } from '@/api/types';
 import { registerPermissionModeMessageQueueBinding } from './bindPermissionModeQueue';
+import type { PermissionModeQueuedPrompt } from '@/agent/runtime/permission/permissionModeQueuedPrompt';
 
 describe('registerPermissionModeMessageQueueBinding', () => {
   function createHarness() {
     let userMessageHandler: ((message: UserMessage) => void) | null = null;
-    const queueCalls: Array<{ type: 'push' | 'clear'; message: string; mode: { permissionMode: PermissionMode } }> = [];
+    const queueCalls: Array<{ type: 'push' | 'clear'; message: PermissionModeQueuedPrompt; mode: { permissionMode: PermissionMode } }> = [];
     let currentPermissionMode: PermissionMode | undefined;
     let metadata = { permissionMode: 'default', permissionModeUpdatedAt: 0 } as unknown as Metadata;
 
@@ -22,9 +23,9 @@ describe('registerPermissionModeMessageQueueBinding', () => {
     registerPermissionModeMessageQueueBinding({
       session,
       queue: {
-        push: (message: string, mode: { permissionMode: PermissionMode }) =>
+        push: (message: PermissionModeQueuedPrompt, mode: { permissionMode: PermissionMode }) =>
           queueCalls.push({ type: 'push', message, mode }),
-        pushIsolateAndClear: (message: string, mode: { permissionMode: PermissionMode }) =>
+        pushIsolateAndClear: (message: PermissionModeQueuedPrompt, mode: { permissionMode: PermissionMode }) =>
           queueCalls.push({ type: 'clear', message, mode }),
       },
       getCurrentPermissionMode: () => currentPermissionMode,
@@ -50,13 +51,14 @@ describe('registerPermissionModeMessageQueueBinding', () => {
     harness.emit({
       role: 'user',
       content: { type: 'text', text: 'hello world' },
+      localId: 'local-1',
       meta: {},
     } as UserMessage);
 
     expect(harness.queueCalls).toEqual([
       {
         type: 'push',
-        message: 'hello world',
+        message: { text: 'hello world', localId: 'local-1' },
         mode: { permissionMode: 'default' },
       },
     ]);
@@ -68,6 +70,7 @@ describe('registerPermissionModeMessageQueueBinding', () => {
     harness.emit({
       role: 'user',
       content: { type: 'text', text: 'approve this' },
+      localId: 'local-2',
       meta: { permissionMode: 'acceptEdits' },
       createdAt: 42,
     } as UserMessage);
@@ -78,7 +81,7 @@ describe('registerPermissionModeMessageQueueBinding', () => {
     expect(harness.queueCalls).toEqual([
       {
         type: 'push',
-        message: 'approve this',
+        message: { text: 'approve this', localId: 'local-2' },
         mode: { permissionMode: 'safe-yolo' },
       },
     ]);
@@ -90,13 +93,14 @@ describe('registerPermissionModeMessageQueueBinding', () => {
     harness.emit({
       role: 'user',
       content: { type: 'text', text: '/clear' },
+      localId: 'local-3',
       meta: {},
     } as UserMessage);
 
     expect(harness.queueCalls).toEqual([
       {
         type: 'clear',
-        message: '/clear',
+        message: { text: '/clear', localId: 'local-3' },
         mode: { permissionMode: 'default' },
       },
     ]);

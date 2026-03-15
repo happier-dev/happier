@@ -6,6 +6,7 @@ import { sessionScmStatusSnapshot } from '@/sync/ops';
 import { createProjectKey } from '@/sync/runtime/orchestration/projectManager';
 import { resolveProjectMachineScopeId } from '@/sync/runtime/orchestration/projectManager';
 import { resolveAbsolutePath } from '@/utils/path/pathUtils';
+import { readSessionWorkspaceContext } from '@/sync/domains/session/readSessionWorkspaceContext';
 import {
     EMPTY_SCM_CAPABILITIES,
     mapProtocolSnapshotToUiSnapshot,
@@ -103,17 +104,24 @@ export class ScmRepositoryService {
     async fetchSnapshotForSession(sessionId: string): Promise<UiScmWorkingSnapshot | null> {
         const state = storage.getState();
         const session = state.sessions[sessionId];
-        if (!session?.metadata?.path) return null;
+        if (!session) return null;
 
-        const machineHomeDir = session.metadata.machineId
-            ? state.machines?.[session.metadata.machineId]?.metadata?.homeDir
+        const workspaceContext = readSessionWorkspaceContext(state, sessionId);
+        if (!workspaceContext.workspacePath) return null;
+
+        const machineIdForHomeDir =
+            session.metadata?.machineId
+            ?? workspaceContext.projectMachineId
+            ?? null;
+        const machineHomeDir = machineIdForHomeDir
+            ? state.machines?.[machineIdForHomeDir]?.metadata?.homeDir
             : undefined;
         const resolvedSessionPath = resolveAbsolutePath(
-            session.metadata.path,
-            session.metadata.homeDir ?? machineHomeDir
+            workspaceContext.workspacePath,
+            session.metadata?.homeDir ?? machineHomeDir
         );
         const projectKey = createProjectKey(
-            resolveProjectMachineScopeId(session.metadata),
+            workspaceContext.projectMachineId ?? resolveProjectMachineScopeId(session.metadata ?? {}),
             resolvedSessionPath
         );
         const projectKeyString = `${projectKey.machineId}:${projectKey.path}`;

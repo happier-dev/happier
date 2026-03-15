@@ -8,6 +8,7 @@ import { resolvePath } from '@/utils/path/pathUtils';
 import { ToolDiffView } from '@/components/tools/shell/presentation/ToolDiffView';
 import { useSetting } from '@/sync/domains/state/storage';
 import { Text } from '@/components/ui/text/Text';
+import { t } from '@/text';
 
 
 type PatchChange = {
@@ -90,6 +91,7 @@ export const PatchView = React.memo<ToolViewProps>(({ tool, metadata, detailLeve
                                         {basename}
                                     </Text>
                                     <ToolDiffView
+                                        filePath={change.filePath}
                                         oldText={change.oldText}
                                         newText={change.newText}
                                         showLineNumbers={showLineNumbersInToolViews}
@@ -135,8 +137,8 @@ export const PatchView = React.memo<ToolViewProps>(({ tool, metadata, detailLeve
                 <View style={styles.fileContainer}>
                     <Octicons name="file-diff" size={16} color={theme.colors.textSecondary} />
                     <Text style={styles.fileName}>{fileName}</Text>
-                    {allDeletes ? <Text style={styles.applied}>Deleted</Text> : null}
-                    {applied ? <Text style={styles.applied}>Applied</Text> : null}
+                    {allDeletes ? <Text style={styles.applied}>{t('common.deleted')}</Text> : null}
+                    {applied ? <Text style={styles.applied}>{t('common.applied')}</Text> : null}
                 </View>
             </ToolSectionView>
         );
@@ -145,8 +147,8 @@ export const PatchView = React.memo<ToolViewProps>(({ tool, metadata, detailLeve
     return (
         <ToolSectionView>
             <View style={styles.filesContainer}>
-                {allDeletes ? <Text style={styles.applied}>Deleted</Text> : null}
-                {applied ? <Text style={styles.applied}>Applied</Text> : null}
+                {allDeletes ? <Text style={styles.applied}>{t('common.deleted')}</Text> : null}
+                {applied ? <Text style={styles.applied}>{t('common.applied')}</Text> : null}
                 {files.map((file, index) => {
                     const filePath = resolvePath(file, metadata);
                     const fileName = filePath.split('/').pop() || filePath;

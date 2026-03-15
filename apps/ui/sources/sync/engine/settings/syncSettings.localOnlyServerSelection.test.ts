@@ -19,6 +19,7 @@ const mocks = vi.hoisted(() => {
 
     return {
         serverFetch: vi.fn(),
+        loadPendingSettings: vi.fn(() => ({})),
         applySettingsFn: vi.fn((base: Record<string, unknown>, delta: Record<string, unknown>) => ({
             ...base,
             ...delta,
@@ -72,9 +73,18 @@ vi.mock('@/sync/domains/state/storage', () => ({
     },
 }));
 
-vi.mock('@/sync/encryption/secretSettings', () => ({
-    sealSecretsDeep: (value: unknown) => value,
+vi.mock('@/sync/domains/state/persistence', () => ({
+    loadPendingSettings: mocks.loadPendingSettings,
 }));
+
+vi.mock('@/sync/encryption/secretSettings', async (importOriginal) => {
+    const actual = await importOriginal<typeof import('@/sync/encryption/secretSettings')>();
+    return {
+        ...actual,
+        sealSecretsDeep: (value: unknown) => value,
+        unsealSecretsDeep: (value: unknown) => value,
+    };
+});
 
 vi.mock('@/sync/http/client', () => ({
     serverFetch: mocks.serverFetch,
@@ -99,6 +109,8 @@ const encryptionStub = {
 describe('syncSettings local-only server-selection settings', () => {
     beforeEach(() => {
         mocks.serverFetch.mockReset();
+        mocks.loadPendingSettings.mockReset();
+        mocks.loadPendingSettings.mockReturnValue({});
         mocks.applySettingsFn.mockClear();
         mocks.settingsParse.mockClear();
         mocks.storageState.settings = {
@@ -115,12 +127,19 @@ describe('syncSettings local-only server-selection settings', () => {
     });
 
     it('does not rewrite server settings when GET ciphertext cannot be decrypted', async () => {
-        mocks.serverFetch.mockResolvedValueOnce(
-            new Response(JSON.stringify({ settings: 'ciphertext', settingsVersion: 12 }), {
-                status: 200,
-                headers: { 'Content-Type': 'application/json' },
-            }),
-        );
+        mocks.serverFetch
+            .mockResolvedValueOnce(
+                new Response(JSON.stringify({ mode: 'e2ee', updatedAt: Date.now() }), {
+                    status: 200,
+                    headers: { 'Content-Type': 'application/json' },
+                }),
+            )
+            .mockResolvedValueOnce(
+                new Response(JSON.stringify({ content: { t: 'encrypted', c: 'ciphertext' }, version: 12 }), {
+                    status: 200,
+                    headers: { 'Content-Type': 'application/json' },
+                }),
+            );
         (encryptionStub.decryptRaw as unknown as ReturnType<typeof vi.fn>).mockResolvedValueOnce(null);
 
         await syncSettings({
@@ -130,7 +149,7 @@ describe('syncSettings local-only server-selection settings', () => {
             clearPendingSettings: () => {},
         });
 
-        expect(mocks.serverFetch).toHaveBeenCalledTimes(1);
+        expect(mocks.serverFetch).toHaveBeenCalledTimes(2);
         expect(encryptionStub.encryptRaw).not.toHaveBeenCalled();
         expect(mocks.storageState.applySettings).toHaveBeenCalledWith(
             {
@@ -151,12 +170,19 @@ describe('syncSettings local-only server-selection settings', () => {
             payload: { analyticsOptOut: true, claudeLocalPermissionBridgeEnabled: false },
             randomBytes: () => new Uint8Array(24).fill(1),
         });
-        mocks.serverFetch.mockResolvedValueOnce(
-            new Response(JSON.stringify({ settings: ciphertext, settingsVersion: 4 }), {
-                status: 200,
-                headers: { 'Content-Type': 'application/json' },
-            }),
-        );
+        mocks.serverFetch
+            .mockResolvedValueOnce(
+                new Response(JSON.stringify({ mode: 'e2ee', updatedAt: Date.now() }), {
+                    status: 200,
+                    headers: { 'Content-Type': 'application/json' },
+                }),
+            )
+            .mockResolvedValueOnce(
+                new Response(JSON.stringify({ content: { t: 'encrypted', c: ciphertext }, version: 4 }), {
+                    status: 200,
+                    headers: { 'Content-Type': 'application/json' },
+                }),
+            );
 
         await syncSettings({
             credentials,
@@ -165,7 +191,7 @@ describe('syncSettings local-only server-selection settings', () => {
             clearPendingSettings: () => {},
         });
 
-        expect(mocks.serverFetch).toHaveBeenCalledTimes(1);
+        expect(mocks.serverFetch).toHaveBeenCalledTimes(2);
         expect(encryptionStub.decryptRaw).not.toHaveBeenCalled();
         expect(mocks.storageState.applySettings).toHaveBeenCalledWith(
             {
@@ -195,12 +221,19 @@ describe('syncSettings local-only server-selection settings', () => {
             payload: { analyticsOptOut: true },
             randomBytes: () => new Uint8Array(24).fill(2),
         });
-        mocks.serverFetch.mockResolvedValueOnce(
-            new Response(JSON.stringify({ settings: ciphertext, settingsVersion: 7 }), {
-                status: 200,
-                headers: { 'Content-Type': 'application/json' },
-            }),
-        );
+        mocks.serverFetch
+            .mockResolvedValueOnce(
+                new Response(JSON.stringify({ mode: 'e2ee', updatedAt: Date.now() }), {
+                    status: 200,
+                    headers: { 'Content-Type': 'application/json' },
+                }),
+            )
+            .mockResolvedValueOnce(
+                new Response(JSON.stringify({ content: { t: 'encrypted', c: ciphertext }, version: 7 }), {
+                    status: 200,
+                    headers: { 'Content-Type': 'application/json' },
+                }),
+            );
 
         await syncSettings({
             credentials,
@@ -221,6 +254,49 @@ describe('syncSettings local-only server-selection settings', () => {
         );
     });
 
+    it('preserves pending local deltas when applying fetched server settings', async () => {
+        mocks.loadPendingSettings.mockReturnValueOnce({
+            sessionReplayEnabled: true,
+        } as any);
+
+        mocks.storageState.settings = {
+            analyticsOptOut: false,
+            sessionReplayEnabled: false,
+            terminalConnectLegacySecretExportEnabled: false,
+        };
+
+        mocks.serverFetch
+            .mockResolvedValueOnce(
+                new Response(JSON.stringify({ mode: 'e2ee', updatedAt: Date.now() }), {
+                    status: 200,
+                    headers: { 'Content-Type': 'application/json' },
+                }),
+            )
+            .mockResolvedValueOnce(
+                new Response(JSON.stringify({ content: null, version: 12 }), {
+                    status: 200,
+                    headers: { 'Content-Type': 'application/json' },
+                }),
+            );
+
+        await syncSettings({
+            credentials,
+            encryption: encryptionStub,
+            // Simulate an in-flight sync tick that did not observe the newest pending object reference.
+            pendingSettings: {},
+            clearPendingSettings: () => {},
+        });
+
+        expect(mocks.storageState.applySettings).toHaveBeenCalledWith(
+            expect.objectContaining({
+                analyticsOptOut: false,
+                sessionReplayEnabled: true,
+                terminalConnectLegacySecretExportEnabled: false,
+            }),
+            12,
+        );
+    });
+
     it('does not sync server-selection settings keys to account settings payload', async () => {
         mocks.storageState.settings = {
             analyticsOptOut: false,
@@ -234,13 +310,19 @@ describe('syncSettings local-only server-selection settings', () => {
 
         mocks.serverFetch
             .mockResolvedValueOnce(
-                new Response(JSON.stringify({ success: true }), {
+                new Response(JSON.stringify({ mode: 'e2ee', updatedAt: Date.now() }), {
                     status: 200,
                     headers: { 'Content-Type': 'application/json' },
                 }),
             )
             .mockResolvedValueOnce(
-                new Response(JSON.stringify({ settings: null, settingsVersion: 11 }), {
+                new Response(JSON.stringify({ success: true, version: 11 }), {
+                    status: 200,
+                    headers: { 'Content-Type': 'application/json' },
+                }),
+            )
+            .mockResolvedValueOnce(
+                new Response(JSON.stringify({ content: null, version: 11 }), {
                     status: 200,
                     headers: { 'Content-Type': 'application/json' },
                 }),
@@ -257,12 +339,12 @@ describe('syncSettings local-only server-selection settings', () => {
 
         expect(clearPendingSettings).toHaveBeenCalledTimes(1);
         expect(encryptionStub.encryptRaw).not.toHaveBeenCalled();
-        const body = JSON.parse(String((mocks.serverFetch.mock.calls[0]?.[1] as RequestInit | undefined)?.body ?? 'null')) as { settings?: unknown } | null;
-        expect(typeof body?.settings).toBe('string');
+        const body = JSON.parse(String((mocks.serverFetch.mock.calls[1]?.[1] as RequestInit | undefined)?.body ?? 'null')) as { content?: unknown } | null;
+        expect(typeof (body as any)?.content?.c).toBe('string');
         const opened = openAccountScopedBlobCiphertext({
             kind: 'account_settings',
             material: { type: 'dataKey', machineKey: TEST_MACHINE_KEY },
-            ciphertext: String(body?.settings ?? ''),
+            ciphertext: String((body as any)?.content?.c ?? ''),
         });
         expect(opened?.value && typeof opened.value === 'object').toBe(true);
         const record = opened?.value as Record<string, unknown>;
@@ -281,12 +363,19 @@ describe('syncSettings local-only server-selection settings', () => {
             serverSelectionActiveTargetId: null,
         };
 
-        mocks.serverFetch.mockResolvedValueOnce(
-            new Response(JSON.stringify({ settings: 'decryptable-ciphertext', settingsVersion: 8 }), {
-                status: 200,
-                headers: { 'Content-Type': 'application/json' },
-            }),
-        );
+        mocks.serverFetch
+            .mockResolvedValueOnce(
+                new Response(JSON.stringify({ mode: 'e2ee', updatedAt: Date.now() }), {
+                    status: 200,
+                    headers: { 'Content-Type': 'application/json' },
+                }),
+            )
+            .mockResolvedValueOnce(
+                new Response(JSON.stringify({ content: { t: 'encrypted', c: 'decryptable-ciphertext' }, version: 8 }), {
+                    status: 200,
+                    headers: { 'Content-Type': 'application/json' },
+                }),
+            );
         (encryptionStub.decryptRaw as unknown as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
             analyticsOptOut: true,
             serverSelectionGroups: [{ id: 'legacy', name: 'Legacy', serverIds: ['server-a'] }],
@@ -314,12 +403,19 @@ describe('syncSettings local-only server-selection settings', () => {
     });
 
     it('clears pending settings when pending delta only contains local server-selection keys', async () => {
-        mocks.serverFetch.mockResolvedValueOnce(
-            new Response(JSON.stringify({ settings: null, settingsVersion: 4 }), {
-                status: 200,
-                headers: { 'Content-Type': 'application/json' },
-            }),
-        );
+        mocks.serverFetch
+            .mockResolvedValueOnce(
+                new Response(JSON.stringify({ mode: 'e2ee', updatedAt: Date.now() }), {
+                    status: 200,
+                    headers: { 'Content-Type': 'application/json' },
+                }),
+            )
+            .mockResolvedValueOnce(
+                new Response(JSON.stringify({ content: null, version: 4 }), {
+                    status: 200,
+                    headers: { 'Content-Type': 'application/json' },
+                }),
+            );
         const clearPendingSettings = vi.fn();
 
         await syncSettings({
@@ -337,7 +433,7 @@ describe('syncSettings local-only server-selection settings', () => {
 
         expect(clearPendingSettings).toHaveBeenCalledTimes(1);
         expect(encryptionStub.encryptRaw).not.toHaveBeenCalled();
-        expect(mocks.serverFetch).toHaveBeenCalledTimes(1);
+        expect(mocks.serverFetch).toHaveBeenCalledTimes(2);
     });
 });
 

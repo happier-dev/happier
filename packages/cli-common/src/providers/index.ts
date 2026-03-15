@@ -6,6 +6,8 @@ import { join } from 'node:path';
 import type { AgentId, ProviderCliInstallPlatform, ProviderCliInstallSpec } from '@happier-dev/agents';
 import { getProviderCliInstallSpec } from '@happier-dev/agents';
 
+import { resolveWindowsCommandInvocation } from '../process/index.js';
+
 export type ProviderCliInstallPlan = Readonly<{
   providerId: AgentId;
   title: string;
@@ -158,7 +160,19 @@ export function installProviderCli(params: Readonly<{
     if (!commandExists(c.cmd, env)) {
       return { ok: false, errorCode: 'command-not-found', errorMessage: `Command not found: ${c.cmd}`, plan, logPath };
     }
-    const res = spawnSync(c.cmd, [...c.args], { encoding: 'utf8', env: { ...process.env, ...env } });
+    const childEnv = { ...process.env, ...env };
+    const invocation = resolveWindowsCommandInvocation({
+      command: c.cmd,
+      args: c.args,
+      env: childEnv,
+      resolveCommandOnPath: true,
+    });
+    const res = spawnSync(invocation.command, invocation.args, {
+      encoding: 'utf8',
+      env: childEnv,
+      windowsHide: true,
+      windowsVerbatimArguments: invocation.windowsVerbatimArguments,
+    });
     if (res.error) {
       appendCommandLog(logPath, c.cmd, c.args, '', res.error.message, res.status ?? null);
       return { ok: false, errorCode: 'command-exec-failed', errorMessage: res.error.message, plan, logPath };

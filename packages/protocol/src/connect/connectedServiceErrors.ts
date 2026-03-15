@@ -8,6 +8,9 @@ export const CONNECTED_SERVICE_ERROR_CODES = {
     oauthStateMismatch: 'connect_oauth_state_mismatch',
     oauthTimeout: 'connect_oauth_timeout',
     oauthExchangeFailed: 'connect_oauth_exchange_failed',
+    oauthInvalidGrant: 'connect_oauth_invalid_grant',
+    oauthInvalidClient: 'connect_oauth_invalid_client',
+    oauthMissingRefreshToken: 'connect_oauth_missing_refresh_token',
 } as const;
 
 export const ConnectedServiceErrorCodeSchema = z.enum([
@@ -18,6 +21,9 @@ export const ConnectedServiceErrorCodeSchema = z.enum([
     CONNECTED_SERVICE_ERROR_CODES.oauthStateMismatch,
     CONNECTED_SERVICE_ERROR_CODES.oauthTimeout,
     CONNECTED_SERVICE_ERROR_CODES.oauthExchangeFailed,
+    CONNECTED_SERVICE_ERROR_CODES.oauthInvalidGrant,
+    CONNECTED_SERVICE_ERROR_CODES.oauthInvalidClient,
+    CONNECTED_SERVICE_ERROR_CODES.oauthMissingRefreshToken,
 ]);
 
 export type ConnectedServiceErrorCode = z.infer<typeof ConnectedServiceErrorCodeSchema>;

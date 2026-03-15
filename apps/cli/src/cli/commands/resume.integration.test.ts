@@ -8,12 +8,14 @@ import {
   deriveBoxPublicKeyFromSeed,
   sealEncryptedDataKeyEnvelopeV1,
 } from '@happier-dev/protocol';
+import type { SessionAttachSecret } from '@/agent/runtime/sessionAttach';
 
 describe('happier resume command (integration)', () => {
   const originalServerUrl = process.env.HAPPIER_SERVER_URL;
   const originalWebappUrl = process.env.HAPPIER_WEBAPP_URL;
   const originalHomeDir = process.env.HAPPIER_HOME_DIR;
   const originalAttachFile = process.env.HAPPIER_SESSION_ATTACH_FILE;
+  const originalAccountSettingsMode = process.env.HAPPIER_ACCOUNT_SETTINGS_MODE;
   let server: Server | null = null;
   let serverUrl = '';
   let happyHomeDir = '';
@@ -24,6 +26,7 @@ describe('happier resume command (integration)', () => {
     requestCount = 0;
     lastAuthHeader = null;
     happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-cli-resume-'));
+    process.env.HAPPIER_ACCOUNT_SETTINGS_MODE = 'never';
 
     const sessionId = 'sess_integration_123';
     const dek = new Uint8Array(32).fill(3);
@@ -41,6 +44,7 @@ describe('happier resume command (integration)', () => {
         {
           path: '/tmp/happier-resume-integration',
           flavor: 'claude',
+          claudeSessionId: 'claude_vendor_session_1',
         },
         dek,
       ),
@@ -121,6 +125,8 @@ describe('happier resume command (integration)', () => {
     else process.env.HAPPIER_HOME_DIR = originalHomeDir;
     if (originalAttachFile === undefined) delete process.env.HAPPIER_SESSION_ATTACH_FILE;
     else process.env.HAPPIER_SESSION_ATTACH_FILE = originalAttachFile;
+    if (originalAccountSettingsMode === undefined) delete process.env.HAPPIER_ACCOUNT_SETTINGS_MODE;
+    else process.env.HAPPIER_ACCOUNT_SETTINGS_MODE = originalAccountSettingsMode;
 
     const { reloadConfiguration } = await import('@/configuration');
     reloadConfiguration();
@@ -135,7 +141,7 @@ describe('happier resume command (integration)', () => {
 
     let observedAgentId: string | null = null;
     let observedArgs: string[] | null = null;
-    let observedAttach: { variant: string; key: Uint8Array } | null = null;
+    let observedAttach: SessionAttachSecret | null = null;
     let observedChdir: string | null = null;
 
     await handleResumeCommand(['sess_integration_123'], {
@@ -153,9 +159,7 @@ describe('happier resume command (integration)', () => {
           observedArgs = context.args;
           const attach = await readSessionAttachFromEnv();
           expect(attach).not.toBeNull();
-          observedAttach = attach
-            ? { variant: attach.encryptionVariant, key: attach.encryptionKey }
-            : null;
+          observedAttach = attach;
         };
       },
       chdirFn: (nextDir) => {
@@ -167,11 +171,19 @@ describe('happier resume command (integration)', () => {
     expect(lastAuthHeader).toBe(`Bearer ${token}`);
     expect(observedChdir).toBe('/tmp/happier-resume-integration');
     expect(observedAgentId).toBe('claude');
-    expect(observedArgs).toEqual(['claude', '--existing-session', 'sess_integration_123', '--started-by', 'terminal']);
+    expect(observedArgs).toEqual([
+      'claude',
+      '--existing-session',
+      'sess_integration_123',
+      '--resume',
+      'claude_vendor_session_1',
+      '--started-by',
+      'terminal',
+    ]);
     if (!observedAttach) {
       throw new Error('Expected attach payload to be present');
     }
-    expect(observedAttach).toEqual({ variant: 'dataKey', key: new Uint8Array(32).fill(3) });
+    expect(observedAttach).toEqual({ encryptionMode: 'e2ee', encryptionVariant: 'dataKey', encryptionKey: new Uint8Array(32).fill(3) });
     expect(process.env.HAPPIER_SESSION_ATTACH_FILE).toBeUndefined();
   });
 });

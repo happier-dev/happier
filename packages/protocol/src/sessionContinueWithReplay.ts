@@ -1,5 +1,7 @@
 import { z } from 'zod';
 
+import { LlmTaskRunnerConfigV1Schema } from './llmTasks/llmTaskRunnerConfigV1.js';
+
 export const HappierReplayStrategySchema = z.enum(['recent_messages', 'summary_plus_recent']);
 export type HappierReplayStrategy = z.infer<typeof HappierReplayStrategySchema>;
 
@@ -19,8 +21,10 @@ export const SessionContinueWithReplayRequestSchema = z
   .object({
     previousSessionId: z.string().min(1),
     strategy: HappierReplayStrategySchema.optional(),
-    recentMessagesCount: z.number().int().min(1).max(100).optional(),
+    recentMessagesCount: z.number().int().min(1).max(500).optional(),
+    maxSeedChars: z.number().int().min(200).max(200_000).optional(),
     seedMode: HappierReplaySeedModeSchema.optional(),
+    summaryRunner: LlmTaskRunnerConfigV1Schema.optional(),
   })
   .strict();
 export type SessionContinueWithReplayRequest = z.infer<typeof SessionContinueWithReplayRequestSchema>;
@@ -40,7 +44,7 @@ export const SessionContinueWithReplayRpcParamsSchema = z
 export type SessionContinueWithReplayRpcParams = z.infer<typeof SessionContinueWithReplayRpcParamsSchema>;
 
 export const SessionContinueWithReplayRpcResultSchema = z.union([
-  z.object({ type: z.literal('success'), sessionId: z.string().min(1), seedDraft: z.string().min(1) }).passthrough(),
+  z.object({ type: z.literal('success'), sessionId: z.string().min(1) }).passthrough(),
   z.object({ type: z.literal('requestToApproveDirectoryCreation'), directory: z.string().min(1) }).passthrough(),
   z.object({ type: z.literal('error'), errorCode: z.string().min(1), errorMessage: z.string().min(1) }).passthrough(),
 ]);

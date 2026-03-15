@@ -32,7 +32,7 @@ hstack where
   - This is the **storage workspace for the Happier monorepo checkout + worktrees** used by hstack.
   - It typically contains:
     - `<workspace>/main` (stable monorepo checkout)
-    - `<workspace>/dev` (dev monorepo checkout; created by `hstack setup --profile=dev`)
+    - `<workspace>/dev` (dev monorepo checkout; created by `hstack setup-from-source --profile=dev`)
     - `<workspace>/pr/...` (PR worktrees)
     - `<workspace>/local/<owner>/...` (local worktrees)
     - `<workspace>/tmp/<owner>/...` (temporary worktrees)

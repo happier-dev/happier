@@ -8,11 +8,16 @@ import {
 } from '@/agent/runtime/permission/permissionModeStateSync';
 import { waitForNextPermissionModeMessage } from '@/agent/runtime/waitForNextPermissionModeMessage';
 import type { MessageBuffer } from '@/ui/ink/messageBuffer';
+import type { PermissionModeQueuedPrompt } from '@/agent/runtime/permission/permissionModeQueuedPrompt';
+import {
+  resolveProviderPromptWithReplaySeed,
+} from '@/agent/runtime/replaySeed/replaySeedV1';
 
 type PromptRuntime = {
   beginTurn: () => void;
   startOrLoad: (opts: { resumeId?: string }) => Promise<unknown>;
   sendPrompt: (message: string) => Promise<void>;
+  sendPromptWithMeta?: (params: { text: string; localId?: string | null }) => Promise<void>;
   flushTurn: () => void;
   reset: () => Promise<void>;
   getSessionId: () => string | null;
@@ -24,7 +29,7 @@ type OverrideSynchronizer = {
 };
 
 type QueuedPermissionModeMessage = {
-  message: string;
+  message: PermissionModeQueuedPrompt;
   mode: { permissionMode: PermissionMode };
   hash: string;
 };
@@ -34,7 +39,7 @@ export async function runPermissionModePromptLoop(opts: {
   agentMessageType: Parameters<ApiSessionClient['sendAgentMessage']>[0];
   explicitPermissionMode: PermissionMode | undefined;
   session: ApiSessionClient;
-  messageQueue: MessageQueue2<{ permissionMode: PermissionMode }>;
+  messageQueue: MessageQueue2<{ permissionMode: PermissionMode }, PermissionModeQueuedPrompt>;
   permissionHandler: ProviderEnforcedPermissionHandler;
   runtime: PromptRuntime;
   createOverrideSynchronizer: (isStarted: () => boolean) => OverrideSynchronizer;
@@ -56,6 +61,7 @@ export async function runPermissionModePromptLoop(opts: {
   let currentModeHash: string | null = null;
   let pending: QueuedPermissionModeMessage | null = null;
   let storedSessionIdForResume: string | null = null;
+  let didReplaySeedBootstrap = false;
 
   const normalizedResumeId = typeof opts.initialResumeId === 'string' ? opts.initialResumeId.trim() : '';
   if (normalizedResumeId) {
@@ -123,9 +129,9 @@ export async function runPermissionModePromptLoop(opts: {
     }
 
     currentModeHash = message.hash;
-    opts.messageBuffer.addMessage(message.message, 'user');
+    opts.messageBuffer.addMessage(message.message.text, 'user');
 
-    const special = parseSpecialCommand(message.message);
+    const special = parseSpecialCommand(message.message.text);
     if (special.type === 'clear') {
       opts.messageBuffer.addMessage(`Resetting ${opts.providerName} session…`, 'status');
       await opts.runtime.reset();
@@ -163,7 +169,26 @@ export async function runPermissionModePromptLoop(opts: {
         wasStarted = true;
         await overrideSync.flushPendingAfterStart();
       }
-      await opts.runtime.sendPrompt(message.message);
+
+      const localId = typeof message.message.localId === 'string' && message.message.localId ? message.message.localId : null;
+      const special = parseSpecialCommand(message.message.text);
+      const nowMs = Date.now();
+      const seedResolution = await resolveProviderPromptWithReplaySeed({
+        session: opts.session,
+        userText: message.message.text,
+        allowSeed: special.type === null,
+        localId,
+        nowMs,
+        refreshMetadataBeforeRead: !didReplaySeedBootstrap,
+      });
+      didReplaySeedBootstrap = true;
+      const providerPrompt = seedResolution.providerPrompt;
+
+      if (typeof opts.runtime.sendPromptWithMeta === 'function') {
+        await opts.runtime.sendPromptWithMeta({ text: providerPrompt, localId });
+      } else {
+        await opts.runtime.sendPrompt(providerPrompt);
+      }
     } catch (error) {
       opts.session.sendAgentMessage(opts.agentMessageType, { type: 'message', message: opts.formatPromptErrorMessage(error) });
     } finally {

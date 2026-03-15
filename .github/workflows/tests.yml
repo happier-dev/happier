@@ -5,6 +5,7 @@ on:
   push:
     branches:
       - dev
+      - preview
       - main
   workflow_call:
     inputs:

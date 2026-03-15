@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import { listRepositoryDirectoryEntries, sortRepositoryDirectoryEntries } from './repositoryDirectory';
+import { listRepositoryDirectoryEntries, sortRepositoryDirectoryEntries, warmRepositoryDirectoryCache } from './repositoryDirectory';
 
 vi.mock('@/sync/ops', () => ({
     sessionListDirectory: vi.fn(),
@@ -43,5 +43,42 @@ describe('listRepositoryDirectoryEntries', () => {
 
         // NFKC would change 'Å' to 'Å'. We must preserve the raw name.
         expect(result.entries.some((e) => e.name === 'Å.txt')).toBe(true);
+    });
+});
+
+describe('warmRepositoryDirectoryCache', () => {
+    it('dedupes in-flight warms and reuses cached entries', async () => {
+        const { sessionListDirectory } = await import('@/sync/ops');
+
+        let resolve!: (value: any) => void;
+        const pending = new Promise((r) => {
+            resolve = r as any;
+        });
+
+        (sessionListDirectory as any).mockReturnValueOnce(pending);
+
+        const first = warmRepositoryDirectoryCache({ sessionId: 's', directoryPath: '' });
+        const second = warmRepositoryDirectoryCache({ sessionId: 's', directoryPath: '' });
+
+        expect(sessionListDirectory).toHaveBeenCalledTimes(1);
+
+        resolve({
+            success: true,
+            entries: [
+                { name: 'src', type: 'directory' },
+                { name: 'a.txt', type: 'file' },
+            ],
+        });
+
+        const res1 = await first;
+        const res2 = await second;
+        expect(res1.ok).toBe(true);
+        expect(res2.ok).toBe(true);
+
+        // Subsequent warms should be satisfied from cache without another sessionListDirectory call.
+        (sessionListDirectory as any).mockClear();
+        const cached = await warmRepositoryDirectoryCache({ sessionId: 's', directoryPath: '' });
+        expect(cached.ok).toBe(true);
+        expect(sessionListDirectory).not.toHaveBeenCalled();
     });
 });

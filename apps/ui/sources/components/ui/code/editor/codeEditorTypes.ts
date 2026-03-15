@@ -1,3 +1,5 @@
+import { normalizeCodeLanguageId } from '@/utils/code/normalizeCodeLanguageId';
+
 export type CodeEditorProps = Readonly<{
     resetKey: string;
     value: string;
@@ -11,12 +13,17 @@ export type CodeEditorProps = Readonly<{
 }>;
 
 export function resolveMonacoLanguageId(language: string | null): string {
-    if (!language) return 'plaintext';
-    const lang = language.toLowerCase();
-    if (lang === 'ts' || lang === 'typescript') return 'typescript';
-    if (lang === 'js' || lang === 'javascript') return 'javascript';
-    if (lang === 'json') return 'json';
-    if (lang === 'md' || lang === 'markdown') return 'markdown';
-    if (lang === 'py' || lang === 'python') return 'python';
-    return 'plaintext';
+    const raw = normalizeCodeLanguageId(language);
+    if (!raw) return 'plaintext';
+
+    // Normalize common aliases/variants.
+    if (raw === 'text' || raw === 'plaintext') return 'plaintext';
+    if (raw === 'typescript' || raw === 'tsx') return 'typescript';
+    if (raw === 'javascript' || raw === 'jsx') return 'javascript';
+    if (raw === 'mdx') return 'markdown';
+    if (raw === 'jsonc' || raw === 'json5') return 'json';
+    if (raw === 'bash' || raw === 'zsh' || raw === 'dotenv' || raw === 'ssh-config') return 'shell';
+
+    // Best-effort: pass through known language ids (Monaco basic languages are registered at runtime on web).
+    return raw;
 }

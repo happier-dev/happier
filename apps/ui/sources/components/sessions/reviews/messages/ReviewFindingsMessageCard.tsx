@@ -8,6 +8,7 @@ import { sessionExecutionRunAction } from '@/sync/ops/sessionExecutionRuns';
 import { sync } from '@/sync/sync';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 import { Text, TextInput } from '@/components/ui/text/Text';
+import { t } from '@/text';
 
 
 function formatFindingLocation(finding: ReviewFindingsV1['findings'][number]): string | null {
@@ -64,6 +65,22 @@ export function ReviewFindingsMessageCard(props: {
 
     const hasDraft = Object.keys(draftStatusByFindingId).length > 0;
 
+    const statusLabel = React.useCallback((status: ReviewTriageStatus | 'untriaged') => {
+        switch (status) {
+            case 'accept':
+                return t('session.reviewFindings.status.accept');
+            case 'reject':
+                return t('session.reviewFindings.status.reject');
+            case 'defer':
+                return t('session.reviewFindings.status.defer');
+            case 'needs_refinement':
+                return t('session.reviewFindings.status.needsRefinement');
+            case 'untriaged':
+            default:
+                return t('session.reviewFindings.status.untriaged');
+        }
+    }, []);
+
     const handleApplyTriage = React.useCallback(() => {
         fireAndForget((async () => {
             setSaveError(null);
@@ -75,10 +92,12 @@ export function ReviewFindingsMessageCard(props: {
                     input: triageOverlay,
                 });
                 if (!res.ok) {
-                    setSaveError('Failed to apply triage.');
+                    setSaveError(t('session.reviewFindings.errors.applyTriageFailed'));
                 }
             } catch (e) {
-                setSaveError(e instanceof Error ? e.message : 'Failed to apply triage.');
+                setSaveError(
+                    e instanceof Error ? e.message : t('session.reviewFindings.errors.applyTriageFailed')
+                );
             } finally {
                 setIsSaving(false);
             }
@@ -115,9 +134,15 @@ export function ReviewFindingsMessageCard(props: {
                 };
 
                 const text = `@happier/review.apply_accepted_findings\n${JSON.stringify(payload)}`;
-                await sync.sendMessage(props.sessionId, text, 'Apply accepted findings');
+                await sync.sendMessage(
+                    props.sessionId,
+                    text,
+                    t('session.reviewFindings.actions.applyAcceptedFindings')
+                );
             } catch (e) {
-                setApplyError(e instanceof Error ? e.message : 'Failed to apply accepted findings.');
+                setApplyError(
+                    e instanceof Error ? e.message : t('session.reviewFindings.errors.applyAcceptedFailed')
+                );
             } finally {
                 setIsApplying(false);
             }
@@ -126,11 +151,12 @@ export function ReviewFindingsMessageCard(props: {
 
     return (
         <View style={styles.container}>
-            <Text style={styles.headerText}>Review findings ({findings.length})</Text>
+            <Text style={styles.headerText}>{t('session.reviewFindings.title', { count: findings.length })}</Text>
             <Text style={styles.summaryText}>{props.payload.summary}</Text>
             {findings.map((f) => {
                 const isExpanded = expandedFindingId === f.id;
                 const location = formatFindingLocation(f);
+                const triageStatus = (draftStatusByFindingId[f.id] ?? 'untriaged') as ReviewTriageStatus | 'untriaged';
                 return (
                     <View key={f.id} style={styles.findingRow}>
                         <Pressable
@@ -138,7 +164,12 @@ export function ReviewFindingsMessageCard(props: {
                             style={styles.findingHeader}
                         >
                             <Text style={styles.findingTitleText}>
-                                [{draftStatusByFindingId[f.id] ?? 'untriaged'}] [{f.severity}/{f.category}] {f.title}
+                                {t('session.reviewFindings.findingTitle', {
+                                    status: statusLabel(triageStatus),
+                                    severity: String(f.severity ?? ''),
+                                    category: String(f.category ?? ''),
+                                    title: String(f.title ?? ''),
+                                })}
                             </Text>
                             {location ? (
                                 <Text style={styles.findingLocationText} numberOfLines={1}>
@@ -164,7 +195,7 @@ export function ReviewFindingsMessageCard(props: {
                                                 }
                                             >
                                                 <Text style={[styles.triageChipText, selected && styles.triageChipTextSelected]}>
-                                                    {status}
+                                                    {statusLabel(status)}
                                                 </Text>
                                             </Pressable>
                                         );
@@ -176,7 +207,7 @@ export function ReviewFindingsMessageCard(props: {
                                         onChangeText={(text) =>
                                             setDraftCommentByFindingId((prev) => ({ ...prev, [f.id]: String(text ?? '') }))
                                         }
-                                        placeholder="Optional comment for refinement"
+                                        placeholder={t('session.reviewFindings.refinementPlaceholder')}
                                         multiline
                                         style={styles.refinementInput as any}
                                     />
@@ -193,7 +224,9 @@ export function ReviewFindingsMessageCard(props: {
                 style={[styles.applyButton, (!hasDraft || isSaving) && styles.applyButtonDisabled]}
                 disabled={!hasDraft || isSaving}
             >
-                <Text style={styles.applyButtonText}>{isSaving ? 'Applying…' : 'Apply triage'}</Text>
+                <Text style={styles.applyButtonText}>
+                    {isSaving ? t('session.reviewFindings.actions.applying') : t('session.reviewFindings.actions.applyTriage')}
+                </Text>
             </Pressable>
 
             <Pressable
@@ -201,7 +234,9 @@ export function ReviewFindingsMessageCard(props: {
                 style={[styles.applyButton, (acceptedFindingIds.length === 0 || isApplying) && styles.applyButtonDisabled]}
                 disabled={acceptedFindingIds.length === 0 || isApplying}
             >
-                <Text style={styles.applyButtonText}>{isApplying ? 'Sending…' : 'Apply accepted findings'}</Text>
+                <Text style={styles.applyButtonText}>
+                    {isApplying ? t('session.reviewFindings.actions.sending') : t('session.reviewFindings.actions.applyAcceptedFindings')}
+                </Text>
             </Pressable>
         </View>
     );

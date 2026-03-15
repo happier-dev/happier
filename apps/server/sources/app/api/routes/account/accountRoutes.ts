@@ -5,6 +5,7 @@ import { registerAccountUsernameRoute } from "./registerAccountUsernameRoute";
 import { registerAccountSettingsRoutes } from "./registerAccountSettingsRoutes";
 import { registerAccountUsageRoutes } from "./registerAccountUsageRoutes";
 import { registerAccountEncryptionRoutes } from "./registerAccountEncryptionRoutes";
+import { registerAccountEncryptionMigrateRoutes } from "./registerAccountEncryptionMigrateRoutes";
 
 export function accountRoutes(app: Fastify): void {
     registerAccountProfileRoute(app);
@@ -12,5 +13,6 @@ export function accountRoutes(app: Fastify): void {
     registerAccountUsernameRoute(app);
     registerAccountSettingsRoutes(app);
     registerAccountEncryptionRoutes(app);
+    registerAccountEncryptionMigrateRoutes(app);
     registerAccountUsageRoutes(app);
 }

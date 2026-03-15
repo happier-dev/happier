@@ -51,6 +51,20 @@ export function getExpoStatePaths({ baseDir, kind, projectDir, stateFileName = '
   };
 }
 
+export function resolveExpoTmpDir({ env = process.env, defaultTmpDir, kind, projectDir } = {}) {
+  const def = String(defaultTmpDir ?? '').trim();
+  const base = (env?.HAPPIER_STACK_EXPO_SHARED_TMPDIR_BASE_DIR ?? '').toString().trim();
+  if (!base) return def;
+
+  const keyRaw = (env?.HAPPIER_STACK_EXPO_SHARED_TMPDIR_KEY ?? '').toString().trim();
+  const keySource = keyRaw || String(projectDir ?? '').trim() || def;
+  if (!keySource) return def;
+
+  const k = String(kind ?? '').trim() || 'expo';
+  const key = hashDir(keySource);
+  return join(base, 'tmp', k, key);
+}
+
 export async function ensureExpoIsolationEnv({ env, stateDir, expoHomeDir, tmpDir }) {
   await mkdir(stateDir, { recursive: true });
   await mkdir(expoHomeDir, { recursive: true });

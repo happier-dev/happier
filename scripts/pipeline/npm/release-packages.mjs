@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { parseArgs } from 'node:util';
+import { resolveWindowsCommandInvocation } from '@happier-dev/cli-common/process';
 
 function fail(message) {
   console.error(message);
@@ -83,12 +84,21 @@ function run(opts, cmd, args, extra) {
     return '';
   }
 
-  return execFileSync(cmd, args, {
+  const env = { ...process.env, ...(extra?.env ?? {}) };
+  const invocation = resolveWindowsCommandInvocation({
+    command: cmd,
+    args,
+    env,
+    resolveCommandOnPath: true,
+  });
+
+  return execFileSync(invocation.command, invocation.args, {
     cwd,
-    env: { ...process.env, ...(extra?.env ?? {}) },
+    env,
     encoding: 'utf8',
     stdio: 'inherit',
     timeout: 10 * 60_000,
+    windowsVerbatimArguments: invocation.windowsVerbatimArguments,
   });
 }
 
@@ -102,12 +112,20 @@ function npmPack(pkgDir, opts) {
     return { filename: 'DRY_RUN.tgz', tgzPath: path.join(pkgDir, 'DRY_RUN.tgz') };
   }
 
-  const raw = execFileSync('npm', ['pack', '--ignore-scripts', '--json', '--loglevel=error'], {
+  const env = { ...process.env };
+  const invocation = resolveWindowsCommandInvocation({
+    command: 'npm',
+    args: ['pack', '--ignore-scripts', '--json', '--loglevel=error'],
+    env,
+    resolveCommandOnPath: true,
+  });
+  const raw = execFileSync(invocation.command, invocation.args, {
     cwd: pkgDir,
-    env: { ...process.env },
+    env,
     encoding: 'utf8',
     stdio: ['ignore', 'pipe', 'inherit'],
     timeout: 10 * 60_000,
+    windowsVerbatimArguments: invocation.windowsVerbatimArguments,
   }).trim();
 
   /** @type {any} */

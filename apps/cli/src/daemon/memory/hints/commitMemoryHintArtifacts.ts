@@ -4,7 +4,7 @@ import type { Credentials } from '@/persistence';
 import { encryptSessionPayload, type SessionEncryptionContext } from '@/sessionControl/sessionEncryptionContext';
 import { commitSessionEncryptedMessage } from '@/sessionControl/sessionsHttp';
 
-import { buildSummaryShardLocalId, buildSynopsisLocalId } from '../artifacts/buildMemoryArtifactLocalId';
+import { buildSummaryShardLocalId, buildSynopsisLocalId } from '@/session/memoryArtifacts/buildMemoryArtifactLocalId';
 
 export type CommitMemoryHintArtifactsDeps = Readonly<{
   commitSessionEncryptedMessage: typeof commitSessionEncryptedMessage;
@@ -62,4 +62,3 @@ export async function commitMemoryHintArtifacts(params: Readonly<{
     });
   }
 }
-

@@ -5,7 +5,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import * as React from 'react';
 import { encodeBase64 } from "@/encryption/base64";
 import { authGetToken } from "@/auth/flows/getToken";
-import { router, useRouter } from "expo-router";
+import { router, useRouter, useLocalSearchParams } from "expo-router";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { getRandomBytesAsync } from "@/platform/cryptoRandom";
 import { useIsLandscape } from "@/utils/platform/responsive";
@@ -28,6 +28,7 @@ import { Text } from '@/components/ui/text/Text';
 import { buildDataKeyCredentialsForToken } from "@/auth/flows/buildDataKeyCredentialsForToken";
 import { digest } from "@/platform/digest";
 import { encodeHex } from "@/encryption/hex";
+import { resolveAppUrlScheme } from "@/utils/url/appScheme";
 
 
 export default function Home() {
@@ -41,6 +42,28 @@ export default function Home() {
 }
 
 function Authenticated() {
+    const params = useLocalSearchParams<{ id?: string | string[]; messageId?: string | string[]; jumpChildId?: string | string[] }>();
+    const router = useRouter();
+
+    const sessionId = typeof params.id === 'string' ? params.id : Array.isArray(params.id) ? (params.id[0] ?? null) : null;
+    const messageId = typeof params.messageId === 'string' ? params.messageId : Array.isArray(params.messageId) ? (params.messageId[0] ?? null) : null;
+    const jumpChildId = typeof params.jumpChildId === 'string' ? params.jumpChildId : Array.isArray(params.jumpChildId) ? (params.jumpChildId[0] ?? null) : null;
+
+    React.useEffect(() => {
+        const sid = String(sessionId ?? '').trim();
+        if (!sid) return;
+
+        const mid = String(messageId ?? '').trim();
+        if (mid) {
+            const child = String(jumpChildId ?? '').trim();
+            const qs = child ? `?jumpChildId=${encodeURIComponent(child)}` : '';
+            router.replace(`/session/${encodeURIComponent(sid)}/message/${encodeURIComponent(mid)}${qs}`);
+            return;
+        }
+
+        router.replace(`/session/${encodeURIComponent(sid)}`);
+    }, [jumpChildId, messageId, router, sessionId]);
+
     return <MainView variant="phone" />;
 }
 
@@ -224,14 +247,25 @@ function NotAuthenticated() {
 
     const createAccountViaProvider = async (providerId: string) => {
         try {
+            const proofBytes = await getRandomBytesAsync(32);
+            const proof = encodeBase64(proofBytes, 'base64url');
+            const proofHashBytes = await digest('SHA-256', new TextEncoder().encode(proof));
+            const proofHash = encodeHex(proofHashBytes).toLowerCase();
+
             const secretBytes = await getRandomBytesAsync(32);
-            const secret = encodeBase64(secretBytes, "base64url");
+            const secret = encodeBase64(secretBytes, 'base64url');
+            const signingKeyPair = sodium.crypto_sign_seed_keypair(secretBytes);
+            const publicKey = encodeBase64(signingKeyPair.publicKey);
+
             const snapshot = getActiveServerSnapshot();
             const serverUrl = snapshot.serverUrl ? String(snapshot.serverUrl).trim() : '';
-            await TokenStorage.setPendingExternalAuth({ provider: providerId, secret, returnTo: '/', ...(serverUrl ? { serverUrl } : {}) });
-
-            const kp = sodium.crypto_sign_seed_keypair(secretBytes);
-            const publicKey = encodeBase64(kp.publicKey);
+            await TokenStorage.setPendingExternalAuth({
+                provider: providerId,
+                proof,
+                secret,
+                returnTo: '/',
+                ...(serverUrl ? { serverUrl } : {}),
+            });
 
             const provider = getAuthProvider(providerId);
             if (!provider) {
@@ -240,7 +274,7 @@ function NotAuthenticated() {
                 return;
             }
 
-            const url = await provider.getExternalSignupUrl({ publicKey });
+            const url = await provider.getExternalAuthUrl({ mode: 'keyed', proofHash, publicKey });
             if (!isSafeExternalAuthUrl(url)) {
                 await TokenStorage.clearPendingExternalAuth();
                 await Modal.alert(t('common.error'), t('errors.operationFailed'));
@@ -276,19 +310,18 @@ function NotAuthenticated() {
             await TokenStorage.setPendingExternalAuth({
                 provider: providerId,
                 proof,
-                mode: 'keyless',
                 returnTo: '/',
                 ...(serverUrl ? { serverUrl } : {}),
             });
 
             const provider = getAuthProvider(providerId);
-            if (!provider || !provider.getExternalLoginUrl) {
+            if (!provider) {
                 await TokenStorage.clearPendingExternalAuth();
                 await Modal.alert(t('common.error'), t('errors.operationFailed'));
                 return;
             }
 
-            const url = await provider.getExternalLoginUrl({ proofHash });
+            const url = await provider.getExternalAuthUrl({ mode: 'keyless', proofHash });
             if (!isSafeExternalAuthUrl(url)) {
                 await TokenStorage.clearPendingExternalAuth();
                 await Modal.alert(t('common.error'), t('errors.operationFailed'));
@@ -323,7 +356,7 @@ function NotAuthenticated() {
             }
 
             if (Platform.OS !== 'web') {
-                const returnTo = 'happier:///mtls';
+                const returnTo = `${resolveAppUrlScheme()}:///mtls`;
                 const startUrl = `${serverUrl}/v1/auth/mtls/start?returnTo=${encodeURIComponent(returnTo)}`;
                 await Linking.openURL(startUrl);
                 return;

@@ -10,6 +10,15 @@ const clipboardMocks = vi.hoisted(() => ({
 
 vi.mock('expo-clipboard', () => clipboardMocks);
 
+vi.mock('expo-constants', () => ({
+  default: { expoConfig: null, manifest: null },
+}));
+
+vi.mock('expo-updates', () => ({
+  channel: null,
+  releaseChannel: null,
+}));
+
 vi.mock('react-native', () => ({
   View: (props: any) => React.createElement('View', props, props.children),
   Text: (props: any) => React.createElement('Text', props, props.children),
@@ -24,6 +33,10 @@ vi.mock('react-native', () => ({
 
 vi.mock('@expo/vector-icons', () => ({
   Ionicons: (props: any) => React.createElement('Ionicons', props, null),
+}));
+
+vi.mock('expo-image', () => ({
+  Image: (props: any) => React.createElement('Image', props, null),
 }));
 
 vi.mock('react-native-unistyles', () => ({
@@ -87,6 +100,10 @@ vi.mock('@/components/ui/buttons/RoundButton', () => ({
   RoundButton: (props: any) => React.createElement('RoundButton', props, null),
 }));
 
+vi.mock('@/config', () => ({
+  config: { variant: 'production', cliNpmDistTag: undefined },
+}));
+
 describe('SessionGettingStartedGuidanceView', () => {
   it('includes server profile setup when serverUrl is not cloud', async () => {
     const { SessionGettingStartedGuidanceView } = await import('./SessionGettingStartedGuidance');
@@ -117,6 +134,7 @@ describe('SessionGettingStartedGuidanceView', () => {
 
     expect(() => tree.root.findByProps({ testID: 'session-getting-started-copy-all' } as any)).toThrow();
     expect(() => tree.root.findByProps({ testID: 'session-getting-started-scroll' } as any)).not.toThrow();
+    expect(() => tree.root.findByProps({ testID: 'session-getting-started-logo' } as any)).not.toThrow();
     expect(() => tree.root.findByProps({ testID: 'session-getting-started-kind-connect_machine' } as any)).not.toThrow();
     expect(() => tree.root.findByProps({ testID: 'session-getting-started-step-create_session' } as any)).not.toThrow();
 

@@ -1,7 +1,6 @@
 import * as React from 'react';
-import { View, Platform } from 'react-native';
-import { StyleSheet } from 'react-native-unistyles';
-import { Text } from '@/components/ui/text/Text';
+import { CodeBlockView } from '@/components/ui/code/blocks/CodeBlockView';
+import { useSetting } from '@/sync/domains/state/storage';
 
 
 interface CodeViewProps {
@@ -13,23 +12,34 @@ export const CodeView = React.memo<CodeViewProps>(({
     code, 
     language
 }) => {
+    const jsonInferenceMaxBytes = useSetting('filesCodeViewJsonInferenceMaxBytes') as number | null;
+
+    const resolvedLanguage = React.useMemo(() => {
+        if (typeof language === 'string' && language.trim()) return language.trim();
+        const trimmed = String(code ?? '').trim();
+        if (!trimmed) return null;
+        // Best-effort: infer JSON for common tool input/output blocks (frequently `JSON.stringify`).
+        const budget = typeof jsonInferenceMaxBytes === 'number' ? jsonInferenceMaxBytes : 0;
+        const canInferJson = budget > 0 && trimmed.length <= budget;
+
+        if (canInferJson && (trimmed.startsWith('{') || trimmed.startsWith('['))) {
+            try {
+                JSON.parse(trimmed);
+                return 'json';
+            } catch {
+                // ignore
+            }
+        }
+        return null;
+    }, [code, jsonInferenceMaxBytes, language]);
+
     return (
-        <View style={styles.codeBlock}>
-            <Text style={styles.codeText}>{code}</Text>
-        </View>
+        <CodeBlockView
+            code={code}
+            language={resolvedLanguage}
+            selectable={true}
+            wrap={false}
+            showCopyButton={true}
+        />
     );
 });
-
-const styles = StyleSheet.create((theme) => ({
-    codeBlock: {
-        backgroundColor: theme.colors.surfaceHigh,
-        borderRadius: 6,
-        padding: 12,
-    },
-    codeText: {
-        fontFamily: Platform.select({ ios: 'Menlo', android: 'monospace', default: 'monospace' }),
-        fontSize: 12,
-        color: theme.colors.text,
-        lineHeight: 18,
-    },
-}));

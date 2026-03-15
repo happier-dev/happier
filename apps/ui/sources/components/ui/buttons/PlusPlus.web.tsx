@@ -3,6 +3,8 @@ import { View, ViewStyle } from 'react-native';
 import { Typography } from '@/constants/Typography';
 import { Text } from '@/components/ui/text/Text';
 
+const PLUS_PLUS = '++';
+
 
 interface PlusPlusProps {
     fontSize: number;
@@ -30,7 +32,7 @@ export const PlusPlus: React.FC<PlusPlusProps> = ({ fontSize, style }) => {
                     gradientTextStyle,
                 ]}
             >
-                ++
+                {PLUS_PLUS}
             </Text>
         </View>
     );

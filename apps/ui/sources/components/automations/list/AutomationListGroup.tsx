@@ -11,6 +11,7 @@ import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { Switch } from '@/components/ui/forms/Switch';
 import { ignoreNextRowPress } from '@/utils/ui/ignoreNextRowPress';
+import { t } from '@/text';
 import { formatAutomationNextRun, formatAutomationScheduleLabel } from './automationListFormatting';
 
 type Props = Readonly<{
@@ -55,7 +56,10 @@ export const AutomationListGroup = React.memo((props: Props) => {
                 });
             }, 2500);
         } catch (error) {
-            await Modal.alert('Error', error instanceof Error ? error.message : 'Failed to run automation.');
+            await Modal.alert(
+                t('common.error'),
+                error instanceof Error ? error.message : t('automations.detail.runFailed'),
+            );
             setRunNowStateById((prev) => {
                 const { [automationId]: _ignored, ...rest } = prev;
                 return rest;
@@ -71,7 +75,10 @@ export const AutomationListGroup = React.memo((props: Props) => {
                 await sync.resumeAutomation(automationId);
             }
         } catch (error) {
-            await Modal.alert('Error', error instanceof Error ? error.message : 'Failed to update automation.');
+            await Modal.alert(
+                t('common.error'),
+                error instanceof Error ? error.message : t('automations.edit.updateFailed'),
+            );
         }
     }, []);
 
@@ -90,7 +97,7 @@ export const AutomationListGroup = React.memo((props: Props) => {
                 const subtitle = [
                     formatAutomationScheduleLabel({ schedule: automation.schedule }),
                     formatAutomationNextRun(automation.nextRunAt ?? null),
-                    ...(runState === 'queued' ? ['Queued.'] : []),
+                    ...(runState === 'queued' ? [t('automations.detail.runNowQueuedLine')] : []),
                 ].join('\n');
 
                 const onPress = () => {
@@ -118,7 +125,7 @@ export const AutomationListGroup = React.memo((props: Props) => {
                                         { opacity: pressed ? 0.7 : 1 },
                                     ])}
                                     accessibilityRole="button"
-                                    accessibilityLabel="Run automation now"
+                                    accessibilityLabel={t('automations.detail.runNowTitle')}
                                 >
                                     {runState === 'running' ? (
                                         <ActivityIndicator size="small" color={theme.colors.textSecondary} />

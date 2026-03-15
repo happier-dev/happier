@@ -46,7 +46,4 @@ export function applyProviderSpawnExtrasToProcessEnv(params: Readonly<{
   if (extras.experimentalCodexAcp === true) {
     if (!hasTruthyEnv('HAPPIER_EXPERIMENTAL_CODEX_ACP')) process.env.HAPPIER_EXPERIMENTAL_CODEX_ACP = '1';
   }
-  if (extras.experimentalCodexResume === true) {
-    if (!hasTruthyEnv('HAPPIER_EXPERIMENTAL_CODEX_RESUME')) process.env.HAPPIER_EXPERIMENTAL_CODEX_RESUME = '1';
-  }
 }

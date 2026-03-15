@@ -7,6 +7,7 @@ import { StructuredResultView } from '@/components/tools/renderers/system/Struct
 import type { Message } from '@/sync/domains/messages/messageTypes';
 import { TaskLikeSummarySection } from './TaskLikeSummarySection';
 import { Text } from '@/components/ui/text/Text';
+import { t } from '@/text';
 
 
 type FindingsDigest = Readonly<{
@@ -59,7 +60,7 @@ function coerceTextMessages(messages: readonly Message[]): readonly string[] {
     return out;
 }
 
-export const SubAgentRunView = React.memo<ToolViewProps>(({ tool, messages, detailLevel }) => {
+export const SubAgentRunView = React.memo<ToolViewProps>(({ tool, messages, detailLevel, sessionId, messageId }) => {
     if (tool.state === 'running') {
         return (
             <TaskLikeSummarySection
@@ -67,7 +68,19 @@ export const SubAgentRunView = React.memo<ToolViewProps>(({ tool, messages, deta
                 metadata={null}
                 messages={messages ?? []}
                 detailLevel={detailLevel}
+                sessionId={sessionId}
+                messageId={messageId}
                 opts={{ hideResultInlineWhenBackgroundRun: false }}
+            />
+        );
+    }
+
+    if (tool.state === 'error' && tool.result) {
+        return (
+            <StructuredResultView
+                tool={{ ...tool, state: 'completed' }}
+                metadata={null}
+                messages={[]}
             />
         );
     }
@@ -88,7 +101,7 @@ export const SubAgentRunView = React.memo<ToolViewProps>(({ tool, messages, deta
             const summary = typeof (tool.result as any)?.summary === 'string' ? String((tool.result as any).summary) : '';
             return (
                 <View style={styles.container}>
-                    <Text style={styles.title}>Plan</Text>
+                    <Text style={styles.title}>{t('tools.subAgentRunView.planTitle')}</Text>
                     {summary ? <Text style={styles.line}>{summary}</Text> : null}
                     <StructuredResultView tool={tool} metadata={null} messages={[]} />
                 </View>
@@ -99,7 +112,7 @@ export const SubAgentRunView = React.memo<ToolViewProps>(({ tool, messages, deta
             const summary = typeof (tool.result as any)?.summary === 'string' ? String((tool.result as any).summary) : '';
             return (
                 <View style={styles.container}>
-                    <Text style={styles.title}>Delegate</Text>
+                    <Text style={styles.title}>{t('tools.subAgentRunView.delegateTitle')}</Text>
                     {summary ? <Text style={styles.line}>{summary}</Text> : null}
                     <StructuredResultView tool={tool} metadata={null} messages={[]} />
                 </View>
@@ -111,7 +124,7 @@ export const SubAgentRunView = React.memo<ToolViewProps>(({ tool, messages, deta
 
     return (
         <View style={styles.container}>
-            <Text style={styles.title}>Review digest</Text>
+            <Text style={styles.title}>{t('tools.subAgentRunView.reviewDigestTitle')}</Text>
             {digest.items.slice(0, 20).map((item, idx) => (
                 <Text key={item.id || String(idx)} style={styles.line}>
                     {item.title}

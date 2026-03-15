@@ -164,16 +164,20 @@ function mockCommonDeps() {
 }
 
 function mockSettings() {
-    vi.doMock('@/sync/domains/state/storage', () => ({
-        useSetting: (key: string) => {
-            if (key === 'profiles') return [];
-            if (key === 'agentInputEnterToSend') return true;
-            if (key === 'agentInputActionBarLayout') return 'scroll';
-            if (key === 'agentInputChipDensity') return 'labels';
-            if (key === 'sessionPermissionModeApplyTiming') return 'immediate';
-            return null;
-        },
-    }));
+    vi.doMock('@/sync/domains/state/storage', async (importOriginal) => {
+        const actual = await importOriginal<typeof import('@/sync/domains/state/storage')>();
+        return {
+            ...actual,
+            useSetting: (key: string) => {
+                if (key === 'profiles') return [];
+                if (key === 'agentInputEnterToSend') return true;
+                if (key === 'agentInputActionBarLayout') return 'scroll';
+                if (key === 'agentInputChipDensity') return 'labels';
+                if (key === 'sessionPermissionModeApplyTiming') return 'immediate';
+                return null;
+            },
+        };
+    });
 }
 
 function mockScrollEdgeFades(params: { canScrollX: boolean; showRight: boolean }) {

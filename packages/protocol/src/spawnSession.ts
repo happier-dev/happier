@@ -11,6 +11,7 @@ export const SPAWN_SESSION_ERROR_CODES = {
   CHILD_EXITED_BEFORE_WEBHOOK: 'CHILD_EXITED_BEFORE_WEBHOOK',
   SESSION_WEBHOOK_TIMEOUT: 'SESSION_WEBHOOK_TIMEOUT',
   SPAWN_FAILED: 'SPAWN_FAILED',
+  DAEMON_RPC_UNAVAILABLE: 'DAEMON_RPC_UNAVAILABLE',
   UNEXPECTED: 'UNEXPECTED',
 } as const;
 
@@ -20,4 +21,3 @@ export type SpawnSessionResult =
   | { type: 'success'; sessionId?: string }
   | { type: 'requestToApproveDirectoryCreation'; directory: string }
   | { type: 'error'; errorCode: SpawnSessionErrorCode; errorMessage: string };
-

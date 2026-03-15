@@ -6,6 +6,7 @@ import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { Item } from '@/components/ui/lists/Item';
 import { Switch } from '@/components/ui/forms/Switch';
 import { Modal } from '@/modal';
+import { t } from '@/text';
 
 import type { MemorySettingsV1 } from '@happier-dev/protocol';
 
@@ -20,13 +21,13 @@ export const MemorySettingsEmbeddingsSection = React.memo(function MemorySetting
 
     return (
         <ItemGroup
-            title="Embeddings"
-            footer="Optional: download a local model to improve semantic matches when using Deep mode."
+            title={t('memorySearchSettings.embeddings.groupTitle')}
+            footer={t('memorySearchSettings.embeddings.groupFooter')}
         >
             <Item
                 testID="memory-settings-embeddings-enabled-item"
-                title="Enable embeddings"
-                subtitle="Improves ranking for deep search (downloads a model on first use)"
+                title={t('memorySearchSettings.embeddings.enableTitle')}
+                subtitle={t('memorySearchSettings.embeddings.enableSubtitle')}
                 icon={<Ionicons name="sparkles-outline" size={29} color={theme.colors.success} />}
                 rightElement={(
                     <Switch
@@ -43,18 +44,18 @@ export const MemorySettingsEmbeddingsSection = React.memo(function MemorySetting
                 showChevron={false}
             />
             <Item
-                title="Embeddings model"
+                title={t('memorySearchSettings.embeddings.modelTitle')}
                 subtitle={settings.embeddings.modelId}
                 icon={<Ionicons name="cube-outline" size={29} color={theme.colors.accent.purple} />}
                 onPress={async () => {
                     const next = await Modal.prompt(
-                        'Embeddings model',
-                        'Enter a local transformers model id.',
+                        t('memorySearchSettings.embeddings.modelTitle'),
+                        t('memorySearchSettings.embeddings.promptBody'),
                         {
                             defaultValue: settings.embeddings.modelId,
-                            placeholder: 'Xenova/all-MiniLM-L6-v2',
-                            confirmText: 'Save',
-                            cancelText: 'Cancel',
+                            placeholder: t('memorySearchSettings.embeddings.modelPlaceholder'),
+                            confirmText: t('common.save'),
+                            cancelText: t('common.cancel'),
                         },
                     );
                     if (typeof next === 'string' && next.trim()) {

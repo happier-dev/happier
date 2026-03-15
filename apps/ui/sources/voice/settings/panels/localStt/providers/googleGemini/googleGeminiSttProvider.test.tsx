@@ -84,7 +84,7 @@ describe('GoogleGeminiSttSettings', () => {
 
     const modelDropdown = tree.root
       .findAllByType('DropdownMenu' as any)
-      .find((d: any) => d.props?.searchPlaceholder === 'Search models');
+      .find((d: any) => d.props?.searchPlaceholder === 'settingsVoice.local.googleGeminiStt.model.searchPlaceholder');
     expect(modelDropdown).toBeTruthy();
 
     await act(async () => {

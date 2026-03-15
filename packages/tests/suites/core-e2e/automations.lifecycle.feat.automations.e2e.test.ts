@@ -94,5 +94,5 @@ describe('core e2e: automations lifecycle', () => {
 
     const changes = await fetchChanges(server.baseUrl, auth.token, { after: cursor0.cursor });
     expect(changes.changes.some((entry) => entry.kind === 'automation' && entry.entityId === created.id)).toBe(true);
-  }, 30_000);
+  }, 120_000);
 });

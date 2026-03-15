@@ -3,6 +3,10 @@ import { describe, expect, it } from 'vitest';
 import { applyClaudeRemoteMetaState, DEFAULT_CLAUDE_REMOTE_META_STATE } from './claudeRemoteMetaState';
 
 describe('applyClaudeRemoteMetaState', () => {
+  it('defaults claudeRemoteSettingSourcesV2 to user+project+local (matches Claude Code default behavior)', () => {
+    expect((DEFAULT_CLAUDE_REMOTE_META_STATE as any).claudeRemoteSettingSourcesV2).toEqual(['user', 'project', 'local']);
+  });
+
   it('accepts null for claudeRemoteMaxThinkingTokens', () => {
     const next = applyClaudeRemoteMetaState(
       { ...DEFAULT_CLAUDE_REMOTE_META_STATE, claudeRemoteMaxThinkingTokens: 123 },
@@ -35,10 +39,18 @@ describe('applyClaudeRemoteMetaState', () => {
     expect(next2.claudeRemoteMaxThinkingTokens).toBe(100);
   });
 
-  it('ignores invalid settingSources values and keeps previous value', () => {
-    const prev = { ...DEFAULT_CLAUDE_REMOTE_META_STATE, claudeRemoteSettingSources: 'project' as const };
+  it('ignores invalid legacy settingSources values and keeps previous value', () => {
+    const prev = { ...DEFAULT_CLAUDE_REMOTE_META_STATE, claudeRemoteSettingSources: 'project' as const } as any;
     const next = applyClaudeRemoteMetaState(prev, { claudeRemoteSettingSources: 'workspace' });
-    expect(next.claudeRemoteSettingSources).toBe('project');
+    expect((next as any).claudeRemoteSettingSources).toBe('project');
+  });
+
+  it('accepts claudeRemoteSettingSourcesV2 arrays when provided', () => {
+    const next = applyClaudeRemoteMetaState(DEFAULT_CLAUDE_REMOTE_META_STATE as any, {
+      claudeRemoteSettingSourcesV2: ['local', 'user', 'project', 'local', 'bogus'],
+    });
+    // Normalized to stable order with invalid/dupes dropped.
+    expect((next as any).claudeRemoteSettingSourcesV2).toEqual(['user', 'project', 'local']);
   });
 
   it('applies supported boolean toggles when provided', () => {
@@ -50,6 +62,7 @@ describe('applyClaudeRemoteMetaState', () => {
       claudeRemoteEnableFileCheckpointing: true,
       claudeRemoteDisableTodos: true,
       claudeRemoteStrictMcpServerConfig: true,
+      claudeCodeExperimentalAgentTeamsEnabled: true,
     });
 
     expect(next).toMatchObject({
@@ -60,6 +73,7 @@ describe('applyClaudeRemoteMetaState', () => {
       claudeRemoteEnableFileCheckpointing: true,
       claudeRemoteDisableTodos: true,
       claudeRemoteStrictMcpServerConfig: true,
+      claudeCodeExperimentalAgentTeamsEnabled: true,
     });
   });
 

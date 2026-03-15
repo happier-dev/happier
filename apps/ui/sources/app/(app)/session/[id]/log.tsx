@@ -56,7 +56,7 @@ export default function SessionLogScreen() {
         try {
             const response = await sessionReadLogTail(session.id, { maxBytes: LOG_TAIL_MAX_BYTES });
             if (!response.success) {
-                setError(response.error || 'Failed to read session log');
+                setError(response.error || t('sessionLog.readFailed'));
                 setTailText('');
                 setTruncated(false);
                 return;
@@ -106,10 +106,10 @@ export default function SessionLogScreen() {
             <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 24 }}>
                 <Ionicons name="lock-closed-outline" size={42} color={theme.colors.textSecondary} />
                 <Text style={{ color: theme.colors.text, fontSize: 18, marginTop: 12, textAlign: 'center', ...Typography.default('semiBold') }}>
-                    Developer mode is required
+                    {t('sessionLog.devModeRequiredTitle')}
                 </Text>
                 <Text style={{ color: theme.colors.textSecondary, fontSize: 14, marginTop: 8, textAlign: 'center', ...Typography.default() }}>
-                    Enable developer mode in settings to view session logs.
+                    {t('sessionLog.devModeRequiredBody')}
                 </Text>
             </View>
         );
@@ -117,39 +117,39 @@ export default function SessionLogScreen() {
 
     return (
         <ItemList>
-            <ItemGroup title="Session Log">
+            <ItemGroup title={t('sessionLog.title')}>
                 <Item
-                    title="Log path"
-                    subtitle={resolvedLogPath || metadataLogPath || 'Unavailable'}
+                    title={t('sessionLog.logPathTitle')}
+                    subtitle={resolvedLogPath || metadataLogPath || t('sessionLog.unavailable')}
                     icon={<Ionicons name="document-text-outline" size={29} color={theme.colors.accent.indigo} />}
                     showChevron={false}
                     onPress={() => {
                         const path = resolvedLogPath || metadataLogPath;
                         if (!path) return;
-                        void copyText('Session log path', path);
+                        void copyText(t('sessionLog.logPathCopyLabel'), path);
                     }}
                 />
                 <Item
-                    title="Refresh log tail"
-                    subtitle={loading ? 'Loading…' : `Read last ${LOG_TAIL_MAX_BYTES.toLocaleString()} bytes`}
+                    title={t('sessionLog.refreshTailTitle')}
+                    subtitle={loading ? t('common.loading') : t('sessionLog.refreshTailSubtitle', { maxBytes: LOG_TAIL_MAX_BYTES.toLocaleString() })}
                     icon={<Ionicons name="refresh-outline" size={29} color={theme.colors.accent.blue} />}
                     onPress={() => void refreshTail()}
                     showChevron={false}
                 />
                 <Item
-                    title="Copy visible log"
-                    subtitle={tailText.length > 0 ? 'Copy current tail to clipboard' : 'No log content loaded'}
+                    title={t('sessionLog.copyVisibleTitle')}
+                    subtitle={tailText.length > 0 ? t('sessionLog.copyVisibleSubtitleLoaded') : t('sessionLog.copyVisibleSubtitleEmpty')}
                     icon={<Ionicons name="copy-outline" size={29} color={theme.colors.accent.blue} />}
-                    onPress={() => void copyText('Session log', tailText)}
+                    onPress={() => void copyText(t('sessionLog.copyLogLabel'), tailText)}
                     showChevron={false}
                     disabled={tailText.length === 0}
                 />
             </ItemGroup>
 
             {error ? (
-                <ItemGroup title="Log status">
+                <ItemGroup title={t('sessionLog.statusTitle')}>
                     <Item
-                        title="Read error"
+                        title={t('sessionLog.readErrorTitle')}
                         subtitle={error}
                         icon={<Ionicons name="alert-circle-outline" size={29} color={theme.colors.warningCritical} />}
                         showChevron={false}
@@ -157,10 +157,10 @@ export default function SessionLogScreen() {
                 </ItemGroup>
             ) : null}
 
-            <ItemGroup title={truncated ? 'Log tail (truncated)' : 'Log tail'}>
+            <ItemGroup title={truncated ? t('sessionLog.tailTitleTruncated') : t('sessionLog.tailTitle')}>
                 <View style={{ marginHorizontal: 16, marginBottom: 12 }}>
                     <CodeView
-                        code={tailText.length > 0 ? tailText : '(No log output yet)'}
+                        code={tailText.length > 0 ? tailText : t('sessionLog.noOutputYet')}
                         language="text"
                     />
                 </View>

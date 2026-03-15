@@ -75,15 +75,20 @@ export class HappierPipeline {
     artifactName: string,
     outJsonName: string,
     expoToken: Secret,
+    sentryAuthToken: Secret = dag.setSecret("SENTRY_AUTH_TOKEN", ""),
     easCliVersion: string = "18.0.1",
     nodeVersion: string = "22.14.0",
+    expoAppSlug: string = "",
+    expoAppScheme: string = "",
+    expoAppName: string = "",
+    expoAppBundleId: string = "",
   ): Promise<Directory> {
     const workdir = "/repo"
     const ext = path.extname(artifactName || "") || ".apk"
     const internalArtifact = `/tmp/happier-ui-mobile-android${ext}`
     const internalOutJson = "/tmp/eas_build_android.json"
 
-    const container = dag
+    let container = dag
       .container({ platform: "linux/amd64" })
       .from("ghcr.io/cirruslabs/android-sdk:34")
       .withExec([
@@ -114,6 +119,7 @@ export class HappierPipeline {
       .withWorkdir(workdir)
       .withExec(["git", "init"])
       .withSecretVariable("EXPO_TOKEN", expoToken)
+      .withSecretVariable("SENTRY_AUTH_TOKEN", sentryAuthToken)
       .withEnvVariable("EAS_CLI_VERSION", easCliVersion)
       .withEnvVariable("HAPPIER_INSTALL_SCOPE", "ui,protocol,agents")
       .withEnvVariable("HAPPIER_UI_VENDOR_WEB_ASSETS", "0")
@@ -132,6 +138,21 @@ export class HappierPipeline {
         "--prefer-offline",
         "--non-interactive",
       ])
+
+    if (expoAppSlug) {
+      container = container.withEnvVariable("EXPO_APP_SLUG", expoAppSlug)
+    }
+    if (expoAppScheme) {
+      container = container.withEnvVariable("EXPO_APP_SCHEME", expoAppScheme)
+    }
+    if (expoAppName) {
+      container = container.withEnvVariable("EXPO_APP_NAME", expoAppName)
+    }
+    if (expoAppBundleId) {
+      container = container.withEnvVariable("EXPO_APP_BUNDLE_ID", expoAppBundleId)
+    }
+
+    container = container
       .withExec([
         "node",
         "scripts/pipeline/expo/native-build.mjs",

@@ -120,10 +120,18 @@ In a TTY, `hstack auth login` is **local-first**:
 - it guides you through opening the stack’s web UI and connecting your terminal
 - if the stack isn’t running, it can start it in the background for you
 
+By default, this uses the **Expo web UI** for the approval flow. The first web build can take a few minutes (this is normal).
+
 Basic:
 
 ```bash
 hstack auth login
+```
+
+Headless / remote-friendly (prints a QR code / deep link for the mobile app, no browser required):
+
+```bash
+hstack auth login --method=mobile --no-open
 ```
 
 If you’re working with a non-`main` stack:
@@ -154,7 +162,12 @@ Notes:
 - `stack`: force using your stack’s web UI origin (env override → running Expo → stack server)
 - `expo`: use a running Expo dev server’s web UI (fails if no Expo web app is running)
 - `public`: use the stack’s public/server URL
-- `hosted`: use the happier-cli default web app URL (no stack override)
+- `hosted`: use the hosted web app (`https://app.happier.dev`) for the approval UI (most reliable when your stack isn’t serving a web UI)
+
+If `auto` selects Expo but Expo fails to become ready, `hstack` will:
+
+- fail closed if your stack has no public URL (hosted/mobile cannot reach `localhost`)
+- otherwise, prompt to either keep waiting (recommended) or fall back to `--webapp=hosted` / `--method=mobile` so you can still complete login
 
 ### Starting the stack when needed
 

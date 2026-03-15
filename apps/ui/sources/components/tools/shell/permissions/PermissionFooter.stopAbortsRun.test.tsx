@@ -32,6 +32,7 @@ vi.mock('react-native', () => ({
     Text: 'Text',
     TouchableOpacity: 'TouchableOpacity',
     ActivityIndicator: 'ActivityIndicator',
+    Alert: { alert: vi.fn() },
     Platform: { OS: 'ios', select: <T,>(value: { ios?: T }) => value.ios },
     StyleSheet: { create: <T,>(styles: T) => styles },
 }));
@@ -59,6 +60,7 @@ vi.mock('@expo/vector-icons', () => ({
 
 vi.mock('@/sync/ops', () => ({
     sessionAllow: vi.fn(async () => {}),
+    sessionAllowWithPermissionUpdates: vi.fn(async () => {}),
     sessionDeny: ops.sessionDeny,
     sessionAbort: ops.sessionAbort,
 }));
@@ -88,14 +90,14 @@ vi.mock('@/agents/catalog/permissionUiCopy', () => ({
                 protocol: 'codexDecision',
                 yesAlwaysAllowCommandKey: 'codex.permissions.yesAlwaysAllowCommand',
                 yesForSessionKey: 'codex.permissions.yesForSession',
-                stopAndExplainKey: 'codex.permissions.stopAndExplain',
+                stopKey: 'codex.permissions.stop',
             };
         }
         return {
             protocol: 'claude',
             yesAllowAllEditsKey: 'claude.permissions.yesAllowAllEdits',
             yesForToolKey: 'claude.permissions.yesForTool',
-            noTellAgentKey: 'claude.permissions.stopAndExplain',
+            stopKey: 'claude.permissions.stop',
         };
     },
 }));
@@ -118,7 +120,7 @@ describe('PermissionFooter stop action', () => {
             flavor: 'opencode' as const,
             toolName: 'bash',
             toolInput: { command: 'pwd' },
-            shouldSendFollowupPrompt: true,
+            shouldSendFollowupPrompt: false,
             shouldAbortRun: true,
             expectedDecision: 'abort' as const,
         },
@@ -128,7 +130,7 @@ describe('PermissionFooter stop action', () => {
             flavor: 'opencode' as const,
             toolName: 'Read',
             toolInput: { filepath: '/etc/hosts' },
-            shouldSendFollowupPrompt: true,
+            shouldSendFollowupPrompt: false,
             shouldAbortRun: true,
             shouldSetReadOnlyMode: true,
             expectedDecision: 'abort' as const,
@@ -139,7 +141,7 @@ describe('PermissionFooter stop action', () => {
             flavor: 'gemini' as const,
             toolName: 'execute',
             toolInput: { command: "bash -lc 'echo hi > /tmp/x'" },
-            shouldSendFollowupPrompt: true,
+            shouldSendFollowupPrompt: false,
             shouldAbortRun: true,
             shouldSetReadOnlyMode: false,
             expectedDecision: 'abort' as const,

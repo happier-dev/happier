@@ -196,7 +196,7 @@ describe('SidebarView header automations button', () => {
             tree = renderer.create(<SidebarView />);
         });
 
-        const button = findPressableByLabel(tree!, 'Open automations');
+        const button = findPressableByLabel(tree!, 'automations.openA11y');
         await act(async () => {
             button.props.onPress();
         });

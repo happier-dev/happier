@@ -92,6 +92,10 @@ vi.mock('@/sync/sync', () => ({
     sync: syncSpies,
 }));
 
+vi.mock('@/text', () => ({
+    t: (key: string) => key,
+}));
+
 async function flushRender(): Promise<void> {
     await act(async () => {
         await Promise.resolve();
@@ -148,9 +152,9 @@ describe('AutomationsScreen', () => {
         await flushRender();
 
         expect(syncSpies.refreshAutomations).toHaveBeenCalledTimes(1);
-        expect(JSON.stringify(tree!.toJSON())).toContain('No automations yet');
+        expect(JSON.stringify(tree!.toJSON())).toContain('automations.screen.emptyTitle');
 
-        const createButton = findPressableByLabel(tree!, 'Create automation');
+        const createButton = findPressableByLabel(tree!, 'automations.screen.createAutomationA11y');
         await act(async () => {
             createButton.props.onPress();
         });
@@ -178,7 +182,7 @@ describe('AutomationsScreen', () => {
         });
         await flushRender();
 
-        const runNow = findPressableByLabel(tree!, 'Run automation now');
+        const runNow = findPressableByLabel(tree!, 'automations.detail.runNowTitle');
         await act(async () => {
             runNow.props.onPress();
         });

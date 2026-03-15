@@ -26,6 +26,7 @@ describe('createActionExecutor', () => {
             sessionPermissionRespond: async () => ({}),
             sessionTargetPrimarySet: async () => ({}),
             sessionTargetTrackedSet: async () => ({}),
+            sessionFork: async () => ({}),
             sessionList: async () => ({}),
             sessionActivityGet: async () => ({}),
             sessionRecentMessagesGet: async () => ({}),

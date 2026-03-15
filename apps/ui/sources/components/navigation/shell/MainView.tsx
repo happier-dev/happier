@@ -4,7 +4,7 @@ import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { useFriendRequests, useSocketStatus } from '@/sync/domains/state/storage';
 import { useVisibleSessionListViewData } from '@/hooks/session/useVisibleSessionListViewData';
 import { useIsTablet } from '@/utils/platform/responsive';
-import { useRouter } from 'expo-router';
+import { usePathname, useRouter } from 'expo-router';
 import { SessionGettingStartedGuidance } from '@/components/sessions/guidance/SessionGettingStartedGuidance';
 import { SessionsList } from '@/components/sessions/shell/SessionsList';
 import { FABWide } from '@/components/ui/buttons/FABWide';
@@ -28,6 +28,8 @@ import { useAutomationsSupport } from '@/hooks/server/useAutomationsSupport';
 import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
 import { useTabState } from '@/hooks/ui/useTabState';
 import { Text } from '@/components/ui/text/Text';
+import { getFeatureBuildPolicyDecision } from '@/sync/domains/features/featureBuildPolicy';
+import type { FeatureId } from '@happier-dev/protocol';
 
 
 interface MainViewProps {
@@ -77,6 +79,25 @@ const styles = StyleSheet.create((theme) => ({
         flexBasis: 0,
         flexGrow: 1,
     },
+    sidebarEmptyHintContainer: {
+        flex: 1,
+        alignItems: 'center',
+        justifyContent: 'flex-start',
+        paddingHorizontal: 16,
+        paddingTop: 24,
+        gap: 8,
+    },
+    sidebarEmptyHintTitle: {
+        fontSize: 15,
+        color: theme.colors.text,
+        ...Typography.default('semiBold'),
+    },
+    sidebarEmptyHintSubtitle: {
+        fontSize: 13,
+        color: theme.colors.textSecondary,
+        textAlign: 'center',
+        ...Typography.default(),
+    },
     titleContainer: {
         flex: 1,
         alignItems: 'center',
@@ -109,7 +130,25 @@ const styles = StyleSheet.create((theme) => ({
         alignItems: 'center',
         gap: 2,
     },
+    primaryPaneFallback: {
+        flex: 1,
+        flexBasis: 0,
+        flexGrow: 1,
+        alignItems: 'center',
+        justifyContent: 'center',
+        paddingHorizontal: 20,
+        backgroundColor: theme.colors.groupped.background,
+    },
+    primaryPaneFallbackText: {
+        textAlign: 'center',
+        maxWidth: 520,
+        color: theme.colors.textSecondary,
+        fontSize: 15,
+        ...Typography.default(),
+    },
 }));
+
+const SESSION_GETTING_STARTED_GUIDANCE_FEATURE_ID = 'app.ui.sessionGettingStartedGuidance' as const satisfies FeatureId;
 
 // Tab header configuration (zen excluded as that tab is disabled)
 const TAB_TITLES = {
@@ -210,6 +249,7 @@ export const MainView = React.memo(({ variant }: MainViewProps) => {
     const sessionListViewData = useVisibleSessionListViewData();
     const isTablet = useIsTablet();
     const router = useRouter();
+    const pathname = usePathname();
     const friendRequests = useFriendRequests();
     const inboxFriendsEnabled = useFriendsEnabled();
     const voiceEnabled = useFeatureEnabled('voice');
@@ -267,10 +307,18 @@ export const MainView = React.memo(({ variant }: MainViewProps) => {
 
         // Empty state
         if (sessionListViewData.length === 0) {
+            const suppressSidebarGuidance = isTablet && pathname === '/';
             return (
                 <View style={styles.sidebarContentContainer}>
                     <View style={styles.emptyStateContainer}>
-                        <SessionGettingStartedGuidance variant="sidebar" />
+                        {suppressSidebarGuidance ? (
+                            <View style={styles.sidebarEmptyHintContainer}>
+                                <Text style={styles.sidebarEmptyHintTitle}>{t('components.emptySessionsTablet.noActiveSessions')}</Text>
+                                <Text style={styles.sidebarEmptyHintSubtitle}>{t('components.emptySessionsTablet.startNewSessionDescription')}</Text>
+                            </View>
+                        ) : (
+                            <SessionGettingStartedGuidance variant="sidebar" />
+                        )}
                     </View>
                 </View>
             );
@@ -287,7 +335,17 @@ export const MainView = React.memo(({ variant }: MainViewProps) => {
     // Phone variant
     // Tablet in phone mode - special case (when showing index view on tablets, show empty view)
     if (isTablet) {
-        return <SessionGettingStartedGuidance variant="primaryPane" />;
+        const buildPolicyDecision = getFeatureBuildPolicyDecision(SESSION_GETTING_STARTED_GUIDANCE_FEATURE_ID);
+        if (buildPolicyDecision !== 'deny') {
+            return <SessionGettingStartedGuidance variant="primaryPane" />;
+        }
+        return (
+            <View testID="mainview-tablet-primary-pane-fallback" style={styles.primaryPaneFallback}>
+                <Text style={styles.primaryPaneFallbackText}>
+                    {t('components.emptyMainScreen.readyToCode')}
+                </Text>
+            </View>
+        );
     }
 
     // Regular phone mode with tabs

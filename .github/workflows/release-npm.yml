@@ -11,7 +11,7 @@ on:
           - production
           - preview
       source_ref:
-        description: "Promotion — Source ref to release from (auto: preview→dev, production→main)"
+        description: "Promotion — Source ref to release from (auto: preview→preview, production→main)"
         required: true
         default: auto
         type: string
@@ -55,7 +55,7 @@ on:
         required: true
         type: string
       source_ref:
-        description: "Promotion — Source ref to release from (auto: preview→dev, production→main)"
+        description: "Promotion — Source ref to release from (auto: preview→preview, production→main)"
         required: false
         default: auto
         type: string
@@ -165,14 +165,14 @@ jobs:
           src="${INPUT_SOURCE_REF}"
           if [ "$src" = "auto" ]; then
             if [ "$channel" = "preview" ]; then
-              src="dev"
+              src="preview"
             else
               src="main"
             fi
           fi
 
-          if [ "$channel" = "preview" ] && [ "$src" != "dev" ]; then
-            echo "Preview releases must run from dev (got source_ref='${src}')." >&2
+          if [ "$channel" = "preview" ] && [ "$src" != "preview" ]; then
+            echo "Preview releases must run from preview (got source_ref='${src}')." >&2
             exit 1
           fi
           if [ "$channel" = "production" ] && [ "$src" != "main" ]; then
@@ -189,9 +189,9 @@ jobs:
             exit 0
           fi
           case "${GITHUB_REF_NAME}" in
-            dev|main) ;;
+            dev|preview|main) ;;
             *)
-              echo "Refusing workflow_dispatch from untrusted ref '${GITHUB_REF_NAME}'. Use dev or main." >&2
+              echo "Refusing workflow_dispatch from untrusted ref '${GITHUB_REF_NAME}'. Use dev, preview, or main." >&2
               exit 1
               ;;
           esac

@@ -96,6 +96,8 @@ export type DropdownMenuProps = Readonly<{
 
     items: ReadonlyArray<DropdownMenuItem>;
     onSelect: (itemId: string) => void;
+    /** When false, selecting an item does not close the popover (useful for multi-select menus). */
+    closeOnSelect?: boolean;
     /**
      * Optional: the currently-selected item ID. Used for initial keyboard highlight.
      * If it points to a disabled item, it is ignored.
@@ -189,6 +191,7 @@ export function DropdownMenu(props: DropdownMenuProps) {
         }));
     }, [props.items, rowVariant, theme.colors.textSecondary]);
 
+    const closeOnSelect = props.closeOnSelect !== false;
     const onRequestClose = React.useCallback(() => props.onOpenChange(false), [props]);
     const schedule = React.useCallback((cb: () => void) => {
         // Opening an overlay on the same click can sometimes immediately trigger a backdrop close
@@ -315,10 +318,10 @@ export function DropdownMenu(props: DropdownMenuProps) {
                 handleCreate();
                 return;
             }
-            props.onOpenChange(false);
+            if (closeOnSelect) props.onOpenChange(false);
             props.onSelect(item.id);
         });
-    }, [handleCreate, handleKeyPress, props]);
+    }, [closeOnSelect, handleCreate, handleKeyPress, props]);
 
     return (
         <View
@@ -406,7 +409,7 @@ export function DropdownMenu(props: DropdownMenuProps) {
                                             handleCreate();
                                             return;
                                         }
-                                        props.onOpenChange(false);
+                                        if (closeOnSelect) props.onOpenChange(false);
                                         props.onSelect(item.id);
                                     }}
                                     rowVariant={rowVariant}

@@ -57,13 +57,22 @@ describe("sessionWriteService", () => {
             sessionMessage: {
                 findUnique: vi.fn(),
                 create: vi.fn(),
+                update: vi.fn(),
             },
         };
     });
 
     describe("createSessionMessage", () => {
         it("returns existing message for (sessionId, localId) without writing or marking changes", async () => {
-            currentTx.sessionMessage.findUnique.mockResolvedValue({ id: "m1", seq: 4, localId: "l1", createdAt: new Date(1) });
+            currentTx.sessionMessage.findUnique.mockResolvedValue({
+                id: "m1",
+                seq: 4,
+                localId: "l1",
+                sidechainId: null,
+                content: { t: "encrypted", c: "c1" },
+                createdAt: new Date(1),
+                updatedAt: new Date(2),
+            });
             currentTx.session.findUnique.mockResolvedValue({ accountId: "u1" });
             currentTx.sessionShare.findUnique.mockResolvedValue(null);
 
@@ -77,12 +86,110 @@ describe("sessionWriteService", () => {
             expect(res).toEqual({
                 ok: true,
                 didWrite: false,
-                message: { id: "m1", seq: 4, localId: "l1", createdAt: new Date(1) },
+                didUpdate: false,
+                message: {
+                    id: "m1",
+                    seq: 4,
+                    localId: "l1",
+                    sidechainId: null,
+                    content: { t: "encrypted", c: "c1" },
+                    createdAt: new Date(1),
+                    updatedAt: new Date(2),
+                },
                 participantCursors: [],
             });
             expect(currentTx.session.update).not.toHaveBeenCalled();
             expect(currentTx.sessionMessage.create).not.toHaveBeenCalled();
+            expect(currentTx.sessionMessage.update).not.toHaveBeenCalled();
             expect(markAccountChanged).not.toHaveBeenCalled();
+        });
+
+        it("rejects (sessionId, localId) reuse across sidechains", async () => {
+            currentTx.sessionMessage.findUnique.mockResolvedValue({
+                id: "m1",
+                seq: 4,
+                localId: "l1",
+                sidechainId: "sc-1",
+                content: { t: "encrypted", c: "c1" },
+                createdAt: new Date(1),
+                updatedAt: new Date(2),
+            });
+            currentTx.session.findUnique.mockResolvedValue({ accountId: "u1" });
+            currentTx.sessionShare.findUnique.mockResolvedValue(null);
+
+            const res = await createSessionMessage({
+                actorUserId: "u1",
+                sessionId: "s1",
+                ciphertext: "c1",
+                localId: "l1",
+                sidechainId: null,
+            });
+
+            expect(res).toEqual({ ok: false, error: "invalid-params" });
+            expect(currentTx.session.update).not.toHaveBeenCalled();
+            expect(currentTx.sessionMessage.create).not.toHaveBeenCalled();
+            expect(currentTx.sessionMessage.update).not.toHaveBeenCalled();
+            expect(markAccountChanged).not.toHaveBeenCalled();
+        });
+
+        it("updates existing message content for (sessionId, localId) when payload changes", async () => {
+            const createdAt = new Date("2020-01-01T00:00:00.000Z");
+            const updatedAt = new Date("2020-01-01T00:00:00.000Z");
+
+            currentTx.sessionMessage.findUnique.mockResolvedValue({
+                id: "m1",
+                seq: 4,
+                localId: "l1",
+                sidechainId: null,
+                content: { t: "encrypted", c: "prev" },
+                createdAt,
+                updatedAt,
+            });
+            currentTx.session.findUnique.mockResolvedValue({ accountId: "u1" });
+            currentTx.sessionShare.findUnique.mockResolvedValue(null);
+
+            currentTx.sessionMessage.update.mockResolvedValue({
+                id: "m1",
+                seq: 4,
+                localId: "l1",
+                sidechainId: null,
+                content: { t: "encrypted", c: "next" },
+                createdAt,
+                updatedAt,
+            });
+
+            getSessionParticipantUserIds.mockResolvedValue(["u1", "u2"]);
+            markAccountChanged.mockResolvedValueOnce(101).mockResolvedValueOnce(102);
+
+            const res = await createSessionMessage({
+                actorUserId: "u1",
+                sessionId: "s1",
+                ciphertext: "next",
+                localId: "l1",
+            });
+
+            expect(res.ok).toBe(true);
+            if (!res.ok) throw new Error("expected ok");
+
+            expect(res).toEqual({
+                ok: true,
+                didWrite: false,
+                didUpdate: true,
+                message: expect.objectContaining({ id: "m1", seq: 4, localId: "l1" }),
+                participantCursors: [
+                    { accountId: "u1", cursor: 101 },
+                    { accountId: "u2", cursor: 102 },
+                ],
+            });
+
+            expect(currentTx.session.update).not.toHaveBeenCalled();
+            expect(currentTx.sessionMessage.create).not.toHaveBeenCalled();
+            expect(currentTx.sessionMessage.update).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    where: { id: "m1" },
+                    data: { content: { t: "encrypted", c: "next" }, sidechainId: null },
+                }),
+            );
         });
 
         it("rejects message creation if actor has no edit access", async () => {
@@ -112,6 +219,7 @@ describe("sessionWriteService", () => {
                 id: "m1",
                 seq: 10,
                 localId: "l1",
+                sidechainId: null,
                 content: { t: "encrypted", c: "cipher" },
                 createdAt,
                 updatedAt,
@@ -129,6 +237,7 @@ describe("sessionWriteService", () => {
 
             expect(res.ok).toBe(true);
             if (!res.ok || res.didWrite === false) throw new Error("expected ok + didWrite");
+            expect(res.didUpdate).toBe(false);
 
             expect(res.message.id).toBe("m1");
             expect(res.message.seq).toBe(10);
@@ -159,7 +268,15 @@ describe("sessionWriteService", () => {
 
             dbSessionFindUnique.mockResolvedValue({ accountId: "u1" });
             dbSessionShareFindUnique.mockResolvedValue(null);
-            dbFindUnique.mockResolvedValue({ id: "mExisting", seq: 9, localId: "l1", createdAt: new Date(1) });
+            dbFindUnique.mockResolvedValue({
+                id: "mExisting",
+                seq: 9,
+                localId: "l1",
+                sidechainId: null,
+                content: { t: "encrypted", c: "cipher" },
+                createdAt: new Date(1),
+                updatedAt: new Date(1),
+            });
 
             const res = await createSessionMessage({
                 actorUserId: "u1",
@@ -171,9 +288,83 @@ describe("sessionWriteService", () => {
             expect(res).toEqual({
                 ok: true,
                 didWrite: false,
-                message: { id: "mExisting", seq: 9, localId: "l1", createdAt: new Date(1) },
+                didUpdate: false,
+                message: {
+                    id: "mExisting",
+                    seq: 9,
+                    localId: "l1",
+                    sidechainId: null,
+                    content: { t: "encrypted", c: "cipher" },
+                    createdAt: new Date(1),
+                    updatedAt: new Date(1),
+                },
                 participantCursors: [],
             });
+        });
+
+        it("handles localId races by updating the winner row when content differs", async () => {
+            currentTx.sessionMessage.findUnique.mockResolvedValue(null);
+            currentTx.session.findUnique.mockResolvedValue({ accountId: "u1" });
+            currentTx.session.update.mockResolvedValue({ seq: 10 });
+            currentTx.sessionMessage.create.mockRejectedValue({ code: "P2002" });
+
+            dbSessionFindUnique.mockResolvedValue({ accountId: "u1" });
+            dbSessionShareFindUnique.mockResolvedValue(null);
+            dbFindUnique.mockResolvedValue({
+                id: "mExisting",
+                seq: 9,
+                localId: "l1",
+                sidechainId: null,
+                content: { t: "encrypted", c: "prev" },
+                createdAt: new Date(1),
+                updatedAt: new Date(1),
+            });
+
+            currentTx.sessionMessage.update.mockResolvedValue({
+                id: "mExisting",
+                seq: 9,
+                localId: "l1",
+                sidechainId: null,
+                content: { t: "encrypted", c: "next" },
+                createdAt: new Date(1),
+                updatedAt: new Date(2),
+            });
+
+            getSessionParticipantUserIds.mockResolvedValue(["u1", "u2"]);
+            markAccountChanged.mockResolvedValueOnce(101).mockResolvedValueOnce(102);
+
+            const res = await createSessionMessage({
+                actorUserId: "u1",
+                sessionId: "s1",
+                ciphertext: "next",
+                localId: "l1",
+            });
+
+            expect(res).toEqual({
+                ok: true,
+                didWrite: false,
+                didUpdate: true,
+                message: {
+                    id: "mExisting",
+                    seq: 9,
+                    localId: "l1",
+                    sidechainId: null,
+                    content: { t: "encrypted", c: "next" },
+                    createdAt: new Date(1),
+                    updatedAt: new Date(2),
+                },
+                participantCursors: [
+                    { accountId: "u1", cursor: 101 },
+                    { accountId: "u2", cursor: 102 },
+                ],
+            });
+
+            expect(currentTx.sessionMessage.update).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    where: { id: "mExisting" },
+                    data: { content: { t: "encrypted", c: "next" }, sidechainId: null },
+                }),
+            );
         });
 
         it("rejects encrypted writes when the session encryptionMode is plain (with a stable code)", async () => {

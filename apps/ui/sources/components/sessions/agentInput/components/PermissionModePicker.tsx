@@ -4,6 +4,7 @@ import { Pressable, View } from 'react-native';
 import type { PermissionMode } from '@/sync/domains/permissions/permissionTypes';
 import type { EffectivePermissionModeDescription } from '@/sync/domains/permissions/describeEffectivePermissionMode';
 import { Text } from '@/components/ui/text/Text';
+import { t } from '@/text';
 
 
 export type PermissionModePickerOption = Readonly<{
@@ -46,7 +47,7 @@ export function PermissionModePicker(props: {
             <Text style={props.styles.overlaySectionTitle}>{props.title}</Text>
             <View style={{ paddingHorizontal: 16 }}>
                 <Text style={[props.styles.overlayOptionDescription]}>
-                    Effective: {props.effectivePermissionLabel}
+                    {t('agentInput.permissionMode.effectiveLabel', { label: props.effectivePermissionLabel })}
                 </Text>
                 {props.effectivePermissionPolicy.notes.map((note, idx) => (
                     <Text key={idx} style={props.styles.overlayOptionDescription}>

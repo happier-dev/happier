@@ -6,6 +6,7 @@ import { projectPath } from '@/projectPath';
 
 import { applyDaemonServiceInstallPlan, applyDaemonServiceUninstallPlan } from './apply';
 import { planDaemonServiceInstall, planDaemonServiceUninstall } from './plan';
+import type { DaemonServiceMode } from './plan';
 
 type SupportedPlatform = 'darwin' | 'linux' | 'win32';
 
@@ -26,6 +27,8 @@ export async function installDaemonService(options: Readonly<{
   uid?: number;
   userHomeDir?: string;
   happierHomeDir?: string;
+  mode?: DaemonServiceMode;
+  systemUser?: string;
   instanceId?: string;
   serverUrl?: string;
   webappUrl?: string;
@@ -44,14 +47,18 @@ export async function installDaemonService(options: Readonly<{
   const userHomeDir = options.userHomeDir ?? homedir();
   const happierHomeDir = options.happierHomeDir ?? configuration.happyHomeDir;
   const instanceId = options.instanceId ?? configuration.activeServerId;
-  const serverUrl = options.serverUrl ?? configuration.serverUrl;
+  // Daemon should prefer the local API URL when available (e.g. canonical HTTPS URL + local loopback HTTP).
+  // We express this using env override semantics: HAPPIER_PUBLIC_SERVER_URL (canonical) + HAPPIER_SERVER_URL (API).
+  const serverUrl = options.serverUrl ?? configuration.apiServerUrl;
   const webappUrl = options.webappUrl ?? configuration.webappUrl;
-  const publicServerUrl = options.publicServerUrl ?? configuration.publicServerUrl;
+  const publicServerUrl = options.publicServerUrl ?? configuration.serverUrl;
   const nodePath = options.nodePath ?? process.execPath;
   const entryPath = options.entryPath ?? (looksLikeNodeExecPath(nodePath) ? join(projectPath(), 'dist', 'index.mjs') : '');
 
   const plan = planDaemonServiceInstall({
     platform,
+    mode: options.mode,
+    systemUser: options.systemUser,
     instanceId,
     uid,
     userHomeDir,
@@ -70,6 +77,7 @@ export async function uninstallDaemonService(options: Readonly<{
   uid?: number;
   userHomeDir?: string;
   happierHomeDir?: string;
+  mode?: DaemonServiceMode;
   instanceId?: string;
   runCommands?: boolean;
 }> = {}): Promise<void> {
@@ -86,6 +94,7 @@ export async function uninstallDaemonService(options: Readonly<{
 
   const plan = planDaemonServiceUninstall({
     platform,
+    mode: options.mode,
     instanceId,
     uid,
     userHomeDir,

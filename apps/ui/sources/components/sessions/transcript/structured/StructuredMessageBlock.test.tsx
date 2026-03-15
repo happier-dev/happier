@@ -1,10 +1,14 @@
 import React from 'react';
 import renderer, { act } from 'react-test-renderer';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import { StructuredMessageBlock } from './StructuredMessageBlock';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
+
+vi.mock('@/components/ui/text/Text', () => ({
+    Text: (props: any) => React.createElement('Text', props, props.children),
+}));
 
 describe('StructuredMessageBlock', () => {
     it('returns null for unknown kinds', () => {
@@ -56,5 +60,46 @@ describe('StructuredMessageBlock', () => {
         const serialized = JSON.stringify(tree!.toJSON());
         expect(serialized).toContain('Review comments');
         expect(serialized).toContain('src/a.ts');
+    });
+
+    it('renders participant message card for valid payload', () => {
+        let tree: renderer.ReactTestRenderer | null = null;
+        act(() => {
+            tree = renderer.create(
+                <StructuredMessageBlock
+                    message={{
+                        kind: 'user-text',
+                        id: 'm1',
+                        localId: null,
+                        createdAt: 1,
+                        text: 'hello there',
+                        meta: {
+                            happier: {
+                                kind: 'participant_message.v1',
+                                payload: {
+                                    recipient: {
+                                        kind: 'agent_team_member',
+                                        teamId: 'team_1',
+                                        memberId: 'agent_1',
+                                        memberLabel: 'Alice',
+                                    },
+                                },
+                            },
+                        },
+                    } as any}
+                    sessionId="s1"
+                    onJumpToAnchor={() => {}}
+                />,
+            );
+        });
+
+        const serialized = JSON.stringify(tree!.toJSON());
+        expect(serialized).toContain('To:');
+        expect(serialized).toContain('Alice');
+        expect(serialized).toContain('hello there');
+
+        const findTextNode = (text: string) =>
+            tree!.root.findAll((n: any) => n.type === 'Text' && n.props?.children === text)[0]!;
+        expect(findTextNode('hello there').props.selectable).toBe(true);
     });
 });

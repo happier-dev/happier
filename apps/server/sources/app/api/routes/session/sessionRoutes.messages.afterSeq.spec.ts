@@ -1,16 +1,21 @@
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeAll, beforeEach, describe, expect, it } from "vitest";
 
 import {
     catchupFetchesInc,
     catchupReturnedInc,
     checkSessionAccess,
     createSessionRouteReply,
+    preloadSessionRoutes,
     registerSessionRoutesAndGetHandler,
     resetSessionRouteMocks,
     sessionMessageFindMany,
 } from "./sessionRoutes.testkit";
 
 describe("sessionRoutes v1 messages pagination", () => {
+    beforeAll(async () => {
+        await preloadSessionRoutes();
+    }, 120_000);
+
     beforeEach(() => {
         resetSessionRouteMocks();
         checkSessionAccess.mockReset();
@@ -24,9 +29,9 @@ describe("sessionRoutes v1 messages pagination", () => {
 
         const t0 = new Date(1);
         sessionMessageFindMany.mockResolvedValue([
-            { id: "m3", seq: 3, localId: null, content: { t: "encrypted", c: "c3" }, createdAt: t0, updatedAt: t0 },
-            { id: "m4", seq: 4, localId: null, content: { t: "encrypted", c: "c4" }, createdAt: t0, updatedAt: t0 },
-            { id: "m5", seq: 5, localId: null, content: { t: "encrypted", c: "c5" }, createdAt: t0, updatedAt: t0 },
+            { id: "m3", seq: 3, localId: null, sidechainId: null, content: { t: "encrypted", c: "c3" }, createdAt: t0, updatedAt: t0 },
+            { id: "m4", seq: 4, localId: null, sidechainId: null, content: { t: "encrypted", c: "c4" }, createdAt: t0, updatedAt: t0 },
+            { id: "m5", seq: 5, localId: null, sidechainId: null, content: { t: "encrypted", c: "c5" }, createdAt: t0, updatedAt: t0 },
         ]);
 
         const { handler } = await registerSessionRoutesAndGetHandler("GET", "/v1/sessions/:sessionId/messages");
@@ -46,7 +51,7 @@ describe("sessionRoutes v1 messages pagination", () => {
 
         expect(sessionMessageFindMany).toHaveBeenCalledWith(
             expect.objectContaining({
-                where: { sessionId: "s1", seq: { gt: 2 } },
+                where: { sessionId: "s1", sidechainId: null, seq: { gt: 2 } },
                 orderBy: { seq: "asc" },
                 take: 3,
             }),
@@ -68,7 +73,7 @@ describe("sessionRoutes v1 messages pagination", () => {
 
         const t0 = new Date(1);
         sessionMessageFindMany.mockResolvedValue([
-            { id: "m3", seq: 3, localId: null, content: { t: "encrypted", c: "c3" }, createdAt: t0, updatedAt: t0 },
+            { id: "m3", seq: 3, localId: null, sidechainId: null, content: { t: "encrypted", c: "c3" }, createdAt: t0, updatedAt: t0 },
         ]);
 
         const { handler } = await registerSessionRoutesAndGetHandler("GET", "/v1/sessions/:sessionId/messages");
@@ -101,9 +106,9 @@ describe("sessionRoutes v1 messages pagination", () => {
 
         const t0 = new Date(1);
         sessionMessageFindMany.mockResolvedValue([
-            { id: "m5", seq: 5, localId: null, content: { t: "encrypted", c: "c5" }, createdAt: t0, updatedAt: t0 },
-            { id: "m4", seq: 4, localId: null, content: { t: "encrypted", c: "c4" }, createdAt: t0, updatedAt: t0 },
-            { id: "m3", seq: 3, localId: null, content: { t: "encrypted", c: "c3" }, createdAt: t0, updatedAt: t0 },
+            { id: "m5", seq: 5, localId: null, sidechainId: null, content: { t: "encrypted", c: "c5" }, createdAt: t0, updatedAt: t0 },
+            { id: "m4", seq: 4, localId: null, sidechainId: null, content: { t: "encrypted", c: "c4" }, createdAt: t0, updatedAt: t0 },
+            { id: "m3", seq: 3, localId: null, sidechainId: null, content: { t: "encrypted", c: "c3" }, createdAt: t0, updatedAt: t0 },
         ]);
 
         const { handler } = await registerSessionRoutesAndGetHandler("GET", "/v1/sessions/:sessionId/messages");
@@ -123,7 +128,7 @@ describe("sessionRoutes v1 messages pagination", () => {
 
         expect(sessionMessageFindMany).toHaveBeenCalledWith(
             expect.objectContaining({
-                where: { sessionId: "s1" },
+                where: { sessionId: "s1", sidechainId: null },
                 orderBy: { seq: "desc" },
                 take: 3,
             }),
@@ -145,8 +150,8 @@ describe("sessionRoutes v1 messages pagination", () => {
 
         const t0 = new Date(1);
         sessionMessageFindMany.mockResolvedValue([
-            { id: "m4", seq: 4, localId: null, content: { t: "encrypted", c: "c4" }, createdAt: t0, updatedAt: t0 },
-            { id: "m3", seq: 3, localId: null, content: { t: "encrypted", c: "c3" }, createdAt: t0, updatedAt: t0 },
+            { id: "m4", seq: 4, localId: null, sidechainId: null, content: { t: "encrypted", c: "c4" }, createdAt: t0, updatedAt: t0 },
+            { id: "m3", seq: 3, localId: null, sidechainId: null, content: { t: "encrypted", c: "c3" }, createdAt: t0, updatedAt: t0 },
         ]);
 
         const { handler } = await registerSessionRoutesAndGetHandler("GET", "/v1/sessions/:sessionId/messages");
@@ -166,7 +171,7 @@ describe("sessionRoutes v1 messages pagination", () => {
 
         expect(sessionMessageFindMany).toHaveBeenCalledWith(
             expect.objectContaining({
-                where: { sessionId: "s1", seq: { lt: 5 } },
+                where: { sessionId: "s1", sidechainId: null, seq: { lt: 5 } },
                 orderBy: { seq: "desc" },
                 take: 51,
             }),
@@ -181,5 +186,71 @@ describe("sessionRoutes v1 messages pagination", () => {
             nextBeforeSeq: null,
             nextAfterSeq: null,
         });
+    });
+
+    it("can fetch all chains when scope=all", async () => {
+        checkSessionAccess.mockResolvedValue({ level: "owner" });
+
+        const t0 = new Date(1);
+        sessionMessageFindMany.mockResolvedValue([
+            { id: "m2", seq: 2, localId: null, sidechainId: "sc-1", content: { t: "encrypted", c: "c2" }, createdAt: t0, updatedAt: t0 },
+            { id: "m1", seq: 1, localId: null, sidechainId: null, content: { t: "encrypted", c: "c1" }, createdAt: t0, updatedAt: t0 },
+        ]);
+
+        const { handler } = await registerSessionRoutesAndGetHandler("GET", "/v1/sessions/:sessionId/messages");
+        const reply = createSessionRouteReply();
+
+        const res = await handler(
+            {
+                userId: "u1",
+                params: { sessionId: "s1" },
+                query: { limit: 50, scope: "all" },
+            },
+            reply,
+        );
+
+        expect(sessionMessageFindMany).toHaveBeenCalledWith(
+            expect.objectContaining({
+                where: { sessionId: "s1" },
+            }),
+        );
+
+        expect(res).toEqual({
+            messages: [
+                { id: "m2", seq: 2, content: { t: "encrypted", c: "c2" }, localId: null, sidechainId: "sc-1", createdAt: 1, updatedAt: 1 },
+                { id: "m1", seq: 1, content: { t: "encrypted", c: "c1" }, localId: null, createdAt: 1, updatedAt: 1 },
+            ],
+            hasMore: false,
+            nextBeforeSeq: null,
+            nextAfterSeq: null,
+        });
+    });
+
+    it("can fetch a single sidechain when scope=sidechain", async () => {
+        checkSessionAccess.mockResolvedValue({ level: "owner" });
+
+        const t0 = new Date(1);
+        sessionMessageFindMany.mockResolvedValue([
+            { id: "m2", seq: 2, localId: null, sidechainId: "sc-1", content: { t: "encrypted", c: "c2" }, createdAt: t0, updatedAt: t0 },
+            { id: "m1", seq: 1, localId: null, sidechainId: "sc-1", content: { t: "encrypted", c: "c1" }, createdAt: t0, updatedAt: t0 },
+        ]);
+
+        const { handler } = await registerSessionRoutesAndGetHandler("GET", "/v1/sessions/:sessionId/messages");
+        const reply = createSessionRouteReply();
+
+        await handler(
+            {
+                userId: "u1",
+                params: { sessionId: "s1" },
+                query: { limit: 50, scope: "sidechain", sidechainId: "sc-1" },
+            },
+            reply,
+        );
+
+        expect(sessionMessageFindMany).toHaveBeenCalledWith(
+            expect.objectContaining({
+                where: { sessionId: "s1", sidechainId: "sc-1" },
+            }),
+        );
     });
 });

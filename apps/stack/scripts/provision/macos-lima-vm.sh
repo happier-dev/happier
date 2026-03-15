@@ -245,9 +245,9 @@ Profile `bare` (no changes at all):
 
 After provisioning (common next commands):
   - Dev monorepo wizard (clones + bootstraps a workspace):
-      npx --yes -p @happier-dev/stack@latest hstack setup --profile=dev --bind=loopback
+      npx --yes -p @happier-dev/stack@latest hstack setup-from-source --profile=dev --bind=loopback
   - Selfhost (lighter; good for quickly validating server/UI boot without auth):
-      npx --yes -p @happier-dev/stack@latest hstack setup --profile=selfhost --no-auth --no-tailscale --no-autostart --no-menubar --bind=loopback
+      npx --yes -p @happier-dev/stack@latest hstack setup-from-source --profile=selfhost --no-auth --no-tailscale --no-autostart --no-menubar --bind=loopback
 
 Tips:
   - Open printed URLs on your macOS host via http://localhost:<port> or http://*.localhost:<port>.

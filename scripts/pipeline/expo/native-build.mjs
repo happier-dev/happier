@@ -2,13 +2,15 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawn } from 'node:child_process';
 import { parseArgs } from 'node:util';
 
 import { stageRepoForDagger } from './stage-repo-for-dagger.mjs';
 import { rewriteEasLocalBuildArtifactPath } from './rewrite-eas-local-build-artifact-path.mjs';
 import { assertDockerCanRunLinuxAmd64 } from '../docker/assert-docker-can-run-linux-amd64.mjs';
 import { createEasLocalBuildEnv } from './eas-local-build-env.mjs';
+import { ensureStagedGitRepo } from '../git/ensure-staged-git-repo.mjs';
+import { shouldStageRepoForEasLocalBuild } from './should-stage-eas-local-build-repo.mjs';
 
 function fail(message) {
   console.error(message);
@@ -44,34 +46,6 @@ function commandExists(cmd, env) {
   } catch {
     return false;
   }
-}
-
-/**
- * EAS expects the project to be inside a git repository, even for local builds.
- * When staging outside the working tree, we create a lightweight repo so EAS can proceed
- * without mutating the real checkout.
- *
- * @param {{ repoDir: string; env: Record<string, string>; dryRun: boolean }} opts
- */
-function ensureStagedGitRepo({ repoDir, env, dryRun }) {
-  const gitDir = path.join(repoDir, '.git');
-  if (fs.existsSync(gitDir)) return;
-
-  if (dryRun) {
-    console.log(`[dry-run] (cwd: ${repoDir}) git init`);
-    return;
-  }
-
-  execFileSync('git', ['init', '-q'], { cwd: repoDir, env, stdio: 'ignore', timeout: 60_000 });
-  execFileSync('git', ['config', 'user.email', 'pipeline@local'], { cwd: repoDir, env, stdio: 'ignore', timeout: 10_000 });
-  execFileSync('git', ['config', 'user.name', 'Happier Pipeline'], { cwd: repoDir, env, stdio: 'ignore', timeout: 10_000 });
-  // Avoid `git add -A` on a staged monorepo (can be extremely slow) — EAS only needs a repo + a commit.
-  execFileSync('git', ['commit', '--allow-empty', '-m', 'eas local build', '--no-gpg-sign'], {
-    cwd: repoDir,
-    env,
-    stdio: 'ignore',
-    timeout: 60_000,
-  });
 }
 
 /**
@@ -152,6 +126,87 @@ function run(opts, cmd, args, extra) {
   });
 }
 
+/**
+ * @param {{ dryRun: boolean }} opts
+ * @param {string} cmd
+ * @param {string[]} args
+ * @param {{ cwd?: string; env?: Record<string, string>; timeoutMs?: number; heartbeatLabel?: string }} [extra]
+ * @returns {Promise<string>}
+ */
+function runCaptureWithHeartbeat(opts, cmd, args, extra) {
+  const cwd = extra?.cwd ? path.resolve(extra.cwd) : process.cwd();
+  const printable = `${cmd} ${args.map((a) => (a.includes(' ') ? JSON.stringify(a) : a)).join(' ')}`;
+  if (opts.dryRun) {
+    console.log(`[dry-run] (cwd: ${cwd}) ${printable}`);
+    return Promise.resolve('');
+  }
+
+  const env = { ...process.env, ...(extra?.env ?? {}) };
+  const timeoutMs = extra?.timeoutMs ?? 4 * 60 * 60_000;
+  const rawHeartbeatMs = Number.parseInt(String(process.env.HAPPIER_PIPELINE_HEARTBEAT_MS ?? ''), 10);
+  const heartbeatMs = Number.isFinite(rawHeartbeatMs) && rawHeartbeatMs > 0 ? rawHeartbeatMs : 20_000;
+  const heartbeatLabel = String(extra?.heartbeatLabel ?? `${cmd} process`);
+
+  return new Promise((resolve, reject) => {
+    const child = spawn(cmd, args, { cwd, env, stdio: ['ignore', 'pipe', 'pipe'] });
+    const startedAt = Date.now();
+    let lastOutputAt = Date.now();
+    let stdout = '';
+    let stderr = '';
+
+    const timeoutId = setTimeout(() => {
+      child.kill('SIGTERM');
+      reject(new Error(`Command timed out after ${timeoutMs}ms: ${printable}`));
+    }, timeoutMs);
+
+    const heartbeatId = setInterval(() => {
+      const elapsedSeconds = Math.floor((Date.now() - startedAt) / 1000);
+      const idleSeconds = Math.floor((Date.now() - lastOutputAt) / 1000);
+      console.log(`[pipeline] waiting on ${heartbeatLabel} (${elapsedSeconds}s elapsed, ${idleSeconds}s since last output)`);
+    }, heartbeatMs);
+
+    child.stdout.on('data', (chunk) => {
+      const text = String(chunk);
+      stdout += text;
+      lastOutputAt = Date.now();
+      process.stdout.write(text);
+    });
+
+    child.stderr.on('data', (chunk) => {
+      const text = String(chunk);
+      stderr += text;
+      lastOutputAt = Date.now();
+      process.stderr.write(text);
+    });
+
+    child.on('error', (error) => {
+      clearTimeout(timeoutId);
+      clearInterval(heartbeatId);
+      reject(error);
+    });
+
+    child.on('close', (code, signal) => {
+      clearTimeout(timeoutId);
+      clearInterval(heartbeatId);
+      if (code === 0) {
+        resolve(stdout);
+        return;
+      }
+
+      const commandError = new Error(
+        signal
+          ? `Command failed with signal ${signal}: ${printable}`
+          : `Command failed with exit code ${code}: ${printable}`,
+      );
+      // @ts-expect-error - attaching debug fields to improve failure diagnosis.
+      commandError.stdout = stdout;
+      // @ts-expect-error - attaching debug fields to improve failure diagnosis.
+      commandError.stderr = stderr;
+      reject(commandError);
+    });
+  });
+}
+
 async function main() {
   const repoRoot = path.resolve(process.cwd());
   const { values } = parseArgs({
@@ -223,7 +278,8 @@ async function main() {
 	      if (platform !== 'android') {
 	        fail("--local-runtime dagger is currently supported only for --platform android.");
 	      }
-	      if (!dryRun) {
+        const daggerContainerPlatform = String(process.env.HAPPIER_EXPO_ANDROID_DAGGER_CONTAINER_PLATFORM ?? '').trim();
+	      if (!dryRun && daggerContainerPlatform.includes('amd64')) {
 	        assertDockerCanRunLinuxAmd64();
 	      }
 
@@ -235,6 +291,12 @@ async function main() {
       if (!artifactName || artifactName === '.' || artifactName === '..') fail(`Invalid --artifact-out path: ${artifactAbs}`);
       const exportDirAbs = path.dirname(artifactAbs);
       const exportedOutJsonAbs = path.join(exportDirAbs, outJsonName);
+
+      const expoAppSlug = String(process.env.EXPO_APP_SLUG ?? '').trim();
+      const expoAppScheme = String(process.env.EXPO_APP_SCHEME ?? '').trim();
+      const expoAppName = String(process.env.EXPO_APP_NAME ?? '').trim();
+      const expoAppBundleId = String(process.env.EXPO_APP_BUNDLE_ID ?? '').trim();
+      const sentryAuthToken = String(process.env.SENTRY_AUTH_TOKEN ?? '').trim();
 
       const staged = dryRun ? null : stageRepoForDagger({ repoRoot });
       const daggerRepoArg = dryRun ? '.' : staged?.stagedRepoDir;
@@ -266,8 +328,14 @@ async function main() {
             outJsonName,
             '--expo-token',
             'env://EXPO_TOKEN',
+            ...(sentryAuthToken ? ['--sentry-auth-token', 'env://SENTRY_AUTH_TOKEN'] : []),
             '--eas-cli-version',
             easCliVersion,
+            ...(daggerContainerPlatform ? ['--container-platform', daggerContainerPlatform] : []),
+            ...(expoAppSlug ? ['--expo-app-slug', expoAppSlug] : []),
+            ...(expoAppScheme ? ['--expo-app-scheme', expoAppScheme] : []),
+            ...(expoAppName ? ['--expo-app-name', expoAppName] : []),
+            ...(expoAppBundleId ? ['--expo-app-bundle-id', expoAppBundleId] : []),
           ],
           { cwd: repoRoot, stdio: 'inherit' },
         );
@@ -343,12 +411,16 @@ async function main() {
       }
     }
 
+    const stageForEas = shouldStageRepoForEasLocalBuild({ env: baseEnv, dryRun });
     // Stage the repo for EAS local builds so:
     // - autoIncrement/build-number changes don't touch the real working tree
     // - git ignorecase/casing and dirty-tree checks don't block local iteration
     // - local-only files like `.env*` don't leak into build contexts
-    const staged = dryRun ? null : stageRepoForDagger({ repoRoot });
-    const effectiveRepoDir = dryRun ? repoRoot : staged?.stagedRepoDir ?? repoRoot;
+    //
+    // When running inside Dagger, the mounted repo is already ephemeral and staging can explode
+    // Dagger's engine cache (millions of inodes under /tmp). Prefer building in-place.
+    const staged = stageForEas ? stageRepoForDagger({ repoRoot }) : null;
+    const effectiveRepoDir = staged?.stagedRepoDir ?? repoRoot;
     const effectiveUiDir = path.join(effectiveRepoDir, 'apps', 'ui');
 
     const pipelineInteractive =
@@ -404,11 +476,16 @@ async function main() {
     return;
   }
 
-  const easJson = run(
-    opts,
-    'npx',
-    ['--yes', `eas-cli@${easCliVersion}`, 'build', '--platform', platform, '--profile', profile, '--non-interactive', '--json'],
-    { cwd: uiDir, stdio: 'pipe' },
+  console.log(
+    '[pipeline] expo native build (cloud): waiting for EAS to schedule builds (output is quiet until build IDs are returned; this can take several minutes on large uploads).',
+  );
+  const easJson = (
+    await runCaptureWithHeartbeat(
+      opts,
+      'npx',
+      ['--yes', `eas-cli@${easCliVersion}`, 'build', '--platform', platform, '--profile', profile, '--non-interactive', '--json'],
+      { cwd: uiDir, heartbeatLabel: 'Expo cloud build scheduling' },
+    )
   ).trim();
 
   if (!dryRun) {

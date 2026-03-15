@@ -3,10 +3,10 @@ import { t } from '@/text';
 
 export async function promptSignedOutServerSwitchConfirmation(): Promise<boolean> {
     return await Modal.confirm(
-        'You are not connected',
-        'Switch to this server and continue to the home screen so you can sign in or create an account?',
+        t('server.signedOutSwitchConfirmTitle'),
+        t('server.signedOutSwitchConfirmBody'),
         {
-            confirmText: 'Continue',
+            confirmText: t('common.continue'),
             cancelText: t('common.cancel'),
         },
     );

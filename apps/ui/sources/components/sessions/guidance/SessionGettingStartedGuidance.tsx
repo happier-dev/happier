@@ -8,6 +8,9 @@ import { useRouter } from 'expo-router';
 import { Modal } from '@/modal';
 import * as Clipboard from 'expo-clipboard';
 import { Ionicons } from '@expo/vector-icons';
+import { Image } from 'expo-image';
+import Constants from 'expo-constants';
+import * as Updates from 'expo-updates';
 import { useVisibleSessionListViewData } from '@/hooks/session/useVisibleSessionListViewData';
 import { useResolvedActiveServerSelection } from '@/hooks/server/useEffectiveServerSelection';
 import { useMachineListByServerId, useMachineListStatusByServerId, useSetting } from '@/sync/domains/state/storage';
@@ -15,11 +18,14 @@ import { listServerProfiles } from '@/sync/domains/server/serverProfiles';
 import { useConnectTerminal } from '@/hooks/session/useConnectTerminal';
 import type { FeatureId } from '@happier-dev/protocol';
 import { getFeatureBuildPolicyDecision } from '@/sync/domains/features/featureBuildPolicy';
+import { config } from '@/config';
+import { resolveAppVariant, type AppVariant } from '@/sync/runtime/appVariant';
 
 import type { SessionGettingStartedDecisionKind } from './gettingStartedModel';
 import type { SessionGettingStartedViewModel } from './gettingStartedModel';
 import { buildSessionGettingStartedViewModel } from './gettingStartedModel';
 import { Text } from '@/components/ui/text/Text';
+import { resolveHappierCliNpmPackageSpecifier } from './happierCliInstallCommand';
 
 
 export type SessionGettingStartedGuidanceVariant = 'phone' | 'sidebar' | 'primaryPane' | 'newSessionBlocking';
@@ -50,6 +56,11 @@ const stylesheet = StyleSheet.create((theme) => ({
         paddingHorizontal: 20,
         paddingTop: 32,
         paddingBottom: 20,
+    },
+    logo: {
+        height: 44,
+        width: 44,
+        marginBottom: 16,
     },
     title: {
         width: '100%',
@@ -165,10 +176,26 @@ function subtitleForKind(kind: SessionGettingStartedDecisionKind, targetLabel: s
     }
 }
 
-function normalizeCommandLine(line: string): string {
-    const trimmedStart = line.trimStart();
-    if (!trimmedStart.startsWith('$')) return line;
-    return trimmedStart.replace(/^\$\s*/, '');
+function resolveAppVariantForCliInstall(): AppVariant {
+    return (
+        resolveAppVariant({
+            appVariant: config.variant,
+            updatesReleaseChannel: (Updates as any)?.releaseChannel,
+            updatesChannel: (Updates as any)?.channel,
+            manifestReleaseChannel: (Constants as any)?.manifest?.releaseChannel,
+            expoConfigReleaseChannel: (Constants as any)?.expoConfig?.releaseChannel,
+            envAppEnv: process.env.APP_ENV,
+            envExpoPublicAppEnv: process.env.EXPO_PUBLIC_APP_ENV,
+        }) ?? 'production'
+    );
+}
+
+function buildCliInstallCommand(): string {
+    const packageSpecifier = resolveHappierCliNpmPackageSpecifier({
+        appVariant: resolveAppVariantForCliInstall(),
+        distTagOverride: config.cliNpmDistTag,
+    });
+    return `npm i -g ${packageSpecifier}`;
 }
 
 type SessionGettingStartedGuidanceStep = Readonly<{
@@ -187,7 +214,7 @@ function buildSteps(model: SessionGettingStartedGuidanceViewModel): SessionGetti
                 id: 'install_cli',
                 title: 'Install the CLI',
                 description: 'Run this once on the machine you want to connect.',
-                command: normalizeCommandLine(t('components.emptyMainScreen.installCommand')),
+                command: buildCliInstallCommand(),
                 copyLabel: 'Install command',
             });
             if (model.showServerSetup) {
@@ -279,6 +306,7 @@ export function SessionGettingStartedGuidanceView(props: Readonly<{
     const title = titleForKind(model.kind);
     const subtitle = subtitleForKind(model.kind, model.targetLabel);
     const steps = buildSteps(model);
+    const showLogo = props.variant === 'primaryPane' || props.variant === 'newSessionBlocking';
 
     return (
         <ScrollView
@@ -288,7 +316,16 @@ export function SessionGettingStartedGuidanceView(props: Readonly<{
             keyboardShouldPersistTaps="handled"
         >
             <View testID={`session-getting-started-kind-${model.kind}`} style={{ width: 0, height: 0, overflow: 'hidden' }} />
-            
+
+            {showLogo ? (
+                <Image
+                    testID="session-getting-started-logo"
+                    source={theme.dark ? require('@/assets/images/logo-white.png') : require('@/assets/images/logo-black.png')}
+                    contentFit="contain"
+                    style={styles.logo}
+                />
+            ) : null}
+
             {steps.length > 0 ? (
                 <View style={styles.stepsContainer}>
                     {steps.map((step) => (
@@ -302,15 +339,15 @@ export function SessionGettingStartedGuidanceView(props: Readonly<{
                             {step.command ? (
                                 <View style={styles.codeBlock}>
                                     <Text style={[styles.terminalText, styles.codeText]}>{step.command}</Text>
-                                    <Pressable
-                                        testID={`session-getting-started-copy-${step.id}`}
-                                        accessibilityRole="button"
-                                        accessibilityLabel={`Copy ${step.copyLabel ?? 'command'}`}
-                                        style={styles.codeCopyButton}
-                                        onPress={() => copyTextToClipboard({ label: step.copyLabel ?? 'Command', text: step.command ?? '' })}
-                                    >
-                                        <Ionicons name="copy-outline" size={16} color={theme.colors.textSecondary} />
-                                    </Pressable>
+                                      <Pressable
+                                          testID={`session-getting-started-copy-${step.id}`}
+                                          accessibilityRole="button"
+                                          accessibilityLabel={t('common.copyWithLabel', { label: step.copyLabel ?? t('common.command') })}
+                                          style={styles.codeCopyButton}
+                                          onPress={() => copyTextToClipboard({ label: step.copyLabel ?? t('common.command'), text: step.command ?? '' })}
+                                      >
+                                          <Ionicons name="copy-outline" size={16} color={theme.colors.textSecondary} />
+                                      </Pressable>
                                 </View>
                             ) : null}
                         </View>

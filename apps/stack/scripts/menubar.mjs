@@ -4,7 +4,7 @@ import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { getHappyStacksHomeDir, getRootDir } from './utils/paths/paths.mjs';
+import { getHappyStacksHomeDir, getRootDir, resolveStackEnvPath } from './utils/paths/paths.mjs';
 import { parseArgs } from './utils/cli/args.mjs';
 import { printResult, wantsHelp, wantsJson } from './utils/cli/cli.mjs';
 import { ensureEnvLocalUpdated } from './utils/env/env_local.mjs';
@@ -13,6 +13,7 @@ import { normalizeProfile } from './utils/cli/normalize.mjs';
 import { banner, kv, sectionTitle } from './utils/ui/layout.mjs';
 import { cyan, dim, green } from './utils/ui/ansi.mjs';
 import { detectSwiftbarPluginInstalled, removeSwiftbarPlugins } from './utils/menubar/swiftbar.mjs';
+import { normalizeStackNameOrNull, sanitizeStackName } from './utils/stack/names.mjs';
 
 async function ensureSwiftbarAssets({ cliRootDir }) {
   const homeDir = getHappyStacksHomeDir();
@@ -48,13 +49,22 @@ function sandboxPluginBasename() {
   return `hstack.sandbox-${hash}`;
 }
 
+function stackPluginBasename(stackName) {
+  const normalized = sanitizeStackName(stackName, { fallback: 'stack', maxLen: 64 });
+  const hash = createHash('sha256').update(String(stackName ?? '')).digest('hex').slice(0, 6);
+  const short = normalized.length > 32 ? normalized.slice(0, 32) : normalized;
+  return sanitizeStackName(`hstack-${short}-${hash}`, { fallback: 'hstack', maxLen: 64 });
+}
+
 async function main() {
   const rawArgv = process.argv.slice(2);
   const argv = rawArgv[0] === 'menubar' ? rawArgv.slice(1) : rawArgv;
   const helpSepIdx = argv.indexOf('--');
   const helpScopeArgv = helpSepIdx === -1 ? argv : argv.slice(0, helpSepIdx);
   const { flags } = parseArgs(helpScopeArgv);
+  const { kv: kvFlags } = parseArgs(helpScopeArgv);
   const json = wantsJson(helpScopeArgv, { flags });
+  const dryRun = flags.has('--dry-run') || helpScopeArgv.includes('--dry-run');
 
   const cmd = helpScopeArgv.find((a) => a && a !== '--' && !a.startsWith('-')) || 'help';
   const wantsHelpFlag = wantsHelp(helpScopeArgv, { flags });
@@ -119,7 +129,7 @@ async function main() {
     }
     const patterns = isSandboxed()
       ? [`${sandboxPluginBasename()}.*.sh`]
-      : ['hstack.*.sh'];
+      : ['hstack.*.sh', 'hstack-*.sh'];
     const res = await removeSwiftbarPlugins({ patterns });
     const dir = res.pluginsDir;
     printResult({
@@ -175,16 +185,76 @@ async function main() {
     }
     const { destDir } = await ensureSwiftbarAssets({ cliRootDir });
     const installer = join(destDir, 'install.sh');
+
+    const explicitStackRaw = String(kvFlags.get('--stack') ?? '').trim();
+    const explicitStack = explicitStackRaw ? normalizeStackNameOrNull(explicitStackRaw) : null;
+    if (explicitStackRaw && !explicitStack) {
+      throw new Error('[menubar] invalid --stack name (expected letters, numbers, and dashes)');
+    }
+    const stackName = explicitStack || String((process.env.HAPPIER_STACK_STACK ?? '').trim() || 'main');
+    const normalizedStack = sanitizeStackName(stackName, { fallback: 'main', maxLen: 64 });
+    const stackScoped = normalizedStack !== 'main';
+
+    const interval = String(process.env.HAPPIER_STACK_SWIFTBAR_INTERVAL ?? '').trim() || '5m';
+    const defaultBasename = isSandboxed()
+      ? sandboxPluginBasename()
+      : (stackScoped ? stackPluginBasename(normalizedStack) : 'hstack');
+    const pluginBasename = String(process.env.HAPPIER_STACK_SWIFTBAR_PLUGIN_BASENAME ?? '').trim() || defaultBasename;
+    const pluginFile = `${pluginBasename}.${interval}.sh`;
+
+    const defaultEnvFile = (process.env.HAPPIER_STACK_ENV_FILE ?? '').toString().trim();
+    const resolvedEnvFile = defaultEnvFile || resolveStackEnvPath(normalizedStack, process.env).envPath;
+
     const env = {
       ...process.env,
       HAPPIER_STACK_HOME_DIR: getHappyStacksHomeDir(),
-      ...(isSandboxed()
+      ...(pluginBasename ? { HAPPIER_STACK_SWIFTBAR_PLUGIN_BASENAME: pluginBasename } : {}),
+      ...((isSandboxed() || stackScoped)
         ? {
-            HAPPIER_STACK_SWIFTBAR_PLUGIN_BASENAME: sandboxPluginBasename(),
             HAPPIER_STACK_SWIFTBAR_PLUGIN_WRAPPER: '1',
+            ...(stackScoped
+              ? {
+                  HAPPIER_STACK_SWIFTBAR_PRIMARY_STACK: normalizedStack,
+                  HAPPIER_STACK_SWIFTBAR_PRIMARY_ENV_FILE: resolvedEnvFile,
+                }
+              : {}),
           }
         : {}),
     };
+
+    if (dryRun) {
+      const data = {
+        ok: true,
+        stack: {
+          name: normalizedStack,
+          scoped: stackScoped,
+          envFile: resolvedEnvFile || null,
+        },
+        swiftbar: {
+          pluginBasename,
+          pluginInterval: interval,
+          pluginFile,
+          wrapper: Boolean(isSandboxed() || stackScoped),
+        },
+        installer: {
+          cmd: 'bash',
+          args: [installer, '--force'],
+        },
+      };
+      printResult({
+        json,
+        data,
+        text: [
+          sectionTitle('Menubar install (dry-run)'),
+          `- ${kv('stack:', cyan(normalizedStack))}`,
+          `- ${kv('plugin:', cyan(pluginFile))}`,
+          `- ${kv('wrapper:', cyan(String(data.swiftbar.wrapper)))}`,
+          `- ${kv('env file:', resolvedEnvFile ? cyan(resolvedEnvFile) : dim('(none)'))}`,
+        ].join('\n'),
+      });
+      return;
+    }
+
     const res = spawnSync('bash', [installer, '--force'], { stdio: 'inherit', env });
     if (res.status !== 0) {
       process.exit(res.status ?? 1);

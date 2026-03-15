@@ -56,16 +56,16 @@ export function SavedServersSection(props: SavedServersSectionProps) {
                         onPress: () => props.onRemoveGroup?.(group),
                     },
                 ];
-                return (
-                    <Item
-                        key={targetKey}
-                        title={group.name}
-                        subtitle={`${group.serverIds.length} server${group.serverIds.length === 1 ? '' : 's'}`}
-                        icon={<Ionicons name="albums-outline" size={18} color={theme.colors.textSecondary} />}
-                        selected={isSelected}
-                        showChevron={false}
-                        detail={isSelected ? t('server.active') : undefined}
-                        onPress={() => props.onSwitchGroup?.(group)}
+                  return (
+                      <Item
+                          key={targetKey}
+                          title={group.name}
+                          subtitle={t('server.serverCount', { count: group.serverIds.length })}
+                          icon={<Ionicons name="albums-outline" size={18} color={theme.colors.textSecondary} />}
+                          selected={isSelected}
+                          showChevron={false}
+                          detail={isSelected ? t('server.active') : undefined}
+                          onPress={() => props.onSwitchGroup?.(group)}
                         rightElement={(
                             <ItemRowActions
                                 title={group.name}

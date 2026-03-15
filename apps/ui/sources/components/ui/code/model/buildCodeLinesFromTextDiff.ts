@@ -1,6 +1,7 @@
 import { calculateUnifiedDiff } from '@/components/ui/code/model/diff/calculateDiff';
 
 import type { CodeLine } from './codeLineTypes';
+import type { IntraLineDiffSegment } from './codeLineTypes';
 
 export function buildCodeLinesFromTextDiff(params: {
     oldText: string;
@@ -27,6 +28,9 @@ export function buildCodeLinesFromTextDiff(params: {
         for (let i = 0; i < hunk.lines.length; i++) {
             const line = hunk.lines[i];
             if (line.type === 'add') {
+                const segments: readonly IntraLineDiffSegment[] | null = Array.isArray(line.tokens)
+                    ? line.tokens.map((t) => ({ text: t.value, kind: t.added ? 'added' : 'context' }))
+                    : null;
                 out.push({
                     id: `ta:${h}:${i}`,
                     sourceIndex: out.length,
@@ -35,10 +39,14 @@ export function buildCodeLinesFromTextDiff(params: {
                     newLine: line.newLineNumber ?? null,
                     renderPrefixText: '+',
                     renderCodeText: line.content,
+                    renderIntraLineDiffSegments: segments,
                     renderIsHeaderLine: false,
                     selectable: true,
                 });
             } else if (line.type === 'remove') {
+                const segments: readonly IntraLineDiffSegment[] | null = Array.isArray(line.tokens)
+                    ? line.tokens.map((t) => ({ text: t.value, kind: t.removed ? 'removed' : 'context' }))
+                    : null;
                 out.push({
                     id: `tr:${h}:${i}`,
                     sourceIndex: out.length,
@@ -47,6 +55,7 @@ export function buildCodeLinesFromTextDiff(params: {
                     newLine: null,
                     renderPrefixText: '-',
                     renderCodeText: line.content,
+                    renderIntraLineDiffSegments: segments,
                     renderIsHeaderLine: false,
                     selectable: true,
                 });
@@ -59,6 +68,7 @@ export function buildCodeLinesFromTextDiff(params: {
                     newLine: line.newLineNumber ?? null,
                     renderPrefixText: ' ',
                     renderCodeText: line.content,
+                    renderIntraLineDiffSegments: null,
                     renderIsHeaderLine: false,
                     selectable: false,
                 });

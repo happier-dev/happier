@@ -133,11 +133,19 @@ EXPOSE 8080
 FROM deps-alpine-build AS webapp-builder
 ARG HAPPIER_EMBEDDED_POLICY_ENV=preview
 ARG POSTHOG_API_KEY=""
+ARG POSTHOG_HOST=""
+ARG SENTRY_DSN=""
+ARG SENTRY_RELEASE=""
+ARG SENTRY_AUTH_TOKEN=""
+ARG SENTRY_URL=""
 ARG REVENUE_CAT_STRIPE=""
 
 ENV NODE_ENV=production
 ENV APP_ENV=production
-ENV EXPO_PUBLIC_POSTHOG_API_KEY=$POSTHOG_API_KEY
+ENV EXPO_PUBLIC_POSTHOG_KEY=$POSTHOG_API_KEY
+ENV EXPO_PUBLIC_POSTHOG_HOST=$POSTHOG_HOST
+ENV EXPO_PUBLIC_SENTRY_DSN=$SENTRY_DSN
+ENV EXPO_PUBLIC_SENTRY_RELEASE=$SENTRY_RELEASE
 ENV EXPO_PUBLIC_REVENUE_CAT_STRIPE=$REVENUE_CAT_STRIPE
 ENV HAPPIER_EMBEDDED_POLICY_ENV=$HAPPIER_EMBEDDED_POLICY_ENV
 
@@ -150,6 +158,7 @@ RUN yarn workspace @happier-dev/protocol postinstall:real && yarn workspace @hap
 RUN yarn workspace @happier-dev/app postinstall:real
 RUN rm -rf apps/ui/dist
 RUN yarn workspace @happier-dev/app expo export --platform web --output-dir dist
+RUN if [ -n "$SENTRY_AUTH_TOKEN" ]; then cd apps/ui && SENTRY_AUTH_TOKEN="$SENTRY_AUTH_TOKEN" SENTRY_URL="$SENTRY_URL" SENTRY_RELEASE="$SENTRY_RELEASE" npx --yes sentry-expo-upload-sourcemaps dist; else echo "[docker] SENTRY_AUTH_TOKEN not set; skipping Sentry source maps upload"; fi
 
 FROM nginxinc/nginx-unprivileged:alpine AS webapp
 USER root
@@ -267,6 +276,11 @@ FROM server AS relay-server
 # Embed the web UI bundle so self-hosted deployments can serve UI from the server.
 # Disable at runtime by clearing HAPPIER_SERVER_UI_DIR (e.g. `-e HAPPIER_SERVER_UI_DIR=`).
 COPY --from=webapp-builder --chown=node:node /repo/apps/ui/dist /repo/apps/ui/dist
+ARG SENTRY_RELEASE=""
+ENV SENTRY_RELEASE=$SENTRY_RELEASE
+ARG SENTRY_SERVER_CENTRAL_DSN=""
+ENV HAPPIER_SENTRY_CENTRAL_DSN=$SENTRY_SERVER_CENTRAL_DSN
+ENV HAPPIER_SENTRY_USE_CENTRAL_DSN=1
 ENV HAPPIER_SERVER_FLAVOR=light
 ENV HAPPY_SERVER_FLAVOR=light
 ENV HAPPIER_DB_PROVIDER=sqlite

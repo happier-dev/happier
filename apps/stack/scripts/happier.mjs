@@ -9,24 +9,74 @@ import { resolveCliHomeDir } from './utils/stack/dirs.mjs';
 import { getPublicServerUrlEnvOverride, resolveServerPortFromEnv } from './utils/server/urls.mjs';
 import { applyStackActiveServerScopeEnv } from './utils/auth/stable_scope_id.mjs';
 
+function printHstackHappierHelp({ json }) {
+  printResult({
+    json,
+    data: { passthrough: true },
+    text: [
+      '[happier] usage:',
+      '  hstack happier <happier-cli args...>',
+      '',
+      'notes:',
+      '  - This runs the monorepo CLI component (apps/cli) with stack env defaults.',
+      '  - It auto-fills HAPPIER_HOME_DIR / HAPPIER_SERVER_URL / HAPPIER_WEBAPP_URL when missing.',
+      '',
+      'stack wrapper options:',
+      '  --stack-help  Show this wrapper help (use -h/--help for CLI help)',
+    ].join('\n'),
+  });
+}
+
+function hasExplicitServerSelectionArg(argv) {
+  const args = Array.isArray(argv) ? argv.map((a) => String(a ?? '')) : [];
+  const check = (name) => args.includes(name) || args.some((a) => a.startsWith(`${name}=`));
+  return (
+    check('--server') ||
+    check('--server-url') ||
+    check('--webapp-url') ||
+    check('--public-server-url')
+  );
+}
+
+function readArgValue(argv, flagName) {
+  const args = Array.isArray(argv) ? argv.map((a) => String(a ?? '')) : [];
+  for (let i = args.length - 1; i >= 0; i -= 1) {
+    const arg = args[i];
+    if (arg === flagName) {
+      const next = args[i + 1];
+      const value = String(next ?? '').trim();
+      return value || null;
+    }
+    if (arg.startsWith(`${flagName}=`)) {
+      const value = arg.slice(flagName.length + 1).trim();
+      return value || null;
+    }
+  }
+  return null;
+}
+
+function normalizeServerUrl(url) {
+  return String(url ?? '').trim().replace(/\/+$/, '');
+}
+
+function deriveEnvServerIdFromUrl(url) {
+  const normalized = normalizeServerUrl(url);
+  if (!normalized) return null;
+  let h = 2166136261;
+  for (let i = 0; i < normalized.length; i += 1) {
+    h ^= normalized.charCodeAt(i);
+    h = Math.imul(h, 16777619);
+  }
+  return `env_${(h >>> 0).toString(16)}`;
+}
+
 async function main() {
   const argv = process.argv.slice(2);
   const { flags } = parseArgs(argv);
   const json = wantsJson(argv, { flags });
 
-  if (wantsHelp(argv, { flags })) {
-    printResult({
-      json,
-      data: { passthrough: true },
-      text: [
-        '[happier] usage:',
-        '  hstack happier <happier-cli args...>',
-        '',
-        'notes:',
-        '  - This runs the monorepo CLI component (apps/cli) with stack env defaults.',
-        '  - It auto-fills HAPPIER_HOME_DIR / HAPPIER_SERVER_URL / HAPPIER_WEBAPP_URL when missing.',
-      ].join('\n'),
-    });
+  if (flags.has('--stack-help')) {
+    printHstackHappierHelp({ json });
     return;
   }
 
@@ -42,6 +92,10 @@ async function main() {
 
   const cliDir = getComponentDir(rootDir, 'happier-cli');
   const entrypoint = join(cliDir, 'dist', 'index.mjs');
+  if (wantsHelp(argv, { flags }) && !existsSync(entrypoint)) {
+    printHstackHappierHelp({ json });
+    return;
+  }
   if (!existsSync(entrypoint)) {
     console.error(`[happier] missing CLI build at: ${entrypoint}`);
     console.error('Run: hstack bootstrap');
@@ -52,13 +106,29 @@ async function main() {
   env.HAPPIER_HOME_DIR = env.HAPPIER_HOME_DIR || cliHomeDir;
   env.HAPPIER_SERVER_URL = env.HAPPIER_SERVER_URL || internalServerUrl;
   env.HAPPIER_WEBAPP_URL = env.HAPPIER_WEBAPP_URL || publicServerUrl;
-  env = applyStackActiveServerScopeEnv({
-    env,
-    stackName,
-    cliIdentity: (env.HAPPIER_STACK_CLI_IDENTITY ?? '').toString().trim() || 'default',
-  });
+  if (hasExplicitServerSelectionArg(argv)) {
+    // If the user explicitly selects a server/profile, do not force a stack-stable active server id.
+    // Otherwise credentials can be resolved from the wrong per-server directory, causing 401s.
+    const explicitServerUrl =
+      readArgValue(argv, '--server-url')
+      || readArgValue(argv, '--public-server-url')
+      || null;
+    const derived = explicitServerUrl ? deriveEnvServerIdFromUrl(explicitServerUrl) : null;
+    if (derived) {
+      env.HAPPIER_ACTIVE_SERVER_ID = derived;
+    } else {
+      delete env.HAPPIER_ACTIVE_SERVER_ID;
+    }
+  } else {
+    env = applyStackActiveServerScopeEnv({
+      env,
+      stackName,
+      cliIdentity: (env.HAPPIER_STACK_CLI_IDENTITY ?? '').toString().trim() || 'default',
+    });
+  }
 
-  const res = spawnSync(process.execPath, ['--no-warnings', '--no-deprecation', entrypoint, ...argv], {
+  const forwardedArgv = argv.filter((a) => a !== '--stack-help');
+  const res = spawnSync(process.execPath, ['--no-warnings', '--no-deprecation', entrypoint, ...forwardedArgv], {
     stdio: 'inherit',
     env,
   });

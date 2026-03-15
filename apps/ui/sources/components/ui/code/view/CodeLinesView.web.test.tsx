@@ -8,7 +8,10 @@ const rowSpy = vi.fn();
 
 vi.mock('react-native', () => ({
     View: ({ children, ...props }: any) => React.createElement('View', props, children),
-    Platform: { OS: 'web' },
+    Platform: {
+        OS: 'web',
+        select: (options: any) => options?.web ?? options?.default ?? options?.ios ?? options?.android,
+    },
     FlatList: (props: any) => {
         const items = Array.isArray(props.data)
             ? props.data.map((item: any, index: number) =>
@@ -35,6 +38,7 @@ vi.mock('./CodeLineRow', () => ({
 }));
 
 const createHighlighterSpy = vi.fn(async (..._args: any[]) => ({
+    loadLanguage: async () => {},
     codeToTokens: () => ({
         fg: '#000',
         tokens: [[{ content: 'const', color: '#f00' }]],
@@ -42,6 +46,11 @@ const createHighlighterSpy = vi.fn(async (..._args: any[]) => ({
 }));
 
 vi.mock('shiki', () => ({
+    bundledLanguages: {
+        ts: {},
+        js: {},
+        python: {},
+    },
     createHighlighter: (...args: any[]) => createHighlighterSpy(...args),
 }));
 
@@ -71,6 +80,7 @@ describe('CodeLinesView (web)', () => {
                 throw new Error('shiki_init_failed');
             })
             .mockImplementation(async () => ({
+                loadLanguage: async () => {},
                 codeToTokens: () => ({
                     fg: '#000',
                     tokens: [[{ content: 'const', color: '#f00' }]],
@@ -109,6 +119,9 @@ describe('CodeLinesView (web)', () => {
             tree1 = renderer.create(view);
         });
         await flushReactAsyncWork();
+
+        // Uses Happier themes instead of generic GitHub themes.
+        expect(createHighlighterSpy.mock.calls[0]?.[0]?.themes?.[0]?.name).toBe('happier-light');
 
         const calls1 = rowSpy.mock.calls.map((c) => c[0]);
         expect(calls1.some((p: any) => Array.isArray(p.advancedTokens) && p.advancedTokens.length > 0)).toBe(false);

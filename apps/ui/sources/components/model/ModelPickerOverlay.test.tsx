@@ -1,9 +1,12 @@
 import React from 'react';
 import renderer, { act, type ReactTestInstance } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
-import { ModelPickerOverlay } from './ModelPickerOverlay';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
+
+vi.mock('@/text', () => ({
+    t: (key: string) => key,
+}));
 
 function nodeContainsExactText(node: ReactTestInstance, value: string): boolean {
     return node.children.some((child) => {
@@ -31,7 +34,7 @@ function findSearchInput(tree: renderer.ReactTestRenderer): ReactTestInstance | 
     return tree.root.findAll((node) => (
         typeof node.props?.onChangeText === 'function' &&
         typeof node.props?.placeholder === 'string' &&
-        node.props.placeholder.startsWith('Search models')
+        node.props.placeholder === 'modelPickerOverlay.searchPlaceholder'
     ))[0];
 }
 
@@ -46,8 +49,9 @@ function findNodeByAccessibilityLabel(tree: renderer.ReactTestRenderer, label: s
 }
 
 describe('ModelPickerOverlay', () => {
-    it('selects a named option', () => {
+    it('selects a named option', async () => {
         const onSelect = vi.fn();
+        const { ModelPickerOverlay } = await import('./ModelPickerOverlay');
 
         let tree: ReturnType<typeof renderer.create> | undefined;
         act(() => {
@@ -78,8 +82,9 @@ describe('ModelPickerOverlay', () => {
         expect(onSelect).toHaveBeenCalledWith('fast');
     });
 
-    it('hides search input when option count is below threshold', () => {
+    it('hides search input when option count is below threshold', async () => {
         const onSelect = vi.fn();
+        const { ModelPickerOverlay } = await import('./ModelPickerOverlay');
 
         let tree: ReturnType<typeof renderer.create> | undefined;
         act(() => {
@@ -103,8 +108,9 @@ describe('ModelPickerOverlay', () => {
         expect(findSearchInput(tree!)).toBeUndefined();
     });
 
-    it('filters options through the search input and selects the filtered match', () => {
+    it('filters options through the search input and selects the filtered match', async () => {
         const onSelect = vi.fn();
+        const { ModelPickerOverlay } = await import('./ModelPickerOverlay');
 
         const options = [
             { value: 'default', label: 'Default', description: '' },
@@ -148,7 +154,9 @@ describe('ModelPickerOverlay', () => {
         expect(onSelect).toHaveBeenCalledWith('model-7');
     });
 
-    it('renders empty text when there are no options', () => {
+    it('renders empty text when there are no options', async () => {
+        const { ModelPickerOverlay } = await import('./ModelPickerOverlay');
+
         let tree: ReturnType<typeof renderer.create> | undefined;
         act(() => {
             tree = renderer.create(
@@ -168,8 +176,9 @@ describe('ModelPickerOverlay', () => {
         expect(findTextNode(tree!, 'No models available')).toBeTruthy();
     });
 
-    it('calls custom-model handler when custom option is enabled', () => {
+    it('calls custom-model handler when custom option is enabled', async () => {
         const onRequestCustomModel = vi.fn();
+        const { ModelPickerOverlay } = await import('./ModelPickerOverlay');
 
         let tree: ReturnType<typeof renderer.create> | undefined;
         act(() => {
@@ -201,7 +210,9 @@ describe('ModelPickerOverlay', () => {
         expect(onRequestCustomModel).toHaveBeenCalledTimes(1);
     });
 
-    it('shows a loading indicator when models are being probed', () => {
+    it('shows a loading indicator when models are being probed', async () => {
+        const { ModelPickerOverlay } = await import('./ModelPickerOverlay');
+
         let tree: ReturnType<typeof renderer.create> | undefined;
         act(() => {
             tree = renderer.create(
@@ -219,11 +230,12 @@ describe('ModelPickerOverlay', () => {
             );
         });
 
-        expect(findNodeByAccessibilityLabel(tree!, 'Loading models…')).toBeTruthy();
+        expect(findNodeByAccessibilityLabel(tree!, 'modelPickerOverlay.loadingModelsA11y')).toBeTruthy();
     });
 
-    it('calls refresh handler from the picker when provided', () => {
+    it('calls refresh handler from the picker when provided', async () => {
         const onRefresh = vi.fn();
+        const { ModelPickerOverlay } = await import('./ModelPickerOverlay');
 
         let tree: ReturnType<typeof renderer.create> | undefined;
         act(() => {
@@ -242,7 +254,7 @@ describe('ModelPickerOverlay', () => {
             );
         });
 
-        const refreshButton = findPressableByAccessibilityLabel(tree!, 'Refresh models');
+        const refreshButton = findPressableByAccessibilityLabel(tree!, 'modelPickerOverlay.refreshModelsA11y');
         expect(refreshButton).toBeTruthy();
 
         act(() => {

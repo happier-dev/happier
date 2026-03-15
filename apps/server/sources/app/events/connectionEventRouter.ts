@@ -109,6 +109,9 @@ class EventRouter {
                 }
                 return false;  // session-scoped doesn't need machine updates
 
+            case 'machine-only':
+                return connection.connectionType === 'machine-scoped' && connection.machineId === filter.machineId;
+
             case 'all-user-authenticated-connections':
                 // Send to all connection types (default behavior)
                 return true;
@@ -183,6 +186,8 @@ class EventRouter {
                 const rooms = [`machine:${filter.machineId}:${userId}`, `user-scoped:${userId}`];
                 return this.io.to(rooms);
             }
+            case "machine-only":
+                return this.io.to(`machine:${filter.machineId}:${userId}`);
             case "all-user-authenticated-connections":
                 return this.io.to(`user:${userId}`);
             default:

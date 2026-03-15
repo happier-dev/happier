@@ -10,6 +10,7 @@ import { fetchMessagesSince, fetchSessionV2, patchSessionMetadataWithRetry } fro
 import { decryptLegacyBase64, encryptLegacyBase64 } from '../../messageCrypto';
 import { sleep } from '../../timing';
 import { enqueuePendingQueueV2 } from '../../pendingQueueV2';
+import { repoRootDir } from '../../paths';
 import {
   resolveAcpOutsideWorkspaceWriteAllowed,
   resolveAcpOutsideWorkspaceRequireTaskComplete,
@@ -443,6 +444,10 @@ function assertProviderId(provider: ProviderUnderTest, expected: ProviderUnderTe
   if (provider.id !== expected) throw new Error(`Scenario is only supported for provider ${expected} (got ${provider.id})`);
 }
 
+function isOpenCodeFamilyProvider(provider: ProviderUnderTest): boolean {
+  return provider.id === 'opencode' || provider.id === 'opencode_server';
+}
+
 function acpProviderId(provider: ProviderUnderTest): string {
   return provider.traceProvider ?? provider.id;
 }
@@ -455,6 +460,25 @@ function acpResumeMetadataKey(providerId: ProviderUnderTest['id']): string {
   if (providerId === 'kimi') return 'kimiSessionId';
   if (providerId === 'auggie') return 'auggieSessionId';
   return 'opencodeSessionId';
+}
+
+function claudeAgentTeamsCreateAndSpawnPrompt(teamId: string): string {
+  return [
+    'This is an automated E2E test for Claude Code Agent Teams.',
+    'You MUST execute the following tool calls, in order:',
+    '',
+    `1) TeamCreate: create a team with team_name="${teamId}".`,
+    '2) Task: spawn teammate Alpha (run_in_background=true).',
+    '3) Task: spawn teammate Beta (run_in_background=true).',
+    '',
+    'Rules:',
+    '- Do not use Bash.',
+    '- Do not read or write files.',
+    '- Do not answer until steps 1–3 are complete.',
+    '- Then reply DONE.',
+    '',
+    'If you do not see the TeamCreate tool available, reply ONLY: NO_AGENT_TEAMS.',
+  ].join('\n');
 }
 
 export function abortContinuationFollowupSubstrings(
@@ -649,7 +673,7 @@ function makeAcpPermissionModeOutsideWorkspaceScenario(
   };
 
   if (
-    (provider.id === 'opencode' || provider.id === 'kilo') &&
+    (isOpenCodeFamilyProvider(provider) || provider.id === 'kilo') &&
     mode !== 'yolo' &&
     decision === 'approve' &&
     expectPermissionRequest
@@ -667,7 +691,7 @@ function makeAcpPermissionModeOutsideWorkspaceScenario(
 
 const agentSdkRemoteMetaBase = {
   claudeRemoteAgentSdkEnabled: true,
-  claudeRemoteSettingSources: 'project',
+  claudeRemoteSettingSourcesV2: ['user', 'project', 'local'],
 } as const;
 
 function withAgentSdkRemoteMeta(
@@ -705,6 +729,109 @@ export const scenarioCatalog: Record<string, ScenarioFactory> = {
   // --------------------
   // Claude (local/remote)
   // --------------------
+  mcp_merge_preserves_user_tools: () => {
+    const sentinel = `FIXTURE_MCP_PONG_${randomUUID()}`;
+    // This fixture script uses ESM + top-level await, so it must be .mjs for Node.
+    const scriptFilename = 'fixture-mcp-server.mjs';
+    return {
+      id: 'mcp_merge_preserves_user_tools',
+      title: 'mcp: injected Happy MCP config does not hide user MCP tools (merge + no forced allowlist)',
+      tier: 'extended',
+      yolo: true,
+      maxTraceEvents: { toolCalls: 1, toolResults: 1, permissionRequests: 1 },
+      setup: async ({ workspaceDir }) => {
+        const scriptPath = join(workspaceDir, scriptFilename);
+
+        const sdkMcpPath = join(
+          repoRootDir(),
+          'apps',
+          'cli',
+          'node_modules',
+          '@modelcontextprotocol',
+          'sdk',
+          'dist',
+          'esm',
+          'server',
+          'mcp.js',
+        );
+        const sdkStdioPath = join(
+          repoRootDir(),
+          'apps',
+          'cli',
+          'node_modules',
+          '@modelcontextprotocol',
+          'sdk',
+          'dist',
+          'esm',
+          'server',
+          'stdio.js',
+        );
+        const zodPath = join(repoRootDir(), 'apps', 'cli', 'node_modules', 'zod', 'index.js');
+
+        await writeFile(
+          scriptPath,
+          `#!/usr/bin/env node
+import { pathToFileURL } from 'node:url';
+
+const sdkMcpPath = ${JSON.stringify(sdkMcpPath)};
+const sdkStdioPath = ${JSON.stringify(sdkStdioPath)};
+const zodPath = ${JSON.stringify(zodPath)};
+const sentinel = ${JSON.stringify(sentinel)};
+
+const { McpServer } = await import(pathToFileURL(sdkMcpPath).href);
+const { StdioServerTransport } = await import(pathToFileURL(sdkStdioPath).href);
+const { z } = await import(pathToFileURL(zodPath).href);
+
+const server = new McpServer({ name: 'fixture-mcp', version: '0.0.0' });
+
+server.registerTool(
+  'ping',
+  {
+    title: 'ping',
+    description: 'Fixture MCP ping tool',
+    inputSchema: {
+      // Use a non-redacted key so provider tool traces can assert the sentinel substring
+      // without disabling any redaction logic.
+      sentinel: z.string(),
+    },
+  },
+  async () => ({
+    content: [{ type: 'text', text: sentinel }],
+  }),
+);
+
+await server.connect(new StdioServerTransport());
+`,
+          'utf8',
+        );
+      },
+      cliArgs: ({ workspaceDir }) => {
+        const scriptPath = join(workspaceDir, scriptFilename);
+        return [
+          '--mcp-config',
+          JSON.stringify({
+            mcpServers: {
+              fixture: {
+                command: process.execPath,
+                args: [scriptPath],
+              },
+            },
+          }),
+        ];
+      },
+      prompt: () =>
+        [
+          'Run exactly one tool call:',
+          '- Use the tool mcp__fixture__ping.',
+          `- Pass this exact JSON input: {"sentinel":${JSON.stringify(sentinel)}}`,
+          '- Do not use any other tool.',
+          '- Then reply DONE.',
+        ].join('\n'),
+      requiredFixtureKeys: ['claude/claude/tool-call/mcp__fixture__ping', 'claude/claude/tool-result/mcp__fixture__ping'],
+      requiredTraceSubstrings: [sentinel],
+    };
+  },
+
   bash_echo_trace_ok: () => ({
     id: 'bash_echo_trace_ok',
     title: 'Bash: echo CLAUDE_TRACE_OK',
@@ -731,6 +858,207 @@ export const scenarioCatalog: Record<string, ScenarioFactory> = {
       if (!hasEcho) throw new Error('Bash tool-call did not include expected command substring');
     },
   }),
+
+  agent_teams_participant_routing_broadcast: (provider) => {
+    assertProviderId(provider, 'claude');
+    const teamId = 'probe';
+    const broadcastSentinel = 'HAPPIER_E2E_AGENT_TEAMS_BROADCAST_SENTINEL_123';
+    return {
+      id: 'agent_teams_participant_routing_broadcast',
+      title: 'agent teams: participant routing (broadcast) triggers SendMessage tool call',
+      tier: 'extended',
+      yolo: false,
+      waitMs: 240_000,
+      messageMeta: {
+        claudeCodeExperimentalAgentTeamsEnabled: true,
+      },
+      steps: [
+        {
+          id: 'create_team_and_spawn',
+          prompt: () => claudeAgentTeamsCreateAndSpawnPrompt(teamId),
+          satisfaction: {
+            requiredFixtureKeys: [
+              'claude/claude/tool-call/AgentTeamCreate',
+              'claude/claude/tool-call/Task',
+            ],
+            requiredTraceSubstrings: ['Alpha', 'Beta'],
+          },
+        },
+        {
+          id: 'broadcast_via_participant_meta',
+          prompt: () =>
+            [
+              broadcastSentinel,
+              'Reply with EXACT text: OK',
+            ].join('\n'),
+          messageMeta: {
+            happier: {
+              kind: 'participant_message.v1',
+              payload: {
+                recipient: {
+                  kind: 'agent_team_broadcast',
+                  teamId,
+                },
+              },
+            },
+          },
+          satisfaction: {
+            requiredFixtureKeys: ['claude/claude/tool-call/AgentTeamSendMessage'],
+          },
+        },
+        {
+          id: 'delete_team',
+          prompt: () =>
+            [
+              `Delete the Agent Team named "${teamId}" using the TeamDelete tool.`,
+              'Then reply DONE.',
+            ].join('\n'),
+        },
+      ],
+      requiredFixtureKeys: ['claude/claude/tool-call/AgentTeamCreate', 'claude/claude/tool-call/AgentTeamSendMessage', 'claude/claude/tool-call/AgentTeamDelete'],
+      verify: async ({ fixtures }) => {
+        const examples = fixtures?.examples;
+        if (!examples || typeof examples !== 'object') throw new Error('Invalid fixtures: missing examples');
+
+        const teamCreates = (examples['claude/claude/tool-call/AgentTeamCreate'] ?? []) as any[];
+        if (!Array.isArray(teamCreates) || teamCreates.length === 0) throw new Error('Missing TeamCreate tool-call fixtures');
+        const hasProbeTeamCreate = teamCreates.some((e) => hasStringSubstring(stableStringifyShape(e?.payload?.input), teamId));
+        if (!hasProbeTeamCreate) throw new Error(`TeamCreate did not include expected team id/name: ${teamId}`);
+
+        const taskCalls = (examples['claude/claude/tool-call/Task'] ?? []) as any[];
+        if (!Array.isArray(taskCalls) || taskCalls.length === 0) throw new Error('Missing Task tool-call fixtures (expected teammate spawns)');
+        const hasAlpha = taskCalls.some((e) => {
+          const input = e?.payload?.input;
+          const name = typeof input?.name === 'string' ? input.name.trim().toLowerCase() : '';
+          if (name === 'alpha') return true;
+          const description = typeof input?.description === 'string' ? input.description.trim().toLowerCase() : '';
+          return description.includes('alpha');
+        });
+        const hasBeta = taskCalls.some((e) => {
+          const input = e?.payload?.input;
+          const name = typeof input?.name === 'string' ? input.name.trim().toLowerCase() : '';
+          if (name === 'beta') return true;
+          const description = typeof input?.description === 'string' ? input.description.trim().toLowerCase() : '';
+          return description.includes('beta');
+        });
+        if (!hasAlpha || !hasBeta) throw new Error('Expected Task tool-call inputs to include both Alpha and Beta teammate spawns');
+
+        const sendMessages = (examples['claude/claude/tool-call/AgentTeamSendMessage'] ?? []) as any[];
+        if (!Array.isArray(sendMessages) || sendMessages.length === 0) throw new Error('Missing SendMessage tool-call fixtures');
+        const hasBroadcast = sendMessages.some((e) => {
+          const input = e?.payload?.input;
+          if (!input || typeof input !== 'object' || Array.isArray(input)) return false;
+          return (input as any).type === 'broadcast';
+        });
+        if (!hasBroadcast) {
+          throw new Error('SendMessage tool-call did not include a broadcast payload');
+        }
+
+        const deletes = (examples['claude/claude/tool-call/AgentTeamDelete'] ?? []) as any[];
+        if (!Array.isArray(deletes) || deletes.length === 0) throw new Error('Missing TeamDelete tool-call fixtures');
+      },
+    } satisfies ProviderScenario;
+  },
+
+  agent_sdk_agent_teams_participant_routing_broadcast: (provider) => {
+    const base = scenarioCatalog.agent_teams_participant_routing_broadcast(provider);
+    return withAgentSdkRemoteMeta(base, {
+      id: 'agent_sdk_agent_teams_participant_routing_broadcast',
+      title: 'agent sdk: agent teams: participant routing (broadcast) triggers SendMessage tool call',
+    });
+  },
+
+  agent_teams_participant_routing_member: (provider) => {
+    assertProviderId(provider, 'claude');
+    const teamId = 'probe';
+    const memberLabel = 'Alpha';
+    const memberId = '@Alpha';
+    const directSentinel = 'HAPPIER_E2E_AGENT_TEAMS_DIRECT_SENTINEL_123';
+    return {
+      id: 'agent_teams_participant_routing_member',
+      title: 'agent teams: participant routing (member) triggers SendMessage tool call',
+      tier: 'extended',
+      yolo: false,
+      waitMs: 240_000,
+      messageMeta: {
+        claudeCodeExperimentalAgentTeamsEnabled: true,
+      },
+      steps: [
+        {
+          id: 'create_team_and_spawn',
+          prompt: () => claudeAgentTeamsCreateAndSpawnPrompt(teamId),
+          satisfaction: {
+            requiredFixtureKeys: [
+              'claude/claude/tool-call/AgentTeamCreate',
+              'claude/claude/tool-call/Task',
+            ],
+            requiredTraceSubstrings: ['Alpha', 'Beta'],
+          },
+        },
+        {
+          id: 'direct_message_via_participant_meta',
+          prompt: () =>
+            [
+              directSentinel,
+              'Reply with EXACT text: OK',
+            ].join('\n'),
+          messageMeta: {
+            happier: {
+              kind: 'participant_message.v1',
+              payload: {
+                recipient: {
+                  kind: 'agent_team_member',
+                  teamId,
+                  memberId,
+                  memberLabel,
+                },
+              },
+            },
+          },
+          satisfaction: {
+            requiredFixtureKeys: ['claude/claude/tool-call/AgentTeamSendMessage'],
+          },
+        },
+        {
+          id: 'delete_team',
+          prompt: () =>
+            [
+              `Delete the Agent Team named "${teamId}" using the TeamDelete tool.`,
+              'Then reply DONE.',
+            ].join('\n'),
+        },
+      ],
+      requiredFixtureKeys: ['claude/claude/tool-call/AgentTeamCreate', 'claude/claude/tool-call/AgentTeamSendMessage', 'claude/claude/tool-call/AgentTeamDelete'],
+      verify: async ({ fixtures }) => {
+        const examples = fixtures?.examples;
+        if (!examples || typeof examples !== 'object') throw new Error('Invalid fixtures: missing examples');
+
+        const sendMessages = (examples['claude/claude/tool-call/AgentTeamSendMessage'] ?? []) as any[];
+        if (!Array.isArray(sendMessages) || sendMessages.length === 0) throw new Error('Missing SendMessage tool-call fixtures');
+        const hasDirect = sendMessages.some((e) => {
+          const input = e?.payload?.input;
+          if (!input || typeof input !== 'object' || Array.isArray(input)) return false;
+          const type = typeof (input as any).type === 'string' ? String((input as any).type) : '';
+          const recipient = typeof (input as any).recipient === 'string' ? String((input as any).recipient) : '';
+          const hasTarget = recipient.includes(memberLabel) || recipient.includes(memberId);
+          // Avoid matching shutdown requests that may happen during cleanup.
+          const isRoutedMessage = type.length > 0 && type !== 'broadcast' && type !== 'shutdown_request';
+          return hasTarget && isRoutedMessage;
+        });
+        if (!hasDirect) {
+          throw new Error('SendMessage tool-call did not include a direct/member payload containing the expected target');
+        }
+      },
+    } satisfies ProviderScenario;
+  },
+
+  agent_sdk_agent_teams_participant_routing_member: (provider) => {
+    const base = scenarioCatalog.agent_teams_participant_routing_member(provider);
+    return withAgentSdkRemoteMeta(base, {
+      id: 'agent_sdk_agent_teams_participant_routing_member',
+      title: 'agent sdk: agent teams: participant routing (member) triggers SendMessage tool call',
+    });
+  },
 
   read_known_file: (provider) => {
     if (provider.id === 'claude') {
@@ -1243,6 +1571,28 @@ export const scenarioCatalog: Record<string, ScenarioFactory> = {
     } satisfies ProviderScenario;
   },
 
+  opencode_surface_status_error: (provider) => {
+    if (provider.protocol !== 'acp') {
+      throw new Error(`opencode_surface_status_error only supports ACP providers (got ${provider.protocol})`);
+    }
+    if (!isOpenCodeFamilyProvider(provider)) {
+      throw new Error(`opencode_surface_status_error only supports opencode-family providers (got ${provider.id})`);
+    }
+
+    return {
+      id: 'opencode_surface_status_error',
+      title: 'opencode: surfaces model failures as status:error (not silent)',
+      tier: 'extended',
+      // Force a deterministic provider failure without hitting network: OpenCode rejects unknown
+      // model ids locally, and Happier must surface the failure in the session UI.
+      cliArgs: () => ['--model', 'openai/does_not_exist', '--model-updated-at', String(Date.now())],
+      prompt: () => 'hi',
+      requiredMessageSubstrings: ['Model not found'],
+      // Keep wait budget tight; this should fail fast if errors are not surfaced.
+      waitMs: 60_000,
+    } satisfies ProviderScenario;
+  },
+
   acp_set_model_inventory: (provider) => {
     if (provider.protocol !== 'acp') {
       throw new Error(`acp_set_model_inventory only supports ACP providers (got ${provider.protocol})`);
@@ -1494,7 +1844,7 @@ export const scenarioCatalog: Record<string, ScenarioFactory> = {
     // "allow once" option is selected. Prefer auto-selecting "always allow" in the harness so the
     // scenario can validate permission surfacing + enforcement deterministically.
     if (
-      (provider.id === 'opencode' || provider.id === 'kilo') &&
+      (isOpenCodeFamilyProvider(provider) || provider.id === 'kilo') &&
       scenarioWithYolo.yolo === false &&
       scenarioWithYolo.permissionAutoDecision === 'approved' &&
       expectPermissionRequest
@@ -1503,7 +1853,7 @@ export const scenarioCatalog: Record<string, ScenarioFactory> = {
     }
 
     if (
-      (provider.id === 'opencode' || provider.id === 'kilo') &&
+      (isOpenCodeFamilyProvider(provider) || provider.id === 'kilo') &&
       scenarioWithYolo.yolo === true
     ) {
       return { ...scenarioWithYolo, allowPermissionAutoApproveInYolo: true };
@@ -1889,7 +2239,7 @@ export const scenarioCatalog: Record<string, ScenarioFactory> = {
       const pid = acpProviderId(provider);
       const sessionMetadataKey = acpResumeMetadataKey(provider.id);
       const followupTimeoutMs =
-        provider.id === 'opencode' || provider.id === 'kilo' ? 300_000 : provider.id === 'kimi' ? 240_000 : 180_000;
+        isOpenCodeFamilyProvider(provider) || provider.id === 'kilo' ? 300_000 : provider.id === 'kimi' ? 240_000 : 180_000;
       const readyAndMemoryTimeoutMs = provider.id === 'kilo' ? 180_000 : 120_000;
       const followupSubstrings = abortContinuationFollowupSubstrings(provider.id, followupSentinel, memorySentinel);
       return {
@@ -2012,7 +2362,7 @@ export const scenarioCatalog: Record<string, ScenarioFactory> = {
   // ACP providers (Codex/OpenCode/Kilo)
   // --------------------
   execute_trace_ok: (provider) => {
-    if (provider.id === 'opencode' || provider.id === 'kilo') {
+    if (isOpenCodeFamilyProvider(provider) || provider.id === 'kilo') {
       const pid = acpProviderId(provider);
       const expectedRawToolNames = ['execute', 'bash', 'shell', 'execute_command', 'exec_command'];
       return {
@@ -2219,8 +2569,8 @@ export const scenarioCatalog: Record<string, ScenarioFactory> = {
   },
 
   execute_error_exit_2: (provider) => {
-    if (provider.id !== 'opencode' && provider.id !== 'kilo') {
-      throw new Error(`execute_error_exit_2 only supports opencode or kilo providers (got ${provider.id})`);
+    if (!isOpenCodeFamilyProvider(provider) && provider.id !== 'kilo') {
+      throw new Error(`execute_error_exit_2 only supports opencode-family or kilo providers (got ${provider.id})`);
     }
     const pid = acpProviderId(provider);
     return {
@@ -2262,7 +2612,9 @@ export const scenarioCatalog: Record<string, ScenarioFactory> = {
   },
 
   task_subagent_reply: (provider) => {
-    assertProviderId(provider, 'opencode');
+    if (provider.id !== 'opencode' && provider.id !== 'opencode_server') {
+      throw new Error(`task_subagent_reply only supports OpenCode-family providers (got ${provider.id})`);
+    }
     const pid = acpProviderId(provider);
     return {
       id: 'task_subagent_reply',
@@ -2348,7 +2700,7 @@ export const scenarioCatalog: Record<string, ScenarioFactory> = {
     const token = provider.id === 'codex' ? 'CODEX_SEARCH_OK' : 'SEARCH_TOKEN_XYZ';
     const scenario = makeAcpSearchKnownTokenScenario({ providerId: pid, token });
 
-    if (provider.id === 'opencode') {
+    if (isOpenCodeFamilyProvider(provider)) {
       return {
         ...scenario,
         verify: async ({ fixtures }) => {
@@ -2410,8 +2762,8 @@ export const scenarioCatalog: Record<string, ScenarioFactory> = {
   },
 
   edit_write_file_and_cat: (provider) => {
-    if (provider.id !== 'opencode' && provider.id !== 'kilo') {
-      throw new Error(`edit_write_file_and_cat only supports opencode or kilo providers (got ${provider.id})`);
+    if (!isOpenCodeFamilyProvider(provider) && provider.id !== 'kilo') {
+      throw new Error(`edit_write_file_and_cat only supports opencode-family or kilo providers (got ${provider.id})`);
     }
     return makeAcpWriteInWorkspaceScenario({
       providerId: acpProviderId(provider),
@@ -2423,8 +2775,8 @@ export const scenarioCatalog: Record<string, ScenarioFactory> = {
   },
 
   write_then_stream_markdown_table: (provider) => {
-    if (provider.id !== 'opencode' && provider.id !== 'kilo') {
-      throw new Error(`write_then_stream_markdown_table only supports opencode or kilo providers (got ${provider.id})`);
+    if (!isOpenCodeFamilyProvider(provider) && provider.id !== 'kilo') {
+      throw new Error(`write_then_stream_markdown_table only supports opencode-family or kilo providers (got ${provider.id})`);
     }
     return makeAcpWriteThenStreamMarkdownTableScenario({
       providerId: acpProviderId(provider),

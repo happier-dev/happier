@@ -3,3 +3,4 @@ export * as workspaces from './workspaces/index.js';
 export * as links from './links.js';
 export * as service from './service/index.js';
 export * as providers from './providers/index.js';
+export * as tailscale from './tailscale/index.js';

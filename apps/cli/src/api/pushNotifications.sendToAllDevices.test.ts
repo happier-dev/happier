@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 import axios from 'axios';
 
 import { PushNotificationClient } from './pushNotifications';
+import { PUSH_NOTIFICATION_ANDROID_CHANNEL_IDS, PUSH_NOTIFICATION_CATEGORY_IDS } from '@happier-dev/protocol';
 
 const sendPushNotificationsAsyncSpy = vi.fn(async (_chunk: any[]) =>
   _chunk.map(() => ({ status: 'ok' })),
@@ -55,5 +56,68 @@ describe('PushNotificationClient.sendToAllDevicesAsync', () => {
     const [first, second] = chunk as any[];
     expect(first.data).toMatchObject({ serverUrl: 'https://lan.example.test' });
     expect(second.data).toMatchObject({ serverUrl: 'http://localhost:3005' });
+  });
+
+  it('sets categoryId for permission/user_action request pushes based on payload kind', async () => {
+    (axios as any).get.mockResolvedValue({
+      data: {
+        tokens: [{ id: '1', token: 'ExponentPushToken[a]' }],
+      },
+    });
+
+    const client = new PushNotificationClient('t', 'https://api.example.test');
+    await client.sendToAllDevicesAsync('Title', 'Body', { sessionId: 's_1', requestId: 'p_1', kind: 'permission' });
+
+    const [chunk] = sendPushNotificationsAsyncSpy.mock.calls.at(-1) ?? [];
+    expect(Array.isArray(chunk)).toBe(true);
+    expect(chunk).toHaveLength(1);
+    expect((chunk as any[])[0]).toMatchObject({ categoryId: PUSH_NOTIFICATION_CATEGORY_IDS.permissionRequestV1 });
+  });
+
+  it('sets iOS subtitle and Android channelId for permission request pushes', async () => {
+    (axios as any).get.mockResolvedValue({
+      data: {
+        tokens: [{ id: '1', token: 'ExponentPushToken[a]' }],
+      },
+    });
+
+    const client = new PushNotificationClient('t', 'https://api.example.test');
+    await client.sendToAllDevicesAsync('Title', 'Body', {
+      sessionId: 's_1',
+      requestId: 'p_1',
+      kind: 'permission',
+      tool: 'Bash',
+    });
+
+    const [chunk] = sendPushNotificationsAsyncSpy.mock.calls.at(-1) ?? [];
+    expect(Array.isArray(chunk)).toBe(true);
+    expect(chunk).toHaveLength(1);
+    expect((chunk as any[])[0]).toMatchObject({
+      subtitle: 'Bash',
+      channelId: PUSH_NOTIFICATION_ANDROID_CHANNEL_IDS.permissionRequestsV1,
+    });
+  });
+
+  it('sanitizes iOS subtitle for notification pushes', async () => {
+    (axios as any).get.mockResolvedValue({
+      data: {
+        tokens: [{ id: '1', token: 'ExponentPushToken[a]' }],
+      },
+    });
+
+    const client = new PushNotificationClient('t', 'https://api.example.test');
+    await client.sendToAllDevicesAsync('Title', 'Body', {
+      sessionId: 's_1',
+      requestId: 'p_1',
+      kind: 'permission',
+      tool: 'Bash\nrm -rf /\t\t',
+    });
+
+    const [chunk] = sendPushNotificationsAsyncSpy.mock.calls.at(-1) ?? [];
+    expect(Array.isArray(chunk)).toBe(true);
+    expect(chunk).toHaveLength(1);
+    expect((chunk as any[])[0]).toMatchObject({
+      subtitle: 'Bash rm -rf /',
+    });
   });
 });

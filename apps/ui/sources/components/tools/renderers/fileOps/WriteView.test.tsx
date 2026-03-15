@@ -56,6 +56,7 @@ describe('WriteView', () => {
 
         expect(diffSpy).toHaveBeenCalledTimes(1);
         const last = diffSpy.mock.calls.at(-1)?.[0];
+        expect(last.filePath).toBe('/tmp/a.txt');
         expect(last.newText).toContain('line-0');
         expect(last.newText).toContain('line-19');
         expect(last.newText).not.toContain('line-20');

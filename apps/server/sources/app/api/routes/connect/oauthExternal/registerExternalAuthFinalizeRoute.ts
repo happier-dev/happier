@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import * as privacyKit from "privacy-kit";
 import tweetnacl from "tweetnacl";
 import { z } from "zod";
@@ -31,7 +32,7 @@ export function registerExternalAuthFinalizeRoute(app: Fastify) {
             body: ExternalOAuthFinalizeAuthRequestSchema,
             response: {
                 200: ExternalOAuthFinalizeAuthSuccessResponseSchema,
-                400: z.object({ error: z.enum(["invalid-pending", "invalid-public-key", "invalid-signature", "username-required", "invalid-username"]) }),
+                400: z.object({ error: z.enum(["invalid-pending", "invalid-proof", "invalid-public-key", "invalid-signature", "username-required", "invalid-username"]) }),
                 403: z.object({ error: z.enum(["signup-provider-disabled", "forbidden", "not-eligible", RECOVERY_DISABLED_ERROR]) }),
                 404: z.object({ error: z.literal("unsupported-provider") }),
                 409: z.union([
@@ -117,15 +118,33 @@ export function registerExternalAuthFinalizeRoute(app: Fastify) {
             return reply.code(400).send({ error: "invalid-pending" });
         }
 
-        if (parsedValue.authMode !== "keyed" || !parsedValue.publicKeyHex) {
+        const pendingFormat =
+            (parsedValue as any)?.v === 2
+                ? ("v2" as const)
+                : (typeof (parsedValue as any)?.publicKeyHex === "string" && (parsedValue as any).publicKeyHex.trim())
+                    ? ("legacy_keyed" as const)
+                    : null;
+        if (!pendingFormat) {
             await deleteOAuthPendingBestEffort(pendingKey);
             return reply.code(400).send({ error: "invalid-pending" });
+        }
+        if (pendingFormat === "v2") {
+            const proof = request.body.proof?.toString?.().trim?.() ?? "";
+            if (!proof) {
+                await deleteOAuthPendingBestEffort(pendingKey);
+                return reply.code(400).send({ error: "invalid-proof" });
+            }
+            const proofHash = createHash("sha256").update(proof, "utf8").digest("hex");
+            if (!((parsedValue as any).proofHash) || proofHash !== (parsedValue as any).proofHash) {
+                await deleteOAuthPendingBestEffort(pendingKey);
+                return reply.code(400).send({ error: "invalid-proof" });
+            }
         }
 
         if (parsedValue.provider.toString().trim().toLowerCase() !== providerId) {
             return reply.code(403).send({ error: "forbidden" });
         }
-        if (parsedValue.publicKeyHex !== publicKeyHex) {
+        if (pendingFormat === "legacy_keyed" && (parsedValue as any).publicKeyHex !== publicKeyHex) {
             return reply.code(403).send({ error: "forbidden" });
         }
 
@@ -134,18 +153,25 @@ export function registerExternalAuthFinalizeRoute(app: Fastify) {
         let pendingProfile: unknown;
         try {
             const tokenBytes = privacyKit.decodeBase64(parsedValue.accessTokenEnc);
-            accessToken = decryptString(["auth", "external", providerId, "pending", pendingKey, publicKeyHex], tokenBytes);
+            accessToken =
+                pendingFormat === "v2"
+                    ? decryptString(["auth", "external", providerId, "pending_v2", pendingKey, "token"], tokenBytes)
+                    : decryptString(["auth", "external", providerId, "pending", pendingKey, publicKeyHex], tokenBytes);
             if (typeof parsedValue.refreshTokenEnc === "string" && parsedValue.refreshTokenEnc.trim()) {
                 const refreshBytes = privacyKit.decodeBase64(parsedValue.refreshTokenEnc);
                 refreshToken = decryptString(
-                    ["auth", "external", providerId, "pending", pendingKey, publicKeyHex, "refresh"],
+                    pendingFormat === "v2"
+                        ? ["auth", "external", providerId, "pending_v2", pendingKey, "refresh"]
+                        : ["auth", "external", providerId, "pending", pendingKey, publicKeyHex, "refresh"],
                     refreshBytes,
                 );
             }
 
             const profileBytes = privacyKit.decodeBase64(parsedValue.profileEnc);
             const profileJson = decryptString(
-                ["auth", "external", providerId, "pending", pendingKey, publicKeyHex, "profile"],
+                pendingFormat === "v2"
+                    ? ["auth", "external", providerId, "pending_v2", pendingKey, "profile"]
+                    : ["auth", "external", providerId, "pending", pendingKey, publicKeyHex, "profile"],
                 profileBytes,
             );
             pendingProfile = JSON.parse(profileJson);

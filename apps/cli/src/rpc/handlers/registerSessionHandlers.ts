@@ -9,12 +9,10 @@ export type { SpawnSessionErrorCode } from '@happier-dev/protocol';
 import { registerCapabilitiesHandlers } from './capabilities';
 import { registerPreviewEnvHandler } from './previewEnv';
 import { registerBashHandler } from './bash';
-import { registerFileSystemHandlers } from './fileSystem';
 import { registerSessionLogTailHandler } from './sessionLogTail';
 import { registerAttachmentsUploadHandlers } from './attachmentsUpload';
 import { registerRipgrepHandler } from './ripgrep';
 import { registerDifftasticHandler } from './difftastic';
-import { registerScmHandlers } from './scm';
 
 /*
  * Spawn Session Options and Result
@@ -24,6 +22,15 @@ import { registerScmHandlers } from './scm';
 export interface SpawnSessionOptions {
     machineId?: string;
     directory: string;
+    /**
+     * Daemon-only spawn idempotency salt.
+     *
+     * When set, the daemon treats the spawn request as unique for the purposes of spawn request
+     * coalescing (prevents returning a recent success session id for rapid consecutive spawns).
+     *
+     * This must not be forwarded into the spawned session process (it is not an environment variable).
+     */
+    spawnNonce?: string;
     /**
      * Optional initial prompt to seed for daemon-driven session starts.
      * The spawned process consumes this prompt from environment and sends it
@@ -144,10 +151,8 @@ export function registerSessionHandlers(
     // Checklist-based machine capability registry (replaces legacy detect-cli / detect-capabilities / dep-status).
     registerCapabilitiesHandlers(rpcHandlerManager);
     registerPreviewEnvHandler(rpcHandlerManager);
-    registerFileSystemHandlers(rpcHandlerManager, workingDirectory, { getAdditionalAllowedReadDirs });
     registerSessionLogTailHandler(rpcHandlerManager, { getSessionMetadata: opts?.getSessionMetadata });
     registerAttachmentsUploadHandlers(rpcHandlerManager, { workingDirectory, setAdditionalAllowedReadDirs });
     registerRipgrepHandler(rpcHandlerManager, workingDirectory);
     registerDifftasticHandler(rpcHandlerManager, workingDirectory);
-    registerScmHandlers(rpcHandlerManager, workingDirectory);
 }

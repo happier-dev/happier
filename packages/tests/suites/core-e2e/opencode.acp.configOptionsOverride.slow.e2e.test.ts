@@ -184,6 +184,7 @@ new acp.AgentSideConnection((conn) => new FakeAgent(conn), stream);
       HAPPIER_SERVER_URL: server.baseUrl,
       HAPPIER_WEBAPP_URL: server.baseUrl,
       HAPPIER_SESSION_ATTACH_FILE: attachFile,
+      HAPPIER_OPENCODE_BACKEND_MODE: 'acp',
       HAPPIER_E2E_ACP_SDK_ENTRY: sdkEntry,
       HAPPIER_E2E_CONFIG_LOG: configLogPath,
       PATH: `${fakeBinDir}:${process.env.PATH ?? ''}`,

@@ -9,7 +9,7 @@ import { SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc';
 
 import { fetchSessionById } from '@/sessionControl/sessionsHttp';
 import { wantsJson, printJsonEnvelope } from '@/sessionControl/jsonOutput';
-import { resolveSessionEncryptionContextFromCredentials } from '@/sessionControl/sessionEncryptionContext';
+import { resolveSessionEncryptionContextFromCredentials, resolveSessionStoredContentEncryptionMode } from '@/sessionControl/sessionEncryptionContext';
 import { callSessionRpc } from '@/sessionControl/sessionRpc';
 import { readFlagValue } from '@/sessionControl/argvFlags';
 import { resolveSessionIdOrPrefix } from '@/sessionControl/resolveSessionId';
@@ -82,6 +82,7 @@ export async function cmdSessionRunStart(
   }
 
   const ctx = resolveSessionEncryptionContextFromCredentials(credentials, rawSession);
+  const mode = resolveSessionStoredContentEncryptionMode(rawSession);
 
   const permissionMode = (readFlagValue(argv, '--permission-mode') ?? '').trim() || defaultPermissionModeForIntent(intent);
   const retentionPolicy = (readFlagValue(argv, '--retention') ?? '').trim() || 'ephemeral';
@@ -102,6 +103,7 @@ export async function cmdSessionRunStart(
   const result = await callSessionRpc({
     token: credentials.token,
     sessionId,
+    mode,
     ctx,
     method,
     request,

@@ -32,6 +32,11 @@ describe('providers harness: provider availability classification', () => {
         'Fatal provider runtime error (codex.glob_list_files): Usage limit exceeded',
       ),
     ).toBe(true);
+    expect(
+      isSkippableProviderUnavailabilityError(
+        'Fatal provider runtime error (claude.agent_sdk_agent_teams_participant_routing_broadcast): Rate limited',
+      ),
+    ).toBe(true);
   });
 
   it('does not classify regular scenario assertion failures as provider unavailability', () => {

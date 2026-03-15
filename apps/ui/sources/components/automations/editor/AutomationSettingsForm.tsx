@@ -7,6 +7,7 @@ import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { Switch } from '@/components/ui/forms/Switch';
 import { Text, TextInput } from '@/components/ui/text/Text';
+import { t } from '@/text';
 
 export type AutomationSettingsValue = Readonly<{
     enabled: boolean;
@@ -70,14 +71,16 @@ export const AutomationSettingsForm = React.memo((props: Props) => {
         props.onChange({ ...props.value, ...patch });
     }, [props]);
 
-    const enableTitle = props.variant === 'new-session' ? 'Enable automation' : 'Enabled';
+    const enableTitle = props.variant === 'new-session'
+        ? t('automations.form.toggleEnableTitle')
+        : t('automations.form.toggleEnabledTitle');
     const enableSubtitle = props.variant === 'new-session'
-        ? 'Create this new session template as a scheduled automation instead of starting immediately.'
-        : 'When disabled, no scheduled runs will be executed.';
+        ? t('automations.form.toggleEnableSubtitle')
+        : t('automations.form.toggleEnabledSubtitle');
 
     return (
         <>
-            <ItemGroup title="Automation">
+            <ItemGroup title={t('automations.form.groupAutomationTitle')}>
                 <Item
                     title={enableTitle}
                     subtitle={enableSubtitle}
@@ -92,24 +95,24 @@ export const AutomationSettingsForm = React.memo((props: Props) => {
                 />
             </ItemGroup>
 
-            <ItemGroup title="Details">
+            <ItemGroup title={t('common.details')}>
                 <View style={styles.contentContainer}>
-                    <Text style={styles.label}>NAME</Text>
+                    <Text style={styles.label}>{t('automations.form.labels.name')}</Text>
                     <TextInput
                         style={styles.textInput}
                         value={props.value.name}
                         onChangeText={(value) => update({ name: value })}
-                        placeholder="Scheduled Session"
+                        placeholder={t('automations.form.placeholders.name')}
                         placeholderTextColor={theme.colors.input.placeholder}
                         autoCapitalize="words"
                         autoCorrect={false}
                     />
-                    <Text style={styles.label}>DESCRIPTION (OPTIONAL)</Text>
+                    <Text style={styles.label}>{t('automations.form.labels.descriptionOptional')}</Text>
                     <TextInput
                         style={styles.textInput}
                         value={props.value.description}
                         onChangeText={(value) => update({ description: value })}
-                        placeholder="What should this automation do?"
+                        placeholder={t('automations.form.placeholders.description')}
                         placeholderTextColor={theme.colors.input.placeholder}
                         autoCapitalize="sentences"
                         autoCorrect={true}
@@ -117,17 +120,17 @@ export const AutomationSettingsForm = React.memo((props: Props) => {
                 </View>
             </ItemGroup>
 
-            <ItemGroup title="Schedule">
+            <ItemGroup title={t('automations.form.groupScheduleTitle')}>
                 <Item
-                    title="Interval"
-                    subtitle="Run every N minutes."
+                    title={t('automations.form.schedule.intervalTitle')}
+                    subtitle={t('automations.form.schedule.intervalSubtitle')}
                     selected={props.value.scheduleKind === 'interval'}
                     onPress={() => update({ scheduleKind: 'interval' })}
                     icon={<Ionicons name="repeat-outline" size={18} color={theme.colors.textSecondary} />}
                 />
                 <Item
-                    title="Cron"
-                    subtitle="Advanced schedule expression."
+                    title={t('automations.form.schedule.cronTitle')}
+                    subtitle={t('automations.form.schedule.cronSubtitle')}
                     selected={props.value.scheduleKind === 'cron'}
                     onPress={() => update({ scheduleKind: 'cron' })}
                     icon={<Ionicons name="calendar-outline" size={18} color={theme.colors.textSecondary} />}
@@ -136,7 +139,7 @@ export const AutomationSettingsForm = React.memo((props: Props) => {
                 <View style={styles.contentContainer}>
                     {props.value.scheduleKind === 'interval' ? (
                         <>
-                            <Text style={styles.label}>EVERY (MINUTES)</Text>
+                            <Text style={styles.label}>{t('automations.form.labels.everyMinutes')}</Text>
                             <TextInput
                                 style={styles.textInput}
                                 value={String(props.value.everyMinutes)}
@@ -145,7 +148,7 @@ export const AutomationSettingsForm = React.memo((props: Props) => {
                                     if (!Number.isFinite(parsed)) return;
                                     update({ everyMinutes: clampEveryMinutes(parsed) });
                                 }}
-                                placeholder="60"
+                                placeholder={t('automations.form.placeholders.everyMinutes')}
                                 placeholderTextColor={theme.colors.input.placeholder}
                                 keyboardType="numeric"
                                 autoCapitalize="none"
@@ -154,28 +157,28 @@ export const AutomationSettingsForm = React.memo((props: Props) => {
                         </>
                     ) : (
                         <>
-                            <Text style={styles.label}>CRON EXPRESSION</Text>
+                            <Text style={styles.label}>{t('automations.form.labels.cronExpression')}</Text>
                             <TextInput
                                 style={styles.textInput}
                                 value={props.value.cronExpr}
                                 onChangeText={(value) => update({ cronExpr: value })}
-                                placeholder="*/5 * * * *"
+                                placeholder={t('automations.form.placeholders.cronExpression')}
                                 placeholderTextColor={theme.colors.input.placeholder}
                                 autoCapitalize="none"
                                 autoCorrect={false}
                             />
                             <Text style={styles.helpText}>
-                                Standard 5-field cron: minute hour day-of-month month day-of-week.
+                                {t('automations.form.schedule.cronHelpText')}
                             </Text>
                         </>
                     )}
 
-                    <Text style={styles.label}>TIMEZONE (OPTIONAL)</Text>
+                    <Text style={styles.label}>{t('automations.form.labels.timezoneOptional')}</Text>
                     <TextInput
                         style={styles.textInput}
                         value={props.value.timezone ?? ''}
                         onChangeText={(value) => update({ timezone: normalizeTimezone(value) })}
-                        placeholder="UTC or America/New_York"
+                        placeholder={t('automations.form.placeholders.timezone')}
                         placeholderTextColor={theme.colors.input.placeholder}
                         autoCapitalize="none"
                         autoCorrect={false}

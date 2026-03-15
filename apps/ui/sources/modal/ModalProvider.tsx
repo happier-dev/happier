@@ -75,7 +75,10 @@ export function ModalProvider({ children }: { children: React.ReactNode }) {
                             <WebAlertModal
                                 key={modal.id}
                                 config={modal}
-                                onClose={() => hideModal(modal.id)}
+                                onClose={() => {
+                                    Modal.resolveAlert(modal.id);
+                                    hideModal(modal.id);
+                                }}
                                 showBackdrop={showBackdrop}
                                 zIndexBase={modalZIndexBase}
                             />

@@ -26,6 +26,7 @@ test('pipeline CLI can run Expo submit in dry-run', async () => {
       env: {
         ...process.env,
         EXPO_TOKEN: 'expo-token',
+        APPLE_API_PRIVATE_KEY: '-----BEGIN PRIVATE KEY-----\\nabc\\n-----END PRIVATE KEY-----\\n',
       },
       encoding: 'utf8',
       stdio: ['ignore', 'pipe', 'pipe'],
@@ -36,4 +37,3 @@ test('pipeline CLI can run Expo submit in dry-run', async () => {
   assert.match(out, /scripts\/pipeline\/expo\/submit\.mjs/);
   assert.match(out, /\[pipeline\] expo submit: environment=preview platform=all/);
 });
-

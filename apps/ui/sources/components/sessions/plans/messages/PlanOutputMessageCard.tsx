@@ -6,6 +6,7 @@ import type { PlanOutputV1 } from '@happier-dev/protocol';
 import { sync } from '@/sync/sync';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 import { Text } from '@/components/ui/text/Text';
+import { t } from '@/text';
 
 
 export function PlanOutputMessageCard(props: Readonly<{ payload: PlanOutputV1; sessionId: string }>) {
@@ -32,7 +33,7 @@ export function PlanOutputMessageCard(props: Readonly<{ payload: PlanOutputV1; s
                 const text = `@happier/plan.adopt\n${JSON.stringify(wire)}`;
                 await sync.sendMessage(props.sessionId, text, 'Adopt plan');
             } catch (e) {
-                setError(e instanceof Error ? e.message : 'Failed to adopt plan');
+                setError(e instanceof Error ? e.message : t('session.planOutput.failedToAdopt'));
             } finally {
                 setIsSending(false);
             }
@@ -41,14 +42,14 @@ export function PlanOutputMessageCard(props: Readonly<{ payload: PlanOutputV1; s
 
     return (
         <View style={styles.container}>
-            <Text style={styles.headerText}>Plan</Text>
-            <Text style={styles.summaryText}>{props.payload.summary}</Text>
+            <Text selectable style={styles.headerText}>{t('session.planOutput.title')}</Text>
+            <Text selectable style={styles.summaryText}>{props.payload.summary}</Text>
 
             {sections.slice(0, 10).map((section) => (
                 <View key={section.title} style={styles.section}>
-                    <Text style={styles.sectionTitle}>{section.title}</Text>
+                    <Text selectable style={styles.sectionTitle}>{section.title}</Text>
                     {section.items.slice(0, 12).map((item, idx) => (
-                        <Text key={`${section.title}-${idx}`} style={styles.sectionItem}>
+                        <Text selectable key={`${section.title}-${idx}`} style={styles.sectionItem}>
                             {item}
                         </Text>
                     ))}
@@ -57,16 +58,16 @@ export function PlanOutputMessageCard(props: Readonly<{ payload: PlanOutputV1; s
 
             {props.payload.recommendedBackendId ? (
                 <View style={styles.section}>
-                    <Text style={styles.sectionTitle}>Recommended backend</Text>
-                    <Text style={styles.sectionItem}>{props.payload.recommendedBackendId}</Text>
+                    <Text selectable style={styles.sectionTitle}>{t('session.planOutput.recommendedBackend')}</Text>
+                    <Text selectable style={styles.sectionItem}>{props.payload.recommendedBackendId}</Text>
                 </View>
             ) : null}
 
             {risks.length > 0 ? (
                 <View style={styles.section}>
-                    <Text style={styles.sectionTitle}>Risks</Text>
+                    <Text selectable style={styles.sectionTitle}>{t('session.planOutput.risks')}</Text>
                     {risks.slice(0, 12).map((risk, idx) => (
-                        <Text key={`risk-${idx}`} style={styles.sectionItem}>
+                        <Text selectable key={`risk-${idx}`} style={styles.sectionItem}>
                             {risk}
                         </Text>
                     ))}
@@ -75,26 +76,29 @@ export function PlanOutputMessageCard(props: Readonly<{ payload: PlanOutputV1; s
 
             {milestones.length > 0 ? (
                 <View style={styles.section}>
-                    <Text style={styles.sectionTitle}>Milestones</Text>
+                    <Text selectable style={styles.sectionTitle}>{t('session.planOutput.milestones')}</Text>
                     {milestones.slice(0, 12).map((m, idx) => (
                         <View key={`ms-${idx}`} style={{ gap: 2 }}>
-                            <Text style={styles.sectionItem}>{m.title}</Text>
-                            {m.details ? <Text style={styles.sectionItem}>{m.details}</Text> : null}
+                            <Text selectable style={styles.sectionItem}>{m.title}</Text>
+                            {m.details ? <Text selectable style={styles.sectionItem}>{m.details}</Text> : null}
                         </View>
                     ))}
                 </View>
             ) : null}
 
-            {error ? <Text style={styles.errorText}>{error}</Text> : null}
+            {error ? <Text selectable style={styles.errorText}>{error}</Text> : null}
 
             <Pressable
                 accessibilityRole="button"
-                accessibilityLabel="Adopt plan"
+                testID="adopt-plan-button"
+                accessibilityLabel={t('session.planOutput.a11y.adoptPlan')}
                 onPress={handleAdopt}
                 disabled={isSending}
                 style={[styles.adoptButton, isSending && styles.adoptButtonDisabled]}
             >
-                <Text style={styles.adoptButtonText}>{isSending ? 'Sending…' : 'Adopt plan'}</Text>
+                <Text style={styles.adoptButtonText}>
+                    {isSending ? t('session.planOutput.sending') : t('session.planOutput.adoptPlan')}
+                </Text>
             </Pressable>
         </View>
     );

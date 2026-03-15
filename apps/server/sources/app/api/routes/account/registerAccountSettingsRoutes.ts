@@ -6,19 +6,22 @@ import { log } from "@/utils/logging/log";
 import { afterTx, inTx } from "@/storage/inTx";
 import { markAccountChanged } from "@/app/changes/markAccountChanged";
 import { type Fastify } from "../../types";
-import { resolveRouteRateLimit } from "@/app/api/utils/apiRateLimitPolicy";
+import { resolveApiHotEndpointRateLimit } from "@/app/api/utils/apiRateLimitCatalog";
+import {
+    AccountSettingsV2GetResponseSchema,
+    AccountSettingsV2UpdateRequestSchema,
+    AccountSettingsV2UpdateResponseSchema,
+    type AccountSettingsStoredContentEnvelope,
+} from "@happier-dev/protocol";
+import { resolveEffectiveAccountEncryptionModeFromAccountRow } from "@/app/encryption/accountEncryptionMode";
+import { openPlainAccountSettingsDbValue, storePlainAccountSettingsDbValue } from "@/app/encryption/accountSettingsStorage";
 
 export function registerAccountSettingsRoutes(app: Fastify): void {
     // Get Account Settings API
     app.get('/v1/account/settings', {
         preHandler: app.authenticate,
         config: {
-            rateLimit: resolveRouteRateLimit(process.env, {
-                maxEnvKey: "HAPPIER_ACCOUNT_SETTINGS_RATE_LIMIT_MAX",
-                windowEnvKey: "HAPPIER_ACCOUNT_SETTINGS_RATE_LIMIT_WINDOW",
-                defaultMax: 300,
-                defaultWindow: "1 minute",
-            }),
+            rateLimit: resolveApiHotEndpointRateLimit(process.env, "account.settings"),
         },
         schema: {
             response: {
@@ -26,6 +29,7 @@ export function registerAccountSettingsRoutes(app: Fastify): void {
                     settings: z.string().nullable(),
                     settingsVersion: z.number()
                 }),
+                400: z.object({ error: z.literal("plain_account_requires_settings_v2") }),
                 500: z.object({
                     error: z.literal('Failed to get account settings')
                 })
@@ -35,11 +39,16 @@ export function registerAccountSettingsRoutes(app: Fastify): void {
         try {
             const user = await db.account.findUnique({
                 where: { id: request.userId },
-                select: { settings: true, settingsVersion: true }
+                select: { settings: true, settingsVersion: true, publicKey: true, encryptionMode: true }
             });
 
             if (!user) {
                 return reply.code(500).send({ error: 'Failed to get account settings' });
+            }
+
+            const mode = resolveEffectiveAccountEncryptionModeFromAccountRow(user);
+            if (mode === "plain") {
+                return reply.code(400).send({ error: "plain_account_requires_settings_v2" });
             }
 
             return reply.send({
@@ -68,6 +77,7 @@ export function registerAccountSettingsRoutes(app: Fastify): void {
                     currentVersion: z.number(),
                     currentSettings: z.string().nullable()
                 })]),
+                400: z.object({ error: z.literal("plain_account_requires_settings_v2") }),
                 500: z.object({
                     success: z.literal(false),
                     error: z.literal('Failed to update account settings')
@@ -83,11 +93,16 @@ export function registerAccountSettingsRoutes(app: Fastify): void {
             const result = await inTx(async (tx) => {
                 const currentUser = await tx.account.findUnique({
                     where: { id: userId },
-                    select: { settings: true, settingsVersion: true }
+                    select: { settings: true, settingsVersion: true, publicKey: true, encryptionMode: true }
                 });
 
                 if (!currentUser) {
                     return { type: 'internal-error' as const };
+                }
+
+                const mode = resolveEffectiveAccountEncryptionModeFromAccountRow(currentUser);
+                if (mode === "plain") {
+                    return { type: "plain-requires-v2" as const };
                 }
 
                 if (currentUser.settingsVersion !== expectedVersion) {
@@ -148,6 +163,10 @@ export function registerAccountSettingsRoutes(app: Fastify): void {
                 });
             }
 
+            if (result.type === "plain-requires-v2") {
+                return reply.code(400).send({ error: "plain_account_requires_settings_v2" });
+            }
+
             if (result.type === 'version-mismatch') {
                 return reply.code(200).send({
                     success: false,
@@ -167,6 +186,165 @@ export function registerAccountSettingsRoutes(app: Fastify): void {
                 success: false,
                 error: 'Failed to update account settings'
             });
+        }
+    });
+
+    // V2 envelope-aware settings API for plaintext accounts and keyless flows.
+    app.get("/v2/account/settings", {
+        preHandler: app.authenticate,
+        config: {
+            rateLimit: resolveApiHotEndpointRateLimit(process.env, "account.settings"),
+        },
+        schema: {
+            response: {
+                200: AccountSettingsV2GetResponseSchema,
+                500: z.object({ error: z.literal("internal") }),
+            },
+        },
+    }, async (request, reply) => {
+        try {
+            const user = await db.account.findUnique({
+                where: { id: request.userId },
+                select: { settings: true, settingsVersion: true, publicKey: true, encryptionMode: true },
+            });
+            if (!user) return reply.code(500).send({ error: "internal" });
+
+            const mode = resolveEffectiveAccountEncryptionModeFromAccountRow(user);
+            if (mode === "e2ee") {
+                return reply.send({
+                    content: user.settings ? { t: "encrypted", c: user.settings } : null,
+                    version: user.settingsVersion,
+                });
+            }
+
+            const opened = openPlainAccountSettingsDbValue({ accountId: request.userId, dbValue: user.settings });
+            return reply.send({
+                content: opened,
+                version: user.settingsVersion,
+            });
+        } catch {
+            return reply.code(500).send({ error: "internal" });
+        }
+    });
+
+    app.post("/v2/account/settings", {
+        preHandler: app.authenticate,
+        schema: {
+            body: AccountSettingsV2UpdateRequestSchema,
+            response: {
+                200: AccountSettingsV2UpdateResponseSchema,
+                400: z.object({ error: z.literal("invalid-params") }),
+                500: z.object({ error: z.literal("internal") }),
+            },
+        },
+    }, async (request, reply) => {
+        const userId = request.userId;
+        const { content, expectedVersion } = request.body;
+
+        try {
+            const result = await inTx(async (tx) => {
+                const currentUser = await tx.account.findUnique({
+                    where: { id: userId },
+                    select: { settings: true, settingsVersion: true, publicKey: true, encryptionMode: true },
+                });
+                if (!currentUser) return { type: "internal-error" as const };
+
+                const mode = resolveEffectiveAccountEncryptionModeFromAccountRow(currentUser);
+                if (mode === "plain") {
+                    if (content && content.t !== "plain") {
+                        return { type: "invalid-params" as const };
+                    }
+                } else {
+                    if (content && content.t !== "encrypted") {
+                        return { type: "invalid-params" as const };
+                    }
+                }
+
+                const currentContent: AccountSettingsStoredContentEnvelope | null =
+                    mode === "plain"
+                        ? openPlainAccountSettingsDbValue({ accountId: userId, dbValue: currentUser.settings })
+                        : currentUser.settings
+                            ? { t: "encrypted", c: currentUser.settings }
+                            : null;
+
+                if (currentUser.settingsVersion !== expectedVersion) {
+                    return {
+                        type: "version-mismatch" as const,
+                        currentVersion: currentUser.settingsVersion,
+                        currentContent,
+                    };
+                }
+
+                const nextSettingsDbValue =
+                    mode === "plain"
+                        ? storePlainAccountSettingsDbValue({ accountId: userId, content: content })
+                        : (content?.t === "encrypted" ? content.c : null);
+
+                const { count } = await tx.account.updateMany({
+                    where: { id: userId, settingsVersion: expectedVersion },
+                    data: {
+                        settings: nextSettingsDbValue,
+                        settingsVersion: expectedVersion + 1,
+                        updatedAt: new Date(),
+                    },
+                });
+                if (count === 0) {
+                    const account = await tx.account.findUnique({
+                        where: { id: userId },
+                        select: { settings: true, settingsVersion: true, publicKey: true, encryptionMode: true },
+                    });
+                    const refreshedMode = account ? resolveEffectiveAccountEncryptionModeFromAccountRow(account) : mode;
+                    const refreshedContent: AccountSettingsStoredContentEnvelope | null =
+                        refreshedMode === "plain"
+                            ? openPlainAccountSettingsDbValue({ accountId: userId, dbValue: account?.settings ?? null })
+                            : account?.settings
+                                ? { t: "encrypted", c: account.settings }
+                                : null;
+                    return {
+                        type: "version-mismatch" as const,
+                        currentVersion: account?.settingsVersion ?? 0,
+                        currentContent: refreshedContent,
+                    };
+                }
+
+                const cursor = await markAccountChanged(tx, {
+                    accountId: userId,
+                    kind: "account",
+                    entityId: "self",
+                    hint: { settingsVersion: expectedVersion + 1 },
+                });
+
+                afterTx(tx, () => {
+                    const updatePayload = buildUpdateAccountUpdate(
+                        userId,
+                        { settingsV2: { content: content ?? null, version: expectedVersion + 1 } },
+                        cursor,
+                        randomKeyNaked(12),
+                    );
+                    eventRouter.emitUpdate({
+                        userId,
+                        payload: updatePayload,
+                        recipientFilter: { type: "user-scoped-only" },
+                    });
+                });
+
+                return { type: "success" as const, version: expectedVersion + 1 };
+            });
+
+            if (result.type === "internal-error") return reply.code(500).send({ error: "internal" });
+            if (result.type === "invalid-params") return reply.code(400).send({ error: "invalid-params" });
+            if (result.type === "version-mismatch") {
+                return reply.send({
+                    success: false,
+                    error: "version-mismatch",
+                    currentVersion: result.currentVersion,
+                    currentContent: result.currentContent ?? null,
+                });
+            }
+            return reply.send({ success: true, version: result.version });
+        } catch (error) {
+            log({ module: "api", level: "error" }, `Failed to update v2 account settings: ${error}`);
+            return reply.code(500).send({ error: "internal" });
         }
     });
 }

@@ -1,4 +1,4 @@
-import { existsSync, readdirSync } from 'node:fs';
+import { existsSync, readdirSync, statSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
@@ -16,5 +16,71 @@ describe('expo-router route hygiene', () => {
         // Test helpers must live outside of `sources/app` so they can't accidentally become routes/layouts.
         expect(existsSync(resolve(appGroupDir, '_layout.testHelpers.ts'))).toBe(false);
         expect(existsSync(resolve(__dirname, 'testkit/rootLayoutTestkit.ts'))).toBe(true);
+    });
+
+    it('does not allow Vitest test/spec files inside sources/app (they can become routes and shadow screens)', () => {
+        const appRoot = resolve(__dirname, '../app');
+
+        /** @param {string} dir */
+        const walk = (dir: string): string[] => {
+            const out: string[] = [];
+            for (const entry of readdirSync(dir)) {
+                const full = resolve(dir, entry);
+                const st = statSync(full);
+                if (st.isDirectory()) {
+                    out.push(...walk(full));
+                } else {
+                    out.push(full);
+                }
+            }
+            return out;
+        };
+
+        const forbidden = walk(appRoot).filter((filePath) =>
+            /\.(?:spec|test)\.[tj]sx?$/.test(filePath) || /\.testHelpers\.[tj]sx?$/.test(filePath),
+        );
+
+        expect(forbidden).toEqual([]);
+    });
+
+    it('does not allow non-route modules at the router root (they become top-level routes)', () => {
+        const appRoot = resolve(__dirname, '../app');
+        const topLevelFiles = readdirSync(appRoot).filter((name) => {
+            const full = resolve(appRoot, name);
+            try {
+                return statSync(full).isFile();
+            } catch {
+                return false;
+            }
+        });
+
+        const unexpected = topLevelFiles.filter((name) => {
+            if (name === '_layout.tsx') return false;
+            if (name.startsWith('+')) return false;
+            return true;
+        });
+
+        expect(unexpected).toEqual([]);
+    });
+
+    it('does not allow .ts modules inside sources/app (they become routes and should be .tsx screens)', () => {
+        const appRoot = resolve(__dirname, '../app');
+
+        const walk = (dir: string): string[] => {
+            const out: string[] = [];
+            for (const entry of readdirSync(dir)) {
+                const full = resolve(dir, entry);
+                const st = statSync(full);
+                if (st.isDirectory()) {
+                    out.push(...walk(full));
+                } else {
+                    out.push(full);
+                }
+            }
+            return out;
+        };
+
+        const unexpected = walk(appRoot).filter((filePath) => filePath.endsWith('.ts'));
+        expect(unexpected).toEqual([]);
     });
 });

@@ -9,25 +9,32 @@ const {
     mockSessionRPC,
     modalAlert,
     modalConfirm,
-    modalPrompt,
-    showScmCommitMessageEditorModal,
-    invalidateFromMutationAndAwait,
-    trackingCapture,
-} = vi.hoisted(() => ({
-    mockSessionRPC: vi.fn(),
-    modalAlert: vi.fn(),
-    modalConfirm: vi.fn(),
-    modalPrompt: vi.fn(),
-    showScmCommitMessageEditorModal: vi.fn(),
-    invalidateFromMutationAndAwait: vi.fn(async () => {}),
-    trackingCapture: vi.fn(),
-}));
+	    modalPrompt,
+	    showScmCommitMessageEditorModal,
+	    invalidateFromMutationAndAwait,
+	    trackingCapture,
+	    mockMachineRPC,
+	} = vi.hoisted(() => ({
+	    mockSessionRPC: vi.fn(),
+	    modalAlert: vi.fn(),
+	    modalConfirm: vi.fn(),
+	    modalPrompt: vi.fn(),
+	    showScmCommitMessageEditorModal: vi.fn(),
+	    invalidateFromMutationAndAwait: vi.fn(async () => {}),
+	    trackingCapture: vi.fn(),
+	    mockMachineRPC: vi.fn(async () => {
+	        const err = new Error('RPC method not available');
+	        (err as Error & { rpcErrorCode?: string }).rpcErrorCode = 'RPC_METHOD_NOT_AVAILABLE';
+	        throw err;
+	    }),
+	}));
 
-vi.mock('@/sync/api/session/apiSocket', () => ({
-    apiSocket: {
-        sessionRPC: mockSessionRPC,
-    },
-}));
+	vi.mock('@/sync/api/session/apiSocket', () => ({
+	    apiSocket: {
+	        sessionRPC: mockSessionRPC,
+	        machineRPC: mockMachineRPC,
+	    },
+	}));
 
 // sessions ops import sync for non-git helpers; keep this test node-safe.
 vi.mock('@/sync/sync', () => ({
@@ -136,19 +143,26 @@ describe('useFilesScmOperations integration', () => {
         storage.setState(initialStorageState, true);
         projectManager.clear();
 
-        mockSessionRPC.mockReset();
-        modalAlert.mockReset();
-        modalConfirm.mockReset();
-        modalPrompt.mockReset();
-        showScmCommitMessageEditorModal.mockReset();
+	        mockSessionRPC.mockReset();
+	        mockMachineRPC.mockReset();
+	        modalAlert.mockReset();
+	        modalConfirm.mockReset();
+	        modalPrompt.mockReset();
+	        showScmCommitMessageEditorModal.mockReset();
         invalidateFromMutationAndAwait.mockReset();
         invalidateFromMutationAndAwait.mockImplementation(async () => {});
-        trackingCapture.mockReset();
+	        trackingCapture.mockReset();
 
-        modalConfirm.mockResolvedValue(true);
-        modalPrompt.mockResolvedValue('feat: hook integration commit');
-        showScmCommitMessageEditorModal.mockResolvedValue('feat: hook integration commit');
-    });
+	        mockMachineRPC.mockImplementation(async () => {
+	            const err = new Error('RPC method not available');
+	            (err as Error & { rpcErrorCode?: string }).rpcErrorCode = 'RPC_METHOD_NOT_AVAILABLE';
+	            throw err;
+	        });
+
+	        modalConfirm.mockResolvedValue(true);
+	        modalPrompt.mockResolvedValue('feat: hook integration commit');
+	        showScmCommitMessageEditorModal.mockResolvedValue('feat: hook integration commit');
+	    });
 
     it('creates a commit then pushes successfully against a real remote', async () => {
         const remote = mkdtempSync(join(tmpdir(), 'happier-ui-hook-remote-'));
@@ -215,6 +229,57 @@ describe('useFilesScmOperations integration', () => {
         const operationLog = storage.getState().getSessionProjectScmOperationLog(sessionId);
         expect(operationLog.some((entry) => entry.operation === 'commit' && entry.status === 'success')).toBe(true);
         expect(operationLog.some((entry) => entry.operation === 'push' && entry.status === 'success')).toBe(true);
+
+        act(() => {
+            hook.unmount();
+        });
+    });
+
+    it('creates a commit from an explicit draft message without opening the modal editor', async () => {
+        const workspace = mkdtempSync(join(tmpdir(), 'happier-ui-hook-draftcommit-'));
+        initRepo(workspace);
+        writeFileSync(join(workspace, 'a.txt'), 'base\n');
+        git(workspace, ['add', 'a.txt']);
+        git(workspace, ['commit', '-m', 'base']);
+
+        writeFileSync(join(workspace, 'a.txt'), 'base\nupdate\n');
+        git(workspace, ['add', 'a.txt']);
+
+        const sessionId = 'session-hook-draft-1';
+        storage.getState().applySessions([createSession(sessionId, workspace) as any]);
+        mockSessionRPC.mockImplementation(createGitSessionRpcHarness(workspace));
+
+        const snapshotResponse = await sessionScmStatusSnapshot(sessionId, {});
+        expect(snapshotResponse.success).toBe(true);
+        if (!snapshotResponse.success || !snapshotResponse.snapshot) {
+            throw new Error('expected git snapshot');
+        }
+
+        const refreshScmData = vi.fn(async () => {});
+        const loadCommitHistory = vi.fn(async () => {});
+
+        const hook = mountHook({
+            sessionId,
+            sessionPath: workspace,
+            scmSnapshot: normalizeWorkingSnapshotForUi(snapshotResponse.snapshot, `local:${workspace}`),
+            scmWriteEnabled: true,
+            scmCommitStrategy: 'git_staging',
+            scmRemoteConfirmPolicy: 'always',
+            scmPushRejectPolicy: 'prompt_fetch',
+            refreshScmData,
+            loadCommitHistory,
+        });
+
+        await act(async () => {
+            const current = hook.getCurrent();
+            await current.createCommitFromMessage('feat: draft commit');
+        });
+
+        expect(git(workspace, ['log', '-1', '--pretty=%s'])).toBe('feat: draft commit');
+        expect(showScmCommitMessageEditorModal).not.toHaveBeenCalled();
+        expect(modalAlert).not.toHaveBeenCalled();
+        expect(invalidateFromMutationAndAwait).toHaveBeenCalledTimes(1);
+        expect(loadCommitHistory).toHaveBeenCalledWith({ reset: true });
 
         act(() => {
             hook.unmount();

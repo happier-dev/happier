@@ -47,6 +47,7 @@ function mark(line) {
 export async function run(_cmd, args, { env } = {}) {
   const script = String(args?.[0] ?? '').split(/[\\/]/).pop();
   mark('run:' + script + '|setupChild=' + String(env?.HAPPIER_STACK_SETUP_CHILD ?? '') + '|workspace=' + String(env?.HAPPIER_STACK_WORKSPACE_DIR ?? ''));
+  mark('runArgs:' + script + '|' + JSON.stringify((args ?? []).slice(1)));
   return { status: 0 };
 }
 `),
@@ -132,6 +133,13 @@ export async function resolve(specifier, context, defaultResolve) {
       markerLog,
       /run:stack\.mjs\|setupChild=1\|workspace=/,
       `expected setup pr to propagate setup child env to initial stack creation\n${markerLog}`
+    );
+
+    // Default server selection should match stack.mjs accepted values.
+    assert.match(
+      markerLog,
+      /runArgs:stack\.mjs\|\[\"pr\",\"pr123\",.*\"--server=happier-server-light\"/,
+      `expected setup pr to default to --server=happier-server-light\n${markerLog}`
     );
   } finally {
     await rm(tmp, { recursive: true, force: true });

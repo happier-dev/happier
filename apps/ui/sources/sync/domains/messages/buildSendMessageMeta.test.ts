@@ -33,7 +33,7 @@ describe('buildSendMessageMeta', () => {
     it('includes provider plugin meta extras for Claude sessions', () => {
         const settings = settingsParse({
             claudeRemoteAgentSdkEnabled: true,
-            claudeRemoteSettingSources: 'project',
+            claudeRemoteSettingSourcesV2: ['project'],
             claudeLocalPermissionBridgeEnabled: true,
             claudeLocalPermissionBridgeWaitIndefinitely: false,
             claudeLocalPermissionBridgeTimeoutSeconds: 123,
@@ -42,6 +42,7 @@ describe('buildSendMessageMeta', () => {
         const extras = meta as Record<string, unknown>;
 
         expect(extras.claudeRemoteAgentSdkEnabled).toBe(true);
+        expect(extras.claudeRemoteSettingSourcesV2).toEqual(['project']);
         expect(extras.claudeRemoteSettingSources).toBe('project');
         expect(extras.claudeLocalPermissionBridgeEnabled).toBe(true);
         expect(extras.claudeLocalPermissionBridgeWaitIndefinitely).toBe(false);
@@ -56,6 +57,7 @@ describe('buildSendMessageMeta', () => {
 
         expect(extras.claudeRemoteAgentSdkEnabled).toBeUndefined();
         expect(extras.claudeRemoteSettingSources).toBeUndefined();
+        expect(extras.claudeRemoteSettingSourcesV2).toBeUndefined();
     });
 
     it('keeps only base metadata when agentId is null', () => {
@@ -88,7 +90,7 @@ describe('buildSendMessageMeta', () => {
     it('shallow merges metaOverrides (including meta.happier) while preserving provider extras', () => {
         const settings = settingsParse({
             claudeRemoteAgentSdkEnabled: true,
-            claudeRemoteSettingSources: 'project',
+            claudeRemoteSettingSourcesV2: ['project'],
             claudeLocalPermissionBridgeEnabled: true,
             claudeLocalPermissionBridgeWaitIndefinitely: false,
             claudeLocalPermissionBridgeTimeoutSeconds: 123,

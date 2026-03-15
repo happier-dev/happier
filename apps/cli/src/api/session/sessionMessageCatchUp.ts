@@ -11,7 +11,7 @@ export async function catchUpSessionMessagesAfterSeq(params: {
     onUpdate: (update: Update) => void;
 }): Promise<void> {
     let cursor = Number.isFinite(params.afterSeq) && params.afterSeq >= 0 ? Math.floor(params.afterSeq) : 0;
-    const serverUrl = resolveLoopbackHttpUrl(configuration.serverUrl).replace(/\/+$/, '');
+    const serverUrl = resolveLoopbackHttpUrl(configuration.apiServerUrl).replace(/\/+$/, '');
     for (let page = 0; page < 10; page++) {
         const response = await axios.get(`${serverUrl}/v1/sessions/${params.sessionId}/messages`, {
             headers: {

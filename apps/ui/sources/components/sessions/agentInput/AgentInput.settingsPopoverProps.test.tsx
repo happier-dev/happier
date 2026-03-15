@@ -28,61 +28,85 @@ vi.mock('react-native', async () => {
 vi.mock('react-native-unistyles', () => ({
     StyleSheet: {
         create: (styles: any) => {
-            const theme = {
-                colors: {
-                    input: { background: '#fff' },
-                    button: {
-                        primary: { background: '#000', tint: '#fff' },
-                        secondary: { tint: '#000', surface: '#fff' },
-                    },
-                    radio: { active: '#000', inactive: '#ddd' },
-                    text: '#000',
-                    textSecondary: '#666',
-                    divider: '#ddd',
-                    success: '#0a0',
-                    textDestructive: '#a00',
-                    surfacePressed: '#eee',
-                    permission: {
-                        acceptEdits: '#0a0',
-                        bypass: '#0a0',
+	            const theme = {
+	                colors: {
+	                    input: { background: '#fff' },
+	                    button: {
+	                        primary: { background: '#000', tint: '#fff' },
+	                        secondary: { tint: '#000', surface: '#fff' },
+	                    },
+	                    accent: { indigo: '#4f46e5' },
+	                    radio: { active: '#000', inactive: '#ddd' },
+	                    text: '#000',
+	                    textSecondary: '#666',
+	                    textLink: '#2563eb',
+	                    divider: '#ddd',
+	                    success: '#0a0',
+	                    warning: '#f59e0b',
+	                    warningCritical: '#b45309',
+	                    textDestructive: '#a00',
+	                    surfacePressed: '#eee',
+	                    surface: '#fff',
+	                    surfaceHigh: '#fafafa',
+	                    modal: { border: '#ddd' },
+	                    shadow: { color: '#000' },
+	                    permission: {
+	                        acceptEdits: '#0a0',
+	                        bypass: '#0a0',
                         plan: '#0a0',
                         readOnly: '#0a0',
                         safeYolo: '#0a0',
                         yolo: '#0a0',
                     },
-                    surfaceHighest: '#fafafa',
-                },
-            };
+	                    surfaceHighest: '#fafafa',
+	                    box: {
+	                        error: { background: '#fee2e2', border: '#fecaca', text: '#7f1d1d' },
+	                        warning: { background: '#fef3c7', border: '#fde68a', text: '#92400e' },
+	                    },
+	                },
+	            };
             return typeof styles === "function" ? styles(theme) : styles;
         },
     },
-    useUnistyles: () => ({
-        theme: {
-            colors: {
-                input: { background: '#fff' },
-                button: {
-                    primary: { background: '#000', tint: '#fff' },
-                    secondary: { tint: '#000', surface: '#fff' },
-                },
-                radio: { active: '#000', inactive: '#ddd' },
-                text: '#000',
-                textSecondary: '#666',
-                divider: '#ddd',
-                success: '#0a0',
-                textDestructive: '#a00',
-                surfacePressed: '#eee',
-                permission: {
-                    acceptEdits: '#0a0',
-                    bypass: '#0a0',
+	    useUnistyles: () => ({
+	        theme: {
+	            colors: {
+	                input: { background: '#fff' },
+	                button: {
+	                    primary: { background: '#000', tint: '#fff' },
+	                    secondary: { tint: '#000', surface: '#fff' },
+	                },
+	                accent: { indigo: '#4f46e5' },
+	                radio: { active: '#000', inactive: '#ddd' },
+	                text: '#000',
+	                textSecondary: '#666',
+	                textLink: '#2563eb',
+	                divider: '#ddd',
+	                success: '#0a0',
+	                warning: '#f59e0b',
+	                warningCritical: '#b45309',
+	                textDestructive: '#a00',
+	                surfacePressed: '#eee',
+	                surface: '#fff',
+	                surfaceHigh: '#fafafa',
+	                modal: { border: '#ddd' },
+	                shadow: { color: '#000' },
+	                permission: {
+	                    acceptEdits: '#0a0',
+	                    bypass: '#0a0',
                     plan: '#0a0',
                     readOnly: '#0a0',
                     safeYolo: '#0a0',
                     yolo: '#0a0',
                 },
-                surfaceHighest: '#fafafa',
-            },
-        },
-    }),
+	                surfaceHighest: '#fafafa',
+	                box: {
+	                    error: { background: '#fee2e2', border: '#fecaca', text: '#7f1d1d' },
+	                    warning: { background: '#fef3c7', border: '#fde68a', text: '#92400e' },
+	                },
+	            },
+	        },
+	    }),
 }));
 
 vi.mock('@expo/vector-icons', () => ({
@@ -107,24 +131,27 @@ vi.mock('@/components/ui/layout/layout', () => ({
     layout: { maxWidth: 800, headerMaxWidth: 800 },
 }));
 
-vi.mock('@/sync/domains/state/storage', () => ({
-    useSetting: (key: string) => {
-        if (key === 'profiles') return [];
-        if (key === 'agentInputEnterToSend') return true;
-        if (key === 'agentInputActionBarLayout') return 'collapsed';
-        if (key === 'agentInputChipDensity') return 'labels';
-        if (key === 'sessionPermissionModeApplyTiming') return 'immediate';
-        return null;
-    },
-    useSettings: () => ({
-        profiles: [],
-        agentInputEnterToSend: true,
-        agentInputActionBarLayout: 'collapsed',
-        agentInputChipDensity: 'labels',
-        sessionPermissionModeApplyTiming: 'immediate',
-    }),
-    useSessionMessages: () => ({ messages: [], isLoaded: true }),
-}));
+	vi.mock('@/sync/domains/state/storage', () => ({
+	    useSetting: (key: string) => {
+	        if (key === 'profiles') return [];
+	        if (key === 'agentInputEnterToSend') return true;
+	        if (key === 'agentInputActionBarLayout') return 'collapsed';
+	        if (key === 'agentInputChipDensity') return 'labels';
+	        if (key === 'sessionPermissionModeApplyTiming') return 'immediate';
+	        return null;
+	    },
+	    useSettings: () => ({
+	        profiles: [],
+	        agentInputEnterToSend: true,
+	        agentInputActionBarLayout: 'collapsed',
+	        agentInputChipDensity: 'labels',
+	        sessionPermissionModeApplyTiming: 'immediate',
+	    }),
+	    useSessionMessages: () => ({ messages: [], isLoaded: true }),
+	    useSessionTranscriptIds: () => ({ ids: [], isLoaded: true }),
+	    useSessionMessagesById: () => ({}),
+	    useSessionMessagesVersion: () => 0,
+	}));
 
 vi.mock('@/sync/domains/state/storageStore', () => ({
     getStorage: () => (selector: any) => selector({ sessionMessages: {} }),
@@ -271,6 +298,7 @@ vi.mock('./components/PermissionModePicker', () => ({
 
 describe('AgentInput (settings popover props)', () => {
     it('anchors the settings popover to the gear button and sizes relative to the agent input', async () => {
+        vi.resetModules();
         const { AgentInput } = await import('./AgentInput');
 
         let tree: renderer.ReactTestRenderer;
@@ -299,12 +327,11 @@ describe('AgentInput (settings popover props)', () => {
         expect(gearPressable).toBeTruthy();
         expect(typeof gearPressable!.props.onPress).toBe('function');
 
-        captured.last = null;
         act(() => {
             gearPressable!.props.onPress();
         });
 
-        const popoverProps = captured.last;
+        const popoverProps: CapturedPopoverProps | null = captured.last;
         expect(popoverProps?.open).toBe(true);
         expect(popoverProps?.anchorRef).toBe(gearPressable!.props.ref);
         expect(popoverProps?.boundaryRef).toBe(null);
@@ -315,4 +342,3 @@ describe('AgentInput (settings popover props)', () => {
         act(() => tree!.unmount());
     });
 });
-

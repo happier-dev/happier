@@ -15,6 +15,7 @@ export type ScmOperationIntent =
     | 'push'
     | 'commit'
     | 'revert'
+    | 'discard'
     | 'stage'
     | 'unstage'
     | 'line_selection';
@@ -195,6 +196,8 @@ function supportsOperation(snapshot: ScmWorkingSnapshot, intent: ScmOperationInt
             return capabilities.writeCommit;
         case 'revert':
             return capabilities.writeBackout;
+        case 'discard':
+            return capabilities.writeDiscard === true;
         case 'stage':
             return capabilities.writeInclude;
         case 'unstage':

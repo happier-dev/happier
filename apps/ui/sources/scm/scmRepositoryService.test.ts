@@ -166,6 +166,48 @@ describe('ScmRepositoryService.fetchSnapshotForSession', () => {
         expect(sessionScmStatusSnapshot).not.toHaveBeenCalled();
     });
 
+    it('uses project key path when session metadata path is unavailable', async () => {
+        vi.spyOn(storage, 'getState').mockReturnValue({
+            sessions: {
+                session_1: {
+                    id: 'session_1',
+                    metadata: {
+                        machineId: 'machine-a',
+                    },
+                },
+            },
+            getProjectForSession: (sessionId: string) =>
+                sessionId === 'session_1'
+                    ? {
+                        key: {
+                            machineId: 'machine-a',
+                            path: '/repo-from-project',
+                        },
+                    }
+                    : null,
+        } as any);
+
+        vi.mocked(sessionScmStatusSnapshot).mockResolvedValue({
+            success: true,
+            snapshot: makeScmSnapshot({
+                projectKey: 'machine-a:/repo-from-project',
+                repo: {
+                    isRepo: true,
+                    rootPath: '/repo-from-project',
+                    backendId: 'git',
+                    mode: '.git',
+                },
+            }),
+        } as any);
+
+        const service = new ScmRepositoryService();
+        const result = await service.fetchSnapshotForSession('session_1');
+
+        expect(result).not.toBeNull();
+        expect(result?.projectKey).toBe('machine-a:/repo-from-project');
+        expect(sessionScmStatusSnapshot).toHaveBeenCalledWith('session_1', {});
+    });
+
     it('throws when rpc snapshot fetch fails', async () => {
         vi.spyOn(Date, 'now').mockReturnValue(1_700_000_000_000);
         vi.spyOn(storage, 'getState').mockReturnValue({

@@ -32,7 +32,6 @@ export default React.memo(function FeaturesSettingsScreen() {
     const [featureToggles, setFeatureToggles] = useSettingMutable('featureToggles');
     const [useProfiles, setUseProfiles] = useSettingMutable('useProfiles');
     const [commandPaletteEnabled, setCommandPaletteEnabled] = useLocalSettingMutable('commandPaletteEnabled');
-    const [markdownCopyV2, setMarkdownCopyV2] = useLocalSettingMutable('markdownCopyV2');
     const [showEnvironmentBadge, setShowEnvironmentBadge] = useSettingMutable('showEnvironmentBadge');
     const [useEnhancedSessionWizard, setUseEnhancedSessionWizard] = useSettingMutable('useEnhancedSessionWizard');
     const [useMachinePickerSearch, setUseMachinePickerSearch] = useSettingMutable('useMachinePickerSearch');
@@ -236,13 +235,6 @@ export default React.memo(function FeaturesSettingsScreen() {
             {/* Standard feature toggles first */}
             <ItemGroup>
                 <Item
-                    title={t('settingsFeatures.markdownCopyV2')}
-                    subtitle={t('settingsFeatures.markdownCopyV2Subtitle')}
-                    icon={<Ionicons name="text-outline" size={29} color={theme.colors.success} />}
-                    rightElement={<Switch value={markdownCopyV2} onValueChange={setMarkdownCopyV2} />}
-                    showChevron={false}
-                />
-                <Item
                     title={t('settingsFeatures.environmentBadge')}
                     subtitle={t('settingsFeatures.environmentBadgeSubtitle')}
                     icon={<Ionicons name="pricetag-outline" size={29} color={theme.colors.accent.indigo} />}
@@ -310,6 +302,7 @@ export default React.memo(function FeaturesSettingsScreen() {
                     icon={<Ionicons name="flask-outline" size={29} color={theme.colors.accent.indigo} />}
                     rightElement={
                         <Switch
+                            testID="settings-feature-experiments-toggle"
                             value={experiments}
                             onValueChange={(next) => {
                                 setExperiments(next);
@@ -326,8 +319,8 @@ export default React.memo(function FeaturesSettingsScreen() {
 
             {standardToggleDefinitions.length > 0 && (
                 <ItemGroup
-                    title="Features"
-                    footer="Per-feature local toggles (independent of server support)."
+                    title={t('settingsFeatures.localTogglesTitle')}
+                    footer={t('settingsFeatures.localTogglesFooter')}
                 >
                     {standardToggleDefinitions.map((d) => {
                         const blockedByDependencies = isLocallyBlockedByDependencies(d.featureId);
@@ -341,6 +334,7 @@ export default React.memo(function FeaturesSettingsScreen() {
                                 icon={<Ionicons name={d.icon.ioniconName as keyof typeof Ionicons.glyphMap} size={29} color={resolveLegacyIconColor(d.icon.color)} />}
                                 rightElement={
                                     <Switch
+                                        testID={`settings-feature-toggle-${d.featureId}`}
                                         value={enabled}
                                         disabled={blockedByDependencies}
                                         onValueChange={(next) => applyLocalToggleChange(d.featureId, next)}
@@ -370,6 +364,7 @@ export default React.memo(function FeaturesSettingsScreen() {
                                 icon={<Ionicons name={d.icon.ioniconName as keyof typeof Ionicons.glyphMap} size={29} color={resolveLegacyIconColor(d.icon.color)} />}
                                 rightElement={
                                     <Switch
+                                        testID={`settings-feature-toggle-${d.featureId}`}
                                         value={enabled}
                                         disabled={blockedByDependencies}
                                         onValueChange={(next) => applyLocalToggleChange(d.featureId, next)}

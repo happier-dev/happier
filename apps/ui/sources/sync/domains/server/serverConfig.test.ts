@@ -65,13 +65,13 @@ describe('getServerUrl', () => {
         expect(getServerUrl()).toBe('https://stack.example.test');
     });
 
-    it('falls back to an empty value on native when no server is configured', async () => {
+    it('defaults to Happier Cloud on native when no server is configured', async () => {
         delete process.env.EXPO_PUBLIC_HAPPY_SERVER_URL;
         delete process.env.EXPO_PUBLIC_HAPPY_PRECONFIGURED_SERVERS;
 
         const { getServerUrl } = await importFreshServerConfig();
 
-        expect(getServerUrl()).toBe('');
+        expect(getServerUrl()).toBe('https://api.happier.dev');
     });
 
     it('trims EXPO_PUBLIC_HAPPY_SERVER_URL to avoid whitespace issues', async () => {

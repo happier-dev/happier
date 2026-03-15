@@ -22,6 +22,7 @@ import { ATTRIBUTION_INVALIDATION_WINDOW_MS, shouldAttributeChangedPaths } from 
 import { isSessionPathWithinRepoRoot } from './sync/paths';
 import { collectChangedPaths } from './sync/snapshotDiff';
 import { resolveProjectMachineScopeId } from '@/sync/runtime/orchestration/projectManager';
+import { readSessionWorkspaceContext } from '@/sync/domains/session/readSessionWorkspaceContext';
 
 type InvalidationSource = 'unknown' | 'mutation';
 
@@ -73,11 +74,17 @@ export class ScmStatusSync {
         if (mapped) {
             return mapped;
         }
-        const session = storage.getState().sessions[sessionId];
-        if (!session?.metadata?.path) {
+        const state = storage.getState();
+        const session = state.sessions[sessionId];
+        if (!session) {
             return null;
         }
-        return `${resolveProjectMachineScopeId(session.metadata)}:${session.metadata.path}`;
+        const workspaceContext = readSessionWorkspaceContext(state, sessionId);
+        if (!workspaceContext.workspacePath) {
+            return null;
+        }
+        const machineScopeId = workspaceContext.projectMachineId ?? resolveProjectMachineScopeId(session.metadata ?? {});
+        return `${machineScopeId}:${workspaceContext.workspacePath}`;
     }
 
     /**
@@ -144,14 +151,21 @@ export class ScmStatusSync {
     }
 
     invalidateFromMutation(sessionId: string): void {
+        const projectKey = this.getProjectKeyForSession(sessionId);
+        if (!projectKey) return;
+        if (this.projectAutoRefreshSuspended.has(projectKey)) {
+            return;
+        }
         this.invalidateWithSource(sessionId, 'mutation');
     }
 
     async invalidateFromMutationAndAwait(sessionId: string): Promise<void> {
         const projectKey = this.getProjectKeyForSession(sessionId);
         if (!projectKey) return;
+        if (this.projectAutoRefreshSuspended.has(projectKey)) {
+            return;
+        }
 
-        this.projectAutoRefreshSuspended.delete(projectKey);
         this.projectLastInvalidatedBySession.set(projectKey, sessionId);
         this.projectLastInvalidationSource.set(projectKey, 'mutation');
         const now = Date.now();
@@ -205,17 +219,11 @@ export class ScmStatusSync {
 	        this.projectLastInvalidatedBySessionAt.delete(projectKey);
 	    }
 
-    private invalidateProject(projectKey: string): void {
-        const sync = this.projectSyncMap.get(projectKey);
-        if (!sync) return;
-        sync.invalidate();
-    }
-
     private getAnySessionForProject(projectKey: string): string | null {
+        const state = storage.getState();
         for (const [sessionId, key] of this.sessionToProjectKey.entries()) {
             if (key !== projectKey) continue;
-            const session = storage.getState().sessions[sessionId];
-            if (session?.metadata?.path) {
+            if (readSessionWorkspaceContext(state, sessionId).workspacePath) {
                 return sessionId;
             }
         }
@@ -243,7 +251,10 @@ export class ScmStatusSync {
                 return;
             }
 
-            const scopeId = resolveProjectMachineScopeId(state.sessions[sessionId]?.metadata ?? {});
+            const sessionWorkspaceContext = readSessionWorkspaceContext(state, sessionId);
+            const scopeId =
+                sessionWorkspaceContext.projectMachineId
+                ?? resolveProjectMachineScopeId(state.sessions[sessionId]?.metadata ?? {});
             const repoRoot = snapshot.repo.rootPath;
             if (snapshot.repo.isRepo && scopeId !== 'unknown' && repoRoot) {
                 activeProjectKey = `${scopeId}:${repoRoot}`;
@@ -373,7 +384,7 @@ export class ScmStatusSync {
         this.projectLastInvalidationSource.set(projectKey, source);
         const now = Date.now();
         this.projectLastInvalidatedBySessionAt.set(projectKey, now);
-        this.invalidateProject(projectKey);
+        this.getSync(sessionId).invalidate();
     }
 }
 

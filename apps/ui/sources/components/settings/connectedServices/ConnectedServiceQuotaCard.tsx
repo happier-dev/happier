@@ -7,9 +7,12 @@ import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { Text } from '@/components/ui/text/Text';
 import { useAuth } from '@/auth/context/AuthContext';
+import { fetchAccountEncryptionMode } from '@/sync/api/account/apiAccountEncryptionMode';
 import { getConnectedServiceQuotaSnapshotSealed, requestConnectedServiceQuotaSnapshotRefresh } from '@/sync/api/account/apiConnectedServicesQuotasV2';
+import { getConnectedServiceQuotaSnapshotPlain, requestConnectedServiceQuotaSnapshotRefreshV3 } from '@/sync/api/account/apiConnectedServicesQuotasV3';
 import { openConnectedServiceQuotaSnapshot } from '@/sync/domains/connectedServices/openConnectedServiceQuotaSnapshot';
 import type { ConnectedServiceId, ConnectedServiceQuotaSnapshotV1 } from '@happier-dev/protocol';
+import { t } from '@/text';
 
 import { ConnectedServiceQuotaMeterRow } from './ConnectedServiceQuotaMeterRow';
 
@@ -38,6 +41,14 @@ export const ConnectedServiceQuotaCard = React.memo(function ConnectedServiceQuo
   const auth = useAuth();
   const credentials = auth.credentials;
 
+  type AccountMode = 'plain' | 'e2ee';
+  const accountModeRef = React.useRef<'plain' | 'e2ee' | null>(null);
+  const accountModePromiseRef = React.useRef<Promise<AccountMode> | null>(null);
+  React.useEffect(() => {
+    accountModeRef.current = null;
+    accountModePromiseRef.current = null;
+  }, [credentials?.token]);
+
   const onSnapshotRef = React.useRef(props.onSnapshot);
   React.useEffect(() => {
     onSnapshotRef.current = props.onSnapshot;
@@ -49,16 +60,48 @@ export const ConnectedServiceQuotaCard = React.memo(function ConnectedServiceQuo
 
   const loadPromiseRef = React.useRef<Promise<ConnectedServiceQuotaSnapshotV1 | null> | null>(null);
 
+  const resolveAccountMode = React.useCallback(async (): Promise<AccountMode> => {
+    const cached = accountModeRef.current;
+    if (cached) return cached;
+    if (!credentials) return 'e2ee';
+
+    const promise =
+      accountModePromiseRef.current ??
+      (accountModePromiseRef.current = fetchAccountEncryptionMode(credentials)
+        .then((res): AccountMode => (res.mode === 'plain' ? 'plain' : 'e2ee'))
+        .catch((): AccountMode => 'e2ee')
+        .then((mode): AccountMode => {
+          accountModeRef.current = mode;
+          return mode;
+        }));
+
+    return await promise;
+  }, [credentials]);
+
   const load = React.useCallback(async (): Promise<ConnectedServiceQuotaSnapshotV1 | null> => {
     if (!credentials) return null;
     setLoading(true);
     setError(null);
     try {
-      const sealed = await getConnectedServiceQuotaSnapshotSealed(credentials, {
-        serviceId: props.serviceId,
-        profileId: props.profileId,
-      });
-      const opened = sealed ? openConnectedServiceQuotaSnapshot(credentials, sealed.sealed) : null;
+      const mode = await resolveAccountMode();
+      let opened: ConnectedServiceQuotaSnapshotV1 | null = null;
+      if (mode === 'plain') {
+        opened = await getConnectedServiceQuotaSnapshotPlain(credentials, {
+          serviceId: props.serviceId,
+          profileId: props.profileId,
+        });
+      }
+
+      if (mode !== 'plain' || !opened) {
+        const sealed = await getConnectedServiceQuotaSnapshotSealed(credentials, {
+          serviceId: props.serviceId,
+          profileId: props.profileId,
+        });
+        const fallback = sealed ? openConnectedServiceQuotaSnapshot(credentials, sealed.sealed) : null;
+        setSnapshot(fallback);
+        onSnapshotRef.current?.(fallback);
+        return fallback;
+      }
       setSnapshot(opened);
       onSnapshotRef.current?.(opened);
       return opened;
@@ -89,10 +132,14 @@ export const ConnectedServiceQuotaCard = React.memo(function ConnectedServiceQuo
       .catch(() => 0)) ?? 0;
     const sinceFetchedAt = Math.max(snapshot?.fetchedAt ?? 0, inFlightFetchedAt);
     try {
-      await requestConnectedServiceQuotaSnapshotRefresh(credentials, {
-        serviceId: props.serviceId,
-        profileId: props.profileId,
-      });
+      const mode = await resolveAccountMode();
+      const ok = mode === 'plain'
+        ? await requestConnectedServiceQuotaSnapshotRefreshV3(credentials, { serviceId: props.serviceId, profileId: props.profileId })
+        : await requestConnectedServiceQuotaSnapshotRefresh(credentials, { serviceId: props.serviceId, profileId: props.profileId });
+
+      if (!ok && mode === 'plain') {
+        await requestConnectedServiceQuotaSnapshotRefresh(credentials, { serviceId: props.serviceId, profileId: props.profileId });
+      }
     } catch {
       // Best-effort only.
     }
@@ -102,7 +149,7 @@ export const ConnectedServiceQuotaCard = React.memo(function ConnectedServiceQuo
       const opened = await loadTracked();
       if (opened && opened.fetchedAt > sinceFetchedAt) break;
     }
-  }, [credentials, props.serviceId, props.profileId, loadTracked, snapshot?.fetchedAt]);
+  }, [credentials, props.serviceId, props.profileId, loadTracked, snapshot?.fetchedAt, resolveAccountMode]);
 
   const nowMs = Date.now();
   const isStale = snapshot ? nowMs - snapshot.fetchedAt > snapshot.staleAfterMs : false;
@@ -119,8 +166,16 @@ export const ConnectedServiceQuotaCard = React.memo(function ConnectedServiceQuo
   return (
     <ItemGroup title={props.title}>
       <Item
-        title="Refresh"
-        subtitle={loading ? 'Loading…' : error ? `Error: ${error}` : snapshot ? `Last updated: ${formatTimestamp(snapshot.fetchedAt)}${isStale ? ' • stale' : ''}` : 'No quota data yet'}
+        title={t('common.refresh')}
+        subtitle={loading
+          ? t('connectedServices.quota.loading')
+          : error
+            ? t('connectedServices.quota.error', { message: error })
+            : snapshot
+              ? (isStale
+                ? t('connectedServices.quota.lastUpdatedStale', { time: formatTimestamp(snapshot.fetchedAt) })
+                : t('connectedServices.quota.lastUpdated', { time: formatTimestamp(snapshot.fetchedAt) }))
+              : t('connectedServices.quota.noData')}
         icon={<Ionicons name="refresh-outline" size={22} color={theme.colors.accent.blue} />}
         onPress={() => void requestRefreshAndReload()}
         showChevron={false}
@@ -128,7 +183,7 @@ export const ConnectedServiceQuotaCard = React.memo(function ConnectedServiceQuo
 
       {snapshot?.planLabel ? (
         <View style={{ paddingHorizontal: 16, paddingTop: 8, paddingBottom: 2 }}>
-          <Text style={{ opacity: 0.7 }}>{`Plan: ${snapshot.planLabel}`}</Text>
+          <Text style={{ color: theme.colors.textSecondary }}>{t('connectedServices.quota.planLabel', { plan: snapshot.planLabel })}</Text>
         </View>
       ) : null}
 

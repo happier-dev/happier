@@ -3,6 +3,8 @@ import { AutomationValidationError } from "@/app/automations/automationValidatio
 
 import { createFakeRouteApp, createReplyStub, getRouteHandler } from "../../testkit/routeHarness";
 
+const findAccountById = vi.fn(async () => ({ publicKey: "pk-test", encryptionMode: null }));
+
 const TEST_TEMPLATE_ENVELOPE = JSON.stringify({
     kind: "happier_automation_template_encrypted_v1",
     payloadCiphertext: "ciphertext-base64",
@@ -59,6 +61,13 @@ vi.mock("@/app/automations/automationCrudService", () => ({
 }));
 vi.mock("@/app/automations/automationClaimService", () => ({
     claimAutomationRun,
+}));
+vi.mock("@/storage/db", () => ({
+    db: {
+        account: {
+            findUnique: findAccountById,
+        },
+    },
 }));
 
 describe("automationRoutes", () => {

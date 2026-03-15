@@ -6,6 +6,7 @@ import { claudeLocalLauncher, LauncherResult } from "./claudeLocalLauncher"
 import { claudeRemoteLauncher } from "./claudeRemoteLauncher"
 import type { JsRuntime } from "./runClaude"
 import type { PushNotificationClient } from "@/api/pushNotifications"
+import type { AccountSettings } from '@happier-dev/protocol';
 
 // Re-export permission mode type from api/types
 // Single unified type with 7 modes - Codex modes mapped at SDK boundary
@@ -14,6 +15,13 @@ import type { PermissionMode } from "@/api/types"
 
 export interface EnhancedMode {
     permissionMode: PermissionMode;
+    /** Agent/session mode override id (e.g. "plan"). Stored via acpSessionModeOverrideV1 in session metadata. */
+    agentModeId?: string | null;
+    /**
+     * Whether replaySeedV1 is allowed to prefix this prompt (provider-only).
+     * Special commands like /clear should disable seeding.
+     */
+    replaySeedAllowed?: boolean;
     /**
      * Stable id for the originating user message (when provided by the app),
      * used for discard markers and reconciliation.
@@ -23,13 +31,13 @@ export interface EnhancedMode {
     fallbackModel?: string;
     customSystemPrompt?: string;
     appendSystemPrompt?: string;
-    allowedTools?: string[];
-    disallowedTools?: string[];
 
     // Claude remote-mode (provider-scoped) settings forwarded via message meta.
     claudeRemoteAgentSdkEnabled?: boolean;
+    claudeRemoteSettingSourcesV2?: ReadonlyArray<'user' | 'project' | 'local'>;
     claudeRemoteSettingSources?: 'project' | 'user_project' | 'none';
     claudeRemoteIncludePartialMessages?: boolean;
+    claudeCodeExperimentalAgentTeamsEnabled?: boolean;
     claudeRemoteEnableFileCheckpointing?: boolean;
     claudeRemoteMaxThinkingTokens?: number | null;
     claudeRemoteDisableTodos?: boolean;
@@ -42,15 +50,15 @@ interface LoopOptions {
     model?: string
     permissionMode?: PermissionMode
     permissionModeUpdatedAt?: number
-    startingMode?: 'local' | 'remote'
+        startingMode?: 'local' | 'remote'
+        /** Force-enable Claude Code experimental Agent Teams across local + remote starts (off = inherit). */
+        claudeCodeExperimentalAgentTeamsEnabled?: boolean
     onModeChange: (mode: 'local' | 'remote') => void
-    mcpServers: Record<string, any>
     session: SessionClientPort
     pushSender?: PushNotificationClient | null
-    claudeEnvVars?: Record<string, string>
+    accountSettings?: AccountSettings | null
     claudeArgs?: string[]
     messageQueue: MessageQueue2<EnhancedMode>
-    allowedTools?: string[]
     onSessionReady?: (session: Session) => void
     /** Path to temporary settings file with SessionStart hook (required for session tracking) */
     hookSettingsPath: string
@@ -66,19 +74,18 @@ export async function loop(opts: LoopOptions): Promise<number> {
     let session = new Session({
         client: opts.session,
         pushSender: opts.pushSender ?? null,
+        accountSettings: opts.accountSettings ?? null,
         path: opts.path,
         sessionId: null,
-        claudeEnvVars: opts.claudeEnvVars,
         claudeArgs: opts.claudeArgs,
-        mcpServers: opts.mcpServers,
         logPath: logPath,
         messageQueue: opts.messageQueue,
-        allowedTools: opts.allowedTools,
         onModeChange: opts.onModeChange,
         hookSettingsPath: opts.hookSettingsPath,
         jsRuntime: opts.jsRuntime,
         startedBy: opts.startedBy ?? 'terminal',
     });
+    session.claudeCodeExperimentalAgentTeamsEnabled = opts.claudeCodeExperimentalAgentTeamsEnabled === true;
 
     // Seed permission mode without blocking on transcript fetches.
     // The session's metadata snapshot is already available locally, and for fresh sessions

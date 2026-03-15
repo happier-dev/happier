@@ -52,6 +52,8 @@ export function ServerSettingsScreen() {
                         inputName={controller.inputName}
                         error={controller.error}
                         isValidating={controller.isValidating}
+                        prefillHint={controller.addServerPrefillHint}
+                        defaultExpanded={controller.addServerDefaultExpanded}
                         onChangeUrl={controller.onChangeUrl}
                         onChangeName={controller.onChangeName}
                         onResetServer={controller.onResetServer}

@@ -9,6 +9,7 @@ export type ExternalOAuthErrorResponse = z.infer<typeof ExternalOAuthErrorRespon
 export const ExternalOAuthFinalizeAuthRequestSchema = z
   .object({
     pending: z.string().min(1),
+    proof: z.string().min(1).optional(),
     reset: z.boolean().optional(),
     username: z.string().min(1).optional(),
     publicKey: z.string().min(1),

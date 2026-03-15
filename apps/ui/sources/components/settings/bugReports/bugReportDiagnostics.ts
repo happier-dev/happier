@@ -10,17 +10,21 @@ import {
     sanitizeBugReportArtifactPath,
     sanitizeBugReportStackContextPayload,
     sanitizeBugReportUrl,
+    parseDoctorSnapshotSafe,
     type BugReportArtifactPayload,
 } from '@happier-dev/protocol';
 
 import type { Machine } from '@/sync/domains/state/storageTypes';
 import { getStorage } from '@/sync/domains/state/storage';
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
+import { listServerProfiles } from '@/sync/domains/server/serverProfiles';
+import { loadProfile } from '@/sync/domains/state/persistence';
 import { serverFetch } from '@/sync/http/client';
 import { machineCollectBugReportDiagnostics, machineGetBugReportLogTail } from '@/sync/ops/machines';
 import { isMachineOnline } from '@/utils/sessions/machineUtils';
 import { getBugReportUserActionTrail } from '@/utils/system/bugReportActionTrail';
 import { getBugReportLogText } from '@/utils/system/bugReportLogBuffer';
+import { peekPreRestartBugReportSnapshot } from '@/utils/system/preRestartBugReportSnapshot';
 
 import type { BugReportDeploymentType } from './bugReportFallback';
 import { resolvePositiveInt, runAbortableWithTimeout, runWithTimeout } from './bugReportAsync';
@@ -54,6 +58,7 @@ export async function collectBugReportDiagnosticsArtifacts(input: {
     includeDiagnostics: boolean;
     acceptedKinds: string[];
     maxArtifactBytes: number;
+    pastedCliDoctorSnapshotJson?: string;
     machineDiagnosticsTimeoutMs?: number;
     serverDiagnosticsTimeoutMs?: number;
     logTailTimeoutMs?: number;
@@ -104,10 +109,46 @@ export async function collectBugReportDiagnosticsArtifacts(input: {
     const diagnosticsCollection: Record<string, DiagnosticsCollectionEntry> = {
         appLogs: { status: 'skipped', detail: 'no app logs collected' },
         userActions: { status: 'skipped', detail: 'no recent user actions' },
+        preRestartSnapshot: { status: 'skipped', detail: 'no pre-restart snapshot found' },
         latestSession: { status: 'skipped', detail: 'no recent session found' },
         serverDiagnostics: { status: 'skipped', detail: 'source kind not accepted' },
         machineDiagnostics: { status: 'skipped', detail: 'source kind not accepted' },
+        pastedCliDoctorSnapshot: { status: 'skipped', detail: 'no pasted snapshot' },
     };
+
+    const preRestart = await peekPreRestartBugReportSnapshot();
+    if (preRestart) {
+        let pushedAny = false;
+        pushedAny = pushArtifact(artifacts, {
+            filename: 'pre-restart-crash.txt',
+            sourceKind: 'ui-mobile',
+            contentType: 'text/plain',
+            content: preRestart.errorDetails,
+        }, input) || pushedAny;
+        pushedAny = pushArtifact(artifacts, {
+            filename: 'pre-restart-app-console.log',
+            sourceKind: 'ui-mobile',
+            contentType: 'text/plain',
+            content: preRestart.appLogs,
+        }, input) || pushedAny;
+        if (preRestart.userActions.length > 0) {
+            pushedAny = pushArtifact(artifacts, {
+                filename: 'pre-restart-user-action-trail.json',
+                sourceKind: 'ui-mobile',
+                contentType: 'application/json',
+                content: JSON.stringify({
+                    capturedAt: new Date(preRestart.createdAtMs).toISOString(),
+                    actionCount: preRestart.userActions.length,
+                    actions: preRestart.userActions,
+                }, null, 2),
+            }, input) || pushedAny;
+        }
+        if (pushedAny) {
+            diagnosticsCollection.preRestartSnapshot = { status: 'collected' };
+        } else {
+            diagnosticsCollection.preRestartSnapshot = { status: 'skipped', detail: 'pre-restart snapshot was empty after trimming/redaction' };
+        }
+    }
 
     const appLogs = getBugReportLogText(input.maxArtifactBytes, { sinceMs });
     if (appLogs.trim()) {
@@ -155,24 +196,31 @@ export async function collectBugReportDiagnosticsArtifacts(input: {
     }
 
     if (hasAcceptedBugReportArtifactKind(input.acceptedKinds, 'server')) {
-        diagnosticsCollection.serverDiagnostics = { status: 'error', detail: 'server diagnostics request timed out or failed' };
         const lines = resolveBugReportServerDiagnosticsLines(contextWindowMs);
         const serverSnapshot = await runAbortableWithTimeout(async (signal) => {
             const response = await serverFetch(`/v1/diagnostics/bug-report-snapshot?lines=${lines}`, {
                 method: 'GET',
                 signal,
             });
-            if (!response.ok) return null;
-            return await response.text();
+            if (response.ok) {
+                return { status: 'ok' as const, body: await response.text() };
+            }
+            return { status: 'error' as const, httpStatus: response.status };
         }, serverDiagnosticsTimeoutMs);
-        if (serverSnapshot) {
+        if (serverSnapshot?.status === 'ok') {
             const pushed = pushArtifact(artifacts, {
                 filename: 'server-diagnostics.json',
                 sourceKind: 'server',
                 contentType: 'application/json',
-                content: serverSnapshot,
+                content: serverSnapshot.body,
             }, input);
             if (pushed) diagnosticsCollection.serverDiagnostics = { status: 'collected' };
+        } else if (serverSnapshot?.status === 'error' && serverSnapshot.httpStatus === 404) {
+            diagnosticsCollection.serverDiagnostics = { status: 'skipped', detail: 'server diagnostics endpoint disabled (404)' };
+        } else if (serverSnapshot?.status === 'error') {
+            diagnosticsCollection.serverDiagnostics = { status: 'error', detail: `server responded with status ${serverSnapshot.httpStatus ?? 'unknown'}` };
+        } else {
+            diagnosticsCollection.serverDiagnostics = { status: 'error', detail: 'server diagnostics request timed out or failed' };
         }
     }
 
@@ -208,6 +256,19 @@ export async function collectBugReportDiagnosticsArtifacts(input: {
                     diagnostics: daemonDiagnostics,
                 }, null, 2),
             }, input);
+
+            const doctorSnapshot = (diagnostics as { doctorSnapshot?: unknown }).doctorSnapshot;
+            if (doctorSnapshot) {
+                pushArtifact(artifacts, {
+                    filename: `${machineIdSlug}-cli-doctor-snapshot.json`,
+                    sourceKind: 'daemon',
+                    contentType: 'application/json',
+                    content: JSON.stringify({
+                        machineId: machine.id,
+                        doctorSnapshot,
+                    }, null, 2),
+                }, input);
+            }
         }
 
         if (allowStackDiagnostics && diagnostics.stackContext) {
@@ -283,6 +344,29 @@ export async function collectBugReportDiagnosticsArtifacts(input: {
         }
     }
 
+    if (allowDaemonDiagnostics) {
+        const pasted = String(input.pastedCliDoctorSnapshotJson ?? '').trim();
+        if (pasted.length > 0) {
+            const parsed = parseDoctorSnapshotSafe(pasted);
+            if (parsed.ok) {
+                const pushed = pushArtifact(artifacts, {
+                    filename: 'pasted-cli-doctor-snapshot.json',
+                    sourceKind: 'daemon',
+                    contentType: 'application/json',
+                    content: JSON.stringify({
+                        capturedAt: new Date().toISOString(),
+                        doctorSnapshot: parsed.snapshot,
+                    }, null, 2),
+                }, input);
+                if (pushed) diagnosticsCollection.pastedCliDoctorSnapshot = { status: 'collected' };
+            } else {
+                diagnosticsCollection.pastedCliDoctorSnapshot = { status: 'error', detail: parsed.error };
+            }
+        } else {
+            diagnosticsCollection.pastedCliDoctorSnapshot = { status: 'skipped', detail: 'no pasted snapshot' };
+        }
+    }
+
     pushArtifact(artifacts, {
         filename: 'app-context.json',
         sourceKind: 'ui-mobile',
@@ -290,10 +374,29 @@ export async function collectBugReportDiagnosticsArtifacts(input: {
         content: JSON.stringify({
             collectedAt: new Date().toISOString(),
             environment,
+            profile: (() => {
+                const profile = loadProfile();
+                return {
+                    id: profile.id,
+                    username: profile.username,
+                    linkedProviderIds: Array.from(new Set(
+                        (profile.linkedProviders ?? [])
+                            .map((provider) => String((provider as { id?: unknown }).id ?? '').trim())
+                            .filter(Boolean),
+                    )),
+                };
+            })(),
             server: {
                 ...snapshot,
                 serverUrl: sanitizeBugReportUrl(snapshot.serverUrl) ?? snapshot.serverUrl,
             },
+            serverProfiles: listServerProfiles().map((profile) => ({
+                id: profile.id,
+                name: profile.name,
+                source: profile.source ?? null,
+                serverUrl: sanitizeBugReportUrl(profile.serverUrl) ?? profile.serverUrl,
+                lastUsedAt: profile.lastUsedAt,
+            })),
             diagnosticsCollection,
         }, null, 2),
     }, input);

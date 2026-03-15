@@ -2,6 +2,7 @@ import { spawn } from 'child_process';
 import { isAbsolute, relative, sep } from 'path';
 import os from 'node:os';
 import path from 'node:path';
+import { realpathSync } from 'node:fs';
 
 import { createScmCapabilities, type ScmWorkingSnapshot } from '@happier-dev/protocol';
 
@@ -186,11 +187,19 @@ export function resolveCwd(
 }
 
 export function normalizePathspec(rawPath: string, cwd: string): { ok: true; pathspec: string } | { ok: false; error: string } {
-    const validation = validatePath(rawPath, cwd);
+    const canonicalCwd = (() => {
+        try {
+            return realpathSync(path.resolve(cwd));
+        } catch {
+            return path.resolve(cwd);
+        }
+    })();
+
+    const validation = validatePath(rawPath, canonicalCwd);
     if (!validation.valid || !validation.resolvedPath) {
         return { ok: false, error: validation.error || `Invalid path: ${rawPath}` };
     }
-    const rel = relative(cwd, validation.resolvedPath);
+    const rel = relative(canonicalCwd, validation.resolvedPath);
     if (rel === '' || rel === '.') {
         return { ok: true, pathspec: '.' };
     }
@@ -200,9 +209,9 @@ export function normalizePathspec(rawPath: string, cwd: string): { ok: true; pat
     return { ok: true, pathspec: rel.split(sep).join('/') };
 }
 
-// The UI sends repo-root-relative paths (from status snapshots), but sessions can run from subdirectories.
-// Use git pathspec magic to anchor the path to the repository top-level so diffs work from any cwd.
-export function normalizeRepoRootPathspec(rawPath: string): { ok: true; pathspec: string } | { ok: false; error: string } {
+export function normalizeRepoRootRelativePath(
+    rawPath: string
+): { ok: true; relativePath: string; pathspec: string } | { ok: false; error: string } {
     const trimmed = String(rawPath ?? '').trim();
     if (!trimmed) {
         return { ok: false, error: 'Path cannot be empty' };
@@ -227,9 +236,17 @@ export function normalizeRepoRootPathspec(rawPath: string): { ok: true; pathspec
         return { ok: false, error: `Path contains unsupported ".." segment: ${rawPath}` };
     }
     if (!normalized || normalized === '.') {
-        return { ok: true, pathspec: ':(top).' };
+        return { ok: true, relativePath: '.', pathspec: ':(top).' };
     }
-    return { ok: true, pathspec: `:(top)${normalized}` };
+    return { ok: true, relativePath: normalized, pathspec: `:(top)${normalized}` };
+}
+
+// The UI sends repo-root-relative paths (from status snapshots), but sessions can run from subdirectories.
+// Use git pathspec magic to anchor the path to the repository top-level so diffs work from any cwd.
+export function normalizeRepoRootPathspec(rawPath: string): { ok: true; pathspec: string } | { ok: false; error: string } {
+    const normalized = normalizeRepoRootRelativePath(rawPath);
+    if (!normalized.ok) return normalized;
+    return { ok: true, pathspec: normalized.pathspec };
 }
 
 const SAFE_COMMIT_REF_REGEX = /^(?:[0-9a-fA-F]{7,64}|[A-Za-z0-9._/-]+)$/;

@@ -7,6 +7,7 @@ import { killPortListeners } from './utils/net/ports.mjs';
 import { getServerComponentName, isHappierServerRunning, waitForServerReady } from './utils/server/server.mjs';
 import { ensureCliBuilt, ensureDepsInstalled, pmExecBin, pmSpawnScript, requireDir } from './utils/proc/pm.mjs';
 import { join } from 'node:path';
+import { statSync } from 'node:fs';
 import { setTimeout as delay } from 'node:timers/promises';
 import { maybeResetTailscaleServe } from './tailscale.mjs';
 import { checkDaemonState, getDaemonEnv, isDaemonRunning, startLocalDaemonWithAuth, stopLocalDaemon } from './daemon.mjs';
@@ -25,15 +26,19 @@ import { ensureDevExpoServer, resolveExpoTailscaleEnabled } from './utils/dev/ex
 import { maybeRunInteractiveStackAuthSetup } from './utils/auth/interactive_stack_auth.mjs';
 import { getInvokedCwd, inferComponentFromCwd } from './utils/cli/cwd_scope.mjs';
 import { daemonStartGate, formatDaemonAuthRequiredError } from './utils/auth/daemon_gate.mjs';
+import { applyStackActiveServerScopeEnv } from './utils/auth/stable_scope_id.mjs';
 import { resolveServerUiEnv } from './utils/server/ui_env.mjs';
 import { applyBindModeToEnv, resolveBindModeFromArgs } from './utils/net/bind_mode.mjs';
 import { cmd, sectionTitle } from './utils/ui/layout.mjs';
+import { renderTerminalUsageInstructions } from './utils/stack/terminal_usage_instructions.mjs';
 import { cyan, dim, green, yellow } from './utils/ui/ansi.mjs';
 import { isSandboxed } from './utils/env/sandbox.mjs';
 import { installExitCleanup } from './utils/proc/exit_cleanup.mjs';
 import { expandHome } from './utils/paths/canonical_home.mjs';
 import { validateUiServingConfig } from './utils/server/ui_build_check.mjs';
 import { resolveLocalServerPortForStack } from './utils/server/resolve_stack_server_port.mjs';
+import { findExistingStackCredentialPath } from './utils/auth/credentials_paths.mjs';
+import { createServiceDaemonAutostarter } from './utils/service/daemon_autostart.mjs';
 
 /**
  * Run the local stack in "production-like" mode:
@@ -214,10 +219,12 @@ async function main() {
 	  const children = [];
 	  let shuttingDown = false;
 	  let ownedDaemonPid = null;
+	  let daemonAutostarter = null;
 	  installExitCleanup({ label: 'local', children });
 	  const baseEnv = { ...process.env };
 	  const stackCtx = resolveStackContext({ env: baseEnv, autostart });
 	  const { stackMode, runtimeStatePath, stackName, envPath, ephemeral } = stackCtx;
+	  const daemonScopeEnv = applyStackActiveServerScopeEnv({ env: baseEnv, stackName, cliIdentity: 'default' });
 
   serverPort = await resolveLocalServerPortForStack({
     env: baseEnv,
@@ -432,11 +439,11 @@ async function main() {
     }
 
     console.log('');
-    console.log(sectionTitle('Terminal usage'));
-    console.log(dim(`To run ${cyan('happier')} against this stack (and have sessions appear in the UI), export:`));
-    console.log(cmd(`export HAPPIER_SERVER_URL="${effectiveInternalServerUrl}"`));
-    console.log(cmd(`export HAPPIER_HOME_DIR="${cliHomeDir}"`));
-    console.log(cmd(`export HAPPIER_WEBAPP_URL="${publicServerUrl}"`));
+    console.log(renderTerminalUsageInstructions({
+      internalServerUrl: effectiveInternalServerUrl,
+      cliHomeDir,
+      publicServerUrl,
+    }).join('\n'));
 
     // Auto-open UI (interactive only) using the stack-scoped hostname when applicable.
     const isInteractive = Boolean(process.stdin.isTTY && process.stdout.isTTY);
@@ -452,12 +459,75 @@ async function main() {
 
   // Daemon
   if (startDaemon) {
-    const gate = daemonStartGate({ env: baseEnv, cliHomeDir, serverUrl: effectiveInternalServerUrl });
+    const gate = daemonStartGate({ env: daemonScopeEnv, cliHomeDir, serverUrl: effectiveInternalServerUrl });
     if (!gate.ok) {
       const isInteractive = Boolean(process.stdin.isTTY && process.stdout.isTTY);
       // In orchestrated auth flows, keep server/UI up and let the orchestrator start daemon post-auth.
       if (gate.reason === 'auth_flow_missing_credentials') {
         console.log('[local] auth flow: skipping daemon start until credentials exist');
+        const serviceMode = (daemonScopeEnv.HAPPIER_STACK_SERVICE_MODE ?? '').toString().trim() === '1';
+        if (serviceMode) {
+          const pollMs = daemonScopeEnv.HAPPIER_STACK_SERVICE_DAEMON_AUTOSTART_POLL_MS ?? '';
+          const maxAttemptsPerCredentials =
+            daemonScopeEnv.HAPPIER_STACK_SERVICE_DAEMON_AUTOSTART_MAX_ATTEMPTS_PER_CREDENTIALS ?? '';
+          const retryBaseMs = daemonScopeEnv.HAPPIER_STACK_SERVICE_DAEMON_AUTOSTART_RETRY_BASE_MS ?? '';
+          const retryMaxMs = daemonScopeEnv.HAPPIER_STACK_SERVICE_DAEMON_AUTOSTART_RETRY_MAX_MS ?? '';
+
+          const getCredentialFingerprint = async () => {
+            const path = findExistingStackCredentialPath({
+              cliHomeDir,
+              serverUrl: effectiveInternalServerUrl,
+              env: daemonScopeEnv,
+            });
+            if (!path) return null;
+            try {
+              const st = statSync(path);
+              const mtime = Number(st?.mtimeMs) || 0;
+              const size = Number(st?.size) || 0;
+              return `${path}:${mtime}:${size}`;
+            } catch {
+              return String(path);
+            }
+          };
+
+          const startDaemonAndRecord = async () => {
+            await startLocalDaemonWithAuth({
+              cliBin,
+              cliHomeDir,
+              internalServerUrl: effectiveInternalServerUrl,
+              publicServerUrl,
+              isShuttingDown: () => shuttingDown,
+              forceRestart: restart,
+              env: daemonScopeEnv,
+              stackName,
+              cliIdentity: 'default',
+            });
+            const daemonEnvForState = getDaemonEnv({
+              baseEnv: daemonScopeEnv,
+              cliHomeDir,
+              internalServerUrl: effectiveInternalServerUrl,
+              publicServerUrl: publicServerUrl || effectiveInternalServerUrl,
+              stackName,
+              cliIdentity: 'default',
+            });
+            const daemonState = checkDaemonState(cliHomeDir, { serverUrl: effectiveInternalServerUrl, env: daemonEnvForState });
+            ownedDaemonPid = typeof daemonState?.pid === 'number' ? daemonState.pid : null;
+          };
+
+          daemonAutostarter = createServiceDaemonAutostarter({
+            enabled: true,
+            isShuttingDown: () => shuttingDown,
+            pollMs,
+            maxAttemptsPerCredentials,
+            retryBaseMs,
+            retryMaxMs,
+            getCredentialFingerprint,
+            isDaemonRunning: () => isDaemonRunning(cliHomeDir, { serverUrl: effectiveInternalServerUrl, env: daemonScopeEnv }),
+            startDaemon: startDaemonAndRecord,
+            logger: console,
+          });
+          daemonAutostarter.start();
+        }
       } else if (!isInteractive) {
         throw new Error(
           formatDaemonAuthRequiredError({
@@ -480,11 +550,11 @@ async function main() {
       }
       const accountCount =
         serverComponentName === 'happier-server-light' ? serverLightAccountCount : happierServerAccountCount;
-      const autoSeedEnabled = resolveAutoCopyFromMainEnabled({ env: baseEnv, stackName: autostart.stackName, isInteractive });
+      const autoSeedEnabled = resolveAutoCopyFromMainEnabled({ env: daemonScopeEnv, stackName, isInteractive });
       await maybeRunInteractiveStackAuthSetup({
         rootDir,
-        env: baseEnv,
-        stackName: autostart.stackName,
+        env: daemonScopeEnv,
+        stackName,
         cliHomeDir,
         accountCount,
         isInteractive,
@@ -492,8 +562,8 @@ async function main() {
       });
       await prepareDaemonAuthSeedIfNeeded({
       rootDir,
-      env: baseEnv,
-      stackName: autostart.stackName,
+      env: daemonScopeEnv,
+      stackName,
       cliHomeDir,
       startDaemon,
       isInteractive,
@@ -507,11 +577,11 @@ async function main() {
 	      publicServerUrl,
 	      isShuttingDown: () => shuttingDown,
 	      forceRestart: restart,
-	        env: baseEnv,
-	        stackName: autostart.stackName,
+	        env: daemonScopeEnv,
+	        stackName,
 	    });
 	      const daemonEnvForState = getDaemonEnv({
-	        baseEnv,
+	        baseEnv: daemonScopeEnv,
 	        cliHomeDir,
 	        internalServerUrl: effectiveInternalServerUrl,
 	        publicServerUrl: publicServerUrl || effectiveInternalServerUrl,
@@ -552,6 +622,12 @@ async function main() {
     shuttingDown = true;
     console.log('\n[local] shutting down...');
 
+    try {
+      daemonAutostarter?.stop?.();
+    } catch {
+      // ignore
+    }
+
 	    if (startDaemon) {
 	      if (ownedDaemonPid && Number.isFinite(ownedDaemonPid) && ownedDaemonPid > 0) {
 	        await stopLocalDaemon({
@@ -559,7 +635,7 @@ async function main() {
 	          internalServerUrl: effectiveInternalServerUrl,
 	          cliHomeDir,
 	          expectedPid: ownedDaemonPid,
-	          env: baseEnv,
+	          env: daemonScopeEnv,
 	          stackName,
 	          cliIdentity: 'default',
 	        });
@@ -568,7 +644,7 @@ async function main() {
 	          cliBin,
 	          internalServerUrl: effectiveInternalServerUrl,
 	          cliHomeDir,
-	          env: baseEnv,
+	          env: daemonScopeEnv,
 	          stackName,
 	          cliIdentity: 'default',
 	        });

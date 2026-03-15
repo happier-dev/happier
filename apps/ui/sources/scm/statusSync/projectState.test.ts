@@ -35,5 +35,26 @@ describe('getRepoScopeSessionIds', () => {
 
     expect(getRepoScopeSessionIds('s1', '/repo')).toEqual(['s1']);
   });
-});
 
+  it('includes sessions using project workspace fallback when metadata path is missing', () => {
+    getStateMock.mockReturnValue({
+      sessions: {
+        s1: { id: 's1', metadata: { machineId: 'machine-a', path: null } },
+        s2: { id: 's2', metadata: { machineId: 'machine-a', path: '/repo/apps/ui' } },
+        s3: { id: 's3', metadata: { machineId: 'machine-b', path: '/repo/apps/server' } },
+      },
+      getProjectForSession: (sessionId: string) => {
+        if (sessionId === 's1') {
+          return { key: { machineId: 'machine-a', path: '/repo' } };
+        }
+        if (sessionId === 's2') {
+          return { key: { machineId: 'machine-a', path: '/repo/apps/ui' } };
+        }
+        return null;
+      },
+    });
+
+    const scoped = getRepoScopeSessionIds('s1', '/repo').sort();
+    expect(scoped).toEqual(['s1', 's2']);
+  });
+});

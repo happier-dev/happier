@@ -128,7 +128,7 @@ export function LocalNeuralTtsSettings(props: {
 
       // Warm up the runtime so "Ready" means "inference works", not just "runtime import succeeded".
       // This also ensures the first user-visible preview isn't the first time we compile WASM and load model assets.
-      setDownloadProgress({ name: 'Warming up…' });
+      setDownloadProgress({ name: t('settingsVoice.local.kokoro.web.warmingUp') });
       await synthesizeKokoroWav({
         text: 'Hi',
         assetSetId: effectiveAssetSetId,
@@ -167,9 +167,9 @@ export function LocalNeuralTtsSettings(props: {
     fireAndForget((async () => {
       if (modelStatus === 'downloading') return;
       const confirmed = await Modal.confirm(
-        'Clear Kokoro cache?',
-        'This removes downloaded Kokoro model and voice files from this device.',
-        { confirmText: 'Clear' },
+        t('settingsVoice.local.kokoro.web.clearCache.confirmTitle'),
+        t('settingsVoice.local.kokoro.web.clearCache.confirmBody'),
+        { confirmText: t('settingsVoice.local.kokoro.web.clearCache.confirmButton') },
       );
       if (!confirmed) return;
       await clearKokoroBrowserCaches();
@@ -204,25 +204,27 @@ export function LocalNeuralTtsSettings(props: {
 
   const modelDetail =
     modelStatus === 'downloading'
-      ? (downloadProgress ? formatDownloadProgressDetail(downloadProgress, { prefix: 'Downloading' }) : 'Downloading…')
+      ? (downloadProgress
+          ? formatDownloadProgressDetail(downloadProgress, { prefix: t('settingsVoice.local.kokoro.modelStatus.downloadingPrefix') })
+          : t('settingsVoice.local.kokoro.modelStatus.downloading'))
       : modelStatus === 'ready'
-        ? 'Ready'
+        ? t('settingsVoice.local.kokoro.modelStatus.ready')
         : modelStatus === 'error'
-          ? 'Error'
-          : 'Not downloaded';
+          ? t('settingsVoice.local.kokoro.modelStatus.error')
+          : t('settingsVoice.local.kokoro.modelStatus.notDownloaded');
 
   const cacheDetail =
     cacheSummary
-      ? `Model files: ${cacheSummary.transformersCacheCount} • Voices: ${cacheSummary.kokoroVoicesCacheCount}`
-      : '—';
+      ? `${t('settingsVoice.local.kokoro.web.cacheDetail.modelFiles')}: ${cacheSummary.transformersCacheCount} • ${t('settingsVoice.local.kokoro.web.cacheDetail.voices')}: ${cacheSummary.kokoroVoicesCacheCount}`
+      : t('settingsVoice.local.kokoro.common.none');
 
   return (
     <>
       {!runtimeSupported ? (
         <Item
-          title="Kokoro runtime"
-          subtitle="Kokoro is not supported on this device/runtime."
-          detail="Unavailable"
+          title={t('settingsVoice.local.kokoro.runtime.title')}
+          subtitle={t('settingsVoice.local.kokoro.runtime.unsupportedSubtitle')}
+          detail={t('settingsVoice.local.kokoro.runtime.unavailableDetail')}
           selected={false}
           showChevron={false}
         />
@@ -240,10 +242,10 @@ export function LocalNeuralTtsSettings(props: {
         rowKind="item"
         popoverBoundaryRef={props.popoverBoundaryRef}
         itemTrigger={{
-          title: 'Kokoro model pack',
-          subtitle: 'Select which runtime configuration to use for Kokoro.',
+          title: t('settingsVoice.local.kokoro.assetPack.title'),
+          subtitle: t('settingsVoice.local.kokoro.assetPack.subtitleWeb'),
           showSelectedSubtitle: false,
-          detailFormatter: () => (effectiveAssetSetId ?? 'Default'),
+          detailFormatter: () => (effectiveAssetSetId ?? t('settingsVoice.local.kokoro.common.default')),
         }}
         items={assetSets.map((s) => ({
           id: s.id,
@@ -258,8 +260,8 @@ export function LocalNeuralTtsSettings(props: {
       />
 
       <Item
-        title="Kokoro model"
-        subtitle="Downloads on demand. Uses WebAssembly (beta)."
+        title={t('settingsVoice.local.kokoro.model.title')}
+        subtitle={t('settingsVoice.local.kokoro.model.subtitleWeb')}
         detail={modelDetail}
         rightElement={
           modelStatus === 'downloading'
@@ -284,8 +286,8 @@ export function LocalNeuralTtsSettings(props: {
       />
 
       <Item
-        title="Kokoro cache"
-        subtitle="Manage downloaded Kokoro files on this device."
+        title={t('settingsVoice.local.kokoro.web.cache.title')}
+        subtitle={t('settingsVoice.local.kokoro.web.cache.subtitle')}
         detail={cacheDetail}
         onPress={clearCache}
         showChevron={false}
@@ -298,7 +300,7 @@ export function LocalNeuralTtsSettings(props: {
         onOpenChange={(next) => setOpenMenu(next ? 'voiceId' : null)}
         variant="selectable"
         search={true}
-        searchPlaceholder="Search voices"
+        searchPlaceholder={t('settingsVoice.local.kokoro.voice.searchPlaceholder')}
         selectedId={effectiveVoiceId}
         showCategoryTitles={false}
         matchTriggerWidth={true}
@@ -306,12 +308,14 @@ export function LocalNeuralTtsSettings(props: {
         rowKind="item"
         popoverBoundaryRef={props.popoverBoundaryRef}
         itemTrigger={{
-          title: 'Kokoro voice',
-          subtitle: 'Choose the on-device voice used for replies.',
+          title: t('settingsVoice.local.kokoro.voice.titleWeb'),
+          subtitle: t('settingsVoice.local.kokoro.voice.subtitleWeb'),
           showSelectedSubtitle: false,
           detailFormatter: () => effectiveVoiceId,
         }}
-        items={(voices.length > 0 ? voices : [{ id: effectiveVoiceId, title: 'Loading voices…', subtitle: undefined, disabled: true }]).map((v) => ({
+        items={(voices.length > 0
+          ? voices
+          : [{ id: effectiveVoiceId, title: t('settingsVoice.local.kokoro.voice.loadingVoicesTitle'), subtitle: undefined, disabled: true }]).map((v) => ({
           id: v.id,
           title: v.title,
           subtitle: v.subtitle,
@@ -351,8 +355,8 @@ export function LocalNeuralTtsSettings(props: {
         rowKind="item"
         popoverBoundaryRef={props.popoverBoundaryRef}
         itemTrigger={{
-          title: 'Speed',
-          subtitle: 'Adjust speaking speed (0.5–2.0).',
+          title: t('settingsVoice.local.kokoro.speed.title'),
+          subtitle: t('settingsVoice.local.kokoro.speed.subtitle'),
           showSelectedSubtitle: false,
         }}
         items={[0.7, 0.8, 0.9, 1, 1.1, 1.2, 1.3, 1.4, 1.5, 1.7, 2].map((speed) => ({

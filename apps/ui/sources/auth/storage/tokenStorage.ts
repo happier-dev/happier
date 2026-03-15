@@ -185,9 +185,8 @@ export function isLegacyAuthCredentials(credentials: AuthCredentials): credentia
 
 export interface PendingExternalAuth {
     provider: string;
-    secret?: string;
     proof?: string;
-    mode?: 'keyed' | 'keyless';
+    secret?: string;
     intent?: 'signup' | 'reset';
     serverUrl?: string;
     returnTo?: string;
@@ -220,12 +219,9 @@ function isPendingExternalAuthRecord(value: unknown): value is PendingExternalAu
     const mode = maybe.mode;
     const hasSecret = isNonEmptyString(secret);
     const hasProof = isNonEmptyString(proof);
-    if (hasSecret === hasProof) return false;
-    if (hasProof) {
-        if (mode !== 'keyless') return false;
-    } else if (mode !== undefined && mode !== 'keyed') {
-        return false;
-    }
+    // New flow requires proof for binding. Accept legacy secret-only records for backward compatibility.
+    if (!hasProof && !hasSecret) return false;
+    if (mode !== undefined && mode !== 'keyed' && mode !== 'keyless') return false;
     if (maybe.serverUrl !== undefined && !isNonEmptyString(maybe.serverUrl)) return false;
     if (maybe.returnTo !== undefined && !isInternalReturnTo(maybe.returnTo)) return false;
     if (maybe.intent === undefined) return true;

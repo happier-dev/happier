@@ -145,10 +145,9 @@ export function openAccountScopedBlobCiphertext(params: {
     const key = deriveAccountScopedSecretboxKey({ machineKey, kind: params.kind });
     const opened = tweetnacl.secretbox.open(boxed, nonce, key);
     const parsed = opened ? tryParseJson(new Uint8Array(opened)) : null;
-    if (parsed === null) {
-      return null;
+    if (parsed !== null) {
+      return { format: 'account_scoped_v1', value: parsed };
     }
-    return { format: 'account_scoped_v1', value: parsed };
   }
 
   // Backwards compatibility: legacy secretbox payloads that omitted magic/version bytes.

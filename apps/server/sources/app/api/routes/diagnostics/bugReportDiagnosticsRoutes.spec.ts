@@ -51,6 +51,28 @@ describe("bugReportDiagnosticsRoutes", () => {
         );
     });
 
+    it("allows overriding diagnostics snapshot max/window via HAPPIER_DIAGNOSTICS_BUG_REPORT_SNAPSHOT_RATE_LIMIT_*", async () => {
+        process.env.HAPPIER_DIAGNOSTICS_BUG_REPORT_SNAPSHOT_RATE_LIMIT_MAX = "7";
+        process.env.HAPPIER_DIAGNOSTICS_BUG_REPORT_SNAPSHOT_RATE_LIMIT_WINDOW = "30 seconds";
+
+        const registrations: Array<{ path: string; options: any }> = [];
+        const { bugReportDiagnosticsRoutes } = await import("./bugReportDiagnosticsRoutes");
+        bugReportDiagnosticsRoutes({
+            authenticate: vi.fn(),
+            get: (path: string, options: any, _handler: any) => {
+                registrations.push({ path, options });
+            },
+        } as any);
+
+        const route = registrations.find((entry) => entry.path === "/v1/diagnostics/bug-report-snapshot");
+        expect(route?.options?.config?.rateLimit).toEqual(
+            expect.objectContaining({
+                max: 7,
+                timeWindow: "30 seconds",
+            }),
+        );
+    });
+
     it("returns redacted log tail when enabled", async () => {
         const dir = mkdtempSync(join(tmpdir(), "happier-bug-report-diag-"));
         const logPath = join(dir, "server.log");

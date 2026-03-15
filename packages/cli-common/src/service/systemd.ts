@@ -1,6 +1,6 @@
 function escapeSystemdEnvValue(value: string): string {
   const s = String(value ?? '');
-  if (/^[A-Za-z0-9_./:@%+-]+$/.test(s)) return s;
+  if (/^[A-Za-z0-9_./:@%+-]+$/.test(s)) return s.includes('%') ? s.replaceAll('%', '%%') : s;
   const escaped = s
     .replaceAll('\\', '\\\\')
     .replaceAll('%', '%%')
@@ -11,11 +11,20 @@ function escapeSystemdEnvValue(value: string): string {
   return `"${escaped}"`;
 }
 
+function assertSingleLineSystemdField(fieldName: string, value: string): string {
+  const s = String(value ?? '');
+  if (s.includes('\n') || s.includes('\r')) {
+    throw new Error(`${fieldName} must not contain newlines`);
+  }
+  return s;
+}
+
 function escapeSystemdExecArg(value: string): string {
   const s = String(value ?? '');
-  if (/^[A-Za-z0-9_./:@%+=-]+$/.test(s)) return s;
+  if (/^[A-Za-z0-9_./:@%+=-]+$/.test(s)) return s.includes('%') ? s.replaceAll('%', '%%') : s;
   const escaped = s
     .replaceAll('\\', '\\\\')
+    .replaceAll('%', '%%')
     .replaceAll('\r\n', '\n')
     .replaceAll('\r', '\n')
     .replaceAll('\n', '\\n')
@@ -49,16 +58,22 @@ export function renderSystemdServiceUnit(params: Readonly<{
   stderrPath?: string;
   wantedBy?: string;
 }>): string {
-  const desc = String(params.description ?? '').trim() || 'Happier Service';
-  const restartPolicy = String(params.restart ?? '').trim() || 'always';
-  const workDir = String(params.workingDirectory ?? '').trim();
-  const out = String(params.stdoutPath ?? '').trim();
-  const err = String(params.stderrPath ?? '').trim();
-  const runAsUser = String(params.runAsUser ?? '').trim();
+  const desc = assertSingleLineSystemdField(
+    'description',
+    String(params.description ?? '').trim() || 'Happier Service',
+  );
+  const restartPolicy = assertSingleLineSystemdField(
+    'restart',
+    String(params.restart ?? '').trim() || 'always',
+  );
+  const workDir = assertSingleLineSystemdField('workingDirectory', String(params.workingDirectory ?? '').trim());
+  const out = assertSingleLineSystemdField('stdoutPath', String(params.stdoutPath ?? '').trim());
+  const err = assertSingleLineSystemdField('stderrPath', String(params.stderrPath ?? '').trim());
+  const runAsUser = assertSingleLineSystemdField('runAsUser', String(params.runAsUser ?? '').trim());
 
   const execStart = Array.isArray(params.execStart)
     ? params.execStart.map((a) => escapeSystemdExecArg(String(a ?? ''))).join(' ')
-    : String(params.execStart ?? '').trim();
+    : assertSingleLineSystemdField('execStart', String(params.execStart ?? '').trim());
   if (!execStart) {
     throw new Error('execStart is required');
   }
@@ -68,7 +83,10 @@ export function renderSystemdServiceUnit(params: Readonly<{
   const userLine = runAsUser ? `User=${runAsUser}\n` : '';
   const outLine = out ? `StandardOutput=append:${out}\n` : '';
   const errLine = err ? `StandardError=append:${err}\n` : '';
-  const wantedBy = String(params.wantedBy ?? '').trim() || 'default.target';
+  const wantedBy = assertSingleLineSystemdField(
+    'wantedBy',
+    String(params.wantedBy ?? '').trim() || 'default.target',
+  );
 
   const envBlock = envLines.length ? `\n${envLines.join('\n')}\n` : '\n';
 

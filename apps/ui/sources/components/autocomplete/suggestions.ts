@@ -13,22 +13,18 @@ export async function getCommandSuggestions(sessionId: string, query: string): P
     
     try {
         // Use the command search cache with fuzzy matching
-        const commands = await searchCommands(sessionId, searchTerm, { limit: 5 });
-        
+        const commands = await searchCommands(sessionId, searchTerm, { limit: 8 });
+
         // Convert CommandItem to suggestion format
         return commands.map((cmd: CommandItem) => ({
             key: `cmd-${cmd.command}`,
             text: `/${cmd.command}`,
             component: () => React.createElement(CommandSuggestion, {
                 command: cmd.command,
-                description: cmd.description
-            })
+                description: cmd.description,
+            }),
         }));
-    } catch (error) {
-        if (process.env.EXPO_PUBLIC_DEBUG) {
-            console.error('Error fetching command suggestions:', error);
-        }
-        // Return empty array on error
+    } catch {
         return [];
     }
 }
@@ -43,8 +39,8 @@ export async function getFileMentionSuggestions(sessionId: string, query: string
     
     try {
         // Use the file search cache with fuzzy matching
-        const files = await searchFiles(sessionId, searchTerm, { limit: 5 });
-        
+        const files = await searchFiles(sessionId, searchTerm, { limit: 12 });
+
         // Convert FileItem to suggestion format
         return files.map((file: FileItem) => ({
             key: `file-${file.fullPath}`,
@@ -52,14 +48,10 @@ export async function getFileMentionSuggestions(sessionId: string, query: string
             component: () => React.createElement(FileMentionSuggestion, {
                 fileName: file.fileName,
                 filePath: file.filePath,
-                fileType: file.fileType
-            })
+                fileType: file.fileType,
+            }),
         }));
-    } catch (error) {
-        if (process.env.EXPO_PUBLIC_DEBUG) {
-            console.error('Error fetching file suggestions:', error);
-        }
-        // Return empty array on error
+    } catch {
         return [];
     }
 }

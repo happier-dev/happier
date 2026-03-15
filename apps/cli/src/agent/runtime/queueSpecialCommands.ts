@@ -1,22 +1,23 @@
 import { parseSpecialCommand } from '@/cli/parsers/specialCommands';
 
-export type SpecialCommandQueue<Mode> = {
-  push: (message: string, mode: Mode) => void;
-  pushIsolateAndClear: (message: string, mode: Mode) => void;
+export type SpecialCommandQueue<Mode, Message> = {
+  push: (message: Message, mode: Mode) => void;
+  pushIsolateAndClear: (message: Message, mode: Mode) => void;
 };
 
 /**
  * Push user input to a mode-aware queue, handling slash-style clear commands consistently.
  */
-export function pushTextToMessageQueueWithSpecialCommands<Mode>(opts: {
-  queue: SpecialCommandQueue<Mode>;
+export function pushMessageToQueueWithSpecialCommands<Mode, Message>(opts: {
+  queue: SpecialCommandQueue<Mode, Message>;
+  message: Message;
   text: string;
   mode: Mode;
 }): void {
   const special = parseSpecialCommand(opts.text);
   if (special.type === 'clear') {
-    opts.queue.pushIsolateAndClear(opts.text, opts.mode);
+    opts.queue.pushIsolateAndClear(opts.message, opts.mode);
     return;
   }
-  opts.queue.push(opts.text, opts.mode);
+  opts.queue.push(opts.message, opts.mode);
 }

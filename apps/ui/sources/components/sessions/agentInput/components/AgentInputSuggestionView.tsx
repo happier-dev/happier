@@ -3,8 +3,9 @@ import { View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 import { Ionicons } from '@expo/vector-icons';
 import { Typography } from '@/constants/Typography';
-import { t } from '@/text';
 import { Text } from '@/components/ui/text/Text';
+import { FileIcon } from '@/components/ui/media/FileIcon';
+import { normalizeRepoPathParts } from '@/utils/path/normalizeRepoPathParts';
 
 
 interface CommandSuggestionProps {
@@ -12,13 +13,15 @@ interface CommandSuggestionProps {
     description?: string;
 }
 
+const COMMAND_PREFIX = '/';
+
 export const CommandSuggestion = React.memo(({ command, description }: CommandSuggestionProps) => {
     return (
         <View style={styles.suggestionContainer}>
             <Text 
                 style={[styles.commandText, { marginRight: description ? 12 : 0 }]}
             >
-                /{command}
+                {COMMAND_PREFIX}{command}
             </Text>
             {description && (
                 <Text
@@ -39,24 +42,30 @@ interface FileMentionProps {
 }
 
 export const FileMentionSuggestion = React.memo(({ fileName, filePath, fileType = 'file' }: FileMentionProps) => {
+    const { dir, name } = React.useMemo(() => {
+        return normalizeRepoPathParts({ fileName, filePath });
+    }, [fileName, filePath]);
+    const dirLabel = dir ? `${dir}/` : null;
+
+    const icon = fileType === 'folder'
+        ? <Ionicons name="folder-outline" size={16} color={styles.iconColor.color} />
+        : <FileIcon fileName={name || fileName} size={16} />;
+
     return (
         <View style={styles.suggestionContainer}>
-            <View style={styles.iconContainer}>
-                <Ionicons
-                    name={fileType === 'folder' ? 'folder' : 'document-text'}
-                    size={18}
-                    color={styles.iconColor.color}
-                />
+            <View style={styles.leadingIcon}>{icon}</View>
+            <View style={{ flex: 1, minWidth: 0, flexDirection: 'row', alignItems: 'baseline' }}>
+                {dirLabel ? (
+                    <Text style={styles.filePathText} numberOfLines={1} ellipsizeMode="clip">
+                        {dirLabel}
+                    </Text>
+                ) : (
+                    <View style={{ flex: 1, minWidth: 0 }} />
+                )}
+                <Text style={styles.fileTitleText} numberOfLines={1} ellipsizeMode="middle">
+                    {fileType === 'folder' ? `${name}/` : name}
+                </Text>
             </View>
-            <Text 
-                style={styles.fileNameText}
-                numberOfLines={1}
-            >
-                {filePath}{fileName}
-            </Text>
-            <Text style={styles.labelText}>
-                {fileType === 'folder' ? t('agentInput.suggestion.folderLabel') : t('agentInput.suggestion.fileLabel')}
-            </Text>
         </View>
     );
 });
@@ -65,9 +74,8 @@ const styles = StyleSheet.create((theme) => ({
     suggestionContainer: {
         flexDirection: 'row',
         alignItems: 'center',
-        paddingHorizontal: 16,
-        paddingVertical: 12,
-        height: 48,
+        paddingHorizontal: 8,
+        paddingVertical: 4,
     },
     commandText: {
         fontSize: 14,
@@ -81,28 +89,26 @@ const styles = StyleSheet.create((theme) => ({
         color: theme.colors.textSecondary,
         ...Typography.default(),
     },
-    iconContainer: {
-        width: 32,
-        height: 32,
-        borderRadius: 16,
-        backgroundColor: theme.colors.surfaceHigh,
+    leadingIcon: {
+        width: 16,
+        height: 16,
         alignItems: 'center',
         justifyContent: 'center',
-        marginRight: 12,
+        marginRight: 8,
     },
     iconColor: {
         color: theme.colors.textSecondary,
     },
-    fileNameText: {
-        flex: 1,
-        fontSize: 14,
-        color: theme.colors.textSecondary,
-        ...Typography.default(),
+    fileTitleText: {
+        fontSize: 13,
+        color: theme.colors.text,
+        ...Typography.default('semiBold'),
     },
-    labelText: {
+    filePathText: {
+        flex: 1,
+        minWidth: 0,
         fontSize: 12,
         color: theme.colors.textSecondary,
-        marginLeft: 8,
         ...Typography.default(),
     },
 }));

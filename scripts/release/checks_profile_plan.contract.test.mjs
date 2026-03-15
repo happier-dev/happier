@@ -14,6 +14,7 @@ test('checks profile: none disables CI checks', () => {
   assert.equal(plan.runBuildWebsite, false);
   assert.equal(plan.runBuildDocs, false);
   assert.equal(plan.runCliSmokeLinux, false);
+  assert.equal(plan.runReleaseAssetsE2e, false);
 });
 
 test('checks profile: fast runs CI but skips slow lanes', () => {
@@ -27,6 +28,7 @@ test('checks profile: fast runs CI but skips slow lanes', () => {
   assert.equal(plan.runBuildWebsite, false);
   assert.equal(plan.runBuildDocs, false);
   assert.equal(plan.runCliSmokeLinux, false);
+  assert.equal(plan.runReleaseAssetsE2e, false);
 });
 
 test('checks profile: full enables e2e/db-contract/builds/smoke', () => {
@@ -40,6 +42,7 @@ test('checks profile: full enables e2e/db-contract/builds/smoke', () => {
   assert.equal(plan.runBuildWebsite, true);
   assert.equal(plan.runBuildDocs, true);
   assert.equal(plan.runCliSmokeLinux, true);
+  assert.equal(plan.runReleaseAssetsE2e, false);
 });
 
 test('checks profile: custom toggles lanes from CSV', () => {
@@ -56,6 +59,7 @@ test('checks profile: custom toggles lanes from CSV', () => {
   assert.equal(plan.runBuildWebsite, false);
   assert.equal(plan.runBuildDocs, true);
   assert.equal(plan.runCliSmokeLinux, true);
+  assert.equal(plan.runReleaseAssetsE2e, false);
 });
 
 test('checks profile: custom with e2e_core enables fast e2e only', () => {
@@ -64,10 +68,32 @@ test('checks profile: custom with e2e_core enables fast e2e only', () => {
   assert.equal(plan.runUiE2e, false);
   assert.equal(plan.runE2eCore, true);
   assert.equal(plan.runE2eCoreSlow, false);
+  assert.equal(plan.runReleaseAssetsE2e, false);
 });
 
 test('checks profile: custom ui e2e toggle', () => {
   const plan = resolveChecksProfilePlan({ profile: 'custom', customChecks: 'ui_e2e' });
   assert.equal(plan.runCi, true);
   assert.equal(plan.runUiE2e, true);
+  assert.equal(plan.runReleaseAssetsE2e, false);
+});
+
+test('checks profile: release-assets focuses on release assets e2e', () => {
+  const plan = resolveChecksProfilePlan({ profile: 'release-assets', customChecks: '' });
+  assert.equal(plan.runCi, true);
+  assert.equal(plan.runUiE2e, false);
+  assert.equal(plan.runE2eCore, false);
+  assert.equal(plan.runE2eCoreSlow, false);
+  assert.equal(plan.runServerDbContract, false);
+  assert.equal(plan.runStress, false);
+  assert.equal(plan.runBuildWebsite, false);
+  assert.equal(plan.runBuildDocs, false);
+  assert.equal(plan.runCliSmokeLinux, false);
+  assert.equal(plan.runReleaseAssetsE2e, true);
+});
+
+test('checks profile: custom supports release assets e2e toggle', () => {
+  const plan = resolveChecksProfilePlan({ profile: 'custom', customChecks: 'release_assets_e2e' });
+  assert.equal(plan.runCi, true);
+  assert.equal(plan.runReleaseAssetsE2e, true);
 });

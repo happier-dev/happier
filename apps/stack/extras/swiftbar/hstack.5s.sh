@@ -96,10 +96,11 @@ source "$LIB_DIR/render.sh"
 # Menu
 # ============================================================================
 
+PRIMARY_STACK_RAW="${HAPPIER_STACK_SWIFTBAR_PRIMARY_STACK:-${HAPPIER_STACK_STACK:-main}}"
+PRIMARY_STACK="${PRIMARY_STACK_RAW:-main}"
+
 hstack_BIN="$(resolve_hstack_bin)"
 hstack_TERM="$hstack_ROOT_DIR/extras/swiftbar/hstack-term.sh"
-MAIN_PORT="$(resolve_main_port)"
-MAIN_SERVER_COMPONENT="$(resolve_main_server_component)"
 TAILSCALE_URL="$(get_tailscale_url)"
 if swiftbar_is_sandboxed; then
   # Never probe Tailscale (global machine state) when sandboxing.
@@ -111,12 +112,22 @@ MENUBAR_MODE="$(resolve_menubar_mode)"
 ensure_launchctl_cache
 
 if [[ -z "$MAIN_ENV_FILE" ]]; then
-  MAIN_ENV_FILE="$(resolve_stack_env_file main)"
+  MAIN_ENV_FILE="$(resolve_stack_env_file "$PRIMARY_STACK")"
 fi
-HAPPIER_HOME_DIR="$(resolve_stack_base_dir main "$MAIN_ENV_FILE")"
-CLI_HOME_DIR="$(resolve_stack_cli_home_dir main "$MAIN_ENV_FILE")"
+if [[ -z "${HAPPIER_STACK_ENV_FILE:-}" ]] && [[ -n "$MAIN_ENV_FILE" ]]; then
+  export HAPPIER_STACK_ENV_FILE="$MAIN_ENV_FILE"
+fi
+MAIN_SERVER_COMPONENT="$(resolve_main_server_component)"
+if [[ "$PRIMARY_STACK" == "main" ]]; then
+  MAIN_PORT="$(resolve_main_port)"
+else
+  MAIN_PORT="$(resolve_stack_server_port "$PRIMARY_STACK" "$MAIN_ENV_FILE")"
+fi
+
+HAPPIER_HOME_DIR="$(resolve_stack_base_dir "$PRIMARY_STACK" "$MAIN_ENV_FILE")"
+CLI_HOME_DIR="$(resolve_stack_cli_home_dir "$PRIMARY_STACK" "$MAIN_ENV_FILE")"
 LOGS_DIR="$HAPPIER_HOME_DIR/logs"
-MAIN_LABEL="$(resolve_stack_label main)"
+MAIN_LABEL="$(resolve_stack_label "$PRIMARY_STACK")"
 
 MAIN_COLLECT="$(collect_stack_status "$MAIN_PORT" "$CLI_HOME_DIR" "$MAIN_LABEL" "$HAPPIER_HOME_DIR")"
 IFS=$'\t' read -r MAIN_LEVEL MAIN_SERVER_STATUS MAIN_SERVER_PID MAIN_SERVER_METRICS MAIN_DAEMON_STATUS MAIN_DAEMON_PID MAIN_DAEMON_METRICS MAIN_DAEMON_UPTIME MAIN_LAST_HEARTBEAT MAIN_LAUNCHAGENT_STATUS MAIN_AUTOSTART_PID MAIN_AUTOSTART_METRICS <<<"$MAIN_COLLECT"
@@ -160,14 +171,25 @@ fi
 echo "---"
 
 # Main stack (inline)
-echo "Main stack"
+if [[ "$PRIMARY_STACK" == "main" ]]; then
+  # If the main env file points at a named stack (common in wrapper installs),
+  # render the concrete stack name to avoid ambiguity.
+  DECLARED_MAIN_STACK_NAME="$(dotenv_get "$MAIN_ENV_FILE" "HAPPIER_STACK_STACK")"
+  if [[ -n "$DECLARED_MAIN_STACK_NAME" && "$DECLARED_MAIN_STACK_NAME" != "main" ]]; then
+    echo "Stack: $DECLARED_MAIN_STACK_NAME"
+  else
+    echo "Main stack"
+  fi
+else
+  echo "Stack: $PRIMARY_STACK"
+fi
 echo "---"
 export MAIN_LEVEL="$MAIN_LEVEL"
-render_stack_info "" "main" "$MAIN_PORT" "$MAIN_SERVER_COMPONENT" "$HAPPIER_HOME_DIR" "$CLI_HOME_DIR" "$MAIN_LABEL" "$MAIN_ENV_FILE" "$TAILSCALE_URL" "$MAIN_SERVER_METRICS" "$MAIN_DAEMON_METRICS" "$MAIN_AUTOSTART_METRICS"
-render_component_server "" "main" "$MAIN_PORT" "$MAIN_SERVER_COMPONENT" "$MAIN_SERVER_STATUS" "$MAIN_SERVER_PID" "$MAIN_SERVER_METRICS" "$TAILSCALE_URL" "$MAIN_LABEL"
-render_component_daemon "" "$MAIN_DAEMON_STATUS" "$MAIN_DAEMON_PID" "$MAIN_DAEMON_METRICS" "$MAIN_DAEMON_UPTIME" "$MAIN_LAST_HEARTBEAT" "$CLI_HOME_DIR/daemon.state.json" "main"
-render_component_autostart "" "main" "$MAIN_LABEL" "$MAIN_LAUNCHAGENT_STATUS" "$MAIN_AUTOSTART_PID" "$MAIN_AUTOSTART_METRICS" "$LOGS_DIR"
-render_component_tailscale "" "main" "$TAILSCALE_URL"
+render_stack_info "" "$PRIMARY_STACK" "$MAIN_PORT" "$MAIN_SERVER_COMPONENT" "$HAPPIER_HOME_DIR" "$CLI_HOME_DIR" "$MAIN_LABEL" "$MAIN_ENV_FILE" "$TAILSCALE_URL" "$MAIN_SERVER_METRICS" "$MAIN_DAEMON_METRICS" "$MAIN_AUTOSTART_METRICS"
+render_component_server "" "$PRIMARY_STACK" "$MAIN_PORT" "$MAIN_SERVER_COMPONENT" "$MAIN_SERVER_STATUS" "$MAIN_SERVER_PID" "$MAIN_SERVER_METRICS" "$TAILSCALE_URL" "$MAIN_LABEL"
+render_component_daemon "" "$MAIN_DAEMON_STATUS" "$MAIN_DAEMON_PID" "$MAIN_DAEMON_METRICS" "$MAIN_DAEMON_UPTIME" "$MAIN_LAST_HEARTBEAT" "$CLI_HOME_DIR/daemon.state.json" "$PRIMARY_STACK"
+render_component_autostart "" "$PRIMARY_STACK" "$MAIN_LABEL" "$MAIN_LAUNCHAGENT_STATUS" "$MAIN_AUTOSTART_PID" "$MAIN_AUTOSTART_METRICS" "$LOGS_DIR"
+render_component_tailscale "" "$PRIMARY_STACK" "$TAILSCALE_URL"
 
 echo "---"
 if [[ "$MENUBAR_MODE" == "selfhost" ]]; then
@@ -249,7 +271,7 @@ else
   fi
 
   echo "---"
-  render_components_menu "" "main" "main" "$MAIN_ENV_FILE"
+  render_components_menu "" "main" "$PRIMARY_STACK" "$MAIN_ENV_FILE"
 
   echo "Worktrees | sfimage=arrow.triangle.branch"
   if [[ -z "$hstack_BIN" ]]; then

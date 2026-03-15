@@ -23,14 +23,13 @@ export async function extractSDKMetadata(): Promise<SDKMetadata> {
         logger.debug('[metadataExtractor] Starting SDK metadata extraction')
         
         // Run SDK with minimal tools allowed
-        const sdkQuery = query({
-            prompt: 'hello',
-            options: {
-                allowedTools: ['Bash(echo)'],
-                maxTurns: 1,
-                abort: abortController.signal
-            }
-        })
+	        const sdkQuery = query({
+	            prompt: 'hello',
+	            options: {
+	                maxTurns: 1,
+	                abort: abortController.signal
+	            }
+	        })
 
         // Wait for the first system message which contains tools and slash commands
         for await (const message of sdkQuery) {

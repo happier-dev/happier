@@ -16,11 +16,24 @@ import { resolveServerScopedSessionContext } from '@/sync/runtime/orchestration/
 import { sessionRpcWithServerScope } from '@/sync/runtime/orchestration/serverScopedRpc/serverScopedSessionRpc';
 import { createEphemeralServerSocketClient } from '@/sync/runtime/orchestration/serverScopedRpc/createEphemeralServerSocketClient';
 import { runtimeFetch } from '@/utils/system/runtimeFetch';
-import type { SessionContinueWithReplayRpcResult, SpawnSessionResult } from '@happier-dev/protocol';
-import { SessionContinueWithReplayRpcResultSchema, SPAWN_SESSION_ERROR_CODES } from '@happier-dev/protocol';
+import type {
+    LlmTaskRunnerConfigV1,
+    SessionContinueWithReplayRpcResult,
+    SessionForkPoint,
+    SessionForkRpcResult,
+    SessionForkStrategy,
+    SpawnSessionResult,
+} from '@happier-dev/protocol';
+import {
+    SessionContinueWithReplayRpcResultSchema,
+    SessionForkRpcResultSchema,
+    SPAWN_SESSION_ERROR_CODES,
+} from '@happier-dev/protocol';
 import { RPC_ERROR_CODES, RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { normalizeSpawnSessionResult } from './_shared';
+import { canUseSessionRpc, readMachineTargetForSession, resolveMachinePathFromSessionBase, shouldFallbackToSessionRpc } from './sessionMachineTarget';
 export {
+    sessionScmChangeDiscard,
     sessionScmChangeExclude,
     sessionScmChangeInclude,
     sessionScmCommitBackout,
@@ -45,6 +58,11 @@ interface SessionPermissionRequest {
     execPolicyAmendment?: {
         command: string[];
     };
+    /**
+     * Optional permission updates to apply inside the agent runtime (provider-specific).
+     * This is used to accept provider-suggested permission changes (e.g. Claude Agent SDK `permission_suggestions`).
+     */
+    updatedPermissions?: unknown;
     /**
      * AskUserQuestion: structured answers keyed by question text.
      * When present, the agent can complete the tool call without requiring a follow-up user message.
@@ -112,6 +130,17 @@ interface SessionWriteFileResponse {
     errorCode?: string;
 }
 
+// Create directory operation types
+interface SessionCreateDirectoryRequest {
+    path: string;
+}
+
+interface SessionCreateDirectoryResponse {
+    success: boolean;
+    error?: string;
+    errorCode?: string;
+}
+
 // List directory operation types
 interface SessionListDirectoryRequest {
     path: string;
@@ -175,6 +204,8 @@ interface SessionKillResponse {
     message: string;
     errorCode?: string;
 }
+
+const INACTIVE_SESSION_RPC_UNAVAILABLE_ERROR = 'Session RPC unavailable for inactive session';
 
 // Response types for spawn session
 export type ResumeSessionResult = SpawnSessionResult;
@@ -251,6 +282,15 @@ export async function resumeSession(options: ResumeSessionOptions): Promise<Resu
         });
         return normalizeSpawnSessionResult(result);
     } catch (error) {
+        if (isRpcMethodNotAvailableError(error as any) || readRpcErrorCode(error) === RPC_ERROR_CODES.METHOD_NOT_AVAILABLE) {
+            return {
+                type: 'error',
+                errorCode: SPAWN_SESSION_ERROR_CODES.DAEMON_RPC_UNAVAILABLE,
+                errorMessage:
+                    `Daemon RPC is not available (RPC method not available). ` +
+                    `The daemon may be stopped, still starting, or not connected to the server.`,
+            };
+        }
         return {
             type: 'error',
             errorCode: SPAWN_SESSION_ERROR_CODES.UNEXPECTED,
@@ -273,7 +313,9 @@ export type ContinueSessionWithReplayOptions = Readonly<{
         previousSessionId: string;
         strategy?: 'recent_messages' | 'summary_plus_recent';
         recentMessagesCount?: number;
+        maxSeedChars?: number;
         seedMode?: 'draft' | 'daemon_initial_prompt';
+        summaryRunner?: LlmTaskRunnerConfigV1;
     }>;
 }>;
 
@@ -306,10 +348,79 @@ export async function continueSessionWithReplay(options: ContinueSessionWithRepl
         }
         return parsed.data;
     } catch (error) {
+        if (isRpcMethodNotAvailableError(error as any) || readRpcErrorCode(error) === RPC_ERROR_CODES.METHOD_NOT_AVAILABLE) {
+            return {
+                type: 'error',
+                errorCode: SPAWN_SESSION_ERROR_CODES.DAEMON_RPC_UNAVAILABLE,
+                errorMessage:
+                    `Daemon RPC is not available (RPC method not available). ` +
+                    `The daemon may be stopped, still starting, or not connected to the server.`,
+            };
+        }
         return {
             type: 'error',
             errorCode: SPAWN_SESSION_ERROR_CODES.UNEXPECTED,
             errorMessage: error instanceof Error ? error.message : 'Failed to continue session with replay',
+        };
+    }
+}
+
+export type ForkSessionOptions = Readonly<{
+    machineId?: string | null;
+    serverId?: string | null;
+    parentSessionId: string;
+    forkPoint: SessionForkPoint;
+    strategy?: SessionForkStrategy;
+    replaySummaryRunner?: LlmTaskRunnerConfigV1;
+    replayMaxSeedChars?: number;
+}>;
+
+export async function forkSession(options: ForkSessionOptions): Promise<SessionForkRpcResult> {
+    const serverId = typeof options.serverId === 'string' ? options.serverId.trim() : null;
+    const parentTarget = readMachineTargetForSession(options.parentSessionId);
+    const explicitMachineId = typeof options.machineId === 'string' ? options.machineId.trim() : '';
+    const machineId = parentTarget?.machineId ?? explicitMachineId;
+    if (!machineId) {
+        return {
+            ok: false,
+            errorCode: 'machine_not_found',
+            errorMessage: 'No reachable machine target found for session fork',
+        };
+    }
+    try {
+        const raw = await machineRpcWithServerScope<unknown, unknown>({
+            machineId,
+            method: RPC_METHODS.SESSION_FORK,
+            payload: {
+                v: 1,
+                parentSessionId: options.parentSessionId,
+                forkPoint: options.forkPoint,
+                strategy: options.strategy,
+                replaySummaryRunner: options.replaySummaryRunner,
+                replayMaxSeedChars: options.replayMaxSeedChars,
+            },
+            serverId,
+        });
+
+        const parsed = SessionForkRpcResultSchema.safeParse(raw);
+        if (!parsed.success) {
+            return { ok: false, errorCode: 'UNEXPECTED', errorMessage: 'Unsupported fork response from daemon' };
+        }
+        return parsed.data;
+    } catch (error) {
+        if (isRpcMethodNotAvailableError(error as any) || readRpcErrorCode(error) === RPC_ERROR_CODES.METHOD_NOT_AVAILABLE) {
+            return {
+                ok: false,
+                errorCode: SPAWN_SESSION_ERROR_CODES.DAEMON_RPC_UNAVAILABLE,
+                errorMessage:
+                    `Daemon RPC is not available (RPC method not available). ` +
+                    `The daemon may be stopped, still starting, or not connected to the server.`,
+            };
+        }
+        return {
+            ok: false,
+            errorCode: 'UNEXPECTED',
+            errorMessage: error instanceof Error ? error.message : 'Failed to fork session',
         };
     }
 }
@@ -347,6 +458,33 @@ export async function sessionAllow(
         allowedTools,
         decision,
         execPolicyAmendment
+    };
+    await apiSocket.sessionRPC(sessionId, 'permission', request);
+}
+
+/**
+ * Allow a permission request and attach provider permission updates.
+ *
+ * Used when the backend exposes structured permission suggestions that can be applied in-runtime
+ * (e.g. Claude Agent SDK `permission_suggestions`).
+ */
+export async function sessionAllowWithPermissionUpdates(
+    sessionId: string,
+    id: string,
+    params: Readonly<{
+        mode?: 'default' | 'acceptEdits' | 'bypassPermissions' | 'plan';
+        allowedTools?: string[];
+        decision?: 'approved' | 'approved_for_session' | 'approved_execpolicy_amendment';
+        updatedPermissions: unknown;
+    }>,
+): Promise<void> {
+    const request: SessionPermissionRequest = {
+        id,
+        approved: true,
+        mode: params.mode,
+        allowedTools: params.allowedTools,
+        decision: params.decision,
+        updatedPermissions: params.updatedPermissions,
     };
     await apiSocket.sessionRPC(sessionId, 'permission', request);
 }
@@ -446,6 +584,32 @@ export async function sessionBash(sessionId: string, request: SessionBashRequest
  */
 export async function sessionReadFile(sessionId: string, path: string): Promise<SessionReadFileResponse> {
     try {
+        const machineTarget = readMachineTargetForSession(sessionId);
+        if (machineTarget) {
+            try {
+                const request: SessionReadFileRequest = {
+                    path: resolveMachinePathFromSessionBase({ basePath: machineTarget.basePath, requestPath: path }),
+                };
+                const response = await apiSocket.machineRPC<SessionReadFileResponse, SessionReadFileRequest>(
+                    machineTarget.machineId,
+                    'readFile',
+                    request,
+                );
+                return assertRpcResponseWithSuccess<SessionReadFileResponse>(response);
+            } catch (error) {
+                if (!shouldFallbackToSessionRpc(sessionId, error)) {
+                    throw error;
+                }
+            }
+        }
+
+        if (!canUseSessionRpc(sessionId)) {
+            return {
+                success: false,
+                error: INACTIVE_SESSION_RPC_UNAVAILABLE_ERROR,
+            };
+        }
+
         const request: SessionReadFileRequest = { path };
         const response = await apiSocket.sessionRPC<SessionReadFileResponse, SessionReadFileRequest>(
             sessionId,
@@ -504,6 +668,34 @@ export async function sessionWriteFile(
         const request: SessionWriteFileRequest = expectedHash === undefined
             ? { path, content: contentBase64 }
             : { path, content: contentBase64, expectedHash };
+        const machineTarget = readMachineTargetForSession(sessionId);
+        if (machineTarget) {
+            try {
+                const machineRequest: SessionWriteFileRequest = {
+                    ...request,
+                    path: resolveMachinePathFromSessionBase({ basePath: machineTarget.basePath, requestPath: path }),
+                };
+                const response = await apiSocket.machineRPC<SessionWriteFileResponse, SessionWriteFileRequest>(
+                    machineTarget.machineId,
+                    'writeFile',
+                    machineRequest,
+                );
+                return assertRpcResponseWithSuccess<SessionWriteFileResponse>(response);
+            } catch (error) {
+                if (!shouldFallbackToSessionRpc(sessionId, error)) {
+                    throw error;
+                }
+            }
+        }
+
+        if (!canUseSessionRpc(sessionId)) {
+            return {
+                success: false,
+                error: INACTIVE_SESSION_RPC_UNAVAILABLE_ERROR,
+                errorCode: RPC_ERROR_CODES.METHOD_NOT_AVAILABLE,
+            };
+        }
+
         const response = await apiSocket.sessionRPC<SessionWriteFileResponse, SessionWriteFileRequest>(
             sessionId,
             'writeFile',
@@ -520,10 +712,87 @@ export async function sessionWriteFile(
 }
 
 /**
+ * Create a directory in the session workspace.
+ */
+export async function sessionCreateDirectory(
+    sessionId: string,
+    path: string,
+): Promise<SessionCreateDirectoryResponse> {
+    try {
+        const machineTarget = readMachineTargetForSession(sessionId);
+        if (machineTarget) {
+            try {
+                const request: SessionCreateDirectoryRequest = {
+                    path: resolveMachinePathFromSessionBase({ basePath: machineTarget.basePath, requestPath: path }),
+                };
+                const response = await apiSocket.machineRPC<SessionCreateDirectoryResponse, SessionCreateDirectoryRequest>(
+                    machineTarget.machineId,
+                    'createDirectory',
+                    request,
+                );
+                return assertRpcResponseWithSuccess<SessionCreateDirectoryResponse>(response);
+            } catch (error) {
+                if (!shouldFallbackToSessionRpc(sessionId, error)) {
+                    throw error;
+                }
+            }
+        }
+
+        if (!canUseSessionRpc(sessionId)) {
+            return {
+                success: false,
+                error: INACTIVE_SESSION_RPC_UNAVAILABLE_ERROR,
+                errorCode: RPC_ERROR_CODES.METHOD_NOT_AVAILABLE,
+            };
+        }
+
+        const request: SessionCreateDirectoryRequest = { path };
+        const response = await apiSocket.sessionRPC<SessionCreateDirectoryResponse, SessionCreateDirectoryRequest>(
+            sessionId,
+            'createDirectory',
+            request,
+        );
+        return assertRpcResponseWithSuccess<SessionCreateDirectoryResponse>(response);
+    } catch (error) {
+        return {
+            success: false,
+            error: error instanceof Error ? error.message : 'Unknown error',
+            errorCode: readRpcErrorCode(error),
+        };
+    }
+}
+
+/**
  * List directory contents in the session
  */
 export async function sessionListDirectory(sessionId: string, path: string): Promise<SessionListDirectoryResponse> {
     try {
+        const machineTarget = readMachineTargetForSession(sessionId);
+        if (machineTarget) {
+            try {
+                const request: SessionListDirectoryRequest = {
+                    path: resolveMachinePathFromSessionBase({ basePath: machineTarget.basePath, requestPath: path }),
+                };
+                const response = await apiSocket.machineRPC<SessionListDirectoryResponse, SessionListDirectoryRequest>(
+                    machineTarget.machineId,
+                    'listDirectory',
+                    request
+                );
+                return assertRpcResponseWithSuccess<SessionListDirectoryResponse>(response);
+            } catch (error) {
+                if (!shouldFallbackToSessionRpc(sessionId, error)) {
+                    throw error;
+                }
+            }
+        }
+
+        if (!canUseSessionRpc(sessionId)) {
+            return {
+                success: false,
+                error: INACTIVE_SESSION_RPC_UNAVAILABLE_ERROR,
+            };
+        }
+
         const request: SessionListDirectoryRequest = { path };
         const response = await apiSocket.sessionRPC<SessionListDirectoryResponse, SessionListDirectoryRequest>(
             sessionId,
@@ -548,6 +817,33 @@ export async function sessionGetDirectoryTree(
     maxDepth: number
 ): Promise<SessionGetDirectoryTreeResponse> {
     try {
+        const machineTarget = readMachineTargetForSession(sessionId);
+        if (machineTarget) {
+            try {
+                const request: SessionGetDirectoryTreeRequest = {
+                    path: resolveMachinePathFromSessionBase({ basePath: machineTarget.basePath, requestPath: path }),
+                    maxDepth,
+                };
+                const response = await apiSocket.machineRPC<SessionGetDirectoryTreeResponse, SessionGetDirectoryTreeRequest>(
+                    machineTarget.machineId,
+                    'getDirectoryTree',
+                    request
+                );
+                return assertRpcResponseWithSuccess<SessionGetDirectoryTreeResponse>(response);
+            } catch (error) {
+                if (!shouldFallbackToSessionRpc(sessionId, error)) {
+                    throw error;
+                }
+            }
+        }
+
+        if (!canUseSessionRpc(sessionId)) {
+            return {
+                success: false,
+                error: INACTIVE_SESSION_RPC_UNAVAILABLE_ERROR,
+            };
+        }
+
         const request: SessionGetDirectoryTreeRequest = { path, maxDepth };
         const response = await apiSocket.sessionRPC<SessionGetDirectoryTreeResponse, SessionGetDirectoryTreeRequest>(
             sessionId,
@@ -572,6 +868,33 @@ export async function sessionRipgrep(
     cwd?: string
 ): Promise<SessionRipgrepResponse> {
     try {
+        const machineTarget = readMachineTargetForSession(sessionId);
+        if (machineTarget) {
+            try {
+                const request: SessionRipgrepRequest = {
+                    args,
+                    cwd: resolveMachinePathFromSessionBase({ basePath: machineTarget.basePath, requestPath: cwd }),
+                };
+                const response = await apiSocket.machineRPC<SessionRipgrepResponse, SessionRipgrepRequest>(
+                    machineTarget.machineId,
+                    'ripgrep',
+                    request,
+                );
+                return assertRpcResponseWithSuccess<SessionRipgrepResponse>(response);
+            } catch (error) {
+                if (!shouldFallbackToSessionRpc(sessionId, error)) {
+                    throw error;
+                }
+            }
+        }
+
+        if (!canUseSessionRpc(sessionId)) {
+            return {
+                success: false,
+                error: INACTIVE_SESSION_RPC_UNAVAILABLE_ERROR,
+            };
+        }
+
         const request: SessionRipgrepRequest = { args, cwd };
         const response = await apiSocket.sessionRPC<SessionRipgrepResponse, SessionRipgrepRequest>(
             sessionId,

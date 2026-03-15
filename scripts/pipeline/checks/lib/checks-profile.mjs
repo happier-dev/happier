@@ -1,7 +1,7 @@
 // @ts-check
 
 /**
- * @typedef {'full'|'fast'|'none'|'custom'} ChecksProfile
+ * @typedef {'full'|'fast'|'none'|'custom'|'release-assets'} ChecksProfile
  *
  * @typedef {{
  *   runCi: boolean;
@@ -13,6 +13,11 @@
  *   runBuildWebsite: boolean;
  *   runBuildDocs: boolean;
  *   runCliSmokeLinux: boolean;
+ *   runReleaseAssetsE2e: boolean;
+ *   runSelfHostSystemd: boolean;
+ *   runSelfHostLaunchd: boolean;
+ *   runSelfHostSchtasks: boolean;
+ *   runSelfHostDaemon: boolean;
  * }} ChecksProfilePlan
  */
 
@@ -22,8 +27,8 @@
  */
 function parseChecksProfile(value) {
   const raw = String(value ?? '').trim();
-  if (raw === 'full' || raw === 'fast' || raw === 'none' || raw === 'custom') return raw;
-  throw new Error(`checks profile must be one of: full, fast, none, custom (got: ${raw || '<empty>'})`);
+  if (raw === 'full' || raw === 'fast' || raw === 'none' || raw === 'custom' || raw === 'release-assets') return raw;
+  throw new Error(`checks profile must be one of: full, fast, none, custom, release-assets (got: ${raw || '<empty>'})`);
 }
 
 /**
@@ -40,7 +45,8 @@ function parseCustomChecks(raw) {
 }
 
 /**
- * Mirrors `.github/workflows/release.yml` check-profile conditional logic.
+ * Mirrors `.github/workflows/release.yml` check-profile conditional logic, with a local-only
+ * `release-assets` profile for running the release assets E2E harness via the pipeline runner.
  *
  * Notes:
  * - `fast` intentionally skips optional lanes (e2e/db-contract/build/smoke).
@@ -58,6 +64,7 @@ export function resolveChecksProfilePlan(input) {
   const isFull = profile === 'full';
   const isFast = profile === 'fast';
   const isCustom = profile === 'custom';
+  const isReleaseAssets = profile === 'release-assets';
 
   const has = (key) => customChecks.has(key);
 
@@ -71,6 +78,14 @@ export function resolveChecksProfilePlan(input) {
   const runBuildDocs = isFull || (isCustom && has('build_docs'));
   const runCliSmokeLinux = isFull || (isCustom && has('cli_smoke_linux'));
 
+  const runReleaseAssetsE2e = isReleaseAssets || (isCustom && has('release_assets_e2e'));
+
+  // Host-mutating self-host E2E suites (explicit opt-in only).
+  const runSelfHostSystemd = isCustom && has('self_host_systemd');
+  const runSelfHostLaunchd = isCustom && has('self_host_launchd');
+  const runSelfHostSchtasks = isCustom && has('self_host_schtasks');
+  const runSelfHostDaemon = isCustom && has('self_host_daemon');
+
   return {
     runCi,
     runUiE2e: runCi && runUiE2e,
@@ -81,5 +96,10 @@ export function resolveChecksProfilePlan(input) {
     runBuildWebsite: runCi && runBuildWebsite,
     runBuildDocs: runCi && runBuildDocs,
     runCliSmokeLinux: runCi && runCliSmokeLinux,
+    runReleaseAssetsE2e: runCi && runReleaseAssetsE2e,
+    runSelfHostSystemd: runCi && runSelfHostSystemd,
+    runSelfHostLaunchd: runCi && runSelfHostLaunchd,
+    runSelfHostSchtasks: runCi && runSelfHostSchtasks,
+    runSelfHostDaemon: runCi && runSelfHostDaemon,
   };
 }

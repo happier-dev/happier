@@ -1,5 +1,5 @@
 import { logger } from '@/ui/logger';
-import { readFile, writeFile, readdir, stat } from 'fs/promises';
+import { mkdir, readFile, writeFile, readdir, stat } from 'fs/promises';
 import { createHash } from 'crypto';
 import { basename, join } from 'path';
 import type { RpcHandlerRegistrar } from '@/api/rpc/types';
@@ -25,6 +25,15 @@ interface WriteFileRequest {
 interface WriteFileResponse {
     success: boolean;
     hash?: string; // hash of written file
+    error?: string;
+}
+
+interface CreateDirectoryRequest {
+    path: string;
+}
+
+interface CreateDirectoryResponse {
+    success: boolean;
     error?: string;
 }
 
@@ -166,6 +175,25 @@ export function registerFileSystemHandlers(
         } catch (error) {
             logger.debug('Failed to write file:', error);
             return { success: false, error: error instanceof Error ? error.message : 'Failed to write file' };
+        }
+    });
+
+    // Create directory handler
+    rpcHandlerManager.registerHandler<CreateDirectoryRequest, CreateDirectoryResponse>(RPC_METHODS.CREATE_DIRECTORY, async (data) => {
+        logger.debug('Create directory request:', data.path);
+
+        const validation = validatePath(data.path, workingDirectory);
+        if (!validation.valid) {
+            return { success: false, error: validation.error };
+        }
+
+        const resolvedPath = validation.resolvedPath!;
+        try {
+            await mkdir(resolvedPath, { recursive: true });
+            return { success: true };
+        } catch (error) {
+            logger.debug('Failed to create directory:', error);
+            return { success: false, error: error instanceof Error ? error.message : 'Failed to create directory' };
         }
     });
 

@@ -17,12 +17,12 @@ import { switchConnectionToActiveServer } from '@/sync/runtime/orchestration/con
 import { Typography } from '@/constants/Typography';
 import { listServerSelectionTargets } from '@/sync/domains/server/selection/serverSelectionResolver';
 import { resolveActiveServerSelectionFromRawSettings } from '@/sync/domains/server/selection/serverSelectionResolution';
+import { normalizeStoredServerSelectionGroups } from '@/sync/domains/server/selection/serverSelectionMutations';
 import { toServerUrlDisplay } from '@/sync/domains/server/url/serverUrlDisplay';
 import { useConnectionTargetActions } from '@/components/navigation/connection/useConnectionTargetActions';
 import { ConnectionTargetList } from '@/components/navigation/connection/ConnectionTargetList';
 import { promptSignedOutServerSwitchConfirmation } from '@/components/settings/server/modals/ServerSwitchAuthPrompt';
 import { Text } from '@/components/ui/text/Text';
-
 
 type Variant = 'sidebar' | 'header';
 
@@ -109,25 +109,23 @@ export const ConnectionStatusControl = React.memo(function ConnectionStatusContr
     const [serverSelectionActiveTargetId, setServerSelectionActiveTargetId] = useSettingMutable('serverSelectionActiveTargetId');
 
     const [open, setOpen] = React.useState(false);
-    const anchorRef = React.useRef<any>(null);
+    const anchorRef = React.useRef<React.ElementRef<typeof View> | null>(null);
     const [authStatusByServerId, setAuthStatusByServerId] = React.useState<Record<string, 'signedIn' | 'signedOut' | 'unknown'>>({});
 
-    const connectionStatus = React.useMemo(() => {
+    const connectionStatus = React.useMemo((): { color: string; isPulsing: boolean } => {
         switch (socketStatus.status) {
             case 'connected':
-                return { color: theme.colors.status.connected, isPulsing: false, text: t('status.connected') };
+                return { color: theme.colors.status.connected, isPulsing: false };
             case 'connecting':
-                return { color: theme.colors.status.connecting, isPulsing: true, text: t('status.connecting') };
+                return { color: theme.colors.status.connecting, isPulsing: true };
             case 'disconnected':
-                return { color: theme.colors.status.disconnected, isPulsing: false, text: t('status.disconnected') };
+                return { color: theme.colors.status.disconnected, isPulsing: false };
             case 'error':
-                return { color: theme.colors.status.error, isPulsing: false, text: t('status.error') };
+                return { color: theme.colors.status.error, isPulsing: false };
             default:
-                return { color: theme.colors.status.default, isPulsing: false, text: '' };
+                return { color: theme.colors.status.default, isPulsing: false };
         }
     }, [socketStatus.status, theme.colors.status]);
-
-    if (!connectionStatus.text) return null;
 
     const textSize = props.textSize ?? (props.variant === 'sidebar' ? 11 : 12);
     const dotSize = props.dotSize ?? 6;
@@ -149,6 +147,13 @@ export const ConnectionStatusControl = React.memo(function ConnectionStatusContr
             return '';
         }
     }, [open]);
+
+    const activeServerLabel = React.useMemo(() => {
+        const active = servers.find((server) => server.id === activeServerId);
+        const name = String(active?.name ?? '').trim();
+        if (name) return name;
+        return toServerUrlDisplay(getServerUrl()) || t('status.connected');
+    }, [activeServerId, servers]);
 
     React.useEffect(() => {
         let cancelled = false;
@@ -181,7 +186,7 @@ export const ConnectionStatusControl = React.memo(function ConnectionStatusContr
     const serverTargets = React.useMemo(() => {
         return listServerSelectionTargets({
             serverProfiles: servers,
-            groupProfiles: serverSelectionGroups as any,
+            groupProfiles: normalizeStoredServerSelectionGroups(serverSelectionGroups),
         });
     }, [serverSelectionGroups, servers]);
 
@@ -294,7 +299,7 @@ export const ConnectionStatusControl = React.memo(function ConnectionStatusContr
             >
                 <Pressable
                     style={styles.statusContainer}
-                    onPress={() => setOpen(true)}
+                    onPress={() => setOpen((currentOpen) => !currentOpen)}
                     accessibilityRole="button"
                 >
                     <StatusDot
@@ -307,7 +312,7 @@ export const ConnectionStatusControl = React.memo(function ConnectionStatusContr
                         style={[styles.statusText, { color: connectionStatus.color, fontSize: textSize }]}
                         numberOfLines={1}
                     >
-                        {connectionStatus.text}
+                        {activeServerLabel}
                     </Text>
                     <Ionicons
                         name={open ? "chevron-up" : "chevron-down"}
@@ -336,44 +341,44 @@ export const ConnectionStatusControl = React.memo(function ConnectionStatusContr
                             maxHeight={Math.max(220, Math.min(maxHeight, 520))}
                             keyboardShouldPersistTaps="always"
                             edgeFades={{ top: true, bottom: true, size: 18 }}
-                            edgeIndicators={true}
-                        >
-                            <View style={{ paddingTop: 8 }}>
-                                <Text style={styles.popoverTitle}>Connection</Text>
+                                edgeIndicators={true}
+                            >
+                                <View style={{ paddingTop: 8 }}>
+                                    <Text style={styles.popoverTitle}>{t('connectionStatus.title')}</Text>
 
-                                <View style={styles.popoverRow}>
-                                    <Text style={styles.popoverLabel}>Server</Text>
-                                    <Text style={styles.popoverValue} numberOfLines={2}>{toServerUrlDisplay(getServerUrl())}</Text>
-                                </View>
-
-                                <View style={styles.popoverRow}>
-                                    <Text style={styles.popoverLabel}>Socket</Text>
-                                    <Text style={styles.popoverValue}>{socketStatus.status}</Text>
-                                </View>
-
-                                <View style={styles.popoverRow}>
-                                    <Text style={styles.popoverLabel}>Authenticated</Text>
-                                    <Text style={styles.popoverValue}>{auth.isAuthenticated ? 'Yes' : 'No'}</Text>
-                                </View>
-
-                                <View style={styles.popoverRow}>
-                                    <Text style={styles.popoverLabel}>Last sync</Text>
-                                    <Text style={styles.popoverValue}>{formatTime(lastSyncAt)}</Text>
-                                </View>
-
-                                {syncError?.nextRetryAt ? (
                                     <View style={styles.popoverRow}>
-                                        <Text style={styles.popoverLabel}>Next retry</Text>
-                                        <Text style={styles.popoverValue}>{formatTime(syncError.nextRetryAt)}</Text>
+                                        <Text style={styles.popoverLabel}>{t('connectionStatus.labels.server')}</Text>
+                                        <Text style={styles.popoverValue} numberOfLines={2}>{toServerUrlDisplay(getServerUrl())}</Text>
                                     </View>
-                                ) : null}
 
-                                {syncError ? (
                                     <View style={styles.popoverRow}>
-                                        <Text style={styles.popoverLabel}>Last error</Text>
-                                        <Text style={styles.popoverValue} numberOfLines={3}>{syncError.message}</Text>
+                                        <Text style={styles.popoverLabel}>{t('connectionStatus.labels.socket')}</Text>
+                                        <Text style={styles.popoverValue}>{socketStatus.status}</Text>
                                     </View>
-                                ) : null}
+
+                                    <View style={styles.popoverRow}>
+                                        <Text style={styles.popoverLabel}>{t('connectionStatus.labels.authenticated')}</Text>
+                                        <Text style={styles.popoverValue}>{auth.isAuthenticated ? t('common.yes') : t('common.no')}</Text>
+                                    </View>
+
+                                    <View style={styles.popoverRow}>
+                                        <Text style={styles.popoverLabel}>{t('connectionStatus.labels.lastSync')}</Text>
+                                        <Text style={styles.popoverValue}>{formatTime(lastSyncAt)}</Text>
+                                    </View>
+
+                                    {syncError?.nextRetryAt ? (
+                                        <View style={styles.popoverRow}>
+                                            <Text style={styles.popoverLabel}>{t('connectionStatus.labels.nextRetry')}</Text>
+                                            <Text style={styles.popoverValue}>{formatTime(syncError.nextRetryAt)}</Text>
+                                        </View>
+                                    ) : null}
+
+                                    {syncError ? (
+                                        <View style={styles.popoverRow}>
+                                            <Text style={styles.popoverLabel}>{t('connectionStatus.labels.lastError')}</Text>
+                                            <Text style={styles.popoverValue} numberOfLines={3}>{syncError.message}</Text>
+                                        </View>
+                                    ) : null}
 
                                 {serverTargets.length > 0 ? (
                                     <ConnectionTargetList

@@ -14,6 +14,7 @@ import type {
 } from '@/backends/claude/sdk'
 import type { RawJSONLines } from '@/backends/claude/types'
 import type { PermissionMode } from '@/api/types'
+import { normalizeClaudeToolUseNamesInSdkMessage } from './normalizeClaudeToolUseNames'
 
 /**
  * Context for converting SDK messages to log format
@@ -121,10 +122,30 @@ export class SDKToLogConverter {
         switch (sdkMessage.type) {
             case 'user': {
                 const userMsg = sdkMessage as SDKUserMessage
+                const toolUseResult = (sdkMessage as any)?.tool_use_result as unknown;
                 logMessage = {
                     ...baseFields,
                     type: 'user',
                     message: userMsg.message
+                }
+
+                if (toolUseResult !== undefined && Array.isArray(userMsg.message.content)) {
+                    const nextContent = userMsg.message.content.map((block: any) => {
+                        if (!block || typeof block !== 'object') return block;
+                        if (block.type !== 'tool_result' || typeof block.tool_use_id !== 'string') return block;
+                        const existing = block.content;
+                        if (existing && typeof existing === 'object' && !Array.isArray(existing) && (existing as any).tool_use_result !== undefined) {
+                            return block;
+                        }
+                        return {
+                            ...block,
+                            content: {
+                                content: existing,
+                                tool_use_result: toolUseResult,
+                            },
+                        };
+                    });
+                    (logMessage as any).message = { ...userMsg.message, content: nextContent };
                 }
 
                 // Check if this is a tool result and add mode if available
@@ -144,7 +165,7 @@ export class SDKToLogConverter {
             }
 
             case 'assistant': {
-                const assistantMsg = sdkMessage as SDKAssistantMessage
+                const assistantMsg = normalizeClaudeToolUseNamesInSdkMessage(sdkMessage) as SDKAssistantMessage
                 logMessage = {
                     ...baseFields,
                     type: 'assistant',

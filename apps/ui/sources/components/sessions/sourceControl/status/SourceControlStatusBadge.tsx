@@ -5,6 +5,10 @@ import { useSessionProjectScmSnapshot } from '@/sync/domains/state/storage';
 import { useUnistyles } from 'react-native-unistyles';
 import { buildScmStatusSummaryFromSnapshot } from './statusSummary';
 import { Text } from '@/components/ui/text/Text';
+import { t } from '@/text';
+
+const LINE_ADDED_PREFIX = '+';
+const LINE_REMOVED_PREFIX = '-';
 
 
 // Custom hook to check if a source-control status badge should be shown.
@@ -27,7 +31,7 @@ export function SourceControlStatusBadge({ sessionId }: SourceControlStatusBadge
     }
 
     const hasLineChanges = scmStatusSummary.hasLineChanges;
-    const changedFilesLabel = `${scmStatusSummary.changedFiles} ${scmStatusSummary.changedFiles === 1 ? 'file' : 'files'}`;
+    const changedFilesLabel = t('files.sourceControlStatus.changedFilesLabel', { count: scmStatusSummary.changedFiles });
 
     return (
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, flex: 1, overflow: 'hidden' }}>
@@ -49,10 +53,10 @@ export function SourceControlStatusBadge({ sessionId }: SourceControlStatusBadge
                                 fontWeight: '600',
                             }}
                             numberOfLines={1}
-                        >
-                            +{scmStatusSummary.linesAdded}
-                        </Text>
-                    )}
+                          >
+                              {`${LINE_ADDED_PREFIX}${scmStatusSummary.linesAdded}`}
+                          </Text>
+                      )}
                     {scmStatusSummary.linesRemoved > 0 && (
                         <Text
                             style={{
@@ -61,10 +65,10 @@ export function SourceControlStatusBadge({ sessionId }: SourceControlStatusBadge
                                 fontWeight: '600',
                             }}
                             numberOfLines={1}
-                        >
-                            -{scmStatusSummary.linesRemoved}
-                        </Text>
-                    )}
+                          >
+                              {`${LINE_REMOVED_PREFIX}${scmStatusSummary.linesRemoved}`}
+                          </Text>
+                      )}
                 </View>
             )}
             {!hasLineChanges && scmStatusSummary.hasAnyChanges && (

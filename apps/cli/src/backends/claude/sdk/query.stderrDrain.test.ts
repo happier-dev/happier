@@ -85,7 +85,12 @@ describe('claude sdk query', () => {
       );
 
       const abortController = new AbortController();
+      let resolveStderrSeen: (() => void) | null = null;
+      const stderrSeen = new Promise<void>((resolve) => {
+        resolveStderrSeen = resolve;
+      });
       const seen: string[] = [];
+      let seenText = '';
 
       const q = query({
         prompt: 'hello',
@@ -96,6 +101,8 @@ describe('claude sdk query', () => {
           abort: abortController.signal,
           stderr: (data: string) => {
             seen.push(data);
+            seenText += data;
+            if (/boom on stderr/i.test(seenText)) resolveStderrSeen?.();
           },
         } as any,
       });
@@ -104,6 +111,8 @@ describe('claude sdk query', () => {
         const first = await withTimeout(q.next(), 8_000, 'first sdk message');
         expect(first.done).toBe(false);
         expect(first.value.type).toBe('result');
+
+        await withTimeout(stderrSeen, 2_000, 'stderr callback');
       } finally {
         abortController.abort();
         if (typeof prevDebug === 'string') process.env.DEBUG = prevDebug;

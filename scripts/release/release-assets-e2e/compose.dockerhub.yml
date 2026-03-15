@@ -9,6 +9,7 @@ services:
       RUN_MIGRATIONS: ${RELAY_RUN_MIGRATIONS:-1}
     volumes:
       - relay-data:/data
+      - ${REPO_ROOT:?Missing REPO_ROOT}/scripts/release/release-assets-e2e/bin:/opt/happier-npm-e2e/bin:ro
 
   postgres:
     image: postgres:16-alpine

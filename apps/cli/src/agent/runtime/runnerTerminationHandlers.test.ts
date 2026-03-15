@@ -34,6 +34,33 @@ describe('registerRunnerTerminationHandlers', () => {
     }
   });
 
+  it('can ignore specific unhandledRejection reasons and keep running', async () => {
+    const fakeProcess = createFakeProcess();
+    const exit = vi.fn();
+    const onTerminate = vi.fn(async () => undefined);
+
+    const handlers = registerRunnerTerminationHandlers({
+      process: fakeProcess,
+      exit,
+      onTerminate,
+      shouldTerminateOnUnhandledRejection: () => false,
+    });
+
+    try {
+      fakeProcess.emit('unhandledRejection', new Error('ignored'), Promise.resolve());
+
+      await expect(Promise.race([handlers.whenTerminated, Promise.resolve('nope')])).resolves.toBe('nope');
+      expect(onTerminate).not.toHaveBeenCalled();
+      expect(exit).not.toHaveBeenCalled();
+
+      fakeProcess.emit('SIGTERM');
+      await handlers.whenTerminated;
+      expect(exit).toHaveBeenCalledWith(0);
+    } finally {
+      handlers.dispose();
+    }
+  });
+
   it('archives on SIGTERM (exit 0) by default outcome', async () => {
     const fakeProcess = createFakeProcess();
     const exit = vi.fn();

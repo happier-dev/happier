@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 import * as geminiAuth from './authenticate';
 
 describe('exchangeGeminiAuthorizationCodeForTokens', () => {
-  it('exchanges tokens without sending client_secret', async () => {
+  it('exchanges tokens and sends client_secret', async () => {
     const exchange = (geminiAuth as unknown as {
       exchangeGeminiAuthorizationCodeForTokens?: (params: Readonly<{
         code: string;
@@ -41,6 +41,48 @@ describe('exchangeGeminiAuthorizationCodeForTokens', () => {
     const call = fetchMock.mock.calls[0] ?? [];
     const init = call[1] ?? null;
     const body = String(init?.body?.toString?.() ?? init?.body ?? '');
-    expect(body).not.toContain('client_secret=');
+    expect(body).toContain('client_secret=');
+  });
+
+  it('uses the env override token URL when provided', async () => {
+    const exchange = (geminiAuth as unknown as {
+      exchangeGeminiAuthorizationCodeForTokens?: (params: Readonly<{
+        code: string;
+        verifier: string;
+        redirectUri: string;
+      }>) => Promise<{ access_token: string; refresh_token?: string }>;
+    }).exchangeGeminiAuthorizationCodeForTokens;
+
+    expect(typeof exchange).toBe('function');
+
+    const previous = process.env.HAPPIER_CONNECTED_SERVICES_GEMINI_OAUTH_TOKEN_URL;
+    process.env.HAPPIER_CONNECTED_SERVICES_GEMINI_OAUTH_TOKEN_URL = 'https://oauth.example.test/token';
+
+    try {
+      const fetchMock = vi.fn(async (_url: string, _init?: any) => ({
+        ok: true,
+        status: 200,
+        json: async () => ({
+          access_token: 'at',
+          refresh_token: 'rt',
+          expires_in: 60,
+          token_type: 'Bearer',
+          scope: 'scope',
+        }),
+        text: async () => '',
+      }));
+      vi.stubGlobal('fetch', fetchMock as unknown as typeof fetch);
+
+      await exchange!({
+        code: 'code',
+        verifier: 'verifier',
+        redirectUri: 'http://localhost:54545/oauth2callback',
+      });
+
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      expect(String(fetchMock.mock.calls[0]?.[0] ?? '')).toBe('https://oauth.example.test/token');
+    } finally {
+      process.env.HAPPIER_CONNECTED_SERVICES_GEMINI_OAUTH_TOKEN_URL = previous;
+    }
   });
 });

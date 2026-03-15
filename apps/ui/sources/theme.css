@@ -58,3 +58,32 @@
 ::-webkit-scrollbar:vertical {
     width: 12px;
 }
+
+/* Pierre diffs (web/desktop)
+   - Adjust typography + spacing via Pierre CSS variables.
+   - Prevent browser scroll anchoring jumps while diffs mount/virtualize/syntax-highlight. */
+.happier-pierre-diff-wrapper {
+    --diffs-font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+    --diffs-font-size: 12px;
+    --diffs-line-height: 22px;
+    --diffs-tab-size: 2;
+    --diffs-header-font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    --diffs-min-number-column-width: 4ch;
+    --diffs-gap-inline: 0;
+    --diffs-gap-block: 0;
+    overflow-anchor: none;
+}
+
+[data-happier-diff-virtual-root] {
+    overflow-anchor: none;
+}
+
+/* SCM review (FlashList) mounts/unmounts large diff blocks; prevent browser scroll anchoring jumps on web. */
+[data-testid="scm-review-list"],
+[data-testid="scm-review-list"] * {
+    overflow-anchor: none;
+}
+
+.happier-pierre-diff-wrapper diffs-container {
+    display: block;
+}

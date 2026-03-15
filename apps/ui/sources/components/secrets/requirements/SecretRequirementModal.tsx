@@ -675,7 +675,7 @@ export function SecretRequirementModal(props: SecretRequirementModalProps) {
                                 <TextInput
                                     ref={sessionOnlyInputRef}
                                     style={styles.textInput}
-                                    placeholder="sk-..."
+                                    placeholder={t('secrets.placeholders.valueExample')}
                                     placeholderTextColor={theme.colors.input.placeholder}
                                     value={sessionOnlyValue}
                                     onChangeText={setSessionOnlyValue}

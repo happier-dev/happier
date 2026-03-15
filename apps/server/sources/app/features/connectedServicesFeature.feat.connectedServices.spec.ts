@@ -8,7 +8,7 @@ describe("resolveConnectedServicesFeature", () => {
 
         expect(feature.features?.connectedServices).toEqual({
             enabled: true,
-            quotas: { enabled: false },
+            quotas: { enabled: true },
         });
     });
 

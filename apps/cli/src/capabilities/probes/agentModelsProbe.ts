@@ -4,6 +4,8 @@ import type { AcpPermissionHandler } from '@/agent/acp/AcpBackend';
 import type { AgentBackend } from '@/agent/core';
 import { AGENTS } from '@/backends/catalog';
 import type { CatalogAgentId } from '@/backends/types';
+import { killProcessTree } from '@/agent/acp/killProcessTree';
+import { resolveWindowsCommandInvocation } from '@happier-dev/cli-common/process';
 import { getAgentModelConfig } from '@happier-dev/agents';
 import { AsyncTtlCache } from '@happier-dev/protocol';
 import { spawn } from 'node:child_process';
@@ -90,18 +92,25 @@ async function probeModelsFromCliModelsCommand(params: {
       resolve(result);
     };
 
-    const child = spawn(params.command, [...params.args], {
+    const invocation = resolveWindowsCommandInvocation({
+      command: params.command,
+      args: params.args,
+      resolveCommandOnPath: true,
+    });
+
+    const child = spawn(invocation.command, invocation.args, {
       cwd: params.cwd,
       env: { ...process.env, CI: '1' },
       stdio: ['ignore', 'pipe', 'ignore'],
       windowsHide: true,
+      windowsVerbatimArguments: invocation.windowsVerbatimArguments,
     });
 
     const timer = setTimeout(() => {
-      try {
-        child.kill('SIGKILL');
-      } catch {
-        // best-effort
+      if (process.platform === 'win32') {
+        void killProcessTree(child, { graceMs: 250 }).catch(() => undefined);
+      } else {
+        try { child.kill('SIGKILL'); } catch { /* best-effort */ }
       }
       finish(null);
     }, timeoutMs);

@@ -29,7 +29,7 @@ describe('coreTerminalTools.Bash.title', () => {
         expect(title).toBe('Run pwd');
     });
 
-    it('prefers an explicit description when present', async () => {
+    it('strips a leading unset prelude (Claude auth scrub) for display', async () => {
         const { coreTerminalTools } = await import('./terminal');
 
         const title = coreTerminalTools.Bash.title({
@@ -37,16 +37,35 @@ describe('coreTerminalTools.Bash.title', () => {
             tool: {
                 name: 'Bash',
                 state: 'completed',
-                input: { command: ['/bin/zsh', '-lc', 'pwd'] },
+                input: { command: 'unset ANTHROPIC_API_KEY ANTHROPIC_AUTH_TOKEN; rm -rf /tmp/x' },
+                result: { stdout: '' },
+                createdAt: Date.now(),
+                startedAt: Date.now(),
+                completedAt: Date.now(),
+                description: 'execute',
+            },
+        } as any);
+
+        expect(title).toBe('Run rm');
+    });
+
+    it('falls back to an explicit description when the command cannot be derived', async () => {
+        const { coreTerminalTools } = await import('./terminal');
+
+        const title = coreTerminalTools.Bash.title({
+            metadata: null,
+            tool: {
+                name: 'Bash',
+                state: 'completed',
+                input: {},
                 result: { stdout: '/tmp\n' },
                 createdAt: Date.now(),
                 startedAt: Date.now(),
                 completedAt: Date.now(),
-                description: 'Run pwd',
+                description: 'Run something',
             },
         } as any);
 
-        expect(title).toBe('Run pwd');
+        expect(title).toBe('Run something');
     });
 });
-

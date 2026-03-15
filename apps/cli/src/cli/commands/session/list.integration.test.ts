@@ -13,6 +13,7 @@ describe('happier session list (integration)', () => {
   const originalServerUrl = process.env.HAPPIER_SERVER_URL;
   const originalWebappUrl = process.env.HAPPIER_WEBAPP_URL;
   const originalHomeDir = process.env.HAPPIER_HOME_DIR;
+  const originalAccountSettingsMode = process.env.HAPPIER_ACCOUNT_SETTINGS_MODE;
   let server: Server | null = null;
   let happyHomeDir = '';
 
@@ -21,6 +22,8 @@ describe('happier session list (integration)', () => {
   const archivedSessionId = 'sess_integration_archived_999';
 
   beforeEach(async () => {
+    process.env.HAPPIER_ACCOUNT_SETTINGS_MODE = 'never';
+
     happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-cli-session-list-'));
     const dek = new Uint8Array(32).fill(3);
     const machineKeySeed = new Uint8Array(32).fill(8);
@@ -37,6 +40,7 @@ describe('happier session list (integration)', () => {
         {
           path: '/tmp/happier-session-control-integration',
           flavor: 'claude',
+          claudeSessionId: 'claude_vendor_session_1',
           tag: 'MyTag',
           host: 'host1',
           summary: { text: 'My Title', updatedAt: 123 },
@@ -193,6 +197,8 @@ describe('happier session list (integration)', () => {
     else process.env.HAPPIER_WEBAPP_URL = originalWebappUrl;
     if (originalHomeDir === undefined) delete process.env.HAPPIER_HOME_DIR;
     else process.env.HAPPIER_HOME_DIR = originalHomeDir;
+    if (originalAccountSettingsMode === undefined) delete process.env.HAPPIER_ACCOUNT_SETTINGS_MODE;
+    else process.env.HAPPIER_ACCOUNT_SETTINGS_MODE = originalAccountSettingsMode;
 
     const { reloadConfiguration } = await import('@/configuration');
     reloadConfiguration();
@@ -284,8 +290,9 @@ describe('happier session list (integration)', () => {
         }),
       });
 
+      expect(stdout.join('\n')).toContain('ID');
       expect(stdout.join('\n')).not.toContain(systemSessionId);
-      expect(stdout.join('\n')).toContain(normalSessionId);
+      expect(stdout.join('\n')).toContain(normalSessionId.slice(0, 12));
     } finally {
       logSpy.mockRestore();
     }
@@ -311,8 +318,37 @@ describe('happier session list (integration)', () => {
         }),
       });
 
+      expect(stdout.join('\n')).toContain('ID');
       expect(stdout.join('\n')).toContain(`system:${'voice_carrier'}`);
+      expect(stdout.join('\n')).toContain(systemSessionId.slice(0, 12));
+    } finally {
+      logSpy.mockRestore();
+    }
+  });
+
+  it('supports --plain by printing the legacy one-line format', async () => {
+    const { handleSessionCommand } = await import('./index');
+
+    const stdout: string[] = [];
+    const logSpy = vi.spyOn(console, 'log').mockImplementation((...args) => {
+      stdout.push(args.join(' '));
+    });
+
+    try {
+      await handleSessionCommand(['list', '--include-system', '--plain'], {
+        readCredentialsFn: async () => ({
+          token: 'token_test',
+          encryption: {
+            type: 'dataKey',
+            publicKey: deriveBoxPublicKeyFromSeed(new Uint8Array(32).fill(8)),
+            machineKey: new Uint8Array(32).fill(8),
+          },
+        }),
+      });
+
       expect(stdout.join('\n')).toContain(systemSessionId);
+      expect(stdout.join('\n')).toContain(`system:${'voice_carrier'}`);
+      expect(stdout.join('\n')).not.toContain('ID');
     } finally {
       logSpy.mockRestore();
     }
@@ -345,6 +381,36 @@ describe('happier session list (integration)', () => {
         isSystem: true,
         systemPurpose: 'voice_carrier',
       });
+    } finally {
+      logSpy.mockRestore();
+    }
+  });
+
+  it('supports --resumable by filtering to vendor-resumable inactive sessions', async () => {
+    const { handleSessionCommand } = await import('./index');
+
+    const stdout: string[] = [];
+    const logSpy = vi.spyOn(console, 'log').mockImplementation((...args) => {
+      stdout.push(args.join(' '));
+    });
+
+    try {
+      await handleSessionCommand(['list', '--resumable'], {
+        readCredentialsFn: async () => ({
+          token: 'token_test',
+          encryption: {
+            type: 'dataKey',
+            publicKey: deriveBoxPublicKeyFromSeed(new Uint8Array(32).fill(8)),
+            machineKey: new Uint8Array(32).fill(8),
+          },
+        }),
+      });
+
+      const output = stdout.join('\n');
+      expect(output).toContain('ID');
+      expect(output).toContain(normalSessionId.slice(0, 12));
+      expect(output).not.toContain('system:voice_carrier');
+      expect(output).not.toContain('ArchivedTag');
     } finally {
       logSpy.mockRestore();
     }

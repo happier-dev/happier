@@ -172,7 +172,7 @@ function HeaderLeft(props: { showAutomations: boolean }) {
                     hitSlop={15}
                     style={styles.headerButton}
                     accessibilityRole="button"
-                    accessibilityLabel="Open automations"
+                    accessibilityLabel={t('automations.openA11y')}
                 >
                     <Ionicons name="timer-outline" size={22} color={theme.colors.header.tint} />
                 </Pressable>

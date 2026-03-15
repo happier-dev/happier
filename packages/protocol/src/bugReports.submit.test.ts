@@ -51,15 +51,15 @@ describe('submitBugReportToService', () => {
     const fetchMock = vi.fn();
     vi.stubGlobal('fetch', fetchMock);
 
-	    await expect(submitBugReportToService({
-	      providerUrl: 'not-a-valid-url',
-	      timeoutMs: 20_000,
-	      form: baseForm,
-	      artifacts: [],
-	      issueOwner: 'happier-dev',
-	      issueRepo: 'happier',
-	      clientPrefix: 'test',
-	    })).rejects.toThrow(/invalid bug report provider url/i);
+      await expect(submitBugReportToService({
+        providerUrl: 'not-a-valid-url',
+        timeoutMs: 20_000,
+        form: baseForm,
+        artifacts: [],
+        issueOwner: 'happier-dev',
+        issueRepo: 'happier',
+        clientPrefix: 'test',
+      })).rejects.toThrow(/invalid bug report provider url/i);
 
     expect(fetchMock).not.toHaveBeenCalled();
   });
@@ -68,15 +68,15 @@ describe('submitBugReportToService', () => {
     const fetchMock = vi.fn();
     vi.stubGlobal('fetch', fetchMock);
 
-	    await expect(submitBugReportToService({
-	      providerUrl: 'https://reports.happier.dev',
-	      timeoutMs: 20_000,
-	      form: baseForm,
-	      artifacts: [],
-	      issueOwner: 'owner/with/slash',
-	      issueRepo: 'happier',
-	      clientPrefix: 'test',
-	    })).rejects.toThrow(/invalid bug report issue target/i);
+      await expect(submitBugReportToService({
+        providerUrl: 'https://reports.happier.dev',
+        timeoutMs: 20_000,
+        form: baseForm,
+        artifacts: [],
+        issueOwner: 'owner/with/slash',
+        issueRepo: 'happier',
+        clientPrefix: 'test',
+      })).rejects.toThrow(/invalid bug report issue target/i);
 
     expect(fetchMock).not.toHaveBeenCalled();
   });
@@ -85,15 +85,15 @@ describe('submitBugReportToService', () => {
     const fetchMock = vi.fn();
     vi.stubGlobal('fetch', fetchMock);
 
-	    await expect(submitBugReportToService({
-	      providerUrl: 'https://reports.happier.dev',
-	      timeoutMs: 20_000,
-	      form: baseForm,
-	      artifacts: [],
-	      issueOwner: 'happier-dev',
-	      issueRepo: 'repo?bad=1',
-	      clientPrefix: 'test',
-	    })).rejects.toThrow(/invalid bug report issue target/i);
+      await expect(submitBugReportToService({
+        providerUrl: 'https://reports.happier.dev',
+        timeoutMs: 20_000,
+        form: baseForm,
+        artifacts: [],
+        issueOwner: 'happier-dev',
+        issueRepo: 'repo?bad=1',
+        clientPrefix: 'test',
+      })).rejects.toThrow(/invalid bug report issue target/i);
 
     expect(fetchMock).not.toHaveBeenCalled();
   });
@@ -102,15 +102,15 @@ describe('submitBugReportToService', () => {
     const fetchMock = vi.fn();
     vi.stubGlobal('fetch', fetchMock);
 
-	    await expect(submitBugReportToService({
-	      providerUrl: 'ftp://reports.happier.dev',
-	      timeoutMs: 20_000,
-	      form: baseForm,
-	      artifacts: [],
-	      issueOwner: 'happier-dev',
-	      issueRepo: 'happier',
-	      clientPrefix: 'test',
-	    })).rejects.toThrow(/invalid bug report provider url/i);
+      await expect(submitBugReportToService({
+        providerUrl: 'ftp://reports.happier.dev',
+        timeoutMs: 20_000,
+        form: baseForm,
+        artifacts: [],
+        issueOwner: 'happier-dev',
+        issueRepo: 'happier',
+        clientPrefix: 'test',
+      })).rejects.toThrow(/invalid bug report provider url/i);
 
     expect(fetchMock).not.toHaveBeenCalled();
   });
@@ -154,10 +154,10 @@ describe('submitBugReportToService', () => {
 
     vi.stubGlobal('fetch', fetchMock);
 
-	    await expect(submitBugReportToService({
-	      providerUrl: 'https://reports.happier.dev',
-	      timeoutMs: 20_000,
-	      form: baseForm,
+      await expect(submitBugReportToService({
+        providerUrl: 'https://reports.happier.dev',
+        timeoutMs: 20_000,
+        form: baseForm,
       artifacts: [
         {
           filename: 'a.log',
@@ -171,11 +171,11 @@ describe('submitBugReportToService', () => {
           contentType: 'text/plain',
           content: 'b',
         },
-	      ],
-	      issueOwner: 'happier-dev',
-	      issueRepo: 'happier',
-	      clientPrefix: 'test',
-	    })).rejects.toThrow(/target count/i);
+        ],
+        issueOwner: 'happier-dev',
+        issueRepo: 'happier',
+        clientPrefix: 'test',
+      })).rejects.toThrow(/target count/i);
   });
 
   it('sanitizes environment serverUrl before sending session payload', async () => {
@@ -211,21 +211,21 @@ describe('submitBugReportToService', () => {
 
     vi.stubGlobal('fetch', fetchMock);
 
-	    await submitBugReportToService({
-	      providerUrl: 'https://reports.happier.dev',
-	      timeoutMs: 20_000,
+      await submitBugReportToService({
+        providerUrl: 'https://reports.happier.dev',
+        timeoutMs: 20_000,
       form: {
         ...baseForm,
         environment: {
           ...baseForm.environment,
           serverUrl: 'https://user:pass@example.dev/path?token=abc',
         },
-	      },
-	      artifacts: [],
-	      issueOwner: 'happier-dev',
-	      issueRepo: 'happier',
-	      clientPrefix: 'test',
-	    });
+        },
+        artifacts: [],
+        issueOwner: 'happier-dev',
+        issueRepo: 'happier',
+        clientPrefix: 'test',
+      });
 
     const sessionBody = requestBodies[0] ?? {};
     const form = (sessionBody.form ?? {}) as Record<string, unknown>;
@@ -318,9 +318,9 @@ describe('submitBugReportToService', () => {
 
     vi.stubGlobal('fetch', fetchMock);
 
-	    await submitBugReportToService({
-	      providerUrl: 'https://reports.happier.dev',
-	      timeoutMs: 20_000,
+      await submitBugReportToService({
+        providerUrl: 'https://reports.happier.dev',
+        timeoutMs: 20_000,
       form: baseForm,
       maxArtifactBytes: 2_048,
       artifacts: [
@@ -330,11 +330,11 @@ describe('submitBugReportToService', () => {
           contentType: 'text/plain',
           content: `${'a'.repeat(5000)}\nauthorization: bearer ghp_123456789012345678901234567890`,
         },
-	      ],
-	      issueOwner: 'happier-dev',
-	      issueRepo: 'happier',
-	      clientPrefix: 'test',
-	    });
+        ],
+        issueOwner: 'happier-dev',
+        issueRepo: 'happier',
+        clientPrefix: 'test',
+      });
 
     expect(uploadBodies).toHaveLength(1);
     expect(uploadBodies[0]).toContain('authorization: bearer [REDACTED]');
@@ -360,15 +360,15 @@ describe('submitBugReportToService', () => {
 
     let thrown: unknown = null;
     try {
-	      await submitBugReportToService({
-	        providerUrl: 'https://reports.happier.dev',
-	        timeoutMs: 20_000,
-	        form: baseForm,
-	        artifacts: [],
-	        issueOwner: 'happier-dev',
-	        issueRepo: 'happier',
-	        clientPrefix: 'test',
-	      });
+        await submitBugReportToService({
+          providerUrl: 'https://reports.happier.dev',
+          timeoutMs: 20_000,
+          form: baseForm,
+          artifacts: [],
+          issueOwner: 'happier-dev',
+          issueRepo: 'happier',
+          clientPrefix: 'test',
+        });
     } catch (error) {
       thrown = error;
     }
@@ -380,9 +380,9 @@ describe('submitBugReportToService', () => {
     expect(Buffer.byteLength(message, 'utf8')).toBeLessThanOrEqual(1_300);
   });
 
-	  it('includes selected existing issue number in submit payload', async () => {
-	    const requestBodies: Array<Record<string, unknown>> = [];
-	    const fetchMock = vi.fn(async (input: unknown, init?: RequestInit) => {
+    it('includes selected existing issue number in submit payload', async () => {
+      const requestBodies: Array<Record<string, unknown>> = [];
+      const fetchMock = vi.fn(async (input: unknown, init?: RequestInit) => {
       const url = String(input);
       if (init?.body && typeof init.body === 'string') {
         requestBodies.push(JSON.parse(init.body) as Record<string, unknown>);
@@ -413,20 +413,20 @@ describe('submitBugReportToService', () => {
 
     vi.stubGlobal('fetch', fetchMock);
 
-	    await submitBugReportToService({
-	      providerUrl: 'https://reports.happier.dev',
-	      timeoutMs: 20_000,
-	      form: baseForm,
-	      artifacts: [],
-	      issueOwner: 'happier-dev',
-	      issueRepo: 'happier',
-	      clientPrefix: 'test',
-	      existingIssueNumber: 99,
-	    });
+      await submitBugReportToService({
+        providerUrl: 'https://reports.happier.dev',
+        timeoutMs: 20_000,
+        form: baseForm,
+        artifacts: [],
+        issueOwner: 'happier-dev',
+        issueRepo: 'happier',
+        clientPrefix: 'test',
+        existingIssueNumber: 99,
+      });
 
-	    const submitBody = requestBodies.find((body) => typeof body.reportId === 'string' && 'uploadedArtifacts' in body) ?? {};
-	    const issue = (submitBody.issue ?? {}) as { number?: unknown; labels?: unknown };
-	    expect(issue.number).toBe(99);
-	    expect(issue.labels).toBeUndefined();
-	  });
+      const submitBody = requestBodies.find((body) => typeof body.reportId === 'string' && 'uploadedArtifacts' in body) ?? {};
+      const issue = (submitBody.issue ?? {}) as { number?: unknown; labels?: unknown };
+      expect(issue.number).toBe(99);
+      expect(issue.labels).toBeUndefined();
+    });
 });

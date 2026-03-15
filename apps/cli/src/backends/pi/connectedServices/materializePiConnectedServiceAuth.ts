@@ -5,12 +5,15 @@ import type { ConnectedServiceCredentialRecordV1 } from '@happier-dev/protocol';
 import { writeJsonAtomic } from '@/utils/fs/writeJsonAtomic';
 import {
   buildConnectedServiceOauthAuthEntry,
+  requireConnectedServiceTokenCredentialRecord,
   requireConnectedServiceOauthCredentialRecordWithExpiry,
 } from '@/backends/connectedServices/connectedServiceCredentialRecord';
 
 export async function materializePiConnectedServiceAuth(params: Readonly<{
   rootDir: string;
   openaiCodex: ConnectedServiceCredentialRecordV1 | null;
+  openai: ConnectedServiceCredentialRecordV1 | null;
+  claudeSubscription: ConnectedServiceCredentialRecordV1 | null;
   anthropic: ConnectedServiceCredentialRecordV1 | null;
 }>): Promise<Readonly<{ env: Record<string, string> }>> {
   const agentDir = join(params.rootDir, 'pi-agent-dir');
@@ -24,11 +27,26 @@ export async function materializePiConnectedServiceAuth(params: Readonly<{
     auth['openai-codex'] = buildConnectedServiceOauthAuthEntry(record);
   }
 
+  if (params.openai) {
+    const record = requireConnectedServiceTokenCredentialRecord(params.openai);
+    auth.openai = {
+      type: 'api_key',
+      key: record.token.token,
+    };
+  }
+
+  if (params.claudeSubscription) {
+    if (params.claudeSubscription.kind !== 'token') {
+      throw new Error('Claude subscription OAuth credentials are not supported by Pi. Reconnect using a Claude setup-token.');
+    }
+    env.ANTHROPIC_OAUTH_TOKEN = params.claudeSubscription.token.token;
+  }
+
   if (params.anthropic) {
     if (params.anthropic.kind !== 'token') {
-      throw new Error('Pi requires an Anthropic setup-token (connected-services kind=token), not an oauth credential.');
+      throw new Error('Anthropic OAuth credentials are not supported. Reconnect using an Anthropic API key.');
     }
-    env.ANTHROPIC_OAUTH_TOKEN = params.anthropic.token.token;
+    env.ANTHROPIC_API_KEY = params.anthropic.token.token;
   }
 
   await writeJsonAtomic(join(agentDir, 'auth.json'), auth);

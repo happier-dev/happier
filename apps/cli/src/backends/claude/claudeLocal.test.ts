@@ -2,6 +2,18 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { basename } from 'node:path';
 import { claudeLocal } from './claudeLocal';
 
+async function withPlatform<T>(platform: NodeJS.Platform, run: () => Promise<T>): Promise<T> {
+    const descriptor = Object.getOwnPropertyDescriptor(process, 'platform');
+    if (!descriptor) return await run();
+
+    Object.defineProperty(process, 'platform', { ...descriptor, value: platform });
+    try {
+        return await run();
+    } finally {
+        Object.defineProperty(process, 'platform', descriptor);
+    }
+}
+
 // Use vi.hoisted to ensure mock functions are available when vi.mock factory runs
 const { mockSpawn, mockClaudeFindLastSession, mockResolveClaudeCliPath, mockIsClaudeCliJavaScriptFile } = vi.hoisted(() => ({
     mockSpawn: vi.fn(),
@@ -115,6 +127,55 @@ describe('claudeLocal --continue handling', () => {
         expect(onSessionFound).toHaveBeenCalledWith('123e4567-e89b-12d3-a456-426614174000');
     });
 
+    it('injects --mcp-config when happierMcpConfigJson is provided', async () => {
+        const mcpJson = JSON.stringify({
+            mcpServers: { happier: { command: 'node', args: ['happier-mcp.mjs', '--url', 'http://127.0.0.1:1234'] } },
+        });
+
+        await claudeLocal({
+            abort: new AbortController().signal,
+            sessionId: null,
+            path: '/tmp',
+            onSessionFound,
+            claudeArgs: [],
+            happierMcpConfigJson: mcpJson,
+        } as any);
+
+        expect(mockSpawn).toHaveBeenCalled();
+        const spawnArgs = mockSpawn.mock.calls[0][1];
+        const idx = spawnArgs.indexOf('--mcp-config');
+        expect(idx).toBeGreaterThan(-1);
+        expect(spawnArgs[idx + 1]).toBe(mcpJson);
+    });
+
+    it('appends Happier --mcp-config after any user --mcp-config flags (last-wins on collisions)', async () => {
+        const userMcp = JSON.stringify({
+            mcpServers: { fixture: { command: 'node', args: ['server.mjs'] } },
+        });
+        const happierMcp = JSON.stringify({
+            mcpServers: { happier: { command: 'node', args: ['happier-mcp.mjs', '--url', 'http://127.0.0.1:1234'] } },
+        });
+
+        await claudeLocal({
+            abort: new AbortController().signal,
+            sessionId: null,
+            path: '/tmp',
+            onSessionFound,
+            claudeArgs: ['--mcp-config', userMcp],
+            happierMcpConfigJson: happierMcp,
+        } as any);
+
+        expect(mockSpawn).toHaveBeenCalled();
+        const spawnArgs = mockSpawn.mock.calls[0][1] as string[];
+        const mcpFlags = spawnArgs
+            .map((value, index) => ({ value, index }))
+            .filter((entry) => entry.value === '--mcp-config')
+            .map((entry) => entry.index);
+        expect(mcpFlags.length).toBe(2);
+        expect(spawnArgs[mcpFlags[0]! + 1]).toBe(userMcp);
+        expect(spawnArgs[mcpFlags[1]! + 1]).toBe(happierMcp);
+    });
+
     it('should spawn the Node launcher using process.execPath when running under Node', async () => {
         mockClaudeFindLastSession.mockReturnValue(null);
 
@@ -128,6 +189,32 @@ describe('claudeLocal --continue handling', () => {
 
         expect(mockSpawn).toHaveBeenCalled();
         expect(basename(String(mockSpawn.mock.calls[0]?.[0]))).toMatch(/^node(\.exe)?$/);
+    });
+
+    it('wraps .cmd Claude shims with cmd.exe on Windows', async () => {
+        mockClaudeFindLastSession.mockReturnValue(null);
+        mockResolveClaudeCliPath.mockReturnValue('C:\\Users\\me\\AppData\\Roaming\\npm\\claude.cmd');
+        mockIsClaudeCliJavaScriptFile.mockReturnValue(false);
+
+        await withPlatform('win32', async () => {
+            await claudeLocal({
+                abort: new AbortController().signal,
+                sessionId: null,
+                path: '/tmp',
+                onSessionFound,
+                claudeArgs: [],
+            });
+        });
+
+        expect(mockSpawn).toHaveBeenCalled();
+        const spawnCommand = mockSpawn.mock.calls[0]?.[0];
+        const spawnArgs = mockSpawn.mock.calls[0]?.[1] as unknown;
+        const spawnOpts = mockSpawn.mock.calls[0]?.[2] as Record<string, unknown>;
+
+        expect(spawnCommand).toBe('cmd.exe');
+        expect((spawnArgs as any)?.slice?.(0, 3)).toEqual(['/d', '/s', '/c']);
+        expect(String((spawnArgs as any)?.[3])).toContain('claude.cmd');
+        expect(spawnOpts.shell).not.toBe(true);
     });
 
     it('should create new session when --continue but no sessions exist', async () => {
@@ -469,5 +556,42 @@ describe('claudeLocal launcher selection', () => {
             if (typeof prevEntrypoint === 'string') process.env.CLAUDE_CODE_ENTRYPOINT = prevEntrypoint;
             else delete process.env.CLAUDE_CODE_ENTRYPOINT;
         }
+    });
+
+    it('does not forward HAPPIER_SPAWN_EXPLICIT_ENV_KEYS_JSON into the spawned Claude process environment', async () => {
+        const prev = process.env.HAPPIER_SPAWN_EXPLICIT_ENV_KEYS_JSON;
+        process.env.HAPPIER_SPAWN_EXPLICIT_ENV_KEYS_JSON = JSON.stringify(['GITHUB_TOKEN']);
+
+        try {
+            await claudeLocal({
+                abort: new AbortController().signal,
+                sessionId: null,
+                path: '/tmp',
+                onSessionFound,
+                claudeArgs: [],
+            });
+
+            expect(mockSpawn).toHaveBeenCalled();
+            const spawnOpts = mockSpawn.mock.calls[0][2];
+            expect(spawnOpts?.env?.HAPPIER_SPAWN_EXPLICIT_ENV_KEYS_JSON).toBeUndefined();
+        } finally {
+            if (typeof prev === 'string') process.env.HAPPIER_SPAWN_EXPLICIT_ENV_KEYS_JSON = prev;
+            else delete process.env.HAPPIER_SPAWN_EXPLICIT_ENV_KEYS_JSON;
+        }
+    });
+
+    it('merges envOverlay into the spawned process environment', async () => {
+        await claudeLocal({
+            abort: new AbortController().signal,
+            sessionId: null,
+            path: '/tmp',
+            onSessionFound,
+            claudeArgs: [],
+            envOverlay: { CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS: '1' },
+        } as any);
+
+        expect(mockSpawn).toHaveBeenCalled();
+        const spawnOpts = mockSpawn.mock.calls[0][2];
+        expect(spawnOpts?.env?.CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS).toBe('1');
     });
 });

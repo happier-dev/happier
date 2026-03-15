@@ -6,22 +6,29 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 const {
-    mockSessionRPC,
-    modalAlert,
-    invalidateFromMutationAndAwait,
-    trackingCapture,
-} = vi.hoisted(() => ({
-    mockSessionRPC: vi.fn(),
-    modalAlert: vi.fn(),
-    invalidateFromMutationAndAwait: vi.fn(async () => {}),
-    trackingCapture: vi.fn(),
-}));
+	    mockSessionRPC,
+	    modalAlert,
+	    invalidateFromMutationAndAwait,
+	    trackingCapture,
+	    mockMachineRPC,
+	} = vi.hoisted(() => ({
+	    mockSessionRPC: vi.fn(),
+	    modalAlert: vi.fn(),
+	    invalidateFromMutationAndAwait: vi.fn(async () => {}),
+	    trackingCapture: vi.fn(),
+	    mockMachineRPC: vi.fn(async () => {
+	        const err = new Error('RPC method not available');
+	        (err as Error & { rpcErrorCode?: string }).rpcErrorCode = 'RPC_METHOD_NOT_AVAILABLE';
+	        throw err;
+	    }),
+	}));
 
-vi.mock('@/sync/api/session/apiSocket', () => ({
-    apiSocket: {
-        sessionRPC: mockSessionRPC,
-    },
-}));
+	vi.mock('@/sync/api/session/apiSocket', () => ({
+	    apiSocket: {
+	        sessionRPC: mockSessionRPC,
+	        machineRPC: mockMachineRPC,
+	    },
+	}));
 
 // sessions ops import sync for non-git helpers; keep this test node-safe.
 vi.mock('@/sync/sync', () => ({
@@ -117,24 +124,60 @@ function mountHook(props: HookProps) {
     };
 }
 
-function lineIndexByContent(diff: string, expectedLine: string): number {
-    const index = diff.split('\n').findIndex((line) => line === expectedLine);
-    if (index < 0) {
-        throw new Error(`line not found in diff: ${expectedLine}`);
+function selectionKeyByContent(diff: string, expectedLine: string): string {
+    const hunkHeader = /^@@\s+-(\d+)(?:,\d+)?\s+\+(\d+)(?:,\d+)?\s+@@/;
+    let oldLine = 0;
+    let newLine = 0;
+
+    for (const line of diff.split('\n')) {
+        const headerMatch = hunkHeader.exec(line);
+        if (headerMatch) {
+            oldLine = Number(headerMatch[1] ?? 0);
+            newLine = Number(headerMatch[2] ?? 0);
+            continue;
+        }
+
+        if (line === expectedLine) {
+            if (line.startsWith('-') && !line.startsWith('---')) return `deletions:${oldLine}`;
+            if (line.startsWith('+') && !line.startsWith('+++')) return `additions:${newLine}`;
+            throw new Error(`expected a diff content line (+/-), got: ${expectedLine}`);
+        }
+
+        if (line.startsWith(' ')) {
+            oldLine += 1;
+            newLine += 1;
+            continue;
+        }
+        if (line.startsWith('-') && !line.startsWith('---')) {
+            oldLine += 1;
+            continue;
+        }
+        if (line.startsWith('+') && !line.startsWith('+++')) {
+            newLine += 1;
+            continue;
+        }
     }
-    return index;
+
+    throw new Error(`line not found in diff: ${expectedLine}`);
 }
 
 describe('useFileScmStageActions integration', () => {
     beforeEach(() => {
         storage.setState(initialStorageState, true);
-        projectManager.clear();
+	        projectManager.clear();
 
-        mockSessionRPC.mockReset();
-        modalAlert.mockReset();
-        invalidateFromMutationAndAwait.mockReset();
-        trackingCapture.mockReset();
-    });
+	        mockSessionRPC.mockReset();
+	        mockMachineRPC.mockReset();
+	        modalAlert.mockReset();
+	        invalidateFromMutationAndAwait.mockReset();
+	        trackingCapture.mockReset();
+
+	        mockMachineRPC.mockImplementation(async () => {
+	            const err = new Error('RPC method not available');
+	            (err as Error & { rpcErrorCode?: string }).rpcErrorCode = 'RPC_METHOD_NOT_AVAILABLE';
+	            throw err;
+	        });
+	    });
 
     it('stages and unstages a full file through real git operations', async () => {
         const workspace = mkdtempSync(join(tmpdir(), 'happier-ui-file-stage-'));
@@ -166,9 +209,9 @@ describe('useFileScmStageActions integration', () => {
             diffMode: 'pending',
             diffContent: git(workspace, ['diff', '--', 'a.txt']),
             lineSelectionEnabled: false,
-            selectedLineIndexes: new Set<number>(),
+            selectedLineKeys: new Set<string>(),
             refreshAll,
-            setSelectedLineIndexes: vi.fn() as any,
+            setSelectedLineKeys: vi.fn() as any,
         });
 
         await act(async () => {
@@ -225,9 +268,9 @@ describe('useFileScmStageActions integration', () => {
             diffMode: 'pending',
             diffContent: git(workspace, ['diff', '--', 'a.txt']),
             lineSelectionEnabled: false,
-            selectedLineIndexes: new Set<number>(),
+            selectedLineKeys: new Set<string>(),
             refreshAll,
-            setSelectedLineIndexes: vi.fn() as any,
+            setSelectedLineKeys: vi.fn() as any,
             scmCommitStrategy: 'atomic',
         } as any);
 
@@ -264,7 +307,7 @@ describe('useFileScmStageActions integration', () => {
         writeFileSync(join(workspace, 'a.txt'), 'base\nline-one\nline-two\n');
 
         const diff = git(workspace, ['diff', '--', 'a.txt']);
-        const selectedIndex = lineIndexByContent(diff, '+line-one');
+        const selectedKey = selectionKeyByContent(diff, '+line-one');
 
         const sessionId = 'session-file-stage-atomic-lines';
         storage.getState().applySessions([createSession(sessionId, workspace) as any]);
@@ -276,7 +319,7 @@ describe('useFileScmStageActions integration', () => {
             throw new Error('expected git snapshot');
         }
 
-        const setSelectedLineIndexes = vi.fn();
+        const setSelectedLineKeys = vi.fn();
         const hook = mountHook({
             sessionId,
             sessionPath: workspace,
@@ -288,9 +331,9 @@ describe('useFileScmStageActions integration', () => {
             diffMode: 'pending',
             diffContent: diff,
             lineSelectionEnabled: true,
-            selectedLineIndexes: new Set<number>([selectedIndex]),
+            selectedLineKeys: new Set<string>([selectedKey]),
             refreshAll: vi.fn(async () => {}),
-            setSelectedLineIndexes: setSelectedLineIndexes as any,
+            setSelectedLineKeys: setSelectedLineKeys as any,
         });
 
         await act(async () => {
@@ -302,7 +345,7 @@ describe('useFileScmStageActions integration', () => {
         expect(patches[0]?.path).toBe('a.txt');
         expect(patches[0]?.patch).toContain('+line-one');
         expect(patches[0]?.patch).not.toContain('+line-two');
-        expect(setSelectedLineIndexes).toHaveBeenCalled();
+        expect(setSelectedLineKeys).toHaveBeenCalled();
         expect(invalidateFromMutationAndAwait).not.toHaveBeenCalled();
 
         act(() => {
@@ -319,7 +362,7 @@ describe('useFileScmStageActions integration', () => {
         writeFileSync(join(workspace, 'a.txt'), 'base\nline-one\nline-two\n');
 
         const diff = git(workspace, ['diff', '--', 'a.txt']);
-        const selectedIndex = lineIndexByContent(diff, '+line-one');
+        const selectedKey = selectionKeyByContent(diff, '+line-one');
 
         const sessionId = 'session-file-stage-atomic-replace';
         storage.getState().applySessions([createSession(sessionId, workspace) as any]);
@@ -343,9 +386,9 @@ describe('useFileScmStageActions integration', () => {
             diffMode: 'pending',
             diffContent: diff,
             lineSelectionEnabled: true,
-            selectedLineIndexes: new Set<number>([selectedIndex]),
+            selectedLineKeys: new Set<string>([selectedKey]),
             refreshAll: vi.fn(async () => {}),
-            setSelectedLineIndexes: vi.fn() as any,
+            setSelectedLineKeys: vi.fn() as any,
         });
 
         await act(async () => {
@@ -371,7 +414,7 @@ describe('useFileScmStageActions integration', () => {
         writeFileSync(join(workspace, 'a.txt'), 'base\nline-one\nline-two\n');
 
         const diff = git(workspace, ['diff', '--', 'a.txt']);
-        const selectedIndex = lineIndexByContent(diff, '+line-one');
+        const selectedKey = selectionKeyByContent(diff, '+line-one');
 
         const sessionId = 'session-file-stage-2';
         storage.getState().applySessions([createSession(sessionId, workspace) as any]);
@@ -384,7 +427,7 @@ describe('useFileScmStageActions integration', () => {
         }
 
         const refreshAll = vi.fn(async () => {});
-        const setSelectedLineIndexes = vi.fn();
+        const setSelectedLineKeys = vi.fn();
 
         const hook = mountHook({
             sessionId,
@@ -397,9 +440,9 @@ describe('useFileScmStageActions integration', () => {
             diffMode: 'pending',
             diffContent: diff,
             lineSelectionEnabled: true,
-            selectedLineIndexes: new Set([selectedIndex]),
+            selectedLineKeys: new Set<string>([selectedKey]),
             refreshAll,
-            setSelectedLineIndexes: setSelectedLineIndexes as any,
+            setSelectedLineKeys: setSelectedLineKeys as any,
         });
 
         await act(async () => {
@@ -412,7 +455,7 @@ describe('useFileScmStageActions integration', () => {
         expect(stagedDiff).toContain('+line-one');
         expect(stagedDiff).not.toContain('+line-two');
         expect(unstagedDiff).toContain('+line-two');
-        expect(setSelectedLineIndexes).toHaveBeenCalledWith(new Set());
+        expect(setSelectedLineKeys).toHaveBeenCalledWith(new Set());
         expect(invalidateFromMutationAndAwait).toHaveBeenCalledTimes(1);
         expect(refreshAll).toHaveBeenCalledTimes(1);
         expect(modalAlert).not.toHaveBeenCalled();
@@ -432,7 +475,7 @@ describe('useFileScmStageActions integration', () => {
         git(workspace, ['add', 'a.txt']);
 
         const stagedDiff = git(workspace, ['diff', '--cached', '--', 'a.txt']);
-        const selectedIndex = lineIndexByContent(stagedDiff, '+line-one');
+        const selectedKey = selectionKeyByContent(stagedDiff, '+line-one');
 
         const sessionId = 'session-file-stage-3';
         storage.getState().applySessions([createSession(sessionId, workspace) as any]);
@@ -457,9 +500,9 @@ describe('useFileScmStageActions integration', () => {
             diffMode: 'included',
             diffContent: stagedDiff,
             lineSelectionEnabled: true,
-            selectedLineIndexes: new Set([selectedIndex]),
+            selectedLineKeys: new Set<string>([selectedKey]),
             refreshAll,
-            setSelectedLineIndexes: vi.fn() as any,
+            setSelectedLineKeys: vi.fn() as any,
         });
 
         await act(async () => {
@@ -491,7 +534,7 @@ describe('useFileScmStageActions integration', () => {
         git(workspace, ['add', 'a.txt']);
 
         const stagedDiff = git(workspace, ['diff', '--cached', '--', 'a.txt']);
-        const selectedIndex = lineIndexByContent(stagedDiff, '+beta');
+        const selectedKey = selectionKeyByContent(stagedDiff, '+beta');
 
         const sessionId = 'session-file-stage-4';
         storage.getState().applySessions([createSession(sessionId, workspace) as any]);
@@ -516,9 +559,9 @@ describe('useFileScmStageActions integration', () => {
             diffMode: 'included',
             diffContent: stagedDiff,
             lineSelectionEnabled: true,
-            selectedLineIndexes: new Set([selectedIndex]),
+            selectedLineKeys: new Set<string>([selectedKey]),
             refreshAll,
-            setSelectedLineIndexes: vi.fn() as any,
+            setSelectedLineKeys: vi.fn() as any,
         });
 
         await act(async () => {

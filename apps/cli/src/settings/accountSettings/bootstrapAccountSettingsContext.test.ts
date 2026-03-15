@@ -142,6 +142,39 @@ describe('bootstrapAccountSettingsContext', () => {
     expect(fetchFromServer).not.toHaveBeenCalled();
   });
 
+  it('forces Codex ACP default for schemaVersion < 6', async () => {
+    const nowMs = 1_000_000;
+    const applySideEffects = vi.fn();
+
+    await bootstrapAccountSettingsContext({
+      credentials: createCredentialsStub(),
+      mode: 'blocking',
+      refresh: 'auto',
+      nowMs,
+      ttlMs: 60_000,
+      agentId: 'codex',
+      deps: {
+        resolveCachePath: () => '/tmp/server/account.settings.cache.json',
+        readCache: async () => ({
+          version: 2,
+          cachedAt: nowMs - 1_000,
+          settingsContent: { t: 'plain', v: { schemaVersion: 5, codexBackendMode: 'mcp' } },
+          settingsVersion: 123,
+        }),
+        writeCache: async () => {},
+        fetchFromServer: async () => ({ settingsContent: null, settingsVersion: 999 }),
+        decryptCiphertext: async () => null,
+        applySideEffects,
+      },
+    });
+
+    expect(applySideEffects).toHaveBeenCalledWith(
+      expect.objectContaining({
+        settings: expect.objectContaining({ schemaVersion: 6, codexBackendMode: 'acp' }),
+      }),
+    );
+  });
+
   it('fetches when cache is stale and refresh=auto (blocking)', async () => {
     const fetchFromServer = vi.fn(async () => ({ settingsCiphertext: 'cipher2', settingsVersion: 11 }));
     const nowMs = 1_000_000;
@@ -258,5 +291,31 @@ describe('bootstrapAccountSettingsContext', () => {
     expect(res.whenRefreshed).toBeTruthy();
     expect(fetchFromServer).toHaveBeenCalledTimes(1);
     await res.whenRefreshed;
+  });
+
+  it('supports plaintext settings content envelopes (v2) without decrypting', async () => {
+    const nowMs = 1_000_000;
+    const res = await bootstrapAccountSettingsContext({
+      credentials: createCredentialsStub(),
+      mode: 'blocking',
+      refresh: 'force',
+      nowMs,
+      ttlMs: 60_000,
+      deps: {
+        resolveCachePath: () => '/tmp/server/account.settings.cache.json',
+        readCache: async () => null,
+        decryptCiphertext: async () => {
+          throw new Error('unexpected decryptCiphertext');
+        },
+        fetchFromServer: async () => ({
+          settingsContent: { t: 'plain', v: { notificationsSettingsV1: { v: 1, pushEnabled: false, ready: true, permissionRequest: true } } },
+          settingsVersion: 12,
+        } as any),
+        writeCache: async () => {},
+        applySideEffects: () => {},
+      },
+    });
+    expect(res.settingsVersion).toBe(12);
+    expect((res.settings as any).notificationsSettingsV1?.pushEnabled).toBe(false);
   });
 });

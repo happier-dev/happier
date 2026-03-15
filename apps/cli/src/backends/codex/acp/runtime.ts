@@ -10,14 +10,15 @@ import { createCodexAcpBackend, type CodexAcpBackendOptions, type CodexAcpBacken
 import { publishCodexSessionIdMetadata } from '@/backends/codex/utils/codexSessionIdMetadata';
 import type { PermissionMode } from '@/api/types';
 import { buildCodexAcpEnvOverrides } from '@/backends/codex/acp/env';
-import { sendPermissionRequestPushNotificationForActiveAccount } from '@/settings/notifications/permissionRequestPush';
+import {
+  sendPermissionRequestPushNotificationForActiveAccount,
+  type PermissionRequestPushSender,
+} from '@/settings/notifications/permissionRequestPush';
 
 export function createCodexAcpRuntime(params: {
   directory: string;
   session: ApiSessionClient;
-  pushSender?: Readonly<{
-    sendToAllDevices: (title: string, body: string, data: Record<string, unknown>) => void;
-  }>;
+  pushSender?: PermissionRequestPushSender;
   messageBuffer: MessageBuffer;
   mcpServers: Record<string, McpServerConfig>;
   permissionHandler: AcpPermissionHandler;

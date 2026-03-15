@@ -112,6 +112,13 @@ export type ProviderScenario = {
   // Prompt text that will be sent as a user message (single-step scenarios).
   // For multi-step scenarios, use `steps` instead.
   prompt?: (ctx: { workspaceDir: string }) => string;
+  /**
+   * Optional extra CLI args to pass to `yarn workspace @happier-dev/cli dev <provider> ...`.
+   *
+   * Useful for provider CLI flags that must be set at process start (e.g. Claude `--mcp-config`),
+   * without relying on writing global config into the host HOME directory.
+   */
+  cliArgs?: string[] | ((ctx: { workspaceDir: string }) => string[]);
   // Optional provider-specific message meta to attach to every prompt for this scenario.
   // Useful for enabling experimental provider features (e.g. Claude Agent SDK).
   messageMeta?: Record<string, unknown> | ((ctx: { workspaceDir: string }) => Record<string, unknown>);
@@ -159,7 +166,7 @@ export type ProviderScenario = {
   // external-directory prompts despite running with a permissive policy.
   allowPermissionAutoApproveInYolo?: boolean;
   // Optional per-scenario setup hook (create files, seed workspace, etc.).
-  setup?: (ctx: { workspaceDir: string }) => Promise<void>;
+  setup?: (ctx: { workspaceDir: string; cliHome: string }) => Promise<void>;
   // Tool-trace fixture keys that must exist after running the scenario.
   requiredFixtureKeys?: string[];
   // Optional alternative keys: if any of these are present, treat as satisfying that requirement bucket.

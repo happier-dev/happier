@@ -111,7 +111,7 @@ describe('GoogleCloudTtsSettings', () => {
 
     const languageDropdown = tree.root
       .findAllByType('DropdownMenu' as any)
-      .find((d: any) => d.props?.searchPlaceholder === 'Search languages');
+      .find((d: any) => d.props?.searchPlaceholder === 'settingsVoice.local.googleCloudTts.language.searchPlaceholder');
     expect(languageDropdown).toBeTruthy();
     expect(languageDropdown.props.items.some((it: any) => it.id === 'en-US')).toBe(true);
     expect(languageDropdown.props.items.some((it: any) => it.id === 'fr-FR')).toBe(true);
@@ -161,8 +161,8 @@ describe('GoogleCloudTtsSettings', () => {
       );
     });
 
-    const speakRateItem = tree.root.findAll((n: any) => n.type === 'Item' && n.props?.title === 'Speaking rate')[0];
-    const pitchItem = tree.root.findAll((n: any) => n.type === 'Item' && n.props?.title === 'Pitch')[0];
+    const speakRateItem = tree.root.findAll((n: any) => n.type === 'Item' && n.props?.title === 'settingsVoice.local.googleCloudTts.speakingRate.title')[0];
+    const pitchItem = tree.root.findAll((n: any) => n.type === 'Item' && n.props?.title === 'settingsVoice.local.googleCloudTts.pitch.title')[0];
     expect(speakRateItem).toBeTruthy();
     expect(pitchItem).toBeTruthy();
 

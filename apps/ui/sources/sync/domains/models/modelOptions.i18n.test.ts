@@ -11,6 +11,6 @@ describe('modelOptions i18n', () => {
         const options = getModelOptionsForAgentType('gemini');
         const defaultOption = options.find((opt) => opt.value === 'default');
 
-        expect(defaultOption?.label).toBe('tx:agentInput.permissionMode.default');
+        expect(defaultOption?.label).toBe('tx:agentInput.model.useCliSettings');
     });
 });

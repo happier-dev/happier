@@ -79,28 +79,28 @@ export const BugReportComposerView = React.memo(function BugReportComposerView()
             keyboardShouldPersistTaps="handled"
             contentInsetAdjustmentBehavior={Platform.OS === 'ios' ? 'automatic' : undefined}
           >
-	              <BugReportIssueDetailsSection
-	                title={model.title}
-	                onTitleChange={model.setTitle}
-	                reporterGithubUsername={model.reporterGithubUsername}
-	                onReporterGithubUsernameChange={model.setReporterGithubUsername}
-	                summary={model.summary}
-	                onSummaryChange={model.setSummary}
-	                currentBehavior={model.currentBehavior}
-	                onCurrentBehaviorChange={model.setCurrentBehavior}
-	                expectedBehavior={model.expectedBehavior}
-	                onExpectedBehaviorChange={model.setExpectedBehavior}
-	                reproductionStepsText={model.reproductionStepsText}
-	                onReproductionStepsTextChange={model.setReproductionStepsText}
-	                whatChangedRecently={model.whatChangedRecently}
-	                onWhatChangedRecentlyChange={model.setWhatChangedRecently}
-	                placeholderTextColor={theme.colors.input.placeholder}
-	                fieldErrors={{
-	                  title: model.fieldErrors.title,
-	                  summary: model.fieldErrors.summary,
-	                }}
-	                disabled={model.submitting}
-	              />
+                <BugReportIssueDetailsSection
+                  title={model.title}
+                  onTitleChange={model.setTitle}
+                  reporterGithubUsername={model.reporterGithubUsername}
+                  onReporterGithubUsernameChange={model.setReporterGithubUsername}
+                  summary={model.summary}
+                  onSummaryChange={model.setSummary}
+                  currentBehavior={model.currentBehavior}
+                  onCurrentBehaviorChange={model.setCurrentBehavior}
+                  expectedBehavior={model.expectedBehavior}
+                  onExpectedBehaviorChange={model.setExpectedBehavior}
+                  reproductionStepsText={model.reproductionStepsText}
+                  onReproductionStepsTextChange={model.setReproductionStepsText}
+                  whatChangedRecently={model.whatChangedRecently}
+                  onWhatChangedRecentlyChange={model.setWhatChangedRecently}
+                  placeholderTextColor={theme.colors.input.placeholder}
+                  fieldErrors={{
+                    title: model.fieldErrors.title,
+                    summary: model.fieldErrors.summary,
+                  }}
+                  disabled={model.submitting}
+                />
 
             <BugReportSimilarIssuesSection
               loading={model.similarIssues.loading}
@@ -148,6 +148,9 @@ export const BugReportComposerView = React.memo(function BugReportComposerView()
               onSelectedKindsChange={model.setDiagnosticsKinds}
               onPreviewDiagnostics={model.handlePreviewDiagnostics}
               previewDisabled={model.previewDisabled}
+              pastedCliDoctorSnapshotJson={model.pastedCliDoctorSnapshotJson}
+              onPastedCliDoctorSnapshotJsonChange={model.setPastedCliDoctorSnapshotJson}
+              placeholderTextColor={theme.colors.input.placeholder}
             />
 
             <BugReportConsentSection
@@ -156,15 +159,15 @@ export const BugReportComposerView = React.memo(function BugReportComposerView()
               errorText={model.includeDiagnostics ? model.fieldErrors.privacy : undefined}
             />
 
-	            {model.validation.code !== 'ok' && (
-	              <View style={{ marginHorizontal: 12, marginTop: -8 }}>
-	                {model.title.trim().length === 0
-	                  && model.summary.trim().length === 0
-	                  && !model.includeDiagnostics
-	                  ? <Text style={bugReportComposerStyles.helperText}>Complete the required fields to enable submission.</Text>
-	                  : <Text style={bugReportComposerStyles.errorText}>{model.validation.message}</Text>}
-	              </View>
-	            )}
+                {model.validation.code !== 'ok' && (
+                  <View style={{ marginHorizontal: 12, marginTop: -8 }}>
+                    {model.title.trim().length === 0
+                      && model.summary.trim().length === 0
+                      && !model.includeDiagnostics
+                      ? <Text style={bugReportComposerStyles.helperText}>{t('bugReports.composer.submit.requiredFieldsHint')}</Text>
+                      : <Text style={bugReportComposerStyles.errorText}>{model.validation.message}</Text>}
+                  </View>
+                )}
 
             <Pressable
               style={[
@@ -177,14 +180,14 @@ export const BugReportComposerView = React.memo(function BugReportComposerView()
               {model.submitting
                 ? <ActivityIndicator size="small" color={theme.colors.button.primary.tint} />
                 : <Ionicons name="paper-plane-outline" size={18} color={theme.colors.button.primary.tint} />}
-              <Text style={styles.submitButtonText}>
-                {model.submitting
-                  ? 'Submitting report…'
-                  : model.existingIssueNumber
-                    ? `Add to issue #${model.existingIssueNumber}`
-                    : 'Submit bug report'}
-              </Text>
-            </Pressable>
+                <Text style={styles.submitButtonText}>
+                  {model.submitting
+                    ? t('bugReports.composer.submit.submitting')
+                    : model.existingIssueNumber
+                      ? t('bugReports.composer.submit.addToIssue', { number: model.existingIssueNumber })
+                      : t('bugReports.composer.submit.submitNew')}
+                </Text>
+              </Pressable>
           </ScrollView>
         </KeyboardAvoidingView>
       </View>

@@ -56,7 +56,7 @@ export function createCodexMcpMessageHandler(opts: {
   let sawReasoningDelta = false;
 
   return (msg: unknown): void => {
-    opts.logger.debug(`[Codex] MCP message: ${JSON.stringify(msg)}`);
+    opts.logger.debug('[Codex] MCP message:', msg);
 
     opts.publishCodexThreadIdToMetadata();
 

@@ -43,7 +43,9 @@ export class ClaudeRemoteSubagentFileCollector {
 
   private lastClaudeSessionId: string | null = null;
   private toolNameByToolUseId = new Map<string, string>();
+  private agentIdByToolUseId = new Map<string, string>();
   private pendingRegistrations = new Set<Promise<void>>();
+  private readonly pendingBySidechainId = new Map<string, { sidechainId: string; agentId: string }>();
   private readonly entriesBySidechainId = new Map<string, Entry>();
   private readonly sidechainIdByJsonlPath = new Map<string, string>();
   private readonly seenUuidsBySidechainId = new Map<string, LruSet>();
@@ -78,12 +80,17 @@ export class ClaudeRemoteSubagentFileCollector {
     this.entriesBySidechainId.clear();
     this.sidechainIdByJsonlPath.clear();
     this.toolNameByToolUseId.clear();
+    this.agentIdByToolUseId.clear();
     this.seenUuidsBySidechainId.clear();
   }
 
   async syncAll(): Promise<void> {
     if (this.pendingRegistrations.size > 0) {
       // Ensure we don't miss an initial import in the same tick as Task tool_result observation.
+      await Promise.allSettled([...this.pendingRegistrations]);
+    }
+    this.flushPendingRegistrations();
+    if (this.pendingRegistrations.size > 0) {
       await Promise.allSettled([...this.pendingRegistrations]);
     }
     for (const entry of this.entriesBySidechainId.values()) {
@@ -103,6 +110,12 @@ export class ClaudeRemoteSubagentFileCollector {
       const toolName = String((item as any).name ?? '').trim();
       if (!toolUseId || !toolName) continue;
       this.toolNameByToolUseId.set(toolUseId, toolName);
+      if (toolName === 'Agent') {
+        const agentIdFromInput = this.extractAgentIdFromAgentToolUseInput((item as any).input);
+        if (agentIdFromInput) {
+          this.agentIdByToolUseId.set(toolUseId, agentIdFromInput);
+        }
+      }
     }
   }
 
@@ -110,6 +123,7 @@ export class ClaudeRemoteSubagentFileCollector {
     const content = (message as any)?.message?.content;
     if (!Array.isArray(content)) return;
 
+    const toolUseResult = (message as any)?.tool_use_result ?? (message as any)?.toolUseResult;
     for (const item of content) {
       if (!item || typeof item !== 'object') continue;
       if ((item as any).type !== 'tool_result') continue;
@@ -118,30 +132,47 @@ export class ClaudeRemoteSubagentFileCollector {
       if (!toolUseId) continue;
 
       const toolName = this.toolNameByToolUseId.get(toolUseId) ?? null;
-      if (toolName !== 'Task') continue;
+      // Execution runs and Claude agent teams both surface sub-agent transcripts as JSONL files.
+      // - `Task` tool results often include `output_file`
+      // - `Agent` (agent-teams) tool results typically do not, so we resolve by agent_id + session_id
+      if (toolName !== 'Task' && toolName !== 'Agent') continue;
 
-      const toolResultText = coerceToolResultText((item as any).content);
+      const toolResultText = coerceToolResultText(
+        toolUseResult !== undefined ? { content: (item as any).content, tool_use_result: toolUseResult } : (item as any).content,
+      );
       const ids = extractAgentIdFromTaskResultText(toolResultText);
-      const agentId =
-        (ids.agentId ? String(ids.agentId).trim() : '') ||
-        (typeof (message as any)?.toolUseResult?.agentId === 'string'
-          ? String((message as any).toolUseResult.agentId).trim()
-          : '');
+      const agentIdFromToolUseResult =
+        typeof toolUseResult?.agent_id === 'string'
+          ? String(toolUseResult.agent_id).trim()
+          : typeof toolUseResult?.agentId === 'string'
+            ? String(toolUseResult.agentId).trim()
+            : typeof toolUseResult?.teammate_id === 'string'
+              ? String(toolUseResult.teammate_id).trim()
+              : '';
+      const agentIdFromToolUseInput = this.agentIdByToolUseId.get(toolUseId) ?? '';
+      const agentId = agentIdFromToolUseResult || (ids.agentId ? String(ids.agentId).trim() : '') || agentIdFromToolUseInput;
       if (!agentId) continue;
 
       const outputFilePath =
         extractOutputFilePathFromTaskResultText(toolResultText) ??
-        (typeof (message as any)?.toolUseResult?.outputFile === 'string'
-          ? String((message as any).toolUseResult.outputFile).trim()
-          : typeof (message as any)?.toolUseResult?.output_file === 'string'
-            ? String((message as any).toolUseResult.output_file).trim()
+        (typeof toolUseResult?.outputFile === 'string'
+          ? String(toolUseResult.outputFile).trim()
+          : typeof toolUseResult?.output_file === 'string'
+            ? String(toolUseResult.output_file).trim()
             : null) ??
         (() => {
           if (!this.resolveJsonlPathForAgentId) return null;
           const claudeSessionId = this.resolveClaudeSessionId(message);
           return this.resolveJsonlPathForAgentId({ agentId, sidechainId: toolUseId, claudeSessionId });
         })();
-      if (!outputFilePath) continue;
+      if (!outputFilePath) {
+        // Session id/transcript path may not be known yet (init may arrive after Task spawns). Store a pending entry and
+        // retry once we learn session_id (or when syncAll() is called).
+        if (this.resolveJsonlPathForAgentId && !this.entriesBySidechainId.has(toolUseId)) {
+          this.pendingBySidechainId.set(toolUseId, { sidechainId: toolUseId, agentId });
+        }
+        continue;
+      }
 
       const registration = this.registerTaskOutputFile({
         sidechainId: toolUseId,
@@ -151,6 +182,40 @@ export class ClaudeRemoteSubagentFileCollector {
       this.pendingRegistrations.add(registration);
       void registration.finally(() => this.pendingRegistrations.delete(registration));
     }
+  }
+
+  private extractAgentIdFromAgentToolUseInput(input: unknown): string | null {
+    if (!input || typeof input !== 'object' || Array.isArray(input)) return null;
+    const record = input as Record<string, unknown>;
+    const directAgentId =
+      typeof record.agent_id === 'string'
+        ? String(record.agent_id).trim()
+        : typeof record.agentId === 'string'
+          ? String(record.agentId).trim()
+          : typeof record.teammate_id === 'string'
+            ? String(record.teammate_id).trim()
+            : typeof record.teammateId === 'string'
+              ? String(record.teammateId).trim()
+              : '';
+    if (directAgentId.length > 0) return directAgentId;
+
+    const name = typeof record.name === 'string' ? String(record.name).trim() : '';
+    if (!name) return null;
+
+    const teamName =
+      typeof record.team_name === 'string'
+        ? String(record.team_name).trim()
+        : typeof record.teamName === 'string'
+          ? String(record.teamName).trim()
+          : typeof record.team_id === 'string'
+            ? String(record.team_id).trim()
+            : typeof record.teamId === 'string'
+              ? String(record.teamId).trim()
+              : typeof record.team === 'string'
+                ? String(record.team).trim()
+                : '';
+    if (!teamName) return name.includes('@') ? name : null;
+    return name.includes('@') ? name : `${name}@${teamName}`;
   }
 
   private async registerTaskOutputFile(params: {
@@ -237,12 +302,45 @@ export class ClaudeRemoteSubagentFileCollector {
     if (typeof raw !== 'string') return;
     const value = raw.trim();
     if (!value) return;
+    const prev = this.lastClaudeSessionId;
     this.lastClaudeSessionId = value;
+    if (prev !== value) {
+      this.flushPendingRegistrations();
+    }
   }
 
   private resolveClaudeSessionId(message: SDKMessage): string | null {
     const raw = (message as any)?.sessionId ?? (message as any)?.session_id;
     if (typeof raw === 'string' && raw.trim().length > 0) return raw.trim();
     return this.lastClaudeSessionId;
+  }
+
+  private flushPendingRegistrations(): void {
+    if (!this.resolveJsonlPathForAgentId) return;
+    const claudeSessionId = this.lastClaudeSessionId;
+    if (!claudeSessionId) return;
+
+    for (const pending of this.pendingBySidechainId.values()) {
+      if (this.entriesBySidechainId.has(pending.sidechainId)) {
+        this.pendingBySidechainId.delete(pending.sidechainId);
+        continue;
+      }
+
+      const outputFilePath = this.resolveJsonlPathForAgentId({
+        agentId: pending.agentId,
+        sidechainId: pending.sidechainId,
+        claudeSessionId,
+      });
+      if (!outputFilePath) continue;
+
+      this.pendingBySidechainId.delete(pending.sidechainId);
+      const registration = this.registerTaskOutputFile({
+        sidechainId: pending.sidechainId,
+        agentId: pending.agentId,
+        outputFilePath,
+      });
+      this.pendingRegistrations.add(registration);
+      void registration.finally(() => this.pendingRegistrations.delete(registration));
+    }
   }
 }

@@ -5,6 +5,7 @@ import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { Octicons } from '@expo/vector-icons';
 import type { ScmLogEntry } from '@happier-dev/protocol';
+import { t } from '@/text';
 
 type SourceControlOperationsHistorySectionProps = Readonly<{
     theme: any;
@@ -45,7 +46,7 @@ export function SourceControlOperationsHistorySection(props: SourceControlOperat
     if (historyEntries.length === 0) {
         return (
             <Text style={{ color: theme.colors.textSecondary, fontSize: 12, ...Typography.default() }}>
-                No commits available.
+                {t('files.operationsHistory.noCommitsAvailable')}
             </Text>
         );
     }
@@ -60,7 +61,7 @@ export function SourceControlOperationsHistorySection(props: SourceControlOperat
                     ...Typography.default('semiBold'),
                 }}
             >
-                Recent commits
+                {t('files.operationsHistory.recentCommits')}
             </Text>
             {historyEntries.slice(0, Math.min(historyEntries.length, visibleCount)).map((entry) => (
                 <Pressable
@@ -127,7 +128,7 @@ export function SourceControlOperationsHistorySection(props: SourceControlOperat
                 >
                     <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
                         <Text style={{ color: theme.colors.textLink, fontSize: 12, ...Typography.default('semiBold') }}>
-                            {historyLoading ? 'Loading…' : 'Load more commits'}
+                            {historyLoading ? t('common.loading') : t('files.operationsHistory.loadMore')}
                         </Text>
                         <Octicons name="chevron-down" size={14} color={theme.colors.textSecondary} />
                     </View>

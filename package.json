@@ -23,7 +23,7 @@
     "providers": "node ./apps/stack/scripts/repo_local.mjs providers",
     "self-host": "node ./apps/stack/scripts/repo_local.mjs self-host",
     "remote": "node ./apps/stack/scripts/repo_local.mjs remote",
-    "setup": "node ./apps/stack/scripts/repo_local.mjs setup",
+    "setup": "node ./apps/stack/scripts/repo_local.mjs setup-from-source",
     "service": "node ./apps/stack/scripts/repo_local.mjs service",
     "service:status": "node ./apps/stack/scripts/repo_local.mjs service status",
     "service:logs": "node ./apps/stack/scripts/repo_local.mjs service logs",
@@ -79,6 +79,8 @@
     "test:providers": "yarn workspace @happier-dev/tests test:providers",
     "test:providers:opencode:smoke": "yarn workspace @happier-dev/tests providers:opencode:smoke",
     "test:providers:opencode:extended": "yarn workspace @happier-dev/tests providers:opencode:extended",
+    "test:providers:opencode_server:smoke": "yarn workspace @happier-dev/tests providers:opencode_server:smoke",
+    "test:providers:opencode_server:extended": "yarn workspace @happier-dev/tests providers:opencode_server:extended",
     "test:providers:claude:smoke": "yarn workspace @happier-dev/tests providers:claude:smoke",
     "test:providers:claude:extended": "yarn workspace @happier-dev/tests providers:claude:extended",
     "test:providers:pi:smoke": "yarn workspace @happier-dev/tests providers:pi:smoke",
@@ -110,7 +112,7 @@
     "release:build:binaries:server": "node scripts/pipeline/release/build-server-binaries.mjs",
     "release:verify:artifacts": "node scripts/pipeline/release/verify-artifacts.mjs",
     "release:publish:manifests": "node scripts/pipeline/release/publish-manifests.mjs",
-    "test:release:contracts": "HAPPIER_FEATURE_POLICY_ENV= node --test scripts/release/*.test.mjs",
+    "test:release:contracts": "HAPPIER_FEATURE_POLICY_ENV= node --test scripts/release/*.test.mjs scripts/release/*/*.test.mjs scripts/pipeline/**/*.test.mjs",
     "release:sync:installers": "node scripts/pipeline/release/sync-installers.mjs",
     "release:check:installers": "node scripts/pipeline/release/sync-installers.mjs --check"
   },
@@ -143,6 +145,9 @@
   },
   "resolutions": {
     "@tauri-apps/api": "2.8.0"
+  },
+  "devDependencies": {
+    "@sentry/cli": "^3.2.2"
   },
   "packageManager": "yarn@1.22.22"
 }

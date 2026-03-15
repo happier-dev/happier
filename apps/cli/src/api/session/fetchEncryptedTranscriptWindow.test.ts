@@ -11,6 +11,7 @@ vi.mock('axios', () => ({
 vi.mock('@/configuration', () => ({
   configuration: {
     serverUrl: 'http://localhost:1234',
+    apiServerUrl: 'http://localhost:1234',
     memoryMaxTranscriptWindowMessages: 250,
   },
 }));

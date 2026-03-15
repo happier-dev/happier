@@ -47,7 +47,7 @@ describe('TodoView', () => {
         expect(text).toContain('Item 1');
         expect(text).toContain('Item 6');
         expect(text).not.toContain('Item 7');
-        expect(text).toContain('+ 4 more');
+        expect(text).toContain('+4 more');
     });
 
     it('renders more items when detailLevel=full', async () => {

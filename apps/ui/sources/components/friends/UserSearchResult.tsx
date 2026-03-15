@@ -7,6 +7,8 @@ import { t } from '@/text';
 import { useRouter } from 'expo-router';
 import { Text } from '@/components/ui/text/Text';
 
+const USERNAME_PREFIX = '@';
+
 
 interface UserSearchResultProps {
     user: UserProfile;
@@ -58,7 +60,7 @@ export function UserSearchResult({
                 
                 <View style={styles.info}>
                     <Text style={styles.name}>{displayName}</Text>
-                    <Text style={styles.username}>@{user.username}</Text>
+                    <Text style={styles.username}>{USERNAME_PREFIX}{user.username}</Text>
                 </View>
 
                 <TouchableOpacity

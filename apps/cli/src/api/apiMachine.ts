@@ -9,6 +9,8 @@ import { logger } from '@/ui/logger';
 import { configuration } from '@/configuration';
 import { MachineMetadata, DaemonState, Machine, Update, UpdateMachineBody } from './types';
 import { registerSessionHandlers } from '@/rpc/handlers/registerSessionHandlers';
+import { registerScmHandlers } from '@/rpc/handlers/scm';
+import { registerFileSystemHandlers } from '@/rpc/handlers/fileSystem';
 import { encodeBase64, decodeBase64, encrypt, decrypt } from './encryption';
 import { backoff } from '@/utils/time';
 import { RpcHandlerManager } from './rpc/RpcHandlerManager';
@@ -20,6 +22,7 @@ import { getSocketIoProxyOptions } from '@/utils/proxy/socketIoProxy';
 
 import type { DaemonToServerEvents, ServerToDaemonEvents } from './machine/socketTypes';
 import { registerMachineRpcHandlers, type MachineRpcHandlers } from './machine/rpcHandlers';
+import { resolveMachineRpcWorkingDirectory } from './machine/resolveMachineRpcWorkingDirectory';
 
 export class ApiMachineClient {
     private socket!: Socket<ServerToDaemonEvents, DaemonToServerEvents>;
@@ -28,6 +31,7 @@ export class ApiMachineClient {
     private hasConnectedOnce = false;
     private accountIdPromise: Promise<string> | null = null;
     private changesSyncInFlight: Promise<void> | null = null;
+    private updateListeners = new Set<(update: Update) => boolean | void>();
 
     constructor(
         private token: string,
@@ -41,7 +45,12 @@ export class ApiMachineClient {
             logger: (msg, data) => logger.debug(msg, data)
         });
 
-        registerSessionHandlers(this.rpcHandlerManager, process.cwd());
+        const machineRpcWorkingDirectory = resolveMachineRpcWorkingDirectory();
+        registerSessionHandlers(this.rpcHandlerManager, machineRpcWorkingDirectory);
+        registerFileSystemHandlers(this.rpcHandlerManager, machineRpcWorkingDirectory);
+        // SCM must be machine-scoped so the UI can view diffs/logs and perform staging/commit operations
+        // even when no session is currently active.
+        registerScmHandlers(this.rpcHandlerManager, machineRpcWorkingDirectory);
     }
 
     setRPCHandlers({
@@ -54,6 +63,29 @@ export class ApiMachineClient {
             rpcHandlerManager: this.rpcHandlerManager,
             handlers: { spawnSession, stopSession, requestShutdown, ...(memory ? { memory } : {}) }
         });
+    }
+
+    onUpdate(listener: (update: Update) => boolean | void): () => void {
+        this.updateListeners.add(listener);
+        return () => {
+            this.updateListeners.delete(listener);
+        };
+    }
+
+    private dispatchUpdate(update: Update): boolean {
+        let handled = false;
+        for (const listener of this.updateListeners) {
+            try {
+                if (listener(update) === true) {
+                    handled = true;
+                }
+            } catch (error) {
+                logger.warn('[API MACHINE] Update listener threw (ignored)', {
+                    message: error instanceof Error ? error.message : String(error),
+                });
+            }
+        }
+        return handled;
     }
 
     /**
@@ -128,10 +160,10 @@ export class ApiMachineClient {
 
     connect(params?: { onConnect?: () => void | Promise<void> }) {
         // socket.io-client expects an http(s) URL (even when forcing websocket transport).
-        const serverUrl = resolveLoopbackHttpUrl(configuration.serverUrl).replace(/\/+$/, '');
+        const serverUrl = resolveLoopbackHttpUrl(configuration.apiServerUrl).replace(/\/+$/, '');
         logger.debug(`[API MACHINE] Connecting to ${serverUrl}`);
 
-        const transports = configuration.socketForceWebsocketOnly ? ['websocket'] : undefined;
+        const transports = configuration.socketIoTransports;
         this.socket = io(serverUrl, {
             ...(transports ? { transports } : null),
             auth: {
@@ -154,6 +186,9 @@ export class ApiMachineClient {
             const isReconnect = this.hasConnectedOnce;
             this.hasConnectedOnce = true;
 
+            // Register all handlers first so RPC routing is available immediately on connect.
+            this.rpcHandlerManager.onSocketConnect(this.socket);
+
             // Update daemon state to running
             // We need to override previous state because the daemon (this process)
             // has restarted with new PID & port
@@ -169,10 +204,6 @@ export class ApiMachineClient {
                     message: error instanceof Error ? error.message : String(error),
                 });
             });
-
-
-            // Register all handlers
-            this.rpcHandlerManager.onSocketConnect(this.socket);
 
             // Catch up on coalesced account changes (optional). This is a safety net for reconnects:
             // if we missed socket updates while disconnected, we can resync our machine state.
@@ -219,8 +250,12 @@ export class ApiMachineClient {
                     this.machine.daemonState = decrypt(this.machine.encryptionKey, this.machine.encryptionVariant, decodeBase64(update.daemonState.value));
                     this.machine.daemonStateVersion = update.daemonState.version;
                 }
-            } else {
-                logger.debug(`[API MACHINE] Received unknown update type: ${(data.body as any).t}`);
+                return;
+            }
+
+            const handled = this.dispatchUpdate(data);
+            if (!handled && process.env.DEBUG) { // too verbose for production
+                logger.debug(`[API MACHINE] Ignored update type: ${(data.body as any).t}`);
             }
         });
 
@@ -286,7 +321,7 @@ export class ApiMachineClient {
         }
 
         const p = (async () => {
-            const serverUrl = resolveLoopbackHttpUrl(configuration.serverUrl).replace(/\/+$/, '');
+            const serverUrl = resolveLoopbackHttpUrl(configuration.apiServerUrl).replace(/\/+$/, '');
             const response = await axios.get(`${serverUrl}/v1/account/profile`, {
                 headers: {
                     Authorization: `Bearer ${this.token}`,
@@ -312,7 +347,7 @@ export class ApiMachineClient {
 
     private async refreshMachineFromServer(): Promise<void> {
         try {
-            const serverUrl = resolveLoopbackHttpUrl(configuration.serverUrl).replace(/\/+$/, '');
+            const serverUrl = resolveLoopbackHttpUrl(configuration.apiServerUrl).replace(/\/+$/, '');
             const response = await axios.get(`${serverUrl}/v1/machines/${this.machine.id}`, {
                 headers: {
                     Authorization: `Bearer ${this.token}`,

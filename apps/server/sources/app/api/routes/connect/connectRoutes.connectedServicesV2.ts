@@ -2,6 +2,7 @@ import { type Fastify } from "../../types";
 import { parseIntEnv } from "@/config/env";
 import { registerConnectedServiceCredentialRoutesV2 } from "./connectedServicesV2/registerConnectedServiceCredentialRoutesV2";
 import { registerConnectedServiceOauthExchangeRoutes } from "./connectedServicesV2/registerConnectedServiceOauthExchangeRoutes";
+import { registerConnectedServiceOpenAiCodexDeviceAuthRoutes } from "./connectedServicesV2/registerConnectedServiceOpenAiCodexDeviceAuthRoutes";
 import { registerConnectedServiceProfilesRoutesV2 } from "./connectedServicesV2/registerConnectedServiceProfilesRoutesV2";
 import { registerConnectedServiceRefreshLeaseRoutesV2 } from "./connectedServicesV2/registerConnectedServiceRefreshLeaseRoutesV2";
 import { registerConnectedServiceV1ShimRoutes } from "./connectedServicesV2/registerConnectedServiceV1ShimRoutes";
@@ -20,6 +21,7 @@ export function connectConnectedServicesV2Routes(app: Fastify) {
 
     registerConnectedServiceV1ShimRoutes(app, { credentialMaxLen });
     registerConnectedServiceOauthExchangeRoutes(app);
+    registerConnectedServiceOpenAiCodexDeviceAuthRoutes(app);
     registerConnectedServiceCredentialRoutesV2(app, { credentialMaxLen });
     registerConnectedServiceProfilesRoutesV2(app);
     registerConnectedServiceRefreshLeaseRoutesV2(app, { refreshLeaseMaxMs });

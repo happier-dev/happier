@@ -12,6 +12,15 @@ import { useLocalSetting } from '@/sync/store/hooks';
 
 import { scaleTextStyle } from './uiFontScale';
 
+const TextSelectabilityContext = React.createContext<boolean>(false);
+
+export function TextSelectabilityScope(props: Readonly<{ selectable: boolean; children: React.ReactNode }>) {
+    return (
+        <TextSelectabilityContext.Provider value={props.selectable}>
+            {props.children}
+        </TextSelectabilityContext.Provider>
+    );
+}
 
 export type AppTextProps = RNTextProps & Readonly<{
     /**
@@ -30,7 +39,7 @@ export const Text = React.memo(
         {
             style,
             useDefaultTypography = true,
-            selectable = false,
+            selectable,
             disableUiFontScaling = false,
             ...props
         },
@@ -38,6 +47,8 @@ export const Text = React.memo(
     ) {
         const uiFontScaleSetting = useLocalSetting('uiFontScale');
         const uiFontScale = disableUiFontScaling ? 1 : uiFontScaleSetting;
+        const selectableFromScope = React.useContext(TextSelectabilityContext);
+        const effectiveSelectable = selectable ?? selectableFromScope;
 
         const scaledStyle = React.useMemo(() => scaleTextStyle(style as any, uiFontScale), [style, uiFontScale]);
         const defaultStyle = useDefaultTypography ? Typography.default() : null;
@@ -53,7 +64,7 @@ export const Text = React.memo(
             <RNText
                 ref={ref}
                 style={mergedStyle}
-                selectable={selectable}
+                selectable={effectiveSelectable}
                 {...props}
             />
         );

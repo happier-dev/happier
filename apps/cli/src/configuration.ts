@@ -9,6 +9,7 @@ import { chmodSync, existsSync, mkdirSync, readFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { isServerIdFilesystemSafe, sanitizeServerIdForFilesystem } from '@/server/serverId'
+import { isLocalishServerUrl } from '@/server/serverUrlClassification'
 import packageJson from '../package.json'
 
 export function isDaemonProcessArgv(args: readonly string[]): boolean {
@@ -19,6 +20,11 @@ export function isDaemonProcessArgv(args: readonly string[]): boolean {
 
 class Configuration {
   public readonly serverUrl: string
+  public readonly apiServerUrl: string
+  /**
+   * Deprecated alias: historically used as “public URL for QR/deep links”.
+   * In schema v6+ the canonical/share URL is `serverUrl`, so this is always equal to `serverUrl`.
+   */
   public readonly publicServerUrl: string
   public readonly webappUrl: string
   public readonly activeServerId: string
@@ -34,15 +40,25 @@ class Configuration {
   public readonly privateKeyFile: string
   public readonly daemonStateFile: string
   public readonly daemonLockFile: string
+  // Session attach file pruning (best-effort; defense-in-depth for crash-before-read scenarios).
+  public readonly sessionAttachFileMaxAgeMs: number
+  // Session control HTTP timeouts (v2 sessions endpoints; archive/unarchive, list, etc).
+  public readonly sessionControlHttpTimeoutMs: number
+  // Vendor CLI `--help` invocation timeout (defense-in-depth against hung vendor CLIs).
+  public readonly vendorCliHelpTimeoutMs: number
   public readonly currentCliVersion: string
 
   public readonly isExperimentalEnabled: boolean
   public readonly disableCaffeinate: boolean
   public readonly socketForceWebsocketOnly: boolean
+  public readonly socketIoTransports: string[]
 
   // Session connection keep-alive (ephemeral thinking state + online presence).
   public readonly sessionKeepAliveIdleMs: number
   public readonly sessionKeepAliveThinkingMs: number
+
+  // Pending queue V2: idle wake polling (ensures queued prompts are materialized even if socket wakeups are missed).
+  public readonly pendingQueueIdleWakePollIntervalMs: number
 
   // MCP server SSE keepalive (prevents client idle timeouts on long-lived streams).
   public readonly mcpSseKeepAliveIntervalMs: number | null
@@ -59,6 +75,9 @@ class Configuration {
   public readonly transcriptRecoveryMaxConcurrent: number
   public readonly transcriptRecoveryErrorLogThrottleMs: number
 
+  // Startup transcript catch-up (avoids missing early prompts; prevents replaying entire history into the agent queue).
+  public readonly startupTranscriptCatchUpLookbackMs: number
+
   // Claude remote TaskOutput sidechain import limits (defense-in-depth against huge transcripts).
   public readonly claudeTaskOutputMaxPendingPerAgent: number
   public readonly claudeTaskOutputMaxSeenUuidsPerSidechain: number
@@ -68,8 +87,30 @@ class Configuration {
   // Claude subagent local JSONL follower (used in remote mode when Task returns output_file).
   public readonly claudeSubagentJsonlPollIntervalMs: number
 
+  // Claude permission handler metadata watcher (prevents tight loops when metadata updates are unavailable).
+  public readonly claudeMetadataWatcherIdleBackoffMs: number
+
   // Claude Task tool policy (remote mode).
   public readonly claudeTaskAllowRunInBackground: boolean
+  /**
+   * When a user aborts a Claude session, the vendor SDK may surface a cancellation as a process-level
+   * unhandledRejection (known "Operation aborted" error). Within this short window after a user abort,
+   * the CLI treats that specific error as non-fatal so the session runner does not crash and respawn.
+   */
+  public readonly claudeAbortUnhandledRejectionIgnoreWindowMs: number
+  /**
+   * When a user approves ExitPlanMode, the UI/metadata update that clears plan mode may arrive slightly
+   * after Claude resumes tool execution. This latch window ensures same-turn tool calls are not denied
+   * as "still in plan mode" while the metadata update propagates.
+   */
+  public readonly claudeExitPlanModeLatchMs: number
+  /** Max number of per-message localIds remembered for ExitPlanMode latch. */
+  public readonly claudeExitPlanModeLatchMaxEntries: number
+
+  // Permission-request push notifications (best-effort; bounded retries).
+  public readonly permissionRequestPushRetryDelaysMs: readonly number[]
+  public readonly permissionRequestPushRetryMaxMs: number
+  public readonly permissionRequestPushDedupeMaxEntries: number
 
   // Execution runs and ephemeral tasks (session-process budgets).
   public readonly executionRunsMaxConcurrentPerSession: number
@@ -82,6 +123,14 @@ class Configuration {
 
   // Memory search (daemon-local indexing) limits.
   public readonly memoryMaxTranscriptWindowMessages: number
+
+  // Replay-fork synopsis lookup (memory artifacts may be older than the most recent replay page).
+  public readonly replaySynopsisScanMaxPages: number
+  public readonly replaySynopsisScanPageSize: number
+  // Replay seed prompt budget (prevents oversized provider prompts).
+  public readonly replaySeedMaxChars: number
+  // Replay transcript fetch size for seed hydration (best-effort; bounded by server /v1/messages limit).
+  public readonly replaySeedCandidateLimit: number
 
   // Startup coordinator / deferred session buffering (fast-start).
   public readonly startupTimingEnabled: boolean
@@ -109,6 +158,7 @@ class Configuration {
     this.serversDir = join(this.happyHomeDir, 'servers')
 
     const envServerUrl = (process.env.HAPPIER_SERVER_URL ?? '').toString().trim();
+    const envLocalServerUrl = (process.env.HAPPIER_LOCAL_SERVER_URL ?? '').toString().trim();
     const envWebappUrl = (process.env.HAPPIER_WEBAPP_URL ?? '').toString().trim();
     const envPublicServerUrl = (process.env.HAPPIER_PUBLIC_SERVER_URL ?? '').toString().trim();
     const envActiveServerIdRaw = (process.env.HAPPIER_ACTIVE_SERVER_ID ?? '').toString().trim();
@@ -118,13 +168,16 @@ class Configuration {
     const persisted = readActiveServerFromSettingsFile(this.settingsFile);
     const resolved = resolveServerSelection({
       envServerUrl: envServerUrl || null,
+      envLocalServerUrl: envLocalServerUrl || null,
+      envPublicServerUrl: envPublicServerUrl || null,
       envWebappUrl: envWebappUrl || null,
       envActiveServerId,
       persisted,
     });
 
     this.serverUrl = resolved.serverUrl
-    this.publicServerUrl = (envPublicServerUrl || resolved.serverUrl).replace(/\/+$/, '')
+    this.apiServerUrl = resolved.apiServerUrl
+    this.publicServerUrl = resolved.serverUrl
     this.webappUrl = resolved.webappUrl
     this.activeServerId = sanitizeServerIdForFilesystem(resolved.activeServerId, 'cloud')
 
@@ -134,10 +187,57 @@ class Configuration {
     this.daemonStateFile = join(this.activeServerDir, 'daemon.state.json')
     this.daemonLockFile = join(this.activeServerDir, 'daemon.state.json.lock')
 
+    const attachMaxAgeRaw = String(process.env.HAPPIER_SESSION_ATTACH_FILE_MAX_AGE_MS ?? '').trim();
+    const attachMaxAgeMs = Number.parseInt(attachMaxAgeRaw, 10);
+    // Default: 10 minutes. Set to 0 to disable pruning.
+    this.sessionAttachFileMaxAgeMs =
+      attachMaxAgeRaw === '0'
+        ? 0
+        : Number.isFinite(attachMaxAgeMs) && attachMaxAgeMs >= 1
+          ? attachMaxAgeMs
+          : 10 * 60_000;
+
+    const sessionControlTimeoutRaw = String(process.env.HAPPIER_SESSION_CONTROL_HTTP_TIMEOUT_MS ?? '').trim();
+    const sessionControlTimeoutMs = Number.parseInt(sessionControlTimeoutRaw, 10);
+    // Default: 60s. Defensive minimum: 1s.
+    this.sessionControlHttpTimeoutMs =
+      Number.isFinite(sessionControlTimeoutMs) && sessionControlTimeoutMs >= 1000 ? sessionControlTimeoutMs : 60_000;
+
+    const vendorHelpTimeoutRaw = String(process.env.HAPPIER_VENDOR_CLI_HELP_TIMEOUT_MS ?? '').trim();
+    const vendorHelpTimeoutMs = Number.parseInt(vendorHelpTimeoutRaw, 10);
+    // Default: 5s. Set to 0 to disable timeouts.
+    this.vendorCliHelpTimeoutMs =
+      vendorHelpTimeoutRaw === '0'
+        ? 0
+        : Number.isFinite(vendorHelpTimeoutMs) && vendorHelpTimeoutMs >= 250
+          ? Math.min(vendorHelpTimeoutMs, 60_000)
+          : 5_000;
+
     this.isExperimentalEnabled = ['true', '1', 'yes'].includes(process.env.HAPPIER_EXPERIMENTAL?.toLowerCase() || '');
     this.disableCaffeinate = ['true', '1', 'yes'].includes(process.env.HAPPIER_DISABLE_CAFFEINATE?.toLowerCase() || '');
     const forceWebsocketRaw = (process.env.HAPPIER_SOCKET_FORCE_WEBSOCKET ?? '').toString().trim().toLowerCase();
     this.socketForceWebsocketOnly = ['true', '1', 'yes', 'on'].includes(forceWebsocketRaw);
+
+    const socketTransportsRaw = (process.env.HAPPIER_SOCKET_TRANSPORTS ?? '').toString().trim().toLowerCase();
+    const parsedSocketTransports = (() => {
+      if (!socketTransportsRaw) return null;
+      const allowed = new Set(['websocket', 'polling']);
+      const seen = new Set<string>();
+      const out: string[] = [];
+      for (const raw of socketTransportsRaw.split(',')) {
+        const value = raw.trim().toLowerCase();
+        if (!value) continue;
+        if (!allowed.has(value)) continue;
+        if (seen.has(value)) continue;
+        seen.add(value);
+        out.push(value);
+      }
+      return out.length > 0 ? out : null;
+    })();
+
+    this.socketIoTransports =
+      parsedSocketTransports
+      ?? (this.socketForceWebsocketOnly ? ['websocket'] : ['websocket', 'polling']);
 
     const idleMsRaw = Number.parseInt(String(process.env.HAPPIER_SESSION_KEEPALIVE_IDLE_MS ?? ''), 10);
     const thinkingMsRaw = Number.parseInt(String(process.env.HAPPIER_SESSION_KEEPALIVE_THINKING_MS ?? ''), 10);
@@ -147,12 +247,53 @@ class Configuration {
     this.sessionKeepAliveIdleMs = Number.isFinite(idleMsRaw) && idleMsRaw >= 1000 ? idleMsRaw : 15_000;
     this.sessionKeepAliveThinkingMs = Number.isFinite(thinkingMsRaw) && thinkingMsRaw >= 500 ? thinkingMsRaw : 2_000;
 
+    const pendingWakeRaw = String(process.env.HAPPIER_PENDING_QUEUE_IDLE_WAKE_POLL_INTERVAL_MS ?? '').trim();
+    const pendingWakeMs = Number.parseInt(pendingWakeRaw, 10);
+    // Default: 1s. Set to 0 to disable.
+    this.pendingQueueIdleWakePollIntervalMs =
+      pendingWakeRaw === '0'
+        ? 0
+        : (Number.isFinite(pendingWakeMs) && pendingWakeMs >= 50
+            ? Math.min(pendingWakeMs, 60_000)
+            : 1_000);
+
     const mcpKeepAliveRaw = String(process.env.HAPPIER_MCP_SSE_KEEPALIVE_INTERVAL_MS ?? '').trim();
     const mcpKeepAliveMs = Number.parseInt(mcpKeepAliveRaw, 10);
     // Default: 15s. Must be < client idle timeouts (~5 minutes observed in Claude Code logs).
     // Set to 0 to disable (not recommended).
     this.mcpSseKeepAliveIntervalMs =
       mcpKeepAliveRaw === '0' ? null : (Number.isFinite(mcpKeepAliveMs) && mcpKeepAliveMs >= 10 ? mcpKeepAliveMs : 15_000);
+
+    const parseCsvNumberList = (raw: string, opts: { min: number; max: number }): number[] | null => {
+      const value = raw.trim();
+      if (!value) return null;
+      const out: number[] = [];
+      const seen = new Set<number>();
+      for (const part of value.split(',')) {
+        const trimmed = part.trim();
+        if (!trimmed) continue;
+        const parsed = Number.parseInt(trimmed, 10);
+        if (!Number.isFinite(parsed)) continue;
+        const clamped = Math.max(opts.min, Math.min(opts.max, parsed));
+        if (seen.has(clamped)) continue;
+        seen.add(clamped);
+        out.push(clamped);
+      }
+      return out.length > 0 ? out : null;
+    };
+
+    const pushRetryDelays =
+      parseCsvNumberList(String(process.env.HAPPIER_PERMISSION_REQUEST_PUSH_RETRY_DELAYS_MS ?? ''), { min: 0, max: 600_000 })
+      ?? [2_500, 10_000, 30_000, 60_000];
+    this.permissionRequestPushRetryDelaysMs = pushRetryDelays;
+
+    const pushRetryMaxRaw = Number.parseInt(String(process.env.HAPPIER_PERMISSION_REQUEST_PUSH_RETRY_MAX_MS ?? ''), 10);
+    this.permissionRequestPushRetryMaxMs =
+      Number.isFinite(pushRetryMaxRaw) && pushRetryMaxRaw >= 0 ? Math.min(pushRetryMaxRaw, 60 * 60_000) : 10 * 60_000;
+
+    const dedupeMaxRaw = Number.parseInt(String(process.env.HAPPIER_PERMISSION_REQUEST_PUSH_DEDUPE_MAX ?? ''), 10);
+    this.permissionRequestPushDedupeMaxEntries =
+      Number.isFinite(dedupeMaxRaw) && dedupeMaxRaw >= 0 ? Math.min(dedupeMaxRaw, 50_000) : 2_000;
 
     const transcriptLookupRequestTimeoutRaw = Number.parseInt(
       String(process.env.HAPPIER_TRANSCRIPT_LOOKUP_REQUEST_TIMEOUT_MS ?? ''),
@@ -218,6 +359,13 @@ class Configuration {
     this.transcriptRecoveryErrorLogThrottleMs =
       Number.isFinite(transcriptRecoveryLogThrottleRaw) && transcriptRecoveryLogThrottleRaw >= 0 ? transcriptRecoveryLogThrottleRaw : 5_000;
 
+    const startupCatchUpLookbackRaw = Number.parseInt(
+      String(process.env.HAPPIER_STARTUP_TRANSCRIPT_CATCH_UP_LOOKBACK_MS ?? ''),
+      10,
+    );
+    this.startupTranscriptCatchUpLookbackMs =
+      Number.isFinite(startupCatchUpLookbackRaw) && startupCatchUpLookbackRaw >= 0 ? startupCatchUpLookbackRaw : 10_000;
+
     const maxPendingRaw = Number.parseInt(String(process.env.HAPPIER_CLAUDE_TASKOUTPUT_MAX_PENDING_PER_AGENT ?? ''), 10);
     const maxSeenUuidsRaw = Number.parseInt(String(process.env.HAPPIER_CLAUDE_TASKOUTPUT_MAX_SEEN_UUIDS_PER_SIDECHAIN ?? ''), 10);
     const maxToolUseRaw = Number.parseInt(String(process.env.HAPPIER_CLAUDE_TASKOUTPUT_MAX_TOOLUSE_ENTRIES ?? ''), 10);
@@ -233,8 +381,38 @@ class Configuration {
     this.claudeSubagentJsonlPollIntervalMs =
       Number.isFinite(subagentPollRaw) && subagentPollRaw >= 25 ? subagentPollRaw : 250;
 
+    const metadataWatcherBackoffRaw = Number.parseInt(
+      String(process.env.HAPPIER_CLAUDE_METADATA_WATCHER_IDLE_BACKOFF_MS ?? ''),
+      10,
+    );
+    // Default: 250ms. Prevents tight loops when waitForMetadataUpdate returns false (e.g. detached session client).
+    this.claudeMetadataWatcherIdleBackoffMs =
+      Number.isFinite(metadataWatcherBackoffRaw) && metadataWatcherBackoffRaw >= 25
+        ? Math.min(metadataWatcherBackoffRaw, 60_000)
+        : 250;
+
     const allowTaskBackgroundRaw = String(process.env.HAPPIER_CLAUDE_TASK_ALLOW_RUN_IN_BACKGROUND ?? '').trim().toLowerCase();
     this.claudeTaskAllowRunInBackground = ['1', 'true', 'yes', 'on'].includes(allowTaskBackgroundRaw);
+
+    const abortIgnoreWindowRaw = Number.parseInt(
+      String(process.env.HAPPIER_CLAUDE_ABORT_UNHANDLED_REJECTION_IGNORE_WINDOW_MS ?? ''),
+      10,
+    );
+    // Default: 10s. Set to 0 to disable suppression.
+    this.claudeAbortUnhandledRejectionIgnoreWindowMs =
+      Number.isFinite(abortIgnoreWindowRaw) && abortIgnoreWindowRaw >= 0 ? Math.min(abortIgnoreWindowRaw, 60_000) : 10_000;
+
+    const exitPlanLatchRaw = Number.parseInt(String(process.env.HAPPIER_CLAUDE_EXIT_PLAN_MODE_LATCH_MS ?? ''), 10);
+    // Default: 15s. Needs to be long enough to cover same-turn tool calls while metadata update propagates.
+    this.claudeExitPlanModeLatchMs =
+      Number.isFinite(exitPlanLatchRaw) && exitPlanLatchRaw >= 0 ? Math.min(exitPlanLatchRaw, 5 * 60_000) : 15_000;
+
+    const exitPlanMaxEntriesRaw = Number.parseInt(
+      String(process.env.HAPPIER_CLAUDE_EXIT_PLAN_MODE_LATCH_MAX_ENTRIES ?? ''),
+      10,
+    );
+    this.claudeExitPlanModeLatchMaxEntries =
+      Number.isFinite(exitPlanMaxEntriesRaw) && exitPlanMaxEntriesRaw >= 1 ? Math.min(exitPlanMaxEntriesRaw, 2_000) : 100;
 
     const maxConcurrentRunsRaw = Number.parseInt(String(process.env.HAPPIER_EXECUTION_RUNS_MAX_CONCURRENT_PER_SESSION ?? ''), 10);
     const maxConcurrentTasksRaw = Number.parseInt(String(process.env.HAPPIER_EPHEMERAL_TASKS_MAX_CONCURRENT_PER_SESSION ?? ''), 10);
@@ -287,6 +465,40 @@ class Configuration {
       this.memoryMaxTranscriptWindowMessages = Math.min(500, Math.trunc(memoryWindowRaw));
     } else {
       this.memoryMaxTranscriptWindowMessages = 250;
+    }
+
+    const replaySynopsisScanMaxPagesRaw = Number.parseInt(String(process.env.HAPPIER_REPLAY_SYNOPSIS_SCAN_MAX_PAGES ?? ''), 10);
+    // Default: 6 pages (enough to find the latest memory synopsis without scanning arbitrarily far back).
+    // Min 0 disables the scan; max 25 is a hard safety cap.
+    if (Number.isFinite(replaySynopsisScanMaxPagesRaw) && replaySynopsisScanMaxPagesRaw >= 0) {
+      this.replaySynopsisScanMaxPages = Math.min(25, Math.trunc(replaySynopsisScanMaxPagesRaw));
+    } else {
+      this.replaySynopsisScanMaxPages = 6;
+    }
+
+    const replaySynopsisScanPageSizeRaw = Number.parseInt(String(process.env.HAPPIER_REPLAY_SYNOPSIS_SCAN_PAGE_SIZE ?? ''), 10);
+    // Default: 500 (server max). Min 1; max 500 to match server enforcement.
+    if (Number.isFinite(replaySynopsisScanPageSizeRaw) && replaySynopsisScanPageSizeRaw >= 1) {
+      this.replaySynopsisScanPageSize = Math.min(500, Math.trunc(replaySynopsisScanPageSizeRaw));
+    } else {
+      this.replaySynopsisScanPageSize = 500;
+    }
+
+    const replaySeedMaxCharsRaw = Number.parseInt(String(process.env.HAPPIER_REPLAY_MAX_SEED_CHARS ?? ''), 10);
+    // Default: 120k chars. Hard bounds protect providers from oversized replay seeds.
+    // Min 500 keeps the prompt meaningful; max 200k is a safety cap.
+    if (Number.isFinite(replaySeedMaxCharsRaw) && replaySeedMaxCharsRaw >= 500) {
+      this.replaySeedMaxChars = Math.min(200_000, Math.trunc(replaySeedMaxCharsRaw));
+    } else {
+      this.replaySeedMaxChars = 120_000;
+    }
+
+    const replaySeedCandidateLimitRaw = Number.parseInt(String(process.env.HAPPIER_REPLAY_SEED_CANDIDATE_LIMIT ?? ''), 10);
+    // Default: 500 (server max). Min 50 ensures meaningful context; max 500 matches server enforcement.
+    if (Number.isFinite(replaySeedCandidateLimitRaw) && replaySeedCandidateLimitRaw >= 50) {
+      this.replaySeedCandidateLimit = Math.min(500, Math.trunc(replaySeedCandidateLimitRaw));
+    } else {
+      this.replaySeedCandidateLimit = 500;
     }
 
     const startupTimingRaw = String(process.env.HAPPIER_STARTUP_TIMING_ENABLED ?? '').trim().toLowerCase();
@@ -383,6 +595,7 @@ class Configuration {
 type PersistedServerProfile = Readonly<{
   id: string;
   serverUrl: string;
+  localServerUrl?: string;
   webappUrl: string;
 }>;
 
@@ -401,13 +614,32 @@ function readActiveServerFromSettingsFile(path: string): PersistedServerSettings
     const activeServerId = sanitizeServerIdForFilesystem((raw as any).activeServerId ?? '', '');
     const serversRaw = (raw as any).servers;
     if (!activeServerId || !serversRaw || typeof serversRaw !== 'object') return null;
-    const servers: Record<string, PersistedServerProfile> = {};
-    for (const [id, v] of Object.entries(serversRaw as Record<string, any>)) {
-      const sid = sanitizeServerIdForFilesystem((v as any)?.id ?? id, '');
-      const serverUrl = String((v as any)?.serverUrl ?? '').trim();
-      const webappUrl = String((v as any)?.webappUrl ?? '').trim();
-      if (!sid || !serverUrl || !webappUrl) continue;
-      servers[sid] = { id: sid, serverUrl, webappUrl };
+        const servers: Record<string, PersistedServerProfile> = {};
+        const normalizeUrl = (value: unknown): string => String(value ?? '').trim().replace(/\/+$/, '');
+        for (const [id, v] of Object.entries(serversRaw as Record<string, any>)) {
+          const sid = sanitizeServerIdForFilesystem((v as any)?.id ?? id, '');
+          const serverUrlRaw = normalizeUrl((v as any)?.serverUrl);
+          const legacyPublicServerUrl = normalizeUrl((v as any)?.publicServerUrl);
+      const localServerUrlRaw = normalizeUrl((v as any)?.localServerUrl);
+      const webappUrl = normalizeUrl((v as any)?.webappUrl);
+      if (!sid || !serverUrlRaw || !webappUrl) continue;
+
+      const serverUrl =
+        legacyPublicServerUrl && legacyPublicServerUrl !== serverUrlRaw
+          ? legacyPublicServerUrl
+          : serverUrlRaw;
+
+          const localServerUrl =
+            localServerUrlRaw
+              ? localServerUrlRaw
+              : (legacyPublicServerUrl && legacyPublicServerUrl !== serverUrlRaw && isLocalishServerUrl(serverUrlRaw) ? serverUrlRaw : '');
+
+          servers[sid] = {
+            id: sid,
+            serverUrl,
+        ...(localServerUrl ? { localServerUrl } : {}),
+        webappUrl,
+      };
     }
     if (!servers[activeServerId]) return null;
     return { activeServerId, servers };
@@ -433,45 +665,63 @@ function normalizeServerUrl(url: string): string {
 
 function resolveServerSelection(params: Readonly<{
   envServerUrl: string | null;
+  envLocalServerUrl: string | null;
+  envPublicServerUrl: string | null;
   envWebappUrl: string | null;
   envActiveServerId: string | null;
   persisted: PersistedServerSettings | null;
-}>): Readonly<{ activeServerId: string; serverUrl: string; webappUrl: string }> {
+}>): Readonly<{ activeServerId: string; serverUrl: string; apiServerUrl: string; webappUrl: string }> {
   const DEFAULT_SERVER_URL = 'https://api.happier.dev';
   const DEFAULT_WEBAPP_URL = 'https://app.happier.dev';
   const resolveActiveServerId = (fallbackId: string): string =>
     sanitizeServerIdForFilesystem(params.envActiveServerId ?? fallbackId, 'cloud');
 
-  // If env vars are set, treat them as an explicit (non-persisted) override for this invocation.
-  if (params.envServerUrl) {
-    const serverUrl = normalizeServerUrl(params.envServerUrl);
+  const normalizeUrl = (value: string | null): string | null => {
+    const out = normalizeServerUrl(value ?? '');
+    return out ? out : null;
+  };
+
+  // Env override semantics (compat):
+  // - If HAPPIER_PUBLIC_SERVER_URL is set: treat it as canonical serverUrl and use HAPPIER_LOCAL_SERVER_URL/HAPPIER_SERVER_URL for apiServerUrl.
+  // - Else: treat HAPPIER_SERVER_URL as canonical serverUrl (legacy), and use HAPPIER_LOCAL_SERVER_URL as apiServerUrl override if provided.
+  const envCanonicalServerUrl = normalizeUrl(params.envPublicServerUrl) ?? normalizeUrl(params.envServerUrl);
+  if (envCanonicalServerUrl) {
+    const envApiServerUrl =
+      normalizeUrl(params.envLocalServerUrl)
+      ?? (params.envPublicServerUrl ? normalizeUrl(params.envServerUrl) : null)
+      ?? envCanonicalServerUrl;
+
     const persistedMatch = params.persisted
-      ? Object.values(params.persisted.servers).find((s) => normalizeServerUrl(s.serverUrl) === serverUrl) ?? null
+      ? Object.values(params.persisted.servers).find((s) => normalizeServerUrl(s.serverUrl) === envCanonicalServerUrl) ?? null
       : null;
+
     let webappUrl = params.envWebappUrl;
     if (!webappUrl) {
       if (persistedMatch?.webappUrl) {
         webappUrl = persistedMatch.webappUrl;
-      } else if (serverUrl === DEFAULT_SERVER_URL) {
+      } else if (envCanonicalServerUrl === DEFAULT_SERVER_URL) {
         webappUrl = DEFAULT_WEBAPP_URL;
       } else {
         try {
-          webappUrl = new URL(serverUrl).origin;
+          webappUrl = new URL(envCanonicalServerUrl).origin;
         } catch {
           webappUrl = DEFAULT_WEBAPP_URL;
         }
       }
     }
-    const activeServerId = resolveActiveServerId(persistedMatch?.id ?? deriveServerIdFromUrl(serverUrl));
-    return { activeServerId, serverUrl, webappUrl };
+    const activeServerId = resolveActiveServerId(persistedMatch?.id ?? deriveServerIdFromUrl(envCanonicalServerUrl));
+    return { activeServerId, serverUrl: envCanonicalServerUrl, apiServerUrl: envApiServerUrl, webappUrl };
   }
 
   if (params.persisted) {
     const active = params.persisted.servers[params.persisted.activeServerId];
     if (active) {
+      const canonical = normalizeServerUrl(active.serverUrl);
+      const apiServerUrl = normalizeServerUrl(active.localServerUrl ?? '') || canonical;
       return {
         activeServerId: resolveActiveServerId(active.id),
-        serverUrl: normalizeServerUrl(active.serverUrl),
+        serverUrl: canonical,
+        apiServerUrl,
         webappUrl: active.webappUrl,
       };
     }
@@ -480,6 +730,7 @@ function resolveServerSelection(params: Readonly<{
   return {
     activeServerId: resolveActiveServerId('cloud'),
     serverUrl: DEFAULT_SERVER_URL,
+    apiServerUrl: DEFAULT_SERVER_URL,
     webappUrl: DEFAULT_WEBAPP_URL,
   };
 }

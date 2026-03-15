@@ -8,6 +8,10 @@ const sessionListState = vi.hoisted(() => ({
     data: [] as any[] | null,
 }));
 
+const buildPolicyState = vi.hoisted(() => ({
+    decision: 'neutral' as 'allow' | 'deny' | 'neutral',
+}));
+
 vi.mock('react-native', async (importOriginal) => {
     const actual = await importOriginal<any>();
     return {
@@ -25,6 +29,7 @@ vi.mock('react-native', async (importOriginal) => {
 
 vi.mock('expo-router', () => ({
     useRouter: () => ({ push: async () => {} }),
+    usePathname: () => '/',
 }));
 
 vi.mock('@expo/vector-icons', () => ({
@@ -74,6 +79,10 @@ vi.mock('@/hooks/ui/useTabState', () => ({
         setActiveTab: async () => {},
         isLoading: false,
     }),
+}));
+
+vi.mock('@/sync/domains/features/featureBuildPolicy', () => ({
+    getFeatureBuildPolicyDecision: () => buildPolicyState.decision,
 }));
 
 vi.mock('@/components/sessions/guidance/SessionGettingStartedGuidance', () => ({
@@ -135,6 +144,7 @@ vi.mock('@/components/navigation/ConnectionStatusControl', () => ({
 describe('MainView (tablet primary pane)', () => {
     beforeEach(() => {
         sessionListState.data = [];
+        buildPolicyState.decision = 'neutral';
     });
 
     it('shows getting started guidance instead of a blank view', async () => {
@@ -146,5 +156,17 @@ describe('MainView (tablet primary pane)', () => {
         });
 
         expect(() => tree!.root.findByType('SessionGettingStartedGuidance')).not.toThrow();
+    });
+
+    it('shows a fallback view when getting started guidance is denied by build policy', async () => {
+        buildPolicyState.decision = 'deny';
+        const { MainView } = await import('./MainView');
+
+        let tree: renderer.ReactTestRenderer | null = null;
+        act(() => {
+            tree = renderer.create(<MainView variant="phone" />);
+        });
+
+        expect(() => tree!.root.findByProps({ testID: 'mainview-tablet-primary-pane-fallback' })).not.toThrow();
     });
 });

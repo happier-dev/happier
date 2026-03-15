@@ -32,13 +32,14 @@ export const SimpleSyntaxHighlighter: React.FC<SimpleSyntaxHighlighterProps> = (
   const tokens = React.useMemo(() => tokenizeSimpleSyntaxText({ text: code, language }), [code, language]);
 
   return (
-    <View>
+    <View style={{ flexShrink: 0, alignSelf: 'flex-start' }}>
       <Text
         selectable={selectable}
         style={{
           fontFamily: Typography.mono().fontFamily,
           fontSize: 14,
           lineHeight: 20,
+          flexShrink: 0,
         }}
       >
         {tokens.map((token, index) => (
@@ -58,4 +59,3 @@ export const SimpleSyntaxHighlighter: React.FC<SimpleSyntaxHighlighterProps> = (
     </View>
   );
 };
-

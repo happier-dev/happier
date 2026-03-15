@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { useLocalSearchParams, Stack, useRouter } from "expo-router";
 import { View, ActivityIndicator } from 'react-native';
-import { useMessage, useSession, useSessionMessages } from "@/sync/domains/state/storage";
+import { useMessage, useSession, useSessionMessages, useSessionTranscriptIds } from "@/sync/domains/state/storage";
 import { sync } from '@/sync/sync';
 import { Deferred } from "@/components/ui/forms/Deferred";
 import { ToolFullView } from '@/components/tools/shell/views/ToolFullView';
@@ -11,6 +11,21 @@ import { Message } from '@/sync/domains/messages/messageTypes';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { Typography } from '@/constants/Typography';
 import { Text } from '@/components/ui/text/Text';
+import { deriveTranscriptInteraction } from '@/utils/sessions/deriveTranscriptInteraction';
+import { AgentInput } from '@/components/sessions/agentInput';
+import { getSuggestions } from '@/components/autocomplete/suggestions';
+import { Modal } from '@/modal';
+import { t } from '@/text';
+import { fireAndForget } from '@/utils/system/fireAndForget';
+import { deriveAutoRecipientFromFocusedToolTranscript, deriveSessionParticipantTargets } from '@/sync/domains/session/participants/deriveSessionParticipantTargets';
+import type { SessionParticipantTarget } from '@/sync/domains/session/participants/participantTargets';
+import { useSessionRecipientState } from '@/components/sessions/agentInput/recipient/useSessionRecipientState';
+import { RecipientChip } from '@/components/sessions/agentInput/recipient/RecipientChip';
+import type { AgentInputExtraActionChip } from '@/components/sessions/agentInput/AgentInput';
+import { resolveParticipantRoutedSend } from '@/sync/domains/input/participants/resolveParticipantRoutedSend';
+import { isExecutionRunNotRunningSendError, sessionExecutionRunSend } from '@/sync/ops/sessionExecutionRuns';
+import { useSessionRunningExecutionRuns } from '@/hooks/session/useSessionRunningExecutionRuns';
+import type { ParticipantRecipientV1 } from '@happier-dev/protocol';
 
 
 const stylesheet = StyleSheet.create((theme) => ({
@@ -32,13 +47,45 @@ const stylesheet = StyleSheet.create((theme) => ({
 }));
 
 export default React.memo(() => {
-    const { id: sessionId, messageId } = useLocalSearchParams<{ id: string; messageId: string }>();
+    const { id: sessionId, messageId, jumpChildId } = useLocalSearchParams<{ id: string; messageId: string; jumpChildId?: string }>();
     const router = useRouter();
     const session = useSession(sessionId!);
-    const { isLoaded: messagesLoaded } = useSessionMessages(sessionId!);
+    const { isLoaded: messagesLoaded } = useSessionTranscriptIds(sessionId!);
     const message = useMessage(sessionId!, messageId!);
     const { theme } = useUnistyles();
     const styles = stylesheet;
+    const [messageBackfillComplete, setMessageBackfillComplete] = React.useState(false);
+
+    const tool = message?.kind === 'tool-call' ? message.tool : null;
+    const toolHeaderTitle = React.useCallback(() => {
+        return tool ? <ToolHeader tool={tool} /> : null;
+    }, [tool]);
+    const toolHeaderRight = React.useCallback(() => {
+        return tool ? <ToolStatusIndicator tool={tool} /> : null;
+    }, [tool]);
+
+    const toolScreenOptions = React.useMemo(() => {
+        return {
+            headerTitle: toolHeaderTitle,
+            headerRight: toolHeaderRight,
+            headerStyle: {
+                backgroundColor: theme.colors.header.background,
+            },
+            headerTintColor: theme.colors.header.tint,
+            headerShadowVisible: false,
+        } as const;
+    }, [theme.colors.header.background, theme.colors.header.tint, toolHeaderRight, toolHeaderTitle]);
+
+    const interaction = React.useMemo(() => {
+        if (!session) {
+            return { canSendMessages: false, canApprovePermissions: false } as const;
+        }
+        return deriveTranscriptInteraction({
+            kind: 'session',
+            accessLevel: session.accessLevel,
+            canApprovePermissions: session.canApprovePermissions,
+        });
+    }, [session]);
     
     // Trigger session visibility when component mounts
     React.useEffect(() => {
@@ -46,13 +93,76 @@ export default React.memo(() => {
             sync.onSessionVisible(sessionId);
         }
     }, [sessionId]);
-    
-    // Navigate back if message doesn't exist after messages are loaded
+
     React.useEffect(() => {
-        if (messagesLoaded && !message) {
-            router.back();
+        setMessageBackfillComplete(false);
+    }, [messageId, sessionId]);
+
+    // Best-effort hydration for deep links / hard refreshes: sessions list is paginated, and message fetch
+    // is guarded when a session isn't known on the active server snapshot yet.
+    React.useEffect(() => {
+        if (!sessionId) return;
+        fireAndForget(sync.ensureSessionVisibleForMessageRoute(sessionId), { tag: 'MessageRoute.ensureSessionVisible' });
+    }, [sessionId]);
+
+    // Message deep links may target messages older than the initial `/messages` page. If we can't find
+    // the message after the initial load, try paging older messages until we either find it or run out.
+    React.useEffect(() => {
+        let canceled = false;
+        if (!sessionId || !messageId || !messagesLoaded || message || messageBackfillComplete) return;
+
+        fireAndForget((async () => {
+            try {
+                try {
+                    await sync.ensureSessionVisibleForMessageRoute(sessionId);
+                } catch {
+                    // best-effort only
+                }
+                // Cap work to avoid infinite paging on malformed message IDs.
+                for (let i = 0; i < 25; i++) {
+                    const result = await sync.loadOlderMessages(sessionId);
+                    if (canceled) return;
+
+                    if (result.status === 'not_ready' || result.status === 'in_flight') {
+                        await new Promise((r) => setTimeout(r, 100));
+                        continue;
+                    }
+
+                    if (result.status === 'no_more' || result.hasMore === false) {
+                        break;
+                    }
+
+                    if (result.loaded <= 0) {
+                        // Avoid tight loops if the paging cursor doesn't advance.
+                        break;
+                    }
+                }
+            } finally {
+                if (!canceled) {
+                    setMessageBackfillComplete(true);
+                }
+            }
+        })(), { tag: 'MessageRoute.loadOlderMessages' });
+
+        return () => {
+            canceled = true;
+        };
+    }, [message, messageBackfillComplete, messageId, messagesLoaded, sessionId]);
+
+    React.useEffect(() => {
+        if (messageBackfillComplete && messagesLoaded && !message) {
+            const canGoBack = typeof (router as any)?.canGoBack === 'function' ? (router as any).canGoBack() : false;
+            if (canGoBack) {
+                router.back();
+                return;
+            }
+            if (sessionId) {
+                router.replace(`/session/${encodeURIComponent(String(sessionId))}`);
+                return;
+            }
+            router.replace('/');
         }
-    }, [messagesLoaded, message, router]);
+    }, [messageBackfillComplete, messagesLoaded, message, router]);
     
     // Configure header for tool messages
     React.useLayoutEffect(() => {
@@ -79,36 +189,6 @@ export default React.memo(() => {
             </View>
         );
     }
-
-    const tool = message.kind === 'tool-call' ? message.tool : null;
-    const toolHeaderTitle = React.useCallback(() => {
-        return tool ? <ToolHeader tool={tool} /> : null;
-    }, [tool]);
-    const toolHeaderRight = React.useCallback(() => {
-        return tool ? <ToolStatusIndicator tool={tool} /> : null;
-    }, [tool]);
-
-    const toolScreenOptions = React.useMemo(() => {
-        return {
-            headerTitle: toolHeaderTitle,
-            headerRight: toolHeaderRight,
-            headerStyle: {
-                backgroundColor: theme.colors.header.background,
-            },
-            headerTintColor: theme.colors.header.tint,
-            headerShadowVisible: false,
-        } as const;
-    }, [theme.colors.header.background, theme.colors.header.tint, toolHeaderRight, toolHeaderTitle]);
-
-    const interaction = React.useMemo(() => {
-        const isOwner = !session.accessLevel;
-        const canSendMessages = isOwner || session.accessLevel === 'edit' || session.accessLevel === 'admin';
-        const canApprovePermissions = isOwner || session.canApprovePermissions === true;
-        const permissionDisabledReason = isOwner
-            ? undefined
-            : (session.accessLevel === 'view' ? 'readOnly' : 'notGranted');
-        return { canSendMessages, canApprovePermissions, permissionDisabledReason } as const;
-    }, [session.accessLevel, session.canApprovePermissions]);
     
     return (
         <>
@@ -121,8 +201,10 @@ export default React.memo(() => {
                 <FullView
                     message={message}
                     sessionId={sessionId!}
+                    session={session}
                     metadata={(session as any)?.metadata ?? null}
                     interaction={interaction}
+                    jumpChildId={typeof jumpChildId === 'string' ? jumpChildId : null}
                 />
             </Deferred>
         </>
@@ -132,36 +214,239 @@ export default React.memo(() => {
 function FullView(props: {
     message: Message;
     sessionId: string;
+    session: any;
     metadata: any;
-    interaction: { canSendMessages: boolean; canApprovePermissions: boolean; permissionDisabledReason?: 'readOnly' | 'notGranted' };
+    interaction: { canSendMessages: boolean; canApprovePermissions: boolean; permissionDisabledReason?: 'public' | 'readOnly' | 'notGranted' | 'inactive' };
+    jumpChildId: string | null;
 }) {
-    const { theme } = useUnistyles();
-    const styles = stylesheet;
-    
     if (props.message.kind === 'tool-call') {
         return (
+            <ToolCallFullView
+                message={props.message}
+                sessionId={props.sessionId}
+                session={props.session}
+                metadata={props.metadata}
+                interaction={props.interaction}
+                jumpChildId={props.jumpChildId}
+            />
+        );
+    }
+    if (props.message.kind === 'agent-text') {
+        return <TextFullView text={props.message.text} />;
+    }
+    if (props.message.kind === 'user-text') {
+        return <TextFullView text={props.message.text} />;
+    }
+    return null;
+}
+
+function TextFullView(props: { text: string }) {
+    const styles = stylesheet;
+    return (
+        <View style={styles.fullViewContainer}>
+            <Text style={styles.messageText}>{props.text}</Text>
+        </View>
+    );
+}
+
+function ensureAutoRecipientTarget(
+    targets: readonly SessionParticipantTarget[],
+    autoRecipient: ParticipantRecipientV1 | null,
+): readonly SessionParticipantTarget[] {
+    if (!autoRecipient) return targets;
+
+    const alreadyPresent = targets.some((target) => {
+        const recipient = target.recipient;
+        if (autoRecipient.kind === 'execution_run') {
+            return recipient.kind === 'execution_run' && recipient.runId === autoRecipient.runId;
+        }
+        if (autoRecipient.kind === 'agent_team_broadcast') {
+            return recipient.kind === 'agent_team_broadcast' && recipient.teamId === autoRecipient.teamId;
+        }
+        if (autoRecipient.kind === 'agent_team_member') {
+            return (
+                recipient.kind === 'agent_team_member' &&
+                recipient.teamId === autoRecipient.teamId &&
+                recipient.memberId === autoRecipient.memberId
+            );
+        }
+        return false;
+    });
+    if (alreadyPresent) return targets;
+
+    if (autoRecipient.kind === 'execution_run') {
+        const displayLabel = t('session.participants.executionRun', { runId: autoRecipient.runId });
+        const injectedTarget = {
+            key: `execution_run:${autoRecipient.runId}`,
+            displayLabel,
+            recipient: { kind: 'execution_run', runId: autoRecipient.runId, label: displayLabel } satisfies ParticipantRecipientV1,
+        } satisfies SessionParticipantTarget;
+        return [injectedTarget, ...targets];
+    }
+
+    if (autoRecipient.kind === 'agent_team_broadcast') {
+        const displayLabel = t('session.participants.broadcast', { teamId: autoRecipient.teamId });
+        const injectedTarget = {
+            key: `agent_team_broadcast:${autoRecipient.teamId}`,
+            displayLabel,
+            recipient: { kind: 'agent_team_broadcast', teamId: autoRecipient.teamId } satisfies ParticipantRecipientV1,
+        } satisfies SessionParticipantTarget;
+        return [injectedTarget, ...targets];
+    }
+
+    if (autoRecipient.kind === 'agent_team_member') {
+        const displayLabel = autoRecipient.memberLabel ? autoRecipient.memberLabel : autoRecipient.memberId;
+        const injectedTarget = {
+            key: `agent_team_member:${autoRecipient.teamId}:${autoRecipient.memberId}`,
+            displayLabel,
+            recipient: {
+                kind: 'agent_team_member',
+                teamId: autoRecipient.teamId,
+                memberId: autoRecipient.memberId,
+                ...(autoRecipient.memberLabel ? { memberLabel: autoRecipient.memberLabel } : {}),
+            } satisfies ParticipantRecipientV1,
+        } satisfies SessionParticipantTarget;
+
+        return [injectedTarget, ...targets];
+    }
+
+    return targets;
+}
+
+function ToolCallFullView(props: {
+    message: Extract<Message, { kind: 'tool-call' }>;
+    sessionId: string;
+    session: any;
+    metadata: any;
+    interaction: { canSendMessages: boolean; canApprovePermissions: boolean; permissionDisabledReason?: 'public' | 'readOnly' | 'notGranted' | 'inactive' };
+    jumpChildId: string | null;
+}) {
+    const { messages: committedMessages } = useSessionMessages(props.sessionId);
+    const [composerText, setComposerText] = React.useState('');
+    const runningExecutionRuns = useSessionRunningExecutionRuns({
+        sessionId: props.sessionId,
+        enabled: true,
+    });
+
+    const focusedTool = props.message.tool;
+    const toolName = focusedTool?.name;
+    const canShowComposer = toolName === 'Task' || toolName === 'SubAgentRun' || toolName === 'Agent';
+
+    const baseParticipantTargets = React.useMemo(() => {
+        return deriveSessionParticipantTargets({
+            session: props.session,
+            messages: committedMessages,
+            activeExecutionRuns: runningExecutionRuns,
+        });
+    }, [committedMessages, props.session, runningExecutionRuns]);
+
+    const autoRecipient = React.useMemo(() => {
+        if (!canShowComposer) return null;
+        return deriveAutoRecipientFromFocusedToolTranscript({
+            session: props.session,
+            tool: focusedTool,
+            messages: committedMessages,
+            activeExecutionRuns: runningExecutionRuns,
+            focusedMessages: props.message.children,
+        });
+    }, [canShowComposer, committedMessages, focusedTool, props.message.children, props.session, runningExecutionRuns]);
+
+    const participantTargets = React.useMemo(() => {
+        return ensureAutoRecipientTarget(baseParticipantTargets, autoRecipient);
+    }, [autoRecipient, baseParticipantTargets]);
+
+    const recipientState = useSessionRecipientState({ targets: participantTargets, autoRecipient });
+
+    const extraActionChips: ReadonlyArray<AgentInputExtraActionChip> | undefined = React.useMemo(() => {
+        if (!canShowComposer) return undefined;
+        if (participantTargets.length === 0) return undefined;
+        return [
+            {
+                key: 'recipient',
+                render: (ctx) => (
+                    <RecipientChip
+                        targets={participantTargets}
+                        recipient={recipientState.recipient}
+                        onRecipientChange={recipientState.setManualRecipient}
+                        ctx={ctx}
+                    />
+                ),
+            },
+        ];
+    }, [canShowComposer, participantTargets, recipientState.recipient, recipientState.setManualRecipient]);
+
+    const shouldShowComposer = canShowComposer && autoRecipient !== null;
+
+    return (
+        <View style={{ flex: 1 }}>
             <ToolFullView
                 tool={props.message.tool}
                 messages={props.message.children}
                 sessionId={props.sessionId}
                 metadata={props.metadata}
                 interaction={props.interaction}
+                jumpChildId={props.jumpChildId}
             />
-        );
-    }
-    if (props.message.kind === 'agent-text') {
-        return (
-            <View style={styles.fullViewContainer}>
-                <Text style={styles.messageText}>{props.message.text}</Text>
-            </View>
-        )
-    }
-    if (props.message.kind === 'user-text') {
-        return (
-            <View style={styles.fullViewContainer}>
-                <Text style={styles.messageText}>{props.message.text}</Text>
-            </View>
-        )
-    }
-    return null;
+
+            {shouldShowComposer ? (
+                <AgentInput
+                    placeholder={props.interaction.canSendMessages ? t('session.inputPlaceholder') : t('session.sharing.viewOnlyMode')}
+                    value={composerText}
+                    onChangeText={setComposerText}
+                    sessionId={props.sessionId}
+                    onSend={() => {
+                        if (!props.interaction.canSendMessages) {
+                            Modal.alert(t('common.error'), t('session.sharing.noEditPermission'));
+                            return;
+                        }
+
+                        const text = composerText.trim();
+                        if (text.length === 0) return;
+
+                        const previousMessage = composerText;
+                        setComposerText('');
+
+                        fireAndForget((async () => {
+                            const routed =
+                                recipientState.recipient
+                                    ? resolveParticipantRoutedSend({ text, recipient: recipientState.recipient })
+                                    : null;
+
+                            if (routed?.type === 'execution_run_send') {
+                                const result = await sessionExecutionRunSend(props.sessionId, {
+                                    runId: routed.runId,
+                                    message: routed.message,
+                                    delivery: routed.delivery,
+                                });
+                                if (!result.ok) {
+                                    if (isExecutionRunNotRunningSendError(result)) {
+                                        recipientState.setManualRecipient(null);
+                                    }
+                                    setComposerText(previousMessage);
+                                    Modal.alert(t('common.error'), result.error ?? t('runs.send.failedToSend'));
+                                }
+                                return;
+                            }
+
+                            try {
+                                if (routed?.type === 'session_message') {
+                                    await sync.sendMessage(props.sessionId, routed.text, routed.displayText, routed.metaOverrides);
+                                    return;
+                                }
+                                await sync.sendMessage(props.sessionId, text);
+                            } catch (e) {
+                                setComposerText(previousMessage);
+                                Modal.alert(t('common.error'), e instanceof Error ? e.message : t('errors.failedToSendMessage'));
+                            }
+                        })(), { tag: 'FocusedMessageView.sendMessage' });
+                    }}
+                    autocompletePrefixes={['@', '/']}
+                    autocompleteSuggestions={(query) => getSuggestions(props.sessionId, query)}
+                    isSendDisabled={!props.interaction.canSendMessages}
+                    disabled={!props.interaction.canSendMessages}
+                    extraActionChips={extraActionChips}
+                />
+            ) : null}
+        </View>
+    );
 }

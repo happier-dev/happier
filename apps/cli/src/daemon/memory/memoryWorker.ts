@@ -21,6 +21,7 @@ import { fetchSessionsPage } from '@/sessionControl/sessionsHttp';
 import { syncMemoryHintsForSessionsOnce } from './syncMemoryHintsForSessionsOnce';
 import { runMemoryHintsExecutionRun } from './hints/runMemoryHintsExecutionRun';
 import { commitMemoryHintArtifacts } from './hints/commitMemoryHintArtifacts';
+import { updateMemorySynopsisPointerBestEffort } from './artifacts/updateMemorySynopsisPointerBestEffort';
 import { chunkTranscriptRows } from './deepIndex/chunkTranscriptRows';
 import { syncDeepIndexForSessionsOnce } from './deepIndex/syncDeepIndexForSessionsOnce';
 import { resolveEmbeddingsProvider } from './deepIndex/embeddings/resolveEmbeddingsProvider';
@@ -233,6 +234,14 @@ export function startMemoryWorker(params: Readonly<{
           shard: { sessionId, payload: shardPayload },
           synopsis: synopsisPayload ? { sessionId, payload: synopsisPayload } : null,
         });
+
+        if (synopsisPayload) {
+          await updateMemorySynopsisPointerBestEffort({
+            credentials: params.credentials,
+            sessionId,
+            synopsis: { seqTo: synopsisPayload.seqTo, updatedAtMs: synopsisPayload.updatedAtMs },
+          });
+        }
       },
     });
   };

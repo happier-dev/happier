@@ -21,7 +21,7 @@ see the “Using Happier from your phone” section in the main README.
 
 ## Shared dev-client app (install once)
 
-If you ran `hstack setup --profile=dev`, the setup wizard can optionally offer to install the dev-client for you.
+If you ran `hstack setup-from-source --profile=dev`, the setup wizard can optionally offer to install the dev-client for you.
 
 Install the dedicated hstack dev-client app on your iPhone (USB).
 
@@ -144,6 +144,8 @@ HAPPIER_STACK_SERVER_URL="https://<your-machine>.<tailnet>.ts.net" hstack mobile
 ```
 
 Note: changing `HAPPIER_STACK_SERVER_URL` requires rebuilding/reinstalling the app you care about.
+
+Tip: `HAPPIER_STACK_SERVER_URL` should be the canonical/share URL your phone can reach. For self-hosted deployments, the server-side equivalent is `HAPPIER_PUBLIC_SERVER_URL` (often the same value).
 
 Important:
 

@@ -5,6 +5,7 @@ import type { ToolViewProps } from '../core/_registry';
 import { ToolSectionView } from '../../shell/presentation/ToolSectionView';
 import { maybeParseJson } from '../../normalization/parse/parseJson';
 import { Text } from '@/components/ui/text/Text';
+import { t } from '@/text';
 
 
 function asRecord(value: unknown): Record<string, unknown> | null {
@@ -41,7 +42,7 @@ export const LSView = React.memo<ToolViewProps>(({ tool, detailLevel }) => {
                 ))}
                 {more > 0 ? (
                     <Text style={[styles.entry, { color: theme.colors.textSecondary }]}>
-                        +{more} more
+                        {t('tools.structuredResult.more', { count: more })}
                     </Text>
                 ) : null}
             </View>

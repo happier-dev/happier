@@ -2,6 +2,7 @@ import * as React from 'react';
 
 import { getAgentCore, type AgentId } from '@/agents/catalog/catalog';
 import { machineCapabilitiesInvoke } from '@/sync/ops/capabilities';
+import { tLoose, type TranslationKeyNoParams } from '@/text';
 import {
     getSessionModeOptionsForPreflightModeList,
     type PreflightSessionModeList,
@@ -51,6 +52,42 @@ export function useNewSessionPreflightSessionModesState(params: Readonly<{
     const supportsPreflightModeProbe = React.useMemo(() => {
         const core = getAgentCore(params.agentType);
         return core.sessionModes.kind === 'acpAgentModes';
+    }, [params.agentType]);
+
+    const staticModeOptions = React.useMemo((): readonly SessionModeOption[] => {
+        const core = getAgentCore(params.agentType);
+        if (core.sessionModes.kind !== 'staticAgentModes') return [];
+
+        const raw = core.sessionModes.staticOptions ?? [];
+        if (!Array.isArray(raw) || raw.length === 0) return [];
+
+        const mapped: SessionModeOption[] = raw
+            .filter((opt): opt is Readonly<{ id: string; nameKey: TranslationKeyNoParams; descriptionKey?: TranslationKeyNoParams }> =>
+                Boolean(opt && typeof opt.id === 'string' && typeof (opt as any).nameKey === 'string'))
+            .map((opt) => ({
+                id: opt.id,
+                name: tLoose(opt.nameKey),
+                ...(opt.descriptionKey ? { description: tLoose(opt.descriptionKey) } : {}),
+            }))
+            .filter((opt) => opt.id.trim().length > 0 && opt.name.trim().length > 0);
+
+        const seen = new Set<string>();
+        const deduped = mapped.filter((opt) => {
+            if (seen.has(opt.id)) return false;
+            seen.add(opt.id);
+            return true;
+        });
+
+        const hasDefault = deduped.some((opt) => opt.id === 'default');
+        return hasDefault
+            ? [
+                ...deduped.filter((opt) => opt.id === 'default'),
+                ...deduped.filter((opt) => opt.id !== 'default'),
+            ]
+            : [
+                { id: 'default', name: tLoose('common.default') },
+                ...deduped,
+            ];
     }, [params.agentType]);
 
     React.useEffect(() => {
@@ -150,6 +187,7 @@ export function useNewSessionPreflightSessionModesState(params: Readonly<{
     }, [preflightModesKey, params.agentType, params.selectedMachineId, params.capabilityServerId, params.cwd, refreshNonce, supportsPreflightModeProbe]);
 
     const modeOptions = React.useMemo(() => {
+        if (staticModeOptions.length > 0) return staticModeOptions;
         if (preflightModes && Array.isArray(preflightModes.availableModes) && preflightModes.availableModes.length > 0) {
             return getSessionModeOptionsForPreflightModeList(preflightModes);
         }
@@ -158,7 +196,7 @@ export function useNewSessionPreflightSessionModesState(params: Readonly<{
             return [{ id: 'default', name: 'Default' }];
         }
         return [];
-    }, [params.selectedMachineId, preflightModes, supportsPreflightModeProbe]);
+    }, [params.selectedMachineId, preflightModes, staticModeOptions, supportsPreflightModeProbe]);
 
     return {
         preflightModes,

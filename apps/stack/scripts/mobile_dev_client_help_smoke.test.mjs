@@ -20,5 +20,6 @@ test('mobile-dev-client --help runs without syntax errors', async () => {
   assert.equal(res.code, 0, `expected exit 0, got ${res.code}\nstderr:\n${res.stderr}\nstdout:\n${res.stdout}`);
   assert.match(res.stdout, /\bmobile-dev-client\b/, `expected help to mention command name\nstdout:\n${res.stdout}`);
   assert.match(res.stdout, /--port(?:=|\b)/, `expected help to mention --port\nstdout:\n${res.stdout}`);
+  assert.match(res.stdout, /--scheme(?:=|\b)/, `expected help to mention --scheme\nstdout:\n${res.stdout}`);
+  assert.match(res.stdout, /--bundle-id(?:=|\b)/, `expected help to mention --bundle-id\nstdout:\n${res.stdout}`);
 });
-

@@ -46,6 +46,49 @@ function resolveWebAppBaseUrlFromEnv(env: NodeJS.ProcessEnv): string {
     return (env.HAPPIER_WEBAPP_URL ?? env.HAPPY_WEBAPP_URL ?? "https://app.happier.dev").toString().trim() || "https://app.happier.dev";
 }
 
+function readSingleHeaderValue(headers: Record<string, unknown>, name: string): string {
+    const raw = (headers as any)[name] ?? (headers as any)[name.toLowerCase()] ?? (headers as any)[name.toUpperCase()];
+    if (Array.isArray(raw)) return typeof raw[0] === "string" ? raw[0] : "";
+    return typeof raw === "string" ? raw : "";
+}
+
+/**
+ * Best-effort override for the OAuth return URL based on the requesting web origin.
+ *
+ * This is intended for local dev / multi-stack scenarios where the server's configured
+ * `HAPPIER_WEBAPP_URL` may not match the origin the user started the flow from.
+ *
+ * Security: we only honor loopback origins (`localhost`, `*.localhost`, `127.0.0.1`, `::1`, etc).
+ */
+export function resolveWebAppOAuthReturnUrlFromRequestHeaders(params: {
+    env: NodeJS.ProcessEnv;
+    providerId: string;
+    headers: Record<string, unknown>;
+}): string | null {
+    const providerId = params.providerId.toString().trim().toLowerCase();
+    if (!providerId) return null;
+
+    const candidates: string[] = [];
+    const origin = readSingleHeaderValue(params.headers, "origin").trim();
+    if (origin) candidates.push(origin);
+    const referer = readSingleHeaderValue(params.headers, "referer").trim();
+    if (referer) candidates.push(referer);
+
+    for (const raw of candidates) {
+        try {
+            const url = new URL(raw);
+            if (!isLoopbackHostname(url.hostname)) continue;
+            if (url.protocol !== "http:" && url.protocol !== "https:") continue;
+            const returnUrl = `${url.origin}/oauth/${encodeURIComponent(providerId)}`;
+            const normalized = tryNormalizeSafeWebRedirectUrl(params.env, returnUrl);
+            if (normalized) return normalized;
+        } catch {
+            continue;
+        }
+    }
+    return null;
+}
+
 export function resolveWebAppOAuthReturnUrlFromEnv(env: NodeJS.ProcessEnv, providerId: string): string {
     const normalizedProvider = providerId.toString().trim().toLowerCase();
     const encodedProvider = encodeURIComponent(normalizedProvider);

@@ -27,7 +27,8 @@ export async function executeScmCommit(input: {
     setScmOperationStatus: (status: string | null) => void;
     tracking: ScmOperationTracker | null;
     shouldContinue?: () => boolean;
-}): Promise<void> {
+}): Promise<{ ok: boolean }> {
+    let didSucceed = false;
     const lockResult = await withSessionProjectScmOperationLock({
         state: storage.getState(),
         sessionId: input.sessionId,
@@ -114,6 +115,7 @@ export async function executeScmCommit(input: {
                     surface: 'files',
                     tracking: input.tracking,
                 });
+                didSucceed = true;
             } catch (error) {
                 const fallbackMessage = getScmUserFacingError({
                     error: error instanceof Error ? error.message : String(error ?? ''),
@@ -156,5 +158,8 @@ export async function executeScmCommit(input: {
             tracking: input.tracking,
         });
         Modal.alert(t('common.error'), lockResult.message);
+        return { ok: false };
     }
+
+    return { ok: didSucceed };
 }

@@ -72,6 +72,15 @@ If auto-provisioning is disabled:
 
 - unknown certificates are rejected (operators can pre-provision accounts / identities via an admin process).
 
+## Keyless-only behavior (important)
+
+mTLS is a **keyless** login method in Happier today:
+
+- When mTLS provisions new accounts, it creates **keyless/plain** accounts (no device keys).
+- If an mTLS identity maps to an account that is currently **E2EE**, the server will refuse to mint a token and will require a **restore / key-challenge** flow instead.
+
+This preserves the core invariant: **E2EE accounts require possession of the secret key** to log in.
+
 ## Encryption opt-out (recommended pairing for enterprise)
 
 If your enterprise wants:
@@ -174,7 +183,6 @@ Note: Direct mode is not implemented yet in the open-source server; use forwarde
 Also confirm that plaintext storage is allowed if you want keyless auto-provisioning:
 
 - `HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY=optional|plaintext_only`
-- `HAPPIER_FEATURE_ENCRYPTION__DEFAULT_ACCOUNT_MODE=plain`
 
 ### “Users get multiple accounts across devices”
 

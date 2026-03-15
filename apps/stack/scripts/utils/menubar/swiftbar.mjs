@@ -75,7 +75,7 @@ export async function detectSwiftbarPluginInstalled({ pluginsDir, patterns = nul
   const dir = pluginsDir ?? (await resolveSwiftbarPluginsDir({ env }));
   if (!dir) return { pluginsDir: null, installed: false };
 
-  const pats = Array.isArray(patterns) && patterns.length ? patterns : ['hstack.*.sh'];
+  const pats = Array.isArray(patterns) && patterns.length ? patterns : ['hstack.*.sh', 'hstack-*.sh'];
   const regs = pats.map(globToRegExp).filter(Boolean);
   if (regs.length === 0) return { pluginsDir: dir, installed: false };
 
@@ -97,7 +97,7 @@ export async function removeSwiftbarPlugins({ pluginsDir, patterns = null, env =
   const dir = pluginsDir ?? (await resolveSwiftbarPluginsDir({ env }));
   if (!dir) return { ok: true, removed: false, pluginsDir: null };
 
-  const pats = Array.isArray(patterns) && patterns.length ? patterns : ['hstack.*.sh'];
+  const pats = Array.isArray(patterns) && patterns.length ? patterns : ['hstack.*.sh', 'hstack-*.sh'];
   const regs = pats.map(globToRegExp).filter(Boolean);
   if (regs.length === 0) return { ok: true, removed: false, pluginsDir: dir };
 

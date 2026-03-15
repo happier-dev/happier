@@ -29,6 +29,7 @@ import { getInvokedCwd, inferComponentFromCwd } from './utils/cli/cwd_scope.mjs'
 import { daemonStartGate, formatDaemonAuthRequiredError } from './utils/auth/daemon_gate.mjs';
 import { applyBindModeToEnv, resolveBindModeFromArgs } from './utils/net/bind_mode.mjs';
 import { cmd, sectionTitle } from './utils/ui/layout.mjs';
+import { renderTerminalUsageInstructions } from './utils/stack/terminal_usage_instructions.mjs';
 import { cyan, dim, green } from './utils/ui/ansi.mjs';
 import { isSandboxed } from './utils/env/sandbox.mjs';
 import { installExitCleanup } from './utils/proc/exit_cleanup.mjs';
@@ -86,6 +87,7 @@ async function main() {
         '',
         'env:',
         '  HAPPIER_STACK_EXPO_TAILSCALE=1   # enable Expo Tailscale forwarding via env var',
+        '  HAPPIER_STACK_EXPO_MAX_OLD_SPACE_SIZE_MB=8192  # default: 8192 (8GB) heap for the Expo/Metro Node process',
       ].join('\n'),
     });
     return;
@@ -302,12 +304,7 @@ async function main() {
   } else {
     console.log(`${green('✓')} server: already running at ${cyan(internalServerUrl)}`);
   }
-  console.log('');
-  console.log(sectionTitle('Terminal usage'));
-  console.log(dim(`To run ${cyan('happier')} against this stack (and have sessions appear in the UI), export:`));
-  console.log(cmd(`export HAPPIER_SERVER_URL="${internalServerUrl}"`));
-  console.log(cmd(`export HAPPIER_HOME_DIR="${cliHomeDir}"`));
-  console.log(cmd(`export HAPPIER_WEBAPP_URL="${publicServerUrl}"`));
+  console.log(renderTerminalUsageInstructions({ internalServerUrl, cliHomeDir, publicServerUrl }).join('\n'));
 
   // Reliability before daemon start:
   // - Ensure schema exists (server-light: prisma migrate deploy; happier-server: migrate deploy if tables missing)

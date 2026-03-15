@@ -4,6 +4,8 @@ import { describe, expect, it, vi } from 'vitest';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
+let capturedRootFlatListProps: any | null = null;
+
 let pinnedSessionKeysV1: string[] = [];
 const setPinnedSessionKeysV1 = vi.fn();
 
@@ -52,7 +54,8 @@ vi.mock('react-native', async () => {
         ...stub,
         Platform: { ...stub.Platform, OS: 'web' },
         TurboModuleRegistry: { ...stub.TurboModuleRegistry, get: () => ({}) },
-        FlatList: ({ data, renderItem, keyExtractor, ListHeaderComponent }: any) => {
+        FlatList: ({ data, renderItem, keyExtractor, ListHeaderComponent, ...rest }: any) => {
+            capturedRootFlatListProps = rest;
             return React.createElement(
                 'FlatList',
                 null,
@@ -185,6 +188,8 @@ vi.mock('@/sync/domains/state/storage', () => ({
         return null;
     },
     useHasUnreadMessages: () => false,
+    useSession: () => null,
+    useProfile: () => null,
     useSettingMutable: (key: string) => {
         if (key === 'pinnedSessionKeysV1') return [pinnedSessionKeysV1, setPinnedSessionKeysV1];
         if (key === 'sessionListGroupOrderV1') return [sessionListGroupOrderV1, setSessionListGroupOrderV1];
@@ -220,6 +225,41 @@ vi.mock('./SessionGroupDragList', () => ({
 }));
 
 describe('SessionsList pinning + per-group ordering', () => {
+    const enterReorderMode = async (tree: renderer.ReactTestRenderer, SessionsList: React.ComponentType) => {
+        const handle = (tree as any).root.findAllByProps({ testID: 'session-item-reorder-handle' })[0];
+        await act(async () => {
+            handle.props.onPress();
+        });
+        await act(async () => {
+            tree.update(<SessionsList />);
+        });
+    };
+
+    it('stops wheel event propagation on web so session list scrolling is not blocked by document scroll-lock listeners', async () => {
+        pinnedSessionKeysV1 = [];
+        sessionListGroupOrderV1 = {};
+        sessionTagsV1 = {};
+        setPinnedSessionKeysV1.mockClear();
+        setSessionListGroupOrderV1.mockClear();
+        setSessionTagsV1.mockClear();
+        capturedRootFlatListProps = null;
+
+        const { SessionsList } = await import('./SessionsList');
+
+        let tree: renderer.ReactTestRenderer | null = null;
+        await act(async () => {
+            tree = renderer.create(<SessionsList />);
+        });
+
+        expect(tree).toBeTruthy();
+        expect(capturedRootFlatListProps).toBeTruthy();
+        expect(typeof capturedRootFlatListProps?.onWheel).toBe('function');
+
+        const stopPropagation = vi.fn();
+        capturedRootFlatListProps?.onWheel?.({ stopPropagation });
+        expect(stopPropagation).toHaveBeenCalledTimes(1);
+    });
+
     it('passes session tags from settings into group row models when enabled', async () => {
         pinnedSessionKeysV1 = [];
         sessionListGroupOrderV1 = {};
@@ -235,6 +275,7 @@ describe('SessionsList pinning + per-group ordering', () => {
             tree = renderer.create(<SessionsList />);
         });
 
+        await enterReorderMode(tree as any, SessionsList);
         const group = (tree as any).root.findByType('SessionGroupDragList');
         const row = group.props.rows.find((r: any) => r.key === 'server_a:sess_a');
         expect(row.tags).toEqual(['important']);
@@ -257,6 +298,7 @@ describe('SessionsList pinning + per-group ordering', () => {
             tree = renderer.create(<SessionsList />);
         });
 
+        await enterReorderMode(tree as any, SessionsList);
         const group = (tree as any).root.findByType('SessionGroupDragList');
         const row = group.props.rows.find((r: any) => r.key === 'server_a:sess_a');
 
@@ -282,6 +324,7 @@ describe('SessionsList pinning + per-group ordering', () => {
             tree = renderer.create(<SessionsList />);
         });
 
+        await enterReorderMode(tree as any, SessionsList);
         const group = (tree as any).root.findByType('SessionGroupDragList');
         const pinnedRow = group.props.rows.find((r: any) => r.key === 'server_a:sess_a');
         expect(pinnedRow.pinned).toBe(true);
@@ -308,6 +351,7 @@ describe('SessionsList pinning + per-group ordering', () => {
             tree = renderer.create(<SessionsList />);
         });
 
+        await enterReorderMode(tree as any, SessionsList);
         const group = (tree as any).root.findByType('SessionGroupDragList');
         const row = group.props.rows.find((r: any) => r.key === 'server_a:sess_a');
         expect(typeof row.onTogglePinned).toBe('function');
@@ -332,6 +376,7 @@ describe('SessionsList pinning + per-group ordering', () => {
             tree = renderer.create(<SessionsList />);
         });
 
+        await enterReorderMode(tree as any, SessionsList);
         await act(async () => {
             const group = (tree as any).root.findByType('SessionGroupDragList');
             group.props.onReorderKeys(['server_a:sess_b', 'server_a:sess_a']);
@@ -391,6 +436,7 @@ describe('SessionsList pinning + per-group ordering', () => {
         const textChildren = textNodes.map((n: any) => n.props.children);
         expect(textChildren).toContain('~/repoA');
 
+        await enterReorderMode(tree as any, SessionsList);
         const group = (tree as any).root.findByType('SessionGroupDragList');
         const row1 = group.props.rows.find((r: any) => r.key === 'server_a:sess_p1');
         expect(row1.variant).toBe('no-path');

@@ -30,6 +30,9 @@ const REGISTRY: Record<string, ExecutionRunBackendDescriptor> = {
   copilot: { factory: copilot },
 };
 
+// Aliases: UI/agents may reference provider IDs that are distinct from the execution-run backend ID.
+REGISTRY['claude-code'] = REGISTRY.claude;
+
 for (const engineId of listNativeReviewEngineIds()) {
   const factory = resolveNativeReviewExecutionRunBackendFactory(engineId);
   if (factory) {

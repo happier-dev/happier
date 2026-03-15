@@ -5,10 +5,9 @@ export function materializeClaudeConnectedServiceAuth(params: Readonly<{
 }>): Readonly<{ env: Record<string, string> }> {
   const env: Record<string, string> = {};
   if (params.record.kind === 'oauth') {
-    env.CLAUDE_CODE_OAUTH_TOKEN = params.record.oauth.accessToken;
-  } else {
-    env.CLAUDE_CODE_SETUP_TOKEN = params.record.token.token;
+    throw new Error('Anthropic OAuth credentials are not supported. Reconnect using an Anthropic API key.');
   }
+  env.ANTHROPIC_API_KEY = params.record.token.token;
   return {
     env,
   };

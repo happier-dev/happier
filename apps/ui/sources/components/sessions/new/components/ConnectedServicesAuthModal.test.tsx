@@ -3,7 +3,9 @@ import { describe, expect, it, vi } from 'vitest';
 import renderer, { act } from 'react-test-renderer';
 
 import { ConnectedServiceQuotaSnapshotV1Schema, sealAccountScopedBlobCiphertext } from '@happier-dev/protocol';
+import type { fetchAccountEncryptionMode } from '@/sync/api/account/apiAccountEncryptionMode';
 import type { getConnectedServiceQuotaSnapshotSealed } from '@/sync/api/account/apiConnectedServicesQuotasV2';
+import type { getConnectedServiceQuotaSnapshotPlain } from '@/sync/api/account/apiConnectedServicesQuotasV3';
 
 import { ConnectedServicesAuthModal } from './ConnectedServicesAuthModal';
 
@@ -24,7 +26,17 @@ const useSettingsSpy = vi.fn(() => ({
 
 const useFeatureEnabledSpy = vi.fn((_featureId: string) => true);
 
-const { getConnectedServiceQuotaSnapshotSealedSpy } = vi.hoisted(() => ({
+const {
+  fetchAccountEncryptionModeSpy,
+  getConnectedServiceQuotaSnapshotPlainSpy,
+  getConnectedServiceQuotaSnapshotSealedSpy,
+} = vi.hoisted(() => ({
+  fetchAccountEncryptionModeSpy: vi.fn<
+    (...args: Parameters<typeof fetchAccountEncryptionMode>) => ReturnType<typeof fetchAccountEncryptionMode>
+  >(async () => ({ mode: 'e2ee' as const, updatedAt: 0 })),
+  getConnectedServiceQuotaSnapshotPlainSpy: vi.fn<
+    (...args: Parameters<typeof getConnectedServiceQuotaSnapshotPlain>) => ReturnType<typeof getConnectedServiceQuotaSnapshotPlain>
+  >(async () => null),
   getConnectedServiceQuotaSnapshotSealedSpy: vi.fn<
     (...args: Parameters<typeof getConnectedServiceQuotaSnapshotSealed>) => ReturnType<typeof getConnectedServiceQuotaSnapshotSealed>
   >(async () => null),
@@ -32,6 +44,10 @@ const { getConnectedServiceQuotaSnapshotSealedSpy } = vi.hoisted(() => ({
 
 vi.mock('@/auth/context/AuthContext', () => ({
   useAuth: () => ({ credentials: stableCredentials }),
+}));
+
+vi.mock('@/sync/api/account/apiAccountEncryptionMode', () => ({
+  fetchAccountEncryptionMode: fetchAccountEncryptionModeSpy,
 }));
 
 vi.mock('@/hooks/server/useFeatureEnabled', () => ({
@@ -46,6 +62,16 @@ vi.mock('@/sync/store/hooks', () => ({
 vi.mock('@/sync/api/account/apiConnectedServicesQuotasV2', () => ({
   getConnectedServiceQuotaSnapshotSealed: getConnectedServiceQuotaSnapshotSealedSpy,
 }));
+
+vi.mock('@/sync/api/account/apiConnectedServicesQuotasV3', () => ({
+  getConnectedServiceQuotaSnapshotPlain: getConnectedServiceQuotaSnapshotPlainSpy,
+}));
+
+async function flushAsyncEffects(turns: number = 3) {
+  for (let index = 0; index < turns; index += 1) {
+    await Promise.resolve();
+  }
+}
 
 describe('ConnectedServicesAuthModal', () => {
   it('renders connected profiles immediately when switching a service to connected mode', () => {
@@ -174,7 +200,7 @@ describe('ConnectedServicesAuthModal', () => {
     });
 
     await act(async () => {
-      await Promise.resolve();
+      await flushAsyncEffects();
     });
 
     expect(tree.root.findAll((n) => n.props?.children === 'Weekly 18%')).not.toHaveLength(0);

@@ -3,10 +3,19 @@ import { describe, expect, it, vi } from 'vitest';
 import { MessageQueue2 } from '@/agent/runtime/modeMessageQueue';
 import { MessageBuffer } from '@/ui/ink/messageBuffer';
 import { runPermissionModePromptLoop } from './runPermissionModePromptLoop';
+import { combinePermissionModeQueuedPrompts, type PermissionModeQueuedPrompt } from '@/agent/runtime/permission/permissionModeQueuedPrompt';
 
 function createTestSession() {
+  let metadata: any = null;
   return {
-    getMetadataSnapshot: vi.fn(() => null),
+    getMetadataSnapshot: vi.fn(() => metadata),
+    updateMetadata: vi.fn(async (updater: (current: any) => any) => {
+      metadata = updater(metadata);
+    }),
+    __setMetadata: (next: any) => {
+      metadata = next;
+    },
+    __getMetadata: () => metadata,
     fetchLatestUserPermissionIntentFromTranscript: vi.fn(async () => null),
     popPendingMessage: vi.fn(async () => false),
     waitForMetadataUpdate: vi.fn(async () => false),
@@ -15,7 +24,12 @@ function createTestSession() {
 }
 
 function createModeQueue() {
-  return new MessageQueue2<{ permissionMode: any }>((mode) => mode.permissionMode);
+  return new MessageQueue2<{ permissionMode: any }, PermissionModeQueuedPrompt>(
+    (mode) => mode.permissionMode,
+    {
+      batcher: (messages) => combinePermissionModeQueuedPrompts(messages),
+    },
+  );
 }
 
 function createRuntime() {
@@ -23,6 +37,7 @@ function createRuntime() {
     beginTurn: vi.fn(),
     startOrLoad: vi.fn(async () => {}),
     sendPrompt: vi.fn(async () => {}),
+    sendPromptWithMeta: undefined as any,
     flushTurn: vi.fn(),
     reset: vi.fn(async () => {}),
     getSessionId: vi.fn(() => 'resume-from-runtime'),
@@ -30,6 +45,69 @@ function createRuntime() {
 }
 
 describe('runPermissionModePromptLoop', () => {
+  it('applies replay seed exactly once to the first real user prompt', async () => {
+    const session = createTestSession();
+    session.__setMetadata({
+      permissionMode: 'default',
+      permissionModeUpdatedAt: 0,
+      replaySeedV1: {
+        v: 1,
+        seedText: 'SEED',
+        sourceSessionId: 'parent',
+        sourceCutoffSeqInclusive: 3,
+        createdAtMs: 123,
+      },
+    });
+    const queue = createModeQueue();
+    const runtime = createRuntime();
+    const messageBuffer = new MessageBuffer();
+    const permissionHandler = {
+      setPermissionMode: vi.fn(),
+      reset: vi.fn(),
+    } as any;
+
+    queue.push({ text: 'hello', localId: 'local-1' }, { permissionMode: 'default' });
+
+    let shouldExit = false;
+    let readyCount = 0;
+    const readySpy = vi.fn(() => {
+      readyCount += 1;
+      if (readyCount === 1) {
+        queue.push({ text: 'second', localId: 'local-2' }, { permissionMode: 'default' });
+        return;
+      }
+      shouldExit = true;
+    });
+
+    await runPermissionModePromptLoop({
+      providerName: 'Test Provider',
+      agentMessageType: 'qwen',
+      explicitPermissionMode: undefined,
+      session,
+      messageQueue: queue,
+      permissionHandler,
+      runtime,
+      createOverrideSynchronizer: () => ({ syncFromMetadata: () => {}, flushPendingAfterStart: async () => {} }),
+      messageBuffer,
+      shouldExit: () => shouldExit,
+      getAbortSignal: () => new AbortController().signal,
+      keepAlive: () => {},
+      setThinking: () => {},
+      sendReady: readySpy,
+      currentPermissionModeUpdatedAt: 0,
+      setCurrentPermissionMode: () => {},
+      setCurrentPermissionModeUpdatedAt: () => {},
+      formatPromptErrorMessage: (error) => `Error: ${String(error)}`,
+    });
+
+    expect(runtime.sendPrompt).toHaveBeenNthCalledWith(1, 'SEED\n\nhello');
+    expect(runtime.sendPrompt).toHaveBeenNthCalledWith(2, 'second');
+
+    const finalMetadata = session.__getMetadata();
+    expect(finalMetadata.replaySeedV1.appliedToLocalId).toBe('local-1');
+    expect(finalMetadata.replaySeedV1.seedText).toBe('');
+  });
+
   it('starts runtime, sends prompt, and emits ready', async () => {
     const session = createTestSession();
     const queue = createModeQueue();
@@ -40,7 +118,7 @@ describe('runPermissionModePromptLoop', () => {
       reset: vi.fn(),
     } as any;
 
-    queue.push('hello', { permissionMode: 'default' });
+    queue.push({ text: 'hello', localId: 'local-1' }, { permissionMode: 'default' });
 
     let shouldExit = false;
     const readySpy = vi.fn(() => {
@@ -78,8 +156,62 @@ describe('runPermissionModePromptLoop', () => {
     expect(permissionHandler.setPermissionMode).toHaveBeenCalled();
   });
 
+  it('uses sendPromptWithMeta when provided by the runtime', async () => {
+    const session = createTestSession();
+    const queue = createModeQueue();
+    const runtime = createRuntime() as any;
+    runtime.sendPromptWithMeta = vi.fn(async () => {});
+    const messageBuffer = new MessageBuffer();
+    const permissionHandler = {
+      setPermissionMode: vi.fn(),
+      reset: vi.fn(),
+    } as any;
+
+    queue.push({ text: 'hello', localId: 'local-1' }, { permissionMode: 'default' });
+
+    let shouldExit = false;
+    const readySpy = vi.fn(() => {
+      shouldExit = true;
+    });
+
+    await runPermissionModePromptLoop({
+      providerName: 'Test Provider',
+      agentMessageType: 'qwen',
+      explicitPermissionMode: undefined,
+      session,
+      messageQueue: queue,
+      permissionHandler,
+      runtime,
+      createOverrideSynchronizer: () => ({ syncFromMetadata: () => {}, flushPendingAfterStart: async () => {} }),
+      messageBuffer,
+      shouldExit: () => shouldExit,
+      getAbortSignal: () => new AbortController().signal,
+      keepAlive: () => {},
+      setThinking: () => {},
+      sendReady: readySpy,
+      currentPermissionModeUpdatedAt: 0,
+      setCurrentPermissionMode: () => {},
+      setCurrentPermissionModeUpdatedAt: () => {},
+      formatPromptErrorMessage: (error) => `Error: ${String(error)}`,
+    });
+
+    expect(runtime.sendPromptWithMeta).toHaveBeenCalledWith({ text: 'hello', localId: 'local-1' });
+    expect(runtime.sendPrompt).not.toHaveBeenCalled();
+  });
+
   it('handles /clear by resetting runtime and skipping prompt send', async () => {
     const session = createTestSession();
+    session.__setMetadata({
+      permissionMode: 'default',
+      permissionModeUpdatedAt: 0,
+      replaySeedV1: {
+        v: 1,
+        seedText: 'SEED',
+        sourceSessionId: 'parent',
+        sourceCutoffSeqInclusive: 3,
+        createdAtMs: 123,
+      },
+    });
     const queue = createModeQueue();
     const runtime = createRuntime();
     const messageBuffer = new MessageBuffer();
@@ -88,7 +220,7 @@ describe('runPermissionModePromptLoop', () => {
       reset: vi.fn(),
     } as any;
 
-    queue.push('/clear', { permissionMode: 'default' });
+    queue.push({ text: '/clear', localId: 'local-2' }, { permissionMode: 'default' });
 
     let shouldExit = false;
     const readySpy = vi.fn(() => {
@@ -122,6 +254,7 @@ describe('runPermissionModePromptLoop', () => {
     expect(permissionHandler.reset).toHaveBeenCalledTimes(1);
     expect(readySpy).toHaveBeenCalledTimes(1);
     expect(messageBuffer.getMessages().some((m) => m.content === 'Session reset.')).toBe(true);
+    expect(session.updateMetadata).not.toHaveBeenCalled();
   });
 
   it('restarts when mode hash changes and replays the pending message', async () => {
@@ -134,8 +267,8 @@ describe('runPermissionModePromptLoop', () => {
       reset: vi.fn(),
     } as any;
 
-    queue.push('first', { permissionMode: 'default' });
-    queue.push('second', { permissionMode: 'read-only' });
+    queue.push({ text: 'first', localId: 'local-3' }, { permissionMode: 'default' });
+    queue.push({ text: 'second', localId: 'local-4' }, { permissionMode: 'read-only' });
 
     let readyCount = 0;
     const readySpy = vi.fn(() => {
@@ -196,7 +329,7 @@ describe('runPermissionModePromptLoop', () => {
       reset: vi.fn(),
     } as any;
 
-    queue.push('hello', { permissionMode: 'default' });
+    queue.push({ text: 'hello', localId: 'local-5' }, { permissionMode: 'default' });
 
     let shouldExit = false;
     await runPermissionModePromptLoop({

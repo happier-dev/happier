@@ -105,6 +105,49 @@ describe('SessionEncryption.decryptMessages (cache behavior)', () => {
     expect(result[0]!.content).toBeNull()
   })
 
+  it('accepts unknown agent output data.type in plaintext messages (forward compatible)', async () => {
+    const cache = new EncryptionCache()
+    const sessionId = 's_plain_unknown_output'
+
+    const encryptor = {
+      encrypt: async () => {
+        throw new Error('encrypt should not be called')
+      },
+      decrypt: async () => {
+        throw new Error('decrypt should not be called')
+      },
+    }
+
+    const sessionEnc = new SessionEncryption(sessionId, encryptor as any, cache)
+
+    const msg = {
+      id: 'm_plain_unknown_output_1',
+      seq: 1,
+      localId: null,
+      createdAt: 1,
+      updatedAt: 1,
+      content: {
+        t: 'plain' as const,
+        v: {
+          role: 'agent',
+          content: {
+            type: 'output',
+            data: {
+              type: 'rate_limit_event',
+              rate_limit_info: { status: 'allowed' },
+              uuid: 'u1',
+            },
+          },
+          meta: { source: 'cli' },
+        },
+      },
+    }
+
+    const result = await sessionEnc.decryptMessages([msg as any])
+    expect(result[0]).toBeTruthy()
+    expect(result[0]!.content).toEqual(msg.content.v)
+  })
+
   it('retries decrypting encrypted messages when a prior attempt failed (does not permanently cache null)', async () => {
     const cache = new EncryptionCache();
     const sessionId = 's1';

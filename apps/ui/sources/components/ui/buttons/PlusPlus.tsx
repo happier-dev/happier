@@ -5,6 +5,8 @@ import MaskedView from '@react-native-masked-view/masked-view';
 import { Typography } from '@/constants/Typography';
 import { Text } from '@/components/ui/text/Text';
 
+const PLUS_PLUS = '++';
+
 
 interface PlusPlusProps {
     fontSize: number;
@@ -21,7 +23,7 @@ export const PlusPlus: React.FC<PlusPlusProps> = ({ fontSize, style }) => {
                     ...Typography.logo(),
                     fontWeight: 'bold'
                 }}>
-                    ++
+                    {PLUS_PLUS}
                 </Text>
             }
         >

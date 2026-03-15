@@ -111,6 +111,15 @@ async function main() {
         targetPath: join('prisma', 'sqlite', 'migrations'),
       });
     }
+    const postgresPrismaClientPath = join(repoRoot, 'node_modules', '.prisma', 'client');
+    const postgresPrismaClientInfo = await stat(postgresPrismaClientPath).catch(() => null);
+    if (!postgresPrismaClientInfo?.isDirectory()) {
+      throw new Error(`[release] missing generated postgres Prisma client directory: ${postgresPrismaClientPath}`);
+    }
+    entries.push({
+      sourcePath: postgresPrismaClientPath,
+      targetPath: join('node_modules', '.prisma', 'client'),
+    });
     return entries;
   };
   const additionalStageEntries = await parseGeneratedProviderDirs();

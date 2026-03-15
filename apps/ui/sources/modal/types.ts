@@ -70,6 +70,7 @@ export interface ModalContextValue {
 
 export interface IModal {
     alert(title: string, message?: string, buttons?: AlertButton[]): void;
+    alertAsync(title: string, message?: string, buttons?: AlertButton[]): Promise<void>;
     confirm(title: string, message?: string, options?: {
         cancelText?: string;
         confirmText?: string;

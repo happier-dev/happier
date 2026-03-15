@@ -85,9 +85,9 @@ describe('useFileScmStageActions (daemon unavailable)', () => {
       diffMode: 'pending',
       diffContent: 'diff',
       lineSelectionEnabled: true,
-      selectedLineIndexes: new Set([1]),
+      selectedLineKeys: new Set(['additions:1']),
       refreshAll: vi.fn(async () => {}),
-      setSelectedLineIndexes: vi.fn(),
+      setSelectedLineKeys: vi.fn(),
     };
 
     let current: ReturnType<typeof useFileScmStageActions> | null = null;

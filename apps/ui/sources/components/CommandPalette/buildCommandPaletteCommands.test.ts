@@ -200,4 +200,28 @@ describe('buildCommandPaletteCommands', () => {
 
     expect(cmds.some((c) => c.id === 'memory-search')).toBe(false);
   });
+
+  it('navigates to the terminal QR scanner from the connect terminal command', async () => {
+    const pushes: string[] = [];
+    mockedState = { createSessionActionDraft: createSessionActionDraftSpy, settings: {} };
+
+    const cmds = buildCommandPaletteCommands({
+      sessionsById: {},
+      isDev: false,
+      activeSessionId: null,
+      features: { executionRunsEnabled: false, voiceEnabled: false, memorySearchEnabled: false },
+      nav: {
+        push: (path) => pushes.push(path),
+        navigateToSession: () => {},
+      },
+      auth: { logout: async () => {} },
+      actions: { execute: async () => ({ ok: true, result: {} }) },
+      alert: async () => {},
+    });
+
+    const cmd = cmds.find((c) => c.id === 'connect');
+    expect(cmd).toBeTruthy();
+    await cmd!.action();
+    expect(pushes).toEqual(['/scan/terminal']);
+  });
 });

@@ -9,9 +9,9 @@ function xmlEscape(s: string): string {
     .replaceAll("'", '&apos;');
 }
 
-const MACOS_DEFAULT_PATH = '/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin';
+const MACOS_DEFAULT_PATH = '/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/usr/local/sbin:/usr/bin:/bin:/usr/sbin:/sbin';
 
-export function buildLaunchdPath(params: Readonly<{ execPath?: string; basePath?: string }> = {}): string {
+export function buildLaunchdPath(params: Readonly<{ execPath?: string; basePath?: string; homeDir?: string }> = {}): string {
   return buildServicePath({ ...params, defaultPath: MACOS_DEFAULT_PATH });
 }
 

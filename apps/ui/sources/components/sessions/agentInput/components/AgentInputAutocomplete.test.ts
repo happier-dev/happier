@@ -7,12 +7,20 @@ import { AgentInputAutocomplete } from './AgentInputAutocomplete';
 
 vi.mock('react-native', () => ({
     Pressable: 'Pressable',
+    Platform: { OS: 'web' },
+    View: 'View',
 }));
 
 vi.mock('react-native-unistyles', () => ({
     useUnistyles: () => ({
         theme: { colors: { surfacePressed: '#eee', surfaceSelected: '#ddd' } },
     }),
+    StyleSheet: {
+        create: (styles: any) =>
+            typeof styles === 'function'
+                ? styles({ colors: { modal: { border: '#ccc' }, shadow: { color: '#000', opacity: 0.2 }, surface: '#fff' } })
+                : styles,
+    },
 }));
 
 vi.mock('@/components/ui/overlays/FloatingOverlay', () => ({

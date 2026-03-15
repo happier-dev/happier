@@ -5,7 +5,7 @@ import { logPublicShareAccess, getIpAddress, getUserAgent } from "@/app/share/ac
 import { PROFILE_SELECT, toShareUserProfile } from "@/app/share/types";
 import { createHash } from "crypto";
 import { auth } from "@/app/auth/auth";
-import { gateRateLimitConfig } from "@/app/api/utils/apiRateLimitPolicy";
+import { resolveApiHotEndpointRateLimit } from "@/app/api/utils/apiRateLimitCatalog";
 
 async function getOptionalAuthenticatedUserId(request: any): Promise<string | null> {
     const authHeader = request?.headers?.authorization;
@@ -30,10 +30,7 @@ export function registerPublicShareReadRoutes(app: Fastify): void {
      */
     app.get('/v1/public-share/:token', {
         config: {
-            rateLimit: gateRateLimitConfig(process.env, {
-                max: 10,
-                timeWindow: '1 minute'
-            })
+            rateLimit: resolveApiHotEndpointRateLimit(process.env, "share.public.read"),
         },
         schema: {
             params: z.object({
@@ -208,10 +205,7 @@ export function registerPublicShareReadRoutes(app: Fastify): void {
      */
     app.get('/v1/public-share/:token/messages', {
         config: {
-            rateLimit: gateRateLimitConfig(process.env, {
-                max: 20,
-                timeWindow: '1 minute'
-            })
+            rateLimit: resolveApiHotEndpointRateLimit(process.env, "share.public.messages"),
         },
         schema: {
             params: z.object({

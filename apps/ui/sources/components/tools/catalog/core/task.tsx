@@ -7,15 +7,14 @@ import { TaskInputV2Schema } from '@happier-dev/protocol';
 
 export const coreTaskTools = {
     'Task': {
-        title: (opts: { metadata: Metadata | null, tool: ToolCall }) => {
-            // Check for description field at runtime
-            if (opts.tool.input && opts.tool.input.description && typeof opts.tool.input.description === 'string') {
-                return opts.tool.input.description;
-            }
-            return t('tools.names.task');
-        },
+        title: () => t('tools.names.subAgent'),
         icon: ICON_TASK,
         isMutable: true,
+        extractSubtitle: (opts: { metadata: Metadata | null, tool: ToolCall }) => {
+            const raw = (opts.tool.input as any)?.description;
+            const description = typeof raw === 'string' ? raw.trim() : '';
+            return description.length > 0 ? description : null;
+        },
         minimal: (opts: { metadata: Metadata | null, tool: ToolCall, messages?: Message[] }) => {
             // Check if there would be any filtered tasks
             const messages = opts.messages || [];

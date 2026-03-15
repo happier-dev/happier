@@ -1,4 +1,4 @@
-import { View, Pressable, Platform, Linking, ActivityIndicator } from 'react-native';
+import { View, Pressable, Platform, Linking, ActivityIndicator, useWindowDimensions } from 'react-native';
 import { Image } from 'expo-image';
 import * as React from 'react';
 import { Text, Text as RNText } from '@/components/ui/text/Text';
@@ -24,6 +24,7 @@ import { disconnectVendorToken } from '@/sync/api/account/apiVendorTokens';
 import { getDisplayName, getAvatarUrl, getBio } from '@/sync/domains/profiles/profile';
 import { Avatar } from '@/components/ui/avatar/Avatar';
 import { t } from '@/text';
+import { canRequestReview, requestReview } from '@/utils/system/requestReview';
 import { DEFAULT_AGENT_ID, getAgentCore, getAgentIconSource, getAgentIconTintColor, resolveAgentIdFromConnectedServiceId } from '@/agents/catalog/catalog';
 import { resolveSupportUsAction } from '@/components/settings/supportUsBehavior';
 import { recordBugReportUserAction } from '@/utils/system/bugReportActionTrail';
@@ -35,12 +36,16 @@ import { getFeatureBuildPolicyDecision } from '@/sync/domains/features/featureBu
 import { getActiveServerSnapshot, listServerProfiles } from '@/sync/domains/server/serverProfiles';
 import { useActiveSelectionMachineGroups } from '@/components/settings/server/hooks/useActiveSelectionMachineGroups';
 import { ActiveSelectionMachinesSection } from '@/components/settings/server/sections/ActiveSelectionMachinesSection';
+import { isRunningOnMac } from '@/utils/platform/platform';
+import { isWebMobileLikeQrScannerHost } from '@/utils/platform/webMobileHeuristics';
 
 export const SettingsView = React.memo(function SettingsView() {
     const { theme } = useUnistyles();
     const router = useRouter();
+    const { width, height } = useWindowDimensions();
     const appVersion = Constants.expoConfig?.version || '1.0.0';
     const auth = useAuth();
+    const isPhoneSizedWeb = Platform.OS === 'web' && isWebMobileLikeQrScannerHost({ width, height });
     const [devModeEnabled, setDevModeEnabled] = useLocalSettingMutable('devModeEnabled');
     const voiceEntitlement = useEntitlement('voice');
     const isPro = __DEV__ || voiceEntitlement;
@@ -52,6 +57,7 @@ export const SettingsView = React.memo(function SettingsView() {
     const sourceControlEnabled = useFeatureEnabled('scm.writeOperations');
     const attachmentsUploadsEnabled = useFeatureEnabled('attachments.uploads');
     const showChangelog = getFeatureBuildPolicyDecision('app.ui.changelog' as const satisfies FeatureId) !== 'deny';
+    const [showRateUs, setShowRateUs] = React.useState(false);
     const useProfiles = useSetting('useProfiles');
     const terminalUseTmux = useSetting('sessionUseTmux');
     const automationsSupport = useAutomationsSupport();
@@ -107,6 +113,28 @@ export const SettingsView = React.memo(function SettingsView() {
         }, [])
     );
 
+    React.useEffect(() => {
+        let cancelled = false;
+
+        const refreshRateUsAvailability = async () => {
+            let available = false;
+            try {
+                available = await canRequestReview();
+            } catch {
+                available = false;
+            }
+            if (!cancelled) {
+                setShowRateUs(available);
+            }
+        };
+
+        void refreshRateUsAvailability();
+
+        return () => {
+            cancelled = true;
+        };
+    }, []);
+
     const machinesTitle = React.useMemo(() => {
         const headerTextStyle = [
             Typography.default('regular'),
@@ -128,7 +156,7 @@ export const SettingsView = React.memo(function SettingsView() {
                     hitSlop={10}
                     style={{ padding: 2 }}
                     accessibilityRole="button"
-                    accessibilityLabel="Refresh"
+                    accessibilityLabel={t('common.refresh')}
                     disabled={refreshingMachines}
                 >
                     {refreshingMachines
@@ -203,22 +231,22 @@ export const SettingsView = React.memo(function SettingsView() {
     });
 
     // Anthropic disconnection
-	    const [disconnectingAnthropic, handleDisconnectAnthropic] = useHappyAction(async () => {
-	        const serviceName = anthropicAgentCore.connectedService.name;
-	        const confirmed = await Modal.confirm(
-	            t('modals.disconnectService', { service: serviceName }),
+      const [disconnectingAnthropic, handleDisconnectAnthropic] = useHappyAction(async () => {
+          const serviceName = anthropicAgentCore.connectedService.name;
+          const confirmed = await Modal.confirm(
+              t('modals.disconnectService', { service: serviceName }),
             t('modals.disconnectServiceConfirm', { service: serviceName }),
             { confirmText: t('modals.disconnect'), destructive: true }
-	        );
-	        if (confirmed) {
-	            if (!auth.credentials) {
-	                Modal.alert(t('common.error'), t('errors.unknownError'), [{ text: t('common.ok') }]);
-	                return;
-	            }
-	            await disconnectVendorToken(auth.credentials, 'anthropic');
-	            await sync.refreshProfile();
-	        }
-	    });
+          );
+          if (confirmed) {
+              if (!auth.credentials) {
+                  Modal.alert(t('common.error'), t('errors.unknownError'), [{ text: t('common.ok') }]);
+                  return;
+              }
+              await disconnectVendorToken(auth.credentials, 'anthropic');
+              await sync.refreshProfile();
+          }
+      });
 
     return (
         <ItemList style={{ paddingTop: 0 }}>
@@ -258,8 +286,22 @@ export const SettingsView = React.memo(function SettingsView() {
                 </View>
             </View>
 
-            {/* Connect Terminal - Only show on native platforms */}
-            {Platform.OS !== 'web' && (
+            {/* Add your phone (desktop/web only) */}
+            {(isRunningOnMac() || (Platform.OS === 'web' && !isPhoneSizedWeb)) &&
+            auth.isAuthenticated ? (
+                <ItemGroup>
+                    <Item
+                        testID="settings-add-your-phone-shortcut"
+                        title={t('settings.addYourPhone')}
+                        subtitle={t('settings.addYourPhoneSubtitle')}
+                        icon={<Ionicons name="phone-portrait-outline" size={29} color={theme.colors.accent.blue} />}
+                        onPress={() => router.push('/settings/add-phone')}
+                    />
+                </ItemGroup>
+            ) : null}
+
+            {/* Connect Terminal */}
+            {!isRunningOnMac() && (Platform.OS !== 'web' || isPhoneSizedWeb) && (
                 <ItemGroup>
                     <Item
                         title={t('settings.scanQrCodeToAuthenticate')}
@@ -276,7 +318,7 @@ export const SettingsView = React.memo(function SettingsView() {
                                 t('modals.authenticateTerminal'),
                                 t('modals.pasteUrlFromTerminal'),
                                 {
-                                    placeholder: 'happier://terminal?...',
+                                    placeholder: t('connect.terminalUrlPlaceholder'),
                                     confirmText: t('common.authenticate')
                                 }
                             );
@@ -372,8 +414,8 @@ export const SettingsView = React.memo(function SettingsView() {
                     onPress={() => router.push('/(app)/settings/appearance')}
                 />
                 <Item
-                    title="Notifications"
-                    subtitle="Push notification preferences"
+                    title={t('settings.notifications')}
+                    subtitle={t('settings.notificationsSubtitle')}
                     icon={<Ionicons name="notifications-outline" size={29} color={theme.colors.accent.blue} />}
                     onPress={() => router.push('/(app)/settings/notifications')}
                 />
@@ -407,8 +449,8 @@ export const SettingsView = React.memo(function SettingsView() {
                 />
                 {attachmentsUploadsEnabled ? (
                     <Item
-                        title="Attachments"
-                        subtitle="File upload preferences"
+                        title={t('settings.attachments')}
+                        subtitle={t('settings.attachmentsSubtitle')}
                         icon={<Ionicons name="attach-outline" size={29} color={theme.colors.accent.blue} />}
                         onPress={() => router.push('/(app)/settings/attachments')}
                     />
@@ -419,30 +461,37 @@ export const SettingsView = React.memo(function SettingsView() {
                     icon={<Ionicons name="server-outline" size={29} color={theme.colors.accent.blue} />}
                     onPress={() => router.push('/server')}
                 />
+                <Item
+                    testID="settings-system-status-item"
+                    title={t('settings.systemStatus')}
+                    subtitle={t('settings.systemStatusSubtitle')}
+                    icon={<Ionicons name="pulse-outline" size={29} color={theme.colors.accent.indigo} />}
+                    onPress={() => router.push('/(app)/settings/system-status')}
+                />
                 {sourceControlEnabled ? (
                     <Item
-                        title="Source control"
-                        subtitle="Commit strategy and backend behavior"
+                        title={t('settings.sourceControl')}
+                        subtitle={t('settings.sourceControlSubtitle')}
                         icon={<Ionicons name="git-branch-outline" size={29} color={theme.colors.success} />}
                         onPress={() => router.push('/(app)/settings/source-control')}
                     />
                 ) : null}
                 {showAutomations ? (
                     <Item
-                        title="Automations"
-                        subtitle="Manage scheduled sessions and recurring runs"
+                        title={t('settings.automations')}
+                        subtitle={t('settings.automationsSubtitle')}
                         icon={<Ionicons name="timer-outline" size={29} color={theme.colors.accent.blue} />}
                         onPress={() => router.push('/automations')}
                     />
                 ) : null}
-                {executionRunsEnabled ? (
-                    <Item
-                        title={t('runs.title') ?? 'Runs'}
-                        subtitle="Execution runs across machines"
-                        icon={<Ionicons name="play-outline" size={29} color={theme.colors.success} />}
-                        onPress={() => router.push('/runs')}
-                    />
-                ) : null}
+                  {executionRunsEnabled ? (
+                      <Item
+                          title={t('runs.title')}
+                          subtitle={t('settings.executionRunsSubtitle')}
+                          icon={<Ionicons name="play-outline" size={29} color={theme.colors.success} />}
+                          onPress={() => router.push('/runs')}
+                      />
+                  ) : null}
                 <Item
                     title={t('settingsProviders.title')}
                     subtitle={t('settingsProviders.entrySubtitle')}
@@ -451,8 +500,8 @@ export const SettingsView = React.memo(function SettingsView() {
                 />
                 {connectedServicesEnabled ? (
                     <Item
-                        title={'Connected services'}
-                        subtitle={'Claude/Codex subscriptions and OAuth profiles'}
+                        title={t('settings.connectedServices')}
+                        subtitle={t('settings.connectedServicesSubtitle')}
                         icon={<Ionicons name="key-outline" size={29} color={theme.colors.accent.blue} />}
                         onPress={() => router.push('/(app)/settings/connected-services')}
                     />
@@ -507,10 +556,20 @@ export const SettingsView = React.memo(function SettingsView() {
                         }}
                     />
                 ) : null}
+                {showRateUs ? (
+                    <Item
+                        title={t('settings.rateUs')}
+                        subtitle={t('settings.rateUsSubtitle')}
+                        icon={<Ionicons name="star-outline" size={29} color={theme.colors.accent.orange} />}
+                        onPress={() => {
+                            void requestReview();
+                        }}
+                    />
+                ) : null}
                 <Item
                     title={t('settings.github')}
                     icon={<Ionicons name="logo-github" size={29} color={theme.colors.text} />}
-                    detail="happier-dev/happier"
+                    subtitle="happier-dev/happier"
                     onPress={handleGitHub}
                 />
                 <Item

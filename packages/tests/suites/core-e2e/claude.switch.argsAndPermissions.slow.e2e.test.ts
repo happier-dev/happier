@@ -135,7 +135,7 @@ describe('core e2e: Claude switching preserves args + permissions', () => {
         fakeLog,
         (i) => i.argv.includes('--settings') && !i.argv.includes('--input-format'),
       );
-      expect(Object.keys(localInvocation.mergedMcpServers ?? {}).sort()).toEqual(['custom', 'happy']);
+      expect(Object.keys(localInvocation.mergedMcpServers ?? {}).sort()).toEqual(['custom', 'happier']);
       expect(localInvocation.argv).toContain('--max-turns');
       expect(localInvocation.argv).toContain('3');
       expect(localInvocation.argv).toContain('--strict-mcp-config');
@@ -157,7 +157,7 @@ describe('core e2e: Claude switching preserves args + permissions', () => {
         fakeLog,
         (i) => i.argv.includes('--settings') && i.argv.includes('--input-format'),
       );
-      expect(Object.keys(legacyRemoteInvocation.mergedMcpServers ?? {}).sort()).toEqual(['custom', 'happy']);
+      expect(Object.keys(legacyRemoteInvocation.mergedMcpServers ?? {}).sort()).toEqual(['custom', 'happier']);
       expect(legacyRemoteInvocation.argv).toContain('--max-turns');
       expect(legacyRemoteInvocation.argv).toContain('3');
       expect(legacyRemoteInvocation.argv).toContain('--strict-mcp-config');
@@ -173,7 +173,7 @@ describe('core e2e: Claude switching preserves args + permissions', () => {
           i.invocationId !== localInvocation.invocationId,
         { timeoutMs: 120_000 },
       );
-      expect(Object.keys(localInvocation2.mergedMcpServers ?? {}).sort()).toEqual(['custom', 'happy']);
+      expect(Object.keys(localInvocation2.mergedMcpServers ?? {}).sort()).toEqual(['custom', 'happier']);
 
       await requestSessionSwitchRpc({ ui, sessionId, to: 'remote', secret, timeoutMs: 20_000 });
 
@@ -193,7 +193,7 @@ describe('core e2e: Claude switching preserves args + permissions', () => {
         (i) => i.argv.includes('--input-format') && !i.argv.includes('--settings'),
         { timeoutMs: 120_000 },
       );
-      expect(Object.keys(agentSdkRemoteInvocation.mergedMcpServers ?? {}).sort()).toEqual(['custom', 'happy']);
+      expect(Object.keys(agentSdkRemoteInvocation.mergedMcpServers ?? {}).sort()).toEqual(['custom', 'happier']);
       expect(agentSdkRemoteInvocation.argv).toContain('--max-turns');
       expect(agentSdkRemoteInvocation.argv).toContain('3');
       expect(agentSdkRemoteInvocation.argv).toContain('--strict-mcp-config');

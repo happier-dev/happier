@@ -1,0 +1,95 @@
+---
+title: Provider Integrations
+description: Use third-party routers, switchers, and plugins with Happier (Claude Code + OpenCode).
+---
+
+Happier runs **provider CLIs** (for example: **Claude Code** and **OpenCode**) as subprocesses, then syncs transcripts/state to your Happier server so you can continue from other devices.
+
+Most third-party “integration” projects fall into two buckets:
+
+1) **Environment-based**: they set env vars like `ANTHROPIC_BASE_URL` / `ANTHROPIC_AUTH_TOKEN`.
+2) **Config-file based**: they write config files that the provider CLI reads (for example `~/.claude/settings.json`).
+
+To use them with Happier, the only requirement is: **those settings must be visible to the provider CLI process that Happier spawns**.
+
+## How env vars reach the provider process
+
+### Terminal-started sessions
+
+If you start a session from your terminal, Happier inherits your shell environment and passes it through to the provider process.
+
+This means “activation” commands like `eval "$(…)"` (that only export env vars) work well: run the activation, then run `happier`.
+
+### UI / remotely-started sessions (daemon)
+
+When you start sessions remotely (from the app), there is no interactive shell. The reliable way to provide env vars is:
+
+- **Settings → Profiles**: create/select a profile and set the env vars there.
+
+Those profile env vars are passed to the provider CLI when the daemon spawns the process.
+
+## Claude Code Router (`claude-code-router`)
+
+Claude Code Router runs a local server and makes Claude Code talk to it by setting `ANTHROPIC_BASE_URL` and a token.
+
+Recommended usage with Happier:
+
+1) Install + configure `claude-code-router`.
+2) Start the router service (`ccr start`).
+3) Configure env vars for Claude Code:
+   - Terminal flow: run the router’s activation command (for example `eval "$(ccr activate)"`), then start Happier (`happier`).
+   - Remote/UI flow: create a **Claude** profile and set:
+     - `ANTHROPIC_BASE_URL` → your router URL (for example `http://127.0.0.1:3456`)
+     - `ANTHROPIC_AUTH_TOKEN` → the router API key/token (if configured)
+
+Avoid `ccr code …` for Happier usage: it launches Claude Code directly, which bypasses Happier’s session syncing.
+
+## Claude Code Switch (`claude-code-switch`)
+
+`claude-code-switch` provides:
+
+- `ccm`: prints `export …` statements so you can switch providers *in the current shell*.
+- `ccc`: switches *and then execs `claude`* (a convenience launcher).
+- Optional persistence modes that write config files under `~/.claude/…` and/or `.claude/…` in a project.
+
+Recommended usage with Happier:
+
+### Terminal flow (env-based)
+
+1) Install `claude-code-switch` and configure API keys (`ccm config`).
+2) Switch providers in your shell (example):
+   - `eval "$(ccm glm global)"`
+3) Start Happier normally:
+   - `happier`
+
+Do **not** use `ccc …` with Happier. `ccc` launches `claude` directly (bypassing Happier). You want Happier to be the process that spawns `claude`, with the switched env vars already set.
+
+### Remote/UI flow (Profiles)
+
+Create a **Claude** profile (Settings → Profiles) and set the same values that `ccm` would export, for example:
+
+- `ANTHROPIC_BASE_URL`
+- `ANTHROPIC_AUTH_TOKEN`
+- (optional) `ANTHROPIC_MODEL` / `ANTHROPIC_SMALL_FAST_MODEL`
+
+Then select that profile when you start a session from the app.
+
+### Persistence modes (advanced)
+
+If you prefer `claude-code-switch` to write `~/.claude/settings.json` (user-level) or `.claude/settings.local.json` (project-level), those can also work with Happier because the provider CLI will read those files when it starts.
+
+If you see provider settings “not sticking”, the simplest fix is to switch back to the env/profile approach above (it’s explicit and easy to debug).
+
+## Oh My OpenCode (`oh-my-opencode`)
+
+`oh-my-opencode` is primarily an **OpenCode plugin/config installer**. Happier runs OpenCode via ACP (`opencode acp`), so the general rule is:
+
+- If `opencode` uses the plugin when you run it directly, it should behave the same when Happier runs it.
+
+Recommended usage with Happier:
+
+1) Install OpenCode.
+2) Install/configure `oh-my-opencode` (it typically updates your OpenCode config under `~/.config/opencode/…`).
+3) Start an OpenCode session in Happier (OpenCode mode).
+
+For remote/UI sessions, ensure **OpenCode and the plugin are installed on the target machine** (the machine running the daemon).

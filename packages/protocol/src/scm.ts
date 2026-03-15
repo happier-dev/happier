@@ -68,6 +68,7 @@ export const ScmCapabilitiesSchema = z.object({
   readLog: z.boolean(),
   writeInclude: z.boolean(),
   writeExclude: z.boolean(),
+  writeDiscard: z.boolean().optional(),
   writeCommit: z.boolean(),
   writeCommitPathSelection: z.boolean(),
   writeCommitLineSelection: z.boolean(),

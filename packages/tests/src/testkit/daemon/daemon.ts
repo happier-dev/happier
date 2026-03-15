@@ -1,10 +1,13 @@
 import { readFile, readdir, stat } from 'node:fs/promises';
+import { unlink } from 'node:fs/promises';
+import { createHash } from 'node:crypto';
 import { join, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
 
 import { repoRootDir } from '../paths';
 import { spawnLoggedProcess, type SpawnedProcess } from '../process/spawnProcess';
-import { ensureCliDistBuilt } from '../process/cliDist';
+import { ensureCliDistSnapshotEntrypoint } from '../process/cliDist';
+import { terminateProcessTreeByPid } from '../process/processTree';
 
 export type DaemonState = {
   pid: number;
@@ -108,19 +111,119 @@ type ProcessInspectionResult =
 
 function inspectProcess(pid: number): ProcessInspectionResult {
   try {
-    const res = spawnSync('ps', ['-o', 'command=', '-p', String(pid)], { encoding: 'utf8' });
+    // Use wide output to avoid truncating long monorepo entrypoint paths. Truncation can cause
+    // false negatives (and then we refuse to hard-kill a leaked daemon).
+    let res = spawnSync('ps', ['-o', 'command=', '-p', String(pid), '-ww'], { encoding: 'utf8' });
+    if (res.status !== 0) {
+      res = spawnSync('ps', ['-o', 'command=', '-p', String(pid)], { encoding: 'utf8' });
+    }
     if (res.status !== 0) return { ok: false, reason: 'inspect_failed' };
-    const command = (res.stdout || '').trim();
+    const command = String(res.stdout || '').trim();
     if (!command) return { ok: false, reason: 'inspect_failed' };
+    const normalized = command.replaceAll('\\', '/');
+    const hasStartSync = normalized.includes('daemon start-sync');
+    const hasCliEntrypoint =
+      normalized.includes('apps/cli/dist/index.mjs') ||
+      normalized.includes('apps/cli/dist/index.js') ||
+      (normalized.includes('apps/cli') && normalized.includes('dist/index.mjs')) ||
+      (normalized.includes('apps/cli') && normalized.includes('dist/index.js')) ||
+      normalized.includes('dist/index.mjs') ||
+      normalized.includes('dist/index.js') ||
+      normalized.includes('happier') && normalized.includes('daemon start-sync') && normalized.includes('dist/index');
     return {
       ok: true,
       command,
-      looksLikeDaemon: command.includes('daemon start-sync') && command.includes('apps/cli/dist/index.mjs'),
+      looksLikeDaemon: hasStartSync && hasCliEntrypoint,
     };
   } catch (e) {
     const err = e as NodeJS.ErrnoException;
     if (err?.code === 'ENOENT') return { ok: false, reason: 'ps_missing' };
     return { ok: false, reason: 'inspect_failed' };
+  }
+}
+
+type DaemonSessionMarkerCandidate = Readonly<{
+  pid: number;
+  markerPath: string;
+  startedBy: string;
+  processCommandHash: string;
+}>;
+
+function daemonSessionMarkersDir(happyHomeDir: string): string {
+  return join(happyHomeDir, 'tmp', 'daemon-sessions');
+}
+
+function hashCommand(command: string): string {
+  return createHash('sha256').update(command).digest('hex');
+}
+
+function inspectProcessCommand(pid: number): string | null {
+  try {
+    // Use wide output to avoid truncation (PID reuse safety requires stable hashing).
+    // Match the daemon's own marker hashing strategy (`ps-list` captures `args`).
+    let res = spawnSync('ps', ['-o', 'args=', '-p', String(pid), '-ww'], { encoding: 'utf8' });
+    if (res.status !== 0) {
+      res = spawnSync('ps', ['-o', 'args=', '-p', String(pid)], { encoding: 'utf8' });
+    }
+    if (res.status !== 0) return null;
+    const command = String(res.stdout || '').trim();
+    return command || null;
+  } catch {
+    return null;
+  }
+}
+
+async function listDaemonSessionMarkerCandidates(happyHomeDir: string): Promise<DaemonSessionMarkerCandidate[]> {
+  const dir = daemonSessionMarkersDir(happyHomeDir);
+  let entries: string[] = [];
+  try {
+    entries = await readdir(dir);
+  } catch {
+    return [];
+  }
+
+  const candidates: DaemonSessionMarkerCandidate[] = [];
+  for (const name of entries) {
+    if (!name.startsWith('pid-') || !name.endsWith('.json')) continue;
+    const markerPath = join(dir, name);
+    try {
+      const raw = await readFile(markerPath, 'utf8');
+      const parsed = JSON.parse(raw) as any;
+      const pid = typeof parsed?.pid === 'number' ? parsed.pid : Number(parsed?.pid);
+      const startedBy = typeof parsed?.startedBy === 'string' ? parsed.startedBy.trim() : '';
+      const processCommandHash = typeof parsed?.processCommandHash === 'string' ? parsed.processCommandHash.trim() : '';
+      const markerHomeDir = typeof parsed?.happyHomeDir === 'string' ? parsed.happyHomeDir.trim() : '';
+
+      if (!Number.isInteger(pid) || pid <= 1) continue;
+      if (markerHomeDir && markerHomeDir !== happyHomeDir) continue;
+      if (!startedBy) continue;
+      if (!processCommandHash) continue;
+
+      candidates.push({
+        pid,
+        markerPath,
+        startedBy,
+        processCommandHash,
+      });
+    } catch {
+      // ignore unreadable markers
+    }
+  }
+  return candidates;
+}
+
+async function stopDaemonLeakedSessionsFromMarkersBestEffort(happyHomeDir: string): Promise<void> {
+  const candidates = await listDaemonSessionMarkerCandidates(happyHomeDir);
+  for (const marker of candidates) {
+    if (marker.startedBy !== 'daemon') continue;
+
+    const command = inspectProcessCommand(marker.pid);
+    if (!command) continue;
+    const hash = hashCommand(command);
+    if (hash !== marker.processCommandHash) continue;
+
+    await terminateProcessTreeByPid(marker.pid, { graceMs: 3_000, pollMs: 50 }).catch(() => {});
+    await unlink(marker.markerPath).catch(() => {});
   }
 }
 
@@ -204,26 +307,38 @@ export async function stopDaemonFromHomeDir(
 
   const inspector = opts?.inspectProcess ?? inspectProcess;
 
+  const controlToken = typeof state.controlToken === 'string' ? state.controlToken.trim() : '';
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json',
+    ...(controlToken ? { 'x-happier-daemon-token': controlToken } : {}),
+  };
+
   const stopRes = await fetch(`http://127.0.0.1:${state.httpPort}/stop`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: '{}',
+    headers,
+    body: JSON.stringify({ stopSessions: true }),
     signal: AbortSignal.timeout(2_000),
   }).catch(() => null);
 
-  if (!stopRes) {
+  // Treat auth failures like an unreachable daemon (don't wait full graceful timeout for a 401).
+  if (!stopRes || stopRes.status === 401) {
     // If the daemon isn't reachable, avoid waiting a full graceful timeout on stale state.
     // Fail closed before hard-killing: only kill if we can reliably inspect the PID.
+    let daemonPidAlive = false;
     try {
       process.kill(state.pid, 0);
+      daemonPidAlive = true;
     } catch {
-      return;
+      daemonPidAlive = false;
     }
 
     const hardKill = opts?.hardKill ?? true;
-    if (!hardKill) return;
+    if (daemonPidAlive && hardKill) {
+      await hardKillDaemonPid({ phase: 'unreachable', state, inspector });
+    }
 
-    await hardKillDaemonPid({ phase: 'unreachable', state, inspector });
+    // Even if the daemon is already gone, detached daemon-started sessions can remain.
+    await stopDaemonLeakedSessionsFromMarkersBestEffort(happyHomeDir).catch(() => {});
     return;
   }
 
@@ -237,6 +352,9 @@ export async function stopDaemonFromHomeDir(
   // Best-effort hard stop to avoid leaking daemons across test runs.
   // Fail closed: only kill if it looks like our daemon.
   await hardKillDaemonPid({ phase: 'graceful-timeout', state, inspector });
+
+  // If we had to hard-kill the daemon, it may not have had a chance to stop detached sessions.
+  await stopDaemonLeakedSessionsFromMarkersBestEffort(happyHomeDir).catch(() => {});
 }
 
 export type StartedDaemon = {
@@ -265,7 +383,10 @@ export async function startTestDaemon(params: {
   happyHomeDir: string;
   env: NodeJS.ProcessEnv;
 }): Promise<StartedDaemon> {
-  const cliDistEntrypoint = await ensureCliDistBuilt({ testDir: params.testDir, env: params.env });
+  const cliDistEntrypoint = await ensureCliDistSnapshotEntrypoint(
+    { testDir: params.testDir, env: params.env },
+    { snapshotDir: resolve(params.testDir, 'cli-dist') },
+  );
 
   const proc = spawnLoggedProcess({
     command: process.execPath,
@@ -282,7 +403,19 @@ export async function startTestDaemon(params: {
 
   let state: DaemonState;
   try {
-    state = await waitForDaemonState(params.happyHomeDir, { timeoutMs: 45_000 });
+    state = await Promise.race([
+      waitForDaemonState(params.happyHomeDir, { timeoutMs: 45_000 }),
+      new Promise<never>((_, reject) => {
+        proc.child.once('exit', (code, signal) => {
+          const detail = signal ? `signal=${String(signal)}` : `code=${String(code)}`;
+          reject(
+            new Error(
+              `Daemon exited before writing daemon.state.json (${detail}). See logs: ${resolve(params.testDir, 'daemon.stdout.log')} and ${resolve(params.testDir, 'daemon.stderr.log')}`,
+            ),
+          );
+        });
+      }),
+    ]);
   } catch (e) {
     // If daemon startup fails, make sure we don't leak a background process.
     await stopDaemonFromHomeDir(params.happyHomeDir).catch(() => {});

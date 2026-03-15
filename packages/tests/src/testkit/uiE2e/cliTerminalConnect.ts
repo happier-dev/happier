@@ -1,7 +1,7 @@
 import { readFile } from 'node:fs/promises';
 import { resolve as resolvePath } from 'node:path';
 
-import { ensureCliDistBuilt } from '../process/cliDist';
+import { ensureCliDistSnapshotEntrypoint } from '../process/cliDist';
 import { spawnLoggedProcess, type SpawnedProcess } from '../process/spawnProcess';
 import { repoRootDir } from '../paths';
 import { waitForRegexInFile } from '../waitForRegexInFile';
@@ -69,7 +69,10 @@ export async function startCliAuthLoginForTerminalConnect(params: Readonly<{
   webappUrl: string;
   env: NodeJS.ProcessEnv;
 }>): Promise<StartedCliTerminalConnect> {
-  const cliDistEntrypoint = await ensureCliDistBuilt({ testDir: params.testDir, env: params.env });
+  const cliDistEntrypoint = await ensureCliDistSnapshotEntrypoint(
+    { testDir: params.testDir, env: params.env },
+    { snapshotDir: resolvePath(params.testDir, 'cli-dist') },
+  );
 
   const stdoutPath = resolvePath(params.testDir, 'cli.auth.login.stdout.log');
   const stderrPath = resolvePath(params.testDir, 'cli.auth.login.stderr.log');

@@ -1,371 +1,285 @@
-import { logger } from "@/ui/logger";
+import { logger } from '@/ui/logger';
 
-interface QueueItem<T> {
-    message: string;
-    mode: T;
-    modeHash: string;
-    isolate?: boolean; // If true, this message must be processed alone
+export type MessageQueueBatch<Mode, Message> = {
+  message: Message;
+  mode: Mode;
+  isolate: boolean;
+  hash: string;
+};
+
+type QueueItem<Mode, Message> = {
+  message: Message;
+  mode: Mode;
+  modeHash: string;
+  isolate: boolean;
+};
+
+type MessageBatcher<Message> = (messages: Message[]) => Message;
+
+function defaultStringBatcher(messages: unknown[]): string {
+  if (!messages.every((value) => typeof value === 'string')) {
+    throw new Error('MessageQueue2: non-string message without a custom batcher');
+  }
+  return (messages as string[]).join('\n');
 }
 
 /**
  * A mode-aware message queue that stores messages with their modes.
  * Returns consistent batches of messages with the same mode.
  */
-export class MessageQueue2<T> {
-    public queue: QueueItem<T>[] = []; // Made public for testing
-    private waiter: ((hasMessages: boolean) => void) | null = null;
-    private closed = false;
-    private onMessageHandler: ((message: string, mode: T) => void) | null = null;
-    modeHasher: (mode: T) => string;
-    private lastWaitLogAt = 0;
-    private lastAbortLogAt = 0;
+export class MessageQueue2<Mode, Message = string> {
+  public queue: Array<QueueItem<Mode, Message>> = []; // public for tests
+  private waiter: ((hasMessages: boolean) => void) | null = null;
+  private closed = false;
+  private onMessageHandler: ((message: Message, mode: Mode) => void) | null = null;
+  readonly modeHasher: (mode: Mode) => string;
+  private readonly batcher: MessageBatcher<Message>;
+  private lastWaitLogAt = 0;
+  private lastAbortLogAt = 0;
 
-    constructor(
-        modeHasher: (mode: T) => string,
-        onMessageHandler: ((message: string, mode: T) => void) | null = null
-    ) {
-        this.modeHasher = modeHasher;
-        this.onMessageHandler = onMessageHandler;
-        logger.debug(`[MessageQueue2] Initialized`);
+  constructor(
+    modeHasher: (mode: Mode) => string,
+    opts?: {
+      onMessageHandler?: ((message: Message, mode: Mode) => void) | null;
+      batcher?: MessageBatcher<Message>;
+    },
+  ) {
+    this.modeHasher = modeHasher;
+    this.onMessageHandler = opts?.onMessageHandler ?? null;
+    this.batcher = opts?.batcher ?? (defaultStringBatcher as unknown as MessageBatcher<Message>);
+    logger.debug('[MessageQueue2] Initialized');
+  }
+
+  setOnMessage(handler: ((message: Message, mode: Mode) => void) | null): void {
+    this.onMessageHandler = handler;
+  }
+
+  push(message: Message, mode: Mode): void {
+    if (this.closed) {
+      throw new Error('Cannot push to closed queue');
     }
 
-    /**
-     * Set a handler that will be called when a message arrives
-     */
-    setOnMessage(handler: ((message: string, mode: T) => void) | null): void {
-        this.onMessageHandler = handler;
+    const modeHash = this.modeHasher(mode);
+
+    this.queue.push({
+      message,
+      mode,
+      modeHash,
+      isolate: false,
+    });
+
+    if (this.onMessageHandler) {
+      this.onMessageHandler(message, mode);
     }
 
-    /**
-     * Push a message to the queue with a mode.
-     */
-    push(message: string, mode: T): void {
-        if (this.closed) {
-            throw new Error('Cannot push to closed queue');
-        }
+    if (this.waiter) {
+      const waiter = this.waiter;
+      this.waiter = null;
+      waiter(true);
+    }
+  }
 
-        const modeHash = this.modeHasher(mode);
-        logger.debug(`[MessageQueue2] push() called with mode hash: ${modeHash}`);
+  pushImmediate(message: Message, mode: Mode): void {
+    this.push(message, mode);
+  }
 
-        this.queue.push({
-            message,
-            mode,
-            modeHash,
-            isolate: false
-        });
-
-        // Trigger message handler if set
-        if (this.onMessageHandler) {
-            this.onMessageHandler(message, mode);
-        }
-
-        // Notify waiter if any
-        if (this.waiter) {
-            logger.debug(`[MessageQueue2] Notifying waiter`);
-            const waiter = this.waiter;
-            this.waiter = null;
-            waiter(true);
-        }
-
-        logger.debug(`[MessageQueue2] push() completed. Queue size: ${this.queue.length}`);
+  pushIsolateAndClear(message: Message, mode: Mode): void {
+    if (this.closed) {
+      throw new Error('Cannot push to closed queue');
     }
 
-    /**
-     * Push a message immediately without batching delay.
-     * Does not clear the queue or enforce isolation.
-     */
-    pushImmediate(message: string, mode: T): void {
-        if (this.closed) {
-            throw new Error('Cannot push to closed queue');
-        }
+    const modeHash = this.modeHasher(mode);
+    this.queue = [];
 
-        const modeHash = this.modeHasher(mode);
-        logger.debug(`[MessageQueue2] pushImmediate() called with mode hash: ${modeHash}`);
+    this.queue.push({
+      message,
+      mode,
+      modeHash,
+      isolate: true,
+    });
 
-        this.queue.push({
-            message,
-            mode,
-            modeHash,
-            isolate: false
-        });
-
-        // Trigger message handler if set
-        if (this.onMessageHandler) {
-            this.onMessageHandler(message, mode);
-        }
-
-        // Notify waiter if any
-        if (this.waiter) {
-            logger.debug(`[MessageQueue2] Notifying waiter for immediate message`);
-            const waiter = this.waiter;
-            this.waiter = null;
-            waiter(true);
-        }
-
-        logger.debug(`[MessageQueue2] pushImmediate() completed. Queue size: ${this.queue.length}`);
+    if (this.onMessageHandler) {
+      this.onMessageHandler(message, mode);
     }
 
-    /**
-     * Push a message that must be processed in complete isolation.
-     * Clears any pending messages and ensures this message is never batched with others.
-     * Used for special commands that require dedicated processing.
-     */
-    pushIsolateAndClear(message: string, mode: T): void {
-        if (this.closed) {
-            throw new Error('Cannot push to closed queue');
-        }
+    if (this.waiter) {
+      const waiter = this.waiter;
+      this.waiter = null;
+      waiter(true);
+    }
+  }
 
-        const modeHash = this.modeHasher(mode);
-        logger.debug(`[MessageQueue2] pushIsolateAndClear() called with mode hash: ${modeHash} - clearing ${this.queue.length} pending messages`);
-
-        // Clear any pending messages to ensure this message is processed in complete isolation
-        this.queue = [];
-
-        this.queue.push({
-            message,
-            mode,
-            modeHash,
-            isolate: true
-        });
-
-        // Trigger message handler if set
-        if (this.onMessageHandler) {
-            this.onMessageHandler(message, mode);
-        }
-
-        // Notify waiter if any
-        if (this.waiter) {
-            logger.debug(`[MessageQueue2] Notifying waiter for isolated message`);
-            const waiter = this.waiter;
-            this.waiter = null;
-            waiter(true);
-        }
-
-        logger.debug(`[MessageQueue2] pushIsolateAndClear() completed. Queue size: ${this.queue.length}`);
+  unshift(message: Message, mode: Mode): void {
+    if (this.closed) {
+      throw new Error('Cannot unshift to closed queue');
     }
 
-    /**
-     * Push a message to the beginning of the queue with a mode.
-     */
-    unshift(message: string, mode: T): void {
-        if (this.closed) {
-            throw new Error('Cannot unshift to closed queue');
-        }
+    const modeHash = this.modeHasher(mode);
 
-        const modeHash = this.modeHasher(mode);
-        logger.debug(`[MessageQueue2] unshift() called with mode hash: ${modeHash}`);
+    this.queue.unshift({
+      message,
+      mode,
+      modeHash,
+      isolate: false,
+    });
 
-        this.queue.unshift({
-            message,
-            mode,
-            modeHash,
-            isolate: false
-        });
-
-        // Trigger message handler if set
-        if (this.onMessageHandler) {
-            this.onMessageHandler(message, mode);
-        }
-
-        // Notify waiter if any
-        if (this.waiter) {
-            logger.debug(`[MessageQueue2] Notifying waiter`);
-            const waiter = this.waiter;
-            this.waiter = null;
-            waiter(true);
-        }
-
-        logger.debug(`[MessageQueue2] unshift() completed. Queue size: ${this.queue.length}`);
+    if (this.onMessageHandler) {
+      this.onMessageHandler(message, mode);
     }
 
-    /**
-     * Reset the queue - clears all messages and resets to empty state
-     */
-    reset(): void {
-        logger.debug(`[MessageQueue2] reset() called. Clearing ${this.queue.length} messages`);
-        this.queue = [];
-        this.closed = false;
+    if (this.waiter) {
+      const waiter = this.waiter;
+      this.waiter = null;
+      waiter(true);
+    }
+  }
 
-        if (this.waiter) {
-            const waiter = this.waiter;
-            this.waiter = null;
-            waiter(false);
-        }
+  reset(): void {
+    this.queue = [];
+    this.closed = false;
+
+    if (this.waiter) {
+      const waiter = this.waiter;
+      this.waiter = null;
+      waiter(false);
+    }
+  }
+
+  close(): void {
+    this.closed = true;
+
+    if (this.waiter) {
+      const waiter = this.waiter;
+      this.waiter = null;
+      waiter(false);
+    }
+  }
+
+  isClosed(): boolean {
+    return this.closed;
+  }
+
+  size(): number {
+    return this.queue.length;
+  }
+
+  /**
+   * Wait for messages and return all messages with the same mode as a single batch.
+   *
+   * NOTE: This historically returned a string (joined by newlines). The method name is kept for
+   * backwards compatibility with string queues.
+   */
+  async waitForMessagesAndGetAsString(abortSignal?: AbortSignal): Promise<MessageQueueBatch<Mode, Message> | null> {
+    if (this.queue.length > 0) {
+      return this.collectBatch();
     }
 
-    /**
-     * Close the queue - no more messages can be pushed
-     */
-    close(): void {
-        logger.debug(`[MessageQueue2] close() called`);
-        this.closed = true;
-
-        // Notify any waiting caller
-        if (this.waiter) {
-            const waiter = this.waiter;
-            this.waiter = null;
-            waiter(false);
-        }
+    if (this.closed || abortSignal?.aborted) {
+      return null;
     }
 
-    /**
-     * Check if the queue is closed
-     */
-    isClosed(): boolean {
-        return this.closed;
+    const hasMessages = await this.waitForMessages(abortSignal);
+    if (!hasMessages) {
+      return null;
     }
 
-    /**
-     * Get the current queue size
-     */
-    size(): number {
-        return this.queue.length;
+    return this.collectBatch();
+  }
+
+  async waitForMessagesSignal(abortSignal?: AbortSignal): Promise<boolean> {
+    if (this.queue.length > 0) {
+      return true;
+    }
+    if (this.closed || abortSignal?.aborted) {
+      return false;
+    }
+    return await this.waitForMessages(abortSignal);
+  }
+
+  private collectBatch(): MessageQueueBatch<Mode, Message> | null {
+    if (this.queue.length === 0) {
+      return null;
     }
 
-    /**
-     * Wait for messages and return all messages with the same mode as a single string
-     * Returns { message: string, mode: T } or null if aborted/closed
-     */
-    async waitForMessagesAndGetAsString(abortSignal?: AbortSignal): Promise<{ message: string, mode: T, isolate: boolean, hash: string } | null> {
-        // If we have messages, return them immediately
-        if (this.queue.length > 0) {
-            return this.collectBatch();
-        }
+    const firstItem = this.queue[0];
+    const sameModeMessages: Message[] = [];
+    const mode = firstItem.mode;
+    const isolate = firstItem.isolate;
+    const targetModeHash = firstItem.modeHash;
 
-        // If closed or already aborted, return null
-        if (this.closed || abortSignal?.aborted) {
-            return null;
-        }
-
-        // Wait for messages to arrive
-        const hasMessages = await this.waitForMessages(abortSignal);
-
-        if (!hasMessages) {
-            return null;
-        }
-
-        return this.collectBatch();
+    if (firstItem.isolate) {
+      const item = this.queue.shift()!;
+      sameModeMessages.push(item.message);
+    } else {
+      while (this.queue.length > 0 && this.queue[0].modeHash === targetModeHash && !this.queue[0].isolate) {
+        const item = this.queue.shift()!;
+        sameModeMessages.push(item.message);
+      }
     }
 
-    /**
-     * Wait until at least one message is available, without draining the queue.
-     *
-     * This is useful when the caller wants to "race" message availability against
-     * another signal (e.g. metadata updates) without risking that the loser drains
-     * the queue and drops a message.
-     */
-    async waitForMessagesSignal(abortSignal?: AbortSignal): Promise<boolean> {
-        if (this.queue.length > 0) {
-            return true;
-        }
-        if (this.closed || abortSignal?.aborted) {
-            return false;
-        }
-        return await this.waitForMessages(abortSignal);
-    }
+    const combinedMessage = this.batcher(sameModeMessages);
 
-    /**
-     * Collect a batch of messages with the same mode, respecting isolation requirements
-     */
-    private collectBatch(): { message: string, mode: T, hash: string, isolate: boolean } | null {
-        if (this.queue.length === 0) {
-            return null;
-        }
+    return {
+      message: combinedMessage,
+      mode,
+      hash: targetModeHash,
+      isolate,
+    };
+  }
 
-        const firstItem = this.queue[0];
-        const sameModeMessages: string[] = [];
-        let mode = firstItem.mode;
-        let isolate = firstItem.isolate ?? false;
-        const targetModeHash = firstItem.modeHash;
+  private waitForMessages(abortSignal?: AbortSignal): Promise<boolean> {
+    return new Promise((resolve) => {
+      let abortHandler: (() => void) | null = null;
 
-        // If the first message requires isolation, only process it alone
-        if (firstItem.isolate) {
-            const item = this.queue.shift()!;
-            sameModeMessages.push(item.message);
-            logger.debug(`[MessageQueue2] Collected isolated message with mode hash: ${targetModeHash}`);
-        } else {
-            // Collect all messages with the same mode until we hit an isolated message
-            while (this.queue.length > 0 &&
-                this.queue[0].modeHash === targetModeHash &&
-                !this.queue[0].isolate) {
-                const item = this.queue.shift()!;
-                sameModeMessages.push(item.message);
+      if (abortSignal) {
+        abortHandler = () => {
+          const reason = (abortSignal as any)?.reason;
+          if (reason !== 'waitForMessagesOrPending') {
+            const now = Date.now();
+            if (now - this.lastAbortLogAt > 2000) {
+              this.lastAbortLogAt = now;
+              logger.debug('[MessageQueue2] Wait aborted');
             }
-            logger.debug(`[MessageQueue2] Collected batch of ${sameModeMessages.length} messages with mode hash: ${targetModeHash}`);
-        }
-
-        // Join all messages with newlines
-        const combinedMessage = sameModeMessages.join('\n');
-
-        return {
-            message: combinedMessage,
-            mode,
-            hash: targetModeHash,
-            isolate
+          }
+          if (this.waiter === waiterFunc) {
+            this.waiter = null;
+          }
+          resolve(false);
         };
-    }
+        abortSignal.addEventListener('abort', abortHandler);
+      }
 
-    /**
-     * Wait for messages to arrive
-     */
-    private waitForMessages(abortSignal?: AbortSignal): Promise<boolean> {
-        return new Promise((resolve) => {
-            let abortHandler: (() => void) | null = null;
+      const waiterFunc = (hasMessages: boolean) => {
+        if (abortHandler && abortSignal) {
+          abortSignal.removeEventListener('abort', abortHandler);
+        }
+        resolve(hasMessages);
+      };
 
-            // Set up abort handler
-            if (abortSignal) {
-                abortHandler = () => {
-                    const reason = (abortSignal as any)?.reason;
-                    if (reason !== 'waitForMessagesOrPending') {
-                        const now = Date.now();
-                        if (now - this.lastAbortLogAt > 2000) {
-                            this.lastAbortLogAt = now;
-                            logger.debug('[MessageQueue2] Wait aborted');
-                        }
-                    }
-                    // Clear waiter if it's still set
-                    if (this.waiter === waiterFunc) {
-                        this.waiter = null;
-                    }
-                    resolve(false);
-                };
-                abortSignal.addEventListener('abort', abortHandler);
-            }
+      if (this.queue.length > 0) {
+        if (abortHandler && abortSignal) {
+          abortSignal.removeEventListener('abort', abortHandler);
+        }
+        resolve(true);
+        return;
+      }
 
-            const waiterFunc = (hasMessages: boolean) => {
-                // Clean up abort handler
-                if (abortHandler && abortSignal) {
-                    abortSignal.removeEventListener('abort', abortHandler);
-                }
-                resolve(hasMessages);
-            };
+      if (this.closed || abortSignal?.aborted) {
+        if (abortHandler && abortSignal) {
+          abortSignal.removeEventListener('abort', abortHandler);
+        }
+        resolve(false);
+        return;
+      }
 
-            // Check again in case messages arrived or queue closed while setting up
-            if (this.queue.length > 0) {
-                if (abortHandler && abortSignal) {
-                    abortSignal.removeEventListener('abort', abortHandler);
-                }
-                resolve(true);
-                return;
-            }
-
-            if (this.closed || abortSignal?.aborted) {
-                if (abortHandler && abortSignal) {
-                    abortSignal.removeEventListener('abort', abortHandler);
-                }
-                resolve(false);
-                return;
-            }
-
-            // Set the waiter
-            this.waiter = waiterFunc;
-            {
-                const now = Date.now();
-                if (now - this.lastWaitLogAt > 2000) {
-                    this.lastWaitLogAt = now;
-                    logger.debug('[MessageQueue2] Waiting for messages...');
-                }
-            }
-        });
-    }
+      this.waiter = waiterFunc;
+      {
+        const now = Date.now();
+        if (now - this.lastWaitLogAt > 2000) {
+          this.lastWaitLogAt = now;
+          logger.debug('[MessageQueue2] Waiting for messages...');
+        }
+      }
+    });
+  }
 }

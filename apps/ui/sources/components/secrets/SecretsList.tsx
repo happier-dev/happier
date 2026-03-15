@@ -269,7 +269,7 @@ export function SecretsList(props: SecretsListProps) {
                         <Text style={styles.fieldLabel}>{t('secrets.fields.value')}</Text>
                         <TextInput
                             style={styles.textInput}
-                            placeholder="sk-..."
+                            placeholder={t('secrets.placeholders.valueExample')}
                             placeholderTextColor={theme.colors.input.placeholder}
                             value={draftValue}
                             onChangeText={setDraftValue}

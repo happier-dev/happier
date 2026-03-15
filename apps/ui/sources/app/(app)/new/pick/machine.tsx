@@ -253,6 +253,7 @@ export default React.memo(function MachinePickerScreen() {
                         selectedMachine={selectedMachine}
                         recentMachines={recentMachines}
                         favoriteMachines={machinesForSelectedServer.filter(m => favoriteMachines.includes(m.id))}
+                        testIdPrefix="new-session-machine"
                         onSelect={handleSelectMachine}
                         showFavorites={true}
                         showSearch={useMachinePickerSearch}

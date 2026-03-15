@@ -5,6 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { parseArgs } from 'node:util';
+import { resolveWindowsCommandInvocation } from '@happier-dev/cli-common/process';
 
 function fail(message) {
   console.error(message);
@@ -81,12 +82,20 @@ function npmPack(pkgDir, destDir, opts) {
   }
 
   fs.mkdirSync(destDir, { recursive: true });
-  const raw = execFileSync('npm', ['pack', '--silent', '--pack-destination', destDir], {
+  const env = { ...process.env };
+  const invocation = resolveWindowsCommandInvocation({
+    command: 'npm',
+    args: ['pack', '--silent', '--pack-destination', destDir],
+    env,
+    resolveCommandOnPath: true,
+  });
+  const raw = execFileSync(invocation.command, invocation.args, {
     cwd: pkgDir,
-    env: { ...process.env },
+    env,
     encoding: 'utf8',
     stdio: ['ignore', 'pipe', 'inherit'],
     timeout: 10 * 60_000,
+    windowsVerbatimArguments: invocation.windowsVerbatimArguments,
   }).trim();
 
   const lines = raw.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
@@ -111,7 +120,18 @@ function resolveInstalledBin(prefixDir) {
   const env = { ...process.env, npm_config_prefix: prefixDir };
   let binDir = '';
   try {
-    binDir = execFileSync('npm', ['bin', '-g'], { env, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] })
+    const invocation = resolveWindowsCommandInvocation({
+      command: 'npm',
+      args: ['bin', '-g'],
+      env,
+      resolveCommandOnPath: true,
+    });
+    binDir = execFileSync(invocation.command, invocation.args, {
+      env,
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'ignore'],
+      windowsVerbatimArguments: invocation.windowsVerbatimArguments,
+    })
       .trim()
       .split(/\r?\n/)[0]
       .trim();

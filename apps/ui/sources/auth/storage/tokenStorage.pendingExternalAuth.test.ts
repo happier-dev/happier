@@ -34,10 +34,10 @@ describe('TokenStorage pending external auth (web)', () => {
 
         await expect(TokenStorage.getPendingExternalAuth()).resolves.toBeNull();
 
-        const ok = await TokenStorage.setPendingExternalAuth({ provider: 'github', secret: 's' });
+        const ok = await TokenStorage.setPendingExternalAuth({ provider: 'github', proof: 'p' });
         expect(ok).toBe(true);
 
-        await expect(TokenStorage.getPendingExternalAuth()).resolves.toEqual({ provider: 'github', secret: 's' });
+        await expect(TokenStorage.getPendingExternalAuth()).resolves.toEqual({ provider: 'github', proof: 'p' });
 
         if (!localStorageHandle) {
             throw new Error('Expected localStorage mock handle');
@@ -54,30 +54,30 @@ describe('TokenStorage pending external auth (web)', () => {
                 localStorageHandle.store.delete(key);
             }
         }
-        await expect(TokenStorage.getPendingExternalAuth()).resolves.toEqual({ provider: 'github', secret: 's' });
+        await expect(TokenStorage.getPendingExternalAuth()).resolves.toEqual({ provider: 'github', proof: 'p' });
 
         const cleared = await TokenStorage.clearPendingExternalAuth();
         expect(cleared).toBe(true);
         await expect(TokenStorage.getPendingExternalAuth()).resolves.toBeNull();
     });
 
-    it('round-trips pending external auth state for keyless external login', async () => {
+    it('round-trips pending external auth state with both proof and secret', async () => {
         const { TokenStorage } = await import('./tokenStorage');
 
-        const ok = await TokenStorage.setPendingExternalAuth({ provider: 'github', proof: 'p', mode: 'keyless' });
+        const ok = await TokenStorage.setPendingExternalAuth({ provider: 'github', proof: 'p', secret: 's', intent: 'reset' });
         expect(ok).toBe(true);
 
-        await expect(TokenStorage.getPendingExternalAuth()).resolves.toEqual({ provider: 'github', proof: 'p', mode: 'keyless' });
+        await expect(TokenStorage.getPendingExternalAuth()).resolves.toEqual({ provider: 'github', proof: 'p', secret: 's', intent: 'reset' });
     });
 
     it('round-trips pending external auth returnTo when it is an internal path', async () => {
         const { TokenStorage } = await import('./tokenStorage');
 
-        const ok = await TokenStorage.setPendingExternalAuth({ provider: 'github', secret: 's', returnTo: '/settings/account' });
+        const ok = await TokenStorage.setPendingExternalAuth({ provider: 'github', proof: 'p', returnTo: '/settings/account' });
         expect(ok).toBe(true);
         await expect(TokenStorage.getPendingExternalAuth()).resolves.toEqual({
             provider: 'github',
-            secret: 's',
+            proof: 'p',
             returnTo: '/settings/account',
         });
     });

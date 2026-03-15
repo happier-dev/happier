@@ -53,7 +53,7 @@ export async function fetchEncryptedTranscriptPageAfterSeq(params: Readonly<{
   afterSeq: number;
   limit: number;
 }>): Promise<TranscriptRow[]> {
-  const serverUrl = resolveLoopbackHttpUrl(configuration.serverUrl).replace(/\/+$/, '');
+  const serverUrl = resolveLoopbackHttpUrl(configuration.apiServerUrl).replace(/\/+$/, '');
   const response = await axios.get(`${serverUrl}/v1/sessions/${params.sessionId}/messages`, {
     headers: {
       Authorization: `Bearer ${params.token}`,
@@ -79,7 +79,7 @@ export async function fetchEncryptedTranscriptPageLatest(params: Readonly<{
   sessionId: string;
   limit: number;
 }>): Promise<TranscriptRow[]> {
-  const serverUrl = resolveLoopbackHttpUrl(configuration.serverUrl).replace(/\/+$/, '');
+  const serverUrl = resolveLoopbackHttpUrl(configuration.apiServerUrl).replace(/\/+$/, '');
   const response = await axios.get(`${serverUrl}/v1/sessions/${params.sessionId}/messages`, {
     headers: {
       Authorization: `Bearer ${params.token}`,

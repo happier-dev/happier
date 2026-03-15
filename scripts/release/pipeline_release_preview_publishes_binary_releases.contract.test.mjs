@@ -7,14 +7,14 @@ import { fileURLToPath } from 'node:url';
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(here, '..', '..');
 
-test('release preview from dev can dry-run binary releases for cli + hstack', async () => {
+test('release dev to preview can dry-run binary releases for cli + hstack', async () => {
   const out = execFileSync(
     process.execPath,
     [
       resolve(repoRoot, 'scripts', 'pipeline', 'run.mjs'),
       'release',
       '--confirm',
-      'release preview from dev',
+      'release dev to preview',
       '--repository',
       'happier-dev/happier',
       '--deploy-environment',

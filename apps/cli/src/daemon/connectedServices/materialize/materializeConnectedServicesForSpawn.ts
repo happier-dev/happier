@@ -8,11 +8,13 @@ import type {
 
 import type { CatalogAgentId } from '@/backends/types';
 import { materializeClaudeConnectedServiceAuth } from '@/backends/claude/connectedServices/materializeClaudeConnectedServiceAuth';
+import { materializeClaudeSubscriptionConnectedServiceAuth } from '@/backends/claude/connectedServices/materializeClaudeSubscriptionConnectedServiceAuth';
 import { materializeCodexConnectedServiceAuth } from '@/backends/codex/connectedServices/materializeCodexConnectedServiceAuth';
 import { materializeGeminiConnectedServiceAuth } from '@/backends/gemini/connectedServices/materializeGeminiConnectedServiceAuth';
 import { materializeOpenCodeConnectedServiceAuth } from '@/backends/opencode/connectedServices/materializeOpenCodeConnectedServiceAuth';
 import { materializePiConnectedServiceAuth } from '@/backends/pi/connectedServices/materializePiConnectedServiceAuth';
 import { normalizeMaterializationKeyForPath } from './normalizeMaterializationKeyForPath';
+import { requireConnectedServiceTokenCredentialRecord } from '@/backends/connectedServices/connectedServiceCredentialRecord';
 
 type MaterializeResult = Readonly<{
   env: Record<string, string>;
@@ -42,32 +44,54 @@ export async function materializeConnectedServicesForSpawn(params: Readonly<{
   const cleanupRoot = bestEffortCleanupDirectory(rootDir);
 
   const codex = params.recordsByServiceId.get('openai-codex') ?? null;
+  const openai = params.recordsByServiceId.get('openai') ?? null;
+  const claudeSubscription = params.recordsByServiceId.get('claude-subscription') ?? null;
   const anthropic = params.recordsByServiceId.get('anthropic') ?? null;
   const gemini = params.recordsByServiceId.get('gemini') ?? null;
 
   if (params.agentId === 'codex') {
-    if (!codex) return null;
-    const materialized = await materializeCodexConnectedServiceAuth({ rootDir, record: codex });
-    Object.assign(env, materialized.env);
-    return { env, cleanupOnFailure: cleanupRoot, cleanupOnExit: cleanupRoot };
+    if (codex) {
+      const materialized = await materializeCodexConnectedServiceAuth({ rootDir, record: codex });
+      Object.assign(env, materialized.env);
+      return { env, cleanupOnFailure: cleanupRoot, cleanupOnExit: cleanupRoot };
+    }
+    if (!openai) return null;
+    const token = requireConnectedServiceTokenCredentialRecord(openai);
+    env.OPENAI_API_KEY = token.token.token;
+    return { env, cleanupOnFailure: null, cleanupOnExit: null };
   }
 
   if (params.agentId === 'claude') {
+    if (claudeSubscription) {
+      Object.assign(env, materializeClaudeSubscriptionConnectedServiceAuth({ record: claudeSubscription }).env);
+      return { env, cleanupOnFailure: null, cleanupOnExit: null };
+    }
     if (!anthropic) return null;
     Object.assign(env, materializeClaudeConnectedServiceAuth({ record: anthropic }).env);
     return { env, cleanupOnFailure: null, cleanupOnExit: null };
   }
 
   if (params.agentId === 'opencode') {
-    if (!codex && !anthropic) return null;
-    const materialized = await materializeOpenCodeConnectedServiceAuth({ rootDir, openaiCodex: codex, anthropic });
+    if (!codex && !openai && !anthropic) return null;
+    const materialized = await materializeOpenCodeConnectedServiceAuth({
+      rootDir,
+      openaiCodex: codex,
+      openai,
+      anthropic,
+    });
     Object.assign(env, materialized.env);
     return { env, cleanupOnFailure: cleanupRoot, cleanupOnExit: cleanupRoot };
   }
 
   if (params.agentId === 'pi') {
-    if (!codex && !anthropic) return null;
-    const materialized = await materializePiConnectedServiceAuth({ rootDir, openaiCodex: codex, anthropic });
+    if (!codex && !openai && !anthropic && !claudeSubscription) return null;
+    const materialized = await materializePiConnectedServiceAuth({
+      rootDir,
+      openaiCodex: codex,
+      openai,
+      claudeSubscription,
+      anthropic,
+    });
     Object.assign(env, materialized.env);
     return { env, cleanupOnFailure: cleanupRoot, cleanupOnExit: cleanupRoot };
   }

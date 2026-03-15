@@ -24,6 +24,10 @@ export function useSegments(): string[] {
     return [];
 }
 
+export function usePathname(): string {
+    return '/';
+}
+
 export function useLocalSearchParams(): Record<string, string | string[] | undefined> {
     return {};
 }

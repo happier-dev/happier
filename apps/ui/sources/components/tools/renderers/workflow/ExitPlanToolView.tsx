@@ -5,7 +5,7 @@ import { ToolViewProps } from '../core/_registry';
 import { ToolSectionView } from '../../shell/presentation/ToolSectionView';
 import { MarkdownView } from '@/components/markdown/MarkdownView';
 import { knownTools } from '../../catalog';
-import { sessionAllow, sessionDeny } from '@/sync/ops';
+import { sessionAllow, sessionAllowWithPermissionUpdates, sessionDeny } from '@/sync/ops';
 import { Modal } from '@/modal';
 import { t } from '@/text';
 import { Ionicons } from '@expo/vector-icons';
@@ -21,10 +21,13 @@ export const ExitPlanToolView = React.memo<ToolViewProps>(({ tool, sessionId, in
     const [changeRequestText, setChangeRequestText] = React.useState('');
     const isSendingChangeRequest = isRequestingChanges && isRejecting;
 
-    let plan = '<empty>';
+    let plan = t('tools.exitPlanMode.planMissing');
     const parsed = knownTools.ExitPlanMode.input.safeParse(tool.input);
     if (parsed.success) {
-        plan = parsed.data.plan ?? '<empty>';
+        const planText = parsed.data.plan;
+        if (typeof planText === 'string' && planText.trim().length > 0) {
+            plan = planText;
+        }
     }
 
     const isRunning = tool.state === 'running';
@@ -37,7 +40,7 @@ export const ExitPlanToolView = React.memo<ToolViewProps>(({ tool, sessionId, in
                 ? t('session.sharing.permissionApprovalsDisabledReadOnly')
                 : t('session.sharing.permissionApprovalsDisabledNotGranted');
 
-    const handleApprove = React.useCallback(async () => {
+    const handleApprove = React.useCallback(async (mode?: 'default' | 'acceptEdits' | 'bypassPermissions' | 'plan', opts?: { updatedPermissions?: unknown }) => {
         if (!sessionId || isApproving || isRejecting || !canInteract) return;
         const permissionId = tool.permission?.id;
         if (!permissionId) {
@@ -47,7 +50,16 @@ export const ExitPlanToolView = React.memo<ToolViewProps>(({ tool, sessionId, in
 
         setIsApproving(true);
         try {
-            await sessionAllow(sessionId, permissionId);
+            if (opts?.updatedPermissions !== undefined) {
+                await sessionAllowWithPermissionUpdates(sessionId, permissionId, {
+                    mode,
+                    updatedPermissions: opts.updatedPermissions,
+                });
+            } else if (mode) {
+                await sessionAllow(sessionId, permissionId, mode);
+            } else {
+                await sessionAllow(sessionId, permissionId);
+            }
             setIsResponded(true);
         } catch (error) {
             console.error('Failed to approve plan:', error);
@@ -55,6 +67,72 @@ export const ExitPlanToolView = React.memo<ToolViewProps>(({ tool, sessionId, in
             setIsApproving(false);
         }
     }, [sessionId, tool.permission?.id, canInteract, isApproving, isRejecting]);
+
+    const handleApproveOptions = React.useCallback(() => {
+        if (!canInteract || isApproving || isRejecting) return;
+
+        const suggestionsRaw = tool.permission?.suggestions;
+        const suggestionList = Array.isArray(suggestionsRaw) ? suggestionsRaw : [];
+
+        type SetModeSuggestion = Readonly<{
+            type: 'setMode';
+            mode: string;
+            destination: 'session';
+        }>;
+
+        const isSetModeSuggestion = (value: unknown): value is SetModeSuggestion => {
+            if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+            const rec = value as Record<string, unknown>;
+            return (
+                rec.type === 'setMode' &&
+                typeof rec.mode === 'string' &&
+                rec.destination === 'session'
+            );
+        };
+
+        const setModeSuggestions = suggestionList.filter(isSetModeSuggestion);
+        const suggestionByMode = new Map<string, SetModeSuggestion>();
+        for (const suggestion of setModeSuggestions) {
+            // Prefer first suggestion for a given mode to preserve provider ordering.
+            if (!suggestionByMode.has(suggestion.mode)) {
+                suggestionByMode.set(suggestion.mode, suggestion);
+            }
+        }
+
+        const labelForMode = (mode: string): string => {
+            if (mode === 'default') return t('agentInput.permissionMode.default');
+            if (mode === 'acceptEdits') return t('agentInput.permissionMode.acceptEdits');
+            if (mode === 'bypassPermissions') return t('agentInput.permissionMode.badgeBypassAllPermissions');
+            return mode;
+        };
+
+        const standardModes = new Set(['default', 'acceptEdits', 'bypassPermissions']);
+        const extraSetModeSuggestions = setModeSuggestions.filter((s) => !standardModes.has(s.mode));
+
+        Modal.alert(t('tools.exitPlanMode.approve'), undefined, [
+            ...extraSetModeSuggestions.map((suggestion) => ({
+                text: `${t('tools.exitPlanMode.approve')} (${labelForMode(suggestion.mode)})`,
+                onPress: () => handleApprove(undefined, { updatedPermissions: [suggestion] }),
+            })),
+            {
+                text: `${t('tools.exitPlanMode.approve')} (${t('agentInput.permissionMode.default')})`,
+                onPress: () => handleApprove('default', { updatedPermissions: [suggestionByMode.get('default') ?? { type: 'setMode', mode: 'default', destination: 'session' }] }),
+            },
+            {
+                text: `${t('tools.exitPlanMode.approve')} (${t('agentInput.permissionMode.acceptEdits')})`,
+                onPress: () => handleApprove('acceptEdits', { updatedPermissions: [suggestionByMode.get('acceptEdits') ?? { type: 'setMode', mode: 'acceptEdits', destination: 'session' }] }),
+            },
+            {
+                text: `${t('tools.exitPlanMode.approve')} (${t('agentInput.permissionMode.badgeBypassAllPermissions')})`,
+                onPress: () => handleApprove('bypassPermissions', { updatedPermissions: [suggestionByMode.get('bypassPermissions') ?? { type: 'setMode', mode: 'bypassPermissions', destination: 'session' }] }),
+                style: 'destructive',
+            },
+            {
+                text: t('common.cancel'),
+                style: 'cancel',
+            },
+        ]);
+    }, [canInteract, isApproving, isRejecting, handleApprove, tool.permission?.suggestions]);
 
     const handleReject = React.useCallback(async () => {
         if (!sessionId || isApproving || isRejecting || !canInteract) return;
@@ -155,6 +233,17 @@ export const ExitPlanToolView = React.memo<ToolViewProps>(({ tool, sessionId, in
             alignItems: 'center',
             justifyContent: 'center',
             gap: 6,
+            minHeight: 44,
+            flexGrow: 1,
+        },
+        approveMenuButton: {
+            backgroundColor: theme.colors.button.primary.background,
+            paddingHorizontal: 12,
+            paddingVertical: 12,
+            borderRadius: 8,
+            flexDirection: 'row',
+            alignItems: 'center',
+            justifyContent: 'center',
             minHeight: 44,
         },
         rejectButton: {
@@ -318,31 +407,43 @@ export const ExitPlanToolView = React.memo<ToolViewProps>(({ tool, sessionId, in
                                         {t('tools.exitPlanMode.requestChanges')}
                                     </Text>
                                 </TouchableOpacity>
-                                <TouchableOpacity
-                                    testID="exit-plan-approve"
-                                    style={[
-                                        styles.approveButton,
-                                        (isApproving || isRejecting) && styles.buttonDisabled,
-                                    ]}
-                                    onPress={handleApprove}
-                                    disabled={isApproving || isRejecting}
-                                    activeOpacity={0.7}
-                                >
-                                    {isApproving ? (
-                                        <ActivityIndicator size="small" color={theme.colors.button.primary.tint} />
+                                  <TouchableOpacity
+                                      testID="exit-plan-approve"
+                                      style={[
+                                          styles.approveButton,
+                                          (isApproving || isRejecting) && styles.buttonDisabled,
+                                      ]}
+                                      onPress={() => handleApprove()}
+                                      disabled={isApproving || isRejecting}
+                                      activeOpacity={0.7}
+                                  >
+                                      {isApproving ? (
+                                          <ActivityIndicator size="small" color={theme.colors.button.primary.tint} />
                                     ) : (
                                         <>
                                             <Ionicons name="checkmark" size={18} color={theme.colors.button.primary.tint} />
-                                            <Text style={styles.approveButtonText}>
-                                                {t('tools.exitPlanMode.approve')}
-                                            </Text>
-                                        </>
-                                    )}
-                                </TouchableOpacity>
-                            </View>
-                        )}
-                    </>
-                ) : (isRunning && !canApprovePermissions ? (
+                                              <Text style={styles.approveButtonText}>
+                                                  {t('tools.exitPlanMode.approve')}
+                                              </Text>
+                                          </>
+                                      )}
+                                  </TouchableOpacity>
+                                  <TouchableOpacity
+                                      testID="exit-plan-approve-menu"
+                                      style={[
+                                          styles.approveMenuButton,
+                                          (isApproving || isRejecting) && styles.buttonDisabled,
+                                      ]}
+                                      onPress={handleApproveOptions}
+                                      disabled={isApproving || isRejecting}
+                                      activeOpacity={0.7}
+                                  >
+                                      <Ionicons name="chevron-down" size={18} color={theme.colors.button.primary.tint} />
+                                  </TouchableOpacity>
+                              </View>
+                          )}
+                      </>
+                  ) : (isRunning && !canApprovePermissions ? (
                     <View style={styles.respondedContainer}>
                         <Ionicons
                             name="lock-closed-outline"

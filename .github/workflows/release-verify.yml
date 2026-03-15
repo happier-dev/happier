@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       channel:
-        description: "Target — Channel to verify (preview uses dev ref; production uses main ref by default)"
+        description: "Target — Channel to verify (preview uses preview ref; production uses main ref by default)"
         required: true
         type: choice
         default: preview

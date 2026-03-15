@@ -32,6 +32,10 @@ vi.mock('@/agents/catalog/catalog', () => ({
 vi.mock('@/components/tools/catalog', () => ({
     knownTools: {
         Read: { title: 'Read' },
+        edit: {
+            title: 'Edit',
+            extractSubtitle: () => 'file.ts',
+        },
     },
 }));
 
@@ -99,7 +103,7 @@ describe('ToolView (detail level: title)', () => {
         const { ToolView } = await import('./ToolView');
 
         const tool = makeToolCall({
-            name: 'Read',
+            name: 'edit',
             input: { file_path: '/tmp/a.txt' },
             result: { file: { content: 'hello' } },
         });
@@ -111,6 +115,9 @@ describe('ToolView (detail level: title)', () => {
 
         // Header still renders (baseline sanity).
         expect(tree.root.findAllByType('Text' as any).length).toBeGreaterThan(0);
+
+        // Title-only should not render subtitles/status text (only title + icon chrome).
+        expect(tree.root.findAllByProps({ testID: 'tool-card-subtitle' })).toHaveLength(0);
 
         // Body renderers should not run at title-level.
         expect(renderedToolViewSpy).not.toHaveBeenCalled();

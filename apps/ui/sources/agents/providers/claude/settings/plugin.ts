@@ -19,6 +19,19 @@ export const CLAUDE_PROVIDER_SETTINGS_PLUGIN = {
     settingsDefaults: defaults,
     uiSections: [
         {
+            id: 'claudeCodeExperiments',
+            title: 'Claude Code experiments',
+            footer: 'These settings apply to both local Claude (terminal) and remote Claude (Agent SDK) sessions started by Happier.',
+            fields: [
+                {
+                    key: 'claudeCodeExperimentalAgentTeamsEnabled',
+                    kind: 'boolean',
+                    title: 'Force-enable Agent Teams',
+                    subtitle: 'Enable Claude Code experimental Agent Teams (agent swarm) in all Claude sessions started by Happier.',
+                },
+            ],
+        },
+        {
             id: 'claudeRemoteSdk',
             title: 'Claude Agent SDK (remote mode)',
             footer:
@@ -31,25 +44,25 @@ export const CLAUDE_PROVIDER_SETTINGS_PLUGIN = {
                     subtitle: 'Use the official @anthropic-ai/claude-agent-sdk for remote mode.',
                 },
                 {
-                    key: 'claudeRemoteSettingSources',
-                    kind: 'enum',
+                    key: 'claudeRemoteSettingSourcesV2',
+                    kind: 'multiEnum',
                     title: 'Setting sources',
                     subtitle: 'Controls which Claude settings are loaded.',
                     enumOptions: [
                         {
+                            id: 'user',
+                            title: 'User',
+                            subtitle: 'Loads user-global Claude config.',
+                        },
+                        {
                             id: 'project',
-                            title: 'Project only',
-                            subtitle: 'Loads repo settings (e.g. CLAUDE.md) for predictability.',
+                            title: 'Project',
+                            subtitle: 'Loads repo settings (including CLAUDE.md).',
                         },
                         {
-                            id: 'user_project',
-                            title: 'User + Project',
-                            subtitle: 'Closer to local Claude behavior; may include user-global config.',
-                        },
-                        {
-                            id: 'none',
-                            title: 'None',
-                            subtitle: 'Most deterministic; ignores CLAUDE.md and user config.',
+                            id: 'local',
+                            title: 'Local',
+                            subtitle: 'Loads local-only overrides.',
                         },
                     ],
                 },

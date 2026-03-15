@@ -1,5 +1,18 @@
 import type { HandlerContext, HandlerResult, SessionUpdate } from './types';
 
+function extractThinkingText(payload: unknown): string | null {
+  if (typeof payload === 'string') {
+    return payload.trim().length > 0 ? payload : null;
+  }
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
+    return null;
+  }
+  const record = payload as Record<string, unknown>;
+  const textCandidate = record.text ?? record.message ?? record.content;
+  if (typeof textCandidate !== 'string') return null;
+  return textCandidate.trim().length > 0 ? textCandidate : null;
+}
+
 export function handleAvailableCommandsUpdate(
   update: SessionUpdate,
   ctx: HandlerContext,
@@ -63,14 +76,15 @@ export function handleThinkingUpdate(
   update: SessionUpdate,
   ctx: HandlerContext,
 ): HandlerResult {
-  if (!update.thinking) {
+  const text = extractThinkingText(update.thinking);
+  if (!text) {
     return { handled: false };
   }
 
   ctx.emit({
     type: 'event',
     name: 'thinking',
-    payload: update.thinking,
+    payload: { text },
   });
 
   return { handled: true };

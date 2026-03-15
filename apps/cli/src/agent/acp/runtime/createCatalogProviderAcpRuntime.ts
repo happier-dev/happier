@@ -7,16 +7,17 @@ import type { ApiSessionClient } from '@/api/session/sessionClient';
 import type { PermissionMode } from '@/api/types';
 import type { MessageBuffer } from '@/ui/ink/messageBuffer';
 import { logger } from '@/ui/logger';
-import { sendPermissionRequestPushNotificationForActiveAccount } from '@/settings/notifications/permissionRequestPush';
+import {
+  sendPermissionRequestPushNotificationForActiveAccount,
+  type PermissionRequestPushSender,
+} from '@/settings/notifications/permissionRequestPush';
 
 type CatalogAcpProviderRuntimeParams<TBackendOptions extends object> = {
   provider: Parameters<typeof createCatalogAcpBackend>[0];
   loggerLabel: string;
   directory: string;
   session: ApiSessionClient;
-  pushSender?: Readonly<{
-    sendToAllDevices: (title: string, body: string, data: Record<string, unknown>) => void;
-  }>;
+  pushSender?: PermissionRequestPushSender;
   messageBuffer: MessageBuffer;
   mcpServers: Record<string, McpServerConfig>;
   permissionHandler: AcpPermissionHandler;
@@ -49,7 +50,6 @@ export function createCatalogProviderAcpRuntime<TBackendOptions extends object =
       // best-effort
     }
   };
-
   const hooks = params.hooks
     ? {
         ...params.hooks,

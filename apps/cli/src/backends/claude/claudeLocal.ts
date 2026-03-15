@@ -14,6 +14,8 @@ import { restoreStdinBestEffort } from "@/ui/ink/restoreStdinBestEffort";
 import { isClaudeCliJavaScriptFile, resolveClaudeCliPath } from "./utils/resolveClaudeCliPath";
 import { isBun } from "@/utils/runtime";
 import { stripNestedSessionDetectionEnv } from "@/utils/processEnv/stripNestedSessionDetectionEnv";
+import { resolveClaudeConfigDirOverride } from "./utils/resolveClaudeConfigDirOverride";
+import { resolveWindowsCommandInvocation, type CommandInvocation } from '@happier-dev/cli-common/process';
 
 /**
  * Error thrown when the Claude process exits with a non-zero exit code.
@@ -35,18 +37,19 @@ export const claudeCliPath = resolve(join(projectPath(), 'scripts', 'claude_loca
 export async function claudeLocal(opts: {
     abort: AbortSignal,
     sessionId: string | null,
-    mcpServers?: Record<string, any>,
     path: string,
     onSessionFound: (id: string) => void,
     onThinkingChange?: (thinking: boolean) => void,
-    claudeEnvVars?: Record<string, string>,
     claudeArgs?: string[],
-    allowedTools?: string[],
+    /** Optional env overrides to apply to the spawned Claude Code subprocess. */
+    envOverlay?: Record<string, string>,
+    /** Optional MCP config JSON to inject into the Claude Code CLI invocation (e.g. Happier MCP). */
+    happierMcpConfigJson?: string,
     /** Path to temporary settings file with SessionStart hook (optional - for session tracking) */
     hookSettingsPath?: string
 }) {
 
-    const claudeConfigDir = opts.claudeEnvVars?.CLAUDE_CONFIG_DIR ?? null;
+    const claudeConfigDir = resolveClaudeConfigDirOverride(process.env);
 
     // Ensure project directory exists
     const projectDir = getProjectPath(opts.path, claudeConfigDir);
@@ -215,14 +218,6 @@ export async function claudeLocal(opts: {
 
             args.push('--append-system-prompt', systemPrompt());
 
-            if (opts.mcpServers && Object.keys(opts.mcpServers).length > 0) {
-                args.push('--mcp-config', JSON.stringify({ mcpServers: opts.mcpServers }));
-            }
-
-            if (opts.allowedTools && opts.allowedTools.length > 0) {
-                args.push('--allowedTools', opts.allowedTools.join(','));
-            }
-
             // Claude CLI treats the first non-flag token as the prompt. If a positional prompt
             // is provided before later flags, those flags can be mis-parsed as prompt text.
             // Ensure positional args come after all flags (including our injected --settings).
@@ -258,10 +253,18 @@ export async function claudeLocal(opts: {
                 }
             }
 
-            // Add hook settings for session tracking (when available)
+            // Append Happier-injected flags after any user-provided flags.
+            //
+            // Claude Code merges multiple `--mcp-config` sources additively and uses last-write-wins on collisions.
+            // Appending here means we do not need to parse/merge user JSON and Happier wins on collisions.
+            //
+            // `--settings` is also treated as an additive overlay by Claude Code (validated via real CLI runs).
             if (opts.hookSettingsPath) {
-                args.push('--settings', opts.hookSettingsPath);
+                flagArgs.push('--settings', opts.hookSettingsPath);
                 logger.debug(`[ClaudeLocal] Using hook settings: ${opts.hookSettingsPath}`);
+            }
+            if (typeof opts.happierMcpConfigJson === 'string' && opts.happierMcpConfigJson.trim().length > 0) {
+                flagArgs.push('--mcp-config', opts.happierMcpConfigJson.trim());
             }
 
             // Add flag arguments before positional prompts.
@@ -277,10 +280,13 @@ export async function claudeLocal(opts: {
             // Launcher only intercepts fetch for thinking state tracking
             const env: NodeJS.ProcessEnv = stripNestedSessionDetectionEnv({
                 ...process.env,
-                ...opts.claudeEnvVars,
                 // Keep behavior consistent with our wrapper script.
                 DISABLE_AUTOUPDATER: '1',
+                ...(opts.envOverlay ?? {}),
             })
+            // Internal daemon→CLI marker used for strict env filtering in Agent SDK remote mode.
+            // Never forward it into the Claude Code subprocess environment.
+            delete env.HAPPIER_SPAWN_EXPLICIT_ENV_KEYS_JSON;
 
             const resolvedClaudeCliPath = resolveClaudeCliPath();
             const shouldUseNodeLauncher = isClaudeCliJavaScriptFile(resolvedClaudeCliPath);
@@ -303,21 +309,18 @@ export async function claudeLocal(opts: {
 
             const nodeExecutable = isBun() ? 'node' : process.execPath;
 
-            const child = shouldUseNodeLauncher
-                ? spawn(nodeExecutable, [claudeCliPath, ...args], {
-                    stdio: ['inherit', 'inherit', 'inherit', 'pipe'],
-                    signal: opts.abort,
-                    cwd: opts.path,
-                    env,
-                    windowsHide: true,
-                })
-                : spawn(resolvedClaudeCliPath, args, {
-                    stdio: ['inherit', 'inherit', 'inherit', 'ignore'],
-                    signal: opts.abort,
-                    cwd: opts.path,
-                    env,
-                    windowsHide: true,
-                });
+            const invocation: CommandInvocation = shouldUseNodeLauncher
+                ? { command: nodeExecutable, args: [claudeCliPath, ...args] }
+                : resolveWindowsCommandInvocation({ command: resolvedClaudeCliPath, args, env });
+
+            const child = spawn(invocation.command, invocation.args, {
+                stdio: shouldUseNodeLauncher ? ['inherit', 'inherit', 'inherit', 'pipe'] : ['inherit', 'inherit', 'inherit', 'ignore'],
+                signal: opts.abort,
+                cwd: opts.path,
+                env,
+                windowsHide: true,
+                ...(invocation.windowsVerbatimArguments ? { windowsVerbatimArguments: true } : {}),
+            });
 
             // Forward signals to child process to prevent orphaned processes
             // Note: signal: opts.abort handles programmatic abort (mode switching),

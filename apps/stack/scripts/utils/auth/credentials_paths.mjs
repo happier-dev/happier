@@ -8,6 +8,12 @@ function normalizeServerUrl(url) {
   return String(url ?? '').trim().replace(/\/+$/, '');
 }
 
+function normalizeLoopbackHost(rawHost) {
+  const host = String(rawHost ?? '').trim().toLowerCase();
+  if (host === '127.0.0.1' || host === '::1' || host === '[::1]' || host === '0.0.0.0') return 'localhost';
+  return host;
+}
+
 function sanitizeServerIdForFilesystem(raw, fallback = 'default') {
   const value = String(raw ?? '').trim();
   if (!value) return String(fallback ?? '').trim() || 'default';
@@ -33,6 +39,21 @@ function deriveServerIdFromUrl(url) {
   return `env_${(h >>> 0).toString(16)}`;
 }
 
+function deriveLoopbackHostPortServerId(url) {
+  const normalized = normalizeServerUrl(url);
+  if (!normalized) return '';
+  try {
+    const parsed = new URL(normalized);
+    const host = normalizeLoopbackHost(parsed.hostname);
+    if (host !== 'localhost') return '';
+    const port = String(parsed.port ?? '').trim();
+    if (!port) return '';
+    return sanitizeServerIdForFilesystem(`${host}-${port}`, '');
+  } catch {
+    return '';
+  }
+}
+
 function requireCliHomeDir(cliHomeDir) {
   const home = String(cliHomeDir ?? '').trim();
   if (!home) {
@@ -49,6 +70,7 @@ export function resolveStackCredentialPaths({ cliHomeDir, serverUrl = '', env = 
     normalizedServerUrl ? deriveServerIdFromUrl(normalizedServerUrl) : 'default',
     'default'
   );
+  const hostPortServerId = deriveLoopbackHostPortServerId(normalizedServerUrl);
   const overrideServerId = resolveActiveServerIdOverride(env);
   const activeServerId = overrideServerId || urlHashServerId;
   const serverScopedPath = join(home, 'servers', activeServerId, 'access.key');
@@ -56,13 +78,19 @@ export function resolveStackCredentialPaths({ cliHomeDir, serverUrl = '', env = 
     urlHashServerId && urlHashServerId !== activeServerId
       ? join(home, 'servers', urlHashServerId, 'access.key')
       : '';
-  const paths = [serverScopedPath, urlHashServerScopedPath, legacyPath].filter(Boolean);
+  const hostPortServerScopedPath =
+    hostPortServerId && hostPortServerId !== activeServerId && hostPortServerId !== urlHashServerId
+      ? join(home, 'servers', hostPortServerId, 'access.key')
+      : '';
+  const paths = [serverScopedPath, urlHashServerScopedPath, hostPortServerScopedPath, legacyPath].filter(Boolean);
   return {
     activeServerId,
     urlHashServerId,
+    hostPortServerId,
     legacyPath,
     serverScopedPath,
     urlHashServerScopedPath,
+    hostPortServerScopedPath,
     paths,
   };
 }
@@ -74,6 +102,7 @@ export function resolveStackDaemonStatePaths({ cliHomeDir, serverUrl = '', env =
     normalizedServerUrl ? deriveServerIdFromUrl(normalizedServerUrl) : 'default',
     'default'
   );
+  const hostPortServerId = deriveLoopbackHostPortServerId(normalizedServerUrl);
   const overrideServerId = resolveActiveServerIdOverride(env);
   const activeServerId = overrideServerId || urlHashServerId;
 
@@ -89,18 +118,32 @@ export function resolveStackDaemonStatePaths({ cliHomeDir, serverUrl = '', env =
     urlHashServerId && urlHashServerId !== activeServerId
       ? join(home, 'servers', urlHashServerId, 'daemon.state.json.lock')
       : '';
+  const hostPortServerScopedStatePath =
+    hostPortServerId && hostPortServerId !== activeServerId && hostPortServerId !== urlHashServerId
+      ? join(home, 'servers', hostPortServerId, 'daemon.state.json')
+      : '';
+  const hostPortServerScopedLockPath =
+    hostPortServerId && hostPortServerId !== activeServerId && hostPortServerId !== urlHashServerId
+      ? join(home, 'servers', hostPortServerId, 'daemon.state.json.lock')
+      : '';
 
   return {
     activeServerId,
     urlHashServerId,
+    hostPortServerId,
     legacyStatePath,
     legacyLockPath,
     serverScopedStatePath,
     serverScopedLockPath,
     urlHashServerScopedStatePath,
     urlHashServerScopedLockPath,
+    hostPortServerScopedStatePath,
+    hostPortServerScopedLockPath,
     pairs: [
       { statePath: serverScopedStatePath, lockPath: serverScopedLockPath },
+      ...(hostPortServerScopedStatePath
+        ? [{ statePath: hostPortServerScopedStatePath, lockPath: hostPortServerScopedLockPath }]
+        : []),
       ...(urlHashServerScopedStatePath
         ? [{ statePath: urlHashServerScopedStatePath, lockPath: urlHashServerScopedLockPath }]
         : []),
@@ -115,6 +158,14 @@ export function resolvePreferredStackDaemonStatePaths({ cliHomeDir, serverUrl = 
     fileHasContent(resolved.serverScopedStatePath) || existsSync(resolved.serverScopedLockPath);
   if (serverScopedExists) {
     return { statePath: resolved.serverScopedStatePath, lockPath: resolved.serverScopedLockPath };
+  }
+
+  if (resolved.hostPortServerScopedStatePath) {
+    const hostPortExists =
+      fileHasContent(resolved.hostPortServerScopedStatePath) || existsSync(resolved.hostPortServerScopedLockPath);
+    if (hostPortExists) {
+      return { statePath: resolved.hostPortServerScopedStatePath, lockPath: resolved.hostPortServerScopedLockPath };
+    }
   }
 
   if (resolved.urlHashServerScopedStatePath) {
@@ -136,6 +187,9 @@ export function resolvePreferredStackDaemonStatePaths({ cliHomeDir, serverUrl = 
 export function findExistingStackCredentialPath({ cliHomeDir, serverUrl = '', env = process.env }) {
   const resolved = resolveStackCredentialPaths({ cliHomeDir, serverUrl, env });
   if (fileHasContent(resolved.serverScopedPath)) return resolved.serverScopedPath;
+  if (resolved.hostPortServerScopedPath && fileHasContent(resolved.hostPortServerScopedPath)) {
+    return resolved.hostPortServerScopedPath;
+  }
   if (resolved.urlHashServerScopedPath && fileHasContent(resolved.urlHashServerScopedPath)) {
     return resolved.urlHashServerScopedPath;
   }

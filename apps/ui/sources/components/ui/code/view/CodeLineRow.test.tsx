@@ -40,6 +40,10 @@ vi.mock('react-native-unistyles', () => {
                 removedText: '#b31d28',
                 hunkHeaderText: '#111',
                 contextText: '#24292e',
+                inlineAddedBg: '#acfaa6',
+                inlineAddedText: '#0a3f0a',
+                inlineRemovedBg: '#ffcecb',
+                inlineRemovedText: '#5a0a05',
             },
             shadow: { color: '#000', opacity: 0.2 },
         },
@@ -118,6 +122,7 @@ describe('CodeLineRow', () => {
         const keywordStyle = keywordNodes[0]!.props.style;
         const flattened = Array.isArray(keywordStyle) ? keywordStyle.flat() : [keywordStyle];
         expect(flattened.some((s: any) => s?.color === '#b00')).toBe(true);
+        expect(flattened.some((s: any) => s?.fontWeight === '600' || s?.fontWeight === 600)).toBe(true);
     });
 
     it('falls back to simple tokenization while advanced tokens are unavailable', async () => {
@@ -158,6 +163,7 @@ describe('CodeLineRow', () => {
         const keywordStyle = keywordNodes[0]!.props.style;
         const flattened = Array.isArray(keywordStyle) ? keywordStyle.flat() : [keywordStyle];
         expect(flattened.some((s: any) => s?.color === '#b00')).toBe(true);
+        expect(flattened.some((s: any) => s?.fontWeight === '600' || s?.fontWeight === 600)).toBe(true);
     });
 
     it('shows a close-comment affordance when the inline comment is active', async () => {
@@ -296,5 +302,50 @@ describe('CodeLineRow', () => {
         const style = codeNode.props.style;
         const flattened = Array.isArray(style) ? style.flat() : [style];
         expect(flattened.some((s: any) => s?.whiteSpace === 'pre-wrap')).toBe(true);
+    });
+
+    it('renders intra-line diff segments when provided', async () => {
+        const { CodeLineRow } = await import('./CodeLineRow');
+
+        let tree: renderer.ReactTestRenderer | null = null;
+        act(() => {
+            tree = renderer.create(
+                <CodeLineRow
+                    line={{
+                        id: '1',
+                        sourceIndex: 0,
+                        kind: 'add',
+                        oldLine: null,
+                        newLine: 1,
+                        renderPrefixText: '+',
+                        renderCodeText: 'const x = 1;',
+                        renderIsHeaderLine: false,
+                        selectable: false,
+                        renderIntraLineDiffSegments: [
+                            { text: 'const ', kind: 'context' },
+                            { text: 'x', kind: 'added' },
+                            { text: ' = 1;', kind: 'context' },
+                        ],
+                    } as any}
+                    selected={false}
+                    syntaxHighlighting={{
+                        mode: 'simple',
+                        language: 'typescript',
+                        maxLineLength: 10_000,
+                    }}
+                />,
+            );
+        });
+
+        const addedNodes = tree!.root.findAll((node) => {
+            if ((node as any).type !== 'Text') return false;
+            const style = node.props?.style;
+            if (!style) return false;
+            const flattened = Array.isArray(style) ? style.flat() : [style];
+            return flattened.some((s: any) => s?.backgroundColor === '#acfaa6');
+        });
+
+        expect(addedNodes.length).toBeGreaterThan(0);
+        expect(JSON.stringify(tree!.toJSON())).toContain('x');
     });
 });

@@ -28,6 +28,18 @@ export const CLAUDE_CORE: AgentCoreConfig = {
     },
     sessionModes: {
         kind: getAgentSessionModesKind('claude'),
+        staticOptions: [
+            {
+                id: 'default',
+                nameKey: 'agentInput.mode.build',
+                descriptionKey: 'agentInput.mode.buildDescription',
+            },
+            {
+                id: 'plan',
+                nameKey: 'agentInput.mode.plan',
+                descriptionKey: 'agentInput.mode.planDescription',
+            },
+        ],
     },
     model: getAgentModelConfig('claude'),
     resume: {

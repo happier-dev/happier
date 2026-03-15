@@ -14,7 +14,7 @@ test('pipeline CLI release can include npm publish lane in dry-run', async () =>
       resolve(repoRoot, 'scripts', 'pipeline', 'run.mjs'),
       'release',
       '--confirm',
-      'release preview from dev',
+      'release dev to preview',
       '--deploy-environment',
       'preview',
       '--deploy-targets',
@@ -49,7 +49,7 @@ test('pipeline CLI release can include npm publish lane in dry-run', async () =>
     },
   );
 
-  assert.match(out, /\[pipeline\] release: environment=preview confirm=release preview from dev/);
+  assert.match(out, /\[pipeline\] release: environment=preview confirm=release dev to preview/);
   assert.match(out, /\[pipeline\] dry-run: would run/);
   assert.match(out, /- runPublishNpm: true/);
 });

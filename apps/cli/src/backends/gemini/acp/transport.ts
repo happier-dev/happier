@@ -20,8 +20,10 @@ import type {
   ToolNameContext,
 } from '@/agent/transport/TransportHandler';
 import type { AgentMessage } from '@/agent/core';
+import { CHANGE_TITLE_TOOL_NAME_ALIASES } from '@happier-dev/protocol/tools/v2';
 import { logger } from '@/ui/logger';
 import { filterJsonObjectOrArrayLine } from '@/agent/transport/utils/jsonStdoutFilter';
+import { getSuggestedGeminiModelsForUi } from '@/backends/gemini/models/suggestedGeminiModelsForUi';
 import {
   findEmptyInputDefaultToolName,
   findToolNameFromId,
@@ -61,14 +63,7 @@ export const GEMINI_TIMEOUTS = {
 const GEMINI_TOOL_PATTERNS: ToolPatternWithInputFields[] = [
   {
     name: 'change_title',
-    patterns: [
-      'change_title',
-      'change-title',
-      'happier__change_title',
-      'mcp__happier__change_title',
-      'happier__change_title',
-      'mcp__happier__change_title',
-    ],
+    patterns: CHANGE_TITLE_TOOL_NAME_ALIASES,
     inputFields: ['title'],
     emptyInputDefault: true, // change_title often has empty input (title extracted from context)
   },
@@ -113,15 +108,6 @@ const GEMINI_TOOL_PATTERNS: ToolPatternWithInputFields[] = [
     patterns: ['write_todos', 'todo_write', 'todowrite'],
     inputFields: ['todos', 'items'],
   },
-];
-
-/**
- * Available Gemini models for error messages
- */
-const AVAILABLE_MODELS = [
-  'gemini-2.5-pro',
-  'gemini-2.5-flash',
-  'gemini-2.5-flash-lite',
 ];
 
 /**
@@ -188,10 +174,11 @@ export class GeminiTransport implements TransportHandler {
 
     // Model not found (404) - show error with available models
     if (trimmed.includes('status 404') || trimmed.includes('code":404')) {
+      const suggested = getSuggestedGeminiModelsForUi();
       const errorMessage: AgentMessage = {
         type: 'status',
         status: 'error',
-        detail: `Model not found. Available models: ${AVAILABLE_MODELS.join(', ')}`,
+        detail: `Model not found. Suggested models: ${suggested.join(', ')}`,
       };
       return { message: errorMessage };
     }

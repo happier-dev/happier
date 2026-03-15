@@ -20,6 +20,16 @@ import { randomUUID } from "node:crypto";
 import { getSocketAdapterFromEnv, isRedisStreamsEnabled } from "@/config/backends";
 import { db } from "@/storage/db";
 
+export const DEFAULT_SOCKET_MAX_HTTP_BUFFER_SIZE = 25_000_000;
+
+export function resolveSocketMaxHttpBufferSizeFromEnv(env: Record<string, string | undefined>): number {
+    const raw = (env.HAPPIER_SOCKET_MAX_HTTP_BUFFER_SIZE ?? env.HAPPY_SOCKET_MAX_HTTP_BUFFER_SIZE ?? '').trim();
+    if (!raw) return DEFAULT_SOCKET_MAX_HTTP_BUFFER_SIZE;
+    const parsed = Number.parseInt(raw, 10);
+    if (!Number.isFinite(parsed) || parsed <= 0) return DEFAULT_SOCKET_MAX_HTTP_BUFFER_SIZE;
+    return parsed;
+}
+
 export function startSocket(app: Fastify) {
     const socketAdapter = getSocketAdapterFromEnv(process.env, "memory");
     const shouldEnableRedisAdapter = isRedisStreamsEnabled(process.env, socketAdapter);
@@ -39,6 +49,7 @@ export function startSocket(app: Fastify) {
         pingTimeout: 45000,
         pingInterval: 15000,
         path: '/v1/updates',
+        maxHttpBufferSize: resolveSocketMaxHttpBufferSizeFromEnv(process.env),
         allowUpgrades: true,
         upgradeTimeout: 10000,
         connectTimeout: 20000,

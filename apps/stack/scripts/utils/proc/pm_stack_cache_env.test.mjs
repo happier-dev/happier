@@ -19,6 +19,7 @@ async function writeYarnEnvDumpStub({ binDir, outputPath }) {
       '  XDG_CACHE_HOME: process.env.XDG_CACHE_HOME ?? null,',
       '  YARN_CACHE_FOLDER: process.env.YARN_CACHE_FOLDER ?? null,',
       '  npm_config_cache: process.env.npm_config_cache ?? null,',
+      '  HOME: process.env.HOME ?? null,',
       '  NODE_ENV: process.env.NODE_ENV ?? null,',
       '  YARN_PRODUCTION: process.env.YARN_PRODUCTION ?? null,',
       '  npm_config_production: process.env.npm_config_production ?? null,',
@@ -107,6 +108,35 @@ async function writeYarnBuildCreatesDistStub({ binDir, outputPath, cliDir }) {
       'if [ "${1:-}" = "build" ]; then',
       `  mkdir -p ${JSON.stringify(join(cliDir, 'dist'))}`,
       `  echo "export const built = true;" > ${JSON.stringify(join(cliDir, 'dist', 'index.mjs'))}`,
+      '  exit 0',
+      'fi',
+      'exit 0',
+    ].join('\n') + '\n',
+    'utf-8'
+  );
+  await chmod(yarnPath, 0o755);
+  await writeFile(outputPath, '', 'utf-8');
+}
+
+async function writeYarnBuildCreatesPartialDistWithMissingChunkStub({ binDir, outputPath, cliDir }) {
+  await mkdir(binDir, { recursive: true });
+  const yarnPath = join(binDir, 'yarn');
+  await writeFile(
+    yarnPath,
+    [
+      '#!/usr/bin/env bash',
+      'set -euo pipefail',
+      'echo "$*" >> "${OUTPUT_PATH:?}"',
+      'if [ "${1:-}" = "--version" ]; then',
+      '  echo "1.22.22"',
+      '  exit 0',
+      'fi',
+      'if [ "${1:-}" = "build" ]; then',
+      `  mkdir -p ${JSON.stringify(join(cliDir, 'dist'))}`,
+      // Simulate a "successful" build that leaves a broken local import graph.
+      // This should be treated as a build failure by ensureCliBuilt.
+      `  echo "import './index-inner.mjs';" > ${JSON.stringify(join(cliDir, 'dist', 'index.mjs'))}`,
+      `  echo "import './missing-chunk.mjs';" > ${JSON.stringify(join(cliDir, 'dist', 'index-inner.mjs'))}`,
       '  exit 0',
       'fi',
       'exit 0',
@@ -271,6 +301,32 @@ test('ensureDepsInstalled scrubs production-mode env even without a stack env fi
   assert.notEqual(parsed.YARN_PRODUCTION, '1');
   assert.notEqual(parsed.npm_config_production, 'true');
   assert.notEqual(parsed.NPM_CONFIG_PRODUCTION, 'true');
+});
+
+test('ensureDepsInstalled honors HAPPIER_STACK_PM_CACHE_BASE_DIR when no stack env file is present', async (t) => {
+  const fixture = await createStackCacheFixture(t, 'hs-pm-explicit-cache-base-');
+  const { root, componentDir, binDir } = fixture;
+  const outputPath = join(root, 'env.json');
+  await writeYarnEnvDumpStub({ binDir, outputPath });
+
+  const cacheBase = join(root, 'pm-cache');
+
+  applyEnvOverrides(t, {
+    PATH: `${binDir}:${process.env.PATH ?? ''}`,
+    OUTPUT_PATH: outputPath,
+    HAPPIER_STACK_ENV_FILE: null,
+    HAPPIER_STACK_PM_CACHE_BASE_DIR: cacheBase,
+    XDG_CACHE_HOME: null,
+    YARN_CACHE_FOLDER: null,
+    npm_config_cache: null,
+  });
+
+  await ensureDepsInstalled(componentDir, 'test-component', { quiet: true });
+  const parsed = JSON.parse(await readFile(outputPath, 'utf-8'));
+  assert.equal(parsed.XDG_CACHE_HOME, join(cacheBase, 'xdg'));
+  assert.equal(parsed.YARN_CACHE_FOLDER, join(cacheBase, 'yarn'));
+  assert.equal(parsed.npm_config_cache, join(cacheBase, 'npm'));
+  assert.equal(parsed.HOME, join(cacheBase, 'home'));
 });
 
 test('ensureDepsInstalled prefers yarn when component is inside the Happy monorepo (packages/ layout)', async (t) => {
@@ -459,6 +515,39 @@ test('ensureCliBuilt restores previous dist output when build fails', async (t) 
   await assert.rejects(
     () => ensureCliBuilt(cliDir, { buildCli: true, quiet: true }),
   );
+  const restored = await readFile(distIndex, 'utf-8');
+  assert.equal(restored, 'export const stable = true;\n');
+});
+
+test('ensureCliBuilt restores previous dist output when build produces a broken dist import graph', async (t) => {
+  const root = await mkdtemp(join(tmpdir(), 'hs-pm-cli-build-partial-'));
+  t.after(async () => {
+    await rm(root, { recursive: true, force: true });
+  });
+
+  const cliDir = join(root, 'apps', 'cli');
+  await mkdir(cliDir, { recursive: true });
+  await writeFile(join(cliDir, 'package.json'), '{ "name": "cli-test" }\n', 'utf-8');
+  await writeFile(join(cliDir, 'yarn.lock'), '# yarn\n', 'utf-8');
+  await mkdir(join(cliDir, 'node_modules'), { recursive: true });
+  await writeFile(join(cliDir, 'node_modules', '.yarn-integrity'), 'ok\n', 'utf-8');
+
+  const distIndex = join(cliDir, 'dist', 'index.mjs');
+  await mkdir(dirname(distIndex), { recursive: true });
+  await writeFile(distIndex, 'export const stable = true;\n', 'utf-8');
+
+  const binDir = join(root, 'bin');
+  const outputPath = join(root, 'argv.txt');
+  await writeYarnBuildCreatesPartialDistWithMissingChunkStub({ binDir, outputPath, cliDir });
+
+  applyEnvOverrides(t, {
+    PATH: `${binDir}:/usr/bin:/bin`,
+    OUTPUT_PATH: outputPath,
+    HAPPIER_STACK_CLI_BUILD_MODE: 'always',
+    HAPPIER_STACK_ENV_FILE: null,
+  });
+
+  await assert.rejects(() => ensureCliBuilt(cliDir, { buildCli: true, quiet: true }));
   const restored = await readFile(distIndex, 'utf-8');
   assert.equal(restored, 'export const stable = true;\n');
 });

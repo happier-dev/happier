@@ -11,6 +11,7 @@ import { openBrowser } from '@/ui/openBrowser';
 import type { CloudConnectAuthenticateOptions } from '@/cloud/connectTypes';
 import { startOauthPkceWithPasteFallback } from '@/cloud/oauthPkceWithPasteFallback';
 import { promptInput } from '@/terminal/prompts/promptInput';
+import { resolveGeminiOauthClientId, resolveGeminiOauthClientSecret, resolveGeminiOauthTokenUrl } from '@/backends/connectedServices/oauthConfig';
 
 export interface GeminiAuthTokens {
     access_token: string;
@@ -22,9 +23,7 @@ export interface GeminiAuthTokens {
 }
 
 // Google OAuth Configuration for Gemini
-const CLIENT_ID = '681255809395-oo8ft2oprdrnp9e3aqf6av3hmdib135j.apps.googleusercontent.com';
 const AUTHORIZE_URL = 'https://accounts.google.com/o/oauth2/v2/auth';
-const TOKEN_URL = 'https://oauth2.googleapis.com/token';
 const DEFAULT_PORT = 54545;
 const SCOPES = [
     'https://www.googleapis.com/auth/cloud-platform',
@@ -37,14 +36,18 @@ export async function exchangeGeminiAuthorizationCodeForTokens(params: Readonly<
     verifier: string;
     redirectUri: string;
 }>): Promise<GeminiAuthTokens> {
-    const response = await fetch(TOKEN_URL, {
+    const clientId = resolveGeminiOauthClientId(process.env);
+    const clientSecret = resolveGeminiOauthClientSecret(process.env);
+    const tokenUrl = resolveGeminiOauthTokenUrl(process.env);
+    const response = await fetch(tokenUrl, {
         method: 'POST',
         headers: {
             'Content-Type': 'application/x-www-form-urlencoded',
         },
         body: new URLSearchParams({
             grant_type: 'authorization_code',
-            client_id: CLIENT_ID,
+            client_id: clientId,
+            client_secret: clientSecret,
             code: params.code,
             code_verifier: params.verifier,
             redirect_uri: params.redirectUri,
@@ -117,8 +120,9 @@ export async function authenticateGemini(opts?: CloudConnectAuthenticateOptions)
                 console.log(`📡 Using callback port: ${port}`);
             },
             buildAuthorizationUrl: ({ redirectUri, state, challenge }) => {
+                const clientId = resolveGeminiOauthClientId(process.env);
                 const params = new URLSearchParams({
-                    client_id: CLIENT_ID,
+                    client_id: clientId,
                     response_type: 'code',
                     redirect_uri: redirectUri,
                     scope: SCOPES,

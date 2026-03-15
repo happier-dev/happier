@@ -6,245 +6,70 @@ import { PushableAsyncIterable } from '@/utils/PushableAsyncIterable';
 import { recordToolTraceEvent } from '@/agent/tools/trace/toolTrace';
 
 import type { EnhancedMode } from '@/backends/claude/loop';
-import { mapToClaudeMode } from '@/backends/claude/utils/permissionMode';
+import { resolveClaudeSdkPermissionModeFromEnhancedMode } from '@/backends/claude/utils/permissionMode';
 import { getDefaultClaudeCodePathForAgentSdk } from '@/backends/claude/sdk/utils';
 import type { SessionHookData } from '@/backends/claude/utils/startHookServer';
 import { getProjectPath } from '@/backends/claude/utils/path';
 import { getClaudeRemoteSystemPrompt } from '@/backends/claude/utils/remoteSystemPrompt';
 import { parseClaudeSdkFlagOverridesFromArgs } from '@/backends/claude/remote/sdkFlagOverrides';
 import { resolveClaudeRemoteSessionStartPlan } from '@/backends/claude/remote/sessionStartPlan';
+import { resolveClaudeConfigDirOverride } from '@/backends/claude/utils/resolveClaudeConfigDirOverride';
+import { resolveClaudeCodeExperimentalEnvOverlay } from '@/backends/claude/spawn/resolveClaudeCodeExperimentalEnvOverlay';
+import { normalizeClaudeToolUseNamesInSdkMessage } from '@/backends/claude/utils/normalizeClaudeToolUseNames';
+import { tryMergeUserMcpConfigArgsIntoHappierMcp } from '@/backends/claude/utils/mcpConfigMerge';
+import { isValidEnvVarKey } from '@/terminal/runtime/envVarSanitization';
 
 import type { SDKMessage, SDKSystemMessage, SDKUserMessage } from '@/backends/claude/sdk';
 import type { PermissionResult } from '@/backends/claude/sdk/types';
 import type { JsRuntime } from '@/backends/claude/runClaude';
 import { createSubprocessStderrAppender, resolveSubprocessArtifactsDir } from '@/agent/runtime/subprocessArtifacts';
 import { join } from 'node:path';
+import { buildClaudeAgentSdkHooks } from './agentSdk/buildClaudeAgentSdkHooks';
+import { parseCheckpointsCommand, parseRewindCommand } from './agentSdk/claudeAgentSdkSlashCommands';
+import { parseExplicitSpawnEnvKeysFromProcessEnv } from './agentSdk/explicitSpawnEnvKeysMarker';
+import {
+    extractTextDeltaFromStreamEvent,
+    extractToolResultStartFromStreamEvent,
+    extractToolUseInputJsonDeltaFromStreamEvent,
+    extractToolUseStartFromStreamEvent,
+    isContentBlockStopStreamEvent,
+    messageContainsToolResultForToolUseId,
+    messageContainsToolUseId,
+    recordSeenToolBlocks,
+    stripSeenToolBlocksFromMessage,
+} from './agentSdk/streamEventToolBlocks';
 
 type AgentSdkQueryFactory = (params: {
     prompt: string | AsyncIterable<any>;
     options?: Record<string, unknown>;
 }) => AgentSdkQueryType;
 
-function parseRewindCommand(message: string): { type: 'rewind'; checkpointId?: string; confirmed: boolean } | null {
-    const trimmed = message.trim();
-    if (!trimmed.startsWith('/rewind')) return null;
-
-    const parts = trimmed.split(/\s+/).filter(Boolean);
-    if (parts[0] !== '/rewind') return null;
-
-    let checkpointId: string | undefined;
-    let confirmed = false;
-
-    for (const part of parts.slice(1)) {
-        if (part === '--confirm' || part === '--yes' || part === '-y') {
-            confirmed = true;
-            continue;
-        }
-
-        if (part.startsWith('-')) continue;
-        if (!checkpointId) checkpointId = part;
+function argsContainMcpConfigFlag(args?: string[] | null): boolean {
+    const input = args ?? [];
+    for (const arg of input) {
+        if (arg === '--mcp-config') return true;
+        if (typeof arg === 'string' && arg.startsWith('--mcp-config=')) return true;
     }
-
-    return { type: 'rewind', checkpointId, confirmed };
-}
-
-function parseCheckpointsCommand(message: string): { type: 'checkpoints' } | null {
-    const trimmed = message.trim();
-    if (trimmed === '/checkpoints') return { type: 'checkpoints' };
-    return null;
-}
-
-function toAgentSdkPermissionResult(result: PermissionResult): any {
-    if (result.behavior === 'allow') {
-        return {
-            behavior: 'allow',
-            updatedInput: result.updatedInput,
-        };
-    }
-
-    return {
-        behavior: 'deny',
-        message: result.message,
-        ...(result.interrupt !== undefined ? { interrupt: result.interrupt } : {}),
-    };
-}
-
-function extractTextDeltaFromStreamEvent(message: unknown): string | null {
-    if (!message || typeof message !== 'object') return null;
-    const m = message as any;
-    if (m.type !== 'stream_event') return null;
-
-    const event = m.event;
-    if (!event || typeof event !== 'object') return null;
-    if (event.type !== 'content_block_delta') return null;
-
-    const delta = event.delta;
-    if (!delta || typeof delta !== 'object') return null;
-    if (delta.type !== 'text_delta') return null;
-
-    return typeof delta.text === 'string' ? delta.text : null;
-}
-
-type StreamEventToolUseStart = { id: string; name: string; input: unknown };
-
-function extractToolUseStartFromStreamEvent(message: unknown): StreamEventToolUseStart | null {
-    if (!message || typeof message !== 'object') return null;
-    const m = message as any;
-    if (m.type !== 'stream_event') return null;
-
-    const event = m.event;
-    if (!event || typeof event !== 'object') return null;
-    if (event.type !== 'content_block_start') return null;
-
-    const block = (event as any).content_block;
-    if (!block || typeof block !== 'object') return null;
-    if (block.type !== 'tool_use') return null;
-
-    const id = typeof (block as any).id === 'string' ? (block as any).id : null;
-    const name = typeof (block as any).name === 'string' ? (block as any).name : null;
-    if (!id || !name) return null;
-
-    return { id, name, input: (block as any).input };
-}
-
-function extractToolUseInputJsonDeltaFromStreamEvent(message: unknown): string | null {
-    if (!message || typeof message !== 'object') return null;
-    const m = message as any;
-    if (m.type !== 'stream_event') return null;
-
-    const event = m.event;
-    if (!event || typeof event !== 'object') return null;
-    if (event.type !== 'content_block_delta') return null;
-
-    const delta = (event as any).delta;
-    if (!delta || typeof delta !== 'object') return null;
-    if (delta.type !== 'input_json_delta') return null;
-
-    const partialJson = (delta as any).partial_json;
-    return typeof partialJson === 'string' ? partialJson : null;
-}
-
-type StreamEventToolResultStart = { toolUseId: string };
-
-function extractToolResultStartFromStreamEvent(message: unknown): StreamEventToolResultStart | null {
-    if (!message || typeof message !== 'object') return null;
-    const m = message as any;
-    if (m.type !== 'stream_event') return null;
-
-    const event = m.event;
-    if (!event || typeof event !== 'object') return null;
-    if (event.type !== 'content_block_start') return null;
-
-    const block = (event as any).content_block;
-    if (!block || typeof block !== 'object') return null;
-    if (block.type !== 'tool_result') return null;
-
-    const toolUseId =
-        typeof (block as any).tool_use_id === 'string'
-            ? (block as any).tool_use_id
-            : typeof (block as any).toolUseId === 'string'
-                ? (block as any).toolUseId
-                : null;
-    if (!toolUseId) return null;
-    return { toolUseId };
-}
-
-function isContentBlockStopStreamEvent(message: unknown): boolean {
-    if (!message || typeof message !== 'object') return false;
-    const m = message as any;
-    if (m.type !== 'stream_event') return false;
-    const event = m.event;
-    if (!event || typeof event !== 'object') return false;
-    return event.type === 'content_block_stop';
-}
-
-function messageContainsToolUseId(message: unknown, toolUseId: string): boolean {
-    if (!message || typeof message !== 'object') return false;
-    const m = message as any;
-    if (m.type !== 'assistant') return false;
-    const content = m.message?.content;
-    if (!Array.isArray(content)) return false;
-    return content.some((c: any) => c?.type === 'tool_use' && c?.id === toolUseId);
-}
-
-function messageContainsToolResultForToolUseId(message: unknown, toolUseId: string): boolean {
-    if (!message || typeof message !== 'object') return false;
-    const m = message as any;
-    if (m.type !== 'user' && m.type !== 'assistant') return false;
-    const content = m.message?.content;
-    if (!Array.isArray(content)) return false;
-    return content.some((c: any) => c?.type === 'tool_result' && c?.tool_use_id === toolUseId);
-}
-
-function recordSeenToolBlocks(message: SDKMessage, seen: { toolUseIds: Set<string>; toolResultIds: Set<string> }): void {
-    const m = message as any;
-    const content = m?.message?.content;
-    if (!Array.isArray(content)) return;
-    for (const block of content) {
-        if (!block || typeof block !== 'object') continue;
-        if (block.type === 'tool_use' && typeof block.id === 'string') {
-            seen.toolUseIds.add(block.id);
-        } else if (block.type === 'tool_result' && typeof block.tool_use_id === 'string') {
-            seen.toolResultIds.add(block.tool_use_id);
-        }
-    }
-}
-
-function stripSeenToolBlocksFromMessage(message: SDKMessage, seen: { toolUseIds: Set<string>; toolResultIds: Set<string> }): SDKMessage | null {
-    const m = message as any;
-    const content = m?.message?.content;
-    if (!Array.isArray(content)) return message;
-
-    let didChange = false;
-    const filtered: any[] = [];
-    for (const block of content) {
-        if (!block || typeof block !== 'object') {
-            filtered.push(block);
-            continue;
-        }
-
-        if (block.type === 'tool_use' && typeof block.id === 'string') {
-            if (seen.toolUseIds.has(block.id)) {
-                didChange = true;
-                continue;
-            }
-            filtered.push(block);
-            continue;
-        }
-
-        if (block.type === 'tool_result' && typeof block.tool_use_id === 'string') {
-            if (seen.toolResultIds.has(block.tool_use_id)) {
-                didChange = true;
-                continue;
-            }
-            filtered.push(block);
-            continue;
-        }
-
-        filtered.push(block);
-    }
-
-    if (!didChange) return message;
-    if (filtered.length === 0) return null;
-    return {
-        ...m,
-        message: {
-            ...(m?.message ?? {}),
-            content: filtered,
-        },
-    } as SDKMessage;
+    return false;
 }
 
 export async function claudeRemoteAgentSdk(opts: {
-    // Fixed parameters
-    sessionId: string | null;
-    transcriptPath: string | null;
-    path: string;
-    mcpServers?: Record<string, any>;
-    claudeEnvVars?: Record<string, string>;
-    claudeArgs?: string[];
-    claudeExecutablePath?: string;
-    allowedTools: string[];
+            // Fixed parameters
+            sessionId: string | null;
+            transcriptPath: string | null;
+            path: string;
+            claudeArgs?: string[];
+        claudeExecutablePath?: string;
+        /**
+         * Optional anchor UUID for resuming a session at a specific assistant message.
+         * Only applied when `resume` is set (i.e. we are resuming a prior session).
+         */
+        resumeSessionAt?: string | null;
+    /**
+     * Optional MCP servers to inject into the Claude Agent SDK invocation (e.g. Happier MCP).
+     * This should be additive with the user's config (no strict MCP unless explicitly requested).
+     */
+    happierMcpServers?: Record<string, unknown>;
     signal?: AbortSignal;
     canCallTool: (
         toolName: string,
@@ -264,7 +89,7 @@ export async function claudeRemoteAgentSdk(opts: {
 
     // Dynamic parameters
     nextMessage: () => Promise<{ message: string; mode: EnhancedMode } | null>;
-    onReady: () => void;
+    onReady: () => void | Promise<void>;
     isAborted: (toolCallId: string) => boolean;
 
     // Callbacks
@@ -291,15 +116,15 @@ export async function claudeRemoteAgentSdk(opts: {
         });
     };
 
-    const { startFrom, shouldContinue } = resolveClaudeRemoteSessionStartPlan({
-        sessionId: opts.sessionId,
-        transcriptPath: opts.transcriptPath,
-        path: opts.path,
-        claudeConfigDir: opts.claudeEnvVars?.CLAUDE_CONFIG_DIR ?? null,
-        claudeArgs: opts.claudeArgs,
-    }, {
-        logPrefix: 'claudeRemoteAgentSdk',
-    });
+        const { startFrom, shouldContinue } = resolveClaudeRemoteSessionStartPlan({
+            sessionId: opts.sessionId,
+            transcriptPath: opts.transcriptPath,
+            path: opts.path,
+            claudeConfigDir: resolveClaudeConfigDirOverride(process.env),
+            claudeArgs: opts.claudeArgs,
+        }, {
+            logPrefix: 'claudeRemoteAgentSdk',
+        });
 
     const initial = await opts.nextMessage();
     if (!initial) return;
@@ -320,18 +145,51 @@ export async function claudeRemoteAgentSdk(opts: {
 
     let mode = initial.mode;
 
+    const mergedMcp = tryMergeUserMcpConfigArgsIntoHappierMcp({
+        baseMcpServers: (opts.happierMcpServers ?? Object.create(null)) as Record<string, unknown>,
+        claudeArgs: opts.claudeArgs,
+    });
+    if (!mergedMcp && argsContainMcpConfigFlag(opts.claudeArgs)) {
+        throw new Error('Invalid --mcp-config: expected JSON object with a { "mcpServers": { ... } } field.');
+    }
+    const effectiveMcpServers = mergedMcp ? mergedMcp.mergedMcpServers : opts.happierMcpServers;
+    const effectiveClaudeArgs = mergedMcp ? mergedMcp.filteredClaudeArgs : opts.claudeArgs;
+
+    // Use args with any --mcp-config stripped for override parsing and start-plan resolution.
+    opts = {
+        ...opts,
+        claudeArgs: effectiveClaudeArgs,
+        ...(effectiveMcpServers ? { happierMcpServers: effectiveMcpServers } : {}),
+    };
+
     const argOverrides = parseClaudeSdkFlagOverridesFromArgs(opts.claudeArgs);
     const customSystemPrompt = argOverrides.customSystemPrompt ?? mode.customSystemPrompt;
     const appendSystemPrompt = argOverrides.appendSystemPrompt ?? mode.appendSystemPrompt;
-    const allowedTools = argOverrides.allowedTools ?? mode.allowedTools;
-    const disallowedTools = argOverrides.disallowedTools ?? mode.disallowedTools;
     const remoteSystemPrompt = getClaudeRemoteSystemPrompt({ disableTodos: mode.claudeRemoteDisableTodos === true });
     const enableFileCheckpointing = mode.claudeRemoteEnableFileCheckpointing === true;
     const settingSources = (() => {
+        const rawV2 = (mode as any).claudeRemoteSettingSourcesV2 as unknown;
+        if (Array.isArray(rawV2)) {
+            const set = new Set<string>();
+            for (const value of rawV2) {
+                if (typeof value === 'string') set.add(value);
+            }
+            const normalized: Array<'user' | 'project' | 'local'> = [];
+            for (const key of ['user', 'project', 'local'] as const) {
+                if (set.has(key)) normalized.push(key);
+            }
+            // When all sources are selected, do not force an explicit override so Claude can apply
+            // its own defaults (future-proof).
+            if (normalized.length === 3) return undefined;
+            return normalized;
+        }
+
+        // Legacy v1 mapping (back-compat).
         const value = mode.claudeRemoteSettingSources;
         if (value === 'none') return [];
         if (value === 'user_project') return ['user', 'project'];
-        return ['project'];
+        if (value === 'project') return ['project'];
+        return undefined;
     })();
     const advancedOptionsJsonRaw = typeof mode.claudeRemoteAdvancedOptionsJson === 'string'
         ? mode.claudeRemoteAdvancedOptionsJson.trim()
@@ -374,105 +232,26 @@ export async function claudeRemoteAgentSdk(opts: {
         )
         : undefined;
 
-    const hooks = {
-        SessionStart: [
-            {
-                hooks: [
-                    async (input: any) => {
-                        const sessionId =
-                            input && typeof input.session_id === 'string'
-                                ? input.session_id
-                                : input && typeof input.sessionId === 'string'
-                                    ? input.sessionId
-                                    : undefined;
-                        if (sessionId) {
-                            const transcriptRaw =
-                                typeof input.transcript_path === 'string'
-                                    ? input.transcript_path
-                                    : typeof input.transcriptPath === 'string'
-                                        ? input.transcriptPath
-                                        : undefined;
-                            const transcriptPathFallback =
-                                transcriptRaw ??
-                                join(
-                                    getProjectPath(opts.path, opts.claudeEnvVars?.CLAUDE_CONFIG_DIR ?? null),
-                                    `${sessionId}.jsonl`,
-                                );
-                            opts.onSessionFound(
-                                sessionId,
-                                { transcript_path: transcriptPathFallback, transcriptPath: transcriptPathFallback },
-                            );
-                        }
-                        return { continue: true };
-                    },
-                ],
-            },
-        ],
-        PermissionRequest: [
-            {
-                hooks: [
-                    async (input: any, toolUseID: string | undefined, options: { signal: AbortSignal }) => {
-                        if (!input || typeof input !== 'object') {
-                            return { continue: true, suppressOutput: true };
-                        }
-                        const toolName = typeof input.tool_name === 'string' ? input.tool_name : '';
-                        const toolInput = (input as any).tool_input;
-                        if (!toolName) {
-                            return { continue: true, suppressOutput: true };
-                        }
+    const builtHooks = buildClaudeAgentSdkHooks({
+        cwd: opts.path,
+        claudeConfigDir: resolveClaudeConfigDirOverride(process.env),
+        getMode: () => mode,
+        onSessionFound: (sessionId, data) => opts.onSessionFound(sessionId, data as any),
+        canCallTool: (toolName, input, resolvedMode, options) =>
+            opts.canCallTool(toolName, input, resolvedMode, {
+                signal: options.signal,
+                toolUseId: options.toolUseId ?? null,
+                agentId: options.agentId ?? null,
+                suggestions: options.suggestions,
+                blockedPath: options.blockedPath ?? null,
+                decisionReason: options.decisionReason ?? null,
+            }),
+    });
+    const hooks = builtHooks.hooks as any;
+    const canUseTool = builtHooks.canUseTool as any;
 
-                        const result = await opts.canCallTool(toolName, toolInput, mode, {
-                            signal: options.signal,
-                            toolUseId: typeof toolUseID === 'string' ? toolUseID : null,
-                            suggestions: (input as any).permission_suggestions,
-                        });
-
-                        if (result.behavior === 'allow') {
-                            const updatedInput =
-                                result.updatedInput && typeof result.updatedInput === 'object' && !Array.isArray(result.updatedInput)
-                                    ? (result.updatedInput as Record<string, unknown>)
-                                    : undefined;
-                            return {
-                                continue: true,
-                                suppressOutput: true,
-                                hookSpecificOutput: {
-                                    hookEventName: 'PermissionRequest',
-                                    decision: {
-                                        behavior: 'allow',
-                                        ...(updatedInput ? { updatedInput } : {}),
-                                    },
-                                },
-                            };
-                        }
-
-                        return {
-                            continue: true,
-                            suppressOutput: true,
-                            hookSpecificOutput: {
-                                hookEventName: 'PermissionRequest',
-                                decision: {
-                                    behavior: 'deny',
-                                    ...(typeof result.message === 'string' && result.message.length > 0 ? { message: result.message } : {}),
-                                    ...(result.interrupt !== undefined ? { interrupt: result.interrupt } : {}),
-                                },
-                            },
-                        };
-                    },
-                ],
-            },
-        ],
-    };
-
-    const canUseTool = async (toolName: string, input: Record<string, unknown>, options: any) => {
-        const result = await opts.canCallTool(toolName, input, mode, {
-            signal: options.signal,
-            toolUseId: typeof options?.toolUseID === 'string' ? options.toolUseID : null,
-            agentId: typeof options?.agentID === 'string' ? options.agentID : null,
-            suggestions: options?.suggestions,
-            blockedPath: typeof options?.blockedPath === 'string' ? options.blockedPath : null,
-            decisionReason: typeof options?.decisionReason === 'string' ? options.decisionReason : null,
-        });
-        return toAgentSdkPermissionResult(result);
+    const emitMessage = (message: SDKMessage) => {
+        opts.onMessage(normalizeClaudeToolUseNamesInSdkMessage(message));
     };
 
     const buildSystemPrompt = (): any => {
@@ -484,11 +263,12 @@ export async function claudeRemoteAgentSdk(opts: {
         return { type: 'preset', preset: 'claude_code', append };
     };
 
-    const buildClaudeSubprocessEnv = (): Record<string, string> => {
-        const allowExact = new Set<string>([
-            'PATH',
-            'HOME',
-            'USER',
+        const buildClaudeSubprocessEnv = (): Record<string, string> => {
+            const explicitSpawnEnvKeys = new Set(parseExplicitSpawnEnvKeysFromProcessEnv(process.env));
+            const allowExact = new Set<string>([
+                'PATH',
+                'HOME',
+                'USER',
             'LOGNAME',
             'SHELL',
             'TERM',
@@ -530,47 +310,55 @@ export async function claudeRemoteAgentSdk(opts: {
             'HAPPY_E2E_',
         ];
 
-        const out: Record<string, string> = {};
-        for (const [key, value] of Object.entries(process.env)) {
-            if (typeof value !== 'string') continue;
-            if (allowExact.has(key) || allowPrefixes.some((p) => key.startsWith(p))) {
-                out[key] = value;
+            const out: Record<string, string> = Object.create(null);
+            for (const [key, value] of Object.entries(process.env)) {
+                if (!isValidEnvVarKey(key)) continue;
+                if (typeof value !== 'string') continue;
+                if (explicitSpawnEnvKeys.has(key) || allowExact.has(key) || allowPrefixes.some((p) => key.startsWith(p))) {
+                    out[key] = value;
+                }
             }
-        }
 
-        return { ...out, ...(opts.claudeEnvVars ?? {}) };
-    };
+            delete out.HAPPIER_SPAWN_EXPLICIT_ENV_KEYS_JSON;
+            return { ...out };
+        };
 
-    const mappedPermissionMode = mapToClaudeMode(mode.permissionMode);
-    const queryOptions: Record<string, unknown> = {
-        abortController,
-        cwd: opts.path,
-        continue: shouldContinue || undefined,
-        resume: startFrom ?? undefined,
-        mcpServers: opts.mcpServers,
-        settingSources,
-        permissionMode: mappedPermissionMode,
-        allowDangerouslySkipPermissions: mappedPermissionMode === 'bypassPermissions',
-        model: argOverrides.model ?? mode.model,
+        const mappedPermissionMode = resolveClaudeSdkPermissionModeFromEnhancedMode(mode);
+        const experimentalEnvOverlay = resolveClaudeCodeExperimentalEnvOverlay({
+            claudeCodeExperimentalAgentTeamsEnabled: mode.claudeCodeExperimentalAgentTeamsEnabled,
+        });
+        const resumeSessionAt =
+            typeof opts.resumeSessionAt === 'string' && opts.resumeSessionAt.trim().length > 0
+                ? opts.resumeSessionAt.trim()
+                : null;
+            const queryOptions: Record<string, unknown> = {
+                abortController,
+                cwd: opts.path,
+            continue: shouldContinue || undefined,
+            resume: startFrom ?? undefined,
+            ...(startFrom && resumeSessionAt ? { resumeSessionAt } : {}),
+            permissionMode: mappedPermissionMode,
+            allowDangerouslySkipPermissions: mappedPermissionMode === 'bypassPermissions',
+            model: argOverrides.model ?? mode.model,
         fallbackModel: argOverrides.fallbackModel ?? mode.fallbackModel,
         maxTurns: argOverrides.maxTurns,
         systemPrompt: buildSystemPrompt(),
-        // Only pass an explicit allowlist when one is requested via mode/CLI overrides.
-        // Otherwise we would inadvertently block Claude Code built-in tools like Read/Edit/Write/Bash
-        // (breaking agent-sdk scenarios that require filesystem operations).
-        allowedTools: allowedTools ? allowedTools.concat(opts.allowedTools) : undefined,
-        disallowedTools,
         strictMcpConfig: mode.claudeRemoteStrictMcpServerConfig === true || argOverrides.strictMcpConfig,
         canUseTool,
-        env: buildClaudeSubprocessEnv(),
-        executable: opts.jsRuntime ?? 'node',
-        pathToClaudeCodeExecutable: opts.claudeExecutablePath ?? getDefaultClaudeCodePathForAgentSdk(),
+        ...(opts.happierMcpServers ? { mcpServers: opts.happierMcpServers } : {}),
+            env: { ...buildClaudeSubprocessEnv(), ...experimentalEnvOverlay },
+            executable: opts.jsRuntime ?? 'node',
+            pathToClaudeCodeExecutable: opts.claudeExecutablePath ?? getDefaultClaudeCodePathForAgentSdk(),
         includePartialMessages: mode.claudeRemoteIncludePartialMessages === true || undefined,
         enableFileCheckpointing: enableFileCheckpointing || undefined,
         extraArgs: enableFileCheckpointing ? { 'replay-user-messages': null } : undefined,
         maxThinkingTokens: typeof mode.claudeRemoteMaxThinkingTokens === 'number' ? mode.claudeRemoteMaxThinkingTokens : undefined,
         hooks,
     };
+
+    if (settingSources !== undefined) {
+        queryOptions.settingSources = settingSources;
+    }
 
     if (debugFilePath) {
         queryOptions.debugFile = debugFilePath;
@@ -638,6 +426,11 @@ export async function claudeRemoteAgentSdk(opts: {
     });
 
     let response: any;
+    let nextMessagePump: Promise<void> | null = null;
+    const swallowOptionalPromise = async (promise: Promise<void> | null): Promise<void> => {
+        if (!promise) return;
+        await promise.catch(() => {});
+    };
     try {
         response = createQuery({
             prompt: messages,
@@ -648,7 +441,7 @@ export async function claudeRemoteAgentSdk(opts: {
         let streamingToolUse:
             | { sessionId: string; id: string; name: string; inputJson: string; initialInput: unknown }
             | null = null;
-        let streamingToolResult: { sessionId: string; toolUseId: string; content: string } | null = null;
+        let streamingToolResult: { sessionId: string; toolUseId: string; content: string; isError: boolean } | null = null;
         let pendingToolUseMessage: { toolUseId: string; message: SDKMessage } | null = null;
         let pendingToolResultMessage: { toolUseId: string; message: SDKMessage } | null = null;
         const seen = { toolUseIds: new Set<string>(), toolResultIds: new Set<string>() };
@@ -661,6 +454,163 @@ export async function claudeRemoteAgentSdk(opts: {
             checkpointIdSet.add(id);
             checkpointIds.push(id);
         }
+
+        const ABORTED = Symbol('aborted');
+        const waitForAbort = (signal: AbortSignal): Promise<typeof ABORTED> =>
+            new Promise((resolve) => {
+                if (signal.aborted) {
+                    resolve(ABORTED);
+                    return;
+                }
+                signal.addEventListener('abort', () => resolve(ABORTED), { once: true });
+            });
+
+        const scheduleNextMessagePump = () => {
+            if (nextMessagePump) return;
+
+            nextMessagePump = (async () => {
+                try {
+                    while (!abortSignal.aborted) {
+                        const nextOrAbort = await Promise.race([opts.nextMessage(), waitForAbort(abortSignal)]);
+                        if (nextOrAbort === ABORTED) {
+                            return;
+                        }
+
+                        const next = nextOrAbort as { message: string; mode: EnhancedMode } | null;
+                        if (!next) {
+                            messages.end();
+                            try {
+                                response?.close?.();
+                            } catch {
+                                // ignore
+                            }
+                            return;
+                        }
+
+                        const checkpointsCommand = parseCheckpointsCommand(next.message);
+                        if (checkpointsCommand) {
+                            if (!enableFileCheckpointing) {
+                                opts.onCompletionEvent?.('No checkpoints are available unless file checkpointing is enabled.');
+                                continue;
+                            }
+
+                            if (checkpointIds.length === 0) {
+                                opts.onCompletionEvent?.('No checkpoints have been captured yet.');
+                                continue;
+                            }
+
+                            opts.onCompletionEvent?.(
+                                [
+                                    'Available checkpoints (newest first):',
+                                    ...checkpointIds
+                                        .slice()
+                                        .reverse()
+                                        .map((id) => `- ${id}`),
+                                    '',
+                                    'Note: Agent SDK rewind restores files only; it does not rewind the conversation.',
+                                    'To rewind: /rewind <checkpoint-id> --confirm',
+                                ].join('\n'),
+                            );
+                            continue;
+                        }
+
+                        const rewindCommand = parseRewindCommand(next.message);
+                        if (rewindCommand) {
+                            if (!enableFileCheckpointing) {
+                                opts.onCompletionEvent?.('Rewind is not available unless file checkpointing is enabled.');
+                                continue;
+                            }
+
+                            const checkpointId = rewindCommand.checkpointId ?? lastCheckpointId;
+                            if (!checkpointId) {
+                                opts.onCompletionEvent?.('No checkpoint id is available yet. Send a normal message first, then try /rewind again.');
+                                continue;
+                            }
+
+                            if (!rewindCommand.confirmed) {
+                                opts.onCompletionEvent?.(
+                                    [
+                                        'Rewind is a destructive filesystem operation.',
+                                        'It restores files to a previous checkpoint and may discard your local file edits.',
+                                        '',
+                                        'Important: Agent SDK rewind restores files only; it does not rewind the conversation.',
+                                        '',
+                                        `To confirm, re-run: /rewind ${checkpointId} --confirm`,
+                                    ].join('\n'),
+                                );
+                                continue;
+                            }
+
+                            const result = await (response as any).rewindFiles?.(checkpointId, undefined);
+                            if (result && typeof result === 'object' && (result as any).canRewind === false) {
+                                const error = typeof (result as any).error === 'string' ? (result as any).error : 'Rewind failed';
+                                opts.onCompletionEvent?.(error);
+                                continue;
+                            }
+
+                            emitMessage({
+                                type: 'system',
+                                subtype: 'happier',
+                                happierTraceMarker: 'checkpoint-rewind',
+                                checkpointId,
+                            } as any);
+                            recordTraceMarker({ kind: 'checkpoint-rewind', payload: { marker: 'checkpoint-rewind', checkpointId } });
+                            opts.onCompletionEvent?.(`Rewound files to checkpoint ${checkpointId}`);
+                            continue;
+                        }
+
+                        const nextSpecial = parseSpecialCommand(next.message);
+                        if (nextSpecial.type === 'clear') {
+                            opts.onCompletionEvent?.('Context was reset');
+                            opts.onSessionReset?.();
+                            messages.end();
+                            try {
+                                response?.close?.();
+                            } catch {
+                                // ignore
+                            }
+                            return;
+                        }
+
+                        if (nextSpecial.type === 'compact') {
+                            isCompactCommand = true;
+                            opts.onCompletionEvent?.('Compaction started');
+                        }
+
+                        mode = next.mode;
+
+                        try {
+                            await (response as any).setPermissionMode?.(resolveClaudeSdkPermissionModeFromEnhancedMode(mode));
+                            await (response as any).setModel?.(mode.model ?? undefined);
+                            if (
+                                typeof mode.claudeRemoteMaxThinkingTokens === 'number' ||
+                                mode.claudeRemoteMaxThinkingTokens === null
+                            ) {
+                                await (response as any).setMaxThinkingTokens?.(mode.claudeRemoteMaxThinkingTokens ?? null);
+                            }
+                        } catch (e) {
+                            logger.debug('[claudeRemoteAgentSdk] Failed to update runtime settings (non-fatal)', e);
+                            opts.onCompletionEvent?.('Failed to update runtime settings (non-fatal); continuing.');
+                        }
+
+                        messages.push({
+                            type: 'user',
+                            session_id: '',
+                            parent_tool_use_id: null,
+                            message: {
+                                role: 'user',
+                                content: [{ type: 'text', text: next.message }],
+                            },
+                        });
+
+                        updateThinking(true);
+                        return;
+                    }
+                } finally {
+                    nextMessagePump = null;
+                }
+            })();
+        };
 
         // Fire-and-forget capability publication.
         // This must not block the main streaming loop.
@@ -719,7 +669,8 @@ export async function claudeRemoteAgentSdk(opts: {
                     streamingToolResult = {
                         sessionId: typeof (message as any).session_id === 'string' ? (message as any).session_id : '',
                         toolUseId: toolResultStart.toolUseId,
-                        content: '',
+                        content: toolResultStart.content ?? '',
+                        isError: toolResultStart.isError ?? false,
                     };
                     continue;
                 }
@@ -736,18 +687,18 @@ export async function claudeRemoteAgentSdk(opts: {
                         streamingToolResult.content += textDelta;
                         continue;
                     }
-                    if (mode.claudeRemoteIncludePartialMessages === true) {
-                        opts.onMessage({
-                            type: 'assistant',
-                            happierPartial: true,
-                            session_id: (message as any).session_id,
-                            parent_tool_use_id: null,
-                            message: {
-                                role: 'assistant',
-                                content: [{ type: 'text', text: textDelta }],
-                            },
-                        } as any);
-                    }
+                        if (mode.claudeRemoteIncludePartialMessages === true) {
+                            emitMessage({
+                                type: 'assistant',
+                                happierPartial: true,
+                                session_id: (message as any).session_id,
+                                parent_tool_use_id: null,
+                                message: {
+                                    role: 'assistant',
+                                    content: [{ type: 'text', text: textDelta }],
+                                },
+                            } as any);
+                        }
                     continue;
                 }
 
@@ -809,7 +760,7 @@ export async function claudeRemoteAgentSdk(opts: {
                                         type: 'tool_result',
                                         tool_use_id: streamingToolResult.toolUseId,
                                         content: streamingToolResult.content,
-                                        is_error: false,
+                                        is_error: Boolean((streamingToolResult as any).isError),
                                     },
                                 ],
                             },
@@ -836,11 +787,11 @@ export async function claudeRemoteAgentSdk(opts: {
                     // Not a boundary that implies the tool ran (tool_result) and not the assembled tool_use;
                     // keep buffering so we can still dedupe when the assistant tool_use arrives.
                 } else {
-                    const deduped = stripSeenToolBlocksFromMessage(pendingToolUseMessage.message, seen);
-                    if (deduped) {
-                        opts.onMessage(deduped);
-                        recordSeenToolBlocks(deduped, seen);
-                    }
+                        const deduped = stripSeenToolBlocksFromMessage(pendingToolUseMessage.message, seen);
+                        if (deduped) {
+                            emitMessage(deduped);
+                            recordSeenToolBlocks(deduped, seen);
+                        }
                     pendingToolUseMessage = null;
                 }
             }
@@ -849,31 +800,31 @@ export async function claudeRemoteAgentSdk(opts: {
                 if (messageContainsToolResultForToolUseId(message, pendingToolResultMessage.toolUseId)) {
                     pendingToolResultMessage = null;
                 } else {
-                    const deduped = stripSeenToolBlocksFromMessage(pendingToolResultMessage.message, seen);
-                    if (deduped) {
-                        opts.onMessage(deduped);
-                        recordSeenToolBlocks(deduped, seen);
-                    }
+                        const deduped = stripSeenToolBlocksFromMessage(pendingToolResultMessage.message, seen);
+                        if (deduped) {
+                            emitMessage(deduped);
+                            recordSeenToolBlocks(deduped, seen);
+                        }
                     pendingToolResultMessage = null;
                 }
             }
 
-            const sdkMessage = message as SDKMessage;
-            const deduped = stripSeenToolBlocksFromMessage(sdkMessage, seen);
-            if (!deduped) continue;
-            opts.onMessage(deduped);
-            recordSeenToolBlocks(deduped, seen);
+                const sdkMessage = message as SDKMessage;
+                const deduped = stripSeenToolBlocksFromMessage(sdkMessage, seen);
+                if (!deduped) continue;
+                emitMessage(deduped);
+                recordSeenToolBlocks(deduped, seen);
 
-            if (message && message.type === 'system' && message.subtype === 'init') {
-                const init = message as SDKSystemMessage;
-                if (init.session_id) {
-                    const transcriptPath = join(
-                        getProjectPath(opts.path, opts.claudeEnvVars?.CLAUDE_CONFIG_DIR ?? null),
-                        `${init.session_id}.jsonl`,
-                    );
-                    opts.onSessionFound(init.session_id, { transcript_path: transcriptPath, transcriptPath });
+                if (message && message.type === 'system' && message.subtype === 'init') {
+                    const init = message as SDKSystemMessage;
+                    if (init.session_id) {
+                        const transcriptPath = join(
+                            getProjectPath(opts.path, resolveClaudeConfigDirOverride(process.env)),
+                            `${init.session_id}.jsonl`,
+                        );
+                        opts.onSessionFound(init.session_id, { transcript_path: transcriptPath, transcriptPath });
+                    }
                 }
-            }
 
             if (message && message.type === 'user') {
                 const msg = message as any;
@@ -914,125 +865,8 @@ export async function claudeRemoteAgentSdk(opts: {
                     isCompactCommand = false;
                 }
 
-                opts.onReady();
-
-                while (true) {
-                    const next = await opts.nextMessage();
-                    if (!next) {
-                        messages.end();
-                        return;
-                    }
-
-                    const checkpointsCommand = parseCheckpointsCommand(next.message);
-                    if (checkpointsCommand) {
-                        if (!enableFileCheckpointing) {
-                            opts.onCompletionEvent?.('No checkpoints are available unless file checkpointing is enabled.');
-                            continue;
-                        }
-
-                        if (checkpointIds.length === 0) {
-                            opts.onCompletionEvent?.('No checkpoints have been captured yet.');
-                            continue;
-                        }
-
-                        opts.onCompletionEvent?.(
-                            [
-                                'Available checkpoints (newest first):',
-                                ...checkpointIds
-                                    .slice()
-                                    .reverse()
-                                    .map((id) => `- ${id}`),
-                                '',
-                                'Note: Agent SDK rewind restores files only; it does not rewind the conversation.',
-                                'To rewind: /rewind <checkpoint-id> --confirm',
-                            ].join('\n'),
-                        );
-                        continue;
-                    }
-
-                    const rewindCommand = parseRewindCommand(next.message);
-                    if (rewindCommand) {
-                        if (!enableFileCheckpointing) {
-                            opts.onCompletionEvent?.('Rewind is not available unless file checkpointing is enabled.');
-                            continue;
-                        }
-
-                        const checkpointId = rewindCommand.checkpointId ?? lastCheckpointId;
-                        if (!checkpointId) {
-                            opts.onCompletionEvent?.('No checkpoint id is available yet. Send a normal message first, then try /rewind again.');
-                            continue;
-                        }
-
-                        if (!rewindCommand.confirmed) {
-                            opts.onCompletionEvent?.(
-                                [
-                                    'Rewind is a destructive filesystem operation.',
-                                    'It restores files to a previous checkpoint and may discard your local file edits.',
-                                    '',
-                                    'Important: Agent SDK rewind restores files only; it does not rewind the conversation.',
-                                    '',
-                                    `To confirm, re-run: /rewind ${checkpointId} --confirm`,
-                                ].join('\n'),
-                            );
-                            continue;
-                        }
-
-                        const result = await (response as any).rewindFiles?.(checkpointId, undefined);
-                        if (result && typeof result === 'object' && (result as any).canRewind === false) {
-                            const error = typeof (result as any).error === 'string' ? (result as any).error : 'Rewind failed';
-                            opts.onCompletionEvent?.(error);
-                            continue;
-                        }
-
-                        opts.onMessage({
-                            type: 'system',
-                            subtype: 'happier',
-                            happierTraceMarker: 'checkpoint-rewind',
-                            checkpointId,
-                        } as any);
-                        recordTraceMarker({ kind: 'checkpoint-rewind', payload: { marker: 'checkpoint-rewind', checkpointId } });
-                        opts.onCompletionEvent?.(`Rewound files to checkpoint ${checkpointId}`);
-                        continue;
-                    }
-
-                    const nextSpecial = parseSpecialCommand(next.message);
-                    if (nextSpecial.type === 'clear') {
-                        opts.onCompletionEvent?.('Context was reset');
-                        opts.onSessionReset?.();
-                        return;
-                    }
-
-                    if (nextSpecial.type === 'compact') {
-                        isCompactCommand = true;
-                        opts.onCompletionEvent?.('Compaction started');
-                    }
-
-                    mode = next.mode;
-
-                    try {
-                        await (response as any).setPermissionMode?.(mapToClaudeMode(mode.permissionMode));
-                        await (response as any).setModel?.(mode.model ?? undefined);
-                        if (typeof mode.claudeRemoteMaxThinkingTokens === 'number' || mode.claudeRemoteMaxThinkingTokens === null) {
-                            await (response as any).setMaxThinkingTokens?.(mode.claudeRemoteMaxThinkingTokens ?? null);
-                        }
-                    } catch (e) {
-                        logger.debug('[claudeRemoteAgentSdk] Failed to update runtime settings (non-fatal)', e);
-                        opts.onCompletionEvent?.('Failed to update runtime settings (non-fatal); continuing.');
-                    }
-
-                    messages.push({
-                        type: 'user',
-                        session_id: '',
-                        parent_tool_use_id: null,
-                        message: {
-                            role: 'user',
-                            content: [{ type: 'text', text: next.message }],
-                        },
-                    });
-
-                    updateThinking(true);
-                    break;
-                }
+                await opts.onReady();
+                scheduleNextMessagePump();
             }
         }
     } catch (e) {
@@ -1040,10 +874,21 @@ export async function claudeRemoteAgentSdk(opts: {
             logger.debug('[claudeRemoteAgentSdk] Aborted');
             return;
         }
+        if (e && typeof e === 'object') {
+            const err = e as any;
+            if (!err.happierClaudeCodeArtifacts) {
+                err.happierClaudeCodeArtifacts = {
+                    debugFilePath: debugFilePath ?? null,
+                    stderrFilePath: stderrAppender?.path ?? null,
+                };
+            }
+        }
         throw e;
     } finally {
         opts.setUserMessageSender?.(null);
         updateThinking(false);
+        abortController.abort();
+        await swallowOptionalPromise(nextMessagePump);
         try {
             response?.close();
         } catch {

@@ -93,9 +93,9 @@ jobs:
             exit 0
           fi
           case "${GITHUB_REF_NAME}" in
-            dev|main) ;;
+            dev|preview|main) ;;
             *)
-              echo "Refusing workflow_dispatch from untrusted ref '${GITHUB_REF_NAME}'. Use dev or main." >&2
+              echo "Refusing workflow_dispatch from untrusted ref '${GITHUB_REF_NAME}'. Use dev, preview, or main." >&2
               exit 1
               ;;
           esac

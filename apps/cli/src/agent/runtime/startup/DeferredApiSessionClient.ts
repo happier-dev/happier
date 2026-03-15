@@ -19,6 +19,7 @@ export type DeferredApiSessionTarget = Readonly<{
   updateAgentState: (updater: (state: AgentState) => AgentState) => void | Promise<void>;
   keepAlive: (thinking: boolean, mode: 'local' | 'remote') => void;
   getMetadataSnapshot: () => Metadata | null;
+  refreshSessionSnapshotFromServerBestEffort?: (opts?: { reason?: 'connect' | 'waitForMetadataUpdate' }) => Promise<void>;
   waitForMetadataUpdate: (abortSignal?: AbortSignal) => Promise<boolean>;
   popPendingMessage: () => Promise<boolean>;
   peekPendingMessageQueueV2Count: () => Promise<number>;
@@ -196,6 +197,36 @@ export class DeferredApiSessionClient {
     const target = this.target;
     if (!target) return null;
     return target.getMetadataSnapshot();
+  }
+
+  async refreshSessionSnapshotFromServerBestEffort(opts?: { reason?: 'connect' | 'waitForMetadataUpdate' }): Promise<void> {
+    const target = this.target;
+    if (target && !this.flushInFlight) {
+      if (typeof target.refreshSessionSnapshotFromServerBestEffort === 'function') {
+        await target.refreshSessionSnapshotFromServerBestEffort(opts);
+      }
+      return;
+    }
+
+    const deferred = createDeferredPromise<void>();
+    if (this.cancelled) {
+      deferred.resolve();
+      return deferred.promise;
+    }
+
+    // Buffer the refresh until attach finishes so callers can reliably wait for a fresh snapshot
+    // even when the session client is still in deferred startup mode.
+    this.pushBufferedCall(
+      async (t) => {
+        if (typeof t.refreshSessionSnapshotFromServerBestEffort === 'function') {
+          await t.refreshSessionSnapshotFromServerBestEffort(opts);
+        }
+        deferred.resolve();
+      },
+      { hint: 'refreshSessionSnapshotFromServerBestEffort' },
+      { onDrop: () => deferred.resolve() },
+    );
+    return deferred.promise;
   }
 
   async waitForMetadataUpdate(abortSignal?: AbortSignal): Promise<boolean> {

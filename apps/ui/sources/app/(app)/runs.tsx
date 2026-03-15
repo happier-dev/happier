@@ -34,20 +34,20 @@ function getMachineTitle(machine: any): string {
   if (displayName) return displayName;
   const host = typeof machine?.metadata?.host === 'string' ? machine.metadata.host.trim() : '';
   if (host) return host;
-  return String(machine?.id ?? 'Unknown machine');
+  return String(machine?.id ?? t('runs.unknownMachine'));
 }
 
 function formatRunDetails(run: DaemonExecutionRunEntry): string {
-  const detailParts: string[] = [`session ${run.happySessionId}`, `pid ${run.pid}`];
+  const detailParts: string[] = [t('runs.sessionTitle', { sessionId: run.happySessionId }), t('runs.detail.pid', { pid: run.pid })];
   const cpu = (run as any).process?.cpu;
   const memory = (run as any).process?.memory;
   if (typeof cpu === 'number' && Number.isFinite(cpu)) {
-    detailParts.push(`${cpu.toFixed(1)}% cpu`);
+    detailParts.push(t('runs.detail.cpu', { percent: cpu.toFixed(1) }));
   }
   if (typeof memory === 'number' && Number.isFinite(memory)) {
-    detailParts.push(`${Math.round(memory / (1024 * 1024))} MB`);
+    detailParts.push(t('runs.detail.memory', { megabytes: Math.round(memory / (1024 * 1024)) }));
   }
-  return `run ${run.runId} · ${detailParts.join(' · ')}`;
+  return `${t('runs.runLabel', { runId: run.runId })} · ${detailParts.join(' · ')}`;
 }
 
 export default function RunsScreen() {
@@ -94,7 +94,7 @@ export default function RunsScreen() {
 
       setState({ status: 'loaded', runsByMachineId });
     } catch (error) {
-      setState({ status: 'error', error: error instanceof Error ? error.message : 'Failed to load runs' });
+      setState({ status: 'error', error: error instanceof Error ? error.message : t('runs.failedToLoad') });
     }
   }, [machineListStatusByServerId, serverEntries]);
 
@@ -107,7 +107,7 @@ export default function RunsScreen() {
       <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
         <Pressable
           accessibilityRole="button"
-          accessibilityLabel="Toggle finished runs"
+          accessibilityLabel={t('runs.a11y.toggleFinished')}
           onPress={() => setShowFinished((value) => !value)}
           hitSlop={10}
           style={({ pressed }) => ({ padding: 4, opacity: pressed ? 0.7 : 1 })}
@@ -120,7 +120,7 @@ export default function RunsScreen() {
         </Pressable>
         <Pressable
           accessibilityRole="button"
-          accessibilityLabel="Refresh runs"
+          accessibilityLabel={t('runs.a11y.refresh')}
           onPress={() => void load()}
           hitSlop={10}
           style={({ pressed }) => ({ padding: 4, opacity: pressed ? 0.7 : 1 })}
@@ -133,7 +133,7 @@ export default function RunsScreen() {
 
   const screenOptions = React.useMemo(() => ({
     headerShown: true,
-    headerTitle: 'Runs',
+    headerTitle: t('runs.title'),
     headerRight,
   }), [headerRight]);
 
@@ -157,15 +157,15 @@ export default function RunsScreen() {
           ) : state.status === 'error' ? (
             <Item title={t('common.error')} subtitle={state.error} showChevron={false} />
           ) : serverEntries.length === 0 ? (
-            <Item title={t('status.unknown')} subtitle="No machines available." showChevron={false} />
+            <Item title={t('status.unknown')} subtitle={t('runs.noMachinesAvailable')} showChevron={false} />
           ) : (
             serverEntries.flatMap(([serverId, machines]) => {
               if (!Array.isArray(machines) || machines.length === 0) return [];
               const header = (
                 <Item
                   key={`server:${serverId}`}
-                  title={`Server ${serverId}`}
-                  subtitle="Machines"
+                  title={t('runs.serverTitle', { serverId })}
+                  subtitle={t('runs.machinesSubtitle')}
                   showChevron={false}
                 />
               );
@@ -181,7 +181,7 @@ export default function RunsScreen() {
                   <ItemGroup key={`machine:${serverId}:${machineId}`} title={title}>
                     <Item
                       title={machineId}
-                      subtitle="Open machine"
+                      subtitle={t('runs.openMachine')}
                       subtitleStyle={{ color: theme.colors.textSecondary, fontFamily: 'Menlo' as any, fontSize: 12 }}
                       rightElement={<Ionicons name="chevron-forward" size={18} color={theme.colors.textSecondary} />}
                       onPress={() => {
@@ -190,7 +190,7 @@ export default function RunsScreen() {
                       }}
                     />
                     {runs.length === 0 ? (
-                      <Item title={t('runs.empty')} subtitle={t('runs.empty') ?? 'No runs yet.'} showChevron={false} />
+                      <Item title={t('runs.empty')} subtitle={t('runs.empty')} showChevron={false} />
                     ) : (
                       runs.slice(0, 50).map((run) => {
                         const canStop = run.status === 'running';
@@ -211,33 +211,33 @@ export default function RunsScreen() {
                               shouldContinue,
                             });
                             if (!shownDaemonUnavailable) {
-                              Modal.alert(t('common.error'), stopResult.error || 'Failed to stop session');
+                              Modal.alert(t('common.error'), stopResult.error || t('runs.stop.failedToStopSession'));
                             }
                           };
                           try {
                             const res = await sessionExecutionRunStop(run.happySessionId, { runId: run.runId }, { serverId });
                             if ((res as any)?.ok === false) {
                               const confirmed = await Modal.confirm(
-                                'Stop run failed',
-                                'Stopping this run via session RPC failed. Do you want to stop the entire session process instead? This is destructive and will stop all runs in that session.',
-                                { confirmText: 'Stop session', cancelText: 'Cancel', destructive: true },
+                                t('runs.stop.stopRunFailedTitle'),
+                                t('runs.stop.stopRunFailedBody'),
+                                { confirmText: t('runs.stop.stopSession'), cancelText: t('common.cancel'), destructive: true },
                               );
                               if (confirmed) {
                                 await stopSessionProcess();
                               } else {
-                                Modal.alert(t('common.error'), String((res as any).error ?? 'Failed to stop run'));
+                                Modal.alert(t('common.error'), String((res as any).error ?? t('runs.stop.failedToStopRun')));
                               }
                             }
                           } catch (error) {
                             const confirmed = await Modal.confirm(
-                              'Stop run failed',
-                              'Stopping this run via session RPC failed. Do you want to stop the entire session process instead? This is destructive and will stop all runs in that session.',
-                              { confirmText: 'Stop session', cancelText: 'Cancel', destructive: true },
+                              t('runs.stop.stopRunFailedTitle'),
+                              t('runs.stop.stopRunFailedBody'),
+                              { confirmText: t('runs.stop.stopSession'), cancelText: t('common.cancel'), destructive: true },
                             );
                             if (confirmed) {
                               await stopSessionProcess();
                             } else {
-                              Modal.alert(t('common.error'), error instanceof Error ? error.message : 'Failed to stop run');
+                              Modal.alert(t('common.error'), error instanceof Error ? error.message : t('runs.stop.failedToStopRun'));
                             }
                           } finally {
                             setStoppingRunId(null);
@@ -254,7 +254,7 @@ export default function RunsScreen() {
                             rightAccessory={canStop ? (
                               <Pressable
                                 accessibilityRole="button"
-                                accessibilityLabel="Stop run"
+                                accessibilityLabel={t('runs.stop.stopRunA11y')}
                                 onPress={onStop}
                                 disabled={stoppingRunId === run.runId}
                                 style={({ pressed }) => ({ opacity: pressed ? 0.7 : 1 })}

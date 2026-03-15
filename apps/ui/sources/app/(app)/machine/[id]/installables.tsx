@@ -19,12 +19,10 @@ import { useUnistyles } from 'react-native-unistyles';
 import { t } from '@/text';
 
 function formatAutoUpdateMode(mode: InstallableAutoUpdateMode): string {
-    if (mode === 'off') return 'Off';
-    if (mode === 'notify') return 'Notify';
-    return 'Auto';
+    if (mode === 'off') return t('machine.installables.autoUpdateModes.off');
+    if (mode === 'notify') return t('machine.installables.autoUpdateModes.notify');
+    return t('machine.installables.autoUpdateModes.auto');
 }
-
-const MACHINE_INSTALLABLES_SCREEN_OPTIONS = { title: 'Installables' } as const;
 
 export default function MachineInstallablesScreen() {
     const { theme } = useUnistyles();
@@ -97,22 +95,25 @@ export default function MachineInstallablesScreen() {
         setInstallablesPolicyByMachineId(next);
     }, [installablesPolicyByMachineId, machineId, setInstallablesPolicyByMachineId]);
 
+    const screenTitle = t('machine.installables.screenTitle');
+    const screenOptions = React.useMemo(() => ({ title: screenTitle }), [screenTitle]);
+
     return (
         <>
-            <Stack.Screen options={MACHINE_INSTALLABLES_SCREEN_OPTIONS} />
+            <Stack.Screen options={screenOptions} />
             <ScrollView
                 contentContainerStyle={{ paddingBottom: 24 }}
                 style={{ backgroundColor: theme.colors.groupped.background }}
             >
-                <ItemGroup title="About">
+                <ItemGroup title={t('machine.installables.aboutGroupTitle')}>
                     <Item
-                        title="Installables"
-                        subtitle="Manage tools that Happier can install and keep up to date on this machine."
+                        title={screenTitle}
+                        subtitle={t('machine.installables.aboutSubtitle')}
                         showChevron={false}
                     />
                 </ItemGroup>
 
-                <ItemGroup title="Detected CLIs">
+                <ItemGroup title={t('machine.detectedClis')}>
                     <DetectedClisList state={detectedCapabilities} layout="stacked" />
                 </ItemGroup>
 
@@ -124,7 +125,7 @@ export default function MachineInstallablesScreen() {
                             machineId={machineId ?? ''}
                             serverId={serverId}
                             enabled={true}
-                            groupTitle={`${entry.title}${entry.experimental ? ' (experimental)' : ''}`}
+                            groupTitle={entry.experimental ? t('machine.installables.experimentalGroupTitle', { title: entry.title }) : entry.title}
                             depId={entry.capabilityId}
                             depTitle={entry.title}
                             depIconName={entry.iconName as any}
@@ -133,25 +134,25 @@ export default function MachineInstallablesScreen() {
                             extraItems={
                                 <>
                                     <Item
-                                        title="Auto-install when needed"
-                                        subtitle="Installs in the background when required for a selected backend (best-effort)."
+                                        title={t('machine.installables.autoInstallTitle')}
+                                        subtitle={t('machine.installables.autoInstallSubtitle')}
                                         rightElement={<Switch value={policy.autoInstallWhenNeeded} onValueChange={(next) => setPolicyPatch(entry.key, { autoInstallWhenNeeded: next })} />}
                                         showChevron={false}
                                         onPress={() => setPolicyPatch(entry.key, { autoInstallWhenNeeded: !policy.autoInstallWhenNeeded })}
                                     />
                                     <Item
-                                        title="Auto-update"
+                                        title={t('machine.installables.autoUpdateTitle')}
                                         subtitle={formatAutoUpdateMode(policy.autoUpdateMode)}
                                         showChevron={true}
                                         onPress={() => {
                                             Modal.alert(
-                                                'Auto-update',
-                                                'Choose how Happier should handle updates for this installable.',
+                                                t('machine.installables.autoUpdatePromptTitle'),
+                                                t('machine.installables.autoUpdatePromptBody'),
                                                 [
-                                                    { text: 'Off', onPress: () => setPolicyPatch(entry.key, { autoUpdateMode: 'off' }) },
-                                                    { text: 'Notify', onPress: () => setPolicyPatch(entry.key, { autoUpdateMode: 'notify' }) },
-                                                    { text: 'Auto', onPress: () => setPolicyPatch(entry.key, { autoUpdateMode: 'auto' }) },
-                                                    { text: 'Cancel', style: 'cancel' },
+                                                    { text: t('machine.installables.autoUpdateModes.off'), onPress: () => setPolicyPatch(entry.key, { autoUpdateMode: 'off' }) },
+                                                    { text: t('machine.installables.autoUpdateModes.notify'), onPress: () => setPolicyPatch(entry.key, { autoUpdateMode: 'notify' }) },
+                                                    { text: t('machine.installables.autoUpdateModes.auto'), onPress: () => setPolicyPatch(entry.key, { autoUpdateMode: 'auto' }) },
+                                                    { text: t('common.cancel'), style: 'cancel' },
                                                 ],
                                             );
                                         }}

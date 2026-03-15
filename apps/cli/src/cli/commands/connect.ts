@@ -8,15 +8,17 @@ import { promptInput } from '@/terminal/prompts/promptInput';
 import { buildConnectedServiceCredentialRecord, sealConnectedServiceCredentialCiphertext, type ConnectedServiceId } from '@happier-dev/protocol';
 
 import type { CommandContext } from '@/cli/commandRegistry';
+import { parseConnectArgs, type ConnectParsedOptions } from './connect/parseConnectArgs';
+import { resolveConnectAuthIntent } from './connect/resolveConnectAuthIntent';
+import { resolveConnectTargetServiceIds } from './connect/resolveConnectTargetServiceIds';
 
 /**
- * Handle connect subcommand
- * 
+ * Handle connect subcommand.
+ *
  * Implements connect subcommands for storing Connected Services credentials (v2):
- * - connect codex: Store OpenAI Codex subscription OAuth (openai-codex)
- * - connect claude: Store Anthropic Claude subscription OAuth or setup-token (anthropic)
+ * - connect codex: Store OpenAI Codex subscription OAuth (openai-codex) or OpenAI API key (openai)
+ * - connect claude: Store Claude subscription auth (claude-subscription) or Anthropic API key (anthropic)
  * - connect gemini: Store Gemini OAuth (gemini)
- * - connect help: Show help for connect command
  */
 export async function handleConnectCommand(args: string[]): Promise<void> {
     const { includeExperimental, subcommand, options } = parseConnectArgs(args);
@@ -54,66 +56,6 @@ export async function handleConnectCommand(args: string[]): Promise<void> {
     await handleConnectVendor(visibleTarget, options);
 }
 
-type ConnectParsedOptions = Readonly<{
-  profileId: string;
-  paste: boolean;
-  noOpen: boolean;
-  timeoutSeconds: number | null;
-  setupToken: boolean;
-}>;
-
-function parseConnectArgs(args: ReadonlyArray<string>): Readonly<{
-  includeExperimental: boolean;
-  subcommand: string | null;
-  options: ConnectParsedOptions;
-}> {
-  const includeExperimental = args.includes('--all') || args.includes('--experimental');
-  const paste = args.includes('--paste');
-  const noOpen = args.includes('--no-open');
-  const setupToken = args.includes('--setup-token') || args.includes('--setup_token');
-
-  const profileFlagIdx = args.findIndex((a) => a === '--profile');
-  const profileId = profileFlagIdx !== -1 ? String(args[profileFlagIdx + 1] ?? '').trim() : '';
-
-  const timeoutFlagIdx = args.findIndex((a) => a === '--timeout');
-  const timeoutRaw = timeoutFlagIdx !== -1 ? String(args[timeoutFlagIdx + 1] ?? '').trim() : '';
-  const timeoutSeconds = timeoutRaw ? Number.parseInt(timeoutRaw, 10) : NaN;
-  const timeoutSecondsValue = Number.isFinite(timeoutSeconds) ? Math.max(1, Math.trunc(timeoutSeconds)) : null;
-
-  const knownFlags = new Set([
-    '--all',
-    '--experimental',
-    '--paste',
-    '--no-open',
-    '--setup-token',
-    '--setup_token',
-    '--profile',
-    '--timeout',
-  ]);
-  const valuesConsumedByFlags = new Set<number>([
-    profileFlagIdx !== -1 ? profileFlagIdx + 1 : -1,
-    timeoutFlagIdx !== -1 ? timeoutFlagIdx + 1 : -1,
-  ]);
-
-  const positional = args
-    .filter((_a, idx) => !valuesConsumedByFlags.has(idx))
-    .filter((a) => !knownFlags.has(a))
-    .filter((a) => !a.startsWith('--'));
-
-  const subcommand = positional[0] ?? null;
-  return {
-    includeExperimental,
-    subcommand,
-    options: {
-      profileId: profileId || 'default',
-      paste,
-      noOpen,
-      timeoutSeconds: timeoutSecondsValue,
-      setupToken,
-    },
-  };
-}
-
 async function loadConnectTargets(params: Readonly<{ includeExperimental: boolean }>): Promise<CloudConnectTarget[]> {
   const targets: CloudConnectTarget[] = [];
   for (const entry of Object.values(AGENTS)) {
@@ -129,7 +71,7 @@ function showConnectHelp(targets: ReadonlyArray<CloudConnectTarget>, opts: Reado
       ? targets.map((t) => formatTargetLine(t)).join('\n')
       : '  (no connect targets registered)';
     console.log(`
-${chalk.bold('happier connect')} - Connect AI vendor API keys to Happier cloud
+${chalk.bold('happier connect')} - Connect AI vendor subscriptions and API keys to Happier cloud
 
 ${chalk.bold('Usage:')}
 ${targetLines}
@@ -138,14 +80,18 @@ ${targetLines}
   happier connect --all ...    Include experimental providers
   happier connect <target> --profile <id>      Store under a specific profile (default: default)
   happier connect <target> --paste             Headless mode: paste redirect URL
+  happier connect <target> --device            Use device-code auth (Codex)
+  happier connect codex --api-key              Store an OpenAI API key
+  happier connect claude --api-key             Store an Anthropic API key (not Claude subscription)
+  happier connect claude --setup-token         Store a Claude setup-token (default for claude)
+  happier connect claude --oauth               Store Claude subscription OAuth (advanced)
   happier connect <target> --no-open           Do not attempt to open a browser
   happier connect <target> --timeout <seconds> Override OAuth timeout
-  happier connect claude --setup-token         Paste a Claude setup-token instead of OAuth
 
 ${chalk.bold('Description:')}
-  The connect command allows you to securely store your AI vendor API keys
+  The connect command allows you to securely store your connected-service credentials
   in Happier cloud. This enables you to use these services through Happier
-  without exposing your API keys locally.
+  without exposing credentials locally.
 
 ${chalk.bold('Examples:')}
   happier connect ${targets[0]?.id ?? 'gemini'}
@@ -153,7 +99,7 @@ ${chalk.bold('Examples:')}
 
 ${chalk.bold('Notes:')} 
   • You must be authenticated with Happier first (run 'happier auth login')
-  • API keys are encrypted and stored securely in Happier cloud
+  • Credentials are encrypted and stored securely in Happier cloud
   • You can manage your stored keys at app.happier.dev
   ${opts.includeExperimental ? '' : '• Some providers are experimental; use --all to show them'}
 `);
@@ -162,13 +108,6 @@ ${chalk.bold('Notes:')}
 function formatTargetLine(target: CloudConnectTarget): string {
   const statusSuffix = target.status === 'wired' ? '' : chalk.gray(' (experimental)');
   return `  happier connect ${target.id.padEnd(12)} ${target.vendorDisplayName}${statusSuffix}`;
-}
-
-function resolveConnectedServiceIdForTarget(targetId: string): ConnectedServiceId | null {
-  if (targetId === 'codex') return 'openai-codex';
-  if (targetId === 'claude') return 'anthropic';
-  if (targetId === 'gemini') return 'gemini';
-  return null;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -189,19 +128,21 @@ async function handleConnectVendor(target: CloudConnectTarget, options: ConnectP
     // Create API client
     const api = await ApiClient.create(credentials);
 
-    const serviceId = resolveConnectedServiceIdForTarget(target.id);
-    if (!serviceId) {
-      console.error(chalk.red(`Connect target '${target.id}' does not support connected services yet.`));
-      process.exit(1);
-    }
-
     const now = Date.now();
     let postConnectPayload: unknown | null = null;
 
     const record = await (async () => {
-      if (target.id === 'claude' && options.setupToken) {
-        const token = (await promptInput('Paste Claude setup-token: ')).trim();
-        if (!token) throw new Error('Missing setup-token');
+      const authIntent = resolveConnectAuthIntent({ targetId: target.id, options });
+      const serviceId: ConnectedServiceId = authIntent.serviceId;
+      if (authIntent.kind === 'token') {
+        const promptLabel =
+          authIntent.tokenKind === 'setup-token'
+            ? 'Paste Claude setup-token (from `claude setup-token`): '
+            : serviceId === 'openai'
+              ? 'Paste OpenAI API key: '
+              : 'Paste Anthropic API key: ';
+        const token = (await promptInput(promptLabel)).trim();
+        if (!token) throw new Error(authIntent.tokenKind === 'setup-token' ? 'Missing setup-token' : 'Missing API key');
         return buildConnectedServiceCredentialRecord({
           now,
           serviceId,
@@ -213,6 +154,7 @@ async function handleConnectVendor(target: CloudConnectTarget, options: ConnectP
 
       const oauth = await target.authenticate({
         paste: options.paste,
+        device: options.device,
         noOpen: options.noOpen,
         timeoutSeconds: options.timeoutSeconds ?? undefined,
       });
@@ -249,24 +191,28 @@ async function handleConnectVendor(target: CloudConnectTarget, options: ConnectP
 
       if (target.id === 'claude') {
         const t = isRecord(oauth) ? oauth : {};
-        const raw = isRecord(t.raw) ? t.raw : null;
-        const account = raw && isRecord(raw.account) ? raw.account : null;
-        const email = account?.email_address;
-        const accountId = account?.uuid;
+        const expiresAt = (() => {
+          const expiresIn = t.expires_in;
+          if (typeof expiresIn === 'number' && Number.isFinite(expiresIn) && expiresIn > 0) {
+            return now + Math.trunc(expiresIn) * 1000;
+          }
+          return null;
+        })();
+        const account = isRecord(t.account) ? t.account : null;
         return buildConnectedServiceCredentialRecord({
           now,
           serviceId,
           profileId: options.profileId,
           kind: 'oauth',
-          expiresAt: typeof t.expires === 'number' ? t.expires : null,
+          expiresAt,
           oauth: {
-            accessToken: String(t.token ?? ''),
+            accessToken: String(t.access_token ?? ''),
             refreshToken: String(t.refresh_token ?? ''),
             idToken: null,
-            scope: raw && typeof raw.scope === 'string' ? raw.scope : null,
-            tokenType: raw && typeof raw.token_type === 'string' ? raw.token_type : null,
-            providerAccountId: typeof accountId === 'string' ? accountId : null,
-            providerEmail: typeof email === 'string' ? email : null,
+            scope: typeof t.scope === 'string' ? t.scope : null,
+            tokenType: typeof t.token_type === 'string' ? t.token_type : null,
+            providerAccountId: account && typeof account.uuid === 'string' ? account.uuid : null,
+            providerEmail: account && typeof account.email_address === 'string' ? account.email_address : null,
           },
         });
       }
@@ -304,9 +250,9 @@ async function handleConnectVendor(target: CloudConnectTarget, options: ConnectP
       randomBytes: (length) => randomBytes(length),
     });
 
-    console.log(`🚀 Registering ${target.displayName} credential with server (${serviceId}/${options.profileId})`);
+    console.log(`🚀 Registering ${target.displayName} credential with server (${record.serviceId}/${options.profileId})`);
     await api.registerConnectedServiceCredentialSealed({
-      serviceId,
+      serviceId: record.serviceId,
       profileId: options.profileId,
       sealed: { format: 'account_scoped_v1', ciphertext: sealedCiphertext },
       metadata: {
@@ -345,16 +291,21 @@ async function handleConnectStatus(targets: ReadonlyArray<CloudConnectTarget>): 
 
     for (const target of targets) {
       try {
-        const serviceId = resolveConnectedServiceIdForTarget(target.id);
-        if (!serviceId) {
+        const serviceIds: ConnectedServiceId[] = resolveConnectTargetServiceIds(target.id);
+
+        if (serviceIds.length === 0) {
           console.log(`  ${chalk.gray('○')}  ${target.vendorDisplayName}: ${chalk.gray('not supported')}`);
           continue;
         }
 
-        const { profiles } = await api.listConnectedServiceProfiles({ serviceId });
-        const connected = profiles.filter((p) => p.status === 'connected');
+        const allProfiles = (await Promise.all(serviceIds.map(async (serviceId) => {
+          const { profiles } = await api.listConnectedServiceProfiles({ serviceId });
+          return profiles;
+        }))).flat();
+
+        const connected = allProfiles.filter((p) => p.status === 'connected');
         if (connected.length === 0) {
-          const needsReauth = profiles.length > 0;
+          const needsReauth = allProfiles.length > 0;
           const label = needsReauth ? 'needs re-auth' : 'not connected';
           const icon = needsReauth ? chalk.yellow('⚠️') : chalk.gray('○');
           const color = needsReauth ? chalk.yellow(label) : chalk.gray(label);

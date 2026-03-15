@@ -15,6 +15,8 @@ import { useAuth } from '@/auth/context/AuthContext';
 import { getServerUrl } from '@/sync/domains/server/serverConfig';
 import { clearPendingTerminalConnect, setPendingTerminalConnect } from '@/sync/domains/pending/pendingTerminalConnect';
 import { buildTerminalConnectDeepLink } from '@/utils/path/terminalConnectUrl';
+import { canonicalizeServerUrl } from '@/sync/domains/server/url/serverUrlCanonical';
+import { resolveEffectiveServerUrlOverride } from '@/sync/domains/server/url/serverUrlOverridePolicy';
 
 export default function TerminalScreen() {
     const router = useRouter();
@@ -55,9 +57,14 @@ export default function TerminalScreen() {
         if (authRedirectTriggeredRef.current) return;
 
         authRedirectTriggeredRef.current = true;
+        const currentServerUrl = canonicalizeServerUrl(getServerUrl());
+        const effectiveTarget = resolveEffectiveServerUrlOverride({
+            requestedServerUrl: serverUrl,
+            activeServerUrl: currentServerUrl,
+        });
         setPendingTerminalConnect({
             publicKeyB64Url: publicKey,
-            serverUrl: serverUrl ?? getServerUrl(),
+            serverUrl: effectiveTarget || currentServerUrl || getServerUrl(),
         });
         router.replace('/');
     }, [auth.isAuthenticated, publicKey, router, serverUrl]);

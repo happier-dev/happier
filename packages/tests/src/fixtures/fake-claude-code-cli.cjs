@@ -82,6 +82,7 @@ safeAppendJsonl(logPath, {
   type: 'invocation',
   invocationId,
   mode,
+  scenario,
   pid: process.pid,
   ts: Date.now(),
   cwd: process.cwd(),
@@ -129,11 +130,34 @@ async function runSdkStreamUntilEof() {
     };
   }
 
+  function createCanUseToolControlRequest(toolName, input) {
+    return {
+      type: 'control_request',
+      request_id: `can_use_${randomUUID()}`,
+      request: {
+        subtype: 'can_use_tool',
+        tool_name: toolName,
+        input,
+      },
+    };
+  }
+
   function createSystemInitMessage() {
     const mcpServers = Object.keys(mergedMcpServers || {}).map((name) => ({
       name,
       status: 'connected',
     }));
+
+    const tools = (() => {
+      const base = ['Bash(echo)'];
+      if (scenario === 'permission-prompt-write') {
+        base.push('Write');
+      }
+      if (scenario === 'transcript-activity-feed') {
+        base.push('Diff', 'Edit', 'Bash(echo)');
+      }
+      return base;
+    })();
 
     return {
       type: 'system',
@@ -141,7 +165,7 @@ async function runSdkStreamUntilEof() {
       apiKeySource: 'project',
       claude_code_version: '0.0.0-fake',
       cwd: process.cwd(),
-      tools: ['Bash(echo)'],
+      tools,
       mcp_servers: mcpServers,
       model: 'fake-claude',
       permissionMode: 'default',
@@ -238,6 +262,8 @@ async function runSdkStreamUntilEof() {
       messageType: msg?.type ?? null,
       messageRole: msg?.message?.role ?? null,
       hasUserText: Boolean(promptText),
+      userTextLength: typeof promptText === 'string' ? promptText.length : null,
+      userTextPreview: typeof promptText === 'string' ? promptText.slice(0, 800) : null,
     });
     if (!promptText) continue;
 
@@ -279,6 +305,207 @@ async function runSdkStreamUntilEof() {
       ]);
 
       emitSdk(assistant);
+      emitSdk(createResultSuccess());
+      continue;
+    }
+
+    if (scenario === 'permission-prompt-write') {
+      const writeToolUseId = `tool_write_${turn}`;
+      const filePath = `/tmp/happier-e2e-permission-${turn}.txt`;
+      const writeInput = { file_path: filePath, content: `hello from ui e2e ${turn}` };
+
+      const assistant = createAssistantMessage([
+        { type: 'text', text: `Attempting to write ${filePath}.` },
+        {
+          type: 'tool_use',
+          id: writeToolUseId,
+          name: 'Write',
+          input: writeInput,
+        },
+      ]);
+
+      emitSdk(assistant);
+      emitSdk(createCanUseToolControlRequest('Write', writeInput));
+      // Intentionally omit the result message: the agent SDK will pause the turn
+      // until the client approves/denies the permission and provides a tool_result.
+      continue;
+    }
+
+    if (scenario === 'transcript-activity-feed') {
+      const diffToolUseId = `tool_diff_${turn}`;
+      const editToolUseId = `tool_edit_${turn}`;
+      const bashToolUseId = `tool_bash_${turn}`;
+      const filler = Array.from({ length: 24 }, (_, i) => `• activity ${turn} line ${i + 1}`).join('\n');
+
+      const unifiedDiff = [
+        'diff --git a/src/demo.ts b/src/demo.ts',
+        '--- a/src/demo.ts',
+        '+++ b/src/demo.ts',
+        '@@ -1 +1,3 @@',
+        '-export function add(a:number,b:number){return a+b}',
+        '+export function add(a: number, b: number) {',
+        '+  return a + b',
+        '+}',
+        '',
+      ].join('\n');
+
+      emitSdk(
+        createAssistantMessage([
+          { type: 'text', text: `FAKE_TRANSCRIPT_ACTIVITY_FEED_START_${turn}\n${filler}` },
+        ]),
+      );
+
+      emitSdk(
+        createAssistantMessage([
+          {
+            type: 'tool_use',
+            id: diffToolUseId,
+            name: 'Diff',
+            input: {
+              files: [{ file_path: 'src/demo.ts', unified_diff: unifiedDiff }],
+            },
+          },
+        ]),
+      );
+      emitSdk(createUserMessage([{ type: 'tool_result', tool_use_id: diffToolUseId, content: 'ok' }]));
+
+      emitSdk(
+        createAssistantMessage([
+          {
+            type: 'tool_use',
+            id: editToolUseId,
+            name: 'Edit',
+            input: {
+              file_path: 'src/demo.ts',
+              old_string: 'export function add(a:number,b:number){return a+b}',
+              new_string: 'export function add(a: number, b: number) {\\n  return a + b\\n}',
+            },
+          },
+        ]),
+      );
+      emitSdk(createUserMessage([{ type: 'tool_result', tool_use_id: editToolUseId, content: 'ok' }]));
+
+      emitSdk(
+        createAssistantMessage([
+          {
+            type: 'tool_use',
+            id: bashToolUseId,
+            name: 'Bash',
+            input: { command: 'echo hello' },
+          },
+        ]),
+      );
+      emitSdk(createUserMessage([{ type: 'tool_result', tool_use_id: bashToolUseId, content: 'hello' }]));
+
+      emitSdk(
+        createAssistantMessage([
+          { type: 'text', text: `FAKE_TRANSCRIPT_ACTIVITY_FEED_DONE_${turn}\n${filler}` },
+        ]),
+      );
+      emitSdk(createResultSuccess());
+      continue;
+    }
+
+    if (scenario === 'thinking-markdown-stream') {
+      const part1 = [
+        '**Considering',
+        'Codex',
+        'functionalities**',
+        '',
+        'In',
+        'Codex,',
+        'I',
+        'can',
+        'perform',
+        '`git',
+        'diff`',
+        'in',
+        'the',
+        'terminal.',
+        'For',
+        'reading,',
+        'I',
+        'can',
+        'use',
+        '`ls`',
+        'or',
+        '`cat`.',
+        'For',
+        'subagents,',
+        "there's",
+        'a',
+        '`mcp__happier__delegate_start`',
+        'tool',
+        '-',
+        'we',
+        'might',
+        'plan',
+        'how',
+        'to',
+        'execute',
+        'it.',
+      ].join('\n');
+
+      const part2 = [
+        '**Exploring',
+        'reasoning',
+        'options**',
+        '',
+        'The',
+        'user',
+        'wants',
+        'reasoning,',
+        'but',
+        'the',
+        'system',
+        'advises',
+        'against',
+        'revealing',
+        'my',
+        'internal',
+        'thought',
+        'process.',
+        'Yet,',
+        'they',
+        'explicitly',
+        'requested',
+        'a',
+        '"web',
+        'fetch".',
+      ].join('\n');
+
+      const part3 = [
+        '**Considering',
+        'commands',
+        'and',
+        'tools**',
+        '',
+        'I',
+        'think',
+        'it',
+        'might',
+        'be',
+        'better',
+        'to',
+        'use',
+        '`curl`',
+        'for',
+        'the',
+        '"web',
+        'fetch"',
+        'instead',
+        'of',
+        '`web.run`.',
+        '',
+        '```sh',
+        'curl -I https://example.com',
+        '```',
+      ].join('\n');
+
+      emitSdk(createAssistantMessage([{ type: 'thinking', thinking: part1 }]));
+      emitSdk(createAssistantMessage([{ type: 'thinking', thinking: part2 }]));
+      emitSdk(createAssistantMessage([{ type: 'thinking', thinking: part3 }]));
+      emitSdk(createAssistantMessage([{ type: 'text', text: `FAKE_CLAUDE_OK_${turn}` }]));
       emitSdk(createResultSuccess());
       continue;
     }
@@ -435,6 +662,46 @@ async function runSdkStreamUntilEof() {
       ]);
 
       emitSdk(assistant);
+      emitSdk(createResultSuccess());
+      continue;
+    }
+
+    if (scenario === 'diff-tool') {
+      const diffToolUseId = `tool_diff_${turn}`;
+      const unifiedDiff = [
+        'diff --git a/src/demo.ts b/src/demo.ts',
+        '--- a/src/demo.ts',
+        '+++ b/src/demo.ts',
+        '@@ -1 +1,3 @@',
+        '-export function add(a:number,b:number){return a+b}',
+        '+export function add(a: number, b: number) {',
+        '+  return a + b',
+        '+}',
+        '',
+      ].join('\n');
+
+      const assistant = createAssistantMessage([
+        {
+          type: 'tool_use',
+          id: diffToolUseId,
+          name: 'Diff',
+          input: {
+            files: [
+              {
+                file_path: 'src/demo.ts',
+                unified_diff: unifiedDiff,
+              },
+            ],
+          },
+        },
+      ]);
+
+      const toolResult = createUserMessage([
+        { type: 'tool_result', tool_use_id: diffToolUseId, content: 'ok' },
+      ]);
+
+      emitSdk(assistant);
+      emitSdk(toolResult);
       emitSdk(createResultSuccess());
       continue;
     }

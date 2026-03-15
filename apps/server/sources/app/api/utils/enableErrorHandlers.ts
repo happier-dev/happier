@@ -4,6 +4,7 @@ import { Fastify } from "../types";
 import { readFile, stat } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { resolveUiConfig } from "@/app/api/uiConfig";
+import { captureFastifyExceptionForSentry } from "@/app/monitoring/sentry";
 
 export function enableErrorHandlers(app: Fastify) {
     // Global error handler
@@ -30,6 +31,7 @@ export function enableErrorHandlers(app: Fastify) {
         const statusCode = error.statusCode || 500;
 
         if (statusCode >= 500) {
+            captureFastifyExceptionForSentry(error, request as any);
             // Internal server errors - don't expose details
             return reply.code(statusCode).send({
                 error: 'Internal Server Error',

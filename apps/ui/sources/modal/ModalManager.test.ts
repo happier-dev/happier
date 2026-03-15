@@ -88,4 +88,51 @@ describe('Modal.prompt', () => {
         expect(alertSpy).not.toHaveBeenCalled();
         expect(modalType).toBe('alert');
     });
+
+    it('supports awaiting alerts via alertAsync on web', async () => {
+        platformState.os = 'web';
+
+        const { Modal } = await import('./ModalManager');
+        const { Alert } = await import('react-native');
+
+        const alertSpy = (Alert as any).alert as ReturnType<typeof vi.fn>;
+        alertSpy.mockClear();
+
+        let modalType: string | null = null;
+        Modal.setFunctions(
+            (config) => {
+                modalType = config.type;
+                return 'alert-async-1';
+            },
+            () => {},
+            () => {},
+        );
+
+        const promise = (Modal as any).alertAsync('Title', 'Message');
+
+        expect(alertSpy).not.toHaveBeenCalled();
+        expect(modalType).toBe('alert');
+
+        (Modal as any).resolveAlert('alert-async-1');
+        await expect(promise).resolves.toBeUndefined();
+    });
+
+    it('supports awaiting alerts via alertAsync on iOS', async () => {
+        const { Modal } = await import('./ModalManager');
+        const { Alert } = await import('react-native');
+
+        const alertSpy = (Alert as any).alert as ReturnType<typeof vi.fn>;
+        alertSpy.mockClear();
+
+        const onPressSpy = vi.fn();
+        const promise = (Modal as any).alertAsync('Title', 'Message', [{ text: 'OK', onPress: onPressSpy }]);
+
+        expect(alertSpy).toHaveBeenCalledTimes(1);
+        const call = alertSpy.mock.calls[0] as any[];
+        const buttons = call[2] as Array<{ onPress?: () => void }>;
+        buttons[0]?.onPress?.();
+
+        expect(onPressSpy).toHaveBeenCalledTimes(1);
+        await expect(promise).resolves.toBeUndefined();
+    });
 });

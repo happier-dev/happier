@@ -7,40 +7,57 @@ const DEMO_SESSION_ID = 'demo-messages-session';
 
 export function useDemoMessages(messages: Message[]) {
     useEffect(() => {
-        // Create messages map
-        const messagesMap: Record<string, Message> = {};
-        messages.forEach(msg => {
-            messagesMap[msg.id] = msg;
-        });
+        const messagesById: Record<string, Message> = {};
+        for (const msg of messages) {
+            messagesById[msg.id] = msg;
+        }
 
-        // Sort messages by createdAt
-        const sortedMessages = [...messages].sort((a, b) => b.createdAt - a.createdAt);
+        const messageIdsOldestFirst = [...messages]
+            .sort((a, b) => {
+                if (a.createdAt !== b.createdAt) return a.createdAt - b.createdAt;
+                return String(a.id).localeCompare(String(b.id));
+            })
+            .map((m) => m.id);
+
+        let latestThinkingMessageId: string | null = null;
+        for (let i = messageIdsOldestFirst.length - 1; i >= 0; i -= 1) {
+            const id = messageIdsOldestFirst[i]!;
+            const msg = messagesById[id];
+            if (msg?.kind === 'agent-text' && msg.isThinking === true) {
+                latestThinkingMessageId = id;
+                break;
+            }
+        }
 
         // Write the demo messages to the hardcoded session
         storage.setState((state) => ({
             ...state,
             sessionMessages: {
                 ...state.sessionMessages,
-                [DEMO_SESSION_ID]: {
-                    messages: sortedMessages,
-                    messagesMap: messagesMap,
-                    reducerState: createReducer(),
-                    isLoaded: true
-                }
-            }
-        }));
+                  [DEMO_SESSION_ID]: {
+                      messageIdsOldestFirst,
+                      messagesById,
+                      messagesMap: messagesById,
+                      reducerState: createReducer(),
+                      latestThinkingMessageId,
+                      latestThinkingMessageActivityAtMs: null,
+                      messagesVersion: 1,
+                      isLoaded: true,
+                  },
+              },
+          }));
 
         // Cleanup function to remove the demo session
         return () => {
-            storage.setState((state) => {
-                const { [DEMO_SESSION_ID]: _, ...restSessions } = state.sessionMessages;
-                return {
-                    ...state,
-                    sessionMessages: restSessions
-                };
-            });
-        };
-    }, [messages]);
+              storage.setState((state) => {
+                  const { [DEMO_SESSION_ID]: _, ...restSessions } = state.sessionMessages;
+                  return {
+                      ...state,
+                      sessionMessages: restSessions,
+                  };
+              });
+          };
+      }, [messages]);
 
     return DEMO_SESSION_ID;
 }

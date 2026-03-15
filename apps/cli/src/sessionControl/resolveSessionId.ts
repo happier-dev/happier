@@ -31,7 +31,16 @@ export async function resolveSessionIdOrPrefix(params: Readonly<{
   const maxPages = Number.isFinite(maxPagesParsed) && maxPagesParsed > 0 ? Math.min(50, maxPagesParsed) : 10;
 
   let cursor: string | undefined;
-  const matches: string[] = [];
+  const matches = new Set<string>();
+
+  const recordMatch = (id: string): ResolveSessionIdResult | null => {
+    if (matches.has(id)) return null;
+    matches.add(id);
+    if (matches.size > 1) {
+      return { ok: false, code: 'session_id_ambiguous', candidates: Array.from(matches).slice(0, 10) };
+    }
+    return null;
+  };
 
   const scan = async (archivedOnly: boolean): Promise<ResolveSessionIdResult | null> => {
     cursor = undefined;
@@ -40,20 +49,16 @@ export async function resolveSessionIdOrPrefix(params: Readonly<{
       for (const row of page.sessions) {
         const id = row.id;
         if (id.startsWith(input)) {
-          matches.push(id);
-          if (matches.length > 1) {
-            return { ok: false, code: 'session_id_ambiguous', candidates: matches.slice(0, 10) };
-          }
+          const res = recordMatch(id);
+          if (res) return res;
         }
 
         // Also support resolving by exact tag match when metadata is decryptable.
         const meta = tryDecryptSessionMetadata({ credentials: params.credentials, rawSession: row });
-        const tag = typeof (meta as any)?.tag === 'string' ? String((meta as any).tag).trim() : '';
+        const tag = meta && typeof meta.tag === 'string' ? meta.tag.trim() : '';
         if (tag && tag === input) {
-          matches.push(id);
-          if (matches.length > 1) {
-            return { ok: false, code: 'session_id_ambiguous', candidates: matches.slice(0, 10) };
-          }
+          const res = recordMatch(id);
+          if (res) return res;
         }
       }
       if (!page.hasNext || !page.nextCursor) break;
@@ -67,7 +72,7 @@ export async function resolveSessionIdOrPrefix(params: Readonly<{
   const archivedScan = await scan(true);
   if (archivedScan) return archivedScan;
 
-  if (matches.length === 1) return { ok: true, sessionId: matches[0]! };
-  if (matches.length === 0) return { ok: false, code: 'session_not_found' };
-  return { ok: false, code: 'session_id_ambiguous', candidates: matches.slice(0, 10) };
+  if (matches.size === 1) return { ok: true, sessionId: Array.from(matches)[0]! };
+  if (matches.size === 0) return { ok: false, code: 'session_not_found' };
+  return { ok: false, code: 'session_id_ambiguous', candidates: Array.from(matches).slice(0, 10) };
 }

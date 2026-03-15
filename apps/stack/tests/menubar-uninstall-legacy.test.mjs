@@ -32,11 +32,14 @@ test('hstack menubar uninstall removes only hstack plugins', async () => {
 
     const legacyHstackPlugin = join(pluginsDir, 'happy-stacks.5m.sh');
     const current = join(pluginsDir, 'hstack.5m.sh');
+    const stackScoped = join(pluginsDir, 'hstack-repo-foo-abcdef.5m.sh');
 
     await writeFile(legacyHstackPlugin, '#!/bin/bash\necho legacy\n', 'utf8');
     await writeFile(current, '#!/bin/bash\necho current\n', 'utf8');
+    await writeFile(stackScoped, '#!/bin/bash\necho scoped\n', 'utf8');
     assert.ok(existsSync(legacyHstackPlugin));
     assert.ok(existsSync(current));
+    assert.ok(existsSync(stackScoped));
 
     const res = runHstack(['menubar', 'uninstall', '--json'], {
       env: {
@@ -48,6 +51,7 @@ test('hstack menubar uninstall removes only hstack plugins', async () => {
 
     assert.ok(existsSync(legacyHstackPlugin), 'expected legacy hstack plugin preserved');
     assert.ok(!existsSync(current), 'expected current plugin removed');
+    assert.ok(!existsSync(stackScoped), 'expected stack-scoped plugin removed');
   } finally {
     await rm(tmp, { recursive: true, force: true });
   }

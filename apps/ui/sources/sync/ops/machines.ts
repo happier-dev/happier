@@ -4,7 +4,7 @@
 
 import type { SpawnSessionResult } from '@happier-dev/protocol';
 import { SPAWN_SESSION_ERROR_CODES } from '@happier-dev/protocol';
-import { RPC_METHODS, isRpcMethodNotFoundResult } from '@happier-dev/protocol/rpc';
+import { RPC_ERROR_CODES, RPC_METHODS, isRpcMethodNotFoundResult } from '@happier-dev/protocol/rpc';
 
 import { apiSocket } from '../api/session/apiSocket';
 import type { MachineMetadata } from '../domains/state/storageTypes';
@@ -36,7 +36,16 @@ export async function machineSpawnNewSession(options: SpawnSessionOptions): Prom
         });
         return normalizeSpawnSessionResult(result);
     } catch (error) {
-        // Handle RPC errors
+        const rpcErrorCode = readRpcErrorCode(error);
+        if (rpcErrorCode === RPC_ERROR_CODES.METHOD_NOT_AVAILABLE) {
+            return {
+                type: 'error',
+                errorCode: SPAWN_SESSION_ERROR_CODES.DAEMON_RPC_UNAVAILABLE,
+                errorMessage:
+                    `Daemon RPC is not available (RPC method not available). ` +
+                    `The daemon may be stopped, still starting, or not connected to the server.`,
+            };
+        }
         return {
             type: 'error',
             errorCode: SPAWN_SESSION_ERROR_CODES.UNEXPECTED,
@@ -48,13 +57,16 @@ export async function machineSpawnNewSession(options: SpawnSessionOptions): Prom
 /**
  * Stop the daemon on a specific machine
  */
-export async function machineStopDaemon(machineId: string): Promise<{ message: string }> {
-    const result = await apiSocket.machineRPC<{ message: string }, {}>(
+export async function machineStopDaemon(
+    machineId: string,
+    options?: Readonly<{ serverId?: string | null }>,
+): Promise<{ message: string }> {
+    return await machineRpcWithServerScope<{ message: string }, {}>({
         machineId,
-        RPC_METHODS.STOP_DAEMON,
-        {}
-    );
-    return result;
+        method: RPC_METHODS.STOP_DAEMON,
+        payload: {},
+        serverId: options?.serverId ?? null,
+    });
 }
 
 export type MachineStopSessionResult =

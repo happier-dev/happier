@@ -1,3 +1,6 @@
+export type { ConnectedServiceId } from '@happier-dev/protocol';
+import type { ConnectedServiceId } from '@happier-dev/protocol';
+
 export const AGENT_IDS = ['claude', 'codex', 'opencode', 'gemini', 'auggie', 'qwen', 'kimi', 'kilo', 'pi', 'copilot'] as const;
 export type AgentId = (typeof AGENT_IDS)[number];
 
@@ -34,6 +37,7 @@ export type VendorResumeSupportLevel = 'supported' | 'unsupported' | 'experiment
 export type ResumeRuntimeGate = 'acpLoadSession' | null;
 
 export type VendorResumeIdField =
+    | 'claudeSessionId'
     | 'codexSessionId'
     | 'geminiSessionId'
     | 'opencodeSessionId'
@@ -47,7 +51,6 @@ export type VendorResumeIdField =
 export type CloudVendorKey = 'openai' | 'anthropic' | 'gemini';
 export type CloudConnectTargetStatus = 'wired' | 'experimental';
 
-export type ConnectedServiceId = 'openai-codex' | 'anthropic' | 'gemini';
 export type ConnectedServiceKind = 'oauth' | 'token';
 
 export type AgentCore = Readonly<{

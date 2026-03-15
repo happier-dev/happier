@@ -3,6 +3,7 @@
 import { readFileSync, existsSync } from 'node:fs';
 import path from 'node:path';
 import { parseDotenv } from './parse-dotenv.mjs';
+import { normalizePipelineEnvAliases } from './normalize-pipeline-env.mjs';
 
 /**
  * @param {string} filePath
@@ -38,7 +39,6 @@ export function loadPipelineEnv({ repoRoot, deployEnvironment }) {
   }
 
   // process.env should override file-based values.
-  const env = { ...base, ...deploy, ...process.env };
+  const env = normalizePipelineEnvAliases({ ...base, ...deploy, ...process.env });
   return { env, sources };
 }
-

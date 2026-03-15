@@ -125,7 +125,7 @@ describe('claude sdk query executable resolution', () => {
     expect(spawnOpts?.shell).not.toBe(true);
   });
 
-  it('uses shell when spawning the global \"claude\" command on Windows', async () => {
+  it('wraps .cmd shims with cmd.exe on Windows', async () => {
     Object.defineProperty(process, 'platform', { value: 'win32', configurable: true });
 
     const spawnMock = vi.fn((..._args: any[]) => {
@@ -149,14 +149,20 @@ describe('claude sdk query executable resolution', () => {
         prompt: 'hi',
         options: {
           cwd: '/tmp',
-          pathToClaudeCodeExecutable: 'claude',
+          pathToClaudeCodeExecutable: 'C:\\\\Users\\\\me\\\\AppData\\\\Roaming\\\\npm\\\\claude.cmd',
         },
       }),
     ).toThrow(/spawn invoked/);
 
     expect(spawnMock).toHaveBeenCalled();
+    const spawnCommand = spawnMock.mock.calls[0]?.[0] as unknown;
+    const spawnArgs = spawnMock.mock.calls[0]?.[1] as unknown;
     const spawnOpts = spawnMock.mock.calls[0]?.[2] as Record<string, unknown> | undefined;
-    expect(spawnOpts?.shell).toBe(true);
+    expect(spawnCommand).toBe('cmd.exe');
+    expect((spawnArgs as any)?.slice?.(0, 3)).toEqual(['/d', '/s', '/c']);
+    expect((spawnArgs as any)?.[3]).toContain('claude.cmd');
+    expect(spawnOpts?.shell).not.toBe(true);
+    expect(spawnOpts?.windowsVerbatimArguments).toBe(true);
   });
 
   it('strips nested Claude Code env vars from the spawned process environment', async () => {
@@ -201,6 +207,46 @@ describe('claude sdk query executable resolution', () => {
       else delete process.env.CLAUDECODE;
       if (typeof prevEntrypoint === 'string') process.env.CLAUDE_CODE_ENTRYPOINT = prevEntrypoint;
       else delete process.env.CLAUDE_CODE_ENTRYPOINT;
+    }
+  });
+
+  it('does not forward HAPPIER_SPAWN_EXPLICIT_ENV_KEYS_JSON into the spawned Claude process environment', async () => {
+    const prev = process.env.HAPPIER_SPAWN_EXPLICIT_ENV_KEYS_JSON;
+    process.env.HAPPIER_SPAWN_EXPLICIT_ENV_KEYS_JSON = JSON.stringify(['GITHUB_TOKEN']);
+
+    const spawnMock = vi.fn((..._args: any[]) => {
+      throw new Error('spawn invoked');
+    });
+
+    vi.doMock('node:child_process', async () => {
+      const actual = await vi.importActual<typeof import('node:child_process')>('node:child_process');
+      return { ...actual, spawn: spawnMock };
+    });
+
+    vi.doMock('node:fs', async () => {
+      const actual = await vi.importActual<typeof import('node:fs')>('node:fs');
+      return { ...actual, existsSync: () => true };
+    });
+
+    const { query } = (await import('./query')) as typeof import('./query');
+
+    try {
+      expect(() =>
+        query({
+          prompt: 'hi',
+          options: {
+            cwd: '/tmp',
+            pathToClaudeCodeExecutable: '/tmp/fake-claude.cjs',
+          },
+        }),
+      ).toThrow(/spawn invoked/);
+
+      expect(spawnMock).toHaveBeenCalled();
+      const spawnOpts = spawnMock.mock.calls[0]?.[2] as Record<string, any> | undefined;
+      expect(spawnOpts?.env?.HAPPIER_SPAWN_EXPLICIT_ENV_KEYS_JSON).toBeUndefined();
+    } finally {
+      if (typeof prev === 'string') process.env.HAPPIER_SPAWN_EXPLICIT_ENV_KEYS_JSON = prev;
+      else delete process.env.HAPPIER_SPAWN_EXPLICIT_ENV_KEYS_JSON;
     }
   });
 });

@@ -166,14 +166,15 @@ async function detectSymlinkedNodeModules({ worktreeDir }) {
   }
 }
 
-export async function assertExpoWebappBundlesOrThrow({ rootDir, stackName, webappUrl }) {
+export async function assertExpoWebappBundlesOrThrow({ rootDir, stackName, webappUrl, timeoutMs = 60_000 } = {}) {
   const u = new URL(webappUrl);
   const port = u.port ? Number(u.port) : null;
   const probeHost = Number.isFinite(port) ? '127.0.0.1' : u.hostname;
   const base = `${u.protocol}//${probeHost}${u.port ? `:${u.port}` : ''}`;
 
   // Retry briefly: Metro can be up while the first bundle compile is still warming.
-  const deadline = Date.now() + 60_000;
+  const timeout = Number(timeoutMs);
+  const deadline = Date.now() + (Number.isFinite(timeout) && timeout > 0 ? timeout : 60_000);
   let lastError = '';
   while (Date.now() < deadline) {
     // eslint-disable-next-line no-await-in-loop
@@ -181,7 +182,8 @@ export async function assertExpoWebappBundlesOrThrow({ rootDir, stackName, webap
     if (!htmlRes.ok) {
       lastError = `HTTP ${htmlRes.status} loading ${base}/`;
       // eslint-disable-next-line no-await-in-loop
-      await delay(500);
+      if (Date.now() >= deadline) break;
+      await delay(Math.min(500, Math.max(0, deadline - Date.now())));
       continue;
     }
 
@@ -189,7 +191,8 @@ export async function assertExpoWebappBundlesOrThrow({ rootDir, stackName, webap
     if (!bundlePath) {
       lastError = `could not find bundle <script src> in ${base}/`;
       // eslint-disable-next-line no-await-in-loop
-      await delay(500);
+      if (Date.now() >= deadline) break;
+      await delay(Math.min(500, Math.max(0, deadline - Date.now())));
       continue;
     }
 
@@ -227,7 +230,8 @@ export async function assertExpoWebappBundlesOrThrow({ rootDir, stackName, webap
 
     lastError = `HTTP ${bundleRes.status} loading bundle ${bundlePath}`;
     // eslint-disable-next-line no-await-in-loop
-    await delay(500);
+    if (Date.now() >= deadline) break;
+    await delay(Math.min(500, Math.max(0, deadline - Date.now())));
   }
 
   if (lastError) {
@@ -407,7 +411,14 @@ export async function guidedStackAuthLoginNow({ rootDir, stackName, env = proces
   const skipBundleCheck = (env.HAPPIER_STACK_AUTH_SKIP_BUNDLE_CHECK ?? '').toString().trim() === '1';
   // Surface common "blank page" issues (Metro resolver errors) even in quiet mode.
   if (!skipBundleCheck) {
-    await assertExpoWebappBundlesOrThrow({ rootDir, stackName: name, webappUrl: resolved });
+    const timeoutMsRaw = String(env.HAPPIER_STACK_AUTH_EXPO_BUNDLE_READY_TIMEOUT_MS ?? '').trim();
+    const timeoutMs = timeoutMsRaw ? Number(timeoutMsRaw) : null;
+    await assertExpoWebappBundlesOrThrow({
+      rootDir,
+      stackName: name,
+      webappUrl: resolved,
+      timeoutMs: Number.isFinite(timeoutMs) && timeoutMs > 0 ? timeoutMs : undefined,
+    });
   }
 
   const preparedEnv = await prepareCoreAuthEnv({ stackName: name, webappUrl: resolved, env });

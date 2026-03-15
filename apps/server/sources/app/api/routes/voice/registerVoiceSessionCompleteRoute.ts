@@ -1,10 +1,9 @@
 import { z } from "zod";
 import { log } from "@/utils/logging/log";
 import { db } from "@/storage/db";
-import { parseIntEnv } from "@/config/env";
 import { resolveElevenLabsApiBaseUrl } from "@/voice/elevenLabsEnv";
 import { resolveServerFeaturesForGating } from "@/app/features/catalog/serverFeatureGate";
-import { createApiRateLimitKeyGenerator, gateRateLimitConfig } from "@/app/api/utils/apiRateLimitPolicy";
+import { resolveApiHotEndpointRateLimit } from "@/app/api/utils/apiRateLimitCatalog";
 import { type Fastify } from "../../types";
 
 function extractConversationAgentId(payload: any): string | null {
@@ -27,22 +26,9 @@ function extractConversationStartUnixSecs(payload: any): number | null {
 export function registerVoiceSessionCompleteRoute(app: Fastify): void {
     app.post('/v1/voice/session/complete', {
         preHandler: app.authenticate,
-        config: (() => {
-            const maxPerMinute = Math.max(0, parseIntEnv(process.env.VOICE_COMPLETE_MAX_PER_MINUTE, 60));
-            return {
-                rateLimit:
-                    gateRateLimitConfig(
-                        process.env,
-                        maxPerMinute <= 0
-                            ? false
-                            : {
-                              max: maxPerMinute,
-                              timeWindow: "1 minute",
-                              keyGenerator: createApiRateLimitKeyGenerator(),
-                          },
-                    ),
-            };
-        })(),
+        config: {
+            rateLimit: resolveApiHotEndpointRateLimit(process.env, "voice.sessionComplete"),
+        },
         schema: {
             body: z.object({
                 leaseId: z.string(),

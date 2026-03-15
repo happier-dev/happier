@@ -7,20 +7,19 @@ import { WebFetchInputV2Schema, WebSearchInputV2Schema } from '@happier-dev/prot
 
 export const coreWebTools = {
     'WebFetch': {
-        title: (opts: { metadata: Metadata | null, tool: ToolCall }) => {
-            if (typeof opts.tool.input.url === 'string') {
-                try {
-                    const url = new URL(opts.tool.input.url);
-                    return url.hostname;
-                } catch {
-                    return t('tools.names.fetchUrl');
-                }
-            }
-            return t('tools.names.fetchUrl');
-        },
+        title: () => t('tools.names.fetchUrl'),
         icon: ICON_WEB,
         minimal: true,
         input: WebFetchInputV2Schema,
+        extractSubtitle: (opts: { metadata: Metadata | null, tool: ToolCall }) => {
+            if (typeof opts.tool.input.url !== 'string') return null;
+            try {
+                const url = new URL(opts.tool.input.url);
+                return url.hostname || null;
+            } catch {
+                return null;
+            }
+        },
         extractDescription: (opts: { metadata: Metadata | null, tool: ToolCall }) => {
             if (typeof opts.tool.input.url === 'string') {
                 try {
@@ -34,15 +33,14 @@ export const coreWebTools = {
         }
     },
     'WebSearch': {
-        title: (opts: { metadata: Metadata | null, tool: ToolCall }) => {
-            if (typeof opts.tool.input.query === 'string') {
-                return opts.tool.input.query;
-            }
-            return t('tools.names.webSearch');
-        },
+        title: () => t('tools.names.webSearch'),
         icon: ICON_WEB,
         minimal: true,
         input: WebSearchInputV2Schema,
+        extractSubtitle: (opts: { metadata: Metadata | null, tool: ToolCall }) => {
+            const query = typeof opts.tool.input.query === 'string' ? opts.tool.input.query.trim() : '';
+            return query.length > 0 ? query : null;
+        },
         extractDescription: (opts: { metadata: Metadata | null, tool: ToolCall }) => {
             if (typeof opts.tool.input.query === 'string') {
                 const query = opts.tool.input.query.length > 30

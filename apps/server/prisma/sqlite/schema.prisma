@@ -55,6 +55,7 @@ model Account {
     VoiceConversation      VoiceConversation[]
     TerminalAuthRequest    TerminalAuthRequest[]
     AccountAuthRequest     AccountAuthRequest[]
+    AuthPairingSession     AuthPairingSession[]
     UsageReport            UsageReport[]
     Machine                Machine[]
     UploadedFile           UploadedFile[]
@@ -216,6 +217,22 @@ model AccountAuthRequest {
     updatedAt         DateTime @updatedAt
 }
 
+model AuthPairingSession {
+    id                 String   @id @default(cuid())
+    accountId           String
+    account             Account  @relation(fields: [accountId], references: [id], onDelete: Cascade)
+    secretHash          String
+    requestedPublicKey  String?
+    requestedDeviceLabel String?
+    requestedAt         DateTime?
+    expiresAt           DateTime
+    createdAt           DateTime @default(now())
+    updatedAt           DateTime @updatedAt
+
+    @@index([accountId, expiresAt])
+    @@index([expiresAt])
+}
+
 model AccountPushToken {
     id        String   @id @default(cuid())
     accountId String
@@ -270,14 +287,17 @@ model SessionMessage {
     sessionId String
     session   Session  @relation(fields: [sessionId], references: [id])
     localId   String?
+    sidechainId String?
     seq       Int
     /// [SessionMessageContent]
     content   Json
     createdAt DateTime @default(now())
     updatedAt DateTime @updatedAt
 
+    // `localId` is a session-global idempotency key (unique across sidechains within a session).
     @@unique([sessionId, localId])
     @@index([sessionId, seq])
+    @@index([sessionId, sidechainId, seq])
 }
 
 enum SessionPendingMessageStatus {

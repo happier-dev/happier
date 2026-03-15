@@ -6,6 +6,7 @@ import { ToolSectionView } from '../../shell/presentation/ToolSectionView';
 import { CodeView } from '@/components/ui/media/CodeView';
 import { maybeParseJson } from '../../normalization/parse/parseJson';
 import { Text } from '@/components/ui/text/Text';
+import { t } from '@/text';
 
 
 /**
@@ -142,12 +143,12 @@ export const MCPToolView = React.memo<ToolViewProps>(({ tool, detailLevel }) => 
                     </Text>
                 ) : null}
                 <View style={styles.section}>
-                    <Text style={styles.sectionTitle}>Input</Text>
+                    <Text style={styles.sectionTitle}>{t('toolView.input')}</Text>
                     <CodeView code={JSON.stringify(maybeParseJson(tool.input), null, 2)} />
                 </View>
                 {tool.state === 'completed' && tool.result != null ? (
                     <View style={styles.section}>
-                        <Text style={styles.sectionTitle}>Output</Text>
+                        <Text style={styles.sectionTitle}>{t('toolView.output')}</Text>
                         <CodeView code={JSON.stringify(maybeParseJson(tool.result), null, 2)} />
                     </View>
                 ) : null}

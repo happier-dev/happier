@@ -1,4 +1,5 @@
 import { resolveCodeEditorFontMetrics } from '../codeEditorFontMetrics';
+import { CODEMIRROR_WEBVIEW_BUNDLE_JS } from './codemirrorWebViewBundle.generated';
 
 export type CodeMirrorWebViewTheme = Readonly<{
     backgroundColor: string;
@@ -28,8 +29,29 @@ export function buildCodeMirrorWebViewHtml(params: Readonly<{
     const fontSizePx = fontMetrics.fontSize;
     const lineHeightPx = fontMetrics.lineHeight;
 
+    const embeddedBundle = typeof CODEMIRROR_WEBVIEW_BUNDLE_JS === 'string'
+        ? CODEMIRROR_WEBVIEW_BUNDLE_JS.trim()
+        : '';
+    const hasEmbeddedBundle = embeddedBundle.length > 0;
+
+    const cdnModuleImports = hasEmbeddedBundle
+        ? ''
+        : `[
+            import('https://cdn.jsdelivr.net/npm/@codemirror/state@6.5.4/+esm'),
+            import('https://cdn.jsdelivr.net/npm/@codemirror/view@6.39.15/+esm'),
+            import('https://cdn.jsdelivr.net/npm/@codemirror/commands@6.10.2/+esm'),
+            import('https://cdn.jsdelivr.net/npm/@codemirror/history@0.19.2/+esm'),
+            import('https://cdn.jsdelivr.net/npm/@codemirror/language@6.12.1/+esm'),
+            import('https://cdn.jsdelivr.net/npm/@codemirror/autocomplete@6.20.0/+esm'),
+            import('https://cdn.jsdelivr.net/npm/@codemirror/lang-javascript@6.2.4/+esm'),
+            import('https://cdn.jsdelivr.net/npm/@codemirror/lang-python@6.2.1/+esm'),
+            import('https://cdn.jsdelivr.net/npm/@codemirror/lang-markdown@6.5.0/+esm'),
+            import('https://cdn.jsdelivr.net/npm/@codemirror/lang-json@6.0.2/+esm'),
+          ]`;
+
     // Notes:
-    // - We load CodeMirror 6 via CDN ESM modules (experimental; best-effort).
+    // - Prefer embedded CM6 bundle (offline + deterministic).
+    // - Fall back to CDN ESM modules when the bundle is not available (best-effort).
     // - The document content is sent after "ready" via an init message; this avoids embedding large docs in HTML.
     return `<!DOCTYPE html>
 <html>
@@ -59,6 +81,7 @@ export function buildCodeMirrorWebViewHtml(params: Readonly<{
   </head>
   <body>
     <div id="root"></div>
+    ${hasEmbeddedBundle ? `<script>${embeddedBundle}</script>` : ''}
     <script type="module">
       const MAX_CHUNK_BYTES = ${maxChunkBytes};
       const CHANGE_DEBOUNCE_MS = ${changeDebounceMs};
@@ -190,11 +213,28 @@ export function buildCodeMirrorWebViewHtml(params: Readonly<{
       }
 
       function resolveLanguageExtension(lang, mod) {
-        const v = (lang || '').toLowerCase();
-        if (v === 'typescript' || v === 'ts' || v === 'javascript' || v === 'js') return mod.javascript({ typescript: v === 'typescript' || v === 'ts' });
-        if (v === 'json') return mod.json();
-        if (v === 'markdown' || v === 'md') return mod.markdown();
-        if (v === 'python' || v === 'py') return mod.python();
+        if (!lang) return null;
+
+        if (typeof lang === 'string') {
+          const v = (lang || '').toLowerCase();
+          if (v === 'typescript' || v === 'ts' || v === 'tsx') return mod.javascript({ typescript: true });
+          if (v === 'javascript' || v === 'js' || v === 'jsx') return mod.javascript({ typescript: false });
+          if (v === 'json' || v === 'jsonc' || v === 'json5') return mod.json ? mod.json() : null;
+          if (v === 'markdown' || v === 'md' || v === 'mdx') return mod.markdown ? mod.markdown() : null;
+          if (v === 'python' || v === 'py') return mod.python ? mod.python() : null;
+          return null;
+        }
+
+        if (typeof lang === 'object') {
+          const id = String(lang.id || '').toLowerCase();
+          if (id === 'javascript') {
+            const ts = lang.typescript === true;
+            return mod.javascript ? mod.javascript({ typescript: ts }) : null;
+          }
+          const fn = mod[id];
+          return typeof fn === 'function' ? fn() : null;
+        }
+
         return null;
       }
 
@@ -203,41 +243,88 @@ export function buildCodeMirrorWebViewHtml(params: Readonly<{
       let applyingRemote = false;
 
       async function boot() {
-        const [
-          { EditorState },
-          { EditorView, lineNumbers },
-          { keymap },
-          { defaultKeymap },
-          { history, historyKeymap },
-          { indentOnInput },
-          { bracketMatching },
-          { closeBrackets, closeBracketsKeymap },
-          { highlightActiveLine, highlightActiveLineGutter },
-          { drawSelection, highlightSpecialChars },
-          { syntaxHighlighting, defaultHighlightStyle },
-          langJavascript,
-          langPython,
-          langMarkdown,
-          langJson,
-        ] = await Promise.all([
-          import('https://cdn.jsdelivr.net/npm/@codemirror/state@6.4.1/+esm'),
-          import('https://cdn.jsdelivr.net/npm/@codemirror/view@6.26.3/+esm'),
-          import('https://cdn.jsdelivr.net/npm/@codemirror/commands@6.5.0/+esm'),
-          import('https://cdn.jsdelivr.net/npm/@codemirror/commands@6.5.0/+esm'),
-          import('https://cdn.jsdelivr.net/npm/@codemirror/history@6.4.0/+esm'),
-          import('https://cdn.jsdelivr.net/npm/@codemirror/history@6.4.0/+esm'),
-          import('https://cdn.jsdelivr.net/npm/@codemirror/language@6.10.2/+esm'),
-          import('https://cdn.jsdelivr.net/npm/@codemirror/language@6.10.2/+esm'),
-          import('https://cdn.jsdelivr.net/npm/@codemirror/autocomplete@6.13.0/+esm'),
-          import('https://cdn.jsdelivr.net/npm/@codemirror/view@6.26.3/+esm'),
-          import('https://cdn.jsdelivr.net/npm/@codemirror/view@6.26.3/+esm'),
-          import('https://cdn.jsdelivr.net/npm/@codemirror/language@6.10.2/+esm'),
-          import('https://cdn.jsdelivr.net/npm/@codemirror/language@6.10.2/+esm'),
-          import('https://cdn.jsdelivr.net/npm/@codemirror/lang-javascript@6.2.2/+esm'),
-          import('https://cdn.jsdelivr.net/npm/@codemirror/lang-python@6.1.6/+esm'),
-          import('https://cdn.jsdelivr.net/npm/@codemirror/lang-markdown@6.2.5/+esm'),
-          import('https://cdn.jsdelivr.net/npm/@codemirror/lang-json@6.0.1/+esm'),
-        ]);
+        const embedded = ${hasEmbeddedBundle ? 'true' : 'false'};
+        let EditorState;
+        let EditorView;
+        let lineNumbers;
+        let keymap;
+        let defaultKeymap;
+        let history;
+        let historyKeymap;
+        let indentOnInput;
+        let bracketMatching;
+        let closeBrackets;
+        let closeBracketsKeymap;
+        let highlightActiveLine;
+        let highlightActiveLineGutter;
+        let drawSelection;
+        let highlightSpecialChars;
+        let syntaxHighlighting;
+        let defaultHighlightStyle;
+        let langJavascript;
+        let langPython;
+        let langMarkdown;
+        let langJson;
+        let langYaml = null;
+        let langShell = null;
+        let langDockerfile = null;
+        let langToml = null;
+        let langIni = null;
+        let langCss = null;
+        let langScss = null;
+        let langLess = null;
+        let langHtml = null;
+        let langXml = null;
+        let langSql = null;
+        let langRust = null;
+        let langGo = null;
+        let langJava = null;
+        let langCpp = null;
+        let langPhp = null;
+
+        if (embedded) {
+          const bundle = globalThis.HAPPIER_CODEMIRROR_WEBVIEW || globalThis.__CM6__ || null;
+          if (!bundle) throw new Error('CodeMirror bundle missing');
+          ({ EditorState } = bundle);
+          ({ EditorView, lineNumbers, keymap, drawSelection, highlightSpecialChars, highlightActiveLine, highlightActiveLineGutter } = bundle);
+          ({ defaultKeymap } = bundle);
+          ({ history, historyKeymap } = bundle);
+          ({ indentOnInput, bracketMatching, syntaxHighlighting, defaultHighlightStyle } = bundle);
+          ({ closeBrackets, closeBracketsKeymap } = bundle);
+          langJavascript = bundle.langs?.javascript;
+          langPython = bundle.langs?.python;
+          langMarkdown = bundle.langs?.markdown;
+          langJson = bundle.langs?.json;
+          langYaml = bundle.langs?.yaml;
+          langShell = bundle.langs?.shell;
+          langDockerfile = bundle.langs?.dockerfile;
+          langToml = bundle.langs?.toml;
+          langIni = bundle.langs?.ini;
+          langCss = bundle.langs?.css;
+          langScss = bundle.langs?.scss;
+          langLess = bundle.langs?.less;
+          langHtml = bundle.langs?.html;
+          langXml = bundle.langs?.xml;
+          langSql = bundle.langs?.sql;
+          langRust = bundle.langs?.rust;
+          langGo = bundle.langs?.go;
+          langJava = bundle.langs?.java;
+          langCpp = bundle.langs?.cpp;
+          langPhp = bundle.langs?.php;
+        } else {
+          [
+            { EditorState },
+            { EditorView, lineNumbers, keymap, drawSelection, highlightSpecialChars, highlightActiveLine, highlightActiveLineGutter },
+            { defaultKeymap },
+            { history, historyKeymap },
+            { indentOnInput, bracketMatching, syntaxHighlighting, defaultHighlightStyle },
+            { closeBrackets, closeBracketsKeymap },
+            langJavascript,
+            langPython,
+            langMarkdown,
+            langJson,
+          ] = await Promise.all(${cdnModuleImports});
+        }
 
         const root = document.getElementById('root');
         const baseExtensions = [
@@ -270,10 +357,26 @@ export function buildCodeMirrorWebViewHtml(params: Readonly<{
 
         function createView(doc, language, readOnly) {
           const langExt = resolveLanguageExtension(language, {
-            javascript: langJavascript.javascript,
-            python: langPython.python,
-            markdown: langMarkdown.markdown,
-            json: langJson.json,
+            javascript: langJavascript && (langJavascript.javascript ?? langJavascript),
+            json: langJson && (langJson.json ?? langJson),
+            markdown: langMarkdown && (langMarkdown.markdown ?? langMarkdown),
+            python: langPython && (langPython.python ?? langPython),
+            yaml: langYaml && (langYaml.yaml ?? langYaml),
+            shell: langShell && (langShell.shell ?? langShell),
+            dockerfile: langDockerfile && (langDockerfile.dockerfile ?? langDockerfile),
+            toml: langToml && (langToml.toml ?? langToml),
+            ini: langIni && (langIni.ini ?? langIni),
+            css: langCss && (langCss.css ?? langCss),
+            scss: langScss && (langScss.scss ?? langScss),
+            less: langLess && (langLess.less ?? langLess),
+            html: langHtml && (langHtml.html ?? langHtml),
+            xml: langXml && (langXml.xml ?? langXml),
+            sql: langSql && (langSql.sql ?? langSql),
+            rust: langRust && (langRust.rust ?? langRust),
+            go: langGo && (langGo.go ?? langGo),
+            java: langJava && (langJava.java ?? langJava),
+            cpp: langCpp && (langCpp.cpp ?? langCpp),
+            php: langPhp && (langPhp.php ?? langPhp),
           });
 
           const extensions = baseExtensions.slice();
@@ -319,7 +422,7 @@ export function buildCodeMirrorWebViewHtml(params: Readonly<{
           if (envelope.type === 'init') {
             const payload = envelope.payload || {};
             const doc = typeof payload.doc === 'string' ? payload.doc : '';
-            const language = typeof payload.language === 'string' ? payload.language : null;
+            const language = payload.language ?? null;
             const readOnly = payload.readOnly === true;
             if (view) {
               setDoc(doc);

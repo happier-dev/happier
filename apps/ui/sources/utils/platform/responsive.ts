@@ -20,20 +20,10 @@ export function getHeaderHeight(isLandscape: boolean, deviceType: 'phone' | 'tab
 
 // Device type detection based on screen size and aspect ratio
 export function getDeviceType(): 'phone' | 'tablet' {
-    const { width, height } = Dimensions.get('screen');
+    const { width, height } = Dimensions.get('window');
     const isPad = Platform.OS === 'ios' ? (Platform as any).isPad === true : false;
 
-    const dimensions = calculateDeviceDimensions({
-        widthPoints: width,
-        heightPoints: height,
-        pointsPerInch: Platform.OS === 'ios' ? 163 : 160
-    });
-
-    return determineDeviceType({
-        diagonalInches: dimensions.diagonalInches,
-        platform: Platform.OS,
-        isPad
-    });
+    return determineDeviceType({ platform: Platform.OS, isPad, widthPoints: width, heightPoints: height });
 }
 
 // Hook to get device type (reactive to dimension changes)
@@ -42,17 +32,7 @@ export function useDeviceType(): 'phone' | 'tablet' {
     
     return useMemo(() => {
         const isPad = Platform.OS === 'ios' ? (Platform as any).isPad === true : false;
-        const dimensions = calculateDeviceDimensions({
-            widthPoints: width,
-            heightPoints: height,
-            pointsPerInch: Platform.OS === 'ios' ? 163 : 160
-        });
-
-        return determineDeviceType({
-            diagonalInches: dimensions.diagonalInches,
-            platform: Platform.OS,
-            isPad
-        });
+        return determineDeviceType({ platform: Platform.OS, isPad, widthPoints: width, heightPoints: height });
     }, [width, height]);
 }
 

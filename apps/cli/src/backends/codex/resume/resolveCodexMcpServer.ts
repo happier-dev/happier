@@ -1,16 +1,17 @@
-import { existsSync } from 'node:fs';
-import { join, delimiter as pathDelimiter } from 'node:path';
-
 import { shouldUseCodexMcpResumeServer } from '../localControl/localControlSupport';
 import { resolveCodexMcpResumeServerCommand } from './resolveMcpResumeServer';
+import { resolveWindowsCommandOnPath } from '@happier-dev/cli-common/process';
 
 export type CodexMcpServerSpawn = Readonly<{ mode: 'codex-cli' | 'mcp-server'; command: string }>;
 
 /**
  * Resolve the codex binary on PATH, respecting PATHEXT on Windows.
  *
+ * On non-Windows platforms we can rely on Node's PATH resolution by passing
+ * `codex` directly to `execFile`/`execFileSync`.
+ *
  * Node.js `execFileSync('codex', ...)` does NOT try `.cmd`/`.exe` extensions,
- * so on Windows we must resolve the full filename ourselves.
+ * so on Windows we must resolve the full filename ourselves (respecting PATHEXT).
  */
 function resolveCodexOnPath(): string {
   const override = typeof process.env.HAPPIER_CODEX_PATH === 'string'
@@ -18,24 +19,9 @@ function resolveCodexOnPath(): string {
     : '';
   if (override) return override;
 
-  const pathEnv = typeof process.env.PATH === 'string' ? process.env.PATH : '';
   const isWindows = process.platform === 'win32';
-  const extensions: string[] = isWindows
-    ? (process.env.PATHEXT || '.EXE;.CMD;.BAT;.COM')
-        .split(';')
-        .map((e: string) => e.trim())
-        .filter(Boolean)
-    : [''];
-
-  for (const dir of pathEnv.split(pathDelimiter)) {
-    const trimmed = dir.trim();
-    if (!trimmed) continue;
-    for (const ext of extensions) {
-      const candidate = join(trimmed, isWindows ? `codex${ext}` : 'codex');
-      if (existsSync(candidate)) return candidate;
-    }
-  }
-  return 'codex';
+  if (!isWindows) return 'codex';
+  return resolveWindowsCommandOnPath('codex') ?? 'codex';
 }
 
 export async function resolveCodexMcpServerSpawn(opts: Readonly<{

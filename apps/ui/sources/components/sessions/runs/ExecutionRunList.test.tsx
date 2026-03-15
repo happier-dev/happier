@@ -26,7 +26,10 @@ vi.mock('react-native-unistyles', () => ({
 }));
 
 vi.mock('@/text', () => ({
-  t: (key: string) => key,
+  t: (key: string, params?: any) => {
+    if (key === 'runs.groupLabel') return `Group ${params?.groupId ?? ''}`.trim();
+    return key;
+  },
 }));
 
 vi.mock('./ExecutionRunRow', () => ({

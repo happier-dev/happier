@@ -1,7 +1,8 @@
 import type { ToolCall } from '../../domains/messages/messageTypes';
 import type { TracedMessage } from '../reducerTracer';
 import type { ReducerMessage, ReducerState } from '../reducer';
-import { coerceStreamingToolResultChunk, mergeExistingStdStreamsIntoFinalResultIfMissing, mergeStreamingChunkIntoResult } from '../helpers/streamingToolResult';
+import { getSidechainThinkingMergeCursor, setSidechainThinkingMergeCursor } from '../helpers/mergeCursors';
+import { applyToolResultUpdateToReducerMessage } from '../helpers/applyToolResultUpdateToReducerMessage';
 import { normalizeThinkingChunk, unwrapThinkingText } from '../helpers/thinkingText';
 
 export function runSidechainsPhase(params: Readonly<{
@@ -19,6 +20,7 @@ export function runSidechainsPhase(params: Readonly<{
     // For each sidechain message, store it in the state and mark the Task as changed
     for (const msg of sidechainMessages) {
         if (!msg.sidechainId) continue;
+        const sidechainId = msg.sidechainId;
 
         // Skip if we already processed this message
         if (state.messageIds.has(msg.id)) continue;
@@ -27,13 +29,18 @@ export function runSidechainsPhase(params: Readonly<{
         state.messageIds.set(msg.id, msg.id);
 
         // Get or create the sidechain array for this Task
-        const existingSidechain = state.sidechains.get(msg.sidechainId) || [];
+        const existingSidechain = state.sidechains.get(sidechainId) || [];
+        const parentMessageId = state.toolIdToMessageId.get(sidechainId) ?? null;
+        const isOrphanSidechain = parentMessageId == null;
+        const markChangedIfOrphan = (messageId: string) => {
+            if (isOrphanSidechain) changed.add(messageId);
+        };
 
         // Process and add new sidechain messages
         if (msg.role === 'agent' && msg.content[0]?.type === 'sidechain') {
             // This is the sidechain root - create a user message
-            let mid = allocateId();
-            let userMsg: ReducerMessage = {
+            const mid = allocateId();
+            const userMsg: ReducerMessage = {
                 id: mid,
                 realID: msg.id,
                 seq: typeof msg.seq === 'number' ? msg.seq : null,
@@ -46,9 +53,11 @@ export function runSidechainsPhase(params: Readonly<{
             };
             state.messages.set(mid, userMsg);
             existingSidechain.push(userMsg);
+            markChangedIfOrphan(mid);
+            setSidechainThinkingMergeCursor(state, sidechainId, null, 'sidechain-root');
         } else if (msg.role === 'agent') {
             // Process agent content in sidechain
-            for (let c of msg.content) {
+            for (const c of msg.content) {
                 if (c.type === 'text') {
                     const streamKey =
                         msg.meta && typeof (msg.meta as any).happierSidechainStreamKey === 'string'
@@ -56,6 +65,9 @@ export function runSidechainsPhase(params: Readonly<{
                             : null;
 
                     const last = existingSidechain[existingSidechain.length - 1];
+                    const textDelta = String(c.text ?? '');
+                    const hasVisibleText = textDelta.trim().length > 0;
+
                     const canMerge =
                         streamKey &&
                         last &&
@@ -68,12 +80,13 @@ export function runSidechainsPhase(params: Readonly<{
 
                     if (canMerge) {
                         last.text = String(last.text ?? '') + String(c.text ?? '');
+                        markChangedIfOrphan(last.id);
                         // Sidechain children must never be emitted as root-level transcript messages.
                         // Marking the owning Task/SubAgentRun tool-call as changed (below) is sufficient
                         // to refresh the child transcript in both the task view and the main session view.
                     } else {
-                        let mid = allocateId();
-                        let textMsg: ReducerMessage = {
+                        const mid = allocateId();
+                        const textMsg: ReducerMessage = {
                             id: mid,
                             realID: msg.id,
                             seq: typeof msg.seq === 'number' ? msg.seq : null,
@@ -87,6 +100,11 @@ export function runSidechainsPhase(params: Readonly<{
                         };
                         state.messages.set(mid, textMsg);
                         existingSidechain.push(textMsg);
+                        markChangedIfOrphan(mid);
+                    }
+
+                    if (hasVisibleText) {
+                        setSidechainThinkingMergeCursor(state, sidechainId, null, 'sidechain-text');
                     }
                 } else if (c.type === 'thinking') {
                     const chunk = typeof c.thinking === 'string' ? normalizeThinkingChunk(c.thinking) : '';
@@ -96,36 +114,55 @@ export function runSidechainsPhase(params: Readonly<{
                         continue;
                     }
 
-	                    const last = existingSidechain[existingSidechain.length - 1];
-	                    if (last && last.role === 'agent' && last.isThinking && typeof last.text === 'string') {
-	                        const merged = unwrapThinkingText(last.text) + chunk;
-	                        last.text = merged;
-	                        // Sidechain children must never be emitted as root-level transcript messages.
-	                        // Marking the owning Task/SubAgentRun tool-call as changed (below) is sufficient
-	                        // to refresh the child transcript in both the task view and the main session view.
-	                    } else {
-	                        let mid = allocateId();
-	                        let textMsg: ReducerMessage = {
-	                            id: mid,
-                            realID: msg.id,
-                            seq: typeof msg.seq === 'number' ? msg.seq : null,
-                            role: 'agent',
-                            createdAt: msg.createdAt,
-                            text: chunk,
-                            isThinking: true,
-                            tool: null,
-                            event: null,
-                            meta: msg.meta,
-                        };
-                        state.messages.set(mid, textMsg);
-                        existingSidechain.push(textMsg);
+                    const cursorId = getSidechainThinkingMergeCursor(state, sidechainId);
+                    const cursorMessage = cursorId ? state.messages.get(cursorId) : null;
+                    if (
+                        cursorMessage &&
+                        cursorMessage.role === 'agent' &&
+                        cursorMessage.isThinking &&
+                        typeof cursorMessage.text === 'string'
+                    ) {
+                        const merged = unwrapThinkingText(cursorMessage.text) + chunk;
+                        cursorMessage.text = merged;
+                        markChangedIfOrphan(cursorMessage.id);
+                        setSidechainThinkingMergeCursor(state, sidechainId, cursorId, 'sidechain-thinking-append');
+                    } else {
+                        const last = existingSidechain[existingSidechain.length - 1];
+                        if (last && last.role === 'agent' && last.isThinking && typeof last.text === 'string') {
+                            const merged = unwrapThinkingText(last.text) + chunk;
+                            last.text = merged;
+                            markChangedIfOrphan(last.id);
+                            setSidechainThinkingMergeCursor(state, sidechainId, last.id, 'sidechain-thinking-append');
+                            // Sidechain children must never be emitted as root-level transcript messages.
+                            // Marking the owning Task/SubAgentRun tool-call as changed (below) is sufficient
+                            // to refresh the child transcript in both the task view and the main session view.
+                        } else {
+                            const mid = allocateId();
+                            const textMsg: ReducerMessage = {
+                                id: mid,
+                                realID: msg.id,
+                                seq: typeof msg.seq === 'number' ? msg.seq : null,
+                                role: 'agent',
+                                createdAt: msg.createdAt,
+                                text: chunk,
+                                isThinking: true,
+                                tool: null,
+                                event: null,
+                                meta: msg.meta,
+                            };
+                            state.messages.set(mid, textMsg);
+                            existingSidechain.push(textMsg);
+                            markChangedIfOrphan(mid);
+                            setSidechainThinkingMergeCursor(state, sidechainId, mid, 'sidechain-thinking-create');
+                        }
                     }
                 } else if (c.type === 'tool-call') {
+                    setSidechainThinkingMergeCursor(state, sidechainId, null, 'sidechain-tool-call');
                     // Check if there's already a permission message for this tool
                     const existingPermissionMessageId = state.toolIdToMessageId.get(c.id);
 
-                    let mid = allocateId();
-                    let toolCall: ToolCall = {
+                    const mid = allocateId();
+                    const toolCall: ToolCall = {
                         id: c.id,
                         name: c.name,
                         state: 'running' as const,
@@ -134,7 +171,7 @@ export function runSidechainsPhase(params: Readonly<{
                         startedAt: null,
                         completedAt: null,
                         description: c.description,
-                        result: undefined
+                        result: undefined,
                     };
 
                     // If there's a permission message, copy its permission info
@@ -152,7 +189,7 @@ export function runSidechainsPhase(params: Readonly<{
                         }
                     }
 
-                    let toolMsg: ReducerMessage = {
+                    const toolMsg: ReducerMessage = {
                         id: mid,
                         realID: msg.id,
                         seq: typeof msg.seq === 'number' ? msg.seq : null,
@@ -165,99 +202,48 @@ export function runSidechainsPhase(params: Readonly<{
                     };
                     state.messages.set(mid, toolMsg);
                     existingSidechain.push(toolMsg);
+                    markChangedIfOrphan(mid);
 
                     // Map sidechain tool separately to avoid overwriting permission mapping
                     state.sidechainToolIdToMessageId.set(c.id, mid);
                 } else if (c.type === 'tool-result') {
                     // Process tool result in sidechain - update BOTH messages
+                    const toolResult = {
+                        tool_use_id: c.tool_use_id,
+                        content: c.content,
+                        is_error: c.is_error,
+                        ...(c.permissions ? { permissions: c.permissions } : {}),
+                    };
 
                     // Update the sidechain tool message
-                    let sidechainMessageId = state.sidechainToolIdToMessageId.get(c.tool_use_id);
+                    const sidechainMessageId = state.sidechainToolIdToMessageId.get(c.tool_use_id);
                     if (sidechainMessageId) {
-                        let sidechainMessage = state.messages.get(sidechainMessageId);
-                        if (sidechainMessage && sidechainMessage.tool && sidechainMessage.tool.state === 'running') {
-                            const streamChunk = coerceStreamingToolResultChunk(c.content);
-                            if (streamChunk) {
-                                sidechainMessage.tool.result = mergeStreamingChunkIntoResult(sidechainMessage.tool.result, streamChunk);
-                            } else {
-                                sidechainMessage.tool.state = c.is_error ? 'error' : 'completed';
-                                sidechainMessage.tool.result = mergeExistingStdStreamsIntoFinalResultIfMissing(sidechainMessage.tool.result, c.content);
-                                sidechainMessage.tool.completedAt = msg.createdAt;
-                            }
-
-                            // Update permission data if provided by backend
-                            if (c.permissions) {
-                                // Merge with existing permission to preserve decision field from agentState
-                                if (sidechainMessage.tool.permission) {
-                                    const existingDecision = sidechainMessage.tool.permission.decision;
-                                    sidechainMessage.tool.permission = {
-                                        ...sidechainMessage.tool.permission,
-                                        id: c.tool_use_id,
-                                        status: c.permissions.result === 'approved' ? 'approved' : 'denied',
-                                        date: c.permissions.date,
-                                        mode: c.permissions.mode,
-                                        allowedTools: c.permissions.allowedTools,
-                                        decision: c.permissions.decision || existingDecision
-                                    };
-                                } else {
-                                    sidechainMessage.tool.permission = {
-                                        id: c.tool_use_id,
-                                        status: c.permissions.result === 'approved' ? 'approved' : 'denied',
-                                        date: c.permissions.date,
-                                        mode: c.permissions.mode,
-                                        allowedTools: c.permissions.allowedTools,
-                                        decision: c.permissions.decision
-                                    };
-                                }
-	                            }
-
-	                            // Do not mark sidechain child tool messages as changed root messages.
-	                            // The owning Task/SubAgentRun tool-call is marked changed at the end of
-	                            // this loop iteration, which will re-serialize updated children.
-	                        }
-	                    }
+                        const sidechainMessage = state.messages.get(sidechainMessageId);
+                        if (sidechainMessage && sidechainMessage.tool) {
+                            applyToolResultUpdateToReducerMessage({
+                                message: sidechainMessage,
+                                messageId: sidechainMessageId,
+                                toolResult,
+                                resultCreatedAt: msg.createdAt,
+                                meta: msg.meta,
+                                changed,
+                            });
+                        }
+                    }
 
                     // Also update the main permission message if it exists
-                    let permissionMessageId = state.toolIdToMessageId.get(c.tool_use_id);
+                    const permissionMessageId = state.toolIdToMessageId.get(c.tool_use_id);
                     if (permissionMessageId) {
-                        let permissionMessage = state.messages.get(permissionMessageId);
-                        if (permissionMessage && permissionMessage.tool && permissionMessage.tool.state === 'running') {
-                            const streamChunk = coerceStreamingToolResultChunk(c.content);
-                            if (streamChunk) {
-                                permissionMessage.tool.result = mergeStreamingChunkIntoResult(permissionMessage.tool.result, streamChunk);
-                            } else {
-                                permissionMessage.tool.state = c.is_error ? 'error' : 'completed';
-                                permissionMessage.tool.result = mergeExistingStdStreamsIntoFinalResultIfMissing(permissionMessage.tool.result, c.content);
-                                permissionMessage.tool.completedAt = msg.createdAt;
-                            }
-
-                            // Update permission data if provided by backend
-                            if (c.permissions) {
-                                // Merge with existing permission to preserve decision field from agentState
-                                if (permissionMessage.tool.permission) {
-                                    const existingDecision = permissionMessage.tool.permission.decision;
-                                    permissionMessage.tool.permission = {
-                                        ...permissionMessage.tool.permission,
-                                        id: c.tool_use_id,
-                                        status: c.permissions.result === 'approved' ? 'approved' : 'denied',
-                                        date: c.permissions.date,
-                                        mode: c.permissions.mode,
-                                        allowedTools: c.permissions.allowedTools,
-                                        decision: c.permissions.decision || existingDecision
-                                    };
-                                } else {
-                                    permissionMessage.tool.permission = {
-                                        id: c.tool_use_id,
-                                        status: c.permissions.result === 'approved' ? 'approved' : 'denied',
-                                        date: c.permissions.date,
-                                        mode: c.permissions.mode,
-                                        allowedTools: c.permissions.allowedTools,
-                                        decision: c.permissions.decision
-                                    };
-                                }
-                            }
-
-                            changed.add(permissionMessageId);
+                        const permissionMessage = state.messages.get(permissionMessageId);
+                        if (permissionMessage && permissionMessage.tool) {
+                            applyToolResultUpdateToReducerMessage({
+                                message: permissionMessage,
+                                messageId: permissionMessageId,
+                                toolResult,
+                                resultCreatedAt: msg.createdAt,
+                                meta: msg.meta,
+                                changed,
+                            });
                         }
                     }
                 }
@@ -265,13 +251,13 @@ export function runSidechainsPhase(params: Readonly<{
         }
 
         // Update the sidechain in state
-        state.sidechains.set(msg.sidechainId, existingSidechain);
+        state.sidechains.set(sidechainId, existingSidechain);
 
         // Find the Task tool message that owns this sidechain and mark it as changed.
         // Provider-agnostic contract: msg.sidechainId is the originating Task tool-call id.
-        const parentMessageId = state.toolIdToMessageId.get(msg.sidechainId);
         if (parentMessageId) {
             changed.add(parentMessageId);
         }
     }
 }
+

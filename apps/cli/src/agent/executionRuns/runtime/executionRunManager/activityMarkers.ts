@@ -10,14 +10,17 @@ export function enqueueExecutionRunMarkerWrite(args: Readonly<{
 }>): Promise<void> {
   const prev = args.markerWriteChains.get(args.runId) ?? Promise.resolve();
   const next = prev.then(args.write, args.write);
-  args.markerWriteChains.set(
-    args.runId,
-    next.finally(() => {
-      if (args.markerWriteChains.get(args.runId) === next) {
+  // Ensure the stored chain never rejects. `next` may be awaited by callers (and they may
+  // attach their own error handling), but the internal sequencing chain must not trigger
+  // unhandled promise rejections when best-effort writes fail (e.g. tmp dir cleanup races).
+  const chain = next
+    .catch(() => {})
+    .finally(() => {
+      if (args.markerWriteChains.get(args.runId) === chain) {
         args.markerWriteChains.delete(args.runId);
       }
-    }),
-  );
+    });
+  args.markerWriteChains.set(args.runId, chain);
   return next;
 }
 
@@ -68,4 +71,3 @@ export async function writeExecutionRunActivityMarker(args: Readonly<{
   } as const;
   await args.enqueueMarkerWrite(args.runId, () => writeExecutionRunMarker(markerPayload)).catch(() => {});
 }
-

@@ -49,7 +49,7 @@ describe('serverFetch abort handling', () => {
         const pending = serverFetch('/v1/health');
         abortServerFetches();
 
-        await expect(pending).rejects.toMatchObject({ name: 'AbortError' });
+        await expect(pending).rejects.toMatchObject({ name: 'ServerFetchAbortedForServerSwitchError' });
     });
 
     it('rejects authenticated absolute-URL requests that target a different host than the active server', async () => {

@@ -3,14 +3,20 @@ import { ToolCall } from '@/sync/domains/messages/messageTypes';
 import { ToolSectionView } from '../../shell/presentation/ToolSectionView';
 import { CommandView } from '@/components/sessions/transcript/CommandView';
 import { Metadata } from '@/sync/domains/state/storageTypes';
-import { extractShellCommand } from '../../normalization/parse/shellCommand';
+import { extractShellCommand, stripShellCommandPreludeForDisplay } from '../../normalization/parse/shellCommand';
 import { maybeParseJson } from '../../normalization/parse/parseJson';
 import { extractStdStreams, tailTextWithEllipsis } from '../../normalization/parse/stdStreams';
+import { CodeView } from '@/components/ui/media/CodeView';
+import { Text } from '@/components/ui/text/Text';
+import { t } from '@/text';
 
 export const BashView = React.memo((props: { tool: ToolCall; metadata: Metadata | null; detailLevel?: 'title' | 'summary' | 'full' }) => {
     const { input, result, state } = props.tool;
-    const command = extractShellCommand(input) ?? (typeof (input as any)?.command === 'string' ? (input as any).command : '');
+    const rawCommand = extractShellCommand(input) ?? (typeof (input as any)?.command === 'string' ? (input as any).command : '');
+    const rawCommandTrimmed = typeof rawCommand === 'string' ? rawCommand.trim() : String(rawCommand ?? '');
+    const command = stripShellCommandPreludeForDisplay(rawCommandTrimmed);
     const isFullView = props.detailLevel === 'full';
+    const didStripPrelude = rawCommandTrimmed.length > 0 && command !== rawCommandTrimmed;
 
     const parsedStreams = extractStdStreams(result);
     let unparsedOutput: string | null = null;
@@ -60,6 +66,14 @@ export const BashView = React.memo((props: { tool: ToolCall; metadata: Metadata 
                     fullWidth={isFullView}
                 />
             </ToolSectionView>
+            {isFullView && didStripPrelude ? (
+                <ToolSectionView title={t('tools.bashView.commandDiffTitle')} fullWidth>
+                    <Text style={{ marginHorizontal: 12, marginBottom: 8 }} numberOfLines={3}>
+                        {t('tools.bashView.commandDiffHint')}
+                    </Text>
+                    <CodeView code={rawCommandTrimmed} />
+                </ToolSectionView>
+            ) : null}
         </>
     );
 });

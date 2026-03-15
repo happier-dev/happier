@@ -140,11 +140,16 @@ test.describe('ui e2e: plaintext mode + public share', () => {
       await page.goto(`${uiBaseUrl}/settings/account`, { waitUntil: 'domcontentloaded' });
       await expect(page.getByTestId('settings-account-encryption-mode-switch')).toHaveCount(1, { timeout: 120_000 });
 
-      const patchOk = page.waitForResponse((resp) => resp.url().endsWith('/v1/account/encryption') && resp.request().method() === 'PATCH' && resp.status() === 200, { timeout: 60_000 });
+      const migrateOk = page.waitForResponse(
+        (resp) =>
+          resp.url().endsWith('/v1/account/encryption/migrate') && resp.request().method() === 'POST' && resp.status() === 200,
+        { timeout: 60_000 },
+      );
       await page.getByTestId('settings-account-encryption-mode-switch').click();
-      const patchResp = await patchOk;
-      const patchJson = (await patchResp.json()) as { mode?: unknown };
-      expect(patchJson?.mode).toBe('plain');
+      const migrateResp = await migrateOk;
+      const migrateJson = (await migrateResp.json()) as { success?: unknown; mode?: unknown };
+      expect(migrateJson?.success).toBe(true);
+      expect(migrateJson?.mode).toBe('plain');
 
       const tag = `ui-e2e-plain-${run.runId}`;
       const message = `hello from plain ${run.runId}`;

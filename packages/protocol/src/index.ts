@@ -56,6 +56,11 @@ export {
 } from './sessionMessages/sessionStoredMessageContent.js';
 
 export {
+  StoredJsonContentEnvelopeSchema,
+  type StoredJsonContentEnvelope,
+} from './storage/storedJsonContentEnvelope.js';
+
+export {
   isSessionEncryptionModeAllowedByStoragePolicy,
   isStoredContentKindAllowedForSessionByStoragePolicy,
   resolveEffectiveDefaultAccountEncryptionMode,
@@ -103,6 +108,16 @@ export {
   type SessionContinueWithReplayRpcParams,
   type SessionContinueWithReplayRpcResult,
 } from './sessionContinueWithReplay.js';
+export {
+  SessionForkPointSchema,
+  SessionForkRpcParamsSchema,
+  SessionForkRpcResultSchema,
+  SessionForkStrategySchema,
+  type SessionForkPoint,
+  type SessionForkRpcParams,
+  type SessionForkRpcResult,
+  type SessionForkStrategy,
+} from './sessionFork.js';
 export {
   RPC_ERROR_CODES,
   RPC_ERROR_MESSAGES,
@@ -541,6 +556,11 @@ export {
 } from './ephemeralTasks.js';
 
 export {
+  LlmTaskRunnerConfigV1Schema,
+  type LlmTaskRunnerConfigV1,
+} from './llmTasks/llmTaskRunnerConfigV1.js';
+
+export {
   ReviewFindingSchema,
   type ReviewFinding,
   type ReviewFindingId,
@@ -616,6 +636,14 @@ export {
 } from './structuredMessages/sessionSummaryShardV1.js';
 
 export {
+  ParticipantRecipientV1Schema,
+  ParticipantMessageV1Schema,
+  parseParticipantMessageV1,
+  type ParticipantRecipientV1,
+  type ParticipantMessageV1,
+} from './structuredMessages/participantMessageV1.js';
+
+export {
   MemoryCitationV1Schema,
   MemorySearchErrorCodeSchema,
   MemorySearchHitV1Schema,
@@ -670,6 +698,13 @@ export {
 
 // Diff helpers
 export { splitUnifiedDiffByFile } from './diff/splitUnifiedDiffByFile.js';
+
+// Push notifications (mobile)
+export {
+  PUSH_NOTIFICATION_ACTION_IDS,
+  PUSH_NOTIFICATION_ANDROID_CHANNEL_IDS,
+  PUSH_NOTIFICATION_CATEGORY_IDS,
+} from './push/pushNotificationActions.js';
 
 // Happier server feature discovery + social contracts
 export {
@@ -768,14 +803,53 @@ export {
 } from './account/encryptionMode.js';
 
 export {
+  AccountEncryptionMigrateToModeSchema,
+  AccountEncryptionMigrateKeyProofSchema,
+  AccountEncryptionMigrateConnectedServicesDirectiveSchema,
+  AccountEncryptionMigrateAutomationsDirectiveSchema,
+  AccountEncryptionMigrateRequestSchema,
+  AccountEncryptionMigrateSuccessResponseSchema,
+  AccountEncryptionMigrateInvalidParamsReasonSchema,
+  AccountEncryptionMigrateBadRequestResponseSchema,
+  AccountEncryptionMigrateForbiddenResponseSchema,
+  AccountEncryptionMigrateNotFoundResponseSchema,
+  AccountEncryptionMigrateConflictResponseSchema,
+  AccountEncryptionMigrateInternalResponseSchema,
+  AccountEncryptionMigrateAnyErrorResponseSchema,
+  type AccountEncryptionMigrateToMode,
+  type AccountEncryptionMigrateKeyProof,
+  type AccountEncryptionMigrateConnectedServicesDirective,
+  type AccountEncryptionMigrateAutomationsDirective,
+  type AccountEncryptionMigrateRequest,
+  type AccountEncryptionMigrateSuccessResponse,
+  type AccountEncryptionMigrateInvalidParamsReason,
+  type AccountEncryptionMigrateBadRequestResponse,
+  type AccountEncryptionMigrateForbiddenResponse,
+  type AccountEncryptionMigrateNotFoundResponse,
+  type AccountEncryptionMigrateConflictResponse,
+  type AccountEncryptionMigrateInternalResponse,
+  type AccountEncryptionMigrateAnyErrorResponse,
+} from './account/encryptionMigrate.js';
+
+export {
   ACCOUNT_SETTINGS_SUPPORTED_SCHEMA_VERSION,
   AccountSettingsSchema,
+  AccountSettingsStoredContentEnvelopeSchema,
+  AccountSettingsV2GetResponseSchema,
+  AccountSettingsV2UpdateRequestSchema,
+  AccountSettingsV2UpdateResponseSchema,
+  ForegroundBehaviorSchema,
   NotificationsSettingsV1Schema,
   DEFAULT_ACTIONS_SETTINGS_V1,
   DEFAULT_NOTIFICATIONS_SETTINGS_V1,
   accountSettingsParse,
   getNotificationsSettingsV1FromAccountSettings,
   type AccountSettings,
+  type AccountSettingsStoredContentEnvelope,
+  type AccountSettingsV2GetResponse,
+  type AccountSettingsV2UpdateRequest,
+  type AccountSettingsV2UpdateResponse,
+  type ForegroundBehavior,
   type NotificationsSettingsV1,
 } from './account/settings/index.js';
 
@@ -849,3 +923,12 @@ export {
   type BugReportServiceSubmitInput,
   type BugReportSeverity,
 } from './bugReports.js';
+
+export {
+  DoctorSnapshotSchema,
+  DoctorSnapshotServerProfileSchema,
+  parseDoctorSnapshotSafe,
+  sanitizeDoctorSnapshotUrls,
+  type DoctorSnapshot,
+  type DoctorSnapshotServerProfile,
+} from './diagnostics/doctorSnapshot.js';

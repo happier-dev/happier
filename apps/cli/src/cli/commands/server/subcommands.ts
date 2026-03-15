@@ -22,6 +22,13 @@ import {
   runCliAction,
 } from './commandUtilities';
 import { wantsJson, printJsonEnvelope } from '@/sessionControl/jsonOutput';
+import { tailscaleServeHttpsUrlForInternalServerUrl } from '@/integrations/tailscale/tailscaleServe';
+import { fetchServerAdvertisedUrls } from '@/server/serverCapabilities';
+import {
+  isInsecureRemoteHttpServerUrl,
+  isLocalishServerUrl,
+  isLoopbackHttpServerUrl,
+} from '@/server/serverUrlClassification';
 
 export async function runServerSubcommand(subcommand: string, args: string[]): Promise<boolean> {
   switch (subcommand) {
@@ -55,6 +62,7 @@ type ServerProfileSummary = Readonly<{
   id: string;
   name: string;
   serverUrl: string;
+  localServerUrl?: string;
   webappUrl: string;
   lastUsedAt?: number;
 }>;
@@ -64,10 +72,24 @@ function summarizeProfile(p: any): ServerProfileSummary {
     id: String(p.id ?? ''),
     name: String(p.name ?? ''),
     serverUrl: String(p.serverUrl ?? ''),
+    ...(typeof (p as any).localServerUrl === 'string' && String((p as any).localServerUrl).trim()
+      ? { localServerUrl: String((p as any).localServerUrl).trim() }
+      : {}),
     webappUrl: String(p.webappUrl ?? ''),
     ...(typeof p.lastUsedAt === 'number' ? { lastUsedAt: p.lastUsedAt } : {}),
   };
   return out;
+}
+
+function shouldAutoInferPublicServerUrl(): boolean {
+  const raw = String(process.env.HAPPIER_TAILSCALE_AUTO_PUBLIC_URL ?? '').trim().toLowerCase();
+  if (!raw) return true;
+  return ['1', 'true', 'yes', 'on'].includes(raw);
+}
+
+function resolveTailscaleServeStatusTimeoutMs(): number {
+  const raw = Number.parseInt(String(process.env.HAPPIER_TAILSCALE_SERVE_STATUS_TIMEOUT_MS ?? ''), 10);
+  return Number.isFinite(raw) && raw > 0 ? raw : 750;
 }
 
 async function cmdList(args: string[]): Promise<void> {
@@ -93,6 +115,9 @@ async function cmdList(args: string[]): Promise<void> {
     const marker = p.id === active.id ? chalk.green('✓') : ' ';
     console.log(`${marker} ${chalk.bold(p.name)} (${p.id})`);
     console.log(`    ${chalk.gray('server:')} ${p.serverUrl}`);
+    if (p.localServerUrl && p.localServerUrl !== p.serverUrl) {
+      console.log(`    ${chalk.gray('local:')} ${p.localServerUrl}`);
+    }
     console.log(`    ${chalk.gray('webapp:')} ${p.webappUrl}`);
   }
 }
@@ -111,6 +136,9 @@ async function cmdCurrent(args: string[]): Promise<void> {
   console.log(`${chalk.gray('name:')}   ${active.name}`);
   console.log(`${chalk.gray('id:')}     ${active.id}`);
   console.log(`${chalk.gray('server:')} ${active.serverUrl}`);
+  if (active.localServerUrl && active.localServerUrl !== active.serverUrl) {
+    console.log(`${chalk.gray('local:')} ${active.localServerUrl}`);
+  }
   console.log(`${chalk.gray('webapp:')} ${active.webappUrl}`);
 }
 
@@ -119,6 +147,8 @@ async function cmdAdd(args: string[]): Promise<void> {
   const interactive = isInteractiveTerminal() && !json;
   let name = argvValue(args, '--name');
   let serverUrlRaw = argvValue(args, '--server-url');
+  let localServerUrlRaw = argvValue(args, '--local-server-url');
+  let publicServerUrlRaw = argvValue(args, '--public-server-url');
   let webappUrlRaw = argvValue(args, '--webapp-url');
   const hasUse = args.includes('--use');
   const hasNoUse = args.includes('--no-use');
@@ -141,7 +171,7 @@ async function cmdAdd(args: string[]): Promise<void> {
       throw new Error(
         [
           'Non-interactive mode: missing required arguments for `happier server add`.',
-          'Provide: --name <name> --server-url <url> [--webapp-url <url>] [--use].',
+          'Provide: --name <name> --server-url <canonical-url> [--local-server-url <url>] [--webapp-url <url>] [--use].',
           'Optional actions: --start-daemon, --install-service.',
         ].join(' '),
       );
@@ -150,6 +180,36 @@ async function cmdAdd(args: string[]): Promise<void> {
     if (!serverUrlRaw) {
       serverUrlRaw = (await promptInput('Server URL (https://...): ')).trim();
     }
+
+    if (!localServerUrlRaw && !publicServerUrlRaw) {
+      const normalized = normalizeUrlOrThrow(serverUrlRaw, '--server-url');
+      if (isLocalishServerUrl(normalized)) {
+        const answer = await promptInput('Is this URL only reachable from this machine/LAN? [Y/n]: ');
+        const localOnly = parseYesNoWithDefault(answer, true);
+        if (localOnly) {
+          localServerUrlRaw = normalized;
+          let inferredCanonical: string | null = null;
+          if (shouldAutoInferPublicServerUrl() && isLoopbackHttpServerUrl(normalized)) {
+            inferredCanonical = await tailscaleServeHttpsUrlForInternalServerUrl({
+              internalServerUrl: normalized,
+              timeoutMs: resolveTailscaleServeStatusTimeoutMs(),
+              env: process.env,
+            });
+          }
+
+          const canonicalPrompt = inferredCanonical
+            ? `Canonical (shareable) Server URL (https://...) [${inferredCanonical}]: `
+            : 'Canonical (shareable) Server URL (https://...): ';
+          const canonicalAnswer = (await promptInput(canonicalPrompt)).trim();
+          const canonical = canonicalAnswer || inferredCanonical;
+          if (!canonical) {
+            throw new Error('Missing canonical Server URL. Provide a public HTTPS URL, or run `happier server add --local-server-url <url> --server-url <canonical>`.');
+          }
+          serverUrlRaw = canonical;
+        }
+      }
+    }
+
     const serverUrlForDefaults = normalizeUrlOrThrow(serverUrlRaw, '--server-url');
     if (!name) {
       const defaultName = defaultNameFromUrl(serverUrlForDefaults);
@@ -165,12 +225,61 @@ async function cmdAdd(args: string[]): Promise<void> {
   }
 
   if (!name) throw new Error('Missing --name');
-  const serverUrl = normalizeUrlOrThrow(serverUrlRaw, '--server-url');
+  // Compatibility: legacy `--public-server-url` (canonical) + legacy `--server-url` (local).
+  if (publicServerUrlRaw) {
+    if (serverUrlRaw && !localServerUrlRaw) {
+      localServerUrlRaw = serverUrlRaw;
+      serverUrlRaw = publicServerUrlRaw;
+    } else if (!serverUrlRaw) {
+      serverUrlRaw = publicServerUrlRaw;
+    }
+  }
+
+  let serverUrl = normalizeUrlOrThrow(serverUrlRaw, '--server-url');
+  let localServerUrl = localServerUrlRaw ? normalizeUrlOrThrow(localServerUrlRaw, '--local-server-url') : '';
+
+  if (!publicServerUrlRaw && shouldAutoInferPublicServerUrl() && isLoopbackHttpServerUrl(serverUrl) && !localServerUrl) {
+    const inferred = await tailscaleServeHttpsUrlForInternalServerUrl({
+      internalServerUrl: serverUrl,
+      timeoutMs: resolveTailscaleServeStatusTimeoutMs(),
+      env: process.env,
+    });
+    if (inferred) {
+      localServerUrl = serverUrl;
+      serverUrl = inferred;
+    }
+  }
+
+  // Best-effort: ask the server what its canonical/share URL is.
+  try {
+    const advertised = await fetchServerAdvertisedUrls({ apiServerUrl: localServerUrl || serverUrl, timeoutMs: 1500 });
+    const advertisedCanonical = advertised?.canonicalServerUrl ?? null;
+    const advertisedWebappUrl = advertised?.webappUrl ?? null;
+
+    if (advertisedCanonical && advertisedCanonical !== serverUrl) {
+      const shouldAdopt = interactive
+        ? parseYesNoWithDefault(await promptInput(`Server reports canonical URL ${advertisedCanonical}. Use it? [Y/n]: `), true)
+        : (!localServerUrl && (isLocalishServerUrl(serverUrl) || isInsecureRemoteHttpServerUrl(serverUrl)));
+
+      if (shouldAdopt) {
+        if (!localServerUrl && isLocalishServerUrl(serverUrl)) {
+          localServerUrl = serverUrl;
+        }
+        serverUrl = advertisedCanonical;
+      }
+    }
+
+    if (!webappUrlRaw && advertisedWebappUrl) {
+      webappUrlRaw = advertisedWebappUrl;
+    }
+  } catch {
+    // best-effort
+  }
   const webappUrl = webappUrlRaw
     ? normalizeUrlOrThrow(webappUrlRaw, '--webapp-url')
     : defaultWebappUrlFromServerUrl(serverUrl);
 
-  const created = await addServerProfile({ name, serverUrl, webappUrl, use: shouldUse });
+  const created = await addServerProfile({ name, serverUrl, ...(localServerUrl ? { localServerUrl } : {}), webappUrl, use: shouldUse });
   const active = shouldUse ? created : await getActiveServerProfile();
 
   if (json) {
@@ -187,6 +296,9 @@ async function cmdAdd(args: string[]): Promise<void> {
   const prefix = `happier --server ${created.id}`;
   if (shouldUse) {
     console.log(chalk.gray(`  Active server is now: ${created.serverUrl}`));
+    if (created.localServerUrl && created.localServerUrl !== created.serverUrl) {
+      console.log(chalk.gray(`  Local API URL: ${created.localServerUrl}`));
+    }
   }
 
   if (!interactive || shouldUse) {
@@ -242,7 +354,7 @@ async function cmdTest(args: string[]): Promise<void> {
   const nonFlagArgs = args.filter((a) => !String(a).startsWith('-'));
   const identifier = String(nonFlagArgs[0] ?? '').trim();
   const profile = identifier ? await getServerProfile(identifier) : await getActiveServerProfile();
-  const result = await probeServerVersion(profile.serverUrl);
+  const result = await probeServerVersion(profile.localServerUrl ?? profile.serverUrl);
   if (json) {
     printJsonEnvelope(
       {
@@ -268,13 +380,66 @@ async function cmdTest(args: string[]): Promise<void> {
 
 async function cmdSet(args: string[]): Promise<void> {
   const json = wantsJson(args);
-  const serverUrlRaw = argvValue(args, '--server-url');
-  const webappUrlRaw = argvValue(args, '--webapp-url');
-  const serverUrl = normalizeUrlOrThrow(serverUrlRaw, '--server-url');
+  let serverUrlRaw = argvValue(args, '--server-url');
+  let localServerUrlRaw = argvValue(args, '--local-server-url');
+  const publicServerUrlRaw = argvValue(args, '--public-server-url');
+  let webappUrlRaw = argvValue(args, '--webapp-url');
+
+  // Compatibility: legacy `--public-server-url` (canonical) + legacy `--server-url` (local).
+  if (publicServerUrlRaw) {
+    if (serverUrlRaw && !localServerUrlRaw) {
+      localServerUrlRaw = serverUrlRaw;
+      serverUrlRaw = publicServerUrlRaw;
+    } else if (!serverUrlRaw) {
+      serverUrlRaw = publicServerUrlRaw;
+    }
+  }
+
+  let serverUrl = normalizeUrlOrThrow(serverUrlRaw, '--server-url');
+  let localServerUrl = localServerUrlRaw ? normalizeUrlOrThrow(localServerUrlRaw, '--local-server-url') : '';
+
+  if (!publicServerUrlRaw && shouldAutoInferPublicServerUrl() && isLoopbackHttpServerUrl(serverUrl) && !localServerUrl) {
+    const inferred = await tailscaleServeHttpsUrlForInternalServerUrl({
+      internalServerUrl: serverUrl,
+      timeoutMs: resolveTailscaleServeStatusTimeoutMs(),
+      env: process.env,
+    });
+    if (inferred) {
+      localServerUrl = serverUrl;
+      serverUrl = inferred;
+    }
+  }
+
+  // Best-effort: ask the server what its canonical/share URL is.
+  try {
+    const advertised = await fetchServerAdvertisedUrls({ apiServerUrl: localServerUrl || serverUrl, timeoutMs: 1500 });
+    const advertisedCanonical = advertised?.canonicalServerUrl ?? null;
+    const advertisedWebappUrl = advertised?.webappUrl ?? null;
+
+    if (advertisedCanonical && advertisedCanonical !== serverUrl) {
+      // cmdSet is always non-interactive today; adopt only when the current serverUrl is unshareable or insecure.
+      const shouldAdopt = !localServerUrl && (isLocalishServerUrl(serverUrl) || isInsecureRemoteHttpServerUrl(serverUrl));
+      if (shouldAdopt) {
+        if (isLocalishServerUrl(serverUrl)) {
+          localServerUrl = serverUrl;
+        }
+        serverUrl = advertisedCanonical;
+      }
+    }
+
+    if (!webappUrlRaw && advertisedWebappUrl) {
+      // Only override when not explicitly set.
+      // When it is set, callers may be pointing at a custom webapp origin.
+      // (A future version can prompt here in interactive mode.)
+      webappUrlRaw = advertisedWebappUrl;
+    }
+  } catch {
+    // best-effort
+  }
   const webappUrl = webappUrlRaw
     ? normalizeUrlOrThrow(webappUrlRaw, '--webapp-url')
     : configuration.webappUrl;
-  const created = await addServerProfile({ name: 'custom', serverUrl, webappUrl, use: true });
+  const created = await addServerProfile({ name: 'custom', serverUrl, ...(localServerUrl ? { localServerUrl } : {}), webappUrl, use: true });
   reloadConfiguration();
   if (json) {
     printJsonEnvelope({ ok: true, kind: 'server_set', data: { active: summarizeProfile(created) } });

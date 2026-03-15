@@ -20,6 +20,9 @@ services:
       # Keep the smoke fast and headless.
       HAPPIER_STACK_SERVE_UI: ${HAPPIER_STACK_SERVE_UI:-1}
       HAPPIER_STACK_NO_BROWSER: "1"
+      # In self-host mode the server host defaults to loopback. Override so the API listens on the
+      # container interface and is reachable from the other smoke containers (cli/remote).
+      HAPPIER_SERVER_HOST: "0.0.0.0"
     volumes:
       - ${PACKS_DIR:-./_packs}:/packs:ro
       - stack-home:/root/.happier-stack

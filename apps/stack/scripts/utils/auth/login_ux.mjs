@@ -81,6 +81,14 @@ export function printAuthLoginInstructions({
     console.log(`${dim('Web:')}   ${cyan(links.webUrl)}`);
     // eslint-disable-next-line no-console
     console.log(`${dim('Mobile:')} ${cyan(links.mobileUrl)}`);
+    if (!links.mobileUrl.includes('url=')) {
+      // eslint-disable-next-line no-console
+      console.log('');
+      // eslint-disable-next-line no-console
+      console.log(yellow('Note: this mobile link does not include a server URL (localhost is only reachable on this machine).'));
+      // eslint-disable-next-line no-console
+      console.log(dim('Fix: set HAPPIER_PUBLIC_SERVER_URL (or the stack equivalent HAPPIER_STACK_SERVER_URL) to a shareable URL your phone can reach, then retry.'));
+    }
   }
 
   if (ctx === 'selfhost') {

@@ -71,4 +71,34 @@ describe('resolveScopedSessionDataKey', () => {
     expect(key).toBeNull();
     expect(decrypt).not.toHaveBeenCalled();
   });
+
+  it('does not cache transient failures', async () => {
+    runtimeFetchMock.mockResolvedValue({
+      ok: false,
+      json: async () => ({}),
+    });
+    const decrypt = vi.fn(async () => new Uint8Array([9]));
+
+    const first = await resolveScopedSessionDataKey({
+      serverId: 's-id',
+      serverUrl: 'https://server.example.test',
+      token: 'token',
+      sessionId: 'session-1',
+      decryptEncryptionKey: decrypt,
+      timeoutMs: 10,
+    });
+    const second = await resolveScopedSessionDataKey({
+      serverId: 's-id',
+      serverUrl: 'https://server.example.test',
+      token: 'token',
+      sessionId: 'session-1',
+      decryptEncryptionKey: decrypt,
+      timeoutMs: 10,
+    });
+
+    expect(first).toBeNull();
+    expect(second).toBeNull();
+    expect(decrypt).not.toHaveBeenCalled();
+    expect(runtimeFetchMock).toHaveBeenCalledTimes(2);
+  });
 });

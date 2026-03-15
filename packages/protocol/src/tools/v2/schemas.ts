@@ -348,6 +348,9 @@ const TOOL_INPUT_SCHEMAS: Record<KnownCanonicalToolNameV2, z.ZodTypeAny> = {
   WorkspaceIndexingPermission: WorkspaceIndexingPermissionInputV2Schema,
   change_title: ChangeTitleInputV2Schema,
   SubAgentRun: SubAgentRunInputV2Schema,
+  AgentTeamCreate: BaseEnvelopeSchema.passthrough(),
+  AgentTeamDelete: BaseEnvelopeSchema.passthrough(),
+  AgentTeamSendMessage: BaseEnvelopeSchema.passthrough(),
 };
 
 const TOOL_RESULT_SCHEMAS: Record<KnownCanonicalToolNameV2, z.ZodTypeAny> = {
@@ -376,6 +379,9 @@ const TOOL_RESULT_SCHEMAS: Record<KnownCanonicalToolNameV2, z.ZodTypeAny> = {
   WorkspaceIndexingPermission: BaseEnvelopeSchema.passthrough(),
   change_title: ChangeTitleResultV2Schema,
   SubAgentRun: SubAgentRunResultV2Schema,
+  AgentTeamCreate: BaseEnvelopeSchema.passthrough(),
+  AgentTeamDelete: BaseEnvelopeSchema.passthrough(),
+  AgentTeamSendMessage: BaseEnvelopeSchema.passthrough(),
 };
 
 export function getToolInputSchemaV2(toolName: KnownCanonicalToolNameV2): z.ZodTypeAny {

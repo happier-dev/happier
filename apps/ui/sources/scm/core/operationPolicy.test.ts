@@ -17,6 +17,7 @@ function makeSnapshot(
             readLog: true,
             writeInclude: true,
             writeExclude: true,
+            writeDiscard: true,
             writeCommit: true,
             writeCommitPathSelection: true,
             writeCommitLineSelection: true,
@@ -119,6 +120,25 @@ describe('evaluateScmOperationPreflight', () => {
                 capabilities: undefined as unknown as ScmWorkingSnapshot['capabilities'],
             },
         });
+
+        expect(result.allowed).toBe(false);
+        if (!result.allowed) {
+            expect(result.reason).toBe('feature_unsupported');
+        }
+    });
+
+    it('blocks discard when backend does not support discard operations', () => {
+        const result = evaluateScmOperationPreflight({
+            intent: 'discard',
+            scmWriteEnabled: true,
+            sessionPath: '/repo',
+            snapshot: makeSnapshot({
+                capabilities: {
+                    ...makeSnapshot().capabilities!,
+                    writeDiscard: false,
+                },
+            }),
+        } as any);
 
         expect(result.allowed).toBe(false);
         if (!result.allowed) {

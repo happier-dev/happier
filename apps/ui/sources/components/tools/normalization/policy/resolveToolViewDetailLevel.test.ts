@@ -14,6 +14,18 @@ describe('resolveToolViewDetailLevel', () => {
         expect(level).toBe('full');
     });
 
+    it('supports compact per-tool overrides', () => {
+        const level = resolveToolViewDetailLevel({
+            toolName: 'Bash',
+            toolInput: {},
+            detailLevelDefault: 'summary',
+            detailLevelDefaultLocalControl: 'title',
+            detailLevelByToolName: { Bash: 'compact' as any },
+        });
+
+        expect(level).toBe('compact');
+    });
+
     it('ignores invalid per-tool overrides and falls back to defaults', () => {
         const level = resolveToolViewDetailLevel({
             toolName: 'Bash',
@@ -31,11 +43,11 @@ describe('resolveToolViewDetailLevel', () => {
             toolName: 'Read',
             toolInput: { _happier: { sessionMode: 'local_control' } },
             detailLevelDefault: 'summary',
-            detailLevelDefaultLocalControl: 'title',
+            detailLevelDefaultLocalControl: 'compact' as any,
             detailLevelByToolName: {},
         });
 
-        expect(level).toBe('title');
+        expect(level).toBe('compact');
     });
 
     it('treats legacy V2 _happy.sessionMode as local-control', () => {
@@ -43,11 +55,11 @@ describe('resolveToolViewDetailLevel', () => {
             toolName: 'Read',
             toolInput: { _happy: { sessionMode: 'local_control' } },
             detailLevelDefault: 'summary',
-            detailLevelDefaultLocalControl: 'title',
+            detailLevelDefaultLocalControl: 'compact' as any,
             detailLevelByToolName: {},
         });
 
-        expect(level).toBe('title');
+        expect(level).toBe('compact');
     });
 
     it('prefers _happier.sessionMode over legacy _happy.sessionMode when both are present', () => {

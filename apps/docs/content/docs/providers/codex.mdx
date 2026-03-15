@@ -21,6 +21,35 @@ npm install -g @openai/codex
 codex --version
 ```
 
+## Authentication (subscriptions and API keys)
+
+Codex can authenticate through Happier connected services:
+
+- **OpenAI Codex subscription** (`openai-codex`): OAuth via device code or paste redirect URL
+- **OpenAI API key** (`openai`): manual key entry
+
+In the app:
+
+- Settings → Connected services → OpenAI (Codex)
+
+In the CLI:
+
+```bash
+# Subscription auth (recommended): device code flow
+happier connect codex --device
+
+# Headless fallback: paste the redirect URL
+happier connect codex --paste
+
+# API key mode
+happier connect codex --api-key
+```
+
+Notes:
+
+- Device auth can require enabling “device code authorization for Codex” in ChatGPT settings.
+- If you connect multiple profiles, you can choose which one to use when starting a new session.
+
 ## Modes: MCP vs ACP (and local-control)
 
 Happier can run Codex using different backends depending on what’s available and what features you enable:

@@ -16,7 +16,7 @@ import {
     sanitizeNewSessionAutomationDraft,
     type NewSessionAutomationDraft,
 } from '@/sync/domains/automations/automationDraft';
-import type { PermissionMode, ModelMode } from '@/sync/domains/permissions/permissionTypes';
+import { isPermissionMode, type PermissionMode, type ModelMode } from '@/sync/domains/permissions/permissionTypes';
 import { normalizePermissionModeForAgentType } from '@/sync/domains/permissions/permissionModeOptions';
 import { readAccountPermissionDefaults, resolveNewSessionDefaultPermissionMode } from '@/sync/domains/permissions/permissionDefaults';
 import { AIBackendProfile, getProfileEnvironmentVariables, isProfileCompatibleWithAgent, type SavedSecret } from '@/sync/domains/settings/settings';
@@ -58,6 +58,7 @@ import { computeNewSessionInputMaxHeight } from '@/components/sessions/agentInpu
 import { useProfileMap, transformProfileToEnvironmentVars } from '@/components/sessions/new/modules/profileHelpers';
 import { newSessionScreenStyles } from '@/components/sessions/new/newSessionScreenStyles';
 import { useSecretRequirementFlow } from '@/components/sessions/new/hooks/useSecretRequirementFlow';
+import { coerceNewSessionModelMode, resolveInitialNewSessionModelMode } from '@/components/sessions/new/hooks/newSessionModelModePolicy';
 import { useNewSessionCapabilitiesPrefetch } from '@/components/sessions/new/hooks/useNewSessionCapabilitiesPrefetch';
 import { useNewSessionDraftAutoPersist } from '@/components/sessions/new/hooks/useNewSessionDraftAutoPersist';
 import { useCreateNewSession } from '@/components/sessions/new/hooks/useCreateNewSession';
@@ -73,19 +74,8 @@ import type { AgentInputExtraActionChip } from '@/components/sessions/agentInput
 import { getActiveServerSnapshot, subscribeActiveServer } from '@/sync/domains/server/serverRuntime';
 import { useAutomationsSupport } from '@/hooks/server/useAutomationsSupport';
 import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
-import { useProfile } from '@/sync/store/hooks';
-import { AGENTS_CORE, type ConnectedServiceId } from '@happier-dev/agents';
-import {
-    ConnectedServicesAuthModal,
-    CONNECTED_SERVICES_BINDINGS_KEY,
-    type ConnectedServicesServiceBinding,
-} from '@/components/sessions/new/components/ConnectedServicesAuthModal';
-import {
-    buildConnectedServiceProfileOptionsByServiceId,
-    buildConnectedServicesBindingsPayload,
-    parseConnectedServicesBindingsByServiceIdFromAgentOptionState,
-    resolveAgentSupportedConnectedServiceIds,
-} from '@/components/sessions/new/modules/connectedServicesNewSessionBindings';
+import { AGENTS_CORE } from '@happier-dev/agents';
+import { useNewSessionConnectedServices } from '@/components/sessions/new/modules/useNewSessionConnectedServices';
 import { useNewSessionServerTargetState } from '@/components/sessions/new/hooks/serverTarget/useNewSessionServerTargetState';
 import { useNewSessionAgentTypeState } from '@/components/sessions/new/hooks/screenModel/useNewSessionAgentTypeState';
 import { useNewSessionMachinePathState } from '@/components/sessions/new/hooks/screenModel/useNewSessionMachinePathState';
@@ -445,25 +435,69 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
     const emptyAutocompletePrefixes = React.useMemo(() => [], []);
     const emptyAutocompleteSuggestions = React.useCallback(async () => [], []);
 
+    const effectiveMachineIdParam = React.useMemo(() => {
+        const raw = typeof machineIdParam === 'string' ? machineIdParam.trim() : '';
+        if (raw) return raw;
+        const temp = typeof tempSessionData?.machineId === 'string' ? tempSessionData.machineId.trim() : '';
+        if (temp) return temp;
+        const draft = typeof persistedDraft?.selectedMachineId === 'string' ? persistedDraft.selectedMachineId.trim() : '';
+        if (draft) return draft;
+        return null;
+    }, [machineIdParam, persistedDraft?.selectedMachineId, tempSessionData?.machineId]);
+
+    const effectivePathParam = React.useMemo(() => {
+        const raw = typeof pathParam === 'string' ? pathParam.trim() : '';
+        if (raw) return raw;
+        const temp = typeof tempSessionData?.path === 'string' ? tempSessionData.path.trim() : '';
+        if (temp) return temp;
+
+        const draftPath = typeof persistedDraft?.selectedPath === 'string' ? persistedDraft.selectedPath.trim() : '';
+        if (!draftPath) return null;
+
+        // If this navigation explicitly targets a different machine, avoid applying the old draft path (machine-scoped).
+        if (typeof machineIdParam === 'string' && machineIdParam.trim().length > 0) {
+            const draftMachineId = typeof persistedDraft?.selectedMachineId === 'string' ? persistedDraft.selectedMachineId.trim() : '';
+            if (draftMachineId && draftMachineId !== machineIdParam.trim()) {
+                return null;
+            }
+        }
+
+        return draftPath;
+    }, [machineIdParam, pathParam, persistedDraft?.selectedMachineId, persistedDraft?.selectedPath, tempSessionData?.path]);
+
     const { agentType, setAgentType, handleAgentCycle } = useNewSessionAgentTypeState({
         enabledAgentIds,
         lastUsedAgent,
-        tempAgentType: tempSessionData?.agentType,
+        tempAgentType: tempSessionData?.agentType ?? persistedDraft?.agentType,
     });
 
-    const [sessionType, setSessionType] = React.useState<'simple' | 'worktree'>('simple');
+    const [sessionType, setSessionType] = React.useState<'simple' | 'worktree'>(() => {
+        const raw = tempSessionData?.sessionType ?? persistedDraft?.sessionType;
+        return raw === 'worktree' ? 'worktree' : 'simple';
+    });
     const [permissionMode, setPermissionMode] = React.useState<PermissionMode>(() => {
         const accountDefaults = readAccountPermissionDefaults(sessionDefaultPermissionModeByAgent, enabledAgentIds);
 
         // If a profile is pre-selected (e.g. from draft), use its override; otherwise fall back to account defaults.
         const profile = selectedProfileId ? (profileMap.get(selectedProfileId) || getBuiltInProfile(selectedProfileId)) : null;
 
-        return resolveNewSessionDefaultPermissionMode({
+        const resolvedDefault = resolveNewSessionDefaultPermissionMode({
             agentType,
             accountDefaults,
             profileDefaults: profile ? profile.defaultPermissionModeByAgent : null,
             legacyProfileDefaultPermissionMode: (profile?.defaultPermissionMode as PermissionMode | undefined) ?? undefined,
         });
+
+        const draft = persistedDraft?.permissionMode;
+        if (isPermissionMode(draft)) {
+            return normalizePermissionModeForAgentType(draft, agentType);
+        }
+
+        if (isPermissionMode(lastUsedPermissionMode)) {
+            return normalizePermissionModeForAgentType(lastUsedPermissionMode, agentType);
+        }
+
+        return resolvedDefault;
     });
 
     // NOTE: Permission mode reset on agentType change is handled by the validation useEffect below (lines ~670-681)
@@ -473,13 +507,21 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
     const [modelMode, setModelMode] = React.useState<ModelMode>(() => {
         const core = getAgentCore(agentType);
         const draftMode = typeof persistedDraft?.modelMode === 'string' ? persistedDraft.modelMode : null;
-        if (draftMode && (core.model.allowedModes as readonly string[]).includes(draftMode)) {
-            return draftMode as ModelMode;
-        }
-        return core.model.defaultMode;
+        return resolveInitialNewSessionModelMode({
+            draftModelMode: draftMode,
+            modelConfig: { defaultMode: core.model.defaultMode, allowedModes: core.model.allowedModes, supportsFreeform: core.model.supportsFreeform },
+        }) as ModelMode;
     });
 
-    const [acpSessionModeId, setAcpSessionModeId] = React.useState<string | null>(null);
+    const [acpSessionModeId, setAcpSessionModeId] = React.useState<string | null>(() => {
+        const raw = (persistedDraft as any)?.acpSessionModeId;
+        if (raw === null) return null;
+        if (typeof raw === 'string') {
+            const trimmed = raw.trim();
+            return trimmed.length > 0 ? trimmed : null;
+        }
+        return null;
+    });
 
     const {
         selectedMachineId,
@@ -490,8 +532,8 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
     } = useNewSessionMachinePathState({
         machines,
         recentMachinePaths,
-        machineIdParam,
-        pathParam,
+        machineIdParam: effectiveMachineIdParam,
+        pathParam: effectivePathParam,
     });
     const { preflightModels, modelOptions, probe: modelOptionsProbeState } = useNewSessionPreflightModelsState({
         agentType,
@@ -526,7 +568,12 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
     );
     const refreshMachineEnvPresence = machineEnvPresence.refresh;
 
-    const hasUserSelectedPermissionModeRef = React.useRef(false);
+    const hasUserSelectedPermissionModeRef = React.useRef<boolean>((() => {
+        const draft = persistedDraft?.permissionMode;
+        if (isPermissionMode(draft) && draft !== 'default') return true;
+        if (isPermissionMode(lastUsedPermissionMode) && lastUsedPermissionMode !== 'default') return true;
+        return false;
+    })());
     const permissionModeRef = React.useRef(permissionMode);
     React.useEffect(() => {
         permissionModeRef.current = permissionMode;
@@ -1043,7 +1090,10 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
             agentType,
             permissionMode,
             modelMode,
+            acpSessionModeId,
             sessionType,
+            resumeSessionId,
+            agentNewSessionOptionStateByAgentId,
             automationDraft: effectiveAutomationDraft,
             updatedAt: Date.now(),
         };
@@ -1060,11 +1110,14 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
             saveNewSessionDraft(draft);
         });
     }, [
+        acpSessionModeId,
         agentType,
+        agentNewSessionOptionStateByAgentId,
         getSessionOnlySecretValueEncByProfileIdByEnvVarName,
         modelMode,
         effectiveAutomationDraft,
         permissionMode,
+        resumeSessionId,
         router,
         selectedMachineId,
         selectedPath,
@@ -1399,16 +1452,19 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
     // Reset model mode when agent type changes to appropriate default
     React.useEffect(() => {
         const core = getAgentCore(agentType);
-        if (preflightModels && Array.isArray(preflightModels.availableModels) && preflightModels.availableModels.length > 0) {
-            if (preflightModels.supportsFreeform === true) return;
-            const allowed = new Set<string>(['default', ...preflightModels.availableModels.map((m) => m.id)]);
-            if (allowed.has(String(modelMode))) return;
-            setModelMode(core.model.defaultMode);
-            return;
+        const next = coerceNewSessionModelMode({
+            modelMode: String(modelMode),
+            modelConfig: { defaultMode: core.model.defaultMode, allowedModes: core.model.allowedModes, supportsFreeform: core.model.supportsFreeform },
+            preflight: preflightModels
+                ? {
+                    availableModels: preflightModels.availableModels.map((m) => ({ id: m.id })),
+                    supportsFreeform: preflightModels.supportsFreeform === true,
+                }
+                : null,
+        });
+        if (next !== modelMode) {
+            setModelMode(next as ModelMode);
         }
-
-        if ((core.model.allowedModes as readonly ModelMode[]).includes(modelMode)) return;
-        setModelMode(core.model.defaultMode);
     }, [agentType, modelMode, preflightModels]);
 
     const openProfileEnvVarsPreview = React.useCallback((profile: AIBackendProfile) => {
@@ -1540,50 +1596,32 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
         });
     }, [router, targetServerId]);
 
-    const accountProfile = useProfile();
     const agentOptionState = agentNewSessionOptionStateByAgentId[agentType] ?? null;
-    const connectedServicesFeatureEnabled = useFeatureEnabled('connectedServices');
     const agentCore = React.useMemo(() => AGENTS_CORE[agentType], [agentType]);
 
-    const supportedConnectedServiceIds = React.useMemo<ReadonlyArray<ConnectedServiceId>>(() => {
-        return resolveAgentSupportedConnectedServiceIds({ connectedServicesFeatureEnabled, agentCore });
-    }, [agentCore, connectedServicesFeatureEnabled]);
-
-    const connectedServiceProfileOptionsByServiceId = React.useMemo(() => {
-        return buildConnectedServiceProfileOptionsByServiceId({
-            accountProfileConnectedServicesV2: accountProfile?.connectedServicesV2 ?? [],
-            agentCore,
-            supportedConnectedServiceIds,
-            labelsByKey: settings.connectedServicesProfileLabelByKey,
+    const setAgentOptionStateForCurrentAgent = React.useCallback((key: string, value: unknown) => {
+        setAgentNewSessionOptionStateByAgentId((prev) => {
+            const nextForAgent = { ...(prev[agentType] ?? {}), [key]: value };
+            return { ...prev, [agentType]: nextForAgent };
         });
-    }, [accountProfile, agentCore, settings.connectedServicesProfileLabelByKey, supportedConnectedServiceIds]);
+    }, [agentType]);
 
-    const connectedServicesBindingsByServiceId = React.useMemo(() => {
-        return parseConnectedServicesBindingsByServiceIdFromAgentOptionState({ agentOptionState });
-    }, [agentOptionState]);
-
-    const connectedServicesBindings = React.useMemo(() => {
-        return buildConnectedServicesBindingsPayload({
-            supportedConnectedServiceIds,
-            connectedServiceProfileOptionsByServiceId,
-            connectedServicesBindingsByServiceId,
-            defaultProfileByServiceId: settings.connectedServicesDefaultProfileByServiceId,
-        });
-    }, [
-        connectedServiceProfileOptionsByServiceId,
-        connectedServicesBindingsByServiceId,
-        settings.connectedServicesDefaultProfileByServiceId,
-        supportedConnectedServiceIds,
-    ]);
+    const { connectedServicesBindingsPayload, connectedServicesAuthChip } = useNewSessionConnectedServices({
+        agentCore,
+        agentOptionState,
+        settings,
+        router,
+        setAgentOptionStateForCurrentAgent,
+    });
 
     const agentNewSessionOptions = React.useMemo(() => {
         const base = buildNewSessionOptionsFromUiState({ agentId: agentType, agentOptionState }) ?? {};
         const merged: Record<string, unknown> = { ...base };
-        if (connectedServicesBindings) {
-            merged.connectedServices = connectedServicesBindings;
+        if (connectedServicesBindingsPayload) {
+            merged.connectedServices = connectedServicesBindingsPayload;
         }
         return Object.keys(merged).length > 0 ? merged : null;
-    }, [agentOptionState, agentType, connectedServicesBindings]);
+    }, [agentOptionState, agentType, connectedServicesBindingsPayload]);
 
     const { handleCreateSession } = useCreateNewSession({
         router,
@@ -1637,70 +1675,12 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
         const isOnline = isMachineOnline(selectedMachine);
 
         return {
-            text: isOnline ? 'online' : 'offline',
+            text: isOnline ? t('status.online') : t('newSession.machineOfflineCannotStartStatus'),
             color: isOnline ? theme.colors.success : theme.colors.textDestructive,
             dotColor: isOnline ? theme.colors.success : theme.colors.textDestructive,
             isPulsing: isOnline,
         };
     }, [selectedMachine, theme]);
-
-    const setAgentOptionStateForCurrentAgent = React.useCallback((key: string, value: unknown) => {
-        setAgentNewSessionOptionStateByAgentId((prev) => {
-            const nextForAgent = { ...(prev[agentType] ?? {}), [key]: value };
-            return { ...prev, [agentType]: nextForAgent };
-        });
-    }, [agentType]);
-
-    const openConnectedServicesAuthModal = React.useCallback(() => {
-        if (supportedConnectedServiceIds.length === 0) return;
-
-        Modal.show({
-            component: ConnectedServicesAuthModal,
-            props: {
-                supportedServiceIds: supportedConnectedServiceIds,
-                profileOptionsByServiceId: connectedServiceProfileOptionsByServiceId,
-                bindingsByServiceId: connectedServicesBindingsByServiceId,
-                setBindingForService: (serviceId: string, binding: ConnectedServicesServiceBinding) => {
-                    setAgentOptionStateForCurrentAgent(CONNECTED_SERVICES_BINDINGS_KEY, {
-                        ...connectedServicesBindingsByServiceId,
-                        [serviceId]: binding,
-                    });
-                },
-                defaultProfileIdByServiceId: settings.connectedServicesDefaultProfileByServiceId,
-                onOpenSettings: () => router.push('/(app)/settings/connected-services'),
-            },
-        });
-    }, [
-        connectedServiceProfileOptionsByServiceId,
-        connectedServicesBindingsByServiceId,
-        settings.connectedServicesDefaultProfileByServiceId,
-        router,
-        setAgentOptionStateForCurrentAgent,
-        supportedConnectedServiceIds,
-    ]);
-
-    const connectedServicesAuthChip = React.useMemo<AgentInputExtraActionChip | null>(() => {
-        if (supportedConnectedServiceIds.length === 0) return null;
-        const connectedCount = supportedConnectedServiceIds.filter((serviceId) => connectedServicesBindingsByServiceId[serviceId]?.source === 'connected').length;
-        const label = connectedCount > 0 ? `Auth: ${connectedCount}` : 'Auth';
-        return {
-            key: 'new-session-connected-services-auth',
-            render: ({ chipStyle, iconColor, showLabel, textStyle }) => (
-                <Pressable
-                    onPress={openConnectedServicesAuthModal}
-                    hitSlop={{ top: 5, bottom: 10, left: 0, right: 0 }}
-                    style={(p) => chipStyle(p.pressed)}
-                >
-                    <Ionicons name="key-outline" size={16} color={iconColor} />
-                    {showLabel ? (
-                        <Text numberOfLines={1} style={textStyle}>
-                            {label}
-                        </Text>
-                    ) : null}
-                </Pressable>
-            ),
-        };
-    }, [connectedServicesBindingsByServiceId, openConnectedServicesAuthModal, supportedConnectedServiceIds]);
 
     const serverPickerActionChip = React.useMemo<AgentInputExtraActionChip | null>(() => {
         if (!showServerPickerChip) return null;
@@ -1867,6 +1847,7 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
             agentType,
             permissionMode,
             modelMode,
+            acpSessionModeId,
             sessionType,
             resumeSessionId,
             agentNewSessionOptionStateByAgentId,
@@ -1875,6 +1856,7 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
         });
     }, [
         agentType,
+        acpSessionModeId,
         agentNewSessionOptionStateByAgentId,
         getSessionOnlySecretValueEncByProfileIdByEnvVarName,
         modelMode,

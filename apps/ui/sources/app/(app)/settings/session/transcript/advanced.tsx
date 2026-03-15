@@ -1,0 +1,3 @@
+import TranscriptRenderingAdvancedSettingsView from '@/components/settings/session/TranscriptRenderingAdvancedSettingsView';
+
+export default TranscriptRenderingAdvancedSettingsView;

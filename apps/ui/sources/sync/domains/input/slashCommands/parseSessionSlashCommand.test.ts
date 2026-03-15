@@ -8,9 +8,9 @@ describe('parseSessionSlashCommand', () => {
         expect(parseSessionSlashCommand('   hello')).toBeNull();
     });
 
-    it('parses /clear as a client-only clear action', () => {
-        expect(parseSessionSlashCommand('/clear')).toEqual({ kind: 'client.clear_input' });
-        expect(parseSessionSlashCommand(' /clear ')).toEqual({ kind: 'client.clear_input' });
+    it('does not intercept /clear (it should be forwarded to the daemon as a normal message)', () => {
+        expect(parseSessionSlashCommand('/clear')).toBeNull();
+        expect(parseSessionSlashCommand(' /clear ')).toBeNull();
     });
 
     it('parses /h.review into a review.start action', () => {

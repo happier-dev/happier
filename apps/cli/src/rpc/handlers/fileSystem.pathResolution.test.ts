@@ -4,6 +4,7 @@ import type { RpcHandlerManager } from '@/api/rpc/RpcHandlerManager';
 vi.mock('fs/promises', () => ({
   readFile: vi.fn(async () => Buffer.from('hello')),
   writeFile: vi.fn(async () => undefined),
+  mkdir: vi.fn(async () => undefined),
   readdir: vi.fn(async () => []),
   stat: vi.fn(async () => {
     const err: NodeJS.ErrnoException = new Error('ENOENT');
@@ -13,6 +14,7 @@ vi.mock('fs/promises', () => ({
 }));
 
 import { readFile, writeFile } from 'fs/promises';
+import { mkdir } from 'fs/promises';
 import { stat } from 'fs/promises';
 
 import { registerFileSystemHandlers } from './fileSystem';
@@ -138,5 +140,18 @@ describe('registerFileSystemHandlers', () => {
     expect(writeResult).toMatchObject({ success: false });
     expect(String((writeResult as any).error ?? '')).toContain('expected to be new');
     expect(writeFile).not.toHaveBeenCalled();
+  });
+
+  it('registers a createDirectory handler that uses the validated resolved path', async () => {
+    vi.clearAllMocks();
+    const mgr = createRpcHandlerManager();
+    registerFileSystemHandlers(mgr as unknown as RpcHandlerManager, '/work/dir');
+
+    const createDirectory = mgr.handlers.get('createDirectory');
+    if (!createDirectory) throw new Error('expected createDirectory handler');
+
+    const result = await createDirectory({ path: 'tmp/new-folder' });
+    expect(result).toMatchObject({ success: true });
+    expect(mkdir).toHaveBeenCalledWith(resolve('/work/dir', 'tmp', 'new-folder'), { recursive: true });
   });
 });

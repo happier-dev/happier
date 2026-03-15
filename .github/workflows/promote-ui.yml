@@ -21,7 +21,7 @@ on:
         default: true
         type: boolean
       source_ref:
-        description: "Promotion — Source ref to promote (branch, tag, or SHA). Use 'auto' to default preview→dev, production→main."
+        description: "Promotion — Source ref to promote (branch, tag, or SHA). Use 'auto' to default preview→preview, production→main."
         required: true
         default: auto
         type: string
@@ -115,7 +115,7 @@ on:
         default: true
         type: boolean
       source_ref:
-        description: "Promotion — Source ref to promote (branch, tag, or SHA). Use 'auto' to default preview→dev, production→main."
+        description: "Promotion — Source ref to promote (branch, tag, or SHA). Use 'auto' to default preview→preview, production→main."
         required: false
         default: auto
         type: string
@@ -214,7 +214,7 @@ jobs:
           src="${{ inputs.source_ref }}"
           if [ "$src" = "auto" ]; then
             if [ "$env_name" = "preview" ]; then
-              src="dev"
+              src="preview"
             else
               src="main"
             fi
@@ -227,8 +227,8 @@ jobs:
           fi
 
           # Bumps require a real branch target we can push back to.
-          if [ "${{ inputs.bump }}" != "none" ] && [ "$src" != "main" ] && [ "$src" != "dev" ]; then
-            echo "Refusing to bump versions when source_ref is not a branch (main/dev). Set bump=none or use a branch." >&2
+          if [ "${{ inputs.bump }}" != "none" ] && [ "$src" != "main" ] && [ "$src" != "preview" ] && [ "$src" != "dev" ]; then
+            echo "Refusing to bump versions when source_ref is not a branch (main/preview/dev). Set bump=none or use a branch." >&2
             exit 1
           fi
 
@@ -241,9 +241,9 @@ jobs:
             exit 0
           fi
           case "${GITHUB_REF_NAME}" in
-            dev|main) ;;
+            dev|preview|main) ;;
             *)
-              echo "Refusing workflow_dispatch from untrusted ref '${GITHUB_REF_NAME}'. Use dev or main." >&2
+              echo "Refusing workflow_dispatch from untrusted ref '${GITHUB_REF_NAME}'. Use dev, preview, or main." >&2
               exit 1
               ;;
           esac

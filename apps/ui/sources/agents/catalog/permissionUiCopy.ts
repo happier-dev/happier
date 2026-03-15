@@ -6,13 +6,13 @@ export type PermissionFooterCopy =
         protocol: 'codexDecision';
         yesAlwaysAllowCommandKey: TranslationKey;
         yesForSessionKey: TranslationKey;
-        stopAndExplainKey: TranslationKey;
+        stopKey: TranslationKey;
     }>
     | Readonly<{
         protocol: 'claude';
         yesAllowAllEditsKey: TranslationKey;
         yesForToolKey: TranslationKey;
-        noTellAgentKey: TranslationKey;
+        stopKey: TranslationKey;
     }>;
 
 export function getPermissionFooterCopy(agentId: AgentId): PermissionFooterCopy {
@@ -22,7 +22,7 @@ export function getPermissionFooterCopy(agentId: AgentId): PermissionFooterCopy 
             protocol,
             yesAlwaysAllowCommandKey: 'codex.permissions.yesAlwaysAllowCommand',
             yesForSessionKey: 'codex.permissions.yesForSession',
-            stopAndExplainKey: 'codex.permissions.stopAndExplain',
+            stopKey: 'codex.permissions.stop',
         };
     }
 
@@ -31,7 +31,7 @@ export function getPermissionFooterCopy(agentId: AgentId): PermissionFooterCopy 
             protocol: 'claude',
             yesAllowAllEditsKey: 'claude.permissions.yesAllowAllEdits',
             yesForToolKey: 'claude.permissions.yesForTool',
-            noTellAgentKey: 'claude.permissions.noTellClaude',
+            stopKey: 'claude.permissions.stop',
         };
     }
 
@@ -39,6 +39,6 @@ export function getPermissionFooterCopy(agentId: AgentId): PermissionFooterCopy 
         protocol: 'claude',
         yesAllowAllEditsKey: 'claude.permissions.yesAllowAllEdits',
         yesForToolKey: 'claude.permissions.yesForTool',
-        noTellAgentKey: 'claude.permissions.noTellClaude',
+        stopKey: 'claude.permissions.stop',
     };
 }

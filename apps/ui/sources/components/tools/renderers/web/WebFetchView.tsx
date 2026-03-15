@@ -6,6 +6,7 @@ import { ToolSectionView } from '../../shell/presentation/ToolSectionView';
 import { CodeView } from '@/components/ui/media/CodeView';
 import { maybeParseJson } from '../../normalization/parse/parseJson';
 import { Text } from '@/components/ui/text/Text';
+import { t } from '@/text';
 
 
 function asRecord(value: unknown): Record<string, unknown> | null {
@@ -53,7 +54,7 @@ export const WebFetchView = React.memo<ToolViewProps>(({ tool, detailLevel }) =>
                             {url}
                         </Text>
                         {typeof status === 'number' ? (
-                            <Text style={styles.status}>{`HTTP ${status}`}</Text>
+                            <Text style={styles.status}>{t('tools.webFetch.httpStatus', { status })}</Text>
                         ) : null}
                     </View>
                 ) : null}

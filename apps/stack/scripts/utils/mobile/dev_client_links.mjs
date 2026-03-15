@@ -48,12 +48,22 @@ export function resolveDevClientDeepLink({ scheme, metroUrl }) {
   return `${s}://expo-development-client/?url=${encodeURIComponent(url)}`;
 }
 
+function normalizeExpoSlug(raw) {
+  const v = String(raw ?? '').trim().toLowerCase();
+  if (!v) return '';
+  // Expo slug should be safe for use in a URL scheme segment (`exp+<slug>`).
+  return v.replace(/[^a-z0-9-]+/g, '-').replace(/-+/g, '-').replace(/^-+|-+$/g, '');
+}
+
 export function resolveMobileQrPayload({ env = process.env, port }) {
   const metroUrl = resolveMetroUrlForMobile({ env, port });
   const scheme = resolveMobileScheme(env);
+  const slug = normalizeExpoSlug(env.EXPO_APP_SLUG);
+  const expoDevClientScheme = slug ? `exp+${slug}` : '';
+
+  // Prefer the configured app scheme for dev-client links so we can isolate dev/prod apps without
+  // needing to change Expo slug (which must match the EAS project id configuration).
   const deepLink = resolveDevClientDeepLink({ scheme, metroUrl });
-  // Match Expo CLI / @expo/cli UrlCreator: QR encodes the dev-client deep link.
-  // Note: iOS Camera will still offer to open custom schemes when the app is installed.
   const payload = deepLink || metroUrl;
-  return { scheme, metroUrl, deepLink, payload };
+  return { scheme, metroUrl, deepLink, payload, expoDevClientScheme, slug };
 }

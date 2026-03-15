@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import {
   ExecutionRunIntentSchema,
   ExecutionRunPublicStateSchema,
+  ExecutionRunSendRequestSchema,
   ExecutionRunStartRequestSchema,
   ExecutionRunTransportErrorCodeSchema,
 } from './executionRuns.js';
@@ -11,6 +12,7 @@ import { ReviewFindingSchema } from './reviews/ReviewFinding.js';
 import { ReviewFindingsV1Schema } from './structuredMessages/reviewFindingsV1.js';
 import { PlanOutputV1Schema } from './structuredMessages/planOutputV1.js';
 import { DelegateOutputV1Schema } from './structuredMessages/delegateOutputV1.js';
+import { ParticipantMessageV1Schema } from './structuredMessages/participantMessageV1.js';
 import { KNOWN_CANONICAL_TOOL_NAMES_V2 } from './tools/v2/names.js';
 
 describe('executionRuns protocol', () => {
@@ -175,6 +177,12 @@ describe('executionRuns protocol', () => {
     expect(KNOWN_CANONICAL_TOOL_NAMES_V2.includes('SubAgentRun' as any)).toBe(true);
   });
 
+  it('adds Agent Team tools to known canonical tool names', () => {
+    expect(KNOWN_CANONICAL_TOOL_NAMES_V2.includes('AgentTeamCreate' as any)).toBe(true);
+    expect(KNOWN_CANONICAL_TOOL_NAMES_V2.includes('AgentTeamDelete' as any)).toBe(true);
+    expect(KNOWN_CANONICAL_TOOL_NAMES_V2.includes('AgentTeamSendMessage' as any)).toBe(true);
+  });
+
   it('parses supported ephemeral task kinds', () => {
     expect(EphemeralTaskKindSchema.parse('scm.commit_message')).toBe('scm.commit_message');
   });
@@ -192,5 +200,29 @@ describe('executionRuns protocol', () => {
     expect(ExecutionRunTransportErrorCodeSchema.parse('permission_denied')).toBe('permission_denied');
 
     expect(() => ExecutionRunTransportErrorCodeSchema.parse('execution_run_send_failed')).toThrow();
+  });
+
+  it('validates optional delivery on send requests', () => {
+    const parsed = ExecutionRunSendRequestSchema.parse({
+      runId: 'run_1',
+      message: 'steer me',
+      delivery: 'steer_if_supported',
+    });
+    expect((parsed as any).delivery).toBe('steer_if_supported');
+
+    // Back-compat: missing delivery remains valid.
+    expect(() => ExecutionRunSendRequestSchema.parse({ runId: 'run_1', message: 'hi' })).not.toThrow();
+  });
+
+  it('validates participant_message.v1 meta payload', () => {
+    expect(() => ParticipantMessageV1Schema.parse({
+      recipient: { kind: 'execution_run', runId: 'run_1' },
+    })).not.toThrow();
+    expect(() => ParticipantMessageV1Schema.parse({
+      recipient: { kind: 'agent_team_member', teamId: 'probe', memberId: 'alpha@probe' },
+    })).not.toThrow();
+    expect(() => ParticipantMessageV1Schema.parse({
+      recipient: { kind: 'agent_team_broadcast', teamId: 'probe' },
+    })).not.toThrow();
   });
 });

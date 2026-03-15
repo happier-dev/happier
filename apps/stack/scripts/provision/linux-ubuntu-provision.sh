@@ -143,5 +143,4 @@ echo ""
 echo "[provision] done."
 echo ""
 echo "Next:"
-echo "  npx --yes -p @happier-dev/stack@latest hstack setup --profile=dev --bind=loopback"
-
+echo "  npx --yes -p @happier-dev/stack@latest hstack setup-from-source --profile=dev --bind=loopback"

@@ -14,6 +14,7 @@ import { useAutomations } from '@/sync/domains/state/storage';
 import { sync } from '@/sync/sync';
 import { filterAutomationsLinkedToSession } from '@/sync/domains/automations/automationSessionLink';
 import { AutomationListGroup } from '@/components/automations/list/AutomationListGroup';
+import { t } from '@/text';
 
 const stylesheet = StyleSheet.create((theme) => ({
     container: {
@@ -56,7 +57,10 @@ export function SessionAutomationsScreen(props: { sessionId: string }) {
             setLoading(true);
             await sync.refreshAutomations();
         } catch (error) {
-            await Modal.alert('Error', error instanceof Error ? error.message : 'Failed to load automations.');
+            await Modal.alert(
+                t('common.error'),
+                error instanceof Error ? error.message : t('automations.session.failedToLoad')
+            );
         } finally {
             setLoading(false);
         }
@@ -85,18 +89,16 @@ export function SessionAutomationsScreen(props: { sessionId: string }) {
                     {linked.length === 0 ? (
                         <View style={styles.emptyContainer}>
                             <Ionicons name="timer-outline" size={56} color={theme.colors.textSecondary} />
-                            <Text style={styles.emptyTitle}>No automations</Text>
-                            <Text style={styles.emptyBody}>
-                                Add an automation to queue scheduled messages into this session.
-                            </Text>
+                            <Text style={styles.emptyTitle}>{t('automations.session.emptyTitle')}</Text>
+                            <Text style={styles.emptyBody}>{t('automations.session.emptyBody')}</Text>
                         </View>
                     ) : (
-                        <AutomationListGroup title="Automations" automations={linked} />
+                        <AutomationListGroup title={t('sessionInfo.automationsTitle')} automations={linked} />
                     )}
 
-                    <ItemGroup title="Actions">
+                    <ItemGroup title={t('common.actions')}>
                         <Item
-                            title="Add automation"
+                            title={t('automations.session.addAutomation')}
                             icon={<Ionicons name="add-outline" size={29} color={theme.colors.accent.blue} />}
                             onPress={() => router.push(`/session/${props.sessionId}/automations/new` as any)}
                         />

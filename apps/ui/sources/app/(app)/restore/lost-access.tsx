@@ -65,6 +65,9 @@ export default function LostAccess() {
         try {
             const secretBytes = await getRandomBytesAsync(32);
             const secret = encodeBase64(secretBytes, 'base64url');
+            const signingKeyPair = sodium.crypto_sign_seed_keypair(secretBytes);
+            const publicKey = encodeBase64(signingKeyPair.publicKey);
+
             const snapshot = getActiveServerSnapshot();
             const serverUrl = snapshot.serverUrl ? String(snapshot.serverUrl).trim() : '';
             await TokenStorage.setPendingExternalAuth({
@@ -75,10 +78,7 @@ export default function LostAccess() {
                 ...(serverUrl ? { serverUrl } : {}),
             });
 
-            const kp = sodium.crypto_sign_seed_keypair(secretBytes);
-            // Server expects standard base64 (not base64url) for `publicKey`.
-            const publicKey = encodeBase64(kp.publicKey);
-            const url = await provider.getExternalSignupUrl({ publicKey });
+            const url = await provider.getExternalAuthUrl({ mode: 'keyed', publicKey });
             if (!isSafeExternalAuthUrl(url)) {
                 throw new Error('unsafe_url');
             }

@@ -5,19 +5,11 @@ import { readFile } from "node:fs/promises";
 import { logger } from "@/ui/logger";
 import { startFileWatcher } from "@/integrations/watcher/startFileWatcher";
 import { getProjectPath } from "./path";
-import { parseRawJsonLinesObject } from './parseRawJsonLines';
 import { ClaudeRemoteSubagentFileCollector } from '../remote/sidechains/claudeRemoteSubagentFileCollector';
-
-/**
- * Known internal Claude Code event types that should be silently skipped.
- * These are written to session JSONL files by Claude Code but are not 
- * actual conversation messages - they're internal state/tracking events.
- */
-const INTERNAL_CLAUDE_EVENT_TYPES = new Set([
-    'file-history-snapshot',
-    'change',
-    'queue-operation',
-]);
+import { resolveClaudeSubagentJsonlPath } from '../remote/sidechains/resolveClaudeSubagentJsonlPath';
+import { normalizeClaudeToolUseNamesInRawJsonLines } from './normalizeClaudeToolUseNames';
+import { createClaudeTeamInboxCollector } from './teamInbox/claudeTeamInboxCollector';
+import { readClaudeSessionJsonlMessages } from './readClaudeSessionJsonlMessages';
 
 export type SessionScannerSessionInfo = {
     sessionId: string;
@@ -98,6 +90,7 @@ export async function createSessionScanner(opts: {
     let watchers = new Map<string, { filePath: string; stop: () => void }>();
     let processedMessageKeys = new Set<string>();
     const taskToolUseIdByAgentId = new Map<string, string>();
+    let invalidate: (() => void) | null = null;
 
     const subagentCollector = new ClaudeRemoteSubagentFileCollector({
         emitImported: (body) => {
@@ -121,7 +114,32 @@ export async function createSessionScanner(opts: {
             if (!claudeSessionId) return null;
             const sanitized = String(agentId ?? '').trim();
             if (!sanitized) return null;
-            return join(effectiveProjectDir(), claudeSessionId, 'subagents', `agent-${sanitized}.jsonl`);
+            return resolveClaudeSubagentJsonlPath({
+                projectDir: effectiveProjectDir(),
+                claudeSessionId,
+                agentId: sanitized,
+            });
+        },
+    });
+
+    const teamInboxCollector = createClaudeTeamInboxCollector({
+        claudeConfigDir: typeof opts.claudeConfigDir === 'string' && opts.claudeConfigDir.trim().length > 0 ? opts.claudeConfigDir.trim() : null,
+        onInvalidate: () => invalidate?.(),
+        emit: (body) => {
+            try {
+                const uuid = typeof (body as any)?.uuid === 'string' ? String((body as any).uuid) : '';
+                const sidechainId = typeof (body as any)?.sidechainId === 'string' ? String((body as any).sidechainId) : '';
+                const key = uuid && sidechainId ? `team-inbox:${sidechainId}:${uuid}` : messageKey(body);
+                if (processedMessageKeys.has(key)) return;
+                processedMessageKeys.add(key);
+            } catch {
+                // ignore
+            }
+            try {
+                opts.onMessage(body);
+            } catch (err) {
+                logger.debug('[SESSION_SCANNER] onMessage callback threw (team inbox):', err);
+            }
         },
     });
 
@@ -203,13 +221,17 @@ export async function createSessionScanner(opts: {
 
     // Mark existing messages as processed and start watching the initial session
     if (opts.sessionId) {
-        let messages = await readSessionLog(getSessionFilePath(opts.sessionId));
+        let messages = await readClaudeSessionJsonlMessages({
+            sessionFilePath: getSessionFilePath(opts.sessionId),
+            logLabel: 'SESSION_SCANNER',
+        });
         logger.debug(`[SESSION_SCANNER] Marking ${messages.length} existing messages as processed from session ${opts.sessionId}`);
         for (let m of messages) {
             // Observe history for sidechain import + task-notification mapping, even when we do not replay history.
             try {
                 observeTaskToolResultMapping(m);
                 subagentCollector.observe(m as any);
+                teamInboxCollector.observe(m as any);
             } catch (err) {
                 logger.debug('[SESSION_SCANNER] Failed observing historical message:', err);
             }
@@ -217,6 +239,7 @@ export async function createSessionScanner(opts: {
         }
         // Backfill sidechain messages for any already-launched tasks.
         await subagentCollector.syncAll();
+        await teamInboxCollector.syncAll();
         // IMPORTANT: Also start watching the initial session file because Claude Code
         // may continue writing to it even after creating a new session with --resume
         // (agent tasks and other updates can still write to the original session file)
@@ -246,13 +269,18 @@ export async function createSessionScanner(opts: {
 
         // Process sessions
         for (let session of sessions) {
-            const sessionMessages = await readSessionLog(getSessionFilePath(session));
+            const sessionMessages = await readClaudeSessionJsonlMessages({
+                sessionFilePath: getSessionFilePath(session),
+                logLabel: 'SESSION_SCANNER',
+            });
             let skipped = 0;
             let sent = 0;
             for (let file of sessionMessages) {
+                file = normalizeClaudeToolUseNamesInRawJsonLines(file);
                 try {
                     observeTaskToolResultMapping(file);
                     subagentCollector.observe(file as any);
+                    teamInboxCollector.observe(file as any);
                 } catch (err) {
                     logger.debug('[SESSION_SCANNER] Failed observing message:', err);
                 }
@@ -285,6 +313,7 @@ export async function createSessionScanner(opts: {
         }
 
         await subagentCollector.syncAll();
+        await teamInboxCollector.syncAll();
 
         // Move pending sessions to finished sessions (but keep processing them via watchers)
         for (let p of sessions) {
@@ -312,6 +341,7 @@ export async function createSessionScanner(opts: {
             }
         }
     });
+    invalidate = () => sync.invalidate();
     await sync.invalidateAndAwait();
 
     // Periodic sync
@@ -322,6 +352,7 @@ export async function createSessionScanner(opts: {
         cleanup: async () => {
             clearInterval(intervalId);
             subagentCollector.cleanup();
+            teamInboxCollector.cleanup();
             for (let w of watchers.values()) {
                 w.stop();
             }
@@ -409,44 +440,5 @@ function messageKey(message: RawJSONLines): string {
 }
 
 /**
- * Read and parse session log file
- * Returns only valid conversation messages, silently skipping internal events
+ * Read and parse session log files lives in `readClaudeSessionJsonlMessages`.
  */
-async function readSessionLog(sessionFilePath: string): Promise<RawJSONLines[]> {
-    logger.debug(`[SESSION_SCANNER] Reading session file: ${sessionFilePath}`);
-    let file: string;
-    try {
-        file = await readFile(sessionFilePath, 'utf-8');
-    } catch (error) {
-        logger.debug(`[SESSION_SCANNER] Session file not found: ${sessionFilePath}`);
-        return [];
-    }
-    let lines = file.split('\n');
-    let messages: RawJSONLines[] = [];
-    for (let l of lines) {
-        try {
-            if (l.trim() === '') {
-                continue;
-            }
-            let message = JSON.parse(l);
-            
-            // Silently skip known internal Claude Code events
-            // These are state/tracking events, not conversation messages
-            if (message.type && INTERNAL_CLAUDE_EVENT_TYPES.has(message.type)) {
-                continue;
-            }
-            
-            const parsed = parseRawJsonLinesObject(message);
-            if (!parsed) {
-                // Unknown message types are silently skipped
-                // They will be tracked by processedMessageKeys to avoid reprocessing
-                continue;
-            }
-            messages.push(parsed);
-        } catch (e) {
-            logger.debug(`[SESSION_SCANNER] Error processing message: ${e}`);
-            continue;
-        }
-    }
-    return messages;
-}

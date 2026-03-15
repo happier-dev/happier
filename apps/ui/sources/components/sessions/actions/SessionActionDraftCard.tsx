@@ -182,14 +182,14 @@ export function SessionActionDraftCard(props: Readonly<{ sessionId: string; draf
         { defaultSessionId: props.sessionId, surface: 'ui_button', placement: 'session_action_menu' } as any,
       );
       if (!res.ok) {
-        setStatus('failed', res.error ?? 'Failed to start');
+        setStatus('editing', res.error ?? 'Failed to start');
         return;
       }
       const inner: any = res.result;
       const results: any[] = Array.isArray(inner?.results) ? inner.results : [];
       if (results.some((r) => r && r.ok === false)) {
         const first = results.find((r) => r && r.ok === false);
-        setStatus('failed', String(first?.error ?? 'Failed to start'));
+        setStatus('editing', String(first?.error ?? 'Failed to start'));
         return;
       }
       setStatus('succeeded', null);
@@ -197,7 +197,7 @@ export function SessionActionDraftCard(props: Readonly<{ sessionId: string; draf
       // successfully, remove the draft card so the transcript doesn't stay cluttered.
       cancel();
     } catch (e) {
-      setStatus('failed', e instanceof Error ? e.message : 'Failed to start');
+      setStatus('editing', e instanceof Error ? e.message : 'Failed to start');
     }
   }, [cancel, executor, input, props.draft.actionId, props.draft.input, props.sessionId, setStatus, validate]);
 
@@ -232,7 +232,7 @@ export function SessionActionDraftCard(props: Readonly<{ sessionId: string; draf
 
                 const label = typeof field?.title === 'string' ? field.title : path;
                 const value = getValueAtPath(input, path);
-                const editable = props.draft.status === 'editing';
+                const editable = props.draft.status !== 'running';
                 const disabled = (field as any)?.disabled === true;
 
                 if (widget === 'multiselect') {
@@ -294,7 +294,7 @@ export function SessionActionDraftCard(props: Readonly<{ sessionId: string; draf
                     <Text style={{ color: theme.colors.textSecondary, marginBottom: 6 }}>{label}</Text>
                     <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 10 }}>
                       <Chip
-                        label="On"
+                        label={t('common.on')}
                         selected={selected}
                         disabled={!editable || disabled}
                         onPress={() => {
@@ -303,7 +303,7 @@ export function SessionActionDraftCard(props: Readonly<{ sessionId: string; draf
                         }}
                       />
                       <Chip
-                        label="Off"
+                        label={t('common.off')}
                         selected={!selected}
                         disabled={!editable || disabled}
                         onPress={() => {
@@ -376,7 +376,7 @@ export function SessionActionDraftCard(props: Readonly<{ sessionId: string; draf
               return null;
             })
           ) : (
-            <Text style={{ color: theme.colors.textSecondary }}>This action has no input hints.</Text>
+            <Text style={{ color: theme.colors.textSecondary }}>{t('session.actionsDraft.noInputHints')}</Text>
           )}
 
           {error ? (
@@ -395,21 +395,21 @@ export function SessionActionDraftCard(props: Readonly<{ sessionId: string; draf
                 opacity: props.draft.status === 'running' ? 0.4 : pressed ? 0.7 : 1,
               })}
             >
-              <Text style={{ color: theme.colors.textSecondary }}>Cancel</Text>
+              <Text style={{ color: theme.colors.textSecondary }}>{t('common.cancel')}</Text>
             </Pressable>
             <Pressable
               accessibilityRole="button"
               onPress={() => void submit()}
-              disabled={props.draft.status !== 'editing'}
+              disabled={props.draft.status === 'running'}
               style={({ pressed }) => ({
                 paddingVertical: 10,
                 paddingHorizontal: 12,
                 borderRadius: 10,
                 backgroundColor: theme.colors.button.primary.background,
-                opacity: props.draft.status !== 'editing' ? 0.5 : pressed ? 0.8 : 1,
+                opacity: props.draft.status === 'running' ? 0.5 : pressed ? 0.8 : 1,
               })}
             >
-              <Text style={{ color: theme.colors.button.primary.tint, fontWeight: '600' }}>Start</Text>
+              <Text style={{ color: theme.colors.button.primary.tint, fontWeight: '600' }}>{t('common.start')}</Text>
             </Pressable>
           </View>
           </View>

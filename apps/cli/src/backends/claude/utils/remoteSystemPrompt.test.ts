@@ -4,6 +4,11 @@ import { systemPrompt } from '@/backends/claude/utils/systemPrompt';
 import { getClaudeRemoteSystemPrompt } from './remoteSystemPrompt';
 
 describe('getClaudeRemoteSystemPrompt', () => {
+  it('includes the session-title tool instruction (so Claude renames sessions at start)', () => {
+    process.env.HAPPIER_SCM_INCLUDE_CO_AUTHORED_BY = '0';
+    expect(systemPrompt()).toContain('change-title tool');
+  });
+
   it('returns the base prompt unchanged when disableTodos is false', () => {
     process.env.HAPPIER_SCM_INCLUDE_CO_AUTHORED_BY = '0';
     const prompt = getClaudeRemoteSystemPrompt({ disableTodos: false });
