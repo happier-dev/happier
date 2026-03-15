@@ -277,8 +277,9 @@ t('errors.fieldError', { field: 'Email', reason: 'Invalid format' })
 1. **Check existing keys first** - Always check if the string already exists in the `common` object or other sections before adding new keys
 2. **Think about context** - Consider the screen/component context when choosing the appropriate section (e.g., `settings.*`, `session.*`, `errors.*`)
 3. **Add to ALL languages** - When adding new strings, you MUST add them to all language files in `sources/text/translations/` (currently: `en`, `ru`, `pl`, `es`, `ca`, `it`, `pt`, `ja`, `zh-Hans`)
-4. **Use descriptive key names** - Use clear, hierarchical keys like `newSession.machineOffline` rather than generic names
-5. **Language metadata** - All supported languages and their metadata are centralized in `sources/text/_all.ts`
+4. **NEVER use smart/curly quotes** - Use only straight quotes (`"` and `'`) in translation files. Smart quotes (`\u201c` `\u201d` `\u2018` `\u2019`) are invalid JS string delimiters and break the build. This has caused repeated build failures — always verify output uses ASCII quotes.
+5. **Use descriptive key names** - Use clear, hierarchical keys like `newSession.machineOffline` rather than generic names
+6. **Language metadata** - All supported languages and their metadata are centralized in `sources/text/_all.ts`
 
 #### Translation Structure
 ```typescript
