@@ -240,11 +240,14 @@ describe('configuration env url fallback', () => {
     delete process.env.HAPPIER_EXECUTION_RUNS_MAX_CONCURRENT_PER_SESSION;
     delete process.env.HAPPIER_EXECUTION_RUNS_BOUNDED_TIMEOUT_MS;
     delete process.env.HAPPIER_EXECUTION_RUNS_REVIEW_BOUNDED_TIMEOUT_MS;
+    delete process.env.HAPPIER_EXECUTION_RUNS_MAX_TURNS;
 
     const configMod = await import('./configuration');
     configMod.reloadConfiguration();
     expect(configMod.configuration.executionRunsMaxConcurrentPerSession).toBeNull();
+    expect(configMod.configuration.ephemeralTasksMaxConcurrentPerSession).toBeNull();
     expect(configMod.configuration.executionRunsBoundedTimeoutMs).toBeNull();
     expect(configMod.configuration.executionRunsReviewBoundedTimeoutMs).toBeNull();
+    expect(configMod.configuration.executionRunsMaxTurns).toBeNull();
   });
 });

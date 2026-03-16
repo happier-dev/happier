@@ -8,11 +8,16 @@ vi.mock('react-native-gesture-handler', () => ({
     Swipeable: 'Swipeable',
 }));
 
+vi.mock('react-native-reanimated', () => ({
+    default: { View: (props: any) => React.createElement('Animated.View', props) },
+    useSharedValue: (init: any) => ({ value: init }),
+    useAnimatedStyle: (fn: () => any) => fn(),
+}));
+
 vi.mock('react-native-safe-area-context', () => ({
     useSafeAreaInsets: () => ({ top: 0, bottom: 0, left: 0, right: 0 }),
 }));
 
-let capturedPressables: any[] = [];
 vi.mock('react-native', async () => {
     const stub = await import('@/dev/reactNativeStub');
     return {
@@ -64,6 +69,7 @@ let sessionListGroupOrderV1: Record<string, string[]> = {};
 const setSessionListGroupOrderV1 = vi.fn();
 let sessionTagsV1: Record<string, string[]> = {};
 const setSessionTagsV1 = vi.fn();
+const useSessionInlineDragSpy = vi.fn((_params: any) => ({ gesture: undefined, animatedStyle: {} }));
 
 vi.mock('@/sync/domains/state/storage', () => ({
     useSetting: (key: string) => {
@@ -107,15 +113,15 @@ vi.mock('@/utils/system/requestReview', () => ({
     requestReview: requestReviewSpy,
 }));
 
-vi.mock('./SessionGroupDragList', () => ({
-    SessionGroupDragList: 'SessionGroupDragList',
+vi.mock('./useSessionInlineDrag', () => ({
+    useSessionInlineDrag: (params: any) => useSessionInlineDragSpy(params),
 }));
 
 vi.mock('./SessionItem', () => ({
     SessionItem: (props: any) => React.createElement('SessionItem', props),
 }));
 
-describe('SessionsList (reorder mode)', () => {
+describe('SessionsList (inline reorder)', () => {
     it('does not trigger store-review prompts automatically when the list renders', async () => {
         requestReviewSpy.mockClear();
         const { SessionsList } = await import('./SessionsList');
@@ -127,11 +133,11 @@ describe('SessionsList (reorder mode)', () => {
         expect(requestReviewSpy).not.toHaveBeenCalled();
     });
 
-    it('enters reorder mode from a row handle and exits after a reorder completes', async () => {
+    it('renders SessionItem rows with reorder drag props', async () => {
         pinnedSessionKeysV1 = [];
         sessionListGroupOrderV1 = {};
         sessionTagsV1 = {};
-        setSessionListGroupOrderV1.mockClear();
+        useSessionInlineDragSpy.mockClear();
 
         const { SessionsList } = await import('./SessionsList');
 
@@ -140,30 +146,13 @@ describe('SessionsList (reorder mode)', () => {
             tree = renderer.create(<SessionsList />);
         });
 
-        expect((tree as any).root.findAllByType('SessionGroupDragList')).toHaveLength(0);
-
         const items = (tree as any).root.findAllByType('SessionItem');
-        expect(items.length).toBeGreaterThan(0);
-        expect(typeof items[0]?.props?.onRequestReorder).toBe('function');
-
-        await act(async () => {
-            items[0].props.onRequestReorder();
-        });
-        expect((tree as any).root.findAllByType('SessionGroupDragList')).toHaveLength(1);
-
-        await act(async () => {
-            const group = (tree as any).root.findByType('SessionGroupDragList');
-            group.props.onReorderKeys(['server_a:sess_b', 'server_a:sess_a']);
-        });
-        expect((tree as any).root.findAllByType('SessionGroupDragList')).toHaveLength(0);
-        expect(setSessionListGroupOrderV1).toHaveBeenCalledTimes(1);
-
-        const itemsAfter = (tree as any).root.findAllByType('SessionItem');
-        expect(itemsAfter.length).toBeGreaterThan(0);
-
-        await act(async () => {
-            itemsAfter[0].props.onRequestReorder();
-        });
-        expect((tree as any).root.findAllByType('SessionGroupDragList')).toHaveLength(1);
+        expect(items.length).toBe(2);
+        // reorderHandleGesture is passed from SessionListRow.
+        // reorderDragStyle is no longer passed (Animated.View is in SessionListRow).
+        expect(items[0].props).toHaveProperty('reorderHandleGesture');
+        // isBeingDragged is passed from SessionListRow
+        expect(items[0].props.isBeingDragged).toBe(false);
+        expect(useSessionInlineDragSpy).toHaveBeenCalledWith(expect.objectContaining({ rowHeight: 84 }));
     });
 });

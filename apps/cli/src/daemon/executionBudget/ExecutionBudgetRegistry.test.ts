@@ -26,6 +26,20 @@ describe('ExecutionBudgetRegistry', () => {
     expect(registry.tryAcquireEphemeralTask('task2')).toBe(true);
   });
 
+  it('allows unlimited ephemeral tasks when maxConcurrentEphemeralTasks is unset', () => {
+    const registry = new ExecutionBudgetRegistry({
+      maxConcurrentExecutionRuns: 1,
+      maxConcurrentEphemeralTasks: null as number | null,
+    });
+
+    expect(registry.tryAcquireEphemeralTask('task1')).toBe(true);
+    expect(registry.tryAcquireEphemeralTask('task2')).toBe(true);
+    expect(registry.getInFlightSnapshot().ephemeralTasks).toBe(2);
+
+    expect(registry.tryAcquireEphemeralTask('automation-1', 'automation')).toBe(true);
+    expect(registry.getInFlightSnapshot().ephemeralTasks).toBe(3);
+  });
+
   it('treats automation and ephemeral tasks as one shared budget', () => {
     const registry = new ExecutionBudgetRegistry({ maxConcurrentExecutionRuns: 1, maxConcurrentEphemeralTasks: 1 });
 

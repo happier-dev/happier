@@ -10,7 +10,27 @@ import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { isServerIdFilesystemSafe, sanitizeServerIdForFilesystem } from '@/server/serverId'
 import { isLocalishServerUrl } from '@/server/serverUrlClassification'
+import { normalizeCliArgv } from '@/cli/parseArgs'
 import packageJson from '../package.json'
+
+/**
+ * Parse an environment variable as an integer and clamp it within optional bounds.
+ *
+ * - Reads `process.env[envVar]`, trims, and parses as base-10 integer.
+ * - If the parsed value is finite and >= `opts.min` (default 1), it is accepted.
+ * - If `opts.max` is specified, the value is clamped to that upper bound.
+ * - Otherwise the `opts.default` value is returned.
+ */
+function resolveIntEnvWithBounds(
+  envVar: string,
+  opts: { min?: number; max?: number; default: number },
+): number {
+  const raw = String(process.env[envVar] ?? '').trim()
+  const parsed = Number.parseInt(raw, 10)
+  const min = opts.min ?? 1
+  if (!Number.isFinite(parsed) || parsed < min) return opts.default
+  return opts.max != null ? Math.min(parsed, opts.max) : parsed
+}
 
 export function isDaemonProcessArgv(args: readonly string[]): boolean {
   if (args.length < 2) return false
@@ -46,6 +66,17 @@ class Configuration {
   public readonly sessionControlHttpTimeoutMs: number
   // Vendor CLI `--help` invocation timeout (defense-in-depth against hung vendor CLIs).
   public readonly vendorCliHelpTimeoutMs: number
+  // Managed runtime installable auto-update background check interval.
+  public readonly installablesRuntimeAutoUpdateCheckIntervalMs: number
+  // File system RPC limits (Files tab + transfers).
+  public readonly filesReadMaxBytes: number
+  public readonly filesTransferChunkBytes: number
+  public readonly filesTransferSessionTtlMs: number
+  public readonly filesUploadMaxFileBytes: number
+  public readonly filesDownloadMaxFileBytes: number
+  public readonly filesZipMaxTotalBytes: number
+  public readonly filesZipMaxEntryCount: number
+  public readonly filesZipExcludedTopLevelDirs: readonly string[]
   public readonly currentCliVersion: string
 
   public readonly isExperimentalEnabled: boolean
@@ -90,6 +121,9 @@ class Configuration {
   // Claude permission handler metadata watcher (prevents tight loops when metadata updates are unavailable).
   public readonly claudeMetadataWatcherIdleBackoffMs: number
 
+  // Claude local transcript scanner (UI-facing missing-transcript warning delay).
+  public readonly claudeTranscriptMissingWarningMs: number
+
   // Claude Task tool policy (remote mode).
   public readonly claudeTaskAllowRunInBackground: boolean
   /**
@@ -114,16 +148,17 @@ class Configuration {
 
   // Execution runs and ephemeral tasks (session-process budgets).
   public readonly executionRunsMaxConcurrentPerSession: number | null
-  public readonly ephemeralTasksMaxConcurrentPerSession: number
+  public readonly ephemeralTasksMaxConcurrentPerSession: number | null
   public readonly executionRunsBoundedTimeoutMs: number | null
   public readonly executionRunsReviewBoundedTimeoutMs: number | null
-  public readonly executionRunsMaxTurns: number
+  public readonly executionRunsMaxTurns: number | null
   public readonly executionRunsMaxDepth: number
   public readonly executionBudgetMaxConcurrentTotalPerSession: number | null
   public readonly executionBudgetMaxConcurrentByClass: Readonly<Record<string, number>>
 
   // Memory search (daemon-local indexing) limits.
   public readonly memoryMaxTranscriptWindowMessages: number
+  public readonly memoryEmbeddingsRemoteRequestTimeoutMs: number
 
   // Replay-fork synopsis lookup (memory artifacts may be older than the most recent replay page).
   public readonly replaySynopsisScanMaxPages: number
@@ -142,7 +177,7 @@ class Configuration {
 
   constructor() {
     // Check if we're running as daemon based on process args
-    const args = process.argv.slice(2)
+    const args = normalizeCliArgv(process.argv.slice(2))
     this.isDaemonProcess = isDaemonProcessArgv(args)
 
     // Directory configuration - Priority: HAPPIER_HOME_DIR env > default home dir
@@ -198,11 +233,10 @@ class Configuration {
           ? attachMaxAgeMs
           : 10 * 60_000;
 
-    const sessionControlTimeoutRaw = String(process.env.HAPPIER_SESSION_CONTROL_HTTP_TIMEOUT_MS ?? '').trim();
-    const sessionControlTimeoutMs = Number.parseInt(sessionControlTimeoutRaw, 10);
     // Default: 60s. Defensive minimum: 1s.
-    this.sessionControlHttpTimeoutMs =
-      Number.isFinite(sessionControlTimeoutMs) && sessionControlTimeoutMs >= 1000 ? sessionControlTimeoutMs : 60_000;
+    this.sessionControlHttpTimeoutMs = resolveIntEnvWithBounds('HAPPIER_SESSION_CONTROL_HTTP_TIMEOUT_MS', {
+      min: 1000, default: 60_000,
+    });
 
     const vendorHelpTimeoutRaw = String(process.env.HAPPIER_VENDOR_CLI_HELP_TIMEOUT_MS ?? '').trim();
     const vendorHelpTimeoutMs = Number.parseInt(vendorHelpTimeoutRaw, 10);
@@ -213,6 +247,63 @@ class Configuration {
         : Number.isFinite(vendorHelpTimeoutMs) && vendorHelpTimeoutMs >= 250
           ? Math.min(vendorHelpTimeoutMs, 60_000)
           : 5_000;
+
+    // Default: 6 hours. Defensive minimum: 1 minute.
+    this.installablesRuntimeAutoUpdateCheckIntervalMs = resolveIntEnvWithBounds(
+      'HAPPIER_INSTALLABLES_AUTO_UPDATE_CHECK_INTERVAL_MS',
+      { min: 60_000, default: 6 * 60 * 60_000 },
+    );
+
+    // Default: 2.5MB. Defensive minimum: 1 byte.
+    this.filesReadMaxBytes = resolveIntEnvWithBounds('HAPPIER_FILES_READ_MAX_BYTES', {
+      min: 1, default: 2_500_000,
+    });
+
+    // Default: 256KB. Defensive min: 1KB; max: 5MB.
+    this.filesTransferChunkBytes = resolveIntEnvWithBounds('HAPPIER_FILES_TRANSFER_CHUNK_BYTES', {
+      min: 1024, max: 5_000_000, default: 256_000,
+    });
+
+    // Default: 10 minutes. Defensive min: 1s; max: 60 minutes.
+    this.filesTransferSessionTtlMs = resolveIntEnvWithBounds('HAPPIER_FILES_TRANSFER_SESSION_TTL_MS', {
+      min: 1000, max: 60 * 60_000, default: 10 * 60_000,
+    });
+
+    // Default: 50MB. Defensive minimum: 1 byte.
+    this.filesUploadMaxFileBytes = resolveIntEnvWithBounds('HAPPIER_FILES_UPLOAD_MAX_FILE_BYTES', {
+      min: 1, default: 50 * 1024 * 1024,
+    });
+
+    // Default: 50MB. Defensive minimum: 1 byte.
+    this.filesDownloadMaxFileBytes = resolveIntEnvWithBounds('HAPPIER_FILES_DOWNLOAD_MAX_FILE_BYTES', {
+      min: 1, default: 50 * 1024 * 1024,
+    });
+
+    // Default: 100MB. Defensive minimum: 1 byte.
+    this.filesZipMaxTotalBytes = resolveIntEnvWithBounds('HAPPIER_FILES_ZIP_MAX_TOTAL_BYTES', {
+      min: 1, default: 100 * 1024 * 1024,
+    });
+
+    // Default: 10k. Defensive minimum: 1 entry; max: 100k.
+    this.filesZipMaxEntryCount = resolveIntEnvWithBounds('HAPPIER_FILES_ZIP_MAX_ENTRY_COUNT', {
+      min: 1, max: 100_000, default: 10_000,
+    });
+
+    const defaultZipExcludedTopLevelDirs = '.git,.sl,node_modules,.happier';
+    const filesZipExcludedTopLevelDirsRaw = String(process.env.HAPPIER_FILES_ZIP_EXCLUDED_TOP_LEVEL_DIRS ?? '').trim();
+    const zipExcludedTopLevelDirsCsv = filesZipExcludedTopLevelDirsRaw || defaultZipExcludedTopLevelDirs;
+    const zipExcludedTopLevelDirs = zipExcludedTopLevelDirsCsv
+      .split(',')
+      .map((value) => value.trim())
+      .filter((value) => value.length > 0);
+    const zipExcludedUnique = new Set<string>();
+    const zipExcludedOut: string[] = [];
+    for (const value of zipExcludedTopLevelDirs) {
+      if (zipExcludedUnique.has(value)) continue;
+      zipExcludedUnique.add(value);
+      zipExcludedOut.push(value);
+    }
+    this.filesZipExcludedTopLevelDirs = zipExcludedOut;
 
     this.isExperimentalEnabled = ['true', '1', 'yes'].includes(process.env.HAPPIER_EXPERIMENTAL?.toLowerCase() || '');
     this.disableCaffeinate = ['true', '1', 'yes'].includes(process.env.HAPPIER_DISABLE_CAFFEINATE?.toLowerCase() || '');
@@ -240,13 +331,15 @@ class Configuration {
       parsedSocketTransports
       ?? (this.socketForceWebsocketOnly ? ['websocket'] : ['websocket', 'polling']);
 
-    const idleMsRaw = Number.parseInt(String(process.env.HAPPIER_SESSION_KEEPALIVE_IDLE_MS ?? ''), 10);
-    const thinkingMsRaw = Number.parseInt(String(process.env.HAPPIER_SESSION_KEEPALIVE_THINKING_MS ?? ''), 10);
     // Defaults chosen to balance UI responsiveness and background traffic:
     // - thinking: ~2s so UI connecting mid-turn sees 'thinking' quickly
     // - idle: ~15s to reduce noise while maintaining presence
-    this.sessionKeepAliveIdleMs = Number.isFinite(idleMsRaw) && idleMsRaw >= 1000 ? idleMsRaw : 15_000;
-    this.sessionKeepAliveThinkingMs = Number.isFinite(thinkingMsRaw) && thinkingMsRaw >= 500 ? thinkingMsRaw : 2_000;
+    this.sessionKeepAliveIdleMs = resolveIntEnvWithBounds('HAPPIER_SESSION_KEEPALIVE_IDLE_MS', {
+      min: 1000, default: 15_000,
+    });
+    this.sessionKeepAliveThinkingMs = resolveIntEnvWithBounds('HAPPIER_SESSION_KEEPALIVE_THINKING_MS', {
+      min: 500, default: 2_000,
+    });
 
     const pendingWakeRaw = String(process.env.HAPPIER_PENDING_QUEUE_IDLE_WAKE_POLL_INTERVAL_MS ?? '').trim();
     const pendingWakeMs = Number.parseInt(pendingWakeRaw, 10);
@@ -288,31 +381,23 @@ class Configuration {
       ?? [2_500, 10_000, 30_000, 60_000];
     this.permissionRequestPushRetryDelaysMs = pushRetryDelays;
 
-    const pushRetryMaxRaw = Number.parseInt(String(process.env.HAPPIER_PERMISSION_REQUEST_PUSH_RETRY_MAX_MS ?? ''), 10);
-    this.permissionRequestPushRetryMaxMs =
-      Number.isFinite(pushRetryMaxRaw) && pushRetryMaxRaw >= 0 ? Math.min(pushRetryMaxRaw, 60 * 60_000) : 10 * 60_000;
-
-    const dedupeMaxRaw = Number.parseInt(String(process.env.HAPPIER_PERMISSION_REQUEST_PUSH_DEDUPE_MAX ?? ''), 10);
-    this.permissionRequestPushDedupeMaxEntries =
-      Number.isFinite(dedupeMaxRaw) && dedupeMaxRaw >= 0 ? Math.min(dedupeMaxRaw, 50_000) : 2_000;
-
-    const transcriptLookupRequestTimeoutRaw = Number.parseInt(
-      String(process.env.HAPPIER_TRANSCRIPT_LOOKUP_REQUEST_TIMEOUT_MS ?? ''),
-      10,
+    this.permissionRequestPushRetryMaxMs = resolveIntEnvWithBounds(
+      'HAPPIER_PERMISSION_REQUEST_PUSH_RETRY_MAX_MS',
+      { min: 0, max: 60 * 60_000, default: 10 * 60_000 },
     );
-    this.transcriptLookupRequestTimeoutMs =
-      Number.isFinite(transcriptLookupRequestTimeoutRaw) && transcriptLookupRequestTimeoutRaw >= 250
-        ? transcriptLookupRequestTimeoutRaw
-        : 10_000;
-
-    const transcriptLookupPollIntervalRaw = Number.parseInt(
-      String(process.env.HAPPIER_TRANSCRIPT_LOOKUP_POLL_INTERVAL_MS ?? ''),
-      10,
+    this.permissionRequestPushDedupeMaxEntries = resolveIntEnvWithBounds(
+      'HAPPIER_PERMISSION_REQUEST_PUSH_DEDUPE_MAX',
+      { min: 0, max: 50_000, default: 2_000 },
     );
-    this.transcriptLookupPollIntervalMs =
-      Number.isFinite(transcriptLookupPollIntervalRaw) && transcriptLookupPollIntervalRaw >= 10
-        ? transcriptLookupPollIntervalRaw
-        : 150;
+
+    this.transcriptLookupRequestTimeoutMs = resolveIntEnvWithBounds(
+      'HAPPIER_TRANSCRIPT_LOOKUP_REQUEST_TIMEOUT_MS',
+      { min: 250, default: 10_000 },
+    );
+    this.transcriptLookupPollIntervalMs = resolveIntEnvWithBounds(
+      'HAPPIER_TRANSCRIPT_LOOKUP_POLL_INTERVAL_MS',
+      { min: 10, default: 150 },
+    );
 
     const transcriptLookupErrorBackoffBaseRaw = Number.parseInt(
       String(process.env.HAPPIER_TRANSCRIPT_LOOKUP_ERROR_BACKOFF_BASE_MS ?? ''),
@@ -336,94 +421,82 @@ class Configuration {
     this.transcriptLookupKeepAliveEnabled =
       transcriptLookupKeepAliveRaw.length === 0 ? true : ['1', 'true', 'yes', 'on'].includes(transcriptLookupKeepAliveRaw);
 
-    const transcriptRecoveryDelayRaw = Number.parseInt(String(process.env.HAPPIER_TRANSCRIPT_RECOVERY_DELAY_MS ?? ''), 10);
-    this.transcriptRecoveryDelayMs =
-      Number.isFinite(transcriptRecoveryDelayRaw) && transcriptRecoveryDelayRaw >= 0 ? transcriptRecoveryDelayRaw : 500;
+    this.transcriptRecoveryDelayMs = resolveIntEnvWithBounds('HAPPIER_TRANSCRIPT_RECOVERY_DELAY_MS', {
+      min: 0, default: 500,
+    });
+    this.transcriptRecoveryMaxWaitMs = resolveIntEnvWithBounds('HAPPIER_TRANSCRIPT_RECOVERY_MAX_WAIT_MS', {
+      min: 250, default: 7_500,
+    });
 
-    const transcriptRecoveryMaxWaitRaw = Number.parseInt(String(process.env.HAPPIER_TRANSCRIPT_RECOVERY_MAX_WAIT_MS ?? ''), 10);
-    this.transcriptRecoveryMaxWaitMs =
-      Number.isFinite(transcriptRecoveryMaxWaitRaw) && transcriptRecoveryMaxWaitRaw >= 250 ? transcriptRecoveryMaxWaitRaw : 7_500;
+    this.transcriptRecoveryMaxConcurrent = resolveIntEnvWithBounds('HAPPIER_TRANSCRIPT_RECOVERY_MAX_CONCURRENT', {
+      min: 1, default: 3,
+    });
 
-    const transcriptRecoveryMaxConcurrentRaw = Number.parseInt(
-      String(process.env.HAPPIER_TRANSCRIPT_RECOVERY_MAX_CONCURRENT ?? ''),
-      10,
+    this.transcriptRecoveryErrorLogThrottleMs = resolveIntEnvWithBounds(
+      'HAPPIER_TRANSCRIPT_RECOVERY_ERROR_LOG_THROTTLE_MS',
+      { min: 0, default: 5_000 },
     );
-    this.transcriptRecoveryMaxConcurrent =
-      Number.isFinite(transcriptRecoveryMaxConcurrentRaw) && transcriptRecoveryMaxConcurrentRaw >= 1
-        ? Math.floor(transcriptRecoveryMaxConcurrentRaw)
-        : 3;
 
-    const transcriptRecoveryLogThrottleRaw = Number.parseInt(
-      String(process.env.HAPPIER_TRANSCRIPT_RECOVERY_ERROR_LOG_THROTTLE_MS ?? ''),
-      10,
+    this.startupTranscriptCatchUpLookbackMs = resolveIntEnvWithBounds(
+      'HAPPIER_STARTUP_TRANSCRIPT_CATCH_UP_LOOKBACK_MS',
+      { min: 0, default: 10_000 },
     );
-    this.transcriptRecoveryErrorLogThrottleMs =
-      Number.isFinite(transcriptRecoveryLogThrottleRaw) && transcriptRecoveryLogThrottleRaw >= 0 ? transcriptRecoveryLogThrottleRaw : 5_000;
 
-    const startupCatchUpLookbackRaw = Number.parseInt(
-      String(process.env.HAPPIER_STARTUP_TRANSCRIPT_CATCH_UP_LOOKBACK_MS ?? ''),
-      10,
+    this.claudeTaskOutputMaxPendingPerAgent = resolveIntEnvWithBounds(
+      'HAPPIER_CLAUDE_TASKOUTPUT_MAX_PENDING_PER_AGENT', { min: 0, default: 2000 },
     );
-    this.startupTranscriptCatchUpLookbackMs =
-      Number.isFinite(startupCatchUpLookbackRaw) && startupCatchUpLookbackRaw >= 0 ? startupCatchUpLookbackRaw : 10_000;
+    this.claudeTaskOutputMaxSeenUuidsPerSidechain = resolveIntEnvWithBounds(
+      'HAPPIER_CLAUDE_TASKOUTPUT_MAX_SEEN_UUIDS_PER_SIDECHAIN', { min: 0, default: 5000 },
+    );
+    this.claudeTaskOutputMaxToolUseEntries = resolveIntEnvWithBounds(
+      'HAPPIER_CLAUDE_TASKOUTPUT_MAX_TOOLUSE_ENTRIES', { min: 0, default: 5000 },
+    );
+    this.claudeTaskOutputMaxAgentMappings = resolveIntEnvWithBounds(
+      'HAPPIER_CLAUDE_TASKOUTPUT_MAX_AGENT_MAPPINGS', { min: 0, default: 2000 },
+    );
 
-    const maxPendingRaw = Number.parseInt(String(process.env.HAPPIER_CLAUDE_TASKOUTPUT_MAX_PENDING_PER_AGENT ?? ''), 10);
-    const maxSeenUuidsRaw = Number.parseInt(String(process.env.HAPPIER_CLAUDE_TASKOUTPUT_MAX_SEEN_UUIDS_PER_SIDECHAIN ?? ''), 10);
-    const maxToolUseRaw = Number.parseInt(String(process.env.HAPPIER_CLAUDE_TASKOUTPUT_MAX_TOOLUSE_ENTRIES ?? ''), 10);
-    const maxAgentMappingsRaw = Number.parseInt(String(process.env.HAPPIER_CLAUDE_TASKOUTPUT_MAX_AGENT_MAPPINGS ?? ''), 10);
-
-    this.claudeTaskOutputMaxPendingPerAgent = Number.isFinite(maxPendingRaw) && maxPendingRaw >= 0 ? maxPendingRaw : 2000;
-    this.claudeTaskOutputMaxSeenUuidsPerSidechain = Number.isFinite(maxSeenUuidsRaw) && maxSeenUuidsRaw >= 0 ? maxSeenUuidsRaw : 5000;
-    this.claudeTaskOutputMaxToolUseEntries = Number.isFinite(maxToolUseRaw) && maxToolUseRaw >= 0 ? maxToolUseRaw : 5000;
-    this.claudeTaskOutputMaxAgentMappings = Number.isFinite(maxAgentMappingsRaw) && maxAgentMappingsRaw >= 0 ? maxAgentMappingsRaw : 2000;
-
-    const subagentPollRaw = Number.parseInt(String(process.env.HAPPIER_CLAUDE_SUBAGENT_JSONL_POLL_INTERVAL_MS ?? ''), 10);
     // Default: 250ms. Most imports will be watcher-driven; this is a safety net if fs watch misses events.
-    this.claudeSubagentJsonlPollIntervalMs =
-      Number.isFinite(subagentPollRaw) && subagentPollRaw >= 25 ? subagentPollRaw : 250;
-
-    const metadataWatcherBackoffRaw = Number.parseInt(
-      String(process.env.HAPPIER_CLAUDE_METADATA_WATCHER_IDLE_BACKOFF_MS ?? ''),
-      10,
+    this.claudeSubagentJsonlPollIntervalMs = resolveIntEnvWithBounds(
+      'HAPPIER_CLAUDE_SUBAGENT_JSONL_POLL_INTERVAL_MS', { min: 25, default: 250 },
     );
+
     // Default: 250ms. Prevents tight loops when waitForMetadataUpdate returns false (e.g. detached session client).
-    this.claudeMetadataWatcherIdleBackoffMs =
-      Number.isFinite(metadataWatcherBackoffRaw) && metadataWatcherBackoffRaw >= 25
-        ? Math.min(metadataWatcherBackoffRaw, 60_000)
-        : 250;
+    this.claudeMetadataWatcherIdleBackoffMs = resolveIntEnvWithBounds(
+      'HAPPIER_CLAUDE_METADATA_WATCHER_IDLE_BACKOFF_MS',
+      { min: 25, max: 60_000, default: 250 },
+    );
+
+    // Default: 15s. Set to 0 to disable.
+    this.claudeTranscriptMissingWarningMs = resolveIntEnvWithBounds(
+      'HAPPIER_CLAUDE_TRANSCRIPT_MISSING_WARNING_MS',
+      { min: 0, max: 2 * 60_000, default: 15_000 },
+    );
 
     const allowTaskBackgroundRaw = String(process.env.HAPPIER_CLAUDE_TASK_ALLOW_RUN_IN_BACKGROUND ?? '').trim().toLowerCase();
     this.claudeTaskAllowRunInBackground = ['1', 'true', 'yes', 'on'].includes(allowTaskBackgroundRaw);
 
-    const abortIgnoreWindowRaw = Number.parseInt(
-      String(process.env.HAPPIER_CLAUDE_ABORT_UNHANDLED_REJECTION_IGNORE_WINDOW_MS ?? ''),
-      10,
-    );
     // Default: 10s. Set to 0 to disable suppression.
-    this.claudeAbortUnhandledRejectionIgnoreWindowMs =
-      Number.isFinite(abortIgnoreWindowRaw) && abortIgnoreWindowRaw >= 0 ? Math.min(abortIgnoreWindowRaw, 60_000) : 10_000;
-
-    const exitPlanLatchRaw = Number.parseInt(String(process.env.HAPPIER_CLAUDE_EXIT_PLAN_MODE_LATCH_MS ?? ''), 10);
-    // Default: 15s. Needs to be long enough to cover same-turn tool calls while metadata update propagates.
-    this.claudeExitPlanModeLatchMs =
-      Number.isFinite(exitPlanLatchRaw) && exitPlanLatchRaw >= 0 ? Math.min(exitPlanLatchRaw, 5 * 60_000) : 15_000;
-
-    const exitPlanMaxEntriesRaw = Number.parseInt(
-      String(process.env.HAPPIER_CLAUDE_EXIT_PLAN_MODE_LATCH_MAX_ENTRIES ?? ''),
-      10,
+    this.claudeAbortUnhandledRejectionIgnoreWindowMs = resolveIntEnvWithBounds(
+      'HAPPIER_CLAUDE_ABORT_UNHANDLED_REJECTION_IGNORE_WINDOW_MS',
+      { min: 0, max: 60_000, default: 10_000 },
     );
-    this.claudeExitPlanModeLatchMaxEntries =
-      Number.isFinite(exitPlanMaxEntriesRaw) && exitPlanMaxEntriesRaw >= 1 ? Math.min(exitPlanMaxEntriesRaw, 2_000) : 100;
+
+    // Default: 15s. Needs to be long enough to cover same-turn tool calls while metadata update propagates.
+    this.claudeExitPlanModeLatchMs = resolveIntEnvWithBounds('HAPPIER_CLAUDE_EXIT_PLAN_MODE_LATCH_MS', {
+      min: 0, max: 5 * 60_000, default: 15_000,
+    });
+    this.claudeExitPlanModeLatchMaxEntries = resolveIntEnvWithBounds(
+      'HAPPIER_CLAUDE_EXIT_PLAN_MODE_LATCH_MAX_ENTRIES',
+      { min: 1, max: 2_000, default: 100 },
+    );
 
     const maxConcurrentRunsRaw = Number.parseInt(String(process.env.HAPPIER_EXECUTION_RUNS_MAX_CONCURRENT_PER_SESSION ?? ''), 10);
-    const maxConcurrentTasksRaw = Number.parseInt(String(process.env.HAPPIER_EPHEMERAL_TASKS_MAX_CONCURRENT_PER_SESSION ?? ''), 10);
     const boundedTimeoutRaw = Number.parseInt(String(process.env.HAPPIER_EXECUTION_RUNS_BOUNDED_TIMEOUT_MS ?? ''), 10);
     const reviewBoundedTimeoutRaw = Number.parseInt(
       String(process.env.HAPPIER_EXECUTION_RUNS_REVIEW_BOUNDED_TIMEOUT_MS ?? ''),
       10,
     );
     const maxTurnsRaw = Number.parseInt(String(process.env.HAPPIER_EXECUTION_RUNS_MAX_TURNS ?? ''), 10);
-    const maxDepthRaw = Number.parseInt(String(process.env.HAPPIER_EXECUTION_RUNS_MAX_DEPTH ?? ''), 10);
     const budgetTotalRaw = Number.parseInt(String(process.env.HAPPIER_EXECUTION_BUDGET_MAX_CONCURRENT_TOTAL_PER_SESSION ?? ''), 10);
     const budgetByClassRaw = String(process.env.HAPPIER_EXECUTION_BUDGET_MAX_CONCURRENT_BY_CLASS_JSON ?? '').trim();
 
@@ -431,19 +504,28 @@ class Configuration {
     // inherit an arbitrary product cap unless an operator explicitly configures one.
     this.executionRunsMaxConcurrentPerSession =
       Number.isFinite(maxConcurrentRunsRaw) && maxConcurrentRunsRaw >= 1 ? maxConcurrentRunsRaw : null;
+    const maxConcurrentEphemeralTasksRaw = Number.parseInt(
+      String(process.env.HAPPIER_EPHEMERAL_TASKS_MAX_CONCURRENT_PER_SESSION ?? ''),
+      10,
+    );
+    // Intentionally unlimited by default: ephemeral tasks (including reviews and automation helpers) can be long-lived,
+    // and concurrency limits should only be applied when an operator explicitly configures them.
     this.ephemeralTasksMaxConcurrentPerSession =
-      Number.isFinite(maxConcurrentTasksRaw) && maxConcurrentTasksRaw >= 1 ? maxConcurrentTasksRaw : 2;
+      Number.isFinite(maxConcurrentEphemeralTasksRaw) && maxConcurrentEphemeralTasksRaw >= 1
+        ? maxConcurrentEphemeralTasksRaw
+        : null;
     // Intentionally no wall-clock timeout by default: users should stop long-running plan/delegate/review
     // runs explicitly, while operators can still opt into caps via env overrides.
     this.executionRunsBoundedTimeoutMs =
       Number.isFinite(boundedTimeoutRaw) && boundedTimeoutRaw >= 1_000 ? boundedTimeoutRaw : null;
     this.executionRunsReviewBoundedTimeoutMs =
       Number.isFinite(reviewBoundedTimeoutRaw) && reviewBoundedTimeoutRaw >= 1_000 ? reviewBoundedTimeoutRaw : null;
-    this.executionRunsMaxTurns =
-      Number.isFinite(maxTurnsRaw) && maxTurnsRaw >= 1 ? maxTurnsRaw : 32;
+    // Intentionally unlimited by default: long-lived execution runs should not stop unexpectedly.
+    this.executionRunsMaxTurns = Number.isFinite(maxTurnsRaw) && maxTurnsRaw >= 1 ? Math.trunc(maxTurnsRaw) : null;
     // Depth 0 means "no nested runs allowed". Default 1 allows one nested hop when explicitly linked.
-    this.executionRunsMaxDepth =
-      Number.isFinite(maxDepthRaw) && maxDepthRaw >= 0 ? maxDepthRaw : 1;
+    this.executionRunsMaxDepth = resolveIntEnvWithBounds('HAPPIER_EXECUTION_RUNS_MAX_DEPTH', {
+      min: 0, default: 1,
+    });
 
     this.executionBudgetMaxConcurrentTotalPerSession =
       Number.isFinite(budgetTotalRaw) && budgetTotalRaw >= 1 ? budgetTotalRaw : null;
@@ -469,76 +551,58 @@ class Configuration {
     }
     this.executionBudgetMaxConcurrentByClass = Object.freeze(parsedBudgetByClass);
 
-    const memoryWindowRaw = Number.parseInt(String(process.env.HAPPIER_MEMORY_MAX_TRANSCRIPT_WINDOW_MESSAGES ?? ''), 10);
     // Default: 250 messages. Hard bounds protect daemon from excessive replay windows.
     // Min 50 ensures meaningful windows; max 500 matches server enforcement.
-    if (Number.isFinite(memoryWindowRaw) && memoryWindowRaw >= 50) {
-      this.memoryMaxTranscriptWindowMessages = Math.min(500, Math.trunc(memoryWindowRaw));
-    } else {
-      this.memoryMaxTranscriptWindowMessages = 250;
-    }
+    this.memoryMaxTranscriptWindowMessages = resolveIntEnvWithBounds(
+      'HAPPIER_MEMORY_MAX_TRANSCRIPT_WINDOW_MESSAGES',
+      { min: 50, max: 500, default: 250 },
+    );
+    this.memoryEmbeddingsRemoteRequestTimeoutMs = resolveIntEnvWithBounds(
+      'HAPPIER_MEMORY_EMBEDDINGS_REMOTE_REQUEST_TIMEOUT_MS',
+      { min: 1_000, default: 15_000 },
+    );
 
-    const replaySynopsisScanMaxPagesRaw = Number.parseInt(String(process.env.HAPPIER_REPLAY_SYNOPSIS_SCAN_MAX_PAGES ?? ''), 10);
     // Default: 6 pages (enough to find the latest memory synopsis without scanning arbitrarily far back).
     // Min 0 disables the scan; max 25 is a hard safety cap.
-    if (Number.isFinite(replaySynopsisScanMaxPagesRaw) && replaySynopsisScanMaxPagesRaw >= 0) {
-      this.replaySynopsisScanMaxPages = Math.min(25, Math.trunc(replaySynopsisScanMaxPagesRaw));
-    } else {
-      this.replaySynopsisScanMaxPages = 6;
-    }
-
-    const replaySynopsisScanPageSizeRaw = Number.parseInt(String(process.env.HAPPIER_REPLAY_SYNOPSIS_SCAN_PAGE_SIZE ?? ''), 10);
+    this.replaySynopsisScanMaxPages = resolveIntEnvWithBounds('HAPPIER_REPLAY_SYNOPSIS_SCAN_MAX_PAGES', {
+      min: 0, max: 25, default: 6,
+    });
     // Default: 500 (server max). Min 1; max 500 to match server enforcement.
-    if (Number.isFinite(replaySynopsisScanPageSizeRaw) && replaySynopsisScanPageSizeRaw >= 1) {
-      this.replaySynopsisScanPageSize = Math.min(500, Math.trunc(replaySynopsisScanPageSizeRaw));
-    } else {
-      this.replaySynopsisScanPageSize = 500;
-    }
-
-    const replaySeedMaxCharsRaw = Number.parseInt(String(process.env.HAPPIER_REPLAY_MAX_SEED_CHARS ?? ''), 10);
+    this.replaySynopsisScanPageSize = resolveIntEnvWithBounds('HAPPIER_REPLAY_SYNOPSIS_SCAN_PAGE_SIZE', {
+      min: 1, max: 500, default: 500,
+    });
     // Default: 120k chars. Hard bounds protect providers from oversized replay seeds.
     // Min 500 keeps the prompt meaningful; max 200k is a safety cap.
-    if (Number.isFinite(replaySeedMaxCharsRaw) && replaySeedMaxCharsRaw >= 500) {
-      this.replaySeedMaxChars = Math.min(200_000, Math.trunc(replaySeedMaxCharsRaw));
-    } else {
-      this.replaySeedMaxChars = 120_000;
-    }
-
-    const replaySeedCandidateLimitRaw = Number.parseInt(String(process.env.HAPPIER_REPLAY_SEED_CANDIDATE_LIMIT ?? ''), 10);
+    this.replaySeedMaxChars = resolveIntEnvWithBounds('HAPPIER_REPLAY_MAX_SEED_CHARS', {
+      min: 500, max: 200_000, default: 120_000,
+    });
     // Default: 500 (server max). Min 50 ensures meaningful context; max 500 matches server enforcement.
-    if (Number.isFinite(replaySeedCandidateLimitRaw) && replaySeedCandidateLimitRaw >= 50) {
-      this.replaySeedCandidateLimit = Math.min(500, Math.trunc(replaySeedCandidateLimitRaw));
-    } else {
-      this.replaySeedCandidateLimit = 500;
-    }
+    this.replaySeedCandidateLimit = resolveIntEnvWithBounds('HAPPIER_REPLAY_SEED_CANDIDATE_LIMIT', {
+      min: 50, max: 500, default: 500,
+    });
 
     const startupTimingRaw = String(process.env.HAPPIER_STARTUP_TIMING_ENABLED ?? '').trim().toLowerCase();
     this.startupTimingEnabled = startupTimingRaw === '1' || startupTimingRaw === 'true' || startupTimingRaw === 'yes' || startupTimingRaw === 'on';
 
-    const startupMaxEntriesRaw = Number.parseInt(String(process.env.HAPPIER_STARTUP_DEFERRED_SESSION_MAX_ENTRIES ?? ''), 10);
-    const startupMaxBytesRaw = Number.parseInt(String(process.env.HAPPIER_STARTUP_DEFERRED_SESSION_MAX_BYTES ?? ''), 10);
     // Defaults: conservative bounds to buffer early startup writes until the server session attaches.
-    this.startupDeferredSessionBufferMaxEntries =
-      Number.isFinite(startupMaxEntriesRaw) && startupMaxEntriesRaw >= 10 ? startupMaxEntriesRaw : 500;
-    this.startupDeferredSessionBufferMaxBytes =
-      Number.isFinite(startupMaxBytesRaw) && startupMaxBytesRaw >= 1024 ? startupMaxBytesRaw : 256_000;
-
-    const startupTranscriptTakeRaw = Number.parseInt(String(process.env.HAPPIER_STARTUP_PERMISSION_SEED_TRANSCRIPT_TAKE ?? ''), 10);
-    // Default: 50 messages (enough to recover the latest permission intent without excessive transcript fetches).
-    this.startupPermissionSeedTranscriptTake =
-      Number.isFinite(startupTranscriptTakeRaw) && startupTranscriptTakeRaw >= 1
-        ? Math.min(500, Math.trunc(startupTranscriptTakeRaw))
-        : 50;
-
-    const startupOverridesCacheAgeRaw = Number.parseInt(
-      String(process.env.HAPPIER_STARTUP_OVERRIDES_CACHE_MAX_AGE_MS ?? ''),
-      10,
+    this.startupDeferredSessionBufferMaxEntries = resolveIntEnvWithBounds(
+      'HAPPIER_STARTUP_DEFERRED_SESSION_MAX_ENTRIES', { min: 10, default: 500 },
     );
+    this.startupDeferredSessionBufferMaxBytes = resolveIntEnvWithBounds(
+      'HAPPIER_STARTUP_DEFERRED_SESSION_MAX_BYTES', { min: 1024, default: 256_000 },
+    );
+
+    // Default: 50 messages (enough to recover the latest permission intent without excessive transcript fetches).
+    this.startupPermissionSeedTranscriptTake = resolveIntEnvWithBounds(
+      'HAPPIER_STARTUP_PERMISSION_SEED_TRANSCRIPT_TAKE',
+      { min: 1, max: 500, default: 50 },
+    );
+
     // Default: 7 days. Used only to seed fast-start permission/model defaults when explicit args are missing.
-    this.startupOverridesCacheMaxAgeMs =
-      Number.isFinite(startupOverridesCacheAgeRaw) && startupOverridesCacheAgeRaw >= 0
-        ? Math.trunc(startupOverridesCacheAgeRaw)
-        : 7 * 24 * 60 * 60 * 1000;
+    this.startupOverridesCacheMaxAgeMs = resolveIntEnvWithBounds(
+      'HAPPIER_STARTUP_OVERRIDES_CACHE_MAX_AGE_MS',
+      { min: 0, default: 7 * 24 * 60 * 60 * 1000 },
+    );
 
     this.currentCliVersion = packageJson.version
 
@@ -697,9 +761,16 @@ function resolveServerSelection(params: Readonly<{
   // - Else: treat HAPPIER_SERVER_URL as canonical serverUrl (legacy), and use HAPPIER_LOCAL_SERVER_URL as apiServerUrl override if provided.
   const envCanonicalServerUrl = normalizeUrl(params.envPublicServerUrl) ?? normalizeUrl(params.envServerUrl);
   if (envCanonicalServerUrl) {
+    const envPublicServerUrl = normalizeUrl(params.envPublicServerUrl);
+    const envLocalServerUrl = normalizeUrl(params.envLocalServerUrl);
+    const ignoreStaleLocalOverride =
+      !envPublicServerUrl &&
+      isLocalishServerUrl(envCanonicalServerUrl) &&
+      !!envLocalServerUrl &&
+      normalizeServerUrl(envLocalServerUrl) !== normalizeServerUrl(envCanonicalServerUrl);
     const envApiServerUrl =
-      normalizeUrl(params.envLocalServerUrl)
-      ?? (params.envPublicServerUrl ? normalizeUrl(params.envServerUrl) : null)
+      (ignoreStaleLocalOverride ? null : envLocalServerUrl)
+      ?? (envPublicServerUrl ? normalizeUrl(params.envServerUrl) : null)
       ?? envCanonicalServerUrl;
 
     const persistedMatch = params.persisted

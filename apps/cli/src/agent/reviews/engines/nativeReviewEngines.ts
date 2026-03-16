@@ -1,7 +1,8 @@
 import { listNativeReviewEngines, type NativeReviewEngineId } from '@happier-dev/protocol';
+import type { BackendTargetRefV1, ExecutionRunRetentionPolicy } from '@happier-dev/protocol';
 
 import type { ExecutionRunProfileBoundedCompleteResult } from '@/agent/executionRuns/profiles/ExecutionRunIntentProfile';
-import type { ExecutionRunBackendFactory } from '@/backends/executionRuns/types';
+import type { ExecutionRunBackendFactory } from '@/agent/executionRuns/registry/executionRunBackendTypes';
 
 import { executionRunBackendFactory as coderabbitBackendFactory } from './coderabbit/executionRunBackendFactory';
 import { normalizeCodeRabbitPlainReviewOutput } from './coderabbit/normalizeCodeRabbitPlainReviewOutput';
@@ -11,9 +12,12 @@ export type NativeReviewOutputNormalizer = (params: Readonly<{
   callId: string;
   sidechainId: string;
   backendId: string;
+  backendTarget: BackendTargetRefV1;
   startedAtMs: number;
   finishedAtMs: number;
   rawText: string;
+  intentInput?: unknown;
+  retentionPolicy?: ExecutionRunRetentionPolicy;
 }>) => ExecutionRunProfileBoundedCompleteResult;
 
 const NATIVE_BACKEND_FACTORIES: Record<NativeReviewEngineId, ExecutionRunBackendFactory> = {
@@ -39,4 +43,3 @@ export function resolveNativeReviewOutputNormalizer(id: string): NativeReviewOut
 export function listNativeReviewEngineIds(): readonly string[] {
   return listNativeReviewEngines().map((e) => e.id);
 }
-

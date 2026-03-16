@@ -37,6 +37,8 @@ export function createCodexMcpExecutionRunBackend(args: Readonly<{
         reject: (error: Error) => void;
       } = null;
   let lastAssistantText = '';
+  let fallbackCallIdCounter = 0;
+  const pendingFallbackCallIds: string[] = [];
 
   const emit = (message: AgentMessage) => {
     for (const handler of handlers) {
@@ -115,11 +117,31 @@ export function createCodexMcpExecutionRunBackend(args: Readonly<{
     const { approvalPolicy, sandbox } = resolveCodexMcpPolicyForPermissionMode(args.permissionMode);
     return buildCodexMcpStartConfig({
       prompt,
+      cwd: args.cwd,
       sandbox,
       approvalPolicy,
       mcpServers: {},
       ...(typeof args.modelId === 'string' && args.modelId.trim() ? { model: args.modelId.trim() } : {}),
     });
+  };
+
+  const createFallbackCallId = (): ToolCallId => {
+    fallbackCallIdCounter += 1;
+    return `codex_tool_${fallbackCallIdCounter}` as ToolCallId;
+  };
+
+  const resolveBeginCallId = (rawCallId: unknown): ToolCallId => {
+    const callId = String(rawCallId ?? '');
+    if (callId) return callId as ToolCallId;
+    const fallbackCallId = createFallbackCallId();
+    pendingFallbackCallIds.push(fallbackCallId);
+    return fallbackCallId;
+  };
+
+  const resolveEndCallId = (rawCallId: unknown): ToolCallId => {
+    const callId = String(rawCallId ?? '');
+    if (callId) return callId as ToolCallId;
+    return (pendingFallbackCallIds.shift() ?? createFallbackCallId()) as ToolCallId;
   };
 
   client.setHandler((raw: unknown) => {
@@ -150,23 +172,21 @@ export function createCodexMcpExecutionRunBackend(args: Readonly<{
         break;
       }
       case 'exec_command_begin': {
-        const callId = String(message.call_id ?? message.callId ?? '');
         const toolName = 'CodexBash';
         emit({
           type: 'tool-call',
           toolName,
           args: typeof message === 'object' && message ? { ...message } : {},
-          callId: (callId || `codex_tool_${Date.now()}`) as ToolCallId,
+          callId: resolveBeginCallId(message.call_id ?? message.callId),
         });
         break;
       }
       case 'exec_command_end': {
-        const callId = String(message.call_id ?? message.callId ?? '');
         emit({
           type: 'tool-result',
           toolName: 'CodexBash',
           result: typeof message === 'object' && message ? { ...message } : message,
-          callId: (callId || `codex_tool_${Date.now()}`) as ToolCallId,
+          callId: resolveEndCallId(message.call_id ?? message.callId),
           isError: Boolean(message?.error),
         });
         break;
@@ -255,8 +275,12 @@ export function createCodexMcpExecutionRunBackend(args: Readonly<{
     offMessage(handler: AgentMessageHandler): void {
       handlers.delete(handler);
     },
-    async waitForResponseComplete(timeoutMs = 120_000): Promise<void> {
+    async waitForResponseComplete(timeoutMs?: number | null): Promise<void> {
       if (!responseWaiter || responseSettled) return;
+      if (typeof timeoutMs !== 'number' || !Number.isFinite(timeoutMs) || timeoutMs <= 0) {
+        await responseWaiter.promise;
+        return;
+      }
       await Promise.race([
         responseWaiter.promise,
         new Promise<void>((_, reject) => {

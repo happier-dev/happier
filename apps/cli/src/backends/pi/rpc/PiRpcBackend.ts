@@ -396,12 +396,22 @@ export class PiRpcBackend implements AgentBackend {
     this.emitMessage({ type: 'status', status: 'idle' });
   }
 
-  async waitForResponseComplete(timeoutMs = 120_000): Promise<void> {
+  async waitForResponseComplete(timeoutMs?: number | null): Promise<void> {
     if (!this.pendingTurn && this.pendingTurnBarrier) {
       await this.pendingTurnBarrier.promise;
     }
     if (!this.pendingTurn) return;
     const turn = this.pendingTurn;
+
+    const stallTimeoutMs =
+      typeof timeoutMs === 'number' && Number.isFinite(timeoutMs) && timeoutMs > 0
+        ? Math.trunc(timeoutMs)
+        : null;
+
+    if (stallTimeoutMs === null) {
+      await turn.promise;
+      return;
+    }
 
     let timeout: NodeJS.Timeout | null = null;
     try {
@@ -410,7 +420,7 @@ export class PiRpcBackend implements AgentBackend {
         new Promise<void>((_, reject) => {
           timeout = setTimeout(() => {
             reject(new Error('Timed out waiting for Pi response completion'));
-          }, timeoutMs);
+          }, stallTimeoutMs);
           timeout.unref?.();
         }),
       ]);

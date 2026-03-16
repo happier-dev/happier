@@ -1,6 +1,6 @@
 export class ExecutionBudgetRegistry {
   private readonly maxConcurrentExecutionRuns: number | null;
-  private readonly maxConcurrentEphemeralTasks: number;
+  private readonly maxConcurrentEphemeralTasks: number | null;
   private readonly maxConcurrentTotal: number | null;
   private readonly maxConcurrentByClass: Readonly<Record<string, number>>;
   private readonly inFlightByTokenId = new Map<string, string>();
@@ -8,7 +8,7 @@ export class ExecutionBudgetRegistry {
 
   constructor(params: Readonly<{
     maxConcurrentExecutionRuns: number | null;
-    maxConcurrentEphemeralTasks: number;
+    maxConcurrentEphemeralTasks: number | null;
     maxConcurrentTotal?: number;
     maxConcurrentByClass?: Readonly<Record<string, number>>;
   }>) {
@@ -18,7 +18,10 @@ export class ExecutionBudgetRegistry {
     ) {
       throw new Error(`Invalid maxConcurrentExecutionRuns: ${params.maxConcurrentExecutionRuns}`);
     }
-    if (!Number.isInteger(params.maxConcurrentEphemeralTasks) || params.maxConcurrentEphemeralTasks < 1) {
+    if (
+      params.maxConcurrentEphemeralTasks !== null
+      && (!Number.isInteger(params.maxConcurrentEphemeralTasks) || params.maxConcurrentEphemeralTasks < 1)
+    ) {
       throw new Error(`Invalid maxConcurrentEphemeralTasks: ${params.maxConcurrentEphemeralTasks}`);
     }
     this.maxConcurrentExecutionRuns = params.maxConcurrentExecutionRuns;
@@ -96,6 +99,12 @@ export class ExecutionBudgetRegistry {
     const cls = kind === 'automation' ? 'automation' : 'ephemeral_task';
     if (!taskId || typeof taskId !== 'string') return false;
     if (this.inFlightByTokenId.has(taskId)) return true;
+
+    // Null means "no default cap". Explicit per-class or total caps may still constrain an ephemeral task
+    // when an operator opts into them.
+    if (this.maxConcurrentEphemeralTasks === null) {
+      return this.tryAcquireToken(taskId, cls, null);
+    }
 
     const inFlightEphemeral =
       this.countInFlightForClass('automation')

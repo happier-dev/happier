@@ -190,9 +190,9 @@ export interface AgentBackend {
    * Wait for the current response to complete.
    * Call this after sendPrompt to wait for all chunks to be received.
    * 
-   * @param timeoutMs - Maximum time to wait in milliseconds (default: 120000)
+   * @param timeoutMs - Optional stall budget in milliseconds. When unset/null, there is no timeout by default.
    */
-  waitForResponseComplete?(timeoutMs?: number): Promise<void>;
+  waitForResponseComplete?(timeoutMs?: number | null): Promise<void>;
   
   /**
    * Clean up resources and close the backend.
