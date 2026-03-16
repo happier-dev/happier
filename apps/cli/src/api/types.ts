@@ -133,9 +133,9 @@ export interface ClientToServerEvents {
   'ping': (callback: () => void) => void
   [SOCKET_RPC_EVENTS.REGISTER]: (data: { method: string }) => void
   [SOCKET_RPC_EVENTS.UNREGISTER]: (data: { method: string }) => void
-  [SOCKET_RPC_EVENTS.CALL]: (data: { method: string, params: string }, callback: (response: {
+  [SOCKET_RPC_EVENTS.CALL]: (data: { method: string, params: unknown }, callback: (response: {
     ok: boolean
-    result?: string
+    result?: unknown
     error?: string
   }) => void) => void
   'usage-report': (data: {

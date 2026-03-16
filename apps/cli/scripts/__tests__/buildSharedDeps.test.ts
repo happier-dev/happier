@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { sep } from 'node:path';
 
-import { resolveTscBin, runTsc, syncBundledWorkspaceDist } from '../buildSharedDeps.mjs';
+import { buildSharedDeps, resolveTscBin, runTsc, syncBundledWorkspaceDist } from '../buildSharedDeps.mjs';
 
 describe('buildSharedDeps', () => {
   it('surfaces which tsconfig failed when compilation throws', () => {
@@ -107,5 +107,22 @@ describe('buildSharedDeps', () => {
     const parsed = JSON.parse(String(payload));
     expect(parsed.exports?.['./installables']).toBeTruthy();
     expect(parsed.private).toBe(true);
+  });
+
+  it('builds protocol before agents so agents do not consume stale protocol declarations', () => {
+    const runTsc = vi.fn(() => undefined);
+
+    buildSharedDeps({
+      repoRoot: '/repo',
+      runTsc,
+      existsSync: () => true,
+      syncBundledWorkspaceDist: vi.fn(() => undefined),
+    });
+
+    expect(runTsc.mock.calls.map((args) => args[0])).toEqual([
+      '/repo/packages/protocol/tsconfig.json',
+      '/repo/packages/agents/tsconfig.json',
+      '/repo/packages/cli-common/tsconfig.json',
+    ]);
   });
 });

@@ -133,19 +133,30 @@ function sanitizeBundledWorkspacePackageJson(raw) {
   };
 }
 
-export function main() {
-  runTsc(resolve(repoRoot, 'packages', 'agents', 'tsconfig.json'));
-  runTsc(resolve(repoRoot, 'packages', 'cli-common', 'tsconfig.json'));
-  runTsc(resolve(repoRoot, 'packages', 'protocol', 'tsconfig.json'));
+export function buildSharedDeps(opts = {}) {
+  const repoRootArg = opts.repoRoot;
+  const resolvedRepoRoot = typeof repoRootArg === 'string' && repoRootArg.trim() ? repoRootArg : repoRoot;
+  const runTscImpl = opts.runTsc ?? runTsc;
+  const syncBundledWorkspaceDistImpl = opts.syncBundledWorkspaceDist ?? syncBundledWorkspaceDist;
+  const existsSyncImpl = opts.existsSync ?? existsSync;
 
-  const protocolDist = resolve(repoRoot, 'packages', 'protocol', 'dist', 'index.js');
-  if (!existsSync(protocolDist)) {
+  // Protocol must build before agents because agents consumes protocol's published types.
+  runTscImpl(resolve(resolvedRepoRoot, 'packages', 'protocol', 'tsconfig.json'));
+  runTscImpl(resolve(resolvedRepoRoot, 'packages', 'agents', 'tsconfig.json'));
+  runTscImpl(resolve(resolvedRepoRoot, 'packages', 'cli-common', 'tsconfig.json'));
+
+  const protocolDist = resolve(resolvedRepoRoot, 'packages', 'protocol', 'dist', 'index.js');
+  if (!existsSyncImpl(protocolDist)) {
     throw new Error(`Expected @happier-dev/protocol build output missing: ${protocolDist}`);
   }
 
   // If the CLI currently has bundled workspace deps under apps/cli/node_modules,
   // keep their dist outputs in sync so local builds/tests do not consume stale artifacts.
-  syncBundledWorkspaceDist({ repoRoot });
+  syncBundledWorkspaceDistImpl({ repoRoot: resolvedRepoRoot });
+}
+
+export function main() {
+  buildSharedDeps();
 }
 
 const invokedAsMain = (() => {

@@ -420,6 +420,8 @@ export async function startDaemon(): Promise<void> {
               const attach = await createSessionAttachFile({
                 happySessionId: normalizedExistingSessionId,
                 payload: {
+                  v: 2,
+                  encryptionMode: 'e2ee',
                   encryptionKeyBase64: normalizedSessionEncryptionKeyBase64,
                   encryptionVariant: 'dataKey',
                 },
