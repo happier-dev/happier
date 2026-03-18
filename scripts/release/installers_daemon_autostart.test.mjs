@@ -58,13 +58,52 @@ echo Linux
     const artifactName = `${artifactStem}.tar.gz`;
     const artifactDir = join(fixtureDir, artifactStem);
     await mkdir(artifactDir, { recursive: true });
+    await mkdir(join(artifactDir, 'package-dist'), { recursive: true });
     const happierBin = join(artifactDir, 'happier');
     await writeFile(
       happierBin,
       `#!/usr/bin/env bash
 set -euo pipefail
+copy_tree() {
+  local source="$1"
+  local target="$2"
+  mkdir -p "$target"
+  cp -R "$source"/. "$target"/
+}
 if [[ "$1" = "--version" ]]; then
   echo "${version}"
+  exit 0
+fi
+if [[ "$1" = "self" && "$2" = "__install-payload" ]]; then
+  payload_root=""
+  version_id=""
+  while [[ "$#" -gt 0 ]]; do
+    case "$1" in
+      --payload-root)
+        payload_root="$2"
+        shift 2
+        ;;
+      --version)
+        version_id="$2"
+        shift 2
+        ;;
+      *)
+        shift
+        ;;
+    esac
+  done
+  install_root="$HAPPIER_HOME_DIR/cli"
+  target_version_dir="$install_root/versions/$version_id"
+  mkdir -p "$install_root/versions" "$HAPPIER_HOME_DIR/bin"
+  if [[ -d "$install_root/current" ]]; then
+    rm -rf "$install_root/previous"
+    cp -R "$install_root/current" "$install_root/previous"
+  fi
+  rm -rf "$target_version_dir" "$install_root/current"
+  copy_tree "$payload_root" "$target_version_dir"
+  copy_tree "$payload_root" "$install_root/current"
+  cp "$install_root/current/happier" "$HAPPIER_HOME_DIR/bin/happier"
+  chmod +x "$HAPPIER_HOME_DIR/bin/happier"
   exit 0
 fi
 if [[ "$1" = "daemon" && "$2" = "service" && "$3" = "install" ]]; then
@@ -76,6 +115,7 @@ exit 0
       'utf8',
     );
     await chmod(happierBin, 0o755);
+    await writeFile(join(artifactDir, 'package-dist', 'index.mjs'), `export default ${JSON.stringify(version)};\n`, 'utf8');
 
     const tarPath = join(fixtureDir, artifactName);
     const tarRes = spawnSync('tar', ['-czf', tarPath, '-C', fixtureDir, artifactStem], { encoding: 'utf8' });
@@ -203,6 +243,8 @@ printf '%s' '${releaseJson}'
   const versionRes = spawnSync(join(outBinDir, 'happier'), ['--version'], { env, encoding: 'utf8' });
   assert.equal(versionRes.status, 0, `installed binary failed: ${String(versionRes.stderr ?? '')}`);
   assert.match(String(versionRes.stdout ?? ''), /1\.2\.4/);
+  assert.equal(await readFile(join(installDir, 'cli', 'current', 'package-dist', 'index.mjs'), 'utf8'), 'export default "1.2.4";\n');
+  assert.match(await readFile(join(installDir, 'cli', 'current', 'happier'), 'utf8'), /1\.2\.4/);
 
   await rm(root, { recursive: true, force: true });
 });
