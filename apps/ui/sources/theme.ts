@@ -41,6 +41,7 @@ export const lightTheme = {
         text: '#000000',
         textDestructive: Platform.select({ ios: '#FF3B30', default: '#F44336' }),
         textSecondary: Platform.select({ ios: '#8E8E93', default: '#49454F' }),
+        textTertiary: Platform.select({ ios: '#AEAEB2', default: '#8C8793' }),
         textLink: '#2BACCC',
         accent: {
             blue: '#007AFF',
@@ -58,7 +59,7 @@ export const lightTheme = {
         surface: '#ffffff',
         surfaceRipple: 'rgba(0, 0, 0, 0.08)',
         surfacePressed: '#f0f0f2',
-        surfaceSelected: Platform.select({ ios: '#eaeaea', default: '#eaeaea' }),
+        surfaceSelected: Platform.select({ ios: '#f8f8f8', default: '#f8f8f8' }),
         surfacePressedOverlay: Platform.select({ ios: '#D1D1D6', default: 'transparent' }),
         overlay: {
             scrim: 'rgba(0, 0, 0, 0.45)',
@@ -145,6 +146,7 @@ export const lightTheme = {
         status: {
             connected: '#34C759',
             connecting: '#007AFF',
+            actionRequired: '#FF9500',
             disconnected: '#999999',
             error: '#FF3B30',
             default: '#8E8E93',
@@ -265,6 +267,7 @@ export const darkTheme = {
         text: '#ffffff',
         textDestructive: Platform.select({ ios: '#FF453A', default: '#F48FB1' }),
         textSecondary: Platform.select({ ios: '#8E8E93', default: '#CAC4D0' }),
+        textTertiary: Platform.select({ ios: '#636366', default: '#8B8692' }),
         textLink: '#2BACCC',
         accent: {
             blue: '#0A84FF',
@@ -370,6 +373,7 @@ export const darkTheme = {
         status: { // App Connection Status
             connected: '#34C759',
             connecting: '#FFFFFF',
+            actionRequired: '#FF9F0A',
             disconnected: '#8E8E93',
             error: '#FF453A',
             default: '#8E8E93',
