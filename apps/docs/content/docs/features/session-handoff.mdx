@@ -1,0 +1,270 @@
+---
+title: Session handoff
+description: Move a live Happier session between machines, keep the same session id, and understand workspace-transfer and direct-session options.
+---
+
+Session handoff lets you move a live Happier session from one machine to another without forking it.
+
+The important promise is simple:
+
+- the same Happier session id stays in place
+- the active owner changes from one machine to another
+- the conversation can continue on the target machine
+
+This is different from:
+
+- [Session forking & replay](/docs/features/session-forking), which creates a branch
+- [Attach to a running session](/docs/features/attach-to-session), which reopens a session from a terminal on the same machine
+- [Synced and direct sessions](/docs/features/direct-sessions), which explains where the transcript lives
+
+## Where to start a handoff
+
+You can start handoff from:
+
+- the session header action menu
+- the Session info screen
+
+Open the action, choose the destination machine, review the handoff options, and confirm.
+
+## What handoff preserves
+
+When handoff succeeds:
+
+- the Happier session id stays the same
+- the transcript stays in the same session
+- session metadata stays attached to that same session
+- the new machine becomes the active owner
+
+For supported providers, the provider runtime state also moves with the session so the target machine can continue the same work instead of starting a brand-new conversation.
+
+## What handoff does not do
+
+Session handoff does not automatically:
+
+- log a provider CLI into the target machine
+- merge or overwrite the target workspace unless you explicitly enable workspace transfer
+- make unsupported providers suddenly resumable across machines
+
+If the target side cannot satisfy the provider/runtime requirements, the handoff cannot complete.
+
+## Supported providers
+
+Session handoff is provider-dependent.
+
+Current status:
+
+| Provider | Status | Notes |
+| --- | --- | --- |
+| Claude | Supported | Works with supported Claude session state transfer. |
+| OpenCode | Supported | Works with OpenCode session import/export flows. |
+| Codex | Experimental | Available, but less stable than Claude/OpenCode. |
+| Other providers | Unsupported | The handoff action is hidden or unavailable. |
+
+## Session types
+
+Session handoff works with both user-facing session models:
+
+- Synced sessions
+- Direct sessions
+
+See [Synced and direct sessions](/docs/features/direct-sessions).
+
+### Synced sessions
+
+For a synced session, handoff moves the live owner to another machine while keeping the same Happier-managed session.
+
+This is the simplest case:
+
+- same synced session
+- new owning machine
+- same transcript and session id
+
+### Direct sessions
+
+For a direct session, handoff shows an extra target-mode choice.
+
+You can choose:
+
+- Keep direct
+- Convert to synced
+
+Use Keep direct when you want the target machine to keep following the provider-backed session.
+
+Use Convert to synced when you want to move out of the machine-bound direct model and let Happier own the session going forward.
+
+## Workspace transfer
+
+Workspace transfer is optional.
+
+By default, Happier keeps the target workspace unchanged unless you turn transfer on.
+
+When enabled, the handoff modal lets you choose:
+
+- whether to transfer the workspace
+- what to do if the target path already exists
+- how ignored files should be handled
+
+### Conflict policies
+
+Current conflict options:
+
+- Create sibling copy
+- Replace existing path
+
+`Replace existing path` requires explicit confirmation when the destination already exists.
+
+### Ignored files
+
+Current ignored-file options:
+
+- Exclude ignored files
+- Include selected ignored files
+
+If you choose Include selected ignored files, you can provide include globs such as:
+
+- `dist/**`
+- `.env.local`
+
+### Safe-by-default path checks
+
+Happier blocks workspace transfer for unsafe source paths such as:
+
+- the filesystem root
+- your home directory
+- the shorthand home path (`~`)
+
+In those cases, the handoff UI forces workspace transfer off instead of attempting to copy an unsafe or excessively broad workspace.
+
+## Session handoff settings
+
+You can set default handoff behavior in:
+
+- Settings -> Session -> Session handoff
+
+Those defaults include:
+
+- whether workspace transfer is enabled by default
+- the default workspace conflict policy
+- the default ignored-file mode
+- ignored-file include globs
+- the default target mode for direct-session handoff
+
+The modal still lets you override those defaults for an individual handoff.
+
+Related guide:
+
+- [Session settings](/docs/features/session-settings)
+
+## Connected services and handoff
+
+Connected services are often the easiest way to make handoff work across machines.
+
+Why:
+
+- the credential lives in your Happier account
+- compatible backends can reuse that credential on another machine
+- you do not need to depend only on the target machine’s native CLI login state
+
+This is especially useful when you want to move a session between:
+
+- two laptops/desktops
+- a host machine and a VM
+- different machine homes attached to the same account
+
+Connected services do not replace every machine-local auth requirement, but they are the preferred path for cross-machine continuity when the backend supports them.
+
+Related guide:
+
+- [Connected services](/docs/features/connected-services)
+
+## Provider authentication and handoff
+
+Machine-local provider authentication still matters.
+
+If a provider/backend relies on the native provider CLI login state, the target machine must be ready too.
+
+So the mental model is:
+
+- Connected services help when the backend can materialize auth from Happier-managed credentials
+- Provider authentication still matters for machine-local provider CLI workflows
+
+Related guide:
+
+- [Provider authentication](/docs/features/provider-authentication)
+
+## What you see during handoff
+
+When you start handoff, Happier shows a progress modal while it:
+
+- prepares the target machine
+- moves the session state
+- resumes the session on the target
+- updates the session ownership
+
+After completion:
+
+- the session stays in place in Happier
+- the active machine changes
+- the old owner relinquishes control
+
+## Common workflows
+
+### Move a live session from one machine to another
+
+Use handoff when you want to keep the same conversation going, but on a different machine.
+
+Examples:
+
+- move from your laptop to a desktop
+- move from a host machine to a VM
+- move from one dedicated Happier home to another
+
+### Keep a direct session provider-backed, but move it
+
+Use Keep direct when the provider-backed ownership model is still what you want and the provider supports direct handoff.
+
+### Convert a direct session into a synced session
+
+Use Convert to synced when you started from a provider-native session but now want Happier to own the transcript and future continuity.
+
+### Move the session but leave the target workspace alone
+
+Leave workspace transfer off. This is the safest default when:
+
+- the target already has the right files
+- you want session continuity without file copying
+- the source path is broad or machine-specific
+
+## Troubleshooting
+
+### The target machine is not selectable
+
+Usually one of these is true:
+
+- the machine is offline
+- the machine is the current owner
+- the provider/backend does not support handoff for this session
+
+### Workspace transfer is disabled
+
+This usually means:
+
+- your defaults have workspace transfer off, or
+- Happier detected an unsafe source path such as `~` or a filesystem root
+
+### The handoff action is missing
+
+The action can be unavailable when:
+
+- the provider does not support handoff
+- the session lacks the required provider resume/state information
+- the selected server/build disabled the handoff feature
+
+## Related guides
+
+- [Synced and direct sessions](./direct-sessions)
+- [Session settings](./session-settings)
+- [Connected services](./connected-services)
+- [Provider authentication](./provider-authentication)
+- [Attach to a running session](./attach-to-session)
+- [Session forking & replay](./session-forking)

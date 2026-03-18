@@ -5,6 +5,19 @@ description: How Happier integrates with local AI provider CLIs (like Claude Cod
 
 Happier can run different “providers” (agent backends) depending on which tool you want to use.
 
+Some providers also support Happier connected services. When they do, you can connect subscriptions / API keys once in Settings and then choose those profiles from the new-session auth picker instead of relying only on the provider's native login state.
+
+Some providers also support [session handoff](/docs/features/session-handoff), which lets you move the same Happier session between machines without forking it.
+
+Most providers are first-class built-ins such as Claude, Codex, Gemini, or Kiro.
+
+Happier also ships a generic **Custom ACP** provider family for any CLI that speaks the Agent Client Protocol (ACP). With Custom ACP, you define selectable **ACP backends**, and those backends then appear as normal backend choices across the app.
+
+See:
+
+- [ACP backends](/docs/features/acp-backends)
+- [Provider authentication](/docs/features/provider-authentication)
+
 ## Provider settings in the app
 
 Provider-specific settings live with each provider (not hardcoded in the core Settings screen).
@@ -14,6 +27,13 @@ In the app, open:
 1. **Settings**
 2. **AI provider settings**
 3. Pick a provider (for example, **Claude (remote)**)
+
+Each provider page can show two different auth surfaces:
+
+- **Authentication** — the native login state of the provider CLI on the selected machine
+- **Connected service** — the Happier-managed credential family that provider can consume, when supported
+
+For the shared user guide to provider CLI auth, see [Provider authentication](/docs/features/provider-authentication).
 
 ## Installing provider CLIs
 
@@ -30,11 +50,14 @@ See the provider-specific pages for installation and troubleshooting.
 <Cards>
   <Card title="Claude" href="/docs/providers/claude" />
   <Card title="Codex" href="/docs/providers/codex" />
+  <Card title="Custom ACP" href="/docs/providers/custom-acp" />
   <Card title="Gemini" href="/docs/providers/gemini" />
   <Card title="OpenCode" href="/docs/providers/opencode" />
   <Card title="Augment (Auggie)" href="/docs/providers/augment" />
+  <Card title="GitHub Copilot" href="/docs/providers/copilot" />
   <Card title="Kilo (experimental)" href="/docs/providers/kilo" />
   <Card title="Kimi" href="/docs/providers/kimi" />
+  <Card title="Kiro" href="/docs/providers/kiro" />
   <Card title="Qwen" href="/docs/providers/qwen" />
   <Card title="Pi (experimental)" href="/docs/providers/pi" />
 </Cards>

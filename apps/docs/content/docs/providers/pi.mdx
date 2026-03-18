@@ -27,15 +27,32 @@ pi --version
 happier pi
 ```
 
+## Local authentication in Happier
+
+Pi does not currently expose a native interactive login flow through Happier provider settings.
+
+Instead, Happier shows the machine-local auth state for Pi in:
+
+- **Settings → AI provider settings → Pi**
+
+Today that status is based on supported environment-backed credentials on the selected machine.
+
+For the shared user guide, see [Provider authentication](/docs/features/provider-authentication).
+
 ## Authentication (connected services)
 
 Pi can reuse connected services profiles when spawned by Happier:
 
-- `claude-subscription` (setup-token) for Claude subscription auth (materialized as `ANTHROPIC_OAUTH_TOKEN`)
+- `openai-codex` (subscription OAuth)
+- `openai` (API key)
+- `claude-subscription` (setup-token only) for Claude subscription auth (materialized as `ANTHROPIC_OAUTH_TOKEN`)
 - `anthropic` for Anthropic API key auth (`ANTHROPIC_API_KEY`)
-- `openai` for OpenAI API key auth (where applicable)
 
 If multiple compatible profiles exist, Happier will let you pick one when starting a new session.
+
+Important limitation:
+
+- Pi does not currently accept Claude OAuth profiles from `claude-subscription`; use a Claude setup-token profile instead.
 
 See: [Connected services](/docs/features/connected-services)
 

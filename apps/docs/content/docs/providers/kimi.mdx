@@ -33,6 +33,18 @@ Invoke-RestMethod https://code.kimi.com/install.ps1 | Invoke-Expression
 kimi --version
 ```
 
+## Local authentication in Happier
+
+Kimi supports launching its native setup/login flow from:
+
+- **Settings → AI provider settings → Kimi**
+
+Happier opens Kimi and sends `/setup` for you.
+
+Auth-status detection for Kimi is currently conservative, so Happier may still show **Unknown** even though the login flow is available.
+
+For the shared user guide, see [Provider authentication](/docs/features/provider-authentication).
+
 ## Start Kimi with Happier
 
 ```bash
@@ -41,7 +53,8 @@ happier kimi
 
 ## Notes
 
-- Resume/model/mode/permission behavior is capability-driven.
+- Resume availability is session-specific in Happier and depends on valid resume metadata plus the current backend/settings.
+- Model, mode, and permission behavior can still vary by installed Kimi runtime.
 - Tool calls are normalized to canonical Happier tool renderers.
 
 ## Troubleshooting

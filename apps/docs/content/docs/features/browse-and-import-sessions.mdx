@@ -1,0 +1,193 @@
+---
+title: Browse and import provider sessions
+description: Find existing Codex, Claude, and OpenCode sessions, open them directly in Happier, and import or sync them when you want Happier-native continuity.
+---
+
+This feature is for a common workflow:
+
+> “I already have sessions in Codex, Claude, or OpenCode. I want to find them in Happier, inspect them, and decide whether to keep them provider-backed or bring them fully into Happier.”
+
+Happier supports that through the **Direct sessions** flow.
+
+## What this feature does
+
+Happier can:
+
+- browse existing provider sessions on a selected machine
+- show those sessions in a searchable list
+- open them directly in Happier without importing them first
+- follow running transcripts from the provider
+- take control of the session in Happier
+- import/sync the session into Happier when you want Happier to become the source of truth
+
+This works best with:
+
+- **Codex**
+- **Claude**
+- **OpenCode**
+
+## Where to find it
+
+1. Open the session list
+2. Switch to the **Direct** tab
+3. Choose **Browse provider sessions**
+4. Pick:
+   - a machine
+   - a provider
+   - a source
+
+From there, Happier shows the provider sessions it can discover for that selection.
+
+## What “browse provider sessions” means
+
+Happier is reading the provider’s own session source on the chosen machine.
+
+That usually means:
+
+- provider logs
+- provider session stores
+- provider-managed server state
+
+So this feature is specifically useful for sessions that:
+
+- were started outside Happier
+- already existed before you opened Happier
+- are still running locally in a provider CLI or provider server
+
+## Open directly vs import into Happier
+
+You have two main ways to work with an existing provider session.
+
+### Open directly
+
+Open the session as a **Direct** session when you want:
+
+- immediate access
+- no transcript import yet
+- the provider to remain the source of truth
+- a machine-bound session that Happier can inspect or control
+
+This is the best option when you mainly want to browse, inspect, monitor, or lightly continue the provider session.
+
+### Import or sync into Happier
+
+Use **Take over + Sync** when you want:
+
+- Happier to own the transcript moving forward
+- a session that behaves like a normal Happier synced session
+- cross-device continuity through Happier
+- a clean transition from provider-native history into Happier-native history
+
+This is the best option when the session is no longer just something you want to observe—you want it to become part of your regular Happier workflow.
+
+## A practical decision rule
+
+Use **Direct** when:
+
+- the provider session already exists
+- you want the lowest-friction way to open it
+- the machine will stay online
+- you do not want to import it yet
+
+Use **Take over + Sync** when:
+
+- you want Happier-native continuity
+- you want the session to feel like a normal Happier session afterward
+- you want the imported transcript and the new work to live together in Happier
+
+## What users can do after browsing
+
+After you browse and open a provider session, users can usually:
+
+- read the transcript
+- load older transcript pages
+- follow new transcript entries
+- take over the session directly in Happier
+- take over and sync/import it into Happier
+
+Depending on the provider and session state, users may also be able to:
+
+- resume it from Happier once it is a synced Happier session with valid resume metadata
+- continue sending prompts
+- move from observe-only mode into a controlled mode
+
+## How import works conceptually
+
+When a user chooses **Take over + Sync**:
+
+1. Happier reads the provider transcript
+2. Happier imports that history into the Happier session
+3. The session changes from **Direct** to **Synced**
+4. Future work continues as a Happier-managed session
+
+This is why the feature is more than “view logs”.
+It is a real bridge from provider-native sessions into Happier-native sessions.
+
+## What providers are supported
+
+### Codex
+
+Happier can browse existing Codex sessions from supported Codex homes on the selected machine, including the usual user store and supported connected-service-backed stores.
+
+### Claude
+
+Happier can browse existing Claude sessions from the selected machine’s Claude session store and open them as direct sessions in Happier.
+
+### OpenCode
+
+Happier can browse existing OpenCode sessions from the OpenCode server/session source and open them directly from Happier.
+
+## What happens if the machine is offline
+
+If the provider session is still **Direct**, the machine must be reachable.
+
+If the machine goes offline:
+
+- Happier can no longer refresh the provider transcript
+- direct follow/tail stops
+- direct takeover controls are unavailable until the machine returns
+
+If the session has already been **synced/imported** into Happier, the synced Happier session remains available as a normal Happier session.
+
+## Search and filtering
+
+The browse modal lets users narrow down provider sessions by:
+
+- machine
+- provider
+- source
+- local search inside the loaded candidate list
+
+Happier also shows useful browse metadata when available, including:
+
+- extracted session titles
+- last activity
+- path/context
+- activity state such as running, recent, or idle
+
+## Typical user scenarios
+
+### “I started a Codex session in my terminal yesterday”
+
+Open **Direct → Browse provider sessions**, select the machine and Codex, find the session, open it, then either:
+
+- keep it direct, or
+- choose **Take over + Sync**
+
+### “I want to monitor a live Claude session from Happier”
+
+Browse the Claude sessions on the machine, open the session directly, and keep it in **Direct** mode unless you want Happier to take ownership.
+
+### “I use OpenCode and want those sessions to appear in Happier without starting them through Happier”
+
+Browse the OpenCode source, open the session directly, and sync it later only if you want Happier-native continuity.
+
+## Related guides
+
+- [Resume inactive sessions](./session-resume)
+- [Synced and direct sessions](./direct-sessions)
+- [Connected services](./connected-services)
+- [Profiles](./profiles)
+- [Codex](../providers/codex)
+- [Claude](../providers/claude)
+- [OpenCode](../providers/opencode)

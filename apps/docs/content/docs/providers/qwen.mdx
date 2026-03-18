@@ -33,6 +33,18 @@ curl -fsSL -o %TEMP%\\install-qwen.bat https://qwen-code-assets.oss-cn-hangzhou.
 qwen --version
 ```
 
+## Local authentication in Happier
+
+Qwen supports launching its native auth flow from:
+
+- **Settings → AI provider settings → Qwen**
+
+Happier opens Qwen and sends `/auth` for you.
+
+Auth-status detection for Qwen is currently conservative, so Happier may still show **Unknown** even though the login flow is available.
+
+For the shared user guide, see [Provider authentication](/docs/features/provider-authentication).
+
 ## Start Qwen with Happier
 
 ```bash
@@ -41,7 +53,8 @@ happier qwen
 
 ## Notes
 
-- Resume/model/mode/permission behavior is capability-driven.
+- Resume availability is session-specific in Happier and depends on valid resume metadata plus the current backend/settings.
+- Model, mode, and permission behavior can still vary by installed Qwen runtime.
 - Tool calls are normalized to canonical Happier tool renderers.
 
 ## Troubleshooting
