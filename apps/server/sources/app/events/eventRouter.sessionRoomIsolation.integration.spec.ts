@@ -73,13 +73,20 @@ async function startTestIoServer() {
     };
 }
 
-function connectClient(params: { url: string; userId: string; clientType: "session-scoped" | "user-scoped"; sessionId?: string }) {
+function connectClient(params: {
+    url: string;
+    userId: string;
+    clientType: "session-scoped" | "user-scoped" | "machine-scoped";
+    sessionId?: string;
+    machineId?: string;
+}) {
     const socket = ioClient(params.url, {
         path: "/v1/updates",
         auth: {
             userId: params.userId,
             clientType: params.clientType,
             ...(params.sessionId ? { sessionId: params.sessionId } : {}),
+            ...(params.machineId ? { machineId: params.machineId } : {}),
         },
         reconnection: false,
         autoConnect: true,
@@ -175,6 +182,44 @@ describe("eventRouter session room isolation (integration)", () => {
         } finally {
             u1.disconnect();
             u2.disconnect();
+            await server.close();
+        }
+    });
+
+    it("does not deliver catch-all authenticated-user broadcasts to machine-scoped sockets", async () => {
+        const server = await startTestIoServer();
+        eventRouter.setIo(server.io as any);
+
+        const userScoped = connectClient({ url: server.url, userId: "u1", clientType: "user-scoped" });
+        const machineScoped = connectClient({
+            url: server.url,
+            userId: "u1",
+            clientType: "machine-scoped",
+            machineId: "m1",
+        });
+
+        try {
+            await Promise.all([waitForConnect(userScoped), waitForConnect(machineScoped)]);
+
+            const receivedByUserScoped: any[] = [];
+            const receivedByMachineScoped: any[] = [];
+
+            userScoped.on("update", (data) => receivedByUserScoped.push(data));
+            machineScoped.on("update", (data) => receivedByMachineScoped.push(data));
+
+            eventRouter.emitUpdate({
+                userId: "u1",
+                payload: { id: "upd-all", seq: 1, createdAt: Date.now(), body: { t: "public-share-created" } } as any,
+                recipientFilter: { type: "all-user-authenticated-connections" },
+            });
+
+            await vi.waitFor(() => {
+                expect(receivedByUserScoped.some((payload) => payload?.id === "upd-all")).toBe(true);
+            });
+            expect(receivedByMachineScoped.some((payload) => payload?.id === "upd-all")).toBe(false);
+        } finally {
+            userScoped.disconnect();
+            machineScoped.disconnect();
             await server.close();
         }
     });

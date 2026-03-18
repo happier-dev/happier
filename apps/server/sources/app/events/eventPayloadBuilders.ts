@@ -96,6 +96,11 @@ export function buildUpdateSessionUpdate(
     updateId: string,
     metadata?: { value: string | null; version: number },
     agentState?: { value: string | null; version: number },
+    projection?: {
+        lastViewedSessionSeq?: number;
+        pendingPermissionRequestCount?: number;
+        pendingUserActionRequestCount?: number;
+    },
 ): UpdatePayload {
     return {
         id: updateId,
@@ -106,7 +111,14 @@ export function buildUpdateSessionUpdate(
             // Compatibility: some clients use `sid` for sessionId.
             sid: sessionId,
             metadata,
-            agentState
+            agentState,
+            ...(typeof projection?.lastViewedSessionSeq === 'number' ? { lastViewedSessionSeq: projection.lastViewedSessionSeq } : {}),
+            ...(typeof projection?.pendingPermissionRequestCount === 'number'
+                ? { pendingPermissionRequestCount: projection.pendingPermissionRequestCount }
+                : {}),
+            ...(typeof projection?.pendingUserActionRequestCount === 'number'
+                ? { pendingUserActionRequestCount: projection.pendingUserActionRequestCount }
+                : {}),
         },
         createdAt: Date.now()
     };

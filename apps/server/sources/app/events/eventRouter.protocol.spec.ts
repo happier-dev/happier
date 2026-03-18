@@ -68,11 +68,19 @@ describe("eventRouter payloads (protocol container)", () => {
             "upd-3",
             { value: "enc-meta", version: 2 },
             { value: null, version: 3 },
+            {
+                lastViewedSessionSeq: 7,
+                pendingPermissionRequestCount: 2,
+                pendingUserActionRequestCount: 1,
+            },
         );
 
         expect(UpdateContainerSchema.safeParse(payload).success).toBe(true);
         expect((payload.body as any).id).toBe("s1");
         expect((payload.body as any).sid).toBe("s1");
+        expect((payload.body as any).lastViewedSessionSeq).toBe(7);
+        expect((payload.body as any).pendingPermissionRequestCount).toBe(2);
+        expect((payload.body as any).pendingUserActionRequestCount).toBe(1);
     });
 
     it("buildDeleteSessionUpdate emits a full container", () => {

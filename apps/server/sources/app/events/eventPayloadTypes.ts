@@ -1,5 +1,6 @@
 import { Socket } from "socket.io";
 import type { LinkedProvider } from "@/app/auth/providers/linkedProviders";
+import type { ExecutionRunPublicState } from "@happier-dev/protocol";
 
 // === CONNECTION TYPES ===
 
@@ -88,6 +89,9 @@ export type UpdateEvent = {
         value: string | null;
         version: number;
     } | null | undefined;
+    lastViewedSessionSeq?: number | undefined;
+    pendingPermissionRequestCount?: number | undefined;
+    pendingUserActionRequestCount?: number | undefined;
 } | {
     type: 'pending-changed';
     sessionId: string;
@@ -255,6 +259,10 @@ export type EphemeralEvent = {
     active: boolean;
     activeAt: number;
     thinking?: boolean;
+} | {
+    type: 'execution-run-updated';
+    sessionId: string;
+    run: ExecutionRunPublicState;
 } | {
     type: 'transcript-draft';
     sessionId: string;
