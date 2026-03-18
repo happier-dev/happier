@@ -2,33 +2,91 @@ import axios from 'axios';
 
 import { connectionState, isNetworkError } from '@/api/offline/serverConnectionErrors';
 
-export function shouldReturnNullForGetOrCreateSessionError(
-  error: unknown,
-  params: Readonly<{ url: string }>
-): boolean {
-  // Check if it's a connection error
-  if (error && typeof error === 'object' && 'code' in error) {
-    const errorCode = (error as any).code;
-    if (isNetworkError(errorCode)) {
-      connectionState.fail({
-        operation: 'Session creation',
-        caller: 'api.getOrCreateSession',
-        errorCode,
-        url: params.url,
-      });
-      return true;
-    }
+function readBootstrapErrorStatus(error: unknown): number | null {
+  if (axios.isAxiosError(error)) {
+    return typeof error.response?.status === 'number' ? error.response.status : null;
   }
 
-  // Handle 404 gracefully - server endpoint may not be available yet
-  const is404Error =
-    (axios.isAxiosError(error) && error.response?.status === 404) ||
-    (error && typeof error === 'object' && 'response' in error && (error as any).response?.status === 404);
-  if (is404Error) {
-    connectionState.fail({
-      operation: 'Session creation',
+  if (error && typeof error === 'object' && 'response' in error) {
+    const status = (error as { response?: { status?: unknown } }).response?.status;
+    return typeof status === 'number' ? status : null;
+  }
+
+  return null;
+}
+
+function readBootstrapNetworkErrorCode(error: unknown): string | null {
+  if (!error || typeof error !== 'object' || !('code' in error)) {
+    return null;
+  }
+
+  const code = (error as { code?: unknown }).code;
+  return typeof code === 'string' ? code : null;
+}
+
+function markOfflineBootstrapFailure(params: Readonly<{
+  operation: string;
+  url: string;
+  errorCode: string;
+  caller?: string;
+  details?: readonly string[];
+}>): void {
+  connectionState.fail({
+    operation: params.operation,
+    caller: params.caller,
+    errorCode: params.errorCode,
+    url: params.url,
+    details: params.details ? [...params.details] : undefined,
+  });
+}
+
+function shouldTreatBootstrapErrorAsOffline(params: Readonly<{
+  error: unknown;
+  operation: string;
+  url: string;
+  caller?: string;
+  treat404AsOffline?: boolean;
+  treat5xxAsOffline?: boolean;
+  ignoredStatuses?: readonly number[];
+  retryDetails?: readonly string[];
+}>): boolean {
+  const networkErrorCode = readBootstrapNetworkErrorCode(params.error);
+  if (networkErrorCode && isNetworkError(networkErrorCode)) {
+    markOfflineBootstrapFailure({
+      operation: params.operation,
+      caller: params.caller,
+      errorCode: networkErrorCode,
+      url: params.url,
+    });
+    return true;
+  }
+
+  const status = readBootstrapErrorStatus(params.error);
+  if (status === null) {
+    return false;
+  }
+
+  if (params.ignoredStatuses?.includes(status)) {
+    return false;
+  }
+
+  if (params.treat404AsOffline === true && status === 404) {
+    markOfflineBootstrapFailure({
+      operation: params.operation,
+      caller: params.caller,
       errorCode: '404',
       url: params.url,
+    });
+    return true;
+  }
+
+  if (params.treat5xxAsOffline === true && status >= 500) {
+    markOfflineBootstrapFailure({
+      operation: params.operation,
+      caller: params.caller,
+      errorCode: String(status),
+      url: params.url,
+      details: params.retryDetails,
     });
     return true;
   }
@@ -36,48 +94,31 @@ export function shouldReturnNullForGetOrCreateSessionError(
   return false;
 }
 
-export function shouldReturnMinimalMachineForGetOrCreateMachineError(
+export function shouldTreatGetOrCreateSessionErrorAsOffline(
   error: unknown,
   params: Readonly<{ url: string }>
 ): boolean {
-  // Handle connection errors gracefully
-  if (axios.isAxiosError(error) && error.code && isNetworkError(error.code)) {
-    connectionState.fail({
-      operation: 'Machine registration',
-      caller: 'api.getOrCreateMachine',
-      errorCode: error.code,
-      url: params.url,
-    });
-    return true;
-  }
+  return shouldTreatBootstrapErrorAsOffline({
+    error,
+    operation: 'Session creation',
+    caller: 'api.getOrCreateSession',
+    url: params.url,
+    treat404AsOffline: true,
+  });
+}
 
-  if (axios.isAxiosError(error) && error.response?.status) {
-    const status = error.response.status;
-
-    // Never treat a machine-id conflict as an offline/transient condition.
-    if (status === 409) return false;
-
-    // Handle 5xx - server error, use offline mode with auto-reconnect
-    if (status >= 500) {
-      connectionState.fail({
-        operation: 'Machine registration',
-        errorCode: String(status),
-        url: params.url,
-        details: ['Server encountered an error, will retry automatically'],
-      });
-      return true;
-    }
-
-    // Handle 404 - endpoint may not be available yet
-    if (status === 404) {
-      connectionState.fail({
-        operation: 'Machine registration',
-        errorCode: '404',
-        url: params.url,
-      });
-      return true;
-    }
-  }
-
-  return false;
+export function shouldTreatGetOrCreateMachineErrorAsOffline(
+  error: unknown,
+  params: Readonly<{ url: string }>
+): boolean {
+  return shouldTreatBootstrapErrorAsOffline({
+    error,
+    operation: 'Machine registration',
+    caller: 'api.getOrCreateMachine',
+    url: params.url,
+    treat404AsOffline: true,
+    treat5xxAsOffline: true,
+    ignoredStatuses: [409],
+    retryDetails: ['Server encountered an error, will retry automatically'],
+  });
 }
