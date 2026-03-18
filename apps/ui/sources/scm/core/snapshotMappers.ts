@@ -22,7 +22,7 @@ export const EMPTY_SCM_CAPABILITIES: ScmCapabilities = {
     writeBranchCheckout: false,
     readStash: false,
     writeStash: false,
-    workspaceWorktreeCreate: false,
+    worktreeCreate: false,
     changeSetModel: 'working-copy',
     supportedDiffAreas: ['pending', 'both'],
 };
@@ -65,6 +65,7 @@ export function mapProtocolSnapshotToUiSnapshot(
             rootPath: snapshot.repo.rootPath,
             backendId: snapshot.repo.backendId,
             mode: snapshot.repo.mode,
+            worktrees: snapshot.repo.worktrees,
         },
         capabilities: mergeScmCapabilities(snapshot.capabilities),
         branch: {

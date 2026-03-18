@@ -3,12 +3,17 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { ScmWorkingSnapshot as ProtocolScmWorkingSnapshot } from '@happier-dev/protocol';
 import { SCM_OPERATION_ERROR_CODES } from '@happier-dev/protocol';
 import { sessionScmStatusSnapshot } from '@/sync/ops';
+import { machineScmStatusSnapshot } from '@/sync/ops/scm/machineScm';
 import { storage } from '@/sync/domains/state/storage';
 import type { ScmWorkingSnapshot as UiScmWorkingSnapshot } from '@/sync/domains/state/storageTypes';
 import { ScmRepositoryService, snapshotToScmStatus } from './scmRepositoryService';
 
 vi.mock('@/sync/ops', () => ({
     sessionScmStatusSnapshot: vi.fn(),
+}));
+
+vi.mock('@/sync/ops/scm/machineScm', () => ({
+    machineScmStatusSnapshot: vi.fn(),
 }));
 
 afterEach(() => {
@@ -89,7 +94,7 @@ function makeScmSnapshot(partial?: Partial<ProtocolScmWorkingSnapshot>): Protoco
             writeRemoteFetch: true,
             writeRemotePull: true,
             writeRemotePush: true,
-            workspaceWorktreeCreate: true,
+            worktreeCreate: true,
             changeSetModel: 'index',
             supportedDiffAreas: ['included', 'pending', 'both'],
             operationLabels: { commit: 'Commit staged' },
@@ -386,8 +391,53 @@ describe('ScmRepositoryService.fetchSnapshotForSession', () => {
         expect(result?.capabilities?.operationLabels?.commit).toBe('Commit changes');
     });
 
+    it('preserves protocol repo worktrees in the ui snapshot shape', async () => {
+        vi.spyOn(storage, 'getState').mockReturnValue({
+            sessions: {
+                session_1: {
+                    id: 'session_1',
+                    metadata: {
+                        machineId: 'machine-a',
+                        path: '/repo',
+                    },
+                },
+            },
+        } as any);
+        vi.mocked(sessionScmStatusSnapshot).mockResolvedValue({
+            success: true,
+            snapshot: makeScmSnapshot({
+                repo: {
+                    isRepo: true,
+                    rootPath: '/repo',
+                    backendId: 'git',
+                    mode: '.git',
+                    worktrees: [
+                        { path: '/repo/.worktrees/feature-auth', branch: 'feature/auth', isCurrent: false },
+                        { path: '/repo', branch: 'main', isCurrent: true },
+                    ],
+                },
+            }),
+        } as any);
+
+        const service = new ScmRepositoryService();
+        const result = await service.fetchSnapshotForSession('session_1');
+
+        expect(result?.repo.worktrees).toEqual([
+            { path: '/repo/.worktrees/feature-auth', branch: 'feature/auth', isCurrent: false },
+            { path: '/repo', branch: 'main', isCurrent: true },
+        ]);
+    });
+
     it('does not pass tilde session paths to scm rpc (relies on session working directory)', async () => {
         vi.spyOn(storage, 'getState').mockReturnValue({
+            machines: {
+                'machine-a': {
+                    id: 'machine-a',
+                    metadata: {
+                        homeDir: '/Users/tester',
+                    },
+                },
+            },
             sessions: {
                 session_1: {
                     id: 'session_1',
@@ -410,6 +460,98 @@ describe('ScmRepositoryService.fetchSnapshotForSession', () => {
         await service.fetchSnapshotForSession('session_1');
 
         expect(sessionScmStatusSnapshot).toHaveBeenCalledWith('session_1', {});
+    });
+
+    it('hydrates the shared machine/path cache when a session snapshot resolves a repo identity', async () => {
+        vi.spyOn(storage, 'getState').mockReturnValue({
+            machines: {
+                'machine-a': {
+                    id: 'machine-a',
+                    metadata: {
+                        homeDir: '/Users/tester',
+                    },
+                },
+            },
+            sessions: {
+                session_1: {
+                    id: 'session_1',
+                    metadata: {
+                        machineId: 'machine-a',
+                        path: '~/repo',
+                    },
+                },
+            },
+        } as any);
+        vi.mocked(sessionScmStatusSnapshot).mockResolvedValue({
+            success: true,
+            snapshot: makeScmSnapshot({
+                projectKey: 'machine-a:/Users/tester/repo',
+                repo: {
+                    isRepo: true,
+                    rootPath: '/Users/tester/repo',
+                    backendId: 'git',
+                    mode: '.git',
+                    worktrees: [{ path: '/Users/tester/repo', branch: 'main', isCurrent: true }],
+                },
+            }),
+        } as any);
+
+        const service = new ScmRepositoryService();
+        const result = await service.fetchSnapshotForSession('session_1');
+
+        expect(service.readCachedSnapshotForMachinePath({
+            machineId: 'machine-a',
+            path: '~/repo',
+        })).toEqual(result);
+    });
+
+    it('stores session snapshots under the canonical repo root identity key when the session path is a subdirectory', async () => {
+        vi.spyOn(storage, 'getState').mockReturnValue({
+            machines: {
+                'machine-a': {
+                    id: 'machine-a',
+                    metadata: {
+                        homeDir: '/Users/tester',
+                    },
+                },
+            },
+            sessions: {
+                session_1: {
+                    id: 'session_1',
+                    metadata: {
+                        machineId: 'machine-a',
+                        path: '~/repo/subdir',
+                    },
+                },
+            },
+        } as any);
+        vi.mocked(sessionScmStatusSnapshot).mockResolvedValue({
+            success: true,
+            snapshot: makeScmSnapshot({
+                projectKey: '',
+                repo: {
+                    isRepo: true,
+                    rootPath: '/Users/tester/repo',
+                    backendId: 'git',
+                    mode: '.git',
+                    worktrees: [{ path: '/Users/tester/repo', branch: 'main', isCurrent: true }],
+                },
+            }),
+        } as any);
+
+        const service = new ScmRepositoryService();
+        const result = await service.fetchSnapshotForSession('session_1');
+
+        expect(result?.projectKey).toBe('machine-a:/Users/tester/repo');
+        expect(service.readCachedSnapshotForSession('session_1')).toEqual(result);
+        expect(service.readCachedSnapshotForMachinePath({
+            machineId: 'machine-a',
+            path: '~/repo',
+        })).toEqual(result);
+        expect(service.readCachedSnapshotForMachinePath({
+            machineId: 'machine-a',
+            path: '~/repo/subdir',
+        })).toEqual(result);
     });
 
     it('defaults missing capabilities to fully disabled regardless of backend id', async () => {
@@ -457,9 +599,400 @@ describe('ScmRepositoryService.fetchSnapshotForSession', () => {
             writeBranchCheckout: false,
             readStash: false,
             writeStash: false,
-            workspaceWorktreeCreate: false,
+            worktreeCreate: false,
             changeSetModel: 'working-copy',
             supportedDiffAreas: ['pending', 'both'],
         });
+    });
+});
+
+describe('ScmRepositoryService.fetchSnapshotForMachinePath', () => {
+    it('fetches and normalizes a repo snapshot through machine/path SCM without requiring a session', async () => {
+        vi.spyOn(storage, 'getState').mockReturnValue({
+            machines: {
+                'machine-a': {
+                    id: 'machine-a',
+                    metadata: {
+                        homeDir: '/Users/tester',
+                    },
+                },
+            },
+        } as any);
+        vi.mocked(machineScmStatusSnapshot).mockResolvedValue({
+            success: true,
+            snapshot: makeScmSnapshot({
+                projectKey: '',
+                repo: {
+                    isRepo: true,
+                    rootPath: '/Users/tester/repo',
+                    backendId: 'git',
+                    mode: '.git',
+                    worktrees: [
+                        { path: '/Users/tester/repo', branch: 'main', isCurrent: true },
+                        { path: '/Users/tester/repo-feature-auth', branch: 'feature/auth', isCurrent: false },
+                    ],
+                },
+            }),
+        } as any);
+
+        const service = new ScmRepositoryService();
+        const result = await service.fetchSnapshotForMachinePath({
+            machineId: 'machine-a',
+            path: '~/repo',
+        });
+
+        expect(machineScmStatusSnapshot).toHaveBeenCalledWith('machine-a', {
+            cwd: '/Users/tester/repo',
+        });
+        expect(result).not.toBeNull();
+        expect(result?.projectKey).toBe('machine-a:/Users/tester/repo');
+        expect(result?.repo.rootPath).toBe('/Users/tester/repo');
+        expect(result?.repo.worktrees).toEqual([
+            { path: '/Users/tester/repo', branch: 'main', isCurrent: true },
+            { path: '/Users/tester/repo-feature-auth', branch: 'feature/auth', isCurrent: false },
+        ]);
+    });
+
+    it('normalizes projectKey to the repo root when the request path is a subdirectory and the backend omits projectKey', async () => {
+        vi.spyOn(storage, 'getState').mockReturnValue({
+            machines: {
+                'machine-a': {
+                    id: 'machine-a',
+                    metadata: {
+                        homeDir: '/Users/tester',
+                    },
+                },
+            },
+        } as any);
+        vi.mocked(machineScmStatusSnapshot).mockResolvedValue({
+            success: true,
+            snapshot: makeScmSnapshot({
+                projectKey: '',
+                repo: {
+                    isRepo: true,
+                    rootPath: '/Users/tester/repo',
+                    backendId: 'git',
+                    mode: '.git',
+                    worktrees: [{ path: '/Users/tester/repo', branch: 'main', isCurrent: true }],
+                },
+            }),
+        } as any);
+
+        const service = new ScmRepositoryService();
+        const result = await service.fetchSnapshotForMachinePath({
+            machineId: 'machine-a',
+            path: '~/repo/subdir',
+        });
+
+        expect(machineScmStatusSnapshot).toHaveBeenCalledWith('machine-a', {
+            cwd: '/Users/tester/repo/subdir',
+        });
+        expect(result?.projectKey).toBe('machine-a:/Users/tester/repo');
+        expect(result?.repo.rootPath).toBe('/Users/tester/repo');
+    });
+
+    it('normalizes repo root paths before building the canonical projectKey', async () => {
+        vi.spyOn(storage, 'getState').mockReturnValue({
+            machines: {
+                'machine-a': {
+                    id: 'machine-a',
+                    metadata: {
+                        homeDir: '/Users/tester',
+                    },
+                },
+            },
+        } as any);
+        vi.mocked(machineScmStatusSnapshot).mockResolvedValue({
+            success: true,
+            snapshot: makeScmSnapshot({
+                projectKey: '',
+                repo: {
+                    isRepo: true,
+                    rootPath: '/Users/tester/repo/',
+                    backendId: 'git',
+                    mode: '.git',
+                    worktrees: [{ path: '/Users/tester/repo', branch: 'main', isCurrent: true }],
+                },
+            }),
+        } as any);
+
+        const service = new ScmRepositoryService();
+        const result = await service.fetchSnapshotForMachinePath({
+            machineId: 'machine-a',
+            path: '~/repo/subdir',
+        });
+
+        expect(result?.projectKey).toBe('machine-a:/Users/tester/repo');
+    });
+
+    it('deduplicates concurrent machine/path snapshot requests for the same repo identity', async () => {
+        vi.spyOn(storage, 'getState').mockReturnValue({
+            machines: {
+                'machine-a': {
+                    id: 'machine-a',
+                    metadata: {
+                        homeDir: '/Users/tester',
+                    },
+                },
+            },
+        } as any);
+
+        const deferredSnapshot = {
+            resolve: (_value: any): void => {},
+        };
+        const snapshotPromise = new Promise<any>((resolve) => {
+            deferredSnapshot.resolve = resolve;
+        });
+        vi.mocked(machineScmStatusSnapshot).mockReturnValue(snapshotPromise as any);
+
+        const service = new ScmRepositoryService();
+        const firstPromise = service.fetchSnapshotForMachinePath({
+            machineId: 'machine-a',
+            path: '~/repo',
+        });
+        const secondPromise = service.fetchSnapshotForMachinePath({
+            machineId: 'machine-a',
+            path: '~/repo',
+        });
+
+        expect(machineScmStatusSnapshot).toHaveBeenCalledTimes(1);
+
+        deferredSnapshot.resolve({
+            success: true,
+            snapshot: makeScmSnapshot({
+                repo: {
+                    isRepo: true,
+                    rootPath: '/Users/tester/repo',
+                    backendId: 'git',
+                    mode: '.git',
+                    worktrees: [{ path: '/Users/tester/repo', branch: 'main', isCurrent: true }],
+                },
+            }),
+        });
+
+        const [firstResult, secondResult] = await Promise.all([firstPromise, secondPromise]);
+        expect(firstResult).toEqual(secondResult);
+        expect(machineScmStatusSnapshot).toHaveBeenCalledTimes(1);
+    });
+
+    it('deduplicates concurrent session and machine/path snapshot requests for the same repo identity', async () => {
+        vi.spyOn(storage, 'getState').mockReturnValue({
+            machines: {
+                'machine-a': {
+                    id: 'machine-a',
+                    metadata: {
+                        homeDir: '/Users/tester',
+                    },
+                },
+            },
+            sessions: {
+                session_1: {
+                    id: 'session_1',
+                    metadata: {
+                        machineId: 'machine-a',
+                        path: '~/repo',
+                    },
+                },
+            },
+        } as any);
+
+        const deferredSnapshot = {
+            resolve: (_value: any): void => {},
+        };
+        const snapshotPromise = new Promise<any>((resolve) => {
+            deferredSnapshot.resolve = resolve;
+        });
+        vi.mocked(sessionScmStatusSnapshot).mockReturnValue(snapshotPromise as any);
+
+        const service = new ScmRepositoryService();
+        const firstPromise = service.fetchSnapshotForSession('session_1');
+        const secondPromise = service.fetchSnapshotForMachinePath({
+            machineId: 'machine-a',
+            path: '~/repo',
+        });
+
+        expect(sessionScmStatusSnapshot).toHaveBeenCalledTimes(1);
+        expect(machineScmStatusSnapshot).not.toHaveBeenCalled();
+
+        deferredSnapshot.resolve({
+            success: true,
+            snapshot: makeScmSnapshot({
+                projectKey: 'machine-a:/Users/tester/repo',
+                repo: {
+                    isRepo: true,
+                    rootPath: '/Users/tester/repo',
+                    backendId: 'git',
+                    mode: '.git',
+                    worktrees: [{ path: '/Users/tester/repo', branch: 'main', isCurrent: true }],
+                },
+            }),
+        });
+
+        await expect(Promise.all([firstPromise, secondPromise])).resolves.toEqual([
+            expect.objectContaining({
+                projectKey: 'machine-a:/Users/tester/repo',
+            }),
+            expect.objectContaining({
+                projectKey: 'machine-a:/Users/tester/repo',
+            }),
+        ]);
+        expect(machineScmStatusSnapshot).not.toHaveBeenCalled();
+    });
+
+    it('caches the last normalized machine/path snapshot by repo identity', async () => {
+        vi.spyOn(storage, 'getState').mockReturnValue({
+            machines: {
+                'machine-a': {
+                    id: 'machine-a',
+                    metadata: {
+                        homeDir: '/Users/tester',
+                    },
+                },
+            },
+        } as any);
+        vi.mocked(machineScmStatusSnapshot).mockResolvedValue({
+            success: true,
+            snapshot: makeScmSnapshot({
+                repo: {
+                    isRepo: true,
+                    rootPath: '/Users/tester/repo',
+                    backendId: 'git',
+                    mode: '.git',
+                    worktrees: [{ path: '/Users/tester/repo', branch: 'main', isCurrent: true }],
+                },
+            }),
+        } as any);
+
+        const service = new ScmRepositoryService();
+        const result = await service.fetchSnapshotForMachinePath({
+            machineId: 'machine-a',
+            path: '~/repo',
+        });
+
+        expect(service.readCachedSnapshotForMachinePath({
+            machineId: 'machine-a',
+            path: '~/repo',
+        })).toEqual(result);
+    });
+
+    it('returns a cached repo snapshot when reading from a subdirectory path within the same repo', async () => {
+        vi.spyOn(storage, 'getState').mockReturnValue({
+            machines: {
+                'machine-a': {
+                    id: 'machine-a',
+                    metadata: {
+                        homeDir: '/Users/tester',
+                    },
+                },
+            },
+        } as any);
+        vi.mocked(machineScmStatusSnapshot).mockResolvedValue({
+            success: true,
+            snapshot: makeScmSnapshot({
+                projectKey: '',
+                repo: {
+                    isRepo: true,
+                    rootPath: '/Users/tester/repo',
+                    backendId: 'git',
+                    mode: '.git',
+                    worktrees: [{ path: '/Users/tester/repo', branch: 'main', isCurrent: true }],
+                },
+            }),
+        } as any);
+
+        const service = new ScmRepositoryService();
+        const result = await service.fetchSnapshotForMachinePath({
+            machineId: 'machine-a',
+            path: '~/repo',
+        });
+
+        expect(service.readCachedSnapshotForMachinePath({
+            machineId: 'machine-a',
+            path: '~/repo/subdir',
+        })).toEqual(result);
+    });
+
+    it('stores machine/path snapshots under the canonical repo root identity key when the request is a subdirectory', async () => {
+        vi.spyOn(storage, 'getState').mockReturnValue({
+            machines: {
+                'machine-a': {
+                    id: 'machine-a',
+                    metadata: {
+                        homeDir: '/Users/tester',
+                    },
+                },
+            },
+        } as any);
+        vi.mocked(machineScmStatusSnapshot).mockResolvedValue({
+            success: true,
+            snapshot: makeScmSnapshot({
+                projectKey: '',
+                repo: {
+                    isRepo: true,
+                    rootPath: '/Users/tester/repo',
+                    backendId: 'git',
+                    mode: '.git',
+                    worktrees: [{ path: '/Users/tester/repo', branch: 'main', isCurrent: true }],
+                },
+            }),
+        } as any);
+
+        const service = new ScmRepositoryService();
+        const result = await service.fetchSnapshotForMachinePath({
+            machineId: 'machine-a',
+            path: '~/repo/subdir',
+        });
+
+        expect(result?.projectKey).toBe('machine-a:/Users/tester/repo');
+        expect(service.readCachedSnapshotForMachinePath({
+            machineId: 'machine-a',
+            path: '~/repo',
+        })).toEqual(result);
+    });
+
+    it('does not rely on aliased cache entries surviving forever (alias eviction falls back to prefix-scan)', async () => {
+        vi.spyOn(storage, 'getState').mockReturnValue({
+            machines: {
+                'machine-a': {
+                    id: 'machine-a',
+                    metadata: {
+                        homeDir: '/Users/tester',
+                    },
+                },
+            },
+        } as any);
+        vi.mocked(machineScmStatusSnapshot).mockResolvedValue({
+            success: true,
+            snapshot: makeScmSnapshot({
+                projectKey: '',
+                repo: {
+                    isRepo: true,
+                    rootPath: '/Users/tester/repo',
+                    backendId: 'git',
+                    mode: '.git',
+                    worktrees: [{ path: '/Users/tester/repo', branch: 'main', isCurrent: true }],
+                },
+            }),
+        } as any);
+
+        const service = new ScmRepositoryService({ maxAliasEntries: 1 });
+        const result = await service.fetchSnapshotForMachinePath({
+            machineId: 'machine-a',
+            path: '~/repo',
+        });
+
+        expect(service.readCachedSnapshotForMachinePath({
+            machineId: 'machine-a',
+            path: '~/repo/subdir-a',
+        })).toEqual(result);
+        expect(service.readCachedSnapshotForMachinePath({
+            machineId: 'machine-a',
+            path: '~/repo/subdir-b',
+        })).toEqual(result);
+        // subdir-a alias may have been evicted, but read should still resolve via prefix scan.
+        expect(service.readCachedSnapshotForMachinePath({
+            machineId: 'machine-a',
+            path: '~/repo/subdir-a',
+        })).toEqual(result);
     });
 });

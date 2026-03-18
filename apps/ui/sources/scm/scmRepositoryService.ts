@@ -1,17 +1,18 @@
 import type { ScmWorkingSnapshot as ProtocolScmWorkingSnapshot } from '@happier-dev/protocol';
 
 import type { ScmCapabilities, ScmStatus, ScmWorkingSnapshot as UiScmWorkingSnapshot } from '@/sync/domains/state/storageTypes';
-import { storage } from '@/sync/domains/state/storage';
 import { sessionScmStatusSnapshot } from '@/sync/ops';
-import { createProjectKey } from '@/sync/runtime/orchestration/projectManager';
-import { resolveProjectMachineScopeId } from '@/sync/runtime/orchestration/projectManager';
-import { resolveAbsolutePath } from '@/utils/path/pathUtils';
-import { readSessionWorkspaceContext } from '@/sync/domains/session/readSessionWorkspaceContext';
+import { machineScmStatusSnapshot } from '@/sync/ops/scm/machineScm';
+import { normalizeFileSystemPath } from '@/sync/domains/fileSystem/normalizeFileSystemPath';
+import { resolveRepoScmMachinePathRequest } from '@/scm/repository/resolveRepoScmMachinePathRequest';
+import { resolveRepoScmSessionRequest } from '@/scm/repository/resolveRepoScmSessionRequest';
+import { LruMap } from '@/utils/cache/lruMap';
 import {
     EMPTY_SCM_CAPABILITIES,
     mapProtocolSnapshotToUiSnapshot,
     mergeScmCapabilities,
 } from '@/scm/core/snapshotMappers';
+import { resolveCanonicalScmProjectKey } from '@/scm/core/resolveCanonicalScmProjectKey';
 
 function isProtocolScmSnapshot(
     snapshot: UiScmWorkingSnapshot | ProtocolScmWorkingSnapshot
@@ -68,6 +69,40 @@ function createEmptyScmSnapshot(input: {
     };
 }
 
+function normalizeScmSnapshotResponseOrThrow(input: {
+    response: Awaited<ReturnType<typeof sessionScmStatusSnapshot>>;
+    projectKey: string;
+    fetchedAt: number;
+    emptyRootPath?: string | null;
+}): UiScmWorkingSnapshot {
+    const { response, projectKey, fetchedAt, emptyRootPath } = input;
+    if (
+        !response
+        || typeof response !== 'object'
+        || typeof (response as { success?: unknown }).success !== 'boolean'
+    ) {
+        throw new Error('Invalid source-control status snapshot response');
+    }
+    if (!response.success) {
+        const message = response.error || 'Failed to fetch source-control status snapshot';
+        const err = new Error(message) as Error & { scmErrorCode?: string };
+        if (typeof (response as { errorCode?: unknown }).errorCode === 'string') {
+            err.scmErrorCode = (response as { errorCode?: string }).errorCode;
+        }
+        throw err;
+    }
+
+    if (!response.snapshot) {
+        return createEmptyScmSnapshot({
+            projectKey,
+            fetchedAt,
+            rootPath: emptyRootPath ?? null,
+        });
+    }
+
+    return normalizeWorkingSnapshotForUi(response.snapshot, projectKey);
+}
+
 export function snapshotToScmStatus(snapshot: UiScmWorkingSnapshot): ScmStatus {
     const modifiedCount = snapshot.entries.filter((entry) => entry.kind !== 'untracked').length;
     const untrackedCount = snapshot.entries.filter((entry) => entry.kind === 'untracked').length;
@@ -101,61 +136,222 @@ export function snapshotToScmStatus(snapshot: UiScmWorkingSnapshot): ScmStatus {
 }
 
 export class ScmRepositoryService {
-    async fetchSnapshotForSession(sessionId: string): Promise<UiScmWorkingSnapshot | null> {
-        const state = storage.getState();
-        const session = state.sessions[sessionId];
-        if (!session) return null;
+    private repoSnapshotRequests = new Map<string, Promise<UiScmWorkingSnapshot | null>>();
+    private repoSnapshotCache = new Map<string, UiScmWorkingSnapshot | null>();
+    private repoSnapshotAliases: LruMap<string, string>;
 
-        const workspaceContext = readSessionWorkspaceContext(state, sessionId);
-        if (!workspaceContext.workspacePath) return null;
+    constructor(options?: Readonly<{
+        maxAliasEntries?: number;
+    }>) {
+        this.repoSnapshotAliases = new LruMap<string, string>({
+            maxEntries: this.normalizeMaxAliasEntries(options?.maxAliasEntries),
+        });
+    }
 
-        const machineIdForHomeDir =
-            session.metadata?.machineId
-            ?? workspaceContext.projectMachineId
-            ?? null;
-        const machineHomeDir = machineIdForHomeDir
-            ? state.machines?.[machineIdForHomeDir]?.metadata?.homeDir
-            : undefined;
-        const resolvedSessionPath = resolveAbsolutePath(
-            workspaceContext.workspacePath,
-            session.metadata?.homeDir ?? machineHomeDir
-        );
-        const projectKey = createProjectKey(
-            workspaceContext.projectMachineId ?? resolveProjectMachineScopeId(session.metadata ?? {}),
-            resolvedSessionPath
-        );
-        const projectKeyString = `${projectKey.machineId}:${projectKey.path}`;
-        const fetchedAt = Date.now();
-
-        // Session SCM RPC runs within the session working directory already. Passing an absolute
-        // `cwd` is both redundant and brittle (tilde paths, symlink differences, etc.) because
-        // the CLI security layer resolves `cwd` relative to the working directory.
-        const response = await sessionScmStatusSnapshot(sessionId, {});
-        if (
-            !response
-            || typeof response !== 'object'
-            || typeof (response as { success?: unknown }).success !== 'boolean'
-        ) {
-            throw new Error('Invalid source-control status snapshot response');
+    private normalizeMaxAliasEntries(value: unknown): number {
+        if (typeof value === 'number' && Number.isFinite(value)) {
+            return Math.max(0, Math.floor(value));
         }
-        if (!response.success) {
-            const message = response.error || 'Failed to fetch source-control status snapshot';
-            const err = new Error(message) as Error & { scmErrorCode?: string };
-            if (typeof (response as { errorCode?: unknown }).errorCode === 'string') {
-                err.scmErrorCode = (response as { errorCode?: string }).errorCode;
+
+        const raw = String(process.env.EXPO_PUBLIC_HAPPIER_SCM_REPO_SNAPSHOT_ALIAS_CACHE_MAX ?? '').trim();
+        if (!raw) return 2048;
+        const parsed = Number.parseInt(raw, 10);
+        if (!Number.isFinite(parsed)) return 2048;
+        return Math.max(0, Math.min(100_000, parsed));
+    }
+
+    private resolveCachedRepoIdentityKeyForMachinePath(input: Readonly<{
+        machineId: string;
+        resolvedPath: string;
+        repoIdentityKey: string;
+    }>): string | null {
+        const normalizedResolvedPath = normalizeFileSystemPath(input.resolvedPath);
+        if (!normalizedResolvedPath) {
+            return null;
+        }
+
+        const aliasedIdentityKey = this.repoSnapshotAliases.get(input.repoIdentityKey);
+        if (aliasedIdentityKey) {
+            if (this.repoSnapshotCache.has(aliasedIdentityKey)) {
+                return aliasedIdentityKey;
             }
-            throw err;
+            // Alias is stale (cache was cleared); drop it so we can fall back to lookup.
+            this.repoSnapshotAliases.delete(input.repoIdentityKey);
         }
 
-        if (!response.snapshot) {
-            return createEmptyScmSnapshot({
-                projectKey: projectKeyString,
-                fetchedAt,
-                rootPath: null,
+        if (this.repoSnapshotCache.has(input.repoIdentityKey)) {
+            return input.repoIdentityKey;
+        }
+
+        let bestMatchKey: string | null = null;
+        let bestMatchRootLen = -1;
+        for (const [candidateKey, candidateSnapshot] of this.repoSnapshotCache) {
+            if (!candidateKey.startsWith(`${input.machineId}:`)) {
+                continue;
+            }
+            if (!candidateSnapshot?.repo?.isRepo) {
+                continue;
+            }
+
+            const normalizedRootPath = normalizeFileSystemPath(candidateSnapshot.repo.rootPath);
+            if (!normalizedRootPath) {
+                continue;
+            }
+
+            const isMatch =
+                normalizedResolvedPath === normalizedRootPath
+                || normalizedResolvedPath.startsWith(`${normalizedRootPath}/`);
+            if (!isMatch) {
+                continue;
+            }
+
+            if (normalizedRootPath.length > bestMatchRootLen) {
+                bestMatchRootLen = normalizedRootPath.length;
+                bestMatchKey =
+                    candidateSnapshot.projectKey && this.repoSnapshotCache.has(candidateSnapshot.projectKey)
+                        ? candidateSnapshot.projectKey
+                        : candidateKey;
+            }
+        }
+
+        if (bestMatchKey) {
+            this.repoSnapshotAliases.set(input.repoIdentityKey, bestMatchKey);
+        }
+
+        return bestMatchKey;
+    }
+
+    private async fetchSnapshotForRepoIdentity(
+        repoIdentityKey: string,
+        loader: () => Promise<UiScmWorkingSnapshot | null>,
+    ): Promise<UiScmWorkingSnapshot | null> {
+        const existingRequest = this.repoSnapshotRequests.get(repoIdentityKey);
+        if (existingRequest) {
+            return await existingRequest;
+        }
+
+        const requestPromise = (async () => {
+            const snapshot = await loader();
+            const canonicalIdentityKey = snapshot?.projectKey ? snapshot.projectKey : repoIdentityKey;
+
+            this.repoSnapshotCache.set(canonicalIdentityKey, snapshot);
+            if (canonicalIdentityKey !== repoIdentityKey) {
+                this.repoSnapshotCache.delete(repoIdentityKey);
+                this.repoSnapshotAliases.set(repoIdentityKey, canonicalIdentityKey);
+            }
+            return snapshot;
+        })();
+
+        this.repoSnapshotRequests.set(repoIdentityKey, requestPromise);
+        try {
+            return await requestPromise;
+        } finally {
+            if (this.repoSnapshotRequests.get(repoIdentityKey) === requestPromise) {
+                this.repoSnapshotRequests.delete(repoIdentityKey);
+            }
+        }
+    }
+
+    async fetchSnapshotForSession(sessionId: string): Promise<UiScmWorkingSnapshot | null> {
+        const request = resolveRepoScmSessionRequest({ sessionId });
+        if (!request) {
+            return null;
+        }
+
+        return await this.fetchSnapshotForRepoIdentity(request.repoIdentityKey, async () => {
+            const fetchedAt = Date.now();
+
+            // Session SCM RPC runs within the session working directory already. Passing an absolute
+            // `cwd` is both redundant and brittle (tilde paths, symlink differences, etc.) because
+            // the CLI security layer resolves `cwd` relative to the working directory.
+            const response = await sessionScmStatusSnapshot(sessionId, {});
+            const projectKey = resolveCanonicalScmProjectKey({
+                fallbackProjectKey: request.repoIdentityKey,
+                machineId: request.machineId,
+                snapshot:
+                    response
+                    && typeof response === 'object'
+                    && (response as any).success === true
+                        ? (response as any).snapshot
+                        : null,
             });
+            return normalizeScmSnapshotResponseOrThrow({
+                response,
+                projectKey,
+                fetchedAt,
+                emptyRootPath: null,
+            });
+        });
+    }
+
+    async fetchSnapshotForMachinePath(input: Readonly<{
+        machineId: string;
+        path: string;
+    }>): Promise<UiScmWorkingSnapshot | null> {
+        const request = resolveRepoScmMachinePathRequest(input);
+        if (!request) {
+            return null;
+        }
+        return await this.fetchSnapshotForRepoIdentity(request.repoIdentityKey, async () => {
+            const fetchedAt = Date.now();
+            const response = await machineScmStatusSnapshot(request.machineId, {
+                cwd: request.resolvedPath,
+            });
+            const projectKey = resolveCanonicalScmProjectKey({
+                fallbackProjectKey: request.repoIdentityKey,
+                machineId: request.machineId,
+                snapshot:
+                    response
+                    && typeof response === 'object'
+                    && (response as any).success === true
+                        ? (response as any).snapshot
+                        : null,
+            });
+            return normalizeScmSnapshotResponseOrThrow({
+                response,
+                projectKey,
+                fetchedAt,
+                emptyRootPath: request.resolvedPath,
+            });
+        });
+    }
+
+    readCachedSnapshotForMachinePath(input: Readonly<{
+        machineId: string;
+        path: string;
+    }>): UiScmWorkingSnapshot | null {
+        const request = resolveRepoScmMachinePathRequest(input);
+        if (!request) {
+            return null;
         }
 
-        return normalizeWorkingSnapshotForUi(response.snapshot, projectKeyString);
+        const resolvedCacheKey =
+            this.resolveCachedRepoIdentityKeyForMachinePath({
+                machineId: request.machineId,
+                resolvedPath: request.resolvedPath,
+                repoIdentityKey: request.repoIdentityKey,
+            })
+            ?? request.repoIdentityKey;
+
+        return this.repoSnapshotCache.get(resolvedCacheKey) ?? null;
+    }
+
+    readCachedSnapshotForSession(sessionId: string): UiScmWorkingSnapshot | null {
+        const request = resolveRepoScmSessionRequest({ sessionId });
+        if (!request) {
+            return null;
+        }
+
+        const resolvedCacheKey =
+            request.machineId
+                ? this.resolveCachedRepoIdentityKeyForMachinePath({
+                    machineId: request.machineId,
+                    resolvedPath: request.resolvedPath,
+                    repoIdentityKey: request.repoIdentityKey,
+                })
+                : null;
+
+        return this.repoSnapshotCache.get(resolvedCacheKey ?? request.repoIdentityKey) ?? null;
     }
 }
 
