@@ -69,6 +69,9 @@ export function encryptSecretStringV1(
   key: Uint8Array,
   randomBytes: (length: number) => Uint8Array,
 ): EncryptedStringV1 {
+  if (key.length !== tweetnacl.secretbox.keyLength) {
+    throw new Error(`Invalid secretbox key length: ${key.length}`);
+  }
   const nonce = randomBytes(tweetnacl.secretbox.nonceLength);
   if (nonce.length !== tweetnacl.secretbox.nonceLength) {
     throw new Error(`Invalid nonce length: ${nonce.length}`);
@@ -119,8 +122,8 @@ export function decryptSecretValueWithKeysV1(
   keys: ReadonlyArray<Uint8Array | null | undefined>,
 ): string | null {
   if (!input) return null;
-  const plaintext = typeof input.value === 'string' ? input.value.trim() : '';
-  if (plaintext) return plaintext;
+  const plaintext = typeof input.value === 'string' ? input.value : null;
+  if (plaintext !== null && plaintext.trim().length > 0) return plaintext;
   if (!input.encryptedValue) return null;
   return decryptSecretStringWithKeysV1(input.encryptedValue, keys);
 }
@@ -160,11 +163,15 @@ export function sealSecretsDeepV1<T>(
   if (!isPlainObject(input)) return input;
 
   if ((input as any)._isSecretValue === true) {
-    const value = typeof (input as any).value === 'string' ? String((input as any).value).trim() : '';
-    if (value.length > 0) {
-      const encryptedValue = encryptSecretStringV1(value, key, randomBytes);
+    const rawValue = typeof (input as any).value === 'string' ? String((input as any).value) : null;
+    if (rawValue !== null && rawValue.trim().length > 0) {
+      const encryptedValue = encryptSecretStringV1(rawValue, key, randomBytes);
       const { value: _dropped, ...rest } = input as any;
       return { ...rest, encryptedValue } as any;
+    }
+    if (rawValue !== null) {
+      const { value: _dropped, ...rest } = input as any;
+      return rest as any;
     }
     return input as any;
   }
@@ -212,7 +219,11 @@ export function unsealSecretsDeepWithKeysV1<T>(
 
   if ((input as any)._isSecretValue === true) {
     const hasPlain = typeof (input as any).value === 'string' && String((input as any).value).trim().length > 0;
-    if (hasPlain) return input as any;
+    if (hasPlain) {
+      if ((input as any).encryptedValue === undefined) return input as any;
+      const { encryptedValue: _dropped, ...rest } = input as any;
+      return rest as any;
+    }
     const encryptedValue = (input as any).encryptedValue;
     const parsed = EncryptedStringV1Schema.safeParse(encryptedValue);
     if (!parsed.success) return input as any;
