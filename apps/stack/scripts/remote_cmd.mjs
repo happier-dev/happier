@@ -129,7 +129,7 @@ export function buildRemoteSelfHostInstallCommand({ channel, mode, envValues }) 
   // Always disable auto-service setup in the installer so this command controls remote service behavior.
   const installCmd = [
     `curl -fsSL ${installUrl} |`,
-    `HAPPIER_CHANNEL=${channel} HAPPIER_WITH_DAEMON=0 HAPPIER_NONINTERACTIVE=1 bash`,
+    `HAPPIER_CHANNEL=${channel} HAPPIER_WITH_DAEMON=0 HAPPIER_WITH_CLI=0 HAPPIER_NONINTERACTIVE=1 bash`,
   ].join(' ');
 
   const split = splitRemoteServerSetupEnvValues(envValues);

@@ -7,6 +7,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { resolveStackCredentialPaths } from './utils/auth/credentials_paths.mjs';
+import { buildStackStableScopeId } from './utils/auth/stable_scope_id.mjs';
 
 const scriptsDir = dirname(fileURLToPath(import.meta.url));
 const rootDir = dirname(scriptsDir);
@@ -61,8 +62,8 @@ async function writeDummyAuth({ cliHomeDir }) {
   await writeFile(join(cliHomeDir, 'settings.json'), JSON.stringify({ machineId: 'test-machine' }) + '\n', 'utf-8');
 }
 
-async function writeServerScopedAuth({ cliHomeDir, serverUrl }) {
-  const paths = resolveStackCredentialPaths({ cliHomeDir, serverUrl });
+async function writeServerScopedAuth({ cliHomeDir, serverUrl, env = {} }) {
+  const paths = resolveStackCredentialPaths({ cliHomeDir, serverUrl, env });
   await mkdir(dirname(paths.serverScopedPath), { recursive: true });
   await writeFile(paths.serverScopedPath, 'dummy\n', 'utf-8');
   await writeFile(join(cliHomeDir, 'settings.json'), JSON.stringify({ machineId: 'test-machine' }) + '\n', 'utf-8');
@@ -206,7 +207,10 @@ test('hstack stack daemon <name> restart restarts only the daemon', async (t) =>
     serverPort: 4101,
   });
 
-  await writeDummyAuth({ cliHomeDir: fixture.stackCliHome });
+  await writeServerScopedAuth({
+    cliHomeDir: fixture.stackCliHome,
+    serverUrl: `http://127.0.0.1:${fixture.serverPort}`,
+  });
   await fixture.writeStackEnv();
   registerDaemonCleanup(t, { env: fixture.baseEnv, stackName: fixture.stackName, includeNameFirst: true });
 
@@ -347,6 +351,38 @@ test('hstack stack daemon <name> start/stop with --identity uses an isolated cli
 
   const logTextAfter = await readLogText(logPath);
   assert.ok(logTextAfter.includes('stop'), `expected stub daemon stop to be called for identity\n${logTextAfter}`);
+});
+
+test('hstack stack daemon <name> start with --identity accepts stack-stable server-scoped credentials', async (t) => {
+  const fixture = await createDaemonFixture(t, {
+    prefix: 'happy-stacks-stack-daemon-identity-scoped-auth-',
+    stackName: 'exp-test',
+    serverPort: 4101,
+  });
+
+  const identity = 'account-b';
+  const identityHome = join(fixture.storageDir, fixture.stackName, 'cli-identities', identity);
+  const scopedEnv = {
+    ...fixture.baseEnv,
+    HAPPIER_ACTIVE_SERVER_ID: buildStackStableScopeId({ stackName: fixture.stackName, cliIdentity: identity }),
+  };
+  await writeServerScopedAuth({
+    cliHomeDir: identityHome,
+    serverUrl: `http://127.0.0.1:${fixture.serverPort}`,
+    env: scopedEnv,
+  });
+  await fixture.writeStackEnv();
+  registerDaemonCleanup(t, { env: fixture.baseEnv, stackName: fixture.stackName, identity });
+
+  const startRes = await runHstack(
+    ['stack', 'daemon', fixture.stackName, 'start', `--identity=${identity}`, '--json'],
+    { env: fixture.baseEnv }
+  );
+  assertExitOk(startRes, 'stack daemon start with identity-scoped auth');
+
+  const logPath = join(identityHome, 'stub-daemon.log');
+  const logText = await readLogText(logPath);
+  assert.ok(logText.includes('start'), `expected stub daemon start to be called in identity home\n${logText}`);
 });
 
 test('hstack daemon status targets main stack', async (t) => {

@@ -7,13 +7,14 @@ import { findExistingStackCredentialPath } from '../utils/auth/credentials_paths
 import { ensureDir } from '../utils/fs/ops.mjs';
 import { readLastLines } from '../utils/fs/tail.mjs';
 import { isTcpPortFree, listListenPids, pickNextFreeTcpPort } from '../utils/net/ports.mjs';
-import { resolveStackEnvPath } from '../utils/paths/paths.mjs';
+import { getComponentDir, resolveStackEnvPath } from '../utils/paths/paths.mjs';
 import { resolveLocalhostHost } from '../utils/paths/localhost_host.mjs';
 import { killProcessGroupOwnedByStack } from '../utils/proc/ownership.mjs';
 import { run } from '../utils/proc/proc.mjs';
 import { coercePort } from '../utils/server/port.mjs';
 import { waitForHttpOk } from '../utils/server/server.mjs';
 import { getCliHomeDirFromEnvOrDefault } from '../utils/stack/dirs.mjs';
+import { findRunningExpoStateInRoot, looksLikeExpoMetro } from '../utils/expo/expo.mjs';
 import {
   deleteStackRuntimeStateFile,
   getStackRuntimeStatePath,
@@ -36,6 +37,84 @@ export function hasRecordedRuntimePortsForRestart(runtimeState = null) {
 
 export function shouldReuseRuntimePortsOnRestart({ wantsRestart = false, runtimeState = null, wasRunning = false } = {}) {
   return Boolean(wantsRestart && (wasRunning || hasRecordedRuntimePortsForRestart(runtimeState)));
+}
+
+export async function inspectExistingStartLikeRuntime({
+  stackName = '',
+  envPath = '',
+  baseDir = '',
+  expectedUiDir = '',
+  scriptPath,
+  args = [],
+  runtimeState = null,
+} = {}) {
+  const existingOwnerPid = Number(runtimeState?.ownerPid);
+  const existingServerPid = Number(runtimeState?.processes?.serverPid);
+  const existingExpoPid = Number(runtimeState?.processes?.expoPid);
+  const existingForwarderPid = Number(runtimeState?.processes?.expoTailscaleForwarderPid);
+  const existingServerPort = Number(runtimeState?.ports?.server);
+  const existingExpoPort = Number(runtimeState?.expo?.port ?? runtimeState?.expo?.webPort ?? runtimeState?.expo?.mobilePort);
+
+  const wantsUi = scriptPath === 'dev.mjs' && !args.includes('--no-ui');
+  const wantsMobile = scriptPath === 'dev.mjs' && (args.includes('--mobile') || args.includes('--with-mobile'));
+
+  const ownerRunning = Number.isFinite(existingOwnerPid) && existingOwnerPid > 1 ? isPidAlive(existingOwnerPid) : false;
+  const serverPidRunning = Number.isFinite(existingServerPid) && existingServerPid > 1 ? isPidAlive(existingServerPid) : false;
+  const expoPidRunning = Number.isFinite(existingExpoPid) && existingExpoPid > 1 ? isPidAlive(existingExpoPid) : false;
+  const forwarderRunning =
+    Number.isFinite(existingForwarderPid) && existingForwarderPid > 1 ? isPidAlive(existingForwarderPid) : false;
+  const serverPortListening =
+    Number.isFinite(existingServerPort) && existingServerPort > 0
+      ? !(await isTcpPortFree(existingServerPort, { host: '127.0.0.1' }).catch(() => true))
+      : false;
+  const serverRunning = serverPortListening || serverPidRunning;
+
+  let uiRunning = false;
+  let uiPort = null;
+  if (wantsUi || wantsMobile) {
+    const base = String(baseDir ?? '').trim();
+    if (base) {
+      const res = await findRunningExpoStateInRoot({
+        expoDevRoot: join(base, 'expo-dev'),
+        requireWeb: wantsUi,
+        expectedProjectDir: expectedUiDir,
+      });
+      const p = Number(res?.state?.port);
+      if (res && Number.isFinite(p) && p > 0) {
+        uiRunning = true;
+        uiPort = p;
+      }
+    } else if (Number.isFinite(existingExpoPort) && existingExpoPort > 0) {
+      uiRunning = await looksLikeExpoMetro({ port: existingExpoPort, timeoutMs: 900 });
+      uiPort = uiRunning ? existingExpoPort : null;
+    }
+  }
+
+  const wasRunning = ownerRunning || serverRunning || uiRunning || serverPidRunning || expoPidRunning || forwarderRunning;
+  const canShortCircuit =
+    scriptPath === 'dev.mjs'
+      ? serverRunning && (!wantsUi || uiRunning) && (!wantsMobile || uiRunning)
+      : wasRunning;
+
+  return {
+    ownerRunning,
+    serverRunning,
+    uiRunning,
+    uiPort,
+    wasRunning,
+    canShortCircuit,
+    wantsUi,
+    wantsMobile,
+  };
+}
+
+export function shouldAdoptOccupiedRuntimePortsForRecovery(existingRuntimeStatus = null) {
+  return Boolean(
+    existingRuntimeStatus &&
+      existingRuntimeStatus.serverRunning &&
+      !existingRuntimeStatus.canShortCircuit &&
+      (existingRuntimeStatus.wantsUi || existingRuntimeStatus.wantsMobile)
+  );
 }
 
 export async function runStackScriptWithStackEnv({ rootDir, stackName, scriptPath, args, extraEnv = {}, background = false }) {
@@ -62,23 +141,24 @@ export async function runStackScriptWithStackEnv({ rootDir, stackName, scriptPat
         serverComponent === 'happier-server'
           ? (stackEnv.HAPPIER_STACK_MANAGED_INFRA ?? '1').toString().trim() !== '0'
           : false;
+      const { baseDir } = resolveStackEnvPath(stackName, env);
+      const expectedUiDir = getComponentDir(rootDir, 'happier-ui', env);
 
       // If this is an ephemeral-port stack and it's already running, avoid spawning a second copy.
       const existingOwnerPid = Number(runtimeState?.ownerPid);
       const existingPort = Number(runtimeState?.ports?.server);
       const existingUiPort = Number(runtimeState?.expo?.webPort);
       const existingPorts = runtimeState?.ports && typeof runtimeState.ports === 'object' ? runtimeState.ports : null;
-      const infraRuntimePids = [
-        Number(runtimeState?.processes?.serverPid),
-        Number(runtimeState?.processes?.expoPid),
-        Number(runtimeState?.processes?.expoTailscaleForwarderPid),
-      ].filter((pid) => Number.isFinite(pid) && pid > 1);
-      const infraPidAlive = infraRuntimePids.some((pid) => isPidAlive(pid));
-      const serverPortOccupied =
-        Number.isFinite(existingPort) && existingPort > 0
-          ? !(await isTcpPortFree(existingPort, { host: '127.0.0.1' }).catch(() => true))
-          : false;
-      const wasRunning = isPidAlive(existingOwnerPid) || infraPidAlive || serverPortOccupied;
+      const existingRuntimeStatus = await inspectExistingStartLikeRuntime({
+        stackName,
+        envPath,
+        baseDir,
+        expectedUiDir,
+        scriptPath,
+        args,
+        runtimeState,
+      });
+      const wasRunning = existingRuntimeStatus.wasRunning;
       // True restart = there was an active runner for this stack. If the stack is not running,
       // `--restart` should behave like a normal start (allocate new ephemeral ports if needed).
       const isTrueRestart = shouldReuseRuntimePortsOnRestart({ wantsRestart, runtimeState, wasRunning });
@@ -105,11 +185,15 @@ export async function runStackScriptWithStackEnv({ rootDir, stackName, scriptPat
         }
         await deleteStackRuntimeStateFile(runtimeStatePath).catch(() => {});
       }
-      if (wasRunning) {
+      if (existingRuntimeStatus.canShortCircuit) {
         if (!wantsRestart) {
           const serverPart = Number.isFinite(existingPort) && existingPort > 0 ? ` server=${existingPort}` : '';
           const uiPart =
-            scriptPath === 'dev.mjs' && Number.isFinite(existingUiPort) && existingUiPort > 0 ? ` ui=${existingUiPort}` : '';
+            scriptPath === 'dev.mjs' && Number.isFinite(existingRuntimeStatus.uiPort) && existingRuntimeStatus.uiPort > 0
+              ? ` ui=${existingRuntimeStatus.uiPort}`
+              : scriptPath === 'dev.mjs' && Number.isFinite(existingUiPort) && existingUiPort > 0
+              ? ` ui=${existingUiPort}`
+              : '';
           console.log(`[stack] ${stackName}: already running (pid=${existingOwnerPid}${serverPart}${uiPart})`);
 
           const isInteractive = Boolean(process.stdin.isTTY && process.stdout.isTTY);
@@ -182,6 +266,7 @@ export async function runStackScriptWithStackEnv({ rootDir, stackName, scriptPat
         const hasRecordedPorts = hasRecordedRuntimePortsForRestart(runtimeState);
         const wantsSoftReuse = !wantsRestart && hasRecordedPorts && existingPorts;
         const wantsHardReuse = isTrueRestart;
+        const adoptOccupiedRuntimePorts = shouldAdoptOccupiedRuntimePortsForRecovery(existingRuntimeStatus);
 
         const candidatePorts =
           (wantsHardReuse || wantsSoftReuse) && existingPorts
@@ -202,7 +287,7 @@ export async function runStackScriptWithStackEnv({ rootDir, stackName, scriptPat
           (!managedInfra || (candidatePorts.pg && candidatePorts.redis && candidatePorts.minio && candidatePorts.minioConsole));
 
         // Soft reuse: if previously recorded ports are occupied, fall back to allocating new ports.
-        if (canReuse && wantsSoftReuse && !wantsHardReuse) {
+        if (canReuse && wantsSoftReuse && !wantsHardReuse && !adoptOccupiedRuntimePorts) {
           const toCheck = Object.values(candidatePorts)
             .map((n) => Number(n))
             .filter((n) => Number.isFinite(n) && n > 0);
@@ -234,6 +319,9 @@ export async function runStackScriptWithStackEnv({ rootDir, stackName, scriptPat
           for (const p of toCheck) {
             // eslint-disable-next-line no-await-in-loop
             if (!(await isTcpPortFree(p))) {
+              if (adoptOccupiedRuntimePorts) {
+                continue;
+              }
               if (isTrueRestart && !wantsJson) {
                 // Try one more safe cleanup of stack-owned processes and re-check.
                 const baseDir = resolveStackEnvPath(stackName).baseDir;
@@ -297,7 +385,7 @@ export async function runStackScriptWithStackEnv({ rootDir, stackName, scriptPat
         }
 
         // Sanity: if somehow the server port is now occupied, fail closed (avoids killPortListeners nuking random processes).
-        if (!(await isTcpPortFree(Number(ports.server)))) {
+        if (!adoptOccupiedRuntimePorts && !(await isTcpPortFree(Number(ports.server)))) {
           throw new Error(`[stack] ${stackName}: picked server port ${ports.server} but it is not free`);
         }
 

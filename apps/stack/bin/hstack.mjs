@@ -6,12 +6,14 @@ import { existsSync } from 'node:fs';
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { basename, dirname, isAbsolute, join, resolve } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { commandHelpArgs, renderhstackRootHelp, resolvehstackCommand } from '../scripts/utils/cli/cli_registry.mjs';
 import { expandHome, getCanonicalHomeEnvPathFromEnv } from '../scripts/utils/paths/canonical_home.mjs';
-import { resolveStackEnvPath } from '../scripts/utils/paths/paths.mjs';
+import { coerceHappyMonorepoRootFromPath, resolveStackEnvPath } from '../scripts/utils/paths/paths.mjs';
 import { SANDBOX_PRESERVE_KEYS, scrubHappierStackEnv } from '../scripts/utils/env/scrub_env.mjs';
 import { maybeAutoUpdateNotice as maybeAutoUpdateNoticeShared } from '../scripts/utils/update/auto_update_notice.mjs';
+import { resolveBundledWorkspaceSyncModulePath } from '../scripts/runtime/resolveBundledWorkspaceSyncModulePath.mjs';
+import { readBundledWorkspaceSyncConfig } from '../scripts/runtime/readBundledWorkspaceSyncConfig.mjs';
 
 function getCliRootDir() {
   return dirname(dirname(fileURLToPath(import.meta.url)));
@@ -260,6 +262,30 @@ function maybeAutoUpdateNotice(cliRootDir, cmd) {
   });
 }
 
+async function maybeRefreshLocalBundledWorkspacePackages(cliRootDir) {
+  const cliRoot = String(cliRootDir ?? '').trim();
+  if (!cliRoot) return;
+  const disabled = String(process.env.HAPPIER_STACK_SYNC_BUNDLED_WORKSPACES ?? '').trim().toLowerCase();
+  if (disabled === '0' || disabled === 'false' || disabled === 'no') return;
+
+  const repoRoot = coerceHappyMonorepoRootFromPath(cliRoot);
+  if (!repoRoot) return;
+
+  const syncModulePath = resolveBundledWorkspaceSyncModulePath(cliRoot);
+  if (!syncModulePath) return;
+
+  const syncConfig = readBundledWorkspaceSyncConfig(cliRoot);
+  if (!syncConfig) return;
+
+  const { syncBundledWorkspacePackages } = await import(pathToFileURL(syncModulePath).href);
+
+  syncBundledWorkspacePackages({
+    repoRoot,
+    packages: syncConfig.packages,
+    hostApps: syncConfig.hostApps,
+  });
+}
+
 function usage() {
   return renderhstackRootHelp();
 }
@@ -293,7 +319,7 @@ function maybeWarnDeprecatedSetup(cmd, rest) {
   console.error('');
 }
 
-function main() {
+async function main() {
   const cliRootDir = getCliRootDir();
   const initialArgv = process.argv.slice(2);
   const argv0 = applyVerbosityIfRequested(initialArgv);
@@ -307,6 +333,7 @@ function main() {
   }
 
   maybeReexecToCliRoot(cliRootDir);
+  await maybeRefreshLocalBundledWorkspacePackages(cliRootDir);
 
   // If the user passed only flags (common via `npx --yes -p @happier-dev/stack hstack --help`),
   // treat it as root help rather than `help --help` (which would look like
@@ -396,4 +423,8 @@ function main() {
   return runNodeScript(cliRootDir, resolved.scriptRelPath, args);
 }
 
-main();
+main().catch((error) => {
+  const message = error instanceof Error ? error.message : String(error);
+  console.error(message);
+  process.exit(1);
+});
