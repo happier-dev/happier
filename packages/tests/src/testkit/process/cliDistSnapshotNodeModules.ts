@@ -207,12 +207,12 @@ function ensureWorkspacePackageDistTrees(snapshotNodeModulesDir: string, rootDir
 
     const sourceDistDir = resolve(packagesDir, entry.name, 'dist');
     const snapshotPackageDir = resolve(snapshotNodeModulesDir, '@happier-dev', scopePackageName);
-    const snapshotPackageDistDir = resolve(snapshotPackageDir, 'dist');
+    const snapshotDistDir = resolve(snapshotPackageDir, 'dist');
     if (!existsSync(sourceDistDir)) continue;
 
     mkdirSync(snapshotPackageDir, { recursive: true });
     try {
-      cpSync(sourceDistDir, snapshotPackageDistDir, {
+      cpSync(sourceDistDir, snapshotDistDir, {
         recursive: true,
         dereference: false,
         preserveTimestamps: true,

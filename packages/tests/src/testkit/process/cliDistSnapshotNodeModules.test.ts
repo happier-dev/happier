@@ -4,7 +4,7 @@ import { join, resolve } from 'node:path';
 
 import { afterEach, describe, expect, it } from 'vitest';
 
-import { ensureCliDistSnapshotNodeModules } from './cliDistSnapshotNodeModules.js';
+import { ensureCliDistSnapshotNodeModules } from './cliDistSnapshotNodeModules';
 
 const createdDirs: string[] = [];
 
