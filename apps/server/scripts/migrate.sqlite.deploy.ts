@@ -1,8 +1,7 @@
 import { spawn } from "node:child_process";
 import { mkdir } from "node:fs/promises";
 import { dirname, join } from "node:path";
-import { pathToFileURL } from "node:url";
-import { applyLightDefaultEnv } from "@/flavors/light/env";
+import { applyLightDefaultEnv } from "../sources/flavors/light/env";
 import { requireLightDataDir } from "./migrate.light.deployPlan";
 
 function run(cmd: string, args: string[], env: NodeJS.ProcessEnv): Promise<void> {
@@ -36,33 +35,27 @@ async function ensureSqliteDbDir(env: NodeJS.ProcessEnv): Promise<void> {
     await mkdir(dirname(filePath), { recursive: true });
 }
 
-export async function runSqliteMigrateDeploy(env: NodeJS.ProcessEnv = process.env): Promise<void> {
-    const nextEnv: NodeJS.ProcessEnv = { ...env };
-    applyLightDefaultEnv(nextEnv);
+async function main() {
+    const env: NodeJS.ProcessEnv = { ...process.env };
+    applyLightDefaultEnv(env);
 
-    const dataDir = requireLightDataDir(nextEnv);
+    const dataDir = requireLightDataDir(env);
     await mkdir(dataDir, { recursive: true });
 
-    await run("yarn", ["-s", "schema:sync", "--quiet"], nextEnv);
+    await run("yarn", ["-s", "schema:sync", "--quiet"], env);
 
-    ensureSqliteDatabaseUrl(nextEnv);
-    await ensureSqliteDbDir(nextEnv);
+    ensureSqliteDatabaseUrl(env);
+    await ensureSqliteDbDir(env);
     // Work around a Prisma CLI behavior where SQLite migrate errors can surface as a blank
     // "Schema engine error:" on some Node/engine combinations. Enabling Rust logging restores
     // normal output and behavior.
     await run("yarn", ["-s", "prisma", "migrate", "deploy", "--schema", "prisma/sqlite/schema.prisma"], {
-        ...nextEnv,
+        ...env,
         RUST_LOG: "info",
     });
 }
 
-export async function main(): Promise<void> {
-    await runSqliteMigrateDeploy(process.env);
-}
-
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
-    void main().catch((err) => {
-        console.error(err);
-        process.exit(1);
-    });
-}
+main().catch((err) => {
+    console.error(err);
+    process.exit(1);
+});

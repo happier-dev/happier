@@ -1,8 +1,6 @@
 import { spawn } from 'node:child_process';
 import { mkdir, readdir } from 'node:fs/promises';
-import { pathToFileURL } from 'node:url';
-import { applyLightDefaultEnv } from '@/flavors/light/env';
-import { requireLightDataDir } from './migrate.light.deployPlan';
+import { applyLightDefaultEnv } from '../sources/flavors/light/env';
 
 function run(cmd: string, args: string[], env: NodeJS.ProcessEnv): Promise<void> {
     return new Promise((resolve, reject) => {
@@ -32,30 +30,24 @@ async function findBaselineMigrationDir(): Promise<string> {
     return first;
 }
 
-export async function runLightMigrateResolveBaseline(env: NodeJS.ProcessEnv = process.env): Promise<void> {
-    const nextEnv: NodeJS.ProcessEnv = { ...env };
-    applyLightDefaultEnv(nextEnv);
+async function main() {
+    const env: NodeJS.ProcessEnv = { ...process.env };
+    applyLightDefaultEnv(env);
 
-    const dataDir = requireLightDataDir(nextEnv);
+    const dataDir = env.HAPPY_SERVER_LIGHT_DATA_DIR ?? env.HAPPIER_SERVER_LIGHT_DATA_DIR!;
     await mkdir(dataDir, { recursive: true });
 
-    await run('yarn', ['-s', 'schema:sync', '--quiet'], nextEnv);
+    await run('yarn', ['-s', 'schema:sync', '--quiet'], env);
 
     const baseline = await findBaselineMigrationDir();
     await run(
         'yarn',
         ['-s', 'prisma', 'migrate', 'resolve', '--schema', 'prisma/sqlite/schema.prisma', '--applied', baseline],
-        nextEnv
+        env
     );
 }
 
-export async function main(): Promise<void> {
-    await runLightMigrateResolveBaseline(process.env);
-}
-
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
-    void main().catch((err) => {
-        console.error(err);
-        process.exit(1);
-    });
-}
+main().catch((err) => {
+    console.error(err);
+    process.exit(1);
+});
