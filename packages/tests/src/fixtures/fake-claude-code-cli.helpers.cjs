@@ -61,7 +61,8 @@ function parseHookForwarderCommand(settingsPath) {
     const cmd = json?.hooks?.SessionStart?.[0]?.hooks?.[0]?.command;
     if (typeof cmd !== 'string' || cmd.length === 0) return null;
     // Expected: node "<forwarderScript>" <port>
-    const m = cmd.match(/^node\s+"([^"]+)"\s+(\d+)\s*$/);
+    // or: "<runtimeExecutable>" "<forwarderScript>" <port>
+    const m = cmd.match(/^(?:node|"[^"]+")\s+"([^"]+)"\s+(\d+)\s*$/);
     if (!m) return { type: 'raw', command: cmd };
     return { type: 'node', scriptPath: m[1], port: Number(m[2]) };
   } catch {
