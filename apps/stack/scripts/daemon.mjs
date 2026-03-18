@@ -18,16 +18,11 @@ import { formatDaemonAuthScopeDiagnostic, formatDaemonCredentialsTokenSubChanged
 import { applyStackActiveServerScopeEnv } from './utils/auth/stable_scope_id.mjs';
 import { existsSync, readdirSync, readFileSync, unlinkSync } from 'node:fs';
 import { chmod, copyFile, mkdir } from 'node:fs/promises';
-import { dirname, join } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { getRootDir, resolveStackEnvPath } from './utils/paths/paths.mjs';
 import { parseEnvToObject } from './utils/env/dotenv.mjs';
 import { getCliHomeDirFromEnvOrDefault } from './utils/stack/dirs.mjs';
-import {
-  isCliDirectExecutableCommand,
-  readCliDistIntegrity,
-  resolveCliDistEntrypointFromBin,
-} from './utils/cli/cliDistIntegrity.mjs';
 import { recordStackRuntimeDaemonPid, syncStackRuntimeDaemonPidFromDaemonState } from './utils/stack/runtime_daemon_state.mjs';
 
 /**
@@ -56,6 +51,31 @@ function resolveEnvFromOptions(options) {
 
 function hasExplicitServerContext({ serverUrl = '', env = process.env }) {
   return String(serverUrl ?? '').trim() !== '' || String(env?.HAPPIER_ACTIVE_SERVER_ID ?? '').trim() !== '';
+}
+
+function isCliDirectExecutableCommand(cliBin) {
+  const bin = String(cliBin ?? '').trim();
+  if (!bin || !existsSync(bin)) return false;
+  return !/\.(?:cjs|js|mjs)$/i.test(basename(bin));
+}
+
+function resolveCliDistEntrypointFromBin(cliBin) {
+  const bin = String(cliBin ?? '').trim();
+  if (!bin) return '';
+  const binDir = dirname(bin);
+  const cliDir = basename(binDir) === 'bin' ? dirname(binDir) : binDir;
+  return join(cliDir, 'dist', 'index.mjs');
+}
+
+function readCliDistIntegrity(distEntrypoint) {
+  const entry = String(distEntrypoint ?? '').trim();
+  if (!entry) {
+    return { ok: false, reason: 'missing_dist_entrypoint' };
+  }
+  if (!existsSync(entry)) {
+    return { ok: false, reason: `missing:${entry}` };
+  }
+  return { ok: true, reason: 'exists' };
 }
 
 export async function cleanupStaleDaemonState(homeDir, options = {}) {

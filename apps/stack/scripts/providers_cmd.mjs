@@ -3,7 +3,7 @@ import './utils/env/env.mjs';
 import { parseArgs } from './utils/cli/args.mjs';
 import { printResult, wantsHelp, wantsJson } from './utils/cli/cli.mjs';
 import { createStepPrinter, runCommandLogged } from './utils/cli/progress.mjs';
-import { AGENT_IDS, getProviderCliInstallSpec } from '@happier-dev/agents';
+import { AGENT_IDS, getProviderCliRuntimeSpec } from '@happier-dev/agents';
 import { installProviderCli, planProviderCliInstall, resolvePlatformFromNodePlatform } from '@happier-dev/cli-common/providers';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -57,6 +57,10 @@ function resolveProviderInstallLogPath(providerId) {
   return join(base, `install-provider-${providerId}-${Date.now()}.log`);
 }
 
+function resolveProviderRuntimeSpec(providerId) {
+  return getProviderCliRuntimeSpec(providerId);
+}
+
 function planForProvider(providerId) {
   const platform = resolvePlatform();
   if (platform === 'unsupported') {
@@ -74,14 +78,14 @@ async function cmdList({ argv }) {
   const json = wantsJson(argv, { flags });
   const platform = resolvePlatform();
   const rows = AGENT_IDS.map((id) => {
-    const spec = getProviderCliInstallSpec(id);
+    const spec = resolveProviderRuntimeSpec(id);
     const planned = planForProvider(id);
     return {
       id: spec.id,
       title: spec.title,
-      binaries: spec.binaries,
+      binaries: spec.binaryName ? [spec.binaryName] : [],
       autoInstall: planned.ok,
-      note: planned.ok ? null : planned.error,
+      note: planned.ok ? null : spec.installGuideUrl || planned.error,
       platform,
     };
   });
@@ -133,9 +137,9 @@ async function cmdInstall({ argv }) {
 
   // In json mode, preserve the existing structured behavior (no progress output).
   if (json) {
-    const results = resolved.map((providerId) =>
+    const results = await Promise.all(resolved.map((providerId) =>
       installProviderCli({ providerId, platform, dryRun, skipIfInstalled, env: process.env }),
-    );
+    ));
     const failures = results.filter((r) => !r.ok);
     if (failures.length > 0) {
       const first = failures[0];
@@ -164,14 +168,15 @@ async function cmdInstall({ argv }) {
   const steps = createStepPrinter({ enabled: true });
   const results = [];
   for (const providerId of resolved) {
-    const spec = getProviderCliInstallSpec(providerId);
+    const spec = resolveProviderRuntimeSpec(providerId);
     const planned = planProviderCliInstall({ providerId, platform });
     if (!planned.ok) {
       throw new Error(`[providers] install failed: ${planned.errorMessage}`);
     }
 
     const label = `Installing ${spec.title || `${providerId} CLI`}`;
-    const binariesPresent = skipIfInstalled && spec.binaries.every((b) => commandExists(b, process.env));
+    const binaries = spec.binaryName ? [spec.binaryName] : [];
+    const binariesPresent = skipIfInstalled && binaries.length > 0 && binaries.every((b) => commandExists(b, process.env));
     if (binariesPresent) {
       steps.info(`- [✓] ${label} (already installed)`);
       results.push({ ok: true, providerId, alreadyInstalled: true, logPath: null, plan: planned.plan });

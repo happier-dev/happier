@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
+import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { test } from 'node:test';
@@ -74,6 +75,30 @@ const helpScenarios = [
     excludes: ['hstack auth status'],
   },
   {
+    title: 'hstack daemon -h prints daemon help (not root help)',
+    args: ['daemon', '-h'],
+    includes: ['hstack stack daemon <name> status', 'hstack stack daemon main restart'],
+    excludes: ['hstack logs'],
+  },
+  {
+    title: 'hstack providers -h prints provider help (not root help)',
+    args: ['providers', '-h'],
+    includes: ['hstack providers list', 'hstack providers install'],
+    excludes: ['hstack remote daemon setup'],
+  },
+  {
+    title: 'hstack remote -h prints remote setup help (not root help)',
+    args: ['remote', '-h'],
+    includes: ['hstack remote daemon setup', 'hstack remote server setup'],
+    excludes: ['hstack providers install'],
+  },
+  {
+    title: 'hstack logs -h prints logs help (not root help)',
+    args: ['logs', '-h'],
+    includes: ['hstack logs', 'hstack logs tail'],
+    excludes: ['hstack service status'],
+  },
+  {
     title: 'hstack tailscale enable -h prints enable help (not root help)',
     args: ['tailscale', 'enable', '-h'],
     includes: ['hstack tailscale enable'],
@@ -137,3 +162,17 @@ for (const scenario of helpScenarios) {
     for (const needle of scenario.excludes) assertOutputExcludes(res.stdout, needle);
   });
 }
+
+test('hstack package scripts point at the expanded stack tooling entrypoints', () => {
+  const testDir = resolve(fileURLToPath(import.meta.url), '..');
+  const repoRoot = resolve(testDir, '..', '..', '..');
+  const pkg = JSON.parse(readFileSync(resolve(repoRoot, 'apps', 'stack', 'package.json'), 'utf8'));
+
+  assert.equal(pkg.scripts.logs, 'node ./scripts/logs.mjs');
+  assert.equal(pkg.scripts['logs:tail'], 'node ./scripts/logs.mjs tail');
+  assert.equal(pkg.scripts.daemon, 'node ./scripts/daemon_cmd.mjs');
+  assert.equal(pkg.scripts.providers, 'node ./scripts/providers_cmd.mjs');
+  assert.equal(pkg.scripts.remote, 'node ./scripts/remote_cmd.mjs');
+  assert.equal(pkg.scripts['service:logs'], 'node ./scripts/service.mjs logs');
+  assert.equal(pkg.scripts['service:tail'], 'node ./scripts/service.mjs tail');
+});
