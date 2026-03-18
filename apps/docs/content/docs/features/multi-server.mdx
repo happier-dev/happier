@@ -19,7 +19,17 @@ If you use the same identity provider (for example GitHub) on two servers, they 
 
 - Open **Server** settings to add, select, rename, or remove saved servers.
 - On web, server selection can be set per-tab or as a device default.
-- If a connect/notification link targets a different server, Happier switches to that server before continuing.
+- If a connect/notification link targets a different **saved** server, Happier switches to that server before continuing.
+- If a notification targets a server that is **not saved yet**, Happier does not blindly replace your existing server setup.
+
+#### Notifications from a server that is not saved yet
+
+Happier handles this differently depending on what is already on the device:
+
+- **No saved servers yet**: Happier can bootstrap the server so the notification link still opens the intended session
+- **One or more saved servers already exist**: Happier opens **Server settings** with the incoming URL prefilled and asks you to add it explicitly
+
+After you choose **Add & Use**, Happier continues to the pending session/request automatically.
 
 ### Configure-server links
 
@@ -99,3 +109,9 @@ Accounts are server-scoped. The identity provider can be the same, but each serv
 ### I switched servers and my previous sessions are gone.
 
 That is expected when the previous sessions belong to another server. Switch back to that server profile to see those sessions again.
+
+### I tapped a notification and Happier sent me to Server settings instead of directly into the session.
+
+That usually means the notification came from a server URL that is not saved on this device yet, while you already had other saved servers.
+
+Happier does this on purpose so it does not silently add or trust a new server in the background. Add the server from the prefilled form, then Happier will continue to the intended session.

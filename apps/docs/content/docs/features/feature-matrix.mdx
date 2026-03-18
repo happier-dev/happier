@@ -17,8 +17,9 @@ Status legend:
 | --- | --- | --- | --- |
 | Multi-server profiles + switching | Stable | App, Web, CLI | Accounts and runtime state are scoped per server. |
 | Session sharing + collaboration | Stable | App, Web | Share sessions with friends/teammates and manage access. |
-| Persistent sessions + resume | Stable | App, Web, CLI | Resume long-running sessions across devices. |
-| Connected services | Stable | App, Web, CLI | Link provider subscriptions and API keys once, then reuse them across backends and machines. |
+| Synced sessions + resume | Stable | App, Web, CLI | Resume inactive Happier-managed sessions when the provider/backend supports vendor resume for that session. |
+| Session handoff between machines | Capability-driven | App, Web | Move a live session to another machine while keeping the same session id. Claude and OpenCode are supported; Codex is experimental. |
+| Direct provider sessions | Experimental | App, Web | Browse provider-native sessions, open them directly, and optionally sync them into Happier. |
 | Embedded terminal | Experimental | App, Web, Mobile app | Session-owned terminal dockable to bottom/sidebar/details; requires a connected daemon and reachable machine. |
 | Pending queue | Stable | App, Web, CLI runtime | Queue, reorder, edit, remove, and send-now workflows. |
 | In-flight steering while busy | Capability-driven | App, Web, CLI runtime | When supported by backend/runtime, messages can steer an active turn instead of waiting in queue. |
@@ -30,13 +31,18 @@ Status legend:
 | Turn-level change summaries | Capability-driven | App, Web | Per-turn summary and diff rendering quality depends on provider/runtime payloads. |
 | Permission modes | Capability-driven | App, Web, CLI | Effective behavior varies by provider/backend capabilities. |
 | Model/mode selection | Capability-driven | App, Web, CLI | Availability and apply timing are provider-specific. |
+| Connected services | Stable | App, Web, CLI, daemon | Connect provider subscriptions / API keys once, then reuse them across supported backends and sessions. |
+| Connected-services auth picker | Stable | App, Web | New-session auth picker shows only backend-compatible connected services and profiles. |
+| Connected-services quotas | Capability-driven | App, Web, daemon | Quota badges and profile detail meters currently exist for `openai-codex`, `claude-subscription`, and `gemini`. |
+| Local memory search | Experimental | App, Web, daemon | Opt-in machine-local transcript search with light/deep indexing, backfill controls, and optional embeddings reranking. |
+| ACP backends | Experimental | App, Web, CLI runtime | Add arbitrary ACP-compatible CLIs through Custom ACP and use each configured backend as a first-class backend choice. |
 | Server feature flags | Stable | App, Web, Server | Server can disable features (for example social/voice/bug reports) and clients adapt UI accordingly. |
-| Notification routing to session/server | Stable | App, Web | Notification taps route to correct session; multi-server routes to matching server first. |
+| Notification routing to session/server | Stable | App, Web | Notification taps route to the correct session/server; mobile also supports permission `Allow` / `Deny` and action-request `Answer` buttons with safe server-aware routing. |
 | In-app bug reports + diagnostics | Stable | App | Submit issue reports with optional diagnostics; server can disable upload/report UI. |
-| Voice: Happier Voice | Capability-driven | App, Web | Requires server voice config and feature enablement. |
-| Voice: BYO ElevenLabs | Stable | App, Web | Uses your own ElevenLabs account/API key (stored encrypted). |
-| Voice: Local OpenAI-compatible STT/TTS | Experimental | App, Web | Supports direct mode and voice agent mode. |
-| Voice: device STT/TTS toggles | Experimental | Mobile app | Uses on-device speech where available. |
+| Voice: Happier Voice | Capability-driven | App, Web | Managed realtime ElevenLabs voice; requires server voice config and feature enablement. |
+| Voice: BYO ElevenLabs | Stable | App, Web | Uses your own ElevenLabs account/API key, supports voice previews, and can provision/update a Happier-compatible ElevenLabs agent. |
+| Voice: Local voice | Experimental | App, Web | Mix device, OpenAI-compatible, Google, and local-neural STT/TTS providers; supports direct-to-session and agent conversation modes. |
+| Voice: Local neural speech | Experimental | App, Web | Kokoro local neural TTS works on web and native; Sherpa local neural STT currently requires a native build. |
 
 ## Provider availability
 
@@ -47,20 +53,24 @@ Status legend:
 | Gemini | [/docs/providers/gemini](/docs/providers/gemini) |
 | OpenCode | [/docs/providers/opencode](/docs/providers/opencode) |
 | Augment (Auggie) | [/docs/providers/augment](/docs/providers/augment) |
+| Custom ACP | [/docs/providers/custom-acp](/docs/providers/custom-acp) |
 | Kilo | [/docs/providers/kilo](/docs/providers/kilo) |
 | Kimi | [/docs/providers/kimi](/docs/providers/kimi) |
+| Kiro | [/docs/providers/kiro](/docs/providers/kiro) |
 | Qwen | [/docs/providers/qwen](/docs/providers/qwen) |
 
 ## Related guides
 
 - [Permissions](/docs/features/permissions)
-- [Embedded terminal](/docs/features/embedded-terminal)
+- [ACP backends](/docs/features/acp-backends)
+- [Session handoff](/docs/features/session-handoff)
 - [Pending queue](/docs/features/pending-queue)
 - [Steering while busy](/docs/features/steering)
+- [Embedded terminal](/docs/features/embedded-terminal)
 - [Tool timeline & normalization](/docs/features/tool-timeline)
 - [Server feature flags](/docs/features/feature-flags)
-- [Connected services](/docs/features/connected-services)
 - [Bug reports](/docs/features/bug-reports)
 - [Git & file browser](/docs/features/git)
+- [Local memory search](/docs/features/local-memory-search)
 - [Notifications](/docs/advanced/notifications)
 - [Update channels and update behavior](/docs/advanced/updates)

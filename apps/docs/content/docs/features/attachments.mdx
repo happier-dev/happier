@@ -35,6 +35,10 @@ You can attach both images and non-image files in the same message.
 
 Before you send the message, Happier keeps attachments as **drafts** in the composer.
 
+In the **new-session flow**, those draft attachments are kept while you move around the same in-app flow, such as opening picker screens and returning to the composer.
+
+They are still treated as **temporary unsent draft state**, not durable stored content. A full page reload or app restart can still clear unsent attachments.
+
 ### Non-image files
 
 Non-image files appear as attachment chips with the filename.
@@ -85,7 +89,7 @@ When you send a message with attachments:
 1. Happier uploads each file first
 2. Happier stores the files in the configured attachment upload location
 3. the sent message includes an attachments block with stable file paths
-4. the agent is instructed to read those paths with the **Read** tool before answering
+4. the message tells the agent to read those paths from disk before answering
 
 This means attachments behave like real files in the session environment, not like provider-specific “inline binary parts”.
 
@@ -144,13 +148,13 @@ Open:
 
 Default behavior stores attachments inside the current workspace.
 
-By default, Happier uses:
+By default, Happier uses this workspace-relative directory:
 
 ```text
 .happier/uploads
 ```
 
-This is useful when you want attachments to live alongside the rest of the session’s project context.
+This path is relative to the workspace root, which keeps attachments alongside the rest of the session’s project context.
 
 ### OS temp
 
@@ -209,7 +213,7 @@ Examples:
 
 Regular session messages support attachments through Happier’s shared attachment flow.
 
-One current exception is **routed Claude teammate messages**: those still do not support attachments yet.
+For routed Claude teammate messages, check the Claude provider page for the current attachment limitations on that flow.
 
 See:
 

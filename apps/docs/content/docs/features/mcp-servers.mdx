@@ -34,13 +34,15 @@ In the app:
 
 - **Settings → MCP servers**
 
-In the CLI:
+In the CLI, common examples are:
 
 ```bash
 happier mcp servers list
 happier mcp servers test --server <name-or-id>
 happier mcp servers detect --provider codex
 ```
+
+Command details can evolve, so use `happier mcp servers --help` for the current subcommands and flags.
 
 The same account-synced MCP settings are used by the app UI, the daemon, and the CLI.
 
@@ -274,15 +276,17 @@ That means:
 
 Tool delivery depends on the selected backend.
 
-Happier currently supports:
+Happier can currently deliver managed MCP tools through two broad paths:
 
-- **Native MCP delivery** on providers such as Claude, Codex, OpenCode, Kiro, and compatible custom ACP backends
-- **Shell-bridge delivery** on providers such as Gemini, Auggie, Qwen, Kimi, Kilo, Pi, and Copilot
+- **Native MCP delivery** on backends with native MCP support, including Claude, Codex, OpenCode, and compatible custom ACP backends
+- **Shell-bridge delivery** on backends that use the Happier tools bridge
 
 Important distinction:
 
 - provider-native **detected** MCP configuration is only available where that provider actually has a native MCP config model
 - Happier-managed custom MCP tools can still be delivered through the shell bridge on providers without native MCP delivery
+
+Provider support can change over time, so use the provider pages and the feature matrix as the source of truth for current behavior.
 
 See also:
 

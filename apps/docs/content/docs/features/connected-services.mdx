@@ -1,103 +1,268 @@
 ---
 title: Connected services
-description: Link provider subscriptions and API keys to Happier (OAuth/device/paste flows, daemon materialization, quotas).
+description: Link provider subscriptions and API keys to Happier, reuse them across supported backends, and monitor quota snapshots where available.
 ---
 
-Connected services let you connect provider credentials (subscriptions and API keys) to your Happier account so:
+Connected services let you store provider credentials once in Happier and then reuse them across supported backends and sessions.
 
-- you can **reuse the same auth** across multiple backends (Codex, Claude, OpenCode, Pi, …)
-- credentials are stored in Happier Cloud **encrypted**, and synced to devices without exposing plaintext to the server
-- the daemon can **materialize** per-backend auth files/env vars when spawning a session
-- (optional) Happier can display **quota/usage** snapshots where supported
+They are different from **provider authentication** in provider settings:
 
-## Service identities (important)
+- **Connected services** are stored in Happier and can be reused across compatible backends
+- **Provider authentication** reflects the native login state of a provider CLI on one specific machine
+
+See [Provider authentication](/docs/features/provider-authentication).
+
+They exist so you can:
+
+- connect subscriptions and API keys without manually re-entering them for every backend
+- keep credentials encrypted in Happier Cloud and decrypt them only on the client / daemon
+- choose per-service auth at session start instead of relying only on each backend's native auth
+- monitor usage / quota snapshots for supported services
+- make multi-machine workflows easier when the target machine should reuse the same Happier-managed credential
+
+## What a connected service is
 
 Happier models different credential types as distinct connected services:
 
-- `openai-codex`: OpenAI **Codex subscription** auth (OAuth / device code)
-- `openai`: OpenAI **API key** auth (manual token entry)
-- `claude-subscription`: Claude **subscription** auth
-  - setup-token (recommended default)
-  - OAuth (advanced; supported where possible)
-- `anthropic`: Anthropic **API key** auth (manual token entry)
-- `gemini`: Gemini OAuth auth (Google OAuth)
+- `openai-codex`: OpenAI Codex subscription auth
+- `openai`: OpenAI API key auth
+- `claude-subscription`: Claude subscription auth
+- `anthropic`: Anthropic API key auth
+- `gemini`: Gemini OAuth auth
 
-This split avoids mixing “subscription-style” credentials with “API key” credentials (different billing/entitlements and different env wiring).
+This split is intentional. Subscription auth and API-key auth have different provider behavior, billing paths, and backend materialization requirements, so Happier does not merge them into a single generic "Claude" or "OpenAI" credential type.
 
-## Where to manage connected services
+## Where you manage them
 
 In the app:
 
-- Settings → Connected services
+- Settings -> Connected services
+
+From there you can:
+
+- add one or more profiles for the same service
+- give profiles custom labels
+- set a default profile per service
+- inspect profile details such as provider email, account id, and quota meters
+- disconnect individual profiles
 
 In the CLI:
 
 - `happier connect status`
-- `happier connect codex|claude|gemini …`
+- `happier connect codex ...`
+- `happier connect claude ...`
+- `happier connect gemini`
 
-## OAuth methods (device / paste / embedded)
+## Connection methods
 
-Connected services supports multiple OAuth capture methods depending on platform:
+### OpenAI Codex
 
-- **Device code** (OpenAI Codex): best for headless / remote / “no reliable callback”
-- **Paste redirect URL**: works everywhere; user signs in in the browser, then pastes the final redirect URL into Happier
-- **Embedded (native only)**: when supported/reliable, Happier can open an in-app browser view
+Supported methods:
 
-### OpenAI Codex device auth (note)
+- device code
+- paste redirect URL
+- in-app browser on native only
 
-OpenAI can require enabling device-code authorization in ChatGPT settings (“Enable device code authorization for Codex”).
+OpenAI Codex can also be connected with an API key, but that is modeled as the separate `openai` service.
 
-Happier will show a warning when device auth is rejected for this reason.
+### OpenAI API key
 
-## Server/daemon boundary (security model)
+Supported methods:
 
-For OAuth-based services, Happier clients do **not** exchange OAuth codes for tokens directly.
+- manual API key entry
+
+Use this when you want OpenAI-backed backends to run against your own API key instead of your Codex subscription login.
+
+### Claude subscription
+
+Supported methods:
+
+- setup-token
+- paste redirect URL
+- in-app browser on native only
+
+Setup-token is the recommended default. Generate it on any machine already logged into Claude Code:
+
+```bash
+claude setup-token
+```
+
+Then paste it into Happier.
+
+### Anthropic API key
+
+Supported methods:
+
+- manual API key entry
+
+This is the Anthropic Console API-key path. It is separate from `claude-subscription`.
+
+### Gemini
+
+Supported methods:
+
+- paste redirect URL
+- in-app browser on native only
+
+### Why web behaves differently
+
+Happier does not use embedded OAuth capture on web. Web falls back to paste-based flows because a browser app cannot reliably auto-capture provider redirects to `localhost`.
+
+## Backend compatibility
+
+Connected services are not global "works everywhere" credentials. Each backend declares which service ids and credential kinds it can consume.
+
+| Backend | Supported connected services |
+| --- | --- |
+| Claude | `claude-subscription` (setup-token or OAuth), `anthropic` (API key) |
+| Codex | `openai-codex` (OAuth), `openai` (API key) |
+| Gemini | `gemini` (OAuth) |
+| OpenCode | `openai-codex` (OAuth), `openai` (API key), `anthropic` (API key) |
+| Pi | `openai-codex` (OAuth), `openai` (API key), `claude-subscription` (setup-token only), `anthropic` (API key) |
+
+Important limitations:
+
+- OpenCode does not currently accept `claude-subscription`.
+- Pi accepts `claude-subscription` only when the profile is a setup-token profile, not a Claude OAuth profile.
+- `anthropic` is API-key only in Happier.
+
+## Using connected services in the new-session flow
+
+If the selected backend supports connected services, the new-session screen shows an auth picker.
+
+That picker is dynamic:
+
+- it appears only for backends that support connected services
+- it shows only services compatible with the selected backend
+- it shows only connected profiles that are valid for that backend
+- it lets you choose `native` auth or `connected` auth for each compatible service
+
+If no compatible connected profile exists for a service, Happier keeps that service on native auth and offers a shortcut to open Connected services settings.
+
+## Connected services and session handoff
+
+Connected services are often the easiest way to preserve session continuity across machines.
+
+Why:
+
+- the credential is stored in Happier, not only in one machine-local provider login
+- compatible backends can materialize that credential again on another machine
+- you can hand off the same Happier session and continue without depending only on native provider CLI auth on the destination
+
+This is especially useful for:
+
+- moving a session from one desktop/laptop to another
+- moving between a host machine and a VM
+- keeping continuity when only one side had previously been set up through the app
+
+Connected services do not replace every native provider login flow. Some providers and runtimes still depend on machine-local authentication. But for supported backends, connected services are the preferred path for cross-machine continuity.
+
+See:
+
+- [Session handoff](/docs/features/session-handoff)
+- [Provider authentication](/docs/features/provider-authentication)
+
+## Profiles, defaults, and labels
+
+Each connected service can have multiple profiles, for example:
+
+- a personal OpenAI subscription and a work OpenAI subscription
+- multiple Anthropic API keys
+- multiple Claude setup-token profiles
+
+For each service you can:
+
+- set one default profile
+- override the default at session start
+- assign a friendly label so the auth picker can show something clearer than just `work` or `default`
+
+## Quotas
+
+Quota / usage surfaces are behind the `connectedServices.quotas` feature gate.
+
+Current quota snapshots are available for:
+
+- `openai-codex`
+- `claude-subscription`
+- `gemini`
+
+They appear in:
+
+- the Connected services list as badges on the effective profile
+- per-profile detail screens
+- the new-session auth picker for connected profiles
+
+Each profile detail view lets you:
+
+- refresh the snapshot
+- inspect the provider plan label when available
+- pin specific meters so the same meters appear as summary badges elsewhere in the UI
+
+## Security model
+
+For OAuth-based services, Happier clients do not exchange provider codes for tokens directly.
 
 Instead:
 
-1. Client receives an OAuth `code` (device/paste/embedded capture).
-2. Client calls Happier server `/v2/connect/<serviceId>/oauth/exchange`.
-3. Server exchanges the code with the provider and returns an **encrypted bundle** (sealed to the client public key).
-4. Client decrypts locally and stores the credential record.
+1. the client receives an OAuth code through device auth, paste, or embedded browser capture
+2. the client calls Happier server `/v2/connect/<serviceId>/oauth/exchange`
+3. the server exchanges the code with the provider
+4. the server returns an encrypted bundle sealed to the client public key
+5. the client decrypts the bundle locally and stores the resulting credential record
 
-This keeps provider secrets (for example Gemini OAuth `client_secret`) out of the UI bundle.
+This keeps provider secrets, including server-side OAuth client secrets, out of the UI bundle.
 
-## Quotas (optional)
+When a session starts, the daemon decrypts the selected records locally and materializes only the backend-specific auth it needs for that spawn.
 
-Quota/usage surfaces are behind the `connectedServices.quotas` feature gate.
+## Feature gates and overrides
 
-If enabled, the daemon can fetch usage snapshots for compatible connected services and show them in:
+Connected services uses the canonical feature-gating system.
 
-- Connected service profile detail views
-- Backend/session pickers (where applicable)
+Server feature flags:
 
-## Environment variables (advanced)
+- `connectedServices`
+- `connectedServices.quotas`
 
-Most users should not need these. They exist to reduce drift and allow self-hosted overrides.
+UI build gates:
 
-### Server OAuth exchange
+- `EXPO_PUBLIC_HAPPIER_FEATURE_CONNECTED_SERVICES__ENABLED`
+- `EXPO_PUBLIC_HAPPIER_FEATURE_CONNECTED_SERVICES_QUOTAS__ENABLED`
+
+See:
+
+- [Server feature flags](/docs/features/feature-flags)
+- [App environment variables (Expo)](/docs/development/app-env)
+
+## Advanced server overrides
+
+Most users should not need these. They are mainly for self-hosted deployments and drift reduction.
+
+Global server exchange timeout:
 
 - `HAPPIER_CONNECTED_SERVICES_OAUTH_EXCHANGE_TIMEOUT_MS`
 
-OpenAI Codex:
+OpenAI Codex OAuth:
 
 - `HAPPIER_CONNECTED_SERVICES_OPENAI_CODEX_OAUTH_CLIENT_ID`
 - `HAPPIER_CONNECTED_SERVICES_OPENAI_CODEX_OAUTH_TOKEN_URL`
 
-Gemini:
+Gemini OAuth:
 
 - `HAPPIER_CONNECTED_SERVICES_GEMINI_OAUTH_CLIENT_ID`
 - `HAPPIER_CONNECTED_SERVICES_GEMINI_OAUTH_CLIENT_SECRET`
 - `HAPPIER_CONNECTED_SERVICES_GEMINI_OAUTH_TOKEN_URL`
 
-Claude subscription:
+Claude subscription OAuth:
 
 - `HAPPIER_CONNECTED_SERVICES_CLAUDE_SUBSCRIPTION_OAUTH_CLIENT_ID`
 - `HAPPIER_CONNECTED_SERVICES_CLAUDE_SUBSCRIPTION_OAUTH_TOKEN_URL`
 
-### UI build gates
+Quota fetchers:
 
-See: [App environment variables (Expo)](/docs/development/app-env) for:
+- `HAPPIER_CONNECTED_SERVICES_QUOTAS_STALE_AFTER_MS`
+- `HAPPIER_CONNECTED_SERVICES_QUOTAS_USER_AGENT`
+- `HAPPIER_CONNECTED_SERVICES_OPENAI_CODEX_USAGE_URL`
+- `HAPPIER_CONNECTED_SERVICES_CLAUDE_SUBSCRIPTION_USAGE_URL`
+- `HAPPIER_CONNECTED_SERVICES_ANTHROPIC_USAGE_URL`
 
-- `EXPO_PUBLIC_HAPPIER_FEATURE_CONNECTED_SERVICES__ENABLED`
-- `EXPO_PUBLIC_HAPPIER_FEATURE_CONNECTED_SERVICES_QUOTAS__ENABLED`
+`HAPPIER_CONNECTED_SERVICES_ANTHROPIC_USAGE_URL` remains accepted as a fallback override for Claude subscription quota fetching, but the primary service identity is `claude-subscription`.
