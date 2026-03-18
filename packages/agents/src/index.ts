@@ -5,20 +5,32 @@ export {
     PERMISSION_INTENTS,
     PERMISSION_MODES,
     type AgentCore,
+    type AgentCoreRuntimeControlSurface,
+    type AgentHandoffConfig,
     type AgentId,
+    type AgentLocalControlConfig,
+    type AgentLocalControlAttachStrategy,
+    type AgentLocalControlTopology,
+    type AgentResumeConfig,
+    type AgentSessionCapabilitySupportLevel,
+    type AgentSessionCapabilities,
+    type AgentSessionStorage,
+    type AgentToolsConfig,
+    type AgentToolsDelivery,
+    type AgentToolsSupportLevel,
     type ConnectedServiceId,
     type ConnectedServiceKind,
     type CloudConnectTargetStatus,
     type CloudVendorKey,
     type PermissionIntent,
     type PermissionMode,
-    type ResumeRuntimeGate,
+    type VendorHandoffSupportLevel,
     type VendorResumeIdField,
     type VendorResumeSupportLevel,
 } from './types.js';
 export { AGENTS_CORE, DEFAULT_AGENT_ID } from './manifest.js';
 export { resolveAgentIdFromFlavor } from './resolveAgentIdFromFlavor.js';
-export { inferAgentIdFromSessionMetadata } from './resolveAgentIdFromSessionMetadata.js';
+export { inferAgentIdFromSessionMetadata, resolveAgentIdFromSessionMetadata } from './resolveAgentIdFromSessionMetadata.js';
 export {
   AGENT_MODEL_CONFIG,
   getAgentModelConfig,
@@ -27,8 +39,13 @@ export {
 } from './models.js';
 
 export {
+  AGENT_SESSION_MODE_DESCRIPTORS,
   AGENT_SESSION_MODES,
+  getAgentSessionModeDescriptor,
   getAgentSessionModesKind,
+  type AgentSessionModeDescriptor,
+  type AgentSessionModeSemantics,
+  type AgentSessionModeSource,
   type AgentSessionModesKind,
 } from './sessionModes.js';
 
