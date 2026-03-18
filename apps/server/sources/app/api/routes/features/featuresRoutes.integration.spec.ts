@@ -360,6 +360,13 @@ describe("featuresRoutes", () => {
             const payload = await getFeaturesPayload();
             expect(payload.features.automations.enabled).toBe(true);
         });
+
+        it("returns automations enabled=false when HAPPIER_FEATURE_AUTOMATIONS__ENABLED is off", async () => {
+            process.env.HAPPIER_FEATURE_AUTOMATIONS__ENABLED = "0";
+
+            const payload = await getFeaturesPayload();
+            expect(payload.features.automations.enabled).toBe(false);
+        });
     });
 
     describe("connected services", () => {
