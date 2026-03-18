@@ -30,6 +30,7 @@ export function useChangedFilesReviewDiffLoading(input: {
     maxConcurrency?: number;
     minRefetchMs?: number;
     refreshToken?: number;
+    providerDiffByPath?: ReadonlyMap<string, string> | null;
     normalizeError: (input: unknown) => string;
     fallbackError: string;
 }) {
@@ -48,6 +49,7 @@ export function useChangedFilesReviewDiffLoading(input: {
         fallbackError,
         minRefetchMs,
         refreshToken,
+        providerDiffByPath,
     } = input;
 
     const requestedPathsNormalized = React.useMemo<readonly string[] | null>(() => {
@@ -111,6 +113,20 @@ export function useChangedFilesReviewDiffLoading(input: {
     }, [fileStatusByPath]);
 
     React.useEffect(() => {
+        if (!providerDiffByPath || providerDiffByPath.size === 0) return;
+        for (const path of fileStatusByPath.keys()) {
+            const providerDiff = providerDiffByPath.get(path);
+            if (typeof providerDiff !== 'string' || providerDiff.trim().length === 0) continue;
+            diffStateSource.setDiffState(path, {
+                status: 'loaded',
+                diff: providerDiff,
+                error: null,
+            });
+            lastFetchAtMsByPathRef.current[path] = Date.now();
+        }
+    }, [diffStateSource, fileStatusByPath, providerDiffByPath]);
+
+    React.useEffect(() => {
         if (!sessionId) return;
         if (!isRepo) return;
         if (reviewFiles.length === 0) return;
@@ -134,6 +150,16 @@ export function useChangedFilesReviewDiffLoading(input: {
                 }
             }
             if (inFlightPathsRef.current.has(path)) {
+                return;
+            }
+            const providerDiff = providerDiffByPath?.get(path);
+            if (typeof providerDiff === 'string' && providerDiff.trim().length > 0) {
+                diffStateSource.setDiffState(path, {
+                    status: 'loaded',
+                    diff: providerDiff,
+                    error: null,
+                });
+                lastFetchAtMsByPathRef.current[path] = Date.now();
                 return;
             }
             inFlightPathsRef.current.add(path);
@@ -260,6 +286,7 @@ export function useChangedFilesReviewDiffLoading(input: {
         sessionId,
         snapshotSignature,
         tooLarge,
+        providerDiffByPath,
     ]);
 
     return {

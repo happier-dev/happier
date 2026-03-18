@@ -8,12 +8,17 @@ vi.mock('react-native', () => ({
     Platform: { OS: 'web', select: (_: any) => 1 },
     View: (props: any) => React.createElement('View', props, props.children),
     Text: (props: any) => React.createElement('Text', props, props.children),
+    Pressable: (props: any) => React.createElement('Pressable', props, props.children),
     ActivityIndicator: (props: any) => React.createElement('ActivityIndicator', props, null),
     AppState: {
         currentState: 'active',
         addEventListener: () => ({ remove: () => {} }),
         removeEventListener: () => {},
     },
+}));
+
+vi.mock('@expo/vector-icons', () => ({
+    Octicons: 'Octicons',
 }));
 
 vi.mock('react-native-unistyles', () => ({
@@ -47,14 +52,30 @@ vi.mock('@/hooks/session/files/useChangedFilesData', () => ({
     useChangedFilesData: () => ({
         attributionReliability: 'high',
         allRepositoryChangedFiles: [],
+        turnAttributedFiles: [],
+        turnRepositoryOnlyFiles: [],
         sessionAttributedFiles: [],
         repositoryOnlyFiles: [],
         suppressedInferredCount: 0,
+        showTurnViewToggle: false,
+        showSessionViewToggle: false,
+    }),
+}));
+
+vi.mock('@/sync/domains/session/changes/hooks/useDerivedSessionChangeSet', () => ({
+    useDerivedSessionChangeSet: () => ({
+        turnChangeSets: [],
+        latestTurnChangeSet: null,
+        latestTurnScopedChangeSet: null,
+        sessionChangeSet: null,
+        latestTurnDiffByPath: null,
+        providerDiffByPath: null,
     }),
 }));
 
 vi.mock('@/sync/domains/state/storage', () => ({
     useSession: () => ({ metadata: { path: '/tmp/repo' } }),
+    useSessionMessages: () => ({ messages: [] }),
     useSessionProjectScmSnapshot: () => null,
     useSessionProjectScmSnapshotError: () => null,
     useSessionProjectScmTouchedPaths: () => [],
@@ -62,6 +83,22 @@ vi.mock('@/sync/domains/state/storage', () => ({
     useProjectForSession: () => null,
     useProjectSessions: () => [],
     useSetting: () => 25,
+}));
+
+vi.mock('@/sync/domains/state/storageStore', () => ({
+    useSession: () => ({ metadata: { path: '/tmp/repo' } }),
+    useSessionMessages: () => ({ messages: [] }),
+    useSessionProjectScmSnapshot: () => null,
+    useSessionProjectScmSnapshotError: () => null,
+    useSessionProjectScmTouchedPaths: () => [],
+    useSessionProjectScmOperationLog: () => [],
+    useProjectForSession: () => null,
+    useProjectSessions: () => [],
+    useSetting: () => 25,
+    storage: {
+        getState: () => ({}),
+    },
+    getStorage: () => ((selector: any) => selector({ localSettings: {} })),
 }));
 
 vi.mock('@/scm/scmStatusSync', () => ({
