@@ -1,5 +1,5 @@
 import { db } from "@/storage/db";
-import { ShareAccessLevel } from "@prisma/client";
+import { ShareAccessLevel } from "@/storage/prisma";
 import { createHash } from "crypto";
 
 /**
