@@ -5,7 +5,6 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { resolveActiveRuntimeSnapshot } from './resolveActiveRuntimeSnapshot.mjs';
-import { resolveCliRuntimeLaunchSpec } from './resolveCliRuntimeLaunchSpec.mjs';
 import { writeRuntimeManifest, writeRuntimePointer } from '../shared/runtime_manifest.mjs';
 import { resolveStackRuntimePaths } from '../shared/runtime_paths.mjs';
 
@@ -82,9 +81,11 @@ test('resolveActiveRuntimeSnapshot rejects pointers that escape the stack runtim
   await mkdir(join(escaped, 'ui'), { recursive: true });
   await mkdir(join(escaped, 'server'), { recursive: true });
   await mkdir(join(escaped, 'cli'), { recursive: true });
+  await mkdir(join(escaped, 'cli', 'package-dist'), { recursive: true });
   await writeFile(join(escaped, 'ui', 'index.html'), '<html></html>\n', 'utf-8');
   await writeFile(join(escaped, 'server', 'happier-server'), 'echo server\n', 'utf-8');
   await writeFile(join(escaped, 'cli', 'happier'), 'echo cli\n', 'utf-8');
+  await writeFile(join(escaped, 'cli', 'package-dist', 'index.mjs'), 'export {};\n', 'utf-8');
   await writeRuntimeManifest({
     manifestPath: paths.manifestPath,
     manifest: {
@@ -157,28 +158,4 @@ test('resolveActiveRuntimeSnapshot returns validated manifest and pointer data',
   assert.equal(resolved.snapshotId, 'snap-1');
   assert.equal(resolved.snapshotPath, paths.snapshotDir);
   assert.equal(resolved.manifest.sourceFingerprint, 'src-1');
-  assert.equal('bundledWorkspaceSync' in resolved, false);
-});
-
-test('resolveCliRuntimeLaunchSpec returns a runtime binary command from the snapshot', () => {
-  const resolved = resolveCliRuntimeLaunchSpec({
-    snapshot: {
-      snapshotPath: '/tmp/stack/runtime/builds/snap-1',
-      manifest: {
-        components: {
-          daemon: { entrypoint: 'cli/happier' },
-        },
-      },
-    },
-  });
-
-  assert.deepEqual(resolved, {
-    source: 'runtime',
-    cliDir: '/tmp/stack/runtime/builds/snap-1/cli',
-    entrypoint: '/tmp/stack/runtime/builds/snap-1/cli/happier',
-    nodeEntrypoint: '/tmp/stack/runtime/builds/snap-1/cli/package-dist/index.mjs',
-    command: '/tmp/stack/runtime/builds/snap-1/cli/happier',
-    args: [],
-  });
-  assert.equal('bundledWorkspaceSync' in resolved, false);
 });

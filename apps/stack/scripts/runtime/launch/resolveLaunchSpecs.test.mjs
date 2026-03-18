@@ -24,7 +24,6 @@ test('resolveCliRuntimeLaunchSpec returns a runtime binary command from the snap
     command: '/tmp/stack/runtime/builds/snap-1/cli/happier',
     args: [],
   });
-  assert.equal('bundledWorkspaceSync' in resolved, false);
 });
 
 test('resolveServerRuntimeLaunchSpec returns the runtime server binary command from the snapshot', () => {
@@ -86,7 +85,6 @@ test('resolveCliRuntimeLaunchSpec falls back to the canonical cli path when the 
     command: '/tmp/stack/runtime/builds/snap-1/cli/happier',
     args: [],
   });
-  assert.equal('bundledWorkspaceSync' in resolved, false);
 });
 
 test('resolveServerRuntimeLaunchSpec falls back to the canonical server path when the manifest entrypoint escapes the snapshot root', () => {

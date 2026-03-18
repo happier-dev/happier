@@ -6,17 +6,16 @@ import { readBundledWorkspaceSyncConfig } from './readBundledWorkspaceSyncConfig
 test('readBundledWorkspaceSyncConfig derives stack workspace packages from bundledDependencies', () => {
   const config = readBundledWorkspaceSyncConfig('/repo/apps/stack', {
     existsSync: (candidate) => candidate === '/repo/apps/stack/package.json',
-    readFileSync: () =>
-      JSON.stringify({
-        bundledDependencies: [
-          '@happier-dev/agents',
-          '@happier-dev/cli-common',
-          '@happier-dev/connection-supervisor',
-          'qrcode',
-          '@happier-dev/protocol',
-          '@happier-dev/release-runtime',
-        ],
-      }),
+    readFileSync: () => JSON.stringify({
+      bundledDependencies: [
+        '@happier-dev/agents',
+        '@happier-dev/cli-common',
+        '@happier-dev/connection-supervisor',
+        'qrcode',
+        '@happier-dev/protocol',
+        '@happier-dev/release-runtime',
+      ],
+    }),
   });
 
   assert.deepEqual(config, {

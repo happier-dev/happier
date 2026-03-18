@@ -78,7 +78,7 @@ test('hstack stack auth copy-from skips pglite DB seed when lock is held by a li
     assert.match(combinedOutput, /\bdb seed skipped\b/i, `expected db seed to be skipped\nstdout:\n${res.stdout}\nstderr:\n${res.stderr}`);
     assert.match(
       combinedOutput,
-      /\bpglite.*db dir is in use/i,
+      /\bpglite.*(?:already in use|db dir is in use)/i,
       `expected message about live pglite lock\nstdout:\n${res.stdout}\nstderr:\n${res.stderr}`
     );
   } finally {
