@@ -374,6 +374,9 @@ export function sanitizeDaemonEnvForSpawn(env: NodeJS.ProcessEnv): NodeJS.Proces
   delete sanitized.HAPPY_SESSION_ATTACH_FILE;
   delete sanitized.HAPPIER_STACK_TOOL_TRACE_FILE;
   delete sanitized.HAPPY_STACK_TOOL_TRACE_FILE;
+  if (sanitized.HAPPIER_DISABLE_CAFFEINATE === undefined || sanitized.HAPPIER_DISABLE_CAFFEINATE === '') {
+    sanitized.HAPPIER_DISABLE_CAFFEINATE = '1';
+  }
   return sanitized;
 }
 
