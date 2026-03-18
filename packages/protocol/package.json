@@ -34,6 +34,10 @@
       "types": "./dist/installables.d.ts",
       "default": "./dist/installables.js"
     },
+    "./installablesPolicy": {
+      "types": "./dist/installablesPolicy.d.ts",
+      "default": "./dist/installablesPolicy.js"
+    },
     "./capabilities": {
       "types": "./dist/capabilities.d.ts",
       "default": "./dist/capabilities.js"

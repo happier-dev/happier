@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
+import { actionSpecToElevenLabsClientToolParameters } from './actionInputElevenLabsToolSchema.js';
 import { getActionSpec } from './actionSpecs.js';
 
 function hasKeyDeep(value: unknown, key: string): boolean {
@@ -11,9 +12,8 @@ function hasKeyDeep(value: unknown, key: string): boolean {
 }
 
 describe('actionInputElevenLabsToolSchema', () => {
-  it('produces an ElevenLabs-compatible parameters schema for review.start', async () => {
+  it('produces an ElevenLabs-compatible parameters schema for review.start', () => {
     const spec = getActionSpec('review.start');
-    const { actionSpecToElevenLabsClientToolParameters } = await import('./actionInputElevenLabsToolSchema.js');
 
     const schema = actionSpecToElevenLabsClientToolParameters(spec);
 
@@ -42,5 +42,66 @@ describe('actionInputElevenLabsToolSchema', () => {
     expect(base?.type).toBe('object');
     expect(base?.properties?.kind).toMatchObject({ type: 'string' });
     expect(base?.properties?.kind?.enum).toEqual(expect.arrayContaining(['none', 'branch', 'commit']));
+  });
+
+  it('produces an ElevenLabs-compatible parameters schema for session.user_action.answer', () => {
+    const spec = getActionSpec('session.user_action.answer');
+
+    const schema = actionSpecToElevenLabsClientToolParameters(spec);
+
+    expect(schema).toMatchObject({
+      type: 'object',
+      properties: expect.any(Object),
+    });
+    expect(hasKeyDeep(schema, 'additionalProperties')).toBe(false);
+    expect(hasKeyDeep(schema, 'oneOf')).toBe(false);
+    expect(hasKeyDeep(schema, 'anyOf')).toBe(false);
+    expect(hasKeyDeep(schema, 'allOf')).toBe(false);
+
+    const answers = (schema as any).properties?.answers;
+    expect(answers).toMatchObject({ type: 'array', items: { type: 'object' } });
+    expect(typeof answers.description).toBe('string');
+    expect(typeof answers.items?.description).toBe('string');
+    expect(typeof answers.items?.properties?.question?.description).toBe('string');
+    expect(typeof answers.items?.properties?.answer?.description).toBe('string');
+  });
+
+  it('omits guidance for disabled discovery tools from parameter descriptions', () => {
+    const spec = getActionSpec('session.spawn_new');
+
+    const schema = actionSpecToElevenLabsClientToolParameters(spec, {
+      disabledActionIds: ['machines.list'],
+    });
+
+    expect(String((schema as any).properties?.host?.description ?? '')).not.toContain('listMachines');
+    expect((schema as any).properties?.workspaceId).toBeUndefined();
+  });
+
+  it('omits guidance for discovery tools that are not exposed in the available surface', () => {
+    const spec = getActionSpec('session.spawn_new');
+
+    const schema = actionSpecToElevenLabsClientToolParameters(spec, {
+      availableActionIds: ['session.spawn_picker', 'agents.backends.list', 'agents.models.list'],
+    });
+
+    expect((schema as any).properties?.workspaceId).toBeUndefined();
+    expect(String((schema as any).properties?.path?.description ?? '')).not.toContain('listRecentPaths');
+    expect(String((schema as any).properties?.path?.description ?? '')).toContain('spawnSessionPicker');
+    expect(String((schema as any).properties?.agentId?.description ?? '')).toContain('listAgentBackends');
+  });
+
+  it('drops non-string enums that ElevenLabs rejects on numeric parameters', () => {
+    const spec = getActionSpec('memory.search');
+
+    const schema = actionSpecToElevenLabsClientToolParameters(spec);
+
+    expect((schema as any).properties?.query?.properties?.v).toMatchObject({
+      type: 'number',
+      description: expect.any(String),
+    });
+    expect((schema as any).properties?.query?.properties?.v?.enum).toBeUndefined();
+    expect((schema as any).properties?.query?.properties?.mode?.enum).toEqual(
+      expect.arrayContaining(['hints', 'deep', 'auto']),
+    );
   });
 });

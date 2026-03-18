@@ -18,6 +18,15 @@ export {
 } from './meta.js';
 
 export { CHANGE_TITLE_TOOL_NAME_ALIASES, isChangeTitleToolNameAlias, type ChangeTitleToolNameAlias } from './aliases.js';
+export {
+  LEGACY_SUBAGENT_TOOL_NAME_ALIASES,
+  GENERIC_SUBAGENT_TOOL_NAME_ALIASES,
+  canonicalizeGenericSubAgentToolName,
+  isGenericSubAgentToolName,
+  isSubAgentTranscriptToolName,
+  type LegacySubAgentToolNameAlias,
+  type GenericSubAgentToolNameAlias,
+} from './subAgentFamilies.js';
 
 export {
   getToolInputSchemaV2,
@@ -48,6 +57,8 @@ export {
   TodoWriteInputV2Schema,
   TodoReadInputV2Schema,
   TodoResultV2Schema,
+  SubAgentInputV2Schema,
+  SubAgentResultV2Schema,
   TaskInputV2Schema,
   TaskResultV2Schema,
   ReasoningInputV2Schema,

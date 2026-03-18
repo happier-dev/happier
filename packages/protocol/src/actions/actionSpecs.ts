@@ -9,6 +9,8 @@ import { ApprovalRequestCreatedBySchema } from '../approvals/approvalRequestV1.j
 import { PromptRegistryConfiguredSourceV1Schema } from '../promptLibrary/promptRegistriesV1.js';
 import { PromptAssetInstallModeV1Schema, PromptAssetScopeV1Schema } from '../promptLibrary/promptAssetsV1.js';
 import { BackendTargetKeySchema } from '../backendTargets/backendTargetRef.js';
+import { SessionRollbackTargetSchema } from '../sessionRollback.js';
+import { SessionHandoffWorkspaceTransferSchema } from '../sessionControl/handoff/handoffSchemas.js';
 
 const ZodSchemaLike = z.custom<z.ZodTypeAny>((value) => {
   if (!value || typeof value !== 'object') return false;
@@ -37,6 +39,7 @@ export const ActionInputOptionSchema = z
     value: z.string().min(1),
     label: z.string().min(1),
     description: z.string().min(1).optional(),
+    disabled: z.boolean().optional(),
   })
   .strict();
 export type ActionInputOption = z.infer<typeof ActionInputOptionSchema>;
@@ -59,6 +62,11 @@ export const ActionInputFieldHintSchema = z
      */
     listSeparator: z.enum(['comma', 'newline']).optional(),
     required: z.boolean().optional(),
+    /**
+     * When true, draft/launcher UIs should keep this field empty until the user
+     * explicitly picks a value instead of auto-seeding or auto-selecting one.
+     */
+    requireExplicitSelection: z.boolean().optional(),
     options: z.array(ActionInputOptionSchema).optional(),
     optionsSourceId: z.string().min(1).optional(),
     visibleWhen: ActionInputPredicateSchema.optional(),
@@ -105,6 +113,13 @@ export const ActionInputHintsSchema = z
   .strict();
 export type ActionInputHints = z.infer<typeof ActionInputHintsSchema>;
 
+export const ActionPromptingSchema = z
+  .object({
+    voiceHotPath: z.boolean().optional(),
+  })
+  .strict();
+export type ActionPrompting = z.infer<typeof ActionPromptingSchema>;
+
 export const ActionSpecSchema = z.object({
   id: ActionIdSchema,
   title: z.string().min(1),
@@ -146,6 +161,7 @@ export const ActionSpecSchema = z.object({
     })
     .passthrough()
     .optional(),
+  prompting: ActionPromptingSchema.optional(),
   surfaces: ActionSurfaceSchema,
   inputSchema: ZodSchemaLike,
   inputHints: ActionInputHintsSchema.optional(),
@@ -156,10 +172,13 @@ export type ActionSpec = z.infer<typeof ActionSpecSchema> & Readonly<{
 }>;
 
 const EmptyObjectSchema = z.object({}).strict();
+const OptionalSessionIdInputSchema = z.object({
+  sessionId: z.string().min(1).optional(),
+}).passthrough();
 
 const IntentStartCommonSchema = z.object({
   sessionId: z.string().min(1).optional(),
-  backendIds: z.array(z.string().min(1)).min(1),
+  backendTargetKeys: z.array(BackendTargetKeySchema).min(1),
   instructions: z.string().trim().min(1),
   permissionMode: z.string().min(1).optional(),
   retentionPolicy: z.enum(['ephemeral', 'resumable']).optional(),
@@ -208,16 +227,36 @@ const ExecutionRunActionInputSchema = ExecutionRunIdInputSchema.extend({
 }).passthrough();
 
 const SessionOpenInputSchema = z.object({
-  sessionId: z.string().min(1),
-}).passthrough();
+  sessionId: z.string().min(1).optional(),
+  sessionTitle: z.string().trim().min(1).optional(),
+}).passthrough().superRefine((value, ctx) => {
+  if (!(typeof value.sessionId === 'string' && value.sessionId.trim().length > 0) && !(typeof value.sessionTitle === 'string' && value.sessionTitle.trim().length > 0)) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: 'sessionId or sessionTitle is required',
+      path: ['sessionId'],
+    });
+  }
+});
 
 const SessionForkInputSchema = z.object({
   sessionId: z.string().min(1).optional(),
 }).passthrough();
 
+const SessionRollbackInputSchema = z.object({
+  sessionId: z.string().min(1).optional(),
+  target: SessionRollbackTargetSchema.optional(),
+}).passthrough();
+
+const SessionHandoffInputSchema = z.object({
+  sessionId: z.string().min(1).optional(),
+  targetMachineId: z.string().min(1).optional(),
+  targetSessionStorageMode: z.enum(['direct', 'persisted']).optional(),
+  workspaceTransfer: SessionHandoffWorkspaceTransferSchema.optional(),
+}).passthrough();
+
 const SessionSpawnNewInputSchema = z.object({
   tag: z.string().min(1).optional(),
-  workspaceId: z.string().min(1).optional(),
   agentId: z.string().min(1).optional(),
   modelId: z.string().min(1).optional(),
   path: z.string().min(1).optional(),
@@ -230,10 +269,6 @@ const SessionSpawnPickerInputSchema = z.object({
   agentId: z.string().min(1).optional(),
   modelId: z.string().min(1).optional(),
   initialMessage: z.string().min(1).optional(),
-}).passthrough();
-
-const WorkspacesListRecentInputSchema = z.object({
-  limit: z.number().int().min(1).max(50).optional(),
 }).passthrough();
 
 const PathsListRecentInputSchema = z.object({
@@ -249,14 +284,50 @@ const ServersListInputSchema = z.object({
   limit: z.number().int().min(1).max(200).optional(),
 }).passthrough();
 
+const ReviewEnginesListInputSchema = z.object({
+  sessionId: z.string().min(1).optional(),
+  includeDisabled: z.boolean().optional(),
+}).passthrough();
+
 const AgentsBackendsListInputSchema = z.object({
   includeDisabled: z.boolean().optional(),
+  limit: z.number().int().min(1).max(200).optional(),
 }).passthrough();
 
 const AgentsModelsListInputSchema = z.object({
   agentId: z.string().min(1),
   machineId: z.string().min(1).optional(),
+  limit: z.number().int().min(1).max(200).optional(),
 }).passthrough();
+
+const ActionSpecSearchInputSchema = z.object({
+  query: z.string().trim().optional(),
+  limit: z.number().int().min(1).max(100).optional(),
+}).passthrough();
+
+const ActionSpecGetInputSchema = z.object({
+  id: z.string().min(1),
+}).passthrough();
+
+const ActionOptionsResolveInputSchema = z.object({
+  actionId: z.string().min(1).optional(),
+  fieldPath: z.string().min(1).optional(),
+  optionsSourceId: z.string().min(1).optional(),
+  sessionId: z.string().min(1).optional(),
+  limit: z.number().int().min(1).max(200).optional(),
+  query: z.string().trim().optional(),
+}).passthrough().superRefine((value, ctx) => {
+  const actionId = typeof value.actionId === 'string' ? value.actionId.trim() : '';
+  const fieldPath = typeof value.fieldPath === 'string' ? value.fieldPath.trim() : '';
+  const optionsSourceId = typeof value.optionsSourceId === 'string' ? value.optionsSourceId.trim() : '';
+  if (!optionsSourceId && !(actionId && fieldPath)) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: 'actionId + fieldPath or optionsSourceId is required',
+      path: ['actionId'],
+    });
+  }
+});
 
 const SessionSendMessageInputSchema = z.object({
   sessionId: z.string().min(1).optional(),
@@ -269,9 +340,56 @@ const SessionPermissionRespondInputSchema = z.object({
   requestId: z.string().min(1).optional(),
 }).passthrough();
 
-const SessionPrimaryTargetInputSchema = z.object({
-  sessionId: z.string().min(1).nullable(),
+const SessionUserActionAnswerItemSchema = z.object({
+  question: z.string().trim().min(1),
+  answer: z.string().trim().min(1),
+}).strict();
+
+const SessionUserActionAnswerInputSchema = z.object({
+  sessionId: z.string().min(1).optional(),
+  requestId: z.string().min(1).optional(),
+  decision: z.enum(['approve', 'reject', 'request_changes']).optional(),
+  reason: z.string().trim().min(1).optional(),
+  answers: z.array(SessionUserActionAnswerItemSchema).min(1).optional(),
+  updatedPermissions: z.unknown().optional(),
+}).passthrough().superRefine((value, ctx) => {
+  const hasAnswers = Array.isArray(value.answers) && value.answers.length > 0;
+  const decision = typeof value.decision === 'string' ? value.decision : null;
+  if (!hasAnswers && !decision) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: 'decision or answers is required',
+      path: ['decision'],
+    });
+  }
+  if (decision === 'request_changes' && !(typeof value.reason === 'string' && value.reason.trim().length > 0)) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: 'reason is required when decision=request_changes',
+      path: ['reason'],
+    });
+  }
+});
+
+const SessionModeSetInputSchema = z.object({
+  sessionId: z.string().min(1).optional(),
+  modeId: z.string().min(1),
 }).passthrough();
+
+const SessionPrimaryTargetInputSchema = z.object({
+  sessionId: z.string().min(1).nullable().optional(),
+  sessionTitle: z.string().trim().min(1).optional(),
+}).passthrough().superRefine((value, ctx) => {
+  const hasSessionId = value.sessionId === null || (typeof value.sessionId === 'string' && value.sessionId.trim().length > 0);
+  const hasSessionTitle = typeof value.sessionTitle === 'string' && value.sessionTitle.trim().length > 0;
+  if (!hasSessionId && !hasSessionTitle) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: 'sessionId or sessionTitle is required',
+      path: ['sessionId'],
+    });
+  }
+});
 
 const SessionTrackedTargetsInputSchema = z.object({
   sessionIds: z.array(z.string().min(1)).max(50),
@@ -384,11 +502,101 @@ const PromptRegistryInstallInputSchema = z.object({
 
 export const ACTION_SPECS: readonly ActionSpec[] = Object.freeze([
   {
+    id: 'action.spec.search',
+    title: 'Search action specs',
+    description: 'Search available Happier action specs by name, description, bindings, and field hints.',
+    safety: 'safe',
+    placements: ['voice_panel'],
+    prompting: { voiceHotPath: true },
+    bindings: { voiceClientToolName: 'searchActionSpecs', mcpToolName: 'action_spec_search' },
+    examples: {
+      voice: { argsExample: '{"query":"plan mode","limit":5}' },
+    },
+    surfaces: {
+      ui_button: false,
+      ui_slash_command: false,
+      voice_tool: true,
+      voice_action_block: true,
+      mcp: true,
+      session_control_cli: false,
+    },
+    inputHints: {
+      title: 'Search action specs',
+      description: 'Use this before guessing action ids or tool names.',
+      fields: [
+        { path: 'query', title: 'Query', description: 'Natural-language search text.', widget: 'text' },
+        { path: 'limit', title: 'Limit', description: 'Maximum number of action specs to return.', widget: 'text' },
+      ],
+    },
+    inputSchema: ActionSpecSearchInputSchema,
+  },
+  {
+    id: 'action.spec.get',
+    title: 'Get action spec',
+    description: 'Get one Happier action spec with input hints and examples.',
+    safety: 'safe',
+    placements: ['voice_panel'],
+    prompting: { voiceHotPath: true },
+    bindings: { voiceClientToolName: 'getActionSpec', mcpToolName: 'action_spec_get' },
+    examples: {
+      voice: { argsExample: '{"id":"subagents.plan.start"}' },
+    },
+    surfaces: {
+      ui_button: false,
+      ui_slash_command: false,
+      voice_tool: true,
+      voice_action_block: true,
+      mcp: true,
+      session_control_cli: false,
+    },
+    inputHints: {
+      title: 'Get action spec',
+      fields: [
+        { path: 'id', title: 'Action id', description: 'The exact Happier action id.', widget: 'text', required: true },
+      ],
+    },
+    inputSchema: ActionSpecGetInputSchema,
+  },
+  {
+    id: 'action.options.resolve',
+    title: 'Resolve action options',
+    description: 'Resolve valid options for an action field, including dynamic options sources.',
+    safety: 'safe',
+    placements: ['voice_panel'],
+    prompting: { voiceHotPath: true },
+    bindings: { voiceClientToolName: 'resolveActionOptions', mcpToolName: 'action_options_resolve' },
+    examples: {
+      voice: { argsExample: '{"actionId":"subagents.plan.start","fieldPath":"backendTargetKeys","sessionId":"{{sessionId}}"}' },
+    },
+    surfaces: {
+      ui_button: false,
+      ui_slash_command: false,
+      voice_tool: true,
+      voice_action_block: true,
+      mcp: true,
+      session_control_cli: false,
+    },
+    inputHints: {
+      title: 'Resolve action options',
+      description: 'Use this when an action field has static options or an optionsSourceId.',
+      fields: [
+        { path: 'actionId', title: 'Action id', description: 'Optional when optionsSourceId is provided directly.', widget: 'text' },
+        { path: 'fieldPath', title: 'Field path', description: 'Dot-path for the action input field.', widget: 'text' },
+        { path: 'optionsSourceId', title: 'Options source id', description: 'Direct options source lookup when known.', widget: 'text' },
+        { path: 'sessionId', title: 'Session id', description: 'Needed for session-scoped option sources.', widget: 'text' },
+        { path: 'query', title: 'Query filter', description: 'Optional search text to filter the returned options.', widget: 'text' },
+        { path: 'limit', title: 'Limit', description: 'Maximum number of options to return.', widget: 'text' },
+      ],
+    },
+    inputSchema: ActionOptionsResolveInputSchema,
+  },
+  {
     id: 'review.start',
     title: 'Start review',
     safety: 'safe',
     placements: ['agent_input_chips', 'session_action_menu', 'command_palette', 'slash_command', 'voice_panel'],
-    slash: { tokens: ['/h.review'] },
+    prompting: { voiceHotPath: true },
+    slash: { tokens: ['/review', '/h.review'] },
     bindings: { voiceClientToolName: 'startReview', mcpToolName: 'review_start' },
     inputHints: {
       title: 'Start a code review',
@@ -400,6 +608,7 @@ export const ACTION_SPECS: readonly ActionSpec[] = Object.freeze([
           description: 'Select one or more engines. Each engine runs as its own execution run.',
           widget: 'multiselect',
           required: true,
+          requireExplicitSelection: true,
           optionsSourceId: 'review.engines.available',
         },
         {
@@ -460,7 +669,7 @@ export const ACTION_SPECS: readonly ActionSpec[] = Object.freeze([
       ],
     },
     examples: {
-      voice: { argsExample: '{"sessionId":"{{sessionId}}","engineIds":["codex"],"instructions":"Review this.","changeType":"committed","base":{"kind":"none"}}' },
+      voice: { argsExample: '{"sessionId":"{{sessionId}}","engineIds":["codex"],"instructions":"Review this.","changeType":"uncommitted","base":{"kind":"none"}}' },
     },
     surfaces: {
       ui_button: true,
@@ -473,18 +682,19 @@ export const ACTION_SPECS: readonly ActionSpec[] = Object.freeze([
     inputSchema: ReviewStartInputSchema,
   },
   {
-    id: 'plan.start',
+    id: 'subagents.plan.start',
     title: 'Start plan run',
     safety: 'safe',
     placements: ['agent_input_chips', 'session_action_menu', 'command_palette', 'slash_command', 'voice_panel'],
+    prompting: { voiceHotPath: true },
     slash: { tokens: ['/h.plan'] },
-    bindings: { voiceClientToolName: 'startPlan', mcpToolName: 'plan_start' },
+    bindings: { voiceClientToolName: 'startPlan', mcpToolName: 'subagents_plan_start' },
     inputHints: {
       title: 'Start a planning run',
       description: 'Start one or more parallel planning runs using selected backends.',
       fields: [
         {
-          path: 'backendIds',
+          path: 'backendTargetKeys',
           title: 'Backends',
           description: 'Select one or more backends. Each backend runs as its own execution run.',
           widget: 'multiselect',
@@ -501,7 +711,7 @@ export const ACTION_SPECS: readonly ActionSpec[] = Object.freeze([
       ],
     },
     examples: {
-      voice: { argsExample: '{"sessionId":"{{sessionId}}","backendIds":["codex"],"instructions":"Plan the changes."}' },
+      voice: { argsExample: '{"sessionId":"{{sessionId}}","backendTargetKeys":["agent:codex"],"instructions":"Plan the changes."}' },
     },
     surfaces: {
       ui_button: true,
@@ -514,18 +724,19 @@ export const ACTION_SPECS: readonly ActionSpec[] = Object.freeze([
     inputSchema: PlanStartInputSchema,
   },
   {
-    id: 'delegate.start',
+    id: 'subagents.delegate.start',
     title: 'Start delegate run',
     safety: 'safe',
     placements: ['agent_input_chips', 'session_action_menu', 'command_palette', 'slash_command', 'voice_panel'],
+    prompting: { voiceHotPath: true },
     slash: { tokens: ['/h.delegate'] },
-    bindings: { voiceClientToolName: 'startDelegate', mcpToolName: 'delegate_start' },
+    bindings: { voiceClientToolName: 'startDelegate', mcpToolName: 'subagents_delegate_start' },
     inputHints: {
       title: 'Start a delegation run',
       description: 'Start one or more parallel delegation runs using selected backends.',
       fields: [
         {
-          path: 'backendIds',
+          path: 'backendTargetKeys',
           title: 'Backends',
           description: 'Select one or more backends. Each backend runs as its own execution run.',
           widget: 'multiselect',
@@ -542,7 +753,7 @@ export const ACTION_SPECS: readonly ActionSpec[] = Object.freeze([
       ],
     },
     examples: {
-      voice: { argsExample: '{"sessionId":"{{sessionId}}","backendIds":["codex"],"instructions":"Delegate the task."}' },
+      voice: { argsExample: '{"sessionId":"{{sessionId}}","backendTargetKeys":["agent:codex"],"instructions":"Delegate the task."}' },
     },
     surfaces: {
       ui_button: true,
@@ -566,7 +777,7 @@ export const ACTION_SPECS: readonly ActionSpec[] = Object.freeze([
       description: 'Start a voice agent execution run (typically used by the voice control plane).',
       fields: [
         {
-          path: 'backendIds',
+          path: 'backendTargetKeys',
           title: 'Backends',
           description: 'Select one or more backends.',
           widget: 'multiselect',
@@ -583,7 +794,7 @@ export const ACTION_SPECS: readonly ActionSpec[] = Object.freeze([
       ],
     },
     examples: {
-      voice: { argsExample: '{"sessionId":"{{sessionId}}","backendIds":["codex"],"instructions":"..."}' },
+      voice: { argsExample: '{"sessionId":"{{sessionId}}","backendTargetKeys":["agent:codex"],"instructions":"Start the voice assistant for this workspace."}' },
     },
     surfaces: {
       ui_button: false,
@@ -600,6 +811,7 @@ export const ACTION_SPECS: readonly ActionSpec[] = Object.freeze([
     title: 'List execution runs',
     safety: 'safe',
     placements: ['run_list', 'command_palette', 'slash_command', 'voice_panel'],
+    prompting: { voiceHotPath: true },
     slash: { tokens: ['/h.runs'] },
     bindings: { voiceClientToolName: 'listExecutionRuns', mcpToolName: 'execution_run_list' },
     inputHints: {
@@ -624,9 +836,10 @@ export const ACTION_SPECS: readonly ActionSpec[] = Object.freeze([
     title: 'Get execution run',
     safety: 'safe',
     placements: ['run_list', 'run_card', 'command_palette'],
+    prompting: { voiceHotPath: true },
     bindings: { voiceClientToolName: 'getExecutionRun', mcpToolName: 'execution_run_get' },
     examples: {
-      voice: { argsExample: '{"sessionId":"{{sessionId}}","runId":"...","includeStructured":false}' },
+      voice: { argsExample: '{"sessionId":"{{sessionId}}","runId":"run_123","includeStructured":false}' },
     },
     surfaces: {
       ui_button: false,
@@ -652,7 +865,7 @@ export const ACTION_SPECS: readonly ActionSpec[] = Object.freeze([
     placements: ['run_card'],
     bindings: { voiceClientToolName: 'sendExecutionRunMessage', mcpToolName: 'execution_run_send' },
     examples: {
-      voice: { argsExample: '{"sessionId":"{{sessionId}}","runId":"...","message":"...","resume":false}' },
+      voice: { argsExample: '{"sessionId":"{{sessionId}}","runId":"run_123","message":"Continue and summarize what changed.","resume":false}' },
     },
     surfaces: {
       ui_button: false,
@@ -679,7 +892,7 @@ export const ACTION_SPECS: readonly ActionSpec[] = Object.freeze([
     placements: ['run_card', 'run_list'],
     bindings: { voiceClientToolName: 'stopExecutionRun', mcpToolName: 'execution_run_stop' },
     examples: {
-      voice: { argsExample: '{"sessionId":"{{sessionId}}","runId":"..."}' },
+      voice: { argsExample: '{"sessionId":"{{sessionId}}","runId":"run_123"}' },
     },
     surfaces: {
       ui_button: true,
@@ -702,7 +915,7 @@ export const ACTION_SPECS: readonly ActionSpec[] = Object.freeze([
     placements: ['run_card'],
     bindings: { voiceClientToolName: 'actionExecutionRun', mcpToolName: 'execution_run_action' },
     examples: {
-      voice: { argsExample: '{"sessionId":"{{sessionId}}","runId":"...","actionId":"...","input":{}}' },
+      voice: { argsExample: '{"sessionId":"{{sessionId}}","runId":"run_123","actionId":"voice_agent.commit","input":{"maxChars":1200}}' },
     },
     surfaces: {
       ui_button: false,
@@ -729,7 +942,7 @@ export const ACTION_SPECS: readonly ActionSpec[] = Object.freeze([
     placements: ['command_palette', 'session_info', 'voice_panel'],
     bindings: { voiceClientToolName: 'openSession' },
     examples: {
-      voice: { argsExample: '{"sessionId":"..."}' },
+      voice: { argsExample: '{"sessionTitle":"Session Setup"}' },
     },
     surfaces: {
       ui_button: true,
@@ -741,7 +954,10 @@ export const ACTION_SPECS: readonly ActionSpec[] = Object.freeze([
     },
     inputHints: {
       title: 'Open a session',
-      fields: [{ path: 'sessionId', title: 'Session id', widget: 'text', required: true }],
+      fields: [
+        { path: 'sessionId', title: 'Session id', widget: 'text' },
+        { path: 'sessionTitle', title: 'Session title', widget: 'text' },
+      ],
     },
     inputSchema: SessionOpenInputSchema,
   },
@@ -754,7 +970,7 @@ export const ACTION_SPECS: readonly ActionSpec[] = Object.freeze([
     slash: { tokens: ['fork'] },
     bindings: { voiceClientToolName: 'forkSession' },
     examples: {
-      voice: { argsExample: '{"sessionId":"...optional..."}' },
+      voice: { argsExample: '{"sessionId":"{{sessionId}}"}' },
     },
     surfaces: {
       ui_button: true,
@@ -772,13 +988,62 @@ export const ACTION_SPECS: readonly ActionSpec[] = Object.freeze([
     inputSchema: SessionForkInputSchema,
   },
   {
+    id: 'session.rollback',
+    title: 'Rollback conversation',
+    description: 'Roll back conversation state in the selected session.',
+    safety: 'danger',
+    placements: ['session_action_menu', 'session_info'],
+    surfaces: {
+      ui_button: true,
+      ui_slash_command: false,
+      voice_tool: false,
+      voice_action_block: false,
+      mcp: false,
+      session_control_cli: false,
+    },
+    inputHints: {
+      title: 'Rollback a session conversation',
+      description: 'Rewinds conversation state for the selected session.',
+      fields: [{ path: 'sessionId', title: 'Session id', widget: 'text' }],
+    },
+    inputSchema: SessionRollbackInputSchema,
+  },
+  {
+    id: 'session.handoff',
+    title: 'Hand off session',
+    description: 'Move the current session to another machine while keeping the same session id.',
+    safety: 'safe',
+    placements: ['session_action_menu', 'session_info'],
+    examples: {
+      voice: { argsExample: '{"sessionId":"{{sessionId}}","targetMachineId":"{{machineId}}"}' },
+    },
+    surfaces: {
+      ui_button: true,
+      ui_slash_command: false,
+      voice_tool: false,
+      voice_action_block: false,
+      mcp: false,
+      session_control_cli: false,
+    },
+    inputHints: {
+      title: 'Hand off a session',
+      description: 'Moves the current session to another machine.',
+      fields: [
+        { path: 'sessionId', title: 'Session id', widget: 'text' },
+        { path: 'targetMachineId', title: 'Target machine id', widget: 'text' },
+      ],
+    },
+    inputSchema: SessionHandoffInputSchema,
+  },
+  {
     id: 'session.spawn_new',
     title: 'Create session',
     safety: 'safe',
     placements: ['command_palette', 'session_info', 'voice_panel'],
+    prompting: { voiceHotPath: true },
     bindings: { voiceClientToolName: 'spawnSession' },
     examples: {
-      voice: { argsExample: '{"tag":"...optional...","workspaceId":"...optional...","agentId":"...optional...","modelId":"...optional...","path":"...optional...","host":"...optional...","initialMessage":"...optional..."}' },
+      voice: { argsExample: '{"tag":"voice-qa","agentId":"claude","modelId":"default","initialMessage":"Help me inspect this workspace."}' },
     },
     surfaces: {
       ui_button: true,
@@ -792,7 +1057,6 @@ export const ACTION_SPECS: readonly ActionSpec[] = Object.freeze([
       title: 'Create a new session',
       fields: [
         { path: 'tag', title: 'Tag', widget: 'text' },
-        { path: 'workspaceId', title: 'Workspace id', widget: 'text' },
         { path: 'agentId', title: 'Agent id', widget: 'text' },
         { path: 'modelId', title: 'Model id', widget: 'text' },
         { path: 'path', title: 'Path', widget: 'text' },
@@ -808,9 +1072,10 @@ export const ACTION_SPECS: readonly ActionSpec[] = Object.freeze([
     description: 'Open the in-app machine + directory picker and create a new session from the user selection.',
     safety: 'safe',
     placements: ['voice_panel'],
+    prompting: { voiceHotPath: true },
     bindings: { voiceClientToolName: 'spawnSessionPicker' },
     examples: {
-      voice: { argsExample: '{"tag":"...optional...","agentId":"...optional...","modelId":"...optional...","initialMessage":"...optional..."}' },
+      voice: { argsExample: '{"tag":"voice-qa","agentId":"claude","modelId":"default","initialMessage":"Help me inspect this workspace."}' },
     },
     surfaces: {
       ui_button: false,
@@ -832,30 +1097,6 @@ export const ACTION_SPECS: readonly ActionSpec[] = Object.freeze([
     inputSchema: SessionSpawnPickerInputSchema,
   },
   {
-    id: 'workspaces.list_recent',
-    title: 'List recent workspaces',
-    description: 'List recent workspace handles for discovery without exposing raw paths to remote providers.',
-    safety: 'safe',
-    placements: ['voice_panel'],
-    bindings: { voiceClientToolName: 'listRecentWorkspaces' },
-    examples: {
-      voice: { argsExample: '{"limit":10}' },
-    },
-    surfaces: {
-      ui_button: false,
-      ui_slash_command: false,
-      voice_tool: true,
-      voice_action_block: true,
-      mcp: false,
-      session_control_cli: false,
-    },
-    inputHints: {
-      title: 'List recent workspaces',
-      fields: [{ path: 'limit', title: 'Limit', widget: 'text' }],
-    },
-    inputSchema: WorkspacesListRecentInputSchema,
-  },
-  {
     id: 'paths.list_recent',
     title: 'List recent paths',
     description: 'List recent workspace directory handles (optionally filtered to a machine).',
@@ -863,7 +1104,7 @@ export const ACTION_SPECS: readonly ActionSpec[] = Object.freeze([
     placements: ['voice_panel'],
     bindings: { voiceClientToolName: 'listRecentPaths' },
     examples: {
-      voice: { argsExample: '{"machineId":"...optional...","limit":10}' },
+      voice: { argsExample: '{"limit":10}' },
     },
     surfaces: {
       ui_button: false,
@@ -931,14 +1172,42 @@ export const ACTION_SPECS: readonly ActionSpec[] = Object.freeze([
     inputSchema: ServersListInputSchema,
   },
   {
+    id: 'review.engines.list',
+    title: 'List review engines',
+    description: 'List review engines currently available for the active session.',
+    safety: 'safe',
+    placements: ['voice_panel'],
+    bindings: { voiceClientToolName: 'listReviewEngines' },
+    examples: {
+      voice: { argsExample: '{"sessionId":"{{sessionId}}","includeDisabled":false}' },
+    },
+    surfaces: {
+      ui_button: false,
+      ui_slash_command: false,
+      voice_tool: true,
+      voice_action_block: true,
+      mcp: false,
+      session_control_cli: false,
+    },
+    inputHints: {
+      title: 'List review engines',
+      fields: [
+        { path: 'sessionId', title: 'Session id', widget: 'text' },
+        { path: 'includeDisabled', title: 'Include disabled', widget: 'toggle' },
+      ],
+    },
+    inputSchema: ReviewEnginesListInputSchema,
+  },
+  {
     id: 'agents.backends.list',
     title: 'List agent backends',
     description: 'List available agent backends (providers) for spawning sessions.',
     safety: 'safe',
     placements: ['voice_panel'],
+    prompting: { voiceHotPath: true },
     bindings: { voiceClientToolName: 'listAgentBackends' },
     examples: {
-      voice: { argsExample: '{"includeDisabled":false}' },
+      voice: { argsExample: '{"includeDisabled":false,"limit":10}' },
     },
     surfaces: {
       ui_button: false,
@@ -950,7 +1219,10 @@ export const ACTION_SPECS: readonly ActionSpec[] = Object.freeze([
     },
     inputHints: {
       title: 'List agent backends',
-      fields: [{ path: 'includeDisabled', title: 'Include disabled', widget: 'toggle' }],
+      fields: [
+        { path: 'includeDisabled', title: 'Include disabled', widget: 'toggle' },
+        { path: 'limit', title: 'Max results', widget: 'text' },
+      ],
     },
     inputSchema: AgentsBackendsListInputSchema,
   },
@@ -960,9 +1232,10 @@ export const ACTION_SPECS: readonly ActionSpec[] = Object.freeze([
     description: 'List available models for an agent backend.',
     safety: 'safe',
     placements: ['voice_panel'],
+    prompting: { voiceHotPath: true },
     bindings: { voiceClientToolName: 'listAgentModels' },
     examples: {
-      voice: { argsExample: '{"agentId":"claude","machineId":"...optional..."}' },
+      voice: { argsExample: '{"agentId":"claude","limit":10}' },
     },
     surfaces: {
       ui_button: false,
@@ -977,6 +1250,7 @@ export const ACTION_SPECS: readonly ActionSpec[] = Object.freeze([
       fields: [
         { path: 'agentId', title: 'Agent id', widget: 'text', required: true },
         { path: 'machineId', title: 'Machine id (optional)', widget: 'text' },
+        { path: 'limit', title: 'Max results', widget: 'text' },
       ],
     },
     inputSchema: AgentsModelsListInputSchema,
@@ -986,10 +1260,12 @@ export const ACTION_SPECS: readonly ActionSpec[] = Object.freeze([
     title: 'Send a message to a session',
     description: 'Send a user message to the AI coding assistant inside the specified session.',
     safety: 'safe',
+    requiresApprovalQueue: true,
     placements: ['voice_panel'],
+    prompting: { voiceHotPath: true },
     bindings: { voiceClientToolName: 'sendSessionMessage' },
     examples: {
-      voice: { argsExample: '{"sessionId":"{{sessionId}}","message":"..."}' },
+      voice: { argsExample: '{"sessionId":"{{sessionId}}","message":"Please inspect the latest changes."}' },
     },
     surfaces: {
       ui_button: false,
@@ -1014,9 +1290,10 @@ export const ACTION_SPECS: readonly ActionSpec[] = Object.freeze([
     description: 'Approve or deny an active permission request in a session.',
     safety: 'safe',
     placements: ['voice_panel'],
+    prompting: { voiceHotPath: true },
     bindings: { voiceClientToolName: 'processPermissionRequest' },
     examples: {
-      voice: { argsExample: '{"sessionId":"{{sessionId}}","decision":"allow|deny","requestId":"...optional..."}' },
+      voice: { argsExample: '{"sessionId":"{{sessionId}}","decision":"allow"}' },
     },
     surfaces: {
       ui_button: false,
@@ -1046,14 +1323,124 @@ export const ACTION_SPECS: readonly ActionSpec[] = Object.freeze([
     inputSchema: SessionPermissionRespondInputSchema,
   },
   {
+    id: 'session.user_action.answer',
+    title: 'Respond to user-action request',
+    description: 'Approve, reject, request changes, or provide structured answers for an active user-action request.',
+    safety: 'safe',
+    placements: ['voice_panel'],
+    prompting: { voiceHotPath: true },
+    bindings: { voiceClientToolName: 'answerUserActionRequest' },
+    examples: {
+      voice: {
+        argsExample:
+          '{"sessionId":"{{sessionId}}","answers":[{"question":"Continue?","answer":"Yes"}]}',
+      },
+    },
+    surfaces: {
+      ui_button: false,
+      ui_slash_command: false,
+      voice_tool: true,
+      voice_action_block: true,
+      mcp: false,
+      session_control_cli: false,
+    },
+    inputHints: {
+      title: 'Respond to user-action request',
+      fields: [
+        { path: 'sessionId', title: 'Session id', widget: 'text' },
+        { path: 'requestId', title: 'Request id', widget: 'text' },
+        {
+          path: 'decision',
+          title: 'Decision',
+          description: 'Use approve or reject for general user actions, or request_changes when you need the coding assistant to revise something first.',
+          widget: 'select',
+          options: [
+            { value: 'approve', label: 'Approve' },
+            { value: 'reject', label: 'Reject' },
+            { value: 'request_changes', label: 'Request changes' },
+          ],
+        },
+        {
+          path: 'reason',
+          title: 'Reason',
+          description: 'Required when requesting changes. Optional extra context for a rejection.',
+          widget: 'textarea',
+        },
+        {
+          path: 'answers',
+          title: 'Answers',
+          description: 'Structured answers for question-style user-action requests such as AskUserQuestion.',
+          widget: 'textarea',
+        },
+        {
+          path: 'answers.[]',
+          title: 'Answer entry',
+          description: 'One question/answer pair for the pending request.',
+          widget: 'textarea',
+        },
+        {
+          path: 'answers.[].question',
+          title: 'Question',
+          description: 'The exact question text to answer.',
+          widget: 'text',
+          required: true,
+        },
+        {
+          path: 'answers.[].answer',
+          title: 'Answer',
+          description: 'The answer text to send back for that question.',
+          widget: 'text',
+          required: true,
+        },
+      ],
+    },
+    inputSchema: SessionUserActionAnswerInputSchema,
+  },
+  {
+    id: 'session.mode.set',
+    title: 'Set session mode',
+    description: 'Request a new ACP session mode for the current session when the active provider supports session modes.',
+    safety: 'safe',
+    placements: ['voice_panel'],
+    prompting: { voiceHotPath: true },
+    bindings: { voiceClientToolName: 'setSessionMode' },
+    examples: {
+      voice: { argsExample: '{"sessionId":"{{sessionId}}","modeId":"plan"}' },
+    },
+    surfaces: {
+      ui_button: false,
+      ui_slash_command: false,
+      voice_tool: true,
+      voice_action_block: true,
+      mcp: false,
+      session_control_cli: false,
+    },
+    inputHints: {
+      title: 'Set session mode',
+      fields: [
+        { path: 'sessionId', title: 'Session id', description: 'Optional when the active target session is already correct.', widget: 'text' },
+        {
+          path: 'modeId',
+          title: 'Mode id',
+          description: 'Use default to clear the override and return to the provider default mode.',
+          widget: 'select',
+          required: true,
+          optionsSourceId: 'session.modes.available',
+        },
+      ],
+    },
+    inputSchema: SessionModeSetInputSchema,
+  },
+  {
     id: 'session.target.primary.set',
     title: 'Set primary action session',
     description: 'Set which session the voice assistant should target by default.',
     safety: 'safe',
     placements: ['voice_panel'],
+    prompting: { voiceHotPath: true },
     bindings: { voiceClientToolName: 'setPrimaryActionSession' },
     examples: {
-      voice: { argsExample: '{"sessionId":"...|null"}' },
+      voice: { argsExample: '{"sessionTitle":"Session Setup"}' },
     },
     surfaces: {
       ui_button: false,
@@ -1065,7 +1452,10 @@ export const ACTION_SPECS: readonly ActionSpec[] = Object.freeze([
     },
     inputHints: {
       title: 'Set primary action session',
-      fields: [{ path: 'sessionId', title: 'Session id (or null)', widget: 'text' }],
+      fields: [
+        { path: 'sessionId', title: 'Session id (or null)', widget: 'text' },
+        { path: 'sessionTitle', title: 'Session title', widget: 'text' },
+      ],
     },
     inputSchema: SessionPrimaryTargetInputSchema,
   },
@@ -1077,7 +1467,7 @@ export const ACTION_SPECS: readonly ActionSpec[] = Object.freeze([
     placements: ['voice_panel'],
     bindings: { voiceClientToolName: 'setTrackedSessions' },
     examples: {
-      voice: { argsExample: '{"sessionIds":["..."]}' },
+      voice: { argsExample: '{"sessionIds":["{{sessionId}}"]}' },
     },
     surfaces: {
       ui_button: false,
@@ -1099,6 +1489,7 @@ export const ACTION_SPECS: readonly ActionSpec[] = Object.freeze([
     description: 'List recent sessions the user can target.',
     safety: 'safe',
     placements: ['voice_panel'],
+    prompting: { voiceHotPath: true },
     bindings: { voiceClientToolName: 'listSessions' },
     examples: {
       voice: { argsExample: '{"limit":20,"cursor":null,"includeLastMessagePreview":true}' },
@@ -1129,7 +1520,7 @@ export const ACTION_SPECS: readonly ActionSpec[] = Object.freeze([
     placements: ['voice_panel'],
     bindings: { voiceClientToolName: 'getSessionActivity' },
     examples: {
-      voice: { argsExample: '{"sessionId":"..."}' },
+      voice: { argsExample: '{"sessionId":"{{sessionId}}"}' },
     },
     surfaces: {
       ui_button: false,
@@ -1156,7 +1547,7 @@ export const ACTION_SPECS: readonly ActionSpec[] = Object.freeze([
     placements: ['voice_panel'],
     bindings: { voiceClientToolName: 'getSessionRecentMessages' },
     examples: {
-      voice: { argsExample: '{"sessionId":"...","limit":3,"cursor":null}' },
+      voice: { argsExample: '{"sessionId":"{{sessionId}}","limit":3,"cursor":null}' },
     },
     surfaces: {
       ui_button: false,
@@ -1204,11 +1595,37 @@ export const ACTION_SPECS: readonly ActionSpec[] = Object.freeze([
     inputSchema: EmptyObjectSchema,
   },
   {
+    id: 'ui.voice_agent.teleport',
+    title: 'Teleport voice agent to session root',
+    description: 'Move the daemon-backed voice agent into the current or specified session root.',
+    safety: 'safe',
+    placements: ['voice_panel'],
+    bindings: { voiceClientToolName: 'teleportVoiceAgentToSessionRoot' },
+    inputHints: {
+      title: 'Teleport voice agent',
+      description: 'Teleport the active voice agent into a session root. Defaults to the current action session when omitted.',
+      fields: [{ path: 'sessionId', title: 'Session id', widget: 'text' }],
+    },
+    examples: {
+      voice: { argsExample: '{"sessionId":"{{sessionId}}"}' },
+    },
+    surfaces: {
+      ui_button: false,
+      ui_slash_command: false,
+      voice_tool: true,
+      voice_action_block: true,
+      mcp: false,
+      session_control_cli: false,
+    },
+    inputSchema: OptionalSessionIdInputSchema,
+  },
+  {
     id: 'memory.search',
     title: 'Search memory',
     description: 'Search the local daemon memory index (opt-in).',
     safety: 'safe',
     placements: ['voice_panel', 'command_palette'],
+    prompting: { voiceHotPath: true },
     bindings: { voiceClientToolName: 'memorySearch', mcpToolName: 'memory_search' },
     inputHints: {
       title: 'Search memory',
@@ -1280,6 +1697,10 @@ export const ACTION_SPECS: readonly ActionSpec[] = Object.freeze([
       voice_action_block: true,
       mcp: true,
       session_control_cli: false,
+    },
+    examples: {
+      voice: { argsExample: '{"machineId":"{{machineId}}","sessionId":"{{sessionId}}","seqFrom":120,"seqTo":124}' },
+      mcp: { argsExample: '{"machineId":"{{machineId}}","sessionId":"{{sessionId}}","seqFrom":120,"seqTo":124}' },
     },
     inputSchema: MemoryGetWindowInputSchema,
   },
@@ -1528,14 +1949,29 @@ export function getActionSpec(id: ActionId): ActionSpec {
   return spec;
 }
 
+export function isActionSpecSurfacedOn(spec: ActionSpec, surface: keyof ActionSurfaces | null | undefined): boolean {
+  if (!surface) return true;
+  return spec.surfaces[surface] === true;
+}
+
+export function listActionSpecsForSurface(surface: keyof ActionSurfaces): readonly ActionSpec[] {
+  return ACTION_SPECS.filter((spec) => isActionSpecSurfacedOn(spec, surface));
+}
+
 export function listVoiceToolActionSpecs(): readonly ActionSpec[] {
-  return ACTION_SPECS.filter((spec) => spec.surfaces.voice_tool === true && Boolean(spec.bindings?.voiceClientToolName));
+  return listActionSpecsForSurface('voice_tool').filter((spec) => Boolean(spec.bindings?.voiceClientToolName));
+}
+
+export function isVoicePromptHotPathSpec(spec: ActionSpec): boolean {
+  return spec.prompting?.voiceHotPath === true;
+}
+
+export function listVoicePromptHotPathSpecs(): readonly ActionSpec[] {
+  return listVoiceToolActionSpecs().filter(isVoicePromptHotPathSpec);
 }
 
 export function listVoiceActionBlockSpecs(): readonly ActionSpec[] {
-  return ACTION_SPECS.filter(
-    (spec) => spec.surfaces.voice_action_block === true && Boolean(spec.bindings?.voiceClientToolName),
-  );
+  return listActionSpecsForSurface('voice_action_block').filter((spec) => Boolean(spec.bindings?.voiceClientToolName));
 }
 
 export function listVoiceClientToolNames(): readonly string[] {
@@ -1544,4 +1980,17 @@ export function listVoiceClientToolNames(): readonly string[] {
     .filter((name) => name.length > 0);
   names.sort();
   return names;
+}
+
+export function resolveVoiceClientToolNameAlias(value: string): string | null {
+  const normalized = String(value ?? '').trim();
+  if (!normalized) return null;
+
+  for (const spec of listVoiceToolActionSpecs()) {
+    const toolName = String(spec.bindings?.voiceClientToolName ?? '').trim();
+    if (!toolName) continue;
+    if (toolName === normalized || spec.id === normalized) return toolName;
+  }
+
+  return null;
 }

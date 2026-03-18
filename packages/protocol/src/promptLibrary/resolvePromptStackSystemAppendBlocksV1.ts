@@ -19,13 +19,16 @@ function readSkillMarkdownFromPromptBundleBody(body: Readonly<{
 
 function listSystemAppendEntries(params: Readonly<{
   stacks: PromptStacksV1;
+  surface: 'coding' | 'voice';
   profileId: string | null | undefined;
 }>): PromptStackEntryV1[] {
-  const coding = params.stacks.surfaces.coding ?? [];
+  const surfaceEntries = params.surface === 'voice'
+    ? (params.stacks.surfaces.voice ?? [])
+    : (params.stacks.surfaces.coding ?? []);
   const profileId = typeof params.profileId === 'string' ? params.profileId.trim() : '';
   const profile = profileId ? (params.stacks.surfaces.profilesById?.[profileId] ?? []) : [];
 
-  return [...coding, ...profile].filter((entry) => {
+  return [...surfaceEntries, ...profile].filter((entry) => {
     if (!entry.enabled) return false;
     return entry.placement === 'system_append' || entry.placement === 'skill_instructions';
   });
@@ -40,6 +43,7 @@ function parseJsonBodySafe(bodyRaw: string): unknown | null {
 }
 
 export async function resolvePromptStackSystemAppendBlocksV1(args: Readonly<{
+  surface: 'coding' | 'voice';
   promptStacksV1: PromptStacksV1 | null | undefined;
   profileId: string | null | undefined;
   readArtifactBody: (artifactId: string) => Promise<string | null | undefined>;
@@ -47,7 +51,11 @@ export async function resolvePromptStackSystemAppendBlocksV1(args: Readonly<{
   const stacks = args.promptStacksV1;
   if (!stacks) return [];
 
-  const entries = listSystemAppendEntries({ stacks, profileId: args.profileId });
+  const entries = listSystemAppendEntries({
+    stacks,
+    surface: args.surface,
+    profileId: args.profileId,
+  });
   if (entries.length === 0) return [];
 
   const out: string[] = [];

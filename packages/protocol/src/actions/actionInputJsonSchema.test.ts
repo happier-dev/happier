@@ -1,10 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import { z } from 'zod';
 
-describe('actionInputJsonSchema', () => {
-  it('converts a zod object schema into a JSON schema object (no refs)', async () => {
-    const { zodSchemaToJsonSchemaObject } = await import('./actionInputJsonSchema.js');
+import { zodSchemaToJsonSchemaObject } from './actionInputJsonSchema.js';
 
+describe('actionInputJsonSchema', () => {
+  it('converts a zod object schema into a JSON schema object (no refs)', () => {
     const schema = z
       .object({
         sessionId: z.string().min(1).optional(),
@@ -26,9 +26,7 @@ describe('actionInputJsonSchema', () => {
     expect((json as any).definitions).toBeUndefined();
   });
 
-  it('converts string literals into string enums (for discriminators)', async () => {
-    const { zodSchemaToJsonSchemaObject } = await import('./actionInputJsonSchema.js');
-
+  it('converts string literals into string enums (for discriminators)', () => {
     const schema = z.object({
       kind: z.union([z.literal('none'), z.literal('branch')]),
     });

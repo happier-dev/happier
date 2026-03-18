@@ -36,7 +36,7 @@ export type PromptBundleValidationResult =
   | Readonly<{ ok: true }>
   | Readonly<{
       ok: false;
-      errorCode: 'unsupported_schema' | 'missing_required_entry' | 'invalid_path' | 'duplicate_path' | 'size_limit_exceeded';
+      errorCode: 'unsupported_schema' | 'missing_required_entry' | 'invalid_request' | 'invalid_path' | 'duplicate_path' | 'size_limit_exceeded';
       message: string;
       path?: string;
       requiredPath?: string;
@@ -67,7 +67,7 @@ export function validatePromptBundleBodyV1AgainstSchemaId(input: Readonly<{
 
   const bodyParsed = PromptBundleBodyV1Schema.safeParse(body);
   if (!bodyParsed.success) {
-    return { ok: false, errorCode: 'invalid_path', message: 'invalid_body' };
+    return { ok: false, errorCode: 'invalid_request', message: 'invalid_body' };
   }
 
   if (body.entries.length > PROMPT_BUNDLE_SCHEMA_LIMITS_V1.maxEntries) {

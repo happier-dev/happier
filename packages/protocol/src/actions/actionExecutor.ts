@@ -1,10 +1,24 @@
-import { getActionSpec, type ActionSurfaces } from './actionSpecs.js';
+import {
+  findActionInputFieldHint,
+  filterResolvedActionOptions,
+  getActionSpecForCatalogSurface,
+  getSerializedActionSpecForSurface,
+  searchSerializedActionSpecsForSurface,
+  serializeActionFieldOptions,
+} from './actionCatalog.js';
+import { getActionSpec, isActionSpecSurfacedOn, type ActionSpec, type ActionSurfaces } from './actionSpecs.js';
 import type { ActionId } from './actionIds.js';
 import type { ActionUiPlacement } from './actionUiPlacements.js';
 import type { MemorySearchQueryV1, MemorySearchResultV1 } from '../memory/memorySearch.js';
 import type { MemoryWindowV1 } from '../memory/memoryWindow.js';
 import { ApprovalRequestV1Schema, type ApprovalRequestV1 } from '../approvals/approvalRequestV1.js';
 import type { PromptRegistryConfiguredSourceV1 } from '../promptLibrary/promptRegistriesV1.js';
+import { BackendTargetKeySchema, buildBackendTargetKey, parseBackendTargetKey } from '../backendTargets/backendTargetRef.js';
+import type { SessionRollbackTarget } from '../sessionRollback.js';
+import {
+  SessionHandoffWorkspaceTransferSchema,
+  type SessionHandoffWorkspaceTransfer,
+} from '../sessionControl/handoff/handoffSchemas.js';
 
 export type ActionExecuteResult =
   | Readonly<{ ok: true; result: unknown }>
@@ -47,9 +61,16 @@ export type ActionExecutorDeps = Readonly<{
   // Session navigation/spawn (client-side)
   sessionOpen: (args: Readonly<{ sessionId: string }>) => Promise<unknown>;
   sessionFork: (args: Readonly<{ sessionId: string; serverId?: string | null }>) => Promise<unknown>;
+  sessionRollback: (args: Readonly<{ sessionId: string; serverId?: string | null; target?: SessionRollbackTarget }>) => Promise<unknown>;
+  sessionHandoffStart?: (args: Readonly<{
+    sessionId: string;
+    targetMachineId: string;
+    targetSessionStorageMode?: 'direct' | 'persisted';
+    workspaceTransfer?: SessionHandoffWorkspaceTransfer;
+    serverId?: string | null;
+  }>) => Promise<unknown>;
   sessionSpawnNew: (args: Readonly<{
     tag?: string;
-    workspaceId?: string;
     agentId?: string;
     modelId?: string;
     path?: string;
@@ -59,10 +80,10 @@ export type ActionExecutorDeps = Readonly<{
   sessionSpawnPicker: (args: Readonly<{ tag?: string; agentId?: string; modelId?: string; initialMessage?: string }>) => Promise<unknown>;
 
   // Local inventory + discovery (voice)
-  workspacesListRecent: (args: Readonly<{ limit?: number }>) => Promise<unknown>;
   pathsListRecent: (args: Readonly<{ machineId?: string; limit?: number }>) => Promise<unknown>;
   machinesList: (args: Readonly<{ limit?: number }>) => Promise<unknown>;
   serversList: (args: Readonly<{ limit?: number }>) => Promise<unknown>;
+  reviewEnginesList: (args: Readonly<{ sessionId: string; includeDisabled?: boolean }>) => Promise<unknown>;
   agentsBackendsList: (args: Readonly<{ includeDisabled?: boolean }>) => Promise<unknown>;
   agentsModelsList: (args: Readonly<{ agentId: string; machineId?: string }>) => Promise<unknown>;
 
@@ -76,6 +97,17 @@ export type ActionExecutorDeps = Readonly<{
     requestId?: string | null;
     serverId?: string | null;
   }>) => Promise<unknown>;
+  sessionUserActionAnswer: (args: Readonly<{
+    sessionId: string;
+    requestId?: string | null;
+    answers: readonly Readonly<{ question: string; answer: string }>[];
+    decision?: 'approve' | 'reject' | 'request_changes';
+    reason?: string;
+    updatedPermissions?: unknown;
+    serverId?: string | null;
+  }>) => Promise<unknown>;
+  sessionModeSet: (args: Readonly<{ sessionId: string; modeId: string }>) => Promise<unknown>;
+  sessionModesList: (args: Readonly<{ sessionId: string }>) => Promise<unknown>;
 
   // Voice panel targeting + session query tools
   sessionTargetPrimarySet: (args: Readonly<{ sessionId: string | null }>) => Promise<unknown>;
@@ -94,6 +126,7 @@ export type ActionExecutorDeps = Readonly<{
 
   // Global voice controls
   resetGlobalVoiceAgent: () => Promise<void> | void;
+  teleportVoiceAgentToSessionRoot?: (args: Readonly<{ sessionId: string }>) => Promise<unknown>;
 
   // Daemon-local memory (machine-scoped RPC)
   daemonMemorySearch: (args: Readonly<{ machineId: string; query: MemorySearchQueryV1; serverId?: string | null }>) => Promise<MemorySearchResultV1>;
@@ -129,6 +162,7 @@ export type ActionExecutorDeps = Readonly<{
     machineId: string;
     assetTypeId: string;
     scope: 'user' | 'project';
+    serverId?: string | null;
     directory?: string;
     targetPath?: string;
     targetName?: string;
@@ -139,6 +173,7 @@ export type ActionExecutorDeps = Readonly<{
     sourceId: string;
     itemId: string;
     configuredSources: readonly PromptRegistryConfiguredSourceV1[];
+    serverId?: string | null;
     installTarget?: Readonly<{
       assetTypeId: string;
       scope: 'user' | 'project';
@@ -166,10 +201,147 @@ function resolveSessionIdFromInput(input: any, ctx: ActionExecutorContext): stri
   return fallback || null;
 }
 
+function extractListedSessions(value: unknown): readonly Readonly<{ id: string; title: string }>[] {
+  const sessions = Array.isArray((value as any)?.sessions)
+    ? ((value as any).sessions as readonly Record<string, unknown>[])
+    : Array.isArray((value as any)?.items)
+      ? ((value as any).items as readonly Record<string, unknown>[])
+      : [];
+
+  return sessions
+    .map((session) => {
+      const id = normalizeId(session?.id);
+      const title = normalizeId(session?.title ?? session?.label);
+      if (!id || !title) return null;
+      return { id, title };
+    })
+    .filter(Boolean) as readonly Readonly<{ id: string; title: string }>[];
+}
+
+type SessionTitleResolution =
+  | Readonly<{ kind: 'not_found' }>
+  | Readonly<{ kind: 'resolved'; sessionId: string }>
+  | Readonly<{ kind: 'ambiguous' }>;
+
+async function resolveSessionIdByTitle(
+  deps: ActionExecutorDeps,
+  rawSessionTitle: unknown,
+): Promise<SessionTitleResolution> {
+  const sessionTitle = normalizeId(rawSessionTitle);
+  if (!sessionTitle) return { kind: 'not_found' };
+
+  let cursor: string | null = null;
+  let matchedSessionId: string | null = null;
+  for (let page = 0; page < 20; page += 1) {
+    const response = await deps.sessionList({ limit: 100, ...(cursor ? { cursor } : {}) });
+    for (const session of extractListedSessions(response)) {
+      if (session.title !== sessionTitle) continue;
+      if (matchedSessionId && matchedSessionId !== session.id) {
+        return { kind: 'ambiguous' };
+      }
+      matchedSessionId = session.id;
+    }
+    const nextCursor = normalizeId((response as any)?.nextCursor);
+    if (!nextCursor) break;
+    cursor = nextCursor;
+  }
+
+  return matchedSessionId ? { kind: 'resolved', sessionId: matchedSessionId } : { kind: 'not_found' };
+}
+
 function resolveServerIdForSession(deps: ActionExecutorDeps, ctx: ActionExecutorContext, sessionId: string): string | null {
   const explicit = normalizeId(ctx.serverId);
   if (explicit) return explicit;
   return deps.resolveServerIdForSessionId ? deps.resolveServerIdForSessionId(sessionId) : null;
+}
+
+function normalizeResolvedOptions(value: unknown): readonly Readonly<{ value: string; label: string; description?: string; disabled?: boolean }>[] {
+  const items = Array.isArray((value as any)?.items)
+    ? ((value as any).items as readonly Record<string, unknown>[])
+    : Array.isArray(value)
+      ? (value as readonly Record<string, unknown>[])
+      : [];
+
+  return items
+    .map((item) => {
+      const valueCandidate =
+        typeof item?.targetKey === 'string'
+          ? item.targetKey
+          : typeof item?.value === 'string'
+            ? item.value
+            : typeof item?.id === 'string'
+              ? item.id
+              : typeof item?.agentId === 'string'
+                ? item.agentId
+                : typeof item?.engineId === 'string'
+                  ? item.engineId
+                  : null;
+      if (!valueCandidate) return null;
+      const labelCandidate =
+        typeof item?.label === 'string'
+          ? item.label
+          : typeof item?.title === 'string'
+            ? item.title
+            : valueCandidate;
+      const descriptionCandidate = typeof item?.description === 'string' ? item.description : undefined;
+      const disabledCandidate =
+        item?.disabled === true || item?.enabled === false ? true : undefined;
+      return {
+        value: valueCandidate,
+        label: labelCandidate,
+        ...(descriptionCandidate ? { description: descriptionCandidate } : {}),
+        ...(disabledCandidate ? { disabled: true as const } : {}),
+      };
+    })
+    .filter(Boolean) as readonly Readonly<{ value: string; label: string; description?: string; disabled?: boolean }>[];
+}
+
+function normalizeExecutionBackendOptionValue(value: string): string {
+  const parsed = BackendTargetKeySchema.safeParse(value);
+  if (parsed.success) return parsed.data;
+  return buildBackendTargetKey({ kind: 'builtInAgent', agentId: value });
+}
+
+async function resolveDynamicActionOptions(params: Readonly<{
+  deps: ActionExecutorDeps;
+  ctx: ActionExecutorContext;
+  optionsSourceId: string;
+  input: Record<string, unknown>;
+}>): Promise<ActionExecuteResult> {
+  const { deps, ctx, optionsSourceId, input } = params;
+
+  if (optionsSourceId === 'execution.backends.enabled') {
+    const result = await deps.agentsBackendsList({
+      ...(typeof input.includeDisabled === 'boolean' ? { includeDisabled: input.includeDisabled } : { includeDisabled: false }),
+      ...(typeof input.limit === 'number' ? { limit: input.limit } : {}),
+    });
+    return {
+      ok: true,
+      result: normalizeResolvedOptions(result).map((option) => ({
+        ...option,
+        value: normalizeExecutionBackendOptionValue(option.value),
+      })),
+    };
+  }
+
+  if (optionsSourceId === 'review.engines.available') {
+    const sessionId = resolveSessionIdFromInput(input, ctx);
+    if (!sessionId) return { ok: false, errorCode: 'session_not_selected', error: 'session_not_selected' };
+    const result = await deps.reviewEnginesList({
+      sessionId,
+      ...(typeof input.includeDisabled === 'boolean' ? { includeDisabled: input.includeDisabled } : {}),
+    });
+    return { ok: true, result: normalizeResolvedOptions(result) };
+  }
+
+  if (optionsSourceId === 'session.modes.available') {
+    const sessionId = resolveSessionIdFromInput(input, ctx);
+    if (!sessionId) return { ok: false, errorCode: 'session_not_selected', error: 'session_not_selected' };
+    const result = await deps.sessionModesList({ sessionId });
+    return { ok: true, result: normalizeResolvedOptions(result) };
+  }
+
+  return { ok: false, errorCode: 'options_source_not_supported', error: 'options_source_not_supported' };
 }
 
 type FanoutResultItem = Readonly<{
@@ -189,6 +361,22 @@ async function fanoutStarts(params: Readonly<{
       try {
         const result = await params.startOne(key);
         if (result && typeof result === 'object' && (result as any).ok === false) {
+          return {
+            key,
+            ok: false,
+            error: typeof (result as any).error === 'string' ? String((result as any).error) : 'execution_run_failed',
+            ...(typeof (result as any).errorCode === 'string' ? { errorCode: String((result as any).errorCode) } : {}),
+          };
+        }
+        if (
+          result
+          && typeof result === 'object'
+          && (
+            typeof (result as any).runId !== 'string'
+            || typeof (result as any).callId !== 'string'
+            || typeof (result as any).sidechainId !== 'string'
+          )
+        ) {
           return {
             key,
             ok: false,
@@ -219,88 +407,189 @@ function buildApprovalDecisionResult(request: ApprovalRequestV1): ActionExecuteR
 export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
   execute: (actionId: ActionId, input: unknown, context?: ActionExecutorContext) => Promise<ActionExecuteResult>;
 }> {
-  const isActionEnabled = deps.isActionEnabled ?? ((_id: ActionId, _ctx: ActionExecutorContext) => true);
+  const policyAllowsAction = deps.isActionEnabled ?? ((_id: ActionId, _ctx: ActionExecutorContext) => true);
+  const isActionEnabled = (spec: ActionSpec, ctx: ActionExecutorContext) =>
+    isActionSpecSurfacedOn(spec, ctx.surface) && policyAllowsAction(spec.id, ctx);
 
   const execute = async (actionId: ActionId, input: unknown, context?: ActionExecutorContext): Promise<ActionExecuteResult> => {
     const ctx: ActionExecutorContext = context ?? {};
 
-      if (!isActionEnabled(actionId, ctx)) {
-        return { ok: false, errorCode: 'action_disabled', error: 'action_disabled' };
+    const spec = getActionSpec(actionId);
+    if (!isActionEnabled(spec, ctx)) {
+      return { ok: false, errorCode: 'action_disabled', error: 'action_disabled' };
+    }
+    const parsed = (spec.inputSchema as any).safeParse(input ?? {});
+    if (!parsed.success) {
+      return { ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' };
+    }
+
+    try {
+      // Switch by actionId; keep substrate generic.
+      if (actionId === 'review.start') {
+        const sessionId = resolveSessionIdFromInput(parsed.data, ctx);
+        if (!sessionId) return { ok: false, errorCode: 'session_not_selected', error: 'session_not_selected' };
+        const serverId = resolveServerIdForSession(deps, ctx, sessionId);
+        const opts = serverId ? { serverId } : undefined;
+
+        const engineIds: readonly string[] = Array.isArray((parsed.data as any).engineIds) ? (parsed.data as any).engineIds : [];
+        const instructions = String((parsed.data as any).instructions ?? '').trim();
+        const intentInputBase = { ...(parsed.data as any) };
+
+        const results = await fanoutStarts({
+          keys: engineIds,
+          startOne: async (engineId) =>
+            deps.executionRunStart(
+              sessionId,
+              {
+                intent: 'review',
+                backendTarget: parseBackendTargetKey(normalizeExecutionBackendOptionValue(engineId)),
+                instructions,
+                permissionMode: (parsed.data as any).permissionMode ?? 'read_only',
+                retentionPolicy: 'resumable',
+                runClass: 'bounded',
+                // Reviews should stream sidechain progress (and tool traffic) into the parent session.
+                ioMode: 'streaming',
+                intentInput: { ...intentInputBase, engineId },
+              },
+              opts,
+            ),
+        });
+
+        return { ok: true, result: { intent: 'review', sessionId, results } };
       }
 
-      const spec = getActionSpec(actionId);
-      const parsed = (spec.inputSchema as any).safeParse(input ?? {});
-      if (!parsed.success) {
-        return { ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' };
-      }
+      if (actionId === 'subagents.plan.start' || actionId === 'subagents.delegate.start' || actionId === 'voice_agent.start') {
+        const sessionId = resolveSessionIdFromInput(parsed.data, ctx);
+        if (!sessionId) return { ok: false, errorCode: 'session_not_selected', error: 'session_not_selected' };
+        const serverId = resolveServerIdForSession(deps, ctx, sessionId);
+        const opts = serverId ? { serverId } : undefined;
 
-      try {
-        // Switch by actionId; keep substrate generic.
-        if (actionId === 'review.start') {
-          const sessionId = resolveSessionIdFromInput(parsed.data, ctx);
-          if (!sessionId) return { ok: false, errorCode: 'session_not_selected', error: 'session_not_selected' };
-          const serverId = resolveServerIdForSession(deps, ctx, sessionId);
-          const opts = serverId ? { serverId } : undefined;
-
-          const engineIds: readonly string[] = Array.isArray((parsed.data as any).engineIds) ? (parsed.data as any).engineIds : [];
-          const instructions = String((parsed.data as any).instructions ?? '').trim();
-          const intentInputBase = { ...(parsed.data as any) };
+        const backendTargetKeys: readonly string[] = Array.isArray((parsed.data as any).backendTargetKeys)
+          ? (parsed.data as any).backendTargetKeys
+          : [];
+        const instructions = String((parsed.data as any).instructions ?? '').trim();
+        const intent: 'plan' | 'delegate' | 'voice_agent' =
+          actionId === 'subagents.plan.start' ? 'plan' : actionId === 'subagents.delegate.start' ? 'delegate' : 'voice_agent';
+        const permissionModeDefault = intent === 'delegate' ? 'workspace_write' : 'read_only';
 
           const results = await fanoutStarts({
-            keys: engineIds,
-            startOne: async (engineId) =>
-              deps.executionRunStart(
-                sessionId,
-                {
-                  intent: 'review',
-                  backendId: engineId,
-                  instructions,
-                  permissionMode: (parsed.data as any).permissionMode ?? 'read_only',
-                  retentionPolicy: 'ephemeral',
-                  runClass: 'bounded',
-                  // Reviews should stream sidechain progress (and tool traffic) into the parent session.
-                  ioMode: 'streaming',
-                  intentInput: { ...intentInputBase, engineId },
-                },
-                opts,
-              ),
-          });
-
-          return { ok: true, result: { intent: 'review', sessionId, results } };
-        }
-
-        if (actionId === 'plan.start' || actionId === 'delegate.start' || actionId === 'voice_agent.start') {
-          const sessionId = resolveSessionIdFromInput(parsed.data, ctx);
-          if (!sessionId) return { ok: false, errorCode: 'session_not_selected', error: 'session_not_selected' };
-          const serverId = resolveServerIdForSession(deps, ctx, sessionId);
-          const opts = serverId ? { serverId } : undefined;
-
-          const backendIds: readonly string[] = Array.isArray((parsed.data as any).backendIds) ? (parsed.data as any).backendIds : [];
-          const instructions = String((parsed.data as any).instructions ?? '').trim();
-          const intent: 'plan' | 'delegate' | 'voice_agent' =
-            actionId === 'plan.start' ? 'plan' : actionId === 'delegate.start' ? 'delegate' : 'voice_agent';
-          const permissionModeDefault = intent === 'delegate' ? 'default' : 'read_only';
-
-          const results = await fanoutStarts({
-            keys: backendIds,
-            startOne: async (backendId) =>
+            keys: backendTargetKeys,
+            startOne: async (backendTargetKey) =>
               deps.executionRunStart(
                 sessionId,
                 {
                   intent,
-                  backendId,
+                  backendTarget: parseBackendTargetKey(backendTargetKey),
                   instructions,
                   permissionMode: (parsed.data as any).permissionMode ?? permissionModeDefault,
                   retentionPolicy: (parsed.data as any).retentionPolicy ?? 'ephemeral',
                   runClass: (parsed.data as any).runClass ?? 'bounded',
                   ioMode: (parsed.data as any).ioMode ?? 'request_response',
-                  intentInput: { ...(parsed.data as any), backendId },
+                  intentInput: { ...(parsed.data as any), backendTargetKey },
                 },
                 opts,
               ),
           });
 
           return { ok: true, result: { intent, sessionId, results } };
+        }
+
+        if (actionId === 'action.spec.search') {
+          return {
+            ok: true,
+            result: {
+              actionSpecs: searchSerializedActionSpecsForSurface({
+                surface: ctx.surface ?? null,
+                query: typeof (parsed.data as any).query === 'string' ? (parsed.data as any).query : '',
+                limit: typeof (parsed.data as any).limit === 'number' ? (parsed.data as any).limit : undefined,
+                isActionEnabled: (id) => isActionEnabled(getActionSpec(id), ctx),
+              }),
+            },
+          };
+        }
+
+        if (actionId === 'action.spec.get') {
+          try {
+            const requested = getSerializedActionSpecForSurface({
+              id: String((parsed.data as any).id) as ActionId,
+              surface: ctx.surface ?? null,
+              isActionEnabled: (id) => isActionEnabled(getActionSpec(id), ctx),
+            });
+            if (!requested) {
+              return { ok: false, errorCode: 'action_disabled', error: 'action_disabled' };
+            }
+            return { ok: true, result: { actionSpec: requested } };
+          } catch {
+            return { ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' };
+          }
+        }
+
+        if (actionId === 'action.options.resolve') {
+          const actionIdRaw = normalizeId((parsed.data as any).actionId);
+          const fieldPath = normalizeId((parsed.data as any).fieldPath);
+          const directOptionsSourceId = normalizeId((parsed.data as any).optionsSourceId);
+          let optionsSourceId = directOptionsSourceId;
+
+          if (actionIdRaw && fieldPath) {
+            try {
+              getActionSpec(actionIdRaw as ActionId);
+            } catch {
+              return { ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' };
+            }
+            const requestedSpec = getActionSpecForCatalogSurface({
+              id: actionIdRaw as ActionId,
+              surface: ctx.surface ?? null,
+              isActionEnabled: (id) => isActionEnabled(getActionSpec(id), ctx),
+            });
+            if (!requestedSpec) {
+              return { ok: false, errorCode: 'action_disabled', error: 'action_disabled' };
+            }
+            const field = findActionInputFieldHint(requestedSpec, fieldPath);
+            if (!field) {
+              return { ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' };
+            }
+
+            const staticOptions = serializeActionFieldOptions(field);
+
+            if (staticOptions.length > 0) {
+              return {
+                ok: true,
+                result: {
+                  actionId: requestedSpec.id,
+                  fieldPath,
+                  optionsSourceId: null,
+                  options: filterResolvedActionOptions(staticOptions, parsed.data as Record<string, unknown>),
+                },
+              };
+            }
+
+            optionsSourceId = normalizeId((field as any).optionsSourceId) || directOptionsSourceId;
+          }
+
+          if (!optionsSourceId) {
+            return { ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' };
+          }
+
+          const dynamic = await resolveDynamicActionOptions({
+            deps,
+            ctx,
+            optionsSourceId,
+            input: parsed.data as Record<string, unknown>,
+          });
+          if (!dynamic.ok) return dynamic;
+
+          return {
+            ok: true,
+            result: {
+              actionId: actionIdRaw || null,
+              fieldPath: fieldPath || null,
+              optionsSourceId,
+              options: filterResolvedActionOptions(
+                dynamic.result as readonly Readonly<{ value: string; label: string; description?: string; disabled?: boolean }>[] ,
+                parsed.data as Record<string, unknown>,
+              ),
+            },
+          };
         }
 
         if (actionId === 'execution.run.list') {
@@ -349,7 +638,13 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
         }
 
         if (actionId === 'session.open') {
-          const sessionId = normalizeId((parsed.data as any).sessionId);
+          const explicitSessionId = normalizeId((parsed.data as any).sessionId);
+          const titleResolution = explicitSessionId ? null : await resolveSessionIdByTitle(deps, (parsed.data as any).sessionTitle);
+          if (titleResolution?.kind === 'ambiguous') {
+            return { ok: false, errorCode: 'session_id_ambiguous', error: 'session_id_ambiguous' };
+          }
+          const sessionId =
+            explicitSessionId || (titleResolution?.kind === 'resolved' ? titleResolution.sessionId : null);
           if (!sessionId) return { ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' };
           const res = await deps.sessionOpen({ sessionId });
           return { ok: true, result: res };
@@ -363,10 +658,44 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
           return { ok: true, result: res };
         }
 
+        if (actionId === 'session.rollback') {
+          const sessionId = resolveSessionIdFromInput(parsed.data, ctx);
+          if (!sessionId) return { ok: false, errorCode: 'session_not_selected', error: 'session_not_selected' };
+          const serverId = resolveServerIdForSession(deps, ctx, sessionId);
+          const rawTarget = (parsed.data as any)?.target;
+          const target = rawTarget && typeof rawTarget === 'object' ? (rawTarget as SessionRollbackTarget) : undefined;
+          const res = await deps.sessionRollback({ sessionId, ...(serverId ? { serverId } : {}), ...(target ? { target } : {}) });
+          return { ok: true, result: res };
+        }
+
+        if (actionId === 'session.handoff') {
+          const sessionId = resolveSessionIdFromInput(parsed.data, ctx);
+          if (!sessionId) return { ok: false, errorCode: 'session_not_selected', error: 'session_not_selected' };
+          const targetMachineId = normalizeId((parsed.data as any).targetMachineId);
+          if (!targetMachineId) return { ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' };
+          if (!deps.sessionHandoffStart) {
+            return { ok: false, errorCode: 'unsupported_action', error: 'unsupported_action:session.handoff' };
+          }
+          const serverId = resolveServerIdForSession(deps, ctx, sessionId);
+          const targetSessionStorageMode =
+            (parsed.data as any).targetSessionStorageMode === 'direct' || (parsed.data as any).targetSessionStorageMode === 'persisted'
+              ? (parsed.data as any).targetSessionStorageMode
+              : undefined;
+          const workspaceTransferParsed = SessionHandoffWorkspaceTransferSchema.safeParse((parsed.data as any).workspaceTransfer);
+          const workspaceTransfer = workspaceTransferParsed.success ? workspaceTransferParsed.data : undefined;
+          const res = await deps.sessionHandoffStart({
+            sessionId,
+            targetMachineId,
+            ...(targetSessionStorageMode ? { targetSessionStorageMode } : {}),
+            ...(workspaceTransfer ? { workspaceTransfer } : {}),
+            ...(serverId ? { serverId } : {}),
+          });
+          return { ok: true, result: res };
+        }
+
         if (actionId === 'session.spawn_new') {
           const res = await deps.sessionSpawnNew({
             ...(((parsed.data as any).tag) ? { tag: String((parsed.data as any).tag) } : {}),
-            ...(((parsed.data as any).workspaceId) ? { workspaceId: String((parsed.data as any).workspaceId) } : {}),
             ...(((parsed.data as any).agentId) ? { agentId: String((parsed.data as any).agentId) } : {}),
             ...(((parsed.data as any).modelId) ? { modelId: String((parsed.data as any).modelId) } : {}),
             ...(((parsed.data as any).path) ? { path: String((parsed.data as any).path) } : {}),
@@ -382,13 +711,6 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
             ...(((parsed.data as any).agentId) ? { agentId: String((parsed.data as any).agentId) } : {}),
             ...(((parsed.data as any).modelId) ? { modelId: String((parsed.data as any).modelId) } : {}),
             ...(((parsed.data as any).initialMessage) ? { initialMessage: String((parsed.data as any).initialMessage) } : {}),
-          });
-          return { ok: true, result: res };
-        }
-
-        if (actionId === 'workspaces.list_recent') {
-          const res = await deps.workspacesListRecent({
-            ...(typeof (parsed.data as any).limit === 'number' ? { limit: (parsed.data as any).limit } : {}),
           });
           return { ok: true, result: res };
         }
@@ -415,9 +737,20 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
           return { ok: true, result: res };
         }
 
+        if (actionId === 'review.engines.list') {
+          const sessionId = resolveSessionIdFromInput(parsed.data, ctx);
+          if (!sessionId) return { ok: false, errorCode: 'session_not_selected', error: 'session_not_selected' };
+          const res = await deps.reviewEnginesList({
+            sessionId,
+            ...(typeof (parsed.data as any).includeDisabled === 'boolean' ? { includeDisabled: (parsed.data as any).includeDisabled } : {}),
+          });
+          return { ok: true, result: res };
+        }
+
         if (actionId === 'agents.backends.list') {
           const res = await deps.agentsBackendsList({
             ...(typeof (parsed.data as any).includeDisabled === 'boolean' ? { includeDisabled: (parsed.data as any).includeDisabled } : {}),
+            ...(typeof (parsed.data as any).limit === 'number' ? { limit: (parsed.data as any).limit } : {}),
           });
           return { ok: true, result: res };
         }
@@ -426,6 +759,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
           const res = await deps.agentsModelsList({
             agentId: String((parsed.data as any).agentId),
             ...(((parsed.data as any).machineId) ? { machineId: String((parsed.data as any).machineId) } : {}),
+            ...(typeof (parsed.data as any).limit === 'number' ? { limit: (parsed.data as any).limit } : {}),
           });
           return { ok: true, result: res };
         }
@@ -451,9 +785,52 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
           return { ok: true, result: res };
         }
 
+        if (actionId === 'session.user_action.answer') {
+          const sessionId = resolveSessionIdFromInput(parsed.data, ctx);
+          if (!sessionId) return { ok: false, errorCode: 'session_not_selected', error: 'session_not_selected' };
+          const serverId = resolveServerIdForSession(deps, ctx, sessionId);
+          const res = await deps.sessionUserActionAnswer({
+            sessionId,
+            requestId: Object.prototype.hasOwnProperty.call(parsed.data, 'requestId') ? (((parsed.data as any).requestId ?? null) as any) : null,
+            answers: Array.isArray((parsed.data as any).answers) ? (((parsed.data as any).answers as unknown[]).map((entry: any) => ({
+              question: String(entry?.question ?? ''),
+              answer: String(entry?.answer ?? ''),
+            }))) : [],
+            ...(typeof (parsed.data as any).decision === 'string' ? { decision: (parsed.data as any).decision } : {}),
+            ...(typeof (parsed.data as any).reason === 'string' ? { reason: (parsed.data as any).reason } : {}),
+            ...(Object.prototype.hasOwnProperty.call(parsed.data, 'updatedPermissions') ? { updatedPermissions: (parsed.data as any).updatedPermissions } : {}),
+            ...(serverId ? { serverId } : {}),
+          });
+          return { ok: true, result: res };
+        }
+
+        if (actionId === 'session.mode.set') {
+          const sessionId = resolveSessionIdFromInput(parsed.data, ctx);
+          if (!sessionId) return { ok: false, errorCode: 'session_not_selected', error: 'session_not_selected' };
+          const modeIdRaw = normalizeId((parsed.data as any).modeId);
+          const modeId = modeIdRaw === 'default' ? '' : modeIdRaw;
+          if (modeId) {
+            const availableModes = normalizeResolvedOptions(await deps.sessionModesList({ sessionId }));
+            if (!availableModes.some((option) => normalizeId(option.value) === modeId)) {
+              return { ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' };
+            }
+          }
+          const res = await deps.sessionModeSet({ sessionId, modeId });
+          return { ok: true, result: res };
+        }
+
         if (actionId === 'session.target.primary.set') {
           const raw = (parsed.data as any).sessionId;
-          const sessionId = raw === null ? null : normalizeId(raw);
+          const explicitSessionId = raw === null ? null : normalizeId(raw);
+          const titleResolution =
+            raw === null || explicitSessionId ? null : await resolveSessionIdByTitle(deps, (parsed.data as any).sessionTitle);
+          if (titleResolution?.kind === 'ambiguous') {
+            return { ok: false, errorCode: 'session_id_ambiguous', error: 'session_id_ambiguous' };
+          }
+          const sessionId =
+            raw === null
+              ? null
+              : explicitSessionId || (titleResolution?.kind === 'resolved' ? titleResolution.sessionId : null);
           const res = await deps.sessionTargetPrimarySet({ sessionId: sessionId || null });
           return { ok: true, result: res };
         }
@@ -499,6 +876,58 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
           return { ok: true, result: res };
         }
 
+        if (actionId === 'memory.search') {
+          const machineId = normalizeId((parsed.data as any).machineId);
+          if (!machineId) return { ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' };
+          const query = (parsed.data as any).query as MemorySearchQueryV1;
+          const res = await deps.daemonMemorySearch({ machineId, query, serverId: normalizeId(ctx.serverId) || null });
+          return { ok: true, result: res };
+        }
+
+        if (actionId === 'memory.get_window') {
+          const machineId = normalizeId((parsed.data as any).machineId);
+          const sessionId = normalizeId((parsed.data as any).sessionId);
+          if (!machineId || !sessionId) return { ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' };
+          const res = await deps.daemonMemoryGetWindow({
+            machineId,
+            sessionId,
+            seqFrom: Number((parsed.data as any).seqFrom ?? 0),
+            seqTo: Number((parsed.data as any).seqTo ?? 0),
+            serverId: normalizeId(ctx.serverId) || null,
+          });
+          return { ok: true, result: res };
+        }
+
+        if (actionId === 'memory.ensure_up_to_date') {
+          const machineId = normalizeId((parsed.data as any).machineId);
+          if (!machineId) return { ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' };
+          const sessionId = normalizeId((parsed.data as any).sessionId);
+          const res = await deps.daemonMemoryEnsureUpToDate({
+            machineId,
+            ...(sessionId ? { sessionId } : {}),
+            serverId: normalizeId(ctx.serverId) || null,
+          });
+          return { ok: true, result: res };
+        }
+
+        if (actionId === 'ui.voice_global.reset') {
+          await deps.resetGlobalVoiceAgent();
+          return { ok: true, result: { ok: true } };
+        }
+
+        if (actionId === 'ui.voice_agent.teleport') {
+          if (!deps.teleportVoiceAgentToSessionRoot) {
+            return { ok: false, errorCode: 'unsupported_action', error: 'unsupported_action:ui.voice_agent.teleport' };
+          }
+          const sessionId = resolveSessionIdFromInput(parsed.data as any, ctx);
+          if (!sessionId) return { ok: false, errorCode: 'session_not_selected', error: 'session_not_selected' };
+          const result = await deps.teleportVoiceAgentToSessionRoot({ sessionId });
+          if ((result as any)?.ok === false) {
+            const errorCode = String((result as any)?.code ?? 'voice_teleport_failed');
+            return { ok: false, errorCode, error: errorCode };
+          }
+          return { ok: true, result: { ok: true, sessionId } };
+        }
 
         if (actionId === 'prompt_doc.update') {
           if (!deps.promptDocUpdate) {
@@ -558,6 +987,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
             machineId,
             assetTypeId,
             scope,
+            ...(normalizeId(ctx.serverId) ? { serverId: normalizeId(ctx.serverId) } : {}),
             ...(typeof (parsed.data as any).directory === 'string' && String((parsed.data as any).directory).trim().length > 0
               ? { directory: String((parsed.data as any).directory).trim() }
               : {}),
@@ -615,6 +1045,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
             sourceId,
             itemId,
             configuredSources: Array.isArray((parsed.data as any).configuredSources) ? (parsed.data as any).configuredSources : [],
+            ...(normalizeId(ctx.serverId) ? { serverId: normalizeId(ctx.serverId) } : {}),
             ...(installTarget ? { installTarget } : {}),
           });
           if ((res as any)?.ok === false) {
@@ -627,172 +1058,139 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
           return { ok: true, result: res };
         }
 
-        if (actionId === 'approval.request.create') {
-          if (!deps.approvalsCreate) {
-            return { ok: false, errorCode: 'unsupported_action', error: 'unsupported_action:approvals' };
-          }
-
-          const now = Date.now();
-          const targetActionId = (parsed.data as any).actionId as ActionId;
-          if (targetActionId === 'approval.request.create' || targetActionId === 'approval.request.decide') {
-            return { ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' };
-          }
-
-          const targetSpec = getActionSpec(targetActionId);
-          const isEligibleForApprovalQueue =
-            targetSpec.safety === 'danger' || (targetSpec as any).requiresApprovalQueue === true;
-          if (!isEligibleForApprovalQueue) {
-            return { ok: false, errorCode: 'action_not_approvable', error: 'action_not_approvable' };
-          }
-
-          const request: ApprovalRequestV1 = {
-            v: 1,
-            status: 'open',
-            createdAtMs: now,
-            updatedAtMs: now,
-            createdBy: (parsed.data as any).createdBy,
-            actionId: targetActionId,
-            actionArgs: (parsed.data as any).actionArgs,
-            summary: String((parsed.data as any).summary ?? '').trim(),
-            ...(normalizeId(ctx.serverId) ? { serverId: normalizeId(ctx.serverId) } : {}),
-            ...(Object.prototype.hasOwnProperty.call(parsed.data, 'preview') ? { preview: (parsed.data as any).preview } : {}),
-          };
-          const res = await deps.approvalsCreate({ request, serverId: normalizeId(ctx.serverId) || null });
-          return { ok: true, result: res };
+      if (actionId === 'approval.request.create') {
+        if (!deps.approvalsCreate) {
+          return { ok: false, errorCode: 'unsupported_action', error: 'unsupported_action:approvals' };
         }
 
-        if (actionId === 'approval.request.decide') {
-          if (!deps.approvalsGet || !deps.approvalsUpdate) {
-            return { ok: false, errorCode: 'unsupported_action', error: 'unsupported_action:approvals' };
-          }
-
-          const artifactId = normalizeId((parsed.data as any).artifactId);
-          if (!artifactId) return { ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' };
-
-          const existingRaw = await deps.approvalsGet({ artifactId, serverId: normalizeId(ctx.serverId) || null });
-          if (!existingRaw) return { ok: false, errorCode: 'approval_not_found', error: 'approval_not_found' };
-
-          const existingParsed = ApprovalRequestV1Schema.safeParse(existingRaw);
-          if (!existingParsed.success) return { ok: false, errorCode: 'approval_invalid', error: 'approval_invalid' };
-          const existing = existingParsed.data;
-          const decision = (parsed.data as any).decision;
-
-          if (existing.actionId === 'approval.request.create' || existing.actionId === 'approval.request.decide') {
-            return { ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' };
-          }
-
-          const isRecoverableApproved = decision === 'approve'
-            && existing.status === 'approved'
-            && existing.decision?.kind === 'approve'
-            && !existing.execution;
-
-          if (decision === 'reject' && existing.status === 'rejected' && existing.decision?.kind === 'reject') {
-            return buildApprovalDecisionResult(existing);
-          }
-
-          if (decision === 'approve'
-            && (existing.status === 'approved' || existing.status === 'executed' || existing.status === 'failed')
-            && existing.decision?.kind === 'approve'
-            && !isRecoverableApproved) {
-            return buildApprovalDecisionResult(existing);
-          }
-
-          if (existing.status !== 'open' && !isRecoverableApproved) {
-            return { ok: false, errorCode: 'approval_not_open', error: 'approval_not_open' };
-          }
-
-          const now = Date.now();
-
-          if (decision === 'reject') {
-            const nextRejected: ApprovalRequestV1 = {
-              ...existing,
-              status: 'rejected',
-              updatedAtMs: now,
-              decision: { kind: 'reject', decidedAtMs: now },
-            };
-            const updated = await deps.approvalsUpdate({ artifactId, request: nextRejected, serverId: normalizeId(ctx.serverId) || null });
-            if ((updated as any)?.ok === false) return { ok: false, errorCode: (updated as any).errorCode, error: (updated as any).error };
-            return buildApprovalDecisionResult(nextRejected);
-          }
-
-          let approvedRequest = existing;
-          if (existing.status === 'open') {
-            approvedRequest = {
-              ...existing,
-              status: 'approved',
-              updatedAtMs: now,
-              decision: { kind: 'approve', decidedAtMs: now },
-            };
-
-            const approved = await deps.approvalsUpdate({
-              artifactId,
-              request: approvedRequest,
-              serverId: normalizeId(ctx.serverId) || null,
-            });
-            if ((approved as any)?.ok === false) {
-              return { ok: false, errorCode: (approved as any).errorCode, error: (approved as any).error };
-            }
-          }
-
-          const exec = await execute(existing.actionId, existing.actionArgs, ctx);
-          const executedAtMs = Date.now();
-          const nextExecuted: ApprovalRequestV1 = {
-            ...approvedRequest,
-            status: exec.ok ? 'executed' : 'failed',
-            updatedAtMs: executedAtMs,
-            execution: exec.ok
-              ? { executedAtMs, ok: true, result: (exec as any).result }
-              : { executedAtMs, ok: false, errorCode: (exec as any).errorCode, error: (exec as any).error },
-          };
-
-          const updated = await deps.approvalsUpdate({ artifactId, request: nextExecuted, serverId: normalizeId(ctx.serverId) || null });
-          if ((updated as any)?.ok === false) return { ok: false, errorCode: (updated as any).errorCode, error: (updated as any).error };
-          return buildApprovalDecisionResult(nextExecuted);
+        const now = Date.now();
+        const targetActionId = (parsed.data as any).actionId as ActionId;
+        if (targetActionId === 'approval.request.create' || targetActionId === 'approval.request.decide') {
+          return { ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' };
         }
 
-        if (actionId === 'memory.search') {
-          const machineId = normalizeId((parsed.data as any).machineId);
-          if (!machineId) return { ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' };
-          const query = (parsed.data as any).query as MemorySearchQueryV1;
-          const res = await deps.daemonMemorySearch({ machineId, query, serverId: normalizeId(ctx.serverId) || null });
-          return { ok: true, result: res };
+        const targetSpec = getActionSpec(targetActionId);
+        const isEligibleForApprovalQueue =
+          targetSpec.safety === 'danger' || (targetSpec as any).requiresApprovalQueue === true;
+        if (!isEligibleForApprovalQueue) {
+          return { ok: false, errorCode: 'action_not_approvable', error: 'action_not_approvable' };
         }
 
-        if (actionId === 'memory.get_window') {
-          const machineId = normalizeId((parsed.data as any).machineId);
-          const sessionId = normalizeId((parsed.data as any).sessionId);
-          if (!machineId || !sessionId) return { ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' };
-          const res = await deps.daemonMemoryGetWindow({
-            machineId,
-            sessionId,
-            seqFrom: Number((parsed.data as any).seqFrom ?? 0),
-            seqTo: Number((parsed.data as any).seqTo ?? 0),
-            serverId: normalizeId(ctx.serverId) || null,
-          });
-          return { ok: true, result: res };
-        }
-
-        if (actionId === 'memory.ensure_up_to_date') {
-          const machineId = normalizeId((parsed.data as any).machineId);
-          if (!machineId) return { ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' };
-          const sessionId = normalizeId((parsed.data as any).sessionId);
-          const res = await deps.daemonMemoryEnsureUpToDate({
-            machineId,
-            ...(sessionId ? { sessionId } : {}),
-            serverId: normalizeId(ctx.serverId) || null,
-          });
-          return { ok: true, result: res };
-        }
-
-        if (actionId === 'ui.voice_global.reset') {
-          await deps.resetGlobalVoiceAgent();
-          return { ok: true, result: { ok: true } };
-        }
-
-        return { ok: false, errorCode: 'unsupported_action', error: `unsupported_action:${actionId}` };
-      } catch (error) {
-        return { ok: false, errorCode: 'action_failed', error: error instanceof Error ? error.message : 'action_failed' };
+        const request: ApprovalRequestV1 = {
+          v: 1,
+          status: 'open',
+          createdAtMs: now,
+          updatedAtMs: now,
+          createdBy: (parsed.data as any).createdBy,
+          actionId: targetActionId,
+          actionArgs: (parsed.data as any).actionArgs,
+          summary: String((parsed.data as any).summary ?? '').trim(),
+          ...(normalizeId(ctx.serverId) ? { serverId: normalizeId(ctx.serverId) } : {}),
+          ...(Object.prototype.hasOwnProperty.call(parsed.data, 'preview') ? { preview: (parsed.data as any).preview } : {}),
+        };
+        const res = await deps.approvalsCreate({ request, serverId: normalizeId(ctx.serverId) || null });
+        return { ok: true, result: res };
       }
+
+      if (actionId === 'approval.request.decide') {
+        if (!deps.approvalsGet || !deps.approvalsUpdate) {
+          return { ok: false, errorCode: 'unsupported_action', error: 'unsupported_action:approvals' };
+        }
+
+        const artifactId = normalizeId((parsed.data as any).artifactId);
+        if (!artifactId) return { ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' };
+
+        const existingRaw = await deps.approvalsGet({ artifactId, serverId: normalizeId(ctx.serverId) || null });
+        if (!existingRaw) return { ok: false, errorCode: 'approval_not_found', error: 'approval_not_found' };
+
+        const existingParsed = ApprovalRequestV1Schema.safeParse(existingRaw);
+        if (!existingParsed.success) return { ok: false, errorCode: 'approval_invalid', error: 'approval_invalid' };
+        const existing = existingParsed.data;
+        const effectiveServerId = normalizeId(ctx.serverId) || normalizeId(existing.serverId) || null;
+        const decision = (parsed.data as any).decision;
+
+        if (existing.actionId === 'approval.request.create' || existing.actionId === 'approval.request.decide') {
+          return { ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' };
+        }
+
+        const isRecoverableApproved = decision === 'approve'
+          && existing.status === 'approved'
+          && existing.decision?.kind === 'approve'
+          && !existing.execution;
+
+        if (decision === 'reject' && existing.status === 'rejected' && existing.decision?.kind === 'reject') {
+          return buildApprovalDecisionResult(existing);
+        }
+
+        if (decision === 'approve'
+          && (existing.status === 'approved' || existing.status === 'executed' || existing.status === 'failed')
+          && existing.decision?.kind === 'approve'
+          && !isRecoverableApproved) {
+          return buildApprovalDecisionResult(existing);
+        }
+
+        if (existing.status !== 'open' && !isRecoverableApproved) {
+          return { ok: false, errorCode: 'approval_not_open', error: 'approval_not_open' };
+        }
+
+        const now = Date.now();
+
+        if (decision === 'reject') {
+          const nextRejected: ApprovalRequestV1 = {
+            ...existing,
+            status: 'rejected',
+            updatedAtMs: now,
+            decision: { kind: 'reject', decidedAtMs: now },
+          };
+          const updated = await deps.approvalsUpdate({ artifactId, request: nextRejected, serverId: effectiveServerId });
+          if ((updated as any)?.ok === false) return { ok: false, errorCode: (updated as any).errorCode, error: (updated as any).error };
+          return buildApprovalDecisionResult(nextRejected);
+        }
+
+        let approvedRequest = existing;
+        if (existing.status === 'open') {
+          approvedRequest = {
+            ...existing,
+            status: 'approved',
+            updatedAtMs: now,
+            decision: { kind: 'approve', decidedAtMs: now },
+          };
+
+          const approved = await deps.approvalsUpdate({
+            artifactId,
+            request: approvedRequest,
+            serverId: effectiveServerId,
+          });
+          if ((approved as any)?.ok === false) {
+            return { ok: false, errorCode: (approved as any).errorCode, error: (approved as any).error };
+          }
+        }
+
+        const exec = await execute(existing.actionId, existing.actionArgs, {
+          ...ctx,
+          ...(effectiveServerId ? { serverId: effectiveServerId } : {}),
+          surface: null,
+          placement: null,
+        });
+        const executedAtMs = Date.now();
+        const nextExecuted: ApprovalRequestV1 = {
+          ...approvedRequest,
+          status: exec.ok ? 'executed' : 'failed',
+          updatedAtMs: executedAtMs,
+          execution: exec.ok
+            ? { executedAtMs, ok: true, result: (exec as any).result }
+            : { executedAtMs, ok: false, errorCode: (exec as any).errorCode, error: (exec as any).error },
+        };
+
+        const updated = await deps.approvalsUpdate({ artifactId, request: nextExecuted, serverId: effectiveServerId });
+        if ((updated as any)?.ok === false) return { ok: false, errorCode: (updated as any).errorCode, error: (updated as any).error };
+        return buildApprovalDecisionResult(nextExecuted);
+      }
+
+      return { ok: false, errorCode: 'unsupported_action', error: `unsupported_action:${actionId}` };
+    } catch (error) {
+      return { ok: false, errorCode: 'action_failed', error: error instanceof Error ? error.message : 'action_failed' };
+    }
   };
 
   return {

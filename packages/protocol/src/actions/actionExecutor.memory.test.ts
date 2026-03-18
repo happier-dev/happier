@@ -12,18 +12,21 @@ function createDeps(): ActionExecutorDeps {
     executionRunAction: vi.fn(async () => ({})),
 
     sessionOpen: vi.fn(async () => ({})),
+    sessionFork: vi.fn(async () => ({})),
+    sessionRollback: vi.fn(async () => ({})),
     sessionSpawnNew: vi.fn(async () => ({})),
     sessionSpawnPicker: vi.fn(async () => ({})),
 
-    workspacesListRecent: vi.fn(async () => ({ items: [] })),
     pathsListRecent: vi.fn(async () => ({ items: [] })),
     machinesList: vi.fn(async () => ({ items: [] })),
     serversList: vi.fn(async () => ({ items: [] })),
+    reviewEnginesList: vi.fn(async () => ({ items: [] })),
     agentsBackendsList: vi.fn(async () => ({ items: [] })),
     agentsModelsList: vi.fn(async () => ({ items: [] })),
 
     sessionSendMessage: vi.fn(async () => ({})),
     sessionPermissionRespond: vi.fn(async () => ({})),
+    sessionUserActionAnswer: vi.fn(async () => ({})),
 
     sessionTargetPrimarySet: vi.fn(async () => ({})),
     sessionTargetTrackedSet: vi.fn(async () => ({})),
@@ -56,4 +59,3 @@ describe('createActionExecutor (memory)', () => {
     });
   });
 });
-
