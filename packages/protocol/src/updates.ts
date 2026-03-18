@@ -64,6 +64,8 @@ export const UpdateBodySchema = z.discriminatedUnion('t', [
     lastViewedSessionSeq: z.number().int().min(0).optional(),
     pendingPermissionRequestCount: z.number().int().min(0).optional(),
     pendingUserActionRequestCount: z.number().int().min(0).optional(),
+    pendingCount: z.number().int().min(0).optional(),
+    pendingVersion: z.number().int().min(0).optional(),
   }).passthrough(),
   z.object({
     t: z.literal('pending-changed'),

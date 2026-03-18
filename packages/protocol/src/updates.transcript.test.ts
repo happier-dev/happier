@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { EphemeralUpdateSchema, MessageAckResponseSchema, UpdateBodySchema } from './updates.js';
+import { EphemeralUpdateSchema, MessageAckResponseSchema, UpdateBodySchema, type UpdateBody } from './updates.js';
 
 describe('updates transcript vNext payloads', () => {
   it('parses update-session payloads with session counters', () => {
@@ -12,11 +12,41 @@ describe('updates transcript vNext payloads', () => {
       lastViewedSessionSeq: 11,
       pendingPermissionRequestCount: 2,
       pendingUserActionRequestCount: 3,
+      pendingCount: 4,
+      pendingVersion: 5,
     });
 
     expect(parsed.success).toBe(true);
     if (!parsed.success) return;
     expect(parsed.data.t).toBe('update-session');
+  });
+
+  it('types the extended update-session payload counters', () => {
+    type UpdateSessionBody = Extract<UpdateBody, { t: 'update-session' }>;
+
+    const updateSessionBody = {
+      t: 'update-session',
+      id: 'sess_1',
+      metadata: { value: null, version: 3 },
+      agentState: { value: 'active', version: 2 },
+      lastViewedSessionSeq: 11,
+      pendingPermissionRequestCount: 2,
+      pendingUserActionRequestCount: 3,
+      pendingCount: 4,
+      pendingVersion: 5,
+    } satisfies UpdateSessionBody;
+
+    const lastViewedSessionSeq: number | undefined = updateSessionBody.lastViewedSessionSeq;
+    const pendingPermissionRequestCount: number | undefined = updateSessionBody.pendingPermissionRequestCount;
+    const pendingUserActionRequestCount: number | undefined = updateSessionBody.pendingUserActionRequestCount;
+    const pendingCount: number | undefined = updateSessionBody.pendingCount;
+    const pendingVersion: number | undefined = updateSessionBody.pendingVersion;
+
+    expect(lastViewedSessionSeq).toBe(11);
+    expect(pendingPermissionRequestCount).toBe(2);
+    expect(pendingUserActionRequestCount).toBe(3);
+    expect(pendingCount).toBe(4);
+    expect(pendingVersion).toBe(5);
   });
 
   it('parses message-updated payload', () => {

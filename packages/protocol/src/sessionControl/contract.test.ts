@@ -210,6 +210,35 @@ describe('sessionControl contract exports', () => {
     expect(parsed.success).toBe(true);
   });
 
+  it('types the extended session summary counters used by newer session control payloads', () => {
+    const summary = {
+      id: 'sess_1',
+      createdAt: 1,
+      updatedAt: 2,
+      active: true,
+      activeAt: 3,
+      archivedAt: null,
+      lastViewedSessionSeq: 11,
+      pendingPermissionRequestCount: 2,
+      pendingUserActionRequestCount: 3,
+      pendingCount: 5,
+      pendingVersion: 7,
+      encryption: { type: 'dataKey' },
+    } satisfies protocol.SessionSummary;
+
+    const lastViewedSessionSeq: number | null | undefined = summary.lastViewedSessionSeq;
+    const pendingPermissionRequestCount: number | undefined = summary.pendingPermissionRequestCount;
+    const pendingUserActionRequestCount: number | undefined = summary.pendingUserActionRequestCount;
+    const pendingCount: number | undefined = summary.pendingCount;
+    const pendingVersion: number | undefined = summary.pendingVersion;
+
+    expect(lastViewedSessionSeq).toBe(11);
+    expect(pendingPermissionRequestCount).toBe(2);
+    expect(pendingUserActionRequestCount).toBe(3);
+    expect(pendingCount).toBe(5);
+    expect(pendingVersion).toBe(7);
+  });
+
   it('validates v2 session message responses', () => {
     const schema = (protocol as any).V2SessionMessageResponseSchema;
     const parsed = schema.safeParse({
