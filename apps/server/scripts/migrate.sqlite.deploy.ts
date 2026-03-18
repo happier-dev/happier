@@ -1,6 +1,7 @@
 import { spawn } from "node:child_process";
 import { mkdir } from "node:fs/promises";
 import { dirname, join } from "node:path";
+import { pathToFileURL } from "node:url";
 import { applyLightDefaultEnv } from "@/flavors/light/env";
 import { requireLightDataDir } from "./migrate.light.deployPlan";
 
@@ -35,27 +36,33 @@ async function ensureSqliteDbDir(env: NodeJS.ProcessEnv): Promise<void> {
     await mkdir(dirname(filePath), { recursive: true });
 }
 
-async function main() {
-    const env: NodeJS.ProcessEnv = { ...process.env };
-    applyLightDefaultEnv(env);
+export async function runSqliteMigrateDeploy(env: NodeJS.ProcessEnv = process.env): Promise<void> {
+    const nextEnv: NodeJS.ProcessEnv = { ...env };
+    applyLightDefaultEnv(nextEnv);
 
-    const dataDir = requireLightDataDir(env);
+    const dataDir = requireLightDataDir(nextEnv);
     await mkdir(dataDir, { recursive: true });
 
-    await run("yarn", ["-s", "schema:sync", "--quiet"], env);
+    await run("yarn", ["-s", "schema:sync", "--quiet"], nextEnv);
 
-    ensureSqliteDatabaseUrl(env);
-    await ensureSqliteDbDir(env);
+    ensureSqliteDatabaseUrl(nextEnv);
+    await ensureSqliteDbDir(nextEnv);
     // Work around a Prisma CLI behavior where SQLite migrate errors can surface as a blank
     // "Schema engine error:" on some Node/engine combinations. Enabling Rust logging restores
     // normal output and behavior.
     await run("yarn", ["-s", "prisma", "migrate", "deploy", "--schema", "prisma/sqlite/schema.prisma"], {
-        ...env,
+        ...nextEnv,
         RUST_LOG: "info",
     });
 }
 
-main().catch((err) => {
-    console.error(err);
-    process.exit(1);
-});
+export async function main(): Promise<void> {
+    await runSqliteMigrateDeploy(process.env);
+}
+
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+    void main().catch((err) => {
+        console.error(err);
+        process.exit(1);
+    });
+}

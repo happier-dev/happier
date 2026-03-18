@@ -1,5 +1,6 @@
 import { spawn } from 'node:child_process';
 import { mkdir } from 'node:fs/promises';
+import { pathToFileURL } from 'node:url';
 import { applyLightDefaultEnv } from '@/flavors/light/env';
 import { buildLightDevPlan } from './dev.lightPlan';
 
@@ -18,14 +19,14 @@ function run(cmd: string, args: string[], env: NodeJS.ProcessEnv): Promise<void>
     });
 }
 
-async function main() {
-    const env: NodeJS.ProcessEnv = { ...process.env };
-    applyLightDefaultEnv(env);
+export async function runLightDev(env: NodeJS.ProcessEnv = process.env): Promise<void> {
+    const nextEnv: NodeJS.ProcessEnv = { ...env };
+    applyLightDefaultEnv(nextEnv);
 
-    const dataDir = env.HAPPY_SERVER_LIGHT_DATA_DIR!;
-    const filesDir = env.HAPPY_SERVER_LIGHT_FILES_DIR!;
-    const dbDir = env.HAPPY_SERVER_LIGHT_DB_DIR!;
-    const plan = buildLightDevPlan(env);
+    const dataDir = nextEnv.HAPPY_SERVER_LIGHT_DATA_DIR!;
+    const filesDir = nextEnv.HAPPY_SERVER_LIGHT_FILES_DIR!;
+    const dbDir = nextEnv.HAPPY_SERVER_LIGHT_DB_DIR!;
+    const plan = buildLightDevPlan(nextEnv);
 
     // Ensure dirs exist for light flavor.
     await mkdir(dataDir, { recursive: true });
@@ -33,13 +34,19 @@ async function main() {
     await mkdir(dbDir, { recursive: true });
 
     // Apply migrations (idempotent).
-    await run('yarn', plan.migrateDeployArgs, env);
+    await run('yarn', plan.migrateDeployArgs, nextEnv);
 
     // Run the light flavor.
-    await run('yarn', plan.startLightArgs, env);
+    await run('yarn', plan.startLightArgs, nextEnv);
 }
 
-main().catch((err) => {
-    console.error(err);
-    process.exit(1);
-});
+export async function main(): Promise<void> {
+    await runLightDev(process.env);
+}
+
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+    void main().catch((err) => {
+        console.error(err);
+        process.exit(1);
+    });
+}

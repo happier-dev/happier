@@ -1,6 +1,7 @@
 import { spawn } from 'node:child_process';
 import { mkdir } from 'node:fs/promises';
 import { createRequire } from 'node:module';
+import { pathToFileURL } from 'node:url';
 import { applyLightDefaultEnv } from '@/flavors/light/env';
 import { requireLightDataDir } from './migrate.light.deployPlan';
 import { PGlite } from '@electric-sql/pglite';
@@ -22,14 +23,14 @@ function run(cmd: string, args: string[], env: NodeJS.ProcessEnv): Promise<void>
     });
 }
 
-async function main() {
-    const env: NodeJS.ProcessEnv = { ...process.env };
-    applyLightDefaultEnv(env);
+export async function runLightMigrateDeploy(env: NodeJS.ProcessEnv = process.env): Promise<void> {
+    const nextEnv: NodeJS.ProcessEnv = { ...env };
+    applyLightDefaultEnv(nextEnv);
 
-    const dataDir = requireLightDataDir(env);
+    const dataDir = requireLightDataDir(nextEnv);
     await mkdir(dataDir, { recursive: true });
 
-    const dbDir = env.HAPPY_SERVER_LIGHT_DB_DIR?.trim();
+    const dbDir = nextEnv.HAPPY_SERVER_LIGHT_DB_DIR?.trim();
     if (!dbDir) {
         throw new Error('Missing HAPPY_SERVER_LIGHT_DB_DIR (set it or ensure applyLightDefaultEnv sets it)');
     }
@@ -55,11 +56,11 @@ async function main() {
             }
         })();
         url.searchParams.set('connection_limit', '1');
-        env.DATABASE_URL = url.toString();
+        nextEnv.DATABASE_URL = url.toString();
 
         const require = createRequire(import.meta.url);
         const prismaCliPath = require.resolve('prisma/build/index.js');
-        await run(process.execPath, [prismaCliPath, 'migrate', 'deploy', '--schema', 'prisma/schema.prisma'], env);
+        await run(process.execPath, [prismaCliPath, 'migrate', 'deploy', '--schema', 'prisma/schema.prisma'], nextEnv);
     } finally {
         await server?.stop().catch(() => {});
         await pglite?.close().catch(() => {});
@@ -67,7 +68,13 @@ async function main() {
     }
 }
 
-main().catch((err) => {
-    console.error(err);
-    process.exit(1);
-});
+export async function main(): Promise<void> {
+    await runLightMigrateDeploy(process.env);
+}
+
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+    void main().catch((err) => {
+        console.error(err);
+        process.exit(1);
+    });
+}

@@ -1,11 +1,11 @@
 import http from 'node:http';
 import assert from 'node:assert/strict';
+import { pathToFileURL } from 'node:url';
 import { Server } from 'socket.io';
 import { io as ioClient } from 'socket.io-client';
 import { createAdapter } from '@socket.io/redis-streams-adapter';
 import { Redis } from 'ioredis';
-
-const ENV_REDIS_URL = process.env.REDIS_URL?.trim() ?? '';
+import { resolveRedisAdapterValidationRedisUrl } from './resolveRedisAdapterValidationRedisUrl';
 
 const ROOM = 'user:test-user';
 
@@ -24,18 +24,8 @@ async function closeServer(server: http.Server): Promise<void> {
   await new Promise<void>((resolve) => server.close(() => resolve()));
 }
 
-async function main(): Promise<void> {
-  let redisMemory: { stop: () => Promise<boolean>; getIp: () => Promise<string>; getPort: () => Promise<number> } | null = null;
-  const redisUrl =
-    ENV_REDIS_URL ||
-    (await (async () => {
-      const { RedisMemoryServer } = await import('redis-memory-server');
-      redisMemory = await RedisMemoryServer.create();
-      const ip = await redisMemory.getIp();
-      const port = await redisMemory.getPort();
-      return `redis://${ip}:${port}`;
-    })());
-
+export async function main(): Promise<void> {
+  const { redisUrl, stop } = await resolveRedisAdapterValidationRedisUrl(process.env);
   const redisA = new Redis(redisUrl);
   const redisB = new Redis(redisUrl);
 
@@ -129,11 +119,13 @@ async function main(): Promise<void> {
     await closeServer(httpB);
     await redisA.quit();
     await redisB.quit();
-    if (redisMemory) await redisMemory.stop();
+    await stop();
   }
 }
 
-main().catch((err) => {
-  console.error(err);
-  process.exit(1);
-});
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  void main().catch((err) => {
+    console.error(err);
+    process.exit(1);
+  });
+}
