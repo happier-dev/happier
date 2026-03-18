@@ -26,7 +26,7 @@ test('hstack stack auth copy-from skips pglite DB seed when lock is held by a li
   await writeFile(yarnPath, '#!/bin/bash\nexit 0\n', 'utf-8');
   await chmod(yarnPath, 0o755);
 
-  const repoRoot = dirname(rootDir); // .../apps/stack -> .../ (monorepo root)
+  const repoRoot = dirname(dirname(rootDir)); // .../apps/stack -> repo root
 
   const mkStackEnv = async (name) => {
     const baseDir = join(storageDir, name);
@@ -78,7 +78,7 @@ test('hstack stack auth copy-from skips pglite DB seed when lock is held by a li
     assert.match(combinedOutput, /\bdb seed skipped\b/i, `expected db seed to be skipped\nstdout:\n${res.stdout}\nstderr:\n${res.stderr}`);
     assert.match(
       combinedOutput,
-      /\bpglite db dir is in use by pid(?:=|\b)/i,
+      /\bpglite.*db dir is in use/i,
       `expected message about live pglite lock\nstdout:\n${res.stdout}\nstderr:\n${res.stderr}`
     );
   } finally {

@@ -119,11 +119,13 @@ async function buildGuidedNoExpoFixture({
     await mkdir(join(snapshotDir, 'ui'), { recursive: true });
     await mkdir(join(snapshotDir, 'server'), { recursive: true });
     await mkdir(join(snapshotDir, 'cli'), { recursive: true });
+    await mkdir(join(snapshotDir, 'cli', 'package-dist'), { recursive: true });
     await writeFile(join(snapshotDir, 'ui', 'index.html'), '<!doctype html><html><body>runtime ui</body></html>\n', 'utf-8');
     const serverBinaryPath = join(snapshotDir, 'server', 'happier-server');
     const cliBinaryPath = join(snapshotDir, 'cli', 'happier');
     await writeFile(serverBinaryPath, '#!/bin/sh\nexit 0\n', 'utf-8');
     await writeFile(cliBinaryPath, runtimeCliScript, 'utf-8');
+    await writeFile(join(snapshotDir, 'cli', 'package-dist', 'index.mjs'), 'export {};\n', 'utf-8');
     await chmod(serverBinaryPath, 0o755);
     await chmod(cliBinaryPath, 0o755);
     await writeFile(

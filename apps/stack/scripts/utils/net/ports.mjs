@@ -2,6 +2,38 @@ import { setTimeout as delay } from 'node:timers/promises';
 import net from 'node:net';
 import { runCaptureIfCommandExists } from '../proc/commands.mjs';
 
+export async function isTcpPortListening(port, { host = '127.0.0.1', timeoutMs = 250 } = {}) {
+  if (!Number.isFinite(port) || port <= 0) return false;
+
+  return await new Promise((resolvePromise) => {
+    let settled = false;
+    const done = (result) => {
+      if (settled) return;
+      settled = true;
+      resolvePromise(result);
+    };
+
+    let socket;
+    try {
+      socket = net.createConnection({ port, host }, () => {
+        socket.destroy();
+        done(true);
+      });
+    } catch {
+      done(false);
+      return;
+    }
+
+    socket.unref();
+    socket.on('error', () => done(false));
+    socket.setTimeout(timeoutMs, () => {
+      socket.destroy();
+      // Fail-closed: treat timeouts as "in use / unknown" rather than "free".
+      done(true);
+    });
+  });
+}
+
 export async function listListenPids(port) {
   if (!Number.isFinite(port) || port <= 0) return [];
   if (process.platform === 'win32') return [];
@@ -77,7 +109,7 @@ export async function killPortListeners(port, { label = 'port' } = {}) {
   return pids;
 }
 
-export async function isTcpPortFree(port, { host = '127.0.0.1' } = {}) {
+export async function isTcpPortFree(port, { host = '127.0.0.1', timeoutMs = 250 } = {}) {
   if (!Number.isFinite(port) || port <= 0) return false;
 
   // Prefer lsof-based detection to catch IPv6 listeners (e.g. TCP *:8081 (LISTEN))
@@ -87,12 +119,57 @@ export async function isTcpPortFree(port, { host = '127.0.0.1' } = {}) {
 
   // Fallback: attempt to bind.
   return await new Promise((resolvePromise) => {
-    const srv = net.createServer();
+    let settled = false;
+    let timeoutId;
+
+    const done = (result) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeoutId);
+      resolvePromise(result);
+    };
+
+    let srv;
+    try {
+      srv = net.createServer((socket) => {
+        // Tests use this as a port reservation primitive too; if something external connects
+        // (e.g. a browser tab), immediately close the socket so server.close() cannot hang
+        // waiting for long-lived connections to drain.
+        try {
+          socket.destroy();
+        } catch {
+          // ignore
+        }
+      });
+    } catch {
+      done(false);
+      return;
+    }
+
     srv.unref();
-    srv.on('error', () => resolvePromise(false));
-    srv.listen({ port, host }, () => {
-      srv.close(() => resolvePromise(true));
-    });
+
+    timeoutId = setTimeout(() => {
+      try {
+        srv.close();
+      } catch {
+        // ignore
+      }
+      // Fail-closed: treat timeouts as "in use / unknown" rather than "free".
+      done(false);
+    }, timeoutMs);
+
+    srv.on('error', () => done(false));
+    try {
+      srv.listen({ port, host }, () => {
+        try {
+          srv.close(() => done(true));
+        } catch {
+          done(false);
+        }
+      });
+    } catch {
+      done(false);
+    }
   });
 }
 
@@ -107,4 +184,3 @@ export async function pickNextFreeTcpPort(startPort, { reservedPorts = new Set()
   }
   throw new Error(`[local] unable to find a free TCP port starting at ${startPort}`);
 }
-

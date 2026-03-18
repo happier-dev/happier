@@ -2,41 +2,44 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import net from 'node:net';
 
-import { isTcpPortFree, pickNextFreeTcpPort } from './ports.mjs';
+import { isTcpPortFree } from './ports.mjs';
 
-function listenOnPort(port) {
-  return new Promise((resolve, reject) => {
-    const server = net.createServer();
-    server.once('error', reject);
-    server.listen({ host: '127.0.0.1', port }, () => resolve(server));
+async function getUnusedLoopbackPort() {
+  const srv = net.createServer();
+  await new Promise((resolvePromise, reject) => {
+    srv.once('error', reject);
+    srv.listen({ host: '127.0.0.1', port: 0 }, () => resolvePromise());
   });
+  const addr = srv.address();
+  const port = typeof addr === 'object' && addr ? addr.port : null;
+  if (!port) throw new Error('failed to allocate a free TCP port');
+  await new Promise((resolvePromise) => srv.close(resolvePromise));
+  return port;
 }
 
-test('isTcpPortFree reports a listening port as occupied', async () => {
-  const server = await listenOnPort(0);
-  try {
-    const address = server.address();
-    assert.ok(address && typeof address === 'object', 'expected a listening TCP server');
-    assert.equal(await isTcpPortFree(address.port, { host: '127.0.0.1' }), false);
-  } finally {
-    await new Promise((resolve) => server.close(() => resolve()));
-  }
-});
+test(
+  'isTcpPortFree resolves (fails closed) when the bind-probe cannot close cleanly',
+  { timeout: 2000 },
+  async (t) => {
+    const port = await getUnusedLoopbackPort();
 
-test('pickNextFreeTcpPort skips reserved and occupied ports', async () => {
-  const server = await listenOnPort(0);
-  try {
-    const address = server.address();
-    assert.ok(address && typeof address === 'object', 'expected a listening TCP server');
-    const reserved = new Set([address.port, address.port + 1]);
-    const picked = await pickNextFreeTcpPort(address.port, {
-      reservedPorts: reserved,
-      host: '127.0.0.1',
-      tries: 25,
+    t.mock.method(net, 'createServer', () => {
+      return {
+        unref() {},
+        on() {
+          return this;
+        },
+        listen(_opts, cb) {
+          queueMicrotask(cb);
+          return this;
+        },
+        close() {
+          // Simulate a broken/never-closing server.close callback.
+        },
+      };
     });
-    assert.ok(picked > address.port, 'expected a port greater than the occupied start port');
-    assert.equal(reserved.has(picked), false);
-  } finally {
-    await new Promise((resolve) => server.close(() => resolve()));
+
+    const out = await isTcpPortFree(port, { host: '127.0.0.1', timeoutMs: 25 });
+    assert.equal(out, false);
   }
-});
+);

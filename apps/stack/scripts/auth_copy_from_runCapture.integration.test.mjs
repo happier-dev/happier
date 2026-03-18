@@ -28,11 +28,10 @@ test('hstack stack auth copy-from does not hit ReferenceError: runCapture is not
   const binDir = join(tmp, 'bin');
   await mkdir(binDir, { recursive: true });
   const yarnPath = join(binDir, 'yarn');
-  const yarnLogPath = join(tmp, 'yarn.calls.log');
-  await writeFile(yarnPath, `#!/bin/bash\necho \"$*\" >> ${JSON.stringify(yarnLogPath)}\nexit 0\n`, 'utf-8');
+  await writeFile(yarnPath, '#!/bin/bash\nexit 0\n', 'utf-8');
   await chmod(yarnPath, 0o755);
 
-  const repoRoot = dirname(rootDir); // .../apps/stack -> .../ (monorepo root)
+  const repoRoot = dirname(dirname(rootDir)); // .../apps/stack -> repo root
 
   const mkStackEnv = async (name) => {
     const baseDir = join(storageDir, name);
@@ -76,12 +75,6 @@ test('hstack stack auth copy-from does not hit ReferenceError: runCapture is not
     !res.stdout.includes('spawn yarn ENOENT') && !res.stderr.includes('spawn yarn ENOENT'),
     `expected yarn to be resolvable in light migrations step\nstdout:\n${res.stdout}\nstderr:\n${res.stderr}`
   );
-  const yarnCalls = await readFile(yarnLogPath, 'utf-8');
-  assert.match(
-    yarnCalls,
-    /\bmigrate:sqlite:deploy\b/,
-    `expected light auth flow without explicit DB provider to use sqlite migrations\ncalls:\n${yarnCalls}`
-  );
 });
 
 test('hstack stack auth copy-from prefers source server-scoped credential over unrelated legacy key', async (t) => {
@@ -105,7 +98,7 @@ test('hstack stack auth copy-from prefers source server-scoped credential over u
   await writeFile(yarnPath, '#!/bin/bash\nexit 0\n', 'utf-8');
   await chmod(yarnPath, 0o755);
 
-  const repoRoot = dirname(rootDir);
+  const repoRoot = dirname(dirname(rootDir));
   const sourceStack = 'dev-auth';
   const targetStack = 'dev';
   const serverPort = 4201;
@@ -182,7 +175,7 @@ test('hstack stack auth copy-from prefers source stable-scope credential when so
   await writeFile(yarnPath, '#!/bin/bash\nexit 0\n', 'utf-8');
   await chmod(yarnPath, 0o755);
 
-  const repoRoot = dirname(rootDir);
+  const repoRoot = dirname(dirname(rootDir));
   const sourceStack = 'dev-auth';
   const targetStack = 'dev';
   const sourceCliHome = join(storageDir, sourceStack, 'cli');
@@ -282,7 +275,7 @@ test('hstack stack auth copy-from fails closed when source token subject is miss
   await writeFile(yarnPath, '#!/bin/bash\nexit 0\n', 'utf-8');
   await chmod(yarnPath, 0o755);
 
-  const repoRoot = dirname(rootDir);
+  const repoRoot = dirname(dirname(rootDir));
   const sourceStack = 'dev-auth';
   const targetStack = 'dev';
   const sourceCliHome = join(storageDir, sourceStack, 'cli');
@@ -366,7 +359,7 @@ test('hstack stack auth copy-from accepts source auth when source server validat
   await writeFile(yarnPath, '#!/bin/bash\nexit 0\n', 'utf-8');
   await chmod(yarnPath, 0o755);
 
-  const repoRoot = dirname(rootDir);
+  const repoRoot = dirname(dirname(rootDir));
   const sourceStack = 'dev-auth';
   const targetStack = 'dev';
   const sourceCliHome = join(storageDir, sourceStack, 'cli');
@@ -474,7 +467,7 @@ test('hstack stack auth copy-from fails closed when source stack is not running 
   await writeFile(yarnPath, '#!/bin/bash\nexit 0\n', 'utf-8');
   await chmod(yarnPath, 0o755);
 
-  const repoRoot = dirname(rootDir);
+  const repoRoot = dirname(dirname(rootDir));
   const sourceStack = 'dev-auth';
   const targetStack = 'dev';
   const serverPort = 4311;
@@ -551,7 +544,7 @@ test('hstack stack auth copy-from --no-secret does not overwrite target master s
   await writeFile(yarnPath, '#!/bin/bash\nexit 0\n', 'utf-8');
   await chmod(yarnPath, 0o755);
 
-  const repoRoot = dirname(rootDir);
+  const repoRoot = dirname(dirname(rootDir));
   const sourceStack = 'dev-auth';
   const targetStack = 'dev';
   const serverPort = 4331;

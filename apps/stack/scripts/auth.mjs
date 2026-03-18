@@ -306,7 +306,7 @@ async function cmdSeed({ argv, json }) {
 }
 
 async function cmdDevKey({ argv, json }) {
-  const { flags, kv } = parseArgs(argv);
+  const { flags, kv: argKv } = parseArgs(argv);
 
   // parseArgs currently only supports --k=v, but UX/docs commonly use: --k "value".
   // Support both forms here (without changing global parsing semantics).
@@ -328,14 +328,14 @@ async function cmdDevKey({ argv, json }) {
   };
 
   const wantPrint = flags.has('--print');
-  const fmtRaw = (argvKvValue('--format') || (kv.get('--format') ?? '')).trim();
+  const fmtRaw = (argvKvValue('--format') || (argKv.get('--format') ?? '')).trim();
   // UX: the Happy UI restore screen expects the "backup" (XXXXX-...) format.
   //
   // IMPORTANT: the Happy restore screen treats any key containing '-' as "backup format",
   // so printing a base64url key (which may contain '-') is *not reliably pasteable*.
   // Default to backup always unless explicitly overridden.
   const fmt = fmtRaw || 'backup'; // base64url | backup
-  const set = (argvKvValue('--set') || (kv.get('--set') ?? '')).trim();
+  const set = (argvKvValue('--set') || (argKv.get('--set') ?? '')).trim();
   const clear = flags.has('--clear');
 
   if (set) {
