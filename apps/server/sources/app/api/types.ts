@@ -2,6 +2,14 @@ import { FastifyBaseLogger, FastifyInstance } from "fastify";
 import { ZodTypeProvider } from "fastify-type-provider-zod";
 import { IncomingMessage, Server, ServerResponse } from "http";
 
+type SocketClientType = "session-scoped" | "user-scoped" | "machine-scoped";
+
+type SocketSessionScopedBinding = Readonly<{
+    sessionId: string;
+    machineId: string | null;
+    proof: "owner-session" | "machine-access-key";
+}>;
+
 export type Fastify = FastifyInstance<
     Server<typeof IncomingMessage, typeof ServerResponse>,
     IncomingMessage,
@@ -17,5 +25,15 @@ declare module 'fastify' {
     }
     interface FastifyInstance {
         authenticate: any;
+    }
+}
+
+declare module "socket.io" {
+    interface SocketData {
+        userId?: string;
+        clientType?: SocketClientType;
+        sessionId?: string;
+        machineId?: string;
+        sessionScopedBinding?: SocketSessionScopedBinding;
     }
 }

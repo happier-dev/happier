@@ -14,6 +14,7 @@ import { machineUpdateHandler } from "./socket/machineUpdateHandler";
 import { artifactUpdateHandler } from "./socket/artifactUpdateHandler";
 import { accessKeyHandler } from "./socket/accessKeyHandler";
 import { getSocketRooms } from "./socketRooms";
+import { resolveSessionScopedSocketBinding } from "./socket/sessionScopedBinding";
 import { createAdapter } from "@socket.io/redis-streams-adapter";
 import { getRedisClient } from "@/storage/redis/redis";
 import { randomUUID } from "node:crypto";
@@ -101,6 +102,18 @@ export function startSocket(app: Fastify) {
             }));
         }
 
+        if (clientType === "session-scoped") {
+            const binding = await resolveSessionScopedSocketBinding({
+                userId: verified.userId,
+                sessionId: sessionId ?? "",
+                machineId: machineId ?? null,
+            });
+            if (!binding.ok) {
+                return next(rejectSocket({ statusCode: binding.statusCode, error: binding.error }));
+            }
+            socket.data.sessionScopedBinding = binding.binding;
+        }
+
         if (clientType === 'machine-scoped') {
             const machine = await db.machine.findFirst({
                 where: { accountId: verified.userId, id: machineId },
@@ -111,19 +124,19 @@ export function startSocket(app: Fastify) {
             }
         }
 
-        (socket.data as any).userId = verified.userId;
-        (socket.data as any).clientType = clientType;
-        (socket.data as any).sessionId = sessionId;
-        (socket.data as any).machineId = machineId;
+        socket.data.userId = verified.userId;
+        socket.data.clientType = clientType;
+        socket.data.sessionId = sessionId;
+        socket.data.machineId = machineId;
         return next();
     });
 
     io.on("connection", async (socket) => {
         log({ module: 'websocket' }, `New connection attempt from socket: ${socket.id}`);
-        const userId = (socket.data as any).userId as string | undefined;
-        const clientType = (socket.data as any).clientType as 'session-scoped' | 'user-scoped' | 'machine-scoped' | undefined;
-        const sessionId = (socket.data as any).sessionId as string | undefined;
-        const machineId = (socket.data as any).machineId as string | undefined;
+        const userId = socket.data.userId;
+        const clientType = socket.data.clientType;
+        const sessionId = socket.data.sessionId;
+        const machineId = socket.data.machineId;
 
         if (!userId) {
             socket.disconnect();
