@@ -5,8 +5,11 @@ const stopRealtimeSession = vi.fn(async () => {});
 const getCurrentRealtimeSessionId = vi.fn(() => {
   throw new Error('getCurrentRealtimeSessionId should not be called');
 });
-const getVoiceSession = vi.fn(() => ({ sendContextualUpdate: vi.fn() }));
+const sendTextMessage = vi.fn();
+const sendContextualUpdate = vi.fn();
+const getVoiceSession = vi.fn(() => ({ sendTextMessage, sendContextualUpdate }));
 const isVoiceSessionStarted = vi.fn(() => true);
+const appendVoiceConversationUserText = vi.fn();
 
 const onVoiceStarted = vi.fn(() => 'initial-context');
 const onVoiceStopped = vi.fn();
@@ -35,6 +38,10 @@ vi.mock('@/sync/domains/state/storage', () => ({
   storage: {
     getState: () => state,
   },
+}));
+
+vi.mock('@/voice/sessionBinding/voiceConversationTranscript', () => ({
+  appendVoiceConversationUserText: (params: any) => appendVoiceConversationUserText(params),
 }));
 
 describe('realtime elevenlabs voice adapter', () => {
@@ -74,5 +81,51 @@ describe('realtime elevenlabs voice adapter', () => {
 
     expect(stopRealtimeSession).toHaveBeenCalledTimes(1);
     expect(onVoiceStopped).toHaveBeenCalledTimes(1);
+  });
+
+  it('routes typed sends through the active realtime session when already connected', async () => {
+    sendTextMessage.mockReset();
+    startRealtimeSession.mockReset();
+    appendVoiceConversationUserText.mockReset();
+    isVoiceSessionStarted.mockReturnValueOnce(true);
+
+    const { createRealtimeElevenLabsVoiceAdapter } = await import('./realtimeElevenLabsAdapter');
+    const adapter = createRealtimeElevenLabsVoiceAdapter();
+
+    await adapter.sendTextTurn?.({
+      controlSessionId: 'voice-global',
+      conversationSessionId: 'carrier-s1',
+      text: 'hello',
+    });
+
+    expect(startRealtimeSession).not.toHaveBeenCalled();
+    expect(appendVoiceConversationUserText).toHaveBeenCalledWith({
+      conversationSessionId: 'carrier-s1',
+      text: 'hello',
+    });
+    expect(sendTextMessage).toHaveBeenCalledWith('hello');
+  });
+
+  it('reopens realtime voice in text-only mode before sending when disconnected', async () => {
+    sendTextMessage.mockReset();
+    startRealtimeSession.mockReset();
+    appendVoiceConversationUserText.mockReset();
+    isVoiceSessionStarted.mockReturnValueOnce(false);
+
+    const { createRealtimeElevenLabsVoiceAdapter } = await import('./realtimeElevenLabsAdapter');
+    const adapter = createRealtimeElevenLabsVoiceAdapter();
+
+    await adapter.sendTextTurn?.({
+      controlSessionId: 'voice-global',
+      conversationSessionId: 'carrier-s1',
+      text: 'hello',
+    });
+
+    expect(startRealtimeSession).toHaveBeenCalledWith('voice-global', undefined, false, { textOnly: true });
+    expect(appendVoiceConversationUserText).toHaveBeenCalledWith({
+      conversationSessionId: 'carrier-s1',
+      text: 'hello',
+    });
+    expect(sendTextMessage).toHaveBeenCalledWith('hello');
   });
 });

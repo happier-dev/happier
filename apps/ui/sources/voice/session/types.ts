@@ -20,6 +20,7 @@ export type VoiceAdapterController = Readonly<{
   toggle: (opts: Readonly<{ sessionId: string }>) => Promise<void>;
   interrupt: (opts: Readonly<{ sessionId: string }>) => Promise<void>;
   sendContextUpdate: (opts: Readonly<{ sessionId: string; update: string }>) => void;
+  sendTextTurn?: (opts: Readonly<{ controlSessionId: string; conversationSessionId: string; text: string }>) => Promise<void>;
   getSnapshot: () => VoiceSessionSnapshot;
   subscribe?: (listener: () => void) => () => void;
 }>;

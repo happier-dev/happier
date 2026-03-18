@@ -4,11 +4,13 @@ type LocalVoiceState = Readonly<{ status: string; sessionId: string | null; erro
 
 const toggleLocalVoiceTurn = vi.fn(async () => {});
 const stopLocalVoiceSession = vi.fn(async () => {});
+const abortLocalVoiceTurn = vi.fn(async (_sessionId: string) => {});
 const getLocalVoiceState = vi.fn<() => LocalVoiceState>(() => ({ status: 'idle', sessionId: null, error: null }));
 
 vi.mock('@/voice/local/localVoiceEngine', () => ({
   toggleLocalVoiceTurn,
   stopLocalVoiceSession,
+  abortLocalVoiceTurn,
   getLocalVoiceState,
 }));
 
@@ -41,5 +43,17 @@ describe('local direct voice adapter', () => {
 
     await adapter.stop({ sessionId: 's1' });
     expect(stopLocalVoiceSession).toHaveBeenCalledTimes(1);
+  });
+
+  it('interrupt aborts the current turn without hanging up the local voice session', async () => {
+    abortLocalVoiceTurn.mockClear();
+    stopLocalVoiceSession.mockClear();
+    const { createLocalDirectVoiceAdapter } = await import('./localDirectAdapter');
+    const adapter = createLocalDirectVoiceAdapter();
+
+    await adapter.interrupt({ sessionId: 's1' });
+
+    expect(abortLocalVoiceTurn).toHaveBeenCalledWith('s1');
+    expect(stopLocalVoiceSession).not.toHaveBeenCalled();
   });
 });

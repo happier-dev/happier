@@ -7,6 +7,7 @@ import {
 } from '@/realtime/RealtimeSession';
 import { storage } from '@/sync/domains/state/storage';
 import type { VoiceAdapterController, VoiceSessionMode, VoiceSessionSnapshot, VoiceSessionStatus } from '@/voice/session/types';
+import { appendVoiceConversationUserText } from '@/voice/sessionBinding/voiceConversationTranscript';
 
 function mapRealtimeStatus(status: any): VoiceSessionStatus {
   if (status === 'connecting' || status === 'connected' || status === 'error') return status;
@@ -72,6 +73,21 @@ export function createRealtimeElevenLabsVoiceAdapter(): VoiceAdapterController {
     voice.sendContextualUpdate(opts.update);
   };
 
+  const sendTextTurn = async (opts: Readonly<{ controlSessionId: string; conversationSessionId: string; text: string }>) => {
+    const voice = getVoiceSession();
+    if (!voice) {
+      throw new Error('voice_service_unavailable');
+    }
+    appendVoiceConversationUserText({
+      conversationSessionId: opts.conversationSessionId,
+      text: opts.text,
+    });
+    if (!isVoiceSessionStarted()) {
+      await startRealtimeSession(opts.controlSessionId, undefined, false, { textOnly: true });
+    }
+    getVoiceSession()?.sendTextMessage(opts.text);
+  };
+
   const subscribe = (listener: () => void) => {
     return storage.subscribe((state: any, prevState: any) => {
       if (state?.realtimeStatus !== prevState?.realtimeStatus) {
@@ -91,6 +107,7 @@ export function createRealtimeElevenLabsVoiceAdapter(): VoiceAdapterController {
     toggle,
     interrupt,
     sendContextUpdate,
+    sendTextTurn,
     getSnapshot,
     subscribe,
   };

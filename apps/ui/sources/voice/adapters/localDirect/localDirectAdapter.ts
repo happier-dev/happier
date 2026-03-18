@@ -1,4 +1,5 @@
 import {
+  abortLocalVoiceTurn,
   getLocalVoiceState,
   subscribeLocalVoiceState,
   stopLocalVoiceSession,
@@ -64,8 +65,8 @@ export function createLocalDirectVoiceAdapter(): VoiceAdapterController {
     await stopLocalVoiceSession();
   };
 
-  const interrupt = async (_opts: Readonly<{ sessionId: string }>) => {
-    await stopLocalVoiceSession();
+  const interrupt = async (opts: Readonly<{ sessionId: string }>) => {
+    await abortLocalVoiceTurn(opts.sessionId);
   };
 
   return {
