@@ -142,6 +142,7 @@ function findRepoRoot(startDir) {
 }
 
 const repoRoot = findRepoRoot(__dirname);
+const CLI_BUNDLED_HOST_APPS = ['cli'];
 
 export function resolveTscBin({ exists } = {}) {
   const existsImpl = exists ?? existsSync;
@@ -200,7 +201,7 @@ export function syncBundledWorkspaceDist(opts = {}) {
   syncBundledWorkspacePackages({
     repoRoot,
     packages,
-    hostApps: Array.isArray(opts.bundledHostApps) && opts.bundledHostApps.length > 0 ? opts.bundledHostApps : ['cli'],
+    hostApps: Array.isArray(opts.bundledHostApps) && opts.bundledHostApps.length > 0 ? opts.bundledHostApps : CLI_BUNDLED_HOST_APPS,
     existsSync: opts.existsSync,
     cpSync: opts.cpSync,
     mkdirSync: opts.mkdirSync,
