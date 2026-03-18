@@ -1,10 +1,10 @@
 import http from 'node:http';
 import assert from 'node:assert/strict';
-import { pathToFileURL } from 'node:url';
 import { Server } from 'socket.io';
 import { io as ioClient } from 'socket.io-client';
 import { createAdapter } from '@socket.io/redis-streams-adapter';
 import { Redis } from 'ioredis';
+
 import { resolveRedisAdapterValidationRedisUrl } from './resolveRedisAdapterValidationRedisUrl';
 
 const ROOM = 'user:test-user';
@@ -24,8 +24,11 @@ async function closeServer(server: http.Server): Promise<void> {
   await new Promise<void>((resolve) => server.close(() => resolve()));
 }
 
-export async function main(): Promise<void> {
-  const { redisUrl, stop } = await resolveRedisAdapterValidationRedisUrl(process.env);
+async function main(): Promise<void> {
+  const { redisUrl, redisMemory } = await resolveRedisAdapterValidationRedisUrl({
+    env: process.env,
+  });
+
   const redisA = new Redis(redisUrl);
   const redisB = new Redis(redisUrl);
 
@@ -119,13 +122,11 @@ export async function main(): Promise<void> {
     await closeServer(httpB);
     await redisA.quit();
     await redisB.quit();
-    await stop();
+    if (redisMemory) await redisMemory.stop();
   }
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
-  void main().catch((err) => {
-    console.error(err);
-    process.exit(1);
-  });
-}
+main().catch((err) => {
+  console.error(err);
+  process.exit(1);
+});

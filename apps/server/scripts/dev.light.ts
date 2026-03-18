@@ -1,7 +1,6 @@
 import { spawn } from 'node:child_process';
 import { mkdir } from 'node:fs/promises';
-import { pathToFileURL } from 'node:url';
-import { applyLightDefaultEnv } from '@/flavors/light/env';
+import { applyLightDefaultEnv } from '../sources/flavors/light/env';
 import { buildLightDevPlan } from './dev.lightPlan';
 
 function run(cmd: string, args: string[], env: NodeJS.ProcessEnv): Promise<void> {
@@ -19,14 +18,14 @@ function run(cmd: string, args: string[], env: NodeJS.ProcessEnv): Promise<void>
     });
 }
 
-export async function runLightDev(env: NodeJS.ProcessEnv = process.env): Promise<void> {
-    const nextEnv: NodeJS.ProcessEnv = { ...env };
-    applyLightDefaultEnv(nextEnv);
+async function main() {
+    const env: NodeJS.ProcessEnv = { ...process.env };
+    applyLightDefaultEnv(env);
 
-    const dataDir = nextEnv.HAPPY_SERVER_LIGHT_DATA_DIR!;
-    const filesDir = nextEnv.HAPPY_SERVER_LIGHT_FILES_DIR!;
-    const dbDir = nextEnv.HAPPY_SERVER_LIGHT_DB_DIR!;
-    const plan = buildLightDevPlan(nextEnv);
+    const dataDir = env.HAPPY_SERVER_LIGHT_DATA_DIR!;
+    const filesDir = env.HAPPY_SERVER_LIGHT_FILES_DIR!;
+    const dbDir = env.HAPPY_SERVER_LIGHT_DB_DIR!;
+    const plan = buildLightDevPlan(env);
 
     // Ensure dirs exist for light flavor.
     await mkdir(dataDir, { recursive: true });
@@ -34,19 +33,13 @@ export async function runLightDev(env: NodeJS.ProcessEnv = process.env): Promise
     await mkdir(dbDir, { recursive: true });
 
     // Apply migrations (idempotent).
-    await run('yarn', plan.migrateDeployArgs, nextEnv);
+    await run('yarn', plan.migrateDeployArgs, env);
 
     // Run the light flavor.
-    await run('yarn', plan.startLightArgs, nextEnv);
+    await run('yarn', plan.startLightArgs, env);
 }
 
-export async function main(): Promise<void> {
-    await runLightDev(process.env);
-}
-
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
-    void main().catch((err) => {
-        console.error(err);
-        process.exit(1);
-    });
-}
+main().catch((err) => {
+    console.error(err);
+    process.exit(1);
+});

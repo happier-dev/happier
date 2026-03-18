@@ -1,41 +1,32 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { describe, expect, it, vi } from 'vitest';
 
-const stop = vi.fn(async () => true);
-const getIp = vi.fn(async () => "127.0.0.1");
-const getPort = vi.fn(async () => 46379);
-const create = vi.fn(async () => ({
-    getIp,
-    getPort,
-    stop,
-}));
+import { resolveRedisAdapterValidationRedisUrl } from './resolveRedisAdapterValidationRedisUrl';
 
-vi.mock("redis-memory-server", () => ({
-    RedisMemoryServer: { create },
-}));
+describe('resolveRedisAdapterValidationRedisUrl', () => {
+    it('uses REDIS_URL directly when provided', async () => {
+        const loadRedisMemoryServer = vi.fn();
 
-describe("resolveRedisAdapterValidationRedisUrl", () => {
-    beforeEach(() => {
-        vi.clearAllMocks();
+        await expect(resolveRedisAdapterValidationRedisUrl({
+            env: {
+                REDIS_URL: 'redis://127.0.0.1:6379',
+            } as NodeJS.ProcessEnv,
+            loadRedisMemoryServer,
+        })).resolves.toEqual({
+            redisUrl: 'redis://127.0.0.1:6379',
+            redisMemory: null,
+        });
+
+        expect(loadRedisMemoryServer).not.toHaveBeenCalled();
     });
 
-    it("returns the trimmed REDIS_URL when one is set", async () => {
-        const { resolveRedisAdapterValidationRedisUrl } = await import("./resolveRedisAdapterValidationRedisUrl");
+    it('fails with an explicit actionable message when the optional redis-memory-server dependency is unavailable', async () => {
+        const loadRedisMemoryServer = vi.fn(async () => {
+            throw new Error("Cannot find package 'redis-memory-server'");
+        });
 
-        const result = await resolveRedisAdapterValidationRedisUrl({ REDIS_URL: "  redis://localhost:6379  " });
-
-        expect(result.redisUrl).toBe("redis://localhost:6379");
-        await result.stop();
-        expect(create).not.toHaveBeenCalled();
-    });
-
-    it("creates a redis-memory-server instance when REDIS_URL is missing", async () => {
-        const { resolveRedisAdapterValidationRedisUrl } = await import("./resolveRedisAdapterValidationRedisUrl");
-
-        const result = await resolveRedisAdapterValidationRedisUrl({});
-
-        expect(create).toHaveBeenCalledTimes(1);
-        expect(result.redisUrl).toBe("redis://127.0.0.1:46379");
-        await result.stop();
-        expect(stop).toHaveBeenCalledTimes(1);
+        await expect(resolveRedisAdapterValidationRedisUrl({
+            env: {} as NodeJS.ProcessEnv,
+            loadRedisMemoryServer,
+        })).rejects.toThrow(/REDIS_URL.*redis-memory-server/i);
     });
 });

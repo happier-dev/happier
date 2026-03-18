@@ -1,7 +1,7 @@
 import { execFileSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
-import { fileURLToPath, pathToFileURL } from 'node:url';
+import { fileURLToPath } from 'node:url';
 import { createRequire } from 'node:module';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -44,35 +44,13 @@ function runTsc(tsconfigPath) {
   execFileSync(tscInvocation.command, [...tscInvocation.argsPrefix, '-p', tsconfigPath], { stdio: 'inherit' });
 }
 
-export function main() {
-  const sharedTsconfigs = [
-    resolve(repoRoot, 'packages', 'agents', 'tsconfig.json'),
-    resolve(repoRoot, 'packages', 'protocol', 'tsconfig.json'),
-  ];
+// Build shared packages (dist/ is the runtime contract).
+// Protocol must build first because agents consumes @happier-dev/protocol dist/types.
+runTsc(resolve(repoRoot, 'packages', 'protocol', 'tsconfig.json'));
+runTsc(resolve(repoRoot, 'packages', 'agents', 'tsconfig.json'));
 
-  // Build shared packages (dist/ is the runtime contract).
-  for (const tsconfigPath of sharedTsconfigs) {
-    runTsc(tsconfigPath);
-  }
-
-  // Sanity check: ensure protocol dist entry exists.
-  const protocolDist = resolve(repoRoot, 'packages', 'protocol', 'dist', 'index.js');
-  if (!existsSync(protocolDist)) {
-    throw new Error(`Expected @happier-dev/protocol build output missing: ${protocolDist}`);
-  }
-}
-
-const invokedAsMain = (() => {
-  const argv1 = process.argv[1];
-  if (!argv1) return false;
-  return import.meta.url === pathToFileURL(argv1).href;
-})();
-
-if (invokedAsMain) {
-  try {
-    main();
-  } catch (error) {
-    console.error(error instanceof Error ? error.message : String(error));
-    process.exit(1);
-  }
+// Sanity check: ensure protocol dist entry exists.
+const protocolDist = resolve(repoRoot, 'packages', 'protocol', 'dist', 'index.js');
+if (!existsSync(protocolDist)) {
+  throw new Error(`Expected @happier-dev/protocol build output missing: ${protocolDist}`);
 }

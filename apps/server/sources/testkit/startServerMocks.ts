@@ -12,17 +12,13 @@ export const START_SERVER_ENV_KEYS = [
   'HAPPIER_DB_PROVIDER',
   'HAPPY_FILES_BACKEND',
   'HAPPIER_FILES_BACKEND',
-  'HAPPY_SERVER_LIGHT_FILES_DIR',
-  'HAPPIER_SERVER_LIGHT_FILES_DIR',
-  'HAPPY_SERVER_LIGHT_DB_DIR',
-  'HAPPIER_SERVER_LIGHT_DB_DIR',
   'HAPPY_SOCKET_ADAPTER',
   'HAPPIER_SOCKET_ADAPTER',
   'HAPPY_SOCKET_REDIS_ADAPTER',
   'HAPPIER_SOCKET_REDIS_ADAPTER',
   'HAPPY_SERVER_LIGHT_DATA_DIR',
   'HAPPIER_SERVER_LIGHT_DATA_DIR',
-  'VOICE_LEASE_CLEANUP',
+  'HAPPIER_SERVER_RETENTION__ENABLED',
 ] as const
 
 export function applyEnvValues(values: EnvValues): void {
@@ -73,6 +69,9 @@ export function installStartServerCommonWiringMocks(): void {
     initFilesS3FromEnv: vi.fn(() => {}),
   }))
   vi.mock('@/utils/logging/log', () => ({ log: vi.fn() }))
+  vi.mock('@/app/retention/runtime/startRetentionWorker', () => ({
+    startRetentionWorker: vi.fn(() => null),
+  }))
   vi.mock('@/app/presence/presenceMode', () => ({
     shouldConsumePresenceFromRedis: vi.fn(() => false),
     shouldEnableLocalPresenceDbFlush: vi.fn(() => false),
