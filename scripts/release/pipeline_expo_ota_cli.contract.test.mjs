@@ -12,12 +12,15 @@ test('pipeline CLI can run Expo OTA update in dry-run for supported non-producti
     const out = execFileSync(
       process.execPath,
       [
-        resolve(repoRoot, 'scripts', 'pipeline', 'expo', 'ota-update.mjs'),
+        resolve(repoRoot, 'scripts', 'pipeline', 'run.mjs'),
+        'expo-ota',
         '--environment',
         environment,
         '--message',
         `${environment} OTA test message`,
         '--dry-run',
+        '--secrets-source',
+        'env',
       ],
       {
         cwd: repoRoot,
@@ -32,7 +35,7 @@ test('pipeline CLI can run Expo OTA update in dry-run for supported non-producti
     );
 
     assert.match(out, new RegExp(`\\[pipeline\\] expo ota: environment=${environment}`));
-    assert.match(out, new RegExp(`--channel ${environment}`));
+    assert.match(out, /scripts\/pipeline\/expo\/ota-update\.mjs/);
   }
 });
 
@@ -40,7 +43,8 @@ test('pipeline CLI allows interactive local override for Expo OTA dry-runs', asy
   const out = execFileSync(
     process.execPath,
     [
-      resolve(repoRoot, 'scripts', 'pipeline', 'expo', 'ota-update.mjs'),
+      resolve(repoRoot, 'scripts', 'pipeline', 'run.mjs'),
+      'expo-ota',
       '--environment',
       'development',
       '--interactive',
@@ -48,6 +52,8 @@ test('pipeline CLI allows interactive local override for Expo OTA dry-runs', asy
       '--message',
       'development OTA test message',
       '--dry-run',
+      '--secrets-source',
+      'env',
     ],
     {
       cwd: repoRoot,
@@ -69,7 +75,8 @@ test('pipeline CLI allows interactive local Expo OTA dry-runs without EXPO_TOKEN
   const out = execFileSync(
     process.execPath,
     [
-      resolve(repoRoot, 'scripts', 'pipeline', 'expo', 'ota-update.mjs'),
+      resolve(repoRoot, 'scripts', 'pipeline', 'run.mjs'),
+      'expo-ota',
       '--environment',
       'development',
       '--interactive',
@@ -77,6 +84,8 @@ test('pipeline CLI allows interactive local Expo OTA dry-runs without EXPO_TOKEN
       '--message',
       'development OTA test message',
       '--dry-run',
+      '--secrets-source',
+      'env',
     ],
     {
       cwd: repoRoot,
@@ -98,7 +107,8 @@ test('pipeline CLI forwards explicit interactive setting to Expo OTA', async () 
   const out = execFileSync(
     process.execPath,
     [
-      resolve(repoRoot, 'scripts', 'pipeline', 'expo', 'ota-update.mjs'),
+      resolve(repoRoot, 'scripts', 'pipeline', 'run.mjs'),
+      'expo-ota',
       '--environment',
       'development',
       '--interactive',
@@ -106,6 +116,8 @@ test('pipeline CLI forwards explicit interactive setting to Expo OTA', async () 
       '--message',
       'development OTA test message',
       '--dry-run',
+      '--secrets-source',
+      'env',
     ],
     {
       cwd: repoRoot,
@@ -119,6 +131,6 @@ test('pipeline CLI forwards explicit interactive setting to Expo OTA', async () 
     },
   );
 
-  assert.match(out, /--channel development/);
-  assert.match(out, /--non-interactive\b/);
+  assert.match(out, /scripts\/pipeline\/expo\/ota-update\.mjs/);
+  assert.match(out, /--interactive\"?\s+\"?false\b/);
 });
