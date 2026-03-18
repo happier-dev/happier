@@ -1,51 +1,21 @@
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 
-vi.mock("./serverFeatureRegistry", () => ({
-    serverFeatureRegistry: [],
-}));
-
-import { resolveServerFeaturePayload } from "./resolveServerFeaturePayload";
-import { resolveServerFeatureBuildPolicy } from "./serverFeatureBuildPolicy";
-import type { ServerFeatureResolver } from "./serverFeatureRegistry";
-import type { FeaturesPayloadDelta } from "@/app/features/types";
-import { evaluateFeatureBuildPolicy } from "@happier-dev/protocol";
 import { resolveMachineTransferFeature } from "../machineTransferFeature";
 import { resolveSessionHandoffFeature } from "../sessionHandoffFeature";
 import { resolveTerminalFeature } from "../terminalFeature";
+import { resolveServerFeaturePayload } from "./resolveServerFeaturePayload";
+import { resolveServerFeatureBuildPolicy } from "./serverFeatureBuildPolicy";
+import type { ServerFeatureResolver } from "./serverFeatureRegistry";
+import type { FeaturesPayloadDelta } from "../types";
+import { evaluateFeatureBuildPolicy } from "@happier-dev/protocol";
 
 function fromPartial(partial: FeaturesPayloadDelta): ServerFeatureResolver {
     return () => partial;
 }
 
 describe("resolveServerFeaturePayload", () => {
-    it("enables terminal embedded PTY when the terminal env toggle is on", () => {
-        const payload = resolveTerminalFeature({
-            HAPPIER_FEATURE_TERMINAL_EMBEDDED_PTY__ENABLED: "1",
-        } as NodeJS.ProcessEnv);
-
-        expect(payload.features.terminal.embeddedPty.enabled).toBe(true);
-    });
-
-    it("enables session handoff when the handoff env toggle is on", () => {
-        const payload = resolveSessionHandoffFeature({
-            HAPPIER_FEATURE_SESSIONS_HANDOFF__ENABLED: "1",
-        } as NodeJS.ProcessEnv);
-
-        expect(payload.features.sessions.handoff.enabled).toBe(true);
-    });
-
-    it("enables machine transfer gates and exposes server-routed transfer capability data", () => {
-        const payload = resolveMachineTransferFeature({
-            HAPPIER_FEATURE_MACHINES_TRANSFER_DIRECT_PEER__ENABLED: "1",
-            HAPPIER_FEATURE_MACHINES_TRANSFER_SERVER_ROUTED__ENABLED: "1",
-            HAPPIER_FEATURE_MACHINES_TRANSFER_SERVER_ROUTED__MAX_BYTES: "16384",
-        } as NodeJS.ProcessEnv);
-
-        expect(payload.features.machines.enabled).toBe(true);
-        expect(payload.features.machines.transfer.enabled).toBe(true);
-        expect(payload.features.machines.transfer.directPeer.enabled).toBe(true);
-        expect(payload.features.machines.transfer.serverRouted.enabled).toBe(true);
-        expect(payload.capabilities.machines.transfer.serverRouted.maxBytes).toBe(16384);
+    it("throws when resolvers list is empty", () => {
+        expect(() => resolveServerFeaturePayload({} as NodeJS.ProcessEnv, [])).toThrow(/resolvers/i);
     });
 
     it("forces server feature gates disabled when build policy denies a represented feature", () => {
@@ -140,4 +110,37 @@ describe("resolveServerFeaturePayload", () => {
         expect(payload.features.voice.happierVoice.enabled).toBe(false);
         expect(payload.capabilities.voice.disabledByBuildPolicy).toBe(true);
     });
+
+    it("enables terminal embedded PTY by default so the UI toggle can appear", () => {
+        const payload = resolveServerFeaturePayload({} as NodeJS.ProcessEnv, [resolveTerminalFeature]);
+        expect(payload.features.terminal.embeddedPty.enabled).toBe(true);
+    });
+
+    it("enables session handoff and server-routed transfer by default", () => {
+        const payload = resolveServerFeaturePayload({} as NodeJS.ProcessEnv, [resolveSessionHandoffFeature, resolveMachineTransferFeature]);
+        expect(payload.features.sessions.handoff.enabled).toBe(true);
+        expect(payload.features.machines.transfer.serverRouted.enabled).toBe(true);
+        expect(payload.features.machines.transfer.directPeer.enabled).toBe(true);
+        expect(payload.capabilities.machines.transfer.serverRouted.maxBytes).toBeNull();
+    });
+
+    it("disables only generic server-routed transfer when the env toggle is off", () => {
+        const payload = resolveServerFeaturePayload({
+            HAPPIER_FEATURE_MACHINES_TRANSFER_SERVER_ROUTED__ENABLED: "0",
+        } as NodeJS.ProcessEnv, [resolveSessionHandoffFeature, resolveMachineTransferFeature]);
+
+        expect(payload.features.sessions.handoff.enabled).toBe(true);
+        expect(payload.features.machines.transfer.serverRouted.enabled).toBe(false);
+        expect(payload.features.machines.transfer.directPeer.enabled).toBe(true);
+    });
+
+    it("exposes server-routed transfer max-bytes capability when configured", () => {
+        const payload = resolveServerFeaturePayload({
+            HAPPIER_FEATURE_MACHINES_TRANSFER_SERVER_ROUTED__MAX_BYTES: "16384",
+        } as NodeJS.ProcessEnv, [resolveSessionHandoffFeature, resolveMachineTransferFeature]);
+
+        expect(payload.features.machines.transfer.serverRouted.enabled).toBe(true);
+        expect(payload.capabilities.machines.transfer.serverRouted.maxBytes).toBe(16384);
+    });
+
 });

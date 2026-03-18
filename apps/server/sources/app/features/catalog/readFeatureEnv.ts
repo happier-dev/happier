@@ -1,4 +1,4 @@
-import { parseBooleanEnv, parseIntEnv } from '@/config/env';
+import { parseBooleanEnv, parseIntEnv } from '../../../config/env';
 import { MACHINE_TRANSFER_SERVER_ROUTED_MAX_BYTES_ENV_KEY, normalizeMachineTransferServerRoutedMaxBytes } from '@happier-dev/protocol';
 import { FEATURE_ENV_KEYS } from './featureEnvSchema';
 

@@ -1,4 +1,4 @@
-import { featuresSchema, type FeaturesResponse } from '@/app/features/types';
+import { featuresSchema, type FeaturesResponse } from '../types';
 import {
     evaluateFeatureBuildPolicy,
     FEATURE_CATALOG,
@@ -7,15 +7,36 @@ import {
     tryWriteServerEnabledBitInPlace,
 } from '@happier-dev/protocol';
 
-import { serverFeatureRegistry, type ServerFeatureResolver } from './serverFeatureRegistry';
+import type { ServerFeatureResolver } from './serverFeatureRegistry';
 import { resolveServerFeatureBuildPolicy } from './serverFeatureBuildPolicy';
 
 const DEPENDENCIES_BY_ID = new Map(FEATURE_IDS.map((featureId) => [featureId, FEATURE_CATALOG[featureId].dependencies] as const));
 
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+    return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+function mergeDeep<T extends Record<string, unknown>>(base: T, patch: Record<string, unknown>): T {
+    const next: Record<string, unknown> = { ...base };
+    for (const [key, value] of Object.entries(patch)) {
+        const existing = next[key];
+        if (isPlainObject(existing) && isPlainObject(value)) {
+            next[key] = mergeDeep(existing, value);
+        } else {
+            next[key] = value;
+        }
+    }
+    return next as T;
+}
+
 export function resolveServerFeaturePayload(
     env: NodeJS.ProcessEnv,
-    resolvers: readonly ServerFeatureResolver[] = serverFeatureRegistry,
+    resolvers: readonly ServerFeatureResolver[],
 ): FeaturesResponse {
+    if (resolvers.length === 0) {
+        throw new Error('resolveServerFeaturePayload: resolvers list is empty');
+    }
+
     const mergedFeatures: Record<string, unknown> = {};
     const mergedCapabilities: Record<string, unknown> = {};
     for (const resolver of resolvers) {
@@ -24,7 +45,8 @@ export function resolveServerFeaturePayload(
             Object.assign(mergedFeatures, partial.features as Record<string, unknown>);
         }
         if (partial.capabilities && typeof partial.capabilities === 'object') {
-            Object.assign(mergedCapabilities, partial.capabilities as Record<string, unknown>);
+            const patch = partial.capabilities as Record<string, unknown>;
+            Object.assign(mergedCapabilities, mergeDeep(mergedCapabilities, patch));
         }
     }
 

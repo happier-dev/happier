@@ -1,21 +1,21 @@
-import type { FeaturesPayloadDelta } from '@/app/features/types';
+import type { FeaturesPayloadDelta } from '../types';
 
-import { resolveAutomationsFeature } from '@/app/features/automationsFeature';
-import { resolveBugReportsFeature } from '@/app/features/bugReportsFeature';
-import { resolveSharingFeature } from '@/app/features/sharingFeature';
-import { resolveVoiceFeature } from '@/app/features/voiceFeature';
-import { resolveFriendsFeature } from '@/app/features/friendsFeature';
-import { resolveOAuthFeature } from '@/app/features/oauthFeature';
-import { resolveAuthFeature } from '@/app/features/authFeature';
-import { resolveConnectedServicesFeature } from '@/app/features/connectedServicesFeature';
-import { resolveUpdatesFeature } from '@/app/features/updatesFeature';
-import { resolveAttachmentsUploadsFeature } from '@/app/features/attachmentsUploadsFeature';
-import { resolveMachineTransferFeature } from '@/app/features/machineTransferFeature';
-import { resolveSessionHandoffFeature } from '@/app/features/sessionHandoffFeature';
-import { resolveTerminalFeature } from '@/app/features/terminalFeature';
-import { resolveEncryptionFeature } from '@/app/features/encryptionFeature';
-import { resolveE2eeFeature } from '@/app/features/e2eeFeature';
-import { resolveServerUrlCapabilitiesFeature } from '@/app/features/serverUrlCapabilitiesFeature';
+import { resolveAutomationsFeature } from '../automationsFeature';
+import { resolveBugReportsFeature } from '../bugReportsFeature';
+import { resolveSharingFeature } from '../sharingFeature';
+import { resolveVoiceFeature } from '../voiceFeature';
+import { resolveFriendsFeature } from '../friendsFeature';
+import { resolveOAuthFeature } from '../oauthFeature';
+import { resolveAuthFeature } from '../authFeature';
+import { resolveConnectedServicesFeature } from '../connectedServicesFeature';
+import { resolveUpdatesFeature } from '../updatesFeature';
+import { resolveAttachmentsUploadsFeature } from '../attachmentsUploadsFeature';
+import { resolveMachineTransferFeature } from '../machineTransferFeature';
+import { resolveSessionHandoffFeature } from '../sessionHandoffFeature';
+import { resolveTerminalFeature } from '../terminalFeature';
+import { resolveEncryptionFeature } from '../encryptionFeature';
+import { resolveE2eeFeature } from '../e2eeFeature';
+import { resolveServerUrlCapabilitiesFeature } from '../serverUrlCapabilitiesFeature';
 import { resolveServerRetentionCapabilitiesFeature } from '../serverRetentionCapabilitiesFeature';
 
 export type ServerFeatureResolver = (env: NodeJS.ProcessEnv) => FeaturesPayloadDelta;
