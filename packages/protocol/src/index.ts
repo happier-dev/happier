@@ -517,6 +517,18 @@ export {
 } from './sessionMetadata/acpConfiguredBackendV1.js';
 
 export {
+  AgentRuntimeDescriptorV1Schema,
+  type AgentRuntimeDescriptorV1,
+  createAgentRuntimeDescriptorV1Schema,
+  buildCodexAgentRuntimeDescriptorV1,
+  buildOpenCodeAgentRuntimeDescriptorV1,
+  buildPiAgentRuntimeDescriptorV1,
+  readAgentRuntimeDescriptorV1,
+  readCanonicalAgentRuntimeDescriptorV1ForProvider,
+  readAgentRuntimeDescriptorV1ForProvider,
+} from './sessionMetadata/agentRuntimeDescriptorV1.js';
+
+export {
   ModelOverrideV1Schema,
   type ModelOverrideV1,
   createModelOverrideV1Schema,
@@ -529,6 +541,11 @@ export {
   type AcpConfigOptionOverridesV1,
   createAcpConfigOptionOverridesV1Schema,
   buildAcpConfigOptionOverridesV1,
+  CodexRuntimeDescriptorV1Schema,
+  type CodexRuntimeDescriptorV1,
+  createCodexRuntimeDescriptorV1Schema,
+  buildCodexRuntimeDescriptorV1,
+  readCodexRuntimeDescriptorV1BackendMode,
 } from './sessionMetadata/metadataOverridesV1.js';
 
 export {
