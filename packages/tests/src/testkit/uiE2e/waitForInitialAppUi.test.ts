@@ -68,11 +68,10 @@ describe('waitForInitialAppUi', () => {
     expect(page.reloadCalls).toBe(1);
   });
 
-  it('throws with diagnostics when UI never appears', async () => {
+  it('throws when UI never appears', async () => {
     const nowSpy = vi.spyOn(Date, 'now');
     nowSpy
       .mockReturnValueOnce(0)
-      .mockReturnValueOnce(300)
       .mockReturnValueOnce(0)
       .mockReturnValueOnce(300);
 
@@ -85,6 +84,14 @@ describe('waitForInitialAppUi', () => {
         browserDiagnostics: () => '# Browser diagnostics',
       }),
     ).rejects.toThrow('App did not render initial UI within 250ms.');
+  });
+
+  it('includes browser diagnostics when UI never appears', async () => {
+    const nowSpy = vi.spyOn(Date, 'now');
+    nowSpy
+      .mockReturnValueOnce(0)
+      .mockReturnValueOnce(300);
+
     await expect(
       waitForInitialAppUi({
         page: createFakePage({}),
