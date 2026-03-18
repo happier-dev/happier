@@ -1,5 +1,5 @@
 import React from 'react';
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it, beforeEach, vi } from 'vitest';
 import renderer, { act } from 'react-test-renderer';
 
 import type { ToolCallMessage } from '@/sync/domains/messages/messageTypes';
@@ -37,16 +37,21 @@ vi.mock('@/text', () => ({
 }));
 
 let collapsedPreviewCount: number = 1;
+let toolChromeMode: 'activity_feed' | 'cards' = 'activity_feed';
 vi.mock('@/sync/domains/state/storage', () => ({
     useSetting: (key: string) => {
-        if (key === 'toolViewTimelineChromeMode') return 'activity_feed';
+        if (key === 'toolViewTimelineChromeMode') return toolChromeMode;
         if (key === 'transcriptToolCallsCollapsedPreviewCount') return collapsedPreviewCount;
         return null;
     },
 }));
 
+const renderedToolViewProps: any[] = [];
 vi.mock('@/components/tools/shell/views/ToolView', () => ({
-    ToolView: () => null,
+    ToolView: (props: any) => {
+        renderedToolViewProps.push(props);
+        return React.createElement('ToolView', props);
+    },
 }));
 
 vi.mock('@/components/tools/shell/views/ToolTimelineRow', () => ({
@@ -85,6 +90,49 @@ function makeToolMessage(id: string, createdAt: number): ToolCallMessage {
 }
 
 describe('ToolCallsGroupView (collapsed preview)', () => {
+    beforeEach(() => {
+        collapsedPreviewCount = 1;
+        toolChromeMode = 'activity_feed';
+        renderedToolViewProps.length = 0;
+    });
+
+    it('renders subagent previews through the shared card renderer in cards mode', async () => {
+        const { ToolCallsGroupView } = await import('./ToolCallsGroupView');
+        toolChromeMode = 'cards';
+        const toolMessage = makeToolMessage('m2', 2);
+        const toolMessages: ToolCallMessage[] = [
+            {
+                ...toolMessage,
+                tool: {
+                    ...toolMessage.tool,
+                    name: 'SubAgentRun',
+                    input: { intent: 'review' },
+                },
+            },
+        ];
+
+        let tree: ReturnType<typeof renderer.create> | undefined;
+        await act(async () => {
+            tree = renderer.create(
+                <ToolCallsGroupView
+                    id="toolCalls:1"
+                    status="running"
+                    toolMessages={toolMessages}
+                    metadata={null}
+                    sessionId="s1"
+                    interaction={{ canSendMessages: true, canApprovePermissions: true }}
+                    expanded={false}
+                    setExpanded={vi.fn()}
+                />,
+            );
+        });
+
+        const previewRows = tree!.root.findAll((node) => (node.props as any).testID === 'transcript-tool-calls-preview-row');
+        expect(previewRows).toHaveLength(1);
+        expect(tree!.root.findAllByType('ToolView' as any)).toHaveLength(1);
+        expect(renderedToolViewProps[0]?.tool?.name).toBe('SubAgentRun');
+    });
+
     it('renders the last N tool previews when collapsed', async () => {
         const { ToolCallsGroupView } = await import('./ToolCallsGroupView');
         collapsedPreviewCount = 2;

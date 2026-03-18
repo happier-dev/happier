@@ -121,14 +121,25 @@ export const ToolCallsGroupView = React.memo((props: {
                                     testID="transcript-tool-calls-preview-row"
                                     style={[styles.previewRow, normalizedChromeMode === 'activity_feed' ? styles.previewRowFeed : styles.previewRowCards]}
                                 >
-                                    <ToolTimelineRow
-                                        tool={m.tool}
-                                        metadata={props.metadata}
-                                        messages={m.children}
-                                        sessionId={props.sessionId}
-                                        messageId={m.id}
-                                        interaction={props.interaction}
-                                    />
+                                    {normalizedChromeMode === 'cards' && m.tool.name === 'SubAgentRun' ? (
+                                        <ToolView
+                                            tool={m.tool}
+                                            metadata={props.metadata}
+                                            messages={m.children}
+                                            sessionId={props.sessionId}
+                                            messageId={m.id}
+                                            interaction={props.interaction}
+                                        />
+                                    ) : (
+                                        <ToolTimelineRow
+                                            tool={m.tool}
+                                            metadata={props.metadata}
+                                            messages={m.children}
+                                            sessionId={props.sessionId}
+                                            messageId={m.id}
+                                            interaction={props.interaction}
+                                        />
+                                    )}
                                 </View>
                             ))}
                         </View>
