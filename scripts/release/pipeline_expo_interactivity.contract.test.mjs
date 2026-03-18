@@ -1,51 +1,61 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import fs from 'node:fs';
-import { execFileSync } from 'node:child_process';
-import path from 'node:path';
 
-const repoRoot = path.resolve(import.meta.dirname, '..', '..');
+import { resolveExpoInteractivity } from '../pipeline/expo/resolve-expo-interactivity.mjs';
 
-function readScript(relPath) {
-  return fs.readFileSync(path.join(repoRoot, relPath), 'utf8');
-}
+test('expo interactivity defaults to interactive on a local TTY', () => {
+  const resolved = resolveExpoInteractivity({
+    env: { EXPO_TOKEN: 'expo-token' },
+    stdinIsTty: true,
+    stdoutIsTty: true,
+  });
 
-test('expo pipeline scripts resolve interactivity through a shared helper', () => {
-  const nativeBuild = readScript('scripts/pipeline/expo/native-build.mjs');
-  const submit = readScript('scripts/pipeline/expo/submit.mjs');
-
-  assert.match(nativeBuild, /resolve-expo-interactivity\.mjs/);
-  assert.match(submit, /resolve-expo-interactivity\.mjs/);
-  assert.doesNotMatch(nativeBuild, /String\(process\.env\.PIPELINE_INTERACTIVE \?\? ''\)/);
-  assert.doesNotMatch(submit, /Boolean\(expoToken\) && !pipelineInteractive/);
+  assert.equal(resolved.isCi, false);
+  assert.equal(resolved.hasInteractiveTty, true);
+  assert.equal(resolved.nonInteractive, false);
 });
 
-test('expo submit stays interactive locally unless PIPELINE_INTERACTIVE opts into non-interactive mode', () => {
-  const out = execFileSync(
-    process.execPath,
-    [
-      path.join(repoRoot, 'scripts', 'pipeline', 'expo', 'submit.mjs'),
-      '--environment',
-      'preview',
-      '--platform',
-      'android',
-      '--dry-run',
-    ],
-    {
-      cwd: repoRoot,
-      env: {
-        ...process.env,
-        CI: '',
-        EXPO_TOKEN: 'test-token',
-        PIPELINE_INTERACTIVE: '',
-      },
-      encoding: 'utf8',
-      stdio: ['ignore', 'pipe', 'pipe'],
-      timeout: 30_000,
-    },
-  );
+test('expo interactivity defaults to non-interactive without a TTY', () => {
+  const resolved = resolveExpoInteractivity({
+    env: { EXPO_TOKEN: 'expo-token' },
+    stdinIsTty: false,
+    stdoutIsTty: false,
+  });
 
-  assert.match(out, /\[pipeline\] expo submit: environment=preview platform=android/);
-  assert.match(out, /\[dry-run\].*\bnpx\b/);
-  assert.doesNotMatch(out, /\s--non-interactive\b/);
+  assert.equal(resolved.isCi, false);
+  assert.equal(resolved.hasInteractiveTty, false);
+  assert.equal(resolved.nonInteractive, true);
+});
+
+test('expo interactivity allows explicit local override to interactive', () => {
+  const resolved = resolveExpoInteractivity({
+    env: { EXPO_TOKEN: 'expo-token', PIPELINE_INTERACTIVE: '1' },
+    interactiveOverride: 'true',
+    stdinIsTty: false,
+    stdoutIsTty: false,
+  });
+
+  assert.equal(resolved.nonInteractive, false);
+});
+
+test('expo interactivity allows explicit local override to non-interactive', () => {
+  const resolved = resolveExpoInteractivity({
+    env: { EXPO_TOKEN: 'expo-token', PIPELINE_INTERACTIVE: '1' },
+    interactiveOverride: 'false',
+    stdinIsTty: true,
+    stdoutIsTty: true,
+  });
+
+  assert.equal(resolved.nonInteractive, true);
+});
+
+test('expo interactivity stays non-interactive in CI', () => {
+  const resolved = resolveExpoInteractivity({
+    env: { EXPO_TOKEN: 'expo-token', CI: 'true', PIPELINE_INTERACTIVE: '1' },
+    stdinIsTty: true,
+    stdoutIsTty: true,
+  });
+
+  assert.equal(resolved.isCi, true);
+  assert.equal(resolved.nonInteractive, true);
 });

@@ -2,37 +2,83 @@
 
 /**
  * @param {string | undefined | null} value
- * @param {string} name
- * @returns {boolean | null}
+ * @returns {'auto' | 'true' | 'false'}
  */
-function parseOptionalBool(value, name) {
+export function normalizeInteractiveOverride(value) {
   const raw = String(value ?? '').trim().toLowerCase();
-  if (!raw) return null;
-  if (raw === '1' || raw === 'true') return true;
-  if (raw === '0' || raw === 'false') return false;
-  throw new Error(`${name} must be '1', '0', 'true', or 'false' (got: ${value})`);
+  if (!raw) return 'auto';
+  if (raw === 'auto' || raw === 'true' || raw === 'false') return raw;
+  throw new Error(`--interactive must be 'auto', 'true', or 'false' (got: ${value})`);
 }
 
 /**
- * Resolves whether Expo tooling should run non-interactively.
- *
- * CI always wins, otherwise operators can explicitly opt in/out via PIPELINE_INTERACTIVE.
- * If neither env var is set, callers provide the default behavior for the command.
- *
  * @param {{
- *   ci?: string | undefined | null;
- *   pipelineInteractive?: string | undefined | null;
- *   defaultNonInteractive?: boolean;
- * }} opts
- * @returns {boolean}
+ *   env?: Record<string, string | undefined>;
+ *   stdinIsTty?: boolean;
+ *   stdoutIsTty?: boolean;
+ *   interactiveOverride?: string;
+ *   defaultMode?: 'tty' | 'non-interactive';
+ * }} [opts]
  */
-export function resolveExpoNonInteractive(opts) {
-  const ci = parseOptionalBool(opts.ci, 'CI');
-  if (ci === true) return true;
+export function resolveExpoInteractivity(opts = {}) {
+  const env = opts.env ?? process.env;
+  const isCi = String(env.CI ?? '').trim().toLowerCase() === 'true' || String(env.GITHUB_ACTIONS ?? '').trim() === 'true';
+  const hasInteractiveTty = Boolean(opts.stdinIsTty ?? process.stdin.isTTY) && Boolean(opts.stdoutIsTty ?? process.stdout.isTTY);
+  const defaultMode = opts.defaultMode === 'non-interactive' ? 'non-interactive' : 'tty';
+  const interactiveOverride = normalizeInteractiveOverride(opts.interactiveOverride);
+  const rawOverride = String(env.PIPELINE_INTERACTIVE ?? '').trim().toLowerCase();
+  const forceInteractive = rawOverride === '1' || rawOverride === 'true';
+  const forceNonInteractive = rawOverride === '0' || rawOverride === 'false';
 
-  const pipelineInteractive = parseOptionalBool(opts.pipelineInteractive, 'PIPELINE_INTERACTIVE');
-  if (pipelineInteractive === true) return false;
-  if (pipelineInteractive === false) return true;
+  if (isCi) {
+    return {
+      isCi,
+      hasInteractiveTty,
+      nonInteractive: true,
+      source: 'ci',
+    };
+  }
 
-  return opts.defaultNonInteractive === true;
+  if (interactiveOverride === 'true') {
+    return {
+      isCi,
+      hasInteractiveTty,
+      nonInteractive: false,
+      source: 'arg-force-interactive',
+    };
+  }
+
+  if (interactiveOverride === 'false') {
+    return {
+      isCi,
+      hasInteractiveTty,
+      nonInteractive: true,
+      source: 'arg-force-non-interactive',
+    };
+  }
+
+  if (forceInteractive) {
+    return {
+      isCi,
+      hasInteractiveTty,
+      nonInteractive: false,
+      source: 'env-force-interactive',
+    };
+  }
+
+  if (forceNonInteractive) {
+    return {
+      isCi,
+      hasInteractiveTty,
+      nonInteractive: true,
+      source: 'env-force-non-interactive',
+    };
+  }
+
+  return {
+    isCi,
+    hasInteractiveTty,
+    nonInteractive: defaultMode === 'non-interactive' ? true : !hasInteractiveTty,
+    source: defaultMode === 'non-interactive' ? 'default-non-interactive' : hasInteractiveTty ? 'tty-auto' : 'non-tty-auto',
+  };
 }

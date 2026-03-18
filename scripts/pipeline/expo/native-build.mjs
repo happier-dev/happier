@@ -7,7 +7,8 @@ import { parseArgs } from 'node:util';
 
 import { stageRepoForDagger } from './stage-repo-for-dagger.mjs';
 import { rewriteEasLocalBuildArtifactPath } from './rewrite-eas-local-build-artifact-path.mjs';
-import { resolveExpoNonInteractive } from './resolve-expo-interactivity.mjs';
+import { normalizeInteractiveOverride, resolveExpoInteractivity } from './resolve-expo-interactivity.mjs';
+import { withEasGitCaseSensitiveEnv } from './eas-git-case-sensitive-env.mjs';
 import { assertDockerCanRunLinuxAmd64 } from '../docker/assert-docker-can-run-linux-amd64.mjs';
 import { createEasLocalBuildEnv } from './eas-local-build-env.mjs';
 import { ensureStagedGitRepo } from '../git/ensure-staged-git-repo.mjs';
@@ -218,6 +219,7 @@ async function main() {
       'build-mode': { type: 'string', default: 'cloud' },
       'local-runtime': { type: 'string', default: 'host' },
       'artifact-out': { type: 'string', default: '' },
+      interactive: { type: 'string', default: 'auto' },
       'eas-cli-version': { type: 'string', default: '' },
       'dump-view': { type: 'string', default: 'true' },
       'dry-run': { type: 'boolean', default: false },
@@ -249,6 +251,13 @@ async function main() {
     fail(`--local-runtime must be 'host' or 'dagger' (got: ${values['local-runtime']})`);
   }
   const localRuntime = /** @type {'host' | 'dagger'} */ (localRuntimeRaw);
+
+  let interactiveOverride = 'auto';
+  try {
+    interactiveOverride = normalizeInteractiveOverride(values.interactive);
+  } catch (error) {
+    fail(/** @type {Error} */ (error).message);
+  }
 
   const isCi = String(process.env.CI ?? '').trim().toLowerCase() === 'true' || String(process.env.GITHUB_ACTIONS ?? '').trim() === 'true';
   const expoToken = String(process.env.EXPO_TOKEN ?? '').trim();
@@ -424,11 +433,10 @@ async function main() {
     const effectiveRepoDir = staged?.stagedRepoDir ?? repoRoot;
     const effectiveUiDir = path.join(effectiveRepoDir, 'apps', 'ui');
 
-    const localNonInteractive = resolveExpoNonInteractive({
-      ci: isCi ? 'true' : '',
-      pipelineInteractive: process.env.PIPELINE_INTERACTIVE,
-      defaultNonInteractive: localRuntime === 'dagger',
-    });
+    const localNonInteractive = resolveExpoInteractivity({
+      interactiveOverride,
+      defaultMode: localRuntime === 'dagger' ? 'non-interactive' : 'tty',
+    }).nonInteractive;
 
     try {
       if (staged && effectiveRepoDir !== repoRoot) {
@@ -481,12 +489,23 @@ async function main() {
   console.log(
     '[pipeline] expo native build (cloud): waiting for EAS to schedule builds (output is quiet until build IDs are returned; this can take several minutes on large uploads).',
   );
+  const cloudNonInteractive = resolveExpoInteractivity({ interactiveOverride }).nonInteractive;
   const easJson = (
     await runCaptureWithHeartbeat(
       opts,
       'npx',
-      ['--yes', `eas-cli@${easCliVersion}`, 'build', '--platform', platform, '--profile', profile, '--non-interactive', '--json'],
-      { cwd: uiDir, heartbeatLabel: 'Expo cloud build scheduling' },
+      [
+        '--yes',
+        `eas-cli@${easCliVersion}`,
+        'build',
+        '--platform',
+        platform,
+        '--profile',
+        profile,
+        ...(cloudNonInteractive ? ['--non-interactive'] : []),
+        '--json',
+      ],
+      { cwd: uiDir, heartbeatLabel: 'Expo cloud build scheduling', env: withEasGitCaseSensitiveEnv(process.env) },
     )
   ).trim();
 

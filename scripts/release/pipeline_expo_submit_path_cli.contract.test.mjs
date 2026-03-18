@@ -55,7 +55,11 @@ test('pipeline CLI supports --path for expo-submit (dry-run)', () => {
     ],
     {
       cwd: repoRoot,
-      env: { ...process.env, EXPO_TOKEN: '' },
+      env: {
+        ...process.env,
+        EXPO_TOKEN: '',
+        APPLE_API_PRIVATE_KEY: 'dummy-private-key',
+      },
       encoding: 'utf8',
       stdio: ['ignore', 'pipe', 'pipe'],
       timeout: 30_000,

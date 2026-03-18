@@ -7,7 +7,7 @@ import { execFileSync } from 'node:child_process';
 import { parseArgs } from 'node:util';
 
 import { ensureAscApiKeyFile } from './ensure-asc-api-key-file.mjs';
-import { resolveExpoNonInteractive } from './resolve-expo-interactivity.mjs';
+import { normalizeInteractiveOverride, resolveExpoInteractivity } from './resolve-expo-interactivity.mjs';
 
 function fail(message) {
   console.error(message);
@@ -261,6 +261,7 @@ function main() {
       platform: { type: 'string' },
       path: { type: 'string', default: '' },
       profile: { type: 'string', default: '' },
+      interactive: { type: 'string', default: 'auto' },
       'eas-cli-version': { type: 'string', default: '' },
       'dry-run': { type: 'boolean', default: false },
     },
@@ -288,16 +289,18 @@ function main() {
   const dryRun = values['dry-run'] === true;
   const opts = { dryRun };
 
-  const isCi = String(process.env.CI ?? '').trim().toLowerCase() === 'true' || String(process.env.GITHUB_ACTIONS ?? '').trim() === 'true';
+  let interactiveOverride = 'auto';
+  try {
+    interactiveOverride = normalizeInteractiveOverride(values.interactive);
+  } catch (error) {
+    fail(/** @type {Error} */ (error).message);
+  }
+
   const expoToken = String(process.env.EXPO_TOKEN ?? '').trim();
+  const { isCi, nonInteractive } = resolveExpoInteractivity({ interactiveOverride });
   if (isCi && !expoToken) {
     fail('EXPO_TOKEN is required for Expo submit.');
   }
-  const nonInteractive = resolveExpoNonInteractive({
-    ci: isCi ? 'true' : '',
-    pipelineInteractive: process.env.PIPELINE_INTERACTIVE,
-    defaultNonInteractive: false,
-  });
 
   const easCliVersion =
     String(values['eas-cli-version'] ?? '').trim() || String(process.env.EAS_CLI_VERSION ?? '').trim() || '18.0.1';

@@ -15,9 +15,9 @@ export const COMMAND_HELP_EXPO = {
   'ui-mobile-release': {
     summary: 'Expo mobile release entrypoint (OTA, native build, submit).',
     usage:
-      'node scripts/pipeline/run.mjs ui-mobile-release --environment <preview|production> --action <ota|native|native_submit> --platform <ios|android|all> [--profile <easProfile>]',
+      'node scripts/pipeline/run.mjs ui-mobile-release --environment <development|canary|preview|production> --action <ota|native|native_submit> --platform <ios|android|all> [--profile <easProfile>]',
     options: [
-      '--environment <preview|production>  Required.',
+      '--environment <development|canary|preview|production> Required.',
       '--action <ota|native|native_submit> Required.',
       '--platform <ios|android|all>        Required.',
       '--profile <name>                   Required for native/native_submit; must start with preview* or production*.',
@@ -50,10 +50,12 @@ export const COMMAND_HELP_EXPO = {
 
   'expo-ota': {
     summary: 'Publish an Expo OTA update for the given environment.',
-    usage: 'node scripts/pipeline/run.mjs expo-ota --environment <preview|production> [--message <text>] [--dry-run]',
+    usage:
+      'node scripts/pipeline/run.mjs expo-ota --environment <development|canary|preview|production> [--message <text>] [--interactive <auto|true|false>] [--dry-run]',
     options: [
-      '--environment <preview|production>  Required.',
+      '--environment <development|canary|preview|production> Required.',
       '--message <text>                   Optional.',
+      '--interactive <auto|true|false>   Optional; defaults to auto.',
       '--eas-cli-version <ver>            Optional; pins EAS CLI.',
       '--dry-run',
       '--secrets-source <auto|env|keychain>',
@@ -67,7 +69,7 @@ export const COMMAND_HELP_EXPO = {
   'expo-native-build': {
     summary: 'Build a native Expo app (EAS Build) and write build metadata to a JSON file.',
     usage:
-      'node scripts/pipeline/run.mjs expo-native-build --platform <ios|android> --profile <profile> --out <buildJsonPath> [--build-mode cloud|local] [--artifact-out <path>]',
+      'node scripts/pipeline/run.mjs expo-native-build --platform <ios|android> --profile <profile> --out <buildJsonPath> [--build-mode cloud|local] [--artifact-out <path>] [--interactive <auto|true|false>]',
     options: [
       '--platform <ios|android>          Required.',
       '--profile <name>                 Required; EAS build profile.',
@@ -75,6 +77,7 @@ export const COMMAND_HELP_EXPO = {
       '--build-mode <cloud|local>       Optional; overrides profile runner.',
       '--local-runtime <host|dagger>    Optional; only applies to local builds.',
       '--artifact-out <path>            Optional; writes IPA/AAB/APK to this path for local builds.',
+      '--interactive <auto|true|false>  Optional; defaults to auto.',
       '--eas-cli-version <ver>          Optional; pins EAS CLI.',
       '--dump-view <bool>               true|false (default: true).',
       '--dry-run',
@@ -91,9 +94,9 @@ export const COMMAND_HELP_EXPO = {
   'expo-download-apk': {
     summary: 'Download the Android APK from a previous EAS Build JSON output.',
     usage:
-      'node scripts/pipeline/run.mjs expo-download-apk --environment <preview|production> [--build-json <path>] [--out-dir <dir>]',
+      'node scripts/pipeline/run.mjs expo-download-apk --environment <development|canary|preview|production> [--build-json <path>] [--out-dir <dir>]',
     options: [
-      '--environment <preview|production>  Required.',
+      '--environment <development|canary|preview|production> Required.',
       '--build-json <path>               (default: /tmp/eas_build.json).',
       '--out-dir <dir>                   (default: dist/ui-mobile).',
       '--eas-cli-version <ver>           Optional; pins EAS CLI.',
@@ -127,12 +130,13 @@ export const COMMAND_HELP_EXPO = {
   'expo-submit': {
     summary: 'Submit a native build to TestFlight / Play Store (EAS Submit).',
     usage:
-      'node scripts/pipeline/run.mjs expo-submit --environment <preview|production> --platform <ios|android|all> [--profile <submitProfile>] [--path <artifactPath>]',
+      'node scripts/pipeline/run.mjs expo-submit --environment <preview|production> --platform <ios|android|all> [--profile <submitProfile>] [--path <artifactPath>] [--interactive <auto|true|false>]',
     options: [
       '--environment <preview|production>  Required.',
       '--platform <ios|android|all>       Required.',
       '--profile <name>                  Optional; EAS submit profile.',
       '--path <path>                     Optional; submit a local artifact (IPA/AAB/APK).',
+      '--interactive <auto|true|false>   Optional; defaults to auto.',
       '--eas-cli-version <ver>           Optional; pins EAS CLI.',
       '--dry-run',
       '--secrets-source <auto|env|keychain>',

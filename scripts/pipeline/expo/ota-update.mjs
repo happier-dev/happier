@@ -4,6 +4,8 @@ import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { parseArgs } from 'node:util';
 import { maybeUploadSentryExpoSourceMaps } from './sentry-upload-sourcemaps.mjs';
+import { withEasGitCaseSensitiveEnv } from './eas-git-case-sensitive-env.mjs';
+import { normalizeInteractiveOverride, resolveExpoInteractivity } from './resolve-expo-interactivity.mjs';
 
 function fail(message) {
   console.error(message);
@@ -40,18 +42,19 @@ function run(opts, cmd, args, extra) {
 function resolvePreviewMessage(environment, rawMessage, opts) {
   const explicit = String(rawMessage ?? '').trim();
   if (explicit) return explicit;
-  if (environment !== 'preview') return '';
+  if (environment !== 'development' && environment !== 'canary' && environment !== 'preview') return '';
 
   const sha = String(process.env.GITHUB_SHA ?? '').trim() || run(opts, 'git', ['rev-parse', 'HEAD'], { stdio: 'pipe' }).trim();
   const runId = String(process.env.GITHUB_RUN_ID ?? '').trim();
   const attempt = String(process.env.GITHUB_RUN_ATTEMPT ?? '').trim();
+  const laneLabel = environment === 'preview' ? 'preview' : environment;
   if (runId && attempt) {
-    return `Happier OTA preview ${sha} (run ${runId} attempt ${attempt})`;
+    return `Happier OTA ${laneLabel} ${sha} (run ${runId} attempt ${attempt})`;
   }
   if (runId) {
-    return `Happier OTA preview ${sha} (run ${runId})`;
+    return `Happier OTA ${laneLabel} ${sha} (run ${runId})`;
   }
-  return `Happier OTA preview ${sha}`;
+  return `Happier OTA ${laneLabel} ${sha}`;
 }
 
 function main() {
@@ -60,6 +63,7 @@ function main() {
     options: {
       environment: { type: 'string' },
       message: { type: 'string', default: '' },
+      interactive: { type: 'string', default: 'auto' },
       'eas-cli-version': { type: 'string', default: '' },
       'dry-run': { type: 'boolean', default: false },
     },
@@ -68,16 +72,24 @@ function main() {
 
   const environment = String(values.environment ?? '').trim();
   if (!environment) fail('--environment is required');
-  if (environment !== 'preview' && environment !== 'production') {
-    fail(`--environment must be 'preview' or 'production' (got: ${environment})`);
+  if (environment !== 'development' && environment !== 'canary' && environment !== 'preview' && environment !== 'production') {
+    fail(`--environment must be 'development', 'canary', 'preview', or 'production' (got: ${environment})`);
   }
 
   const dryRun = values['dry-run'] === true;
   const opts = { dryRun };
 
+  let interactiveOverride = 'auto';
+  try {
+    interactiveOverride = normalizeInteractiveOverride(values.interactive);
+  } catch (error) {
+    fail(/** @type {Error} */ (error).message);
+  }
+
+  const interactivity = resolveExpoInteractivity({ interactiveOverride });
   const expoToken = String(process.env.EXPO_TOKEN ?? '').trim();
-  if (!expoToken) {
-    fail('EXPO_TOKEN is required for Expo OTA updates.');
+  if (interactivity.nonInteractive && !expoToken) {
+    fail('EXPO_TOKEN is required for non-interactive Expo OTA updates.');
   }
 
   const easCliVersion =
@@ -94,20 +106,37 @@ function main() {
   }
 
   const uiDir = path.join(repoRoot, 'apps', 'ui');
+  const appEnvironment = resolveAppEnvironment(environment);
+  const updateLane = resolveUpdateLane(environment);
+  const easCommandEnv = withEasGitCaseSensitiveEnv({
+    ...process.env,
+    APP_ENV: process.env.APP_ENV ?? appEnvironment,
+    NODE_ENV: process.env.NODE_ENV ?? appEnvironment,
+    EXPO_UPDATES_CHANNEL: process.env.EXPO_UPDATES_CHANNEL ?? updateLane,
+  });
   run(opts, 'yarn', ['tsx', 'sources/scripts/parseChangelog.ts'], {
     cwd: uiDir,
-    env: { ...process.env, APP_ENV: process.env.APP_ENV ?? 'preview', NODE_ENV: process.env.NODE_ENV ?? 'preview' },
+    env: { ...process.env, APP_ENV: process.env.APP_ENV ?? appEnvironment, NODE_ENV: process.env.NODE_ENV ?? appEnvironment },
   });
   run(opts, 'yarn', ['typecheck'], { cwd: uiDir });
 
   const message = resolvePreviewMessage(environment, values.message, opts);
-  if (!message) fail('Missing Expo update message for preview OTA update.');
+  if (!message) fail(`Missing Expo update message for ${environment} OTA update.`);
 
   run(
     opts,
     'npx',
-    ['--yes', `eas-cli@${easCliVersion}`, 'update', '--branch', 'preview', '--non-interactive', '--message', message],
-    { cwd: uiDir },
+    [
+      '--yes',
+      `eas-cli@${easCliVersion}`,
+      'update',
+      '--channel',
+      updateLane,
+      ...(interactivity.nonInteractive ? ['--non-interactive'] : []),
+      '--message',
+      message,
+    ],
+    { cwd: uiDir, env: easCommandEnv },
   );
 
   const upload = maybeUploadSentryExpoSourceMaps({
@@ -129,3 +158,28 @@ function main() {
 }
 
 main();
+/**
+ * @param {string} environment
+ * @returns {'development' | 'preview' | 'production'}
+ */
+function resolveAppEnvironment(environment) {
+  if (environment === 'production') return 'production';
+  if (environment === 'development') return 'development';
+  return 'preview';
+}
+
+/**
+ * @param {string} environment
+ * @returns {'development' | 'canary' | 'preview' | 'production'}
+ */
+function resolveUpdateLane(environment) {
+  if (
+    environment === 'development' ||
+    environment === 'canary' ||
+    environment === 'preview' ||
+    environment === 'production'
+  ) {
+    return environment;
+  }
+  return 'preview';
+}

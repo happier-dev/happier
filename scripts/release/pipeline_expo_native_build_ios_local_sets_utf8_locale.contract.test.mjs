@@ -13,8 +13,17 @@ function writeExecutable(filePath, content) {
 
 test('expo native-build local iOS forces UTF-8 locale env for CocoaPods', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'happier-pipeline-eas-ios-locale-'));
+  const repo = path.join(dir, 'repo');
   const binDir = path.join(dir, 'bin');
+  const nodeModulesDir = path.join(repo, 'node_modules');
+  const appNodeModulesDir = path.join(repo, 'apps', 'ui', 'node_modules');
+  fs.mkdirSync(repo, { recursive: true });
   fs.mkdirSync(binDir, { recursive: true });
+  fs.mkdirSync(nodeModulesDir, { recursive: true });
+  fs.mkdirSync(appNodeModulesDir, { recursive: true });
+  fs.mkdirSync(path.join(repo, 'apps', 'ui'), { recursive: true });
+  fs.symlinkSync(path.join(repoRoot, '.git'), path.join(repo, '.git'), 'dir');
+  fs.symlinkSync(path.join(repoRoot, 'scripts'), path.join(repo, 'scripts'), 'dir');
 
   // Satisfy commandExists('fastlane') and commandExists('pod') checks.
   writeExecutable(path.join(binDir, 'fastlane'), ['#!/usr/bin/env bash', 'exit 0', ''].join('\n'));
@@ -57,7 +66,7 @@ test('expo native-build local iOS forces UTF-8 locale env for CocoaPods', () => 
   const stdout = execFileSync(
     process.execPath,
     [
-      path.join(repoRoot, 'scripts', 'pipeline', 'expo', 'native-build.mjs'),
+      path.join(repo, 'scripts', 'pipeline', 'expo', 'native-build.mjs'),
       '--platform',
       'ios',
       '--profile',
@@ -69,11 +78,10 @@ test('expo native-build local iOS forces UTF-8 locale env for CocoaPods', () => 
       '--artifact-out',
       artifactOut,
     ],
-    { cwd: repoRoot, env, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: 30_000 },
+    { cwd: repo, env, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: 30_000 },
   );
 
   assert.match(stdout, /LANG=en_US\.UTF-8/);
   assert.match(stdout, /LC_ALL=en_US\.UTF-8/);
   assert.ok(fs.existsSync(artifactOut), 'expected local build artifact to be created');
 });
-
