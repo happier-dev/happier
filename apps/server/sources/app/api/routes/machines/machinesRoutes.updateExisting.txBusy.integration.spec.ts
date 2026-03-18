@@ -29,6 +29,14 @@ const existingMachine = {
 };
 
 const dbMachineFindFirst = vi.fn(async () => existingMachine);
+
+function hasStringCode(error: unknown): error is { code: string } {
+    if (!error || typeof error !== "object") {
+        return false;
+    }
+    return typeof (error as { code?: unknown }).code === "string";
+}
+
 vi.mock("@/storage/db", () => ({
     db: {
         machine: {
@@ -37,7 +45,7 @@ vi.mock("@/storage/db", () => ({
         },
     },
     isPrismaErrorCode: (err: unknown, code: string) =>
-        typeof err === "object" && err !== null && "code" in err && (err as any).code === code,
+        hasStringCode(err) && err.code === code,
 }));
 
 const inTx = vi.fn(async () => {
@@ -75,6 +83,12 @@ describe("machinesRoutes (update existing machine, tx busy)", () => {
             reply,
         );
 
+        expect(dbMachineFindFirst).toHaveBeenCalledWith({
+            where: {
+                accountId: "u1",
+                id: "m1",
+            },
+        });
         expect(inTx).toHaveBeenCalledTimes(1);
         expect(reply.send).toHaveBeenCalled();
         expect(response).toEqual(
@@ -86,5 +100,33 @@ describe("machinesRoutes (update existing machine, tx busy)", () => {
             }),
         );
     });
-});
 
+    it("does not silently succeed when a dataEncryptionKey update is skipped by transaction contention", async () => {
+        const { machinesRoutes } = await import("./machinesRoutes");
+
+        const app = createFakeRouteApp();
+        machinesRoutes(app as any);
+
+        const handler = getRouteHandler(app, "POST", "/v1/machines");
+        expect(typeof handler).toBe("function");
+
+        const reply = createReplyStub();
+
+        await expect(
+            handler(
+                {
+                    userId: "u1",
+                    body: {
+                        id: "m1",
+                        metadata: "meta-old",
+                        daemonState: undefined,
+                        dataEncryptionKey: "AAECAw==",
+                    },
+                },
+                reply,
+            ),
+        ).rejects.toMatchObject({ code: "P2028" });
+
+        expect(reply.send).not.toHaveBeenCalled();
+    });
+});
