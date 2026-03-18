@@ -143,4 +143,68 @@ describe("resolveServerFeaturePayload", () => {
         expect(payload.capabilities.machines.transfer.serverRouted.maxBytes).toBe(16384);
     });
 
+    it("merges sibling capabilities.server fields from different resolvers", () => {
+        const payload = resolveServerFeaturePayload(
+            {
+                HAPPIER_PUBLIC_SERVER_URL: "https://stack.example.test/",
+            } as NodeJS.ProcessEnv,
+            [
+                fromPartial({
+                    capabilities: {
+                        server: {
+                            canonicalServerUrl: "https://stack.example.test",
+                            retention: {
+                                policyVersion: 1,
+                                enabled: true,
+                                sessions: {
+                                    mode: "keep_forever",
+                                },
+                                accountChanges: {
+                                    mode: "keep_forever",
+                                },
+                                voiceSessionLeases: {
+                                    mode: "keep_forever",
+                                },
+                                userFeedItems: {
+                                    mode: "keep_forever",
+                                },
+                                sessionShareAccessLogs: {
+                                    mode: "keep_forever",
+                                },
+                                publicShareAccessLogs: {
+                                    mode: "keep_forever",
+                                },
+                                terminalAuthRequests: {
+                                    mode: "keep_forever",
+                                },
+                                accountAuthRequests: {
+                                    mode: "keep_forever",
+                                },
+                                authPairingSessions: {
+                                    mode: "keep_forever",
+                                },
+                                repeatKeys: {
+                                    mode: "keep_forever",
+                                },
+                                globalLocks: {
+                                    mode: "keep_forever",
+                                },
+                                automationRuns: {
+                                    mode: "keep_forever",
+                                },
+                                automationRunEvents: {
+                                    mode: "keep_forever",
+                                },
+                            },
+                        },
+                    },
+                }),
+            ],
+        );
+
+        expect(payload.capabilities.server.canonicalServerUrl).toBe("https://stack.example.test");
+        expect(payload.capabilities.server.retention.policyVersion).toBe(1);
+        expect(payload.capabilities.server.retention.enabled).toBe(true);
+    });
+
 });
