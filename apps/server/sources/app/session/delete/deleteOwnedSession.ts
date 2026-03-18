@@ -44,17 +44,30 @@ export async function deleteOwnedSession(params: {
                 recipientCursors.push({ accountId, cursor });
             }
 
-            await deleteSessionTree(tx as any, {
+            const sessionDeleteWhere = {
+                ...(params.ownerAccountId ? { accountId: params.ownerAccountId } : null),
+                ...(params.sessionWhereGuard ?? null),
+            };
+            const deleted = await deleteSessionTree(tx as any, {
                 sessionId: params.sessionId,
                 actorAccountId: session.accountId,
                 reason: params.reason,
-                sessionDeleteWhere: {
-                    ...(params.ownerAccountId ? { accountId: params.ownerAccountId } : null),
-                    ...(params.sessionWhereGuard ?? null),
-                },
+                sessionDeleteWhere: Object.keys(sessionDeleteWhere).length > 0 ? sessionDeleteWhere : undefined,
             });
 
             afterTx(tx as any, async () => {
+                log(
+                    {
+                        module: 'session-delete',
+                        userId: session.accountId,
+                        sessionId: params.sessionId,
+                        reason: params.reason,
+                        deletedMessages: deleted.deletedMessages,
+                        deletedReports: deleted.deletedReports,
+                        deletedAccessKeys: deleted.deletedAccessKeys,
+                    },
+                    'Session deleted successfully',
+                );
                 await Promise.all(recipientCursors.map(async ({ accountId, cursor }) => {
                     await emitSessionDeletedUpdate({
                         sessionId: params.sessionId,
