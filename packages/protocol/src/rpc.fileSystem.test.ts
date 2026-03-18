@@ -22,5 +22,6 @@ describe('RPC_METHODS file-system surface', () => {
     expect(RPC_METHODS.FILES_DOWNLOAD_CHUNK).toBe('files.download.chunk');
     expect(RPC_METHODS.FILES_DOWNLOAD_FINALIZE).toBe('files.download.finalize');
     expect(RPC_METHODS.FILES_DOWNLOAD_ABORT).toBe('files.download.abort');
+    expect(RPC_METHODS.ATTACHMENTS_CONFIGURE).toBe('attachments.configure');
   });
 });

@@ -62,6 +62,7 @@ export const RPC_METHODS = {
   FILES_DOWNLOAD_CHUNK: 'files.download.chunk',
   FILES_DOWNLOAD_FINALIZE: 'files.download.finalize',
   FILES_DOWNLOAD_ABORT: 'files.download.abort',
+  ATTACHMENTS_CONFIGURE: 'attachments.configure',
   RIPGREP: 'ripgrep',
   DIFFTASTIC: 'difftastic',
   SESSION_LOG_TAIL: 'session.log.tail',
