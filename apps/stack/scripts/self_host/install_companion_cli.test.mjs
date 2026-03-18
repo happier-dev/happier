@@ -112,6 +112,7 @@ test('installCompanionCliFromBundle promotes the full CLI payload with shared in
   const installedEntrypoint = await readFile(join(homeDir, 'cli', 'current', 'package-dist', 'index.mjs'), 'utf-8');
   assert.match(installedEntrypoint, /console\.log\("ok"\)/);
   assert.equal(existsSync(join(homeDir, 'bin', 'happier')), true);
-  assert.equal(existsSync(join(homeDir, 'cli', 'current', 'happier')), true);
+  const resolvedCurrentBinary = join(homeDir, 'cli', 'current', 'happier');
+  assert.equal(existsSync(resolvedCurrentBinary), true);
   assert.equal(existsSync(dirname(join(homeDir, 'cli', 'versions', '1.2.3-preview.1'))), true);
 });

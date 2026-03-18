@@ -420,24 +420,6 @@ async function applySelfHostSqliteMigrationsAtInstallTime({ env }) {
   return { applied: appliedNow, skipped: false, reason: 'ok' };
 }
 
-async function findExecutableByName(rootDir, binaryName) {
-  const entries = await readdir(rootDir, { withFileTypes: true });
-  for (const entry of entries) {
-    const fullPath = join(rootDir, entry.name);
-    if (entry.isDirectory()) {
-      const nested = await findExecutableByName(fullPath, binaryName);
-      if (nested) return nested;
-      continue;
-    }
-    if (!entry.isFile()) continue;
-    if (entry.name !== binaryName) continue;
-    const info = await stat(fullPath);
-    if (process.platform === 'win32') return fullPath;
-    if ((info.mode & 0o111) !== 0) return fullPath;
-  }
-  return '';
-}
-
 function resolveConfig({ channel, mode = 'user', platform = process.platform } = {}) {
   const defaults = resolveSelfHostDefaults({ platform, mode, homeDir: homedir() });
   const installRoot = String(process.env.HAPPIER_SELF_HOST_INSTALL_ROOT ?? defaults.installRoot).trim();
@@ -1630,7 +1612,7 @@ export async function installSelfHostBinaryFromBundle({
     versionsDir: config.versionsDir,
     entryPrefix: `${name}-`,
   });
-  const previousVersionId = existingVersionIds.find((candidate) => candidate !== String(resolvedBundle?.version ?? '').trim()) ?? null;
+  const previousVersionId = existingVersionIds.find((candidate) => candidate !== String(bundle?.version ?? '').trim()) ?? null;
 
   const tempDir = await mkdtemp(join(tmpdir(), 'happier-self-host-release-'));
   try {
@@ -1653,7 +1635,7 @@ export async function installSelfHostBinaryFromBundle({
       throw new Error(`[self-host] ${plan.requiredCommand} is required to extract release artifacts`);
     }
     runCommand(plan.command.cmd, plan.command.args, { stdio: 'ignore' });
-    const extractedBinary = await findExecutableByName(extractDir, name);
+    const extractedBinary = await findExtractedExecutableByName(extractDir, name);
     if (!extractedBinary) {
       throw new Error('[self-host] failed to locate extracted server binary');
     }
@@ -1837,16 +1819,16 @@ async function installUiWebFromRelease({ config }) {
     };
   }
   const { release, tag: channelTag } = resolvedRelease;
+  const existingVersionIds = await listVersionedDirectoryIdsNewestFirst({
+    versionsDir: config.uiWebVersionsDir,
+    entryPrefix: `${config.uiWebProduct}-`,
+  });
 
   const resolved = resolveReleaseAssetBundle({
     assets: release?.assets,
     product: config.uiWebProduct,
     os: config.uiWebOs,
     arch: config.uiWebArch,
-  });
-  const existingVersionIds = await listVersionedDirectoryIdsNewestFirst({
-    versionsDir: config.uiWebVersionsDir,
-    entryPrefix: `${config.uiWebProduct}-`,
   });
 
   const tempDir = await mkdtemp(join(tmpdir(), 'happier-self-host-ui-web-'));
@@ -1943,6 +1925,7 @@ async function cmdInstall({ channel, mode, argv, json }) {
     !(argvSansEnv.includes('--without-ui')
       || parseBoolean(process.env.HAPPIER_WITH_UI, true) === false
       || parseBoolean(process.env.HAPPIER_SELF_HOST_WITH_UI, true) === false);
+  const nonInteractive = argvSansEnv.includes('--non-interactive') || parseBoolean(process.env.HAPPIER_NONINTERACTIVE, false);
   const serverBinaryOverride = String(process.env.HAPPIER_SELF_HOST_SERVER_BINARY ?? '').trim();
 
   if (normalizeOs(config.platform) !== 'windows' && !commandExists('tar')) {

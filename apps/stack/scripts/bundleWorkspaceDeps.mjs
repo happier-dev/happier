@@ -6,7 +6,7 @@ import {
   findRepoRoot,
   resolveWorkspaceBundlesFromPackageJson,
   vendorBundledPackageRuntimeDependencies,
-} from '../../../packages/cli-common/dist/workspaces/index.js';
+} from '../../../packages/cli-common/src/workspaces/index.ts';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
