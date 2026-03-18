@@ -172,4 +172,43 @@ describe("ActivityCache machine presence", () => {
         await (activityCache as any).flushPendingUpdates();
         expect(machineUpdateMany).toHaveBeenCalledTimes(3);
     });
+
+    it("does not drop a newer queued machine update that arrives while a flush is awaiting the DB", async () => {
+        let resolveFirstWrite: () => void = () => {
+            throw new Error("resolveFirstWrite not initialized");
+        };
+        const firstWriteBarrier = new Promise<void>((resolve) => {
+            resolveFirstWrite = () => resolve();
+        });
+
+        let callCount = 0;
+        machineUpdateMany.mockImplementation(async () => {
+            callCount += 1;
+            if (callCount === 1) {
+                await firstWriteBarrier;
+            }
+            return { count: 1 };
+        });
+
+        ({ activityCache } = await import("./sessionCache"));
+        activityCache.enableDbFlush();
+
+        await activityCache.isMachineValid("m1", "u1");
+        const t1 = Date.now();
+        expect(activityCache.queueMachineUpdate("m1", t1)).toBe(true);
+
+        const flush = (activityCache as any).flushPendingUpdates();
+        await Promise.resolve();
+
+        // Queue a newer update while the DB write is in-flight.
+        const t2 = t1 + 60_000;
+        expect(activityCache.queueMachineUpdate("m1", t2)).toBe(true);
+
+        resolveFirstWrite();
+        await flush;
+
+        await (activityCache as any).flushPendingUpdates();
+        expect(machineUpdateMany).toHaveBeenCalledTimes(2);
+        expect(machineUpdateMany.mock.calls[1]?.[0]?.data?.lastActiveAt).toEqual(new Date(t2));
+    });
 });

@@ -18,12 +18,21 @@ vi.mock("@/app/share/accessControl", () => ({
 
 let sessionLastActiveAtMs = 0;
 let sessionActive = false;
+let machineLastActiveAtMs = 0;
 const sessionFindUnique = vi.fn(async () => ({
     id: "s1",
     lastActiveAt: new Date(sessionLastActiveAtMs),
     active: sessionActive,
 }));
 const sessionUpdateMany = vi.fn(async (_args: any) => ({ count: 1 }));
+const machineFindUnique = vi.fn(async () => ({
+    id: "m1",
+    accountId: "u1",
+    lastActiveAt: new Date(machineLastActiveAtMs),
+    active: false,
+    revokedAt: null,
+}));
+const machineUpdateMany = vi.fn(async (_args: any) => ({ count: 1 }));
 const dbTransaction = vi.fn(async (ops: any) => {
     if (typeof ops === "function") {
         return ops({
@@ -32,8 +41,8 @@ const dbTransaction = vi.fn(async (ops: any) => {
                 updateMany: sessionUpdateMany,
             },
             machine: {
-                findUnique: vi.fn(),
-                updateMany: vi.fn(),
+                findUnique: machineFindUnique,
+                updateMany: machineUpdateMany,
             },
         });
     }
@@ -65,6 +74,21 @@ describe("ActivityCache session presence", () => {
         vi.setSystemTime(new Date("2026-01-01T00:00:00.000Z"));
         sessionLastActiveAtMs = Date.now();
         sessionActive = false;
+        machineLastActiveAtMs = Date.now();
+        sessionFindUnique.mockImplementation(async () => ({
+            id: "s1",
+            lastActiveAt: new Date(sessionLastActiveAtMs),
+            active: sessionActive,
+        }));
+        sessionUpdateMany.mockImplementation(async () => ({ count: 1 }));
+        machineFindUnique.mockImplementation(async () => ({
+            id: "m1",
+            accountId: "u1",
+            lastActiveAt: new Date(machineLastActiveAtMs),
+            active: false,
+            revokedAt: null,
+        }));
+        machineUpdateMany.mockImplementation(async () => ({ count: 1 }));
     });
 
     afterEach(() => {
@@ -223,5 +247,103 @@ describe("ActivityCache session presence", () => {
 
         await (activityCache as any).flushPendingUpdates();
         expect(sessionUpdateMany).toHaveBeenCalledTimes(2);
+    });
+
+    it("backs off the entire flush when a session update hits a DB-busy error", async () => {
+        let callCount = 0;
+        sessionUpdateMany.mockImplementation(async () => {
+            callCount += 1;
+            if (callCount === 1) {
+                throw Object.assign(new Error("database busy"), { code: "SQLITE_BUSY" });
+            }
+            return { count: 1 };
+        });
+
+        ({ activityCache } = await import("./sessionCache"));
+
+        await activityCache.isSessionValid("s1", "u1");
+        (activityCache as any).machineCache.set("m1", {
+            validUntil: Date.now() + 30_000,
+            lastUpdateSent: Date.now(),
+            pendingUpdate: null,
+            userId: "u1",
+            active: true,
+        });
+
+        expect(activityCache.queueSessionUpdate("s1", "u1", Date.now())).toBe(true);
+        const machineTimestamp = Date.now() + 60_000;
+        expect(activityCache.queueMachineUpdate("m1", machineTimestamp)).toBe(true);
+
+        await (activityCache as any).flushPendingUpdates();
+
+        expect(sessionUpdateMany).toHaveBeenCalledTimes(1);
+        expect(machineUpdateMany).not.toHaveBeenCalled();
+        expect((activityCache as any).machineCache.get("m1")?.pendingUpdate).toBe(machineTimestamp);
+
+        await (activityCache as any).flushPendingUpdates();
+        expect(sessionUpdateMany).toHaveBeenCalledTimes(1);
+        expect(machineUpdateMany).not.toHaveBeenCalled();
+        expect((activityCache as any).machineCache.get("m1")?.pendingUpdate).toBe(machineTimestamp);
+
+        await vi.advanceTimersByTimeAsync(30_000);
+
+        await (activityCache as any).flushPendingUpdates();
+        expect(sessionUpdateMany).toHaveBeenCalledTimes(2);
+    });
+
+    it("does not drop a newer queued session update that arrives while a flush is awaiting the DB", async () => {
+        let resolveFirstWrite: () => void = () => {
+            throw new Error("resolveFirstWrite not initialized");
+        };
+        const firstWriteBarrier = new Promise<void>((resolve) => {
+            resolveFirstWrite = () => resolve();
+        });
+
+        let callCount = 0;
+        sessionUpdateMany.mockImplementation(async () => {
+            callCount += 1;
+            if (callCount === 1) {
+                await firstWriteBarrier;
+            }
+            return { count: 1 };
+        });
+
+        ({ activityCache } = await import("./sessionCache"));
+        activityCache.enableDbFlush();
+
+        await activityCache.isSessionValid("s1", "u1");
+        const t1 = Date.now();
+        expect(activityCache.queueSessionUpdate("s1", "u1", t1)).toBe(true);
+
+        const flush = (activityCache as any).flushPendingUpdates();
+        await Promise.resolve();
+
+        // Queue a newer update while the DB write is in-flight.
+        const t2 = t1 + 60_000;
+        expect(activityCache.queueSessionUpdate("s1", "u1", t2)).toBe(true);
+
+        resolveFirstWrite();
+        await flush;
+
+        await (activityCache as any).flushPendingUpdates();
+        expect(sessionUpdateMany).toHaveBeenCalledTimes(2);
+        expect(sessionUpdateMany.mock.calls[1]?.[0]?.data?.lastActiveAt).toEqual(new Date(t2));
+    });
+
+    it("uses the caller-provided clock when cleaning up before session activity checks", async () => {
+        ({ activityCache } = await import("./sessionCache"));
+
+        const now = Date.now();
+        (activityCache as any).sessionCache.set("s1:u1", {
+            validUntil: now + 1_000,
+            lastUpdateSent: now,
+            pendingUpdate: null,
+            userId: "u1",
+            sessionId: "s1",
+            active: true,
+        });
+
+        expect(activityCache.isSessionObservedActive("s1", now + 60_000)).toBe(false);
+        expect((activityCache as any).sessionCache.size).toBe(0);
     });
 });
