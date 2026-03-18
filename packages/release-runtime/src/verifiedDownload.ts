@@ -3,6 +3,7 @@ import { mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
 import { lookupSha256 } from './checksums.js';
+import { requestBytes, requestText } from './http.js';
 import { verifyMinisign } from './minisign.js';
 
 type ReleaseAsset = Readonly<{ name: string; url: string }>;
@@ -15,16 +16,11 @@ export type ReleaseAssetBundle = Readonly<{
 }>;
 
 async function fetchText(url: string, { userAgent = 'happier-release-runtime' } = {}) {
-  const res = await fetch(url, { headers: { 'user-agent': userAgent } });
-  if (!res.ok) throw new Error(`[download] failed: ${url} (${res.status})`);
-  return res.text();
+  return await requestText({ url, headers: { 'user-agent': userAgent } });
 }
 
 async function fetchBytes(url: string, { userAgent = 'happier-release-runtime' } = {}) {
-  const res = await fetch(url, { headers: { 'user-agent': userAgent } });
-  if (!res.ok) throw new Error(`[download] failed: ${url} (${res.status})`);
-  const ab = await res.arrayBuffer();
-  return Buffer.from(ab);
+  return await requestBytes({ url, headers: { 'user-agent': userAgent } });
 }
 
 function sha256Hex(bytes: Buffer) {
@@ -74,4 +70,3 @@ export async function downloadVerifiedReleaseAssetBundle(params: Readonly<{
     source: { archiveUrl: bundle.archive.url, checksumsUrl: bundle.checksums.url },
   };
 }
-

@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { fetchGitHubReleaseByTag, fetchFirstGitHubReleaseByTags } from '../dist/github.js';
+import { fetchGitHubLatestRelease, fetchGitHubReleaseByTag, fetchFirstGitHubReleaseByTags } from '../dist/github.js';
 
 function createFetchStub(routeMap) {
   const calls = [];
@@ -86,3 +86,57 @@ test('fetchFirstGitHubReleaseByTags returns first non-404 release', async () => 
   assert.equal(stub.calls.length, 2);
 });
 
+test('fetchFirstGitHubReleaseByTags falls back when the HTTP boundary throws a 404 error', async () => {
+  const calls = [];
+  const fetch = async (url, init) => {
+    const href = String(url);
+    calls.push({ url: href, init: init ?? null });
+    if (href.endsWith('/releases/tags/ui-web-preview')) {
+      throw new Error(`[http] request failed: ${href} (404)`);
+    }
+    if (href.endsWith('/releases/tags/ui-web-stable')) {
+      return {
+        ok: true,
+        status: 200,
+        statusText: 'ok',
+        json: async () => ({ tag_name: 'ui-web-stable' }),
+        text: async () => '',
+      };
+    }
+    return {
+      ok: false,
+      status: 500,
+      statusText: 'no route',
+      json: async () => ({}),
+      text: async () => '',
+    };
+  };
+
+  const resolved = await fetchFirstGitHubReleaseByTags({
+    githubRepo: 'happier-dev/happier',
+    tags: ['ui-web-preview', 'ui-web-stable'],
+    fetchImpl: fetch,
+  });
+
+  assert.equal(resolved.tag, 'ui-web-stable');
+  assert.equal(resolved.release.tag_name, 'ui-web-stable');
+  assert.equal(calls.length, 2);
+});
+
+test('fetchGitHubLatestRelease calls GitHub latest endpoint and returns JSON', async () => {
+  const url = 'https://api.github.com/repos/zed-industries/codex-acp/releases/latest';
+  const routeMap = new Map([
+    [url, { ok: true, status: 200, json: { tag_name: 'v0.9.5', assets: [] } }],
+  ]);
+  const stub = createFetchStub(routeMap);
+
+  const release = await fetchGitHubLatestRelease({
+    githubRepo: 'zed-industries/codex-acp',
+    fetchImpl: stub.fetch,
+    userAgent: 'test-agent',
+  });
+
+  assert.equal(release.tag_name, 'v0.9.5');
+  assert.equal(stub.calls[0].url, url);
+  assert.match(String(stub.calls[0].init.headers['user-agent'] ?? ''), /test-agent/);
+});

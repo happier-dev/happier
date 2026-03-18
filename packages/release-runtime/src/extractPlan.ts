@@ -42,6 +42,15 @@ export function planArchiveExtraction(params: Readonly<{
     };
   }
 
+  if (name.toLowerCase().endsWith('.tar.xz')) {
+    return {
+      requiredCommand: 'tar',
+      command: {
+        cmd: 'tar',
+        args: ['-xJf', archivePath, '-C', destDir],
+      },
+    };
+  }
+
   throw new Error(`[extract] unsupported archive extension: ${name}`);
 }
-
