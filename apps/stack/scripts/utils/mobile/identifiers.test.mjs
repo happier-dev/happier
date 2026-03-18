@@ -39,3 +39,10 @@ test('defaultStackReleaseIdentity is per-stack', () => {
   assert.equal(id.scheme, 'happier-pr272-107');
   assert.equal(id.iosAppName, 'Happier (pr272-107)');
 });
+
+test('defaultStackReleaseIdentity respects an explicit app name', () => {
+  const id = defaultStackReleaseIdentity({ stackName: 'pr272-107', user: 'Leeroy Smith', appName: 'Happier Dev' });
+  assert.equal(id.iosAppName, 'Happier Dev');
+  assert.equal(id.iosBundleId, 'dev.happier.stack.stack.leeroy-smith.pr272-107');
+  assert.equal(id.scheme, 'happier-pr272-107');
+});

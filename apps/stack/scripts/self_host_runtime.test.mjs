@@ -15,6 +15,7 @@ import {
   resolveSelfHostAutoUpdateIntervalMinutes,
   resolveSelfHostHealthTimeoutMs,
   resolveSelfHostDefaults,
+  resolveSelfHostAutoUpdateAt,
   renderUpdaterLaunchdPlistXml,
   renderUpdaterScheduledTaskWrapperPs1,
   renderUpdaterSystemdUnit,
@@ -907,6 +908,18 @@ test('resolveSelfHostDefaults uses user-mode paths by default', () => {
   assert.equal(cfg.installRoot, '/home/me/.happier/self-host');
   assert.equal(cfg.binDir, '/home/me/.happier/bin');
   assert.equal(cfg.configDir, '/home/me/.happier/self-host/config');
+});
+
+test('resolveSelfHostDefaults uses system-mode install paths when requested', () => {
+  const cfg = resolveSelfHostDefaults({ platform: 'linux', mode: 'system', homeDir: '/home/me' });
+  assert.equal(cfg.installRoot, '/opt/happier');
+  assert.equal(cfg.binDir, '/usr/local/bin');
+  assert.equal(cfg.configDir, '/etc/happier');
+});
+
+test('resolveSelfHostAutoUpdateAt normalizes valid times and rejects invalid values', () => {
+  assert.equal(resolveSelfHostAutoUpdateAt({ HAPPIER_SELF_HOST_AUTO_UPDATE_AT: '9:5' }), '09:05');
+  assert.equal(resolveSelfHostAutoUpdateAt({ HAPPIER_SELF_HOST_AUTO_UPDATE_AT: '25:00' }), '');
 });
 
 test('resolveMinisignPublicKeyText prefers inline override and otherwise returns bundled key', () => {

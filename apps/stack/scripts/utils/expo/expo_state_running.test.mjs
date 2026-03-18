@@ -5,7 +5,7 @@ import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { isStateProcessRunning } from './expo.mjs';
+import { isStateProcessRunning, wantsExpoClearCache } from './expo.mjs';
 
 function listen(server) {
   return new Promise((resolve, reject) => {
@@ -46,3 +46,8 @@ test('isStateProcessRunning does not treat occupied port as running when /status
   }
 });
 
+test('wantsExpoClearCache defaults to clearing cache outside a TTY and respects explicit overrides', () => {
+  assert.equal(wantsExpoClearCache({ env: {} }), !(process.stdin.isTTY && process.stdout.isTTY));
+  assert.equal(wantsExpoClearCache({ env: { HAPPIER_STACK_EXPO_CLEAR_CACHE: '0' } }), false);
+  assert.equal(wantsExpoClearCache({ env: { HAPPIER_STACK_EXPO_CLEAR_CACHE: '1' } }), true);
+});

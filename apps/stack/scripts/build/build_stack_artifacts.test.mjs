@@ -1,7 +1,33 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { dirname, join } from 'node:path';
 
 import * as buildModule from './build_stack_artifacts.mjs';
+import { readCliDistIntegrity } from '../utils/cli/cliDistIntegrity.mjs';
+
+test('readCliDistIntegrity reports missing and present dist entrypoints', () => {
+  const root = mkdtempSync(join(tmpdir(), 'hstack-cli-dist-integrity-'));
+  const distEntrypoint = join(root, 'dist', 'index.mjs');
+
+  try {
+    assert.deepEqual(readCliDistIntegrity(distEntrypoint), {
+      ok: false,
+      reason: `missing:${distEntrypoint}`,
+    });
+
+    mkdirSync(dirname(distEntrypoint), { recursive: true });
+    writeFileSync(distEntrypoint, 'export const ok = true;\n', 'utf8');
+
+    assert.deepEqual(readCliDistIntegrity(distEntrypoint), {
+      ok: true,
+      reason: 'exists',
+    });
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
 
 test('assertSelectedBuildPrerequisites does not require bun for web-only builds', () => {
   assert.equal(typeof buildModule.assertSelectedBuildPrerequisites, 'function');
