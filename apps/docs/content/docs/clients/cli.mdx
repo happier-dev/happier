@@ -25,7 +25,7 @@ npm install -g @happier-dev/cli
 
 How you update depends on how you installed the CLI:
 
-- **Installer (binary) install**: `happier self check` / `happier self update` (or rerun `curl -fsSL https://happier.dev/install | bash`)
+- **Installer install**: `happier self check` / `happier self update` (or rerun `curl -fsSL https://happier.dev/install | bash`). Installer installs keep the full CLI payload under `~/.happier/cli/current` and refresh the stable `happier` shim for you.
 - **npm install**: `npm install -g @happier-dev/cli@latest` (or `@next` for preview)
 
 The CLI can also show periodic update notices in TTY sessions; disable with:
@@ -128,24 +128,29 @@ For always-on background sessions, remote control, and headless servers, see [Da
 
 ## Attach to an existing session
 
-If a supported session is already running on the current machine, you can reattach to that same live session from a terminal:
+If a supported session is already running, you can reattach to that same live session from a terminal:
 
 ```bash
+happier attach
 happier attach <session-id>
 ```
 
-This is the main “start in the app, continue in the terminal” workflow.
+This is the main “start in the app, continue in the terminal” workflow. In a supported TTY, `happier attach` opens an interactive picker of active sessions:
 
-If the session has already stopped, use `happier resume` instead.
+- **local attachable sessions** are selectable immediately
+- **active but non-attachable sessions** stay visible but disabled with a reason
+- **remote-capable provider sessions** are marked as remote; press `P` in the picker to run a reachability check before attaching
+
+If the session is stopped, use `happier resume` instead.
 
 Important notes:
 
-- attach works only for sessions that were started on the current machine,
-- you must target the same Happier account/server profile that owns the session.
+- tmux and other terminal-host attach flows work only for sessions that are still owned by the current machine.
+- You must target the same Happier account/server profile that owns the session.
 
 Attach strategy depends on the provider:
 
-- some providers use Happier’s `tmux`-backed attach flow,
+- Some providers use Happier's `tmux`-backed attach flow.
 - OpenCode uses a provider-native attach flow for server-backed sessions.
 
 For OpenCode, the supported reattach command is still `happier attach <session-id>`. Do not rely on a raw vendor `opencode attach ...` command as your normal Happier workflow.

@@ -1,13 +1,13 @@
 ---
 title: Daemon
-description: Run Happier in the background for remote start, headless servers, and the embedded terminal.
+description: Run Happier in the background (sessions, remote control, headless servers).
 ---
 
 ## What is the daemon?
 
 The Happier **daemon** is a small background process that keeps Happier “available” on your machine.
 
-In practice, it’s what enables Happier to **start and manage sessions even when you don’t have a terminal open**. That matters for features like **remote start** (for example from the app or web UI): the daemon is the thing on your computer that can receive the request and launch the session locally.
+In practice, it’s what enables Happier to **start and manage sessions even when you don’t have a terminal open**. This is especially important for features like **remote start** (e.g. from the app/web UI): the daemon is the thing on your computer that can receive that request and launch the session locally.
 
 It also helps the CLI:
 
@@ -29,6 +29,34 @@ That is what allows Happier to:
 If the daemon is not running or the machine is unreachable, the embedded terminal cannot work.
 
 Full guide: [Embedded terminal](/docs/features/embedded-terminal).
+
+## Provider authentication support
+
+Provider login flows in provider settings also depend on the daemon because Happier runs the real provider CLI on the target machine.
+
+That is what allows Happier to:
+
+- launch provider login commands on the selected machine
+- stream the provider’s terminal output back into the app
+- detect URLs printed during login flows
+- refresh machine-local auth state after the login flow exits
+
+Full guide: [Provider authentication](/docs/features/provider-authentication).
+
+## Local memory search support
+
+Local memory search also depends on the daemon.
+
+That is what allows Happier to:
+
+- build the machine-local memory index
+- maintain light or deep transcript indexing in the background
+- run optional local embeddings models on the machine
+- query the local index from the app/web UI
+
+Because the index is daemon-local, memory search is scoped to the specific machine where the daemon runs.
+
+Full guide: [Local memory search](/docs/features/local-memory-search).
 
 ## When does it run?
 
