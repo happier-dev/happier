@@ -30,3 +30,4 @@ export function inferAgentIdFromSessionMetadata(metadata: unknown, fallback: Age
   return fallback;
 }
 
+export { inferAgentIdFromSessionMetadata as resolveAgentIdFromSessionMetadata };

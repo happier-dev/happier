@@ -174,6 +174,20 @@ export const PROVIDER_CLI_INSTALL_SPECS: Readonly<Record<AgentId, ProviderCliIns
       ],
     },
   },
+  kiro: {
+    id: 'kiro',
+    title: 'Kiro CLI',
+    binaries: ['kiro-cli'],
+    docsUrl: 'https://kiro.dev/docs/cli/acp/',
+    install: null,
+  },
+  customAcp: {
+    id: 'customAcp',
+    title: 'Custom ACP',
+    binaries: ['custom-acp'],
+    docsUrl: null,
+    install: null,
+  },
 } as const;
 
 export function getProviderCliInstallSpec(id: AgentId): ProviderCliInstallSpec {
