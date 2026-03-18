@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import * as protocol from '../index.js';
+import * as protocol from './contract.js';
 
 describe('sessionControl contract exports', () => {
   it('exports base and per-command envelope schemas', () => {
@@ -183,6 +183,31 @@ describe('sessionControl contract exports', () => {
       },
     });
     expect(byIdParsed.success).toBe(true);
+  });
+
+  it('accepts the extended session record counters used by newer session control payloads', () => {
+    const parsed = (protocol as any).V2SessionRecordSchema.safeParse({
+      id: 'sess_1',
+      seq: 12,
+      createdAt: 1,
+      updatedAt: 2,
+      active: true,
+      activeAt: 3,
+      archivedAt: null,
+      encryptionMode: 'e2ee',
+      metadata: 'm',
+      metadataVersion: 1,
+      agentState: null,
+      agentStateVersion: 0,
+      lastViewedSessionSeq: 11,
+      pendingPermissionRequestCount: 2,
+      pendingUserActionRequestCount: 3,
+      pendingCount: 5,
+      pendingVersion: 7,
+      dataEncryptionKey: null,
+    });
+
+    expect(parsed.success).toBe(true);
   });
 
   it('validates v2 session message responses', () => {
