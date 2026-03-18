@@ -15,6 +15,7 @@ export const sessionExecutionRunList = vi.fn();
 export const sessionExecutionRunGet = vi.fn();
 export const sessionExecutionRunSend = vi.fn();
 export const sessionExecutionRunStop = vi.fn();
+export const sessionRpcWithServerScope = vi.fn();
 export const createdAudioPlayers: any[] = [];
 export const deleteAsync = vi.fn(async () => {});
 export const expoSpeechSpeak = vi.fn();
@@ -48,6 +49,19 @@ export const resolveModelPackManifestUrl = vi.fn(() => 'https://example.com/mani
 export const setActiveServerAndSwitch = vi.fn(async (_params?: any) => false);
 export const refreshFromActiveServer = vi.fn(async () => {});
 export const routerNavigate = vi.fn();
+export const isRuntimeFeatureEnabled = vi.fn<(args: any) => Promise<boolean>>(async (_args) => true);
+export const resolveRuntimeFeatureDecision = vi.fn(async (args: any) => ({
+    featureId: args?.featureId,
+    state: 'enabled',
+    blockedBy: null,
+    blockerCode: 'none',
+    diagnostics: [],
+    evaluatedAt: Date.now(),
+    scope: {
+        scopeKind: 'runtime',
+        ...(args?.serverId ? { serverId: String(args.serverId) } : {}),
+    },
+}));
 
 let platformOs: 'ios' | 'web' = 'ios';
 let nextRecorderPrepareError: Error | null = null;
@@ -216,6 +230,8 @@ export async function flushMicrotasks(turns: number = 1) {
 vi.mock('@/sync/sync', () => ({
     sync: {
         sendMessage,
+        ensureSessionVisibleForMessageRoute: vi.fn(async () => {}),
+        refreshSessionMessages: vi.fn(async () => {}),
         patchSessionMetadataWithRetry: async (sessionId: string, patch: (metadata: any) => any) => {
             (patchSessionMetadataWithRetry as any)(sessionId, patch);
             const { storage } = await import('@/sync/domains/state/storage');
@@ -248,6 +264,10 @@ vi.mock('@/sync/ops/sessionExecutionRuns', () => ({
     sessionExecutionRunStop: (sessionId: string, request: any) => sessionExecutionRunStop(sessionId, request),
 }));
 
+vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedSessionRpc', () => ({
+    sessionRpcWithServerScope: (args: any) => sessionRpcWithServerScope(args),
+}));
+
 vi.mock('@/sync/domains/server/activeServerSwitch', () => ({
     setActiveServerAndSwitch: (params: any) => setActiveServerAndSwitch(params),
 }));
@@ -259,6 +279,11 @@ vi.mock('@/sync/domains/server/serverRuntime', () => ({
 
 vi.mock('@/auth/context/AuthContext', () => ({
     getCurrentAuth: () => ({ refreshFromActiveServer }),
+}));
+
+vi.mock('@/sync/domains/features/featureDecisionInputs', () => ({
+    isRuntimeFeatureEnabled: (args: any) => isRuntimeFeatureEnabled(args),
+    resolveRuntimeFeatureDecision: (args: any) => resolveRuntimeFeatureDecision(args),
 }));
 
 vi.mock('expo-router', () => ({
@@ -310,6 +335,9 @@ vi.mock('@/voice/modelPacks/manifests', () => ({
 vi.mock('react-native', () => ({
     View: 'View',
     Text: 'Text',
+    Dimensions: {
+        get: () => ({ width: 800, height: 600, scale: 2, fontScale: 1 }),
+    },
     Platform: {
         get OS() {
             return platformOs;
@@ -347,6 +375,7 @@ vi.mock('expo-audio', () => ({
             play: () => { },
             remove: () => { },
             __emit: (event: string, arg: any) => listeners.get(event)?.(arg),
+            __hasListener: (event: string) => listeners.has(event),
         };
         createdAudioPlayers.push(player);
         return player;
@@ -450,6 +479,7 @@ export function registerLocalVoiceEngineHarnessHooks() {
         daemonVoiceAgentCancelTurnStream.mockReset();
         daemonVoiceAgentCommit.mockReset();
         daemonVoiceAgentStop.mockReset();
+        sessionRpcWithServerScope.mockReset();
         platformOs = 'ios';
         createdAudioPlayers.length = 0;
         nextRecorderPrepareError = null;
@@ -485,6 +515,8 @@ export function registerLocalVoiceEngineHarnessHooks() {
             },
         });
         resolveModelPackManifestUrl.mockReturnValue('https://example.com/manifest.json');
+        isRuntimeFeatureEnabled.mockReset();
+        isRuntimeFeatureEnabled.mockResolvedValue(true);
         speechRecRecognitionAvailable = true;
         setExpoSpeechStubState({
             speakImpl: (...args: any[]) => (expoSpeechSpeak as any)(...args),
@@ -545,6 +577,8 @@ export function registerLocalVoiceEngineHarnessHooks() {
         daemonVoiceAgentCancelTurnStream.mockResolvedValue({ ok: true });
         daemonVoiceAgentCommit.mockResolvedValue({ commitText: 'Daemon commit' });
         daemonVoiceAgentStop.mockResolvedValue({ ok: true });
+        sessionExecutionRunStop.mockReset();
+        sessionExecutionRunStop.mockResolvedValue({ ok: true });
 
         const storage = await getStorage();
         storage.__setState({
