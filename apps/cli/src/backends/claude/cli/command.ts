@@ -1,18 +1,30 @@
-import { execFileSync } from 'node:child_process';
-
 import chalk from 'chalk';
 import { z } from 'zod';
+import { resolveWindowsCommandInvocation } from '@happier-dev/cli-common/process';
 
 import { PERMISSION_MODES, isPermissionMode } from '@/api/types';
 import { runClaude, type StartOptions } from '@/backends/claude/runClaude';
-import { claudeCliPath } from '@/backends/claude/claudeLocal';
+import { isClaudeCliJavaScriptFile } from '@/backends/claude/utils/resolveClaudeCliPath';
 import { readCredentials, readSettings } from '@/persistence';
 import { logger } from '@/ui/logger';
 import { authAndSetupMachineIfNeeded, ensureMachineIdForCredentials } from '@/ui/auth';
 import { bootstrapAccountSettingsContext } from '@/settings/accountSettings/bootstrapAccountSettingsContext';
+import { resolveSessionStartAccountSettingsContext } from '@/settings/accountSettings/resolveSessionStartAccountSettingsContext';
+import { resolveSessionStartAccountSettingsRefreshMode } from '@/settings/accountSettings/resolveSessionStartAccountSettingsRefreshMode';
+import { applyProfileToProcessEnv } from '@/settings/profiles/applyProfileToProcessEnv';
+import { buildProfileEnvOverlay } from '@/settings/profiles/buildProfileEnvOverlay';
+import { readProfilesFromAccountSettings } from '@/settings/profiles/readProfilesFromAccountSettings';
+import { resolveProfileForAgent } from '@/settings/profiles/resolveProfileForAgent';
 import { resolveProviderOutgoingMessageMetaExtras } from '@/settings/providerSettings';
 import { ensureDaemonRunningForSessionCommand, shouldAutoStartDaemonAfterAuth } from '@/daemon/ensureDaemon';
+import { isInteractiveTerminal } from '@/terminal/prompts/promptInput';
+import { promptSecret } from '@/terminal/prompts/promptSecret';
 import { configuration } from '@/configuration';
+import { buildRootHelpText } from '@/cli/buildRootHelpText';
+import { requireJavaScriptRuntimeExecutable } from '@/runtime/js/requireJavaScriptRuntimeExecutable';
+import { requireProviderCliLaunchSpec } from '@/runtime/managedTools/requireProviderCliLaunchSpec';
+import { readProviderCliOverride } from '@/runtime/managedTools/providerCliResolution';
+import { isBun } from '@/utils/runtime';
 import packageJson from '../../../../package.json';
 
 import type { CommandContext } from '@/cli/commandRegistry';
@@ -57,6 +69,7 @@ export async function handleClaudeCliCommand(context: CommandContext): Promise<v
   let showHelp = false;
   let showVersion = false;
   let refreshSettings = false;
+  let profileQuery: string | null = null;
   let chromeOverride: boolean | undefined = undefined;
   const unknownArgs: string[] = []; // Collect unknown args to pass through to claude
 
@@ -71,6 +84,25 @@ export async function handleClaudeCliCommand(context: CommandContext): Promise<v
       unknownArgs.push(arg);
     } else if (arg === '--refresh-settings') {
       refreshSettings = true;
+    } else if (arg === '--profile') {
+      if (i + 1 >= strippedArgs.length) {
+        console.error(chalk.red('Missing value for --profile (expected: profile id or name)'));
+        process.exit(1);
+      }
+      const raw = strippedArgs[++i];
+      const normalized = typeof raw === 'string' ? raw.trim() : '';
+      if (!normalized) {
+        console.error(chalk.red('Invalid --profile value: empty'));
+        process.exit(1);
+      }
+      profileQuery = normalized;
+    } else if (arg.startsWith('--profile=')) {
+      const normalized = arg.slice('--profile='.length).trim();
+      if (!normalized) {
+        console.error(chalk.red('Invalid --profile value: empty'));
+        process.exit(1);
+      }
+      profileQuery = normalized;
     } else if (arg === '--happy-starting-mode') {
       options.startingMode = z.enum(['local', 'remote']).parse(strippedArgs[++i]);
     } else if (arg === '--yolo') {
@@ -165,36 +197,7 @@ export async function handleClaudeCliCommand(context: CommandContext): Promise<v
   }
 
   if (showHelp) {
-    console.log(`
-${chalk.bold('happier')} - Claude Code On the Go
-
-${chalk.bold('Usage:')}
-\t  happier [options]         Start Claude with mobile control
-\t  happier auth              Manage authentication
-\t  happier codex             Start Codex mode
-\t  happier opencode          Start OpenCode mode (ACP)
-\t  happier gemini            Start Gemini mode (ACP)
-  happier connect           Connect AI vendor API keys
-  happier notify            Send push notification
-  happier daemon            Manage background service that allows
-                            to spawn new sessions away from your computer
-  happier doctor            System diagnostics & troubleshooting
-
-${chalk.bold('Examples:')}
-  happier                    Start session
-  happier --refresh-settings  Force-refresh account settings before starting
-  happier --yolo             Start with bypassing permissions
-                              happier sugar for --dangerously-skip-permissions
-  happier --chrome           Enable Chrome browser access for this session
-  happier --no-chrome        Disable Chrome even if default is on
-  happier --js-runtime bun   Use bun instead of node to spawn Claude Code
-  happier auth login --force Authenticate
-  happier doctor             Run diagnostics
-
-${chalk.bold('Server selection (global flags; prefix-only; no persistence):')}
-  happier --server <name-or-id> ...
-  happier --server-url <url> [--webapp-url <url>] [--public-server-url <url>] ...
-
+    console.log(`${buildRootHelpText()}
 ${chalk.bold('Happier supports ALL Claude options!')}
   Use any claude flag with happier as you would with claude. Our favorite:
 
@@ -206,10 +209,29 @@ ${chalk.bold.cyan('Claude Code Options (from `claude --help`):')}
 
     // Run claude --help and display its output
     try {
-      const claudeHelp = execFileSync(process.execPath, [claudeCliPath, '--help'], { encoding: 'utf8', windowsHide: true });
+      const { execFileSync } = await import('node:child_process');
+      const helpInvocation = await resolveClaudeHelpInvocation();
+      const claudeHelp = execFileSync(
+        helpInvocation.command,
+        helpInvocation.args,
+        {
+          encoding: 'utf8',
+          windowsHide: true,
+          ...(helpInvocation.env ? { env: helpInvocation.env } : {}),
+          ...(helpInvocation.windowsVerbatimArguments ? { windowsVerbatimArguments: true } : {}),
+          ...(configuration.vendorCliHelpTimeoutMs > 0 ? { timeout: configuration.vendorCliHelpTimeoutMs } : {}),
+        },
+      );
       console.log(claudeHelp);
-    } catch {
-      console.log(chalk.yellow('Could not retrieve claude help. Make sure claude is installed.'));
+    } catch (error) {
+      if (error instanceof ReferenceError) {
+        console.log(chalk.yellow(error.message));
+        if (readProviderCliOverride('claude')) {
+          process.exit(1);
+        }
+      } else {
+        console.log(chalk.yellow('Could not retrieve claude help. Make sure claude is installed.'));
+      }
     }
 
     process.exit(0);
@@ -228,7 +250,10 @@ ${chalk.bold.cyan('Claude Code Options (from `claude --help`):')}
 
   const startedBy = options.startedBy ?? 'terminal';
   const startingMode = options.startingMode ?? 'local';
-  const shouldPreferFastBootstrap = startedBy === 'terminal' && startingMode === 'local';
+  const isDaemonStartedRemoteSession = startedBy === 'daemon' && startingMode === 'remote';
+  const shouldPreferFastBootstrap = (startedBy === 'terminal' && startingMode === 'local') || isDaemonStartedRemoteSession;
+  const accountSettingsBootstrapMode = shouldPreferFastBootstrap ? 'fast' : 'blocking';
+  const shouldForceAccountSettingsRefresh = refreshSettings || isDaemonStartedRemoteSession;
 
   let credentials = await readCredentials();
   if (!credentials) {
@@ -236,7 +261,7 @@ ${chalk.bold.cyan('Claude Code Options (from `claude --help`):')}
     credentials = auth.credentials;
   } else {
     await ensureMachineIdForCredentials(credentials);
-    if (shouldAutoStartDaemonAfterAuth({ env: process.env, isDaemonProcess: configuration.isDaemonProcess })) {
+    if (shouldAutoStartDaemonAfterAuth({ env: process.env, isDaemonProcess: configuration.isDaemonProcess, startedBy })) {
       void ensureDaemonRunningForSessionCommand().catch((error) => {
         logger.debug('[claude] Failed to auto-start daemon (non-fatal)', error);
       });
@@ -247,15 +272,44 @@ ${chalk.bold.cyan('Claude Code Options (from `claude --help`):')}
     const snapshot = await bootstrapAccountSettingsContext({
       agentId: 'claude',
       credentials,
-      mode: shouldPreferFastBootstrap ? 'fast' : 'blocking',
-      refresh: refreshSettings ? 'force' : 'auto',
+      mode: accountSettingsBootstrapMode,
+      refresh: resolveSessionStartAccountSettingsRefreshMode({
+        mode: accountSettingsBootstrapMode,
+        refreshRequested: shouldForceAccountSettingsRefresh,
+      }),
+    });
+    const effectiveSnapshot = await resolveSessionStartAccountSettingsContext({
+      startedBy,
+      snapshot,
     });
     options.claudeRemoteMetaDefaults = resolveProviderOutgoingMessageMetaExtras({
       agentId: 'claude',
-      settings: snapshot.settings,
+      settings: effectiveSnapshot.settings,
       session: null,
     });
-    options.accountSettings = snapshot.settings;
+    options.accountSettings = effectiveSnapshot.settings;
+    if (profileQuery) {
+      const { customProfiles } = readProfilesFromAccountSettings(effectiveSnapshot.settings);
+      const profile = resolveProfileForAgent({ agentId: 'claude', query: profileQuery, customProfiles });
+      const promptSecretFn = startedBy !== 'daemon' && isInteractiveTerminal()
+        ? promptSecret
+        : null;
+      const overlay = await buildProfileEnvOverlay({
+        agentId: 'claude',
+        profile,
+        accountSettings: effectiveSnapshot.settings,
+        credentials,
+        processEnv: process.env,
+        promptSecretFn,
+        startedBy,
+      });
+      applyProfileToProcessEnv({ profileId: overlay.profileId, envOverlayExpanded: overlay.envOverlayExpanded });
+
+      if (typeof options.permissionMode !== 'string' && overlay.permissionModeSeed) {
+        options.permissionMode = overlay.permissionModeSeed;
+        options.permissionModeUpdatedAt = options.permissionModeUpdatedAt ?? Date.now();
+      }
+    }
     options.terminalRuntime = context.terminalRuntime;
     await runClaude(credentials, options);
   } catch (error) {
@@ -265,4 +319,41 @@ ${chalk.bold.cyan('Claude Code Options (from `claude --help`):')}
     }
     process.exit(1);
   }
+}
+
+async function resolveClaudeHelpInvocation(): Promise<{
+  command: string;
+  args: string[];
+  env?: NodeJS.ProcessEnv;
+  windowsVerbatimArguments?: boolean;
+}> {
+  const launch = requireProviderCliLaunchSpec('claude');
+  if (isClaudeCliJavaScriptFile(launch.resolvedPath)) {
+    const runtimeExecutable = await requireJavaScriptRuntimeExecutable({
+      isBunRuntime: isBun(),
+      targetLabel: 'Claude Code help',
+    });
+    const invocation = resolveWindowsCommandInvocation({
+      command: runtimeExecutable,
+      args: [launch.resolvedPath, '--help'],
+      env: process.env,
+    });
+    return {
+      command: invocation.command,
+      args: [...invocation.args],
+      env: process.env,
+      ...(invocation.windowsVerbatimArguments ? { windowsVerbatimArguments: true } : {}),
+    };
+  }
+
+  const invocation = resolveWindowsCommandInvocation({
+    command: launch.command,
+    args: [...launch.args, '--help'],
+    env: process.env,
+  });
+  return {
+    command: invocation.command,
+    args: [...invocation.args],
+    ...(invocation.windowsVerbatimArguments ? { windowsVerbatimArguments: true } : {}),
+  };
 }
