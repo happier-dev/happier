@@ -33,7 +33,7 @@ describe('core e2e: feature negotiation automations enablement', () => {
 
   it('keeps automation routes mounted when automations feature is enabled', async () => {
     const testDir = run.testDir('feature-negotiation-automations-enabled');
-    server = await startServerLight({ testDir });
+    server = await startServerLight({ testDir, dbProvider: 'sqlite' });
 
     const features = await fetchJson<any>(`${server.baseUrl}/v1/features`);
     expect(features.status).toBe(200);

@@ -42,7 +42,7 @@ describe('core e2e: automation actions', () => {
 
   async function startTestServer(testName: string): Promise<{ server: StartedServer; token: string }> {
     const testDir = run.testDir(testName);
-    const server = await startServerLight({ testDir });
+    const server = await startServerLight({ testDir, dbProvider: 'sqlite' });
     started.push(server);
     const auth = await createTestAuth(server.baseUrl);
     return { server, token: auth.token };
