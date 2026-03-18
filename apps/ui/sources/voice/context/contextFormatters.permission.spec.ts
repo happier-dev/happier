@@ -1,13 +1,14 @@
 import { describe, expect, it } from 'vitest';
 
-import { formatPermissionRequest } from './contextFormatters';
+import { formatPermissionRequest, summarizeAgentRequestForVoiceHuman } from './contextFormatters';
 
 describe('formatPermissionRequest (opt-out defaults)', () => {
   it('includes tool args by default', () => {
     const result = formatPermissionRequest('sess_1', 'req_1', 'execute', { secret: 'shh', path: '/tmp/a' });
     expect(result).toContain('<tool_name>execute</tool_name>');
     expect(result).toContain('<request_id>req_1</request_id>');
-    expect(result).toContain('session sess_1');
+    expect(result).not.toContain('sess_1');
+    expect(result).toContain('Coding assistant is requesting permission');
     expect(result).toContain('<tool_args>');
     expect(result).toContain('shh');
     expect(result).toContain('/tmp/a');
@@ -37,5 +38,37 @@ describe('formatPermissionRequest (opt-out defaults)', () => {
     expect(result).toContain('<tool_args>');
     expect(result).toContain('<path_redacted>');
     expect(result).not.toContain('/Users/alice/SecretRepo/README.md');
+  });
+
+  it('explicitly tells the voice agent to interrupt and wait for the user before using more tools', () => {
+    const result = formatPermissionRequest('sess_4', 'req_4', 'Bash', { command: 'rm -rf /tmp/x' });
+
+    expect(result).toContain('Interrupt your previous plan and tell the human about this request now.');
+    expect(result).toContain('Do not call any tools or send new coding-session work until the human answers approve or deny.');
+    expect(result).toContain('Ask the human to say approve or deny.');
+  });
+
+  it('creates a short human-facing permission summary for deterministic voice announcements', () => {
+    const result = summarizeAgentRequestForVoiceHuman('permission', 'req_4', 'Bash', { command: 'rm -rf /tmp/x' });
+
+    expect(result).toContain('needs permission');
+    expect(result).toContain('Run:');
+    expect(result).toContain('approve or deny');
+    expect(result).toContain('rm -rf /tmp/x');
+    expect(result).not.toContain('req_4');
+  });
+
+  it('redacts file paths inside the human-facing permission summary when file path sharing is disabled', () => {
+    const result = summarizeAgentRequestForVoiceHuman(
+      'permission',
+      'req_5',
+      'write',
+      { filepath: '/Users/alice/SecretRepo/src/private.ts' },
+      { voiceShareFilePaths: false },
+    );
+
+    expect(result).toContain('needs permission');
+    expect(result).toContain('<path_redacted>');
+    expect(result).not.toContain('/Users/alice/SecretRepo/src/private.ts');
   });
 });
