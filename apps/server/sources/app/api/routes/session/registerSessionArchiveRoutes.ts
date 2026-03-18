@@ -3,6 +3,8 @@ import { z } from "zod";
 import { checkSessionAccess, requireAccessLevel } from "@/app/share/accessControl";
 import { markSessionParticipantsChanged } from "@/app/session/changeTracking/markSessionParticipantsChanged";
 import { inTx } from "@/storage/inTx";
+import { didSessionActivityBadgeContributionChange } from "@/app/activity/accountActivityBadge";
+import { refreshSessionParticipantBadgePushes } from "@/app/activity/refreshAccountActivityBadgePushes";
 import { type Fastify } from "../../types";
 
 export function registerSessionArchiveRoutes(app: Fastify) {
@@ -29,7 +31,16 @@ export function registerSessionArchiveRoutes(app: Fastify) {
         const res = await inTx(async (tx) => {
             const session = await tx.session.findUnique({
                 where: { id: sessionId },
-                select: { id: true, active: true },
+                select: {
+                    id: true,
+                    seq: true,
+                    pendingCount: true,
+                    lastViewedSessionSeq: true,
+                    pendingPermissionRequestCount: true,
+                    pendingUserActionRequestCount: true,
+                    active: true,
+                    archivedAt: true,
+                },
             });
             if (!session) {
                 return { ok: false as const, error: "not-found" as const };
@@ -44,13 +55,21 @@ export function registerSessionArchiveRoutes(app: Fastify) {
                 select: { archivedAt: true },
             });
 
-            await markSessionParticipantsChanged({ tx, sessionId });
+            const participantCursors = await markSessionParticipantsChanged({ tx, sessionId });
 
             const archivedAt = updated.archivedAt?.getTime();
             if (!archivedAt) {
                 return { ok: false as const, error: "not-found" as const };
             }
-            return { ok: true as const, archivedAt };
+            return {
+                ok: true as const,
+                archivedAt,
+                participantCursors,
+                badgeAttentionChanged: didSessionActivityBadgeContributionChange(session, {
+                    ...session,
+                    archivedAt: new Date(archivedAt),
+                }),
+            };
         });
 
         if (!res.ok) {
@@ -59,6 +78,10 @@ export function registerSessionArchiveRoutes(app: Fastify) {
             return reply.code(404).send({ error: "Session not found" });
         }
 
+        await refreshSessionParticipantBadgePushes({
+            badgeAttentionChanged: res.badgeAttentionChanged,
+            participantCursors: res.participantCursors,
+        });
         return reply.send({ success: true, archivedAt: res.archivedAt });
     });
 
@@ -84,7 +107,16 @@ export function registerSessionArchiveRoutes(app: Fastify) {
         const res = await inTx(async (tx) => {
             const session = await tx.session.findUnique({
                 where: { id: sessionId },
-                select: { id: true },
+                select: {
+                    id: true,
+                    seq: true,
+                    pendingCount: true,
+                    lastViewedSessionSeq: true,
+                    pendingPermissionRequestCount: true,
+                    pendingUserActionRequestCount: true,
+                    active: true,
+                    archivedAt: true,
+                },
             });
             if (!session) {
                 return { ok: false as const };
@@ -96,15 +128,25 @@ export function registerSessionArchiveRoutes(app: Fastify) {
                 select: { id: true },
             });
 
-            await markSessionParticipantsChanged({ tx, sessionId });
-            return { ok: true as const };
+            const participantCursors = await markSessionParticipantsChanged({ tx, sessionId });
+            return {
+                ok: true as const,
+                participantCursors,
+                badgeAttentionChanged: didSessionActivityBadgeContributionChange(session, {
+                    ...session,
+                    archivedAt: null,
+                }),
+            };
         });
 
         if (!res.ok) {
             return reply.code(404).send({ error: "Session not found" });
         }
 
+        await refreshSessionParticipantBadgePushes({
+            badgeAttentionChanged: res.badgeAttentionChanged,
+            participantCursors: res.participantCursors,
+        });
         return reply.send({ success: true, archivedAt: null });
     });
 }
-

@@ -10,6 +10,7 @@ import { checkSessionAccess } from "@/app/share/accessControl";
 import { db } from "@/storage/db";
 import { randomKeyNaked } from "@/utils/keys/randomKeyNaked";
 import { resolveApiHotEndpointRateLimit } from "@/app/api/utils/apiRateLimitCatalog";
+import { refreshSessionParticipantBadgePushes } from "@/app/activity/refreshAccountActivityBadgePushes";
 import { type Fastify } from "../../types";
 
 type SessionStoredMessageContent = z.infer<typeof SessionStoredMessageContentSchema>;
@@ -309,6 +310,11 @@ export function registerSessionMessageRoutes(app: Fastify) {
                 });
             }));
         }
+
+        await refreshSessionParticipantBadgePushes({
+            badgeAttentionChanged: result.badgeAttentionChanged,
+            participantCursors: result.participantCursors,
+        });
 
         return reply.send({
             didWrite: result.didWrite,
