@@ -1,4 +1,5 @@
 import { parseBooleanEnv, parseIntEnv } from '@/config/env';
+import { MACHINE_TRANSFER_SERVER_ROUTED_MAX_BYTES_ENV_KEY, normalizeMachineTransferServerRoutedMaxBytes } from '@happier-dev/protocol';
 import { FEATURE_ENV_KEYS } from './featureEnvSchema';
 
 export type AutomationsFeatureEnv = Readonly<{
@@ -31,6 +32,20 @@ export type UpdatesFeatureEnv = Readonly<{
 
 export type AttachmentsUploadsFeatureEnv = Readonly<{
   enabled: boolean;
+}>;
+
+export type SessionHandoffFeatureEnv = Readonly<{
+  handoffEnabled: boolean;
+}>;
+
+export type MachineTransferFeatureEnv = Readonly<{
+  directPeerEnabled: boolean;
+  serverRoutedEnabled: boolean;
+  serverRoutedMaxBytes: number | null;
+}>;
+
+export type TerminalFeatureEnv = Readonly<{
+  embeddedPtyEnabled: boolean;
 }>;
 
 export type SocialFriendsFeatureEnv = Readonly<{
@@ -206,6 +221,28 @@ export function readUpdatesFeatureEnv(env: NodeJS.ProcessEnv): UpdatesFeatureEnv
 export function readAttachmentsUploadsFeatureEnv(env: NodeJS.ProcessEnv): AttachmentsUploadsFeatureEnv {
   return {
     enabled: parseBooleanEnv(env[FEATURE_ENV_KEYS.attachmentsUploadsEnabled], true),
+  };
+}
+
+export function readSessionHandoffFeatureEnv(env: NodeJS.ProcessEnv): SessionHandoffFeatureEnv {
+  return {
+    handoffEnabled: parseBooleanEnv(env[FEATURE_ENV_KEYS.sessionsHandoffEnabled], true),
+  };
+}
+
+export function readMachineTransferFeatureEnv(env: NodeJS.ProcessEnv): MachineTransferFeatureEnv {
+  return {
+    directPeerEnabled: parseBooleanEnv(env[FEATURE_ENV_KEYS.machinesTransferDirectPeerEnabled], true),
+    serverRoutedEnabled: parseBooleanEnv(env[FEATURE_ENV_KEYS.machinesTransferServerRoutedEnabled], true),
+    serverRoutedMaxBytes: normalizeMachineTransferServerRoutedMaxBytes(
+      env[FEATURE_ENV_KEYS.machinesTransferServerRoutedMaxBytes] ?? env[MACHINE_TRANSFER_SERVER_ROUTED_MAX_BYTES_ENV_KEY],
+    ),
+  };
+}
+
+export function readTerminalFeatureEnv(env: NodeJS.ProcessEnv): TerminalFeatureEnv {
+  return {
+    embeddedPtyEnabled: parseBooleanEnv(env[FEATURE_ENV_KEYS.terminalEmbeddedPtyEnabled], true),
   };
 }
 

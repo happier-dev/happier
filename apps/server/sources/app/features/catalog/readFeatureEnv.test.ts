@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
+import * as readFeatureEnv from './readFeatureEnv';
 import { readAuthFeatureEnv, readConnectedServicesFeatureEnv } from './readFeatureEnv';
 
 describe('readConnectedServicesFeatureEnv', () => {
@@ -7,6 +8,70 @@ describe('readConnectedServicesFeatureEnv', () => {
     const env: NodeJS.ProcessEnv = {};
     const res = readConnectedServicesFeatureEnv(env);
     expect(res.quotasEnabled).toBe(true);
+  });
+});
+
+describe('readTerminalFeatureEnv', () => {
+  it('defaults embeddedPtyEnabled to true when env is unset', () => {
+    const readTerminalFeatureEnv = (readFeatureEnv as Record<string, unknown>).readTerminalFeatureEnv as (env: NodeJS.ProcessEnv) => {
+      embeddedPtyEnabled: boolean;
+    };
+    expect(typeof readTerminalFeatureEnv).toBe('function');
+
+    const env: NodeJS.ProcessEnv = {};
+    const res = readTerminalFeatureEnv(env);
+    expect(res.embeddedPtyEnabled).toBe(true);
+  });
+});
+
+describe('readSessionHandoffFeatureEnv', () => {
+  it('defaults handoffEnabled to true when env is unset', () => {
+    const readSessionHandoffFeatureEnv = (readFeatureEnv as Record<string, unknown>).readSessionHandoffFeatureEnv as (
+      env: NodeJS.ProcessEnv,
+    ) => {
+      handoffEnabled: boolean;
+    };
+    expect(typeof readSessionHandoffFeatureEnv).toBe('function');
+
+    const env: NodeJS.ProcessEnv = {};
+    const res = readSessionHandoffFeatureEnv(env);
+    expect(res.handoffEnabled).toBe(true);
+  });
+});
+
+describe('readMachineTransferFeatureEnv', () => {
+  it('defaults directPeerEnabled and serverRoutedEnabled to true when env is unset', () => {
+    const readMachineTransferFeatureEnv = (readFeatureEnv as Record<string, unknown>).readMachineTransferFeatureEnv as (
+      env: NodeJS.ProcessEnv,
+    ) => {
+      directPeerEnabled: boolean;
+      serverRoutedEnabled: boolean;
+      serverRoutedMaxBytes: number | null;
+    };
+    expect(typeof readMachineTransferFeatureEnv).toBe('function');
+
+    const env: NodeJS.ProcessEnv = {};
+    const res = readMachineTransferFeatureEnv(env);
+    expect(res.directPeerEnabled).toBe(true);
+    expect(res.serverRoutedEnabled).toBe(true);
+    expect(res.serverRoutedMaxBytes).toBeNull();
+  });
+
+  it('reads serverRoutedMaxBytes from env when configured', () => {
+    const readMachineTransferFeatureEnv = (readFeatureEnv as Record<string, unknown>).readMachineTransferFeatureEnv as (
+      env: NodeJS.ProcessEnv,
+    ) => {
+      directPeerEnabled: boolean;
+      serverRoutedEnabled: boolean;
+      serverRoutedMaxBytes: number | null;
+    };
+    expect(typeof readMachineTransferFeatureEnv).toBe('function');
+
+    const env: NodeJS.ProcessEnv = {
+      HAPPIER_FEATURE_MACHINES_TRANSFER_SERVER_ROUTED__MAX_BYTES: '8192',
+    };
+    const res = readMachineTransferFeatureEnv(env);
+    expect(res.serverRoutedMaxBytes).toBe(8192);
   });
 });
 

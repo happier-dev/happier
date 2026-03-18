@@ -10,6 +10,9 @@ import { resolveAuthFeature } from '@/app/features/authFeature';
 import { resolveConnectedServicesFeature } from '@/app/features/connectedServicesFeature';
 import { resolveUpdatesFeature } from '@/app/features/updatesFeature';
 import { resolveAttachmentsUploadsFeature } from '@/app/features/attachmentsUploadsFeature';
+import { resolveMachineTransferFeature } from '@/app/features/machineTransferFeature';
+import { resolveSessionHandoffFeature } from '@/app/features/sessionHandoffFeature';
+import { resolveTerminalFeature } from '@/app/features/terminalFeature';
 import { resolveEncryptionFeature } from '@/app/features/encryptionFeature';
 import { resolveE2eeFeature } from '@/app/features/e2eeFeature';
 import { resolveServerUrlCapabilitiesFeature } from '@/app/features/serverUrlCapabilitiesFeature';
@@ -27,6 +30,9 @@ export const serverFeatureRegistry: readonly ServerFeatureResolver[] = Object.fr
     (env) => resolveConnectedServicesFeature(env),
     (env) => resolveUpdatesFeature(env),
     (env) => resolveAttachmentsUploadsFeature(env),
+    (env) => resolveMachineTransferFeature(env),
+    (env) => resolveSessionHandoffFeature(env),
+    (env) => resolveTerminalFeature(env),
     (env) => resolveFriendsFeature(env),
     (env) => resolveOAuthFeature(env),
     (env) => resolveAuthFeature(env),
