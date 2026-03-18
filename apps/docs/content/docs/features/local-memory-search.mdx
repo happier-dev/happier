@@ -1,0 +1,244 @@
+---
+title: Local memory search
+description: Build a device-local memory index on a machine, search past conversation context, and optionally improve deep ranking with local or remote embeddings.
+---
+
+Local memory search lets Happier build a **machine-local search index** from your decrypted session transcripts on a specific daemon-connected machine.
+
+Use it when you want Happier to answer questions such as:
+
+- “Do you remember when we discussed this?”
+- “Find the session where we talked about OpenCode quotas.”
+- “Show me the earlier conversation about the daemon memory plan.”
+
+## What it does
+
+When local memory search is enabled on a machine, Happier can:
+
+- build and maintain a **local derived index** from that machine’s transcripts
+- search that index from the app/web UI
+- open the matching session at the relevant conversation point
+- let coding and voice agents use memory tools for recall instead of guessing from model memory
+
+This is intentionally **device-local**. It is not a server-side global search index.
+
+## Where to find it
+
+In the app/web UI:
+
+1. Open **Settings → Memory search**
+2. Pick the machine you want to configure
+3. Enable memory search for that machine
+
+To search:
+
+1. Open **Local Memory Search**
+2. Pick the machine
+3. Enter a query
+4. Open a result to jump back into the matching session context
+
+If you do not see the feature yet, enable the `memory.search` feature in **Settings → Features**.
+
+## Important model: machine-local, not account-global
+
+Memory search is scoped to the **selected machine**.
+
+That means:
+
+- each machine has its own index
+- a laptop and a remote dev box do **not** automatically share one memory index
+- if a machine is offline, Happier cannot query its local memory index
+- remote embeddings settings are also machine-local, not shared globally
+
+This design is deliberate:
+
+- transcript decryption already happens on the client / daemon side
+- the derived memory index stays on the machine that built it
+- users can choose different storage and embeddings settings per machine
+
+## Light vs deep indexing
+
+Happier supports two indexing modes.
+
+### Light
+
+Light mode stores **summary shards** only.
+
+Use it when you want:
+
+- lower disk usage
+- faster background maintenance
+- a lighter-weight recall layer
+
+This is the recommended starting point if you mainly want broad recall and do not need the richest transcript search.
+
+### Deep
+
+Deep mode stores **message chunks** locally.
+
+Use it when you want:
+
+- stronger recall over real conversation content
+- better search quality for specific topics, decisions, or snippets
+- optional embeddings-based reranking
+
+Deep mode uses more disk and can take longer to backfill.
+
+## Backfill behavior
+
+When you turn local memory search on, you can choose how much history Happier should index:
+
+- **New only** — index only content created after enabling memory search
+- **Last 30 days** — backfill recent history
+- **All history** — backfill everything available on that machine
+
+If you want the fastest, lowest-risk rollout, start with **New only**.
+
+If you want older conversations to be searchable immediately, use **Last 30 days** or **All history**.
+
+## Memory hint generation
+
+Light mode relies on **memory hints** (summary shards).
+
+You can configure:
+
+- the summarizer backend
+- the summarizer model
+- whether summarization runs with `no tools` or `read only` permissions
+
+This is useful if you want memory hints to run through a specific backend or model already available on that machine.
+
+## Embeddings in deep mode
+
+Embeddings are optional and only apply to **deep** indexing mode.
+
+Without embeddings:
+
+- Happier still performs deep search
+- ranking falls back to text-based matching only
+
+With embeddings:
+
+- Happier can improve deep-search ranking
+- the embeddings layer is blended with text ranking
+
+## Embeddings presets
+
+Happier currently exposes these modes:
+
+- **Off** — deep search uses text-only ranking
+- **Balanced** — `Xenova/all-MiniLM-L6-v2`
+- **Long context** — `Xenova/jina-embeddings-v2-small-en`
+- **Quality** — `Alibaba-NLP/gte-modernbert-base`
+- **Custom** — choose your own local model or OpenAI-compatible endpoint
+
+`Balanced` is the default because it has the safest validated first-run profile:
+- smaller download
+- lower cold-start cost
+- good overall retrieval quality
+
+`Long context` works well and is often a better fit for larger transcript chunks, but it still has a heavier first-use cost than the default.
+
+`Quality` is the heaviest preset and is best treated as an evaluation / advanced option.
+
+## Local embeddings
+
+For local presets and custom local models:
+
+- Happier manages the local runtime itself
+- the model downloads on first use
+- after that, the model runs locally from the daemon cache
+
+Users do **not** need to install Python, Ollama, sentence-transformers, or another separate embeddings service.
+
+## Custom remote embeddings
+
+Advanced users can choose **Custom → OpenAI-compatible endpoint**.
+
+That lets you provide:
+
+- a base URL
+- an API key
+- a remote embeddings model
+- optional dimensions
+
+This is useful if you already operate your own embeddings service or want to use an OpenAI-compatible endpoint instead of a local model.
+
+Important details:
+
+- the remote settings are **machine-local**
+- the API key is stored in the daemon’s local sealed settings, not as plaintext
+- if the remote endpoint is unavailable or misconfigured, Happier falls back safely to text-only ranking instead of breaking memory search
+
+## Privacy and cleanup
+
+Local memory search is designed around derived local data.
+
+When enabled, Happier stores local indexes such as:
+
+- the light index database
+- the deep index database
+- optional local model caches
+
+You can enable **Delete on disable** to remove local indexes and caches when memory search is turned off on that machine.
+
+## What agents do with it
+
+When memory search is available and usable, Happier prompts its agents to use memory tools for recall requests.
+
+In practice, that means:
+
+- if you ask “do you remember when we discussed X?”, the agent should search memory first
+- if it finds a likely hit, it can fetch the matching window before answering
+- if memory search finds nothing, the agent should say that clearly instead of inventing an answer
+
+This applies to both normal coding sessions and voice flows when memory search is available on the target machine.
+
+## Typical use cases
+
+### Find an earlier design discussion
+
+Use **Local Memory Search** when you remember the topic but not the exact session.
+
+Example:
+
+- “Find where we discussed connected-service quotas.”
+
+### Re-open an old session at the right moment
+
+Search for a topic, then open the hit to jump back to the matching part of the transcript instead of scrolling through the full session manually.
+
+### Improve recall on a primary work machine
+
+Enable deep indexing and a local embeddings preset on the machine where most of your sessions run.
+
+### Keep a remote dev box searchable
+
+Enable memory search separately on a remote machine if that is where the daemon actually runs your sessions.
+
+## Limitations and expectations
+
+- Local memory search is **not** a server-wide shared search index.
+- Search quality depends on what has already been indexed on the selected machine.
+- Deep indexing and embeddings can take time after first enablement or after switching models.
+- Remote embeddings are an advanced option and depend on your endpoint behaving like an OpenAI-compatible embeddings API.
+
+## Recommended setup
+
+For most users:
+
+1. Enable memory search on your main machine
+2. Start with **Light** or **Deep + Balanced**
+3. Use **New only** first
+4. Turn on **Delete on disable** if you want easy cleanup
+
+Switch to **Long context** if your conversations are long and you want stronger recall over larger transcript chunks.
+
+Use **Custom remote** only if you intentionally want to bring your own embeddings endpoint.
+
+## Related guides
+
+- [Daemon](/docs/clients/daemon)
+- [App](/docs/clients/app)
+- [Feature matrix](/docs/features/feature-matrix)
+- [Server feature flags](/docs/features/feature-flags)
