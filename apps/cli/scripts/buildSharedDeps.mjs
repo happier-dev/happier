@@ -29,18 +29,18 @@ export function resolveTscBin({ exists } = {}) {
     ? [
         // Windows: prefer cmd shims when present.
         resolve(repoRoot, 'node_modules', '.bin', binName),
-        resolve(repoRoot, 'cli', 'node_modules', '.bin', binName),
+        resolve(repoRoot, 'apps', 'cli', 'node_modules', '.bin', binName),
         // Fallback: allow executing the JS entry via Node if shims are missing.
         resolve(repoRoot, 'node_modules', 'typescript', 'bin', 'tsc'),
-        resolve(repoRoot, 'cli', 'node_modules', 'typescript', 'bin', 'tsc'),
+        resolve(repoRoot, 'apps', 'cli', 'node_modules', 'typescript', 'bin', 'tsc'),
       ]
     : [
         // Prefer the real TypeScript entrypoint over node_modules/.bin symlinks.
         // On macOS, workspace-hoisted `.bin/*` symlinks can intermittently fail with ENOENT.
         resolve(repoRoot, 'node_modules', 'typescript', 'bin', 'tsc'),
-        resolve(repoRoot, 'cli', 'node_modules', 'typescript', 'bin', 'tsc'),
+        resolve(repoRoot, 'apps', 'cli', 'node_modules', 'typescript', 'bin', 'tsc'),
         resolve(repoRoot, 'node_modules', '.bin', binName),
-        resolve(repoRoot, 'cli', 'node_modules', '.bin', binName),
+        resolve(repoRoot, 'apps', 'cli', 'node_modules', '.bin', binName),
       ];
 
   for (const candidate of candidates) {
@@ -51,6 +51,7 @@ export function resolveTscBin({ exists } = {}) {
 }
 
 const tscBin = resolveTscBin();
+export const sharedWorkspacePackageNames = ['agents', 'cli-common', 'protocol', 'release-runtime'];
 
 export function runTsc(tsconfigPath, opts) {
   const exec = opts?.execFileSync ?? execFileSync;
@@ -78,7 +79,7 @@ export function syncBundledWorkspaceDist(opts = {}) {
   const cp = opts.cpSync ?? cpSync;
   const readFile = opts.readFileSync ?? readFileSync;
   const writeFile = opts.writeFileSync ?? writeFileSync;
-  const packages = Array.isArray(opts.packages) && opts.packages.length > 0 ? opts.packages : ['agents', 'cli-common', 'protocol'];
+  const packages = Array.isArray(opts.packages) && opts.packages.length > 0 ? opts.packages : sharedWorkspacePackageNames;
 
   for (const pkg of packages) {
     const srcDist = resolve(repoRoot, 'packages', pkg, 'dist');
@@ -134,9 +135,9 @@ function sanitizeBundledWorkspacePackageJson(raw) {
 }
 
 export function main() {
-  runTsc(resolve(repoRoot, 'packages', 'agents', 'tsconfig.json'));
-  runTsc(resolve(repoRoot, 'packages', 'cli-common', 'tsconfig.json'));
-  runTsc(resolve(repoRoot, 'packages', 'protocol', 'tsconfig.json'));
+  for (const pkg of sharedWorkspacePackageNames) {
+    runTsc(resolve(repoRoot, 'packages', pkg, 'tsconfig.json'));
+  }
 
   const protocolDist = resolve(repoRoot, 'packages', 'protocol', 'dist', 'index.js');
   if (!existsSync(protocolDist)) {

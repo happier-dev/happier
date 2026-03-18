@@ -1,7 +1,12 @@
 import { describe, expect, it, vi } from 'vitest';
 import { sep } from 'node:path';
 
-import { resolveTscBin, runTsc, syncBundledWorkspaceDist } from '../buildSharedDeps.mjs';
+import {
+  resolveTscBin,
+  runTsc,
+  sharedWorkspacePackageNames,
+  syncBundledWorkspaceDist,
+} from '../buildSharedDeps.mjs';
 
 describe('buildSharedDeps', () => {
   it('surfaces which tsconfig failed when compilation throws', () => {
@@ -41,6 +46,15 @@ describe('buildSharedDeps', () => {
 
     expect(bin).toMatch(/node_modules/);
     expect(bin).not.toMatch(/cli[\\/]+node_modules/);
+  });
+
+  it('prefers the CLI-local tsc binary when the workspace root binary is unavailable', () => {
+    const bin = resolveTscBin({
+      exists: (candidate: string) =>
+        candidate.includes(`${sep}apps${sep}cli${sep}node_modules${sep}typescript${sep}bin${sep}`),
+    });
+
+    expect(bin).toContain(`${sep}apps${sep}cli${sep}node_modules${sep}typescript${sep}bin${sep}tsc`);
   });
 
   it('executes tsc via node to avoid .bin symlink ENOENT issues', () => {
@@ -107,5 +121,37 @@ describe('buildSharedDeps', () => {
     const parsed = JSON.parse(String(payload));
     expect(parsed.exports?.['./installables']).toBeTruthy();
     expect(parsed.private).toBe(true);
+  });
+
+  it('includes release-runtime in the shared workspace sync list by default', () => {
+    expect(sharedWorkspacePackageNames).toContain('release-runtime');
+
+    const cpSync = vi.fn(() => undefined);
+    const existsSync = vi.fn((p: any) =>
+      String(p).includes('/apps/cli/node_modules/@happier-dev/release-runtime/dist') ||
+      String(p).endsWith('/apps/cli/node_modules/@happier-dev/release-runtime/package.json'),
+    );
+    const readFileSync = vi.fn(() =>
+      JSON.stringify({
+        name: '@happier-dev/release-runtime',
+        version: '0.0.0',
+        type: 'module',
+        exports: { '.': { default: './dist/index.js' } },
+      }),
+    );
+    const writeFileSync = vi.fn(() => undefined);
+
+    syncBundledWorkspaceDist({
+      repoRoot: '/repo',
+      cpSync,
+      existsSync,
+      readFileSync,
+      writeFileSync,
+    });
+
+    expect(cpSync).toHaveBeenCalledTimes(1);
+    const [src, dest] = cpSync.mock.calls[0] ?? [];
+    expect(src).toBe('/repo/packages/release-runtime/dist');
+    expect(dest).toBe('/repo/apps/cli/node_modules/@happier-dev/release-runtime/dist');
   });
 });
