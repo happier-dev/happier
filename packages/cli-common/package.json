@@ -30,6 +30,10 @@
       "types": "./dist/providers/index.d.ts",
       "default": "./dist/providers/index.js"
     },
+    "./providers/managedJavaScriptRuntime": {
+      "types": "./dist/providers/managedJavaScriptRuntime.d.ts",
+      "default": "./dist/providers/managedJavaScriptRuntime.js"
+    },
     "./tailscale": {
       "types": "./dist/tailscale/index.d.ts",
       "default": "./dist/tailscale/index.js"
@@ -37,6 +41,14 @@
     "./process": {
       "types": "./dist/process/index.d.ts",
       "default": "./dist/process/index.js"
+    },
+    "./componentArtifacts": {
+      "types": "./dist/componentArtifacts/index.d.ts",
+      "default": "./dist/componentArtifacts/index.js"
+    },
+    "./firstPartyRuntime": {
+      "types": "./dist/firstPartyRuntime/index.d.ts",
+      "default": "./dist/firstPartyRuntime/index.js"
     }
   },
   "files": [
@@ -46,14 +58,16 @@
   ],
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "test": "yarn -s build && HAPPIER_FEATURE_POLICY_ENV= node --test \"tests/*.test.mjs\"",
+    "test": "yarn -s build && vitest run --config vitest.config.ts && HAPPIER_FEATURE_POLICY_ENV= node --test \"tests/*.test.mjs\"",
     "postinstall:real": "yarn -s build",
     "postinstall": "node -e \"const fs=require('fs');const cp=require('child_process');if(/(^|[\\\\\\\\/])node_modules([\\\\\\\\/]|$)/i.test(process.cwd()))process.exit(0);try{const gate=require('../../scripts/postinstall/shouldRunPostinstall.cjs');if(!gate.shouldRunPostinstall({workspace:'cli-common',scope:process.env.HAPPIER_INSTALL_SCOPE||''}))process.exit(0);}catch{}if(!fs.existsSync('tsconfig.json'))process.exit(0);const run=(cmd,args)=>cp.spawnSync(cmd,args,{stdio:'inherit'});const npmExec=process.env.npm_execpath;let r;if(npmExec){r=run(process.execPath,[npmExec,'run','-s','postinstall:real']);}else{r=run(process.platform==='win32'?'yarn.cmd':'yarn',['-s','postinstall:real']);if(r.error&&process.platform==='win32'){r=run('yarn',['-s','postinstall:real']);}}if(r.error){console.error(r.error.message);process.exit(1);}process.exit(r.status??1);\""
   },
   "dependencies": {
-    "@happier-dev/agents": "0.0.0"
+    "@happier-dev/agents": "0.0.0",
+    "@happier-dev/release-runtime": "0.0.0"
   },
   "devDependencies": {
+    "vitest": "^3.2.4",
     "typescript": "^5.9.2"
   }
 }

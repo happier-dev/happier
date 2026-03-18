@@ -1,4 +1,4 @@
-import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { dirname, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -22,6 +22,18 @@ function readJson(path: string): any {
 
 function writeJson(path: string, value: any): void {
   writeFileSync(path, `${JSON.stringify(value, null, 2)}\n`, 'utf8');
+}
+
+function sleepSync(ms: number): void {
+  if (!ms || ms <= 0) return;
+  const buf = new SharedArrayBuffer(4);
+  const arr = new Int32Array(buf);
+  Atomics.wait(arr, 0, 0, ms);
+}
+
+function isRetryableRmError(err: unknown): boolean {
+  const code = err && typeof err === 'object' ? Reflect.get(err, 'code') : null;
+  return code === 'ENOTEMPTY' || code === 'EBUSY' || code === 'EPERM' || code === 'EACCES';
 }
 
 export function sanitizeBundledPackageJson(raw: any): any {
@@ -55,8 +67,39 @@ export function sanitizeBundledPackageJson(raw: any): any {
   };
 }
 
+export function rmDirSafeSync(
+  path: string,
+  opts: Readonly<{
+    recursive?: boolean;
+    force?: boolean;
+    retries?: number;
+    delayMs?: number;
+    rmSyncImpl?: typeof rmSync;
+  }> = {},
+): void {
+  const {
+    recursive = true,
+    force = true,
+    retries = 5,
+    delayMs = 25,
+    rmSyncImpl = rmSync,
+  } = opts;
+
+  const maxAttempts = Math.max(1, Number.isFinite(retries) ? retries + 1 : 1);
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    try {
+      rmSyncImpl(path, { recursive, force });
+      return;
+    } catch (error) {
+      if (!isRetryableRmError(error) || attempt === maxAttempts - 1) throw error;
+      sleepSync(delayMs);
+    }
+  }
+}
+
 function resetDir(path: string): void {
-  rmSync(path, { recursive: true, force: true });
+  removeStaleBundledWorkspaceTempDirs(path);
+  rmDirSafeSync(path);
   mkdirSync(path, { recursive: true });
 }
 
@@ -64,6 +107,20 @@ function copyIfExists(src: string, dest: string): boolean {
   if (!existsSync(src)) return false;
   cpSync(src, dest, { recursive: true });
   return true;
+}
+
+function isBundledWorkspaceTempDirName(name: string): boolean {
+  return name.startsWith('dist.__sync_tmp__.') || name.startsWith('dist.__sync_backup__.');
+}
+
+function removeStaleBundledWorkspaceTempDirs(targetDir: string): void {
+  if (!existsSync(targetDir)) return;
+
+  for (const entry of readdirSync(targetDir, { withFileTypes: true })) {
+    if (!entry.isDirectory()) continue;
+    if (!isBundledWorkspaceTempDirName(entry.name)) continue;
+    rmDirSafeSync(resolve(targetDir, entry.name));
+  }
 }
 
 export function bundleWorkspacePackage(params: Readonly<{
@@ -112,6 +169,49 @@ export function bundleWorkspacePackages(params: Readonly<{
   }
 }
 
+function readBundledDependencyNames(rawPackageJson: any): string[] {
+  const bundledDependencies = Array.isArray(rawPackageJson?.bundledDependencies)
+    ? rawPackageJson.bundledDependencies
+    : Array.isArray(rawPackageJson?.bundleDependencies)
+      ? rawPackageJson.bundleDependencies
+      : [];
+
+  return bundledDependencies
+    .map((value: unknown) => (typeof value === 'string' ? value.trim() : ''))
+    .filter((value: string) => value.length > 0);
+}
+
+export function resolveWorkspaceBundlesFromPackageJson(params: Readonly<{
+  repoRoot: string;
+  hostPackageDir: string;
+}>): ReadonlyArray<{
+  packageName: string;
+  srcDir: string;
+  destDir: string;
+}> {
+  const hostPackageJsonPath = resolve(params.hostPackageDir, 'package.json');
+  if (!existsSync(hostPackageJsonPath)) {
+    throw new Error(`Missing host package.json: ${hostPackageJsonPath}`);
+  }
+
+  const hostPackageJson = readJson(hostPackageJsonPath);
+  const bundledWorkspaceNames = readBundledDependencyNames(hostPackageJson)
+    .filter((packageName) => packageName.startsWith('@happier-dev/'));
+
+  return bundledWorkspaceNames.map((packageName) => {
+    const workspaceName = packageName.split('/').at(-1);
+    if (!workspaceName) {
+      throw new Error(`Unable to resolve workspace name from bundled dependency: ${packageName}`);
+    }
+
+    return {
+      packageName,
+      srcDir: resolve(params.repoRoot, 'packages', workspaceName),
+      destDir: resolve(params.hostPackageDir, 'node_modules', ...packageName.split('/')),
+    };
+  });
+}
+
 function collectExternalRuntimeDepNamesFromPackageJson(packageJson: any): ReadonlyArray<{ name: string; optional: boolean }> {
   const deps = packageJson?.dependencies ?? {};
   const optionalDeps = packageJson?.optionalDependencies ?? {};
@@ -131,7 +231,49 @@ function resolveInstalledPackage(params: Readonly<{ require: NodeRequire; packag
   packageJsonPath: string;
   packageJson: any;
 }> {
-  const resolvedEntry = params.require.resolve(params.packageName);
+  const searchPaths = params.require.resolve.paths(params.packageName) ?? [];
+  let aliasInstalledPackage:
+    | Readonly<{
+        packageDir: string;
+        packageJsonPath: string;
+        packageJson: any;
+      }>
+    | undefined;
+  for (const searchPath of searchPaths) {
+    const packageJsonPath = resolve(searchPath, ...params.packageName.split('/'), 'package.json');
+    if (!existsSync(packageJsonPath)) continue;
+    const packageJson = readJson(packageJsonPath);
+    if (packageJson?.name === params.packageName) {
+      return {
+        packageDir: dirname(packageJsonPath),
+        packageJsonPath,
+        packageJson,
+      };
+    }
+
+    // npm alias installs keep the alias folder name on disk while package.json preserves
+    // the canonical upstream package name. Vendoring needs the on-disk folder, not an exact
+    // name match, so keep the first directly-installed alias candidate as a fallback.
+    if (!aliasInstalledPackage) {
+      aliasInstalledPackage = {
+        packageDir: dirname(packageJsonPath),
+        packageJsonPath,
+        packageJson,
+      };
+    }
+  }
+
+  if (aliasInstalledPackage) {
+    return aliasInstalledPackage;
+  }
+
+  let resolvedEntry = '';
+  try {
+    resolvedEntry = params.require.resolve(`${params.packageName}/package.json`);
+  } catch {
+    resolvedEntry = params.require.resolve(params.packageName);
+  }
+
   let dir = dirname(resolvedEntry);
 
   for (let i = 0; i < 50; i++) {
@@ -153,12 +295,13 @@ function resolveInstalledPackage(params: Readonly<{ require: NodeRequire; packag
 
 function vendorRuntimeDependencyTree(params: Readonly<{
   packageJsonPath: string;
+  resolveFromPackageJsonPath?: string;
   destNodeModulesDir: string;
   visited?: Set<string>;
 }>): void {
   const pkgJson = readJson(params.packageJsonPath);
   const roots = collectExternalRuntimeDepNamesFromPackageJson(pkgJson);
-  const require = createRequire(pathToFileURL(params.packageJsonPath).href);
+  const require = createRequire(pathToFileURL(params.resolveFromPackageJsonPath ?? params.packageJsonPath).href);
 
   const visited = params.visited ?? new Set<string>();
   mkdirSync(params.destNodeModulesDir, { recursive: true });
@@ -189,6 +332,7 @@ function vendorRuntimeDependencyTree(params: Readonly<{
 
 export function vendorBundledPackageRuntimeDependencies(params: Readonly<{
   srcPackageJsonPath: string;
+  resolveFromPackageJsonPath?: string;
   destPackageDir: string;
 }>): void {
   if (!existsSync(params.srcPackageJsonPath)) {
@@ -197,6 +341,26 @@ export function vendorBundledPackageRuntimeDependencies(params: Readonly<{
 
   vendorRuntimeDependencyTree({
     packageJsonPath: params.srcPackageJsonPath,
+    resolveFromPackageJsonPath: params.resolveFromPackageJsonPath,
     destNodeModulesDir: resolve(params.destPackageDir, 'node_modules'),
+  });
+}
+
+export function bundleInstalledPackageWithRuntimeDependencies(params: Readonly<{
+  packageName: string;
+  resolveFromPackageJsonPath: string;
+  destNodeModulesDir: string;
+}>): void {
+  const require = createRequire(pathToFileURL(params.resolveFromPackageJsonPath).href);
+  const resolved = resolveInstalledPackage({ require, packageName: params.packageName });
+  const destPackageDir = resolve(params.destNodeModulesDir, ...params.packageName.split('/'));
+
+  resetDir(destPackageDir);
+  cpSync(resolved.packageDir, destPackageDir, { recursive: true, dereference: true });
+
+  vendorRuntimeDependencyTree({
+    packageJsonPath: resolved.packageJsonPath,
+    resolveFromPackageJsonPath: resolved.packageJsonPath,
+    destNodeModulesDir: resolve(destPackageDir, 'node_modules'),
   });
 }
