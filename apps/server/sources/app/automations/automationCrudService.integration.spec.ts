@@ -452,6 +452,89 @@ describe("automationCrudService (integration)", () => {
         ).rejects.toThrow(/resumable/i);
     });
 
+    it("allows existing_session automation when the target session is plain and resumable", async () => {
+        const account = await db.account.create({
+            data: { publicKey: "pk-automation-crud-existing-session-plain-resume" },
+            select: { id: true },
+        });
+        await db.machine.create({
+            data: {
+                id: "machine-1",
+                accountId: account.id,
+                metadata: "{}",
+            },
+        });
+
+        const resumableSession = await db.session.create({
+            data: {
+                tag: "plain-resumable-session",
+                accountId: account.id,
+                encryptionMode: "plain",
+                metadata: JSON.stringify({
+                    flavor: "claude",
+                    claudeSessionId: "claude-session-1",
+                }),
+                active: true,
+            },
+            select: { id: true },
+        });
+
+        const created = await createAutomation({
+            accountId: account.id,
+            input: {
+                name: "Plain resumable existing session",
+                description: null,
+                enabled: true,
+                schedule: { kind: "interval", everyMs: 60_000, timezone: null },
+                targetType: "existing_session",
+                templateCiphertext: buildTemplateEnvelope(resumableSession.id),
+                assignments: [{ machineId: "machine-1", enabled: true, priority: 0 }],
+            },
+        });
+
+        expect(created.targetType).toBe("existing_session");
+    });
+
+    it("rejects existing_session automation when the target session has an unknown encryption mode", async () => {
+        const account = await db.account.create({
+            data: { publicKey: "pk-automation-crud-existing-session-unknown-mode" },
+            select: { id: true },
+        });
+        await db.machine.create({
+            data: {
+                id: "machine-1",
+                accountId: account.id,
+                metadata: "{}",
+            },
+        });
+
+        const unknownModeSession = await db.session.create({
+            data: {
+                tag: "unknown-mode-session",
+                accountId: account.id,
+                encryptionMode: "legacy",
+                metadata: "ciphertext-base64",
+                active: true,
+            },
+            select: { id: true },
+        });
+
+        await expect(() =>
+            createAutomation({
+                accountId: account.id,
+                input: {
+                    name: "Unknown mode existing session",
+                    description: null,
+                    enabled: true,
+                    schedule: { kind: "interval", everyMs: 60_000, timezone: null },
+                    targetType: "existing_session",
+                    templateCiphertext: buildTemplateEnvelope(unknownModeSession.id),
+                    assignments: [{ machineId: "machine-1", enabled: true, priority: 0 }],
+                },
+            }),
+        ).rejects.toThrow(/resumable/i);
+    });
+
     it("rejects assignments that target machines outside of the account with AutomationValidationError", async () => {
         const account = await db.account.create({
             data: { publicKey: "pk-automation-crud-assignment-validation" },

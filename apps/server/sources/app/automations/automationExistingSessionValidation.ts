@@ -57,7 +57,13 @@ function isExistingSessionTargetResumable(session: Readonly<{
         return false;
     }
 
-    const encryptionMode: "e2ee" | "plain" = session.encryptionMode === "plain" ? "plain" : "e2ee";
+    const encryptionMode = session.encryptionMode === "plain" || session.encryptionMode === "e2ee"
+        ? session.encryptionMode
+        : null;
+    if (!encryptionMode) {
+        return false;
+    }
+
     const metadata = typeof session.metadata === "string" ? session.metadata.trim() : "";
     if (!metadata) {
         return false;

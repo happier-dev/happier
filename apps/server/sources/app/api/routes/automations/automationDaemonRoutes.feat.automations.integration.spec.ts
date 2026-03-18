@@ -403,4 +403,57 @@ describe("automation daemon routes (integration)", () => {
             },
         );
     });
+
+    it("allows existing_session automation creation when target session is plain and resumable", async () => {
+        const account = await db.account.create({
+            data: { publicKey: "pk-automation-existing-session-plain-resume" },
+            select: { id: true },
+        });
+        await db.machine.create({
+            data: {
+                id: "machine-1",
+                accountId: account.id,
+                metadata: "{}",
+            },
+            select: { id: true },
+        });
+        const resumableSession = await db.session.create({
+            data: {
+                tag: "plain-resumable-target",
+                accountId: account.id,
+                encryptionMode: "plain",
+                metadata: JSON.stringify({
+                    flavor: "claude",
+                    claudeSessionId: "claude-session-1",
+                }),
+                active: true,
+            },
+            select: { id: true },
+        });
+
+        await withAuthenticatedTestApp(
+            (app) => automationRoutes(app as any),
+            async (app) => {
+                const response = await app.inject({
+                    method: "POST",
+                    url: "/v2/automations",
+                    headers: {
+                        "content-type": "application/json",
+                        "x-test-user-id": account.id,
+                    },
+                    payload: {
+                        name: "Plain resumable target",
+                        enabled: true,
+                        schedule: { kind: "interval", everyMs: 60_000 },
+                        targetType: "existing_session",
+                        templateCiphertext: buildTemplateEnvelope(resumableSession.id),
+                        assignments: [{ machineId: "machine-1", enabled: true, priority: 0 }],
+                    },
+                });
+
+                expect(response.statusCode).toBe(200);
+                expect((response.json() as any).targetType).toBe("existing_session");
+            },
+        );
+    });
 });
