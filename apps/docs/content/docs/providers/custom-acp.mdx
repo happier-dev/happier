@@ -1,0 +1,130 @@
+---
+title: Custom ACP
+description: Add your own ACP-compatible CLIs to Happier by defining selectable custom ACP backends.
+---
+
+**Custom ACP** is Happier's generic provider family for any CLI that speaks the Agent Client Protocol (ACP).
+
+Use it when Happier does not ship a dedicated built-in provider for the tool you want to run, or when you want to add your own backend choices on top of an ACP-compatible CLI.
+
+## What Custom ACP gives you
+
+Custom ACP lets you define **custom ACP backends**.
+
+Each custom ACP backend is both:
+
+- the launcher definition for an ACP-compatible CLI
+- the user-facing backend choice you select throughout Happier
+
+## Where to find it
+
+Open:
+
+1. **Settings**
+2. **AI provider settings**
+3. **Custom ACP**
+
+From there, Happier links to the shared ACP catalog screens where you can manage:
+
+- **ACP Backends**
+- **Custom backends**
+
+You can also open the catalog directly from **Settings → ACP Backends**.
+
+## What a custom ACP backend contains
+
+A custom ACP backend stores the information Happier needs to launch and reason about one backend choice.
+
+Typical backend details include:
+
+- id / name / title
+- description
+- command
+- arguments
+- environment variables
+- transport profile
+- auth metadata
+- capability hints
+- optional default mode
+- optional default model
+
+## How Custom ACP appears in Happier
+
+Configured ACP backends are first-class backend choices.
+
+They can appear in:
+
+- the **new session** backend picker
+- **profile compatibility** and backend-specific defaults
+- **permissions** defaults
+- **session launcher** flows such as review, plan, and delegate
+- backend-aware guidance and suggestion surfaces
+
+This means you do not need to remember raw commands once the backend is configured.
+
+## Models, modes, and defaults
+
+When the underlying ACP CLI supports it, Happier can probe a configured backend directly for:
+
+- available models
+- available modes
+- other ACP capability hints
+
+That lets different custom backends behave as distinct backend choices, even when they happen to launch the same CLI with different args or env.
+
+## Authentication
+
+Custom ACP does not imply one single provider-level auth system.
+
+Instead, auth/readiness metadata lives with each ACP backend definition. Depending on the CLI, a backend can describe:
+
+- a login command
+- status-check support
+- machine-login hints
+- documentation links
+
+Some ACP CLIs support safe non-interactive status detection. Others are effectively manual-only.
+
+See [Provider authentication](/docs/features/provider-authentication) for the general model.
+
+## Custom ACP vs built-in providers
+
+Use a built-in provider when Happier already ships a dedicated integration for that tool.
+
+Use Custom ACP when:
+
+- you are adding a different ACP-compatible CLI
+- you want your own backend choice with custom launcher/auth/defaults metadata
+- you want a generic ACP integration rather than a bespoke provider page
+
+For example:
+
+- use [Kiro](/docs/providers/kiro) for Happier's built-in Kiro integration
+- use **Custom ACP** for arbitrary user-defined ACP backends
+
+## Common use cases
+
+### One CLI, multiple backend choices
+
+If you want multiple variants of the same CLI, create multiple custom ACP backends.
+
+That is the recommended pattern when:
+
+- the command is mostly the same
+- the auth setup is the same
+- the args, env, or defaults differ per role
+
+### Team-internal ACP agent
+
+Use Custom ACP when your team has an internal ACP-compatible CLI that Happier does not know about out of the box.
+
+### Development and testing
+
+Use Custom ACP when you want to point Happier at a local ACP stub or test harness during development.
+
+## Related guides
+
+- [ACP backends](/docs/features/acp-backends)
+- [Profiles](/docs/features/profiles)
+- [Session settings](/docs/features/session-settings)
+- [Provider authentication](/docs/features/provider-authentication)

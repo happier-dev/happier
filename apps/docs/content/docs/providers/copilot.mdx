@@ -1,0 +1,61 @@
+---
+title: GitHub Copilot
+description: Configure GitHub Copilot in Happier, including local CLI login, auth detection, and machine-specific setup.
+---
+
+Happier can run **GitHub Copilot CLI** through the local `copilot` binary on your machine.
+
+## Requirements
+
+- Copilot CLI installed locally
+- binary available on `PATH` (or configured through Happier’s CLI path settings)
+
+## Install Copilot
+
+If you use hstack, you can install Copilot with the providers installer:
+
+```bash
+hstack providers install copilot
+copilot --version
+```
+
+Or install manually:
+
+```bash
+npm install -g @github/copilot
+copilot --version
+```
+
+## Local authentication in Happier
+
+Happier shows Copilot’s machine-local auth state in:
+
+- **Settings → AI provider settings → GitHub Copilot**
+
+From there you can:
+
+- check whether Copilot is authenticated on the selected machine
+- open the native `copilot login` flow directly inside Happier
+- refresh the auth status with **Check now**
+
+Happier currently detects Copilot auth from:
+
+- `COPILOT_GITHUB_TOKEN`
+- `GH_TOKEN`
+- `GITHUB_TOKEN`
+- the local GitHub CLI auth state when available
+
+For the shared user guide, see [Provider authentication](/docs/features/provider-authentication).
+
+## Notes
+
+- Copilot auth in Happier is machine-local. If you log in on one machine, another machine still needs its own local login.
+- If you prefer token-based auth, Happier can detect that and show it as an environment-backed method.
+
+## Troubleshooting
+
+If Copilot is not detected:
+
+1. Verify `copilot --version` works.
+2. Restart Happier.
+3. Re-open the provider settings page and use **Check now**.
