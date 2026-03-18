@@ -1,3 +1,5 @@
+import { normalizeVoiceAgentTurnTranscriptText } from '../../voice/normalizeVoiceAgentTurnTranscriptText.js';
+
 export type HappierReplayStrategy = 'recent_messages' | 'summary_plus_recent';
 
 export type HappierReplayDialogItem = Readonly<{
@@ -57,7 +59,7 @@ export function buildHappierReplayPromptFromDialog(params: Readonly<{
   const dialog: Array<{ role: 'User' | 'Assistant'; createdAt: number; text: string }> = [];
   for (const item of params.dialog ?? []) {
     if (!item) continue;
-    const text = normalizeText((item as any).text);
+    const text = normalizeVoiceAgentTurnTranscriptText((item as any).text);
     if (!text) continue;
     const role = (item as any).role === 'Assistant' ? 'Assistant' : 'User';
     const createdAtRaw = Number((item as any).createdAt ?? 0);

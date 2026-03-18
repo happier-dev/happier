@@ -1,8 +1,8 @@
+import { buildVoiceActionBlockDocumentation, buildVoiceToolDocumentation } from './voiceToolDocumentation.js';
+
 export type VoicePromptVerbosity = 'short' | 'balanced';
 
 export const DEFAULT_VOICE_ASSISTANT_NAME = 'Happier Voice';
-
-import { listVoiceActionBlockSpecs, listVoiceToolActionSpecs } from '@happier-dev/protocol';
 
 export function buildVoiceAgentBasePrompt(params?: Readonly<{
   assistantName?: string;
@@ -45,17 +45,6 @@ export function buildElevenLabsVoiceAgentPrompt(params?: Readonly<{
 }>): string {
   const ctx = params?.initialConversationContextPlaceholder ?? '{{initialConversationContext}}';
   const sessionId = params?.sessionIdPlaceholder ?? '{{sessionId}}';
-  const disabled = new Set((params?.disabledActionIds ?? []).map((v) => String(v ?? '').trim()).filter(Boolean));
-
-  const toolLines = listVoiceToolActionSpecs().flatMap((spec) => {
-    if (disabled.has(spec.id)) return [];
-    const toolNameRaw = spec.bindings?.voiceClientToolName;
-    const toolName = typeof toolNameRaw === 'string' ? toolNameRaw.trim() : '';
-    if (!toolName) return [];
-    const desc = (spec.description ?? spec.title ?? toolName).trim();
-    const argsExample = spec.examples?.voice?.argsExample ?? '{}';
-    return [`- ${toolName}: ${desc} Call with ${argsExample}.`];
-  });
 
   return [
     buildVoiceAgentBasePrompt(params),
@@ -65,7 +54,7 @@ export function buildElevenLabsVoiceAgentPrompt(params?: Readonly<{
     'Tools:',
     '- Tool results are JSON strings. If ok=false, explain the error briefly and ask the user what to do next.',
     '- Always include sessionId in tool args when the tool accepts it.',
-    ...toolLines,
+    ...buildVoiceToolDocumentation({ disabledActionIds: params?.disabledActionIds }),
     '',
     'Conversation context (may be empty):',
     ctx,
@@ -82,17 +71,6 @@ export function buildLocalVoiceAgentSystemPrompt(params?: Readonly<{
 }>): string {
   const tag = params?.actionsTag?.trim() || 'voice_actions';
   const sessionId = params?.sessionId?.trim() || '';
-  const disabled = new Set((params?.disabledActionIds ?? []).map((v) => String(v ?? '').trim()).filter(Boolean));
-
-  const actionLines = listVoiceActionBlockSpecs().flatMap((spec) => {
-    if (disabled.has(spec.id)) return [];
-    const toolNameRaw = spec.bindings?.voiceClientToolName;
-    const toolName = typeof toolNameRaw === 'string' ? toolNameRaw.trim() : '';
-    if (!toolName) return [];
-    const desc = (spec.description ?? spec.title ?? toolName).trim();
-    const argsExample = spec.examples?.voice?.argsExample ?? '{}';
-    return [`- ${toolName}: ${desc} Args: ${argsExample}.`];
-  });
 
   return [
     buildVoiceAgentBasePrompt(params),
@@ -110,7 +88,7 @@ export function buildLocalVoiceAgentSystemPrompt(params?: Readonly<{
     '{"actions":[{"t":"...","args":{}}]}',
     '',
     'Available actions:',
-    ...actionLines,
+    ...buildVoiceActionBlockDocumentation({ disabledActionIds: params?.disabledActionIds }),
     '',
     'Rules:',
     '- Never include tool arguments in the action payload unless the user explicitly asked for them.',

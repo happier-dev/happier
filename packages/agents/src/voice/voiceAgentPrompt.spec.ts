@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import { listVoiceActionBlockSpecs, listVoiceToolActionSpecs } from '@happier-dev/protocol';
 
+import { buildVoiceActionBlockDocumentation, buildVoiceToolDocumentation } from './voiceToolDocumentation.js';
 import { buildElevenLabsVoiceAgentPrompt, buildLocalVoiceAgentSystemPrompt } from './voiceAgentPrompt.js';
 
 describe('voiceAgentPrompt', () => {
@@ -61,5 +62,17 @@ describe('voiceAgentPrompt', () => {
     if (typeof toolName === 'string' && toolName.trim().length > 0) {
       expect(prompt).not.toContain(toolName);
     }
+  });
+
+  it('formats shared voice tool documentation lines consistently', () => {
+    const toolDocs = buildVoiceToolDocumentation({ disabledActionIds: ['review.start'] });
+    const actionDocs = buildVoiceActionBlockDocumentation({ disabledActionIds: ['review.start'] });
+
+    expect(toolDocs.length).toBeGreaterThan(0);
+    expect(actionDocs.length).toBeGreaterThan(0);
+    expect(toolDocs.every((line) => line.startsWith('- '))).toBe(true);
+    expect(actionDocs.every((line) => line.startsWith('- '))).toBe(true);
+    expect(toolDocs.some((line) => line.includes('Call with'))).toBe(true);
+    expect(actionDocs.some((line) => line.includes('Call with'))).toBe(true);
   });
 });

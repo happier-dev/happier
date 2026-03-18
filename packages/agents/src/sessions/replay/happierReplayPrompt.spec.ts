@@ -41,6 +41,20 @@ describe('buildHappierReplayPromptFromDialog', () => {
     expect(prompt.split('User:').length - 1).toBe(1);
   });
 
+  it('normalizes transcript text before rendering replay items', () => {
+    const prompt = buildHappierReplayPromptFromDialog({
+      previousSessionId: 'sess_prev',
+      strategy: 'recent_messages',
+      recentMessagesCount: 10,
+      dialog: [
+        { role: 'User', createdAt: 1, text: 'hello\nworld' },
+      ],
+    });
+
+    expect(prompt).toContain('User: hello world');
+    expect(prompt).not.toContain('User: hello\nworld');
+  });
+
   it('allows including more than 100 messages when recentMessagesCount exceeds 100', () => {
     const dialog = Array.from({ length: 120 }, (_, idx) => {
       const i = idx + 1;
