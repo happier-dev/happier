@@ -14,7 +14,7 @@ test('readCliDistIntegrity reports missing and present dist entrypoints', () => 
   try {
     assert.deepEqual(readCliDistIntegrity(distEntrypoint), {
       ok: false,
-      reason: `missing:${distEntrypoint}`,
+      reason: 'missing_entrypoint',
     });
 
     mkdirSync(dirname(distEntrypoint), { recursive: true });
