@@ -1,66 +1,70 @@
-import { readdir, rm, stat } from 'node:fs/promises';
+import { readdir, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 
-function resolveVersionedBinaryPrefix(binaryName) {
-  return `${binaryName}-`;
-}
+import { resolveRetainedVersionIds } from '@happier-dev/cli-common/firstPartyRuntime';
+import { compareVersions } from '@happier-dev/cli-common/update';
 
-function resolveVersionedBinaryName(binaryName, version) {
-  return `${resolveVersionedBinaryPrefix(binaryName)}${version}`;
-}
-
-export async function listVersionedBinaryEntries({
-  versionsDir,
-  binaryName,
-}) {
-  const prefix = resolveVersionedBinaryPrefix(binaryName);
-  const dirEntries = await readdir(versionsDir, { withFileTypes: true });
-  const versionEntries = [];
-
-  for (const dirEntry of dirEntries) {
-    if (!dirEntry.isFile()) continue;
-    if (!dirEntry.name.startsWith(prefix)) continue;
-    const path = join(versionsDir, dirEntry.name);
-    const info = await stat(path);
-    versionEntries.push({
-      name: dirEntry.name,
-      path,
-      mtimeMs: info.mtimeMs,
-    });
+function trimVersionPrefix(entryName, entryPrefix) {
+  const normalizedEntryName = String(entryName ?? '').trim();
+  const normalizedPrefix = String(entryPrefix ?? '').trim();
+  if (!normalizedEntryName || !normalizedPrefix || !normalizedEntryName.startsWith(normalizedPrefix)) {
+    return '';
   }
-
-  versionEntries.sort((left, right) => right.mtimeMs - left.mtimeMs || left.name.localeCompare(right.name));
-  return versionEntries;
+  return normalizedEntryName.slice(normalizedPrefix.length).trim();
 }
 
-export async function pruneVersionedBinaries({
+function compareSelfHostVersionIds(left, right) {
+  const leftText = String(left ?? '').trim();
+  const rightText = String(right ?? '').trim();
+  const leftLocal = /^local-(\d+)$/.exec(leftText);
+  const rightLocal = /^local-(\d+)$/.exec(rightText);
+  if (leftLocal && rightLocal) {
+    const leftValue = Number(leftLocal[1]);
+    const rightValue = Number(rightLocal[1]);
+    if (Number.isFinite(leftValue) && Number.isFinite(rightValue) && leftValue !== rightValue) {
+      return leftValue > rightValue ? 1 : -1;
+    }
+  }
+  return compareVersions(leftText, rightText);
+}
+
+export async function listVersionedDirectoryIdsNewestFirst({ versionsDir, entryPrefix }) {
+  const entries = await readdir(versionsDir, { withFileTypes: true }).catch(() => []);
+
+  return entries
+    .filter((entry) => entry.isDirectory() || entry.isFile())
+    .map((entry) => trimVersionPrefix(entry.name, entryPrefix))
+    .filter(Boolean)
+    .sort((left, right) => compareSelfHostVersionIds(right, left));
+}
+
+export async function pruneVersionedDirectories({
   versionsDir,
-  binaryName,
-  keepCount = 1,
-  protectedVersions = [],
+  entryPrefix,
+  currentVersionId,
+  previousVersionId = null,
+  retainCount = 2,
 }) {
-  const entries = await listVersionedBinaryEntries({ versionsDir, binaryName });
-  const retainedNames = new Set(
-    entries.slice(0, Math.max(0, keepCount)).map((entry) => entry.name),
+  const orderedVersionIdsNewestFirst = await listVersionedDirectoryIdsNewestFirst({
+    versionsDir,
+    entryPrefix,
+  });
+  const { keep, prune } = resolveRetainedVersionIds({
+    orderedVersionIdsNewestFirst,
+    currentVersionId,
+    previousVersionId,
+    retainCount,
+  });
+
+  await Promise.all(
+    prune.map(async (versionId) => {
+      const path = join(versionsDir, `${entryPrefix}${versionId}`);
+      await rm(path, { recursive: true, force: true });
+    }),
   );
 
-  for (const version of protectedVersions) {
-    retainedNames.add(resolveVersionedBinaryName(binaryName, version));
-  }
-
-  const retained = [];
-  const removed = [];
-  for (const entry of entries) {
-    if (retainedNames.has(entry.name)) {
-      retained.push(entry);
-      continue;
-    }
-    await rm(entry.path, { force: true });
-    removed.push(entry);
-  }
-
   return {
-    retained,
-    removed,
+    keptVersionIds: keep,
+    prunedVersionIds: prune,
   };
 }

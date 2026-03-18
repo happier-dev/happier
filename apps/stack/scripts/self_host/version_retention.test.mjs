@@ -1,80 +1,100 @@
-import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, readdir, rm, utimes, writeFile } from 'node:fs/promises';
+import { existsSync } from 'node:fs';
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import test from 'node:test';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { listVersionedBinaryEntries, pruneVersionedBinaries } from './version_retention.mjs';
+import { listVersionedDirectoryIdsNewestFirst, pruneVersionedDirectories } from './version_retention.mjs';
 
-async function withTempRoot(t) {
-  const root = await mkdtemp(join(tmpdir(), 'hstack-self-host-version-retention-'));
+test('pruneVersionedDirectories keeps current and previous server versions', async (t) => {
+  const root = await mkdtemp(join(tmpdir(), 'happier-self-host-version-retention-'));
   t.after(async () => {
     await rm(root, { recursive: true, force: true });
   });
-  return root;
-}
 
-test('listVersionedBinaryEntries returns newest-first versioned files for a binary', async (t) => {
-  const root = await withTempRoot(t);
   const versionsDir = join(root, 'versions');
   await mkdir(versionsDir, { recursive: true });
-
-  const versionA = join(versionsDir, 'happier-server-1.0.0');
-  const versionB = join(versionsDir, 'happier-server-1.1.0');
-  await writeFile(versionA, 'a\n', 'utf-8');
-  await writeFile(versionB, 'b\n', 'utf-8');
-  await utimes(versionA, new Date('2026-01-01T00:00:00Z'), new Date('2026-01-01T00:00:00Z'));
-  await utimes(versionB, new Date('2026-02-01T00:00:00Z'), new Date('2026-02-01T00:00:00Z'));
-
-  const entries = await listVersionedBinaryEntries({
-    versionsDir,
-    binaryName: 'happier-server',
-  });
-
-  assert.deepEqual(
-    entries.map((entry) => entry.name),
-    ['happier-server-1.1.0', 'happier-server-1.0.0'],
-  );
-});
-
-test('pruneVersionedBinaries keeps the newest retained versions and explicit protected versions', async (t) => {
-  const root = await withTempRoot(t);
-  const versionsDir = join(root, 'versions');
-  await mkdir(versionsDir, { recursive: true });
-
-  const names = ['happier-server-1.0.0', 'happier-server-1.1.0', 'happier-server-1.2.0'];
-  for (const [index, name] of names.entries()) {
-    const path = join(versionsDir, name);
-    await writeFile(path, `${name}\n`, 'utf-8');
-    const when = new Date(Date.UTC(2026, index, 1));
-    await utimes(path, when, when);
+  for (const version of ['1.2.1', '1.2.2', '1.2.3']) {
+    await writeFile(join(versionsDir, `happier-server-${version}`), version, 'utf-8');
   }
 
-  const result = await pruneVersionedBinaries({
+  const ordered = await listVersionedDirectoryIdsNewestFirst({
     versionsDir,
-    binaryName: 'happier-server',
-    keepCount: 1,
-    protectedVersions: ['1.0.0'],
+    entryPrefix: 'happier-server-',
+  });
+  assert.deepEqual(ordered, ['1.2.3', '1.2.2', '1.2.1']);
+
+  const result = await pruneVersionedDirectories({
+    versionsDir,
+    entryPrefix: 'happier-server-',
+    currentVersionId: '1.2.3',
+    previousVersionId: '1.2.2',
   });
 
-  assert.deepEqual(result.retained.map((entry) => entry.name), ['happier-server-1.2.0', 'happier-server-1.0.0']);
-  assert.deepEqual(result.removed.map((entry) => entry.name), ['happier-server-1.1.0']);
-  assert.deepEqual((await readdir(versionsDir)).sort(), ['happier-server-1.0.0', 'happier-server-1.2.0']);
+  assert.deepEqual(result.keptVersionIds, ['1.2.3', '1.2.2']);
+  assert.deepEqual(result.prunedVersionIds, ['1.2.1']);
+  assert.equal(existsSync(join(versionsDir, 'happier-server-1.2.1')), false);
+  assert.equal(existsSync(join(versionsDir, 'happier-server-1.2.2')), true);
+  assert.equal(existsSync(join(versionsDir, 'happier-server-1.2.3')), true);
 });
 
-test('pruneVersionedBinaries ignores unrelated files', async (t) => {
-  const root = await withTempRoot(t);
-  const versionsDir = join(root, 'versions');
-  await mkdir(versionsDir, { recursive: true });
-  await writeFile(join(versionsDir, 'happier-server-1.0.0'), 'ok\n', 'utf-8');
-  await writeFile(join(versionsDir, 'happier-cli-1.0.0'), 'other\n', 'utf-8');
-
-  const result = await pruneVersionedBinaries({
-    versionsDir,
-    binaryName: 'happier-server',
-    keepCount: 1,
+test('pruneVersionedDirectories sorts preview ui web versions newest first and keeps two newest by default', async (t) => {
+  const root = await mkdtemp(join(tmpdir(), 'happier-self-host-ui-version-retention-'));
+  t.after(async () => {
+    await rm(root, { recursive: true, force: true });
   });
 
-  assert.deepEqual(result.removed, []);
-  assert.deepEqual((await readdir(versionsDir)).sort(), ['happier-cli-1.0.0', 'happier-server-1.0.0']);
+  const versionsDir = join(root, 'versions');
+  await mkdir(versionsDir, { recursive: true });
+  for (const version of ['1.2.3-preview.1', '1.2.3-preview.3', '1.2.3-preview.2']) {
+    const dir = join(versionsDir, `happier-ui-web-${version}`);
+    await mkdir(dir, { recursive: true });
+  }
+
+  const ordered = await listVersionedDirectoryIdsNewestFirst({
+    versionsDir,
+    entryPrefix: 'happier-ui-web-',
+  });
+  assert.deepEqual(ordered, ['1.2.3-preview.3', '1.2.3-preview.2', '1.2.3-preview.1']);
+
+  const result = await pruneVersionedDirectories({
+    versionsDir,
+    entryPrefix: 'happier-ui-web-',
+    currentVersionId: '1.2.3-preview.3',
+  });
+
+  assert.deepEqual(result.keptVersionIds, ['1.2.3-preview.3', '1.2.3-preview.2']);
+  assert.deepEqual(result.prunedVersionIds, ['1.2.3-preview.1']);
+  assert.equal(existsSync(join(versionsDir, 'happier-ui-web-1.2.3-preview.1')), false);
+});
+
+test('pruneVersionedDirectories sorts local timestamp versions numerically and keeps the newest two', async (t) => {
+  const root = await mkdtemp(join(tmpdir(), 'happier-self-host-local-version-retention-'));
+  t.after(async () => {
+    await rm(root, { recursive: true, force: true });
+  });
+
+  const versionsDir = join(root, 'versions');
+  await mkdir(versionsDir, { recursive: true });
+  for (const version of ['local-500', 'local-2000', 'local-1000']) {
+    await writeFile(join(versionsDir, `happier-server-${version}`), version, 'utf-8');
+  }
+
+  const ordered = await listVersionedDirectoryIdsNewestFirst({
+    versionsDir,
+    entryPrefix: 'happier-server-',
+  });
+  assert.deepEqual(ordered, ['local-2000', 'local-1000', 'local-500']);
+
+  const result = await pruneVersionedDirectories({
+    versionsDir,
+    entryPrefix: 'happier-server-',
+    currentVersionId: 'local-2000',
+    previousVersionId: 'local-1000',
+  });
+
+  assert.deepEqual(result.keptVersionIds, ['local-2000', 'local-1000']);
+  assert.deepEqual(result.prunedVersionIds, ['local-500']);
+  assert.equal(existsSync(join(versionsDir, 'happier-server-local-500')), false);
 });
