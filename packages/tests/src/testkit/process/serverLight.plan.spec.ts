@@ -8,6 +8,7 @@ import {
   type TestDbProvider,
 } from "./serverLight";
 import { resolveServerAppWorkspaceName } from "./serverWorkspaceName";
+import { resolveWorkspaceCommandArgs } from "./workspaceCommandArgs";
 
 describe("startServerLight planning helpers", () => {
   it("defaults to pglite when HAPPIER_E2E_DB_PROVIDER is unset", () => {
@@ -47,7 +48,9 @@ describe("startServerLight planning helpers", () => {
   });
 
   it("builds shared server dependencies before startup", () => {
-    expect(resolveSharedDepsBuildArgs()).toEqual(["-s", "workspace", resolveServerAppWorkspaceName(), "build:shared"]);
+    expect(resolveSharedDepsBuildArgs()).toEqual(
+      resolveWorkspaceCommandArgs(resolveServerAppWorkspaceName(), "build:shared"),
+    );
   });
 
   it("retries server start when startup failure tail contains EADDRINUSE", () => {

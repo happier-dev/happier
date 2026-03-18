@@ -10,6 +10,7 @@ import { runLoggedCommand, spawnLoggedProcess, type SpawnedProcess } from './spa
 import { waitForOkHealth } from '../http';
 import { yarnCommand } from './commands';
 import { resolveServerAppWorkspaceName } from './serverWorkspaceName';
+import { resolveWorkspaceCommandArgs } from './workspaceCommandArgs';
 
 function pickPortCandidate(): number {
   // Avoid privileged / common ports.
@@ -141,24 +142,24 @@ export function resolveTestDbProvider(env: NodeJS.ProcessEnv): TestDbProvider {
 
 export function resolveStartCommandArgs(provider: TestDbProvider): string[] {
   const script = provider === 'postgres' || provider === 'mysql' ? 'start' : 'start:light';
-  return ['-s', 'workspace', resolveServerAppWorkspaceName(), script];
+  return resolveWorkspaceCommandArgs(resolveServerAppWorkspaceName(), script);
 }
 
 export function resolveSharedDepsBuildArgs(): string[] {
-  return ['-s', 'workspace', resolveServerAppWorkspaceName(), 'build:shared'];
+  return resolveWorkspaceCommandArgs(resolveServerAppWorkspaceName(), 'build:shared');
 }
 
 export function resolveMigrateCommandArgs(provider: TestDbProvider): string[] {
   if (provider === 'sqlite') {
-    return ['-s', 'workspace', resolveServerAppWorkspaceName(), 'migrate:sqlite:deploy'];
+    return resolveWorkspaceCommandArgs(resolveServerAppWorkspaceName(), 'migrate:sqlite:deploy');
   }
   if (provider === 'pglite') {
-    return ['-s', 'workspace', resolveServerAppWorkspaceName(), 'migrate:light:deploy'];
+    return resolveWorkspaceCommandArgs(resolveServerAppWorkspaceName(), 'migrate:light:deploy');
   }
   if (provider === 'mysql') {
-    return ['-s', 'workspace', resolveServerAppWorkspaceName(), 'migrate:mysql:deploy'];
+    return resolveWorkspaceCommandArgs(resolveServerAppWorkspaceName(), 'migrate:mysql:deploy');
   }
-  return ['-s', 'workspace', resolveServerAppWorkspaceName(), 'prisma', 'migrate', 'deploy'];
+  return resolveWorkspaceCommandArgs(resolveServerAppWorkspaceName(), 'prisma', 'migrate', 'deploy');
 }
 
 async function ensureServerSharedDepsBuilt(params: { testDir: string; env: NodeJS.ProcessEnv }): Promise<void> {

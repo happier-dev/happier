@@ -306,6 +306,7 @@ export async function stopDaemonFromHomeDir(
   if (!state) return;
 
   const inspector = opts?.inspectProcess ?? inspectProcess;
+  const hardKill = opts?.hardKill ?? true;
 
   const controlToken = typeof state.controlToken === 'string' ? state.controlToken.trim() : '';
   const headers: Record<string, string> = {
@@ -332,7 +333,6 @@ export async function stopDaemonFromHomeDir(
       daemonPidAlive = false;
     }
 
-    const hardKill = opts?.hardKill ?? true;
     if (daemonPidAlive && hardKill) {
       await hardKillDaemonPid({ phase: 'unreachable', state, inspector });
     }
@@ -346,7 +346,6 @@ export async function stopDaemonFromHomeDir(
   const exited = await waitForPidExit(state.pid, gracefulTimeoutMs);
   if (exited) return;
 
-  const hardKill = opts?.hardKill ?? true;
   if (!hardKill) return;
 
   // Best-effort hard stop to avoid leaking daemons across test runs.
@@ -383,9 +382,10 @@ export async function startTestDaemon(params: {
   happyHomeDir: string;
   env: NodeJS.ProcessEnv;
 }): Promise<StartedDaemon> {
+  const snapshotDir = resolve(params.testDir, 'cli-dist');
   const cliDistEntrypoint = await ensureCliDistSnapshotEntrypoint(
     { testDir: params.testDir, env: params.env },
-    { snapshotDir: resolve(params.testDir, 'cli-dist') },
+    { snapshotDir },
   );
 
   const proc = spawnLoggedProcess({
