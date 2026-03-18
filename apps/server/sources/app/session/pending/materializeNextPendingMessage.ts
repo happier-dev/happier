@@ -1,8 +1,8 @@
 import { markSessionParticipantsChanged, type SessionParticipantCursor } from "@/app/session/changeTracking/markSessionParticipantsChanged";
-import { db } from "@/storage/db";
 import { markPendingStateChangedParticipants } from "@/app/session/pending/markPendingStateChangedParticipants";
 import { resolveSessionPendingOwnerAccess } from "@/app/session/pending/resolveSessionPendingAccess";
 import { inTx, type Tx } from "@/storage/inTx";
+import { db } from "@/storage/db";
 import { readEncryptionFeatureEnv } from "@/app/features/catalog/readFeatureEnv";
 import { isStoredContentKindAllowedForSessionByStoragePolicy, type SessionStoredContentKind } from "@happier-dev/protocol";
 import { didSessionActivityBadgeContributionChange } from "@/app/activity/accountActivityBadge";
@@ -115,6 +115,8 @@ export async function materializeNextPendingMessage(params: {
     });
     if (!sessionRow) return { ok: false, error: "session-not-found" };
     if ((sessionRow.pendingCount ?? 0) <= 0) {
+        // pendingCount is a denormalized counter; treat it as a fast-path hint, not a source of truth.
+        // If the counter is inconsistent (e.g. race/data corruption), fall back to checking the queue.
         const hasQueued = await db.sessionPendingMessage.findFirst({
             where: { sessionId, status: "queued" },
             select: { localId: true },
@@ -183,7 +185,16 @@ export async function materializeNextPendingMessage(params: {
 
             const session = await tx.session.findUniqueOrThrow({
                 where: { id: sessionId },
-                select: { pendingCount: true, pendingVersion: true },
+                select: {
+                    seq: true,
+                    pendingCount: true,
+                    pendingVersion: true,
+                    lastViewedSessionSeq: true,
+                    pendingPermissionRequestCount: true,
+                    pendingUserActionRequestCount: true,
+                    active: true,
+                    archivedAt: true,
+                },
             });
 
             const participantCursorsMessage = await markSessionParticipantsChanged({
@@ -207,15 +218,18 @@ export async function materializeNextPendingMessage(params: {
                 participantCursorsPending,
                 pendingCount: session.pendingCount,
                 pendingVersion: session.pendingVersion,
-                badgeAttentionChanged: didSessionActivityBadgeContributionChange(sessionBefore, {
-                    seq: session.seq,
-                    pendingCount: session.pendingCount,
-                    lastViewedSessionSeq: session.lastViewedSessionSeq,
-                    pendingPermissionRequestCount: session.pendingPermissionRequestCount,
-                    pendingUserActionRequestCount: session.pendingUserActionRequestCount,
-                    active: session.active,
-                    archivedAt: session.archivedAt,
-                }),
+                badgeAttentionChanged: didSessionActivityBadgeContributionChange(
+                    sessionBefore,
+                    {
+                        seq: session.seq,
+                        pendingCount: session.pendingCount,
+                        lastViewedSessionSeq: session.lastViewedSessionSeq,
+                        pendingPermissionRequestCount: session.pendingPermissionRequestCount,
+                        pendingUserActionRequestCount: session.pendingUserActionRequestCount,
+                        active: session.active,
+                        archivedAt: session.archivedAt,
+                    },
+                ),
             } as const;
         });
     } catch {

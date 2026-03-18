@@ -1,7 +1,7 @@
 import { markPendingStateChangedParticipants } from "@/app/session/pending/markPendingStateChangedParticipants";
 import type { SessionParticipantCursor } from "@/app/session/changeTracking/markSessionParticipantsChanged";
-import { didSessionActivityBadgeContributionChange } from "@/app/activity/accountActivityBadge";
 import type { Tx } from "@/storage/inTx";
+import { didSessionActivityBadgeContributionChange } from "@/app/activity/accountActivityBadge";
 
 export async function applyPendingSessionStateChange(params: {
     tx: Tx;
