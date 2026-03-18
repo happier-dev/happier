@@ -5,7 +5,7 @@ import renderer, { act } from 'react-test-renderer';
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 vi.mock('./BaseModal', () => ({
-    BaseModal: ({ children }: any) => React.createElement('BaseModal', null, children),
+    BaseModal: (props: any) => React.createElement('BaseModal', props, props.children),
 }));
 
 vi.mock('react-native', () => {
@@ -27,6 +27,10 @@ vi.mock('react-native-unistyles', () => ({
 
 vi.mock('@/constants/Typography', () => ({
     Typography: { default: () => ({}) },
+}));
+
+vi.mock('@/text', () => ({
+    t: (key: string) => key,
 }));
 
 function getTextContent(node: any): string {
@@ -71,5 +75,50 @@ describe('WebPromptModal', () => {
             expect(pressable.props.accessibilityRole).toBe('button');
             expect(pressable.props.accessibilityLabel).toBe(text);
         }
+    });
+
+    it('keeps the typed value when pointer confirm races with modal close', async () => {
+        const { WebPromptModal } = await import('./WebPromptModal');
+
+        const onClose = vi.fn();
+        const onConfirm = vi.fn();
+
+        let tree: renderer.ReactTestRenderer | null = null;
+        act(() => {
+            tree = renderer.create(
+                <WebPromptModal
+                    config={{
+                        id: 'test-prompt',
+                        type: 'prompt',
+                        title: 'Attach location',
+                        message: 'Enter path',
+                        cancelText: 'Cancel',
+                        confirmText: 'Attach',
+                        defaultValue: '/tmp/workspace',
+                        inputType: 'default',
+                    }}
+                    onClose={onClose}
+                    onConfirm={onConfirm}
+                />
+            );
+        });
+
+        const input = tree!.root.findByProps({ testID: 'web-prompt-input' });
+        act(() => {
+            input.props.onChangeText('/srv/workspace');
+        });
+
+        const confirmButton = tree!.root.findByProps({ testID: 'web-prompt-confirm' });
+        const baseModal = tree!.root.findByType('BaseModal' as any);
+
+        act(() => {
+            confirmButton.props.onPressIn?.();
+            baseModal.props.onClose();
+            confirmButton.props.onPress();
+        });
+
+        expect(onConfirm).toHaveBeenCalledTimes(1);
+        expect(onConfirm).toHaveBeenCalledWith('/srv/workspace');
+        expect(onClose).toHaveBeenCalledTimes(1);
     });
 });

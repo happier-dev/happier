@@ -20,6 +20,17 @@ export function WebPromptModal({ config, onClose, onConfirm, showBackdrop = true
     const { theme } = useUnistyles();
     const [inputValue, setInputValue] = useState(config.defaultValue || '');
     const inputRef = useRef<React.ElementRef<typeof TextInput> | null>(null);
+    const didResolveRef = useRef(false);
+
+    const resolveAndClose = React.useCallback((value: string | null) => {
+        if (didResolveRef.current) {
+            return;
+        }
+
+        didResolveRef.current = true;
+        onConfirm(value);
+        onClose();
+    }, [onClose, onConfirm]);
 
     useEffect(() => {
         // Auto-focus the input when modal opens
@@ -30,13 +41,11 @@ export function WebPromptModal({ config, onClose, onConfirm, showBackdrop = true
     }, []);
 
     const handleCancel = () => {
-        onConfirm(null);
-        onClose();
+        resolveAndClose(null);
     };
 
     const handleConfirm = () => {
-        onConfirm(inputValue);
-        onClose();
+        resolveAndClose(inputValue);
     };
 
     const getKeyboardType = (): KeyboardTypeOptions => {
@@ -143,6 +152,7 @@ export function WebPromptModal({ config, onClose, onConfirm, showBackdrop = true
                     )}
                     <TextInput
                         ref={inputRef}
+                        testID="web-prompt-input"
                         style={[styles.input, Typography.default()]}
                         value={inputValue}
                         onChangeText={setInputValue}
@@ -164,6 +174,7 @@ export function WebPromptModal({ config, onClose, onConfirm, showBackdrop = true
                             styles.button,
                             pressed && styles.buttonPressed
                         ]}
+                        testID="web-prompt-cancel"
                         accessibilityRole="button"
                         accessibilityLabel={config.cancelText || t('common.cancel')}
                         onPress={handleCancel}
@@ -182,8 +193,10 @@ export function WebPromptModal({ config, onClose, onConfirm, showBackdrop = true
                             styles.button,
                             pressed && styles.buttonPressed
                         ]}
+                        testID="web-prompt-confirm"
                         accessibilityRole="button"
                         accessibilityLabel={config.confirmText || t('common.ok')}
+                        onPressIn={handleConfirm}
                         onPress={handleConfirm}
                     >
                         <Text style={[
