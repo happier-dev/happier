@@ -1,9 +1,131 @@
 import { execFileSync } from 'node:child_process';
-import { cpSync, existsSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
+import { closeSync, existsSync, mkdirSync, openSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
+import { createRequire } from 'node:module';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { setTimeout as sleep } from 'node:timers/promises';
+import {
+  bundleInstalledPackageWithRuntimeDependencies,
+  resolveWorkspaceBundlesFromPackageJson,
+  vendorBundledPackageRuntimeDependencies,
+} from '../../../packages/cli-common/dist/workspaces/index.js';
+import { syncBundledWorkspacePackages } from '../../../scripts/workspaces/syncBundledWorkspacePackages.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
+const DEFAULT_BUILD_LOCK_PATH = resolve(findRepoRoot(__dirname), '.project', 'tmp', 'cli-shared-deps-build.lock');
+
+function serializeBuildLockOwner(createdAtMs) {
+  return JSON.stringify({ pid: process.pid, createdAtMs });
+}
+
+function parseBuildLockOwner(raw) {
+  const text = String(raw ?? '').trim();
+  if (!text) return { pid: null, createdAtMs: null };
+
+  try {
+    const parsed = JSON.parse(text);
+    return {
+      pid: typeof parsed.pid === 'number' && Number.isFinite(parsed.pid) && parsed.pid > 0 ? parsed.pid : null,
+      createdAtMs:
+        typeof parsed.createdAtMs === 'number' && Number.isFinite(parsed.createdAtMs) && parsed.createdAtMs > 0
+          ? parsed.createdAtMs
+          : null,
+    };
+  } catch {
+    return { pid: null, createdAtMs: null };
+  }
+}
+
+function isRunningPid(pid) {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    if (error && typeof error === 'object' && error.code === 'ESRCH') return false;
+    return true;
+  }
+}
+
+function shouldReclaimBuildLock(lockPath, staleAfterMs, nowMs) {
+  try {
+    const owner = parseBuildLockOwner(readFileSync(lockPath, 'utf8'));
+    if (owner.pid == null && owner.createdAtMs == null) return true;
+    if (owner.pid != null && !isRunningPid(owner.pid)) return true;
+    if (owner.createdAtMs != null && nowMs - owner.createdAtMs > staleAfterMs) return true;
+  } catch {
+    return true;
+  }
+  return false;
+}
+
+export async function withBuildSharedDepsLock(fn, options = {}) {
+  const lockPath = options.lockPath ?? DEFAULT_BUILD_LOCK_PATH;
+  mkdirSync(dirname(lockPath), { recursive: true });
+
+  const startedAt = Date.now();
+  const timeoutMs = options.timeoutMs ?? 240_000;
+  const pollIntervalMs = options.pollIntervalMs ?? 250;
+  const staleAfterMs = options.staleAfterMs ?? timeoutMs;
+
+  let fd = null;
+  let heartbeatTimer = null;
+  while (true) {
+    try {
+      fd = openSync(lockPath, 'wx');
+      writeFileSync(fd, serializeBuildLockOwner(Date.now()), 'utf8');
+      break;
+    } catch (error) {
+      if (error?.code !== 'EEXIST') throw error;
+      if (shouldReclaimBuildLock(lockPath, staleAfterMs, Date.now())) {
+        try {
+          unlinkSync(lockPath);
+        } catch {
+          // ignore
+        }
+        continue;
+      }
+      if (Date.now() - startedAt > timeoutMs) {
+        const owner = parseBuildLockOwner(readFileSync(lockPath, 'utf8'));
+        const ownerLabel =
+          owner.pid != null
+            ? `pid=${owner.pid}, createdAtMs=${owner.createdAtMs ?? 'unknown'}`
+            : owner.createdAtMs != null
+              ? `createdAtMs=${owner.createdAtMs}`
+              : 'unknown owner';
+        throw new Error(`Timed out waiting for shared deps build lock: ${lockPath} (${ownerLabel})`);
+      }
+      await sleep(pollIntervalMs);
+    }
+  }
+
+  try {
+    if (staleAfterMs > 0) {
+      const heartbeatIntervalMs = Math.max(250, Math.min(5_000, Math.floor(staleAfterMs / 4) || 250));
+      heartbeatTimer = setInterval(() => {
+        try {
+          writeFileSync(lockPath, serializeBuildLockOwner(Date.now()), 'utf8');
+        } catch {
+          // Best-effort lease heartbeat only.
+        }
+      }, heartbeatIntervalMs);
+      heartbeatTimer.unref();
+    }
+
+    return await fn();
+  } finally {
+    if (heartbeatTimer) clearInterval(heartbeatTimer);
+    try {
+      if (fd != null) closeSync(fd);
+    } catch {
+      // ignore
+    }
+    try {
+      unlinkSync(lockPath);
+    } catch {
+      // ignore
+    }
+  }
+}
 
 function findRepoRoot(startDir) {
   let dir = startDir;
@@ -29,18 +151,18 @@ export function resolveTscBin({ exists } = {}) {
     ? [
         // Windows: prefer cmd shims when present.
         resolve(repoRoot, 'node_modules', '.bin', binName),
-        resolve(repoRoot, 'apps', 'cli', 'node_modules', '.bin', binName),
+        resolve(repoRoot, 'cli', 'node_modules', '.bin', binName),
         // Fallback: allow executing the JS entry via Node if shims are missing.
         resolve(repoRoot, 'node_modules', 'typescript', 'bin', 'tsc'),
-        resolve(repoRoot, 'apps', 'cli', 'node_modules', 'typescript', 'bin', 'tsc'),
+        resolve(repoRoot, 'cli', 'node_modules', 'typescript', 'bin', 'tsc'),
       ]
     : [
         // Prefer the real TypeScript entrypoint over node_modules/.bin symlinks.
         // On macOS, workspace-hoisted `.bin/*` symlinks can intermittently fail with ENOENT.
         resolve(repoRoot, 'node_modules', 'typescript', 'bin', 'tsc'),
-        resolve(repoRoot, 'apps', 'cli', 'node_modules', 'typescript', 'bin', 'tsc'),
+        resolve(repoRoot, 'cli', 'node_modules', 'typescript', 'bin', 'tsc'),
         resolve(repoRoot, 'node_modules', '.bin', binName),
-        resolve(repoRoot, 'apps', 'cli', 'node_modules', '.bin', binName),
+        resolve(repoRoot, 'cli', 'node_modules', '.bin', binName),
       ];
 
   for (const candidate of candidates) {
@@ -51,7 +173,6 @@ export function resolveTscBin({ exists } = {}) {
 }
 
 const tscBin = resolveTscBin();
-export const sharedWorkspacePackageNames = ['agents', 'cli-common', 'protocol', 'release-runtime'];
 
 export function runTsc(tsconfigPath, opts) {
   const exec = opts?.execFileSync ?? execFileSync;
@@ -75,78 +196,76 @@ export function runTsc(tsconfigPath, opts) {
 export function syncBundledWorkspaceDist(opts = {}) {
   const repoRootArg = opts.repoRoot;
   const repoRoot = typeof repoRootArg === 'string' && repoRootArg.trim() ? repoRootArg : findRepoRoot(__dirname);
-  const exists = opts.existsSync ?? existsSync;
-  const cp = opts.cpSync ?? cpSync;
-  const readFile = opts.readFileSync ?? readFileSync;
-  const writeFile = opts.writeFileSync ?? writeFileSync;
-  const packages = Array.isArray(opts.packages) && opts.packages.length > 0 ? opts.packages : sharedWorkspacePackageNames;
-
-  for (const pkg of packages) {
-    const srcDist = resolve(repoRoot, 'packages', pkg, 'dist');
-    const destDist = resolve(repoRoot, 'apps', 'cli', 'node_modules', '@happier-dev', pkg, 'dist');
-    if (!exists(destDist)) continue;
-    try {
-      cp(srcDist, destDist, { recursive: true, force: true });
-    } catch {
-      // Best-effort: bundled deps may be missing or readonly.
-    }
-
-    const destPackageJsonPath = resolve(repoRoot, 'apps', 'cli', 'node_modules', '@happier-dev', pkg, 'package.json');
-    if (!exists(destPackageJsonPath)) continue;
-    try {
-      const raw = JSON.parse(readFile(resolve(repoRoot, 'packages', pkg, 'package.json'), 'utf8'));
-      const sanitized = sanitizeBundledWorkspacePackageJson(raw);
-      writeFile(destPackageJsonPath, `${JSON.stringify(sanitized, null, 2)}\n`, 'utf8');
-    } catch {
-      // Best-effort: keep local bundled deps usable even if package.json sync fails.
-    }
-  }
+  const packages = Array.isArray(opts.packages) && opts.packages.length > 0 ? opts.packages : ['agents', 'cli-common', 'connection-supervisor', 'protocol', 'transfers', 'release-runtime'];
+  syncBundledWorkspacePackages({
+    repoRoot,
+    packages,
+    hostApps: Array.isArray(opts.bundledHostApps) && opts.bundledHostApps.length > 0 ? opts.bundledHostApps : ['cli'],
+    existsSync: opts.existsSync,
+    cpSync: opts.cpSync,
+    mkdirSync: opts.mkdirSync,
+    rmSync: opts.rmSync,
+    readFileSync: opts.readFileSync,
+    writeFileSync: opts.writeFileSync,
+  });
 }
 
-function sanitizeBundledWorkspacePackageJson(raw) {
-  const {
-    name,
-    version,
-    type,
-    main,
-    module,
-    types,
-    exports,
-    dependencies,
-    peerDependencies,
-    optionalDependencies,
-    engines,
-  } = raw ?? {};
+export function syncCliRuntimeDependencies(opts = {}) {
+  const repoRootArg = opts.repoRoot;
+  const repoRoot = typeof repoRootArg === 'string' && repoRootArg.trim() ? repoRootArg : findRepoRoot(__dirname);
+  const cliPackageJsonPath = resolve(repoRoot, 'apps', 'cli', 'package.json');
+  const cliNodeModulesDir = resolve(repoRoot, 'apps', 'cli', 'node_modules');
+  const cliRequire = createRequire(pathToFileURL(cliPackageJsonPath).href);
+  const resolvedTweetnaclEntry = cliRequire.resolve('tweetnacl');
+  const resolvedTweetnaclDir = dirname(resolvedTweetnaclEntry);
 
-  return {
-    name,
-    version,
-    private: true,
-    type,
-    main,
-    module,
-    types,
-    exports,
-    dependencies,
-    peerDependencies,
-    optionalDependencies,
-    engines,
-  };
+  if (resolvedTweetnaclDir === resolve(cliNodeModulesDir, 'tweetnacl')) {
+    return;
+  }
+
+  bundleInstalledPackageWithRuntimeDependencies({
+    packageName: 'tweetnacl',
+    resolveFromPackageJsonPath: cliPackageJsonPath,
+    destNodeModulesDir: cliNodeModulesDir,
+  });
+}
+
+export function syncBundledWorkspaceRuntimeDependencies(opts = {}) {
+  const repoRootArg = opts.repoRoot;
+  const repoRoot = typeof repoRootArg === 'string' && repoRootArg.trim() ? repoRootArg : findRepoRoot(__dirname);
+  const bundles = resolveWorkspaceBundlesFromPackageJson({
+    repoRoot,
+    hostPackageDir: resolve(repoRoot, 'apps', 'cli'),
+  });
+
+  for (const bundle of bundles) {
+    vendorBundledPackageRuntimeDependencies({
+      srcPackageJsonPath: resolve(bundle.srcDir, 'package.json'),
+      destPackageDir: bundle.destDir,
+    });
+  }
 }
 
 export function main() {
-  for (const pkg of sharedWorkspacePackageNames) {
-    runTsc(resolve(repoRoot, 'packages', pkg, 'tsconfig.json'));
-  }
+  return withBuildSharedDepsLock(async () => {
+    runTsc(resolve(repoRoot, 'packages', 'agents', 'tsconfig.json'));
+    runTsc(resolve(repoRoot, 'packages', 'cli-common', 'tsconfig.json'));
+    runTsc(resolve(repoRoot, 'packages', 'connection-supervisor', 'tsconfig.json'));
+    runTsc(resolve(repoRoot, 'packages', 'protocol', 'tsconfig.json'));
+    runTsc(resolve(repoRoot, 'packages', 'transfers', 'tsconfig.json'));
+    runTsc(resolve(repoRoot, 'packages', 'release-runtime', 'tsconfig.json'));
 
-  const protocolDist = resolve(repoRoot, 'packages', 'protocol', 'dist', 'index.js');
-  if (!existsSync(protocolDist)) {
-    throw new Error(`Expected @happier-dev/protocol build output missing: ${protocolDist}`);
-  }
+    const protocolDist = resolve(repoRoot, 'packages', 'protocol', 'dist', 'index.js');
+    if (!existsSync(protocolDist)) {
+      throw new Error(`Expected @happier-dev/protocol build output missing: ${protocolDist}`);
+    }
 
-  // If the CLI currently has bundled workspace deps under apps/cli/node_modules,
-  // keep their dist outputs in sync so local builds/tests do not consume stale artifacts.
-  syncBundledWorkspaceDist({ repoRoot });
+    // If the CLI currently has bundled workspace deps under apps/cli/node_modules,
+    // keep their dist outputs in sync so local builds/tests do not consume stale artifacts.
+    syncBundledWorkspaceDist({ repoRoot });
+    syncBundledWorkspaceRuntimeDependencies({ repoRoot });
+    syncCliRuntimeDependencies({ repoRoot });
+  });
 }
 
 const invokedAsMain = (() => {
@@ -156,10 +275,8 @@ const invokedAsMain = (() => {
 })();
 
 if (invokedAsMain) {
-  try {
-    main();
-  } catch (error) {
+  main().catch((error) => {
     console.error(error instanceof Error ? error.message : String(error));
     process.exit(1);
-  }
+  });
 }

@@ -78,9 +78,9 @@ describe('runPkgrollBuild', () => {
     runPkgrollBuild({ packageJsonPath, spawn });
 
     expect(spawn).toHaveBeenCalledWith(
-      'npx',
-      ['pkgroll'],
-      expect.objectContaining({ stdio: 'inherit', shell: process.platform === 'win32' }),
+      process.execPath,
+      [expect.stringContaining('pkgroll/dist/cli.mjs')],
+      expect.objectContaining({ stdio: 'inherit' }),
     );
     expect(pkgrollManifest).toBeTruthy();
     expect(pkgrollManifest).not.toHaveProperty('bin');

@@ -7,9 +7,6 @@ import { describe, expect, it } from 'vitest';
 import { resolveRuntimeEntrypoint } from '../../bin/_resolveRuntimeEntrypoint.mjs';
 import { maybeRefreshLocalBundledWorkspacePackages } from '../../bin/_prepareRuntimeEntrypoint.mjs';
 
-const syncBundledWorkspacePackagesSourcePath =
-  '/Users/leeroy/Documents/Development/happier/dev/scripts/workspaces/syncBundledWorkspacePackages.mjs';
-
 describe('resolveRuntimeEntrypoint', () => {
   it('prefers dist output over stale package-dist output in a worktree', () => {
     const projectRoot = mkdtempSync(join(tmpdir(), 'happier-resolve-runtime-entrypoint-'));
@@ -39,7 +36,7 @@ describe('resolveRuntimeEntrypoint', () => {
 
       writeFileSync(
         syncModulePath,
-        readFileSync(syncBundledWorkspacePackagesSourcePath, 'utf8'),
+        readFileSync(join(process.cwd(), '..', '..', 'scripts', 'workspaces', 'syncBundledWorkspacePackages.mjs'), 'utf8'),
         'utf8',
       );
       writeFileSync(
