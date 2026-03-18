@@ -5,6 +5,7 @@
     "quickstart",
     "auth",
     "encryption",
+    "retention",
     "auth-custom-providers",
     "auth-github",
     "auth-oidc",

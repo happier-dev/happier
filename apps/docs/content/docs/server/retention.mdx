@@ -1,0 +1,202 @@
+---
+title: Server retention policies
+description: Configure automatic cleanup for self-hosted Happier servers without changing the default keep-forever behavior.
+---
+
+Happier server retention is optional and disabled by default.
+
+If you do not set any retention env vars, the server keeps sessions and other retained records forever.
+
+## What retention currently covers
+
+Retention is implemented as one server-side sweep worker with per-domain rules. ITt can clean up:
+
+- Sessions
+- Account changes
+- Voice session leases
+- User feed items
+- Session share access logs
+- Public share access logs
+- Terminal auth requests
+- Account auth requests
+- Auth pairing sessions
+- Repeat keys
+- Global locks
+- Automation runs
+- Automation run events
+
+## How session retention works
+
+The session rule is intentionally conservative.
+
+When `HAPPIER_SERVER_RETENTION__SESSIONS__MODE=delete_inactive`, the server deletes an entire session tree only if all of the following are true:
+
+- the session `updatedAt` is older than the configured cutoff
+- the session `lastActiveAt` is older than the configured cutoff
+- the persisted session `active` flag is `false`
+- the runtime does not currently observe the session as active in memory
+- the final delete transaction rechecks the same cutoff guard before anything is removed
+
+This means the server does not need to inspect or decrypt stored transcript content to apply the current session rule.
+
+Happier does **not** currently prune individual old messages inside an otherwise-kept session. Retention deletes whole inactive sessions.
+
+## Default behavior
+
+Retention only becomes effective when both of these are true:
+
+- `HAPPIER_SERVER_RETENTION__ENABLED=1`
+- at least one retention domain is configured with a finite policy
+
+If retention is disabled, or if every domain is still set to `keep_forever`, the effective policy remains keep-forever for every domain.
+
+## Global retention env vars
+
+These env vars control the retention worker itself:
+
+```bash
+HAPPIER_SERVER_RETENTION__ENABLED=1
+HAPPIER_SERVER_RETENTION__INTERVAL_MS=21600000
+HAPPIER_SERVER_RETENTION__BATCH_SIZE=100
+HAPPIER_SERVER_RETENTION__MAX_DELETES_PER_RULE_PER_RUN=1000
+HAPPIER_SERVER_RETENTION__DRY_RUN=0
+```
+
+- `HAPPIER_SERVER_RETENTION__ENABLED`
+  - `0` or unset: retention is effectively off
+  - `1`: retention worker can run if at least one domain has a finite policy
+- `HAPPIER_SERVER_RETENTION__INTERVAL_MS`
+  - sweep interval in milliseconds
+  - default: `21600000` (6 hours)
+- `HAPPIER_SERVER_RETENTION__BATCH_SIZE`
+  - maximum number of candidates each rule evaluates in one sweep
+  - default: `100`
+- `HAPPIER_SERVER_RETENTION__MAX_DELETES_PER_RULE_PER_RUN`
+  - hard cap per rule for actual deletions in one sweep
+  - default: `1000`
+- `HAPPIER_SERVER_RETENTION__DRY_RUN`
+  - `1`: log what would be deleted without deleting it
+  - `0` or unset: apply deletions normally
+
+The retention worker runs once on server startup, then continues on the configured interval. Successful runs are logged with per-rule delete counts and whether the run was a dry run.
+
+## Session policy env vars
+
+Sessions use a dedicated policy shape:
+
+```bash
+HAPPIER_SERVER_RETENTION__SESSIONS__MODE=delete_inactive
+HAPPIER_SERVER_RETENTION__SESSIONS__INACTIVITY_DAYS=30
+```
+
+Supported session modes:
+
+- `keep_forever`
+- `delete_inactive`
+
+`HAPPIER_SERVER_RETENTION__SESSIONS__INACTIVITY_DAYS` must be a positive integer and is required when the mode is `delete_inactive`.
+
+## Age-based domain policy env vars
+
+All non-session retention domains use the same two-key pattern:
+
+```bash
+HAPPIER_SERVER_RETENTION__<DOMAIN>__MODE=delete_older_than
+HAPPIER_SERVER_RETENTION__<DOMAIN>__DAYS=30
+```
+
+Supported age-based modes:
+
+- `keep_forever`
+- `delete_older_than`
+
+Supported domain names:
+
+- `ACCOUNT_CHANGES`
+- `VOICE_SESSION_LEASES`
+- `USER_FEED_ITEMS`
+- `SESSION_SHARE_ACCESS_LOGS`
+- `PUBLIC_SHARE_ACCESS_LOGS`
+- `TERMINAL_AUTH_REQUESTS`
+- `ACCOUNT_AUTH_REQUESTS`
+- `AUTH_PAIRING_SESSIONS`
+- `REPEAT_KEYS`
+- `GLOBAL_LOCKS`
+- `AUTOMATION_RUNS`
+- `AUTOMATION_RUN_EVENTS`
+
+Example:
+
+```bash
+HAPPIER_SERVER_RETENTION__ACCOUNT_CHANGES__MODE=delete_older_than
+HAPPIER_SERVER_RETENTION__ACCOUNT_CHANGES__DAYS=30
+```
+
+## Recommended rollout
+
+Start conservatively:
+
+1. Enable only the rules you actually need.
+2. Turn on `HAPPIER_SERVER_RETENTION__DRY_RUN=1` first.
+3. Begin with session retention and one or two short-lived operational domains such as auth requests or access logs.
+4. Review the server logs to confirm the expected records would be deleted.
+5. Switch `DRY_RUN` back to `0` only after the dry-run output matches your intended policy.
+
+For many self-hosted setups, a good first production policy is:
+
+```bash
+HAPPIER_SERVER_RETENTION__ENABLED=1
+HAPPIER_SERVER_RETENTION__INTERVAL_MS=21600000
+HAPPIER_SERVER_RETENTION__BATCH_SIZE=100
+HAPPIER_SERVER_RETENTION__MAX_DELETES_PER_RULE_PER_RUN=1000
+HAPPIER_SERVER_RETENTION__SESSIONS__MODE=delete_inactive
+HAPPIER_SERVER_RETENTION__SESSIONS__INACTIVITY_DAYS=30
+HAPPIER_SERVER_RETENTION__ACCOUNT_CHANGES__MODE=delete_older_than
+HAPPIER_SERVER_RETENTION__ACCOUNT_CHANGES__DAYS=30
+HAPPIER_SERVER_RETENTION__TERMINAL_AUTH_REQUESTS__MODE=delete_older_than
+HAPPIER_SERVER_RETENTION__TERMINAL_AUTH_REQUESTS__DAYS=7
+HAPPIER_SERVER_RETENTION__ACCOUNT_AUTH_REQUESTS__MODE=delete_older_than
+HAPPIER_SERVER_RETENTION__ACCOUNT_AUTH_REQUESTS__DAYS=7
+```
+
+## What users see in the app
+
+When a client is connected to a server with a finite retention policy, Happier surfaces that policy in the UI so users understand what the server keeps and what it eventually deletes.
+
+Today that information is exposed in:
+
+- the active server settings screen
+- session info for sessions affected by finite session retention
+- saved server rows, when a known server advertises finite session retention
+
+Clients learn the server policy from `GET /v1/features`, under `capabilities.server.retention`.
+
+## Operational notes
+
+- Session retention is based on server-side metadata such as `updatedAt`, `lastActiveAt`, and `active`, not by decrypting stored messages.
+- Account change retention can advance the server `changesFloor`. After old account changes are pruned, very old `/v2/changes` cursors can become invalid and return `410 cursor-gone`.
+- Retention deletes are permanent. There is no built-in quarantine or archive stage before deletion.
+- Like any timestamp-based cleanup system, retention depends on accurate server time and correct stored timestamps. If you manually corrupt timestamps in the database or run with a badly wrong system clock, the policy can make wrong decisions.
+
+## Keep-forever example
+
+If you want to keep the current behavior explicitly, either do not set any retention env vars, or set:
+
+```bash
+HAPPIER_SERVER_RETENTION__ENABLED=0
+```
+
+## Dry-run example for 30-day inactive sessions
+
+```bash
+HAPPIER_SERVER_RETENTION__ENABLED=1
+HAPPIER_SERVER_RETENTION__DRY_RUN=1
+HAPPIER_SERVER_RETENTION__SESSIONS__MODE=delete_inactive
+HAPPIER_SERVER_RETENTION__SESSIONS__INACTIVITY_DAYS=30
+```
+
+## Related docs
+
+- [Server quickstart](./quickstart)
+- [Encryption & plaintext storage](./encryption)
+- [Deployment environment variables](../deployment/env)
