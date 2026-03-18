@@ -1,9 +1,11 @@
 import { markSessionParticipantsChanged, type SessionParticipantCursor } from "@/app/session/changeTracking/markSessionParticipantsChanged";
+import { db } from "@/storage/db";
 import { markPendingStateChangedParticipants } from "@/app/session/pending/markPendingStateChangedParticipants";
 import { resolveSessionPendingOwnerAccess } from "@/app/session/pending/resolveSessionPendingAccess";
 import { inTx, type Tx } from "@/storage/inTx";
 import { readEncryptionFeatureEnv } from "@/app/features/catalog/readFeatureEnv";
 import { isStoredContentKindAllowedForSessionByStoragePolicy, type SessionStoredContentKind } from "@happier-dev/protocol";
+import { didSessionActivityBadgeContributionChange } from "@/app/activity/accountActivityBadge";
 
 type ParticipantCursor = SessionParticipantCursor;
 
@@ -21,6 +23,7 @@ export type MaterializeNextPendingMessageResult =
         participantCursorsPending: ParticipantCursor[];
         pendingCount: number;
         pendingVersion: number;
+        badgeAttentionChanged: boolean;
       }
     | { ok: false; error: "session-not-found" | "forbidden" | "invalid-params" | "internal" };
 
@@ -97,15 +100,47 @@ export async function materializeNextPendingMessage(params: {
     const access = await resolveSessionPendingOwnerAccess(actorUserId, sessionId);
     if (!access.ok) return { ok: false, error: access.error };
 
+    const sessionRow = await db.session.findUnique({
+        where: { id: sessionId },
+        select: {
+            encryptionMode: true,
+            seq: true,
+            pendingCount: true,
+            lastViewedSessionSeq: true,
+            pendingPermissionRequestCount: true,
+            pendingUserActionRequestCount: true,
+            active: true,
+            archivedAt: true,
+        },
+    });
+    if (!sessionRow) return { ok: false, error: "session-not-found" };
+    if ((sessionRow.pendingCount ?? 0) <= 0) {
+        const hasQueued = await db.sessionPendingMessage.findFirst({
+            where: { sessionId, status: "queued" },
+            select: { localId: true },
+        });
+        if (!hasQueued) {
+            return { ok: true, didMaterialize: false };
+        }
+    }
+
+    const sessionEncryptionMode: "e2ee" | "plain" = sessionRow.encryptionMode === "plain" ? "plain" : "e2ee";
+    const policy = readEncryptionFeatureEnv(process.env);
+
     try {
         return await inTx(async (tx) => {
-            const sessionModeRow = await tx.session.findUnique({
+            const sessionBefore = await tx.session.findUniqueOrThrow({
                 where: { id: sessionId },
-                select: { encryptionMode: true },
+                select: {
+                    seq: true,
+                    pendingCount: true,
+                    lastViewedSessionSeq: true,
+                    pendingPermissionRequestCount: true,
+                    pendingUserActionRequestCount: true,
+                    active: true,
+                    archivedAt: true,
+                },
             });
-            if (!sessionModeRow) return { ok: false, error: "session-not-found" } as const;
-            const sessionEncryptionMode: "e2ee" | "plain" = sessionModeRow.encryptionMode === "plain" ? "plain" : "e2ee";
-            const policy = readEncryptionFeatureEnv(process.env);
 
             const nextPending = await tx.sessionPendingMessage.findFirst({
                 where: { sessionId, status: "queued" },
@@ -172,6 +207,15 @@ export async function materializeNextPendingMessage(params: {
                 participantCursorsPending,
                 pendingCount: session.pendingCount,
                 pendingVersion: session.pendingVersion,
+                badgeAttentionChanged: didSessionActivityBadgeContributionChange(sessionBefore, {
+                    seq: session.seq,
+                    pendingCount: session.pendingCount,
+                    lastViewedSessionSeq: session.lastViewedSessionSeq,
+                    pendingPermissionRequestCount: session.pendingPermissionRequestCount,
+                    pendingUserActionRequestCount: session.pendingUserActionRequestCount,
+                    active: session.active,
+                    archivedAt: session.archivedAt,
+                }),
             } as const;
         });
     } catch {

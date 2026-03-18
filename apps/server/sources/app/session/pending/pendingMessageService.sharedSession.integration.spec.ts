@@ -4,10 +4,10 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { spawnSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
+import type { Prisma } from "@prisma/client";
 
 import { applyLightDefaultEnv, ensureHandyMasterSecret } from "@/flavors/light/env";
 import { initDbSqlite, db } from "@/storage/db";
-import type { Prisma } from "@/storage/prisma";
 import { auth } from "@/app/auth/auth";
 import { restoreEnv, snapshotEnv } from "@/app/api/testkit/env";
 import {

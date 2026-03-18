@@ -1,13 +1,26 @@
 import { markPendingStateChangedParticipants } from "@/app/session/pending/markPendingStateChangedParticipants";
 import type { SessionParticipantCursor } from "@/app/session/changeTracking/markSessionParticipantsChanged";
+import { didSessionActivityBadgeContributionChange } from "@/app/activity/accountActivityBadge";
 import type { Tx } from "@/storage/inTx";
 
 export async function applyPendingSessionStateChange(params: {
     tx: Tx;
     sessionId: string;
     pendingCountDelta?: -1 | 0 | 1;
-}): Promise<{ pendingCount: number; pendingVersion: number; participantCursors: SessionParticipantCursor[] }> {
+}): Promise<{ pendingCount: number; pendingVersion: number; participantCursors: SessionParticipantCursor[]; badgeAttentionChanged: boolean }> {
     const { tx, sessionId, pendingCountDelta } = params;
+    const before = await tx.session.findUniqueOrThrow({
+        where: { id: sessionId },
+        select: {
+            seq: true,
+            pendingCount: true,
+            lastViewedSessionSeq: true,
+            pendingPermissionRequestCount: true,
+            pendingUserActionRequestCount: true,
+            active: true,
+            archivedAt: true,
+        },
+    });
     const data: { pendingVersion: { increment: 1 }; pendingCount?: { increment: 1 } | { decrement: 1 } } = {
         pendingVersion: { increment: 1 },
     };
@@ -35,5 +48,9 @@ export async function applyPendingSessionStateChange(params: {
         pendingCount: session.pendingCount,
         pendingVersion: session.pendingVersion,
         participantCursors,
+        badgeAttentionChanged: didSessionActivityBadgeContributionChange(before, {
+            ...before,
+            pendingCount: session.pendingCount,
+        }),
     };
 }
