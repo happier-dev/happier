@@ -35,6 +35,7 @@ type CliDistBuildLockOptions = {
 };
 
 type EnsureCliSharedDepsBuiltOptions = CliDistBuildLockOptions & {
+  skipSourceFreshnessCheck?: boolean;
   repoRoot?: string;
   runCommand?: (params: {
     command: string;
@@ -49,6 +50,7 @@ type EnsureCliSharedDepsBuiltOptions = CliDistBuildLockOptions & {
 
 type EnsureCliDistBuiltOptions = CliDistBuildLockOptions & {
   allowRebuild?: boolean;
+  skipSourceFreshnessCheck?: boolean;
   waitForAvailabilityMs?: number;
   repoRoot?: string;
   runCommand?: (params: {
