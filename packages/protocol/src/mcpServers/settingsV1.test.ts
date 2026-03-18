@@ -97,7 +97,7 @@ describe('McpServersSettingsV1Schema', () => {
     expect(res.success).toBe(false);
   });
 
-  it('enforces unique server names and ids', () => {
+  it('enforces unique server names', () => {
     const res = McpServersSettingsV1Schema.safeParse({
       v: 1,
       strictMode: false,
@@ -114,6 +114,35 @@ describe('McpServersSettingsV1Schema', () => {
         {
           id: 's2',
           name: 'dup',
+          transport: 'stdio',
+          stdio: { command: 'node', args: [] },
+          env: {},
+          createdAt: 0,
+          updatedAt: 0,
+        },
+      ],
+      bindings: [],
+    });
+    expect(res.success).toBe(false);
+  });
+
+  it('enforces unique server ids', () => {
+    const res = McpServersSettingsV1Schema.safeParse({
+      v: 1,
+      strictMode: false,
+      servers: [
+        {
+          id: 's1',
+          name: 'first',
+          transport: 'stdio',
+          stdio: { command: 'node', args: [] },
+          env: {},
+          createdAt: 0,
+          updatedAt: 0,
+        },
+        {
+          id: 's1',
+          name: 'second',
           transport: 'stdio',
           stdio: { command: 'node', args: [] },
           env: {},
@@ -149,4 +178,3 @@ describe('McpServersSettingsV1Schema', () => {
     expect(res.success).toBe(false);
   });
 });
-
