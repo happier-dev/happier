@@ -1,19 +1,48 @@
-import { Prisma, PrismaClient } from "@prisma/client";
+import type { Prisma as PrismaNamespace, PrismaClient as PrismaClientInstance } from "@prisma/client";
 import { PGlite } from "@electric-sql/pglite";
 import { PGLiteSocketServer } from "@electric-sql/pglite-socket";
 import { existsSync } from "node:fs";
 import { mkdir } from "node:fs/promises";
+import { createRequire } from "node:module";
 import { dirname, isAbsolute, join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { acquirePgliteDirLock } from "./locks/pgliteLock";
-
-export { Prisma };
-export type TransactionClient = Prisma.TransactionClient;
-export type PrismaClientType = PrismaClient;
+export type TransactionClient = PrismaNamespace.TransactionClient;
+export type PrismaClientType = PrismaClientInstance;
 
 export * from "./enums.generated";
 
 export type DbProvider = "postgres" | "pglite" | "sqlite" | "mysql";
+
+const requireFromHere = createRequire(import.meta.url);
+
+export function resolvePackagedDefaultPrismaClientEntrypoint(executablePath: string = process.execPath): string {
+    return join(dirname(executablePath), "node_modules", ".prisma", "client", "index.js");
+}
+
+export function loadPackagedPrismaClientModule(
+    executablePath: string = process.execPath,
+): typeof import("@prisma/client") | null {
+    const packagedEntrypoint = resolvePackagedDefaultPrismaClientEntrypoint(executablePath);
+    if (!existsSync(packagedEntrypoint)) {
+        return null;
+    }
+    const requireFromPackagedEntrypoint = createRequire(pathToFileURL(packagedEntrypoint).href);
+    return requireFromPackagedEntrypoint(packagedEntrypoint) as typeof import("@prisma/client");
+}
+
+function loadDefaultPrismaClientModule(): typeof import("@prisma/client") {
+    const packaged = loadPackagedPrismaClientModule();
+    if (packaged) {
+        return packaged;
+    }
+    return requireFromHere("@prisma/client") as typeof import("@prisma/client");
+}
+
+function createDefaultPrismaClient(): PrismaClientType {
+    const { PrismaClient } = loadDefaultPrismaClientModule();
+    return new PrismaClient();
+}
 
 export function getDbProviderFromEnv(env: NodeJS.ProcessEnv, fallback: DbProvider): DbProvider {
     const raw = (env.HAPPIER_DB_PROVIDER ?? env.HAPPY_DB_PROVIDER)?.toString().trim().toLowerCase();
@@ -89,7 +118,7 @@ export function initDbPostgres(): void {
         throw new Error("Database client is already initialized.");
     }
     _provider = "postgres";
-    _db = new PrismaClient();
+    _db = createDefaultPrismaClient();
 }
 
 async function importGeneratedClient(provider: "mysql" | "sqlite"): Promise<any> {
@@ -149,26 +178,12 @@ export async function initDbMysql(): Promise<void> {
     await initDbFromGeneratedClient("mysql");
 }
 
-async function applySqlitePragmas(client: PrismaClientType): Promise<void> {
-    await client.$queryRawUnsafe("PRAGMA foreign_keys = ON");
-    await client.$queryRawUnsafe("PRAGMA journal_mode = WAL");
-    await client.$queryRawUnsafe("PRAGMA synchronous = NORMAL");
-}
-
 export async function initDbSqlite(): Promise<void> {
     await initDbFromGeneratedClient("sqlite");
-    if (_db) {
-        try {
-            await _db.$connect();
-            await applySqlitePragmas(_db);
-        } catch (error) {
-            const client = _db;
-            _db = null;
-            _provider = null;
-            await client.$disconnect().catch(() => {});
-            throw error;
-        }
+    if (!_db) {
+        throw new Error("Database client is not initialized after initDbFromGeneratedClient(sqlite).");
     }
+    await applySqliteRuntimePragmas(_db, process.env);
 }
 
 function resolveLightPgliteDirFromEnv(env: NodeJS.ProcessEnv): string {
@@ -229,7 +244,7 @@ export async function initDbPglite(): Promise<void> {
             // because pglite is single-connection.
             process.env.DATABASE_URL = withConnectionLimit(server.getServerConn(), 1);
 
-            const prismaClient = new PrismaClient();
+            const prismaClient = createDefaultPrismaClient();
             _pglite = pglite;
             _pgliteServer = server;
             _provider = "pglite";
@@ -260,6 +275,62 @@ export function isPrismaErrorCode(err: unknown, code: string): boolean {
         return false;
     }
     return (err as any).code === code;
+}
+
+type SqliteJournalMode = "WAL" | "DELETE";
+type SqliteSynchronousMode = "OFF" | "NORMAL" | "FULL" | "EXTRA";
+
+export type SqliteRuntimePragmas = Readonly<{
+    journalMode: SqliteJournalMode;
+    synchronous: SqliteSynchronousMode;
+    busyTimeoutMs: number;
+}>;
+
+function resolveSqliteJournalModeFromEnv(env: NodeJS.ProcessEnv): SqliteJournalMode {
+    const raw = String(env.HAPPIER_SQLITE_JOURNAL_MODE ?? env.HAPPY_SQLITE_JOURNAL_MODE ?? "").trim();
+    if (!raw) return "WAL";
+    const normalized = raw.toUpperCase();
+    if (normalized === "WAL") return "WAL";
+    if (normalized === "DELETE") return "DELETE";
+    throw new Error(`Invalid HAPPIER_SQLITE_JOURNAL_MODE/HAPPY_SQLITE_JOURNAL_MODE: ${raw}`);
+}
+
+function resolveSqliteSynchronousModeFromEnv(env: NodeJS.ProcessEnv): SqliteSynchronousMode {
+    const raw = String(env.HAPPIER_SQLITE_SYNCHRONOUS ?? env.HAPPY_SQLITE_SYNCHRONOUS ?? "").trim();
+    if (!raw) return "NORMAL";
+    const normalized = raw.toUpperCase();
+    if (normalized === "OFF") return "OFF";
+    if (normalized === "NORMAL") return "NORMAL";
+    if (normalized === "FULL") return "FULL";
+    if (normalized === "EXTRA") return "EXTRA";
+    throw new Error(`Invalid HAPPIER_SQLITE_SYNCHRONOUS/HAPPY_SQLITE_SYNCHRONOUS: ${raw}`);
+}
+
+function resolveSqliteBusyTimeoutMsFromEnv(env: NodeJS.ProcessEnv): number {
+    const raw = String(env.HAPPIER_SQLITE_BUSY_TIMEOUT_MS ?? env.HAPPY_SQLITE_BUSY_TIMEOUT_MS ?? "").trim();
+    if (!raw) return 5000;
+    const parsed = Number.parseInt(raw, 10);
+    if (!Number.isFinite(parsed) || parsed < 0 || parsed > 600_000) {
+        throw new Error(`Invalid HAPPIER_SQLITE_BUSY_TIMEOUT_MS/HAPPY_SQLITE_BUSY_TIMEOUT_MS: ${raw}`);
+    }
+    return parsed;
+}
+
+export function resolveSqliteRuntimePragmasFromEnv(env: NodeJS.ProcessEnv): SqliteRuntimePragmas {
+    return {
+        journalMode: resolveSqliteJournalModeFromEnv(env),
+        synchronous: resolveSqliteSynchronousModeFromEnv(env),
+        busyTimeoutMs: resolveSqliteBusyTimeoutMsFromEnv(env),
+    };
+}
+
+export async function applySqliteRuntimePragmas(client: PrismaClientType, env: NodeJS.ProcessEnv): Promise<void> {
+    const pragmas = resolveSqliteRuntimePragmasFromEnv(env);
+    // These PRAGMA values come from strict allow-list / numeric-range resolvers above.
+    // Keep the resolution step as the SQL safety boundary for these raw statements.
+    await client.$queryRawUnsafe(`PRAGMA journal_mode=${pragmas.journalMode};`);
+    await client.$queryRawUnsafe(`PRAGMA synchronous=${pragmas.synchronous};`);
+    await client.$queryRawUnsafe(`PRAGMA busy_timeout=${pragmas.busyTimeoutMs};`);
 }
 
 export async function shutdownDbPglite(): Promise<void> {

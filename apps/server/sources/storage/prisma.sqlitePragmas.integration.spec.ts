@@ -1,45 +1,38 @@
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { mkdtemp, rm } from "node:fs/promises";
-import { join } from "node:path";
-import { tmpdir } from "node:os";
+import { afterEach, describe, expect, it } from "vitest";
 
-import { db, initDbSqlite } from "./prisma";
+import { db } from "@/storage/db";
+import { createLightSqliteHarness, type LightSqliteHarness } from "@/testkit/lightSqliteHarness";
 
-describe("storage/prisma sqlite pragmas (integration)", () => {
-    const envBackup = { ...process.env };
-    let baseDir = "";
-    let didInit = false;
+describe("storage/prisma sqlite pragmas", () => {
+    let harness: LightSqliteHarness | null = null;
 
-    beforeAll(async () => {
-        baseDir = await mkdtemp(join(tmpdir(), "happier-prisma-sqlite-pragmas-"));
-        const dbPath = join(baseDir, "pragmas.sqlite");
-
-        process.env.HAPPIER_DB_PROVIDER = "sqlite";
-        process.env.HAPPY_DB_PROVIDER = "sqlite";
-        process.env.DATABASE_URL = `file:${dbPath}`;
-
-        await initDbSqlite();
-        didInit = true;
-        await db.$connect();
-    });
-
-    afterAll(async () => {
-        if (didInit) {
-            await db.$disconnect().catch(() => {});
-        }
-        process.env = envBackup;
-        if (baseDir) {
-            await rm(baseDir, { recursive: true, force: true });
+    afterEach(async () => {
+        if (harness) {
+            await harness.close();
+            harness = null;
         }
     });
 
-    it("enables SQLite foreign keys and WAL mode with normal synchronous writes", async () => {
-        const foreignKeys = await db.$queryRawUnsafe<Array<{ foreign_keys: number }>>("PRAGMA foreign_keys;");
-        const journalMode = await db.$queryRawUnsafe<Array<{ journal_mode: string }>>("PRAGMA journal_mode;");
-        const synchronous = await db.$queryRawUnsafe<Array<{ synchronous: number }>>("PRAGMA synchronous;");
+    it("configures WAL + busy_timeout for sqlite connections (stack stability)", async () => {
+        harness = await createLightSqliteHarness({
+            tempDirPrefix: "happier-sqlite-pragmas-",
+            initAuth: false,
+            initEncrypt: false,
+            initFiles: false,
+        });
 
-        expect(foreignKeys[0]?.foreign_keys).toBe(1);
-        expect(String(journalMode[0]?.journal_mode ?? "").toLowerCase()).toBe("wal");
-        expect(synchronous[0]?.synchronous).toBe(1);
+        const [{ journal_mode: journalMode }] = await db.$queryRawUnsafe<Array<{ journal_mode: string }>>(
+            "SELECT journal_mode FROM pragma_journal_mode;",
+        );
+        const [{ synchronous }] = await db.$queryRawUnsafe<Array<{ synchronous: number | bigint }>>(
+            "SELECT synchronous FROM pragma_synchronous;",
+        );
+        const [{ timeout }] = await db.$queryRawUnsafe<Array<{ timeout: number | bigint }>>(
+            "SELECT timeout FROM pragma_busy_timeout;",
+        );
+
+        expect(journalMode.toLowerCase()).toBe("wal");
+        expect(Number(synchronous)).toBe(1); // NORMAL
+        expect(Number(timeout)).toBe(5000);
     });
 });

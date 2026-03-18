@@ -4,7 +4,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import {
+    loadPackagedPrismaClientModule,
     resolveGeneratedClientEntrypoint,
+    resolvePackagedDefaultPrismaClientEntrypoint,
     resolvePackagedGeneratedClientEntrypoint,
     resolvePreferredGeneratedClientEntrypoint,
 } from "./prisma";
@@ -28,6 +30,9 @@ describe("resolveGeneratedClientEntrypoint", () => {
         expect(resolvePackagedGeneratedClientEntrypoint("mysql", "/opt/happier/happier-server")).toBe(
             "/opt/happier/generated/mysql-client/index.js",
         );
+        expect(resolvePackagedDefaultPrismaClientEntrypoint("/opt/happier/happier-server")).toBe(
+            "/opt/happier/node_modules/.prisma/client/index.js",
+        );
     });
 
     it("prefers packaged generated clients when present next to executable", async () => {
@@ -41,9 +46,15 @@ describe("resolveGeneratedClientEntrypoint", () => {
         expect(resolved).toBe(packaged);
     });
 
-    it("falls back to the workspace sqlite client when no packaged client exists", () => {
-        const root = join("/opt", "happier", "happier-server");
-        const resolved = resolvePreferredGeneratedClientEntrypoint("sqlite", root);
-        expect(resolved).toBe("../../generated/sqlite-client/index.js");
+    it("loads a packaged default Prisma client from sidecars next to the executable", async () => {
+        const root = await mkdtemp(join(tmpdir(), "happier-server-packaged-default-prisma-"));
+        const execPath = join(root, "happier-server");
+        const packaged = join(root, "node_modules", ".prisma", "client", "index.js");
+        await mkdir(join(root, "node_modules", ".prisma", "client"), { recursive: true });
+        await writeFile(packaged, "module.exports = { PrismaClient: class PrismaClient {} };\n", "utf-8");
+
+        const module = loadPackagedPrismaClientModule(execPath);
+        expect(typeof module?.PrismaClient).toBe("function");
+        expect(module?.PrismaClient.name).toBe("PrismaClient");
     });
 });
