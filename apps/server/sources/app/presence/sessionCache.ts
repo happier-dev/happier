@@ -20,6 +20,14 @@ interface MachineCacheEntry {
     active: boolean;
 }
 
+function readErrorCode(error: unknown): string | null {
+    if (!error || typeof error !== "object") {
+        return null;
+    }
+    const { code } = error as { code?: unknown };
+    return typeof code === "string" ? code : null;
+}
+
 class ActivityCache {
     private sessionCache = new Map<string, SessionCacheEntry>();
     private machineCache = new Map<string, MachineCacheEntry>();
@@ -65,6 +73,10 @@ class ActivityCache {
     }
 
     private shouldBackoffDbFlush(error: unknown): boolean {
+        const code = readErrorCode(error);
+        if (code === "SQLITE_BUSY" || code === "P1008" || code === "P2028") {
+            return true;
+        }
         const message = error instanceof Error ? error.message : String(error);
         return (
             message.includes("Socket timeout") ||
@@ -75,7 +87,7 @@ class ActivityCache {
 
     private maybeCleanup(now: number): void {
         if (this.nextCleanupAt && now < this.nextCleanupAt) return;
-        this.cleanup();
+        this.cleanup(now);
         this.nextCleanupAt = now + this.CLEANUP_INTERVAL;
     }
 
@@ -276,6 +288,7 @@ class ActivityCache {
     private async flushPendingUpdatesInternal(): Promise<void> {
         const now = Date.now();
         if (now < this.dbFlushBackoffUntil) return;
+        let shouldAbortFlush = false;
 
         const sessionUpdatesById = new Map<string, { timestamp: number; entries: SessionCacheEntry[] }>();
         const machineUpdates: { machineId: string; timestamp: number; entry: MachineCacheEntry }[] = [];
@@ -320,7 +333,9 @@ class ActivityCache {
 
                     for (const entry of entries) {
                         entry.lastUpdateSent = timestamp;
-                        entry.pendingUpdate = null;
+                        // Preserve newer queued updates that arrived while awaiting the DB write.
+                        const pending = entry.pendingUpdate;
+                        entry.pendingUpdate = pending !== null && pending > timestamp ? pending : null;
                         entry.active = true;
                     }
                     okCount += 1;
@@ -335,12 +350,17 @@ class ActivityCache {
                     );
                     if (this.shouldBackoffDbFlush(error)) {
                         this.dbFlushBackoffUntil = Date.now() + this.DB_FLUSH_BACKOFF_INTERVAL;
+                        shouldAbortFlush = true;
                         break;
                     }
                 }
             }
 
             log({ module: 'session-cache' }, `Flushed ${okCount}/${sessionUpdatesById.size} session updates`);
+        }
+
+        if (shouldAbortFlush) {
+            return;
         }
         
         // Flush machine presence updates (best-effort).
@@ -359,7 +379,9 @@ class ActivityCache {
                     });
 
                     update.entry.lastUpdateSent = update.timestamp;
-                    update.entry.pendingUpdate = null;
+                    // Preserve newer queued updates that arrived while awaiting the DB write.
+                    const pending = update.entry.pendingUpdate;
+                    update.entry.pendingUpdate = pending !== null && pending > update.timestamp ? pending : null;
                     update.entry.active = true;
                     okCount += 1;
                 } catch (error) {
@@ -371,6 +393,7 @@ class ActivityCache {
                     );
                     if (this.shouldBackoffDbFlush(error)) {
                         this.dbFlushBackoffUntil = Date.now() + this.DB_FLUSH_BACKOFF_INTERVAL;
+                        shouldAbortFlush = true;
                         break;
                     }
                 }
@@ -381,8 +404,7 @@ class ActivityCache {
     }
 
     // Cleanup old cache entries periodically
-    cleanup(): void {
-        const now = Date.now();
+    cleanup(now = Date.now()): void {
         
         for (const [sessionId, entry] of this.sessionCache.entries()) {
             if (entry.validUntil < now) {
