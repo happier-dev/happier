@@ -25,9 +25,11 @@ import { AppPaneModalProvider } from '@/components/appShell/providers/AppPaneMod
 import { PostHogProvider } from 'posthog-react-native';
 import * as Sentry from '@sentry/react-native';
 import { tracking } from '@/track/tracking';
+import { SettingsAnalyticsRuntime } from '@/track/settingsAnalytics/SettingsAnalyticsRuntime';
 import { syncRestore } from '@/sync/sync';
 import { storage } from '@/sync/domains/state/storage';
 import { getActiveViewingSessionId } from '@/sync/domains/session/activeViewingSession';
+import { NotificationsSettingsV1Schema } from '@happier-dev/protocol';
 import { useTrackScreens } from '@/track/useTrackScreens';
 import { RealtimeProvider } from '@/realtime/RealtimeProvider';
 import { FaviconPermissionIndicator } from '@/components/web/FaviconPermissionIndicator';
@@ -47,7 +49,9 @@ import { t } from '@/text';
 import { AppCrashRecoveryBoundary } from '@/components/appShell/AppCrashRecoveryBoundary';
 import { WebCryptoStartupGate } from '@/components/web/WebCryptoStartupGate';
 import { consumeRestartBugReportIntent } from '@/utils/system/restartBugReportIntent';
+import { getCurrentReactOwnerHint, getUnexpectedPrimitiveViewChildInfo } from '@/utils/system/debugUnexpectedTextNodeCapture';
 import { resolveForegroundNotificationBehavior } from '@/activity/notifications/resolveForegroundNotificationBehavior';
+import { resolveBootCredentials } from '@/boot/resolveBootCredentials';
 
 initializeSentryOnce();
 
@@ -89,41 +93,31 @@ function installRnwUnexpectedTextNodeStackCaptureOnce() {
     const crash = shouldCrashOnRnwUnexpectedTextNode();
 
     console.error = (...args: any[]) => {
+        let handledUnexpectedTextNode = false;
+        let crashMessage: string | null = null;
         try {
             const first = args[0];
             if (typeof first === 'string' && first.startsWith('Unexpected text node:')) {
+                handledUnexpectedTextNode = true;
                 // De-dupe per unique message to keep logs readable.
                 if (!seen.has(first)) {
                     seen.add(first);
-                    let ownerHint: any = null;
-                    try {
-                        // Best-effort: during render, React may expose the current owner fiber.
-                        const internals =
-                            (React as any).__SECRET_INTERNALS_DO_NOT_USE_OR_YOU_WILL_BE_FIRED;
-                        const owner = internals?.ReactCurrentOwner?.current;
-                        const ownerType = owner?.type;
-                        const ownerName =
-                            (typeof ownerType === 'function' && (ownerType.displayName || ownerType.name)) ||
-                            (typeof ownerType === 'string' ? ownerType : null);
-                        const source = owner?._debugSource || owner?._debugOwner?._debugSource || null;
-                        ownerHint = ownerName ? { ownerName, source } : source ? { source } : null;
-                    } catch {
-                        ownerHint = null;
-                    }
+                    const ownerHint = getCurrentReactOwnerHint(React);
                     original(...args);
                     if (ownerHint) original('[debugRnwTextNode] owner:', ownerHint);
                     original('[debugRnwTextNode] stack:', new Error(first).stack);
                     if (crash) {
-                        // Throwing inside render will (usually) include a component stack overlay,
-                        // which helps locate the offending component.
-                        throw new Error(first);
+                        crashMessage = first;
                     }
-                    return;
                 }
             }
         } catch {
             // ignore
         }
+        if (crashMessage) {
+            throw new Error(crashMessage);
+        }
+        if (handledUnexpectedTextNode) return;
         original(...args);
     };
 }
@@ -142,48 +136,21 @@ function installReactCreateElementUnexpectedTextNodeCaptureOnce() {
         try {
             const rawChildren = children.length > 0 ? children : (props?.children ?? []);
             const flat = React.Children.toArray(rawChildren as any[]);
-            const dotChild = flat.find((c) => typeof c === 'string' && c.trim() === '.') as string | undefined;
-            if (dotChild !== undefined) {
-                const typeName =
-                    (typeof type === 'function' && (type.displayName || type.name))
-                    || (typeof type?.render === 'function' && (type.render.displayName || type.render.name))
-                    || (typeof type === 'string' ? type : 'unknown');
+            const info = getUnexpectedPrimitiveViewChildInfo({
+                type,
+                props,
+                flatChildren: flat,
+            });
+            if (info && !seen.has(info.signature) && logged < 10) {
+                seen.add(info.signature);
+                logged += 1;
 
-                const isViewLike = type === View
-                    || type?.displayName === 'View'
-                    || type?.name === 'View'
-                    || type?.render?.displayName === 'View'
-                    || type?.render?.name === 'View';
-
-                const signature = `${typeName}|${props?.testID ?? ''}|${props?.accessibilityLabel ?? ''}|dot`;
-                if (!seen.has(signature) && logged < 10) {
-                    seen.add(signature);
-                    logged += 1;
-
-                    let ownerHint: any = null;
-                    try {
-                        const internals =
-                            (React as any).__SECRET_INTERNALS_DO_NOT_USE_OR_YOU_WILL_BE_FIRED;
-                        const owner = internals?.ReactCurrentOwner?.current;
-                        const ownerType = owner?.type;
-                        const ownerName =
-                            (typeof ownerType === 'function' && (ownerType.displayName || ownerType.name)) ||
-                            (typeof ownerType === 'string' ? ownerType : null);
-                        const source = owner?._debugSource || owner?._debugOwner?._debugSource || null;
-                        ownerHint = ownerName ? { ownerName, source } : source ? { source } : null;
-                    } catch {
-                        ownerHint = null;
-                    }
-
-                    console.error('[debugRnwTextNode] element created with dot primitive child', {
-                        typeName,
-                        isViewLike,
-                        testID: props?.testID ?? null,
-                        accessibilityLabel: props?.accessibilityLabel ?? null,
-                        ownerHint,
-                    });
-                    console.error('[debugRnwTextNode] createElement stack:', new Error('dot child').stack);
-                }
+                const ownerHint = getCurrentReactOwnerHint(React);
+                console.error('[debugRnwTextNode] element created with primitive View child', {
+                    ...info,
+                    ownerHint,
+                });
+                console.error('[debugRnwTextNode] createElement stack:', new Error('primitive child').stack);
             }
         } catch {
             // ignore
@@ -206,47 +173,20 @@ function installReactJsxRuntimeUnexpectedTextNodeCaptureOnce() {
         const logIfBadChildren = (type: any, props: any) => {
             try {
                 const flat = React.Children.toArray(props?.children ?? []);
-                const dotChild = flat.find((c) => typeof c === 'string' && c.trim() === '.') as string | undefined;
-                if (dotChild !== undefined) {
-                    const typeName =
-                        (typeof type === 'function' && (type.displayName || type.name))
-                        || (typeof type?.render === 'function' && (type.render.displayName || type.render.name))
-                        || (typeof type === 'string' ? type : 'unknown');
+                const info = getUnexpectedPrimitiveViewChildInfo({
+                    type,
+                    props,
+                    flatChildren: flat,
+                });
+                if (info && !seen.has(info.signature)) {
+                    seen.add(info.signature);
 
-                    const isViewLike = type === View
-                        || type?.displayName === 'View'
-                        || type?.name === 'View'
-                        || type?.render?.displayName === 'View'
-                        || type?.render?.name === 'View';
-
-                    const signature = `${typeName}|${props?.testID ?? ''}|${props?.accessibilityLabel ?? ''}|dot`;
-                    if (!seen.has(signature)) {
-                        seen.add(signature);
-
-                        let ownerHint: any = null;
-                        try {
-                            const internals =
-                                (React as any).__SECRET_INTERNALS_DO_NOT_USE_OR_YOU_WILL_BE_FIRED;
-                            const owner = internals?.ReactCurrentOwner?.current;
-                            const ownerType = owner?.type;
-                            const ownerName =
-                                (typeof ownerType === 'function' && (ownerType.displayName || ownerType.name)) ||
-                                (typeof ownerType === 'string' ? ownerType : null);
-                            const source = owner?._debugSource || owner?._debugOwner?._debugSource || null;
-                            ownerHint = ownerName ? { ownerName, source } : source ? { source } : null;
-                        } catch {
-                            ownerHint = null;
-                        }
-
-                        console.error('[debugRnwTextNode] jsx-runtime element created with dot primitive child', {
-                            typeName,
-                            isViewLike,
-                            testID: props?.testID ?? null,
-                            accessibilityLabel: props?.accessibilityLabel ?? null,
-                            ownerHint,
-                        });
-                        console.error('[debugRnwTextNode] jsx-runtime stack:', new Error('dot child').stack);
-                    }
+                    const ownerHint = getCurrentReactOwnerHint(React);
+                    console.error('[debugRnwTextNode] jsx-runtime element created with primitive View child', {
+                        ...info,
+                        ownerHint,
+                    });
+                    console.error('[debugRnwTextNode] jsx-runtime stack:', new Error('primitive child').stack);
                 }
             } catch {
                 // ignore
@@ -281,6 +221,56 @@ function installReactJsxRuntimeUnexpectedTextNodeCaptureOnce() {
     }
 }
 
+function installReactNativeViewRenderUnexpectedTextNodeCaptureOnce() {
+    if (typeof globalThis === 'undefined') return;
+    const g = globalThis as any;
+    if (g.__HAPPIER_RNW_VIEW_RENDER_TEXTNODE_CAPTURE_INSTALLED__) return;
+    g.__HAPPIER_RNW_VIEW_RENDER_TEXTNODE_CAPTURE_INSTALLED__ = true;
+
+    try {
+        // eslint-disable-next-line @typescript-eslint/no-var-requires
+        const reactNative = require('react-native');
+        const viewCandidate = reactNative?.View;
+        if (!viewCandidate) return;
+
+        const wrapRender = (original: any) => {
+            const seen = new Set<string>();
+            return function wrappedViewRender(this: unknown, props: Record<string, unknown>, ref: unknown) {
+                try {
+                    const flatChildren = React.Children.toArray((props as any)?.children ?? []);
+                    const info = getUnexpectedPrimitiveViewChildInfo({
+                        type: viewCandidate,
+                        props,
+                        flatChildren,
+                    });
+                    if (info && !seen.has(info.signature)) {
+                        seen.add(info.signature);
+                        console.error('[debugRnwTextNode] View render primitive child', {
+                            ...info,
+                            ownerHint: getCurrentReactOwnerHint(React),
+                        });
+                        console.error('[debugRnwTextNode] View render stack:', new Error('primitive child').stack);
+                    }
+                } catch {
+                    // ignore
+                }
+                return original.call(this, props, ref);
+            };
+        };
+
+        if (typeof viewCandidate?.render === 'function') {
+            viewCandidate.render = wrapRender(viewCandidate.render);
+            return;
+        }
+
+        if (typeof viewCandidate === 'function') {
+            reactNative.View = wrapRender(viewCandidate);
+        }
+    } catch {
+        // ignore
+    }
+}
+
 // Configure notification handler for foreground notifications.
 // Suppresses same-session notifications and respects the foregroundBehavior setting.
 Notifications.setNotificationHandler({
@@ -293,7 +283,7 @@ Notifications.setNotificationHandler({
             return { shouldPlaySound: false, shouldSetBadge: true, shouldShowBanner: false, shouldShowList: false };
         }
 
-        // Foreground behavior is resolved from local + synced account settings.
+        // NotificationsSettingsV1Schema uses .catch(), so parse always succeeds.
         const foregroundBehavior = resolveForegroundNotificationBehavior({
             localSettings: storage.getState().localSettings,
             accountSettings: storage.getState().settings,
@@ -393,6 +383,7 @@ if (shouldCaptureRnwUnexpectedTextNodeStacks()) {
     installRnwUnexpectedTextNodeStackCaptureOnce();
     installReactCreateElementUnexpectedTextNodeCaptureOnce();
     installReactJsxRuntimeUnexpectedTextNodeCaptureOnce();
+    installReactNativeViewRenderUnexpectedTextNodeCaptureOnce();
 }
 
 // Component to apply horizontal safe area padding
@@ -668,7 +659,7 @@ function AppBoot(props: {
                     console.error('Failed to load fonts during init, continuing startup:', error);
                 }
                 await sodium.ready;
-                credentials = await TokenStorage.getCredentials();
+                credentials = await resolveBootCredentials(Platform.OS);
                 if (credentials) {
                     try {
                         await syncRestore(credentials);
@@ -764,6 +755,7 @@ function AppBoot(props: {
     if (tracking) {
         providers = (
             <PostHogProvider client={tracking}>
+                <SettingsAnalyticsRuntime />
                 {providers}
             </PostHogProvider>
         );

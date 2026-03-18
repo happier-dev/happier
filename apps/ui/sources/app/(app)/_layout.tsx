@@ -29,6 +29,11 @@ import { bootstrapActiveServerFromWebLocation, readWebServerUrlOverrideFromLocat
 import { PUSH_NOTIFICATION_ACTION_IDS } from '@happier-dev/protocol';
 import { buildTerminalConnectWebHref } from '@/utils/path/terminalConnectUrl';
 import { useWebInitialRouteReconcile } from '@/hooks/ui/useWebInitialRouteReconcile';
+import { useHappierVoiceSupport } from '@/hooks/server/useHappierVoiceSupport';
+import {
+    createFriendsStackScreenOptions,
+    createInboxStackScreenOptions,
+} from '@/utils/navigation/createSocialStackScreenOptions';
 import { ActivityBadgeRuntime } from '@/activity/badges/ActivityBadgeRuntime';
 import { ActivityLocalNotificationRuntime } from '@/activity/notifications/runtime/ActivityLocalNotificationRuntime';
 
@@ -94,6 +99,7 @@ export default function RootLayout() {
     const friendsIdentityReadiness = useFriendsIdentityReadiness();
     const friendsIdentityReady = friendsIdentityReadiness.isReady;
     const debugRouterEnabled = process.env.EXPO_PUBLIC_DEBUG === '1';
+    const happierVoiceSupported = useHappierVoiceSupport();
 
     useWebInitialRouteReconcile({ routerPathname: pathname });
 
@@ -469,27 +475,23 @@ export default function RootLayout() {
     // default the user's voice mode to off (they can still choose BYO ElevenLabs in settings).
     React.useEffect(() => {
         if (!auth.isAuthenticated) return;
+        if (happierVoiceSupported !== false) return;
         let cancelled = false;
         fireAndForget((async () => {
             try {
-                // Defer loading sync/storage modules until needed to keep module evaluation light
-                // (important for test environments and faster route transitions).
-                const [{ getReadyServerFeatures }, { storage }, { sync }] = await Promise.all([
-                    import('@/sync/api/capabilities/getReadyServerFeatures'),
+                // Defer loading sync/storage modules until needed to keep module evaluation light.
+                const [{ storage }, { sync }] = await Promise.all([
                     import('@/sync/domains/state/storage'),
                     import('@/sync/sync'),
                 ]);
 
-                const features = await getReadyServerFeatures();
                 if (cancelled) return;
-                if (!features) return;
-                if (features.features.voice.happierVoice.enabled === true) return;
                 const voice = (storage.getState().settings as any)?.voice ?? null;
                 const providerId = voice?.providerId ?? 'off';
                 const billingMode = voice?.adapters?.realtime_elevenlabs?.billingMode ?? 'happier';
                 if (providerId !== 'realtime_elevenlabs') return;
                 if (billingMode !== 'happier') return;
-                sync.applySettings({ voice: { ...voice, providerId: 'off' } });
+                sync.applySettings({ voice: { ...voice, providerId: 'off' } }, { source: 'system' });
             } catch {
                 // Non-fatal: feature gating should never crash the root layout.
             }
@@ -497,7 +499,7 @@ export default function RootLayout() {
         return () => {
             cancelled = true;
         };
-    }, [auth.isAuthenticated]);
+    }, [auth.isAuthenticated, happierVoiceSupported]);
 
     // Avoid rendering protected screens for a frame during redirect.
     if (shouldRedirect) {
@@ -547,19 +549,11 @@ export default function RootLayout() {
             />
             <Stack.Screen
                 name="inbox/index"
-                options={{
-                    headerShown: false,
-                    headerTitle: t('tabs.inbox'),
-                    headerBackTitle: t('common.home')
-                }}
+                options={createInboxStackScreenOptions(t)}
             />
             <Stack.Screen
                 name="friends/index"
-                options={{
-                    headerShown: false,
-                    headerTitle: t('tabs.inbox'),
-                    headerBackTitle: t('common.home')
-                }}
+                options={createFriendsStackScreenOptions(t)}
             />
             <Stack.Screen
                 name="oauth/[provider]"
@@ -632,6 +626,26 @@ export default function RootLayout() {
                 }}
             />
             <Stack.Screen
+                name="session/[id]/files"
+                options={{
+                    // The Files/SCM mobile route renders the exact same surface as the desktop right panel,
+                    // including its own header (tabs + close button). Avoid double headers.
+                    headerShown: false,
+                }}
+            />
+            <Stack.Screen
+                name="session/[id]/details"
+                options={{
+                    headerShown: false,
+                }}
+            />
+            <Stack.Screen
+                name="session/[id]/terminal"
+                options={{
+                    headerShown: false,
+                }}
+            />
+            <Stack.Screen
                 name="session/[id]/index"
                 options={{
                     headerShown: false
@@ -657,6 +671,18 @@ export default function RootLayout() {
                 name="settings/account"
                 options={{
                     headerTitle: t('settings.account'),
+                }}
+            />
+            <Stack.Screen
+                name="settings/machines"
+                options={{
+                    headerTitle: t('settings.machines'),
+                }}
+            />
+            <Stack.Screen
+                name="settings/machines/add"
+                options={{
+                    headerTitle: t('settings.addMachine'),
                 }}
             />
             <Stack.Screen
@@ -708,6 +734,12 @@ export default function RootLayout() {
                 }}
             />
             <Stack.Screen
+                name="settings/sub-agent"
+                options={{
+                    headerTitle: t('subAgentGuidance.settings.groupTitle'),
+                }}
+            />
+            <Stack.Screen
                 name="settings/session/tool-rendering"
                 options={{
                     headerTitle: t('settingsSession.toolRendering.title'),
@@ -717,6 +749,12 @@ export default function RootLayout() {
                 name="settings/session/permissions"
                 options={{
                     headerTitle: t('settingsSession.permissions.title'),
+                }}
+            />
+            <Stack.Screen
+                name="settings/session/handoff"
+                options={{
+                    headerTitle: t('settingsSession.handoff.title'),
                 }}
             />
             <Stack.Screen
@@ -962,6 +1000,30 @@ export default function RootLayout() {
                     gestureEnabled: true,
                     fullScreenGestureEnabled: true,
                     // Swipe-to-dismiss is not consistently available across platforms; always provide a close button.
+                    headerBackVisible: false,
+                    headerLeft: () => null,
+                    headerRight: () => (
+                        <TouchableOpacity
+                            onPress={() => router.back()}
+                            hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+                            style={{ paddingHorizontal: 12, paddingVertical: 6 }}
+                            accessibilityRole="button"
+                            accessibilityLabel={t('common.cancel')}
+                        >
+                            <Ionicons name="close" size={22} color={theme.colors.header.tint} />
+                        </TouchableOpacity>
+                    ),
+                }}
+            />
+            <Stack.Screen
+                name="direct/browse"
+                options={{
+                    headerTitle: t('directSessions.browseTitle'),
+                    headerShown: true,
+                    headerBackTitle: t('common.cancel'),
+                    presentation: 'modal',
+                    gestureEnabled: true,
+                    fullScreenGestureEnabled: true,
                     headerBackVisible: false,
                     headerLeft: () => null,
                     headerRight: () => (
