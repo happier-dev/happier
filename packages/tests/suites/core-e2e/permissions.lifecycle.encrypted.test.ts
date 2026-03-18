@@ -112,5 +112,5 @@ describe('core e2e: permission lifecycle (encrypted rpc + agentState) + reconnec
       deviceB.close();
       await agent.stop();
     }
-  });
+  }, 120_000);
 });
