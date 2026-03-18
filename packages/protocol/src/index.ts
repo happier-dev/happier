@@ -1327,7 +1327,17 @@ export {
 } from './promptLibrary/promptInvocationsV1.js';
 
 // System prompt assembly (shared between UI + CLI)
-export { buildAppendSystemPromptV1 } from './prompts/appendSystemPromptV1.js';
+export {
+  buildPromptPlanDiagnosticsV1,
+  buildPromptPlanV1,
+  dedupePromptBlocksV1,
+  renderPromptBlocksV1,
+  renderPromptPlanV1,
+  type PromptBlockScopeV1,
+  type PromptBlockV1,
+  type PromptModalityV1,
+  type PromptPlanV1,
+} from './prompts/promptPlanV1.js';
 export { HAPPIER_BASE_SYSTEM_PROMPT_V1 } from './prompts/systemPromptBaseV1.js';
 export {
   CHANGE_TITLE_INSTRUCTION_V1,
@@ -1340,8 +1350,16 @@ export {
   normalizeExecutionRunsGuidanceFingerprintV1,
   type ExecutionRunsGuidanceEntryV1,
 } from './prompts/executionRunsGuidanceV1.js';
-export { buildAppendSystemPromptBaseV1 } from './prompts/buildAppendSystemPromptBaseV1.js';
+export {
+  buildAppendSystemPromptBaseV1,
+  buildCodingSessionPromptPlanBaseV1,
+} from './prompts/buildAppendSystemPromptBaseV1.js';
 export { buildMemoryRecallGuidanceBlockV1, type MemoryRecallGuidanceVariant } from './prompts/memoryRecallGuidanceV1.js';
+export {
+  isMemoryRecallGuidanceSupported,
+  MEMORY_RECALL_GUIDANCE_REQUIRED_ACTION_IDS,
+  type MemoryRecallGuidanceSurface,
+} from './prompts/isMemoryRecallGuidanceSupported.js';
 export { resolvePromptStackSystemAppendBlocksV1 } from './promptLibrary/resolvePromptStackSystemAppendBlocksV1.js';
 
 export * from './actions/index.js';

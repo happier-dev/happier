@@ -6,10 +6,14 @@ describe('HAPPIER_BASE_SYSTEM_PROMPT_V1', () => {
   it('documents inline @path workspace file references', () => {
     expect(HAPPIER_BASE_SYSTEM_PROMPT_V1).toContain('Linked workspace files');
     expect(HAPPIER_BASE_SYSTEM_PROMPT_V1).toContain('`@path`');
-    expect(HAPPIER_BASE_SYSTEM_PROMPT_V1).toContain('Read tool');
   });
 
   it('mentions change_title for session titles', () => {
     expect(HAPPIER_BASE_SYSTEM_PROMPT_V1).toContain('change_title');
+  });
+
+  it('documents attachment blocks so referenced files are read before answering', () => {
+    expect(HAPPIER_BASE_SYSTEM_PROMPT_V1).toContain('[attachments]');
+    expect(HAPPIER_BASE_SYSTEM_PROMPT_V1).toContain('attachments block');
   });
 });
