@@ -89,6 +89,15 @@ test('pipeline CLI help reflects expanded Expo environment support', async () =>
     timeout: 30_000,
   });
   assert.match(downloadHelp, /development\|canary\|preview\|production/);
+
+  const publishHelp = execFileSync(process.execPath, [pipelineCli, 'help', 'expo-publish-apk-release'], {
+    cwd: repoRoot,
+    env: { ...process.env },
+    encoding: 'utf8',
+    stdio: ['ignore', 'pipe', 'pipe'],
+    timeout: 30_000,
+  });
+  assert.match(publishHelp, /development\|canary\|preview\|production/);
 });
 
 test('pipeline help covers every supported subcommand', async () => {
