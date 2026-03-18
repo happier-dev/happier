@@ -15,4 +15,3 @@ export function resolveTerminalFeature(env: NodeJS.ProcessEnv): FeaturesPayloadD
         },
     };
 }
-
