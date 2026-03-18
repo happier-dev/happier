@@ -61,7 +61,7 @@ function cmdInstall(command: string, opts: Readonly<{ requiresAdmin?: boolean; n
   };
 }
 
-export const PROVIDER_CLI_RUNTIME_SPECS: Readonly<Record<AgentId, ProviderCliRuntimeSpec>> = Object.freeze({
+export const PROVIDER_CLI_RUNTIME_SPECS: Readonly<Record<AgentId, ProviderCliRuntimeSpec>> = {
   claude: {
     id: 'claude',
     title: 'Claude Code CLI',
@@ -251,7 +251,7 @@ export const PROVIDER_CLI_RUNTIME_SPECS: Readonly<Record<AgentId, ProviderCliRun
     acceptsJavaScriptFileOverride: false,
     docsUrl: 'https://docs.github.com/en/copilot/how-tos/set-up/install-copilot-cli',
   },
-} as const);
+} as const;
 
 export function getProviderCliRuntimeSpec(id: AgentId): ProviderCliRuntimeSpec {
   return PROVIDER_CLI_RUNTIME_SPECS[id];

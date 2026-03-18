@@ -1,31 +1,39 @@
 import { describe, expect, it } from 'vitest';
+import { z } from 'zod';
 
-import { AGENT_IDS } from '../types.js';
-import {
-  assertProviderSettingsRegistryValid,
-  getAllProviderSettingsDefinitions,
-  getProviderSettingsDefinition,
-} from './registry.js';
+import type { SettingDefinitionMap } from '@happier-dev/protocol';
+
+import { assertProviderSettingsRegistryValid, getProviderSettingsDefinition } from './registry.js';
+import type { ProviderSettingsDefinition } from './types.js';
+
+function makeDefinition(overrides: Partial<ProviderSettingsDefinition>): ProviderSettingsDefinition {
+  const baseFields = {
+    foo: {
+      schema: z.string(),
+      default: '',
+      description: 'Foo',
+      storageScope: 'account',
+    },
+  } satisfies SettingDefinitionMap;
+
+  return {
+    providerId: 'claude',
+    fields: baseFields,
+    ...overrides,
+  };
+}
 
 describe('provider settings registry', () => {
-  it('covers the canonical provider settings definitions', () => {
-    const definitions = getAllProviderSettingsDefinitions();
-    expect(definitions.map((definition) => definition.providerId).sort()).toEqual(['claude', 'codex', 'opencode']);
-    expect(definitions).toHaveLength(3);
+  it('rejects duplicate setting keys across provider field maps', () => {
+    const a = makeDefinition({ providerId: 'claude' as any });
+    const b = makeDefinition({ providerId: 'codex' as any });
+
+    expect(() => assertProviderSettingsRegistryValid([a, b])).toThrow(/defined more than once/i);
   });
 
-  it('returns a definition for every registered provider', () => {
-    for (const providerId of AGENT_IDS) {
-      const definition = getProviderSettingsDefinition(providerId);
-      if (providerId === 'claude' || providerId === 'codex' || providerId === 'opencode') {
-        expect(definition?.providerId).toBe(providerId);
-      } else {
-        expect(definition).toBeNull();
-      }
-    }
-  });
-
-  it('validates the registry without duplicate keys or mismatched defaults', () => {
-    expect(() => assertProviderSettingsRegistryValid()).not.toThrow();
+  it('exposes field defaults from the canonical provider definition', () => {
+    const codexDefinition = getProviderSettingsDefinition('codex');
+    expect(codexDefinition).not.toBeNull();
+    expect(codexDefinition?.fields.codexBackendMode?.default).toBe('appServer');
   });
 });

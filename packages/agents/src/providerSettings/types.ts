@@ -1,10 +1,6 @@
-import type { z, ZodTypeAny } from 'zod';
+import type { SettingDefinitionMap } from '@happier-dev/protocol';
 
 import type { AgentId } from '../types.js';
-
-export type ProviderSettingsShape = Readonly<Record<string, ZodTypeAny>>;
-
-export type ProviderSettingsBuildShape = (zod: typeof z) => ProviderSettingsShape;
 
 export type ProviderSettingsBuildMessageMetaExtras = (args: Readonly<{
   agentId: AgentId;
@@ -19,8 +15,7 @@ export type ProviderSettingsResolveSpawnExtras = (args: Readonly<{
 
 export type ProviderSettingsDefinition = Readonly<{
   providerId: AgentId;
-  buildSettingsShape: ProviderSettingsBuildShape;
-  settingsDefaults: Readonly<Record<string, unknown>>;
+  fields: SettingDefinitionMap;
   buildOutgoingMessageMetaExtras?: ProviderSettingsBuildMessageMetaExtras;
   resolveSpawnExtras?: ProviderSettingsResolveSpawnExtras;
 }>;

@@ -1,6 +1,7 @@
-import type { z } from 'zod';
+import { z } from 'zod';
+import { buildSettingArtifacts, type SettingDefinitionMap } from '@happier-dev/protocol';
 
-import type { ProviderSettingsDefinition, ProviderSettingsShape } from '../types.js';
+import type { ProviderSettingsDefinition } from '../types.js';
 
 export type CodexBackendMode = 'mcp' | 'acp' | 'appServer';
 
@@ -11,23 +12,29 @@ function normalizeCodexBackendMode(value: unknown): CodexBackendMode | null {
   return null;
 }
 
-export const CODEX_PROVIDER_SETTINGS_DEFAULTS = Object.freeze({
-  codexBackendMode: 'acp' satisfies CodexBackendMode,
-  codexAcpInstallSpec: '',
-});
-
-export function buildCodexProviderSettingsShape(zod: typeof z): ProviderSettingsShape {
-  return {
+export const CODEX_PROVIDER_FIELDS = {
+  codexBackendMode: {
     // Back-compat: `mcp_resume` was a legacy fork that has been removed. Treat it as ACP.
-    codexBackendMode: zod
+    schema: z
       .enum(['mcp', 'mcp_resume', 'acp', 'appServer'])
       .transform((value): CodexBackendMode => {
         if (value === 'mcp') return 'mcp';
         if (value === 'appServer') return 'appServer';
         return 'acp';
       }),
-    codexAcpInstallSpec: zod.string(),
-  } as const;
+    default: 'appServer' satisfies CodexBackendMode,
+    description: 'Preferred Codex backend mode',
+    storageScope: 'account',
+    analytics: { trackCurrentState: true, trackChanges: true, valueKind: 'enum', privacy: 'safe', identityScope: 'person' },
+  },
+} as const satisfies SettingDefinitionMap;
+
+const CODEX_PROVIDER_ARTIFACTS = buildSettingArtifacts(CODEX_PROVIDER_FIELDS);
+
+export const CODEX_PROVIDER_SETTINGS_DEFAULTS = Object.freeze(CODEX_PROVIDER_ARTIFACTS.defaults);
+
+export function buildCodexProviderSettingsShape(_zod: typeof z) {
+  return CODEX_PROVIDER_ARTIFACTS.shape;
 }
 
 export function resolveCodexRuntimeBackendMode(params: Readonly<{
@@ -47,12 +54,7 @@ export function resolveCodexSpawnExtrasFromSettings(settings: Readonly<Record<st
 }> {
   const mode = resolveCodexRuntimeBackendMode({ codexBackendMode: settings.codexBackendMode });
   if (!mode) return {};
-  if (mode === 'acp') {
-    return {
-      codexBackendMode: 'acp',
-      experimentalCodexAcp: true,
-    };
-  }
+  if (mode === 'acp') return { codexBackendMode: 'acp', experimentalCodexAcp: true };
   return { codexBackendMode: mode };
 }
 
@@ -66,8 +68,7 @@ export function isCodexVendorResumeBackendEnabled(settings: Readonly<Record<stri
 
 export const CODEX_PROVIDER_SETTINGS_DEFINITION: ProviderSettingsDefinition = Object.freeze({
   providerId: 'codex',
-  buildSettingsShape: buildCodexProviderSettingsShape,
-  settingsDefaults: CODEX_PROVIDER_SETTINGS_DEFAULTS,
+  fields: CODEX_PROVIDER_ARTIFACTS.definitions,
   buildOutgoingMessageMetaExtras: () => ({}),
   resolveSpawnExtras: ({ settings }) => resolveCodexSpawnExtrasFromSettings(settings),
 });

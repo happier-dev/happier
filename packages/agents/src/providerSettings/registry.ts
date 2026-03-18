@@ -1,5 +1,3 @@
-import * as zod from 'zod';
-
 import type { AgentId } from '../types.js';
 
 import { CLAUDE_REMOTE_PROVIDER_SETTINGS_DEFINITION } from './definitions/claudeRemote.js';
@@ -21,34 +19,25 @@ export function getProviderSettingsDefinition(providerId: AgentId): ProviderSett
   return (ALL_DEFINITIONS.find((d) => d.providerId === providerId) ?? null) as ProviderSettingsDefinition | null;
 }
 
-export function assertProviderSettingsRegistryValid(): void {
+export function assertProviderSettingsRegistryValid(definitions: readonly ProviderSettingsDefinition[] = ALL_DEFINITIONS): void {
+  assertProviderSettingsRegistryValidFor(definitions);
+}
+
+export function assertProviderSettingsRegistryValidFor(definitions: readonly ProviderSettingsDefinition[]): void {
   const seenProviders = new Set<string>();
   const seenKeys = new Set<string>();
 
-  for (const def of ALL_DEFINITIONS) {
+  for (const def of definitions) {
     if (seenProviders.has(def.providerId)) {
       throw new Error(`Duplicate provider settings definition: ${def.providerId}`);
     }
     seenProviders.add(def.providerId);
 
-    const shape = def.buildSettingsShape(zod);
-    const shapeKeys = Object.keys(shape);
-    const defaultKeys = Object.keys(def.settingsDefaults);
-
-    for (const key of shapeKeys) {
-      if (!Object.prototype.hasOwnProperty.call(def.settingsDefaults, key)) {
-        throw new Error(`Provider settings defaults missing key "${key}" for provider "${def.providerId}"`);
-      }
+    for (const key of Object.keys(def.fields)) {
       if (seenKeys.has(key)) {
         throw new Error(`Provider settings key "${key}" is defined more than once across providers`);
       }
       seenKeys.add(key);
-    }
-
-    for (const key of defaultKeys) {
-      if (!Object.prototype.hasOwnProperty.call(shape, key)) {
-        throw new Error(`Provider settings shape missing key "${key}" for provider "${def.providerId}"`);
-      }
     }
   }
 }
