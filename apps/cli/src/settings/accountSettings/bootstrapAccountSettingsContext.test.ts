@@ -1,5 +1,7 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import axios from 'axios';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { configuration } from '@/configuration';
 import type { Credentials } from '@/persistence';
 
 import { bootstrapAccountSettingsContext, resetInMemoryAccountSettingsContextForTests } from './bootstrapAccountSettingsContext';
@@ -11,9 +13,38 @@ function createCredentialsStub(): Credentials {
   };
 }
 
+function mutableConfigurationForTest(): {
+  serverUrl: string;
+  apiServerUrl: string;
+  publicServerUrl: string;
+  webappUrl: string;
+} {
+  return configuration as unknown as {
+    serverUrl: string;
+    apiServerUrl: string;
+    publicServerUrl: string;
+    webappUrl: string;
+  };
+}
+
 describe('bootstrapAccountSettingsContext', () => {
+  const originalServerUrl = configuration.serverUrl;
+  const originalApiServerUrl = configuration.apiServerUrl;
+  const originalPublicServerUrl = configuration.publicServerUrl;
+  const originalWebappUrl = configuration.webappUrl;
+
   beforeEach(() => {
     resetInMemoryAccountSettingsContextForTests();
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    Object.assign(mutableConfigurationForTest(), {
+      serverUrl: originalServerUrl,
+      apiServerUrl: originalApiServerUrl,
+      publicServerUrl: originalPublicServerUrl,
+      webappUrl: originalWebappUrl,
+    });
   });
 
   it('does not reuse in-memory settings across servers (different cache paths)', async () => {
@@ -142,7 +173,7 @@ describe('bootstrapAccountSettingsContext', () => {
     expect(fetchFromServer).not.toHaveBeenCalled();
   });
 
-  it('forces Codex ACP default for schemaVersion < 6', async () => {
+  it('forces Codex appServer default for schemaVersion < 6', async () => {
     const nowMs = 1_000_000;
     const applySideEffects = vi.fn();
 
@@ -170,9 +201,106 @@ describe('bootstrapAccountSettingsContext', () => {
 
     expect(applySideEffects).toHaveBeenCalledWith(
       expect.objectContaining({
-        settings: expect.objectContaining({ schemaVersion: 6, codexBackendMode: 'acp' }),
+        settings: expect.objectContaining({ schemaVersion: 6, codexBackendMode: 'mcp' }),
       }),
     );
+  });
+
+  it('rejects disabled configured ACP backend targets during bootstrap side effects', async () => {
+    const nowMs = 1_000_000;
+
+    await expect(bootstrapAccountSettingsContext({
+      credentials: createCredentialsStub(),
+      mode: 'blocking',
+      refresh: 'auto',
+      nowMs,
+      ttlMs: 60_000,
+      backendTarget: { kind: 'configuredAcpBackend', backendId: 'review-bot' },
+      deps: {
+        resolveCachePath: () => '/tmp/server/account.settings.cache.json',
+        readCache: async () => ({
+          version: 2,
+          cachedAt: nowMs - 1_000,
+          settingsContent: {
+            t: 'plain',
+            v: {
+              backendEnabledByTargetKey: {
+                'acpBackend:review-bot': false,
+              },
+            },
+          },
+          settingsVersion: 123,
+        }),
+        writeCache: async () => {},
+        fetchFromServer: async () => ({ settingsContent: null, settingsVersion: 999 }),
+        decryptCiphertext: async () => null,
+      },
+    })).rejects.toThrow(/review-bot/i);
+  });
+
+  it('re-applies side effects when returning a fresh in-memory context', async () => {
+    const nowMs = 1_000_000;
+    const applySideEffects = vi.fn();
+
+    await bootstrapAccountSettingsContext({
+      credentials: createCredentialsStub(),
+      mode: 'blocking',
+      refresh: 'auto',
+      nowMs,
+      ttlMs: 60_000,
+      backendTarget: { kind: 'configuredAcpBackend', backendId: 'review-bot' },
+      deps: {
+        resolveCachePath: () => '/tmp/server/account.settings.cache.json',
+        readCache: async () => ({
+          version: 2,
+          cachedAt: nowMs - 1_000,
+          settingsContent: {
+            t: 'plain',
+            v: {
+              backendEnabledByTargetKey: {
+                'acpBackend:review-bot': false,
+              },
+            },
+          },
+          settingsVersion: 123,
+        }),
+        writeCache: async () => {},
+        fetchFromServer: async () => ({ settingsContent: null, settingsVersion: 999 }),
+        decryptCiphertext: async () => null,
+        applySideEffects,
+      },
+    }).catch(() => undefined);
+
+    const result = await bootstrapAccountSettingsContext({
+      credentials: createCredentialsStub(),
+      mode: 'blocking',
+      refresh: 'auto',
+      nowMs: nowMs + 10,
+      ttlMs: 60_000,
+      backendTarget: { kind: 'configuredAcpBackend', backendId: 'review-bot' },
+      deps: {
+        resolveCachePath: () => '/tmp/server/account.settings.cache.json',
+        readCache: async () => {
+          throw new Error('should not read cache when in-memory context is fresh');
+        },
+        writeCache: async () => {},
+        fetchFromServer: async () => ({ settingsContent: null, settingsVersion: 999 }),
+        decryptCiphertext: async () => null,
+        applySideEffects,
+      },
+    });
+
+    expect(result.source).toBe('cache');
+    expect(applySideEffects).toHaveBeenCalledTimes(2);
+    expect(applySideEffects).toHaveBeenLastCalledWith(expect.objectContaining({
+      source: 'cache',
+      backendTarget: { kind: 'configuredAcpBackend', backendId: 'review-bot' },
+      settings: expect.objectContaining({
+        backendEnabledByTargetKey: {
+          'acpBackend:review-bot': false,
+        },
+      }),
+    }));
   });
 
   it('fetches when cache is stale and refresh=auto (blocking)', async () => {
@@ -317,5 +445,100 @@ describe('bootstrapAccountSettingsContext', () => {
     });
     expect(res.settingsVersion).toBe(12);
     expect((res.settings as any).notificationsSettingsV1?.pushEnabled).toBe(false);
+  });
+
+  it('uses apiServerUrl for default v2 fetches when canonical serverUrl differs', async () => {
+    Object.assign(mutableConfigurationForTest(), {
+      serverUrl: 'https://public.example.test',
+      apiServerUrl: 'http://127.0.0.1:3005',
+      publicServerUrl: 'https://public.example.test',
+      webappUrl: 'https://public.example.test',
+    });
+
+    const getSpy = vi.spyOn(axios, 'get').mockResolvedValue({
+      status: 200,
+      data: {
+        version: 12,
+        content: {
+          t: 'plain',
+          v: {
+            schemaVersion: 6,
+            mcpServersSettingsV1: {
+              v: 1,
+              strictMode: true,
+              servers: [{ id: 'server-1', name: 'qa_server', transport: 'stdio', stdio: { command: 'npx', args: ['-y', 'pkg'] }, env: {}, createdAt: 1, updatedAt: 1 }],
+              bindings: [],
+            },
+          },
+        },
+      },
+    } as any);
+
+    const res = await bootstrapAccountSettingsContext({
+      credentials: createCredentialsStub(),
+      mode: 'blocking',
+      refresh: 'force',
+      nowMs: 1_000_000,
+      ttlMs: 60_000,
+      deps: {
+        resolveCachePath: () => '/tmp/server/account.settings.cache.json',
+        readCache: async () => null,
+        writeCache: async () => {},
+        decryptCiphertext: async () => {
+          throw new Error('unexpected decryptCiphertext');
+        },
+        applySideEffects: () => {},
+      },
+    });
+
+    expect(getSpy).toHaveBeenCalledWith(
+      'http://127.0.0.1:3005/v2/account/settings',
+      expect.objectContaining({
+        headers: expect.objectContaining({ Authorization: 'Bearer t' }),
+      }),
+    );
+    expect((res.settings as any).mcpServersSettingsV1?.servers).toHaveLength(1);
+  });
+
+  it('uses apiServerUrl for v1 fallback fetches when canonical serverUrl differs', async () => {
+    Object.assign(mutableConfigurationForTest(), {
+      serverUrl: 'https://public.example.test',
+      apiServerUrl: 'http://127.0.0.1:3005',
+      publicServerUrl: 'https://public.example.test',
+      webappUrl: 'https://public.example.test',
+    });
+
+    const getSpy = vi.spyOn(axios, 'get')
+      .mockResolvedValueOnce({ status: 404, data: {} } as any)
+      .mockResolvedValueOnce({ status: 200, data: { settings: null, settingsVersion: 12 } } as any);
+
+    const res = await bootstrapAccountSettingsContext({
+      credentials: createCredentialsStub(),
+      mode: 'blocking',
+      refresh: 'force',
+      nowMs: 1_000_000,
+      ttlMs: 60_000,
+      deps: {
+        resolveCachePath: () => '/tmp/server/account.settings.cache.json',
+        readCache: async () => null,
+        writeCache: async () => {},
+        decryptCiphertext: async () => {
+          throw new Error('unexpected decryptCiphertext');
+        },
+        applySideEffects: () => {},
+      },
+    });
+
+    expect(res.settingsVersion).toBe(12);
+    expect(getSpy).toHaveBeenNthCalledWith(
+      1,
+      'http://127.0.0.1:3005/v2/account/settings',
+      expect.any(Object),
+    );
+    expect(getSpy).toHaveBeenNthCalledWith(
+      2,
+      'http://127.0.0.1:3005/v1/account/settings',
+      expect.any(Object),
+    );
   });
 });
