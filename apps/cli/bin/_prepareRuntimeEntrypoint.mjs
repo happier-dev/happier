@@ -8,7 +8,10 @@ const DEFAULT_PACKAGES = ['agents', 'cli-common', 'connection-supervisor', 'prot
 const DEFAULT_HOST_APPS = ['cli'];
 
 function isDisabled(env) {
-  const candidates = [env?.HAPPIER_SYNC_BUNDLED_WORKSPACES, env?.HAPPIER_CLI_SYNC_BUNDLED_WORKSPACES];
+  const candidates = [
+    env?.HAPPIER_SYNC_BUNDLED_WORKSPACES,
+    env?.HAPPIER_CLI_SYNC_BUNDLED_WORKSPACES,
+  ];
 
   for (const raw of candidates) {
     const value = String(raw ?? '').trim().toLowerCase();

@@ -79,8 +79,11 @@
   "bundledDependencies": [
     "@happier-dev/agents",
     "@happier-dev/cli-common",
+    "@happier-dev/connection-supervisor",
     "@happier-dev/protocol",
-    "@happier-dev/release-runtime"
+    "@happier-dev/transfers",
+    "@happier-dev/release-runtime",
+    "tweetnacl"
   ],
   "scripts": {
     "typecheck": "tsc --noEmit",
@@ -129,7 +132,9 @@
     "@fastify/swagger": "9.7.0",
     "@happier-dev/agents": "0.0.0",
     "@happier-dev/cli-common": "0.0.0",
+    "@happier-dev/connection-supervisor": "0.0.0",
     "@happier-dev/protocol": "0.0.0",
+    "@happier-dev/transfers": "0.0.0",
     "@happier-dev/release-runtime": "0.0.0",
     "@huggingface/transformers": "^3.8.1",
     "@modelcontextprotocol/sdk": "^1.25.3",
