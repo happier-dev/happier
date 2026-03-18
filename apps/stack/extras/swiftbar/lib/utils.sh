@@ -427,9 +427,9 @@ resolve_stack_cli_home_dir() {
 
 resolve_stack_label() {
   local stack_name="${1:-main}"
-  local primary="com.happier.stack"
+  local primary="dev.happier.stack"
   if [[ "$stack_name" != "main" ]]; then
-    primary="com.happier.stack.${stack_name}"
+    primary="dev.happier.stack.${stack_name}"
   fi
   if swiftbar_is_sandboxed; then
     # Never inspect global LaunchAgents in sandbox mode.

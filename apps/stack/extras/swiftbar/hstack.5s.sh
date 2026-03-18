@@ -131,6 +131,7 @@ MAIN_LABEL="$(resolve_stack_label "$PRIMARY_STACK")"
 
 MAIN_COLLECT="$(collect_stack_status "$MAIN_PORT" "$CLI_HOME_DIR" "$MAIN_LABEL" "$HAPPIER_HOME_DIR")"
 IFS=$'\t' read -r MAIN_LEVEL MAIN_SERVER_STATUS MAIN_SERVER_PID MAIN_SERVER_METRICS MAIN_DAEMON_STATUS MAIN_DAEMON_PID MAIN_DAEMON_METRICS MAIN_DAEMON_UPTIME MAIN_LAST_HEARTBEAT MAIN_LAUNCHAGENT_STATUS MAIN_AUTOSTART_PID MAIN_AUTOSTART_METRICS <<<"$MAIN_COLLECT"
+MAIN_DAEMON_STATE_FILE="$(resolve_preferred_daemon_state_pair "$CLI_HOME_DIR" | cut -d'|' -f1)"
 for v in MAIN_SERVER_PID MAIN_SERVER_METRICS MAIN_DAEMON_PID MAIN_DAEMON_METRICS MAIN_DAEMON_UPTIME MAIN_LAST_HEARTBEAT MAIN_AUTOSTART_PID MAIN_AUTOSTART_METRICS; do
   if [[ "${!v}" == "-" ]]; then
     printf -v "$v" '%s' ""
@@ -187,7 +188,7 @@ echo "---"
 export MAIN_LEVEL="$MAIN_LEVEL"
 render_stack_info "" "$PRIMARY_STACK" "$MAIN_PORT" "$MAIN_SERVER_COMPONENT" "$HAPPIER_HOME_DIR" "$CLI_HOME_DIR" "$MAIN_LABEL" "$MAIN_ENV_FILE" "$TAILSCALE_URL" "$MAIN_SERVER_METRICS" "$MAIN_DAEMON_METRICS" "$MAIN_AUTOSTART_METRICS"
 render_component_server "" "$PRIMARY_STACK" "$MAIN_PORT" "$MAIN_SERVER_COMPONENT" "$MAIN_SERVER_STATUS" "$MAIN_SERVER_PID" "$MAIN_SERVER_METRICS" "$TAILSCALE_URL" "$MAIN_LABEL"
-render_component_daemon "" "$MAIN_DAEMON_STATUS" "$MAIN_DAEMON_PID" "$MAIN_DAEMON_METRICS" "$MAIN_DAEMON_UPTIME" "$MAIN_LAST_HEARTBEAT" "$CLI_HOME_DIR/daemon.state.json" "$PRIMARY_STACK"
+render_component_daemon "" "$MAIN_DAEMON_STATUS" "$MAIN_DAEMON_PID" "$MAIN_DAEMON_METRICS" "$MAIN_DAEMON_UPTIME" "$MAIN_LAST_HEARTBEAT" "$MAIN_DAEMON_STATE_FILE" "$PRIMARY_STACK"
 render_component_autostart "" "$PRIMARY_STACK" "$MAIN_LABEL" "$MAIN_LAUNCHAGENT_STATUS" "$MAIN_AUTOSTART_PID" "$MAIN_AUTOSTART_METRICS" "$LOGS_DIR"
 render_component_tailscale "" "$PRIMARY_STACK" "$TAILSCALE_URL"
 
@@ -251,6 +252,7 @@ else
 
       COLLECT="$(collect_stack_status "$port" "$cli_home_dir" "$label" "$base_dir")"
       IFS=$'\t' read -r LEVEL SERVER_STATUS SERVER_PID SERVER_METRICS DAEMON_STATUS DAEMON_PID DAEMON_METRICS DAEMON_UPTIME LAST_HEARTBEAT LAUNCHAGENT_STATUS AUTOSTART_PID AUTOSTART_METRICS <<<"$COLLECT"
+      DAEMON_STATE_FILE="$(resolve_preferred_daemon_state_pair "$cli_home_dir" | cut -d'|' -f1)"
       for v in SERVER_PID SERVER_METRICS DAEMON_PID DAEMON_METRICS DAEMON_UPTIME LAST_HEARTBEAT AUTOSTART_PID AUTOSTART_METRICS; do
         if [[ "${!v}" == "-" ]]; then
           printf -v "$v" '%s' ""
@@ -261,7 +263,7 @@ else
       export STACK_LEVEL="$LEVEL"
       render_stack_info "${STACKS_PREFIX}--" "$s" "$port" "$server_component" "$base_dir" "$cli_home_dir" "$label" "$env_file" "" "$SERVER_METRICS" "$DAEMON_METRICS" "$AUTOSTART_METRICS"
       render_component_server "${STACKS_PREFIX}--" "$s" "$port" "$server_component" "$SERVER_STATUS" "$SERVER_PID" "$SERVER_METRICS" "" "$label"
-      render_component_daemon "${STACKS_PREFIX}--" "$DAEMON_STATUS" "$DAEMON_PID" "$DAEMON_METRICS" "$DAEMON_UPTIME" "$LAST_HEARTBEAT" "$cli_home_dir/daemon.state.json" "$s"
+      render_component_daemon "${STACKS_PREFIX}--" "$DAEMON_STATUS" "$DAEMON_PID" "$DAEMON_METRICS" "$DAEMON_UPTIME" "$LAST_HEARTBEAT" "$DAEMON_STATE_FILE" "$s"
       render_component_autostart "${STACKS_PREFIX}--" "$s" "$label" "$LAUNCHAGENT_STATUS" "$AUTOSTART_PID" "$AUTOSTART_METRICS" "$base_dir/logs"
       render_component_tailscale "${STACKS_PREFIX}--" "$s" ""
       render_components_menu "${STACKS_PREFIX}--" "stack" "$s" "$env_file"

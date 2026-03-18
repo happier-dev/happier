@@ -25,10 +25,10 @@ test('hstack providers install --dry-run --json plans codex + claude installs', 
   assert.equal(data.ok, true);
   assert.deepEqual(data.providers, ['codex', 'claude']);
 
-  const planText = JSON.stringify(data.plan);
-  assert.ok(planText.includes('github_release_binary'), planText);
-  assert.ok(planText.includes('openai/codex'), planText);
-  assert.ok(planText.includes('claude.ai/install.sh'), planText);
+  assert.equal(data.plan[0].installMode, 'github_release_binary');
+  assert.equal(data.plan[1].installMode, 'vendor_recipe');
+  assert.equal(data.plan[0].commands.length, 0);
+  assert.ok(JSON.stringify(data.plan[1].commands).includes('claude.ai/install.sh'));
 });
 
 test('hstack providers install accepts comma-separated positional list', () => {
