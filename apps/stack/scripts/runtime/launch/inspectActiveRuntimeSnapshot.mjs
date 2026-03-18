@@ -1,7 +1,8 @@
 import { resolve } from 'node:path';
 
+import { getFirstPartyComponentCatalogEntry } from '@happier-dev/cli-common/firstPartyRuntime';
+
 import { pathExists } from '../../utils/fs/fs.mjs';
-import { readBundledWorkspaceSyncConfig } from '../readBundledWorkspaceSyncConfig.mjs';
 import {
   readRuntimeManifest,
   readRuntimePointer,
@@ -23,6 +24,18 @@ async function collectSnapshotEntrypointErrors({ snapshotPath, manifest }) {
     : [];
 }
 
+async function collectSnapshotRuntimePayloadErrors({ snapshotPath }) {
+  const daemonComponent = getFirstPartyComponentCatalogEntry('happier-daemon');
+  if (!daemonComponent.nodeEntrypointRelativePath) {
+    return [];
+  }
+
+  const daemonNodeEntrypoint = resolve(snapshotPath, 'cli', daemonComponent.nodeEntrypointRelativePath);
+  return (await pathExists(daemonNodeEntrypoint))
+    ? []
+    : [`[runtime] active runtime snapshot is incomplete: missing daemon node entrypoint (${daemonNodeEntrypoint}).`];
+}
+
 export async function inspectActiveRuntimeSnapshot({ stackBaseDir }) {
   const runtimePaths = resolveStackRuntimePaths({ stackBaseDir });
   const pointer = await readRuntimePointer({ currentPath: runtimePaths.currentPath });
@@ -37,7 +50,6 @@ export async function inspectActiveRuntimeSnapshot({ stackBaseDir }) {
       activeSnapshotId: activeSnapshotId ?? null,
       snapshotPath: pointerSnapshotPath ? resolve(pointerSnapshotPath) : null,
       sourceFingerprint: String(pointer?.sourceFingerprint ?? '').trim() || null,
-      bundledWorkspaceSync: null,
       manifest: null,
       snapshot: null,
     };
@@ -69,6 +81,9 @@ export async function inspectActiveRuntimeSnapshot({ stackBaseDir }) {
         snapshotPath: normalizedExpectedSnapshotPath,
         manifest: validation.manifest,
       })),
+      ...(await collectSnapshotRuntimePayloadErrors({
+        snapshotPath: normalizedExpectedSnapshotPath,
+      })),
     );
   }
 
@@ -81,19 +96,13 @@ export async function inspectActiveRuntimeSnapshot({ stackBaseDir }) {
       snapshotPath: runtimePaths.currentDir,
       manifest: validation.manifest,
     });
-    if (currentDirErrors.length === 0) {
+    const currentRuntimePayloadErrors = await collectSnapshotRuntimePayloadErrors({
+      snapshotPath: runtimePaths.currentDir,
+    });
+    if (currentDirErrors.length === 0 && currentRuntimePayloadErrors.length === 0) {
       launchPath = runtimePaths.currentDir;
     }
   }
-  const bundledWorkspaceSync = valid
-    ? readBundledWorkspaceSyncConfig({
-        snapshot: {
-          snapshotPath: normalizedExpectedSnapshotPath,
-          launchPath,
-          manifest: validation.manifest,
-        },
-      })
-    : null;
 
   return {
     missing: false,
@@ -103,7 +112,6 @@ export async function inspectActiveRuntimeSnapshot({ stackBaseDir }) {
     snapshotPath: normalizedPointerSnapshotPath,
     launchPath,
     sourceFingerprint,
-    bundledWorkspaceSync,
     manifest: validation.manifest,
     snapshot: valid
       ? {
@@ -111,7 +119,6 @@ export async function inspectActiveRuntimeSnapshot({ stackBaseDir }) {
           snapshotPath: normalizedExpectedSnapshotPath,
           launchPath,
           sourceFingerprint,
-          bundledWorkspaceSync,
           manifest: validation.manifest,
         }
       : null,

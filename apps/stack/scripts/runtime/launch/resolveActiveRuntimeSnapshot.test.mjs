@@ -121,9 +121,11 @@ test('resolveActiveRuntimeSnapshot returns validated manifest and pointer data',
   await mkdir(join(paths.snapshotDir, 'ui'), { recursive: true });
   await mkdir(join(paths.snapshotDir, 'server', 'dist', 'runtime'), { recursive: true });
   await mkdir(join(paths.snapshotDir, 'cli', 'dist'), { recursive: true });
+  await mkdir(join(paths.snapshotDir, 'cli', 'package-dist'), { recursive: true });
   await writeFile(join(paths.snapshotDir, 'ui', 'index.html'), '<html></html>\n', 'utf-8');
   await writeFile(join(paths.snapshotDir, 'server', 'dist', 'runtime', 'main.js'), 'export {};\n', 'utf-8');
   await writeFile(join(paths.snapshotDir, 'cli', 'dist', 'index.mjs'), 'export {};\n', 'utf-8');
+  await writeFile(join(paths.snapshotDir, 'cli', 'package-dist', 'index.mjs'), 'export {};\n', 'utf-8');
   await writeRuntimeManifest({
     manifestPath: paths.manifestPath,
     manifest: {
@@ -155,83 +157,28 @@ test('resolveActiveRuntimeSnapshot returns validated manifest and pointer data',
   assert.equal(resolved.snapshotId, 'snap-1');
   assert.equal(resolved.snapshotPath, paths.snapshotDir);
   assert.equal(resolved.manifest.sourceFingerprint, 'src-1');
+  assert.equal('bundledWorkspaceSync' in resolved, false);
 });
 
-test('resolveActiveRuntimeSnapshot surfaces bundled workspace sync config from the runtime manifest source repo', async (t) => {
-  const root = await withTempRoot(t);
-  const repoRoot = join(root, 'repo');
-  const helperPath = join(repoRoot, 'scripts', 'workspaces', 'syncBundledWorkspacePackages.mjs');
-  const paths = resolveStackRuntimePaths({ stackBaseDir: root, snapshotId: 'snap-1' });
-  await mkdir(join(repoRoot, 'scripts', 'workspaces'), { recursive: true });
-  await writeFile(helperPath, 'export function syncBundledWorkspacePackages() {}\n', 'utf-8');
-  await mkdir(paths.snapshotDir, { recursive: true });
-  await mkdir(join(paths.snapshotDir, 'ui'), { recursive: true });
-  await mkdir(join(paths.snapshotDir, 'server', 'dist', 'runtime'), { recursive: true });
-  await mkdir(join(paths.snapshotDir, 'cli', 'package-dist'), { recursive: true });
-  await writeFile(join(paths.snapshotDir, 'ui', 'index.html'), '<html></html>\n', 'utf-8');
-  await writeFile(join(paths.snapshotDir, 'server', 'dist', 'runtime', 'main.js'), 'export {};\n', 'utf-8');
-  await writeFile(join(paths.snapshotDir, 'cli', 'package-dist', 'index.mjs'), 'export {};\n', 'utf-8');
-  await writeRuntimeManifest({
-    manifestPath: paths.manifestPath,
-    manifest: {
-      version: 1,
-      snapshotId: 'snap-1',
-      sourceFingerprint: 'src-1',
-      source: {
-        repoDir: repoRoot,
-      },
-      components: {
-        web: { artifactFingerprint: 'web-1', entrypoint: 'ui/index.html' },
-        server: { artifactFingerprint: 'srv-1', entrypoint: 'server/dist/runtime/main.js' },
-        daemon: { artifactFingerprint: 'cli-1', entrypoint: 'cli/package-dist/index.mjs' },
-      },
-    },
-  });
-  await writeRuntimePointer({
-    currentPath: paths.currentPath,
-    pointer: {
-      version: 1,
-      snapshotId: 'snap-1',
-      snapshotPath: paths.snapshotDir,
-      sourceFingerprint: 'src-1',
-    },
-  });
-
-  const resolved = await resolveActiveRuntimeSnapshot({
-    mode: 'require',
-    stackBaseDir: root,
-  });
-
-  assert.deepEqual(resolved.bundledWorkspaceSync, {
-    repoRoot,
-    helperPath,
-    targetPackageRoot: join(paths.snapshotDir, 'cli'),
-  });
-});
-
-test('resolveCliRuntimeLaunchSpec carries bundled workspace sync metadata for runtime callers', () => {
+test('resolveCliRuntimeLaunchSpec returns a runtime binary command from the snapshot', () => {
   const resolved = resolveCliRuntimeLaunchSpec({
     snapshot: {
       snapshotPath: '/tmp/stack/runtime/builds/snap-1',
       manifest: {
-        source: {
-          repoDir: '/repo',
-        },
         components: {
-          daemon: { entrypoint: 'cli/package-dist/index.mjs' },
+          daemon: { entrypoint: 'cli/happier' },
         },
-      },
-      bundledWorkspaceSync: {
-        repoRoot: '/repo',
-        helperPath: '/repo/scripts/workspaces/syncBundledWorkspacePackages.mjs',
-        targetPackageRoot: '/tmp/stack/runtime/builds/snap-1/cli',
       },
     },
   });
 
-  assert.deepEqual(resolved.bundledWorkspaceSync, {
-    repoRoot: '/repo',
-    helperPath: '/repo/scripts/workspaces/syncBundledWorkspacePackages.mjs',
-    targetPackageRoot: '/tmp/stack/runtime/builds/snap-1/cli',
+  assert.deepEqual(resolved, {
+    source: 'runtime',
+    cliDir: '/tmp/stack/runtime/builds/snap-1/cli',
+    entrypoint: '/tmp/stack/runtime/builds/snap-1/cli/happier',
+    nodeEntrypoint: '/tmp/stack/runtime/builds/snap-1/cli/package-dist/index.mjs',
+    command: '/tmp/stack/runtime/builds/snap-1/cli/happier',
+    args: [],
   });
+  assert.equal('bundledWorkspaceSync' in resolved, false);
 });
