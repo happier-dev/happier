@@ -865,8 +865,7 @@ fi
 
 mkdir -p "${INSTALL_DIR}/bin" "${BIN_DIR}"
 TARGET_BIN="${INSTALL_DIR}/bin/${EXE_NAME}"
-STAGED_BIN="${TARGET_BIN}.new"
-PREVIOUS_BIN="${TARGET_BIN}.previous"
+
 if [[ "${PRODUCT}" == "cli" ]]; then
   PROMOTION_OUTPUT=""
   if ! PROMOTION_OUTPUT="$(
@@ -882,6 +881,8 @@ if [[ "${PRODUCT}" == "cli" ]]; then
       printf '%s\n' "${PROMOTION_OUTPUT}" >&2
       exit 1
     fi
+    STAGED_BIN="${TARGET_BIN}.new"
+    PREVIOUS_BIN="${TARGET_BIN}.previous"
     cp "${PAYLOAD_BINARY_PATH}" "${STAGED_BIN}"
     chmod +x "${STAGED_BIN}"
     if [[ -f "${TARGET_BIN}" ]]; then
@@ -892,6 +893,8 @@ if [[ "${PRODUCT}" == "cli" ]]; then
     chmod +x "${TARGET_BIN}"
   fi
 else
+  STAGED_BIN="${TARGET_BIN}.new"
+  PREVIOUS_BIN="${TARGET_BIN}.previous"
   cp "${PAYLOAD_BINARY_PATH}" "${STAGED_BIN}"
   chmod +x "${STAGED_BIN}"
   if [[ -f "${TARGET_BIN}" ]]; then
@@ -902,7 +905,8 @@ else
   mv -f "${STAGED_BIN}" "${TARGET_BIN}"
   chmod +x "${TARGET_BIN}"
 fi
-ln -sf "${INSTALL_DIR}/bin/${EXE_NAME}" "${BIN_DIR}/${EXE_NAME}"
+
+ln -sf "${TARGET_BIN}" "${BIN_DIR}/${EXE_NAME}"
 
 append_path_hint
 
