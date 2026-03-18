@@ -1,13 +1,13 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import { createAcpConfigOptionOverrideSynchronizer } from './acpConfigOptionOverrideSync';
+import { createSessionConfigOptionOverrideSynchronizer } from './sessionConfigOptionOverrideSync';
 
-describe('createAcpConfigOptionOverrideSynchronizer', () => {
+describe('createSessionConfigOptionOverrideSynchronizer', () => {
   it('queues pending overrides before runtime start and applies after start', async () => {
     let started = false;
     const setSessionConfigOption = vi.fn(async (_configId: string, _value: any) => {});
 
-    const sync = createAcpConfigOptionOverrideSynchronizer({
+    const sync = createSessionConfigOptionOverrideSynchronizer({
       session: {
         getMetadataSnapshot: () =>
           ({
@@ -38,7 +38,7 @@ describe('createAcpConfigOptionOverrideSynchronizer', () => {
   it('applies overrides immediately once started', async () => {
     const setSessionConfigOption = vi.fn(async (_configId: string, _value: any) => {});
 
-    const sync = createAcpConfigOptionOverrideSynchronizer({
+    const sync = createSessionConfigOptionOverrideSynchronizer({
       session: {
         getMetadataSnapshot: () =>
           ({
@@ -59,13 +59,37 @@ describe('createAcpConfigOptionOverrideSynchronizer', () => {
     expect(setSessionConfigOption).toHaveBeenCalledWith('telemetry', 'false');
   });
 
+  it('reads generic sessionConfigOptionOverridesV1 metadata', async () => {
+    const setSessionConfigOption = vi.fn(async (_configId: string, _value: any) => {});
+
+    const sync = createSessionConfigOptionOverrideSynchronizer({
+      session: {
+        getMetadataSnapshot: () =>
+          ({
+            sessionConfigOptionOverridesV1: {
+              v: 1,
+              updatedAt: 22,
+              overrides: {
+                speed: { updatedAt: 22, value: 'fast' },
+              },
+            },
+          }) as any,
+      },
+      runtime: { setSessionConfigOption },
+      isStarted: () => true,
+    });
+
+    sync.syncFromMetadata();
+    expect(setSessionConfigOption).toHaveBeenCalledWith('speed', 'fast');
+  });
+
   it('retries immediate apply on next sync when setSessionConfigOption fails', async () => {
     const setSessionConfigOption = vi
       .fn<(_configId: string, _value: any) => Promise<void>>()
       .mockRejectedValueOnce(new Error('temporary failure'))
       .mockResolvedValue(undefined);
 
-    const sync = createAcpConfigOptionOverrideSynchronizer({
+    const sync = createSessionConfigOptionOverrideSynchronizer({
       session: {
         getMetadataSnapshot: () =>
           ({

@@ -1,8 +1,8 @@
 import type { Metadata } from '@/api/types';
 
-import { computePendingAcpSessionModeOverrideApplication } from './permission/permissionModeFromMetadata';
+import { computePendingSessionModeOverrideApplication } from './permission/permissionModeFromMetadata';
 
-export function createAcpSessionModeOverrideSynchronizer(params: Readonly<{
+export function createSessionModeOverrideSynchronizer(params: Readonly<{
   session: { getMetadataSnapshot: () => Metadata | null };
   runtime: { setSessionMode: (modeId: string) => Promise<void> };
   isStarted: () => boolean;
@@ -12,21 +12,20 @@ export function createAcpSessionModeOverrideSynchronizer(params: Readonly<{
 } {
   let lastAppliedUpdatedAt = 0;
   let pending: { modeId: string; updatedAt: number } | null = null;
-  let applying = false;
+  let applyingPromise: Promise<void> | null = null;
 
-  const applyPendingIfPossible = (): void => {
-    if (applying) return;
-    if (!pending) return;
-    if (!params.isStarted()) return;
+  const applyPendingIfPossible = (): Promise<void> => {
+    if (applyingPromise) return applyingPromise;
+    if (!pending) return Promise.resolve();
+    if (!params.isStarted()) return Promise.resolve();
 
     const next = pending;
     if (next.updatedAt <= lastAppliedUpdatedAt) {
       pending = null;
-      return;
+      return Promise.resolve();
     }
 
-    applying = true;
-    params.runtime
+    applyingPromise = params.runtime
       .setSessionMode(next.modeId)
       .then(() => {
         // Only advance lastAppliedUpdatedAt on success so failures can retry.
@@ -37,16 +36,19 @@ export function createAcpSessionModeOverrideSynchronizer(params: Readonly<{
         // Best-effort only. Keep `pending` so next sync can retry.
       })
       .finally(() => {
-        applying = false;
-        if (pending && pending.updatedAt > lastAppliedUpdatedAt && params.isStarted()) {
-          applyPendingIfPossible();
+        applyingPromise = null;
+        if (pending && pending.updatedAt > next.updatedAt && params.isStarted()) {
+          void applyPendingIfPossible();
         }
       });
+
+    return applyingPromise;
   };
 
   const syncFromMetadata = (): void => {
-    const next = computePendingAcpSessionModeOverrideApplication({
-      metadata: params.session.getMetadataSnapshot(),
+    const snapshot = params.session.getMetadataSnapshot();
+    const next = computePendingSessionModeOverrideApplication({
+      metadata: snapshot,
       lastAppliedUpdatedAt,
     });
     if (!next) return;
@@ -57,31 +59,19 @@ export function createAcpSessionModeOverrideSynchronizer(params: Readonly<{
     }
 
     pending = next;
-    applyPendingIfPossible();
+    void applyPendingIfPossible();
   };
 
   const flushPendingAfterStart = async (): Promise<void> => {
-    if (applying) return;
     if (!pending) return;
     if (!params.isStarted()) return;
 
     const next = pending;
     if (next.updatedAt <= lastAppliedUpdatedAt) return;
-
-    applying = true;
-    try {
-      await params.runtime.setSessionMode(next.modeId);
-      lastAppliedUpdatedAt = next.updatedAt;
-      if (pending && pending.updatedAt <= lastAppliedUpdatedAt) pending = null;
-    } catch {
-      // Best-effort only.
-    } finally {
-      applying = false;
-      if (pending && pending.updatedAt > lastAppliedUpdatedAt && params.isStarted()) {
-        applyPendingIfPossible();
-      }
-    }
+    await applyPendingIfPossible();
   };
 
   return { syncFromMetadata, flushPendingAfterStart };
 }
+
+export const createAcpSessionModeOverrideSynchronizer = createSessionModeOverrideSynchronizer;

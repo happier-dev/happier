@@ -33,18 +33,26 @@ describe('resolvePermissionIntentFromMetadataSnapshot', () => {
   });
 });
 
-describe('resolveAcpSessionModeOverrideFromMetadataSnapshot', () => {
+describe('resolveSessionModeOverrideFromMetadataSnapshot', () => {
   it('returns null when metadata does not include an override', () => {
-    const fn = (permissionModeFromMetadata as any).resolveAcpSessionModeOverrideFromMetadataSnapshot;
+    const fn = (permissionModeFromMetadata as any).resolveSessionModeOverrideFromMetadataSnapshot;
     expect(typeof fn).toBe('function');
 
     expect(fn({ metadata: { path: '/tmp' } as any })).toBeNull();
   });
+
+  it('prefers the generic sessionModeOverrideV1 metadata key', () => {
+    const fn = (permissionModeFromMetadata as any).resolveSessionModeOverrideFromMetadataSnapshot;
+    expect(typeof fn).toBe('function');
+
+    expect(fn({ metadata: { sessionModeOverrideV1: { v: 1, updatedAt: 14, modeId: 'plan' } } as any }))
+      .toEqual({ modeId: 'plan', updatedAt: 14 });
+  });
 });
 
-describe('computePendingAcpSessionModeOverrideApplication', () => {
+describe('computePendingSessionModeOverrideApplication', () => {
   it('returns null when the override is not newer than the last applied timestamp', () => {
-    const fn = (permissionModeFromMetadata as any).computePendingAcpSessionModeOverrideApplication;
+    const fn = (permissionModeFromMetadata as any).computePendingSessionModeOverrideApplication;
     expect(typeof fn).toBe('function');
 
     const res = fn({
@@ -55,7 +63,7 @@ describe('computePendingAcpSessionModeOverrideApplication', () => {
   });
 
   it('returns the override when it is newer than the last applied timestamp', () => {
-    const fn = (permissionModeFromMetadata as any).computePendingAcpSessionModeOverrideApplication;
+    const fn = (permissionModeFromMetadata as any).computePendingSessionModeOverrideApplication;
     expect(typeof fn).toBe('function');
 
     const res = fn({

@@ -1,13 +1,13 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import { createAcpSessionModeOverrideSynchronizer } from './acpSessionModeOverrideSync';
+import { createSessionModeOverrideSynchronizer } from './sessionModeOverrideSync';
 
-describe('createAcpSessionModeOverrideSynchronizer', () => {
+describe('createSessionModeOverrideSynchronizer', () => {
   it('queues pending overrides before runtime start and applies after start', async () => {
     let started = false;
     const setSessionMode = vi.fn(async (_modeId: string) => {});
 
-    const sync = createAcpSessionModeOverrideSynchronizer({
+    const sync = createSessionModeOverrideSynchronizer({
       session: {
         getMetadataSnapshot: () => ({ acpSessionModeOverrideV1: { v: 1, updatedAt: 11, modeId: 'plan' } } as any),
       },
@@ -26,7 +26,7 @@ describe('createAcpSessionModeOverrideSynchronizer', () => {
   it('applies overrides immediately once started', async () => {
     const setSessionMode = vi.fn(async (_modeId: string) => {});
 
-    const sync = createAcpSessionModeOverrideSynchronizer({
+    const sync = createSessionModeOverrideSynchronizer({
       session: {
         getMetadataSnapshot: () => ({ acpSessionModeOverrideV1: { v: 1, updatedAt: 21, modeId: 'plan' } } as any),
       },
@@ -45,7 +45,7 @@ describe('createAcpSessionModeOverrideSynchronizer', () => {
       if (attempt === 1) throw new Error('transient failure');
     });
 
-    const sync = createAcpSessionModeOverrideSynchronizer({
+    const sync = createSessionModeOverrideSynchronizer({
       session: {
         getMetadataSnapshot: () => ({ acpSessionModeOverrideV1: { v: 1, updatedAt: 31, modeId: 'plan' } } as any),
       },
@@ -76,7 +76,7 @@ describe('createAcpSessionModeOverrideSynchronizer', () => {
       return Promise.resolve();
     });
 
-    const sync = createAcpSessionModeOverrideSynchronizer({
+    const sync = createSessionModeOverrideSynchronizer({
       session: {
         getMetadataSnapshot: () => ({ acpSessionModeOverrideV1: { v: 1, updatedAt: 41, modeId: 'plan' } } as any),
       },

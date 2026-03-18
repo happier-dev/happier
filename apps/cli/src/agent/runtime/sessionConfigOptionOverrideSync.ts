@@ -1,4 +1,9 @@
 import type { Metadata } from '@/api/types';
+import {
+  LEGACY_ACP_CONFIG_OPTION_OVERRIDES_KEY,
+  readMetadataAliasValue,
+  SESSION_CONFIG_OPTION_OVERRIDES_KEY,
+} from '@happier-dev/agents';
 
 type ConfigOptionValueId = string;
 
@@ -13,7 +18,11 @@ function normalizeValueId(raw: unknown): ConfigOptionValueId | null {
 }
 
 function parseOverrides(metadata: Metadata | null): Array<{ configId: string; valueId: ConfigOptionValueId; updatedAt: number }> {
-  const root = (metadata as any)?.acpConfigOptionOverridesV1;
+  const root = readMetadataAliasValue<Record<string, unknown>>(
+    metadata,
+    SESSION_CONFIG_OPTION_OVERRIDES_KEY,
+    LEGACY_ACP_CONFIG_OPTION_OVERRIDES_KEY,
+  ) ?? null;
   const overridesRaw = root?.overrides;
   if (!overridesRaw || typeof overridesRaw !== 'object' || Array.isArray(overridesRaw)) return [];
 
@@ -22,7 +31,7 @@ function parseOverrides(metadata: Metadata | null): Array<{ configId: string; va
   for (const [configIdRaw, entryRaw] of Object.entries(overridesRaw as Record<string, unknown>)) {
     const configId = typeof configIdRaw === 'string' ? configIdRaw.trim() : '';
     if (!configId) continue;
-    const entry = entryRaw && typeof entryRaw === 'object' && !Array.isArray(entryRaw) ? (entryRaw as any) : null;
+    const entry = entryRaw && typeof entryRaw === 'object' && !Array.isArray(entryRaw) ? (entryRaw as Record<string, unknown>) : null;
     if (!entry) continue;
     const updatedAt = typeof entry.updatedAt === 'number' && Number.isFinite(entry.updatedAt) ? entry.updatedAt : null;
     if (updatedAt === null) continue;
@@ -37,7 +46,7 @@ function parseOverrides(metadata: Metadata | null): Array<{ configId: string; va
   return out;
 }
 
-export function createAcpConfigOptionOverrideSynchronizer(params: Readonly<{
+export function createSessionConfigOptionOverrideSynchronizer(params: Readonly<{
   session: { getMetadataSnapshot: () => Metadata | null };
   runtime: { setSessionConfigOption: (configId: string, valueId: ConfigOptionValueId) => Promise<void> };
   isStarted: () => boolean;
@@ -47,6 +56,45 @@ export function createAcpConfigOptionOverrideSynchronizer(params: Readonly<{
 } {
   const lastAppliedUpdatedAtByConfigId = new Map<string, number>();
   const pendingByConfigId = new Map<string, { configId: string; valueId: ConfigOptionValueId; updatedAt: number }>();
+  const inFlightByConfigId = new Map<string, Promise<void>>();
+
+  const applyPendingForConfigId = (configId: string): Promise<void> => {
+    const inFlight = inFlightByConfigId.get(configId);
+    if (inFlight) return inFlight;
+
+    const candidate = pendingByConfigId.get(configId);
+    if (!candidate) return Promise.resolve();
+    if (!params.isStarted()) return Promise.resolve();
+
+    const lastApplied = lastAppliedUpdatedAtByConfigId.get(configId) ?? 0;
+    if (candidate.updatedAt <= lastApplied) {
+      pendingByConfigId.delete(configId);
+      return Promise.resolve();
+    }
+
+    const promise = params.runtime
+      .setSessionConfigOption(candidate.configId, candidate.valueId)
+      .then(() => {
+        lastAppliedUpdatedAtByConfigId.set(candidate.configId, candidate.updatedAt);
+        const currentPending = pendingByConfigId.get(candidate.configId);
+        if (currentPending?.updatedAt === candidate.updatedAt) {
+          pendingByConfigId.delete(candidate.configId);
+        }
+      })
+      .catch(() => {
+        // Best-effort only. Keep the candidate pending so a later sync or flush can retry it.
+      })
+      .finally(() => {
+        inFlightByConfigId.delete(configId);
+        const nextPending = pendingByConfigId.get(configId);
+        if (nextPending && nextPending.updatedAt > candidate.updatedAt && params.isStarted()) {
+          void applyPendingForConfigId(configId);
+        }
+      });
+
+    inFlightByConfigId.set(configId, promise);
+    return promise;
+  };
 
   const syncFromMetadata = (): void => {
     const candidates = parseOverrides(params.session.getMetadataSnapshot());
@@ -58,6 +106,9 @@ export function createAcpConfigOptionOverrideSynchronizer(params: Readonly<{
 
       const prevPending = pendingByConfigId.get(candidate.configId);
       if (prevPending && prevPending.updatedAt >= candidate.updatedAt) {
+        if (params.isStarted()) {
+          void applyPendingForConfigId(candidate.configId);
+        }
         continue;
       }
       pendingByConfigId.set(candidate.configId, candidate);
@@ -66,22 +117,7 @@ export function createAcpConfigOptionOverrideSynchronizer(params: Readonly<{
         continue;
       }
 
-      params.runtime
-        .setSessionConfigOption(candidate.configId, candidate.valueId)
-        .then(() => {
-          lastAppliedUpdatedAtByConfigId.set(candidate.configId, candidate.updatedAt);
-          const currentPending = pendingByConfigId.get(candidate.configId);
-          if (currentPending?.updatedAt === candidate.updatedAt) {
-            pendingByConfigId.delete(candidate.configId);
-          }
-        })
-        .catch(() => {
-          // Best-effort only. Keep newer pending values; clear the failed candidate so a later sync can retry it.
-          const currentPending = pendingByConfigId.get(candidate.configId);
-          if (currentPending?.updatedAt === candidate.updatedAt) {
-            pendingByConfigId.delete(candidate.configId);
-          }
-        });
+      void applyPendingForConfigId(candidate.configId);
     }
   };
 
@@ -94,26 +130,11 @@ export function createAcpConfigOptionOverrideSynchronizer(params: Readonly<{
     );
 
     for (const item of pending) {
-      const currentPending = pendingByConfigId.get(item.configId);
-      if (!currentPending || currentPending.updatedAt !== item.updatedAt) continue;
-
-      const lastApplied = lastAppliedUpdatedAtByConfigId.get(item.configId) ?? 0;
-      if (item.updatedAt <= lastApplied) {
-        pendingByConfigId.delete(item.configId);
-        continue;
-      }
-      try {
-        await params.runtime.setSessionConfigOption(item.configId, item.valueId);
-        lastAppliedUpdatedAtByConfigId.set(item.configId, item.updatedAt);
-        const latestPending = pendingByConfigId.get(item.configId);
-        if (latestPending?.updatedAt === item.updatedAt) {
-          pendingByConfigId.delete(item.configId);
-        }
-      } catch {
-        // Best-effort only.
-      }
+      await applyPendingForConfigId(item.configId);
     }
   };
 
   return { syncFromMetadata, flushPendingAfterStart };
 }
+
+export const createAcpConfigOptionOverrideSynchronizer = createSessionConfigOptionOverrideSynchronizer;
