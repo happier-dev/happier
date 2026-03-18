@@ -334,6 +334,7 @@ class ActivityCache {
                     for (const entry of entries) {
                         entry.lastUpdateSent = timestamp;
                         // Preserve newer queued updates that arrived while awaiting the DB write.
+                        // The flush snapshot uses the pendingUpdate value observed at collection time.
                         const pending = entry.pendingUpdate;
                         entry.pendingUpdate = pending !== null && pending > timestamp ? pending : null;
                         entry.active = true;
