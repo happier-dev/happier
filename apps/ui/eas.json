@@ -27,7 +27,11 @@
         "gradleCommand": ":app:assembleDebug"
       },
       "env": {
-        "APP_ENV": "development"
+        "APP_ENV": "development",
+        "HAPPIER_EXPO_DEVCLIENT_LAUNCH_MODE": "most-recent",
+        "HAPPIER_EXPO_DEVCLIENT_SILENT_LAUNCH": "true",
+        "HAPPIER_EXPO_USE_NATIVE_DEBUG": "true",
+        "EX_UPDATES_NATIVE_DEBUG": "1"
       }
     },
     "development-store": {
@@ -39,6 +43,38 @@
       "channel": "development",
       "env": {
         "APP_ENV": "development"
+      }
+    },
+    "canary": {
+      "extends": "base",
+      "environment": "preview",
+      "autoIncrement": true,
+      "distribution": "internal",
+      "channel": "canary",
+      "env": {
+        "APP_ENV": "preview",
+        "EXPO_UPDATES_CHANNEL": "canary",
+        "EXPO_APP_NAME": "Happier (canary)",
+        "EXPO_APP_BUNDLE_ID": "dev.happier.app.canary",
+        "EXPO_APP_SCHEME": "happier-canary"
+      }
+    },
+    "canary-apk": {
+      "extends": "base",
+      "environment": "preview",
+      "autoIncrement": true,
+      "distribution": "internal",
+      "channel": "canary",
+      "android": {
+        "buildType": "apk",
+        "gradleCommand": ":app:assembleRelease -x lintVitalRelease -x lintVitalAnalyzeRelease"
+      },
+      "env": {
+        "APP_ENV": "preview",
+        "EXPO_UPDATES_CHANNEL": "canary",
+        "EXPO_APP_NAME": "Happier (canary)",
+        "EXPO_APP_BUNDLE_ID": "dev.happier.app.canary",
+        "EXPO_APP_SCHEME": "happier-canary"
       }
     },
     "preview": {
