@@ -4,6 +4,7 @@ import { sha512 } from '@noble/hashes/sha512';
 
 import { decodeBase64, encodeBase64 } from './base64.js';
 import { deriveKey } from './keyDerivation.js';
+import { parseSerializedJsonValue } from './serializedJsonValue.js';
 
 export type AccountScopedBlobKind =
   | 'account_settings'
@@ -58,7 +59,7 @@ function deriveAccountScopedSecretboxKey(params: { machineKey: Uint8Array; kind:
 function tryParseJson(value: Uint8Array): unknown | null {
   try {
     const decoded = new TextDecoder().decode(value);
-    return JSON.parse(decoded);
+    return parseSerializedJsonValue(decoded);
   } catch {
     return null;
   }
