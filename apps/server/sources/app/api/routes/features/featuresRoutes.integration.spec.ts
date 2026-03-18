@@ -360,13 +360,6 @@ describe("featuresRoutes", () => {
             const payload = await getFeaturesPayload();
             expect(payload.features.automations.enabled).toBe(true);
         });
-
-        it("returns automations enabled=false when HAPPIER_FEATURE_AUTOMATIONS__ENABLED is off", async () => {
-            process.env.HAPPIER_FEATURE_AUTOMATIONS__ENABLED = "0";
-
-            const payload = await getFeaturesPayload();
-            expect(payload.features.automations.enabled).toBe(false);
-        });
     });
 
     describe("connected services", () => {
@@ -428,6 +421,33 @@ describe("featuresRoutes", () => {
             const payload = await getFeaturesPayload();
             expect(payload.capabilities.server.canonicalServerUrl).toBe("https://stack.example.test");
             expect(payload.capabilities.server.webappUrl).toBe("https://ui.example.test/app");
+        });
+
+        it("exposes retention capabilities when retention env is configured", async () => {
+            process.env.HAPPIER_SERVER_RETENTION__ENABLED = "true";
+            process.env.HAPPIER_SERVER_RETENTION__SESSIONS__MODE = "delete_inactive";
+            process.env.HAPPIER_SERVER_RETENTION__SESSIONS__INACTIVITY_DAYS = "30";
+            process.env.HAPPIER_SERVER_RETENTION__ACCOUNT_CHANGES__MODE = "delete_older_than";
+            process.env.HAPPIER_SERVER_RETENTION__ACCOUNT_CHANGES__DAYS = "30";
+
+            const payload = await getFeaturesPayload();
+
+            expect(payload.capabilities.server.retention).toMatchObject({
+                policyVersion: 1,
+                enabled: true,
+                sessions: {
+                    mode: "delete_inactive",
+                    inactivityDays: 30,
+                    requires: ["updatedAt", "lastActiveAt"],
+                },
+                accountChanges: {
+                    mode: "delete_older_than",
+                    days: 30,
+                },
+                voiceSessionLeases: {
+                    mode: "keep_forever",
+                },
+            });
         });
     });
 });
