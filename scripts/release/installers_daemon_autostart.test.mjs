@@ -57,7 +57,6 @@ echo Linux
     const artifactStem = `happier-v${version}-linux-x64`;
     const artifactName = `${artifactStem}.tar.gz`;
     const artifactDir = join(fixtureDir, artifactStem);
-    await mkdir(artifactDir, { recursive: true });
     await mkdir(join(artifactDir, 'package-dist'), { recursive: true });
     const happierBin = join(artifactDir, 'happier');
     await writeFile(
