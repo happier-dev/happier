@@ -6,6 +6,7 @@ import type { ScmCommitCreateResponse } from '@happier-dev/protocol';
 import { SCM_OPERATION_ERROR_CODES } from '@happier-dev/protocol';
 
 import { runScmCommand } from '../../../runtime';
+import { applyValidatedGitPatch } from './applyValidatedGitPatch';
 
 export type GitCommandOptions = {
     cwd: string;
@@ -139,33 +140,17 @@ export async function applyPatchToIndex(input: {
     patch: string;
     env?: Record<string, string | undefined>;
 }): Promise<ScmCommitCreateResponse | null> {
-    const check = await runGitCommand({
+    const patchResult = await applyValidatedGitPatch({
         cwd: input.cwd,
-        args: ['apply', '--check', '--cached', '--unidiff-zero', '--recount', '--whitespace=nowarn', '-'],
-        stdin: input.patch,
-        timeoutMs: 15_000,
+        patch: input.patch,
+        target: 'index',
         env: input.env,
     });
-    if (!check.success) {
+    if (!patchResult.success) {
         return {
             success: false,
-            errorCode: SCM_OPERATION_ERROR_CODES.CHANGE_APPLY_FAILED,
-            error: check.stderr || 'Patch check failed',
-        };
-    }
-
-    const apply = await runGitCommand({
-        cwd: input.cwd,
-        args: ['apply', '--cached', '--unidiff-zero', '--recount', '--whitespace=nowarn', '-'],
-        stdin: input.patch,
-        timeoutMs: 15_000,
-        env: input.env,
-    });
-    if (!apply.success) {
-        return {
-            success: false,
-            errorCode: SCM_OPERATION_ERROR_CODES.CHANGE_APPLY_FAILED,
-            error: apply.stderr || 'Patch apply failed',
+            errorCode: patchResult.errorCode ?? SCM_OPERATION_ERROR_CODES.CHANGE_APPLY_FAILED,
+            error: patchResult.error || 'Patch apply failed',
         };
     }
 

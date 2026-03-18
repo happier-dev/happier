@@ -122,7 +122,8 @@ describe('sapling repository snapshot', () => {
             },
         });
 
-        const byPath = new Map(snapshot.entries.map((e) => [e.path, e]));
+        const entries = snapshot.entries as Array<{ path: string; stats: { pendingAdded: number; pendingRemoved: number } }>;
+        const byPath = new Map(entries.map((e) => [e.path, e]));
         expect(byPath.get('mod.txt')?.stats.pendingAdded).toBe(2);
         expect(byPath.get('mod.txt')?.stats.pendingRemoved).toBe(1);
         expect(byPath.get('added.txt')?.stats.pendingAdded).toBe(2);

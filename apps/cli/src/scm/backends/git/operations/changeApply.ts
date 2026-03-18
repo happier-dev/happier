@@ -3,48 +3,8 @@ import { SCM_OPERATION_ERROR_CODES } from '@happier-dev/protocol';
 import type { ScmBackendContext } from '../../../types';
 import { runScmCommand } from '../../../runtime';
 
+import { applyValidatedGitPatch } from './applyValidatedGitPatch';
 import { normalizePaths } from './normalizePaths';
-
-async function applyPatchWithCheck(input: {
-    cwd: string;
-    patch: string;
-    checkArgs: string[];
-    applyArgs: string[];
-    checkError: string;
-    applyError: string;
-}): Promise<ScmChangeApplyResponse> {
-    const check = await runScmCommand({
-        bin: 'git',
-        cwd: input.cwd,
-        args: input.checkArgs,
-        stdin: input.patch,
-        timeoutMs: 15_000,
-    });
-    if (!check.success) {
-        return {
-            success: false,
-            errorCode: SCM_OPERATION_ERROR_CODES.CHANGE_APPLY_FAILED,
-            error: check.stderr || input.checkError,
-            stderr: check.stderr,
-        };
-    }
-
-    const apply = await runScmCommand({
-        bin: 'git',
-        cwd: input.cwd,
-        args: input.applyArgs,
-        stdin: input.patch,
-        timeoutMs: 15_000,
-    });
-    return apply.success
-        ? { success: true, stdout: apply.stdout, stderr: apply.stderr }
-        : {
-            success: false,
-            errorCode: SCM_OPERATION_ERROR_CODES.CHANGE_APPLY_FAILED,
-            error: apply.stderr || input.applyError,
-            stderr: apply.stderr,
-        };
-}
 
 export async function gitChangeInclude(input: {
     context: ScmBackendContext;
@@ -52,11 +12,10 @@ export async function gitChangeInclude(input: {
 }): Promise<ScmChangeApplyResponse> {
     const { context, request } = input;
     if (request.patch && request.patch.trim().length > 0) {
-        return applyPatchWithCheck({
+        return applyValidatedGitPatch({
             cwd: context.cwd,
             patch: request.patch,
-            checkArgs: ['apply', '--check', '--cached', '--unidiff-zero', '--recount', '--whitespace=nowarn', '-'],
-            applyArgs: ['apply', '--cached', '--unidiff-zero', '--recount', '--whitespace=nowarn', '-'],
+            target: 'index',
             checkError: 'Patch check failed',
             applyError: 'Patch apply failed',
         });
@@ -102,20 +61,11 @@ export async function gitChangeExclude(input: {
 }): Promise<ScmChangeApplyResponse> {
     const { context, request } = input;
     if (request.patch && request.patch.trim().length > 0) {
-        return applyPatchWithCheck({
+        return applyValidatedGitPatch({
             cwd: context.cwd,
             patch: request.patch,
-            checkArgs: [
-                'apply',
-                '--check',
-                '--cached',
-                '--reverse',
-                '--unidiff-zero',
-                '--recount',
-                '--whitespace=nowarn',
-                '-',
-            ],
-            applyArgs: ['apply', '--cached', '--reverse', '--unidiff-zero', '--recount', '--whitespace=nowarn', '-'],
+            target: 'index',
+            reverse: true,
             checkError: 'Patch reverse-check failed',
             applyError: 'Patch reverse apply failed',
         });

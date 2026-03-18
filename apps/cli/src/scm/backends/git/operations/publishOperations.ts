@@ -4,15 +4,33 @@ import { SCM_OPERATION_ERROR_CODES } from '@happier-dev/protocol';
 import type { ScmBackendContext } from '../../../types';
 import { runScmCommand } from '../../../runtime';
 import { buildScmNonInteractiveEnv } from '../../shared/nonInteractiveEnv';
-import { mapGitErrorCode } from '../remote';
+import { mapGitErrorCode, normalizeScmRemoteRequest } from '../remote';
 import { evaluateRemoteMutationPreconditions } from '../../shared/remoteMutationPreconditions';
 
 import { readGitSnapshotForChecks } from './snapshotChecks';
+
+function validateRemoteName(remote: string | undefined): { ok: true; value: string } | { ok: false; error: string } {
+    const normalized = typeof remote === 'string' ? remote.trim() : '';
+    if (!normalized) return { ok: true, value: 'origin' };
+    if (normalized.startsWith('-')) {
+        return { ok: false, error: 'Remote name cannot start with "-"' };
+    }
+    return { ok: true, value: normalized };
+}
 
 export async function gitRemotePublish(input: {
     context: ScmBackendContext;
     request: ScmRemotePublishRequest;
 }): Promise<ScmRemotePublishResponse> {
+    const normalizedRemoteRequest = normalizeScmRemoteRequest({ remote: input.request.remote });
+    if (!normalizedRemoteRequest.ok) {
+        return {
+            success: false,
+            errorCode: SCM_OPERATION_ERROR_CODES.INVALID_REQUEST,
+            error: normalizedRemoteRequest.error,
+        };
+    }
+
     const snapshotResponse = await readGitSnapshotForChecks(input.context);
     if (!snapshotResponse.success || !snapshotResponse.snapshot) {
         return {
@@ -93,8 +111,16 @@ export async function gitRemotePublish(input: {
         };
     }
 
-    const remote = input.request.remote?.trim() || 'origin';
-    const args = ['push', '--set-upstream', remote, head];
+    const remote = validateRemoteName(normalizedRemoteRequest.request.remote);
+    if (!remote.ok) {
+        return {
+            success: false,
+            errorCode: SCM_OPERATION_ERROR_CODES.INVALID_REQUEST,
+            error: remote.error,
+        };
+    }
+
+    const args = ['push', '--set-upstream', remote.value, head];
     const push = await runScmCommand({
         bin: 'git',
         cwd: input.context.cwd,
@@ -113,4 +139,3 @@ export async function gitRemotePublish(input: {
             stderr: push.stderr,
         };
 }
-
