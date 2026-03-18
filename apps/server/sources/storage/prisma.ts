@@ -149,8 +149,26 @@ export async function initDbMysql(): Promise<void> {
     await initDbFromGeneratedClient("mysql");
 }
 
+async function applySqlitePragmas(client: PrismaClientType): Promise<void> {
+    await client.$queryRawUnsafe("PRAGMA foreign_keys = ON");
+    await client.$queryRawUnsafe("PRAGMA journal_mode = WAL");
+    await client.$queryRawUnsafe("PRAGMA synchronous = NORMAL");
+}
+
 export async function initDbSqlite(): Promise<void> {
     await initDbFromGeneratedClient("sqlite");
+    if (_db) {
+        try {
+            await _db.$connect();
+            await applySqlitePragmas(_db);
+        } catch (error) {
+            const client = _db;
+            _db = null;
+            _provider = null;
+            await client.$disconnect().catch(() => {});
+            throw error;
+        }
+    }
 }
 
 function resolveLightPgliteDirFromEnv(env: NodeJS.ProcessEnv): string {

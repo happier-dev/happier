@@ -40,4 +40,10 @@ describe("resolveGeneratedClientEntrypoint", () => {
         const resolved = resolvePreferredGeneratedClientEntrypoint("sqlite", execPath);
         expect(resolved).toBe(packaged);
     });
+
+    it("falls back to the workspace sqlite client when no packaged client exists", () => {
+        const root = join("/opt", "happier", "happier-server");
+        const resolved = resolvePreferredGeneratedClientEntrypoint("sqlite", root);
+        expect(resolved).toBe("../../generated/sqlite-client/index.js");
+    });
 });
