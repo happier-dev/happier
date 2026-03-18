@@ -7,6 +7,15 @@ import { spawnSync } from 'node:child_process';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
+function copyCliBinRuntimeFiles(repoRoot: string, tempRoot: string) {
+  const runtimeFiles = ['happier.mjs', '_resolveRuntimeEntrypoint.mjs', '_prepareRuntimeEntrypoint.mjs'];
+  mkdirSync(resolve(tempRoot, 'bin'), { recursive: true });
+
+  for (const file of runtimeFiles) {
+    cpSync(resolve(repoRoot, 'apps', 'cli', 'bin', file), resolve(tempRoot, 'bin', file));
+  }
+}
+
 describe('happier bin preflight', () => {
   it('works when protocol deps are vendored under protocol/node_modules (not hoisted to the CLI root)', () => {
     const repoRoot = resolve(__dirname, '..', '..', '..', '..');
@@ -29,9 +38,7 @@ describe('happier bin preflight', () => {
     // CLI direct dep is expected at the CLI root.
     mkdirSync(resolve(tempRoot, 'node_modules', 'tweetnacl'), { recursive: true });
 
-    for (const fileName of ['happier.mjs', '_prepareRuntimeEntrypoint.mjs', '_resolveRuntimeEntrypoint.mjs']) {
-      cpSync(resolve(repoRoot, 'apps', 'cli', 'bin', fileName), resolve(tempRoot, 'bin', fileName));
-    }
+    copyCliBinRuntimeFiles(repoRoot, tempRoot);
 
     writeFileSync(
       resolve(tempRoot, 'node_modules', '@happier-dev', 'protocol', 'package.json'),
@@ -107,9 +114,7 @@ describe('happier bin preflight', () => {
     mkdirSync(resolve(tempRoot, 'dist'), { recursive: true });
     mkdirSync(resolve(tempRoot, 'node_modules', '@happier-dev', 'protocol', 'dist'), { recursive: true });
 
-    for (const fileName of ['happier.mjs', '_prepareRuntimeEntrypoint.mjs', '_resolveRuntimeEntrypoint.mjs']) {
-      cpSync(resolve(repoRoot, 'apps', 'cli', 'bin', fileName), resolve(tempRoot, 'bin', fileName));
-    }
+    copyCliBinRuntimeFiles(repoRoot, tempRoot);
 
     writeFileSync(
       resolve(tempRoot, 'node_modules', '@happier-dev', 'protocol', 'package.json'),
@@ -152,9 +157,7 @@ describe('happier bin preflight', () => {
     mkdirSync(resolve(tempRoot, 'node_modules', '@happier-dev', 'protocol', 'dist'), { recursive: true });
     mkdirSync(resolve(tempRoot, 'node_modules', 'tweetnacl'), { recursive: true });
 
-    for (const fileName of ['happier.mjs', '_prepareRuntimeEntrypoint.mjs', '_resolveRuntimeEntrypoint.mjs']) {
-      cpSync(resolve(repoRoot, 'apps', 'cli', 'bin', fileName), resolve(tempRoot, 'bin', fileName));
-    }
+    copyCliBinRuntimeFiles(repoRoot, tempRoot);
 
     writeFileSync(
       resolve(tempRoot, 'node_modules', '@happier-dev', 'protocol', 'package.json'),
@@ -201,9 +204,7 @@ describe('happier bin preflight', () => {
     mkdirSync(resolve(tempRoot, 'node_modules', 'tweetnacl'), { recursive: true });
     mkdirSync(resolve(tempRoot, 'node_modules', 'base64-js'), { recursive: true });
 
-    for (const fileName of ['happier.mjs', '_prepareRuntimeEntrypoint.mjs', '_resolveRuntimeEntrypoint.mjs']) {
-      cpSync(resolve(repoRoot, 'apps', 'cli', 'bin', fileName), resolve(tempRoot, 'bin', fileName));
-    }
+    copyCliBinRuntimeFiles(repoRoot, tempRoot);
 
     writeFileSync(
       resolve(tempRoot, 'node_modules', '@happier-dev', 'protocol', 'package.json'),
