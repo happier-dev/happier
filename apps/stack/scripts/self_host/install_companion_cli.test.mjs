@@ -1,160 +1,117 @@
-import test from 'node:test';
 import assert from 'node:assert/strict';
-import { chmod, mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
+import { createHash, generateKeyPairSync, sign } from 'node:crypto';
+import { existsSync } from 'node:fs';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import test from 'node:test';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
+import { spawnSync } from 'node:child_process';
 
-import { findExtractedExecutableByName } from './findExtractedExecutableByName.mjs';
-import { buildInstallCompanionCliPlan, installCompanionCli } from './install_companion_cli.mjs';
+import { installCompanionCliFromBundle } from './install_companion_cli.mjs';
 
-async function withTempRoot(t) {
-  const root = await mkdtemp(join(tmpdir(), 'hstack-self-host-companion-cli-'));
-  t.after(async () => {
-    await rm(root, { recursive: true, force: true });
-  });
-  return root;
+function b64(buf) {
+  return Buffer.from(buf).toString('base64');
 }
 
-test('findExtractedExecutableByName finds nested executable files on posix', async (t) => {
-  const root = await withTempRoot(t);
-  const nestedDir = join(root, 'extract', 'bundle', 'bin');
-  const binaryPath = join(nestedDir, 'happier-server');
-  await mkdir(nestedDir, { recursive: true });
-  await writeFile(binaryPath, '#!/bin/sh\nexit 0\n', 'utf-8');
-  await chmod(binaryPath, 0o755);
+function base64UrlToBuffer(value) {
+  const s = String(value ?? '')
+    .replace(/-/g, '+')
+    .replace(/_/g, '/')
+    .padEnd(Math.ceil(String(value ?? '').length / 4) * 4, '=');
+  return Buffer.from(s, 'base64');
+}
 
-  const resolved = await findExtractedExecutableByName({
-    rootDir: join(root, 'extract'),
-    binaryName: 'happier-server',
-    platform: 'linux',
+function createMinisignKeyPair() {
+  const { publicKey, privateKey } = generateKeyPairSync('ed25519');
+  const jwk = publicKey.export({ format: 'jwk' });
+  const rawPublicKey = base64UrlToBuffer(jwk.x);
+  const keyId = Buffer.from('0123456789abcdef', 'hex');
+  const publicKeyBytes = Buffer.concat([Buffer.from('Ed'), keyId, rawPublicKey]);
+  const pubkeyFile = `untrusted comment: minisign public key\n${b64(publicKeyBytes)}\n`;
+  return { pubkeyFile, keyId, privateKey };
+}
+
+function signMinisignMessage({ message, keyId, privateKey }) {
+  const signature = sign(null, message, privateKey);
+  const sigLineBytes = Buffer.concat([Buffer.from('Ed'), keyId, signature]);
+  const trustedComment = 'trusted comment: test';
+  const trustedSuffix = Buffer.from(trustedComment.slice('trusted comment: '.length), 'utf-8');
+  const globalSignature = sign(null, Buffer.concat([signature, trustedSuffix]), privateKey);
+  return [
+    'untrusted comment: signature from happier stack test',
+    b64(sigLineBytes),
+    trustedComment,
+    b64(globalSignature),
+    '',
+  ].join('\n');
+}
+
+function sha256Hex(bytes) {
+  return createHash('sha256').update(bytes).digest('hex');
+}
+
+test('installCompanionCliFromBundle promotes the full CLI payload with shared installer logic', async (t) => {
+  if (process.platform === 'win32') {
+    t.skip('tar-based bundle test does not run on windows');
+    return;
+  }
+  if (spawnSync('bash', ['-lc', 'command -v tar >/dev/null 2>&1'], { stdio: 'ignore' }).status !== 0) {
+    t.skip('tar is required for bundle installation test');
+    return;
+  }
+
+  const tmp = await mkdtemp(join(tmpdir(), 'happier-self-host-companion-cli-'));
+  t.after(async () => {
+    await rm(tmp, { recursive: true, force: true });
   });
 
-  assert.equal(resolved, binaryPath);
-});
+  const staging = join(tmp, 'staging');
+  const rootName = 'happier-v1.2.3-preview.1-darwin-arm64';
+  const rootDir = join(staging, rootName);
+  await mkdir(join(rootDir, 'package-dist'), { recursive: true });
+  await writeFile(join(rootDir, 'package-dist', 'index.mjs'), 'console.log("ok");\n', 'utf-8');
+  const binaryPath = join(rootDir, 'happier');
+  await writeFile(binaryPath, '#!/bin/sh\necho happier\n', 'utf-8');
+  spawnSync('bash', ['-lc', `chmod +x "${binaryPath.replaceAll('"', '\\"')}"`], { stdio: 'ignore' });
 
-test('findExtractedExecutableByName ignores non-executable matches on posix', async (t) => {
-  const root = await withTempRoot(t);
-  const nestedDir = join(root, 'extract', 'bundle');
-  const binaryPath = join(nestedDir, 'happier-server');
-  await mkdir(nestedDir, { recursive: true });
-  await writeFile(binaryPath, 'plain\n', 'utf-8');
+  const archiveName = `${rootName}.tar.gz`;
+  const archivePath = join(tmp, archiveName);
+  const tar = spawnSync('tar', ['-czf', archivePath, '-C', staging, rootName], { encoding: 'utf-8' });
+  assert.equal(tar.status, 0, tar.stderr || tar.stdout);
 
-  const resolved = await findExtractedExecutableByName({
-    rootDir: join(root, 'extract'),
-    binaryName: 'happier-server',
-    platform: 'linux',
+  const archiveBytes = await readFile(archivePath);
+  const checksumsText = `${sha256Hex(archiveBytes)} ${archiveName}\n`;
+  const { pubkeyFile, keyId, privateKey } = createMinisignKeyPair();
+  const sigFile = signMinisignMessage({
+    message: Buffer.from(checksumsText, 'utf-8'),
+    keyId,
+    privateKey,
   });
 
-  assert.equal(resolved, '');
-});
+  const bundle = {
+    version: '1.2.3-preview.1',
+    archive: { name: archiveName, url: `data:application/octet-stream;base64,${archiveBytes.toString('base64')}` },
+    checksums: { name: 'checksums-happier-v1.2.3-preview.1.txt', url: `data:text/plain,${encodeURIComponent(checksumsText)}` },
+    checksumsSig: { name: 'checksums-happier-v1.2.3-preview.1.txt.minisig', url: `data:text/plain,${encodeURIComponent(sigFile)}` },
+  };
 
-test('findExtractedExecutableByName accepts matching files on windows without execute bits', async (t) => {
-  const root = await withTempRoot(t);
-  const nestedDir = join(root, 'extract');
-  const binaryPath = join(nestedDir, 'happier.exe');
-  await mkdir(nestedDir, { recursive: true });
-  await writeFile(binaryPath, 'binary\n', 'utf-8');
-
-  const resolved = await findExtractedExecutableByName({
-    rootDir: join(root, 'extract'),
-    binaryName: 'happier.exe',
-    platform: 'win32',
-  });
-
-  assert.equal(resolved, binaryPath);
-});
-
-test('buildInstallCompanionCliPlan disables companion CLI installation when withCli is false', () => {
-  assert.deepEqual(
-    buildInstallCompanionCliPlan({
-      withCli: false,
-      hasCompanionCli: false,
-      hasCurl: true,
-      hasBash: true,
-    }),
-    {
-      shouldInstall: false,
-      reason: 'disabled',
+  const homeDir = join(tmp, 'home');
+  const result = await installCompanionCliFromBundle({
+    bundle,
+    processEnv: {
+      ...process.env,
+      HAPPIER_HOME_DIR: homeDir,
     },
-  );
-});
-
-test('buildInstallCompanionCliPlan skips installation when companion CLI already exists', () => {
-  assert.deepEqual(
-    buildInstallCompanionCliPlan({
-      withCli: true,
-      hasCompanionCli: true,
-      hasCurl: true,
-      hasBash: true,
-    }),
-    {
-      shouldInstall: false,
-      reason: 'already-installed',
-    },
-  );
-});
-
-test('buildInstallCompanionCliPlan requires curl and bash before installing', () => {
-  assert.deepEqual(
-    buildInstallCompanionCliPlan({
-      withCli: true,
-      hasCompanionCli: false,
-      hasCurl: false,
-      hasBash: true,
-    }),
-    {
-      shouldInstall: false,
-      reason: 'missing-curl-or-bash',
-    },
-  );
-});
-
-test('installCompanionCli runs the published installer with channel and non-interactive env', async () => {
-  const observed = [];
-  const result = await installCompanionCli({
-    channel: 'preview',
-    nonInteractive: true,
-    withCli: true,
-    env: { BASE: '1' },
-    commandExists: (name) => name === 'curl' || name === 'bash',
-    runCommand: async (cmd, args, options) => {
-      observed.push({ cmd, args, options });
-      return { status: 0 };
-    },
+    pubkeyFile,
   });
 
-  assert.deepEqual(result, {
-    installed: true,
-    reason: 'installed',
-  });
-  assert.deepEqual(observed, [
-    {
-      cmd: 'bash',
-      args: ['-lc', 'curl -fsSL https://happier.dev/install | bash'],
-      options: {
-        allowFail: true,
-        env: {
-          BASE: '1',
-          HAPPIER_CHANNEL: 'preview',
-          HAPPIER_NONINTERACTIVE: '1',
-        },
-        stdio: 'inherit',
-      },
-    },
-  ]);
-});
-
-test('installCompanionCli reports installer failure without throwing', async () => {
-  const result = await installCompanionCli({
-    channel: 'stable',
-    nonInteractive: false,
-    withCli: true,
-    commandExists: (name) => name === 'curl' || name === 'bash',
-    runCommand: async () => ({ status: 1 }),
-  });
-
-  assert.deepEqual(result, {
-    installed: false,
-    reason: 'installer-failed',
-  });
+  assert.equal(result.installed, true);
+  assert.equal(result.version, '1.2.3-preview.1');
+  assert.equal(existsSync(join(homeDir, 'cli', 'current', 'package-dist', 'index.mjs')), true);
+  assert.equal(existsSync(join(homeDir, 'cli', 'previous')), false);
+  const installedEntrypoint = await readFile(join(homeDir, 'cli', 'current', 'package-dist', 'index.mjs'), 'utf-8');
+  assert.match(installedEntrypoint, /console\.log\("ok"\)/);
+  assert.equal(existsSync(join(homeDir, 'bin', 'happier')), true);
+  assert.equal(existsSync(join(homeDir, 'cli', 'current', 'happier')), true);
+  assert.equal(existsSync(dirname(join(homeDir, 'cli', 'versions', '1.2.3-preview.1'))), true);
 });

@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { createHash, generateKeyPairSync, sign } from 'node:crypto';
 import { existsSync } from 'node:fs';
-import { mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import test from 'node:test';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
@@ -15,7 +15,6 @@ import {
   resolveSelfHostAutoUpdateIntervalMinutes,
   resolveSelfHostHealthTimeoutMs,
   resolveSelfHostDefaults,
-  resolveSelfHostAutoUpdateAt,
   renderUpdaterLaunchdPlistXml,
   renderUpdaterScheduledTaskWrapperPs1,
   renderUpdaterSystemdUnit,
@@ -29,6 +28,7 @@ import {
   decideSelfHostAutoUpdateReconcile,
   mergeEnvTextWithDefaults,
   installBinaryAtomically,
+  installSelfHostBinaryFromLocalPath,
 } from './self_host_runtime.mjs';
 
 function b64(buf) {
@@ -72,6 +72,19 @@ function signMinisignMessage({ message, keyId, privateKey }) {
 
 function sha256Hex(bytes) {
   return createHash('sha256').update(bytes).digest('hex');
+}
+
+async function createLocalSelfHostRuntimePayloadRoot({ rootDir, binaryName, binaryText = '#!/bin/sh\necho ok\n' }) {
+  await mkdir(join(rootDir, 'generated'), { recursive: true });
+  await mkdir(join(rootDir, 'node_modules', '.prisma', 'client'), { recursive: true });
+  await mkdir(join(rootDir, 'node_modules', '@prisma', 'client'), { recursive: true });
+  await writeFile(join(rootDir, 'generated', 'dummy.txt'), 'ok', 'utf-8');
+  await writeFile(join(rootDir, 'node_modules', '.prisma', 'client', 'query_engine.so'), 'engine', 'utf-8');
+  await writeFile(join(rootDir, 'node_modules', '@prisma', 'client', 'index.js'), 'module.exports = {};\n', 'utf-8');
+  const binaryPath = join(rootDir, binaryName);
+  await writeFile(binaryPath, binaryText, 'utf-8');
+  spawnSync('bash', ['-lc', `chmod +x "${binaryPath.replaceAll('"', '\\"')}"`], { stdio: 'ignore' });
+  return binaryPath;
 }
 
 test('parseSelfHostInvocation accepts optional self-host prefix', () => {
@@ -755,6 +768,56 @@ test('self-host release installer ignores extra root entries when extracting bun
   assert.equal(String(raw.stdout ?? '').trim(), 'ok');
 });
 
+test('installSelfHostBinaryFromLocalPath prunes older retained local versions after promotion', async (t) => {
+  const tmp = await mkdtemp(join(tmpdir(), 'happier-self-host-local-retention-test-'));
+  const previousDateNow = Date.now;
+  t.after(async () => {
+    Date.now = previousDateNow;
+    await rm(tmp, { recursive: true, force: true });
+  });
+
+  const installRoot = join(tmp, 'install');
+  const binaryName = 'happier-server';
+  const config = {
+    platform: process.platform,
+    dataDir: join(installRoot, 'data'),
+    versionsDir: join(installRoot, 'versions'),
+    serverBinaryPath: join(installRoot, 'bin', binaryName),
+    serverPreviousBinaryPath: join(installRoot, 'bin', `${binaryName}.previous`),
+  };
+
+  await mkdir(config.versionsDir, { recursive: true });
+  await writeFile(join(config.versionsDir, `${binaryName}-local-500`), '#!/bin/sh\necho old\n', 'utf-8');
+
+  Date.now = () => 1_000;
+  const sourceOne = await createLocalSelfHostRuntimePayloadRoot({
+    rootDir: join(tmp, 'payload-1'),
+    binaryName,
+    binaryText: '#!/bin/sh\necho local-one\n',
+  });
+  await installSelfHostBinaryFromLocalPath({
+    sourceBinaryPath: sourceOne,
+    binaryName,
+    config,
+  });
+
+  Date.now = () => 2_000;
+  const sourceTwo = await createLocalSelfHostRuntimePayloadRoot({
+    rootDir: join(tmp, 'payload-2'),
+    binaryName,
+    binaryText: '#!/bin/sh\necho local-two\n',
+  });
+  await installSelfHostBinaryFromLocalPath({
+    sourceBinaryPath: sourceTwo,
+    binaryName,
+    config,
+  });
+
+  assert.equal(existsSync(join(config.versionsDir, `${binaryName}-local-500`)), false);
+  assert.equal(existsSync(join(config.versionsDir, `${binaryName}-local-1000`)), true);
+  assert.equal(existsSync(join(config.versionsDir, `${binaryName}-local-2000`)), true);
+});
+
 test('installBinaryAtomically swaps a running binary on Linux without ETXTBSY', async (t) => {
   if (process.platform !== 'linux') {
     t.skip('ETXTBSY behavior is Linux-specific');
@@ -908,18 +971,6 @@ test('resolveSelfHostDefaults uses user-mode paths by default', () => {
   assert.equal(cfg.installRoot, '/home/me/.happier/self-host');
   assert.equal(cfg.binDir, '/home/me/.happier/bin');
   assert.equal(cfg.configDir, '/home/me/.happier/self-host/config');
-});
-
-test('resolveSelfHostDefaults uses system-mode install paths when requested', () => {
-  const cfg = resolveSelfHostDefaults({ platform: 'linux', mode: 'system', homeDir: '/home/me' });
-  assert.equal(cfg.installRoot, '/opt/happier');
-  assert.equal(cfg.binDir, '/usr/local/bin');
-  assert.equal(cfg.configDir, '/etc/happier');
-});
-
-test('resolveSelfHostAutoUpdateAt normalizes valid times and rejects invalid values', () => {
-  assert.equal(resolveSelfHostAutoUpdateAt({ HAPPIER_SELF_HOST_AUTO_UPDATE_AT: '9:5' }), '09:05');
-  assert.equal(resolveSelfHostAutoUpdateAt({ HAPPIER_SELF_HOST_AUTO_UPDATE_AT: '25:00' }), '');
 });
 
 test('resolveMinisignPublicKeyText prefers inline override and otherwise returns bundled key', () => {

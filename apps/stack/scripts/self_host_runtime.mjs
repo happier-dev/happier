@@ -38,6 +38,9 @@ import { resolveReleaseAssetBundle } from '@happier-dev/release-runtime/assets';
 import { downloadVerifiedReleaseAssetBundle } from '@happier-dev/release-runtime/verifiedDownload';
 import { planArchiveExtraction } from '@happier-dev/release-runtime/extractPlan';
 import { fetchFirstGitHubReleaseByTags, fetchGitHubReleaseByTag } from '@happier-dev/release-runtime/github';
+import { findExtractedExecutableByName } from './self_host/findExtractedExecutableByName.mjs';
+import { maybeInstallCompanionCli } from './self_host/install_companion_cli.mjs';
+import { listVersionedDirectoryIdsNewestFirst, pruneVersionedDirectories } from './self_host/version_retention.mjs';
 
 const SUPPORTED_CHANNELS = new Set(['stable', 'preview']);
 const DEFAULTS = Object.freeze({
@@ -1623,6 +1626,11 @@ export async function installSelfHostBinaryFromBundle({
   }
   const platform = String(config?.platform ?? process.platform).trim() || process.platform;
   const os = normalizeOs(platform);
+  const existingVersionIds = await listVersionedDirectoryIdsNewestFirst({
+    versionsDir: config.versionsDir,
+    entryPrefix: `${name}-`,
+  });
+  const previousVersionId = existingVersionIds.find((candidate) => candidate !== String(resolvedBundle?.version ?? '').trim()) ?? null;
 
   const tempDir = await mkdtemp(join(tmpdir(), 'happier-self-host-release-'));
   try {
@@ -1667,40 +1675,77 @@ export async function installSelfHostBinaryFromBundle({
         versionedTargetPath: join(config.versionsDir, `${name}-${version}`),
       }),
     });
+    await pruneVersionedDirectories({
+      versionsDir: config.versionsDir,
+      entryPrefix: `${name}-`,
+      currentVersionId: version,
+      previousVersionId,
+    });
     return { version, source: resolvedBundle.archive.url };
   } finally {
     await rm(tempDir, { recursive: true, force: true });
   }
 }
 
+export async function installSelfHostBinaryFromLocalPath({
+  sourceBinaryPath,
+  binaryName,
+  config,
+} = {}) {
+  const srcPath = String(sourceBinaryPath ?? '').trim();
+  const name = String(binaryName ?? '').trim();
+  if (!srcPath) {
+    throw new Error('[self-host] missing local source binary path');
+  }
+  if (!existsSync(srcPath)) {
+    throw new Error(`[self-host] missing --server-binary path: ${srcPath}`);
+  }
+  if (!name) {
+    throw new Error('[self-host] missing binary name');
+  }
+
+  const version = `local-${Date.now()}`;
+  const existingVersionIds = await listVersionedDirectoryIdsNewestFirst({
+    versionsDir: config.versionsDir,
+    entryPrefix: `${name}-`,
+  });
+  const previousVersionId = existingVersionIds.find((candidate) => candidate !== version) ?? null;
+  const artifactRootDir = dirname(srcPath);
+  const runtimeStageDir = await mkdtemp(join(tmpdir(), 'happier-self-host-local-runtime-stage-'));
+  try {
+    const stagedRuntime = await stageSelfHostRuntimePayload({
+      artifactRootDir,
+      stageRootDir: runtimeStageDir,
+    });
+    await promoteStagedSelfHostRuntimePayload({
+      stagedRuntime,
+      config,
+      onPromoted: async () => installBinaryAtomically({
+        sourceBinaryPath: srcPath,
+        targetBinaryPath: config.serverBinaryPath,
+        previousBinaryPath: config.serverPreviousBinaryPath,
+        versionedTargetPath: join(config.versionsDir, `${name}-${version}`),
+      }),
+    });
+    await pruneVersionedDirectories({
+      versionsDir: config.versionsDir,
+      entryPrefix: `${name}-`,
+      currentVersionId: version,
+      previousVersionId,
+    });
+    return { version, source: 'local' };
+  } finally {
+    await rm(runtimeStageDir, { recursive: true, force: true }).catch(() => {});
+  }
+}
+
 async function installFromRelease({ product, binaryName, config, explicitBinaryPath = '' }) {
   if (explicitBinaryPath) {
-    const srcPath = explicitBinaryPath;
-    if (!existsSync(srcPath)) {
-      throw new Error(`[self-host] missing --server-binary path: ${srcPath}`);
-    }
-    const version = `local-${Date.now()}`;
-    const artifactRootDir = dirname(srcPath);
-    const runtimeStageDir = await mkdtemp(join(tmpdir(), 'happier-self-host-local-runtime-stage-'));
-    try {
-      const stagedRuntime = await stageSelfHostRuntimePayload({
-        artifactRootDir,
-        stageRootDir: runtimeStageDir,
-      });
-      await promoteStagedSelfHostRuntimePayload({
-        stagedRuntime,
-        config,
-        onPromoted: async () => installBinaryAtomically({
-          sourceBinaryPath: srcPath,
-          targetBinaryPath: config.serverBinaryPath,
-          previousBinaryPath: config.serverPreviousBinaryPath,
-          versionedTargetPath: join(config.versionsDir, `${binaryName}-${version}`),
-        }),
-      });
-    } finally {
-      await rm(runtimeStageDir, { recursive: true, force: true }).catch(() => {});
-    }
-    return { version, source: 'local' };
+    return installSelfHostBinaryFromLocalPath({
+      sourceBinaryPath: explicitBinaryPath,
+      binaryName,
+      config,
+    });
   }
 
   const channelTag = config.channel === 'preview' ? 'server-preview' : 'server-stable';
@@ -1799,6 +1844,10 @@ async function installUiWebFromRelease({ config }) {
     os: config.uiWebOs,
     arch: config.uiWebArch,
   });
+  const existingVersionIds = await listVersionedDirectoryIdsNewestFirst({
+    versionsDir: config.uiWebVersionsDir,
+    entryPrefix: `${config.uiWebProduct}-`,
+  });
 
   const tempDir = await mkdtemp(join(tmpdir(), 'happier-self-host-ui-web-'));
   try {
@@ -1831,6 +1880,7 @@ async function installUiWebFromRelease({ config }) {
 
 	    const version = resolved.version || String(release?.tag_name ?? '').replace(/^ui-web-v/, '') || `${Date.now()}`;
 	    const versionedTargetDir = join(config.uiWebVersionsDir, `${config.uiWebProduct}-${version}`);
+    const previousVersionId = existingVersionIds.find((candidate) => candidate !== version) ?? null;
     await rm(versionedTargetDir, { recursive: true, force: true });
     await mkdir(dirname(versionedTargetDir), { recursive: true });
     await cp(artifactRootDir, versionedTargetDir, { recursive: true });
@@ -1838,6 +1888,12 @@ async function installUiWebFromRelease({ config }) {
     await rm(config.uiWebCurrentDir, { recursive: true, force: true }).catch(() => {});
     await symlink(versionedTargetDir, config.uiWebCurrentDir, config.platform === 'win32' ? 'junction' : 'dir').catch(async () => {
       await cp(versionedTargetDir, config.uiWebCurrentDir, { recursive: true });
+    });
+    await pruneVersionedDirectories({
+      versionsDir: config.uiWebVersionsDir,
+      entryPrefix: `${config.uiWebProduct}-`,
+      currentVersionId: version,
+      previousVersionId,
     });
 
     return { installed: true, version, source: downloaded.source.archiveUrl, tag: channelTag };
@@ -1857,33 +1913,6 @@ async function writeSelfHostState(config, statePatch) {
   };
   await mkdir(dirname(config.statePath), { recursive: true });
   await writeFile(config.statePath, `${JSON.stringify(next, null, 2)}\n`, 'utf-8');
-}
-
-async function maybeInstallCompanionCli({ channel, nonInteractive, withCli }) {
-  if (!withCli) return { installed: false, reason: 'disabled' };
-  if (commandExists('happier')) {
-    return { installed: false, reason: 'already-installed' };
-  }
-  if (!commandExists('curl') || !commandExists('bash')) {
-    return { installed: false, reason: 'missing-curl-or-bash' };
-  }
-  const result = runCommand(
-    'bash',
-    ['-lc', 'curl -fsSL https://happier.dev/install | bash'],
-    {
-      allowFail: true,
-      env: {
-        ...process.env,
-        HAPPIER_CHANNEL: channel,
-        HAPPIER_NONINTERACTIVE: nonInteractive ? '1' : '0',
-      },
-      stdio: 'inherit',
-    }
-  );
-  return {
-    installed: (result.status ?? 1) === 0,
-    reason: (result.status ?? 1) === 0 ? 'installed' : 'installer-failed',
-  };
 }
 
 function buildSelfHostServerServiceSpec({ config, envText }) {
@@ -1914,7 +1943,6 @@ async function cmdInstall({ channel, mode, argv, json }) {
     !(argvSansEnv.includes('--without-ui')
       || parseBoolean(process.env.HAPPIER_WITH_UI, true) === false
       || parseBoolean(process.env.HAPPIER_SELF_HOST_WITH_UI, true) === false);
-  const nonInteractive = argvSansEnv.includes('--non-interactive') || parseBoolean(process.env.HAPPIER_NONINTERACTIVE, false);
   const serverBinaryOverride = String(process.env.HAPPIER_SELF_HOST_SERVER_BINARY ?? '').trim();
 
   if (normalizeOs(config.platform) !== 'windows' && !commandExists('tar')) {
@@ -2014,8 +2042,9 @@ async function cmdInstall({ channel, mode, argv, json }) {
 
   const cliResult = await maybeInstallCompanionCli({
     channel,
-    nonInteractive,
+    githubRepo: config.githubRepo,
     withCli: !withoutCli,
+    processEnv: process.env,
   });
   await writeSelfHostState(config, {
     channel,

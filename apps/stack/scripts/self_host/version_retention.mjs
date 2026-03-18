@@ -58,8 +58,7 @@ export async function pruneVersionedDirectories({
 
   await Promise.all(
     prune.map(async (versionId) => {
-      const path = join(versionsDir, `${entryPrefix}${versionId}`);
-      await rm(path, { recursive: true, force: true });
+      await rm(join(versionsDir, `${entryPrefix}${versionId}`), { recursive: true, force: true });
     }),
   );
 
