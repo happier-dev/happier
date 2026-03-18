@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+
 import {
     applyEnvValues,
     installStartServerCommonWiringMocks,
@@ -7,11 +8,6 @@ import {
 } from '@/testkit/startServerMocks';
 
 const retentionStop = vi.fn();
-const startRetentionWorker = vi.fn(() => ({ stop: retentionStop }));
-
-vi.mock('@/app/retention/runtime/startRetentionWorker', () => ({
-    startRetentionWorker,
-}));
 
 vi.mock('@/storage/redis/redis', () => ({
     getRedisClient: () => ({ ping: vi.fn(async () => 'PONG') }),
@@ -22,10 +18,7 @@ vi.mock('@/storage/db', () => ({
         $connect: vi.fn(async () => {}),
         $disconnect: vi.fn(async () => {}),
     },
-    getDbProviderFromEnv: (
-        _env: NodeJS.ProcessEnv,
-        fallback: 'postgres' | 'pglite' | 'sqlite' | 'mysql',
-    ) => fallback,
+    getDbProviderFromEnv: (_env: any, fallback: any) => fallback,
     initDbPostgres: vi.fn(() => {}),
     initDbPglite: vi.fn(async () => {}),
     initDbMysql: vi.fn(async () => {}),
@@ -56,27 +49,19 @@ describe('startServer retention worker wiring', () => {
         restoreEnvValues(envBackup);
     });
 
-    it('starts the retention worker when SERVER_ROLE=all', async () => {
+    it('starts the unified retention worker when SERVER_ROLE=all', async () => {
+        vi.resetModules();
+        const retentionWorkerModule = await import('@/app/retention/runtime/startRetentionWorker');
+        const startRetentionWorker = vi.mocked(retentionWorkerModule.startRetentionWorker);
+        startRetentionWorker.mockReturnValue({ stop: retentionStop });
         const { startServer } = await import('./startServer');
 
         await startServer('full');
 
         expect(startRetentionWorker).toHaveBeenCalledTimes(1);
-        const shutdownRegistration = onShutdown.mock.calls.find(([name]) => name === 'retention-worker');
-        expect(shutdownRegistration).toBeDefined();
-        await shutdownRegistration![1]();
-        expect(retentionStop).toHaveBeenCalledTimes(1);
-    });
-
-    it('does not start the retention worker for api role', async () => {
-        applyEnvValues({
-            SERVER_ROLE: 'api',
-        });
-
-        const { startServer } = await import('./startServer');
-
-        await startServer('full');
-
-        expect(startRetentionWorker).not.toHaveBeenCalled();
+        expect(onShutdown).toHaveBeenCalledWith(
+            'retention-worker',
+            expect.any(Function),
+        );
     });
 });

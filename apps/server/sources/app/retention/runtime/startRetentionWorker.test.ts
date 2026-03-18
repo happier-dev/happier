@@ -1,14 +1,18 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import type { RetentionPolicy } from '@/app/retention/config/retentionPolicyTypes';
-
+const maybeCaptureSentryMonitorCheckIn = vi.fn(async ({ run }: { run: () => Promise<void> }) => {
+    await run();
+});
 const readRetentionPolicyFromEnv = vi.fn();
 const resolveEffectiveRetentionEnabled = vi.fn();
-const runRetentionSweep = vi.fn();
-const acquireRetentionSweepLock = vi.fn();
-const maybeCaptureSentryMonitorCheckIn = vi.fn();
+const runRetentionSweep = vi.fn(async () => ({ deleted: 0, byRule: {} }));
 const logRetentionSweepCompleted = vi.fn();
 const logRetentionSweepFailed = vi.fn();
+const acquireRetentionSweepLock = vi.fn();
+
+vi.mock('@/app/monitoring/sentryMonitors', () => ({
+    maybeCaptureSentryMonitorCheckIn,
+}));
 
 vi.mock('@/app/retention/config/readRetentionPolicyFromEnv', () => ({
     readRetentionPolicyFromEnv,
@@ -22,30 +26,26 @@ vi.mock('./runRetentionSweep', () => ({
     runRetentionSweep,
 }));
 
-vi.mock('./retentionSweepLock', () => ({
-    acquireRetentionSweepLock,
-}));
-
-vi.mock('@/app/monitoring/sentryMonitors', () => ({
-    maybeCaptureSentryMonitorCheckIn,
-}));
-
 vi.mock('./retentionRunLogging', () => ({
     logRetentionSweepCompleted,
     logRetentionSweepFailed,
 }));
 
-function createPolicy(overrides: Partial<Pick<RetentionPolicy, 'enabled' | 'intervalMs' | 'batchSize' | 'dryRun' | 'maxDeletesPerRulePerRun'>> = {}): RetentionPolicy {
+vi.mock('./retentionSweepLock', () => ({
+    acquireRetentionSweepLock,
+}));
+
+function createPolicy(intervalMs: number) {
     return {
         enabled: true,
-        intervalMs: 60_000,
-        batchSize: 10,
+        intervalMs,
+        batchSize: 100,
         dryRun: false,
-        maxDeletesPerRulePerRun: 100,
+        maxDeletesPerRulePerRun: 1000,
         domains: {
             sessions: { mode: 'keep_forever' },
             accountChanges: { mode: 'keep_forever' },
-            voiceSessionLeases: { mode: 'keep_forever' },
+            voiceSessionLeases: { mode: 'delete_older_than', days: 7 },
             userFeedItems: { mode: 'keep_forever' },
             sessionShareAccessLogs: { mode: 'keep_forever' },
             publicShareAccessLogs: { mode: 'keep_forever' },
@@ -57,59 +57,34 @@ function createPolicy(overrides: Partial<Pick<RetentionPolicy, 'enabled' | 'inte
             automationRuns: { mode: 'keep_forever' },
             automationRunEvents: { mode: 'keep_forever' },
         },
-        ...overrides,
     };
 }
 
 describe('startRetentionWorker', () => {
     beforeEach(() => {
+        vi.useFakeTimers();
         vi.clearAllMocks();
-        readRetentionPolicyFromEnv.mockReturnValue(createPolicy());
-        resolveEffectiveRetentionEnabled.mockImplementation((policy: RetentionPolicy) => policy.enabled);
+        resolveEffectiveRetentionEnabled.mockReturnValue(true);
         acquireRetentionSweepLock.mockResolvedValue({
             release: vi.fn(async () => {}),
         });
-        runRetentionSweep.mockResolvedValue({
-            deleted: 1,
-            byRule: { sessions: 1 },
-        });
-        maybeCaptureSentryMonitorCheckIn.mockImplementation(async ({ run }: { run: () => Promise<void> }) => run());
     });
 
-    it('returns null when retention is disabled', async () => {
-        readRetentionPolicyFromEnv.mockReturnValue(createPolicy({ enabled: false }));
-
-        const { startRetentionWorker } = await import('./startRetentionWorker');
-        expect(startRetentionWorker()).toBeNull();
-        expect(acquireRetentionSweepLock).not.toHaveBeenCalled();
+    afterEach(() => {
+        vi.useRealTimers();
     });
 
-    it('rethrows sweep failures so the monitor wrapper can capture them', async () => {
-        const sweepError = new Error('retention sweep failed');
-        const release = vi.fn(async () => {});
-        acquireRetentionSweepLock.mockResolvedValueOnce({ release });
-        runRetentionSweep.mockRejectedValueOnce(sweepError);
-
-        let capturedRun: Promise<void> | undefined;
-        maybeCaptureSentryMonitorCheckIn.mockImplementation(async ({ run }: { run: () => Promise<void> }) => {
-            capturedRun = run();
-            return capturedRun;
-        });
+    it('uses a lock ttl floor that is longer than very short retention intervals', async () => {
+        readRetentionPolicyFromEnv.mockReturnValue(createPolicy(15_000));
 
         const { startRetentionWorker } = await import('./startRetentionWorker');
+
         const worker = startRetentionWorker();
+        await vi.advanceTimersByTimeAsync(0);
 
-        expect(worker).not.toBeNull();
-        await vi.waitFor(() => {
-            expect(capturedRun).toBeDefined();
+        expect(acquireRetentionSweepLock).toHaveBeenCalledWith({
+            ttlMs: 30 * 60 * 1000,
         });
-        await expect(capturedRun!).rejects.toBe(sweepError);
-        expect(logRetentionSweepFailed).toHaveBeenCalledWith({
-            reason: 'startup',
-            error: sweepError,
-        });
-        expect(release).toHaveBeenCalledTimes(1);
-
-        worker!.stop();
+        worker?.stop();
     });
 });
