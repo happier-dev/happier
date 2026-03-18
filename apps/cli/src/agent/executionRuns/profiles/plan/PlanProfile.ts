@@ -1,6 +1,6 @@
 import { z } from 'zod';
 
-import { PlanOutputV1Schema } from '@happier-dev/protocol';
+import { PlanOutputV1Schema, type BackendTargetRefV1 } from '@happier-dev/protocol';
 
 import type {
   ExecutionRunIntentProfile,
@@ -28,11 +28,30 @@ function buildPlanGuidanceBlock(): string {
   ].join('\n');
 }
 
+function deriveLoosePlanSections(text: string): { summary: string; sections: { title: string; items: string[] }[] } | null {
+  const lines = text
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0);
+  if (lines.length === 0) return null;
+
+  const items = lines
+    .map((line) => line.replace(/^(?:[-*•]|\d+[.)])\s*/u, '').trim())
+    .filter((line) => line.length > 0);
+  if (items.length === 0) return null;
+
+  return {
+    summary: lines[0]!,
+    sections: [{ title: 'Plan', items: items.slice(0, 50) }],
+  };
+}
+
 function normalizePlanBoundedCompletion(params: Readonly<{
   runId: string;
   callId: string;
   sidechainId: string;
   backendId: string;
+  backendTarget: BackendTargetRefV1;
   startedAtMs: number;
   finishedAtMs: number;
   rawText: string;
@@ -54,6 +73,48 @@ function normalizePlanBoundedCompletion(params: Readonly<{
   }).passthrough();
   const parsedModel = ModelOutputSchema.safeParse(parsedJson);
   if (!parsedModel.success) {
+    const loose = params.backendId === 'pi' ? deriveLoosePlanSections(trimmed) : null;
+    if (loose) {
+      const payload = PlanOutputV1Schema.parse({
+        runRef: {
+          runId: params.runId,
+          callId: params.callId,
+          backendId: params.backendId,
+          backendTarget: params.backendTarget,
+        },
+        summary: loose.summary,
+        sections: loose.sections,
+        generatedAtMs: params.finishedAtMs,
+      });
+
+      const summary = payload.summary || 'Plan completed.';
+      const structuredMeta: ExecutionRunStructuredMeta = { kind: 'plan_output.v1', payload };
+
+      const sectionsDigest = payload.sections.slice(0, 10).map((section) => ({
+        title: section.title,
+        items: section.items.slice(0, 10),
+      }));
+
+      return {
+        status: 'succeeded',
+        summary,
+        toolResultOutput: {
+          status: 'succeeded',
+          summary,
+          runId: params.runId,
+          callId: params.callId,
+          sidechainId: params.sidechainId,
+          backendId: params.backendId,
+          intent: 'plan',
+          startedAtMs: params.startedAtMs,
+          finishedAtMs: params.finishedAtMs,
+          sectionsDigest,
+        },
+        toolResultMeta: { happier: structuredMeta } as any,
+        structuredMeta,
+      };
+    }
+
     const summary = 'Invalid plan output (expected strict JSON).';
     return {
       status: 'failed',
@@ -74,7 +135,12 @@ function normalizePlanBoundedCompletion(params: Readonly<{
   }
 
   const payload = PlanOutputV1Schema.parse({
-    runRef: { runId: params.runId, callId: params.callId, backendId: params.backendId },
+    runRef: {
+      runId: params.runId,
+      callId: params.callId,
+      backendId: params.backendId,
+      backendTarget: params.backendTarget,
+    },
     summary: parsedModel.data.summary,
     sections: parsedModel.data.sections,
     risks: parsedModel.data.risks,
@@ -86,9 +152,9 @@ function normalizePlanBoundedCompletion(params: Readonly<{
   const summary = payload.summary || 'Plan completed.';
   const structuredMeta: ExecutionRunStructuredMeta = { kind: 'plan_output.v1', payload };
 
-  const sectionsDigest = payload.sections.slice(0, 10).map((s) => ({
-    title: s.title,
-    items: s.items.slice(0, 10),
+  const sectionsDigest = payload.sections.slice(0, 10).map((section) => ({
+    title: section.title,
+    items: section.items.slice(0, 10),
   }));
 
   return {
@@ -121,6 +187,7 @@ export const PlanProfile: ExecutionRunIntentProfile = {
       callId: start.callId,
       sidechainId: start.sidechainId,
       backendId: start.backendId,
+      backendTarget: start.backendTarget,
       startedAtMs: start.startedAtMs,
       finishedAtMs,
       rawText,
