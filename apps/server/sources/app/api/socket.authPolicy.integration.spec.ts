@@ -343,7 +343,6 @@ describe("startSocket (auth policy enforcement)", () => {
         expect(payload.message).toBe("invalid-session");
         expect(payload.data).toEqual({
             error: "invalid-session",
-            provider: undefined,
             statusCode: 403,
         });
     }, 30_000);

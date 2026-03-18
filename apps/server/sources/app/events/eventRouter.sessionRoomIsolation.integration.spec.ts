@@ -95,21 +95,6 @@ function connectClient(params: {
     return socket;
 }
 
-function connectMachineClient(params: { url: string; userId: string; machineId: string }) {
-    const socket = ioClient(params.url, {
-        path: "/v1/updates",
-        auth: {
-            userId: params.userId,
-            clientType: "machine-scoped",
-            machineId: params.machineId,
-        },
-        reconnection: false,
-        autoConnect: true,
-    });
-
-    return socket;
-}
-
 async function waitForConnect(socket: any) {
     if (socket.connected) return;
     await new Promise<void>((resolve, reject) => {
@@ -206,7 +191,12 @@ describe("eventRouter session room isolation (integration)", () => {
         eventRouter.setIo(server.io as any);
 
         const userScoped = connectClient({ url: server.url, userId: "u1", clientType: "user-scoped" });
-        const machineScoped = connectMachineClient({ url: server.url, userId: "u1", machineId: "m1" });
+        const machineScoped = connectClient({
+            url: server.url,
+            userId: "u1",
+            clientType: "machine-scoped",
+            machineId: "m1",
+        });
 
         try {
             await Promise.all([waitForConnect(userScoped), waitForConnect(machineScoped)]);

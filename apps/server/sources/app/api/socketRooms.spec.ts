@@ -16,7 +16,9 @@ describe("getSocketRooms", () => {
     });
 
     it("includes machine room for machine-scoped clients", () => {
-        expect(getSocketRooms({ userId: "u1", clientType: "machine-scoped", machineId: "m1" })).toEqual(["machine:m1:u1"]);
+        expect(getSocketRooms({ userId: "u1", clientType: "machine-scoped", machineId: "m1" })).toEqual([
+            "machine:m1:u1",
+        ]);
     });
 
     it("throws on missing required IDs", () => {

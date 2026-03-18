@@ -16,7 +16,6 @@ import { artifactUpdateHandler } from "./socket/artifactUpdateHandler";
 import { accessKeyHandler } from "./socket/accessKeyHandler";
 import { createServerRpcForwarder } from "./socket/serverRpcForwarder";
 import { getSocketRooms } from "./socketRooms";
-import { resolveSessionScopedSocketBinding } from "./socket/sessionScopedBinding";
 import { createAdapter } from "@socket.io/redis-streams-adapter";
 import { getRedisClient } from "@/storage/redis/redis";
 import { randomUUID } from "node:crypto";
@@ -24,6 +23,7 @@ import { getSocketAdapterFromEnv, isRedisStreamsEnabled } from "@/config/backend
 import { db } from "@/storage/db";
 import { isServerFeatureEnabledForRequest } from "@/app/features/catalog/serverFeatureGate";
 import { readMachineTransferFeatureEnv } from "@/app/features/catalog/readFeatureEnv";
+import { resolveSessionScopedSocketBinding } from "./socket/sessionScopedBinding";
 
 export const DEFAULT_SOCKET_MAX_HTTP_BUFFER_SIZE = 25_000_000;
 
@@ -116,18 +116,6 @@ export function startSocket(app: Fastify) {
             }));
         }
 
-        if (clientType === "session-scoped") {
-            const binding = await resolveSessionScopedSocketBinding({
-                userId: verified.userId,
-                sessionId: sessionId ?? "",
-                machineId: machineId ?? null,
-            });
-            if (!binding.ok) {
-                return next(rejectSocket({ statusCode: binding.statusCode, error: binding.error }));
-            }
-            socket.data.sessionScopedBinding = binding.binding;
-        }
-
         if (clientType === 'machine-scoped') {
             const machine = await db.machine.findFirst({
                 where: { accountId: verified.userId, id: machineId },
@@ -138,19 +126,33 @@ export function startSocket(app: Fastify) {
             }
         }
 
-        socket.data.userId = verified.userId;
-        socket.data.clientType = clientType;
-        socket.data.sessionId = sessionId;
-        socket.data.machineId = machineId;
+        if (clientType === 'session-scoped' && sessionId) {
+            const binding = await resolveSessionScopedSocketBinding({
+                userId: verified.userId,
+                sessionId,
+                machineId,
+            });
+            if (!binding.ok) {
+                return next(rejectSocket({ statusCode: binding.statusCode, error: binding.error }));
+            }
+            (socket.data as any).sessionScopedBinding = binding.binding;
+        }
+
+        (socket.data as any).userId = verified.userId;
+        (socket.data as any).clientType = clientType;
+        (socket.data as any).sessionId = sessionId;
+        (socket.data as any).machineId = machineId;
         return next();
     });
 
     io.on("connection", async (socket) => {
         log({ module: 'websocket' }, `New connection attempt from socket: ${socket.id}`);
-        const userId = socket.data.userId;
-        const clientType = socket.data.clientType;
-        const sessionId = socket.data.sessionScopedBinding?.sessionId ?? socket.data.sessionId;
-        const machineId = socket.data.machineId;
+        const userId = (socket.data as any).userId as string | undefined;
+        const clientType = (socket.data as any).clientType as 'session-scoped' | 'user-scoped' | 'machine-scoped' | undefined;
+        const sessionId =
+            (socket.data as any).sessionScopedBinding?.sessionId as string | undefined
+            ?? (socket.data as any).sessionId as string | undefined;
+        const machineId = (socket.data as any).machineId as string | undefined;
 
         if (!userId) {
             socket.disconnect();

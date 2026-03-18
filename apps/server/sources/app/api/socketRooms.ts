@@ -39,7 +39,6 @@ export function getSocketRooms(params: {
         // for "all authenticated connections" events, and Bun's long-lived socket clients retain native
         // memory aggressively under websocket churn. Keep machine daemons on the dedicated per-machine room.
         rooms.push(`machine:${params.machineId}:${params.userId}`);
-        // Per-account machine room (do not use a shared `machine:${machineId}` room).
     }
 
     return rooms;
