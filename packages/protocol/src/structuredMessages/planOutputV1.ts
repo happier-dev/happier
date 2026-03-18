@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { ExecutionRunStructuredRunRefSchema } from './executionRunStructuredRunRef.js';
 
 /**
  * Structured payload emitted by execution runs with `intent='plan'`.
@@ -22,11 +23,7 @@ export const PlanOutputMilestoneV1Schema = z.object({
 export type PlanOutputMilestoneV1 = z.infer<typeof PlanOutputMilestoneV1Schema>;
 
 export const PlanOutputV1Schema = z.object({
-  runRef: z.object({
-    runId: z.string().min(1),
-    callId: z.string().min(1),
-    backendId: z.string().min(1),
-  }).passthrough(),
+  runRef: ExecutionRunStructuredRunRefSchema,
   summary: z.string().min(1).max(20_000),
   sections: z.array(PlanOutputSectionV1Schema).max(20),
   risks: z.array(z.string().min(1).max(2_000)).max(30).optional(),
@@ -40,4 +37,3 @@ export function parsePlanOutputV1(input: unknown): PlanOutputV1 | null {
   const parsed = PlanOutputV1Schema.safeParse(input);
   return parsed.success ? parsed.data : null;
 }
-
