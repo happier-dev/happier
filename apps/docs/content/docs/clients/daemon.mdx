@@ -1,13 +1,13 @@
 ---
 title: Daemon
-description: Run Happier in the background (sessions, remote control, headless servers).
+description: Run Happier in the background for remote start, headless servers, and the embedded terminal.
 ---
 
 ## What is the daemon?
 
 The Happier **daemon** is a small background process that keeps Happier “available” on your machine.
 
-In practice, it’s what enables Happier to **start and manage sessions even when you don’t have a terminal open**. This is especially important for features like **remote start** (e.g. from the app/web UI): the daemon is the thing on your computer that can receive that request and launch the session locally.
+In practice, it’s what enables Happier to **start and manage sessions even when you don’t have a terminal open**. That matters for features like **remote start** (for example from the app or web UI): the daemon is the thing on your computer that can receive the request and launch the session locally.
 
 It also helps the CLI:
 
