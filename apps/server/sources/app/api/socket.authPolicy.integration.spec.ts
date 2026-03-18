@@ -230,4 +230,60 @@ describe("startSocket (auth policy enforcement)", () => {
             statusCode: 403,
         });
     }, 30_000);
+
+    it("disconnects a session-scoped socket when the session belongs to another account", async () => {
+        const owningAccount = await db.account.create({
+            data: { publicKey: `pk-owning-${Date.now()}` },
+            select: { id: true },
+        });
+        const otherAccount = await db.account.create({
+            data: { publicKey: `pk-other-${Date.now()}` },
+            select: { id: true },
+        });
+
+        await db.session.create({
+            data: {
+                id: "s-test",
+                tag: `tag-${Date.now()}`,
+                accountId: owningAccount.id,
+                encryptionMode: "e2ee",
+                metadata: "{}",
+            },
+            select: { id: true },
+        });
+
+        const token = await auth.createToken(otherAccount.id);
+
+        const app = Fastify({ logger: false }) as unknown as AppFastify;
+        startSocket(app);
+        await app.listen({ port: 0, host: "127.0.0.1" });
+        const address = app.server.address();
+        const port = typeof address === "object" && address ? address.port : null;
+        if (!port) {
+            await app.close();
+            throw new Error("Failed to bind socket server");
+        }
+
+        const socket = ioClient(`http://127.0.0.1:${port}`, {
+            path: "/v1/updates",
+            transports: ["websocket"],
+            reconnection: false,
+            auth: { token, clientType: "session-scoped", sessionId: "s-test" },
+        });
+
+        let payload: ProviderRequiredErrorPayload;
+        try {
+            payload = await waitForConnectionFailure(socket);
+        } finally {
+            socket.close();
+            await app.close();
+        }
+
+        expect(payload.message).toBe("invalid-session");
+        expect(payload.data).toEqual({
+            error: "invalid-session",
+            provider: undefined,
+            statusCode: 403,
+        });
+    }, 30_000);
 });
