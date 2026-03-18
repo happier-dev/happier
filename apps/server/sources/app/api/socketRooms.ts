@@ -10,9 +10,10 @@ export function getSocketRooms(params: {
         throw new Error("getSocketRooms: userId is required");
     }
 
-    const rooms: string[] = [`user:${params.userId}`];
+    const rooms: string[] = [];
 
     if (params.clientType === "user-scoped") {
+        rooms.push(`user:${params.userId}`);
         rooms.push(`user-scoped:${params.userId}`);
     }
 
@@ -20,6 +21,7 @@ export function getSocketRooms(params: {
         if (!params.sessionId) {
             throw new Error("getSocketRooms: sessionId is required for session-scoped clients");
         }
+        rooms.push(`user:${params.userId}`);
         // Important: `session:${sessionId}` is a shared room across participants and must never receive per-account `update`
         // containers (they contain per-account cursors and may contain recipient-specific data). We still join it for future
         // broadcast-safe session events.
@@ -33,7 +35,9 @@ export function getSocketRooms(params: {
         if (!params.machineId) {
             throw new Error("getSocketRooms: machineId is required for machine-scoped clients");
         }
-        // Per-account machine room (do not use a shared `machine:${machineId}` room).
+        // Machine daemons should not subscribe to the generic user room. That room is the fanout target
+        // for "all authenticated connections" events, and Bun's long-lived socket clients retain native
+        // memory aggressively under websocket churn. Keep machine daemons on the dedicated per-machine room.
         rooms.push(`machine:${params.machineId}:${params.userId}`);
     }
 
