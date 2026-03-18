@@ -42,7 +42,7 @@ describe('scmUiBackendRegistry', () => {
                 writeRemoteFetch: true,
                 writeRemotePull: true,
                 writeRemotePush: true,
-                workspaceWorktreeCreate: false,
+                worktreeCreate: false,
                 changeSetModel: 'working-copy',
                 supportedDiffAreas: ['pending', 'both'],
             },

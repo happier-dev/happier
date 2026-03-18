@@ -48,7 +48,7 @@ function makeSnapshot(partial?: Partial<ScmWorkingSnapshot['branch']>): ScmWorki
             writeRemoteFetch: true,
             writeRemotePull: true,
             writeRemotePush: true,
-            workspaceWorktreeCreate: true,
+            worktreeCreate: true,
         },
     };
 }

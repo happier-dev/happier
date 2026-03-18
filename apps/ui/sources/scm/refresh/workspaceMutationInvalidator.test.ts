@@ -84,4 +84,59 @@ describe('WorkspaceMutationInvalidator', () => {
         vi.advanceTimersByTime(50);
         expect(invalidations).toHaveLength(2);
     });
+
+    it('does not invalidate for read-only Diff inspection', () => {
+        vi.useFakeTimers();
+
+        const onInvalidate = vi.fn();
+        const invalidator = new WorkspaceMutationInvalidator({
+            debounceMs: 50,
+            minUnknownOnlyIntervalMs: 1500,
+            now: () => 1_000,
+            setTimer: (fn, ms) => setTimeout(fn, ms),
+            clearTimer: (h) => clearTimeout(h as any),
+            onInvalidate,
+        });
+
+        invalidator.ingest('s1', [toolCallMessage('Diff', {
+            files: [
+                { file_path: 'src/app.ts', oldText: 'old', newText: 'new' },
+            ],
+        })]);
+        vi.advanceTimersByTime(50);
+
+        expect(onInvalidate).not.toHaveBeenCalled();
+    });
+
+    it('invalidates for canonical Diff mutation signals emitted from provider turn change sets', () => {
+        vi.useFakeTimers();
+
+        const onInvalidate = vi.fn();
+        const invalidator = new WorkspaceMutationInvalidator({
+            debounceMs: 50,
+            minUnknownOnlyIntervalMs: 1500,
+            now: () => 1_000,
+            setTimer: (fn, ms) => setTimeout(fn, ms),
+            clearTimer: (h) => clearTimeout(h as any),
+            onInvalidate,
+        });
+
+        invalidator.ingest('s1', [toolCallMessage('ProviderDiff', {
+            files: [
+                { file_path: 'src/native.ts', oldText: 'old', newText: 'new' },
+            ],
+            _happier: {
+                canonicalToolName: 'Diff',
+                workspaceMutationSignal: 'turn-change-set',
+                sessionChangeScope: 'turn',
+            },
+        })]);
+        vi.advanceTimersByTime(50);
+
+        expect(onInvalidate).toHaveBeenCalledWith({
+            sessionId: 's1',
+            changedPaths: ['src/native.ts'],
+            hasUnknownMutations: false,
+        });
+    });
 });

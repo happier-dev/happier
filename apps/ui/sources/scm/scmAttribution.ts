@@ -2,7 +2,7 @@ import type { ScmFileStatus } from './scmStatusFiles';
 import type { ScmProjectOperationLogEntry } from '@/sync/runtime/orchestration/projectManager';
 
 export type SessionAttributionConfidence = 'high' | 'inferred';
-export type ChangedFilesViewMode = 'repository' | 'session';
+export type ChangedFilesViewMode = 'repository' | 'turn' | 'session';
 export type ChangedFilesPresentation = 'list' | 'review';
 export type SessionAttributionReliability = 'high' | 'limited';
 

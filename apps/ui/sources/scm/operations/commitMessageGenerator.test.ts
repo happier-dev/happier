@@ -6,10 +6,6 @@ vi.mock('@/sync/ops/sessionEphemeralTasks', () => ({
     sessionEphemeralTaskRun: sessionEphemeralTaskRunMock,
 }));
 
-vi.mock('@/sync/runtime/orchestration/serverScopedRpc/resolveServerIdForSessionIdFromLocalCache', () => ({
-    resolveServerIdForSessionIdFromLocalCache: (_sessionId: string) => 'server_1',
-}));
-
 describe('commitMessageGenerator', () => {
     it('calls scm.commit_message via sessionEphemeralTaskRun with scope paths and no patches', async () => {
         sessionEphemeralTaskRunMock.mockResolvedValue({
@@ -42,11 +38,9 @@ describe('commitMessageGenerator', () => {
                 },
                 permissionMode: 'no_tools',
             },
-            { serverId: 'server_1' },
         );
 
         const call = sessionEphemeralTaskRunMock.mock.calls[0]?.[1];
         expect(call?.input?.patches).toBeUndefined();
     });
 });
-

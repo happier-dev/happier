@@ -27,7 +27,7 @@ function makeSnapshot(input: Partial<ScmWorkingSnapshot['totals']> & { hasConfli
             writeRemoteFetch: true,
             writeRemotePull: true,
             writeRemotePush: true,
-            workspaceWorktreeCreate: true,
+            worktreeCreate: true,
             operationLabels: { commit: 'Commit staged' },
         },
         branch: { head: 'main', upstream: 'origin/main', ahead: 0, behind: 0, detached: false },
