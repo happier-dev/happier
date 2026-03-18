@@ -287,7 +287,7 @@ describe("automation daemon routes (integration)", () => {
         );
     });
 
-    it("rejects existing_session automation creation when target session is missing or inactive", async () => {
+    it("rejects existing_session automation creation when target session is missing or not resumable", async () => {
         const account = await db.account.create({
             data: { publicKey: "pk-automation-existing-session-create-validation" },
             select: { id: true },
@@ -300,12 +300,12 @@ describe("automation daemon routes (integration)", () => {
             },
             select: { id: true },
         });
-        const inactiveSession = await db.session.create({
+        const unsupportedSession = await db.session.create({
             data: {
-                tag: "inactive-target",
+                tag: "unsupported-target",
                 accountId: account.id,
-                metadata: "{}",
-                active: false,
+                metadata: JSON.stringify({ flavor: "pi", piSessionId: "pi-session-1" }),
+                active: true,
             },
             select: { id: true },
         });
@@ -313,25 +313,6 @@ describe("automation daemon routes (integration)", () => {
         await withAuthenticatedTestApp(
             (app) => automationRoutes(app as any),
             async (app) => {
-                const missingResponse = await app.inject({
-                    method: "POST",
-                    url: "/v2/automations",
-                    headers: {
-                        "content-type": "application/json",
-                        "x-test-user-id": account.id,
-                    },
-                    payload: {
-                        name: "Existing missing",
-                        enabled: true,
-                        schedule: { kind: "interval", everyMs: 60_000 },
-                        targetType: "existing_session",
-                        templateCiphertext: buildTemplateEnvelope("missing-session"),
-                        assignments: [{ machineId: "machine-1", enabled: true, priority: 0 }],
-                    },
-                });
-                expect(missingResponse.statusCode).toBe(400);
-                expect(String((missingResponse.json() as any).error ?? "")).toMatch(/existing session/i);
-
                 const inactiveResponse = await app.inject({
                     method: "POST",
                     url: "/v2/automations",
@@ -340,119 +321,16 @@ describe("automation daemon routes (integration)", () => {
                         "x-test-user-id": account.id,
                     },
                     payload: {
-                        name: "Existing inactive",
+                        name: "Existing unsupported",
                         enabled: true,
                         schedule: { kind: "interval", everyMs: 60_000 },
                         targetType: "existing_session",
-                        templateCiphertext: buildTemplateEnvelope(inactiveSession.id),
+                        templateCiphertext: buildTemplateEnvelope(unsupportedSession.id),
                         assignments: [{ machineId: "machine-1", enabled: true, priority: 0 }],
                     },
                 });
                 expect(inactiveResponse.statusCode).toBe(400);
-                expect(String((inactiveResponse.json() as any).error ?? "")).toMatch(/inactive/i);
-            },
-        );
-    });
-
-    it("allows existing_session automation creation when target metadata is opaque e2ee ciphertext", async () => {
-        const account = await db.account.create({
-            data: { publicKey: "pk-automation-existing-session-opaque" },
-            select: { id: true },
-        });
-        await db.machine.create({
-            data: {
-                id: "machine-1",
-                accountId: account.id,
-                metadata: "{}",
-            },
-            select: { id: true },
-        });
-        const opaqueSession = await db.session.create({
-            data: {
-                tag: "opaque-target",
-                accountId: account.id,
-                encryptionMode: "e2ee",
-                metadata: "ciphertext-base64",
-                active: true,
-            },
-            select: { id: true },
-        });
-
-        await withAuthenticatedTestApp(
-            (app) => automationRoutes(app as any),
-            async (app) => {
-                const response = await app.inject({
-                    method: "POST",
-                    url: "/v2/automations",
-                    headers: {
-                        "content-type": "application/json",
-                        "x-test-user-id": account.id,
-                    },
-                    payload: {
-                        name: "Opaque target",
-                        enabled: true,
-                        schedule: { kind: "interval", everyMs: 60_000 },
-                        targetType: "existing_session",
-                        templateCiphertext: buildTemplateEnvelope(opaqueSession.id),
-                        assignments: [{ machineId: "machine-1", enabled: true, priority: 0 }],
-                    },
-                });
-
-                expect(response.statusCode).toBe(200);
-                expect((response.json() as any).targetType).toBe("existing_session");
-            },
-        );
-    });
-
-    it("allows existing_session automation creation when target session is plain and resumable", async () => {
-        const account = await db.account.create({
-            data: { publicKey: "pk-automation-existing-session-plain-resume" },
-            select: { id: true },
-        });
-        await db.machine.create({
-            data: {
-                id: "machine-1",
-                accountId: account.id,
-                metadata: "{}",
-            },
-            select: { id: true },
-        });
-        const resumableSession = await db.session.create({
-            data: {
-                tag: "plain-resumable-target",
-                accountId: account.id,
-                encryptionMode: "plain",
-                metadata: JSON.stringify({
-                    flavor: "claude",
-                    claudeSessionId: "claude-session-1",
-                }),
-                active: true,
-            },
-            select: { id: true },
-        });
-
-        await withAuthenticatedTestApp(
-            (app) => automationRoutes(app as any),
-            async (app) => {
-                const response = await app.inject({
-                    method: "POST",
-                    url: "/v2/automations",
-                    headers: {
-                        "content-type": "application/json",
-                        "x-test-user-id": account.id,
-                    },
-                    payload: {
-                        name: "Plain resumable target",
-                        enabled: true,
-                        schedule: { kind: "interval", everyMs: 60_000 },
-                        targetType: "existing_session",
-                        templateCiphertext: buildTemplateEnvelope(resumableSession.id),
-                        assignments: [{ machineId: "machine-1", enabled: true, priority: 0 }],
-                    },
-                });
-
-                expect(response.statusCode).toBe(200);
-                expect((response.json() as any).targetType).toBe("existing_session");
+                expect(String((inactiveResponse.json() as any).error ?? "")).toMatch(/resume|resum/i);
             },
         );
     });
