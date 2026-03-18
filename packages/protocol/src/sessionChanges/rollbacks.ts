@@ -1,6 +1,7 @@
 import { z } from 'zod';
 
-import type { SessionRollbackRangeV1, SessionRollbackRangesV1, TurnChangeSet } from './types.js';
+import type { SessionRollbackRangeV1, SessionRollbackRangesV1 } from '../sessionMetadata/sessionRollbackRangesV1.js';
+import type { TurnChangeSet } from './types.js';
 
 export const SessionRollbackTargetSchema = z.discriminatedUnion('type', [
     z.object({ type: z.literal('latest_turn') }).strict(),
@@ -45,14 +46,14 @@ export function readSessionRollbackRangesV1FromMetadata(metadata: unknown): Sess
 }
 
 function isTurnInsideRollbackRange(turn: TurnChangeSet, range: SessionRollbackRangeV1): boolean {
-    return turn.seqRange.startSeqInclusive >= range.startSeqInclusive
-        && turn.seqRange.endSeqInclusive <= range.endSeqInclusive;
+  return turn.seqRange.startSeqInclusive >= range.startSeqInclusive
+    && turn.seqRange.endSeqInclusive <= range.endSeqInclusive;
 }
 
 export function excludeRolledBackTurns(params: Readonly<{
-    turns: readonly TurnChangeSet[];
-    rollbackRanges: readonly SessionRollbackRangeV1[];
+  turns: readonly TurnChangeSet[];
+  rollbackRanges: readonly SessionRollbackRangeV1[];
 }>): TurnChangeSet[] {
-    if (params.rollbackRanges.length === 0) return [...params.turns];
-    return params.turns.filter((turn) => !params.rollbackRanges.some((range) => isTurnInsideRollbackRange(turn, range)));
+  if (params.rollbackRanges.length === 0) return [...params.turns];
+  return params.turns.filter((turn) => !params.rollbackRanges.some((range) => isTurnInsideRollbackRange(turn, range)));
 }

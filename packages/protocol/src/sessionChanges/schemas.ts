@@ -91,3 +91,14 @@ export const SessionWorkingTreeProjectionSchema = z.object({
     }).strict()),
     projectionReliability: ChangeConfidenceSchema,
 }).strict();
+
+export type ChangeEvidenceSource = z.infer<typeof ChangeEvidenceSourceSchema>;
+export type ChangeConfidence = z.infer<typeof ChangeConfidenceSchema>;
+export type FileChangeKind = z.infer<typeof FileChangeKindSchema>;
+export type FileChangeEvidence = z.infer<typeof FileChangeEvidenceSchema>;
+export type TurnChangeSet = z.infer<typeof TurnChangeSetSchema>;
+export type SessionChangeSetFile = z.infer<typeof SessionChangeSetFileSchema>;
+export type ChangeSetConfidenceSummary = z.infer<typeof ChangeSetConfidenceSummarySchema>;
+export type SessionChangeSet = z.infer<typeof SessionChangeSetSchema>;
+export type SessionWorkingTreeMatchedFile = z.infer<typeof SessionWorkingTreeMatchedFileSchema>;
+export type SessionWorkingTreeProjection = z.infer<typeof SessionWorkingTreeProjectionSchema>;

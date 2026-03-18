@@ -84,25 +84,3 @@ export type SessionWorkingTreeProjection = Readonly<{
     }[];
     projectionReliability: ChangeConfidence;
 }>;
-
-export type SessionRollbackTarget =
-    | Readonly<{
-        type: 'latest_turn';
-    }>
-    | Readonly<{
-        type: 'before_user_message';
-        userMessageSeq: number;
-    }>;
-
-export type SessionRollbackRangeV1 = Readonly<{
-    target: SessionRollbackTarget;
-    startSeqInclusive: number;
-    endSeqInclusive: number;
-    rolledBackAt: number;
-}>;
-
-export type SessionRollbackRangesV1 = Readonly<{
-    v: 1;
-    updatedAt: number;
-    ranges: readonly SessionRollbackRangeV1[];
-}>;
