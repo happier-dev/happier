@@ -7,6 +7,7 @@ import { parseArgs } from 'node:util';
 
 import { stageRepoForDagger } from './stage-repo-for-dagger.mjs';
 import { rewriteEasLocalBuildArtifactPath } from './rewrite-eas-local-build-artifact-path.mjs';
+import { resolveExpoNonInteractive } from './resolve-expo-interactivity.mjs';
 import { assertDockerCanRunLinuxAmd64 } from '../docker/assert-docker-can-run-linux-amd64.mjs';
 import { createEasLocalBuildEnv } from './eas-local-build-env.mjs';
 import { ensureStagedGitRepo } from '../git/ensure-staged-git-repo.mjs';
@@ -423,10 +424,11 @@ async function main() {
     const effectiveRepoDir = staged?.stagedRepoDir ?? repoRoot;
     const effectiveUiDir = path.join(effectiveRepoDir, 'apps', 'ui');
 
-    const pipelineInteractive =
-      String(process.env.PIPELINE_INTERACTIVE ?? '').trim() === '1' ||
-      String(process.env.PIPELINE_INTERACTIVE ?? '').trim().toLowerCase() === 'true';
-    const localNonInteractive = isCi || !pipelineInteractive;
+    const localNonInteractive = resolveExpoNonInteractive({
+      ci: isCi ? 'true' : '',
+      pipelineInteractive: process.env.PIPELINE_INTERACTIVE,
+      defaultNonInteractive: localRuntime === 'dagger',
+    });
 
     try {
       if (staged && effectiveRepoDir !== repoRoot) {

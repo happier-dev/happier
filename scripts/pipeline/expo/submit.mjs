@@ -7,6 +7,7 @@ import { execFileSync } from 'node:child_process';
 import { parseArgs } from 'node:util';
 
 import { ensureAscApiKeyFile } from './ensure-asc-api-key-file.mjs';
+import { resolveExpoNonInteractive } from './resolve-expo-interactivity.mjs';
 
 function fail(message) {
   console.error(message);
@@ -292,12 +293,11 @@ function main() {
   if (isCi && !expoToken) {
     fail('EXPO_TOKEN is required for Expo submit.');
   }
-  const pipelineInteractive =
-    String(process.env.PIPELINE_INTERACTIVE ?? '').trim() === '1' ||
-    String(process.env.PIPELINE_INTERACTIVE ?? '').trim().toLowerCase() === 'true';
-  // Default to non-interactive when EXPO_TOKEN is present (matches CI behavior), but allow an explicit
-  // local escape hatch for one-time credential bootstrap (e.g. Google Play service account setup).
-  const nonInteractive = isCi || (Boolean(expoToken) && !pipelineInteractive);
+  const nonInteractive = resolveExpoNonInteractive({
+    ci: isCi ? 'true' : '',
+    pipelineInteractive: process.env.PIPELINE_INTERACTIVE,
+    defaultNonInteractive: false,
+  });
 
   const easCliVersion =
     String(values['eas-cli-version'] ?? '').trim() || String(process.env.EAS_CLI_VERSION ?? '').trim() || '18.0.1';
