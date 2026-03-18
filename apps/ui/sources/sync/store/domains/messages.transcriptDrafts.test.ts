@@ -70,4 +70,30 @@ describe('messages domain: applyTranscriptDraftDelta', () => {
         const sessionMessages = get().sessionMessages.s1;
         expect(sessionMessages.draftsByLocalId['local-1']).toBeUndefined();
     });
+
+    it('clears a matching transcript draft when the durable localId includes surrounding whitespace', () => {
+        const { get, domain } = createHarness();
+
+        domain.applyTranscriptDraftDelta('s1', {
+            localId: 'local-1',
+            segmentKind: 'assistant',
+            sidechainId: null,
+            deltaText: 'Hello',
+            createdAtMs: 10,
+        });
+
+        const durableMessage: NormalizedMessage = {
+            id: 'msg-1',
+            localId: '  local-1  ',
+            role: 'agent',
+            createdAt: 20,
+            isSidechain: false,
+            content: [{ type: 'text', text: 'Hello', uuid: 'u-1', parentUUID: null }],
+        };
+
+        domain.applyMessages('s1', [durableMessage]);
+
+        const sessionMessages = get().sessionMessages.s1;
+        expect(sessionMessages.draftsByLocalId['local-1']).toBeUndefined();
+    });
 });

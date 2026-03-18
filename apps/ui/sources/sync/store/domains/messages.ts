@@ -1,11 +1,11 @@
 import type { PermissionMode } from '@/sync/domains/permissions/permissionTypes';
-import { isMutableTool } from '@/components/tools/catalog';
 import { parsePermissionIntentAlias } from '@happier-dev/agents';
 
 import { createReducer, reducer, type ReducerState } from '../../reducer/reducer';
 import type { Message } from '../../domains/messages/messageTypes';
 import type { NormalizedMessage } from '../../typesRaw';
 import type { Session } from '../../domains/state/storageTypes';
+import { isToolPotentiallyMutableForScm } from '@/sync/domains/tools/toolMutationClassification';
 
 import { persistSessionPermissionData } from './sessionPermissionPersistence';
 import type { SessionPending } from './pending';
@@ -47,6 +47,11 @@ export type SessionMessages = {
      *   selectors keyed on stable primitives (ids/version counters).
      */
     reducerState: ReducerState;
+    /**
+     * `reducerState` is mutated in-place for performance.
+     * Use this version counter to subscribe to reducer-only changes.
+     */
+    reducerVersion?: number;
     latestThinkingMessageId: string | null;
     latestThinkingMessageActivityAtMs: number | null;
     messagesVersion: number;
@@ -310,6 +315,7 @@ export function applyAgentStateUpdateToSessionMessages(params: Readonly<{
             messagesById,
             messagesMap: messagesById,
             reducerState: existing.reducerState,
+            reducerVersion: (existing.reducerVersion ?? 0) + 1,
             latestThinkingMessageId,
             latestThinkingMessageActivityAtMs,
             messagesVersion: existing.messagesVersion + (processedMessages.length > 0 ? 1 : 0),
@@ -327,6 +333,7 @@ function createEmptySessionMessages(): SessionMessages {
         messagesMap: messagesById,
         draftsByLocalId: {},
         reducerState: createReducer(),
+        reducerVersion: 0,
         latestThinkingMessageId: null,
         latestThinkingMessageActivityAtMs: null,
         messagesVersion: 0,
@@ -357,7 +364,7 @@ export function createMessagesDomain<S extends MessagesDomain & MessagesDomainDe
             if (!toolCallMessage || toolCallMessage.kind !== 'tool-call') {
                 return true;
             }
-            return toolCallMessage.tool?.name ? isMutableTool(toolCallMessage.tool?.name) : true;
+            return toolCallMessage.tool?.name ? isToolPotentiallyMutableForScm(toolCallMessage.tool?.name) : true;
         },
         applyMessages: (sessionId: string, messages: NormalizedMessage[]) => {
             let changed = new Set<string>();
@@ -522,7 +529,9 @@ export function createMessagesDomain<S extends MessagesDomain & MessagesDomainDe
                 const draftsByLocalId = existingSession.draftsByLocalId;
                 let didClearTranscriptDraft = false;
                 for (const message of processedMessages) {
-                    const localId = 'localId' in message && typeof message.localId === 'string' ? message.localId : null;
+                    const localId = 'localId' in message && typeof message.localId === 'string'
+                        ? message.localId.trim()
+                        : null;
                     if (!localId || draftsByLocalId[localId] === undefined) continue;
                     delete draftsByLocalId[localId];
                     didClearTranscriptDraft = true;
@@ -587,6 +596,7 @@ export function createMessagesDomain<S extends MessagesDomain & MessagesDomainDe
                             messagesMap: messagesById,
                             draftsByLocalId,
                             reducerState: existingSession.reducerState, // Explicitly include the mutated reducer state
+                            reducerVersion: (existingSession.reducerVersion ?? 0) + 1,
                             latestThinkingMessageId,
                             latestThinkingMessageActivityAtMs,
                             messagesVersion: existingSession.messagesVersion + ((processedMessages.length > 0 || didClearTranscriptDraft) ? 1 : 0),
@@ -692,6 +702,7 @@ export function createMessagesDomain<S extends MessagesDomain & MessagesDomainDe
                         ...state.sessionMessages,
                         [sessionId]: {
                             reducerState,
+                            reducerVersion: agentState ? 1 : 0,
                             messageIdsOldestFirst,
                             messagesById,
                             messagesMap: messagesById,
@@ -733,6 +744,7 @@ export function createMessagesDomain<S extends MessagesDomain & MessagesDomainDe
                         messagesMap: messagesById,
                         draftsByLocalId: {},
                         reducerState: createReducer(),
+                        reducerVersion: 0,
                         latestThinkingMessageId: null,
                         latestThinkingMessageActivityAtMs: null,
                         messagesVersion: 0,
