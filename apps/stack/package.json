@@ -9,7 +9,8 @@
   },
   "packageManager": "yarn@1.22.22",
   "bin": {
-    "hstack": "./bin/hstack.mjs"
+    "hstack": "./bin/hstack.mjs",
+    "happier": "./bin/happier.mjs"
   },
   "files": [
     "bin/",
@@ -20,6 +21,7 @@
   "bundledDependencies": [
     "@happier-dev/agents",
     "@happier-dev/cli-common",
+    "@happier-dev/connection-supervisor",
     "@happier-dev/protocol",
     "@happier-dev/release-runtime"
   ],
@@ -39,7 +41,6 @@
     "srv": "node ./scripts/server_flavor.mjs",
     "server-flavor": "node ./scripts/server_flavor.mjs",
     "stack": "node ./scripts/stack.mjs",
-    "daemon": "node ./scripts/daemon_cmd.mjs",
     "mobile": "node ./scripts/mobile.mjs",
     "mobile:prebuild": "node ./scripts/mobile.mjs --prebuild --clean --no-metro",
     "mobile:ios": "node ./scripts/mobile.mjs --run-ios --no-metro",
@@ -56,18 +57,14 @@
     "service:disable": "node ./scripts/service.mjs disable",
     "service:install": "node ./scripts/service.mjs install",
     "service:uninstall": "node ./scripts/service.mjs uninstall",
-    "service:logs": "node ./scripts/service.mjs logs",
-    "service:tail": "node ./scripts/service.mjs tail",
     "tailscale:status": "node ./scripts/tailscale.mjs status",
     "tailscale:url": "node ./scripts/tailscale.mjs url",
     "tailscale:enable": "node ./scripts/tailscale.mjs enable",
     "tailscale:disable": "node ./scripts/tailscale.mjs disable",
     "stack:doctor": "node ./scripts/doctor.mjs",
     "stack:fix": "node ./scripts/doctor.mjs --fix",
-    "logs": "node ./scripts/logs.mjs",
-    "logs:tail": "node ./scripts/logs.mjs tail",
-    "providers": "node ./scripts/providers_cmd.mjs",
-    "remote": "node ./scripts/remote_cmd.mjs",
+    "logs": "node ./scripts/service.mjs logs",
+    "logs:tail": "node ./scripts/service.mjs tail",
     "menubar:install": "node ./scripts/menubar.mjs install",
     "menubar:uninstall": "node ./scripts/menubar.mjs uninstall",
     "menubar:open": "bash -lc 'DIR=\"$(defaults read com.ameba.SwiftBar PluginDirectory 2>/dev/null)\"; if [[ -z \"$DIR\" ]]; then DIR=\"$HOME/Library/Application Support/SwiftBar/Plugins\"; fi; open \"$DIR\"'",
@@ -80,6 +77,7 @@
   "dependencies": {
     "@happier-dev/agents": "0.0.0",
     "@happier-dev/cli-common": "0.0.0",
+    "@happier-dev/connection-supervisor": "0.0.0",
     "@happier-dev/protocol": "0.0.0",
     "@happier-dev/release-runtime": "0.0.0",
     "qrcode": "^1.5.4",
