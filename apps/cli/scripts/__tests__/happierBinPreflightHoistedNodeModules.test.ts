@@ -21,8 +21,10 @@ describe('apps/cli bin/happier.mjs preflight', () => {
       mkdirSync(distDir, { recursive: true });
 
       const realBin = join(process.cwd(), 'bin', 'happier.mjs');
-      const binSource = readFileSync(realBin, 'utf8');
-      writeFileSync(join(binDir, 'happier.mjs'), binSource, 'utf8');
+      for (const fileName of ['happier.mjs', '_prepareRuntimeEntrypoint.mjs', '_resolveRuntimeEntrypoint.mjs']) {
+        const binSource = readFileSync(join(process.cwd(), 'bin', fileName), 'utf8');
+        writeFileSync(join(binDir, fileName), binSource, 'utf8');
+      }
 
       writeFileSync(join(projectRoot, 'package.json'), JSON.stringify({ name: '@happier-dev/cli' }), 'utf8');
       writeFileSync(join(distDir, 'index.mjs'), 'process.exit(0);\n', 'utf8');
@@ -70,9 +72,10 @@ describe('apps/cli bin/happier.mjs preflight', () => {
       mkdirSync(binDir, { recursive: true });
       mkdirSync(distDir, { recursive: true });
 
-      const realBin = join(process.cwd(), 'bin', 'happier.mjs');
-      const binSource = readFileSync(realBin, 'utf8');
-      writeFileSync(join(binDir, 'happier.mjs'), binSource, 'utf8');
+      for (const fileName of ['happier.mjs', '_prepareRuntimeEntrypoint.mjs', '_resolveRuntimeEntrypoint.mjs']) {
+        const binSource = readFileSync(join(process.cwd(), 'bin', fileName), 'utf8');
+        writeFileSync(join(binDir, fileName), binSource, 'utf8');
+      }
 
       writeFileSync(join(projectRoot, 'package.json'), JSON.stringify({ name: '@happier-dev/cli' }), 'utf8');
       writeFileSync(join(distDir, 'index.mjs'), 'process.exit(0);\n', 'utf8');

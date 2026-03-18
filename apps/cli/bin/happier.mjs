@@ -5,6 +5,8 @@ import { fileURLToPath } from 'url';
 import { join, dirname } from 'path';
 import { createRequire } from 'module';
 
+import { prepareRuntimeEntrypoint } from './_prepareRuntimeEntrypoint.mjs';
+
 function preflightRequiredDependencies(projectRoot) {
   const cliRequire = createRequire(import.meta.url);
   let protocolEntryPath;
@@ -57,9 +59,9 @@ const hasNoDeprecation = process.execArgv.includes('--no-deprecation');
 if (!hasNoWarnings || !hasNoDeprecation) {
   // Get path to the actual CLI entrypoint
   const projectRoot = dirname(dirname(fileURLToPath(import.meta.url)));
+  const entrypoint = await prepareRuntimeEntrypoint(projectRoot, 'index.mjs');
   preflightRequiredDependencies(projectRoot);
-  const entrypoint = join(projectRoot, 'dist', 'index.mjs');
-  
+
   // Execute the actual CLI directly with the correct flags
   try {
     execFileSync(process.execPath, [
@@ -79,6 +81,7 @@ if (!hasNoWarnings || !hasNoDeprecation) {
   // We're running Node with the flags we wanted, import the CLI entrypoint
   // module to avoid creating a new process.
   const projectRoot = dirname(dirname(fileURLToPath(import.meta.url)));
+  const entrypoint = await prepareRuntimeEntrypoint(projectRoot, 'index.mjs');
   preflightRequiredDependencies(projectRoot);
-  import("../dist/index.mjs");
+  import(entrypoint);
 }
