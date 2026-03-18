@@ -294,6 +294,9 @@ action_uninstall() {
 
   rm -f "${BIN_DIR}/${exe}" "${INSTALL_DIR}/bin/${exe}.new" "${INSTALL_DIR}/bin/${exe}.previous" || true
   rm -f "${INSTALL_DIR}/bin/${exe}" || true
+  if [[ "${PRODUCT}" == "cli" ]]; then
+    rm -rf "${INSTALL_DIR}/cli" || true
+  fi
   if [[ "${PURGE_INSTALL_DIR}" == "1" ]]; then
     rm -rf "${INSTALL_DIR}" || true
   fi

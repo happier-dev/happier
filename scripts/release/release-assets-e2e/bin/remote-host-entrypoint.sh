@@ -6,6 +6,7 @@ export DEBIAN_FRONTEND=noninteractive
 remote_user="${REMOTE_USER:-happy}"
 authorized_keys_src="${REMOTE_AUTHORIZED_KEYS_PATH:-/ssh/authorized_keys}"
 shim_installer="${REMOTE_SHIM_HAPPIER_INSTALLER:-0}"
+with_cli="${HAPPIER_WITH_CLI:-1}"
 
 if ! id "$remote_user" >/dev/null 2>&1; then
   echo "[remote-host] missing user: $remote_user" >&2
@@ -17,7 +18,7 @@ if [[ ! -f "$authorized_keys_src" ]]; then
   exit 1
 fi
 
-if [[ "$shim_installer" == "1" ]]; then
+if [[ "$shim_installer" == "1" && "$with_cli" == "1" ]]; then
   if [[ ! -d /usr/local/bin ]]; then
     mkdir -p /usr/local/bin
   fi

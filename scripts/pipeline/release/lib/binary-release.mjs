@@ -1,9 +1,9 @@
 // @ts-check
 
 import { createHash } from 'node:crypto';
-import { cp, mkdtemp, mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
+import { cp, mkdtemp, mkdir, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises';
 import { readFileSync } from 'node:fs';
-import { dirname, join, resolve } from 'node:path';
+import { basename, dirname, join, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { tmpdir } from 'node:os';
@@ -117,6 +117,20 @@ export async function createDeterministicArchive({ artifactPath, sourcePath, sou
     return;
   }
   execOrThrow('tar', ['-czf', artifactPath, '-C', sourcePath, sourceName]);
+}
+
+async function removeAppleDoubleEntries(rootDir) {
+  const entries = await readdir(rootDir, { withFileTypes: true });
+  for (const entry of entries) {
+    const entryPath = join(rootDir, entry.name);
+    if (entry.isDirectory()) {
+      await removeAppleDoubleEntries(entryPath);
+      continue;
+    }
+    if (entry.name.startsWith('._')) {
+      await rm(entryPath, { force: true });
+    }
+  }
 }
 
 export async function writeChecksumsFile({ product, version, artifacts, outDir }) {
@@ -257,12 +271,24 @@ export async function packageTargetBinary({
     if (!sourcePath || !targetPath) continue;
     await cp(sourcePath, join(stageDir, targetPath), { recursive: true });
   }
+  return packagePreparedTargetBinary({
+    product,
+    version,
+    target,
+    stageDir,
+    outDir,
+  });
+}
+
+export async function packagePreparedTargetBinary({ product, version, target, stageDir, outDir }) {
+  await removeAppleDoubleEntries(stageDir);
+  const artifactStem = `${product}-v${version}-${target.os}-${target.arch}`;
   const archiveName = `${artifactStem}.tar.gz`;
   const archivePath = join(outDir, archiveName);
   await createDeterministicArchive({
     artifactPath: archivePath,
-    sourcePath: buildTempDir,
-    sourceName: artifactStem,
+    sourcePath: dirname(stageDir),
+    sourceName: basename(stageDir),
   });
   return { name: archiveName, path: archivePath, os: target.os, arch: target.arch };
 }

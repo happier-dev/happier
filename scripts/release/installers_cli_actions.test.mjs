@@ -57,6 +57,8 @@ test('install.sh --check reports installed binary and shim', async () => {
   await mkdir(homeDir, { recursive: true });
   await mkdir(binDir, { recursive: true });
   await mkdir(join(installDir, 'bin'), { recursive: true });
+  await mkdir(join(installDir, 'cli', 'current'), { recursive: true });
+  await mkdir(join(installDir, 'cli', 'versions', '1.0.0'), { recursive: true });
   await mkdir(outBinDir, { recursive: true });
 
   const curlStubPath = join(binDir, 'curl');
@@ -113,6 +115,8 @@ test('install.sh --uninstall removes installed binary and shim without network',
   await mkdir(homeDir, { recursive: true });
   await mkdir(binDir, { recursive: true });
   await mkdir(join(installDir, 'bin'), { recursive: true });
+  await mkdir(join(installDir, 'cli', 'current'), { recursive: true });
+  await mkdir(join(installDir, 'cli', 'versions', '1.0.0'), { recursive: true });
   await mkdir(outBinDir, { recursive: true });
 
   const curlStubPath = join(binDir, 'curl');
@@ -122,6 +126,8 @@ test('install.sh --uninstall removes installed binary and shim without network',
   const happierPath = join(installDir, 'bin', 'happier');
   await writeFile(happierPath, '#!/usr/bin/env bash\nexit 0\n', 'utf8');
   await chmod(happierPath, 0o755);
+  await writeFile(join(installDir, 'cli', 'current', 'marker.txt'), 'current', 'utf8');
+  await writeFile(join(installDir, 'cli', 'versions', '1.0.0', 'marker.txt'), 'version', 'utf8');
   const shimPath = join(outBinDir, 'happier');
   await symlink(happierPath, shimPath);
 
@@ -146,6 +152,8 @@ test('install.sh --uninstall removes installed binary and shim without network',
   assert.equal(checkBin.status, 0, 'expected binary to be removed');
   const checkShim = spawnSync('bash', ['-lc', `test ! -e "${shimPath.replaceAll('"', '\\"')}"`], { encoding: 'utf8' });
   assert.equal(checkShim.status, 0, 'expected shim to be removed');
+  const checkPayload = spawnSync('bash', ['-lc', `test ! -d "${join(installDir, 'cli').replaceAll('"', '\\"')}"`], { encoding: 'utf8' });
+  assert.equal(checkPayload.status, 0, 'expected versioned payload install root to be removed');
 
   await rm(root, { recursive: true, force: true });
 });
