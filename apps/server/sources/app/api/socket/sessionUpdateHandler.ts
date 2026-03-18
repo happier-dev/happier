@@ -25,6 +25,7 @@ import { parseSessionMessageSidechainId } from "@/app/session/parseSessionMessag
 import { ExecutionRunPublicStateSchema } from "@happier-dev/protocol";
 import { refreshSessionParticipantBadgePushes } from "@/app/activity/refreshAccountActivityBadgePushes";
 import { didSessionActivityBadgeContributionChange } from "@/app/activity/accountActivityBadge";
+import { canPublishFromSessionScopedSocket } from "./sessionScopedBinding";
 
 const DEFAULT_TRANSCRIPT_DRAFT_PARTICIPANTS_CACHE_TTL_MS = 5_000;
 const DEFAULT_TRANSCRIPT_DRAFT_PARTICIPANTS_CACHE_MAX_ENTRIES = 200;
@@ -343,33 +344,14 @@ export function sessionUpdateHandler(userId: string, socket: Socket, connection:
 
             const sid = typeof data?.sid === 'string' ? String(data.sid).trim() : '';
             const runRaw = data?.run;
-            const machineId = typeof (socket.data as { machineId?: unknown } | undefined)?.machineId === 'string'
-                ? String((socket.data as { machineId?: string }).machineId).trim()
-                : '';
             if (!sid) return;
 
-            // Only allow the daemon session-scoped socket to publish execution run state.
-            if (connection.connectionType !== 'session-scoped') {
-                return;
-            }
-            if (connection.sessionId && connection.sessionId !== sid) {
-                return;
-            }
-            if (!machineId) {
-                return;
-            }
-
-            const accessKey = await db.accessKey.findUnique({
-                where: {
-                    accountId_machineId_sessionId: {
-                        accountId: userId,
-                        machineId,
-                        sessionId: sid,
-                    },
-                },
-                select: { machineId: true },
-            });
-            if (!accessKey) {
+            if (!canPublishFromSessionScopedSocket({
+                socket,
+                connection,
+                sessionId: sid,
+                requireMachineBinding: true,
+            })) {
                 return;
             }
 
@@ -378,8 +360,12 @@ export function sessionUpdateHandler(userId: string, socket: Socket, connection:
             if (!requireAccessLevel(access, 'edit')) {
                 return;
             }
+            if (!access.isOwner) {
+                return;
+            }
 
-            const parsedRun = ExecutionRunPublicStateSchema.safeParse(runRaw);
+            // Strip unknown fields before rebroadcasting (clients treat this as a hint; keep the payload tight).
+            const parsedRun = ExecutionRunPublicStateSchema.strip().safeParse(runRaw);
             if (!parsedRun.success) {
                 return;
             }

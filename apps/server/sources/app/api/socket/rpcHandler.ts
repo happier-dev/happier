@@ -3,8 +3,69 @@ import { Server, Socket } from "socket.io";
 import { RPC_ERROR_CODES, RPC_ERROR_MESSAGES } from "@happier-dev/protocol/rpc";
 import { SOCKET_RPC_EVENTS } from "@happier-dev/protocol/socketRpc";
 import { resolveRpcForwardTimeoutMs } from "./rpcForwardTimeout";
+import { resolveRpcMethodAvailabilityGraceMs, resolveRpcMethodAvailabilityPollMs } from "./rpcMethodAvailabilityGrace";
 import { createRpcRedisRegistryCoordinator, type RpcRedisRegistryConfig } from "./rpcRedisRegistryCoordinator";
 import { resolveRpcCallTarget } from "./resolveRpcCallTarget";
+import { canRegisterSessionScopedRpcMethod } from "./sessionScopedBinding";
+
+async function waitForRpcTargetAvailability(params: Readonly<{
+    method: string;
+    initialTargetSocket: Socket | null;
+    initialTargetSocketId?: string | null;
+    lookupTargetSocket: () => Socket | null;
+    lookupRedisSocketId?: () => Promise<string | null>;
+}>): Promise<Readonly<{ targetSocket: Socket | null; targetSocketId: string | null }>> {
+    const graceMs = resolveRpcMethodAvailabilityGraceMs(params.method);
+    const pollMs = resolveRpcMethodAvailabilityPollMs();
+    const deadline = Date.now() + graceMs;
+
+    const initialTargetSocketId =
+        typeof params.initialTargetSocketId === 'string' && params.initialTargetSocketId.trim().length > 0
+            ? params.initialTargetSocketId
+            : null;
+    let targetSocketId = initialTargetSocketId ?? (params.lookupRedisSocketId ? await params.lookupRedisSocketId() : null);
+    let targetSocket =
+        params.initialTargetSocket && params.initialTargetSocket.connected
+            ? params.initialTargetSocket
+            : params.lookupTargetSocket();
+
+    while (
+        (!targetSocket || !targetSocket.connected)
+        && graceMs > 0
+        && Date.now() < deadline
+        && (!params.lookupRedisSocketId || !targetSocketId || targetSocketId === initialTargetSocketId)
+    ) {
+        const remainingMs = deadline - Date.now();
+        await new Promise<void>((resolve) => setTimeout(resolve, Math.min(pollMs, remainingMs)));
+        targetSocketId = params.lookupRedisSocketId ? await params.lookupRedisSocketId() : null;
+        targetSocket = params.lookupTargetSocket() ?? targetSocket ?? null;
+    }
+
+    return {
+        targetSocket: targetSocket && targetSocket.connected ? targetSocket : null,
+        targetSocketId,
+    };
+}
+
+function ensureUserRpcListenerMapRegistered(
+    allRpcListeners: Map<string, Map<string, Socket>>,
+    userId: string,
+    userRpcListeners: Map<string, Socket>,
+) {
+    if (allRpcListeners.get(userId) !== userRpcListeners) {
+        allRpcListeners.set(userId, userRpcListeners);
+    }
+}
+
+function pruneUserRpcListenerMapIfEmpty(
+    allRpcListeners: Map<string, Map<string, Socket>>,
+    userId: string,
+    userRpcListeners: Map<string, Socket>,
+) {
+    if (userRpcListeners.size === 0 && allRpcListeners.get(userId) === userRpcListeners) {
+        allRpcListeners.delete(userId);
+    }
+}
 
 export function rpcHandler(
     userId: string,
@@ -21,6 +82,15 @@ export function rpcHandler(
         ownedMethods,
     });
 
+    const resolveUserRpcListeners = (mode: 'get' | 'ensure'): Map<string, Socket> => {
+        const current = allRpcListeners.get(userId);
+        if (current) return current;
+        if (mode === 'ensure') {
+            ensureUserRpcListenerMapRegistered(allRpcListeners, userId, userRpcListeners);
+        }
+        return userRpcListeners;
+    };
+
     // RPC register - Register this socket as a listener for an RPC method
     socket.on(SOCKET_RPC_EVENTS.REGISTER, async (data: any) => {
         try {
@@ -31,8 +101,14 @@ export function rpcHandler(
                 return;
             }
 
+            if (!canRegisterSessionScopedRpcMethod({ socket, method })) {
+                socket.emit(SOCKET_RPC_EVENTS.ERROR, { type: 'register', error: 'Forbidden' });
+                return;
+            }
+
             // Register this socket as the listener for this method
-            userRpcListeners.set(method, socket);
+            const listeners = resolveUserRpcListeners('ensure');
+            listeners.set(method, socket);
             ownedMethods.add(method);
             await redisRegistry.registerMethod(method);
             redisRegistry.startRefreshLoopIfNeeded();
@@ -54,17 +130,13 @@ export function rpcHandler(
                 return;
             }
 
-            if (userRpcListeners.get(method) === socket) {
-                userRpcListeners.delete(method);
+            const listeners = resolveUserRpcListeners('get');
+            if (listeners.get(method) === socket) {
+                listeners.delete(method);
                 ownedMethods.delete(method);
                 await redisRegistry.removeSocketRegistration(userId, method, socket.id);
                 await redisRegistry.stopRefreshLoopIfIdle();
-
-                // IMPORTANT:
-                // Do not delete the per-user registry map when it becomes empty.
-                // Other active sockets for the same user hold a reference to this map in their rpcHandler closures.
-                // Deleting it would cause subsequent reconnects to allocate a new map, leaving existing sockets unable
-                // to route calls to newly registered methods.
+                pruneUserRpcListenerMapIfEmpty(allRpcListeners, userId, listeners);
             }
 
             socket.emit(SOCKET_RPC_EVENTS.UNREGISTERED, { method });
@@ -77,7 +149,7 @@ export function rpcHandler(
     // RPC call - Call an RPC method on another socket of the same user
     socket.on(SOCKET_RPC_EVENTS.CALL, async (data: any, callback: (response: any) => void) => {
         try {
-            const { method, params: callParams } = data;
+            const { method, params: callParams, timeoutMs: requestedTimeoutMs } = data;
 
             if (!method || typeof method !== 'string') {
                 if (callback) {
@@ -105,40 +177,60 @@ export function rpcHandler(
             }
 
             let { targetUserId, targetSocket } = targetResolution;
-            const forwardTimeoutMs = resolveRpcForwardTimeoutMs(method);
+            const forwardTimeoutMs = resolveRpcForwardTimeoutMs(method, requestedTimeoutMs);
+            let attemptedTargetSocketId: string | null = null;
+            const lookupInMemoryTargetSocket = (): Socket | null => {
+                if (targetUserId === userId && !allRpcListeners.has(userId)) {
+                    return userRpcListeners.get(method) ?? null;
+                }
+                return allRpcListeners.get(targetUserId)?.get(method) ?? null;
+            };
 
             try {
                 if (redisRegistry.enabled) {
-                    const targetSocketId = await redisRegistry.lookupSocketId(targetUserId, method);
-                    if (!targetSocketId) {
-                        // Fallback: Redis registry can briefly miss registrations (e.g. during reconnect or cleanup),
-                        // but the in-process registry may still know the correct socket. Prefer keeping UX stable
-                        // over failing fast with METHOD_NOT_AVAILABLE.
-                        const fallbackSocket = targetSocket ?? userRpcListeners.get(method);
-                        if (fallbackSocket && fallbackSocket.connected) {
-                            if (fallbackSocket === socket) {
-                                if (callback) {
-                                    callback({
-                                        ok: false,
-                                        error: 'Cannot call RPC on the same socket',
-                                    });
-                                }
-                                return;
-                            }
-
-                            const response = await fallbackSocket.timeout(forwardTimeoutMs).emitWithAck(SOCKET_RPC_EVENTS.REQUEST, {
-                                method,
-                                params: callParams,
-                            });
+                    let targetSocketId = await redisRegistry.lookupSocketId(targetUserId, method);
+                    if (!targetSocket?.connected || !targetSocketId) {
+                        const awaited = await waitForRpcTargetAvailability({
+                            method,
+                            initialTargetSocket: targetSocket ?? null,
+                            initialTargetSocketId: typeof targetSocketId === 'string' ? targetSocketId : null,
+                            lookupTargetSocket: lookupInMemoryTargetSocket,
+                            lookupRedisSocketId: async () => {
+                                const lookedUp = await redisRegistry.lookupSocketId(targetUserId, method);
+                                return typeof lookedUp === 'string' && lookedUp.trim().length > 0 ? lookedUp : null;
+                            },
+                        });
+                        targetSocketId = awaited.targetSocketId;
+                        targetSocket = awaited.targetSocket ?? targetSocket;
+                    }
+                    const fallbackSocket = targetSocket ?? lookupInMemoryTargetSocket();
+                    if (fallbackSocket && fallbackSocket.connected) {
+                        if (fallbackSocket === socket) {
                             if (callback) {
                                 callback({
-                                    ok: true,
-                                    result: response,
+                                    ok: false,
+                                    error: 'Cannot call RPC on the same socket',
                                 });
                             }
                             return;
                         }
 
+                        const response = await fallbackSocket.timeout(forwardTimeoutMs).emitWithAck(SOCKET_RPC_EVENTS.REQUEST, {
+                            method,
+                            params: callParams,
+                        });
+                        if (callback) {
+                            callback({
+                                ok: true,
+                                result: response,
+                            });
+                        }
+                        return;
+                    }
+                    if (!targetSocketId) {
+                        // Fallback: Redis registry can briefly miss registrations (e.g. during reconnect or cleanup),
+                        // but the in-process registry may still know the correct socket. Prefer keeping UX stable
+                        // over failing fast with METHOD_NOT_AVAILABLE.
                         if (callback) {
                             callback({
                                 ok: false,
@@ -158,6 +250,7 @@ export function rpcHandler(
                         return;
                     }
 
+                    attemptedTargetSocketId = targetSocketId;
                     const responses = await ctx.io.timeout(forwardTimeoutMs).to(targetSocketId).emitWithAck(SOCKET_RPC_EVENTS.REQUEST, {
                         method,
                         params: callParams,
@@ -191,18 +284,26 @@ export function rpcHandler(
                 }
 
                 if (!targetSocket) {
-                    targetSocket = userRpcListeners.get(method);
+                    targetSocket = lookupInMemoryTargetSocket() ?? undefined;
                 }
-                    if (!targetSocket || !targetSocket.connected) {
-                        if (callback) {
-                            callback({
-                                ok: false,
-                                error: RPC_ERROR_MESSAGES.METHOD_NOT_AVAILABLE,
-                                errorCode: RPC_ERROR_CODES.METHOD_NOT_AVAILABLE,
-                            });
-                        }
-                        return;
+                if (!targetSocket || !targetSocket.connected) {
+                    const awaited = await waitForRpcTargetAvailability({
+                        method,
+                        initialTargetSocket: targetSocket ?? null,
+                        lookupTargetSocket: lookupInMemoryTargetSocket,
+                    });
+                    targetSocket = awaited.targetSocket ?? undefined;
+                }
+                if (!targetSocket || !targetSocket.connected) {
+                    if (callback) {
+                        callback({
+                            ok: false,
+                            error: RPC_ERROR_MESSAGES.METHOD_NOT_AVAILABLE,
+                            errorCode: RPC_ERROR_CODES.METHOD_NOT_AVAILABLE,
+                        });
                     }
+                    return;
+                }
                 if (targetSocket === socket) {
                     if (callback) {
                         callback({
@@ -230,12 +331,9 @@ export function rpcHandler(
                 const errorMsg = error instanceof Error ? error.message : 'RPC call failed';
 
                 // Timeout or error occurred
-                if (redisRegistry.enabled) {
+                if (redisRegistry.enabled && attemptedTargetSocketId) {
                     try {
-                        const targetSocketId = await redisRegistry.lookupSocketId(targetUserId, method);
-                        if (targetSocketId) {
-                            await redisRegistry.removeSocketRegistration(targetUserId, method, targetSocketId);
-                        }
+                        await redisRegistry.removeSocketRegistration(targetUserId, method, attemptedTargetSocketId);
                     } catch {
                         // best-effort cleanup only
                     }
@@ -258,22 +356,21 @@ export function rpcHandler(
     });
 
     socket.on('disconnect', () => {
+        const listeners = resolveUserRpcListeners('get');
         const methodsToRemove: string[] = [];
-        for (const [method, registeredSocket] of userRpcListeners.entries()) {
+        for (const [method, registeredSocket] of listeners.entries()) {
             if (registeredSocket === socket) {
                 methodsToRemove.push(method);
             }
         }
 
         if (methodsToRemove.length > 0) {
-            methodsToRemove.forEach(method => userRpcListeners.delete(method));
+            methodsToRemove.forEach(method => listeners.delete(method));
             ownedMethods.clear();
             void redisRegistry.cleanupMethodsForSocket(userId, methodsToRemove, socket.id);
         }
 
-        if (userRpcListeners.size === 0) {
-            // See note in rpc-unregister: keep the per-user registry map object stable across socket lifetimes.
-        }
+        pruneUserRpcListenerMapIfEmpty(allRpcListeners, userId, listeners);
 
         void redisRegistry.stopRefreshLoopIfIdle();
     });
