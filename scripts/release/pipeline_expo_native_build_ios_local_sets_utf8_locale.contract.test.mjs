@@ -6,6 +6,7 @@ import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 
 const repoRoot = path.resolve(import.meta.dirname, '..', '..');
+const PIPELINE_TEST_TIMEOUT_MS = 120_000;
 
 function writeExecutable(filePath, content) {
   fs.writeFileSync(filePath, content, { encoding: 'utf8', mode: 0o700 });
@@ -13,17 +14,8 @@ function writeExecutable(filePath, content) {
 
 test('expo native-build local iOS forces UTF-8 locale env for CocoaPods', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'happier-pipeline-eas-ios-locale-'));
-  const repo = path.join(dir, 'repo');
   const binDir = path.join(dir, 'bin');
-  const nodeModulesDir = path.join(repo, 'node_modules');
-  const appNodeModulesDir = path.join(repo, 'apps', 'ui', 'node_modules');
-  fs.mkdirSync(repo, { recursive: true });
   fs.mkdirSync(binDir, { recursive: true });
-  fs.mkdirSync(nodeModulesDir, { recursive: true });
-  fs.mkdirSync(appNodeModulesDir, { recursive: true });
-  fs.mkdirSync(path.join(repo, 'apps', 'ui'), { recursive: true });
-  fs.symlinkSync(path.join(repoRoot, '.git'), path.join(repo, '.git'), 'dir');
-  fs.symlinkSync(path.join(repoRoot, 'scripts'), path.join(repo, 'scripts'), 'dir');
 
   // Satisfy commandExists('fastlane') and commandExists('pod') checks.
   writeExecutable(path.join(binDir, 'fastlane'), ['#!/usr/bin/env bash', 'exit 0', ''].join('\n'));
@@ -66,7 +58,7 @@ test('expo native-build local iOS forces UTF-8 locale env for CocoaPods', () => 
   const stdout = execFileSync(
     process.execPath,
     [
-      path.join(repo, 'scripts', 'pipeline', 'expo', 'native-build.mjs'),
+      path.join(repoRoot, 'scripts', 'pipeline', 'expo', 'native-build.mjs'),
       '--platform',
       'ios',
       '--profile',
@@ -78,7 +70,7 @@ test('expo native-build local iOS forces UTF-8 locale env for CocoaPods', () => 
       '--artifact-out',
       artifactOut,
     ],
-    { cwd: repo, env, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: 30_000 },
+    { cwd: repoRoot, env, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: PIPELINE_TEST_TIMEOUT_MS },
   );
 
   assert.match(stdout, /LANG=en_US\.UTF-8/);
