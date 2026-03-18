@@ -41,6 +41,16 @@ describe('uiWebHtml', () => {
     );
   });
 
+  it('prefers Expo Router entry bundles over generic entry bundles', () => {
+    const urls = [
+      'http://localhost:8081/entry.bundle?platform=web&dev=true&hot=false',
+      'http://localhost:8081/node_modules/expo-router/entry.bundle?platform=web&dev=true&hot=false',
+    ];
+    expect(selectPrimaryAppScriptUrl(urls)).toBe(
+      'http://localhost:8081/node_modules/expo-router/entry.bundle?platform=web&dev=true&hot=false',
+    );
+  });
+
   it('falls back to the first script url when no bundle-like url exists', () => {
     const urls = [
       'http://localhost:19006/static/js/runtime.js',
