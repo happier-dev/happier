@@ -28,6 +28,8 @@ describe('ApiMachineClient loopback url resolution', () => {
   beforeEach(() => {
     mockIo.mockReset();
 
+    vi.resetModules();
+
     process.env.HAPPIER_HOME_DIR = '/tmp/happier-cli-test-loopback-machine';
     process.env.HAPPIER_SERVER_URL = 'http://localhost:3005';
     process.env.HAPPIER_WEBAPP_URL = 'http://localhost:8080';
@@ -70,5 +72,5 @@ describe('ApiMachineClient loopback url resolution', () => {
     expect(mockIo).toHaveBeenCalled();
     const calledUrl = mockIo.mock.calls[0]?.[0];
     expect(String(calledUrl)).toContain('http://127.0.0.1:3005');
-  }, 15_000);
+  });
 });

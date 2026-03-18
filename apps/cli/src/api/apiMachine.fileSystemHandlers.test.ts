@@ -27,5 +27,18 @@ describe('ApiMachineClient filesystem handlers', () => {
     expect(rpc.hasHandler(RPC_METHODS.CREATE_DIRECTORY)).toBe(true);
     expect(rpc.hasHandler(RPC_METHODS.LIST_DIRECTORY)).toBe(true);
     expect(rpc.hasHandler(RPC_METHODS.GET_DIRECTORY_TREE)).toBe(true);
+    expect(rpc.hasHandler(RPC_METHODS.DAEMON_FILESYSTEM_LIST_ROOTS)).toBe(true);
+    expect(rpc.hasHandler(RPC_METHODS.DAEMON_FILESYSTEM_LIST_DIRECTORY)).toBe(true);
+    expect(rpc.hasHandler(RPC_METHODS.STAT_FILE)).toBe(true);
+    expect(rpc.hasHandler(RPC_METHODS.RENAME_PATH)).toBe(true);
+    expect(rpc.hasHandler(RPC_METHODS.DELETE_PATH)).toBe(true);
+    expect(rpc.hasHandler(RPC_METHODS.FILES_UPLOAD_INIT)).toBe(true);
+    expect(rpc.hasHandler(RPC_METHODS.FILES_UPLOAD_CHUNK)).toBe(true);
+    expect(rpc.hasHandler(RPC_METHODS.FILES_UPLOAD_FINALIZE)).toBe(true);
+    expect(rpc.hasHandler(RPC_METHODS.FILES_UPLOAD_ABORT)).toBe(true);
+    expect(rpc.hasHandler(RPC_METHODS.FILES_DOWNLOAD_INIT)).toBe(true);
+    expect(rpc.hasHandler(RPC_METHODS.FILES_DOWNLOAD_CHUNK)).toBe(true);
+    expect(rpc.hasHandler(RPC_METHODS.FILES_DOWNLOAD_FINALIZE)).toBe(true);
+    expect(rpc.hasHandler(RPC_METHODS.FILES_DOWNLOAD_ABORT)).toBe(true);
   });
 });

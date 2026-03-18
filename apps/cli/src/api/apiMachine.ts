@@ -3,7 +3,6 @@
  * Similar to ApiSessionClient but for machine-scoped connections
  */
 
-import { io, Socket } from 'socket.io-client';
 import axios from 'axios';
 import { logger } from '@/ui/logger';
 import { configuration } from '@/configuration';
@@ -11,27 +10,76 @@ import { MachineMetadata, DaemonState, Machine, Update, UpdateMachineBody } from
 import { registerSessionHandlers } from '@/rpc/handlers/registerSessionHandlers';
 import { registerScmHandlers } from '@/rpc/handlers/scm';
 import { registerFileSystemHandlers } from '@/rpc/handlers/fileSystem';
+import { registerMachineFileBrowserHandlers } from '@/rpc/handlers/machineFileBrowser/registerMachineFileBrowserHandlers';
 import { encodeBase64, decodeBase64, encrypt, decrypt } from './encryption';
 import { backoff } from '@/utils/time';
 import { RpcHandlerManager } from './rpc/RpcHandlerManager';
 import { SOCKET_RPC_EVENTS } from '@happier-dev/protocol/socketRpc';
+import type { MachineTransferReceiveEnvelope, MachineTransferSendEnvelope } from '@happier-dev/protocol';
 import { fetchChanges } from './changes';
 import { readLastChangesCursor, writeLastChangesCursor } from '@/persistence';
 import { resolveLoopbackHttpUrl } from './client/loopbackUrl';
-import { getSocketIoProxyOptions } from '@/utils/proxy/socketIoProxy';
 
 import type { DaemonToServerEvents, ServerToDaemonEvents } from './machine/socketTypes';
-import { registerMachineRpcHandlers, type MachineRpcHandlers } from './machine/rpcHandlers';
+import { registerMachineRpcHandlers, type MachineRpcHandlerDeps, type MachineRpcHandlers } from './machine/rpcHandlers';
 import { resolveMachineRpcWorkingDirectory } from './machine/resolveMachineRpcWorkingDirectory';
+import type { Socket } from 'socket.io-client';
+import {
+    createManagedConnectionSupervisor,
+    DEFAULT_MANAGED_CONNECTION_POLICY,
+    type ManagedConnectionState,
+    type ManagedConnectionSupervisor,
+} from '@happier-dev/connection-supervisor';
+import { createLoopbackReadinessProbe } from '@/api/connection/createLoopbackReadinessProbe';
+import { createMachineSocketTransport } from '@/api/machine/connection/createMachineSocketTransport';
 
 export class ApiMachineClient {
-    private socket!: Socket<ServerToDaemonEvents, DaemonToServerEvents>;
+    private socket: Socket<ServerToDaemonEvents, DaemonToServerEvents> | null = null;
     private keepAliveInterval: NodeJS.Timeout | null = null;
     private rpcHandlerManager: RpcHandlerManager;
     private hasConnectedOnce = false;
     private accountIdPromise: Promise<string> | null = null;
     private changesSyncInFlight: Promise<void> | null = null;
     private updateListeners = new Set<(update: Update) => boolean | void>();
+    private machineTransferListeners = new Set<(payload: MachineTransferReceiveEnvelope) => void>();
+    private connectionStateListeners = new Set<(state: ManagedConnectionState) => void>();
+    private connectionSupervisor: ManagedConnectionSupervisor | null = null;
+    private currentConnectionState: ManagedConnectionState = {
+        phase: 'idle',
+        reason: null,
+        attempt: 0,
+        nextRetryAt: null,
+        lastConnectedAt: null,
+        lastDisconnectedAt: null,
+        lastErrorMessage: null,
+    };
+
+    private teardownActiveSocket(): void {
+        if (!this.socket) {
+            return;
+        }
+        this.rpcHandlerManager.onSocketDisconnect();
+        this.stopKeepAlive();
+        this.socket = null;
+    }
+
+    private isCurrentConnectionState(state: ManagedConnectionState): boolean {
+        return this.currentConnectionState.phase === state.phase
+            && this.currentConnectionState.reason === state.reason
+            && this.currentConnectionState.attempt === state.attempt
+            && this.currentConnectionState.nextRetryAt === state.nextRetryAt
+            && this.currentConnectionState.lastConnectedAt === state.lastConnectedAt
+            && this.currentConnectionState.lastDisconnectedAt === state.lastDisconnectedAt
+            && this.currentConnectionState.lastErrorMessage === state.lastErrorMessage;
+    }
+
+    private handleTransportSocketDisconnect(socket: Socket<ServerToDaemonEvents, DaemonToServerEvents>): void {
+        logger.debug('[API MACHINE] Disconnected from server');
+        if (this.socket !== socket) {
+            return;
+        }
+        this.teardownActiveSocket();
+    }
 
     constructor(
         private token: string,
@@ -46,8 +94,21 @@ export class ApiMachineClient {
         });
 
         const machineRpcWorkingDirectory = resolveMachineRpcWorkingDirectory();
-        registerSessionHandlers(this.rpcHandlerManager, machineRpcWorkingDirectory);
-        registerFileSystemHandlers(this.rpcHandlerManager, machineRpcWorkingDirectory);
+        let additionalAllowedReadDirs: string[] = [];
+        let additionalAllowedWriteDirs: string[] = [];
+        registerSessionHandlers(this.rpcHandlerManager, machineRpcWorkingDirectory, {
+            setAdditionalAllowedReadDirs: (dirs) => {
+                additionalAllowedReadDirs = dirs;
+            },
+            setAdditionalAllowedWriteDirs: (dirs) => {
+                additionalAllowedWriteDirs = dirs;
+            },
+        });
+        registerFileSystemHandlers(this.rpcHandlerManager, machineRpcWorkingDirectory, {
+            getAdditionalAllowedReadDirs: () => additionalAllowedReadDirs,
+            getAdditionalAllowedWriteDirs: () => additionalAllowedWriteDirs,
+        });
+        registerMachineFileBrowserHandlers({ rpcHandlerManager: this.rpcHandlerManager });
         // SCM must be machine-scoped so the UI can view diffs/logs and perform staging/commit operations
         // even when no session is currently active.
         registerScmHandlers(this.rpcHandlerManager, machineRpcWorkingDirectory);
@@ -56,12 +117,24 @@ export class ApiMachineClient {
     setRPCHandlers({
         spawnSession,
         stopSession,
+        isSessionActive,
         requestShutdown,
         memory,
-    }: MachineRpcHandlers) {
+        machineTransferChannel,
+        directPeerTransfer,
+    }: MachineRpcHandlers, deps?: MachineRpcHandlerDeps) {
         registerMachineRpcHandlers({
             rpcHandlerManager: this.rpcHandlerManager,
-            handlers: { spawnSession, stopSession, requestShutdown, ...(memory ? { memory } : {}) }
+            handlers: {
+                spawnSession,
+                stopSession,
+                ...(isSessionActive ? { isSessionActive } : {}),
+                requestShutdown,
+                ...(memory ? { memory } : {}),
+                ...(machineTransferChannel ? { machineTransferChannel } : {}),
+                ...(directPeerTransfer ? { directPeerTransfer } : {}),
+            },
+            deps,
         });
     }
 
@@ -70,6 +143,26 @@ export class ApiMachineClient {
         return () => {
             this.updateListeners.delete(listener);
         };
+    }
+
+    onMachineTransferEnvelope(listener: (payload: MachineTransferReceiveEnvelope) => void): () => void {
+        this.machineTransferListeners.add(listener);
+        return () => {
+            this.machineTransferListeners.delete(listener);
+        };
+    }
+
+    onConnectionStateChange(listener: (state: ManagedConnectionState) => void): () => void {
+        this.connectionStateListeners.add(listener);
+        listener(this.currentConnectionState);
+        return () => {
+            this.connectionStateListeners.delete(listener);
+        };
+    }
+
+    sendMachineTransferEnvelope(payload: MachineTransferSendEnvelope): void {
+        if (!this.socket) return;
+        this.socket.emit(SOCKET_RPC_EVENTS.MACHINE_TRANSFER_ENVELOPE, payload);
     }
 
     private dispatchUpdate(update: Update): boolean {
@@ -95,6 +188,9 @@ export class ApiMachineClient {
      */
     async updateMachineMetadata(handler: (metadata: MachineMetadata | null) => MachineMetadata): Promise<void> {
         await backoff(async () => {
+            if (!this.socket) {
+                throw new Error('Machine socket is not connected');
+            }
             const updated = handler(this.machine.metadata);
 
             // No-op: don't write if nothing changed.
@@ -128,6 +224,9 @@ export class ApiMachineClient {
      */
     async updateDaemonState(handler: (state: DaemonState | null) => DaemonState): Promise<void> {
         await backoff(async () => {
+            if (!this.socket) {
+                throw new Error('Machine socket is not connected');
+            }
             const updated = handler(this.machine.daemonState);
 
             const answer = await this.socket.emitWithAck('machine-update-state', {
@@ -159,84 +258,107 @@ export class ApiMachineClient {
     }
 
     connect(params?: { onConnect?: () => void | Promise<void> }) {
-        // socket.io-client expects an http(s) URL (even when forcing websocket transport).
         const serverUrl = resolveLoopbackHttpUrl(configuration.apiServerUrl).replace(/\/+$/, '');
         logger.debug(`[API MACHINE] Connecting to ${serverUrl}`);
 
-        const transports = configuration.socketIoTransports;
-        this.socket = io(serverUrl, {
-            ...(transports ? { transports } : null),
-            auth: {
-                token: this.token,
-                clientType: 'machine-scoped' as const,
-                machineId: this.machine.id
-            },
-            path: '/v1/updates',
-            reconnection: true,
-            reconnectionAttempts: Infinity,
-            reconnectionDelay: 1000,
-            reconnectionDelayMax: 5000,
-            withCredentials: true,
-            autoConnect: false,
-            ...getSocketIoProxyOptions({ targetUrl: serverUrl, env: process.env }),
-        });
+        if (!this.connectionSupervisor) {
+            this.connectionSupervisor = createManagedConnectionSupervisor({
+                ...DEFAULT_MANAGED_CONNECTION_POLICY,
+                createTransport: () => {
+                    const { socket, transport } = createMachineSocketTransport({
+                        serverUrl,
+                        token: this.token,
+                        machineId: this.machine.id,
+                        transports: configuration.socketIoTransports,
+                        env: process.env,
+                    });
+                    this.socket = socket;
+                    this.installSocketEventHandlers(socket);
+                    socket.on('disconnect', () => {
+                        this.handleTransportSocketDisconnect(socket);
+                    });
+                    return transport;
+                },
+                probeReadiness: createLoopbackReadinessProbe({
+                    serverUrl: configuration.apiServerUrl,
+                    token: this.token,
+                }),
+                onStateChange: (state) => {
+                    this.currentConnectionState = state;
+                    for (const listener of this.connectionStateListeners) {
+                        listener(state);
+                    }
+                },
+                onConnected: async () => {
+                    logger.debug('[API MACHINE] Connected to server');
+                    const isReconnect = this.hasConnectedOnce;
+                    this.hasConnectedOnce = true;
 
-        this.socket.on('connect', () => {
-            logger.debug('[API MACHINE] Connected to server');
-            const isReconnect = this.hasConnectedOnce;
-            this.hasConnectedOnce = true;
+                    if (this.socket) {
+                        this.rpcHandlerManager.onSocketConnect(this.socket);
+                    }
 
-            // Register all handlers first so RPC routing is available immediately on connect.
-            this.rpcHandlerManager.onSocketConnect(this.socket);
+                    void this.updateDaemonState((state) => ({
+                        ...state,
+                        status: 'running',
+                        pid: process.pid,
+                        httpPort: this.machine.daemonState?.httpPort,
+                        startedAt: Date.now()
+                    })).catch((error) => {
+                        logger.warn('[API MACHINE] Failed to update daemon state on connect', {
+                            message: error instanceof Error ? error.message : String(error),
+                        });
+                    });
 
-            // Update daemon state to running
-            // We need to override previous state because the daemon (this process)
-            // has restarted with new PID & port
-            void this.updateDaemonState((state) => ({
-                ...state,
-                status: 'running',
-                pid: process.pid,
-                httpPort: this.machine.daemonState?.httpPort,
-                startedAt: Date.now()
-            })).catch((error) => {
-                // Best-effort: avoid unhandled rejections on transient socket/ACK failures.
-                logger.warn('[API MACHINE] Failed to update daemon state on connect', {
-                    message: error instanceof Error ? error.message : String(error),
-                });
+                    void this.syncChangesOnConnect({ reason: isReconnect ? 'reconnect' : 'connect' });
+                    this.startKeepAlive();
+
+                    if (params?.onConnect) {
+                        await Promise.resolve(params.onConnect()).catch(() => {});
+                    }
+                },
+                onDisconnected: async () => {
+                    // The transport socket that actually disconnected owns teardown via its
+                    // socket-scoped disconnect handler. This avoids stale callbacks from an
+                    // older transport clearing a newer active socket.
+                },
+                onAuthFailed: async (ctx) => {
+                    logger.debug('[API MACHINE] Auth failed');
+                    if (!this.isCurrentConnectionState(ctx.state)) {
+                        return;
+                    }
+                    this.teardownActiveSocket();
+                },
             });
+        }
 
-            // Catch up on coalesced account changes (optional). This is a safety net for reconnects:
-            // if we missed socket updates while disconnected, we can resync our machine state.
-            void this.syncChangesOnConnect({ reason: isReconnect ? 'reconnect' : 'connect' });
-
-            // Start keep-alive
-            this.startKeepAlive();
-
-            // Optional hook for callers that need a "connected" moment
-            if (params?.onConnect) {
-                Promise.resolve(params.onConnect()).catch(() => {
-                    // Best-effort hook; ignore errors to avoid destabilizing the daemon.
-                });
-            }
+        void this.connectionSupervisor.start().catch((error) => {
+            logger.warn('[API MACHINE] Failed to start machine connection supervisor', {
+                message: error instanceof Error ? error.message : String(error),
+            });
         });
+    }
 
-        this.socket.on('disconnect', () => {
-            logger.debug('[API MACHINE] Disconnected from server');
-            this.rpcHandlerManager.onSocketDisconnect();
-            this.stopKeepAlive();
-        });
-
-        // Single consolidated RPC handler
-        this.socket.on(SOCKET_RPC_EVENTS.REQUEST, async (data: { method: string, params: string }, callback: (response: string) => void) => {
+    private installSocketEventHandlers(socket: Socket<ServerToDaemonEvents, DaemonToServerEvents>) {
+        socket.on(SOCKET_RPC_EVENTS.REQUEST, async (data: { method: string, params: unknown }, callback: (response: unknown) => void) => {
             logger.debugLargeJson(`[API MACHINE] Received RPC request:`, data);
             callback(await this.rpcHandlerManager.handleRequest(data));
         });
 
-        // Handle update events from server
-        this.socket.on('update', (data: Update) => {
-            // Machine clients should only care about machine updates
+        socket.on(SOCKET_RPC_EVENTS.MACHINE_TRANSFER_ENVELOPE, (data: MachineTransferReceiveEnvelope) => {
+            for (const listener of this.machineTransferListeners) {
+                try {
+                    listener(data);
+                } catch (error) {
+                    logger.warn('[API MACHINE] Machine transfer listener threw (ignored)', {
+                        message: error instanceof Error ? error.message : String(error),
+                    });
+                }
+            }
+        });
+
+        socket.on('update', (data: Update) => {
             if (data.body.t === 'update-machine' && (data.body as UpdateMachineBody).machineId === this.machine.id) {
-                // Handle machine metadata or daemon state updates from other clients (e.g., mobile app)
                 const update = data.body as UpdateMachineBody;
 
                 if (update.metadata) {
@@ -254,38 +376,18 @@ export class ApiMachineClient {
             }
 
             const handled = this.dispatchUpdate(data);
-            if (!handled && process.env.DEBUG) { // too verbose for production
+            if (!handled && process.env.DEBUG) {
                 logger.debug(`[API MACHINE] Ignored update type: ${(data.body as any).t}`);
             }
         });
-
-        this.socket.on('connect_error', (error) => {
-            const e: any = error;
-            logger.debug('[API MACHINE] Connection error', {
-                message: typeof e?.message === 'string' ? e.message : String(e),
-                data: e?.data,
-                description: e?.description,
-                context: e?.context,
-                stack: typeof e?.stack === 'string' ? e.stack : undefined,
-            });
-        });
-
-        this.socket.io.on('error', (error: any) => {
-            logger.debug('[API MACHINE] Socket error:', error);
-        });
-
-        // Connect (after handlers are registered)
-        const socketWithConnect = this.socket as unknown as { connect?: () => void; open?: () => void };
-        if (typeof socketWithConnect.connect === 'function') {
-            socketWithConnect.connect();
-        } else if (typeof socketWithConnect.open === 'function') {
-            socketWithConnect.open();
-        }
     }
 
     private startKeepAlive() {
         this.stopKeepAlive();
         this.keepAliveInterval = setInterval(() => {
+            if (!this.socket) {
+                return;
+            }
             const payload = {
                 machineId: this.machine.id,
                 time: Date.now()
@@ -306,13 +408,17 @@ export class ApiMachineClient {
         }
     }
 
-    shutdown() {
+    async shutdown() {
         logger.debug('[API MACHINE] Shutting down');
         this.stopKeepAlive();
-        if (this.socket) {
-            this.socket.close();
-            logger.debug('[API MACHINE] Socket closed');
+        this.socket = null;
+        if (this.connectionSupervisor) {
+            await this.connectionSupervisor.stop();
         }
+    }
+
+    async awaitPendingRpcRequests(): Promise<void> {
+        await this.rpcHandlerManager.waitForIdle();
     }
 
     private async getAccountId(): Promise<string | null> {
@@ -403,7 +509,6 @@ export class ApiMachineClient {
 
         if (this.changesSyncInFlight) {
             await this.changesSyncInFlight.catch(() => {});
-            return;
         }
 
         const p = (async () => {

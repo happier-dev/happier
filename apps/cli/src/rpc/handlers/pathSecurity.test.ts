@@ -1,6 +1,6 @@
 import { resolve } from 'path';
 import { describe, it, expect } from 'vitest';
-import { validatePath } from './pathSecurity';
+import { validatePath, validateWorkspaceInspectionPath } from './pathSecurity';
 import { mkdirSync, symlinkSync, rmSync, existsSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
@@ -120,6 +120,29 @@ describe('validatePath', () => {
         expect(validatePath('file.txt', null as unknown as string)).toEqual({
             valid: false,
             error: 'Access denied: Invalid working directory',
+        });
+    });
+});
+
+describe('validateWorkspaceInspectionPath', () => {
+    it('allows canonical absolute workspace inspection paths outside the working tree', () => {
+        expect(validateWorkspaceInspectionPath('/tmp/workspaces/demo')).toEqual({
+            valid: true,
+            resolvedPath: resolve('/tmp/workspaces/demo'),
+        });
+    });
+
+    it('rejects relative workspace inspection paths', () => {
+        expect(validateWorkspaceInspectionPath('./demo')).toEqual({
+            valid: false,
+            error: 'Attached workspace candidate path must be absolute',
+        });
+    });
+
+    it('rejects workspace inspection paths containing null bytes', () => {
+        expect(validateWorkspaceInspectionPath('/tmp/demo\0repo')).toEqual({
+            valid: false,
+            error: 'Attached workspace candidate path contains invalid characters',
         });
     });
 });

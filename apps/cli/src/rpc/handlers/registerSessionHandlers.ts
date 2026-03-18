@@ -2,14 +2,27 @@ import type { TerminalSpawnOptions } from '@/terminal/runtime/terminalConfig';
 import type { PermissionMode } from '@/api/types';
 import type { RpcHandlerRegistrar } from '@/api/rpc/types';
 import type { Metadata } from '@/api/types';
-import type { BackendTargetRefV1, SessionMcpSelectionV1, SpawnSessionErrorCode } from '@happier-dev/protocol';
+import type { CodexBackendMode } from '@happier-dev/agents';
+import { configuration } from '@/configuration';
+import {
+    AcpConfigOptionOverridesV1,
+    type AgentRuntimeDescriptorV1,
+    BackendTargetRefV1,
+    type SessionAttachMetadataIdentityPolicy,
+    SessionMcpSelectionV1,
+    SpawnSessionErrorCode,
+} from '@happier-dev/protocol';
 export { SPAWN_SESSION_ERROR_CODES } from '@happier-dev/protocol';
 export type { SpawnSessionErrorCode } from '@happier-dev/protocol';
+export { isCodexBackendMode, resolveCanonicalCodexBackendMode } from './codexBackendMode';
 import { registerCapabilitiesHandlers } from './capabilities';
 import { registerPreviewEnvHandler } from './previewEnv';
 import { registerBashHandler } from './bash';
 import { registerSessionLogTailHandler } from './sessionLogTail';
-import { registerAttachmentsUploadHandlers } from './attachmentsUpload';
+import { TransferSessionStore } from '@/transfers/core/transferSessionStore';
+import { resolveSessionRpcTransferMaxBytes } from '@/transfers/policy/sessionRpcTransferPolicy';
+import { registerWorkspaceFileTransferRpcHandlers } from '@/transfers/rpc/registerWorkspaceFileTransferRpcHandlers';
+import { createTransferPathAllowanceRegistry } from '@/transfers/targets/createTransferPathAllowanceRegistry';
 import { registerRipgrepHandler } from './ripgrep';
 import { registerDifftasticHandler } from './difftastic';
 import { registerSessionUserMessageSendHandler } from './sessionUserMessageSend';
@@ -47,15 +60,23 @@ export interface SpawnSessionOptions {
      */
     resume?: string;
     /**
-     * Experimental: switch Codex sessions to use ACP (codex-acp) instead of MCP.
-     * This is evaluated by the daemon BEFORE spawning the child process.
+     * Legacy compatibility for older boundaries that still send the ACP toggle.
+     * Prefer codexBackendMode for new spawn/resume callers.
      */
     experimentalCodexAcp?: boolean;
+    codexBackendMode?: CodexBackendMode;
+    agentRuntimeDescriptorV1?: AgentRuntimeDescriptorV1;
     /**
      * Existing Happy session ID to reconnect to (for inactive session resume).
      * When set, the CLI will connect to this session instead of creating a new one.
      */
     existingSessionId?: string;
+    /**
+     * Optional attach-only metadata identity policy.
+     * Preserve current persisted machine identity for normal attaches, but allow runtime replacement
+     * for cross-machine handoff cutover.
+     */
+    attachMetadataIdentityPolicy?: SessionAttachMetadataIdentityPolicy;
     /**
      * Optional: explicit permission mode to publish at startup (seed or override).
      * When omitted, the runner preserves existing metadata.permissionMode.
@@ -66,6 +87,11 @@ export interface SpawnSessionOptions {
      */
     permissionModeUpdatedAt?: number;
     /**
+     * Optional: ACP/static agent mode override to seed at startup (spawn/resume attach).
+     */
+    agentModeId?: string;
+    agentModeUpdatedAt?: number;
+    /**
      * Optional: session-wide model override to seed at startup (spawn/resume attach).
      *
      * When set, the spawned CLI process will publish `metadata.modelOverrideV1` so the model choice
@@ -73,6 +99,7 @@ export interface SpawnSessionOptions {
      */
     modelId?: string;
     modelUpdatedAt?: number;
+    sessionConfigOptionOverrides?: AcpConfigOptionOverridesV1;
     approvedNewDirectoryCreation?: boolean;
     backendTarget?: BackendTargetRefV1;
     token?: string;
@@ -132,7 +159,6 @@ export interface SpawnSessionOptions {
      */
     transcriptStorage?: 'persisted' | 'direct';
 }
-
 export type SpawnSessionResult =
     | { type: 'success'; sessionId?: string }
     | { type: 'requestToApproveDirectoryCreation'; directory: string }
@@ -151,22 +177,36 @@ export function registerSessionHandlers(
             localId?: string;
             meta: Record<string, unknown>;
         }) => Promise<void> | void) | null;
+        setAdditionalAllowedReadDirs?: (dirs: string[]) => void;
+        setAdditionalAllowedWriteDirs?: (dirs: string[]) => void;
     }>,
 ) {
-    let additionalAllowedReadDirs: string[] = [];
-    const getAdditionalAllowedReadDirs = () => additionalAllowedReadDirs;
-    const setAdditionalAllowedReadDirs = (dirs: string[]) => {
-        additionalAllowedReadDirs = Array.isArray(dirs)
-            ? dirs.filter((v) => typeof v === 'string' && v.trim().length > 0)
-            : [];
-    };
+    const pathAllowanceRegistry = createTransferPathAllowanceRegistry({
+        onReadDirsChange: (dirs) => {
+            opts?.setAdditionalAllowedReadDirs?.([...dirs]);
+        },
+        onWriteDirsChange: (dirs) => {
+            opts?.setAdditionalAllowedWriteDirs?.([...dirs]);
+        },
+    });
+    const transferStore = new TransferSessionStore({ ttlMs: configuration.filesTransferSessionTtlMs });
+    const sessionRpcTransferMaxBytes = resolveSessionRpcTransferMaxBytes();
 
     registerBashHandler(rpcHandlerManager, workingDirectory);
     // Checklist-based machine capability registry (replaces legacy detect-cli / detect-capabilities / dep-status).
     registerCapabilitiesHandlers(rpcHandlerManager);
     registerPreviewEnvHandler(rpcHandlerManager);
     registerSessionLogTailHandler(rpcHandlerManager, { getSessionMetadata: opts?.getSessionMetadata });
-    registerAttachmentsUploadHandlers(rpcHandlerManager, { workingDirectory, setAdditionalAllowedReadDirs });
+    registerWorkspaceFileTransferRpcHandlers(rpcHandlerManager, {
+        workingDirectory,
+        store: transferStore,
+        getAdditionalAllowedReadDirs: () => [...pathAllowanceRegistry.getAdditionalAllowedReadDirs()],
+        getAdditionalAllowedWriteDirs: () => [...pathAllowanceRegistry.getAdditionalAllowedWriteDirs()],
+        sessionRpcTransferMaxBytes,
+        attachmentUpload: {
+            pathAllowanceRegistry,
+        },
+    });
     registerRipgrepHandler(rpcHandlerManager, workingDirectory);
     registerDifftasticHandler(rpcHandlerManager, workingDirectory);
     registerSessionUserMessageSendHandler(rpcHandlerManager, {
