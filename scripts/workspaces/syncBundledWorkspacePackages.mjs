@@ -1,12 +1,16 @@
-import { cp, mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises';
-import { resolve } from 'node:path';
+import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { basename, dirname, resolve } from 'node:path';
 
-function normalizePath(raw) {
-  const value = String(raw ?? '').trim();
-  return value ? resolve(value) : '';
+let syncSequence = 0;
+
+function sleepSync(ms) {
+  if (!ms || ms <= 0) return;
+  const buf = new SharedArrayBuffer(4);
+  const arr = new Int32Array(buf);
+  Atomics.wait(arr, 0, 0, ms);
 }
 
-function sanitizeBundledWorkspacePackageJson(raw) {
+export function sanitizeBundledWorkspacePackageJson(raw) {
   const {
     name,
     version,
@@ -37,95 +41,139 @@ function sanitizeBundledWorkspacePackageJson(raw) {
   };
 }
 
-async function listBundledWorkspacePackageNames(targetPackageRoot) {
-  const scopeDir = resolve(targetPackageRoot, 'node_modules', '@happier-dev');
-  const entries = await readdir(scopeDir, { withFileTypes: true }).catch(() => []);
-  return entries
-    .filter((entry) => entry.isDirectory())
-    .map((entry) => entry.name)
-    .sort();
+function resolveSyncSwapSuffix(syncId) {
+  const explicit = String(syncId ?? '').trim();
+  if (explicit) return explicit;
+
+  syncSequence += 1;
+  return `${process.pid}.${syncSequence}`;
 }
 
-function normalizePackageNames(packageNames) {
-  return [...new Set((packageNames ?? []).map((value) => String(value ?? '').trim()).filter(Boolean))].sort();
+function isRetryableRmError(err) {
+  const code = err && typeof err === 'object' ? err.code : null;
+  return code === 'ENOTEMPTY' || code === 'EBUSY' || code === 'EPERM' || code === 'EACCES' || code === 'EINTR';
 }
 
-export async function syncBundledWorkspacePackages({ repoRoot, targetPackageRoot, packageNames } = {}) {
-  const resolvedRepoRoot = normalizePath(repoRoot);
-  const resolvedTargetPackageRoot = normalizePath(targetPackageRoot);
-  if (!resolvedRepoRoot || !resolvedTargetPackageRoot) {
-    throw new Error('syncBundledWorkspacePackages requires repoRoot and targetPackageRoot');
+function isStaleSwapDirName(name, targetBaseName) {
+  return name.startsWith(`${targetBaseName}.__sync_tmp__.`) || name.startsWith(`${targetBaseName}.__sync_backup__.`);
+}
+
+function removeStaleBundledWorkspaceSwapDirs(parentDir, targetBaseName, fsOps) {
+  const dir = String(parentDir ?? '').trim();
+  const baseName = String(targetBaseName ?? '').trim();
+  if (!dir || !baseName || !fsOps.existsSync(dir)) return;
+
+  for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    if (!entry.isDirectory()) continue;
+    if (!isStaleSwapDirName(entry.name, baseName)) continue;
+    rmDirSafeSync(resolve(dir, entry.name), fsOps);
   }
+}
 
-  const names =
-    Array.isArray(packageNames) && packageNames.length > 0
-      ? normalizePackageNames(packageNames)
-      : await listBundledWorkspacePackageNames(resolvedTargetPackageRoot);
-  const updatedPackages = [];
+export function rmDirSafeSync(targetDir, fsOps = {}, { retries = 5, delayMs = 25 } = {}) {
+  const rm = fsOps.rmSync ?? rmSync;
+  const path = String(targetDir ?? '').trim();
+  if (!path) return;
 
-  for (const packageName of names) {
-    const workspaceDir = resolve(resolvedRepoRoot, 'packages', packageName);
-    const srcPackageJsonPath = resolve(workspaceDir, 'package.json');
-    const srcDistDir = resolve(workspaceDir, 'dist');
-    const destPackageDir = resolve(resolvedTargetPackageRoot, 'node_modules', '@happier-dev', packageName);
-
-    const [rawPackageJson, srcDistExists] = await Promise.all([
-      readFile(srcPackageJsonPath, 'utf-8').catch(() => ''),
-      readdir(srcDistDir).then(() => true).catch(() => false),
-    ]);
-    if (!rawPackageJson || !srcDistExists) {
-      continue;
-    }
-
-    let parsedPackageJson;
+  const maxAttempts = Math.max(1, Number.isFinite(retries) ? retries + 1 : 1);
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
     try {
-      parsedPackageJson = JSON.parse(rawPackageJson);
-    } catch {
-      continue;
+      rm(path, { recursive: true, force: true });
+      return;
+    } catch (error) {
+      if (!isRetryableRmError(error) || attempt === maxAttempts - 1) throw error;
+      sleepSync(delayMs);
     }
-    if (parsedPackageJson?.name !== `@happier-dev/${packageName}`) {
-      continue;
-    }
-
-    await mkdir(destPackageDir, { recursive: true });
-    await rm(resolve(destPackageDir, 'dist'), { recursive: true, force: true });
-    await cp(srcDistDir, resolve(destPackageDir, 'dist'), { recursive: true, force: true });
-    await writeFile(
-      resolve(destPackageDir, 'package.json'),
-      `${JSON.stringify(sanitizeBundledWorkspacePackageJson(parsedPackageJson), null, 2)}\n`,
-      'utf-8',
-    );
-    updatedPackages.push(packageName);
   }
-
-  return {
-    repoRoot: resolvedRepoRoot,
-    targetPackageRoot: resolvedTargetPackageRoot,
-    updatedPackages,
-  };
 }
 
-function readFlagValue(argv, name) {
-  const prefix = `${name}=`;
-  const direct = argv.find((value) => String(value).startsWith(prefix));
-  if (direct) {
-    return String(direct).slice(prefix.length);
+function replaceDirFromSourceSync(targetDir, srcDir, fsOps, { syncSuffix } = {}) {
+  const outDir = String(targetDir ?? '').trim();
+  const sourceDir = String(srcDir ?? '').trim();
+  if (!outDir || !sourceDir) return;
+
+  const parentDir = dirname(outDir);
+  removeStaleBundledWorkspaceSwapDirs(parentDir, basename(outDir), fsOps);
+  const suffix = resolveSyncSwapSuffix(syncSuffix);
+  const stagingDir = `${outDir}.__sync_tmp__.${suffix}`;
+  const backupDir = `${outDir}.__sync_backup__.${suffix}`;
+
+  fsOps.mkdirSync(parentDir, { recursive: true });
+  rmDirSafeSync(stagingDir, fsOps);
+  rmDirSafeSync(backupDir, fsOps);
+  fsOps.cpSync(sourceDir, stagingDir, { recursive: true, force: true });
+
+  let movedExistingDir = false;
+  try {
+    if (fsOps.existsSync(outDir)) {
+      fsOps.renameSync(outDir, backupDir);
+      movedExistingDir = true;
+    }
+
+    fsOps.renameSync(stagingDir, outDir);
+
+    if (movedExistingDir) {
+      rmDirSafeSync(backupDir, fsOps);
+    }
+  } catch (error) {
+    rmDirSafeSync(stagingDir, fsOps);
+    if (movedExistingDir && fsOps.existsSync(backupDir) && !fsOps.existsSync(outDir)) {
+      fsOps.renameSync(backupDir, outDir);
+    }
+    throw error;
   }
-  const index = argv.indexOf(name);
-  return index >= 0 ? String(argv[index + 1] ?? '').trim() : '';
 }
 
-const invokedAsMain = (() => {
-  const argv1 = process.argv[1];
-  return Boolean(argv1 && resolve(argv1) === import.meta.filename);
-})();
+export function syncBundledWorkspacePackages(opts = {}) {
+  const repoRoot = String(opts.repoRoot ?? '').trim();
+  if (!repoRoot) return;
 
-if (invokedAsMain) {
-  syncBundledWorkspacePackages({
-    repoRoot: readFlagValue(process.argv.slice(2), '--repo-root'),
-    targetPackageRoot: readFlagValue(process.argv.slice(2), '--target-package-root'),
-  }).catch((error) => {
-    console.error(error instanceof Error ? error.message : String(error));
-    process.exit(1);
-  });
+  const exists = opts.existsSync ?? existsSync;
+  const cp = opts.cpSync ?? cpSync;
+  const mkdir = opts.mkdirSync ?? mkdirSync;
+  const rename = opts.renameSync ?? renameSync;
+  const rm = opts.rmSync ?? rmSync;
+  const readFile = opts.readFileSync ?? readFileSync;
+  const writeFile = opts.writeFileSync ?? writeFileSync;
+  const syncId = opts.syncId;
+  const packages = Array.isArray(opts.packages) && opts.packages.length > 0
+    ? opts.packages
+    : ['agents', 'cli-common', 'connection-supervisor', 'protocol', 'transfers', 'release-runtime'];
+  const hostApps = Array.isArray(opts.hostApps) && opts.hostApps.length > 0
+    ? opts.hostApps
+    : ['cli', 'stack'];
+
+  for (const pkg of packages) {
+    const srcDist = resolve(repoRoot, 'packages', pkg, 'dist');
+    const srcPackageJsonPath = resolve(repoRoot, 'packages', pkg, 'package.json');
+    if (!exists(srcPackageJsonPath)) continue;
+
+    for (const hostApp of hostApps) {
+      const destPackageDir = resolve(repoRoot, 'apps', hostApp, 'node_modules', '@happier-dev', pkg);
+      const destDist = resolve(destPackageDir, 'dist');
+      if (exists(srcDist)) {
+        try {
+          replaceDirFromSourceSync(destDist, srcDist, {
+            existsSync: exists,
+            cpSync: cp,
+            mkdirSync: mkdir,
+            renameSync: rename,
+            rmSync: rm,
+          }, { syncSuffix: syncId });
+        } catch {
+          // Best-effort: bundled deps may be missing or readonly.
+        }
+      }
+
+      const destPackageJsonPath = resolve(destPackageDir, 'package.json');
+      try {
+        mkdir(destPackageDir, { recursive: true });
+        const raw = JSON.parse(readFile(srcPackageJsonPath, 'utf8'));
+        const sanitized = sanitizeBundledWorkspacePackageJson(raw);
+        writeFile(destPackageJsonPath, `${JSON.stringify(sanitized, null, 2)}\n`, 'utf8');
+      } catch {
+        // Best-effort: keep local bundled deps usable even if package.json sync fails.
+      }
+    }
+  }
 }
