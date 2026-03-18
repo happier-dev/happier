@@ -1,3 +1,7 @@
+import {
+  buildBackendTargetKey,
+  type BackendTargetRefV1,
+} from '@happier-dev/protocol';
 import type { AgentId } from '@happier-dev/agents';
 import { resolvePermissionModeGroupForAgent } from '@happier-dev/agents';
 
@@ -28,20 +32,26 @@ export function normalizePermissionModeForAgentStart(opts: { agentId: AgentId; v
 
 export function resolveAccountDefaultPermissionModeFromAccountSettings(opts: {
   agentId: AgentId;
+  backendTarget?: BackendTargetRefV1;
   accountSettings: unknown;
 }): PermissionMode | null {
   const settings = opts.accountSettings;
   const record =
     settings && typeof settings === 'object' && !Array.isArray(settings) ? (settings as Record<string, unknown>) : null;
-  const rawMap = record?.sessionDefaultPermissionModeByAgent;
+  const rawMap = record?.sessionDefaultPermissionModeByTargetKey;
   const map =
     rawMap && typeof rawMap === 'object' && !Array.isArray(rawMap) ? (rawMap as Record<string, unknown>) : null;
-  const candidate = map?.[opts.agentId];
+
+  const preferredTarget = opts.backendTarget
+    ?? ({ kind: 'builtInAgent', agentId: opts.agentId } as const satisfies BackendTargetRefV1);
+  const candidate = map?.[buildBackendTargetKey(preferredTarget)]
+    ?? map?.[buildBackendTargetKey({ kind: 'builtInAgent', agentId: opts.agentId })];
   return normalizePermissionModeForAgentStart({ agentId: opts.agentId, value: candidate });
 }
 
 export function resolvePermissionModeSeedForAgentStart(opts: {
   agentId: AgentId;
+  backendTarget?: BackendTargetRefV1;
   explicitPermissionMode: unknown;
   inferredPermissionMode?: unknown;
   accountSettings: unknown;
@@ -54,10 +64,10 @@ export function resolvePermissionModeSeedForAgentStart(opts: {
 
   const accountDefault = resolveAccountDefaultPermissionModeFromAccountSettings({
     agentId: opts.agentId,
+    backendTarget: opts.backendTarget,
     accountSettings: opts.accountSettings,
   });
   if (accountDefault) return { mode: accountDefault, source: 'account_default' };
 
   return { mode: 'default', source: 'fallback' };
 }
-
