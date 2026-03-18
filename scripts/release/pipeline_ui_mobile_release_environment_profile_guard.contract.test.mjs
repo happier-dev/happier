@@ -110,7 +110,7 @@ test('ui-mobile-release forwards explicit interactive setting to delegated Expo 
 
   assert.match(out, /\[pipeline\] ui-mobile release: environment=development action=ota platform=all/);
   assert.match(out, /scripts\/pipeline\/expo\/ota-update\.mjs/);
-  assert.match(out, /--interactive"?\s+"?false\b/);
+  assert.match(out, /--interactive\"?\s+\"?false\b/);
 });
 
 test('ui-mobile-release rejects native_submit outside preview and production', () => {
