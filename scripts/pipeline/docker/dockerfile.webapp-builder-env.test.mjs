@@ -24,12 +24,16 @@ test("webapp-builder stage exports PostHog + Sentry public env and supports opti
   assert.match(section, /\bARG SENTRY_AUTH_TOKEN\b/);
   assert.match(section, /\bARG SENTRY_URL\b/);
   assert.match(section, /\bARG EXPO_PUBLIC_HAPPIER_SERVER_URL\b/);
+  assert.match(section, /\bARG EXPO_PUBLIC_HAPPY_SERVER_URL\b/);
+  assert.match(section, /\bARG EXPO_PUBLIC_SERVER_URL\b/);
 
+  assert.match(section, /\bENV EXPO_PUBLIC_HAPPIER_SERVER_URL=\$EXPO_PUBLIC_HAPPIER_SERVER_URL\b/);
+  assert.match(section, /\bENV EXPO_PUBLIC_HAPPY_SERVER_URL=\$EXPO_PUBLIC_HAPPY_SERVER_URL\b/);
+  assert.match(section, /\bENV EXPO_PUBLIC_SERVER_URL=\$EXPO_PUBLIC_SERVER_URL\b/);
   assert.match(section, /\bENV EXPO_PUBLIC_POSTHOG_KEY=\$POSTHOG_API_KEY\b/);
   assert.match(section, /\bENV EXPO_PUBLIC_POSTHOG_HOST=\$POSTHOG_HOST\b/);
   assert.match(section, /\bENV EXPO_PUBLIC_SENTRY_DSN=\$SENTRY_DSN\b/);
   assert.match(section, /\bENV EXPO_PUBLIC_SENTRY_RELEASE=\$SENTRY_RELEASE\b/);
-  assert.match(section, /\bENV EXPO_PUBLIC_HAPPIER_SERVER_URL=\$EXPO_PUBLIC_HAPPIER_SERVER_URL\b/);
   assert.doesNotMatch(section, /\bENV EXPO_PUBLIC_POSTHOG_API_KEY=\$POSTHOG_API_KEY\b/);
 
   assert.match(section, /\bRUN if \[ -n "\$SENTRY_AUTH_TOKEN" \]; then\b/);
