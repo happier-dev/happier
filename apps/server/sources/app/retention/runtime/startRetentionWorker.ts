@@ -30,12 +30,15 @@ export function startRetentionWorker(): { stop: () => void } | null {
                 monitorSlug: 'server.retentionWorker',
                 intervalMs: policy.intervalMs,
                 run: async () => {
-                    const result = await runRetentionSweep({ policy });
-                    logRetentionSweepCompleted({ reason, deleted: result.deleted, byRule: result.byRule, dryRun: policy.dryRun });
+                    try {
+                        const result = await runRetentionSweep({ policy });
+                        logRetentionSweepCompleted({ reason, deleted: result.deleted, byRule: result.byRule, dryRun: policy.dryRun });
+                    } catch (error) {
+                        logRetentionSweepFailed({ reason, error });
+                        throw error;
+                    }
                 },
             });
-        } catch (error) {
-            logRetentionSweepFailed({ reason, error });
         } finally {
             await lock.release();
             running = false;

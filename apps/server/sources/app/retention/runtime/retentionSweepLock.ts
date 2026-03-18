@@ -2,13 +2,14 @@ import { db } from '@/storage/db';
 import { randomKeyNaked } from '@/utils/keys/randomKeyNaked';
 
 const RETENTION_SWEEP_LOCK_KEY = 'server.retention.sweep';
+const MIN_RETENTION_SWEEP_LOCK_TTL_MS = 30_000;
 
 export async function acquireRetentionSweepLock(params: {
     ttlMs: number;
     now?: Date;
 }): Promise<{ release: () => Promise<void> } | null> {
     const now = params.now ?? new Date();
-    const ttlMs = Math.max(30_000, params.ttlMs);
+    const ttlMs = Math.max(MIN_RETENTION_SWEEP_LOCK_TTL_MS, params.ttlMs);
     const expiresAt = new Date(now.getTime() + ttlMs);
     const value = randomKeyNaked(16);
 

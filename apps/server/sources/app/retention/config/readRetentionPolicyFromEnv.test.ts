@@ -17,6 +17,7 @@ describe('retention/readRetentionPolicyFromEnv', () => {
                 accountChanges: { mode: 'keep_forever' },
                 voiceSessionLeases: { mode: 'keep_forever' },
                 userFeedItems: { mode: 'keep_forever' },
+                globalLocks: { mode: 'keep_forever' },
             },
         });
     });
