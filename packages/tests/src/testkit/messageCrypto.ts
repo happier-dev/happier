@@ -1,6 +1,7 @@
 import tweetnacl from 'tweetnacl';
 import * as privacyKit from 'privacy-kit';
 import { randomBytes } from 'node:crypto';
+import { parseSerializedJsonValue } from '@happier-dev/protocol';
 
 export function encodeBase64(bytes: Uint8Array): string {
   return privacyKit.encodeBase64(Uint8Array.from(bytes));
@@ -28,9 +29,8 @@ export function decryptLegacyBase64(ciphertextBase64: string, secret: Uint8Array
   const decrypted = tweetnacl.secretbox.open(encrypted, nonce, secret);
   if (!decrypted) return null;
   try {
-    return JSON.parse(new TextDecoder().decode(decrypted));
+    return parseSerializedJsonValue(new TextDecoder().decode(decrypted));
   } catch {
     return null;
   }
 }
-
