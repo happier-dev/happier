@@ -29,10 +29,12 @@ export const ReviewFindingSchema = z.object({
   startLine: z.number().int().min(1).optional(),
   endLine: z.number().int().min(1).optional(),
   summary: z.string().min(1),
+  whyItMatters: z.string().min(1).optional(),
+  evidence: z.string().min(1).optional(),
+  confidence: z.number().min(0).max(1).optional(),
   suggestion: z.string().min(1).optional(),
   patch: z.string().min(1).optional(),
 }).passthrough();
 
 export type ReviewFinding = z.infer<typeof ReviewFindingSchema>;
 export type ReviewFindingId = string;
-
