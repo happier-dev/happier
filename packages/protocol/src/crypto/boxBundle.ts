@@ -1,5 +1,5 @@
 import tweetnacl from 'tweetnacl';
-import { sha512 } from '@noble/hashes/sha512';
+import { sha512 } from '@noble/hashes/sha512.js';
 
 export const BOX_BUNDLE_PUBLIC_KEY_BYTES = tweetnacl.box.publicKeyLength; // 32
 export const BOX_BUNDLE_NONCE_BYTES = tweetnacl.box.nonceLength; // 24
@@ -9,7 +9,6 @@ export function deriveBoxSecretKeyFromSeed(seed: Uint8Array): Uint8Array {
   // libsodium crypto_box_seed_keypair uses SHA-512(seed) and takes the first 32 bytes as the scalar.
   return sha512(seed).slice(0, 32);
 }
-
 export function deriveBoxPublicKeyFromSeed(seed: Uint8Array): Uint8Array {
   const secretKey = deriveBoxSecretKeyFromSeed(seed);
   return tweetnacl.box.keyPair.fromSecretKey(secretKey).publicKey;
@@ -71,4 +70,3 @@ export function openBoxBundle(params: {
   const compatSecretKey = deriveBoxSecretKeyFromSeed(params.recipientSecretKeyOrSeed);
   return tryOpen(compatSecretKey);
 }
-

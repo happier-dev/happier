@@ -1,6 +1,6 @@
 import tweetnacl from 'tweetnacl';
-import { hmac } from '@noble/hashes/hmac';
-import { sha512 } from '@noble/hashes/sha512';
+import { hmac } from '@noble/hashes/hmac.js';
+import { sha512 } from '@noble/hashes/sha512.js';
 
 import { decodeBase64, encodeBase64 } from './base64.js';
 import { deriveKey } from './keyDerivation.js';
