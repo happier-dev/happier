@@ -97,6 +97,7 @@ export {
   type AgentAdvancedModeCapabilities,
   type AgentRuntimeModeSwitchKind,
 } from './advancedModes.js';
+
 export {
     getAgentRuntimeKindsManifest,
     resolveAgentRuntimeControlSurface,
@@ -211,17 +212,23 @@ export {
   type HappierReplayDialogItem,
   type HappierReplayStrategy,
 } from './sessions/replay/happierReplayPrompt.js';
+export { normalizeVoiceAgentTurnTranscriptText } from './voice/normalizeVoiceAgentTurnTranscriptText.js';
 
 // Namespaced provider-specific helpers/knobs.
 export * as providers from './providers/index.js';
 
 export {
-  PROVIDER_CLI_INSTALL_SPECS,
-  getProviderCliInstallSpec,
-  type ProviderCliInstallCommand,
-  type ProviderCliInstallPlatform,
-  type ProviderCliInstallSpec,
-} from './providers/cliInstallSpecs.js';
+  PROVIDER_CLI_RUNTIME_SPECS,
+  getProviderCliRuntimeSpec,
+  type ProviderCliInstallCommand as ProviderCliRuntimeInstallCommand,
+  type ProviderCliInstallPlatform as ProviderCliRuntimeInstallPlatform,
+  type ProviderCliManagedInstallSpec,
+  type ProviderCliManualInstallKind,
+  type ProviderCliManualInstallRecipes,
+  type ProviderCliRuntimeSpec,
+  type ProviderCliSourcePreference,
+} from './providers/providerCliRuntime.js';
+export * from './providers/providerCliInstallGuidance.js';
 
 export * from './providerSettings/index.js';
 
