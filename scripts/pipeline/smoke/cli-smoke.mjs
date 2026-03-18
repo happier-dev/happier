@@ -82,6 +82,27 @@ function npmPack(pkgDir, destDir, opts) {
   }
 
   fs.mkdirSync(destDir, { recursive: true });
+  if (path.basename(pkgDir) === 'cli' && pkgDir.endsWith(path.join('apps', 'cli'))) {
+    const helper = path.resolve(pkgDir, 'scripts', 'packTarball.mjs');
+    const raw = execFileSync(process.execPath, [helper, '--dest-dir', destDir], {
+      cwd: pkgDir,
+      env: { ...process.env },
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'inherit'],
+      timeout: 10 * 60_000,
+    }).trim();
+    const parsed = raw ? JSON.parse(raw) : [];
+    const entry = Array.isArray(parsed) ? parsed[0] : parsed;
+    const filename = String(entry?.filename ?? '').trim();
+    if (!filename) {
+      throw new Error(`apps/cli pack helper did not return a tarball filename (cwd: ${pkgDir})`);
+    }
+    const tgzPath = path.resolve(destDir, filename);
+    if (!tgzPath.endsWith('.tgz') || !fs.existsSync(tgzPath) || !fs.statSync(tgzPath).isFile()) {
+      throw new Error(`apps/cli pack helper did not produce an expected .tgz file (cwd: ${pkgDir}): ${tgzPath}`);
+    }
+    return tgzPath;
+  }
   const env = { ...process.env };
   const invocation = resolveWindowsCommandInvocation({
     command: 'npm',

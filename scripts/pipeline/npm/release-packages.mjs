@@ -166,6 +166,31 @@ function packTo(repoRoot, pkgDir, outDir, outName, opts) {
   }
 
   fs.mkdirSync(absOutDir, { recursive: true });
+  if (pkgDir === 'apps/cli') {
+    const helper = withinRepo(repoRoot, 'apps/cli/scripts/packTarball.mjs');
+    const raw = execFileSync(process.execPath, [helper, '--dest-dir', absOutDir], {
+      cwd: absPkgDir,
+      env: { ...process.env },
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'inherit'],
+      timeout: 10 * 60_000,
+    }).trim();
+    /** @type {any[]} */
+    const parsed = raw ? JSON.parse(raw) : [];
+    const entry = Array.isArray(parsed) ? parsed[0] : parsed;
+    const filename = String(entry?.filename ?? '').trim();
+    if (!filename) {
+      throw new Error(`apps/cli pack helper did not return a filename (cwd: ${absPkgDir})`);
+    }
+    const tgzPath = path.resolve(absOutDir, filename);
+    if (!fs.existsSync(tgzPath)) {
+      throw new Error(`apps/cli pack helper did not produce expected tarball: ${tgzPath}`);
+    }
+    if (path.basename(tgzPath) !== outName) {
+      fs.renameSync(tgzPath, absOutPath);
+    }
+    return absOutPath;
+  }
   const { tgzPath } = npmPack(absPkgDir, opts);
   fs.renameSync(tgzPath, absOutPath);
   return absOutPath;
