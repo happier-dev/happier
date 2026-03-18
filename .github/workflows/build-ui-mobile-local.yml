@@ -14,6 +14,8 @@ on:
         type: choice
         default: preview
         options:
+          - development
+          - canary
           - preview
           - production
       platform:
@@ -26,24 +28,29 @@ on:
           - android
           - all
       profile:
-        description: "EAS build profile (auto: preview→preview, production→production)"
+        description: "EAS build profile (auto: environment→matching profile)"
         required: true
         type: choice
         default: auto
         options:
           - auto
+          - development
+          - development-store
+          - canary
+          - canary-apk
           - preview
           - preview-apk
           - production
           - production-apk
       action:
-        description: "Whether to submit the built binaries to stores"
+        description: "Build native binaries, submit store builds, or publish OTA"
         required: true
         type: choice
         default: build_only
         options:
           - build_only
           - build_and_submit
+          - ota
       publish_apk_release:
         description: "Deploy (Android APK only) — Publish APK to GitHub Releases (auto publishes only when an APK is produced)"
         required: true
@@ -109,7 +116,7 @@ jobs:
 
   validate_expo_token:
     name: Validate EXPO_TOKEN
-    if: ${{ inputs.platform == 'all' || inputs.platform == 'android' || inputs.platform == 'ios' }}
+    if: ${{ inputs.action == 'ota' || inputs.platform == 'all' || inputs.platform == 'android' || inputs.platform == 'ios' }}
     runs-on: ubuntu-latest
     steps:
       - name: Fail when EXPO_TOKEN is missing
@@ -123,7 +130,7 @@ jobs:
 
   validate_apple_api_private_key:
     name: Validate APPLE_API_PRIVATE_KEY (iOS submit)
-    if: ${{ inputs.action == 'build_and_submit' && (inputs.platform == 'all' || inputs.platform == 'ios') }}
+    if: ${{ inputs.action == 'build_and_submit' && (inputs.environment == 'preview' || inputs.environment == 'production') && (inputs.platform == 'all' || inputs.platform == 'ios') }}
     runs-on: ubuntu-latest
     steps:
       - name: Fail when APPLE_API_PRIVATE_KEY is missing
@@ -137,7 +144,7 @@ jobs:
 
   build_android:
     name: Build (android)
-    if: ${{ inputs.platform == 'all' || inputs.platform == 'android' }}
+    if: ${{ inputs.action != 'ota' && (inputs.platform == 'all' || inputs.platform == 'android') }}
     needs: [release_actor_guard, validate_expo_token]
     runs-on: ubuntu-latest
     permissions:
@@ -145,7 +152,7 @@ jobs:
     environment: release-shared
     env:
       EAS_CLI_VERSION: 18.0.1
-      APP_ENV: ${{ inputs.environment }}
+      APP_ENV: ${{ inputs.environment == 'canary' && 'preview' || inputs.environment }}
       EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
       EAS_PLATFORM: android
       # Local Android release builds can exceed default heap limits during D8 dex merging.
@@ -196,7 +203,7 @@ jobs:
           # Keep builds mobile-focused (desktop/web builds happen elsewhere).
           HAPPIER_INSTALL_SCOPE: "ui,protocol,agents"
           HAPPIER_UI_VENDOR_WEB_ASSETS: "0"
-          HAPPIER_EMBEDDED_POLICY_ENV: ${{ inputs.environment == 'production' && 'production' || 'preview' }}
+          HAPPIER_EMBEDDED_POLICY_ENV: ${{ (inputs.environment == 'production' && 'production') || ((inputs.environment == 'preview' || inputs.environment == 'canary') && 'preview') || '' }}
         run: yarn install --frozen-lockfile --ignore-engines
 
       - name: EAS build (local runner) (pipeline)
@@ -225,13 +232,13 @@ jobs:
 
   build_ios:
     name: Build (ios)
-    if: ${{ inputs.platform == 'all' || inputs.platform == 'ios' }}
+    if: ${{ inputs.action != 'ota' && (inputs.platform == 'all' || inputs.platform == 'ios') }}
     needs: [release_actor_guard, validate_expo_token]
     runs-on: macos-latest
     environment: release-shared
     env:
       EAS_CLI_VERSION: 18.0.1
-      APP_ENV: ${{ inputs.environment }}
+      APP_ENV: ${{ inputs.environment == 'canary' && 'preview' || inputs.environment }}
       EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
       EAS_PLATFORM: ios
     steps:
@@ -261,7 +268,7 @@ jobs:
           # Keep builds mobile-focused (desktop/web builds happen elsewhere).
           HAPPIER_INSTALL_SCOPE: "ui,protocol,agents"
           HAPPIER_UI_VENDOR_WEB_ASSETS: "0"
-          HAPPIER_EMBEDDED_POLICY_ENV: ${{ inputs.environment == 'production' && 'production' || 'preview' }}
+          HAPPIER_EMBEDDED_POLICY_ENV: ${{ (inputs.environment == 'production' && 'production') || ((inputs.environment == 'preview' || inputs.environment == 'canary') && 'preview') || '' }}
         run: yarn install --frozen-lockfile --ignore-engines
 
       - name: EAS build (local runner) (pipeline)
@@ -285,15 +292,63 @@ jobs:
           path: dist/ui-mobile/**
           retention-days: 7
 
+  ota_update:
+    name: OTA update
+    if: ${{ inputs.action == 'ota' }}
+    needs: [release_actor_guard, validate_expo_token]
+    runs-on: ubuntu-latest
+    environment: release-shared
+    env:
+      EAS_CLI_VERSION: 18.0.1
+      APP_ENV: ${{ inputs.environment == 'canary' && 'preview' || inputs.environment }}
+      EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.source_ref != '' && inputs.source_ref || github.sha }}
+          fetch-depth: 0
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22.x
+          cache: yarn
+          cache-dependency-path: yarn.lock
+
+      - name: Enable Corepack (Yarn)
+        run: |
+          set -euo pipefail
+          corepack enable
+          corepack prepare yarn@1.22.22 --activate
+
+      - name: Install dependencies
+        env:
+          YARN_PRODUCTION: "false"
+          npm_config_production: "false"
+          HAPPIER_INSTALL_SCOPE: "ui,protocol,agents"
+          HAPPIER_UI_VENDOR_WEB_ASSETS: "0"
+          HAPPIER_EMBEDDED_POLICY_ENV: ${{ (inputs.environment == 'production' && 'production') || ((inputs.environment == 'preview' || inputs.environment == 'canary') && 'preview') || '' }}
+        run: yarn install --frozen-lockfile --ignore-engines
+
+      - name: Publish OTA via pipeline
+        run: |
+          set -euo pipefail
+          node scripts/pipeline/run.mjs ui-mobile-release \
+            --environment "${{ inputs.environment }}" \
+            --action ota \
+            --platform all \
+            --secrets-source env
+
   submit_android:
     name: Submit (android)
-    if: ${{ inputs.action == 'build_and_submit' && (inputs.platform == 'all' || inputs.platform == 'android') }}
+    if: ${{ inputs.action == 'build_and_submit' && (inputs.environment == 'preview' || inputs.environment == 'production') && (inputs.platform == 'all' || inputs.platform == 'android') }}
     needs: [release_actor_guard, validate_expo_token, build_android]
     runs-on: ubuntu-latest
     environment: release-shared
     env:
       EAS_CLI_VERSION: 18.0.1
-      APP_ENV: ${{ inputs.environment }}
+      APP_ENV: ${{ inputs.environment == 'canary' && 'preview' || inputs.environment }}
       EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
       EAS_PLATFORM: android
     steps:
@@ -397,13 +452,13 @@ jobs:
 
   submit_ios:
     name: Submit (ios)
-    if: ${{ inputs.action == 'build_and_submit' && (inputs.platform == 'all' || inputs.platform == 'ios') }}
+    if: ${{ inputs.action == 'build_and_submit' && (inputs.environment == 'preview' || inputs.environment == 'production') && (inputs.platform == 'all' || inputs.platform == 'ios') }}
     needs: [release_actor_guard, validate_expo_token, validate_apple_api_private_key, build_ios]
     runs-on: macos-latest
     environment: release-shared
     env:
       EAS_CLI_VERSION: 18.0.1
-      APP_ENV: ${{ inputs.environment }}
+      APP_ENV: ${{ inputs.environment == 'canary' && 'preview' || inputs.environment }}
       EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
       APPLE_API_PRIVATE_KEY: ${{ secrets.APPLE_API_PRIVATE_KEY }}
       EAS_PLATFORM: ios

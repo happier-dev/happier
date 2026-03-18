@@ -231,8 +231,9 @@ test('promote-ui preview OTA updates are non-interactive and provide an update m
 
   const script = await loadFile('scripts/pipeline/expo/ota-update.mjs');
   assert.match(script, /eas-cli@\$\{easCliVersion\}/);
-  assert.match(script, /update[\s\S]*?--branch[\s\S]*?preview/);
-  assert.match(script, /--non-interactive/);
+  assert.match(script, /resolveUpdateLane\(environment\)/);
+  assert.match(script, /--channel/);
+  assert.match(script, /resolveExpoInteractivity/);
   assert.match(script, /--message/);
 });
 

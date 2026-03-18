@@ -80,6 +80,17 @@ test('pipeline CLI supports <command> --help', async () => {
   assert.match(out, /--path/);
 });
 
+test('pipeline CLI help reflects expanded Expo environment support', async () => {
+  const downloadHelp = execFileSync(process.execPath, [pipelineCli, 'help', 'expo-download-apk'], {
+    cwd: repoRoot,
+    env: { ...process.env },
+    encoding: 'utf8',
+    stdio: ['ignore', 'pipe', 'pipe'],
+    timeout: 30_000,
+  });
+  assert.match(downloadHelp, /development\|canary\|preview\|production/);
+});
+
 test('pipeline help covers every supported subcommand', async () => {
   const runSource = fs.readFileSync(pipelineCli, 'utf8');
   const allowlist = Array.from(runSource.matchAll(/subcommand\s*!==\s*'([^']+)'/g)).map((m) => String(m[1] ?? '').trim()).filter(Boolean);
