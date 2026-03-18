@@ -8,6 +8,7 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
+SELF_RG="$SCRIPT_DIR/rg"
 REAL_RG="$SCRIPT_DIR/../../tools/unpacked/rg"
 
 args=()
@@ -20,6 +21,40 @@ for arg in "$@"; do
 done
 
 if ((${#args[@]})); then
-  exec "$REAL_RG" "${args[@]}"
+  if [[ -x "$REAL_RG" ]]; then
+    exec "$REAL_RG" "${args[@]}"
+  fi
+  IFS=':' read -r -a path_entries <<< "${PATH:-}"
+  for entry in "${path_entries[@]}"; do
+    [[ -z "$entry" ]] && continue
+    candidate="$entry/rg"
+    if [[ "$candidate" -ef "$SELF_RG" ]]; then
+      continue
+    fi
+    if [[ -x "$candidate" ]]; then
+      exec "$candidate" "${args[@]}"
+    fi
+  done
+  echo "happier: rg shim could not find a usable ripgrep binary" >&2
+  echo "Missing packaged ripgrep at: $REAL_RG" >&2
+  echo "Fix: reinstall @happier-dev/cli (postinstall unpacks tools) or install ripgrep (rg) on PATH." >&2
+  exit 127
 fi
-exec "$REAL_RG"
+if [[ -x "$REAL_RG" ]]; then
+  exec "$REAL_RG"
+fi
+IFS=':' read -r -a path_entries <<< "${PATH:-}"
+for entry in "${path_entries[@]}"; do
+  [[ -z "$entry" ]] && continue
+  candidate="$entry/rg"
+  if [[ "$candidate" -ef "$SELF_RG" ]]; then
+    continue
+  fi
+  if [[ -x "$candidate" ]]; then
+    exec "$candidate"
+  fi
+done
+echo "happier: rg shim could not find a usable ripgrep binary" >&2
+echo "Missing packaged ripgrep at: $REAL_RG" >&2
+echo "Fix: reinstall @happier-dev/cli (postinstall unpacks tools) or install ripgrep (rg) on PATH." >&2
+exit 127

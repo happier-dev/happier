@@ -1,46 +1,24 @@
-import { cpSync, existsSync, rmSync } from 'node:fs';
-import { dirname, resolve } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { cpSync, existsSync } from 'node:fs';
 
-const __dirname = dirname(fileURLToPath(import.meta.url));
+import { rmDirSafeSync } from './rmDirSafe.mjs';
 
-export function resolveCliPackageRoot(scriptDir = __dirname) {
-  return resolve(scriptDir, '..');
-}
-
-export function syncPackageDist(options = {}) {
-  const packageRoot = resolve(String(options.packageRoot ?? resolveCliPackageRoot()));
-  const distDir = resolve(String(options.distDir ?? resolve(packageRoot, 'dist')));
-  const packageDistDir = resolve(String(options.packageDistDir ?? resolve(packageRoot, 'package-dist')));
-  const exists = options.existsSync ?? existsSync;
-  const copy = options.cpSync ?? cpSync;
-  const remove = options.rmSync ?? rmSync;
-
-  if (!exists(distDir)) {
-    throw new Error(`[sync-package-dist] missing dist directory: ${distDir}`);
+export function syncPackageDist() {
+  if (!existsSync('dist')) {
+    throw new Error('Cannot sync package-dist because dist is missing. Run the CLI build first.');
   }
 
-  remove(packageDistDir, { recursive: true, force: true });
-  copy(distDir, packageDistDir, { recursive: true });
-
-  return {
-    packageRoot,
-    distDir,
-    packageDistDir,
-  };
+  rmDirSafeSync('package-dist', {
+    retries: 25,
+    delayMs: 20,
+  });
+  cpSync('dist', 'package-dist', { recursive: true });
 }
 
-const invokedAsMain = (() => {
-  const argv1 = process.argv[1];
-  if (!argv1) return false;
-  return resolve(argv1) === resolve(fileURLToPath(import.meta.url));
+const isEntrypoint = (() => {
+  const arg = typeof process.argv?.[1] === 'string' ? process.argv[1] : '';
+  return arg.endsWith('/syncPackageDist.mjs') || arg.endsWith('\\syncPackageDist.mjs');
 })();
 
-if (invokedAsMain) {
-  try {
-    syncPackageDist();
-  } catch (error) {
-    console.error(error instanceof Error ? error.message : String(error));
-    process.exit(1);
-  }
+if (isEntrypoint) {
+  syncPackageDist();
 }

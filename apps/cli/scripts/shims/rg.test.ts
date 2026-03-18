@@ -1,50 +1,47 @@
-import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync, chmodSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
+import { chmod, copyFile, mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 
-describe('rg shim', () => {
-  it('rewrites --fixed-string to --fixed-strings before invoking the packaged ripgrep binary', () => {
-    if (process.platform === 'win32') return;
+const __dirname = dirname(fileURLToPath(import.meta.url));
 
-    const root = mkdtempSync(join(tmpdir(), 'happier-rg-shim-'));
-    try {
-      const scriptDir = join(root, 'scripts', 'shims');
-      const toolsDir = join(root, 'tools', 'unpacked');
-      mkdirSync(scriptDir, { recursive: true });
-      mkdirSync(toolsDir, { recursive: true });
+const tempDirs = new Set<string>();
 
-      const shimSource = fileURLToPath(new URL('./rg', import.meta.url));
-      const shimPath = join(scriptDir, 'rg');
-      copyFileSync(shimSource, shimPath);
-      chmodSync(shimPath, 0o755);
+afterEach(async () => {
+  for (const dir of tempDirs) {
+    await rm(dir, { recursive: true, force: true });
+  }
+  tempDirs.clear();
+});
 
-      const argsFile = join(root, 'rg-args.txt');
-      const rgPath = join(toolsDir, 'rg');
-      writeFileSync(
-        rgPath,
-        `#!/usr/bin/env bash
-set -euo pipefail
-printf '%s\n' "$@" > ${JSON.stringify(argsFile)}
-`,
-        'utf8',
-      );
-      chmodSync(rgPath, 0o755);
+describe('scripts/shims/rg', () => {
+  it('falls back to system rg when packaged tools are missing', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'happier-cli-rg-shim-'));
+    tempDirs.add(root);
 
-      const result = spawnSync('bash', [shimPath, '--fixed-string', 'needle', '--glob', '*.ts'], {
-        cwd: root,
-        encoding: 'utf8',
-        stdio: ['ignore', 'pipe', 'pipe'],
-      });
+    const shimsDir = join(root, 'scripts', 'shims');
+    await mkdir(shimsDir, { recursive: true });
 
-      expect(result.status).toBe(0);
-      const forwardedArgs = readFileSync(argsFile, 'utf8').trim().split('\n');
-      expect(forwardedArgs).toEqual(['--fixed-strings', 'needle', '--glob', '*.ts']);
-    } finally {
-      rmSync(root, { recursive: true, force: true });
-    }
+    const shimPath = join(shimsDir, 'rg');
+    await copyFile(join(__dirname, 'rg'), shimPath);
+    await chmod(shimPath, 0o755);
+
+    const systemBinDir = join(root, 'system-bin');
+    await mkdir(systemBinDir, { recursive: true });
+
+    const systemRgPath = join(systemBinDir, 'rg');
+    await writeFile(systemRgPath, '#!/usr/bin/env bash\nprintf \"SYSTEM_RG:%s\\n\" \"$*\"\n', 'utf8');
+    await chmod(systemRgPath, 0o755);
+
+    const result = spawnSync(shimPath, ['--fixed-string', 'needle'], {
+      env: { ...process.env, PATH: `${shimsDir}:${systemBinDir}:${process.env.PATH ?? ''}` },
+      encoding: 'utf8',
+    });
+
+    expect(result.status).toBe(0);
+    expect(result.stdout.trim()).toBe('SYSTEM_RG:--fixed-strings needle');
   });
 });

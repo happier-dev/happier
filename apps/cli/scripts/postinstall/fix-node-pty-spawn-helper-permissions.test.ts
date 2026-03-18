@@ -1,41 +1,35 @@
-import { createRequire } from 'node:module';
-import { chmodSync, mkdirSync, mkdtempSync, rmSync, statSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-
 import { describe, expect, it } from 'vitest';
+import { chmod, mkdir, mkdtemp, stat, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join, resolve } from 'node:path';
+import { createRequire } from 'node:module';
 
-const require = createRequire(import.meta.url);
-const { fixNodePtySpawnHelperPermissions } = require('./fix-node-pty-spawn-helper-permissions.cjs') as {
-  fixNodePtySpawnHelperPermissions: (options?: { cwd?: string }) => { fixed: number; paths: string[] };
-};
+function hasAnyExecuteBit(mode: number): boolean {
+    return (mode & 0o111) !== 0;
+}
 
 describe('fixNodePtySpawnHelperPermissions', () => {
-  it('restores executable permissions for bundled node-pty spawn helpers', () => {
-    if (process.platform === 'win32') return;
+    it('marks spawn-helper as executable on darwin', async () => {
+        const rootDir = await mkdtemp(join(tmpdir(), 'happier-node-pty-test-'));
+        const nodePtyDir = resolve(join(rootDir, 'node_modules', 'node-pty'));
+        const helperPath = resolve(join(nodePtyDir, 'prebuilds', 'darwin-arm64', 'spawn-helper'));
 
-    const root = mkdtempSync(join(tmpdir(), 'happier-node-pty-permissions-'));
-    try {
-      const helperPaths = [
-        join(root, 'node_modules', 'node-pty', 'build', 'Release', 'spawn-helper'),
-        join(root, 'node_modules', '@homebridge', 'node-pty-prebuilt-multiarch', 'build', 'Release', 'spawn-helper'),
-      ];
+        await mkdir(resolve(join(nodePtyDir, 'prebuilds', 'darwin-arm64')), { recursive: true });
+        await writeFile(helperPath, 'fake', 'utf8');
+        await chmod(helperPath, 0o644);
 
-      for (const helperPath of helperPaths) {
-        mkdirSync(join(helperPath, '..'), { recursive: true });
-        writeFileSync(helperPath, '#!/usr/bin/env node\n', 'utf8');
-        chmodSync(helperPath, 0o644);
-      }
+        const require = createRequire(import.meta.url);
+        const mod = require('./fix-node-pty-spawn-helper-permissions.cjs') as {
+            fixNodePtySpawnHelperPermissions: (input: { platform: string; nodePtyDirs: string[] }) => Promise<{ changed: number }>;
+        };
 
-      const result = fixNodePtySpawnHelperPermissions({ cwd: root });
-      expect(result.fixed).toBe(2);
+        const before = await stat(helperPath);
+        expect(hasAnyExecuteBit(before.mode)).toBe(false);
 
-      for (const helperPath of helperPaths) {
-        const mode = statSync(helperPath).mode & 0o777;
-        expect(mode & 0o111).not.toBe(0);
-      }
-    } finally {
-      rmSync(root, { recursive: true, force: true });
-    }
-  });
+        const result = await mod.fixNodePtySpawnHelperPermissions({ platform: 'darwin', nodePtyDirs: [nodePtyDir] });
+        expect(result.changed).toBe(1);
+
+        const after = await stat(helperPath);
+        expect(hasAnyExecuteBit(after.mode)).toBe(true);
+    });
 });

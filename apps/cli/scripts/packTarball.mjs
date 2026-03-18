@@ -1,96 +1,63 @@
-import { spawnSync } from 'node:child_process';
-import { existsSync } from 'node:fs';
-import { dirname, resolve } from 'node:path';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import { parseArgs } from 'node:util';
 
-import { resolveCliPackageRoot, syncPackageDist } from './syncPackageDist.mjs';
+import { resolveWindowsCommandInvocation } from '../../../packages/cli-common/dist/process/index.js';
 
-const __dirname = dirname(fileURLToPath(import.meta.url));
+import { syncPackageDist } from './syncPackageDist.mjs';
 
-function resolveNpmInvocation(npmExecpath = process.env.npm_execpath) {
-  const npmExecpathValue = String(npmExecpath ?? '').trim();
-  if (npmExecpathValue) {
-    return {
-      command: process.execPath,
-      args: [npmExecpathValue],
-    };
+function main() {
+  const packageDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+  const { values } = parseArgs({
+    options: {
+      'dest-dir': { type: 'string' },
+    },
+    allowPositionals: false,
+  });
+
+  const destDir = String(values['dest-dir'] ?? '').trim();
+  if (!destDir) {
+    throw new Error('--dest-dir is required');
   }
 
-  return {
+  if (!fs.existsSync(path.join(packageDir, 'dist'))) {
+    throw new Error('apps/cli/dist is missing. Run the CLI build before packing.');
+  }
+  if (!fs.existsSync(path.join(packageDir, 'package-dist'))) {
+    syncPackageDist();
+  }
+
+  fs.mkdirSync(destDir, { recursive: true });
+  const stageDir = fs.mkdtempSync(path.join(os.tmpdir(), 'happier-cli-pack-stage-'));
+  const stagePackageDir = path.join(stageDir, 'package');
+  fs.cpSync(packageDir, stagePackageDir, {
+    recursive: true,
+    filter: (src) => !src.includes(`${path.sep}.git${path.sep}`),
+  });
+
+  const env = { ...process.env };
+  const invocation = resolveWindowsCommandInvocation({
     command: 'npm',
-    args: [],
-  };
-}
-
-function parseTarballName(stdout) {
-  const raw = String(stdout ?? '').trim();
-  if (!raw) return '';
-
-  try {
-    const parsed = JSON.parse(raw);
-    const entry = Array.isArray(parsed) ? parsed.at(-1) : parsed;
-    return String(entry?.filename ?? '').trim();
-  } catch {
-    return raw.split('\n').map((line) => line.trim()).filter(Boolean).at(-1) ?? '';
-  }
-}
-
-export function packTarball(options = {}) {
-  const packageRoot = resolve(String(options.packageRoot ?? resolveCliPackageRoot()));
-  const spawn = options.spawnSync ?? spawnSync;
-  const npmInvocation = options.npmInvocation ?? resolveNpmInvocation(options.npmExecpath);
-
-  syncPackageDist({
-    packageRoot,
-    distDir: options.distDir,
-    packageDistDir: options.packageDistDir,
-    existsSync: options.existsSync,
-    cpSync: options.cpSync,
-    rmSync: options.rmSync,
+    args: ['pack', '--ignore-scripts', '--json', '--pack-destination', destDir],
+    env,
+    resolveCommandOnPath: true,
   });
-
-  const result = spawn(npmInvocation.command, [...npmInvocation.args, 'pack', '--json'], {
-    cwd: packageRoot,
+  const raw = execFileSync(invocation.command, invocation.args, {
+    cwd: stagePackageDir,
+    env,
     encoding: 'utf8',
-    stdio: ['ignore', 'pipe', 'pipe'],
-  });
+    stdio: ['ignore', 'pipe', 'inherit'],
+    timeout: 10 * 60_000,
+    windowsVerbatimArguments: invocation.windowsVerbatimArguments,
+  }).trim();
 
-  if (typeof result.status === 'number' && result.status !== 0) {
-    throw new Error(`[pack-tarball] npm pack exited with status ${result.status}`);
-  }
-  if (result.error) {
-    throw result.error;
-  }
-
-  const tarballName = parseTarballName(result.stdout);
-  if (!tarballName) {
-    throw new Error('[pack-tarball] npm pack did not report a tarball filename');
-  }
-
-  const tarballPath = resolve(packageRoot, tarballName);
-  if (!existsSync(tarballPath)) {
-    throw new Error(`[pack-tarball] missing tarball output: ${tarballPath}`);
-  }
-
-  return {
-    packageRoot,
-    tarballName,
-    tarballPath,
-  };
-}
-
-const invokedAsMain = (() => {
-  const argv1 = process.argv[1];
-  if (!argv1) return false;
-  return resolve(argv1) === resolve(fileURLToPath(import.meta.url));
-})();
-
-if (invokedAsMain) {
-  try {
-    const result = packTarball();
-    console.log(result.tarballPath);
-  } catch (error) {
-    console.error(error instanceof Error ? error.message : String(error));
-    process.exit(1);
+  process.stdout.write(raw);
+  if (!raw.endsWith('\n')) {
+    process.stdout.write('\n');
   }
 }
+
+main();
