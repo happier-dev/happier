@@ -30,12 +30,6 @@ function normalizeStrategy(value: unknown): HappierReplayStrategy {
   return value === 'summary_plus_recent' ? 'summary_plus_recent' : 'recent_messages';
 }
 
-function normalizeText(value: unknown): string | null {
-  if (typeof value !== 'string') return null;
-  const trimmed = value.trim();
-  return trimmed.length > 0 ? trimmed : null;
-}
-
 export function buildHappierReplayPromptFromDialog(params: Readonly<{
   previousSessionId: string;
   dialog: readonly HappierReplayDialogItem[];
