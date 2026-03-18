@@ -39,6 +39,11 @@ function resolveDaemonReportRetryValue(raw: string | undefined, fallback: number
     return Math.min(bounds.max, Math.max(bounds.min, parsed));
 }
 
+function isTruthyEnvFlag(raw: string | undefined): boolean {
+    const normalized = (raw ?? '').trim().toLowerCase();
+    return normalized === '1' || normalized === 'true' || normalized === 'yes' || normalized === 'y';
+}
+
 export function primeAgentStateForUi(session: ApiSessionClient, logPrefix: string): void {
     // Bump agentStateVersion early so the UI can reliably treat the agent as "ready" to receive messages.
     // The server does not currently persist agentState during initial session creation; it starts at version 0
@@ -85,7 +90,13 @@ export async function reportSessionToDaemonIfRunning(opts: {
     const sleepFn = deps.sleepFn ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
     const nowFn = deps.nowFn ?? (() => Date.now());
     const startedBy = String(opts.metadata?.startedBy ?? '').trim().toLowerCase();
-    const defaultRetryTimeoutMs = startedBy === 'daemon' ? 90_000 : 10_000;
+    const daemonAutostartEnabled = isTruthyEnvFlag(process.env.HAPPIER_SESSION_AUTOSTART_DAEMON);
+    const defaultRetryTimeoutMs =
+        startedBy === 'daemon'
+            ? 90_000
+            : daemonAutostartEnabled
+                ? 30_000
+                : 10_000;
     const retryTimeoutMs =
         deps.retryTimeoutMs ??
         resolveDaemonReportRetryValue(process.env.HAPPIER_DAEMON_REPORT_SESSION_RETRY_TIMEOUT_MS, defaultRetryTimeoutMs, {

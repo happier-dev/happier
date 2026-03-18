@@ -131,6 +131,68 @@ describe('DeferredApiSessionClient', () => {
     expect(calls).toEqual(['user', 'codex']);
   });
 
+  it('buffers transcript draft deltas until attach then flushes them', async () => {
+    const deferred = new DeferredApiSessionClient({
+      placeholderSessionId: 'PID-1',
+      limits: { maxEntries: 10, maxBytes: 10_000 },
+    });
+
+    const draftCalls: Array<{
+      provider: unknown;
+      params: unknown;
+    }> = [];
+
+    const real = {
+      sessionId: 'sess_1',
+      rpcHandlerManager: { registerHandler: vi.fn(), invokeLocal: vi.fn(async () => ({})) },
+      sendSessionEvent: vi.fn(),
+      sendClaudeSessionMessage: vi.fn(),
+      sendAgentMessage: vi.fn(),
+      sendCodexMessage: vi.fn(),
+      sendUserTextMessage: vi.fn(),
+      sendTranscriptDraftDelta: vi.fn((provider: unknown, params: unknown) => {
+        draftCalls.push({ provider, params });
+      }),
+      updateMetadata: vi.fn(),
+      updateAgentState: vi.fn(),
+      keepAlive: vi.fn(),
+      getMetadataSnapshot: vi.fn(() => createMetadataStub()),
+      waitForMetadataUpdate: vi.fn(async () => true),
+      popPendingMessage: vi.fn(async () => true),
+      peekPendingMessageQueueV2Count: vi.fn(async () => 0),
+      discardPendingMessageQueueV2All: vi.fn(async () => 0),
+      discardCommittedMessageLocalIds: vi.fn(async () => 0),
+      sendSessionDeath: vi.fn(),
+      flush: vi.fn(async () => {}),
+      close: vi.fn(async () => {}),
+    } as const;
+
+    deferred.sendTranscriptDraftDelta('codex', {
+      localId: 'draft-1',
+      segmentKind: 'assistant',
+      sidechainId: null,
+      deltaText: 'hello',
+      createdAtMs: 123,
+    });
+
+    expect(draftCalls).toEqual([]);
+
+    await deferred.attach(real);
+
+    expect(draftCalls).toEqual([
+      {
+        provider: 'codex',
+        params: {
+          localId: 'draft-1',
+          segmentKind: 'assistant',
+          sidechainId: null,
+          deltaText: 'hello',
+          createdAtMs: 123,
+        },
+      },
+    ]);
+  });
+
   it('flushes buffered calls best-effort when an early write fails (no hang, no abort)', async () => {
     const deferred = new DeferredApiSessionClient({
       placeholderSessionId: 'PID-1',

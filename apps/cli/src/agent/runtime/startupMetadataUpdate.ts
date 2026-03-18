@@ -1,5 +1,6 @@
 import type { Metadata, PermissionMode } from '@/api/types';
-import { updateMetadataBestEffort } from '@/api/session/sessionWritesBestEffort';
+import { logger } from '@/ui/logger';
+import type { SessionAttachMetadataIdentityPolicy } from '@happier-dev/protocol';
 
 import {
   mergeSessionMetadataForStartup,
@@ -51,13 +52,14 @@ export function applyStartupMetadataUpdateToSession(opts: {
   permissionModeOverride: PermissionModeOverride;
   acpSessionModeOverride?: AcpSessionModeOverride;
   modelOverride?: ModelOverride;
+  metadataKeysToUnsetOnAttach?: readonly string[] | null;
+  attachMetadataIdentityPolicy?: SessionAttachMetadataIdentityPolicy | null;
   mode?: 'start' | 'attach';
-}): void {
+}): Promise<void> {
   const nowMs = typeof opts.nowMs === 'number' ? opts.nowMs : Date.now();
 
-  updateMetadataBestEffort(
-    opts.session,
-    (currentMetadata) =>
+  try {
+    const result = opts.session.updateMetadata((currentMetadata) =>
       mergeSessionMetadataForStartup({
         current: currentMetadata,
         next: opts.next,
@@ -65,9 +67,16 @@ export function applyStartupMetadataUpdateToSession(opts: {
         permissionModeOverride: opts.permissionModeOverride ?? null,
         acpSessionModeOverride: opts.acpSessionModeOverride ?? null,
         modelOverride: opts.modelOverride ?? null,
+        metadataKeysToUnsetOnAttach: opts.metadataKeysToUnsetOnAttach ?? null,
+        attachMetadataIdentityPolicy: opts.attachMetadataIdentityPolicy ?? null,
         mode: opts.mode ?? 'start',
       }),
-    '[startupMetadata]',
-    'apply_startup_metadata_update',
-  );
+    );
+    return Promise.resolve(result).catch((error) => {
+      logger.debug('[startupMetadata] Failed to update session metadata (apply_startup_metadata_update) (non-fatal)', error);
+    });
+  } catch (error) {
+    logger.debug('[startupMetadata] Failed to update session metadata (apply_startup_metadata_update) (non-fatal)', error);
+    return Promise.resolve();
+  }
 }

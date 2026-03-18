@@ -1,8 +1,13 @@
-import { describe, it, expect } from 'vitest';
+import { afterEach, describe, it, expect, vi } from 'vitest';
 import { MessageQueue2 } from '@/agent/runtime/modeMessageQueue';
+import { configuration } from '@/configuration';
 import { waitForMessagesOrPending } from './waitForMessagesOrPending';
 
 describe('waitForMessagesOrPending', () => {
+    afterEach(() => {
+        vi.useRealTimers();
+    });
+
     it('returns immediately when a queue message exists', async () => {
         type Mode = { id: string };
         const mode: Mode = { id: 'm1' };
@@ -150,6 +155,150 @@ describe('waitForMessagesOrPending', () => {
         expect(metadataCallCount).toBeLessThan(5);
         expect(popPendingCallCount).toBeLessThan(5);
         expect(result?.message).toBe('after-disconnect');
+    });
+
+    it('reconciles metadata on idle wake when a metadata event was missed', async () => {
+        vi.useFakeTimers();
+
+        type Mode = { id: string };
+        const mode: Mode = { id: 'm1' };
+        const queue = new MessageQueue2<Mode>(() => 'hash');
+        const originalIdleWakePollIntervalMs = configuration.pendingQueueIdleWakePollIntervalMs;
+        (configuration as any).pendingQueueIdleWakePollIntervalMs = 10;
+
+        let metadataDirty = false;
+        let applyQueuedMetadata = false;
+
+        try {
+            const popPendingMessage = async () => {
+                if (!applyQueuedMetadata) return false;
+                applyQueuedMetadata = false;
+                queue.pushImmediate('from-metadata-reconcile', mode);
+                return true;
+            };
+
+            const waitForMetadataUpdate = async (abortSignal?: AbortSignal) => {
+                if (abortSignal?.aborted) return false;
+                return await new Promise<boolean>((resolve) => {
+                    abortSignal?.addEventListener('abort', () => resolve(false), { once: true });
+                });
+            };
+
+            const promise = waitForMessagesOrPending({
+                messageQueue: queue,
+                abortSignal: new AbortController().signal,
+                popPendingMessage,
+                waitForMetadataUpdate,
+                onMetadataUpdate: () => {
+                    if (!metadataDirty) return;
+                    metadataDirty = false;
+                    applyQueuedMetadata = true;
+                },
+            });
+
+            metadataDirty = true;
+
+            const resultPromise = Promise.race([
+                promise,
+                new Promise<never>((_, reject) => {
+                    setTimeout(() => reject(new Error('waitForMessagesOrPending hung')), 100);
+                }),
+            ]);
+
+            await vi.advanceTimersByTimeAsync(120);
+
+            await expect(resultPromise).resolves.toMatchObject({ message: 'from-metadata-reconcile' });
+        } finally {
+            (configuration as any).pendingQueueIdleWakePollIntervalMs = originalIdleWakePollIntervalMs;
+        }
+    });
+
+    it('reconciles metadata on idle wake even when metadata waiting drops out immediately', async () => {
+        vi.useFakeTimers();
+
+        type Mode = { id: string };
+        const mode: Mode = { id: 'm1' };
+        const queue = new MessageQueue2<Mode>(() => 'hash');
+        const originalIdleWakePollIntervalMs = configuration.pendingQueueIdleWakePollIntervalMs;
+        (configuration as any).pendingQueueIdleWakePollIntervalMs = 10;
+
+        let metadataDirty = false;
+
+        try {
+            const promise = waitForMessagesOrPending({
+                messageQueue: queue,
+                abortSignal: new AbortController().signal,
+                popPendingMessage: async () => false,
+                waitForMetadataUpdate: async () => false,
+                onMetadataUpdate: () => {
+                    if (!metadataDirty) return;
+                    metadataDirty = false;
+                    queue.pushImmediate('from-immediate-false-metadata-reconcile', mode);
+                },
+            });
+
+            metadataDirty = true;
+
+            const resultPromise = Promise.race([
+                promise,
+                new Promise<never>((_, reject) => {
+                    setTimeout(() => reject(new Error('waitForMessagesOrPending hung')), 100);
+                }),
+            ]);
+
+            await vi.advanceTimersByTimeAsync(120);
+
+            await expect(resultPromise).resolves.toMatchObject({ message: 'from-immediate-false-metadata-reconcile' });
+        } finally {
+            (configuration as any).pendingQueueIdleWakePollIntervalMs = originalIdleWakePollIntervalMs;
+        }
+    });
+
+    it('does not leak abort listeners when idle fallback timer resolves normally', async () => {
+        vi.useFakeTimers();
+
+        type Mode = { id: string };
+        const mode: Mode = { id: 'm1' };
+        const queue = new MessageQueue2<Mode>(() => 'hash');
+
+        const originalIdleWakePollIntervalMs = configuration.pendingQueueIdleWakePollIntervalMs;
+        (configuration as any).pendingQueueIdleWakePollIntervalMs = 10;
+
+        const abortController = new AbortController();
+        let addCount = 0;
+        let removeCount = 0;
+        const instrumentedSignal = {
+            get aborted() {
+                return abortController.signal.aborted;
+            },
+            addEventListener: (...args: any[]) => {
+                addCount += 1;
+                return (abortController.signal as any).addEventListener(...args);
+            },
+            removeEventListener: (...args: any[]) => {
+                removeCount += 1;
+                return (abortController.signal as any).removeEventListener(...args);
+            },
+        } as any as AbortSignal;
+
+        try {
+            const promise = waitForMessagesOrPending({
+                messageQueue: queue,
+                abortSignal: instrumentedSignal,
+                popPendingMessage: async () => false,
+                waitForMetadataUpdate: async () => false,
+                onMetadataUpdate: () => {
+                    queue.pushImmediate('idle-wake', mode);
+                },
+            });
+
+            await vi.advanceTimersByTimeAsync(50);
+
+            await expect(promise).resolves.toMatchObject({ message: 'idle-wake' });
+            expect(removeCount).toBe(addCount);
+        } finally {
+            (configuration as any).pendingQueueIdleWakePollIntervalMs = originalIdleWakePollIntervalMs;
+        }
     });
 
     it('does not hang when abort races with listener registration', async () => {
