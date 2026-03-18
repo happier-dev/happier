@@ -7,7 +7,10 @@ import {
 import type { Settings } from '../../domains/settings/settings';
 import type { SessionListViewItem } from '../../domains/session/listing/sessionListViewData';
 import type { SessionListRenderableSession } from '../../domains/session/listing/sessionListRenderable';
-import { buildSessionListViewDataWithServerScope } from '../buildSessionListViewDataWithServerScope';
+import {
+    applyReachableTargetsToSessionListRenderables,
+    buildSessionListViewDataWithServerScope,
+} from '../buildSessionListViewDataWithServerScope';
 import { setActiveServerSessionListCache } from '../sessionListCache';
 import { getActiveServerSnapshot } from '../../domains/server/serverRuntime';
 import { projectManager } from '../../runtime/orchestration/projectManager';
@@ -32,6 +35,7 @@ export type MachinesDomain = {
 type MachinesDomainDependencies = Readonly<{
     sessions: Record<string, Session>;
     sessionListRenderables: Record<string, SessionListRenderableSession>;
+    getProjectForSession?: (sessionId: string) => { key?: { machineId?: string | null; path?: string | null } | null } | null;
     profile: { id: string };
     settings: Settings;
     sessionListViewData: SessionListViewItem[] | null;
@@ -124,8 +128,15 @@ export function createMachinesDomain<S extends MachinesDomain & MachinesDomainDe
                     const usesProjectGrouping = activeGrouping === 'project' || inactiveGrouping === 'project';
 
                     if (usesProjectGrouping) {
+                        const reachableRenderables = applyReachableTargetsToSessionListRenderables({
+                            sessions: state.sessionListRenderables ?? {},
+                            sessionRecords: state.sessions ?? {},
+                            machines: mergedMachineDisplays,
+                            machineRecords: mergedMachines,
+                            getProjectForSession: state.getProjectForSession ?? undefined,
+                        });
                         const referencedMachineIds = new Set<string>();
-                        for (const session of Object.values(state.sessionListRenderables ?? {})) {
+                        for (const session of Object.values(reachableRenderables)) {
                             const path = String(session.metadata?.path ?? '').trim();
                             if (!path) continue;
                             const machineId = String(session.metadata?.machineId ?? '').trim() || 'unknown';
@@ -149,10 +160,13 @@ export function createMachinesDomain<S extends MachinesDomain & MachinesDomainDe
                 const sessionListViewData = needsSessionListViewDataRebuild
                     ? buildSessionListViewDataWithServerScope({
                         sessions: state.sessionListRenderables ?? {},
+                        sessionRecords: state.sessions ?? {},
                         machines: mergedMachineDisplays,
+                        machineRecords: mergedMachines,
                         groupInactiveSessionsByProject: state.settings.groupInactiveSessionsByProject,
                         activeGroupingV1: state.settings.sessionListActiveGroupingV1,
                         inactiveGroupingV1: state.settings.sessionListInactiveGroupingV1,
+                        getProjectForSession: state.getProjectForSession ?? undefined,
                     })
                     : state.sessionListViewData;
 

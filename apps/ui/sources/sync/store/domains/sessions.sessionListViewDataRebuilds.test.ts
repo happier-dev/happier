@@ -7,6 +7,8 @@ beforeEach(() => {
 
 function mockSessionPersistenceBoundaries(): void {
     vi.doMock('../../domains/state/persistence', () => ({
+        loadProfile: vi.fn(() => ({ id: 'account_a' })),
+        saveProfile: vi.fn(),
         loadSessionDrafts: vi.fn(() => ({})),
         loadSessionLastViewed: vi.fn(() => ({})),
         loadSessionModelModeUpdatedAts: vi.fn(() => ({})),
@@ -43,6 +45,8 @@ function mockSessionPersistenceBoundaries(): void {
         isModelSelectableForSession: vi.fn(() => true),
     }));
     vi.doMock('@/agents/catalog/catalog', () => ({
+        AGENT_IDS: [],
+        DEFAULT_AGENT_ID: 'openai',
         resolveAgentIdFromFlavor: vi.fn(() => null),
     }));
 }
@@ -178,6 +182,113 @@ describe('sessions domain: sessionListViewData rebuild gating', () => {
         ]);
 
         expect(get().sessionListViewData).toBe(initial);
+    });
+
+    it('rebuilds sessionListViewData when a peer session update changes another stale session reachable target', async () => {
+        const updateSessions = vi.fn();
+        vi.doMock('../../runtime/orchestration/projectManager', () => ({
+            projectManager: { updateSessions },
+        }));
+        mockSessionPersistenceBoundaries();
+
+        const { buildMachineDisplayRenderableFromMachine } = await import('../../domains/machines/machineDisplayRenderable');
+        const { createSessionsDomain } = await import('./sessions');
+        const { get, domain } = createHarness(createSessionsDomain);
+
+        const machineA = {
+            id: 'm-a',
+            active: true,
+            activeAt: 100,
+            metadata: { host: 'host-a' },
+        } as any;
+        const machineB = {
+            id: 'm-b',
+            active: true,
+            activeAt: 200,
+            metadata: { host: 'host-b' },
+        } as any;
+
+        get().machines = {
+            'm-a': machineA,
+            'm-b': machineB,
+        };
+        get().machineDisplayById = {
+            'm-a': buildMachineDisplayRenderableFromMachine(machineA),
+            'm-b': buildMachineDisplayRenderableFromMachine(machineB),
+        };
+
+        domain.applySessions([
+            {
+                id: 's1',
+                seq: 1,
+                createdAt: 1,
+                updatedAt: 10,
+                active: true,
+                activeAt: 10,
+                metadata: { machineId: 'm-stale', host: 'host-stale', path: '/home/u/repo', homeDir: '/home/u' },
+                metadataVersion: 1,
+                agentState: null,
+                agentStateVersion: 0,
+                thinking: false,
+                thinkingAt: 0,
+                presence: 1,
+            } as any,
+            {
+                id: 's2',
+                seq: 2,
+                createdAt: 2,
+                updatedAt: 100,
+                active: true,
+                activeAt: 100,
+                metadata: { machineId: 'm-a', host: 'host-a', path: '/home/u/repo', homeDir: '/home/u' },
+                metadataVersion: 1,
+                agentState: null,
+                agentStateVersion: 0,
+                thinking: false,
+                thinkingAt: 0,
+                presence: 1,
+            } as any,
+            {
+                id: 's3',
+                seq: 3,
+                createdAt: 3,
+                updatedAt: 200,
+                active: true,
+                activeAt: 200,
+                metadata: { machineId: 'm-b', host: 'host-b', path: '/home/u/repo', homeDir: '/home/u' },
+                metadataVersion: 1,
+                agentState: null,
+                agentStateVersion: 0,
+                thinking: false,
+                thinkingAt: 0,
+                presence: 1,
+            } as any,
+        ]);
+
+        const initial = get().sessionListViewData;
+        expect(Array.isArray(initial)).toBe(true);
+        expect(updateSessions).toHaveBeenCalledTimes(1);
+
+        domain.applySessions([
+            {
+                id: 's2',
+                seq: 2,
+                createdAt: 2,
+                updatedAt: 300,
+                active: true,
+                activeAt: 100,
+                metadata: { machineId: 'm-a', host: 'host-a', path: '/home/u/repo', homeDir: '/home/u' },
+                metadataVersion: 1,
+                agentState: { requests: {} },
+                agentStateVersion: 1,
+                thinking: false,
+                thinkingAt: 0,
+                presence: 2,
+            } as any,
+        ]);
+
+        expect(get().sessionListViewData).not.toBe(initial);
+        expect(updateSessions).toHaveBeenCalledTimes(2);
     });
 
     it('rebuilds sessionListViewData for structural applySessions changes (grouping keys)', async () => {
