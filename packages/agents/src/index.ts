@@ -29,6 +29,18 @@ export {
     type VendorResumeSupportLevel,
 } from './types.js';
 export { AGENTS_CORE, DEFAULT_AGENT_ID } from './manifest.js';
+export {
+  getAgentToolsCapability,
+  isAgentToolsUnsupported,
+  usesNativeMcpTools,
+  usesShellBridgeTools,
+  type AgentToolsCapability,
+} from './tools.js';
+export {
+  getAgentLocalControlCapability,
+  usesProviderAttachForLocalControl,
+  type AgentLocalControlCapability,
+} from './localControl.js';
 export { resolveAgentIdFromFlavor } from './resolveAgentIdFromFlavor.js';
 export { inferAgentIdFromSessionMetadata, resolveAgentIdFromSessionMetadata } from './resolveAgentIdFromSessionMetadata.js';
 export {
@@ -37,6 +49,37 @@ export {
   type AgentModelConfig,
   type AgentModelNonAcpApplyScope,
 } from './models.js';
+export {
+  AGENT_LOCAL_CLI_CONFIG,
+  getAgentLocalCliConfig,
+  type AgentCliAuthSupport,
+  type AgentCliLaunchCommand,
+  type AgentLocalCliConfig,
+} from './localCli.js';
+export {
+  AGENT_AUTH_PROBE_CONFIG,
+  getAgentAuthProbeConfig,
+  isAgentAuthProbeSafeForBackgroundChecks,
+  type AgentAuthProbeConfig,
+  type AgentAuthProbeBackgroundChecks,
+  type AgentAuthProbeParser,
+} from './auth.js';
+export {
+  BUILT_IN_ACP_CONFIG,
+  getBuiltInAcpConfig,
+  hasBuiltInAcpConfig,
+  type BuiltInAcpConfig,
+  type BuiltInAcpTransportProfile,
+  type BuiltInAcpYesNoAuto,
+} from './acp.js';
+export {
+  buildBackendTargetKey,
+  isBuiltInAgentTarget,
+  isConfiguredAcpBackendTarget,
+  type BackendTargetKey,
+  type BackendTargetKind,
+  type BackendTargetRefV1,
+} from './backendTargets.js';
 
 export {
   AGENT_SESSION_MODE_DESCRIPTORS,
@@ -54,6 +97,20 @@ export {
   type AgentAdvancedModeCapabilities,
   type AgentRuntimeModeSwitchKind,
 } from './advancedModes.js';
+export {
+    getAgentRuntimeKindsManifest,
+    resolveAgentRuntimeControlSurface,
+    resolveDefaultAgentRuntimeKind,
+    type AgentRuntimeKind,
+    type AgentRuntimeKindCapableAgentId,
+    type AgentRuntimeKindDefinition,
+    type AgentRuntimeKindFor,
+    type AgentRuntimeKindOverrideSurface,
+    type AgentRuntimeKindOverrides,
+    type AgentRuntimeKindsManifest,
+    type AnyAgentRuntimeKindsManifest,
+    type PartialDeep,
+} from './runtimeKinds.js';
 
 export {
     isPermissionIntent,
