@@ -15,6 +15,7 @@ import {
   makeAcpSearchKnownTokenScenario,
   makeAcpGlobListFilesScenario,
   makeAcpWriteInWorkspaceScenario,
+  collectAcpToolTranscriptExamples,
 } from './scenarios.acp';
 
 export const scenarios: ProviderScenario[] = [
@@ -135,12 +136,17 @@ export const scenarios: ProviderScenario[] = [
     // OpenCode task results include a <task_metadata> section with a child session id.
     requiredTraceSubstrings: ['session_id:', 'SUBTASK_OK'],
     verify: async ({ fixtures, baseUrl, token, sessionId, secret }) => {
-      const results = (fixtures?.examples?.['acp/opencode/tool-result/Task'] ?? []) as any[];
+      const { callExamples, resultExamples } = collectAcpToolTranscriptExamples({
+        fixtures,
+        providerId: 'opencode',
+        toolName: 'Task',
+      });
+      const results = resultExamples;
       if (!Array.isArray(results) || results.length === 0) throw new Error('Missing task tool-result fixtures');
       const hasChildSessionId = results.some((e) => typeof e?.payload?.output?.metadata?.sessionId === 'string' && e.payload.output.metadata.sessionId.length > 0);
       if (!hasChildSessionId) throw new Error('task tool-result did not include metadata.sessionId (child session id)');
 
-      const calls = (fixtures?.examples?.['acp/opencode/tool-call/Task'] ?? []) as any[];
+      const calls = callExamples;
       const sidechainId =
         (Array.isArray(calls) && calls.length > 0 && typeof calls[0]?.payload?.callId === 'string' ? calls[0].payload.callId : null) ??
         (typeof results[0]?.payload?.callId === 'string' ? results[0].payload.callId : null);

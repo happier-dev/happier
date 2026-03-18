@@ -1,4 +1,4 @@
-import type { ProviderScenario } from '../types';
+import type { ProviderFixtures, ProviderScenario } from '../types';
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
@@ -21,6 +21,21 @@ function executeToolResultFixtureKeys(providerId: string): string[] {
   const keys = [k(providerId, 'tool-result', 'Bash'), k(providerId, 'tool-result', 'Terminal'), k(providerId, 'tool-result', 'execute')];
   if (providerId === 'kimi') keys.push(k(providerId, 'tool-result', 'unknown'));
   return keys;
+}
+
+export function collectAcpToolTranscriptExamples(params: {
+  fixtures: ProviderFixtures | undefined;
+  providerId: string;
+  toolName: string;
+}): {
+  callExamples: any[];
+  resultExamples: any[];
+} {
+  const examples = params.fixtures?.examples;
+  return {
+    callExamples: ((examples?.[k(params.providerId, 'tool-call', params.toolName)] ?? []) as any[]),
+    resultExamples: ((examples?.[k(params.providerId, 'tool-result', params.toolName)] ?? []) as any[]),
+  };
 }
 
 export function makeAcpReadInWorkspaceScenario(params: {

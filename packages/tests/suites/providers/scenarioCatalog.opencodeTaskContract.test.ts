@@ -15,13 +15,10 @@ function opencodeProvider(): ProviderUnderTest {
 }
 
 describe('scenarioCatalog: opencode task_subagent_reply', () => {
-  it('accepts provider-specific task aliases for call/result fixtures', () => {
+  it('uses Task fixtures for call/result transcripts', () => {
     const scenario = scenarioCatalog.task_subagent_reply(opencodeProvider());
-    expect(scenario.requiredAnyFixtureKeys).toEqual([
-      ['acp/opencode/tool-call/Task', 'acp/opencode/tool-call/change_title'],
-      ['acp/opencode/tool-result/Task', 'acp/opencode/tool-result/change_title'],
-    ]);
-    expect(scenario.requiredFixtureKeys).toBeUndefined();
+    expect(scenario.requiredFixtureKeys).toEqual(['acp/opencode/tool-call/Task', 'acp/opencode/tool-result/Task']);
+    expect(scenario.requiredAnyFixtureKeys).toBeUndefined();
     expect(scenario.requiredTraceSubstrings).toBeUndefined();
     expect(scenario.postSatisfy?.waitForAcpSidechainFromToolName).toBe('Task');
   });

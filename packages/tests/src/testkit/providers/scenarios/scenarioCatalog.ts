@@ -42,6 +42,7 @@ import {
   makeAcpSearchLsEquivalenceScenario,
   makeAcpWriteInWorkspaceScenario,
   makeAcpWriteThenStreamMarkdownTableScenario,
+  collectAcpToolTranscriptExamples,
 } from './scenarios.acp';
 import { cleanupOutsideWorkspacePath, makeOutsideWorkspacePath } from '../harness/outsideWorkspacePath';
 
@@ -2637,24 +2638,20 @@ await server.connect(new StdioServerTransport());
           '',
           `Note: current working directory is ${workspaceDir}`,
         ].join('\n'),
-      requiredAnyFixtureKeys: [
-        [`acp/${pid}/tool-call/Task`, `acp/${pid}/tool-call/change_title`],
-        [`acp/${pid}/tool-result/Task`, `acp/${pid}/tool-result/change_title`],
-      ],
+      requiredFixtureKeys: [`acp/${pid}/tool-call/Task`, `acp/${pid}/tool-result/Task`],
       verify: async ({ fixtures, baseUrl, token, sessionId, secret }) => {
-        const results = (
-          ((fixtures?.examples?.[`acp/${pid}/tool-result/Task`] ?? []) as any[])
-            .concat((fixtures?.examples?.[`acp/${pid}/tool-result/change_title`] ?? []) as any[])
-        );
+        const { callExamples, resultExamples } = collectAcpToolTranscriptExamples({
+          fixtures,
+          providerId: pid,
+          toolName: 'Task',
+        });
+        const results = resultExamples;
         if (!Array.isArray(results) || results.length === 0) throw new Error('Missing Task tool-result fixtures');
         const hasChildSessionId = Array.isArray(results)
           ? results.some((e) => typeof e?.payload?.output?.metadata?.sessionId === 'string' && e.payload.output.metadata.sessionId.length > 0)
           : false;
 
-        const calls = (
-          ((fixtures?.examples?.[`acp/${pid}/tool-call/Task`] ?? []) as any[])
-            .concat((fixtures?.examples?.[`acp/${pid}/tool-call/change_title`] ?? []) as any[])
-        );
+        const calls = callExamples;
         const sidechainId =
           (Array.isArray(calls) && calls.length > 0 && typeof calls[0]?.payload?.callId === 'string' ? calls[0].payload.callId : null) ??
           (typeof results[0]?.payload?.callId === 'string' ? results[0].payload.callId : null);
@@ -2965,16 +2962,15 @@ await server.connect(new StdioServerTransport());
           '',
           `Note: current working directory is ${workspaceDir}`,
         ].join('\n'),
-      requiredAnyFixtureKeys: [
-        [`acp/${pid}/tool-call/Task`, `acp/${pid}/tool-call/change_title`],
-        [`acp/${pid}/tool-result/Task`, `acp/${pid}/tool-result/change_title`],
-      ],
+      requiredFixtureKeys: [`acp/${pid}/tool-call/Task`, `acp/${pid}/tool-result/Task`],
       requiredTraceSubstrings: ['SUBTASK_OK'],
       verify: async ({ fixtures, baseUrl, token, sessionId, secret }) => {
-        const results = (
-          ((fixtures?.examples?.[`acp/${pid}/tool-result/Task`] ?? []) as any[])
-            .concat((fixtures?.examples?.[`acp/${pid}/tool-result/change_title`] ?? []) as any[])
-        );
+        const { resultExamples } = collectAcpToolTranscriptExamples({
+          fixtures,
+          providerId: pid,
+          toolName: 'Task',
+        });
+        const results = resultExamples;
         if (!Array.isArray(results) || results.length === 0) throw new Error('Missing task tool-result fixtures');
         const hasChildSessionId = results.some(
           (e) => typeof e?.payload?.output?.metadata?.sessionId === 'string' && e.payload.output.metadata.sessionId.length > 0,
