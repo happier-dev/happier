@@ -1,5 +1,8 @@
+import { resolveAgentRequestKind, type AgentRequestKind } from '@/utils/sessions/permissions/permissionPromptPolicy';
+
 export type NewPermissionRequest = Readonly<{
   requestId: string;
+  requestKind: AgentRequestKind;
   toolName: string;
   toolArgs: unknown;
 }>;
@@ -23,7 +26,7 @@ function compareNewRequests(a: NewPermissionRequest, b: NewPermissionRequest, ne
   return a.requestId < b.requestId ? -1 : a.requestId > b.requestId ? 1 : 0;
 }
 
-export function deriveNewPermissionRequests(prevRequests: unknown, nextRequests: unknown): NewPermissionRequest[] {
+export function deriveNewAgentRequests(prevRequests: unknown, nextRequests: unknown): NewPermissionRequest[] {
   const prev = toRequestsMap(prevRequests);
   const next = toRequestsMap(nextRequests);
   const results: NewPermissionRequest[] = [];
@@ -34,6 +37,7 @@ export function deriveNewPermissionRequests(prevRequests: unknown, nextRequests:
     if (!toolName) continue;
     results.push({
       requestId,
+      requestKind: resolveAgentRequestKind({ toolName, requestKind: raw?.kind }),
       toolName,
       toolArgs: raw?.arguments,
     });
@@ -42,4 +46,3 @@ export function deriveNewPermissionRequests(prevRequests: unknown, nextRequests:
   results.sort((a, b) => compareNewRequests(a, b, next));
   return results;
 }
-
