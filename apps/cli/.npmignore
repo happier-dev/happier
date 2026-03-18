@@ -1,6 +1,10 @@
 # Exclude unpacked binaries from npm package
 tools/unpacked/
 
+# Keep generated runtime entrypoints in the tarball
+!dist/
+!dist/**
+
 # Keep these for npm package
 # tools/archives/
 # tools/licenses/
