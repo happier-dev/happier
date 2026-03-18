@@ -73,9 +73,6 @@ export function installStartServerCommonWiringMocks(): void {
     initFilesS3FromEnv: vi.fn(() => {}),
   }))
   vi.mock('@/utils/logging/log', () => ({ log: vi.fn() }))
-  vi.mock('@/app/changes/accountChangeCleanup', () => ({
-    startAccountChangeCleanupFromEnv: vi.fn(() => null),
-  }))
   vi.mock('@/app/presence/presenceMode', () => ({
     shouldConsumePresenceFromRedis: vi.fn(() => false),
     shouldEnableLocalPresenceDbFlush: vi.fn(() => false),
