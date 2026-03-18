@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest';
 
-import { hasMaxOldSpaceSize, resolveMaxOldSpaceSizeMb, upsertMaxOldSpaceSize } from '../withNodeHeapLimit.mjs';
+import {
+  hasMaxOldSpaceSize,
+  resolveMaxOldSpaceSizeMb,
+  upsertMaxOldSpaceSize,
+} from '../withNodeHeapLimit.mjs';
 
 describe('withNodeHeapLimit', () => {
   it('detects existing max-old-space-size flags (equals form)', () => {

@@ -27,6 +27,7 @@ function main(argv) {
   const command = argv[2];
   const args = argv.slice(3);
   if (!command) {
+    // eslint-disable-next-line no-console
     console.error('Usage: node scripts/withNodeHeapLimit.mjs <command> [...args]');
     process.exit(1);
   }

@@ -23,14 +23,18 @@ export function resolveVitestConfigPath(argv) {
 
 function spawnVitestRun({ configPath, shardSpec, nodeOptions }) {
   return new Promise((resolve) => {
-    const proc = spawn('vitest', ['run', '--config', configPath, '--shard', shardSpec], {
-      env: {
-        ...process.env,
-        NODE_OPTIONS: nodeOptions,
+    const proc = spawn(
+      'vitest',
+      ['run', '--config', configPath, '--shard', shardSpec],
+      {
+        env: {
+          ...process.env,
+          NODE_OPTIONS: nodeOptions,
+        },
+        stdio: 'inherit',
+        shell: process.platform === 'win32',
       },
-      stdio: 'inherit',
-      shell: process.platform === 'win32',
-    });
+    );
 
     proc.on('exit', (code, signal) => resolve({ code, signal }));
   });
@@ -39,6 +43,7 @@ function spawnVitestRun({ configPath, shardSpec, nodeOptions }) {
 async function main(argv) {
   const configPath = resolveVitestConfigPath(argv);
   if (!configPath) {
+    // eslint-disable-next-line no-console
     console.error('Usage: node scripts/runVitestShards.mjs --config <vitest.config.ts>');
     process.exit(1);
   }
@@ -48,6 +53,7 @@ async function main(argv) {
   const nodeOptions = upsertMaxOldSpaceSize(process.env.NODE_OPTIONS, sizeMb);
 
   for (let index = 1; index <= shardCount; index += 1) {
+    // eslint-disable-next-line no-console
     console.log(`[vitest] shard ${index}/${shardCount}`);
     const shardSpec = `${index}/${shardCount}`;
     const result = await spawnVitestRun({ configPath, shardSpec, nodeOptions });
@@ -62,5 +68,6 @@ async function main(argv) {
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  // eslint-disable-next-line no-void
   void main(process.argv);
 }
