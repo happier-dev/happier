@@ -16,9 +16,9 @@ vi.mock('@/components/tools/shell/presentation/resolveToolHeaderTextPresentation
     }),
 }));
 
-describe('collectTaskLikeTools', () => {
+describe('collectSubAgentSummaryTools', () => {
     it('uses resolveToolHeaderTextPresentation for tool titles', async () => {
-        const { collectTaskLikeTools } = await import('./collectTaskLikeTools');
+        const { collectSubAgentSummaryTools } = await import('./collectSubAgentSummaryTools');
 
         const taskTool: any = {
             name: 'Task',
@@ -51,13 +51,13 @@ describe('collectTaskLikeTools', () => {
             } as any,
         ];
 
-        const tools = collectTaskLikeTools({ tool: taskTool, messages, metadata: null });
+        const tools = collectSubAgentSummaryTools({ tool: taskTool, messages, metadata: null });
         expect(tools).toHaveLength(1);
         expect(tools[0]!.title).toBe('Fancy Tool Title');
     });
 
     it('returns task tool calls sorted by createdAt (oldest first)', async () => {
-        const { collectTaskLikeTools } = await import('./collectTaskLikeTools');
+        const { collectSubAgentSummaryTools } = await import('./collectSubAgentSummaryTools');
 
         const taskTool: any = {
             name: 'Task',
@@ -89,7 +89,7 @@ describe('collectTaskLikeTools', () => {
             } as any,
         ];
 
-        const tools = collectTaskLikeTools({ tool: taskTool, messages, metadata: null });
+        const tools = collectSubAgentSummaryTools({ tool: taskTool, messages, metadata: null });
         expect(tools.map((t) => t.tool.createdAt)).toEqual([11, 12]);
     });
 });

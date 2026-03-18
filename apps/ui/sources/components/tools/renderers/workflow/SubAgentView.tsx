@@ -1,10 +1,10 @@
 import * as React from 'react';
 import type { ToolViewProps } from '../core/_registry';
-import { TaskLikeSummarySection } from './TaskLikeSummarySection';
+import { SubAgentSummarySection } from './SubAgentSummarySection';
 
-export const TaskView = React.memo<ToolViewProps>(({ tool, metadata, messages, detailLevel, sessionId, messageId }) => {
+export const SubAgentView = React.memo<ToolViewProps>(({ tool, metadata, messages, detailLevel, sessionId, messageId }) => {
     return (
-        <TaskLikeSummarySection
+        <SubAgentSummarySection
             tool={tool as any}
             metadata={metadata ?? null}
             messages={messages ?? []}

@@ -6,7 +6,7 @@ vi.mock('../workflow/TodoView', () => ({ TodoView: () => null }));
 vi.mock('../workflow/ExitPlanToolView', () => ({ ExitPlanToolView: () => null }));
 vi.mock('../fileOps/MultiEditView', () => ({ MultiEditView: () => null }));
 vi.mock('../workflow/EnterPlanModeView', () => ({ EnterPlanModeView: () => null }));
-vi.mock('../workflow/TaskView', () => ({ TaskView: () => null }));
+vi.mock('../workflow/SubAgentView', () => ({ SubAgentView: () => null }));
 vi.mock('../fileOps/PatchView', () => ({ PatchView: () => null }));
 vi.mock('../fileOps/DiffView', () => ({ DiffView: () => null }));
 vi.mock('../workflow/AskUserQuestionView', () => ({ AskUserQuestionView: () => null }));

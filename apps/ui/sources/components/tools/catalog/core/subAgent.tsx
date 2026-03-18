@@ -3,10 +3,9 @@ import type { ToolCall, Message } from '@/sync/domains/messages/messageTypes';
 import { t } from '@/text';
 import { ICON_TASK } from '../icons';
 import type { KnownToolDefinition } from '../_types';
-import { TaskInputV2Schema } from '@happier-dev/protocol';
+import { SubAgentInputV2Schema, TaskInputV2Schema } from '@happier-dev/protocol';
 
-export const coreTaskTools = {
-    'Task': {
+const subAgentToolDefinition = {
         title: () => t('tools.names.subAgent'),
         icon: ICON_TASK,
         isMutable: true,
@@ -26,6 +25,10 @@ export const coreTaskTools = {
             }
             return true; // No active sub-tasks, render as minimal
         },
-        input: TaskInputV2Schema,
-    },
+        input: SubAgentInputV2Schema,
+    } satisfies KnownToolDefinition;
+
+export const coreSubAgentTools = {
+    'SubAgent': subAgentToolDefinition,
+    'Task': { ...subAgentToolDefinition, input: TaskInputV2Schema },
 } satisfies Record<string, KnownToolDefinition>;

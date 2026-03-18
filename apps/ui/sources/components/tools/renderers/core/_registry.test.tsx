@@ -10,7 +10,7 @@ vi.mock('../workflow/TodoView', () => ({ TodoView: () => null }));
 vi.mock('../workflow/ExitPlanToolView', () => ({ ExitPlanToolView: () => null }));
 vi.mock('../fileOps/MultiEditView', () => ({ MultiEditView: () => null }));
 vi.mock('../workflow/EnterPlanModeView', () => ({ EnterPlanModeView: () => null }));
-vi.mock('../workflow/TaskView', () => ({ TaskView: () => null }));
+vi.mock('../workflow/SubAgentView', () => ({ SubAgentView: () => null }));
 vi.mock('../fileOps/PatchView', () => ({ PatchView: () => null }));
 vi.mock('../fileOps/DiffView', () => ({ DiffView: () => null }));
 vi.mock('../workflow/AskUserQuestionView', () => ({ AskUserQuestionView: () => null }));
@@ -59,12 +59,13 @@ describe('toolViewRegistry', () => {
         expect(getToolViewComponent('remove')).toBe(toolViewRegistry.Delete);
     });
 
-    it('maps Claude task helper tools to TaskView (TaskCreate/TaskList/TaskUpdate)', async () => {
-        const [{ getToolViewComponent }, { TaskView }] = await Promise.all([import('./_registry'), import('./_registry')]);
+    it('maps Claude task helper tools to SubAgentView (TaskCreate/TaskList/TaskUpdate)', async () => {
+        const [{ getToolViewComponent }, { SubAgentView }] = await Promise.all([import('./_registry'), import('./_registry')]);
 
-        expect(getToolViewComponent('TaskCreate')).toBe(TaskView);
-        expect(getToolViewComponent('TaskList')).toBe(TaskView);
-        expect(getToolViewComponent('TaskUpdate')).toBe(TaskView);
+        expect(getToolViewComponent('TaskCreate')).toBe(SubAgentView);
+        expect(getToolViewComponent('TaskList')).toBe(SubAgentView);
+        expect(getToolViewComponent('TaskUpdate')).toBe(SubAgentView);
+        expect(getToolViewComponent('SubAgent')).toBe(SubAgentView);
     });
 
     it('returns a renderer for canonical Patch tools', async () => {
@@ -87,6 +88,12 @@ describe('toolViewRegistry', () => {
     it('uses the MCP tool renderer for any mcp__* tool name', async () => {
         const [{ getToolViewComponent }, { MCPToolView }] = await Promise.all([import('./_registry'), import('../system/MCPToolView')]);
         expect(getToolViewComponent('mcp__linear__create_issue')).toBe(MCPToolView);
+    });
+
+    it('does not route malformed slash-delimited change title names directly to the dedicated renderer', async () => {
+        const [{ getToolViewComponent }, { UnknownToolView }] = await Promise.all([import('./_registry'), import('../system/UnknownToolView')]);
+
+        expect(getToolViewComponent('happier/change_title')).toBe(UnknownToolView);
     });
 
     it('falls back to a generic renderer for unknown tool names', async () => {

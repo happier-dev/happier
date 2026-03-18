@@ -1,5 +1,6 @@
 import type { Message, ToolCall } from '@/sync/domains/messages/messageTypes';
 import type { Metadata } from '@/sync/domains/state/storageTypes';
+import { isGenericSubAgentToolName } from '@happier-dev/protocol/tools/v2';
 
 import { normalizeToolCallForRendering } from '@/components/tools/normalization/core/normalizeToolCallForRendering';
 import { resolveToolHeaderTextPresentation } from '@/components/tools/shell/presentation/resolveToolHeaderTextPresentation';
@@ -10,7 +11,7 @@ export interface FilteredTool {
     state: 'running' | 'completed' | 'error';
 }
 
-export function collectTaskLikeTools(params: Readonly<{
+export function collectSubAgentSummaryTools(params: Readonly<{
     tool: ToolCall;
     messages: readonly Message[];
     metadata: Metadata | null;
@@ -28,7 +29,7 @@ export function collectTaskLikeTools(params: Readonly<{
         ) {
             continue;
         }
-        if (message.tool.name === 'Task') continue;
+        if (isGenericSubAgentToolName(message.tool.name)) continue;
 
         const toolForRendering = normalizeToolCallForRendering(message.tool);
         const headerText = resolveToolHeaderTextPresentation({ tool: toolForRendering, metadata: params.metadata });

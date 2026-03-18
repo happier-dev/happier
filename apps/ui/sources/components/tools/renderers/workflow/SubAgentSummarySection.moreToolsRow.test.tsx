@@ -87,10 +87,99 @@ function makeToolCallMessage(id: string, tool: ToolCall): ToolCallMessage {
     };
 }
 
-describe('TaskLikeSummarySection (+N more tools row)', () => {
+describe('SubAgentSummarySection (+N more tools row)', () => {
+    it('does not crash when detailLevel changes from title to summary', async () => {
+        const { SubAgentSummarySection } = await import('./SubAgentSummarySection');
+
+        const taskTool = makeToolCall({
+            name: 'Task',
+            state: 'running',
+            input: { description: 'Hook stability check' },
+            createdAt: 10,
+            startedAt: 10,
+            completedAt: null,
+        });
+
+        const toolMessages: Message[] = [];
+
+        let tree: renderer.ReactTestRenderer | null = null;
+        act(() => {
+            tree = renderer.create(
+                <SubAgentSummarySection
+                    tool={taskTool}
+                    metadata={null}
+                    messages={toolMessages}
+                    detailLevel="title"
+                    sessionId="s1"
+                    messageId="msg-task-1"
+                />,
+            );
+        });
+
+        expect(() => {
+            act(() => {
+                tree!.update(
+                    <SubAgentSummarySection
+                        tool={taskTool}
+                        metadata={null}
+                        messages={toolMessages}
+                        detailLevel="summary"
+                        sessionId="s1"
+                        messageId="msg-task-1"
+                    />,
+                );
+            });
+        }).not.toThrow();
+    });
+
+    it('does not crash when content appears after an initially empty render', async () => {
+        const { SubAgentSummarySection } = await import('./SubAgentSummarySection');
+
+        const emptyTool = makeToolCall({
+            name: 'Task',
+            state: 'running',
+            input: {},
+            createdAt: 10,
+            startedAt: 10,
+            completedAt: null,
+        });
+        const toolWithContent: ToolCall = { ...emptyTool, input: { description: 'Now has content' } };
+
+        const toolMessages: Message[] = [];
+
+        let tree: renderer.ReactTestRenderer | null = null;
+        act(() => {
+            tree = renderer.create(
+                <SubAgentSummarySection
+                    tool={emptyTool}
+                    metadata={null}
+                    messages={toolMessages}
+                    detailLevel="summary"
+                    sessionId="s1"
+                    messageId="msg-task-1"
+                />,
+            );
+        });
+
+        expect(() => {
+            act(() => {
+                tree!.update(
+                    <SubAgentSummarySection
+                        tool={toolWithContent}
+                        metadata={null}
+                        messages={toolMessages}
+                        detailLevel="summary"
+                        sessionId="s1"
+                        messageId="msg-task-1"
+                    />,
+                );
+            });
+        }).not.toThrow();
+    });
+
     it('renders the +N more tools row above the visible tools (and makes it tappable)', async () => {
         pushSpy.mockClear();
-        const { TaskLikeSummarySection } = await import('./TaskLikeSummarySection');
+        const { SubAgentSummarySection } = await import('./SubAgentSummarySection');
 
         const taskTool = makeToolCall({
             name: 'Task',
@@ -112,7 +201,7 @@ describe('TaskLikeSummarySection (+N more tools row)', () => {
         let tree: renderer.ReactTestRenderer | null = null;
         act(() => {
             tree = renderer.create(
-                <TaskLikeSummarySection
+                <SubAgentSummarySection
                     tool={taskTool}
                     metadata={null}
                     messages={toolMessages}

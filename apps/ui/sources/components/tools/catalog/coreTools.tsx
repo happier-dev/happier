@@ -1,5 +1,6 @@
 import type { KnownToolDefinition } from './_types';
-import { coreTaskTools } from './core/task';
+import { coreSubAgentTools } from './core/subAgent';
+import { coreSubAgentRunTools } from './core/subAgentRun';
 import { coreTerminalTools } from './core/terminal';
 import { coreSearchTools } from './core/search';
 import { coreFileTools } from './core/files';
@@ -11,7 +12,8 @@ import { coreDiffTools } from './core/diff';
 import { coreReasoningTools } from './core/reasoning';
 
 export const knownToolsCore = {
-    ...coreTaskTools,
+    ...coreSubAgentTools,
+    ...coreSubAgentRunTools,
     ...coreTerminalTools,
     ...coreSearchTools,
     ...coreFileTools,

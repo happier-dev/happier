@@ -9,7 +9,8 @@ import type { Message, ToolCall } from '@/sync/domains/messages/messageTypes';
 import type { Metadata } from '@/sync/domains/state/storageTypes';
 import { t } from '@/text';
 import { Text } from '@/components/ui/text/Text';
-import { collectTaskLikeTools } from './collectTaskLikeTools';
+import { collectSubAgentSummaryTools } from './collectSubAgentSummaryTools';
+import { buildToolCallMessageRouteId } from '@/sync/domains/messages/messageRouteIds';
 
 
 type TaskOperation = 'run' | 'create' | 'list' | 'update' | 'unknown';
@@ -70,7 +71,7 @@ function coerceTaskResultText(result: unknown): string | null {
     return joined.length > 0 ? joined : null;
 }
 
-export const TaskLikeSummarySection = React.memo<{
+export const SubAgentSummarySection = React.memo<{
     tool: ToolCall;
     metadata: Metadata | null;
     messages: readonly Message[];
@@ -80,15 +81,29 @@ export const TaskLikeSummarySection = React.memo<{
     opts?: Readonly<{
         hideResultInlineWhenBackgroundRun?: boolean;
     }>;
-}>(function TaskLikeSummarySection({ tool, metadata, messages, detailLevel = 'summary', sessionId, messageId, opts }) {
+}>(function SubAgentSummarySection({ tool, metadata, messages, detailLevel = 'summary', sessionId, messageId, opts }) {
     const { theme } = useUnistyles();
     const router = useRouter();
-    if (detailLevel === 'title') return null;
 
     const filtered = React.useMemo(
-        () => collectTaskLikeTools({ tool, messages, metadata }),
-        [tool, messages, metadata],
+        () => (detailLevel === 'title' ? [] : collectSubAgentSummaryTools({ tool, messages, metadata })),
+        [detailLevel, tool, messages, metadata],
     );
+    const routeMessageId = React.useMemo(() => {
+        return buildToolCallMessageRouteId({
+            toolId: typeof tool.id === 'string' ? tool.id : null,
+            fallbackMessageId: messageId,
+        });
+    }, [messageId, tool.id]);
+
+    const canOpenDetails = Boolean(sessionId && routeMessageId) && detailLevel !== 'full';
+    const handleOpenDetails = React.useCallback(() => {
+        if (!sessionId || !routeMessageId) return;
+        router.push(`/session/${encodeURIComponent(sessionId)}/message/${encodeURIComponent(routeMessageId)}`);
+    }, [routeMessageId, router, sessionId]);
+
+    if (detailLevel === 'title') return null;
+
     const isFullView = detailLevel === 'full';
     const inferredOperation = inferOperation(tool.input);
     const isBackgroundRun =
@@ -149,12 +164,6 @@ export const TaskLikeSummarySection = React.memo<{
             opacity: 0.7,
         },
     });
-
-    const canOpenDetails = Boolean(sessionId && messageId) && !isFullView;
-    const handleOpenDetails = React.useCallback(() => {
-        if (!sessionId || !messageId) return;
-        router.push(`/session/${sessionId}/message/${messageId}`);
-    }, [messageId, router, sessionId]);
 
     return (
         <ToolSectionView>

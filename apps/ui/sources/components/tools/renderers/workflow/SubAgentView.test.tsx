@@ -37,7 +37,11 @@ vi.mock('@expo/vector-icons', () => ({
 }));
 
 vi.mock('@/text', () => ({
-    t: (_key: string, opts?: { count?: number }) => {
+    t: (_key: string, opts?: { count?: number; subject?: string }) => {
+        if (_key === 'tools.taskLikeSummary.createTaskWithSubject' && opts && typeof opts.subject === 'string') {
+            return `Create task: ${opts.subject}`;
+        }
+        if (_key === 'tools.taskLikeSummary.createTask') return 'Create task';
         if (opts && typeof opts.count === 'number') return `+ ${opts.count} more`;
         return _key;
     },
@@ -51,7 +55,7 @@ vi.mock('../../shell/presentation/ToolSectionView', () => ({
     ToolSectionView: ({ children }: { children: React.ReactNode }) => React.createElement(React.Fragment, null, children),
 }));
 
-describe('TaskView', () => {
+describe('SubAgentView', () => {
     let messageId = 0;
 
     function makeTaskTool(overrides: Partial<ToolCall> = {}): ToolCall {
@@ -105,12 +109,12 @@ describe('TaskView', () => {
         messages: Message[],
         detailLevel?: 'title' | 'summary' | 'full',
     ) {
-        const { TaskView } = await import('./TaskView');
+        const { SubAgentView } = await import('./SubAgentView');
         let tree!: renderer.ReactTestRenderer;
         await act(async () => {
             tree = renderer.create(
                 React.createElement(
-                    TaskView,
+                    SubAgentView,
                     makeToolViewProps(tool, { messages, ...(detailLevel ? { detailLevel } : {}) }),
                 ),
             );

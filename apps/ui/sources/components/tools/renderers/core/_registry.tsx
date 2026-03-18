@@ -8,7 +8,7 @@ import { TodoView } from '../workflow/TodoView';
 import { ExitPlanToolView } from '../workflow/ExitPlanToolView';
 import { MultiEditView } from '../fileOps/MultiEditView';
 import { EnterPlanModeView } from '../workflow/EnterPlanModeView';
-import { TaskView } from '../workflow/TaskView';
+import { SubAgentView } from '../workflow/SubAgentView';
 import { PatchView } from '../fileOps/PatchView';
 import { DiffView } from '../fileOps/DiffView';
 import { AskUserQuestionView } from '../workflow/AskUserQuestionView';
@@ -68,10 +68,11 @@ export const toolViewRegistry: Record<KnownCanonicalToolNameV2, ToolViewComponen
     CodeSearch: CodeSearchView,
     TodoWrite: TodoView,
     TodoRead: TodoView,
+    SubAgent: SubAgentView,
     EnterPlanMode: EnterPlanModeView,
     ExitPlanMode: ExitPlanToolView,
     MultiEdit: MultiEditView,
-    Task: TaskView,
+    Task: SubAgentView,
     AskUserQuestion: AskUserQuestionView,
     AcpHistoryImport: AcpHistoryImportView,
     WorkspaceIndexingPermission: WorkspaceIndexingPermissionView,
@@ -99,7 +100,7 @@ export { DiffView } from '../fileOps/DiffView';
 export { ExitPlanToolView } from '../workflow/ExitPlanToolView';
 export { MultiEditView } from '../fileOps/MultiEditView';
 export { EnterPlanModeView } from '../workflow/EnterPlanModeView';
-export { TaskView } from '../workflow/TaskView';
+export { SubAgentView } from '../workflow/SubAgentView';
 export { AskUserQuestionView } from '../workflow/AskUserQuestionView';
 export { AcpHistoryImportView } from '../system/AcpHistoryImportView';
 export { GlobView } from '../fileOps/GlobView';

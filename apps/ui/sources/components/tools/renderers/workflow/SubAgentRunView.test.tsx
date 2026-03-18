@@ -1,6 +1,6 @@
 import * as React from 'react';
 import renderer from 'react-test-renderer';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -18,13 +18,17 @@ vi.mock('@/text', () => ({
 }));
 
 describe('SubAgentRunView', () => {
+    let SubAgentRunView: any;
+
+    beforeAll(async () => {
+        ({ SubAgentRunView } = await import('./SubAgentRunView'));
+    }, 120_000);
+
     beforeEach(() => {
         structuredResultViewPropsSpy.mockReset();
     });
 
     it('renders sidechain text messages while running (detailLevel=full)', async () => {
-        const { SubAgentRunView } = await import('./SubAgentRunView');
-
         let tree!: renderer.ReactTestRenderer;
         renderer.act(() => {
             tree = renderer.create(
@@ -47,9 +51,30 @@ describe('SubAgentRunView', () => {
         expect(text).toContain('Working...');
     });
 
-    it('renders a review digest from findingsDigest v2 shape', async () => {
-        const { SubAgentRunView } = await import('./SubAgentRunView');
+    it('renders sidechain text messages for abort-like Request interrupted errors', async () => {
+        let tree!: renderer.ReactTestRenderer;
+        renderer.act(() => {
+            tree = renderer.create(
+                <SubAgentRunView
+                    tool={{
+                        state: 'error',
+                        input: { intent: 'delegate' },
+                        result: { error: 'Request interrupted' },
+                    } as any}
+                    metadata={null as any}
+                    messages={[
+                        { kind: 'agent-text', id: 'm1', localId: null, createdAt: 1, text: 'TICK 3', isThinking: false },
+                    ] as any}
+                    detailLevel="full"
+                />,
+            );
+        });
 
+        const text = tree.root.findAllByType('Text').map((n: any) => String(n.props.children)).join('\n');
+        expect(text).toContain('TICK 3');
+    });
+
+    it('renders a review digest from findingsDigest v2 shape', async () => {
         let tree!: renderer.ReactTestRenderer;
         renderer.act(() => {
             tree = renderer.create(
@@ -77,8 +102,6 @@ describe('SubAgentRunView', () => {
     });
 
     it('renders a plan summary when intent is plan', async () => {
-        const { SubAgentRunView } = await import('./SubAgentRunView');
-
         let tree!: renderer.ReactTestRenderer;
         renderer.act(() => {
             tree = renderer.create(
@@ -100,8 +123,6 @@ describe('SubAgentRunView', () => {
     });
 
     it('renders a delegate summary when intent is delegate', async () => {
-        const { SubAgentRunView } = await import('./SubAgentRunView');
-
         let tree!: renderer.ReactTestRenderer;
         renderer.act(() => {
             tree = renderer.create(
@@ -123,8 +144,6 @@ describe('SubAgentRunView', () => {
     });
 
     it('renders structured fallback for error state when result payload exists', async () => {
-        const { SubAgentRunView } = await import('./SubAgentRunView');
-
         let tree!: renderer.ReactTestRenderer;
         renderer.act(() => {
             tree = renderer.create(
@@ -144,8 +163,6 @@ describe('SubAgentRunView', () => {
     });
 
     it('coerces error tool state to completed for structured timeout fallback', async () => {
-        const { SubAgentRunView } = await import('./SubAgentRunView');
-
         let tree!: renderer.ReactTestRenderer;
         renderer.act(() => {
             tree = renderer.create(

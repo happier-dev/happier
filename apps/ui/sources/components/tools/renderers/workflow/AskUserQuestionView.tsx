@@ -344,7 +344,6 @@ export const AskUserQuestionView = React.memo<ToolViewProps>(({ tool, sessionId,
             setIsSubmitted(true);
 
             await sessionAllowWithAnswers(sessionId, toolCallId, answers);
-            setIsSubmitted(true);
         } catch (error) {
             setIsSubmitted(false);
             Modal.alert(t('common.error'), error instanceof Error ? error.message : t('errors.failedToSendMessage'));
