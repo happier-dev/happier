@@ -1,5 +1,7 @@
 import { z } from 'zod';
 
+import { SecretStringV1Schema } from '../crypto/settingsSecretStringsV1.js';
+
 const MemoryDefaultScopeV1Schema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('global') }).passthrough(),
   // Session scope defaults to "current session" at call time (no sessionId persisted).
@@ -59,7 +61,133 @@ export const MemoryEmbeddingsSettingsV1Schema = z
   .passthrough();
 
 export type MemoryEmbeddingsSettingsV1 = z.infer<typeof MemoryEmbeddingsSettingsV1Schema>;
-const DEFAULT_MEMORY_EMBEDDINGS_SETTINGS: MemoryEmbeddingsSettingsV1 = MemoryEmbeddingsSettingsV1Schema.parse({});
+
+export const MemoryEmbeddingsPresetIdSchema = z.enum(['balanced', 'long_context', 'quality']);
+export type MemoryEmbeddingsPresetId = z.infer<typeof MemoryEmbeddingsPresetIdSchema>;
+
+export const MemoryEmbeddingsModeSchema = z.enum(['disabled', 'preset', 'custom']);
+export type MemoryEmbeddingsMode = z.infer<typeof MemoryEmbeddingsModeSchema>;
+
+export const MemoryEmbeddingsBlendSchema = z
+  .object({
+    ftsWeight: z.number().min(0).max(10).default(0.7),
+    embeddingWeight: z.number().min(0).max(10).default(0.3),
+  })
+  .passthrough();
+export type MemoryEmbeddingsBlend = z.infer<typeof MemoryEmbeddingsBlendSchema>;
+
+export const MemoryEmbeddingsLocalTransformersConfigSchema = z
+  .object({
+    kind: z.literal('local_transformers'),
+    modelId: z.string().trim().min(1).default('Xenova/all-MiniLM-L6-v2'),
+    queryPrefix: z.string().trim().min(1).nullable().default(null),
+    documentPrefix: z.string().trim().min(1).nullable().default(null),
+  })
+  .passthrough();
+export type MemoryEmbeddingsLocalTransformersConfig = z.infer<typeof MemoryEmbeddingsLocalTransformersConfigSchema>;
+
+export const MemoryEmbeddingsOpenAiCompatibleConfigSchema = z
+  .object({
+    kind: z.literal('openai_compatible'),
+    baseUrl: z.string().trim().min(1).nullable().default(null),
+    apiKey: SecretStringV1Schema.nullable().default(null),
+    model: z.string().trim().min(1).default('text-embedding-3-small'),
+    dimensions: z.number().int().min(1).max(30_720).nullable().default(null),
+  })
+  .passthrough();
+export type MemoryEmbeddingsOpenAiCompatibleConfig = z.infer<typeof MemoryEmbeddingsOpenAiCompatibleConfigSchema>;
+
+export const MemoryEmbeddingsCustomConfigSchema = z.discriminatedUnion('kind', [
+  MemoryEmbeddingsLocalTransformersConfigSchema,
+  MemoryEmbeddingsOpenAiCompatibleConfigSchema,
+]);
+export type MemoryEmbeddingsCustomConfig = z.infer<typeof MemoryEmbeddingsCustomConfigSchema>;
+
+export const MemoryEmbeddingsSettingsV2Schema = z
+  .object({
+    mode: MemoryEmbeddingsModeSchema.default('disabled'),
+    presetId: MemoryEmbeddingsPresetIdSchema.default('balanced'),
+    custom: MemoryEmbeddingsCustomConfigSchema.nullable().default(null),
+    blend: MemoryEmbeddingsBlendSchema.default({
+      ftsWeight: 0.7,
+      embeddingWeight: 0.3,
+    }),
+  })
+  .passthrough();
+export type MemoryEmbeddingsSettingsV2 = z.infer<typeof MemoryEmbeddingsSettingsV2Schema>;
+
+const DEFAULT_MEMORY_EMBEDDINGS_SETTINGS: MemoryEmbeddingsSettingsV2 = MemoryEmbeddingsSettingsV2Schema.parse({});
+
+function normalizeBlend(raw: Readonly<{ wFts?: unknown; wEmb?: unknown }>): MemoryEmbeddingsBlend {
+  return MemoryEmbeddingsBlendSchema.parse({
+    ftsWeight: raw.wFts,
+    embeddingWeight: raw.wEmb,
+  });
+}
+
+function normalizeLegacyCustomConfig(raw: MemoryEmbeddingsSettingsV1): MemoryEmbeddingsCustomConfig {
+  if (raw.provider === 'remote') {
+    return MemoryEmbeddingsOpenAiCompatibleConfigSchema.parse({
+      kind: 'openai_compatible',
+      model: raw.modelId,
+    });
+  }
+  return MemoryEmbeddingsLocalTransformersConfigSchema.parse({
+    kind: 'local_transformers',
+    modelId: raw.modelId,
+  });
+}
+
+function mapLegacyPresetId(raw: MemoryEmbeddingsSettingsV1): MemoryEmbeddingsPresetId | null {
+  if (raw.provider !== 'local_transformers') return null;
+  if (raw.modelId === 'Xenova/all-MiniLM-L6-v2') return 'balanced';
+  if (raw.modelId === 'Xenova/jina-embeddings-v2-small-en') return 'long_context';
+  if (raw.modelId === 'Alibaba-NLP/gte-modernbert-base') return 'quality';
+  return null;
+}
+
+export function normalizeMemoryEmbeddingsSettings(raw: unknown): MemoryEmbeddingsSettingsV2 {
+  if (raw && typeof raw === 'object' && !Array.isArray(raw)) {
+    const legacyCandidate = raw as Record<string, unknown>;
+    if (
+      Object.prototype.hasOwnProperty.call(legacyCandidate, 'enabled') ||
+      Object.prototype.hasOwnProperty.call(legacyCandidate, 'provider') ||
+      Object.prototype.hasOwnProperty.call(legacyCandidate, 'modelId')
+    ) {
+      const parsedV1 = MemoryEmbeddingsSettingsV1Schema.safeParse(raw);
+      if (parsedV1.success) {
+        const legacy = parsedV1.data;
+        const presetId = mapLegacyPresetId(legacy);
+        if (legacy.enabled !== true) {
+          return {
+            ...DEFAULT_MEMORY_EMBEDDINGS_SETTINGS,
+            blend: normalizeBlend(legacy),
+          };
+        }
+
+        if (presetId) {
+          return MemoryEmbeddingsSettingsV2Schema.parse({
+            mode: 'preset',
+            presetId,
+            blend: normalizeBlend(legacy),
+          });
+        }
+
+        return MemoryEmbeddingsSettingsV2Schema.parse({
+          mode: 'custom',
+          custom: normalizeLegacyCustomConfig(legacy),
+          blend: normalizeBlend(legacy),
+        });
+      }
+    }
+  }
+
+  const parsedV2 = MemoryEmbeddingsSettingsV2Schema.safeParse(raw);
+  if (parsedV2.success) {
+    return parsedV2.data;
+  }
+  return DEFAULT_MEMORY_EMBEDDINGS_SETTINGS;
+}
 
 export const MemoryBudgetsSettingsV1Schema = z
   .object({
@@ -87,13 +215,17 @@ export const MemorySettingsV1Schema = z
   .object({
     v: z.literal(1),
     enabled: z.boolean().default(false),
+    enabledAtMs: z.number().int().min(0).default(0),
     indexMode: z.enum(['hints', 'deep']).default('hints'),
     defaultScope: MemoryDefaultScopeV1Schema.default({ type: 'global' }),
     backfillPolicy: z.enum(['new_only', 'last_30_days', 'all_history']).default('new_only'),
     deleteOnDisable: z.boolean().default(false),
     hints: MemoryHintsSettingsV1Schema.prefault(DEFAULT_MEMORY_HINTS_SETTINGS),
     deep: MemoryDeepSettingsV1Schema.prefault(DEFAULT_MEMORY_DEEP_SETTINGS),
-    embeddings: MemoryEmbeddingsSettingsV1Schema.prefault(DEFAULT_MEMORY_EMBEDDINGS_SETTINGS),
+    embeddings: z.preprocess(
+      (value) => normalizeMemoryEmbeddingsSettings(value),
+      MemoryEmbeddingsSettingsV2Schema,
+    ).prefault(DEFAULT_MEMORY_EMBEDDINGS_SETTINGS),
     budgets: MemoryBudgetsSettingsV1Schema.prefault(DEFAULT_MEMORY_BUDGETS_SETTINGS),
     worker: MemoryWorkerSettingsV1Schema.prefault(DEFAULT_MEMORY_WORKER_SETTINGS),
   })
