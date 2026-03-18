@@ -20,7 +20,7 @@ export type AutomationSettingsValue = Readonly<{
 }>;
 
 type Props = Readonly<{
-    variant: 'new-session' | 'edit';
+    variant: 'new-session' | 'create' | 'edit';
     value: AutomationSettingsValue;
     onChange: (next: AutomationSettingsValue) => void;
 }>;
@@ -71,12 +71,12 @@ export const AutomationSettingsForm = React.memo((props: Props) => {
         props.onChange({ ...props.value, ...patch });
     }, [props]);
 
-    const enableTitle = props.variant === 'new-session'
-        ? t('automations.form.toggleEnableTitle')
-        : t('automations.form.toggleEnabledTitle');
-    const enableSubtitle = props.variant === 'new-session'
-        ? t('automations.form.toggleEnableSubtitle')
-        : t('automations.form.toggleEnabledSubtitle');
+    const enableTitle = props.variant === 'edit'
+        ? t('automations.form.toggleEnabledTitle')
+        : t('automations.form.toggleEnableTitle');
+    const enableSubtitle = props.variant === 'edit'
+        ? t('automations.form.toggleEnabledSubtitle')
+        : t('automations.form.toggleEnableSubtitle');
 
     return (
         <>

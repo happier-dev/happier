@@ -19,6 +19,14 @@ const automationsState = vi.hoisted(() => ({
     list: [] as AutomationListItem[],
 }));
 
+const sessionState = vi.hoisted(() => ({
+    session: null as any,
+}));
+
+const settingsState = vi.hoisted(() => ({
+    settings: {},
+}));
+
 const syncSpies = vi.hoisted(() => ({
     refreshAutomations: vi.fn(async () => {}),
     runAutomationNow: vi.fn(async (_id: string) => {}),
@@ -51,10 +59,16 @@ vi.mock('@/modal', () => ({
 
 vi.mock('@/sync/domains/state/storage', () => ({
     useAutomations: () => automationsState.list,
+    useSession: () => sessionState.session,
+    useSettings: () => settingsState.settings,
 }));
 
 vi.mock('@/sync/sync', () => ({
     sync: syncSpies,
+}));
+
+vi.mock('@/text', () => ({
+    t: (key: string) => key,
 }));
 
 async function flushRender(): Promise<void> {
@@ -84,6 +98,17 @@ function findPressableByText(tree: renderer.ReactTestRenderer, text: string) {
 describe('SessionAutomationsScreen', () => {
     beforeEach(() => {
         automationsState.list = [];
+        sessionState.session = {
+            id: 's1',
+            encryptionMode: 'e2ee',
+            metadata: {
+                flavor: 'codex',
+                machineId: 'm1',
+                path: '/tmp/project',
+                homeDir: '/tmp',
+            },
+        };
+        settingsState.settings = {};
         routerPushSpy.mockReset();
         modalAlertSpy.mockReset();
         syncSpies.refreshAutomations.mockClear();
@@ -150,7 +175,7 @@ describe('SessionAutomationsScreen', () => {
         });
         await flushRender();
 
-        const add = findPressableByText(tree!, 'Add automation');
+        const add = findPressableByText(tree!, 'automations.session.addAutomation');
         await act(async () => {
             add.props.onPress();
         });

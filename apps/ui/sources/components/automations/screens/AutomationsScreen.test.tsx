@@ -17,6 +17,10 @@ const automationsState = vi.hoisted(() => ({
     list: [] as AutomationListItem[],
 }));
 
+const machinesState = vi.hoisted(() => ({
+    list: [] as Array<{ id: string }>,
+}));
+
 const syncSpies = vi.hoisted(() => ({
     refreshAutomations: vi.fn(async () => {}),
     runAutomationNow: vi.fn(async (_id: string) => {}),
@@ -29,8 +33,19 @@ const routerPushSpy = vi.hoisted(() => vi.fn());
 const modalConfirmSpy = vi.hoisted(() => vi.fn(async () => true));
 const modalAlertSpy = vi.hoisted(() => vi.fn(async () => {}));
 
+vi.mock('@/components/ui/buttons/FAB', () => ({
+    FAB: (props: any) => React.createElement('Pressable', {
+        accessibilityLabel: 'create-automation-fab',
+        onPress: props.onPress,
+    }),
+}));
+
 vi.mock('@/components/ui/forms/Switch', () => ({
     Switch: (props: any) => React.createElement('Switch', props),
+}));
+
+vi.mock('@/components/sessions/guidance/SessionGettingStartedGuidance', () => ({
+    SessionGettingStartedGuidance: (props: any) => React.createElement('SessionGettingStartedGuidance', props),
 }));
 
 vi.mock('react-native-unistyles', () => ({
@@ -46,7 +61,8 @@ vi.mock('react-native-unistyles', () => ({
                 surfacePressedOverlay: '#f0f0f0',
                 divider: '#ddd',
                 shadow: { color: '#000', opacity: 0.15 },
-                fab: { background: '#0a84ff' },
+                fab: { background: '#0a84ff', backgroundPressed: '#0060df', icon: '#fff' },
+                accent: { blue: '#0a84ff' },
             },
         },
     }),
@@ -63,7 +79,8 @@ vi.mock('react-native-unistyles', () => ({
                     surfacePressedOverlay: '#f0f0f0',
                     divider: '#ddd',
                     shadow: { color: '#000', opacity: 0.15 },
-                    fab: { background: '#0a84ff' },
+                    fab: { background: '#0a84ff', backgroundPressed: '#0060df', icon: '#fff' },
+                    accent: { blue: '#0a84ff' },
                 },
             }),
     },
@@ -86,6 +103,7 @@ vi.mock('@/modal', () => ({
 
 vi.mock('@/sync/domains/state/storage', () => ({
     useAutomations: () => automationsState.list,
+    useAllMachines: () => machinesState.list,
 }));
 
 vi.mock('@/sync/sync', () => ({
@@ -127,6 +145,7 @@ function findPressableByText(tree: renderer.ReactTestRenderer, text: string) {
 describe('AutomationsScreen', () => {
     beforeEach(() => {
         automationsState.list = [];
+        machinesState.list = [];
         routerPushSpy.mockReset();
         modalConfirmSpy.mockReset();
         modalConfirmSpy.mockResolvedValue(true);
@@ -140,9 +159,10 @@ describe('AutomationsScreen', () => {
 
     afterEach(() => {
         automationsState.list = [];
+        machinesState.list = [];
     });
 
-    it('shows empty state and links create action to New Session automation mode', async () => {
+    it('shows the getting-started guidance when there are no machines yet', async () => {
         const { AutomationsScreen } = await import('./AutomationsScreen');
 
         let tree: renderer.ReactTestRenderer | null = null;
@@ -152,17 +172,30 @@ describe('AutomationsScreen', () => {
         await flushRender();
 
         expect(syncSpies.refreshAutomations).toHaveBeenCalledTimes(1);
-        expect(JSON.stringify(tree!.toJSON())).toContain('automations.screen.emptyTitle');
+        expect(() => tree!.root.findByType('SessionGettingStartedGuidance')).not.toThrow();
+    });
 
-        const createButton = findPressableByLabel(tree!, 'automations.screen.createAutomationA11y');
+    it('shows the create automation action when machines are available', async () => {
+        machinesState.list = [{ id: 'm1' }];
+
+        const { AutomationsScreen } = await import('./AutomationsScreen');
+
+        let tree: renderer.ReactTestRenderer | null = null;
+        await act(async () => {
+            tree = renderer.create(<AutomationsScreen />);
+        });
+        await flushRender();
+
+        const createButton = findPressableByLabel(tree!, 'create-automation-fab');
         await act(async () => {
             createButton.props.onPress();
         });
 
-        expect(routerPushSpy).toHaveBeenCalledWith('/new?automation=1&automationPicker=1');
+        expect(routerPushSpy).toHaveBeenCalledWith('/new?automation=1');
     });
 
     it('runs an automation and toggles enabled state from row controls', async () => {
+        machinesState.list = [{ id: 'm1' }];
         automationsState.list = [
             {
                 id: 'a1',
@@ -198,7 +231,6 @@ describe('AutomationsScreen', () => {
         await act(async () => {
             card.props.onPress();
         });
-        // First press after a control interaction is ignored to prevent accidental navigation.
         await act(async () => {
             card.props.onPress();
         });

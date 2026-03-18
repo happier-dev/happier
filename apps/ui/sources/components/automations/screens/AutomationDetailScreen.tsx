@@ -16,6 +16,7 @@ import { Switch } from '@/components/ui/forms/Switch';
 import { Text } from '@/components/ui/text/Text';
 import { layout } from '@/components/ui/layout/layout';
 import { t } from '@/text';
+import { deferOnWeb } from '@/utils/platform/deferOnWeb';
 
 const stylesheet = StyleSheet.create((theme) => ({
     loading: {
@@ -122,7 +123,7 @@ export function AutomationDetailScreen() {
         if (!confirmed) return;
         try {
             await sync.deleteAutomation(automationId);
-            router.back();
+            deferOnWeb(() => router.replace('/automations'));
         } catch (error) {
             await Modal.alert(
                 t('common.error'),
@@ -133,10 +134,10 @@ export function AutomationDetailScreen() {
 
     const handleEditAutomation = React.useCallback(() => {
         if (!automationId) return;
-        router.push({
+        deferOnWeb(() => router.push({
             pathname: '/automations/edit',
             params: { id: automationId },
-        } as any);
+        } as any));
     }, [automationId, router]);
 
     const handleToggleMachineAssignment = React.useCallback(async (machineId: string, enabled: boolean) => {

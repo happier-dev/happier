@@ -1,119 +1,90 @@
 import React from 'react';
-import { Platform, View } from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
-import { StyleSheet, useUnistyles } from 'react-native-unistyles';
+import { View } from 'react-native';
+import { StyleSheet } from 'react-native-unistyles';
 import { useRouter } from 'expo-router';
 
 import { ItemList } from '@/components/ui/lists/ItemList';
-import { ItemGroup } from '@/components/ui/lists/ItemGroup';
-import { Item } from '@/components/ui/lists/Item';
-import { Text, TextInput } from '@/components/ui/text/Text';
 import { layout } from '@/components/ui/layout/layout';
-import { AutomationSettingsForm, type AutomationSettingsValue } from '@/components/automations/editor/AutomationSettingsForm';
+import { buildAutomationScheduleInputFromForm } from '@/components/automations/editor/buildAutomationScheduleInputFromForm';
+import { ExistingSessionAutomationAuthoringSurface } from '@/components/automations/shared/ExistingSessionAutomationAuthoringSurface';
+import { getExistingSessionAutomationUnavailableReason } from '@/components/automations/shared/existingSessionAutomationAvailabilityUi';
+import { resolveExistingSessionAutomationAvailability } from '@/components/automations/shared/resolveExistingSessionAutomationAvailability';
+import { buildExistingSessionAuthoringDraftFromSession } from '@/components/sessions/authoring/draft/buildExistingSessionAuthoringDraftFromSession';
+import { buildAutomationTemplateFromSessionAuthoringDraft } from '@/components/sessions/authoring/draft/buildAutomationTemplateFromSessionAuthoringDraft';
+import type { SessionAuthoringDraft } from '@/components/sessions/authoring/draft/sessionAuthoringDraft';
+import { useSessionAuthoringDraftState } from '@/components/sessions/authoring/draft/useSessionAuthoringDraftState';
 import { Modal } from '@/modal';
-import { useSession } from '@/sync/domains/state/storage';
-import { normalizeAutomationDescription, normalizeAutomationName, type AutomationScheduleInput, validateAutomationTemplateTarget } from '@/sync/domains/automations/automationValidation';
+import { DEFAULT_NEW_SESSION_AUTOMATION_DRAFT, sanitizeNewSessionAutomationDraft } from '@/sync/domains/automations/automationDraft';
 import { encodeAutomationTemplateCiphertextForAccount } from '@/sync/domains/automations/encodeAutomationTemplateCiphertextForAccount';
+import { normalizeAutomationDescription, normalizeAutomationName, validateAutomationTemplateTarget } from '@/sync/domains/automations/automationValidation';
+import { useSession, useSettings } from '@/sync/domains/state/storage';
+import { readMachineTargetForSession } from '@/sync/ops/sessionMachineTarget';
 import { sync } from '@/sync/sync';
 import { t } from '@/text';
+import { deferOnWeb } from '@/utils/platform/deferOnWeb';
 
 const stylesheet = StyleSheet.create((theme) => ({
     container: {
         flex: 1,
         backgroundColor: theme.colors.groupped.background,
     },
-    contentContainer: {
-        paddingHorizontal: 16,
-        paddingVertical: 12,
-        gap: 12,
-    },
-    label: {
-        fontSize: 12,
-        fontWeight: '700',
-        color: theme.colors.textSecondary,
-        letterSpacing: 0.6,
-        marginBottom: 6,
-    },
-    textInput: {
-        backgroundColor: theme.colors.input.background,
-        borderRadius: 10,
-        paddingHorizontal: 12,
-        paddingVertical: Platform.select({ ios: 10, default: 12 }),
-        borderWidth: 0.5,
-        borderColor: theme.colors.divider,
-        color: theme.colors.text,
-    },
-    helpText: {
-        fontSize: 12,
-        color: theme.colors.textSecondary,
-        marginTop: 6,
-    },
 }));
 
-function buildScheduleFromSettings(form: AutomationSettingsValue): AutomationScheduleInput {
-    const timezone = form.timezone ?? null;
-    if (form.scheduleKind === 'cron') {
-        const scheduleExpr = form.cronExpr.trim().length > 0 ? form.cronExpr.trim() : '0 * * * *';
-        return { kind: 'cron', scheduleExpr, timezone };
-    }
-    const minutes = Math.min(Math.max(Math.floor(form.everyMinutes), 1), 24 * 60);
-    return { kind: 'interval', everyMs: minutes * 60_000, timezone };
-}
-
-function normalizeDirectory(input: unknown): string {
-    if (typeof input === 'string') {
-        const trimmed = input.trim();
-        if (trimmed.length > 0) return trimmed;
-    }
-    return '/';
-}
-
 export function SessionAutomationCreateScreen(props: { sessionId: string }) {
-    const { theme } = useUnistyles();
     const styles = stylesheet;
     const router = useRouter();
     const session = useSession(props.sessionId);
-
-    const [message, setMessage] = React.useState('');
-    const [form, setForm] = React.useState<AutomationSettingsValue>(() => ({
-        enabled: true,
-        name: t('automations.create.defaultName'),
-        description: '',
-        scheduleKind: 'interval',
-        everyMinutes: 60,
-        cronExpr: '0 * * * *',
-        timezone: null,
-    }));
-
-    const machineId = typeof session?.metadata?.machineId === 'string' ? session.metadata.machineId : null;
+    const settings = useSettings();
+    const { draft, setDraft, latestDraftRef } = useSessionAuthoringDraftState();
     const sessionDekBase64 = sync.getSessionEncryptionKeyBase64ForResume(props.sessionId);
-    const requiresDek = session?.encryptionMode !== 'plain';
+    const machineIdOverride = readMachineTargetForSession(props.sessionId)?.machineId ?? null;
 
-    const isValid = React.useMemo(() => {
-        const nameOk = form.name.trim().length > 0;
-        const scheduleOk = form.scheduleKind === 'interval'
-            ? Number.isFinite(form.everyMinutes) && form.everyMinutes >= 1
-            : form.cronExpr.trim().length > 0;
-        const messageOk = message.trim().length > 0;
-        const sessionOk = Boolean(session) && Boolean(machineId) && (!requiresDek || Boolean(sessionDekBase64));
-        return nameOk && scheduleOk && messageOk && sessionOk;
-    }, [form, machineId, message, requiresDek, session, sessionDekBase64]);
+    const availability = React.useMemo(() => resolveExistingSessionAutomationAvailability({
+        session,
+        machineIdOverride,
+        sessionDekBase64,
+        accountSettings: settings,
+    }), [machineIdOverride, session, sessionDekBase64, settings]);
+
+    React.useEffect(() => {
+        if (!session) return;
+        setDraft((current) => {
+            if (current) {
+                if (current.automation) return current;
+                return {
+                    ...current,
+                    automation: sanitizeNewSessionAutomationDraft(DEFAULT_NEW_SESSION_AUTOMATION_DRAFT),
+                };
+            }
+
+            return {
+                ...buildExistingSessionAuthoringDraftFromSession({
+                    session,
+                    message: '',
+                    sessionDekBase64,
+                }),
+                automation: sanitizeNewSessionAutomationDraft(DEFAULT_NEW_SESSION_AUTOMATION_DRAFT),
+            } satisfies SessionAuthoringDraft;
+        });
+    }, [session, sessionDekBase64, setDraft]);
+
+    const currentDraft = latestDraftRef.current ?? draft;
+    const missingReason = React.useMemo(
+        () => getExistingSessionAutomationUnavailableReason(availability),
+        [availability],
+    );
+    const isValid = Boolean(currentDraft?.automation)
+        && availability.kind === 'ready'
+        && (currentDraft?.prompt.trim().length ?? 0) > 0;
 
     const handleCreate = React.useCallback(async () => {
-        if (!isValid) return;
-        if (!session || !machineId) return;
-        if (requiresDek && !sessionDekBase64) return;
+        const current = latestDraftRef.current;
+        if (!session || !current || availability.kind !== 'ready') return;
+        if (!current.automation || current.prompt.trim().length === 0) return;
+
         try {
             const credentials = sync.getCredentials();
-            const template = {
-                directory: normalizeDirectory(session.metadata?.path ?? session.metadata?.homeDir),
-                prompt: message.trim(),
-                displayText: message.trim(),
-                existingSessionId: props.sessionId,
-                ...(requiresDek && sessionDekBase64
-                    ? { sessionEncryptionKeyBase64: sessionDekBase64, sessionEncryptionVariant: 'dataKey' as const }
-                    : {}),
-            };
+            const template = buildAutomationTemplateFromSessionAuthoringDraft(current);
             validateAutomationTemplateTarget({
                 targetType: 'existing_session',
                 template,
@@ -125,81 +96,40 @@ export function SessionAutomationCreateScreen(props: { sessionId: string }) {
             });
 
             await sync.createAutomation({
-                name: normalizeAutomationName(form.name),
-                description: normalizeAutomationDescription(form.description),
-                enabled: form.enabled,
-                schedule: buildScheduleFromSettings(form),
+                name: normalizeAutomationName(current.automation.name),
+                description: normalizeAutomationDescription(current.automation.description),
+                enabled: current.automation.enabled,
+                schedule: buildAutomationScheduleInputFromForm(current.automation),
                 targetType: 'existing_session',
                 templateCiphertext,
-                assignments: [{ machineId, enabled: true, priority: 100 }],
+                assignments: [{ machineId: availability.machineId, enabled: true, priority: 100 }],
             });
             await sync.refreshAutomations();
-            router.back();
+            deferOnWeb(() => router.replace(`/session/${props.sessionId}/automations` as any));
         } catch (error) {
             await Modal.alert(
                 t('common.error'),
                 error instanceof Error ? error.message : t('automations.create.createFailed')
             );
         }
-    }, [form, isValid, machineId, message, props.sessionId, requiresDek, router, session, sessionDekBase64]);
-
-    const missingReason = React.useMemo(() => {
-        if (!session) return t('automations.create.sessionNotFound');
-        if (!machineId) return t('automations.create.missingMachineId');
-        if (requiresDek && !sessionDekBase64) return t('automations.create.missingResumeKey');
-        return null;
-    }, [machineId, requiresDek, session, sessionDekBase64]);
+    }, [availability, latestDraftRef, props.sessionId, router, session]);
 
     return (
         <View style={styles.container}>
             <ItemList style={{ paddingTop: 0 }}>
                 <View style={{ maxWidth: layout.maxWidth, alignSelf: 'center', width: '100%' }}>
-                    {missingReason ? (
-                        <ItemGroup title={t('automations.create.unavailableGroupTitle')}>
-                            <Item
-                                title={t('automations.create.cannotCreateForSession')}
-                                subtitle={missingReason}
-                                subtitleLines={0}
-                                icon={<Ionicons name="alert-circle-outline" size={29} color={theme.colors.warningCritical} />}
-                                showChevron={false}
-                            />
-                        </ItemGroup>
-                    ) : null}
-
-                    <ItemGroup title={t('common.message')}>
-                        <View style={styles.contentContainer}>
-                            <Text style={styles.label}>{t('automations.edit.messageLabel')}</Text>
-                            <TextInput
-                                style={styles.textInput}
-                                value={message}
-                                onChangeText={setMessage}
-                                placeholder={t('automations.edit.messagePlaceholder')}
-                                placeholderTextColor={theme.colors.input.placeholder}
-                                autoCapitalize="sentences"
-                                autoCorrect={true}
-                                multiline={true}
-                            />
-                            <Text style={styles.helpText}>
-                                {t('automations.edit.messageHelpText')}
-                            </Text>
-                        </View>
-                    </ItemGroup>
-
-                    <AutomationSettingsForm
-                        variant="new-session"
-                        value={form}
-                        onChange={setForm}
+                    <ExistingSessionAutomationAuthoringSurface
+                        formVariant="create"
+                        session={session}
+                        draft={draft}
+                        onChangeDraft={setDraft}
+                        availability={availability}
+                        isWaiting={false}
+                        unavailableReason={missingReason}
+                        onSubmit={() => { void handleCreate(); }}
+                        submitAccessibilityLabel={t('automations.create.createButtonTitle')}
+                        isSubmitDisabled={!isValid}
                     />
-
-                    <ItemGroup title={t('common.actions')}>
-                        <Item
-                            title={t('automations.create.createButtonTitle')}
-                            icon={<Ionicons name="checkmark-circle-outline" size={29} color={theme.colors.success} />}
-                            onPress={() => void handleCreate()}
-                            disabled={!isValid}
-                            showChevron={false}
-                        />
-                    </ItemGroup>
                 </View>
             </ItemList>
         </View>

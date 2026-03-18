@@ -7,13 +7,17 @@ import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { ItemList } from '@/components/ui/lists/ItemList';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { Item } from '@/components/ui/lists/Item';
-import { Text } from '@/components/ui/text/Text';
 import { layout } from '@/components/ui/layout/layout';
 import { Modal } from '@/modal';
-import { useAutomations } from '@/sync/domains/state/storage';
+import { useAutomations, useSession, useSettings } from '@/sync/domains/state/storage';
 import { sync } from '@/sync/sync';
 import { filterAutomationsLinkedToSession } from '@/sync/domains/automations/automationSessionLink';
 import { AutomationListGroup } from '@/components/automations/list/AutomationListGroup';
+import { AutomationsEmptyState } from '@/components/automations/shared/AutomationsEmptyState';
+import { getExistingSessionAutomationUnavailableReason } from '@/components/automations/shared/existingSessionAutomationAvailabilityUi';
+import { resolveExistingSessionAutomationAvailability } from '@/components/automations/shared/resolveExistingSessionAutomationAvailability';
+import { readMachineTargetForSession } from '@/sync/ops/sessionMachineTarget';
+import { deferOnWeb } from '@/utils/platform/deferOnWeb';
 import { t } from '@/text';
 
 const stylesheet = StyleSheet.create((theme) => ({
@@ -26,23 +30,6 @@ const stylesheet = StyleSheet.create((theme) => ({
         alignItems: 'center',
         justifyContent: 'center',
     },
-    emptyContainer: {
-        alignItems: 'center',
-        justifyContent: 'center',
-        paddingVertical: 24,
-        paddingHorizontal: 24,
-        gap: 10,
-    },
-    emptyTitle: {
-        fontSize: 18,
-        fontWeight: '600',
-        color: theme.colors.text,
-    },
-    emptyBody: {
-        fontSize: 14,
-        color: theme.colors.textSecondary,
-        textAlign: 'center',
-    },
 }));
 
 export function SessionAutomationsScreen(props: { sessionId: string }) {
@@ -50,6 +37,8 @@ export function SessionAutomationsScreen(props: { sessionId: string }) {
     const styles = stylesheet;
     const router = useRouter();
     const automations = useAutomations();
+    const session = useSession(props.sessionId);
+    const settings = useSettings();
     const [loading, setLoading] = React.useState(true);
 
     const refresh = React.useCallback(async () => {
@@ -73,6 +62,18 @@ export function SessionAutomationsScreen(props: { sessionId: string }) {
     const linked = React.useMemo(() => {
         return filterAutomationsLinkedToSession(automations, props.sessionId);
     }, [automations, props.sessionId]);
+    const sessionDekBase64 = sync.getSessionEncryptionKeyBase64ForResume(props.sessionId);
+    const machineIdOverride = readMachineTargetForSession(props.sessionId)?.machineId ?? null;
+    const availability = React.useMemo(() => resolveExistingSessionAutomationAvailability({
+        session,
+        machineIdOverride,
+        sessionDekBase64,
+        accountSettings: settings,
+    }), [machineIdOverride, session, sessionDekBase64, settings]);
+    const addAutomationUnavailableReason = React.useMemo(
+        () => getExistingSessionAutomationUnavailableReason(availability),
+        [availability],
+    );
 
     if (loading) {
         return (
@@ -87,11 +88,10 @@ export function SessionAutomationsScreen(props: { sessionId: string }) {
             <ItemList style={{ paddingTop: 0 }}>
                 <View style={{ maxWidth: layout.maxWidth, alignSelf: 'center', width: '100%' }}>
                     {linked.length === 0 ? (
-                        <View style={styles.emptyContainer}>
-                            <Ionicons name="timer-outline" size={56} color={theme.colors.textSecondary} />
-                            <Text style={styles.emptyTitle}>{t('automations.session.emptyTitle')}</Text>
-                            <Text style={styles.emptyBody}>{t('automations.session.emptyBody')}</Text>
-                        </View>
+                        <AutomationsEmptyState
+                            title={t('automations.session.emptyTitle')}
+                            body={t('automations.session.emptyBody')}
+                        />
                     ) : (
                         <AutomationListGroup title={t('sessionInfo.automationsTitle')} automations={linked} />
                     )}
@@ -99,8 +99,10 @@ export function SessionAutomationsScreen(props: { sessionId: string }) {
                     <ItemGroup title={t('common.actions')}>
                         <Item
                             title={t('automations.session.addAutomation')}
+                            subtitle={addAutomationUnavailableReason ?? undefined}
                             icon={<Ionicons name="add-outline" size={29} color={theme.colors.accent.blue} />}
-                            onPress={() => router.push(`/session/${props.sessionId}/automations/new` as any)}
+                            onPress={() => deferOnWeb(() => router.push(`/session/${props.sessionId}/automations/new` as any))}
+                            disabled={availability.kind !== 'ready'}
                         />
                     </ItemGroup>
                 </View>
