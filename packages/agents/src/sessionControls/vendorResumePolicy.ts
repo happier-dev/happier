@@ -1,6 +1,9 @@
+import { buildBackendTargetKey } from '@happier-dev/protocol';
 import type { AgentId } from '../types.js';
 import { AGENTS_CORE } from '../manifest.js';
-import { resolveCodexSpawnExtrasFromSettings } from '../providerSettings/definitions/codex.js';
+import { isCodexVendorResumeBackendEnabled } from '../providerSettings/definitions/codex.js';
+import { resolveCodexSessionBackendMode } from './providerSessionBackends.js';
+import { readSessionMetadataRuntimeDescriptor } from './agentRuntimeDescriptor.js';
 
 export type VendorResumeEligibilityReasonCode =
   | 'agent_unsupported'
@@ -18,18 +21,34 @@ function asRecord(value: unknown): Record<string, unknown> | null {
 }
 
 function isBackendDisabledByAccountSettings(agentId: AgentId, accountSettings: Record<string, unknown> | null): boolean {
-  const backendEnabledById = accountSettings?.backendEnabledById;
-  const backendEnabledByIdRecord = asRecord(backendEnabledById);
-  if (!backendEnabledByIdRecord) return false;
-  return backendEnabledByIdRecord[agentId] === false;
+  const backendEnabledByTargetKey = accountSettings?.backendEnabledByTargetKey;
+  const backendEnabledByTargetKeyRecord = asRecord(backendEnabledByTargetKey);
+  if (!backendEnabledByTargetKeyRecord) return false;
+  return backendEnabledByTargetKeyRecord[buildBackendTargetKey({ kind: 'builtInAgent', agentId })] === false;
 }
 
 export function resolveVendorResumeIdFromSessionMetadata(agentId: AgentId, metadata: unknown): string | null {
-  const field = AGENTS_CORE[agentId]?.resume?.vendorResumeIdField ?? null;
-  if (!field) return null;
-
   const record = asRecord(metadata);
   if (!record) return null;
+
+  if (agentId === 'codex') {
+    const runtimeDescriptor = readSessionMetadataRuntimeDescriptor(record, 'codex');
+    if (runtimeDescriptor?.vendorSessionId) return runtimeDescriptor.vendorSessionId;
+  }
+
+  if (agentId === 'opencode') {
+    const runtimeDescriptor = readSessionMetadataRuntimeDescriptor(record, 'opencode');
+    if (runtimeDescriptor?.vendorSessionId) return runtimeDescriptor.vendorSessionId;
+  }
+
+  if (agentId === 'pi') {
+    const runtimeDescriptor = readSessionMetadataRuntimeDescriptor(record, 'pi');
+    if (runtimeDescriptor?.vendorSessionId) return runtimeDescriptor.vendorSessionId;
+  }
+
+  const resume = AGENTS_CORE[agentId]?.resume;
+  const field = resume && 'vendorResumeIdField' in resume ? resume.vendorResumeIdField ?? null : null;
+  if (!field) return null;
 
   const raw = record[field];
   if (typeof raw !== 'string') return null;
@@ -55,10 +74,13 @@ export function evaluateVendorResumeEligibility(input: Readonly<{
   }
 
   if (resumeConfig.vendorResume === 'experimental') {
-    // Codex vendor-resume is ACP-only; treat ACP enablement as the experiment gate.
+    // Codex vendor-resume is currently available through the supported richer backend modes.
     if (input.agentId === 'codex') {
-      const extras = resolveCodexSpawnExtrasFromSettings(accountSettings ?? {});
-      if (extras.experimentalCodexAcp !== true) {
+      const codexBackendMode = resolveCodexSessionBackendMode({
+        metadata: input.metadata,
+        accountSettings,
+      });
+      if (!isCodexVendorResumeBackendEnabled(codexBackendMode ? { codexBackendMode } : {})) {
         return { eligible: false, reasonCode: 'experimental_disabled' };
       }
     } else {
