@@ -1,6 +1,7 @@
 import { resolve } from 'node:path';
 
 import { pathExists } from '../../utils/fs/fs.mjs';
+import { readBundledWorkspaceSyncConfig } from '../readBundledWorkspaceSyncConfig.mjs';
 import {
   readRuntimeManifest,
   readRuntimePointer,
@@ -36,6 +37,7 @@ export async function inspectActiveRuntimeSnapshot({ stackBaseDir }) {
       activeSnapshotId: activeSnapshotId ?? null,
       snapshotPath: pointerSnapshotPath ? resolve(pointerSnapshotPath) : null,
       sourceFingerprint: String(pointer?.sourceFingerprint ?? '').trim() || null,
+      bundledWorkspaceSync: null,
       manifest: null,
       snapshot: null,
     };
@@ -83,6 +85,15 @@ export async function inspectActiveRuntimeSnapshot({ stackBaseDir }) {
       launchPath = runtimePaths.currentDir;
     }
   }
+  const bundledWorkspaceSync = valid
+    ? readBundledWorkspaceSyncConfig({
+        snapshot: {
+          snapshotPath: normalizedExpectedSnapshotPath,
+          launchPath,
+          manifest: validation.manifest,
+        },
+      })
+    : null;
 
   return {
     missing: false,
@@ -92,6 +103,7 @@ export async function inspectActiveRuntimeSnapshot({ stackBaseDir }) {
     snapshotPath: normalizedPointerSnapshotPath,
     launchPath,
     sourceFingerprint,
+    bundledWorkspaceSync,
     manifest: validation.manifest,
     snapshot: valid
       ? {
@@ -99,6 +111,7 @@ export async function inspectActiveRuntimeSnapshot({ stackBaseDir }) {
           snapshotPath: normalizedExpectedSnapshotPath,
           launchPath,
           sourceFingerprint,
+          bundledWorkspaceSync,
           manifest: validation.manifest,
         }
       : null,
