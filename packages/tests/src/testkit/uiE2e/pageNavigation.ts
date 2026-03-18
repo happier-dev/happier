@@ -51,3 +51,35 @@ export async function gotoDomContentLoadedWithRetries(page: Page, url: string, t
     }
   }
 }
+
+function normalizePathname(value: string): string {
+  if (!value) return '/';
+  let pathname = value.trim();
+  if (!pathname.startsWith('/')) pathname = `/${pathname}`;
+  pathname = pathname.replace(/\/+$/, '');
+  return pathname || '/';
+}
+
+export function isGotoTimeoutOnExpectedPath(page: Page, expectedPathname: string, error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  if (!message.toLowerCase().includes('timeout')) return false;
+  try {
+    return normalizePathname(new URL(page.url()).pathname) === normalizePathname(expectedPathname);
+  } catch {
+    return false;
+  }
+}
+
+export async function gotoDomContentLoadedWithPathFallback(
+  page: Page,
+  url: string,
+  expectedPathname: string,
+  timeoutMs = 90_000,
+): Promise<void> {
+  try {
+    await gotoDomContentLoadedWithRetries(page, url, timeoutMs);
+  } catch (error) {
+    if (isGotoTimeoutOnExpectedPath(page, expectedPathname, error)) return;
+    throw error;
+  }
+}

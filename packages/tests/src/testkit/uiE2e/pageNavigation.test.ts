@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import { gotoDomContentLoadedWithRetries } from './pageNavigation';
+import { gotoDomContentLoadedWithPathFallback, gotoDomContentLoadedWithRetries } from './pageNavigation';
 
 describe('gotoDomContentLoadedWithRetries', () => {
   it('retries retryable network errors before succeeding', async () => {
@@ -35,6 +35,22 @@ describe('gotoDomContentLoadedWithRetries', () => {
     };
 
     await expect(gotoDomContentLoadedWithRetries(page as never, targetUrl)).resolves.toBeUndefined();
+    expect(goto).toHaveBeenCalledTimes(1);
+  });
+
+  it('treats a timed-out navigation as usable once the expected pathname has committed', async () => {
+    const targetUrl = 'http://localhost:3000/?server=http%3A%2F%2F127.0.0.1%3A1';
+    const goto = vi.fn(async () => {
+      throw new Error('page.goto: Timeout 90000ms exceeded.');
+    });
+
+    const page = {
+      goto,
+      waitForTimeout: vi.fn(async () => {}),
+      url: () => 'http://localhost:3000/',
+    };
+
+    await expect(gotoDomContentLoadedWithPathFallback(page as never, targetUrl, '/')).resolves.toBeUndefined();
     expect(goto).toHaveBeenCalledTimes(1);
   });
 });
