@@ -313,6 +313,25 @@ describe("automation daemon routes (integration)", () => {
         await withAuthenticatedTestApp(
             (app) => automationRoutes(app as any),
             async (app) => {
+                const missingResponse = await app.inject({
+                    method: "POST",
+                    url: "/v2/automations",
+                    headers: {
+                        "content-type": "application/json",
+                        "x-test-user-id": account.id,
+                    },
+                    payload: {
+                        name: "Existing missing",
+                        enabled: true,
+                        schedule: { kind: "interval", everyMs: 60_000 },
+                        targetType: "existing_session",
+                        templateCiphertext: buildTemplateEnvelope("missing-session"),
+                        assignments: [{ machineId: "machine-1", enabled: true, priority: 0 }],
+                    },
+                });
+                expect(missingResponse.statusCode).toBe(400);
+                expect(String((missingResponse.json() as any).error ?? "")).toMatch(/existing session/i);
+
                 const inactiveResponse = await app.inject({
                     method: "POST",
                     url: "/v2/automations",
