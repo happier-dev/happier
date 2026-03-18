@@ -6,6 +6,8 @@
     "lib": ["ES2022"],
     "rootDir": "src",
     "outDir": "dist",
+    "incremental": true,
+    "tsBuildInfoFile": "dist/.tsbuildinfo",
     "declaration": true,
     "declarationMap": true,
     "sourceMap": true,
