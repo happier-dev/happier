@@ -1,7 +1,5 @@
 import { beforeAll, beforeEach, describe, expect, it } from "vitest";
 
-import { encodeV2SessionListCursorV1 } from "@happier-dev/protocol";
-
 import {
     createSessionRouteReply,
     preloadSessionRoutes,
@@ -10,7 +8,7 @@ import {
     sessionFindMany,
 } from "./sessionRoutes.testkit";
 
-describe("sessionRoutes v2 sessions snapshot", () => {
+describe("sessionRoutes v2 active sessions listing", () => {
     beforeAll(async () => {
         await preloadSessionRoutes();
     }, 120_000);
@@ -20,11 +18,11 @@ describe("sessionRoutes v2 sessions snapshot", () => {
         sessionFindMany.mockReset();
     });
 
-    it("returns owned + shared sessions and uses share DEK for shared sessions", async () => {
-        const now = new Date(1);
+    it("reuses the canonical v2 row contract and visibility while filtering to the active window", async () => {
+        const now = new Date(1_000);
         sessionFindMany.mockResolvedValue([
             {
-                id: "s3",
+                id: "owned-active",
                 seq: 3,
                 accountId: "u1",
                 encryptionMode: "e2ee",
@@ -38,13 +36,15 @@ describe("sessionRoutes v2 sessions snapshot", () => {
                 lastViewedSessionSeq: 2,
                 pendingPermissionRequestCount: 1,
                 pendingUserActionRequestCount: 0,
+                pendingCount: 4,
+                pendingVersion: 8,
                 dataEncryptionKey: Buffer.from([1, 2, 3]),
                 active: true,
                 lastActiveAt: now,
                 shares: [],
             },
             {
-                id: "s2",
+                id: "shared-active",
                 seq: 2,
                 accountId: "owner",
                 encryptionMode: "e2ee",
@@ -58,6 +58,8 @@ describe("sessionRoutes v2 sessions snapshot", () => {
                 lastViewedSessionSeq: 1,
                 pendingPermissionRequestCount: 0,
                 pendingUserActionRequestCount: 2,
+                pendingCount: 3,
+                pendingVersion: 5,
                 dataEncryptionKey: null,
                 active: true,
                 lastActiveAt: now,
@@ -69,29 +71,9 @@ describe("sessionRoutes v2 sessions snapshot", () => {
                     },
                 ],
             },
-            {
-                id: "s1",
-                seq: 1,
-                accountId: "u1",
-                encryptionMode: "plain",
-                createdAt: now,
-                updatedAt: now,
-                archivedAt: null,
-                metadata: "m1",
-                metadataVersion: 1,
-                agentState: null,
-                agentStateVersion: 0,
-                lastViewedSessionSeq: 0,
-                pendingPermissionRequestCount: 0,
-                pendingUserActionRequestCount: 0,
-                dataEncryptionKey: null,
-                active: true,
-                lastActiveAt: now,
-                shares: [],
-            },
         ]);
 
-        const { handler } = await registerSessionRoutesAndGetHandler("GET", "/v2/sessions");
+        const { handler } = await registerSessionRoutesAndGetHandler("GET", "/v2/sessions/active");
         const reply = createSessionRouteReply();
 
         const res = await handler(
@@ -102,31 +84,61 @@ describe("sessionRoutes v2 sessions snapshot", () => {
             reply,
         );
 
+        expect(sessionFindMany).toHaveBeenCalledWith(
+            expect.objectContaining({
+                where: expect.objectContaining({
+                    OR: [
+                        { accountId: "u1" },
+                        { shares: { some: { sharedWithUserId: "u1" } } },
+                    ],
+                    active: true,
+                    lastActiveAt: { gt: expect.any(Date) },
+                }),
+                orderBy: { lastActiveAt: "desc" },
+                take: 2,
+                select: expect.objectContaining({
+                    accountId: true,
+                    pendingCount: true,
+                    pendingVersion: true,
+                    shares: {
+                        where: { sharedWithUserId: "u1" },
+                        select: {
+                            encryptedDataKey: true,
+                            accessLevel: true,
+                            canApprovePermissions: true,
+                        },
+                    },
+                }),
+            }),
+        );
+
         expect(res).toEqual({
             sessions: [
                 expect.objectContaining({
-                    id: "s3",
+                    id: "owned-active",
                     encryptionMode: "e2ee",
                     dataEncryptionKey: "AQID",
                     lastViewedSessionSeq: 2,
                     pendingPermissionRequestCount: 1,
                     pendingUserActionRequestCount: 0,
+                    pendingCount: 4,
+                    pendingVersion: 8,
                     share: null,
                     archivedAt: null,
                 }),
                 expect.objectContaining({
-                    id: "s2",
+                    id: "shared-active",
                     encryptionMode: "e2ee",
                     dataEncryptionKey: "BAU=",
                     lastViewedSessionSeq: 1,
                     pendingPermissionRequestCount: 0,
                     pendingUserActionRequestCount: 2,
+                    pendingCount: 3,
+                    pendingVersion: 5,
                     share: { accessLevel: "edit", canApprovePermissions: true },
                     archivedAt: null,
                 }),
             ],
-            nextCursor: encodeV2SessionListCursorV1("s2"),
-            hasNext: true,
         });
     });
 });
