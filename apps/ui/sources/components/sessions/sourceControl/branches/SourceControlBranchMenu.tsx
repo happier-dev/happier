@@ -1,42 +1,34 @@
 import * as React from 'react';
 import { Pressable, View } from 'react-native';
 import { Octicons } from '@expo/vector-icons';
+import { useRouter } from 'expo-router';
 import { useUnistyles } from 'react-native-unistyles';
 
 import type { ScmBranchListEntry } from '@happier-dev/protocol';
-import { SCM_OPERATION_ERROR_CODES } from '@happier-dev/protocol';
 
-import { DropdownMenu, type DropdownMenuItem } from '@/components/ui/forms/dropdown/DropdownMenu';
+import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { usePublishBranchAction } from '@/hooks/session/sourceControl/usePublishBranchAction';
 import { Modal } from '@/modal';
-import { sessionScmBranchCheckout, sessionScmBranchCreate, sessionScmBranchList } from '@/sync/ops';
+import { repoScmBranchService } from '@/scm/repository/repoScmBranchService';
+import { resolveSessionPathWithinWorktree } from '@/scm/repository/resolveSessionPathWithinWorktree';
+import { useRepoScmBranchList } from '@/scm/repository/useRepoScmBranchList';
+import { repoScmWorktreeService } from '@/scm/repository/repoScmWorktreeService';
+import { sessionScmBranchCheckout, sessionScmBranchCreate } from '@/sync/ops';
 import { useSetting } from '@/sync/domains/state/storage';
 import type { ScmWorkingSnapshot } from '@/sync/domains/state/storageTypes';
+import { readMachineTargetForSession } from '@/sync/ops/sessionMachineTarget';
 import { showSwitchBranchWithChangesDialog } from './SwitchBranchWithChangesDialog';
 import { t } from '@/text';
 import { scmStatusSync } from '@/scm/scmStatusSync';
-
-type BranchSwitchSetting = 'ask' | 'always_bring' | 'always_stash';
-
-function normalizeBranchSwitchSetting(value: unknown): BranchSwitchSetting {
-    if (value === 'always_bring' || value === 'always_stash' || value === 'ask') return value;
-    return 'ask';
-}
-
-function hasUncommittedChanges(snapshot: ScmWorkingSnapshot | null): boolean {
-    const totals = snapshot?.totals;
-    if (!totals) return false;
-    return (totals.includedFiles ?? 0) > 0 || (totals.pendingFiles ?? 0) > 0 || (totals.untrackedFiles ?? 0) > 0;
-}
-
-function isBranchStashAlreadyExistsError(response: Readonly<{ success: boolean; errorCode?: string; error?: string }>): boolean {
-    if (response.success) return false;
-    if (response.errorCode !== SCM_OPERATION_ERROR_CODES.INVALID_REQUEST) return false;
-    const message = typeof response.error === 'string' ? response.error.toLowerCase() : '';
-    return message.includes('stash') && message.includes('already') && message.includes('branch');
-}
+import { buildSourceControlBranchMenuItems } from './buildSourceControlBranchMenuItems';
+import {
+    hasUncommittedChanges,
+    isBranchStashAlreadyExistsError,
+    normalizeBranchSwitchSetting,
+} from './branchMenuPredicates';
+import { handleSourceControlBranchMenuSelect } from './handleSourceControlBranchMenuSelect';
 
 export type SourceControlBranchMenuProps = Readonly<{
     sessionId: string;
@@ -49,10 +41,12 @@ export type SourceControlBranchMenuProps = Readonly<{
 
 export function SourceControlBranchMenu(props: SourceControlBranchMenuProps): React.ReactElement {
     const { theme } = useUnistyles();
+    const router = useRouter();
     const disabled = props.disabled === true;
     const writeEnabled = props.writeEnabled !== false;
     const snapshot = props.snapshot;
     const currentBranch = props.currentBranch;
+    const machineTarget = readMachineTargetForSession(props.sessionId);
 
     const branchSwitchSettingRaw = useSetting('scmUncommittedChangesStrategy');
     const branchSwitchSetting = normalizeBranchSwitchSetting(branchSwitchSettingRaw);
@@ -70,99 +64,86 @@ export function SourceControlBranchMenu(props: SourceControlBranchMenuProps): Re
     });
 
     const [open, setOpen] = React.useState(false);
-    const [loading, setLoading] = React.useState(false);
-    const [branches, setBranches] = React.useState<ScmBranchListEntry[]>([]);
     const [includeRemotes, setIncludeRemotes] = React.useState(false);
 
-    const loadBranches = React.useCallback(async () => {
-        if (!canReadBranches) {
-            setBranches([]);
-            return;
-        }
-        setLoading(true);
-        try {
-            const response = await sessionScmBranchList(props.sessionId, { includeRemotes });
-            if (!response.success) {
-                Modal.alert(t('common.error'), response.error || t('files.branchMenu.failedToLoad'));
-                setBranches([]);
-                return;
-            }
-            setBranches(response.branches ?? []);
-        } catch (error) {
-            const message = error instanceof Error ? error.message : t('files.branchMenu.failedToLoad');
-            Modal.alert(t('common.error'), message);
-            setBranches([]);
-        } finally {
-            setLoading(false);
-        }
-    }, [canReadBranches, includeRemotes, props.sessionId]);
-
-    React.useEffect(() => {
-        if (!open) return;
-        void loadBranches();
-    }, [loadBranches, open]);
-
-    const items: DropdownMenuItem[] = React.useMemo(() => {
-        const out: DropdownMenuItem[] = [];
-
-        if (canPublish) {
-            out.push({
-                id: 'publish',
-                title: t('files.branchMenu.publish.title'),
-                subtitle: t('files.branchMenu.publish.subtitle'),
-                category: t('files.branchMenu.category.actions'),
-            });
-        }
-
-        if (loading) {
-            out.push({
-                id: 'loading',
-                title: t('common.loading'),
-                disabled: true,
-                category: t('files.branchMenu.category.branches'),
-            });
-            return out;
-        }
-
-        if (!canReadBranches) {
-            out.push({
-                id: 'unsupported',
-                title: t('files.branchMenu.unavailable'),
-                disabled: true,
-                category: t('files.branchMenu.category.branches'),
-            });
-            return out;
-        }
-
-        const sorted = [...branches].sort((a, b) => {
-            if (a.type !== b.type) return a.type === 'local' ? -1 : 1;
-            return a.name.localeCompare(b.name);
+    const worktreeRows = React.useMemo(() => {
+        const worktrees = snapshot?.repo.worktrees ?? [];
+        return [...worktrees].sort((left, right) => {
+            if (left.isCurrent === true && right.isCurrent !== true) return -1;
+            if (left.isCurrent !== true && right.isCurrent === true) return 1;
+            return (left.branch ?? left.path).localeCompare(right.branch ?? right.path);
         });
+    }, [snapshot?.repo.worktrees]);
+    const canCreateWorktrees = snapshot?.capabilities?.worktreeCreate === true && writeEnabled && !disabled;
+    const canLaunchWorktreeSession = snapshot?.repo.isRepo === true;
 
-        for (const branch of sorted) {
-            const isCurrent = branch.isCurrent === true || (currentBranch ? branch.name === currentBranch : false);
-            out.push({
-                id: `branch:${branch.name}`,
-                title: branch.name,
-                subtitle: branch.upstream ? t('files.branchMenu.branch.upstream', { upstream: branch.upstream }) : undefined,
-                category: branch.type === 'remote' ? t('files.branchMenu.category.remote') : t('files.branchMenu.category.local'),
-                disabled: !canCheckout || isCurrent,
-                rightElement: isCurrent ? (
-                    <Octicons name="check" size={14} color={theme.colors.textSecondary} />
-                ) : null,
-            });
-        }
-
-        out.push({
-            id: includeRemotes ? 'remotes_off' : 'remotes_on',
-            title: includeRemotes ? t('files.branchMenu.remotes.hide') : t('files.branchMenu.remotes.show'),
-            subtitle: t('files.branchMenu.remotes.subtitle'),
-            category: t('files.branchMenu.category.options'),
-            disabled: !canReadBranches,
+    const openNewSessionForDirectory = React.useCallback((directory: string) => {
+        const params = machineTarget?.machineId
+            ? { machineId: machineTarget.machineId, directory }
+            : { directory };
+        router.push({
+            pathname: '/new',
+            params,
         });
+    }, [machineTarget?.machineId, router]);
 
-        return out;
-    }, [branches, canCheckout, canPublish, canReadBranches, currentBranch, includeRemotes, loading, theme.colors.textSecondary]);
+    const readCachedBranches = React.useCallback(() => {
+        return repoScmBranchService.readCachedBranchesForSession({
+            sessionId: props.sessionId,
+            includeRemotes,
+        });
+    }, [includeRemotes, props.sessionId]);
+
+    const fetchBranches = React.useCallback(async () => {
+        return await repoScmBranchService.fetchBranchesForSession({
+            sessionId: props.sessionId,
+            includeRemotes,
+        });
+    }, [includeRemotes, props.sessionId]);
+
+    const handleBranchLoadError = React.useCallback((error: unknown) => {
+        const message = error instanceof Error ? error.message : t('files.branchMenu.failedToLoad');
+        Modal.alert(t('common.error'), message);
+    }, []);
+
+    const { branches, phase, refresh } = useRepoScmBranchList({
+        ready: canReadBranches,
+        autoLoad: open && canReadBranches,
+        readCached: readCachedBranches,
+        fetch: fetchBranches,
+        onError: handleBranchLoadError,
+    });
+    const loading = phase !== 'idle';
+
+    const items = React.useMemo(() => {
+        return buildSourceControlBranchMenuItems({
+            branches,
+            canCheckout,
+            canCreateWorktrees,
+            canLaunchWorktreeSession,
+            canPublish,
+            canReadBranches,
+            currentBranch,
+            includeRemotes,
+            loading,
+            hasMachineTarget: Boolean(machineTarget),
+            worktreeRows,
+            checkIconColor: theme.colors.textSecondary,
+        });
+    }, [
+        branches,
+        canCheckout,
+        canCreateWorktrees,
+        canLaunchWorktreeSession,
+        canPublish,
+        canReadBranches,
+        currentBranch,
+        includeRemotes,
+        loading,
+        machineTarget,
+        theme.colors.textSecondary,
+        worktreeRows,
+    ]);
 
     const closeMenu = React.useCallback(() => setOpen(false), []);
 
@@ -175,10 +156,11 @@ export function SourceControlBranchMenu(props: SourceControlBranchMenuProps): Re
             Modal.alert(t('common.error'), response.error || t('files.branchMenu.create.failed'));
             return;
         }
+        repoScmBranchService.invalidateBranchesForSession({ sessionId: props.sessionId });
         await scmStatusSync.invalidateFromMutationAndAwait(props.sessionId);
         setOpen(true);
-        void loadBranches();
-    }, [canCreate, loadBranches, props.sessionId]);
+        void refresh('loading');
+    }, [canCreate, props.sessionId, refresh]);
 
     const switchBranch = React.useCallback(async (targetBranch: string) => {
         if (!canCheckout) return;
@@ -242,6 +224,7 @@ export function SourceControlBranchMenu(props: SourceControlBranchMenuProps): Re
             return;
         }
 
+        repoScmBranchService.invalidateBranchesForSession({ sessionId: props.sessionId });
         closeMenu();
         await scmStatusSync.invalidateFromMutationAndAwait(props.sessionId);
     }, [
@@ -254,28 +237,110 @@ export function SourceControlBranchMenu(props: SourceControlBranchMenuProps): Re
         snapshot,
     ]);
 
+    const createWorktreeFromCurrentBranch = React.useCallback(async () => {
+        if (!canCreateWorktrees || !machineTarget || !currentBranch) {
+            return;
+        }
+
+        const response = await repoScmWorktreeService.createWorktreeForMachinePath({
+            machineId: machineTarget.machineId,
+            path: machineTarget.basePath,
+            baseRef: null,
+        });
+        if (!response.success) {
+            Modal.alert(t('common.error'), response.error || t('files.branchMenu.worktrees.createFailed'));
+            return;
+        }
+
+        closeMenu();
+        openNewSessionForDirectory(resolveSessionPathWithinWorktree({
+            selectedPath: machineTarget.basePath,
+            worktreePath: response.worktreePath,
+            sourceRootPath: response.sourceRootPath || machineTarget.basePath,
+        }));
+    }, [canCreateWorktrees, closeMenu, currentBranch, machineTarget, openNewSessionForDirectory]);
+
+    const pruneWorktrees = React.useCallback(async () => {
+        if (!canCreateWorktrees || !machineTarget) {
+            return;
+        }
+
+        const response = await repoScmWorktreeService.pruneWorktreesForMachinePath({
+            machineId: machineTarget.machineId,
+            path: machineTarget.basePath,
+        });
+        if (!response.success) {
+            Modal.alert(t('common.error'), response.stderr || t('files.branchMenu.worktrees.pruneFailed'));
+            return;
+        }
+
+        closeMenu();
+        await scmStatusSync.invalidateFromMutationAndAwait(props.sessionId);
+    }, [canCreateWorktrees, closeMenu, machineTarget, props.sessionId]);
+
+    const removeWorktree = React.useCallback(async (worktreePath: string) => {
+        if (!canCreateWorktrees || !machineTarget) {
+            return;
+        }
+
+        const confirmed = await Modal.confirm(
+            t('files.branchMenu.worktrees.removeConfirmTitle'),
+            t('files.branchMenu.worktrees.removeConfirmBody', { path: worktreePath }),
+            {
+                confirmText: t('files.branchMenu.worktrees.removeConfirmButton'),
+                cancelText: t('common.cancel'),
+                destructive: true,
+            },
+        );
+        if (!confirmed) {
+            return;
+        }
+
+        const response = await repoScmWorktreeService.removeWorktreeForMachinePath({
+            machineId: machineTarget.machineId,
+            path: machineTarget.basePath,
+            worktreePath,
+        });
+        if (!response.success) {
+            Modal.alert(t('common.error'), response.stderr || t('files.branchMenu.worktrees.removeFailed'));
+            return;
+        }
+
+        closeMenu();
+        await scmStatusSync.invalidateFromMutationAndAwait(props.sessionId);
+    }, [canCreateWorktrees, closeMenu, machineTarget, props.sessionId]);
+
+    const directoryFallback = machineTarget?.basePath ?? snapshot?.repo.rootPath ?? '.';
+
     const onSelect = React.useCallback(async (itemId: string) => {
-        if (itemId === 'publish') {
-            const published = await publishBranch();
-            if (published) closeMenu();
-            return;
-        }
-        if (itemId === 'remotes_on') {
-            setIncludeRemotes(true);
-            setOpen(true);
-            return;
-        }
-        if (itemId === 'remotes_off') {
-            setIncludeRemotes(false);
-            setOpen(true);
-            return;
-        }
-        if (itemId.startsWith('branch:')) {
-            const name = itemId.slice('branch:'.length);
-            await switchBranch(name);
-            return;
-        }
-    }, [closeMenu, publishBranch, switchBranch]);
+        await handleSourceControlBranchMenuSelect({
+            itemId,
+            closeMenu,
+            createWorktreeFromCurrentBranch,
+            directoryFallback,
+            machineTarget: machineTarget ? { machineId: machineTarget.machineId, basePath: machineTarget.basePath } : null,
+            openNewSessionForDirectory,
+            pruneWorktrees,
+            publishBranch,
+            removeWorktree,
+            router,
+            setIncludeRemotes,
+            setOpen,
+            switchBranch,
+        });
+    }, [
+        closeMenu,
+        createWorktreeFromCurrentBranch,
+        directoryFallback,
+        machineTarget?.basePath,
+        machineTarget?.machineId,
+        openNewSessionForDirectory,
+        pruneWorktrees,
+        publishBranch,
+        removeWorktree,
+        router,
+        switchBranch,
+    ]);
 
     const selectedId = currentBranch ? `branch:${currentBranch}` : null;
     const triggerTestId = props.testID ?? 'scm-branch-menu-trigger';

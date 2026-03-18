@@ -6,6 +6,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const publishBranchMock = vi.hoisted(() => vi.fn(async () => true));
 const usePublishBranchActionMock = vi.hoisted(() => vi.fn());
+let activeGitSubTab: 'commit' | 'update' | 'history' = 'update';
+let scmSnapshotMock: any = null;
 
 vi.mock('react-native-reanimated', () => ({}));
 
@@ -49,7 +51,7 @@ vi.mock('@/components/appShell/panes/hooks/useAppPaneScope', () => ({
 
 vi.mock('./useSessionRightPanelGitTabState', () => ({
     useSessionRightPanelGitTabState: () => ({
-        activeGitSubTab: 'update',
+        activeGitSubTab,
         setActiveGitSubTab: vi.fn(),
         commitDraftMessage: '',
         setCommitDraftMessage: vi.fn(),
@@ -110,37 +112,7 @@ vi.mock('@/sync/domains/state/storage', async (importOriginal) => {
     useSessionProjectScmCommitSelectionPatches: () => [],
     useSessionProjectScmInFlightOperation: () => null,
     useSessionProjectScmOperationLog: () => [],
-    useSessionProjectScmSnapshot: () => ({
-        fetchedAt: 1,
-        projectKey: 'm1:/repo',
-        repo: { isRepo: true, rootPath: '/repo', backendId: 'git', mode: '.git' },
-        capabilities: {
-            readStatus: true,
-            readDiffFile: true,
-            readDiffCommit: true,
-            readLog: true,
-            writeCommit: true,
-            writeInclude: true,
-            writeExclude: true,
-            writeRemoteFetch: true,
-            writeRemotePull: true,
-            writeRemotePush: true,
-            supportedDiffAreas: ['included', 'pending'],
-        },
-        branch: { head: 'main', upstream: null, ahead: 0, behind: 0, detached: false },
-        stashCount: 0,
-        hasConflicts: false,
-        entries: [],
-        totals: {
-            includedFiles: 0,
-            pendingFiles: 0,
-            untrackedFiles: 0,
-            includedAdded: 0,
-            includedRemoved: 0,
-            pendingAdded: 0,
-            pendingRemoved: 0,
-        },
-    }),
+    useSessionProjectScmSnapshot: () => scmSnapshotMock,
     useSessionProjectScmSnapshotError: () => null,
     useSessionProjectScmTouchedPaths: () => [],
     useSessionProjectScmOperationLogEntryIds: () => [],
@@ -196,9 +168,46 @@ vi.mock('./SessionRightPanelGitHistoryTab', () => ({
     SessionRightPanelGitHistoryTab: () => React.createElement('HistoryTab'),
 }));
 
+function createScmSnapshot(overrides?: Partial<NonNullable<typeof scmSnapshotMock>>) {
+    return {
+        fetchedAt: 1,
+        projectKey: 'm1:/repo',
+        repo: { isRepo: true, rootPath: '/repo', backendId: 'git', mode: '.git' },
+        capabilities: {
+            readStatus: true,
+            readDiffFile: true,
+            readDiffCommit: true,
+            readLog: true,
+            writeCommit: true,
+            writeInclude: true,
+            writeExclude: true,
+            writeRemoteFetch: true,
+            writeRemotePull: true,
+            writeRemotePush: true,
+            supportedDiffAreas: ['included', 'pending'],
+        },
+        branch: { head: 'main', upstream: null, ahead: 0, behind: 0, detached: false },
+        stashCount: 0,
+        hasConflicts: false,
+        entries: [],
+        totals: {
+            includedFiles: 0,
+            pendingFiles: 0,
+            untrackedFiles: 0,
+            includedAdded: 0,
+            includedRemoved: 0,
+            pendingAdded: 0,
+            pendingRemoved: 0,
+        },
+        ...overrides,
+    };
+}
+
 describe('SessionRightPanelGitView (remote action visibility)', () => {
     beforeEach(() => {
         publishBranchMock.mockClear();
+        activeGitSubTab = 'update';
+        scmSnapshotMock = createScmSnapshot();
         usePublishBranchActionMock.mockReturnValue({
             canPublish: true,
             publishBusy: false,
@@ -218,5 +227,37 @@ describe('SessionRightPanelGitView (remote action visibility)', () => {
         const actions = (updateTab.props as any).actions as Array<{ key: string }>;
         expect(actions.map((a) => a.key)).toEqual(['fetch', 'publish']);
         expect((updateTab.props as any).hint).toBeNull();
+    });
+
+    it('does not render a workspace rail when remote update actions are unavailable', async () => {
+        activeGitSubTab = 'commit';
+        scmSnapshotMock = createScmSnapshot({
+            capabilities: {
+                ...createScmSnapshot().capabilities,
+                writeRemoteFetch: false,
+                writeRemotePull: false,
+                writeRemotePush: false,
+            },
+        });
+
+        const { SessionRightPanelGitView } = await import('./SessionRightPanelGitView');
+
+        let tree!: renderer.ReactTestRenderer;
+        await act(async () => {
+            tree = renderer.create(<SessionRightPanelGitView sessionId="s1" scopeId="session:s1" />);
+        });
+
+        expect(tree.root.findAllByType('UpdateTab' as any)).toHaveLength(0);
+    });
+
+    it('keeps the git tabs visible without a workspace rail', async () => {
+        const { SessionRightPanelGitView } = await import('./SessionRightPanelGitView');
+
+        let tree!: renderer.ReactTestRenderer;
+        await act(async () => {
+            tree = renderer.create(<SessionRightPanelGitView sessionId="s1" scopeId="session:s1" />);
+        });
+
+        expect(tree.root.findAllByType('UpdateTab' as any)).toHaveLength(1);
     });
 });

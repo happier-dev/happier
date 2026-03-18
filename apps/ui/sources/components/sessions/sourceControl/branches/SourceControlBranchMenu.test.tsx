@@ -5,12 +5,17 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 const sessionScmBranchCheckoutMock = vi.hoisted(() => vi.fn());
-const sessionScmBranchListMock = vi.hoisted(() => vi.fn());
 const sessionScmBranchCreateMock = vi.hoisted(() => vi.fn());
 const sessionScmRemotePublishMock = vi.hoisted(() => vi.fn());
 const useSettingMock = vi.hoisted(() => vi.fn());
 const publishBranchMock = vi.hoisted(() => vi.fn(async () => true));
 const usePublishBranchActionMock = vi.hoisted(() => vi.fn());
+const readMachineTargetForSessionMock = vi.hoisted(() => vi.fn());
+const routerPushMock = vi.hoisted(() => vi.fn());
+const fetchBranchesForSessionMock = vi.hoisted(() => vi.fn());
+const readCachedBranchesForSessionMock = vi.hoisted(() => vi.fn());
+const invalidateBranchesForSessionMock = vi.hoisted(() => vi.fn());
+const modalAlertMock = vi.hoisted(() => vi.fn());
 
 vi.mock('react-native', () => ({
     View: 'View',
@@ -58,12 +63,27 @@ vi.mock('@/text', () => ({
 vi.mock('@/sync/ops', () => ({
     sessionScmBranchCheckout: sessionScmBranchCheckoutMock,
     sessionScmRemotePublish: sessionScmRemotePublishMock,
-    sessionScmBranchList: sessionScmBranchListMock,
     sessionScmBranchCreate: sessionScmBranchCreateMock,
+}));
+
+vi.mock('@/scm/repository/repoScmBranchService', () => ({
+    repoScmBranchService: {
+        fetchBranchesForSession: (input: unknown) => fetchBranchesForSessionMock(input),
+        readCachedBranchesForSession: (input: unknown) => readCachedBranchesForSessionMock(input),
+        invalidateBranchesForSession: (input: unknown) => invalidateBranchesForSessionMock(input),
+    },
 }));
 
 vi.mock('@/sync/domains/state/storage', () => ({
     useSetting: (key: string) => useSettingMock(key),
+}));
+
+vi.mock('@/sync/ops/sessionMachineTarget', () => ({
+    readMachineTargetForSession: (sessionId: string) => readMachineTargetForSessionMock(sessionId),
+}));
+
+vi.mock('expo-router', () => ({
+    useRouter: () => ({ push: routerPushMock }),
 }));
 
 vi.mock('@/scm/scmStatusSync', () => ({
@@ -78,7 +98,7 @@ vi.mock('@/hooks/session/sourceControl/usePublishBranchAction', () => ({
 
 vi.mock('@/modal', () => ({
     Modal: {
-        alert: vi.fn(),
+        alert: modalAlertMock,
         confirm: vi.fn(async () => false),
     },
 }));
@@ -86,6 +106,15 @@ vi.mock('@/modal', () => ({
 describe('SourceControlBranchMenu', () => {
     beforeEach(() => {
         publishBranchMock.mockClear();
+        readMachineTargetForSessionMock.mockReset();
+        readMachineTargetForSessionMock.mockReturnValue(null);
+        routerPushMock.mockReset();
+        fetchBranchesForSessionMock.mockReset();
+        fetchBranchesForSessionMock.mockResolvedValue([]);
+        readCachedBranchesForSessionMock.mockReset();
+        readCachedBranchesForSessionMock.mockReturnValue([]);
+        invalidateBranchesForSessionMock.mockReset();
+        modalAlertMock.mockReset();
         usePublishBranchActionMock.mockImplementation(({ writeEnabled, disabled, snapshot }: any) => ({
             canPublish:
                 writeEnabled !== false
@@ -99,13 +128,10 @@ describe('SourceControlBranchMenu', () => {
 
     it('keeps the branch list visible while write operations are disabled', async () => {
         useSettingMock.mockImplementation(() => 'always_bring');
-        sessionScmBranchListMock.mockResolvedValue({
-            success: true,
-            branches: [
-                { name: 'existing-branch', type: 'local', isCurrent: true, upstream: null },
-                { name: 'feature/test', type: 'local', isCurrent: false, upstream: null },
-            ],
-        });
+        fetchBranchesForSessionMock.mockResolvedValue([
+            { name: 'existing-branch', type: 'local', isCurrent: true, upstream: null },
+            { name: 'feature/test', type: 'local', isCurrent: false, upstream: null },
+        ]);
 
         const { SourceControlBranchMenu } = await import('./SourceControlBranchMenu');
 
@@ -143,11 +169,107 @@ describe('SourceControlBranchMenu', () => {
 
         expect(menu.props.items.some((item: any) => item.id === 'publish')).toBe(false);
         expect(menu.props.items.find((item: any) => item.id === 'branch:feature/test')?.disabled).toBe(true);
+        expect(fetchBranchesForSessionMock).toHaveBeenCalledWith({
+            sessionId: 's1',
+            includeRemotes: false,
+        });
+    });
+
+    it('seeds the branch menu from the shared branch cache before refreshing', async () => {
+        useSettingMock.mockImplementation(() => 'always_bring');
+        readCachedBranchesForSessionMock.mockReturnValue([
+            { name: 'cached-branch', type: 'local', isCurrent: false, upstream: null },
+        ]);
+        fetchBranchesForSessionMock.mockImplementation(() => new Promise(() => {}));
+
+        const { SourceControlBranchMenu } = await import('./SourceControlBranchMenu');
+
+        let tree!: renderer.ReactTestRenderer;
+        await act(async () => {
+            tree = renderer.create(
+                <SourceControlBranchMenu
+                    sessionId="s1"
+                    currentBranch="main"
+                    snapshot={{
+                        repo: { isRepo: true, rootPath: '/repo', backendId: 'git', mode: '.git' },
+                        branch: { head: 'main', upstream: null, ahead: 0, behind: 0, detached: false },
+                        capabilities: { readBranches: true, writeBranchCheckout: true, writeRemotePublish: true },
+                        totals: { includedFiles: 0, pendingFiles: 0, untrackedFiles: 0, includedAdded: 0, includedRemoved: 0, pendingAdded: 0, pendingRemoved: 0 },
+                        fetchedAt: Date.now(),
+                        projectKey: 'p1',
+                        hasConflicts: false,
+                        entries: [],
+                        stashCount: 0,
+                    } as any}
+                    disabled={false}
+                />
+            );
+        });
+
+        let menu = tree.root.findByType('DropdownMenu' as any);
+        await act(async () => {
+            menu.props.onOpenChange(true);
+            await Promise.resolve();
+        });
+        menu = tree.root.findByType('DropdownMenu' as any);
+
+        expect(menu.props.items.some((item: any) => item.id === 'branch:cached-branch')).toBe(true);
+        expect(fetchBranchesForSessionMock).toHaveBeenCalledWith({
+            sessionId: 's1',
+            includeRemotes: false,
+        });
+    });
+
+    it('keeps cached branches visible when refresh fails', async () => {
+        useSettingMock.mockImplementation(() => 'always_bring');
+        readCachedBranchesForSessionMock.mockReturnValue([
+            { name: 'cached-branch', type: 'local', isCurrent: false, upstream: null },
+        ]);
+        fetchBranchesForSessionMock.mockRejectedValue(new Error('refresh failed'));
+
+        const { SourceControlBranchMenu } = await import('./SourceControlBranchMenu');
+
+        let tree!: renderer.ReactTestRenderer;
+        await act(async () => {
+            tree = renderer.create(
+                <SourceControlBranchMenu
+                    sessionId="s1"
+                    currentBranch="main"
+                    snapshot={{
+                        repo: { isRepo: true, rootPath: '/repo', backendId: 'git', mode: '.git' },
+                        branch: { head: 'main', upstream: null, ahead: 0, behind: 0, detached: false },
+                        capabilities: { readBranches: true, writeBranchCheckout: true, writeRemotePublish: true },
+                        totals: { includedFiles: 0, pendingFiles: 0, untrackedFiles: 0, includedAdded: 0, includedRemoved: 0, pendingAdded: 0, pendingRemoved: 0 },
+                        fetchedAt: Date.now(),
+                        projectKey: 'p1',
+                        hasConflicts: false,
+                        entries: [],
+                        stashCount: 0,
+                    } as any}
+                    disabled={false}
+                />
+            );
+        });
+
+        let menu = tree.root.findByType('DropdownMenu' as any);
+        await act(async () => {
+            menu.props.onOpenChange(true);
+            await Promise.resolve();
+        });
+        await act(async () => {
+            try {
+                await fetchBranchesForSessionMock.mock.results[0]?.value;
+            } catch {}
+        });
+        menu = tree.root.findByType('DropdownMenu' as any);
+
+        expect(menu.props.items.some((item: any) => item.id === 'branch:cached-branch')).toBe(true);
+        expect(modalAlertMock).toHaveBeenCalledWith('common.error', 'refresh failed');
     });
 
     it('allows the branch menu popover to grow wider than the branch trigger', async () => {
         useSettingMock.mockImplementation(() => 'always_bring');
-        sessionScmBranchListMock.mockResolvedValue({ success: true, branches: [] });
+        fetchBranchesForSessionMock.mockResolvedValue([]);
         sessionScmBranchCreateMock.mockResolvedValue({ success: true });
 
         const { SourceControlBranchMenu } = await import('./SourceControlBranchMenu');
@@ -185,7 +307,7 @@ describe('SourceControlBranchMenu', () => {
             if (key === 'scmAskBeforeOverwritingBranchStash') return true;
             return undefined;
         });
-        sessionScmBranchListMock.mockResolvedValue({ success: true, branches: [] });
+        fetchBranchesForSessionMock.mockResolvedValue([]);
         sessionScmBranchCreateMock.mockResolvedValue({ success: true });
         sessionScmBranchCheckoutMock.mockResolvedValue({ success: true });
 
@@ -226,7 +348,7 @@ describe('SourceControlBranchMenu', () => {
 
     it('publishes branch when selecting publish', async () => {
         useSettingMock.mockImplementation(() => 'always_bring');
-        sessionScmBranchListMock.mockResolvedValue({ success: true, branches: [] });
+        fetchBranchesForSessionMock.mockResolvedValue([]);
         sessionScmBranchCreateMock.mockResolvedValue({ success: true });
         sessionScmRemotePublishMock.mockResolvedValue({ success: true });
 

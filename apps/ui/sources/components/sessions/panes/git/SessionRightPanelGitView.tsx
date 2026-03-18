@@ -339,7 +339,7 @@ export const SessionRightPanelGitView = React.memo((props: SessionRightPanelGitV
         if (canPublish && (pullPreflightReason === 'upstream_required' || pushPreflightReason === 'upstream_required')) {
             actions.push({
                 key: 'publish',
-                iconName: 'cloud-upload',
+                iconName: 'upload',
                 label: t('files.branchMenu.publish.title'),
                 disabled: busy,
                 onPress: () => {

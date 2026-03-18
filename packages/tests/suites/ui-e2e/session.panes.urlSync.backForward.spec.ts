@@ -1,7 +1,6 @@
 import { test, expect, type Page } from '@playwright/test';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
-import { execFileSync } from 'node:child_process';
 
 import { createRunDirs } from '../../src/testkit/runDir';
 import { startServerLight, type StartedServer } from '../../src/testkit/process/serverLight';
@@ -10,40 +9,9 @@ import { startTestDaemon, type StartedDaemon } from '../../src/testkit/daemon/da
 import { startCliAuthLoginForTerminalConnect, type StartedCliTerminalConnect } from '../../src/testkit/uiE2e/cliTerminalConnect';
 import { fakeClaudeFixturePath } from '../../src/testkit/fakeClaude';
 import { gotoDomContentLoadedWithRetries, normalizeLoopbackBaseUrl } from '../../src/testkit/uiE2e/pageNavigation';
+import { spawnSessionFromDaemon } from '../../src/testkit/uiE2e/spawnSessionFromDaemon';
 
 const run = createRunDirs({ runLabel: 'ui-e2e' });
-
-function resolveServerLightSqliteDbPath(params: { suiteDir: string }): string {
-  return resolve(join(params.suiteDir, 'server-light-data', 'happier-server-light.sqlite'));
-}
-
-function readLatestMachineIdFromServerLightDb(params: { suiteDir: string }): string {
-  const dbPath = resolveServerLightSqliteDbPath({ suiteDir: params.suiteDir });
-  try {
-    const raw = execFileSync('sqlite3', ['-json', dbPath, 'select id from Machine order by createdAt desc limit 1;'], {
-      encoding: 'utf8',
-    });
-    const parsed = JSON.parse(raw) as Array<{ id?: unknown }>;
-    const id = parsed?.[0]?.id;
-    if (typeof id === 'string' && id.trim()) return id.trim();
-  } catch {
-    // ignore - pollers can retry
-  }
-  throw new Error(`Failed to read machine id from server light sqlite db: ${dbPath}`);
-}
-
-async function waitForLatestMachineId(params: { suiteDir: string; timeoutMs?: number }): Promise<string> {
-  const timeoutMs = params.timeoutMs ?? 60_000;
-  const startedAt = Date.now();
-  while (Date.now() - startedAt < timeoutMs) {
-    try {
-      return readLatestMachineIdFromServerLightDb({ suiteDir: params.suiteDir });
-    } catch {
-      await new Promise((r) => setTimeout(r, 250));
-    }
-  }
-  return readLatestMachineIdFromServerLightDb({ suiteDir: params.suiteDir });
-}
 
 test.describe('ui e2e: session multi-pane URL sync', () => {
   test.describe.configure({ mode: 'serial' });
@@ -117,6 +85,7 @@ test.describe('ui e2e: session multi-pane URL sync', () => {
 
     const testDir = resolve(join(suiteDir, 't1-url-sync'));
     await mkdir(testDir, { recursive: true });
+    await writeFile(resolve(join(testDir, 'AGENTS.md')), '# UI e2e fixture\n', 'utf8');
 
     const cliLogin: StartedCliTerminalConnect = await startCliAuthLoginForTerminalConnect({
       testDir,
@@ -152,6 +121,9 @@ test.describe('ui e2e: session multi-pane URL sync', () => {
         HAPPIER_WEBAPP_URL: uiBaseUrl,
         HAPPIER_DISABLE_CAFFEINATE: '1',
         HAPPIER_VARIANT: 'dev',
+        // Machine-scoped RPC must be allowed to read within the e2e fixture directory so the machine
+        // is considered fully online/usable by the UI (required for /new wizard flows).
+        HAPPIER_MACHINE_RPC_WORKING_DIRECTORY: testDir,
         HAPPIER_CLAUDE_PATH: fakeClaudePath,
         HAPPIER_E2E_FAKE_CLAUDE_LOG: fakeClaudeLogPath,
         HAPPIER_E2E_FAKE_CLAUDE_SESSION_ID: `fake-claude-session-${run.runId}`,
@@ -159,24 +131,7 @@ test.describe('ui e2e: session multi-pane URL sync', () => {
       },
     });
 
-    const machineId = await waitForLatestMachineId({ suiteDir, timeoutMs: 120_000 });
-
-    await page.goto(`${uiBaseUrl}/new`, { waitUntil: 'domcontentloaded' });
-    await expect(page.getByTestId('new-session-composer-input')).toHaveCount(1, { timeout: 60_000 });
-    await expect(page.getByTestId('agent-input-machine-chip')).toHaveCount(1, { timeout: 120_000 });
-    await page.getByTestId('agent-input-machine-chip').click();
-    await expect(page.getByTestId(`new-session-machine:${machineId}`)).toHaveCount(1, { timeout: 120_000 });
-    await page.getByTestId(`new-session-machine:${machineId}`).click();
-    await page.getByTestId('new-session-composer-input').fill('hello');
-    await page.getByTestId('new-session-composer-input').press('Enter');
-
-    await expect(page.getByTestId('session-composer-input')).toHaveCount(1, { timeout: 180_000 });
-
-    const url = page.url();
-    const pathname = new URL(url).pathname;
-    const parts = pathname.split('/').filter(Boolean);
-    const sessionId = parts[0] === 'session' ? parts[1] : null;
-    if (!sessionId) throw new Error(`failed to parse session id from url: ${url}`);
+    const sessionId = await spawnSessionFromDaemon({ daemon, directory: testDir });
     const sessionUrl = `${uiBaseUrl}/session/${sessionId}`;
 
     await page.goto(sessionUrl, { waitUntil: 'domcontentloaded' });

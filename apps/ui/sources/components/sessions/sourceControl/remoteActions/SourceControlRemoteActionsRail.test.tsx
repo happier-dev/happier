@@ -49,4 +49,23 @@ describe('SourceControlRemoteActionsRail', () => {
         });
         expect(onFetch).toHaveBeenCalledTimes(1);
     });
+
+    it('accepts the publish upload icon without casts', () => {
+        const onPublish = vi.fn();
+
+        let tree: renderer.ReactTestRenderer | null = null;
+        act(() => {
+            tree = renderer.create(
+                <SourceControlRemoteActionsRail
+                    theme={theme}
+                    actions={[
+                        { key: 'publish', iconName: 'upload', label: 'Publish', disabled: false, onPress: onPublish },
+                    ]}
+                />
+            );
+        });
+
+        const octicon = (tree! as any).root.findByType('Octicons' as any);
+        expect(octicon.props.name).toBe('upload');
+    });
 });

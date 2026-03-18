@@ -39,9 +39,14 @@ export type SessionRightPanelGitCommitTabProps = Readonly<{
     changedFilesViewMode: ChangedFilesViewMode;
     attributionReliability: SessionAttributionReliability;
     allRepositoryChangedFiles: ScmFileStatus[];
+    turnAttributedFiles?: SessionAttributedFile[];
+    turnRepositoryOnlyFiles?: ScmFileStatus[];
     sessionAttributedFiles: SessionAttributedFile[];
     repositoryOnlyFiles: ScmFileStatus[];
     suppressedInferredCount: number;
+    showTurnViewToggle?: boolean;
+    showSessionViewToggle?: boolean;
+    onChangedFilesViewMode?: (mode: ChangedFilesViewMode) => void;
     repositorySelectedCount: number;
     onSelectAll: () => void;
     onSelectNone: () => void;
@@ -87,9 +92,14 @@ export const SessionRightPanelGitCommitTab = React.memo((props: SessionRightPane
                 changedFilesViewMode={props.changedFilesViewMode}
                 attributionReliability={props.attributionReliability}
                 allRepositoryChangedFiles={props.allRepositoryChangedFiles}
+                turnAttributedFiles={props.turnAttributedFiles}
+                turnRepositoryOnlyFiles={props.turnRepositoryOnlyFiles}
                 sessionAttributedFiles={props.sessionAttributedFiles}
                 repositoryOnlyFiles={props.repositoryOnlyFiles}
                 suppressedInferredCount={props.suppressedInferredCount}
+                showTurnViewToggle={props.showTurnViewToggle}
+                showSessionViewToggle={props.showSessionViewToggle}
+                onChangedFilesViewMode={props.onChangedFilesViewMode}
                 repositorySelectedCount={props.repositorySelectedCount}
                 onSelectAll={props.onSelectAll}
                 onSelectNone={props.onSelectNone}
@@ -219,9 +229,14 @@ type CommitChangesSurfaceProps = Readonly<{
     changedFilesViewMode: ChangedFilesViewMode;
     attributionReliability: SessionAttributionReliability;
     allRepositoryChangedFiles: ScmFileStatus[];
+    turnAttributedFiles?: SessionAttributedFile[];
+    turnRepositoryOnlyFiles?: ScmFileStatus[];
     sessionAttributedFiles: SessionAttributedFile[];
     repositoryOnlyFiles: ScmFileStatus[];
     suppressedInferredCount: number;
+    showTurnViewToggle?: boolean;
+    showSessionViewToggle?: boolean;
+    onChangedFilesViewMode?: (mode: ChangedFilesViewMode) => void;
     repositorySelectedCount: number;
     onSelectAll: () => void;
     onSelectNone: () => void;
@@ -304,6 +319,51 @@ const CommitChangesSurface = React.memo((props: CommitChangesSurfaceProps) => {
         };
     }, [canReadManagedStashes, props.sessionId, props.scmSnapshot?.fetchedAt, snapshotManagedStashCount]);
 
+    const renderModeChip = React.useCallback((params: Readonly<{
+        mode: ChangedFilesViewMode;
+        label: string;
+        icon: React.ComponentProps<typeof Octicons>['name'];
+    }>) => {
+        const active = props.changedFilesViewMode === params.mode;
+        return (
+            <Pressable
+                key={params.mode}
+                accessibilityRole="button"
+                onPress={() => props.onChangedFilesViewMode?.(params.mode)}
+                style={({ pressed }) => ({
+                    flexDirection: 'row',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    paddingHorizontal: 10,
+                    height: 28,
+                    borderRadius: 10,
+                    borderWidth: 1,
+                    borderColor: props.theme.colors.divider,
+                    backgroundColor: active ? props.theme.colors.surfaceHigh : props.theme.colors.surface,
+                    opacity: pressed ? 0.78 : 1,
+                    gap: 6,
+                })}
+            >
+                <Octicons name={params.icon} size={13} color={props.theme.colors.textSecondary} />
+                <Text style={{ fontSize: 11, color: props.theme.colors.textSecondary, ...Typography.default('semiBold') }}>
+                    {params.label}
+                </Text>
+            </Pressable>
+        );
+    }, [props.changedFilesViewMode, props.onChangedFilesViewMode, props.theme.colors.divider, props.theme.colors.surface, props.theme.colors.surfaceHigh, props.theme.colors.textSecondary]);
+
+    const availableModes = React.useMemo(() => {
+        return [
+            { mode: 'repository' as const, label: t('files.toolbar.repositoryView'), icon: 'list-unordered' as const },
+            ...(props.showTurnViewToggle
+                ? [{ mode: 'turn' as const, label: t('files.toolbar.turnView'), icon: 'clock' as const }]
+                : []),
+            ...(props.showSessionViewToggle
+                ? [{ mode: 'session' as const, label: t('files.toolbar.sessionView'), icon: 'history' as const }]
+                : []),
+        ];
+    }, [props.showSessionViewToggle, props.showTurnViewToggle]);
+
     const headerContent = React.useMemo(() => {
         const lockedByOtherSession = Boolean(
             props.inFlightScmOperation && props.inFlightScmOperation.sessionId !== props.sessionId,
@@ -381,40 +441,46 @@ const CommitChangesSurface = React.memo((props: CommitChangesSurfaceProps) => {
                             {String(repositoryChangedFiles.length)}
                         </Text>
                     </View>
-                {props.onOpenReviewAllChanges ? (
-                    <Pressable
-                        testID="session-rightpanel-git-open-review"
-                        accessibilityRole="button"
-                        accessibilityLabel={t('files.toolbar.review')}
-                        onPress={props.onOpenReviewAllChanges}
-                        style={({ pressed }) => ({
-                            flexDirection: 'row',
-                            alignItems: 'center',
-                            justifyContent: 'center',
-                            paddingHorizontal: 10,
-                            height: 30,
-                            borderRadius: 10,
-                            borderWidth: 1,
-                            borderColor: props.theme.colors.divider,
-                            backgroundColor: props.theme.colors.surface,
-                            opacity: pressed ? 0.78 : 1,
-                            gap: 6,
-                        })}
-                    >
-                        <Octicons name="diff" size={14} color={props.theme.colors.textSecondary} />
-                        <Text style={{ fontSize: 12, color: props.theme.colors.textSecondary, ...Typography.default('semiBold') }}>
-                            {t('files.toolbar.review')}
-                        </Text>
-                    </Pressable>
-                ) : null}
-            </View>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+                        {availableModes.map(renderModeChip)}
+                        {props.onOpenReviewAllChanges ? (
+                            <Pressable
+                                testID="session-rightpanel-git-open-review"
+                                accessibilityRole="button"
+                                accessibilityLabel={t('files.toolbar.review')}
+                                onPress={props.onOpenReviewAllChanges}
+                                style={({ pressed }) => ({
+                                    flexDirection: 'row',
+                                    alignItems: 'center',
+                                    justifyContent: 'center',
+                                    paddingHorizontal: 10,
+                                    height: 30,
+                                    borderRadius: 10,
+                                    borderWidth: 1,
+                                    borderColor: props.theme.colors.divider,
+                                    backgroundColor: props.theme.colors.surface,
+                                    opacity: pressed ? 0.78 : 1,
+                                    gap: 6,
+                                })}
+                            >
+                                <Octicons name="diff" size={14} color={props.theme.colors.textSecondary} />
+                                <Text style={{ fontSize: 12, color: props.theme.colors.textSecondary, ...Typography.default('semiBold') }}>
+                                    {t('files.toolbar.review')}
+                                </Text>
+                            </Pressable>
+                        ) : null}
+                    </View>
+                </View>
             </>
         );
     }, [
+        availableModes,
         repositoryChangedFiles.length,
         managedStashCount,
         props.onOpenStashDetails,
         props.onOpenReviewAllChanges,
+        props.changedFilesViewMode,
+        props.onChangedFilesViewMode,
         props.scmStatusFiles,
         props.scmSnapshot,
         props.scmWriteEnabled,
@@ -423,6 +489,7 @@ const CommitChangesSurface = React.memo((props: CommitChangesSurfaceProps) => {
         props.scmOperationBusy,
         props.sessionId,
         props.theme,
+        renderModeChip,
     ]);
 
     const renderRepositoryRow = React.useCallback(({ item: file, index }: { item: ScmFileStatus; index: number }) => {
@@ -492,6 +559,8 @@ const CommitChangesSurface = React.memo((props: CommitChangesSurfaceProps) => {
                         changedFilesViewMode={props.changedFilesViewMode}
                         attributionReliability={props.attributionReliability}
                         allRepositoryChangedFiles={props.allRepositoryChangedFiles}
+                        turnAttributedFiles={props.turnAttributedFiles}
+                        turnRepositoryOnlyFiles={props.turnRepositoryOnlyFiles}
                         sessionAttributedFiles={props.sessionAttributedFiles}
                         repositoryOnlyFiles={props.repositoryOnlyFiles}
                         suppressedInferredCount={props.suppressedInferredCount}
