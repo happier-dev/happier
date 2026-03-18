@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import {
     ConnectedServiceIdSchema,
     ConnectedServiceCredentialRecordV1Schema,
+    ConnectedServiceQuotaSnapshotV1Schema,
     SealedConnectedServiceCredentialV1Schema,
 } from './connectedServiceSchemas.js';
 
@@ -69,6 +70,22 @@ describe('connectedServiceSchemas', () => {
             ciphertext: 'base64ciphertext',
         });
         expect(sealed.format).toBe('account_scoped_v1');
+    });
+
+    it('parses a quota snapshot', () => {
+        const now = Date.now();
+        const snapshot = ConnectedServiceQuotaSnapshotV1Schema.parse({
+            v: 1,
+            serviceId: 'openai',
+            profileId: 'work',
+            fetchedAt: now,
+            staleAfterMs: 60_000,
+            planLabel: 'Pro',
+            accountLabel: 'user@example.com',
+            meters: [],
+        });
+        expect(snapshot.v).toBe(1);
+        expect(snapshot.serviceId).toBe('openai');
     });
 
     it('rejects invalid profile ids', () => {
