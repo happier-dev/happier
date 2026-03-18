@@ -353,4 +353,54 @@ describe("automation daemon routes (integration)", () => {
             },
         );
     });
+
+    it("allows existing_session automation creation when target metadata is opaque e2ee ciphertext", async () => {
+        const account = await db.account.create({
+            data: { publicKey: "pk-automation-existing-session-opaque" },
+            select: { id: true },
+        });
+        await db.machine.create({
+            data: {
+                id: "machine-1",
+                accountId: account.id,
+                metadata: "{}",
+            },
+            select: { id: true },
+        });
+        const opaqueSession = await db.session.create({
+            data: {
+                tag: "opaque-target",
+                accountId: account.id,
+                encryptionMode: "e2ee",
+                metadata: "ciphertext-base64",
+                active: true,
+            },
+            select: { id: true },
+        });
+
+        await withAuthenticatedTestApp(
+            (app) => automationRoutes(app as any),
+            async (app) => {
+                const response = await app.inject({
+                    method: "POST",
+                    url: "/v2/automations",
+                    headers: {
+                        "content-type": "application/json",
+                        "x-test-user-id": account.id,
+                    },
+                    payload: {
+                        name: "Opaque target",
+                        enabled: true,
+                        schedule: { kind: "interval", everyMs: 60_000 },
+                        targetType: "existing_session",
+                        templateCiphertext: buildTemplateEnvelope(opaqueSession.id),
+                        assignments: [{ machineId: "machine-1", enabled: true, priority: 0 }],
+                    },
+                });
+
+                expect(response.statusCode).toBe(200);
+                expect((response.json() as any).targetType).toBe("existing_session");
+            },
+        );
+    });
 });

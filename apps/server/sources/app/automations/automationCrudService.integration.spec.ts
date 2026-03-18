@@ -372,6 +372,86 @@ describe("automationCrudService (integration)", () => {
         ).rejects.toThrow(/existing session/i);
     });
 
+    it("allows existing_session automation when the target session is e2ee and stored metadata is opaque", async () => {
+        const account = await db.account.create({
+            data: { publicKey: "pk-automation-crud-existing-session-opaque" },
+            select: { id: true },
+        });
+        await db.machine.create({
+            data: {
+                id: "machine-1",
+                accountId: account.id,
+                metadata: "{}",
+            },
+        });
+
+        const opaqueSession = await db.session.create({
+            data: {
+                tag: "opaque-session",
+                accountId: account.id,
+                encryptionMode: "e2ee",
+                metadata: "ciphertext-base64",
+                active: true,
+            },
+            select: { id: true },
+        });
+
+        const created = await createAutomation({
+            accountId: account.id,
+            input: {
+                name: "Opaque existing session",
+                description: null,
+                enabled: true,
+                schedule: { kind: "interval", everyMs: 60_000, timezone: null },
+                targetType: "existing_session",
+                templateCiphertext: buildTemplateEnvelope(opaqueSession.id),
+                assignments: [{ machineId: "machine-1", enabled: true, priority: 0 }],
+            },
+        });
+
+        expect(created.targetType).toBe("existing_session");
+    });
+
+    it("rejects existing_session automation when parseable metadata is not resumable", async () => {
+        const account = await db.account.create({
+            data: { publicKey: "pk-automation-crud-existing-session-resume-check" },
+            select: { id: true },
+        });
+        await db.machine.create({
+            data: {
+                id: "machine-1",
+                accountId: account.id,
+                metadata: "{}",
+            },
+        });
+
+        const nonResumableSession = await db.session.create({
+            data: {
+                tag: "plain-session",
+                accountId: account.id,
+                encryptionMode: "plain",
+                metadata: JSON.stringify({ flavor: "claude" }),
+                active: true,
+            },
+            select: { id: true },
+        });
+
+        await expect(() =>
+            createAutomation({
+                accountId: account.id,
+                input: {
+                    name: "Non-resumable existing session",
+                    description: null,
+                    enabled: true,
+                    schedule: { kind: "interval", everyMs: 60_000, timezone: null },
+                    targetType: "existing_session",
+                    templateCiphertext: buildTemplateEnvelope(nonResumableSession.id),
+                    assignments: [{ machineId: "machine-1", enabled: true, priority: 0 }],
+                },
+            }),
+        ).rejects.toThrow(/resumable/i);
+    });
+
     it("rejects assignments that target machines outside of the account with AutomationValidationError", async () => {
         const account = await db.account.create({
             data: { publicKey: "pk-automation-crud-assignment-validation" },
