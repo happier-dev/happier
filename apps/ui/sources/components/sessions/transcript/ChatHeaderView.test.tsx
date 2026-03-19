@@ -5,6 +5,7 @@ import { describe, expect, it, vi } from 'vitest';
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 vi.mock('react-native', async (importOriginal) => {
+    const ReactModule = await import('react');
     const actual = await importOriginal<any>();
     return {
         ...actual,
@@ -15,7 +16,7 @@ vi.mock('react-native', async (importOriginal) => {
         },
         View: 'View',
         Text: 'Text',
-        Pressable: ({ children, ...props }: any) => React.createElement('Pressable', props, children),
+        Pressable: ({ children, ...props }: any) => ReactModule.createElement('Pressable', props, children),
     };
 });
 
@@ -37,7 +38,9 @@ vi.mock('react-native-unistyles', () => ({
             colors: {
                 header: { background: '#fff', tint: '#111' },
                 surface: '#fff',
+                surfaceHigh: '#f5f5f5',
                 divider: '#ddd',
+                textSecondary: '#666',
                 shadow: { color: '#000', opacity: 0.2 },
             },
         },
@@ -48,7 +51,9 @@ vi.mock('react-native-unistyles', () => ({
                 colors: {
                     header: { background: '#fff', tint: '#111' },
                     surface: '#fff',
+                    surfaceHigh: '#f5f5f5',
                     divider: '#ddd',
+                    textSecondary: '#666',
                     shadow: { color: '#000', opacity: 0.2 },
                 },
             };
@@ -142,5 +147,47 @@ describe('ChatHeaderView', () => {
             .filter((s: any) => s && typeof s === 'object' && 'maxWidth' in s)
             .at(-1)?.maxWidth;
         expect(maxWidth).toBe('100%');
+    });
+
+    it('renders header badges when provided', async () => {
+        const { ChatHeaderView } = await import('./ChatHeaderView');
+
+        let tree: renderer.ReactTestRenderer | null = null;
+        await act(async () => {
+            tree = renderer.create(
+                <ChatHeaderView
+                    title="Title"
+                    badges={['Direct', 'Codex · happy-host']}
+                />,
+            );
+        });
+
+        expect(() => tree!.root.findByProps({ testID: 'session-header-badge:0' })).not.toThrow();
+        expect(() => tree!.root.findByProps({ testID: 'session-header-badge:1' })).not.toThrow();
+        expect(JSON.stringify(tree!.toJSON())).toContain('Direct');
+        expect(JSON.stringify(tree!.toJSON())).toContain('Codex · happy-host');
+    });
+
+    it('suppresses session-scoped testIDs when the session screen is hidden', async () => {
+        const { SessionScreenTestIdsProvider } = await import('../shell/sessionScreenTestIds');
+        const { ChatHeaderView } = await import('./ChatHeaderView');
+
+        let tree: renderer.ReactTestRenderer | null = null;
+        await act(async () => {
+            tree = renderer.create(
+                <SessionScreenTestIdsProvider enabled={false}>
+                    <ChatHeaderView
+                        title="Title"
+                        badges={['Direct']}
+                        avatarId="avatar-1"
+                        onAvatarPress={() => {}}
+                    />
+                </SessionScreenTestIdsProvider>,
+            );
+        });
+
+        expect(tree!.root.findAllByProps({ testID: 'session-header-back' })).toHaveLength(0);
+        expect(tree!.root.findAllByProps({ testID: 'session-header-badge:0' })).toHaveLength(0);
+        expect(tree!.root.findAllByProps({ testID: 'session-header-avatar' })).toHaveLength(0);
     });
 });
