@@ -2,16 +2,7 @@ import { inferAgentIdFromSessionMetadata, resolveAgentIdFromFlavor, resolveVendo
 
 import type { Credentials } from '@/persistence';
 import { tryDecryptSessionMetadata } from '@/sessionControl/sessionEncryptionContext';
-
-function tryParseJsonRecord(value: string): Record<string, unknown> | null {
-  try {
-    const parsed = JSON.parse(value);
-    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return null;
-    return parsed as Record<string, unknown>;
-  } catch {
-    return null;
-  }
-}
+import { tryParseJsonRecord } from '@/utils/tryParseJsonRecord';
 
 export function resolveVendorResumeIdForExistingSession(params: Readonly<{
   agent: unknown;
