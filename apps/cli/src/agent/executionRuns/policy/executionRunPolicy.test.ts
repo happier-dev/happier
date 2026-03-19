@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { isSafePermissionModeForIntent } from './ExecutionRunPolicy';
+import { isSafePermissionModeForIntent } from './executionRunPolicy';
 
 describe('isSafePermissionModeForIntent', () => {
   it('treats memory_hints as read-only or no-tools only', () => {

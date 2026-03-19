@@ -21,6 +21,7 @@ function createHandlerContext(): Readonly<{
     transport,
     activeToolCalls: new Set<string>(),
     finalizedToolCalls: new Set<string>(),
+    toolCallLifecycleStates: new Map(),
     toolCallStartTimes: new Map<string, number>(),
     toolCallTimeouts: new Map<string, NodeJS.Timeout>(),
     toolCallIdToNameMap: new Map<string, string>(),
