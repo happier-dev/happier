@@ -1,6 +1,6 @@
 import React from 'react';
 import renderer, { act, type ReactTestRenderer } from 'react-test-renderer';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -8,6 +8,15 @@ const setVoiceProviderId = vi.fn();
 const setVoice = vi.fn();
 const decryptSecretValue = vi.fn<(value: unknown) => string | null>(() => null);
 const resetGlobalVoiceAgentPersistenceSpy = vi.fn(async () => {});
+const canAgentResumeSpy = vi.fn<(agentId: string | null | undefined) => boolean>(() => true);
+const rendererCreate = renderer.create.bind(renderer);
+let activeTree: ReactTestRenderer | null = null;
+
+vi.spyOn(renderer, 'create').mockImplementation(((...args: Parameters<typeof rendererCreate>) => {
+    const tree = rendererCreate(...args);
+    activeTree = tree;
+    return tree;
+}) as typeof renderer.create);
 
 vi.mock('expo-router', () => ({
     useRouter: () => ({ push: vi.fn() }),
@@ -103,6 +112,32 @@ vi.mock('@/agents/hooks/useEnabledAgentIds', () => ({
     useEnabledAgentIds: () => ['claude', 'codex', 'opencode'],
 }));
 
+vi.mock('@/components/sessions/new/hooks/screenModel/useNewSessionPreflightModelsState', () => ({
+    useNewSessionPreflightModelsState: () => ({
+        modelOptions: [],
+        probe: {
+            phase: 'idle',
+            refresh: vi.fn(),
+        },
+    }),
+}));
+
+vi.mock('@/sync/store/hooks', () => ({
+    useAllMachines: () => [],
+}));
+
+vi.mock('@/sync/domains/server/serverRuntime', () => ({
+    getActiveServerSnapshot: () => ({ serverId: 'test-server' }),
+}));
+
+vi.mock('@/components/settings/pickers/resolvePreferredMachineId', () => ({
+    resolvePreferredMachineId: () => null,
+}));
+
+vi.mock('@/agents/runtime/resumeCapabilities', () => ({
+    canAgentResume: (agentId: string | null | undefined) => canAgentResumeSpy(agentId),
+}));
+
 const voiceState: any = {
     providerId: 'realtime_elevenlabs',
     assistantLanguage: null,
@@ -193,6 +228,7 @@ vi.mock('@/voice/settings/useVoiceSettingsMutable', () => ({
 
 vi.mock('@/sync/domains/state/storage', () => ({
     useSetting: () => null,
+    useSettings: () => ({}),
 }));
 
 beforeEach(() => {
@@ -200,6 +236,8 @@ beforeEach(() => {
     setVoiceProviderId.mockClear();
     decryptSecretValue.mockReset();
     decryptSecretValue.mockReturnValue(null);
+    canAgentResumeSpy.mockReset();
+    canAgentResumeSpy.mockReturnValue(true);
     voiceState.providerId = 'realtime_elevenlabs';
     voiceState.assistantLanguage = null;
     voiceState.adapters.realtime_elevenlabs.assistantLanguage = null;
@@ -213,6 +251,15 @@ beforeEach(() => {
     voiceState.ui.updates.otherSessionsSnippetsMode = 'on_demand_only';
     voiceState.privacy.shareRecentMessages = true;
     voiceState.privacy.recentMessagesCount = 3;
+});
+
+afterEach(() => {
+    if (activeTree) {
+        act(() => {
+            activeTree?.unmount();
+        });
+        activeTree = null;
+    }
 });
 
 describe('VoiceSettingsScreen (server voice unsupported)', () => {
@@ -415,6 +462,7 @@ describe('VoiceSettingsScreen (voice settings UX)', () => {
     });
 
     it('disables provider resume when the selected fixed agent does not support vendor resume', async () => {
+        canAgentResumeSpy.mockImplementation((agentId) => agentId !== 'unknown-agent');
         voiceState.providerId = 'local_conversation';
         voiceState.adapters.local_conversation.conversationMode = 'agent';
         voiceState.adapters.local_conversation.agent.agentSource = 'agent';
@@ -503,17 +551,7 @@ describe('VoiceSettingsScreen (voice settings UX)', () => {
         await act(async () => {});
 
         expect(resetGlobalVoiceAgentPersistenceSpy).toHaveBeenCalledTimes(1);
-        expect(setVoice).toHaveBeenCalledWith(
-            expect.objectContaining({
-                adapters: expect.objectContaining({
-                    local_conversation: expect.objectContaining({
-                        agent: expect.objectContaining({
-                            transcript: expect.objectContaining({ epoch: 2 }),
-                        }),
-                    }),
-                }),
-            }),
-        );
+        expect(setVoice).not.toHaveBeenCalled();
         (Modal as any).confirm.mockClear();
     });
 

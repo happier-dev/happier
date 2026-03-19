@@ -1,11 +1,20 @@
 import React from 'react';
 import renderer, { act, type ReactTestRenderer } from 'react-test-renderer';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 const speakDeviceTextSpy = vi.fn();
 const modalAlertSpy = vi.fn();
+const setVoiceSpy = vi.fn();
+const rendererCreate = renderer.create.bind(renderer);
+let activeTree: ReactTestRenderer | null = null;
+
+vi.spyOn(renderer, 'create').mockImplementation(((...args: Parameters<typeof rendererCreate>) => {
+    const tree = rendererCreate(...args);
+    activeTree = tree;
+    return tree;
+}) as typeof renderer.create);
 
 vi.mock('@expo/vector-icons', () => ({
     Ionicons: 'Ionicons',
@@ -59,13 +68,49 @@ vi.mock('@/voice/local/formatVoiceTestFailureMessage', () => ({
 
 let voiceSetting: any = null;
 
+vi.mock('@/voice/settings/useVoiceSettingsMutable', () => ({
+    useVoiceSettingsMutable: () => [voiceSetting, (next: any) => setVoiceSpy(next)],
+}));
+
 vi.mock('@/sync/domains/state/storage', () => ({
     useSetting: (key: string) => {
         if (key === 'voice') return voiceSetting;
         if (key === 'backendEnabledById') return {};
+        if (key === 'backendEnabledByTargetKey') return {};
         if (key === 'recentMachinePaths') return [];
         throw new Error(`unexpected useSetting(${key})`);
     },
+    useSettings: () => ({}),
+}));
+
+vi.mock('@/agents/hooks/useEnabledAgentIds', () => ({
+    useEnabledAgentIds: () => ['claude', 'codex', 'opencode'],
+}));
+
+vi.mock('@/components/sessions/new/hooks/screenModel/useNewSessionPreflightModelsState', () => ({
+    useNewSessionPreflightModelsState: () => ({
+        modelOptions: [],
+        probe: {
+            phase: 'idle',
+            refresh: vi.fn(),
+        },
+    }),
+}));
+
+vi.mock('@/sync/store/hooks', () => ({
+    useAllMachines: () => [],
+}));
+
+vi.mock('@/sync/domains/server/serverRuntime', () => ({
+    getActiveServerSnapshot: () => ({ serverId: 'test-server' }),
+}));
+
+vi.mock('@/components/settings/pickers/resolvePreferredMachineId', () => ({
+    resolvePreferredMachineId: () => null,
+}));
+
+vi.mock('@/agents/runtime/resumeCapabilities', () => ({
+    canAgentResume: () => true,
 }));
 
 vi.mock('@/sync/sync', () => ({
@@ -93,6 +138,16 @@ describe('VoiceSettingsScreen (device TTS)', () => {
         speakDeviceTextSpy.mockClear();
         speakDeviceTextSpy.mockResolvedValue(undefined);
         modalAlertSpy.mockClear();
+        setVoiceSpy.mockClear();
+    });
+
+    afterEach(() => {
+        if (activeTree) {
+            act(() => {
+                activeTree?.unmount();
+            });
+            activeTree = null;
+        }
     });
 
     it('uses device TTS for Test TTS when enabled (does not require TTS Base URL)', async () => {

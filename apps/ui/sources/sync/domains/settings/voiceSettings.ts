@@ -1,3 +1,4 @@
+import { DEFAULT_AGENT_ID } from '@happier-dev/agents';
 import { z } from 'zod';
 import { SecretStringSchema } from '../../encryption/secretSettings';
 import { DEFAULT_ELEVENLABS_VOICE_ID } from '@/realtime/elevenlabs/defaults';
@@ -76,27 +77,80 @@ const VoiceRealtimeElevenLabsSchema = z.object({
     .default({ agentId: null, apiKey: null }),
 });
 
+const LEGACY_HANDS_FREE_ENDPOINTING_DEFAULTS = {
+  silenceMs: 450,
+  minSpeechMs: 120,
+} as const;
+
+const CURRENT_HANDS_FREE_ENDPOINTING_DEFAULTS = {
+  silenceMs: 5000,
+  minSpeechMs: 1000,
+} as const;
+
+function migrateLegacyHandsFreeDefaults(raw: unknown): unknown {
+  if (!raw || typeof raw !== 'object') return raw;
+  const obj = raw as Record<string, unknown>;
+  const endpointing = obj.endpointing;
+  if (!endpointing || typeof endpointing !== 'object') return raw;
+
+  const endpointingRecord = endpointing as Record<string, unknown>;
+  const silenceMs = endpointingRecord.silenceMs;
+  const minSpeechMs = endpointingRecord.minSpeechMs;
+  const nextSilenceMs =
+    silenceMs === LEGACY_HANDS_FREE_ENDPOINTING_DEFAULTS.silenceMs
+      ? CURRENT_HANDS_FREE_ENDPOINTING_DEFAULTS.silenceMs
+      : silenceMs;
+  const nextMinSpeechMs =
+    minSpeechMs === LEGACY_HANDS_FREE_ENDPOINTING_DEFAULTS.minSpeechMs
+      ? CURRENT_HANDS_FREE_ENDPOINTING_DEFAULTS.minSpeechMs
+      : minSpeechMs;
+
+  if (nextSilenceMs === silenceMs && nextMinSpeechMs === minSpeechMs) {
+    return raw;
+  }
+
+  return {
+    ...obj,
+    endpointing: {
+      ...endpointingRecord,
+      silenceMs: nextSilenceMs,
+      minSpeechMs: nextMinSpeechMs,
+    },
+  };
+}
+
+const VoiceHandsFreeSchema = z.preprocess(
+  migrateLegacyHandsFreeDefaults,
+  z
+    .object({
+      enabled: z.boolean().default(false),
+      endpointing: z
+        .object({
+          silenceMs: z.number().int().min(0).max(5000).default(CURRENT_HANDS_FREE_ENDPOINTING_DEFAULTS.silenceMs),
+          minSpeechMs: z.number().int().min(0).max(5000).default(CURRENT_HANDS_FREE_ENDPOINTING_DEFAULTS.minSpeechMs),
+        })
+        .prefault({}),
+    })
+    .default({
+      enabled: false,
+      endpointing: {
+        silenceMs: CURRENT_HANDS_FREE_ENDPOINTING_DEFAULTS.silenceMs,
+        minSpeechMs: CURRENT_HANDS_FREE_ENDPOINTING_DEFAULTS.minSpeechMs,
+      },
+    }),
+);
+
 const VoiceLocalConversationSchema = z.object({
   conversationMode: z.enum(['direct_session', 'agent']).default('direct_session'),
   stt: VoiceLocalSttSchema.prefault({}),
   tts: VoiceLocalTtsSchema.prefault({}),
   networkTimeoutMs: z.number().int().min(1000).max(60000).default(15000),
-  handsFree: z
-    .object({
-      enabled: z.boolean().default(false),
-      endpointing: z
-        .object({
-          silenceMs: z.number().int().min(0).max(5000).default(450),
-          minSpeechMs: z.number().int().min(0).max(5000).default(120),
-        })
-        .prefault({}),
-    })
-    .default({ enabled: false, endpointing: { silenceMs: 450, minSpeechMs: 120 } }),
+  handsFree: VoiceHandsFreeSchema.prefault({}),
 		  agent: z
 		    .object({
 		      backend: z.enum(['daemon', 'openai_compat']).default('daemon'),
 		      agentSource: z.enum(['session', 'agent']).default('session'),
-		      agentId: z.string().default('claude'),
+		      agentId: z.string().default(DEFAULT_AGENT_ID),
 		      /**
 		       * Where the local voice agent daemon run should be hosted.
 		       *
@@ -105,6 +159,7 @@ const VoiceLocalConversationSchema = z.object({
 		       */
 		      machineTargetMode: z.enum(['auto', 'fixed']).default('auto'),
 		      machineTargetId: z.string().nullable().default(null),
+		      autoTargetMachineId: z.string().nullable().default(null),
 		      /**
 		       * Directory policy:
 		       * - false: starting voice from a session uses the session root; sidebar uses voice home
@@ -126,10 +181,11 @@ const VoiceLocalConversationSchema = z.object({
 		       * appended under the target machine's `happyHomeDir`.
 		       */
 		      voiceHomeSubdirName: z.string().default('voice-agent'),
-		      permissionPolicy: z.enum(['no_tools', 'read_only']).default('read_only'),
-		      idleTtlSeconds: z.number().int().min(60).max(21600).default(1800),
-		      prewarmOnConnect: z.boolean().default(false),
-		      resumabilityMode: z.enum(['replay', 'provider_resume']).default('replay'),
+			      permissionPolicy: z.enum(['no_tools', 'read_only']).default('read_only'),
+			      idleTtlSeconds: z.number().int().min(60).max(21600).default(1800),
+			      bootstrapTimeoutMs: z.number().int().min(1000).max(300000).default(60000),
+			      prewarmOnConnect: z.boolean().default(true),
+			      resumabilityMode: z.enum(['replay', 'provider_resume']).default('replay'),
 	      providerResume: z
 	        .object({
 	          fallbackToReplay: z.boolean().default(true),
@@ -175,40 +231,30 @@ const VoiceLocalConversationSchema = z.object({
     .prefault({}),
 	  streaming: z
 	    .object({
-      enabled: z.boolean().default(false),
-      ttsEnabled: z.boolean().default(false),
+      enabled: z.boolean().default(true),
+      ttsEnabled: z.boolean().default(true),
       ttsChunkChars: z.number().int().min(32).max(2000).default(200),
 	      // Turn streaming (daemon voice agent) read loop tuning. Defaults preserve current behavior.
 	      turnReadPollIntervalMs: z.number().int().min(10).max(500).default(25),
-      turnReadMaxEvents: z.number().int().min(1).max(256).default(64),
-      // Total budget for a single streamed turn. When null, fallback to adapter networkTimeoutMs.
-      turnStreamTimeoutMs: z.number().int().min(1000).max(60000).nullable().default(null),
-    })
-    .default({
-      enabled: false,
-      ttsEnabled: false,
-      ttsChunkChars: 200,
-      turnReadPollIntervalMs: 25,
-      turnReadMaxEvents: 64,
-      turnStreamTimeoutMs: null,
-    }),
+	      turnReadMaxEvents: z.number().int().min(1).max(256).default(64),
+	      // Total budget for a single streamed turn. Keep large enough to allow long tool runs.
+	      turnStreamTimeoutMs: z.number().int().min(1000).max(3600000).nullable().default(1800000),
+	    })
+	    .default({
+	      enabled: true,
+	      ttsEnabled: true,
+	      ttsChunkChars: 200,
+	      turnReadPollIntervalMs: 25,
+	      turnReadMaxEvents: 64,
+	      turnStreamTimeoutMs: 1800000,
+	    }),
 });
 
 const VoiceLocalDirectSchema = z.object({
   stt: VoiceLocalSttSchema.prefault({}),
   tts: VoiceLocalTtsSchema.prefault({}),
   networkTimeoutMs: z.number().int().min(1000).max(60000).default(15000),
-  handsFree: z
-    .object({
-      enabled: z.boolean().default(false),
-      endpointing: z
-        .object({
-          silenceMs: z.number().int().min(0).max(5000).default(450),
-          minSpeechMs: z.number().int().min(0).max(5000).default(120),
-        })
-        .prefault({}),
-    })
-    .default({ enabled: false, endpointing: { silenceMs: 450, minSpeechMs: 120 } }),
+  handsFree: VoiceHandsFreeSchema.prefault({}),
 });
 
 export const VoiceSettingsSchema = z.object({
