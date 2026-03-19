@@ -57,7 +57,9 @@ describe('AgentContentView (android keyboard)', () => {
             );
         });
 
-        expect(tree!.root.findAllByType('AnimatedView' as any).length).toBeGreaterThan(0);
+        const animatedViews = tree!.root.findAllByType('AnimatedView' as any);
+        expect(animatedViews.length).toBeGreaterThan(0);
+        expect(animatedViews[0]?.props.pointerEvents).toBe('box-none');
         expect(tree!.root.findAllByType('AnimatedScrollView' as any).length).toBe(1);
     });
 });
