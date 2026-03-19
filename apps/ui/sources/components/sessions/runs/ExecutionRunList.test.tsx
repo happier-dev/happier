@@ -45,9 +45,9 @@ describe('ExecutionRunList', () => {
       tree = renderer.create(
         React.createElement(ExecutionRunList, {
           runs: [
-            { runId: 'r1', intent: 'review', backendId: 'claude', status: 'running', display: { groupId: 'g1' } },
-            { runId: 'r2', intent: 'review', backendId: 'claude', status: 'running', display: { groupId: 'g1' } },
-            { runId: 'r3', intent: 'plan', backendId: 'codex', status: 'succeeded' },
+            { runId: 'r1', intent: 'review', backendTarget: { kind: 'builtInAgent', agentId: 'claude' }, status: 'running', display: { groupId: 'g1' } },
+            { runId: 'r2', intent: 'review', backendTarget: { kind: 'builtInAgent', agentId: 'claude' }, status: 'running', display: { groupId: 'g1' } },
+            { runId: 'r3', intent: 'plan', backendTarget: { kind: 'builtInAgent', agentId: 'codex' }, status: 'succeeded' },
           ],
         }),
       );
