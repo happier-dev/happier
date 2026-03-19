@@ -1,4 +1,5 @@
 import type { Session } from '@/sync/domains/state/storageTypes';
+import type { NewSessionAutomationDraft } from '@/sync/domains/automations/automationDraft';
 
 import type { SessionAuthoringDraft } from '../draft/sessionAuthoringDraft';
 
@@ -10,7 +11,7 @@ export type NewSessionSubmitAccessibilityLabelKey =
 export type NewSessionAuthoringContext = Readonly<{
     kind: 'newSession';
     draft: SessionAuthoringDraft;
-    effectiveAutomationDraft: NonNullable<SessionAuthoringDraft['automation']>;
+    effectiveAutomationDraft: NewSessionAutomationDraft;
     showAutomationActionChips: boolean;
     canSubmit: boolean;
     submissionMode: NewSessionAuthoringSubmissionMode;
@@ -39,4 +40,3 @@ export type ExistingSessionAutomationAuthoringContext = Readonly<{
 }>;
 
 export type SessionAuthoringContext = NewSessionAuthoringContext | ExistingSessionAutomationAuthoringContext;
-
