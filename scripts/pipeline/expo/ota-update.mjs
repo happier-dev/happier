@@ -13,6 +13,32 @@ function fail(message) {
 }
 
 /**
+ * @param {string} environment
+ * @returns {'development' | 'preview' | 'production'}
+ */
+function resolveAppEnvironment(environment) {
+  if (environment === 'production') return 'production';
+  if (environment === 'development') return 'development';
+  return 'preview';
+}
+
+/**
+ * @param {string} environment
+ * @returns {'development' | 'canary' | 'preview' | 'production'}
+ */
+function resolveUpdateLane(environment) {
+  if (
+    environment === 'development' ||
+    environment === 'canary' ||
+    environment === 'preview' ||
+    environment === 'production'
+  ) {
+    return environment;
+  }
+  return 'preview';
+}
+
+/**
  * @param {{ dryRun: boolean }} opts
  * @param {string} cmd
  * @param {string[]} args
@@ -136,7 +162,10 @@ function main() {
       '--message',
       message,
     ],
-    { cwd: uiDir, env: easCommandEnv },
+    {
+      cwd: uiDir,
+      env: easCommandEnv,
+    },
   );
 
   const upload = maybeUploadSentryExpoSourceMaps({
@@ -158,28 +187,3 @@ function main() {
 }
 
 main();
-/**
- * @param {string} environment
- * @returns {'development' | 'preview' | 'production'}
- */
-function resolveAppEnvironment(environment) {
-  if (environment === 'production') return 'production';
-  if (environment === 'development') return 'development';
-  return 'preview';
-}
-
-/**
- * @param {string} environment
- * @returns {'development' | 'canary' | 'preview' | 'production'}
- */
-function resolveUpdateLane(environment) {
-  if (
-    environment === 'development' ||
-    environment === 'canary' ||
-    environment === 'preview' ||
-    environment === 'production'
-  ) {
-    return environment;
-  }
-  return 'preview';
-}
