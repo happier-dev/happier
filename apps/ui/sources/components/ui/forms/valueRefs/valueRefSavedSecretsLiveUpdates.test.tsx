@@ -245,8 +245,6 @@ describe('value ref saved secrets live updates', () => {
             tree = renderer.create(
                 React.createElement(SavedSecretPickerModal, {
                     onClose: vi.fn(),
-                    secrets: [],
-                    onChangeSecrets: vi.fn(),
                     selectedId: null,
                     onSelectId: vi.fn(),
                 }),
