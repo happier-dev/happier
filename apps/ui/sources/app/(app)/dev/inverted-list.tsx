@@ -5,14 +5,15 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Stack } from 'expo-router';
 import { useKeyboardHandler, useKeyboardState, useReanimatedKeyboardAnimation } from 'react-native-keyboard-controller';
 import Animated, { runOnJS, useSharedValue } from 'react-native-reanimated';
-import { FlashList } from '@shopify/flash-list';
+import { FlashList } from '@/components/ui/lists/flashListCompat/FlashListCompat';
 import { LegendList } from '@legendapp/list';
 
 type ListType = 'flash' | 'flat' | 'legend';
 type PaddingType = 'animated' | 'non-animated' | 'header-footer';
+type DemoMessage = Readonly<{ id: string; text: string }>;
 
 export default function InvertedListTest() {
-    const [messages, setMessages] = useState<Array<{ id: string; text: string }>>([]);
+    const [messages, setMessages] = useState<DemoMessage[]>([]);
     const [inputText, setInputText] = useState('');
     const [listType, setListType] = useState<ListType>('flash');
     const [paddingType, setPaddingType] = useState<PaddingType>('non-animated');
@@ -48,7 +49,7 @@ export default function InvertedListTest() {
         }
     };
 
-    const renderItem = ({ item }: { item: { id: string; text: string } }) => (
+    const renderItem = ({ item }: { item: DemoMessage }) => (
         <View style={styles.messageItem}>
             <Text style={styles.messageText}>{item.text}</Text>
         </View>
@@ -143,7 +144,7 @@ export default function InvertedListTest() {
                                 <FlashList
                                     data={messages}
                                     renderItem={renderItem}
-                                    keyExtractor={item => item.id}
+                                    keyExtractor={(item: DemoMessage) => item.id}
                                     maintainVisibleContentPosition={{
                                         autoscrollToBottomThreshold: 0.2,
                                         autoscrollToTopThreshold: 100,
@@ -160,7 +161,7 @@ export default function InvertedListTest() {
                                 <FlatList
                                     data={[...messages].reverse()}
                                     renderItem={renderItem}
-                                    keyExtractor={item => item.id}
+                                    keyExtractor={(item: DemoMessage) => item.id}
                                     maintainVisibleContentPosition={{
                                         minIndexForVisible: 0,
                                         autoscrollToTopThreshold: 100,
@@ -177,7 +178,7 @@ export default function InvertedListTest() {
                                 <LegendList
                                     data={messages}
                                     renderItem={renderItem}
-                                    keyExtractor={item => item.id}
+                                    keyExtractor={(item: DemoMessage) => item.id}
                                     maintainVisibleContentPosition={true}
                                     maintainScrollAtEnd={true}
                                     ListEmptyComponent={ListEmptyComponent}
