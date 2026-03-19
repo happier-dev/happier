@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest';
 
-import { resolveProviderOutgoingMessageMetaExtras, resolveProviderSpawnExtras } from './providerSettings';
+import {
+  resolveProviderOutgoingMessageMetaExtras,
+  resolveProviderSpawnExtras,
+  resolveProviderSpawnExtrasForRuntime,
+} from './providerSettings';
 
 describe('providerSettings', () => {
   it('resolves Codex ACP spawn extras from account settings without mutating process env', () => {
@@ -13,7 +17,7 @@ describe('providerSettings', () => {
           agentId: 'codex',
           settings: { codexBackendMode: 'acp' },
         }),
-      ).toEqual({ experimentalCodexAcp: true });
+      ).toEqual({ codexBackendMode: 'acp', experimentalCodexAcp: true });
       expect(process.env.HAPPIER_EXPERIMENTAL_CODEX_ACP).toBe('0');
     } finally {
       if (prevAcp === undefined) {
@@ -30,7 +34,56 @@ describe('providerSettings', () => {
         agentId: 'codex',
         settings: { codexBackendMode: 'mcp' },
       }),
-    ).toEqual({ experimentalCodexAcp: false });
+    ).toEqual({ codexBackendMode: 'mcp' });
+  });
+
+  it('does not enable ACP spawn extras when Codex backend mode is appServer', () => {
+    expect(
+      resolveProviderSpawnExtras({
+        agentId: 'codex',
+        settings: { codexBackendMode: 'appServer' },
+      }),
+    ).toEqual({ codexBackendMode: 'appServer' });
+  });
+
+  it('keeps Codex runtime spawn extras on the canonical backend mode path for ACP settings', () => {
+    expect(
+      resolveProviderSpawnExtrasForRuntime({
+        agentId: 'codex',
+        settings: { codexBackendMode: 'acp' },
+        processEnv: {},
+      }),
+    ).toEqual({ codexBackendMode: 'acp' });
+  });
+
+  it('lets an explicit Codex ACP env override win over account settings at runtime', () => {
+    expect(
+      resolveProviderSpawnExtrasForRuntime({
+        agentId: 'codex',
+        settings: { codexBackendMode: 'acp' },
+        processEnv: { HAPPIER_EXPERIMENTAL_CODEX_ACP: '0' },
+      }),
+    ).toEqual({});
+  });
+
+  it('lets an explicit Codex backend mode env override win over account settings at runtime', () => {
+    expect(
+      resolveProviderSpawnExtrasForRuntime({
+        agentId: 'codex',
+        settings: { codexBackendMode: 'acp' },
+        processEnv: { HAPPIER_CODEX_BACKEND_MODE: 'appServer' },
+      }),
+    ).toEqual({ codexBackendMode: 'appServer' });
+  });
+
+  it('keeps Codex runtime extras pinned to MCP when fallback publishes mcp into env', () => {
+    expect(
+      resolveProviderSpawnExtrasForRuntime({
+        agentId: 'codex',
+        settings: { codexBackendMode: 'acp' },
+        processEnv: { HAPPIER_CODEX_BACKEND_MODE: 'mcp' },
+      }),
+    ).toEqual({ codexBackendMode: 'mcp' });
   });
 
   it('builds Claude outgoing meta defaults from account settings', () => {
