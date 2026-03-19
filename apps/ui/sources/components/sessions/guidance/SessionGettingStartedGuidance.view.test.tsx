@@ -7,6 +7,9 @@ import renderer, { act } from 'react-test-renderer';
 const clipboardMocks = vi.hoisted(() => ({
   setStringAsync: vi.fn(async (_text: string) => {}),
 }));
+const mockEnv = vi.hoisted(() => ({
+  iconsRenderAsText: false,
+}));
 
 vi.mock('expo-clipboard', () => clipboardMocks);
 
@@ -32,7 +35,9 @@ vi.mock('react-native', () => ({
 }));
 
 vi.mock('@expo/vector-icons', () => ({
-  Ionicons: (props: any) => React.createElement('Ionicons', props, null),
+  Ionicons: (props: any) => (
+    mockEnv.iconsRenderAsText ? <>{'.'}</> : React.createElement('Ionicons', props, null)
+  ),
 }));
 
 vi.mock('expo-image', () => ({
@@ -127,6 +132,8 @@ describe('SessionGettingStartedGuidanceView', () => {
     expect(textNodes.some((t: string) => t.includes('happier server add'))).toBe(true);
     expect(textNodes.some((t: string) => t.includes('https://api.company.example'))).toBe(true);
     expect(textNodes.some((t: string) => t.trimStart().startsWith('$'))).toBe(false);
+    expect(textNodes.some((t: string) => t.includes('curl -fsSL https://happier.dev/install | bash'))).toBe(true);
+    expect(textNodes.some((t: string) => t.includes('npm i -g @happier-dev/cli'))).toBe(false);
     expect(textNodes.some((t: string) => t.includes('happier daemon install'))).toBe(true);
     expect(textNodes.some((t: string) => t.includes('daemon service install'))).toBe(false);
     expect(textNodes.some((t: string) => t.includes('happier codex'))).toBe(true);
@@ -144,5 +151,52 @@ describe('SessionGettingStartedGuidanceView', () => {
       await copyLogin.props.onPress?.();
     });
     expect(clipboardMocks.setStringAsync).toHaveBeenCalledWith('happier auth login');
+  });
+
+  it('does not emit raw text nodes under View when copy icons render as text on web', async () => {
+    const { SessionGettingStartedGuidanceView } = await import('./SessionGettingStartedGuidance');
+    mockEnv.iconsRenderAsText = true;
+
+    let tree!: renderer.ReactTestRenderer;
+    try {
+      await act(async () => {
+        tree = renderer.create(
+          <SessionGettingStartedGuidanceView
+            variant="primaryPane"
+            model={{
+              kind: 'connect_machine',
+              targetLabel: 'Company',
+              serverUrl: 'https://api.company.example',
+              serverName: 'company',
+              showServerSetup: true,
+            }}
+          />,
+        );
+      });
+
+      const badNodes: Array<{ parent: string | null; value: string }> = [];
+      const walk = (node: any, parentType: string | null) => {
+        if (node == null) return;
+        if (typeof node === 'string') {
+          if (parentType !== 'Text' && node.trim().length > 0) badNodes.push({ parent: parentType, value: node });
+          return;
+        }
+        if (Array.isArray(node)) {
+          for (const child of node) walk(child, parentType);
+          return;
+        }
+        const nextParent = typeof node.type === 'string' ? node.type : parentType;
+        const children = Array.isArray(node.children) ? node.children : [];
+        for (const child of children) walk(child, nextParent);
+      };
+
+      walk(tree.toJSON(), null);
+      expect(badNodes).toEqual([]);
+    } finally {
+      mockEnv.iconsRenderAsText = false;
+      act(() => {
+        tree?.unmount();
+      });
+    }
   });
 });
