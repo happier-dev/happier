@@ -149,7 +149,11 @@ export function materializeImportedMcpServerDrafts(params: Readonly<{
         const entryBase = {
             id: entryId,
             name: normalizedName,
-            title: normalizedName === draft.name ? undefined : draft.name,
+            title: draft.title?.trim()
+                ? draft.title.trim()
+                : normalizedName === draft.name
+                    ? undefined
+                    : draft.name,
             env,
             createdAt: params.nowMs,
             updatedAt: params.nowMs,

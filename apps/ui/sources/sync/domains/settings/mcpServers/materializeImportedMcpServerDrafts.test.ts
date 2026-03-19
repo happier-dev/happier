@@ -122,6 +122,37 @@ describe('materializeImportedMcpServerDrafts', () => {
         expect(result.nextSettings.bindings[0]?.target).toEqual({ t: 'allMachines' });
     });
 
+    it('preserves imported server titles when provided', () => {
+        const result = materializeImportedMcpServerDrafts({
+            settings: createEmptySettings(),
+            secrets: [],
+            drafts: [{
+                name: 'context7',
+                title: 'Context7 MCP',
+                transport: 'http',
+                remote: {
+                    url: 'https://mcp.example.com',
+                    headers: {},
+                },
+                env: {},
+                enabled: true,
+                warnings: [],
+            }],
+            inputMappings: {},
+            defaultMachineId: 'machine-1',
+            nowMs: 123,
+            generateId: (() => {
+                let index = 1;
+                return () => `id-${index++}`;
+            })(),
+        });
+
+        expect(result.nextSettings.servers[0]).toMatchObject({
+            name: 'context7',
+            title: 'Context7 MCP',
+        });
+    });
+
     it('falls back to a machine env placeholder when a saved-secret mapping is incomplete', () => {
         const result = materializeImportedMcpServerDrafts({
             settings: createEmptySettings(),

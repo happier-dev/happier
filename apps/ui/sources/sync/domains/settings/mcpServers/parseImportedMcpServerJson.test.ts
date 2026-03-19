@@ -33,6 +33,27 @@ describe('parseImportedMcpServerJson', () => {
         });
     });
 
+    it('accepts a server title field', () => {
+        const result = parseImportedMcpServerJson(`{
+          "mcpServers": {
+            "playwright": {
+              "title": "Playwright MCP",
+              "command": "npx",
+              "args": ["-y", "@playwright/mcp@latest"]
+            }
+          }
+        }`);
+
+        expect(result.errors).toEqual([]);
+        expect(result.warnings).toEqual([]);
+        expect(result.servers).toHaveLength(1);
+        expect(result.servers[0]).toMatchObject({
+            name: 'playwright',
+            title: 'Playwright MCP',
+            transport: 'stdio',
+        });
+    });
+
     it('parses nested mcp.servers and extracts input references', () => {
         const result = parseImportedMcpServerJson(`{
           "mcp": {
