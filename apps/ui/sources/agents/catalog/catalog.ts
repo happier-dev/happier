@@ -1,12 +1,13 @@
-import { AGENT_IDS, DEFAULT_AGENT_ID, type AgentId } from '@happier-dev/agents';
-
 import type { AgentCoreConfig, MachineLoginKey } from '@/agents/registry/registryCore';
 import {
+    AGENT_IDS,
+    DEFAULT_AGENT_ID,
     getAgentCore as getExpoAgentCore,
     isAgentId,
     resolveAgentIdFromCliDetectKey,
     resolveAgentIdFromConnectedServiceId,
     resolveAgentIdFromFlavor,
+    type AgentId,
 } from '@/agents/registry/registryCore';
 
 import type { AgentUiConfig } from '@/agents/registry/registryUi';
@@ -18,6 +19,7 @@ import {
     AGENTS_UI_BEHAVIOR,
     buildResumeCapabilityOptionsFromUiState,
     buildNewSessionOptionsFromUiState,
+    canSelectAgentWithoutDetectedCli,
     getNewSessionAgentInputExtraActionChips,
     buildSpawnEnvironmentVariablesFromUiState,
     buildResumeSessionExtrasFromUiState,
@@ -46,6 +48,19 @@ function registryUi() {
 
 export function getAgentCore(id: AgentId): AgentCoreConfig {
     return getExpoAgentCore(id);
+}
+
+export function writeAgentVendorResumeIdToMetadata<Metadata extends Record<string, unknown>>(
+    metadata: Metadata,
+    agentId: AgentId,
+    vendorResumeId: string,
+): Metadata {
+    const vendorResumeIdField = getAgentCore(agentId).resume.vendorResumeIdField;
+    if (!vendorResumeIdField) return metadata;
+    return {
+        ...metadata,
+        [vendorResumeIdField]: vendorResumeId,
+    };
 }
 
 export function getAgentUi(id: AgentId): AgentUiConfig {
@@ -96,6 +111,7 @@ export {
     buildResumeCapabilityOptionsFromUiState,
     getNewSessionPreflightIssues,
     buildNewSessionOptionsFromUiState,
+    canSelectAgentWithoutDetectedCli,
     getNewSessionAgentInputExtraActionChips,
     getNewSessionRelevantInstallableDepKeys,
     buildSpawnEnvironmentVariablesFromUiState,
