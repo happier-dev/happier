@@ -10,7 +10,8 @@ import { createTestAuth } from '../../src/testkit/auth';
 import { createSessionWithCiphertexts, fetchSessionV2 } from '../../src/testkit/sessions';
 import { repoRootDir } from '../../src/testkit/paths';
 import { spawnLoggedProcess, type SpawnedProcess } from '../../src/testkit/process/spawnProcess';
-import { encryptLegacyBase64, decryptLegacyBase64 } from '../../src/testkit/messageCrypto';
+import { encryptLegacyBase64 } from '../../src/testkit/messageCrypto';
+import { decryptLegacyBase64Normalized } from '../../src/testkit/decryptLegacyBase64Normalized';
 import { writeCliSessionAttachFile } from '../../src/testkit/cliAttachFile';
 import { waitFor } from '../../src/testkit/timing';
 import { writeTestManifestForServer } from '../../src/testkit/manifestForServer';
@@ -175,12 +176,12 @@ setInterval(() => {}, 1000);
 
       await waitFor(async () => {
         const snap = await fetchSessionV2(serverBaseUrl, auth.token, sessionId);
-        const metadata = decryptLegacyBase64(snap.metadata, secret) as any;
+        const metadata = decryptLegacyBase64Normalized(snap.metadata, secret) as any;
         return metadata?.codexSessionId === codexSessionId;
       }, { timeoutMs: 60_000 });
 
       const finalSnap = await fetchSessionV2(serverBaseUrl, auth.token, sessionId);
-      const finalMetadata = decryptLegacyBase64(finalSnap.metadata, secret) as any;
+      const finalMetadata = decryptLegacyBase64Normalized(finalSnap.metadata, secret) as any;
       expect(finalMetadata.codexSessionId).toBe(codexSessionId);
     } finally {
       await proc.stop();
