@@ -1,6 +1,4 @@
 import { createKimiBackend } from '@/backends/kimi/acp/backend';
-import type { ExecutionRunBackendFactory } from '@/backends/executionRuns/types';
+import { createSimpleExecutionRunBackendFactory } from '@/backends/shared/createSimpleExecutionRunBackendFactory';
 
-export const executionRunBackendFactory: ExecutionRunBackendFactory = (opts) => {
-  return createKimiBackend({ cwd: opts.cwd, env: opts.isolation?.env, permissionHandler: opts.permissionHandler });
-};
+export const executionRunBackendFactory = createSimpleExecutionRunBackendFactory(createKimiBackend);
