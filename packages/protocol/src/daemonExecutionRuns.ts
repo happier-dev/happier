@@ -5,31 +5,12 @@ import {
   ExecutionRunDisplaySchema,
   ExecutionRunIntentSchema,
   ExecutionRunIoModeSchema,
+  normalizeLegacyExecutionRunBackendTargetInput,
   ExecutionRunResumeHandleSchema,
   ExecutionRunRetentionPolicySchema,
   ExecutionRunStatusSchema,
 } from './executionRuns.js';
 import { BackendTargetRefSchema } from './backendTargets/backendTargetRef.js';
-
-function normalizeLegacyDaemonExecutionRunBackendTargetInput(value: unknown): unknown {
-  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
-    return value;
-  }
-
-  const input = value as Record<string, unknown>;
-  const normalizedResumeHandle = normalizeLegacyDaemonExecutionRunBackendTargetInput(input.resumeHandle);
-  const backendTarget = input.backendTarget ?? (
-    typeof input.backendId === 'string' && input.backendId.trim()
-      ? { kind: 'builtInAgent', agentId: input.backendId.trim() }
-      : undefined
-  );
-
-  return {
-    ...input,
-    backendTarget,
-    ...(normalizedResumeHandle === input.resumeHandle ? {} : { resumeHandle: normalizedResumeHandle }),
-  };
-}
 
 /**
  * Daemon-scoped execution run listing.
@@ -69,7 +50,7 @@ const DaemonExecutionRunMarkerSchemaCore = z.object({
   resumeHandle: ExecutionRunResumeHandleSchema.nullable().optional(),
 }).passthrough();
 export const DaemonExecutionRunMarkerSchema = z.preprocess(
-  normalizeLegacyDaemonExecutionRunBackendTargetInput,
+  normalizeLegacyExecutionRunBackendTargetInput,
   DaemonExecutionRunMarkerSchemaCore,
 );
 export type DaemonExecutionRunMarker = z.infer<typeof DaemonExecutionRunMarkerSchema>;
@@ -87,7 +68,7 @@ const DaemonExecutionRunEntrySchemaCore = DaemonExecutionRunMarkerSchemaCore.ext
   process: DaemonExecutionRunProcessInfoSchema.optional(),
 }).passthrough();
 export const DaemonExecutionRunEntrySchema = z.preprocess(
-  normalizeLegacyDaemonExecutionRunBackendTargetInput,
+  normalizeLegacyExecutionRunBackendTargetInput,
   DaemonExecutionRunEntrySchemaCore,
 );
 export type DaemonExecutionRunEntry = z.infer<typeof DaemonExecutionRunEntrySchema>;
