@@ -21,6 +21,7 @@ describe('Qwen ACP runtime permission mode wiring', () => {
     let permissionMode: 'default' | 'safe-yolo' = 'default';
     const runtime = createQwenAcpRuntime({
       directory: '/tmp',
+      machineId: 'machine-1',
       session: createQwenSessionFixture(),
       messageBuffer: createQwenMessageBufferFixture(),
       mcpServers: {},
@@ -48,6 +49,7 @@ describe('Qwen ACP runtime permission mode wiring', () => {
     let permissionMode: unknown = null;
     const runtime = createQwenAcpRuntime({
       directory: '/tmp',
+      machineId: 'machine-1',
       session: createQwenSessionFixture(),
       messageBuffer: createQwenMessageBufferFixture(),
       mcpServers: {},

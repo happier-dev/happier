@@ -21,6 +21,7 @@ describe('Kimi ACP runtime permissionMode wiring', () => {
     let permissionMode: 'default' | 'yolo' = 'default';
     const runtime = createKimiAcpRuntime({
       directory: '/tmp',
+      machineId: 'machine-1',
       session: createKimiSessionFixture(),
       messageBuffer: createKimiMessageBufferFixture(),
       mcpServers: {},
@@ -46,6 +47,7 @@ describe('Kimi ACP runtime permissionMode wiring', () => {
 
     const runtime = createKimiAcpRuntime({
       directory: '/tmp',
+      machineId: 'machine-1',
       session: createKimiSessionFixture({ metadataPermissionMode: 'read-only' }),
       messageBuffer: createKimiMessageBufferFixture(),
       mcpServers: {},

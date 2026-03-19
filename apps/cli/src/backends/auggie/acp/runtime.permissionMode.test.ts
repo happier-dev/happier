@@ -70,6 +70,7 @@ describe('Auggie ACP runtime permission mode wiring', () => {
       const { createAuggieAcpRuntime } = await import('./runtime');
       const runtime = createAuggieAcpRuntime({
         directory: '/tmp',
+        machineId: 'machine-1',
         session: createSessionStub(),
         messageBuffer: new MessageBuffer(),
         mcpServers: {},
