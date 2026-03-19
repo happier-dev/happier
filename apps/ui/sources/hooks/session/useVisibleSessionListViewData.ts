@@ -3,9 +3,11 @@ import { SessionListViewItem, useSessionListViewData, useSessionListViewDataBySe
 import { resolveSessionListSourceData } from '@/sync/domains/session/listing/sessionListPresentation';
 import { computeVisibleSessionListViewData } from '@/sync/domains/session/listing/computeVisibleSessionListViewData';
 import { areSessionListGroupOrderMapsEqual, normalizeSessionListGroupOrderV1ForSource } from '@/sync/domains/session/listing/sessionListOrderingStateV1';
+import { filterSessionListViewDataByStorageKind } from '@/sync/domains/session/listing/filterSessionListViewDataByStorageKind';
+import type { SessionListStorageFilter } from '@/sync/domains/session/sessionStorageKind';
 import { useResolvedActiveServerSelection } from '@/hooks/server/useEffectiveServerSelection';
 
-export function useVisibleSessionListViewData(): SessionListViewItem[] | null {
+export function useVisibleSessionListViewData(storageFilter: SessionListStorageFilter = 'all'): SessionListViewItem[] | null {
     const activeData = useSessionListViewData();
     const dataByServerId = useSessionListViewDataByServerId();
     const hideInactiveSessions = useSetting('hideInactiveSessions');
@@ -47,7 +49,7 @@ export function useVisibleSessionListViewData(): SessionListViewItem[] | null {
 
     return React.useMemo(() => {
         if (!source) return source;
-        return computeVisibleSessionListViewData({
+        const visible = computeVisibleSessionListViewData({
             source,
             hideInactiveSessions,
             pinnedSessionKeysV1,
@@ -58,11 +60,14 @@ export function useVisibleSessionListViewData(): SessionListViewItem[] | null {
                 selectedServerIds: selection.allowedServerIds,
             },
         });
+        if (!visible || storageFilter === 'all') return visible;
+        return filterSessionListViewDataByStorageKind(visible, storageFilter);
     }, [
         hideInactiveSessions,
         pinnedSessionKeysV1,
         normalizedGroupOrder,
         selection,
         source,
+        storageFilter,
     ]);
 }
