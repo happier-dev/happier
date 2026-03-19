@@ -61,11 +61,13 @@ export type ScmDiffArea = z.infer<typeof ScmDiffAreaSchema>;
 export const ScmChangeSetModelSchema = z.enum(['index', 'working-copy']);
 export type ScmChangeSetModel = z.infer<typeof ScmChangeSetModelSchema>;
 
-export const ScmCapabilitiesSchema = z.object({
+const ScmCapabilitiesSchemaCore = z.object({
   readStatus: z.boolean(),
   readDiffFile: z.boolean(),
   readDiffCommit: z.boolean(),
   readLog: z.boolean(),
+  readBranches: z.boolean().optional(),
+  readStash: z.boolean().optional(),
   writeInclude: z.boolean(),
   writeExclude: z.boolean(),
   writeDiscard: z.boolean().optional(),
@@ -73,10 +75,14 @@ export const ScmCapabilitiesSchema = z.object({
   writeCommitPathSelection: z.boolean(),
   writeCommitLineSelection: z.boolean(),
   writeBackout: z.boolean(),
+  writeBranchCreate: z.boolean().optional(),
+  writeBranchCheckout: z.boolean().optional(),
   writeRemoteFetch: z.boolean(),
   writeRemotePull: z.boolean(),
   writeRemotePush: z.boolean(),
-  workspaceWorktreeCreate: z.boolean(),
+  writeRemotePublish: z.boolean().optional(),
+  writeStash: z.boolean().optional(),
+  worktreeCreate: z.boolean(),
   changeSetModel: ScmChangeSetModelSchema,
   supportedDiffAreas: z.array(ScmDiffAreaSchema).min(1),
   operationLabels: z
@@ -91,6 +97,19 @@ export const ScmCapabilitiesSchema = z.object({
     })
     .optional(),
 });
+export const ScmCapabilitiesSchema = z.preprocess((value) => {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return value;
+  }
+  const record = value as Record<string, unknown>;
+  if (record.worktreeCreate !== undefined || record.workspaceWorktreeCreate === undefined) {
+    return value;
+  }
+  return {
+    ...record,
+    worktreeCreate: record.workspaceWorktreeCreate,
+  };
+}, ScmCapabilitiesSchemaCore);
 export type ScmCapabilities = z.infer<typeof ScmCapabilitiesSchema>;
 
 export const ScmEntryKindSchema = z.enum([
@@ -125,6 +144,14 @@ export const ScmWorkingEntrySchema = z.object({
 });
 export type ScmWorkingEntry = z.infer<typeof ScmWorkingEntrySchema>;
 
+export const ScmWorktreeSchema = z.object({
+  path: z.string(),
+  branch: z.string().nullable(),
+  isCurrent: z.boolean(),
+  isMain: z.boolean().optional(),
+});
+export type ScmWorktree = z.infer<typeof ScmWorktreeSchema>;
+
 export const ScmWorkingSnapshotSchema = z.object({
   projectKey: z.string(),
   fetchedAt: z.number().int(),
@@ -133,6 +160,7 @@ export const ScmWorkingSnapshotSchema = z.object({
     rootPath: z.string().nullable(),
     backendId: ScmBackendIdSchema.nullable(),
     mode: ScmRepoModeSchema.nullable(),
+    worktrees: z.array(ScmWorktreeSchema).default([]),
   }),
   capabilities: ScmCapabilitiesSchema,
   branch: z.object({
