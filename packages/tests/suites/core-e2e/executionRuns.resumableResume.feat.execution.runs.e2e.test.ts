@@ -20,39 +20,10 @@ import { daemonControlPostJson } from '../../src/testkit/daemon/controlServerCli
 import { waitFor } from '../../src/testkit/timing';
 import { seedCliAuthForServer } from '../../src/testkit/cliAuth';
 import { fakeClaudeFixturePath } from '../../src/testkit/fakeClaude';
+import { callLegacyEncryptedSessionRpc as callSessionRpc } from '../../src/testkit/sessionRpc';
+import { unwrapSerializedJsonValue } from '../../src/testkit/unwrapSerializedJsonValue';
 
 type RpcAck = { ok: boolean; result?: string; error?: string; errorCode?: string };
-type SafeParseResult<T> = { success: true; data: T } | { success: false };
-type ParseSchema<T> = { safeParse: (input: unknown) => SafeParseResult<T> };
-
-async function callSessionRpc<TReq, TRes>(params: {
-  ui: ReturnType<typeof createUserScopedSocketCollector>;
-  sessionId: string;
-  method: string;
-  req: TReq;
-  secret: Uint8Array;
-  schema: ParseSchema<TRes>;
-  timeoutMs?: number;
-}): Promise<TRes> {
-  let out: TRes | null = null;
-  const encryptedParams = encryptLegacyBase64(params.req, params.secret);
-
-  await waitFor(
-    async () => {
-      const res = await params.ui.rpcCall<RpcAck>(`${params.sessionId}:${params.method}`, encryptedParams);
-      if (!res || res.ok !== true || typeof res.result !== 'string') return false;
-      const decrypted = decryptLegacyBase64(res.result, params.secret);
-      const parsed = params.schema.safeParse(decrypted);
-      if (!parsed.success) return false;
-      out = parsed.data;
-      return true;
-    },
-    { timeoutMs: params.timeoutMs ?? 40_000 },
-  );
-
-  if (!out) throw new Error(`RPC call did not return a valid response: ${params.method}`);
-  return out;
-}
 
 const run = createRunDirs({ runLabel: 'core' });
 
@@ -67,7 +38,7 @@ describe('core e2e: execution runs (resumable) enforce backend resume support', 
 
   it('fails closed when backend does not support loadSession for resumable runs', async () => {
     const testDir = run.testDir(`execution-runs-resumable-${randomUUID()}`);
-    server = await startServerLight({ testDir });
+    server = await startServerLight({ testDir, dbProvider: 'sqlite' });
     const serverBaseUrl = server.baseUrl;
     const auth = await createTestAuth(serverBaseUrl);
 
@@ -133,7 +104,7 @@ describe('core e2e: execution runs (resumable) enforce backend resume support', 
       method: SESSION_RPC_METHODS.EXECUTION_RUN_START,
       req: {
         intent: 'delegate',
-        backendId: 'claude',
+        backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
         instructions: 'Start a long-lived resumable run.',
         permissionMode: 'read_only',
         retentionPolicy: 'resumable',
@@ -162,7 +133,7 @@ describe('core e2e: execution runs (resumable) enforce backend resume support', 
     );
     expect(sendNoResumeAck?.ok).toBe(true);
     expect(typeof sendNoResumeAck?.result).toBe('string');
-    const sendNoResumeResult = decryptLegacyBase64(String(sendNoResumeAck?.result ?? ''), secret) as any;
+    const sendNoResumeResult = unwrapSerializedJsonValue(decryptLegacyBase64(String(sendNoResumeAck?.result ?? ''), secret)) as any;
     expect(sendNoResumeResult?.ok).toBe(false);
     expect(sendNoResumeResult?.errorCode).toBe('execution_run_not_allowed');
 
@@ -172,7 +143,7 @@ describe('core e2e: execution runs (resumable) enforce backend resume support', 
     );
     expect(resumeAck?.ok).toBe(true);
     expect(typeof resumeAck?.result).toBe('string');
-    const resumeResult = decryptLegacyBase64(String(resumeAck?.result ?? ''), secret) as any;
+    const resumeResult = unwrapSerializedJsonValue(decryptLegacyBase64(String(resumeAck?.result ?? ''), secret)) as any;
     expect(resumeResult?.ok).toBe(false);
     expect(resumeResult?.errorCode).toBe('execution_run_not_allowed');
 
