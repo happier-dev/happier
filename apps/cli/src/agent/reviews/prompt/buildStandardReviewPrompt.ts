@@ -133,7 +133,6 @@ export function buildStandardReviewPrompt(params: Readonly<{ instructions: strin
       buildReviewFollowUpGuidanceBlock(),
     ].filter((line) => line.length > 0).join('\n');
   }
-
   const scopeBlock = buildReviewScopeGuidanceBlock(params.intentInput);
   return [
     params.instructions,
