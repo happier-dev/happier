@@ -3,6 +3,7 @@ import { SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { readRpcErrorCode } from '@happier-dev/protocol/rpcErrors';
 
 import { sessionRpcWithServerScope } from '@/sync/runtime/orchestration/serverScopedRpc/serverScopedSessionRpc';
+import { resolvePreferredServerIdForSessionId } from '@/sync/runtime/orchestration/serverScopedRpc/resolvePreferredServerIdForSessionId';
 
 export type SessionEphemeralTaskRunResult =
     | EphemeralTaskRunResponse
@@ -16,7 +17,7 @@ export async function sessionEphemeralTaskRun(
     try {
         const response = await sessionRpcWithServerScope<EphemeralTaskRunResponse, EphemeralTaskRunRequest>({
             sessionId,
-            serverId: opts?.serverId,
+            serverId: opts?.serverId ?? resolvePreferredServerIdForSessionId(sessionId),
             method: SESSION_RPC_METHODS.EPHEMERAL_TASK_RUN,
             payload: request,
         });
@@ -33,4 +34,3 @@ export async function sessionEphemeralTaskRun(
         };
     }
 }
-
