@@ -47,6 +47,7 @@ describe('FilesToolbar', () => {
                     changedFilesCount={2}
                     changedFilesViewMode="repository"
                     changedFilesPresentation="list"
+                    showTurnViewToggle={true}
                     showSessionViewToggle={true}
                     onChangedFilesViewMode={onChangedFilesViewMode}
                     onChangedFilesPresentationChange={onChangedFilesPresentationChange}
@@ -76,6 +77,9 @@ describe('FilesToolbar', () => {
         expect(typeof onShowAllRepositoryFiles).toBe('function');
         expect(typeof onChangedFilesViewMode).toBe('function');
         expect(typeof onChangedFilesPresentationChange).toBe('function');
+
+        const labels = tree!.root.findAllByType('Text' as any).map((node) => String(node.props.children));
+        expect(labels).toContain('files.toolbar.turnView');
     });
 
     it('hides session toggle when session attribution is not reliable enough', async () => {
@@ -94,6 +98,7 @@ describe('FilesToolbar', () => {
                     changedFilesCount={2}
                     changedFilesViewMode="repository"
                     changedFilesPresentation="list"
+                    showTurnViewToggle={false}
                     showSessionViewToggle={false}
                     onChangedFilesViewMode={vi.fn()}
                     onChangedFilesPresentationChange={vi.fn()}
@@ -106,6 +111,7 @@ describe('FilesToolbar', () => {
         const textNodes = tree!.root.findAllByType('Text' as any);
         const labels = textNodes.map((node) => String(node.props.children));
         expect(labels).toContain('files.toolbar.repositoryView');
+        expect(labels).not.toContain('files.toolbar.turnView');
         expect(labels).not.toContain('files.toolbar.sessionView');
         expect(labels).toContain('files.attributionReliabilityLimited');
     });
