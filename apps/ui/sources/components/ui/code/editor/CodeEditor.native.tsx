@@ -1,8 +1,8 @@
 import React from 'react';
 
-import type { CodeEditorProps } from './codeEditorTypes';
+import type { CodeEditorHandle, CodeEditorProps } from './codeEditorTypes';
 import { CodeMirrorWebViewSurface } from './surfaces/CodeMirrorWebViewSurface.native';
 
-export function CodeEditor(props: CodeEditorProps) {
-    return <CodeMirrorWebViewSurface {...props} />;
-}
+export const CodeEditor = React.forwardRef<CodeEditorHandle, CodeEditorProps>(function CodeEditor(props, ref) {
+    return <CodeMirrorWebViewSurface {...props} ref={ref} />;
+});
