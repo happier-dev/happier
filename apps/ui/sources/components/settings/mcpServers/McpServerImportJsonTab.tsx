@@ -68,9 +68,9 @@ export const McpServerImportJsonTab = React.memo(function McpServerImportJsonTab
 
             {props.parseResult.errors.length > 0 ? (
                 <ItemGroup title={t('settings.mcpServersImportJsonErrorTitle')}>
-                    {props.parseResult.errors.map((error) => (
+                    {props.parseResult.errors.map((error, index) => (
                         <Item
-                            key={error}
+                            key={`error:${index}`}
                             title={t('settings.mcpServersImportJsonErrorTitle')}
                             subtitle={error}
                             icon={<Ionicons name="alert-circle-outline" size={29} color={theme.colors.textDestructive} />}
@@ -83,9 +83,9 @@ export const McpServerImportJsonTab = React.memo(function McpServerImportJsonTab
 
             {props.parseResult.warnings.length > 0 || props.mappingIssues.length > 0 ? (
                 <ItemGroup title={t('settings.mcpServersImportJsonWarningsTitle')}>
-                    {[...props.parseResult.warnings, ...props.mappingIssues].map((warning) => (
+                    {[...props.parseResult.warnings, ...props.mappingIssues].map((warning, index) => (
                         <Item
-                            key={warning}
+                            key={`warning:${index}`}
                             title={t('settings.mcpServersImportJsonWarningsTitle')}
                             subtitle={warning}
                             icon={<Ionicons name="alert-circle-outline" size={29} color={theme.colors.textSecondary} />}
