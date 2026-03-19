@@ -8,7 +8,7 @@ import { useUnistyles } from 'react-native-unistyles';
 import { t } from '@/text';
 import { Modal } from '@/modal';
 import { promptUnsavedChangesAlert } from '@/utils/ui/promptUnsavedChangesAlert';
-import { AIBackendProfile } from '@/sync/domains/settings/settings';
+import { type AIBackendProfile } from '@/sync/domains/profiles/profileCompatibility';
 import { DEFAULT_PROFILES, getBuiltInProfileNameKey, resolveProfileById } from '@/sync/domains/profiles/profileUtils';
 import { ProfileEditForm } from '@/components/profiles/edit';
 import { ItemList } from '@/components/ui/lists/ItemList';
