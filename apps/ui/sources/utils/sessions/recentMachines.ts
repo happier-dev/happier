@@ -1,5 +1,6 @@
 import type { Machine } from '@/sync/domains/state/storageTypes';
 import type { Session } from '@/sync/domains/state/storageTypes';
+import { readDisplayMachineIdForSession } from '@/sync/ops/sessionMachineTarget';
 
 export function getRecentMachinesFromSessions(params: {
     machines: Machine[];
@@ -13,7 +14,10 @@ export function getRecentMachinesFromSessions(params: {
 
     params.sessions.forEach((item) => {
         if (typeof item === 'string') return;
-        const machineId = item.metadata?.machineId;
+        const machineId = readDisplayMachineIdForSession({
+            sessionId: item.id,
+            metadata: item.metadata ?? null,
+        });
         if (!machineId || seen.has(machineId)) return;
         const machine = byId.get(machineId);
         if (!machine) return;
@@ -28,4 +32,3 @@ export function getRecentMachinesFromSessions(params: {
         .sort((a, b) => b.timestamp - a.timestamp)
         .map((item) => item.machine);
 }
-
