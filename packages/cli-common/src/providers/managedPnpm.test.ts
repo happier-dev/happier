@@ -47,7 +47,7 @@ describe('managedPnpm bootstrap race protection', () => {
     // Create isolated test home directory
     testHomeDir = join(tmpdir(), `happier-pnpm-test-${Date.now()}-${Math.random().toString(36).slice(2)}`);
     await mkdir(testHomeDir, { recursive: true });
-
+    
     testEnv = {
       ...process.env,
       HAPPIER_HOME_DIR: testHomeDir,
