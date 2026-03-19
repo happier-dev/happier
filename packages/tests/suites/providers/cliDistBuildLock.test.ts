@@ -24,6 +24,23 @@ describe('providers: CLI dist build lock', () => {
     expect(existsSync(lockPath)).toBe(false);
   });
 
+  it('reclaims stale lock files even when the recorded pid is still alive', async () => {
+    const workDir = mkdtempSync(join(tmpdir(), 'happier-cli-dist-lock-'));
+    const lockPath = join(workDir, 'cli-dist-build.lock');
+    writeFileSync(lockPath, JSON.stringify({ pid: process.pid, createdAtMs: 1 }), 'utf8');
+
+    const result = await withCliDistBuildLock(
+      async () => {
+        expect(existsSync(lockPath)).toBe(true);
+        return 'ok';
+      },
+      { lockPath, timeoutMs: 500, pollIntervalMs: 20, staleAfterMs: 0 },
+    );
+
+    expect(result).toBe('ok');
+    expect(existsSync(lockPath)).toBe(false);
+  });
+
   it('does not reclaim fresh locks from live owners', async () => {
     const workDir = mkdtempSync(join(tmpdir(), 'happier-cli-dist-lock-'));
     const lockPath = join(workDir, 'cli-dist-build.lock');
