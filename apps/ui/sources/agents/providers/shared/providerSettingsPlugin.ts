@@ -1,57 +1,93 @@
-import type { ZodTypeAny } from 'zod';
+import type React from 'react';
+import type { SettingDefinitionMap } from '@happier-dev/protocol';
 
 import type { AgentId } from '@/agents/catalog/catalog';
+import type { TranslationKeyNoParams } from '@/text';
+
+export type TranslationRef = Readonly<{ key: TranslationKeyNoParams }>;
+
+export type TranslatableText = string | TranslationRef;
+
+export type ProviderSettingsIconColorToken = keyof NonNullable<(typeof import('@/theme'))['lightTheme']['colors']['accent']>;
+export type ProviderSettingsIconColor = string | Readonly<{ kind: 'theme'; token: ProviderSettingsIconColorToken }>;
 
 export type ProviderSettingFieldKind = 'boolean' | 'enum' | 'multiEnum' | 'number' | 'text' | 'json';
 
 export type ProviderSettingEnumOption = Readonly<{
     id: string;
-    title: string;
-    subtitle?: string;
+    title: TranslatableText;
+    subtitle?: TranslatableText;
 }>;
 
 export type ProviderSettingNumberSpec = Readonly<{
     min?: number;
     max?: number;
     step?: number;
-    placeholder?: string;
-    nullLabel?: string;
+    placeholder?: TranslatableText;
 }>;
+
+export type ProviderSettingFieldBinding =
+    | Readonly<{
+        kind: 'direct';
+        settingKey?: string;
+    }>
+    | Readonly<{
+        kind: 'perActiveServer';
+        fallbackSettingKey: string;
+        byServerIdSettingKey: string;
+    }>;
 
 export type ProviderSettingFieldDef = Readonly<{
     key: string;
     kind: ProviderSettingFieldKind;
-    title: string;
-    subtitle?: string;
+    title: TranslatableText;
+    subtitle?: TranslatableText;
     enumOptions?: readonly ProviderSettingEnumOption[];
     numberSpec?: ProviderSettingNumberSpec;
+    binding?: ProviderSettingFieldBinding;
 }>;
 
 export type ProviderSettingsSectionDef = Readonly<{
     id: string;
-    title: string;
-    footer?: string;
+    title: TranslatableText;
+    footer?: TranslatableText;
     fields: readonly ProviderSettingFieldDef[];
+}>;
+
+export type ProviderSubagentSettingsItemDef = Readonly<{
+    id: string;
+    title: TranslatableText;
+    subtitle?: TranslatableText;
+    route: string;
+    iconIonName?: string;
+}>;
+
+export type ProviderSubagentSettingsSectionDef = Readonly<{
+    id: string;
+    title: TranslatableText;
+    footer?: TranslatableText;
+    items: readonly ProviderSubagentSettingsItemDef[];
 }>;
 
 export type ProviderSettingsPlugin = Readonly<{
     providerId: AgentId;
-    title: string;
-    icon: Readonly<{ ionName: string; color: string }>;
+    title: TranslatableText;
+    icon: Readonly<{ ionName: string; color: ProviderSettingsIconColor }>;
+    ExtraSectionsComponent?: React.ComponentType<Readonly<{ providerId: AgentId }>>;
     /**
-     * Provider-owned settings shape (flat keys only).
+     * Provider-owned setting definitions (flat keys only).
      * Keys must be globally unique across all settings.
      */
-    settingsShape: Readonly<Record<string, ZodTypeAny>>;
-    /**
-     * Provider-owned settings defaults (flat keys only).
-     * Must provide defaults for every key in settingsShape.
-     */
-    settingsDefaults: Readonly<Record<string, unknown>>;
+    settings: SettingDefinitionMap;
     /**
      * UI sections rendered by the generic provider-settings screen.
      */
     uiSections: readonly ProviderSettingsSectionDef[];
+    /**
+     * Provider-owned settings that should also be discoverable from the Subagents hub.
+     * These are navigational entries only; the owning provider screen remains the source of truth.
+     */
+    subagentSettingsSections?: readonly ProviderSubagentSettingsSectionDef[];
     /**
      * Provider-specific outgoing message metadata enrichment.
      *
