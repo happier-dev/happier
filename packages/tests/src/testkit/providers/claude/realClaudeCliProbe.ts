@@ -145,8 +145,9 @@ export function coerceTextFromToolResultResult(result: unknown): string | null {
   return joined.length > 0 ? joined : null;
 }
 
-export function findClaudeSubagentJsonlPath(params: { sessionId: string; agentId: string }): string | null {
-  const base = join(homedir(), '.claude', 'projects');
+export function findClaudeSubagentJsonlPath(params: { sessionId: string; agentId: string; claudeHomeDir?: string }): string | null {
+  const claudeHomeDir = params.claudeHomeDir ?? join(homedir(), '.claude');
+  const base = join(claudeHomeDir, 'projects');
   if (!existsSync(base)) return null;
 
   const projectDirs = readdirSync(base, { withFileTypes: true })
@@ -221,6 +222,14 @@ export function findClaudeSubagentJsonlPath(params: { sessionId: string; agentId
     for (const fileName of entries) {
       if (!fileName.startsWith('agent-') || !fileName.endsWith('.jsonl')) continue;
       const filePath = join(subagentsDir, fileName);
+      const metaPath = join(subagentsDir, fileName.replace(/\.jsonl$/i, '.meta.json'));
+      try {
+        const meta = JSON.parse(readFirstLineUtf8(metaPath) ?? '{}') as { agentType?: unknown };
+        const agentType = typeof meta.agentType === 'string' ? meta.agentType.trim() : '';
+        if (agentType.localeCompare(nameGuess, undefined, { sensitivity: 'accent' }) === 0) return filePath;
+      } catch {
+        // ignore malformed or missing meta file
+      }
       const firstLine = readFirstLineUtf8(filePath);
       if (!firstLine) continue;
       let parsed: unknown;
