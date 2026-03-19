@@ -2,6 +2,7 @@ import { logger } from '@/ui/logger'
 import { backoff } from '@/utils/time';
 import type { AgentState, Metadata } from '../types';
 import { decodeBase64, decrypt, encodeBase64, encrypt } from '../encryption';
+import { deriveActivitySummaryFromAgentState } from './deriveActivitySummaryFromAgentState';
 
 type AckableSocket = {
     emitWithAck: (event: string, ...args: any[]) => Promise<any>;
@@ -31,6 +32,18 @@ export async function updateSessionMetadataWithAck(opts: {
 
         const current = opts.getMetadata();
         const updated = opts.handler(current!);
+        logger.debug('[API] updateMetadata attempting', {
+            expectedVersion: opts.getMetadataVersion(),
+            hasModeOverride: Boolean((updated as Record<string, unknown> | null)?.acpSessionModeOverrideV1),
+            hasModelOverride: Boolean((updated as Record<string, unknown> | null)?.modelOverrideV1),
+            hasOpenCodeSessionId: typeof (updated as Record<string, unknown> | null)?.opencodeSessionId === 'string',
+            currentModeId:
+                typeof (updated as Record<string, unknown> | null)?.acpSessionModesV1 === 'object' &&
+                updated &&
+                typeof (updated as any).acpSessionModesV1?.currentModeId === 'string'
+                    ? (updated as any).acpSessionModesV1.currentModeId
+                    : null,
+        });
         const metadataPayload =
             opts.sessionEncryptionMode === 'plain'
                 ? JSON.stringify(updated)
@@ -46,6 +59,18 @@ export async function updateSessionMetadataWithAck(opts: {
                 opts.sessionEncryptionMode === 'plain'
                     ? JSON.parse(String(answer.metadata ?? 'null'))
                     : decrypt(opts.encryptionKey, opts.encryptionVariant, decodeBase64(answer.metadata));
+            logger.debug('[API] updateMetadata success', {
+                version: answer.version,
+                hasModeOverride: Boolean((next as Record<string, unknown> | null)?.acpSessionModeOverrideV1),
+                hasModelOverride: Boolean((next as Record<string, unknown> | null)?.modelOverrideV1),
+                hasOpenCodeSessionId: typeof (next as Record<string, unknown> | null)?.opencodeSessionId === 'string',
+                currentModeId:
+                    typeof (next as Record<string, unknown> | null)?.acpSessionModesV1 === 'object' &&
+                    next &&
+                    typeof (next as any).acpSessionModesV1?.currentModeId === 'string'
+                        ? (next as any).acpSessionModesV1.currentModeId
+                        : null,
+            });
             opts.setMetadata(next);
             opts.setMetadataVersion(answer.version);
             return;
@@ -58,6 +83,18 @@ export async function updateSessionMetadataWithAck(opts: {
                     opts.sessionEncryptionMode === 'plain'
                         ? JSON.parse(String(answer.metadata ?? 'null'))
                         : decrypt(opts.encryptionKey, opts.encryptionVariant, decodeBase64(answer.metadata));
+                logger.debug('[API] updateMetadata version-mismatch', {
+                    version: answer.version,
+                    hasModeOverride: Boolean((next as Record<string, unknown> | null)?.acpSessionModeOverrideV1),
+                    hasModelOverride: Boolean((next as Record<string, unknown> | null)?.modelOverrideV1),
+                    hasOpenCodeSessionId: typeof (next as Record<string, unknown> | null)?.opencodeSessionId === 'string',
+                    currentModeId:
+                        typeof (next as Record<string, unknown> | null)?.acpSessionModesV1 === 'object' &&
+                        next &&
+                        typeof (next as any).acpSessionModesV1?.currentModeId === 'string'
+                            ? (next as any).acpSessionModesV1.currentModeId
+                            : null,
+                });
                 opts.setMetadata(next);
             }
             throw new Error('Metadata version mismatch');
@@ -94,10 +131,12 @@ export async function updateSessionAgentStateWithAck(opts: {
             opts.sessionEncryptionMode === 'plain'
                 ? JSON.stringify(updated)
                 : (updated ? encodeBase64(encrypt(opts.encryptionKey, opts.encryptionVariant, updated)) : null);
+        const activitySummaryV1 = deriveActivitySummaryFromAgentState(updated);
         const answer = await opts.socket.emitWithAck('update-state', {
             sid: opts.sessionId,
             expectedVersion: opts.getAgentStateVersion(),
             agentState: agentStatePayload,
+            activitySummaryV1,
         });
 
         if (answer.result === 'success') {
