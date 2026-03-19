@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -20,9 +21,13 @@ test('pipeline CLI smoke script supports --dry-run', async () => {
     },
   );
 
-  assert.match(out, /\bnpm pack\b/);
+  assert.match(out, /(packTarball\.mjs|\bnpm pack\b)/);
   assert.match(out, /\bnpm install\b/);
   assert.match(out, /\bhappier\b.*--help/);
   assert.match(out, /\bhappier\b.*--version/);
 });
 
+test('pipeline CLI smoke script resolves spawned commands through the Windows command helper', () => {
+  const src = fs.readFileSync(resolve(repoRoot, 'scripts', 'pipeline', 'smoke', 'cli-smoke.mjs'), 'utf8');
+  assert.match(src, /function run\(opts, cmd, args, extra\)[\s\S]*resolveWindowsCommandInvocation\(\{\s*command: cmd,\s*args,/);
+});
