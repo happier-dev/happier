@@ -1,6 +1,7 @@
 import { z } from 'zod';
 
 import { ActionsSettingsV1Schema, type ActionsSettingsV1 } from '../../actions/actionSettings.js';
+import { AcpCatalogSettingsV1Schema } from '../../acpCatalog/settingsV1.js';
 import {
   BUILT_IN_EXPO_PUSH_NOTIFICATION_CHANNEL_ID,
   NotificationChannelsV1Schema,
@@ -8,6 +9,14 @@ import {
   type NotificationChannelV1,
   type NotificationChannelsV1,
 } from './notificationChannels.js';
+
+function rekeyLegacyBuiltInAgentMap<T>(raw: unknown): Record<string, T> {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return {};
+  const entries = Object.entries(raw as Record<string, unknown>)
+    .filter(([key]) => typeof key === 'string' && key.trim().length > 0)
+    .map(([key, value]) => [`agent:${key.trim()}`, value as T]);
+  return Object.fromEntries(entries);
+}
 
 export const ACCOUNT_SETTINGS_SUPPORTED_SCHEMA_VERSION = 2;
 
@@ -40,15 +49,32 @@ export const DEFAULT_NOTIFICATIONS_SETTINGS_V1: NotificationsSettingsV1 = Notifi
 
 export const DEFAULT_ACTIONS_SETTINGS_V1: ActionsSettingsV1 = ActionsSettingsV1Schema.parse({ v: 1 });
 
-const BackendEnabledByIdSchema = z.record(z.string(), z.boolean()).catch({});
+const BackendEnabledByTargetKeySchema = z.record(z.string(), z.boolean()).catch({});
+const BackendCliSourcePreferenceSchema = z.enum(['system-first', 'managed-first']);
+const BackendCliSourcePreferenceByTargetKeySchema = z.preprocess((raw) => {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return {};
+  return Object.fromEntries(
+    Object.entries(raw as Record<string, unknown>).filter(
+      ([, value]) => value === 'system-first' || value === 'managed-first',
+    ),
+  );
+}, z.record(z.string(), BackendCliSourcePreferenceSchema)).default({});
 
-function backfillNotificationChannelsV1(raw: Record<string, unknown>): Record<string, unknown> {
+function backfillLegacyTargetKeyedAccountSettings(raw: Record<string, unknown>): Record<string, unknown> {
   const next = { ...raw };
 
+  if (next.backendEnabledByTargetKey === undefined && raw.backendEnabledById !== undefined) {
+    next.backendEnabledByTargetKey = rekeyLegacyBuiltInAgentMap<boolean>(raw.backendEnabledById);
+  }
+
+  if (next.backendCliSourcePreferenceByTargetKey === undefined && raw.backendCliSourcePreferenceById !== undefined) {
+    next.backendCliSourcePreferenceByTargetKey = rekeyLegacyBuiltInAgentMap<'system-first' | 'managed-first'>(raw.backendCliSourcePreferenceById);
+  }
+
   if (next.notificationChannelsV1 !== undefined) {
-    const parsed = NotificationChannelsV1Schema.safeParse(next.notificationChannelsV1);
-    if (parsed.success) {
-      next.notificationChannelsV1 = parsed.data;
+    const parsedChannels = NotificationChannelsV1Schema.safeParse(next.notificationChannelsV1);
+    if (parsedChannels.success) {
+      next.notificationChannelsV1 = parsedChannels.data;
     } else {
       delete next.notificationChannelsV1;
     }
@@ -70,7 +96,7 @@ function backfillNotificationChannelsV1(raw: Record<string, unknown>): Record<st
 export const AccountSettingsSchema = z.preprocess(
   (raw) => {
     if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return {};
-    return backfillNotificationChannelsV1(raw as Record<string, unknown>);
+    return backfillLegacyTargetKeyedAccountSettings(raw as Record<string, unknown>);
   },
   z
     .object({
@@ -80,13 +106,15 @@ export const AccountSettingsSchema = z.preprocess(
         .min(0)
         .catch(ACCOUNT_SETTINGS_SUPPORTED_SCHEMA_VERSION)
         .default(ACCOUNT_SETTINGS_SUPPORTED_SCHEMA_VERSION),
-      backendEnabledById: BackendEnabledByIdSchema.default({}),
+      backendEnabledByTargetKey: BackendEnabledByTargetKeySchema.default({}),
+      backendCliSourcePreferenceByTargetKey: BackendCliSourcePreferenceByTargetKeySchema,
       scmIncludeCoAuthoredBy: z.boolean().optional().catch(undefined),
       actionsSettingsV1: ActionsSettingsV1Schema.catch(DEFAULT_ACTIONS_SETTINGS_V1).default(DEFAULT_ACTIONS_SETTINGS_V1),
       notificationsSettingsV1: NotificationsSettingsV1Schema.default(DEFAULT_NOTIFICATIONS_SETTINGS_V1),
       notificationChannelsV1: NotificationChannelsV1Schema.default([
         deriveExpoPushNotificationChannelFromLegacySettings(DEFAULT_NOTIFICATIONS_SETTINGS_V1),
       ]),
+      acpCatalogSettingsV1: AcpCatalogSettingsV1Schema.catch({ v: 2, backends: [] }).default({ v: 2, backends: [] }),
     })
     .passthrough(),
 );

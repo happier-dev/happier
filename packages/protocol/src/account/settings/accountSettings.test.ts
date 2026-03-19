@@ -1,45 +1,106 @@
 import { describe, expect, it } from 'vitest';
 
-import {
-  accountSettingsParse,
-  DEFAULT_ACTIONS_SETTINGS_V1,
-  DEFAULT_NOTIFICATIONS_SETTINGS_V1,
-  type AccountSettings,
-} from './accountSettings.js';
+import { accountSettingsParse } from './accountSettings.js';
 
-describe('accountSettingsParse', () => {
-  it('applies defaults for known subtrees', () => {
+describe('accountSettings', () => {
+  it('defaults ready notification preview settings to enabled', () => {
     const parsed = accountSettingsParse({});
 
-    expect(parsed.notificationsSettingsV1).toEqual(DEFAULT_NOTIFICATIONS_SETTINGS_V1);
-    expect(parsed.actionsSettingsV1).toEqual(DEFAULT_ACTIONS_SETTINGS_V1);
-    expect(parsed.notificationsSettingsV1.userActionRequest).toBe(true);
+    expect(parsed.notificationsSettingsV1.readyIncludeMessageText).toBe(true);
   });
 
-  it('preserves unknown keys', () => {
-    const parsed = accountSettingsParse({ someNewKey: { nested: true } });
-    expect((parsed as any).someNewKey).toEqual({ nested: true });
-  });
-
-  it('tolerates invalid known subtrees (falls back to defaults for that subtree)', () => {
+  it('accepts explicit ready notification preview settings', () => {
     const parsed = accountSettingsParse({
-      actionsSettingsV1: 'nope',
-      notificationsSettingsV1: { v: 1, ready: 'nope' },
-      unknownStillThere: 123,
+      notificationsSettingsV1: {
+        v: 1,
+        pushEnabled: true,
+        ready: true,
+        readyIncludeMessageText: false,
+        permissionRequest: true,
+        userActionRequest: true,
+        foregroundBehavior: 'full',
+      },
     });
 
-    expect(parsed.actionsSettingsV1).toEqual(DEFAULT_ACTIONS_SETTINGS_V1);
-    expect(parsed.notificationsSettingsV1).toEqual(DEFAULT_NOTIFICATIONS_SETTINGS_V1);
-    expect((parsed as any).unknownStillThere).toBe(123);
+    expect(parsed.notificationsSettingsV1.readyIncludeMessageText).toBe(false);
   });
 
-  it('returns defaults when raw is not an object', () => {
-    const parsed = accountSettingsParse(null);
-    expect(parsed.notificationsSettingsV1).toEqual(DEFAULT_NOTIFICATIONS_SETTINGS_V1);
+  it('defaults target-keyed backend settings maps', () => {
+    const parsed = accountSettingsParse({});
+
+    expect(parsed.backendEnabledByTargetKey).toEqual({});
+    expect(parsed.backendCliSourcePreferenceByTargetKey).toEqual({});
   });
 
-  it('returns a stable object shape', () => {
-    const parsed: AccountSettings = accountSettingsParse({ schemaVersion: 2 });
-    expect(typeof parsed.schemaVersion).toBe('number');
+  it('accepts target-keyed backend settings', () => {
+    const parsed = accountSettingsParse({
+      backendEnabledByTargetKey: {
+        'agent:claude': true,
+        'acpBackend:team-review': false,
+      },
+      backendCliSourcePreferenceByTargetKey: {
+        'agent:claude': 'system-first',
+        'acpBackend:team-review': 'managed-first',
+      },
+    });
+
+    expect(parsed.backendEnabledByTargetKey).toEqual({
+      'agent:claude': true,
+      'acpBackend:team-review': false,
+    });
+    expect(parsed.backendCliSourcePreferenceByTargetKey).toEqual({
+      'agent:claude': 'system-first',
+      'acpBackend:team-review': 'managed-first',
+    });
+  });
+
+  it('backfills target-keyed backend settings from legacy id-keyed fields', () => {
+    const parsed = accountSettingsParse({
+      backendEnabledById: {
+        claude: false,
+        codex: true,
+      },
+      backendCliSourcePreferenceById: {
+        claude: 'managed-first',
+        codex: 'system-first',
+      },
+    });
+
+    expect(parsed.backendEnabledByTargetKey).toEqual({
+      'agent:claude': false,
+      'agent:codex': true,
+    });
+    expect(parsed.backendCliSourcePreferenceByTargetKey).toEqual({
+      'agent:claude': 'managed-first',
+      'agent:codex': 'system-first',
+    });
+  });
+
+  it('prefers target-keyed backend settings when both schemas are present', () => {
+    const parsed = accountSettingsParse({
+      backendEnabledById: {
+        claude: false,
+      },
+      backendEnabledByTargetKey: {
+        'agent:claude': true,
+      },
+      backendCliSourcePreferenceById: {
+        claude: 'managed-first',
+      },
+      backendCliSourcePreferenceByTargetKey: {
+        'agent:claude': 'system-first',
+      },
+      futureField: {
+        keep: true,
+      },
+    });
+
+    expect(parsed.backendEnabledByTargetKey).toEqual({
+      'agent:claude': true,
+    });
+    expect(parsed.backendCliSourcePreferenceByTargetKey).toEqual({
+      'agent:claude': 'system-first',
+    });
+    expect(parsed.futureField).toEqual({ keep: true });
   });
 });
