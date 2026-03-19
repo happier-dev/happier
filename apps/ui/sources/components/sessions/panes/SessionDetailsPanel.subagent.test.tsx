@@ -68,7 +68,7 @@ vi.mock('@/components/appShell/panes/hooks/useAppPaneScope', () => ({
                         key: 'subagent:execution_run:run_1',
                         kind: 'subagent',
                         title: 'Code review',
-                        subtitle: 'Happier subagent · Codex',
+                        subtitle: 'Subagent · Codex',
                         isPinned: false,
                         isPreview: true,
                         resource: { kind: 'subagent', subagentId: 'execution_run:run_1' },
@@ -122,6 +122,6 @@ describe('SessionDetailsPanel (subagent resource)', () => {
             subagentId: 'execution_run:run_1',
         });
         const textTree = JSON.stringify(tree!.toJSON());
-        expect(textTree).toContain('Happier subagent · Codex');
+        expect(textTree).toContain('Subagent · Codex');
     });
 });
