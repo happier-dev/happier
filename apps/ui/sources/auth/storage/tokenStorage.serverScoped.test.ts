@@ -95,6 +95,55 @@ describe('TokenStorage (web) server-scoped credentials', () => {
         });
     });
 
+    it('can read exact same-URL alternate profile credentials by serverId', async () => {
+        restoreLocalStorage = installLocalStorageMock().restore;
+
+        const state = {
+            activeServerId: 'server-a',
+            activeServerUrl: 'https://shared.example.test',
+            profiles: [
+                { id: 'server-a', serverUrl: 'https://shared.example.test', name: 'Server A' },
+                { id: 'server-b', serverUrl: 'https://shared.example.test', name: 'Server B' },
+            ],
+        };
+
+        vi.doMock('@/sync/domains/server/serverProfiles', async (importOriginal) => {
+            const actual = await importOriginal<typeof import('@/sync/domains/server/serverProfiles')>();
+            return {
+                ...actual,
+                getActiveServerId: () => state.activeServerId,
+                getActiveServerUrl: () => state.activeServerUrl,
+                listServerProfiles: () => state.profiles,
+            };
+        });
+
+        try {
+            const { TokenStorage } = await import('./tokenStorage');
+            const exactLookup = TokenStorage as unknown as {
+                getCredentialsForServerUrl: (
+                    serverUrl: string,
+                    options?: Readonly<{ serverId?: string | null }>,
+                ) => Promise<{ token: string; secret: string } | null>;
+            };
+
+            await expect(TokenStorage.setCredentials({ token: 'token-a', secret: 'secret-a' })).resolves.toBe(true);
+
+            state.activeServerId = 'server-b';
+            await expect(TokenStorage.setCredentials({ token: 'token-b', secret: 'secret-b' })).resolves.toBe(true);
+
+            await expect(exactLookup.getCredentialsForServerUrl(state.activeServerUrl, { serverId: 'server-a' })).resolves.toEqual({
+                token: 'token-a',
+                secret: 'secret-a',
+            });
+            await expect(exactLookup.getCredentialsForServerUrl(state.activeServerUrl, { serverId: 'server-b' })).resolves.toEqual({
+                token: 'token-b',
+                secret: 'secret-b',
+            });
+        } finally {
+            vi.doUnmock('@/sync/domains/server/serverProfiles');
+        }
+    });
+
     it('migrates credentials stored under legacy URL hashing when normalization changes (127.0.0.1 -> localhost)', async () => {
         const localStorageHandle = installLocalStorageMock();
         restoreLocalStorage = localStorageHandle.restore;

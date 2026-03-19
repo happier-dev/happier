@@ -22,6 +22,10 @@ type ScopedStorageKeys = Readonly<{
     legacy: string | null;
 }>;
 
+type ServerCredentialLookupOptions = Readonly<{
+    serverId?: string | null;
+}>;
+
 function normalizeUrlLegacy(raw: string): string {
     return String(raw ?? '').trim().replace(/\/+$/, '');
 }
@@ -55,6 +59,11 @@ function sanitizeScopeToken(raw: string): string {
     return token || 'default';
 }
 
+function normalizeServerId(raw: string | null | undefined): string | null {
+    const serverId = String(raw ?? '').trim();
+    return serverId.length > 0 ? serverId : null;
+}
+
 async function getServerHashScopeForNormalizedUrl(normalizedUrl: string): Promise<string> {
     const normalized = String(normalizedUrl ?? '').trim();
     if (!normalized) return 'default';
@@ -71,14 +80,25 @@ function makeScopedKey(baseKey: string, scopeToken: string): string {
     return scopedStorageId(`${baseKey}__srv_${scopeToken}`, scope);
 }
 
-function resolveServerIdForUrl(serverUrl: string): string | null {
+function resolveServerIdForUrl(serverUrl: string, preferredServerId?: string | null): string | null {
     const normalized = normalizeUrl(serverUrl);
     if (!normalized) return null;
-    const match = listServerProfiles().find((profile) => normalizeUrl(profile.serverUrl) === normalized);
+    const profiles = listServerProfiles();
+    const preferredId = normalizeServerId(preferredServerId);
+    if (preferredId) {
+        const preferredProfile = profiles.find((profile) => normalizeServerId(profile.id) === preferredId) ?? null;
+        if (!preferredProfile) return null;
+        return normalizeUrl(preferredProfile.serverUrl) === normalized ? preferredProfile.id : null;
+    }
+    const match = profiles.find((profile) => normalizeUrl(profile.serverUrl) === normalized);
     return match?.id ?? null;
 }
 
-async function getServerScopedKeys(baseKey: string, serverUrlOverride?: string): Promise<ScopedStorageKeys> {
+async function getServerScopedKeys(
+    baseKey: string,
+    serverUrlOverride?: string,
+    options: ServerCredentialLookupOptions = {},
+): Promise<ScopedStorageKeys> {
     const rawUrl = serverUrlOverride ?? getActiveServerUrl();
     const normalizedUrl = normalizeUrl(rawUrl);
     const legacyCandidates = new Set<string>();
@@ -99,8 +119,9 @@ async function getServerScopedKeys(baseKey: string, serverUrlOverride?: string):
 
     const legacyNormalizedUrlForHash =
         [...legacyCandidates].find((candidate) => candidate && candidate !== normalizedUrl) ?? '';
-    const resolvedServerId = resolveServerIdForUrl(normalizedUrl);
     const activeServerId = serverUrlOverride ? null : getActiveServerId();
+    const preferredServerId = normalizeServerId(options.serverId) ?? normalizeServerId(activeServerId);
+    const resolvedServerId = resolveServerIdForUrl(normalizedUrl, preferredServerId);
     const activeServerUrl = activeServerId
         ? normalizeUrl(listServerProfiles().find((profile) => profile.id === activeServerId)?.serverUrl ?? '')
         : '';
@@ -560,8 +581,11 @@ export const TokenStorage = {
         return legacyParsed;
     },
 
-    async getCredentialsForServerUrl(serverUrl: string): Promise<AuthCredentials | null> {
-        const keys = await getAuthKeys(serverUrl);
+    async getCredentialsForServerUrl(
+        serverUrl: string,
+        options: ServerCredentialLookupOptions = {},
+    ): Promise<AuthCredentials | null> {
+        const keys = await getServerScopedKeys(AUTH_KEY, serverUrl, options);
         const primaryRaw = await readCredentialRawByKey(keys.primary);
         const primaryParsed = parseCredentialsRaw(primaryRaw);
         if (primaryParsed) return primaryParsed;
