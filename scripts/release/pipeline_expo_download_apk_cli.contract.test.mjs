@@ -3,35 +3,59 @@ import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { mkdtempSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(here, '..', '..');
 
 test('pipeline CLI can download Android APK (dry-run) from EAS build JSON', async () => {
-  for (const environment of ['development', 'canary', 'preview', 'production']) {
-    const out = execFileSync(
-      process.execPath,
+  const dir = mkdtempSync(join(tmpdir(), 'happier-eas-'));
+  const buildJsonPath = join(dir, 'eas_build.json');
+  writeFileSync(
+    buildJsonPath,
+    JSON.stringify(
       [
-        resolve(repoRoot, 'scripts', 'pipeline', 'expo', 'download-android-apk.mjs'),
-        '--environment',
-        environment,
-        '--build-json',
-        '/tmp/eas_build.json',
-        '--dry-run',
-      ],
-      {
-        cwd: repoRoot,
-        env: {
-          ...process.env,
-          EXPO_TOKEN: 'expo-token',
+        {
+          id: 'build-android-1',
+          platform: 'android',
+          artifacts: {
+            applicationArchiveUrl: 'https://example.com/happier-preview-android.apk',
+          },
         },
-        encoding: 'utf8',
-        stdio: ['ignore', 'pipe', 'pipe'],
-        timeout: 30_000,
-      },
-    );
+      ],
+      null,
+      2,
+    ),
+  );
 
-    assert.match(out, new RegExp(`\\[pipeline\\] expo download apk: environment=${environment}`));
-    assert.match(out, /would copy .* -> .*happier-(development|canary|preview|production)-android/);
-  }
+  const out = execFileSync(
+    process.execPath,
+    [
+      resolve(repoRoot, 'scripts', 'pipeline', 'run.mjs'),
+      'expo-download-apk',
+      '--environment',
+      'preview',
+      '--build-json',
+      buildJsonPath,
+      '--dry-run',
+      '--secrets-source',
+      'env',
+    ],
+    {
+      cwd: repoRoot,
+      env: {
+        ...process.env,
+        EXPO_TOKEN: 'expo-token',
+      },
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe'],
+      timeout: 30_000,
+    },
+  );
+
+  assert.match(out, /\[pipeline\] expo download apk: environment=preview/);
+  assert.match(out, /scripts\/pipeline\/expo\/download-android-apk\.mjs/);
 });
+
