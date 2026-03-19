@@ -1,4 +1,4 @@
-import type { ExistingSessionAutomationAvailability } from '@/components/sessions/authoring/context/sessionAuthoringContext';
+import type { ExistingSessionAutomationAvailability } from '@/sync/domains/automations/existingSessionAutomationAvailability';
 import { t } from '@/text';
 
 export function getExistingSessionAutomationUnavailableReason(
