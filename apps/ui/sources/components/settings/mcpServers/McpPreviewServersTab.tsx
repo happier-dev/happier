@@ -4,7 +4,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import type { DaemonMcpServersPreviewResponse } from '@happier-dev/protocol';
-import type { AgentCoreConfig } from '@/agents/registry/registryCore';
+import type { AgentCoreConfig, AgentId } from '@/agents/registry/registryCore';
 
 import { DropdownMenu, type DropdownMenuItem } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { Item } from '@/components/ui/lists/Item';
@@ -41,8 +41,8 @@ export const McpPreviewServersTab = React.memo(function McpPreviewServersTab(pro
     onSelectMachine: (machineId: string) => void;
     machineMenuOpen: boolean;
     onMachineMenuOpenChange: (open: boolean) => void;
-    selectedAgentId: string;
-    onSelectAgentId: (agentId: string) => void;
+    selectedAgentId: AgentId;
+    onSelectAgentId: (agentId: AgentId) => void;
     agentMenuOpen: boolean;
     onAgentMenuOpenChange: (open: boolean) => void;
     directory: string;
@@ -78,7 +78,7 @@ export const McpPreviewServersTab = React.memo(function McpPreviewServersTab(pro
                     onOpenChange={props.onAgentMenuOpenChange}
                     items={props.agentItems}
                     selectedId={props.selectedAgentId}
-                    onSelect={props.onSelectAgentId}
+                    onSelect={(agentId) => props.onSelectAgentId(agentId as AgentId)}
                     itemTrigger={{
                         title: t('settings.mcpServersPreviewAgentTitle'),
                         subtitle: props.selectedAgentId,
