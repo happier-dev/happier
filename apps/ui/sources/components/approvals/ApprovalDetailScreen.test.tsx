@@ -43,6 +43,56 @@ let currentArtifact: any = {
     }),
 };
 
+const sessionFixtures: Record<string, any> = {
+    'session-1': {
+        id: 'session-1',
+        metadata: {
+            name: 'Repo session',
+            path: '/Users/leeroy/repo',
+            homeDir: '/Users/leeroy',
+            machineId: 'machine-stale',
+        },
+    },
+};
+
+const machineFixtures: Record<string, any> = {
+    'machine-target': {
+        id: 'machine-target',
+        metadata: { displayName: 'Rebound workstation', host: 'workstation.local' },
+    },
+};
+
+const storageState = {
+    sessions: {
+        'session-1': {
+            active: false,
+            metadata: {
+                machineId: 'machine-stale',
+                path: '/Users/leeroy/repo',
+                homeDir: '/Users/leeroy',
+            },
+        },
+    },
+    machines: {
+        'machine-target': {
+            id: 'machine-target',
+            active: true,
+            activeAt: 10,
+            metadata: { host: 'workstation.local' },
+        },
+    },
+    getProjectForSession: (sessionId: string) =>
+        sessionId === 'session-1'
+            ? {
+                key: {
+                    machineId: 'machine-target',
+                    path: '/Users/leeroy/repo',
+                },
+            }
+            : null,
+    updateArtifact: vi.fn(),
+};
+
 vi.mock('react-native', async (importOriginal) => {
     const actual = await importOriginal<any>();
     return {
@@ -131,29 +181,10 @@ vi.mock('@/components/ui/layout/layout', () => ({
 
 vi.mock('@/sync/domains/state/storage', () => ({
     useArtifact: () => currentArtifact,
-    useSession: (sessionId: string) =>
-        sessionId === 'session-1'
-            ? {
-                  id: 'session-1',
-                  metadata: {
-                      name: 'Repo session',
-                      path: '/Users/leeroy/repo',
-                      homeDir: '/Users/leeroy',
-                      machineId: 'machine-1',
-                  },
-              }
-            : null,
-    useMachine: (machineId: string) =>
-        machineId === 'machine-1'
-            ? {
-                  id: 'machine-1',
-                  metadata: { displayName: 'Workstation', host: 'workstation.local' },
-              }
-            : null,
+    useSession: (sessionId: string) => sessionFixtures[sessionId] ?? null,
+    useMachine: (machineId: string) => machineFixtures[machineId] ?? null,
     storage: {
-        getState: () => ({
-            updateArtifact: vi.fn(),
-        }),
+        getState: () => storageState,
     },
 }));
 
@@ -175,6 +206,34 @@ describe('ApprovalDetailScreen', () => {
         fetchArtifactWithBodySpy.mockClear();
         resolveServerIdForSessionIdFromLocalCacheSpy.mockReset();
         resolveServerIdForSessionIdFromLocalCacheSpy.mockReturnValue('server-cache');
+        sessionFixtures['session-1'] = {
+            id: 'session-1',
+            metadata: {
+                name: 'Repo session',
+                path: '/Users/leeroy/repo',
+                homeDir: '/Users/leeroy',
+                machineId: 'machine-stale',
+            },
+        };
+        machineFixtures['machine-target'] = {
+            id: 'machine-target',
+            metadata: { displayName: 'Rebound workstation', host: 'workstation.local' },
+        };
+        storageState.sessions['session-1'] = {
+            active: false,
+            metadata: {
+                machineId: 'machine-stale',
+                path: '/Users/leeroy/repo',
+                homeDir: '/Users/leeroy',
+            },
+        };
+        storageState.machines['machine-target'] = {
+            id: 'machine-target',
+            active: true,
+            activeAt: 10,
+            metadata: { host: 'workstation.local' },
+        };
+        storageState.updateArtifact = vi.fn();
         currentArtifact = {
             id: 'artifact-1',
             header: {
@@ -221,7 +280,7 @@ describe('ApprovalDetailScreen', () => {
         expect(text).toContain('Approve answering the user');
         expect(text).toContain('Respond to user-action request');
         expect(text).toContain('Repo session');
-        expect(text).toContain('Workstation');
+        expect(text).toContain('Rebound workstation');
         expect(text).toContain('~/repo');
         expect(text).toContain('codex');
         expect(text).toContain('Agent wants to answer the pending question');
