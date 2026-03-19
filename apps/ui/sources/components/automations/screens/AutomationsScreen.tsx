@@ -6,13 +6,13 @@ import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { Modal } from '@/modal';
 import { useAllMachines, useAutomations } from '@/sync/domains/state/storage';
 import { sync } from '@/sync/sync';
+import { Text } from '@/components/ui/text/Text';
 import { layout } from '@/components/ui/layout/layout';
 import { ItemList } from '@/components/ui/lists/ItemList';
 import { AutomationListGroup } from '@/components/automations/list/AutomationListGroup';
 import { AutomationsEmptyState } from '@/components/automations/shared/AutomationsEmptyState';
 import { FAB } from '@/components/ui/buttons/FAB';
 import { SessionGettingStartedGuidance } from '@/components/sessions/guidance/SessionGettingStartedGuidance';
-import { deferOnWeb } from '@/utils/platform/deferOnWeb';
 import { t } from '@/text';
 
 const stylesheet = StyleSheet.create((theme) => ({
@@ -81,7 +81,8 @@ export function AutomationsScreen() {
             </ItemList>
             {machines.length > 0 ? (
                 <FAB
-                    onPress={() => deferOnWeb(() => router.push('/new?automation=1' as any))}
+                    onPress={() => router.push('/new?automation=1' as any)}
+                    accessibilityLabel={t('automations.screen.createAutomationA11y')}
                 />
             ) : null}
         </View>

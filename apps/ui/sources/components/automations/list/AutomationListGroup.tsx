@@ -10,7 +10,7 @@ import { Modal } from '@/modal';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { Switch } from '@/components/ui/forms/Switch';
-import { deferOnWeb } from '@/utils/platform/deferOnWeb';
+import { navigateWithBlurOnWeb } from '@/utils/platform/deferOnWeb';
 import { ignoreNextRowPress } from '@/utils/ui/ignoreNextRowPress';
 import { t } from '@/text';
 import { formatAutomationNextRun, formatAutomationScheduleLabel } from './automationListFormatting';
@@ -85,10 +85,10 @@ export const AutomationListGroup = React.memo((props: Props) => {
 
     const openAutomation = React.useCallback((automationId: string) => {
         if (props.onOpenAutomation) {
-            deferOnWeb(() => props.onOpenAutomation?.(automationId));
+            navigateWithBlurOnWeb(() => props.onOpenAutomation?.(automationId));
             return;
         }
-        deferOnWeb(() => router.push(`/automations/${automationId}` as any));
+        navigateWithBlurOnWeb(() => router.push(`/automations/${automationId}` as any));
     }, [props, router]);
 
     return (

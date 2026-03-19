@@ -30,22 +30,12 @@ const syncSpies = vi.hoisted(() => ({
 }));
 
 const routerPushSpy = vi.hoisted(() => vi.fn());
+const navigateWithBlurOnWebSpy = vi.hoisted(() => vi.fn((action: () => void) => action()));
 const modalConfirmSpy = vi.hoisted(() => vi.fn(async () => true));
 const modalAlertSpy = vi.hoisted(() => vi.fn(async () => {}));
 
-vi.mock('@/components/ui/buttons/FAB', () => ({
-    FAB: (props: any) => React.createElement('Pressable', {
-        accessibilityLabel: 'create-automation-fab',
-        onPress: props.onPress,
-    }),
-}));
-
 vi.mock('@/components/ui/forms/Switch', () => ({
     Switch: (props: any) => React.createElement('Switch', props),
-}));
-
-vi.mock('@/components/sessions/guidance/SessionGettingStartedGuidance', () => ({
-    SessionGettingStartedGuidance: (props: any) => React.createElement('SessionGettingStartedGuidance', props),
 }));
 
 vi.mock('react-native-unistyles', () => ({
@@ -61,8 +51,7 @@ vi.mock('react-native-unistyles', () => ({
                 surfacePressedOverlay: '#f0f0f0',
                 divider: '#ddd',
                 shadow: { color: '#000', opacity: 0.15 },
-                fab: { background: '#0a84ff', backgroundPressed: '#0060df', icon: '#fff' },
-                accent: { blue: '#0a84ff' },
+                fab: { background: '#0a84ff' },
             },
         },
     }),
@@ -79,8 +68,7 @@ vi.mock('react-native-unistyles', () => ({
                     surfacePressedOverlay: '#f0f0f0',
                     divider: '#ddd',
                     shadow: { color: '#000', opacity: 0.15 },
-                    fab: { background: '#0a84ff', backgroundPressed: '#0060df', icon: '#fff' },
-                    accent: { blue: '#0a84ff' },
+                    fab: { background: '#0a84ff' },
                 },
             }),
     },
@@ -92,6 +80,18 @@ vi.mock('@expo/vector-icons', () => ({
 
 vi.mock('expo-router', () => ({
     useRouter: () => ({ push: routerPushSpy }),
+}));
+
+vi.mock('@/utils/platform/deferOnWeb', () => ({
+    navigateWithBlurOnWeb: navigateWithBlurOnWebSpy,
+}));
+
+vi.mock('@/components/ui/buttons/FAB', () => ({
+    FAB: (props: any) => React.createElement('FAB', props),
+}));
+
+vi.mock('@/components/sessions/guidance/SessionGettingStartedGuidance', () => ({
+    SessionGettingStartedGuidance: (props: any) => React.createElement('SessionGettingStartedGuidance', props),
 }));
 
 vi.mock('@/modal', () => ({
@@ -147,6 +147,7 @@ describe('AutomationsScreen', () => {
         automationsState.list = [];
         machinesState.list = [];
         routerPushSpy.mockReset();
+        navigateWithBlurOnWebSpy.mockClear();
         modalConfirmSpy.mockReset();
         modalConfirmSpy.mockResolvedValue(true);
         modalAlertSpy.mockReset();
@@ -162,31 +163,38 @@ describe('AutomationsScreen', () => {
         machinesState.list = [];
     });
 
-    it('shows the getting-started guidance when there are no machines yet', async () => {
+    it('shows machine setup guidance instead of the generic empty state when no machines are connected', async () => {
         const { AutomationsScreen } = await import('./AutomationsScreen');
 
         let tree: renderer.ReactTestRenderer | null = null;
         await act(async () => {
-            tree = renderer.create(<AutomationsScreen />);
+            tree = renderer.create(React.createElement(AutomationsScreen));
         });
         await flushRender();
 
         expect(syncSpies.refreshAutomations).toHaveBeenCalledTimes(1);
-        expect(() => tree!.root.findByType('SessionGettingStartedGuidance')).not.toThrow();
+        expect(() =>
+            tree!.root.findByType('SessionGettingStartedGuidance' as any)
+        ).not.toThrow();
+        expect(JSON.stringify(tree!.toJSON())).not.toContain('automations.screen.emptyTitle');
+        expect(() => tree!.root.findByType('FAB' as any)).toThrow();
     });
 
-    it('shows the create automation action when machines are available', async () => {
+    it('shows generic empty state when machines are connected and links create action to New Session automation mode', async () => {
         machinesState.list = [{ id: 'm1' }];
-
         const { AutomationsScreen } = await import('./AutomationsScreen');
 
         let tree: renderer.ReactTestRenderer | null = null;
         await act(async () => {
-            tree = renderer.create(<AutomationsScreen />);
+            tree = renderer.create(React.createElement(AutomationsScreen));
         });
         await flushRender();
 
-        const createButton = findPressableByLabel(tree!, 'create-automation-fab');
+        expect(syncSpies.refreshAutomations).toHaveBeenCalledTimes(1);
+        expect(JSON.stringify(tree!.toJSON())).toContain('automations.screen.emptyTitle');
+
+        const createButton = tree!.root.findByType('FAB' as any);
+        expect(createButton.props.accessibilityLabel).toBe('automations.screen.createAutomationA11y');
         await act(async () => {
             createButton.props.onPress();
         });
@@ -195,7 +203,6 @@ describe('AutomationsScreen', () => {
     });
 
     it('runs an automation and toggles enabled state from row controls', async () => {
-        machinesState.list = [{ id: 'm1' }];
         automationsState.list = [
             {
                 id: 'a1',
@@ -211,7 +218,7 @@ describe('AutomationsScreen', () => {
 
         let tree: renderer.ReactTestRenderer | null = null;
         await act(async () => {
-            tree = renderer.create(<AutomationsScreen />);
+            tree = renderer.create(React.createElement(AutomationsScreen));
         });
         await flushRender();
 
@@ -231,9 +238,11 @@ describe('AutomationsScreen', () => {
         await act(async () => {
             card.props.onPress();
         });
+        // First press after a control interaction is ignored to prevent accidental navigation.
         await act(async () => {
             card.props.onPress();
         });
+        expect(navigateWithBlurOnWebSpy).toHaveBeenCalled();
         expect(routerPushSpy).toHaveBeenCalledWith('/automations/a1');
     });
 });
