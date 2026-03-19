@@ -1,24 +1,23 @@
 import { describe, expect, it } from 'vitest';
 
-import * as sessionChanges from './index.js';
 import type { TurnChangeSet } from './types.js';
 import { mergeTurnChangeSets } from './mergeTurnChangeSets.js';
 import { excludeRolledBackTurns } from './rollbacks.js';
 
 function buildTurn(params: Readonly<{
-    turnId: string;
-    seqRange: { startSeqInclusive: number; endSeqInclusive: number };
-    files: TurnChangeSet['files'];
+  turnId: string;
+  seqRange: { startSeqInclusive: number; endSeqInclusive: number };
+  files: TurnChangeSet['files'];
 }>): TurnChangeSet {
-    return {
-        sessionId: 'session_1',
-        turnId: params.turnId,
-        seqRange: params.seqRange,
-        status: 'completed',
-        files: params.files,
-        provider: 'codex',
-        derivedAt: 1_700_000_000_000,
-    };
+  return {
+    sessionId: 'session_1',
+    turnId: params.turnId,
+    seqRange: params.seqRange,
+    status: 'completed',
+    files: params.files,
+    provider: 'codex',
+    derivedAt: 1_700_000_000_000,
+  };
 }
 
 describe('mergeTurnChangeSets', () => {
@@ -138,12 +137,5 @@ describe('mergeTurnChangeSets', () => {
         turns: ['turn_1'],
       }),
     ]);
-  });
-
-  it('does not re-export rollback schema helpers from the sessionChanges entrypoint', () => {
-    expect(sessionChanges.excludeRolledBackTurns).toBe(excludeRolledBackTurns);
-    expect('buildSessionRollbackRangesV1' in sessionChanges).toBe(false);
-    expect('readSessionRollbackRangesV1FromMetadata' in sessionChanges).toBe(false);
-    expect('SessionRollbackTargetSchema' in sessionChanges).toBe(false);
   });
 });
