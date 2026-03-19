@@ -14,7 +14,7 @@ export function normalizeToolCallForRendering(tool: ToolCall): ToolCall {
     const parsedInput = maybeParseJson(tool.input);
     const parsedResult = maybeParseJson(tool.result);
 
-    const nextName = canonicalizeToolNameForRendering(tool.name, parsedInput);
+    const nextName = canonicalizeToolNameForRendering(tool.name, parsedInput, tool.description);
     const nextDescription =
         typeof tool.description === 'string' && tool.description.trim().length > 0
             ? tool.description
