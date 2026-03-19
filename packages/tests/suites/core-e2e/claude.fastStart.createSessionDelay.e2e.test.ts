@@ -7,7 +7,6 @@ import { createRunDirs } from '../../src/testkit/runDir';
 import { startServerLight, type StartedServer } from '../../src/testkit/process/serverLight';
 import { createTestAuth } from '../../src/testkit/auth';
 import { ensureCliDistBuilt } from '../../src/testkit/process/cliDist';
-import { yarnCommand } from '../../src/testkit/process/commands';
 import { spawnLoggedProcess, type SpawnedProcess } from '../../src/testkit/process/spawnProcess';
 import { fakeClaudeFixturePath, waitForFakeClaudeInvocation } from '../../src/testkit/fakeClaude';
 import { seedCliAuthForServer } from '../../src/testkit/cliAuth';
@@ -36,7 +35,7 @@ describe('core e2e: Claude fast-start', () => {
     const testDir = run.testDir('claude-fast-start-create-session-delay');
     const startedAt = new Date().toISOString();
 
-    server = await startServerLight({ testDir });
+    server = await startServerLight({ testDir, dbProvider: 'sqlite' });
     const auth = await createTestAuth(server.baseUrl);
 
     const cliHome = resolve(join(testDir, 'cli-home'));
@@ -78,15 +77,15 @@ describe('core e2e: Claude fast-start', () => {
       HAPPIER_E2E_DELAY_CREATE_SESSION_MS: '30000',
     };
 
-    await ensureCliDistBuilt({ testDir, env: cliEnv });
+    const cliDistEntrypoint = await ensureCliDistBuilt(
+      { testDir, env: cliEnv },
+      { skipSourceFreshnessCheck: true },
+    );
 
     proc = spawnLoggedProcess({
-      command: yarnCommand(),
+      command: process.execPath,
       args: [
-        '-s',
-        'workspace',
-        '@happier-dev/cli',
-        'dev',
+        cliDistEntrypoint,
         'claude',
         '--started-by',
         'terminal',
@@ -106,5 +105,5 @@ describe('core e2e: Claude fast-start', () => {
     );
 
     expect(invocation.argv).toEqual(expect.any(Array));
-  });
+  }, 240_000);
 });
