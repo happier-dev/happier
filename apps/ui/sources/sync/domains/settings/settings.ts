@@ -1,10 +1,10 @@
 import { isSettingsSyncDebugEnabled } from './debugSettings';
 import { pruneSecretBindings } from './secretBindings';
-import { PROVIDER_SETTINGS_PLUGINS } from '@/agents/providers/_registry/providerSettingsRegistry';
+import { PROVIDER_SETTINGS_PLUGINS } from '@/agents/providers/registry/providerSettingsRegistry';
 import {
     PROVIDER_SETTINGS_DEFAULTS,
     PROVIDER_SETTINGS_SHAPE,
-} from '@/agents/providers/_registry/providerSettingArtifacts';
+} from '@/agents/providers/registry/providerSettingArtifacts';
 import { z } from 'zod';
 import { ACCOUNT_SETTING_ARTIFACTS } from './registry/account/accountSettingArtifacts';
 import { assertProviderSettingKeysCompatible } from './registry/provider/assertProviderSettingKeysCompatible';
