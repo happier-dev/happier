@@ -130,7 +130,7 @@ vi.mock('@/sync/domains/state/storage', () => {
         },
         useSettingMutable: (name: string) => {
             React.useMemo(() => 0, [name]);
-            return [name === 'codexAcpInstallSpec' ? '' : null, vi.fn()];
+            return [null, vi.fn()];
         },
         useLocalSetting: (name: string) => {
             React.useMemo(() => 0, [name]);
