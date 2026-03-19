@@ -92,7 +92,10 @@ describe('providers: scenario capability gating', () => {
     const codex = providers.find((provider) => provider.id === 'codex');
     expect(codex).toBeTruthy();
 
-    const allScenarioIds = [...codex!.scenarioRegistry.tiers.smoke, ...codex!.scenarioRegistry.tiers.extended];
+    const allScenarioIds = [
+      ...codex!.scenarioRegistry.tiers.smoke,
+      ...codex!.scenarioRegistry.tiers.extended,
+    ];
 
     expect(codex!.coverageExpectation).toEqual({
       providerLaneScope: 'acp-only',

@@ -20,14 +20,11 @@ type ProviderSpecRecord = {
   spec: CliProviderSpecV1;
 };
 
-function resolveCoverageExpectation(providerId: ProviderUnderTest['id']): ProviderUnderTest['coverageExpectation'] {
-  if (providerId === 'codex') {
-    return {
-      providerLaneScope: 'acp-only',
-      defaultRuntimePath: 'appServer',
-      appServerCoverage: 'capability-contract',
-      appServerCapabilitySurfaces: ['modes', 'models', 'speed', 'rollback'],
-    };
+function resolveCoverageExpectation(
+  scenariosRegistry: CliProviderScenarioRegistryV1,
+): ProviderUnderTest['coverageExpectation'] {
+  if (scenariosRegistry.coverageExpectation) {
+    return scenariosRegistry.coverageExpectation;
   }
 
   return {
@@ -142,7 +139,7 @@ export async function loadProvidersFromCliSpecs(): Promise<ProviderUnderTest[]> 
       enableEnvVar: spec.enableEnvVar,
       protocol: spec.protocol,
       traceProvider: spec.traceProvider,
-      coverageExpectation: resolveCoverageExpectation(spec.id),
+      coverageExpectation: resolveCoverageExpectation(scenariosRegistry),
       requiredEnv: spec.requiredEnv,
       auth: spec.auth,
       permissions: spec.permissions,
