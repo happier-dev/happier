@@ -4,11 +4,18 @@ import { t } from '@/text';
 import { ICON_TERMINAL, ICON_EXIT } from '../icons';
 import type { KnownToolDefinition } from '../_types';
 import { extractShellCommand, stripShellCommandPreludeForDisplay } from '../../normalization/parse/shellCommand';
+import { extractHappierToolsShellBridgeCommand } from '../../normalization/parse/happierToolsShellBridge';
+import { getHappierToolsShellBridgeDisplay } from '../../normalization/parse/happierToolsShellBridgeDisplay';
 import { BashInputV2Schema, BashResultV2Schema, ExitPlanModeInputV2Schema } from '@happier-dev/protocol';
 
 export const coreTerminalTools = {
     'Bash': {
         title: (opts: { metadata: Metadata | null, tool: ToolCall }) => {
+            const shellBridge = extractHappierToolsShellBridgeCommand(opts.tool.input);
+            if (shellBridge) {
+                return t('tools.desc.terminalCmd', { cmd: getHappierToolsShellBridgeDisplay(shellBridge).titleCommand });
+            }
+
             const cmdRaw = extractShellCommand(opts.tool.input);
             const cmd = typeof cmdRaw === 'string' ? stripShellCommandPreludeForDisplay(cmdRaw) : cmdRaw;
             if (typeof cmd === 'string') {
@@ -32,6 +39,11 @@ export const coreTerminalTools = {
         input: BashInputV2Schema,
         result: BashResultV2Schema,
         extractDescription: (opts: { metadata: Metadata | null, tool: ToolCall }) => {
+            const shellBridge = extractHappierToolsShellBridgeCommand(opts.tool.input);
+            if (shellBridge) {
+                return getHappierToolsShellBridgeDisplay(shellBridge).description;
+            }
+
             const cmdRaw = extractShellCommand(opts.tool.input);
             const cmd = typeof cmdRaw === 'string' ? stripShellCommandPreludeForDisplay(cmdRaw) : cmdRaw;
             if (typeof cmd === 'string' && cmd.length > 0) {
@@ -47,6 +59,9 @@ export const coreTerminalTools = {
             return t('tools.names.terminal');
         },
         extractSubtitle: (opts: { metadata: Metadata | null, tool: ToolCall }) => {
+            const shellBridge = extractHappierToolsShellBridgeCommand(opts.tool.input);
+            if (shellBridge) return getHappierToolsShellBridgeDisplay(shellBridge).subtitle;
+
             const cmdRaw = extractShellCommand(opts.tool.input);
             const cmd = typeof cmdRaw === 'string' ? stripShellCommandPreludeForDisplay(cmdRaw) : cmdRaw;
             if (typeof cmd === 'string' && cmd.length > 0) return cmd;
