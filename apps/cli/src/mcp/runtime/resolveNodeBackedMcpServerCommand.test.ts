@@ -83,10 +83,39 @@ describe('resolveNodeBackedMcpServerCommand', () => {
       args: [
         '--no-warnings',
         '--no-deprecation',
-        '/repo/bin/happier-mcp-remote-bridge.mjs',
+        '/repo/package-dist/mcp/bridges/remoteMcpStdioBridge.mjs',
         '--url',
         'http://127.0.0.1:4010/',
       ],
+    });
+  });
+
+  it('prefers the source entrypoint when explicitly requested even if package-dist exists', async () => {
+    vi.mocked(existsSync).mockImplementation((pathLike) => {
+      const path = String(pathLike);
+      if (path.endsWith('/package-dist/mcp/bridges/remoteMcpStdioBridge.mjs')) return true;
+      if (path.endsWith('/src/mcp/bridges/remoteMcpStdioBridge.ts')) return true;
+      return false;
+    });
+
+    await expect(
+      resolveNodeBackedMcpServerCommand({
+        distEntrypointSegments: ['mcp', 'bridges', 'remoteMcpStdioBridge.mjs'],
+        sourceEntrypointSegments: ['mcp', 'bridges', 'remoteMcpStdioBridge.ts'],
+        preferSourceEntrypoint: true,
+      }),
+    ).resolves.toEqual({
+      command: process.execPath,
+      args: [
+        '--no-warnings',
+        '--no-deprecation',
+        '--import',
+        '/repo/node_modules/tsx/dist/esm/index.mjs',
+        '/repo/src/mcp/bridges/remoteMcpStdioBridge.ts',
+      ],
+      env: {
+        TSX_TSCONFIG_PATH: '/repo/tsconfig.json',
+      },
     });
   });
 
@@ -108,7 +137,7 @@ describe('resolveNodeBackedMcpServerCommand', () => {
       args: [
         '--no-warnings',
         '--no-deprecation',
-        '/repo/bin/happier-mcp-remote-bridge.mjs',
+        '/repo/dist/mcp/bridges/remoteMcpStdioBridge.mjs',
       ],
     });
   });
@@ -131,7 +160,7 @@ describe('resolveNodeBackedMcpServerCommand', () => {
       args: [
         '--no-warnings',
         '--no-deprecation',
-        '/repo/bin/happier-mcp-remote-bridge.mjs',
+        '/repo/dist/mcp/bridges/remoteMcpStdioBridge.mjs',
       ],
     });
   });
