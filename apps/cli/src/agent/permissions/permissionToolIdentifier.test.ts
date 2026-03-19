@@ -37,6 +37,11 @@ describe('permissionToolIdentifier', () => {
     expect(isToolAllowedForSession(allowed, 'bash', { command: 'git status' })).toBe(true);
   });
 
+  it('accepts direct shell tool-name identifiers for tool-wide session approvals', () => {
+    const allowed = new Set(['Bash']);
+    expect(isToolAllowedForSession(allowed, 'bash', { command: 'git status' })).toBe(true);
+  });
+
   it('accepts shell-tool synonyms for prefix matches', () => {
     const allowed = new Set(['execute(git status:*)']);
     expect(isToolAllowedForSession(allowed, 'bash', { command: 'git status --porcelain' })).toBe(true);

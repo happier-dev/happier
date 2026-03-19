@@ -82,11 +82,22 @@ export function isToolAllowedForSession(
 ): boolean {
   const command = extractShellCommand(input);
   const isShell = isShellToolName(toolName);
+  const normalizedToolName = toolName.toLowerCase();
 
   // Fast path: exact match on canonical identifier.
   const exact = makeToolIdentifier(toolName, input);
   for (const item of allowedIdentifiers) {
     if (item === exact) return true;
+  }
+
+  // Tool-wide approvals: accept direct tool-name identifiers for both shell and non-shell tools.
+  for (const item of allowedIdentifiers) {
+    if (typeof item !== 'string') continue;
+    if (isShell) {
+      if (isShellToolName(item)) return true;
+      continue;
+    }
+    if (item.toLowerCase() === normalizedToolName) return true;
   }
 
   // Shell tools: accept per-command identifiers across shell-tool synonyms and prefix patterns.
@@ -108,14 +119,6 @@ export function isToolAllowedForSession(
     }
 
     if (patterns.length > 0 && isShellCommandAllowed(command, patterns)) return true;
-  }
-
-  // Non-shell tools: allow direct tool-name identifiers (legacy).
-  if (!isShell) {
-    const target = toolName.toLowerCase();
-    for (const item of allowedIdentifiers) {
-      if (typeof item === 'string' && item.toLowerCase() === target) return true;
-    }
   }
 
   return false;
