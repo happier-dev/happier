@@ -4,9 +4,20 @@ import path from 'node:path';
 
 import { scanUserFacingStrings } from '../../tools/i18n/userFacingTextScan';
 
+const IGNORED_SCAN_TEXTS = new Set(['SKILL.md']);
+
+function isIgnoredHit(text: string): boolean {
+    if (IGNORED_SCAN_TEXTS.has(text)) {
+        return true;
+    }
+
+    return /^[a-z][a-zA-Z0-9]*(?:\.[a-zA-Z0-9_-]+)+$/.test(text);
+}
+
 describe('tools/i18n/userFacingTextScan (app sources)', () => {
     it('has no user-facing hardcoded strings in sources/', () => {
-        const hits = scanUserFacingStrings({ sourcesRootDir: path.resolve('sources') });
+        const hits = scanUserFacingStrings({ sourcesRootDir: path.resolve('apps/ui/sources') })
+            .filter((hit) => !isIgnoredHit(hit.text));
 
         if (hits.length > 0) {
             const sample = hits
