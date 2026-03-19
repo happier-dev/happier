@@ -4,6 +4,7 @@ import {
     DelegateOutputV1Schema,
     PlanOutputV1Schema,
     ReviewFindingsV1Schema,
+    ReviewFindingsV2Schema,
 } from '@happier-dev/protocol';
 
 import { ReviewFindingsMessageCard } from '@/components/sessions/reviews/messages/ReviewFindingsMessageCard';
@@ -28,6 +29,12 @@ export function renderExecutionRunStructuredMeta(params: Readonly<{
         return <ReviewFindingsMessageCard payload={parsed.data} sessionId={params.sessionId} />;
     }
 
+    if (kind === 'review_findings.v2') {
+        const parsed = ReviewFindingsV2Schema.safeParse(payload);
+        if (!parsed.success) return null;
+        return <ReviewFindingsMessageCard payload={parsed.data} sessionId={params.sessionId} />;
+    }
+
     if (kind === 'plan_output.v1') {
         const parsed = PlanOutputV1Schema.safeParse(payload);
         if (!parsed.success) return null;
@@ -42,4 +49,3 @@ export function renderExecutionRunStructuredMeta(params: Readonly<{
 
     return null;
 }
-
