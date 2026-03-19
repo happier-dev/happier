@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 
+import { logger } from '@/ui/logger';
 import { createGeminiBackendMessageHandler } from './createGeminiBackendMessageHandler';
 import { createGeminiTurnMessageState } from './geminiTurnMessageState';
 
@@ -70,5 +71,43 @@ describe('createGeminiBackendMessageHandler (reasoning)', () => {
     handler({ type: 'tool-call', toolName: 'glob', callId: 'call_1', args: { pattern: '*.ts' } } as any);
 
     expect(transcriptStream.flushAll).toHaveBeenCalledWith({ reason: 'tool-call-boundary' });
+  });
+
+  it('logs and swallows transcript flush failures at tool-call boundaries', async () => {
+    const state = createGeminiTurnMessageState();
+    const session = {
+      sendAgentMessage: vi.fn(),
+      keepAlive: vi.fn(),
+    };
+    const messageBuffer = {
+      addMessage: vi.fn(),
+      updateLastMessage: vi.fn(),
+    };
+    const diffProcessor = {} as any;
+    const flushFailure = Promise.reject(new Error('flush failed'));
+    flushFailure.catch(() => {});
+    const transcriptStream = {
+      appendThinkingDelta: vi.fn(),
+      flushAll: vi.fn(() => flushFailure),
+    };
+    const debugSpy = vi.spyOn(logger, 'debug').mockImplementation(() => {});
+
+    try {
+      const handler = createGeminiBackendMessageHandler({
+        session: session as any,
+        messageBuffer: messageBuffer as any,
+        state,
+        diffProcessor,
+        transcriptStream: transcriptStream as any,
+      });
+
+      handler({ type: 'tool-call', toolName: 'glob', callId: 'call_1', args: { pattern: '*.ts' } } as any);
+      await Promise.resolve();
+
+      expect(session.sendAgentMessage).toHaveBeenCalled();
+      expect(debugSpy).toHaveBeenCalledWith('[gemini] Failed to flush streamed thinking at tool-call boundary', expect.any(Error));
+    } finally {
+      debugSpy.mockRestore();
+    }
   });
 });

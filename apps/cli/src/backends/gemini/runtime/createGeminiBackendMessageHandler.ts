@@ -109,7 +109,11 @@ export function createGeminiBackendMessageHandler(params: {
 
       case 'tool-call': {
         params.state.hadToolCallInTurn = true;
-        params.transcriptStream?.flushAll({ reason: 'tool-call-boundary' });
+        if (params.transcriptStream) {
+          void Promise.resolve(params.transcriptStream.flushAll({ reason: 'tool-call-boundary' })).catch((error) => {
+            logger.debug('[gemini] Failed to flush streamed thinking at tool-call boundary', error);
+          });
+        }
         const toolArgs = msg.args ? JSON.stringify(msg.args).substring(0, 100) : '';
         const isInvestigationTool =
           msg.toolName === 'codebase_investigator' ||
