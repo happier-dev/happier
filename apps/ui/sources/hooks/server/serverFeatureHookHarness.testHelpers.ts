@@ -14,6 +14,7 @@ export async function flushHookEffects(turns = 2) {
 
 export async function renderHookAndCollectValues<T>(useValue: () => T): Promise<T[]> {
     const seen: T[] = [];
+    let tree: renderer.ReactTestRenderer | null = null;
 
     function Test() {
         const value = useValue();
@@ -24,8 +25,13 @@ export async function renderHookAndCollectValues<T>(useValue: () => T): Promise<
     }
 
     await act(async () => {
-        renderer.create(React.createElement(Test));
+        tree = renderer.create(React.createElement(Test));
         await flushHookEffects();
+    });
+
+    await act(async () => {
+        tree?.unmount();
+        await flushHookEffects(1);
     });
 
     return seen;
