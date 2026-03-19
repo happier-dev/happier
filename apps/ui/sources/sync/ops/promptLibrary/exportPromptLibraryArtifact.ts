@@ -62,6 +62,7 @@ export async function writePromptLibraryArtifactToExternalAsset(args: Readonly<{
   machineId: string;
   assetTypeId: string;
   scope: PromptAssetScopeV1;
+  serverId?: string | null;
   workspacePath?: string | null;
   targetInput: string;
   installMode?: PromptAssetInstallModeV1;
@@ -123,7 +124,11 @@ export async function writePromptLibraryArtifactToExternalAsset(args: Readonly<{
         expectedDigest,
       };
 
-  const response = await machinePromptAssetsWrite(args.machineId, request, undefined);
+  const response = await machinePromptAssetsWrite(
+    args.machineId,
+    request,
+    args.serverId ? { serverId: args.serverId } : undefined,
+  );
   if (!response.ok) {
     return {
       ok: false,
