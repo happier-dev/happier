@@ -8,7 +8,7 @@ import {
   resolveGeminiOauthTokenUrl,
   resolveOpenAiCodexOauthClientId,
   resolveOpenAiCodexOauthTokenUrl,
-} from '@/backends/connectedServices/oauthConfig';
+} from '@/daemon/connectedServices/shared/oauthConfig';
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
