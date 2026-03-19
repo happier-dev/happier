@@ -63,7 +63,6 @@ export function createHappierMcpServer(client: HappyMcpSessionClient): { mcp: Mc
     sessionRollback: async () => ({ ok: false, errorCode: 'unsupported_action', error: 'unsupported_action:session.rollback' }),
     sessionSpawnNew: async () => ({ ok: false, errorCode: 'unsupported_action', error: 'unsupported_action:session.spawn_new' }),
     sessionSpawnPicker: async () => ({ ok: false, errorCode: 'unsupported_action', error: 'unsupported_action:session.spawn_picker' }),
-    workspacesListRecent: async () => ({ ok: false, errorCode: 'unsupported_action', error: 'unsupported_action:workspaces.list_recent' }),
     pathsListRecent: async () => ({ ok: false, errorCode: 'unsupported_action', error: 'unsupported_action:paths.list_recent' }),
     machinesList: async () => ({ ok: false, errorCode: 'unsupported_action', error: 'unsupported_action:machines.list' }),
     serversList: async () => ({ ok: false, errorCode: 'unsupported_action', error: 'unsupported_action:servers.list' }),
