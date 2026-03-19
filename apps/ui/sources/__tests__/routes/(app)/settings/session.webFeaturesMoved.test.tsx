@@ -7,6 +7,7 @@ import { describe, expect, it, vi } from 'vitest';
 vi.mock('react-native', () => ({
     View: 'View',
     TextInput: 'TextInput',
+    useWindowDimensions: () => ({ width: 1280, height: 800 }),
     AppState: {
         addEventListener: vi.fn(() => ({ remove: vi.fn() })),
     },
@@ -54,6 +55,10 @@ vi.mock('@/components/ui/text/Text', () => ({
     TextInput: 'TextInput',
 }));
 
+vi.mock('@/components/settings/llmTasks/LlmTaskRunnerConfigV1BackendModelPicker', () => ({
+    LlmTaskRunnerConfigV1BackendModelPicker: 'LlmTaskRunnerConfigV1BackendModelPicker',
+}));
+
 vi.mock('@/constants/Typography', () => ({
     Typography: {
         default: () => ({}),
@@ -78,6 +83,11 @@ vi.mock('@/sync/domains/state/storage', () => ({
         if (key === 'sessionTmuxSessionName') return [null, vi.fn()] as const;
         if (key === 'sessionTmuxIsolated') return [false, vi.fn()] as const;
         if (key === 'sessionTmuxTmpDir') return [null, vi.fn()] as const;
+        return [null, vi.fn()] as const;
+    },
+    useLocalSettingMutable: (key: string) => {
+        if (key === 'sessionsRightPaneDefaultOpen') return [false, vi.fn()] as const;
+        if (key === 'uiMultiPanePanelsEnabled') return [true, vi.fn()] as const;
         return [null, vi.fn()] as const;
     },
 }));
@@ -106,7 +116,7 @@ vi.mock('@/hooks/server/useFeatureEnabled', () => ({
 
 describe('Session settings (web features moved)', () => {
     it('shows Enter-to-send and Message history inside Session settings (web)', async () => {
-        const mod = await import('@/app/(app)/settings/session');
+        const mod = await import('../../../../app/(app)/settings/session');
         const SessionSettingsScreen = mod.default;
 
         let tree!: ReactTestRenderer;

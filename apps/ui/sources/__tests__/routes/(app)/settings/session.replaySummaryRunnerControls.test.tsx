@@ -1,6 +1,6 @@
 import * as React from 'react';
 import renderer, { act, type ReactTestRenderer } from 'react-test-renderer';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -10,10 +10,21 @@ const settingsState: Record<string, any> = {
     sessionReplayRecentMessagesCount: 100,
     sessionReplayMaxSeedChars: 50_000,
     sessionReplaySummaryRunnerV1: null,
+    sessionsRightPaneDefaultOpen: false,
+    uiMultiPanePanelsEnabled: false,
 };
+const rendererCreate = renderer.create.bind(renderer);
+let activeTree: ReactTestRenderer | null = null;
+
+vi.spyOn(renderer, 'create').mockImplementation(((...args: Parameters<typeof rendererCreate>) => {
+    const tree = rendererCreate(...args);
+    activeTree = tree;
+    return tree;
+}) as typeof renderer.create);
 
 vi.mock('react-native', () => ({
     View: 'View',
+    useWindowDimensions: () => ({ width: 1440, height: 900, scale: 1, fontScale: 1 }),
     Platform: {
         OS: 'web',
         select: (options: any) => (options && 'default' in options ? options.default : undefined),
@@ -77,6 +88,14 @@ vi.mock('@/sync/domains/state/storage', () => ({
             },
         ];
     },
+    useLocalSettingMutable: (key: string) => {
+        return [
+            key in settingsState ? settingsState[key] : null,
+            (next: any) => {
+                settingsState[key] = next;
+            },
+        ];
+    },
     useSetting: (key: string) => {
         if (key === 'recentMachinePaths') return [];
         return null;
@@ -121,6 +140,24 @@ vi.mock('@/sync/domains/server/serverRuntime', () => ({
 vi.mock('@/sync/store/hooks', () => ({
     useAllMachines: () => [],
 }));
+
+beforeEach(() => {
+    executionRunsEnabledState.enabled = true;
+    settingsState.sessionReplayEnabled = true;
+    settingsState.sessionReplayStrategy = 'summary_plus_recent';
+    settingsState.sessionReplayRecentMessagesCount = 100;
+    settingsState.sessionReplayMaxSeedChars = 50_000;
+    settingsState.sessionReplaySummaryRunnerV1 = null;
+});
+
+afterEach(() => {
+    if (activeTree) {
+        act(() => {
+            activeTree?.unmount();
+        });
+        activeTree = null;
+    }
+});
 
 describe('Session settings (Replay summary runner controls)', () => {
     it('renders a max seed chars input when replay is enabled', async () => {
