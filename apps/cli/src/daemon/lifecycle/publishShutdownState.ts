@@ -2,7 +2,7 @@ import type { DaemonState } from '@/api/types';
 
 type DaemonApiMachineLike = {
   updateDaemonState: (updater: (state: DaemonState | null) => DaemonState) => Promise<unknown>;
-  shutdown: () => void;
+  shutdown: () => Promise<void>;
 };
 
 export async function publishShutdownStateBestEffort(params: Readonly<{
@@ -38,5 +38,5 @@ export async function publishShutdownStateBestEffort(params: Readonly<{
     params.warn(`[DAEMON RUN] Shutdown daemon-state publish exceeded ${params.timeoutMs}ms; continuing teardown`);
   }
 
-  params.apiMachine.shutdown();
+  await params.apiMachine.shutdown();
 }

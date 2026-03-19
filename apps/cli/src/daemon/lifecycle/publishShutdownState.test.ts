@@ -8,7 +8,7 @@ describe('publishShutdownStateBestEffort', () => {
     vi.useFakeTimers();
     try {
       const updateDaemonState = vi.fn(() => new Promise<DaemonState>(() => {}));
-      const shutdown = vi.fn();
+      const shutdown = vi.fn(async () => {});
       const warn = vi.fn();
 
       const promise = publishShutdownStateBestEffort({
@@ -36,7 +36,7 @@ describe('publishShutdownStateBestEffort', () => {
     const updateDaemonState = vi.fn(async (updater: (state: DaemonState | null) => DaemonState) =>
       updater({ status: 'online' }),
     );
-    const shutdown = vi.fn();
+    const shutdown = vi.fn(async () => {});
     const warn = vi.fn();
 
     await publishShutdownStateBestEffort({
