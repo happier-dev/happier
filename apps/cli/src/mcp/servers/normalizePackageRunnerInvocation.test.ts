@@ -67,6 +67,20 @@ describe('normalizePackageRunnerInvocation', () => {
     });
   });
 
+  it('rewrites npm exec combined package flags to managed pnpm dlx', async () => {
+    await expect(
+      normalizePackageRunnerInvocation({
+        command: 'npm',
+        args: ['exec', '--package=@scope/server', '--', 'server', '--flag'],
+        processEnv,
+      }),
+    ).resolves.toEqual({
+      command: processEnv.HAPPIER_PNPM_BIN,
+      args: ['dlx', '--package=@scope/server', 'server', '--flag'],
+      cwdPolicy: 'neutral',
+    });
+  });
+
   it('preserves npm run invocations on managed pnpm for workspace-local scripts', async () => {
     await expect(
       normalizePackageRunnerInvocation({
