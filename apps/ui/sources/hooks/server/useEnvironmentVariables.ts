@@ -1,5 +1,9 @@
 import { useState, useEffect, useLayoutEffect, useMemo } from 'react';
 import { machineBash, machinePreviewEnv, type EnvPreviewSecretsPolicy, type PreviewEnvValue } from '@/sync/ops';
+import {
+    buildEnvironmentVariableShellFallbackCommand,
+    parseEnvironmentVariableShellFallbackOutput,
+} from './environmentVariableShellFallback';
 
 // Re-export pure utility functions from envVarUtils for backwards compatibility
 export { resolveEnvVarSubstitution, extractEnvVarReferences } from './envVarUtils';
@@ -186,31 +190,10 @@ export function useEnvironmentVariables(
             // RPC handler executes commands using Node's `exec()` without overriding `env`.
             // That means this matches what `${VAR}` expansion uses when spawning sessions on the daemon
             // (see happy-cli: expandEnvironmentVariables(..., process.env)).
-            // Prefer a JSON protocol (via `node`) to preserve newlines and distinguish unset vs empty.
-            // Fallback to bash-only output if node isn't available.
-            const nodeScript = [
-                // node -e sets argv[1] to "-e", so args start at argv[2]
-                "const keys = process.argv.slice(2);",
-                "const out = {};",
-                "for (const k of keys) {",
-                "  out[k] = Object.prototype.hasOwnProperty.call(process.env, k) ? process.env[k] : null;",
-                "}",
-                "process.stdout.write(JSON.stringify(out));",
-            ].join("");
-            const jsonCommand = `node -e '${nodeScript.replace(/'/g, "'\\''")}' ${safeVarNames.join(' ')}`;
-            // Shell fallback uses `printenv` to distinguish unset vs empty via exit code.
-            // Note: values containing newlines may not round-trip here; the node/JSON path preserves them.
-            const shellFallback = [
-                `for name in ${safeVarNames.join(' ')}; do`,
-                `if printenv "$name" >/dev/null 2>&1; then`,
-                `printf "%s=%s\\n" "$name" "$(printenv "$name")";`,
-                `else`,
-                `printf "%s=__HAPPY_UNSET__\\n" "$name";`,
-                `fi;`,
-                `done`,
-            ].join(' ');
-
-            const command = `if command -v node >/dev/null 2>&1; then ${jsonCommand}; else ${shellFallback}; fi`;
+            //
+            // Use a shell-only null-delimited protocol so the fallback remains binary-safe and can still
+            // preserve multiline values while distinguishing unset from empty-string variables.
+            const command = buildEnvironmentVariableShellFallbackCommand(safeVarNames);
 
             try {
                 if (safeVarNames.length === 0) {
@@ -231,40 +214,10 @@ export function useEnvironmentVariables(
                 if (result.success && result.exitCode === 0) {
                     const stdout = result.stdout;
 
-                    // JSON protocol: {"VAR":"value","MISSING":null}
-                    // Be resilient to any stray output (log lines, warnings) by extracting the last JSON object.
-                    let parsedJson = false;
-                    const trimmed = stdout.trim();
-                    const firstBrace = trimmed.indexOf('{');
-                    const lastBrace = trimmed.lastIndexOf('}');
-                    if (firstBrace !== -1 && lastBrace !== -1 && lastBrace > firstBrace) {
-                        const jsonSlice = trimmed.slice(firstBrace, lastBrace + 1);
-                        try {
-                            const parsed = JSON.parse(jsonSlice) as Record<string, string | null>;
-                            safeVarNames.forEach((name) => {
-                                results[name] = Object.prototype.hasOwnProperty.call(parsed, name) ? parsed[name] : null;
-                            });
-                            parsedJson = true;
-                        } catch {
-                            // Fall through to line parser if JSON is malformed.
-                        }
-                    }
-
-                    // Fallback line parser: "VAR=value" or "VAR=__HAPPY_UNSET__"
-                    if (!parsedJson) {
-                        // Do not trim each line: it can corrupt values with meaningful whitespace.
-                        const lines = stdout.split(/\r?\n/).filter((l) => l.length > 0);
-                        lines.forEach((line) => {
-                            // Ignore unrelated output (warnings, prompts, etc).
-                            if (!/^[A-Z_][A-Z0-9_]*=/.test(line)) return;
-                            const equalsIndex = line.indexOf('=');
-                            if (equalsIndex !== -1) {
-                                const name = line.substring(0, equalsIndex);
-                                const value = line.substring(equalsIndex + 1);
-                                results[name] = value === '__HAPPY_UNSET__' ? null : value;
-                            }
-                        });
-                    }
+                    const parsed = parseEnvironmentVariableShellFallbackOutput(stdout);
+                    safeVarNames.forEach((name) => {
+                        results[name] = Object.prototype.hasOwnProperty.call(parsed, name) ? parsed[name] : null;
+                    });
 
                     // Ensure all requested variables have entries (even if missing from output)
                     safeVarNames.forEach(name => {

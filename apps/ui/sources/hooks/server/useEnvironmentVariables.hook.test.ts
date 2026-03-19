@@ -133,5 +133,50 @@ describe('useEnvironmentVariables (hook)', () => {
             '/',
             { serverId: 'server-b' },
         );
+        const bashCommand = bashMock.mock.calls.at(-1)?.[1];
+        expect(bashCommand).not.toContain('node -e');
+        expect(bashCommand).not.toContain('command -v node');
+    });
+
+    it('parses shell-only fallback output for multiline, empty, and unset values', async () => {
+        const { useEnvironmentVariables } = await import('./useEnvironmentVariables');
+        const ops = await import('@/sync/ops');
+
+        const previewMock = vi.mocked(ops.machinePreviewEnv);
+        const bashMock = vi.mocked(ops.machineBash);
+        previewMock.mockResolvedValueOnce({ supported: false });
+        bashMock.mockResolvedValueOnce({
+            success: true,
+            stdout: ['S', 'FOO', 'one\ntwo', 'S', 'EMPTY', '', 'U', 'MISSING', '', ''].join('\0'),
+            stderr: '',
+            exitCode: 0,
+        });
+
+        const latestRef: { current: ReturnType<typeof useEnvironmentVariables> | null } = { current: null };
+
+        function Test() {
+            latestRef.current = useEnvironmentVariables('m1', ['FOO', 'EMPTY', 'MISSING']);
+            return React.createElement('View');
+        }
+
+        await act(async () => {
+            renderer.create(React.createElement(Test));
+            await flushHookEffects(4);
+        });
+
+        if (!latestRef.current) {
+            throw new Error('Expected hook result');
+        }
+
+        expect(latestRef.current.variables).toEqual({
+            FOO: 'one\ntwo',
+            EMPTY: '',
+            MISSING: null,
+        });
+        expect(latestRef.current.meta).toMatchObject({
+            FOO: { value: 'one\ntwo', isSet: true, display: 'full' },
+            EMPTY: { value: '', isSet: true, display: 'full' },
+            MISSING: { value: null, isSet: false, display: 'unset' },
+        });
     });
 });
