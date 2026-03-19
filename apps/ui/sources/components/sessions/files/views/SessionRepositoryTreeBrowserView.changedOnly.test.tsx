@@ -140,6 +140,10 @@ vi.mock('@/components/sessions/files/content/ChangedFilesTreeList', () => ({
     ChangedFilesTreeList: () => React.createElement('ChangedFilesTreeList'),
 }));
 
+vi.mock('@/components/sessions/files/views/repositoryTreeBrowser/RepositoryTreeChangedFilesPane', () => ({
+    RepositoryTreeChangedFilesPane: () => React.createElement('RepositoryTreeChangedFilesPane'),
+}));
+
 vi.mock('@/components/sessions/files/content/SearchResultsList', () => ({
     SearchResultsList: () => React.createElement('SearchResultsList'),
 }));
@@ -169,22 +173,24 @@ describe('SessionRepositoryTreeBrowserView (changed-only toggle)', () => {
         const { SessionRepositoryTreeBrowserView } = await import('./SessionRepositoryTreeBrowserView');
 
         let tree: renderer.ReactTestRenderer | null = null;
-        await act(async () => {
+        act(() => {
             tree = renderer.create(<SessionRepositoryTreeBrowserView sessionId="s1" onOpenFile={vi.fn()} />);
         });
 
         expect(tree!.root.findAllByType('RepositoryTreeList' as any)).toHaveLength(1);
         expect(tree!.root.findAllByType('ChangedFilesTreeList' as any)).toHaveLength(0);
+        expect(tree!.root.findAllByType('RepositoryTreeChangedFilesPane' as any)).toHaveLength(0);
 
         const toggle = tree!.root.findAll((node: any) => node.props?.testID === 'repository-tree-filter-changed');
         expect(toggle.length).toBeGreaterThanOrEqual(1);
 
-        await act(async () => {
+        act(() => {
             toggle[0]!.props.onPress();
         });
 
         expect(tree!.root.findAllByType('RepositoryTreeList' as any)).toHaveLength(0);
-        expect(tree!.root.findAllByType('ChangedFilesTreeList' as any)).toHaveLength(1);
+        expect(tree!.root.findAllByType('ChangedFilesTreeList' as any)).toHaveLength(0);
+        expect(tree!.root.findAllByType('RepositoryTreeChangedFilesPane' as any)).toHaveLength(1);
     });
 
     it('renders a collapse-all button when folders are expanded', async () => {
@@ -192,14 +198,14 @@ describe('SessionRepositoryTreeBrowserView (changed-only toggle)', () => {
         setExpandedPathsSpy.mockClear();
 
         let tree: renderer.ReactTestRenderer | null = null;
-        await act(async () => {
+        act(() => {
             tree = renderer.create(<SessionRepositoryTreeBrowserView sessionId="s1" onOpenFile={vi.fn()} />);
         });
 
         const collapse = tree!.root.findAll((node: any) => node.props?.testID === 'repository-tree-collapse-all');
         expect(collapse.length).toBeGreaterThanOrEqual(1);
 
-        await act(async () => {
+        act(() => {
             collapse[0]!.props.onPress();
         });
 
