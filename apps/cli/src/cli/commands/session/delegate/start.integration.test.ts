@@ -104,9 +104,9 @@ describe('happier session delegate start (integration)', () => {
         const decodedParams = decodeBase64(String(data.params ?? ''), 'base64');
         const decrypted = decrypt(dek, 'dataKey', decodedParams) as any;
         expect(decrypted.intent).toBe('delegate');
-        expect(decrypted.backendId).toBe('codex');
+        expect(decrypted.backendTarget).toEqual({ kind: 'builtInAgent', agentId: 'codex' });
         expect(decrypted.permissionMode).toBe('workspace_write');
-        expect(decrypted.intentInput?.backendId).toBe('codex');
+        expect(decrypted.intentInput?.backendTargetKey).toBe('agent:codex');
 
         const resultPayload = { runId: 'run_1', callId: 'call_1', sidechainId: 'call_1' };
         cb?.({
@@ -178,7 +178,7 @@ describe('happier session delegate start (integration)', () => {
       expect(parsed.kind).toBe('session_delegate_start');
       expect(parsed.data?.sessionId).toBe('sess_integration_delegate_start_123');
       expect(parsed.data?.results?.length).toBe(1);
-      expect(parsed.data?.results?.[0]?.key).toBe('codex');
+      expect(parsed.data?.results?.[0]?.key).toBe('agent:codex');
     } finally {
       logSpy.mockRestore();
     }
