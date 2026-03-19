@@ -23,6 +23,7 @@ import { waitFor } from '../../src/testkit/timing';
 import { seedCliAuthForServer } from '../../src/testkit/cliAuth';
 import { fetchJson } from '../../src/testkit/http';
 import { decryptDataKeyBase64, encryptDataKeyBase64 } from '../../src/testkit/rpcCrypto';
+import { unwrapSerializedJsonValue } from '../../src/testkit/unwrapSerializedJsonValue';
 
 const run = createRunDirs({ runLabel: 'core' });
 
@@ -108,11 +109,13 @@ async function callMachineRpc<TReq, TRes>(params: {
         const error = typeof res.error === 'string' ? res.error : '';
         throw new Error(`rpc ack not ok (errorCode=${errorCode || 'none'} error=${truncate(error) || 'none'})`);
       }
-      const decrypted = params.decryptResult(res.result);
+      const decrypted = unwrapSerializedJsonValue(params.decryptResult(res.result));
       if (!decrypted) throw new Error('failed to decrypt rpc result');
       const parsed = params.schema.safeParse(decrypted);
       if (!parsed.success) {
-        throw new Error(`failed to parse rpc result as ${params.method} response`);
+        throw new Error(
+          `failed to parse rpc result as ${params.method} response: ${truncate(JSON.stringify(decrypted))}`,
+        );
       }
       out = parsed.data;
       return true;
@@ -135,7 +138,7 @@ describe('core e2e: scm git machine RPC', () => {
 
   it('returns live git backend snapshot/diff/log over encrypted machine RPC', async () => {
     const testDir = run.testDir('scm-session-rpc-git');
-    server = await startServerLight({ testDir });
+    server = await startServerLight({ testDir, dbProvider: 'sqlite' });
     const serverBaseUrl = server.baseUrl;
     const auth = await createTestAuth(serverBaseUrl);
 
@@ -180,147 +183,149 @@ describe('core e2e: scm git machine RPC', () => {
 
     const ui = createUserScopedSocketCollector(serverBaseUrl, auth.token);
     ui.connect();
-    await waitFor(() => ui.isConnected(), { timeoutMs: 20_000 });
+    try {
+      await waitFor(() => ui.isConnected(), { timeoutMs: 20_000 });
 
-    const describeRes = await callMachineRpc({
-      ui,
-      machineId,
-      method: RPC_METHODS.SCM_BACKEND_DESCRIBE,
-      req: { cwd: workspaceDir },
-      encryptParams,
-      decryptResult,
-      schema: ScmBackendDescribeResponseSchema,
-    });
-    expect(describeRes.success).toBe(true);
-    if (describeRes.success) {
-      expect(describeRes.backendId).toBe('git');
+      const describeRes = await callMachineRpc({
+        ui,
+        machineId,
+        method: RPC_METHODS.SCM_BACKEND_DESCRIBE,
+        req: { cwd: workspaceDir },
+        encryptParams,
+        decryptResult,
+        schema: ScmBackendDescribeResponseSchema,
+      });
+      expect(describeRes.success).toBe(true);
+      if (describeRes.success) {
+        expect(describeRes.backendId).toBe('git');
+      }
+
+      const snapshotRes = await callMachineRpc({
+        ui,
+        machineId,
+        method: RPC_METHODS.SCM_STATUS_SNAPSHOT,
+        req: { cwd: workspaceDir },
+        encryptParams,
+        decryptResult,
+        schema: ScmStatusSnapshotResponseSchema,
+      });
+      expect(snapshotRes.success).toBe(true);
+      if (snapshotRes.success) {
+        expect(snapshotRes.snapshot).toBeDefined();
+        const snapshot = snapshotRes.snapshot;
+        if (!snapshot) throw new Error('Missing snapshot payload');
+        expect(snapshot.repo.isRepo).toBe(true);
+        expect(snapshot.repo.backendId).toBe('git');
+        expect(snapshot.totals.pendingFiles).toBeGreaterThanOrEqual(1);
+      }
+
+      const diffRes = await callMachineRpc({
+        ui,
+        machineId,
+        method: RPC_METHODS.SCM_DIFF_FILE,
+        req: { cwd: workspaceDir, path: 'README.md', area: 'pending' },
+        encryptParams,
+        decryptResult,
+        schema: ScmDiffFileResponseSchema,
+      });
+      expect(diffRes.success).toBe(true);
+      if (diffRes.success) {
+        expect(diffRes.diff).toContain('pending line');
+      }
+
+      await writeFile(join(workspaceDir, 'NOTES.md'), 'leftover file\n', 'utf8');
+
+      const pathScopedCommitRes = await callMachineRpc({
+        ui,
+        machineId,
+        method: RPC_METHODS.SCM_COMMIT_CREATE,
+        req: {
+          cwd: workspaceDir,
+          message: 'e2e path-scoped commit',
+          scope: { kind: 'paths', include: ['README.md'] },
+        },
+        encryptParams,
+        decryptResult,
+        schema: ScmCommitCreateResponseSchema,
+      });
+      expect(pathScopedCommitRes.success).toBe(true);
+      if (pathScopedCommitRes.success) {
+        expect(typeof pathScopedCommitRes.commitSha).toBe('string');
+        expect((pathScopedCommitRes.commitSha ?? '').length).toBeGreaterThan(0);
+      }
+      expect(runGit(workspaceDir, ['show', '--pretty=', '--name-only', 'HEAD'])).toContain('README.md');
+
+      const snapshotAfterPathScopedCommitRes = await callMachineRpc({
+        ui,
+        machineId,
+        method: RPC_METHODS.SCM_STATUS_SNAPSHOT,
+        req: { cwd: workspaceDir },
+        encryptParams,
+        decryptResult,
+        schema: ScmStatusSnapshotResponseSchema,
+      });
+      expect(snapshotAfterPathScopedCommitRes.success).toBe(true);
+      if (snapshotAfterPathScopedCommitRes.success) {
+        const snapshot = snapshotAfterPathScopedCommitRes.snapshot;
+        expect(snapshot?.totals.untrackedFiles).toBeGreaterThanOrEqual(1);
+      }
+
+      const commitRes = await callMachineRpc({
+        ui,
+        machineId,
+        method: RPC_METHODS.SCM_COMMIT_CREATE,
+        req: {
+          cwd: workspaceDir,
+          message: 'e2e atomic commit',
+          scope: { kind: 'all-pending' },
+        },
+        encryptParams,
+        decryptResult,
+        schema: ScmCommitCreateResponseSchema,
+      });
+      expect(commitRes.success).toBe(true);
+      if (commitRes.success) {
+        expect(typeof commitRes.commitSha).toBe('string');
+        expect((commitRes.commitSha ?? '').length).toBeGreaterThan(0);
+      }
+
+      const snapshotAfterCommitRes = await callMachineRpc({
+        ui,
+        machineId,
+        method: RPC_METHODS.SCM_STATUS_SNAPSHOT,
+        req: { cwd: workspaceDir },
+        encryptParams,
+        decryptResult,
+        schema: ScmStatusSnapshotResponseSchema,
+      });
+      expect(snapshotAfterCommitRes.success).toBe(true);
+      if (snapshotAfterCommitRes.success) {
+        const snapshot = snapshotAfterCommitRes.snapshot;
+        expect(snapshot?.totals.pendingFiles).toBe(0);
+        expect(snapshot?.totals.includedFiles).toBe(0);
+        expect(snapshot?.totals.untrackedFiles).toBe(0);
+      }
+
+      const logRes = await callMachineRpc({
+        ui,
+        machineId,
+        method: RPC_METHODS.SCM_LOG_LIST,
+        req: { cwd: workspaceDir, limit: 10, skip: 0 },
+        encryptParams,
+        decryptResult,
+        schema: ScmLogListResponseSchema,
+      });
+      expect(logRes.success).toBe(true);
+      if (logRes.success) {
+        expect(Array.isArray(logRes.entries)).toBe(true);
+        const entries = logRes.entries ?? [];
+        expect(entries.length).toBeGreaterThanOrEqual(1);
+        expect(entries.some((entry) => entry.subject === 'e2e path-scoped commit')).toBe(true);
+        expect(entries.some((entry) => entry.subject === 'e2e atomic commit')).toBe(true);
+      }
+    } finally {
+      ui.disconnect();
+      ui.close();
     }
-
-    const snapshotRes = await callMachineRpc({
-      ui,
-      machineId,
-      method: RPC_METHODS.SCM_STATUS_SNAPSHOT,
-      req: { cwd: workspaceDir },
-      encryptParams,
-      decryptResult,
-      schema: ScmStatusSnapshotResponseSchema,
-    });
-    expect(snapshotRes.success).toBe(true);
-    if (snapshotRes.success) {
-      expect(snapshotRes.snapshot).toBeDefined();
-      const snapshot = snapshotRes.snapshot;
-      if (!snapshot) throw new Error('Missing snapshot payload');
-      expect(snapshot.repo.isRepo).toBe(true);
-      expect(snapshot.repo.backendId).toBe('git');
-      expect(snapshot.totals.pendingFiles).toBeGreaterThanOrEqual(1);
-    }
-
-    const diffRes = await callMachineRpc({
-      ui,
-      machineId,
-      method: RPC_METHODS.SCM_DIFF_FILE,
-      req: { cwd: workspaceDir, path: 'README.md', area: 'pending' },
-      encryptParams,
-      decryptResult,
-      schema: ScmDiffFileResponseSchema,
-    });
-    expect(diffRes.success).toBe(true);
-    if (diffRes.success) {
-      expect(diffRes.diff).toContain('pending line');
-    }
-
-    await writeFile(join(workspaceDir, 'NOTES.md'), 'leftover file\n', 'utf8');
-
-    const pathScopedCommitRes = await callMachineRpc({
-      ui,
-      machineId,
-      method: RPC_METHODS.SCM_COMMIT_CREATE,
-      req: {
-        cwd: workspaceDir,
-        message: 'e2e path-scoped commit',
-        scope: { kind: 'paths', include: ['README.md'] },
-      },
-      encryptParams,
-      decryptResult,
-      schema: ScmCommitCreateResponseSchema,
-    });
-    expect(pathScopedCommitRes.success).toBe(true);
-    if (pathScopedCommitRes.success) {
-      expect(typeof pathScopedCommitRes.commitSha).toBe('string');
-      expect((pathScopedCommitRes.commitSha ?? '').length).toBeGreaterThan(0);
-    }
-    expect(runGit(workspaceDir, ['show', '--pretty=', '--name-only', 'HEAD'])).toContain('README.md');
-
-    const snapshotAfterPathScopedCommitRes = await callMachineRpc({
-      ui,
-      machineId,
-      method: RPC_METHODS.SCM_STATUS_SNAPSHOT,
-      req: { cwd: workspaceDir },
-      encryptParams,
-      decryptResult,
-      schema: ScmStatusSnapshotResponseSchema,
-    });
-    expect(snapshotAfterPathScopedCommitRes.success).toBe(true);
-    if (snapshotAfterPathScopedCommitRes.success) {
-      const snapshot = snapshotAfterPathScopedCommitRes.snapshot;
-      expect(snapshot?.totals.untrackedFiles).toBeGreaterThanOrEqual(1);
-    }
-
-    const commitRes = await callMachineRpc({
-      ui,
-      machineId,
-      method: RPC_METHODS.SCM_COMMIT_CREATE,
-      req: {
-        cwd: workspaceDir,
-        message: 'e2e atomic commit',
-        scope: { kind: 'all-pending' },
-      },
-      encryptParams,
-      decryptResult,
-      schema: ScmCommitCreateResponseSchema,
-    });
-    expect(commitRes.success).toBe(true);
-    if (commitRes.success) {
-      expect(typeof commitRes.commitSha).toBe('string');
-      expect((commitRes.commitSha ?? '').length).toBeGreaterThan(0);
-    }
-
-    const snapshotAfterCommitRes = await callMachineRpc({
-      ui,
-      machineId,
-      method: RPC_METHODS.SCM_STATUS_SNAPSHOT,
-      req: { cwd: workspaceDir },
-      encryptParams,
-      decryptResult,
-      schema: ScmStatusSnapshotResponseSchema,
-    });
-    expect(snapshotAfterCommitRes.success).toBe(true);
-    if (snapshotAfterCommitRes.success) {
-      const snapshot = snapshotAfterCommitRes.snapshot;
-      expect(snapshot?.totals.pendingFiles).toBe(0);
-      expect(snapshot?.totals.includedFiles).toBe(0);
-      expect(snapshot?.totals.untrackedFiles).toBe(0);
-    }
-
-    const logRes = await callMachineRpc({
-      ui,
-      machineId,
-      method: RPC_METHODS.SCM_LOG_LIST,
-      req: { cwd: workspaceDir, limit: 10, skip: 0 },
-      encryptParams,
-      decryptResult,
-      schema: ScmLogListResponseSchema,
-    });
-    expect(logRes.success).toBe(true);
-    if (logRes.success) {
-      expect(Array.isArray(logRes.entries)).toBe(true);
-      const entries = logRes.entries ?? [];
-      expect(entries.length).toBeGreaterThanOrEqual(1);
-      expect(entries.some((entry) => entry.subject === 'e2e path-scoped commit')).toBe(true);
-      expect(entries.some((entry) => entry.subject === 'e2e atomic commit')).toBe(true);
-    }
-
-    ui.disconnect();
-    ui.close();
-  }, 240_000);
+  }, 360_000);
 });

@@ -1,6 +1,6 @@
 import { afterAll, describe, expect, it } from 'vitest';
 import { randomBytes } from 'node:crypto';
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 
@@ -24,6 +24,7 @@ import { waitFor } from '../../src/testkit/timing';
 import { seedCliAuthForServer } from '../../src/testkit/cliAuth';
 import { fetchJson } from '../../src/testkit/http';
 import { decryptDataKeyBase64, encryptDataKeyBase64 } from '../../src/testkit/rpcCrypto';
+import { unwrapSerializedJsonValue } from '../../src/testkit/unwrapSerializedJsonValue';
 
 const run = createRunDirs({ runLabel: 'core' });
 
@@ -37,6 +38,11 @@ function runSapling(cwd: string, args: string[]): string {
     encoding: 'utf8',
     stdio: ['ignore', 'pipe', 'pipe'],
   }).trim();
+}
+
+function shouldRunSaplingIntegration(): boolean {
+  const probe = spawnSync('sl', ['--version'], { encoding: 'utf8', stdio: 'ignore' });
+  return probe.error == null;
 }
 
 async function resolveDaemonMachineIdFromSettings(params: { daemonHomeDir: string }): Promise<string> {
@@ -109,11 +115,13 @@ async function callMachineRpc<TReq, TRes>(params: {
         const error = typeof res.error === 'string' ? res.error : '';
         throw new Error(`rpc ack not ok (errorCode=${errorCode || 'none'} error=${truncate(error) || 'none'})`);
       }
-      const decrypted = params.decryptResult(res.result);
+      const decrypted = unwrapSerializedJsonValue(params.decryptResult(res.result));
       if (!decrypted) throw new Error('failed to decrypt rpc result');
       const parsed = params.schema.safeParse(decrypted);
       if (!parsed.success) {
-        throw new Error(`failed to parse rpc result as ${params.method} response`);
+        throw new Error(
+          `failed to parse rpc result as ${params.method} response: ${truncate(JSON.stringify(decrypted))}`,
+        );
       }
       out = parsed.data;
       return true;
@@ -125,7 +133,7 @@ async function callMachineRpc<TReq, TRes>(params: {
   return out;
 }
 
-describe('core e2e: scm sapling machine RPC', () => {
+describe.skipIf(!shouldRunSaplingIntegration())('core e2e: scm sapling machine RPC', () => {
   let server: StartedServer | null = null;
   let daemon: StartedDaemon | null = null;
 
@@ -136,7 +144,7 @@ describe('core e2e: scm sapling machine RPC', () => {
 
   it('returns live sapling backend snapshot/diff/log over encrypted machine RPC', async () => {
     const testDir = run.testDir('scm-session-rpc-sapling');
-    server = await startServerLight({ testDir });
+    server = await startServerLight({ testDir, dbProvider: 'sqlite' });
     const serverBaseUrl = server.baseUrl;
     const auth = await createTestAuth(serverBaseUrl);
 
