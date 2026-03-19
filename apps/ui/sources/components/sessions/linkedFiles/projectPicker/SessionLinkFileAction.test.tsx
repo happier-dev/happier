@@ -4,13 +4,19 @@ import { describe, expect, it, vi } from 'vitest';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
+const platformState = vi.hoisted(() => ({
+    os: 'web' as 'web' | 'ios',
+}));
+
 vi.mock('react-native', async (importOriginal) => {
     const actual = await importOriginal<typeof import('react-native')>();
     return {
         ...actual,
         Platform: {
             ...actual.Platform,
-            OS: 'web',
+            get OS() {
+                return platformState.os;
+            },
             select: (values: any) => values?.web ?? values?.default ?? values?.ios ?? values?.android,
         },
         View: React.forwardRef((props: any, ref: any) => {
@@ -69,6 +75,7 @@ import { SessionLinkFileAction } from './SessionLinkFileAction';
 
 describe('SessionLinkFileAction', () => {
     it('toggles a popover on web and calls onPickPath when a file is selected', () => {
+        platformState.os = 'web';
         const onPickPath = vi.fn<(path: string) => void>();
         const popoverAnchorRef = { current: { nodeType: 'View' } } as any;
 
@@ -123,6 +130,7 @@ describe('SessionLinkFileAction', () => {
     });
 
     it('disables Popover close-on-anchor-press so the chip can act as a true toggle', () => {
+        platformState.os = 'web';
         const onPickPath = vi.fn<(path: string) => void>();
         const popoverAnchorRef = { current: { nodeType: 'View' } } as any;
 
@@ -149,5 +157,67 @@ describe('SessionLinkFileAction', () => {
         });
         const popover = tree!.root.findByType('Popover');
         expect(popover.props.closeOnAnchorPress).toBe(false);
+    });
+
+    it('uses the shared popover on native instead of opening a modal', async () => {
+        platformState.os = 'ios';
+        const { Modal } = await import('@/modal');
+        const onPickPath = vi.fn<(path: string) => void>();
+
+        let tree: renderer.ReactTestRenderer | null = null;
+        act(() => {
+            tree = renderer.create(
+                <SessionLinkFileAction
+                    sessionId="s1"
+                    onPickPath={onPickPath}
+                    showLabel={true}
+                    chipStyle={() => ({})}
+                    iconColor="#000"
+                    textStyle={{}}
+                />,
+            );
+        });
+
+        const linkChip = tree!.root.findByProps({ testID: 'agent-input-link-file' });
+        act(() => {
+            linkChip.props.onPress();
+        });
+
+        expect(Modal.show).not.toHaveBeenCalled();
+        expect(tree!.root.findAllByType('Popover')).toHaveLength(1);
+    });
+
+    it('supports controlled open state without mirroring props into local state', () => {
+        platformState.os = 'web';
+        const onPickPath = vi.fn<(path: string) => void>();
+        const onOpenChange = vi.fn<(next: boolean) => void>();
+        const popoverAnchorRef = { current: { nodeType: 'View' } } as any;
+
+        let tree: renderer.ReactTestRenderer | null = null;
+        act(() => {
+            tree = renderer.create(
+                <SessionLinkFileAction
+                    sessionId="s1"
+                    onPickPath={onPickPath}
+                    showLabel={true}
+                    chipStyle={() => ({})}
+                    iconColor="#000"
+                    textStyle={{}}
+                    popoverAnchorRef={popoverAnchorRef}
+                    open={true}
+                    onOpenChange={onOpenChange}
+                />,
+            );
+        });
+
+        expect(tree!.root.findAllByType('Popover')).toHaveLength(1);
+
+        const linkChip = tree!.root.findByProps({ testID: 'agent-input-link-file' });
+        act(() => {
+            linkChip.props.onPress();
+        });
+
+        expect(onOpenChange).toHaveBeenCalledWith(false);
+        expect(tree!.root.findAllByType('Popover')).toHaveLength(1);
     });
 });

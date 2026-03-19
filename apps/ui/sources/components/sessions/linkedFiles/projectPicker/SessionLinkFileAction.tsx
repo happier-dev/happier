@@ -1,18 +1,18 @@
 import * as React from 'react';
-import { Platform, Pressable, View, useWindowDimensions } from 'react-native';
+import { Pressable, View, useWindowDimensions } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { t } from '@/text';
 import { Text } from '@/components/ui/text/Text';
 import { Popover } from '@/components/ui/popover';
 import { AgentInputPopoverSurface } from '@/components/sessions/agentInput/components/AgentInputPopoverSurface';
 import { SessionRepositoryTreeBrowserView } from '@/components/sessions/files/views/SessionRepositoryTreeBrowserView';
-import { Modal } from '@/modal';
 import { layout } from '@/components/ui/layout/layout';
-import { ProjectFileLinkPickerModal } from './ProjectFileLinkPickerModal';
 
 export type SessionLinkFileActionProps = Readonly<{
     sessionId: string;
     disabled?: boolean;
+    open?: boolean;
+    onOpenChange?: (next: boolean) => void;
     showLabel: boolean;
     chipStyle: (pressed: boolean) => any;
     iconColor: string;
@@ -27,9 +27,11 @@ export type SessionLinkFileActionProps = Readonly<{
 }>;
 
 export const SessionLinkFileAction = React.memo((props: SessionLinkFileActionProps) => {
-    const [open, setOpen] = React.useState(false);
+    const [uncontrolledOpen, setUncontrolledOpen] = React.useState(false);
     const anchorRef = React.useRef<View | null>(null);
     const popoverAnchorRef = props.popoverAnchorRef ?? anchorRef;
+    const isControlled = typeof props.open === 'boolean';
+    const open = isControlled ? props.open === true : uncontrolledOpen;
     const { width: windowWidth } = useWindowDimensions();
     // When the agent input provides a full-width anchor (the composer container),
     // match it so the popover behaves like the @ suggestions surface. Otherwise,
@@ -42,24 +44,19 @@ export const SessionLinkFileAction = React.memo((props: SessionLinkFileActionPro
 
     const handleOpen = React.useCallback(() => {
         if (props.disabled) return;
-        // Keep native/phone behavior as a modal until the popover UX is tuned for small screens.
-        if (Platform.OS !== 'web') {
-            Modal.show({
-                component: ProjectFileLinkPickerModal,
-                props: {
-                    sessionId: props.sessionId,
-                    onPickPath: props.onPickPath,
-                },
-                closeOnBackdrop: true,
-            });
-            return;
+        const next = !open;
+        props.onOpenChange?.(next);
+        if (!isControlled) {
+            setUncontrolledOpen(next);
         }
-        setOpen((prev) => !prev);
-    }, [props.disabled, props.onPickPath, props.sessionId]);
+    }, [isControlled, open, props.disabled, props.onOpenChange]);
 
     const handleClose = React.useCallback(() => {
-        setOpen(false);
-    }, []);
+        props.onOpenChange?.(false);
+        if (!isControlled) {
+            setUncontrolledOpen(false);
+        }
+    }, [isControlled, props.onOpenChange]);
 
     return (
         <>
@@ -81,52 +78,51 @@ export const SessionLinkFileAction = React.memo((props: SessionLinkFileActionPro
                 </Pressable>
             </View>
 
-            {Platform.OS === 'web' ? (
-                <Popover
-                    open={open}
-                    anchorRef={popoverAnchorRef as any}
-                    boundaryRef={null}
-                    placement="top"
-                    gap={8}
-                    maxHeightCap={520}
-                    // Match the @ suggestions popover sizing: cap to the composer max width (while
-                    // still being bounded by the viewport). In portal mode we disable anchor-width
-                    // matching so the popover can be full-width even when the trigger chip is narrow.
-                    maxWidthCap={maxWidthCap}
-                    // IMPORTANT: keep this off for a true toggle UX.
-                    // Popover's web outside-click handler runs on `pointerdown` capture. If we also close on
-                    // anchor press there, the chip's `onPress` (fires on pointerup) can re-open immediately.
-                    closeOnAnchorPress={false}
-                    portal={{
-                        // Portal to `body` so the popover isn't constrained by any modal/root container width.
-                        // This matches the @ suggestions behavior (full composer width) while still escaping
-                        // overflow/stacking contexts in the session view.
-                        web: { target: 'body' },
-                        matchAnchorWidth: shouldMatchAnchorWidthOnPortal,
-                    }}
-                    onRequestClose={handleClose}
-                    backdrop={{ style: { backgroundColor: 'transparent' } }}
-                    containerStyle={{ paddingHorizontal: 0 }}
-                >
-                    {({ maxHeight }) => (
-                        <AgentInputPopoverSurface testID="agent-input-link-file-popover" maxHeight={maxHeight} scrollEnabled={false}>
-                            <SessionRepositoryTreeBrowserView
-                                sessionId={props.sessionId}
-                                density="panel"
-                                onRequestClose={handleClose}
-                                onOpenFile={(fullPath) => {
-                                    props.onPickPath(fullPath);
-                                    handleClose();
-                                }}
-                                onOpenFilePinned={(fullPath) => {
-                                    props.onPickPath(fullPath);
-                                    handleClose();
-                                }}
-                            />
-                        </AgentInputPopoverSurface>
-                    )}
-                </Popover>
-            ) : null}
+            <Popover
+                open={open}
+                anchorRef={popoverAnchorRef as any}
+                boundaryRef={null}
+                placement="top"
+                gap={8}
+                maxHeightCap={520}
+                // Match the @ suggestions popover sizing: cap to the composer max width (while
+                // still being bounded by the viewport). In portal mode we disable anchor-width
+                // matching so the popover can be full-width even when the trigger chip is narrow.
+                maxWidthCap={maxWidthCap}
+                // IMPORTANT: keep this off for a true toggle UX.
+                // Popover's web outside-click handler runs on `pointerdown` capture. If we also close on
+                // anchor press there, the chip's `onPress` (fires on pointerup) can re-open immediately.
+                closeOnAnchorPress={false}
+                portal={{
+                    // Portal to `body` so the popover isn't constrained by any modal/root container width.
+                    // This matches the @ suggestions behavior (full composer width) while still escaping
+                    // overflow/stacking contexts in the session view.
+                    web: { target: 'body' },
+                    native: true,
+                    matchAnchorWidth: shouldMatchAnchorWidthOnPortal,
+                }}
+                onRequestClose={handleClose}
+                backdrop={{ style: { backgroundColor: 'transparent' } }}
+                containerStyle={{ paddingHorizontal: 0 }}
+            >
+                {({ maxHeight }) => (
+                    <AgentInputPopoverSurface testID="agent-input-link-file-popover" maxHeight={maxHeight} scrollEnabled={false}>
+                        <SessionRepositoryTreeBrowserView
+                            sessionId={props.sessionId}
+                            density="panel"
+                            onRequestClose={handleClose}
+                            onOpenFile={(fullPath) => {
+                                props.onPickPath(fullPath);
+                                handleClose();
+                            }}
+                            onOpenFilePinned={(fullPath) => {
+                                props.onPickPath(fullPath);
+                                handleClose();
+                            }}
+                        />
+                    </AgentInputPopoverSurface>
+                )}
+            </Popover>
         </>
     );
 });
