@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { shouldInstallConsoleWriteErrorGuards } from './writeConsoleBestEffort.js';
+import { shouldInstallConsoleWriteErrorGuards } from './writeConsoleBestEffort';
 
 describe('shouldInstallConsoleWriteErrorGuards', () => {
   it('disables console stream guards under Bun runtimes', () => {
