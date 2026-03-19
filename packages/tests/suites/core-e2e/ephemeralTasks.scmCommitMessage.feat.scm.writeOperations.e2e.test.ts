@@ -11,16 +11,12 @@ import { createRunDirs } from '../../src/testkit/runDir';
 import { startServerLight, type StartedServer } from '../../src/testkit/process/serverLight';
 import { createTestAuth } from '../../src/testkit/auth';
 import { createUserScopedSocketCollector } from '../../src/testkit/socketClient';
-import { encryptLegacyBase64, decryptLegacyBase64 } from '../../src/testkit/messageCrypto';
 import { startTestDaemon, type StartedDaemon } from '../../src/testkit/daemon/daemon';
 import { daemonControlPostJson } from '../../src/testkit/daemon/controlServerClient';
 import { waitFor } from '../../src/testkit/timing';
 import { seedCliAuthForServer } from '../../src/testkit/cliAuth';
 import { fakeClaudeFixturePath } from '../../src/testkit/fakeClaude';
-
-type RpcAck = { ok: boolean; result?: string; error?: string; errorCode?: string };
-type SafeParseResult<T> = { success: true; data: T } | { success: false };
-type ParseSchema<T> = { safeParse: (input: unknown) => SafeParseResult<T> };
+import { callLegacyEncryptedSessionRpc as callSessionRpc } from '../../src/testkit/sessionRpc';
 
 function runGit(cwd: string, args: string[]): string {
   return execFileSync('git', args, {
@@ -28,35 +24,6 @@ function runGit(cwd: string, args: string[]): string {
     encoding: 'utf8',
     stdio: ['ignore', 'pipe', 'pipe'],
   }).trim();
-}
-
-async function callSessionRpc<TReq, TRes>(params: {
-  ui: ReturnType<typeof createUserScopedSocketCollector>;
-  sessionId: string;
-  method: string;
-  req: TReq;
-  secret: Uint8Array;
-  schema: ParseSchema<TRes>;
-  timeoutMs?: number;
-}): Promise<TRes> {
-  let out: TRes | null = null;
-  const encryptedParams = encryptLegacyBase64(params.req, params.secret);
-
-  await waitFor(
-    async () => {
-      const res = await params.ui.rpcCall<RpcAck>(`${params.sessionId}:${params.method}`, encryptedParams);
-      if (!res || res.ok !== true || typeof res.result !== 'string') return false;
-      const decrypted = decryptLegacyBase64(res.result, params.secret);
-      const parsed = params.schema.safeParse(decrypted);
-      if (!parsed.success) return false;
-      out = parsed.data;
-      return true;
-    },
-    { timeoutMs: params.timeoutMs ?? 30_000 },
-  );
-
-  if (!out) throw new Error(`RPC call did not return a valid response: ${params.method}`);
-  return out;
 }
 
 const run = createRunDirs({ runLabel: 'core' });
