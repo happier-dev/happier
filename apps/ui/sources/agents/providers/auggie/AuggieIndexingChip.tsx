@@ -14,6 +14,17 @@ export function createAuggieAllowIndexingChip(opts: Readonly<{
 }>): AgentInputExtraActionChip {
     return {
         key: 'auggie-allow-indexing',
+        controlId: 'providerOption',
+        collapsedAction: ({ tint, dismiss }) => ({
+            id: 'auggie-allow-indexing',
+            label: t(opts.allowIndexing ? 'agentInput.auggieIndexingChip.on' : 'agentInput.auggieIndexingChip.off'),
+            icon: <Octicons name="search" size={16} color={tint} />,
+            onPress: () => {
+                dismiss();
+                hapticsLight();
+                opts.setAllowIndexing(!opts.allowIndexing);
+            },
+        }),
         render: ({ chipStyle, showLabel, iconColor, textStyle }) => (
             <Pressable
                 onPress={() => {
@@ -33,4 +44,3 @@ export function createAuggieAllowIndexingChip(opts: Readonly<{
         ),
     };
 }
-
