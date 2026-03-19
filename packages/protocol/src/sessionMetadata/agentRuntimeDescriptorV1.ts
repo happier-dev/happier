@@ -34,7 +34,7 @@ type CodexAgentRuntimeDescriptorProvider = Readonly<{
       connectedServiceProfileId?: string;
     }>;
   }>;
-}>;
+}>; 
 
 type OpenCodeAgentRuntimeDescriptorProvider = Readonly<{
   backendMode: 'server' | 'acp';
