@@ -1,6 +1,7 @@
 import { buildSettingArtifacts, defineSettingDefinitions } from '@happier-dev/protocol';
 import { z } from 'zod';
 
+import { DEFAULT_AGENT_ID } from '@/agents/catalog/catalog';
 import { SCM_COMMIT_STRATEGIES } from '@/scm/settings/commitStrategy';
 import {
     SCM_DIFF_MODE_OPTIONS,
@@ -214,7 +215,7 @@ export const ACCOUNT_SCM_FILES_SETTING_DEFINITIONS = defineSettingDefinitions({
     },
     scmCommitMessageGeneratorBackendId: {
         schema: z.string(),
-        default: 'claude',
+        default: DEFAULT_AGENT_ID,
         description: 'Backend id used for one-shot LLM commit message generation',
         storageScope: 'account',
     },
