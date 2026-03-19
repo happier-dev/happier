@@ -29,7 +29,17 @@ import { buildDataKeyCredentialsForToken } from "@/auth/flows/buildDataKeyCreden
 import { digest } from "@/platform/digest";
 import { encodeHex } from "@/encryption/hex";
 import { resolveAppUrlScheme } from "@/utils/url/appScheme";
+import { readConfiguredServerUrlEnv } from "@/sync/domains/server/readConfiguredServerUrlEnv";
 
+const DEFAULT_WELCOME_SERVER_CHECK_TIMEOUT_MS = 6_000;
+
+function readWelcomeServerCheckTimeoutMs(): number {
+    const raw = String(process.env.EXPO_PUBLIC_HAPPIER_WELCOME_SERVER_CHECK_TIMEOUT_MS ?? '').trim();
+    if (!raw) return DEFAULT_WELCOME_SERVER_CHECK_TIMEOUT_MS;
+    const parsed = Number.parseInt(raw, 10);
+    if (!Number.isFinite(parsed)) return DEFAULT_WELCOME_SERVER_CHECK_TIMEOUT_MS;
+    return Math.max(1_000, Math.min(30_000, parsed));
+}
 
 export default function Home() {
     const auth = useAuth();
@@ -39,6 +49,12 @@ export default function Home() {
     return (
         <Authenticated />
     )
+}
+
+function isAuthenticatedRootDeepLinkRedirectAllowed(): boolean {
+    if (typeof window === 'undefined') return true;
+    const pathname = String(window.location.pathname ?? '').trim();
+    return pathname === '' || pathname === '/' || pathname === '/index.html';
 }
 
 function Authenticated() {
@@ -52,6 +68,7 @@ function Authenticated() {
     React.useEffect(() => {
         const sid = String(sessionId ?? '').trim();
         if (!sid) return;
+        if (!isAuthenticatedRootDeepLinkRedirectAllowed()) return;
 
         const mid = String(messageId ?? '').trim();
         if (mid) {
@@ -95,7 +112,10 @@ function NotAuthenticated() {
             try {
                 if (mounted) setServerAvailability('loading');
 
-                const featuresSnapshot = await getServerFeaturesSnapshot({ timeoutMs: 1500, force: serverCheckNonce > 0 });
+                const featuresSnapshot = await getServerFeaturesSnapshot({
+                    timeoutMs: readWelcomeServerCheckTimeoutMs(),
+                    force: serverCheckNonce > 0,
+                });
                 if (featuresSnapshot.status === 'error') {
                     if (mounted) setServerAvailability('unavailable');
                     return;
@@ -349,7 +369,7 @@ function NotAuthenticated() {
         try {
             const snapshot = getActiveServerSnapshot();
             const rawServerUrl = snapshot.serverUrl ? String(snapshot.serverUrl).trim() : "";
-            const serverUrl = rawServerUrl.replace(/\/+$/, "");
+            const serverUrl = (rawServerUrl.replace(/\/+$/, "") || readConfiguredServerUrlEnv().replace(/\/+$/, ""));
             if (!serverUrl) {
                 await Modal.alert(t('common.error'), t('errors.operationFailed'));
                 return;
