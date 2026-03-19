@@ -104,4 +104,5 @@ describe('useFeatureEnabled', () => {
 
         expect(seen.at(-1)).toBe(false);
     });
+
 });
