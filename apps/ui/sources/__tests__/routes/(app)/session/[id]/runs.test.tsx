@@ -4,6 +4,13 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
+let hydrateReady = true;
+const hydrateSpy = vi.fn((sessionId: string, tag: string) => {
+    void sessionId;
+    void tag;
+    return hydrateReady;
+});
+
 type ExecutionRunListArgs = [string, Record<string, unknown>];
 type ExecutionRunSummary = Readonly<{
     runId: string;
@@ -29,6 +36,11 @@ const listRunsSpy = vi.fn<(...args: ExecutionRunListArgs) => Promise<ExecutionRu
 const routerPushSpy = vi.fn();
 const stackScreenSpy = vi.fn((_props: any) => null);
 let focusEffectHandler: (() => void | (() => void)) | null = null;
+let executionRunsBackendsMock: Record<string, { available?: boolean; intents?: string[] }> | null = {
+    claude: { available: true, intents: ['review', 'plan', 'delegate', 'voice_agent'] },
+    codex: { available: true, intents: ['review', 'plan', 'delegate', 'voice_agent'] },
+};
+let canLaunchExecutionRunsMock = true;
 
 vi.mock('react-native', async () => await import('@/dev/reactNativeStub'));
 
@@ -48,6 +60,10 @@ vi.mock('@/text', () => ({
 }));
 vi.mock('@/components/ui/layout/layout', () => ({ layout: { maxWidth: 999 } }));
 
+vi.mock('@/hooks/session/useHydrateSessionForRoute', () => ({
+    useHydrateSessionForRoute: (sessionId: string, tag: string) => hydrateSpy(sessionId, tag),
+}));
+
 vi.mock('@/sync/ops/sessionExecutionRuns', () => ({
     sessionExecutionRunList: (...args: ExecutionRunListArgs) => listRunsSpy(...args),
 }));
@@ -66,11 +82,42 @@ vi.mock('@/components/sessions/runs/ExecutionRunList', () => ({
         )
     ),
 }));
+vi.mock('@/hooks/server/useExecutionRunsBackendsForSession', () => ({
+    useExecutionRunsBackendsForSession: () => executionRunsBackendsMock,
+}));
+vi.mock('@/hooks/session/useSessionExecutionRunLaunchability', () => ({
+    useSessionExecutionRunLaunchability: () => ({
+        canLaunchExecutionRuns: canLaunchExecutionRunsMock,
+        executionRunsBackends: executionRunsBackendsMock,
+        executionRunsSupported: canLaunchExecutionRunsMock,
+    }),
+}));
 
 describe('Session Runs Screen', () => {
     afterEach(() => {
+        hydrateReady = true;
+        hydrateSpy.mockClear();
         listRunsSpy.mockReset();
         listRunsSpy.mockResolvedValue({ runs: [] });
+        executionRunsBackendsMock = {
+            claude: { available: true, intents: ['review', 'plan', 'delegate', 'voice_agent'] },
+            codex: { available: true, intents: ['review', 'plan', 'delegate', 'voice_agent'] },
+        };
+        canLaunchExecutionRunsMock = true;
+    });
+
+    it('waits for session hydration before listing runs', async () => {
+        hydrateReady = false;
+        listRunsSpy.mockClear();
+
+        const RunsScreen = (await import('@/app/(app)/session/[id]/runs')).default;
+
+        await act(async () => {
+            renderer.create(React.createElement(RunsScreen));
+        });
+
+        expect(hydrateSpy).toHaveBeenCalled();
+        expect(listRunsSpy).toHaveBeenCalledTimes(0);
     });
 
     it('reloads runs when the screen regains focus', async () => {
@@ -151,6 +198,54 @@ describe('Session Runs Screen', () => {
         });
 
         expect(routerPushSpy).toHaveBeenCalledWith('/session/session-1/runs/new?intent=delegate');
+    });
+
+    it('hides new-run header actions when the session has no live execution-run backends', async () => {
+        stackScreenSpy.mockClear();
+        executionRunsBackendsMock = null;
+        canLaunchExecutionRunsMock = false;
+
+        const RunsScreen = (await import('@/app/(app)/session/[id]/runs')).default;
+
+        await act(async () => {
+            renderer.create(React.createElement(RunsScreen));
+        });
+
+        const stackOptions = stackScreenSpy.mock.calls.at(-1)?.[0]?.options;
+        let headerRightTree: renderer.ReactTestRenderer | null = null;
+        await act(async () => {
+            headerRightTree = renderer.create(React.createElement(stackOptions.headerRight));
+        });
+        const buttons = headerRightTree!.root.findAllByType('Pressable');
+        const labels = buttons.map((button: any) => button.props.accessibilityLabel);
+        expect(labels).not.toContain('executionRuns.newRun.intents.review');
+        expect(labels).not.toContain('executionRuns.newRun.intents.delegate');
+        expect(labels).toContain('common.refresh');
+    });
+
+    it('hides new-run header actions when launchability is disabled even if backend discovery is populated', async () => {
+        stackScreenSpy.mockClear();
+        canLaunchExecutionRunsMock = false;
+        executionRunsBackendsMock = {
+            claude: { available: true, intents: ['review', 'plan', 'delegate', 'voice_agent'] },
+        };
+
+        const RunsScreen = (await import('@/app/(app)/session/[id]/runs')).default;
+
+        await act(async () => {
+            renderer.create(React.createElement(RunsScreen));
+        });
+
+        const stackOptions = stackScreenSpy.mock.calls.at(-1)?.[0]?.options;
+        let headerRightTree: renderer.ReactTestRenderer | null = null;
+        await act(async () => {
+            headerRightTree = renderer.create(React.createElement(stackOptions.headerRight));
+        });
+        const buttons = headerRightTree!.root.findAllByType('Pressable');
+        const labels = buttons.map((button: any) => button.props.accessibilityLabel);
+        expect(labels).not.toContain('executionRuns.newRun.intents.review');
+        expect(labels).not.toContain('executionRuns.newRun.intents.delegate');
+        expect(labels).toContain('common.refresh');
     });
 
     it('constrains content to the shared max width', async () => {
@@ -236,6 +331,25 @@ describe('Session Runs Screen', () => {
         expect(listRunsSpy).toHaveBeenCalledTimes(2);
         const textNodes = tree!.root.findAllByType('Text');
         expect(textNodes.some((n: any) => String(n.props.children).includes('run_retry'))).toBe(true);
+    });
+
+    it('shows a daemon-unavailable message when execution run list remains unsupported after retry', async () => {
+        listRunsSpy.mockReset();
+        listRunsSpy
+            .mockResolvedValueOnce({ ok: false, error: 'RPC method not available', errorCode: 'RPC_METHOD_NOT_AVAILABLE' })
+            .mockResolvedValueOnce({ ok: false, error: 'RPC method not available', errorCode: 'RPC_METHOD_NOT_AVAILABLE' });
+
+        const RunsScreen = (await import('@/app/(app)/session/[id]/runs')).default;
+
+        let tree: renderer.ReactTestRenderer | null = null;
+        await act(async () => {
+            tree = renderer.create(React.createElement(RunsScreen));
+            await Promise.resolve();
+            await Promise.resolve();
+        });
+
+        const textNodes = tree!.root.findAllByType('Text');
+        expect(textNodes.some((n: any) => String(n.props.children).includes('errors.daemonUnavailableBody'))).toBe(true);
     });
 
     it('navigates to the run details screen when a run is pressed', async () => {
