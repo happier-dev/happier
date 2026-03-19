@@ -151,6 +151,7 @@ class Configuration {
   public readonly ephemeralTasksMaxConcurrentPerSession: number | null
   public readonly executionRunsBoundedTimeoutMs: number | null
   public readonly executionRunsReviewBoundedTimeoutMs: number | null
+  public readonly voiceAgentResponseTimeoutMs: number
   public readonly executionRunsMaxTurns: number | null
   public readonly executionRunsMaxDepth: number
   public readonly executionBudgetMaxConcurrentTotalPerSession: number | null
@@ -520,6 +521,10 @@ class Configuration {
       Number.isFinite(boundedTimeoutRaw) && boundedTimeoutRaw >= 1_000 ? boundedTimeoutRaw : null;
     this.executionRunsReviewBoundedTimeoutMs =
       Number.isFinite(reviewBoundedTimeoutRaw) && reviewBoundedTimeoutRaw >= 1_000 ? reviewBoundedTimeoutRaw : null;
+    this.voiceAgentResponseTimeoutMs = resolveIntEnvWithBounds('HAPPIER_VOICE_AGENT_RESPONSE_TIMEOUT_MS', {
+      min: 1_000,
+      default: 120_000,
+    });
     // Intentionally unlimited by default: long-lived execution runs should not stop unexpectedly.
     this.executionRunsMaxTurns = Number.isFinite(maxTurnsRaw) && maxTurnsRaw >= 1 ? Math.trunc(maxTurnsRaw) : null;
     // Depth 0 means "no nested runs allowed". Default 1 allows one nested hop when explicitly linked.
