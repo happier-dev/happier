@@ -61,7 +61,7 @@ function tokenizeShellWords(command: string): string[] | null {
     current = '';
   };
 
-  for (let index = 0; index < command.length; index += 1) {
+  for (let index = 0; index < command.length; index++) {
     const ch = command[index] ?? '';
 
     if (escaped) {
@@ -101,7 +101,7 @@ function tokenizeShellWords(command: string): string[] | null {
 function stripLeadingEnvAssignmentTokens(tokens: readonly string[]): string[] {
   let index = 0;
   while (index < tokens.length && /^[A-Za-z_][A-Za-z0-9_]*=/.test(tokens[index] ?? '')) {
-    index += 1;
+    index++;
   }
   return tokens.slice(index);
 }
@@ -118,7 +118,7 @@ function normalizeHappierToolsTokens(tokens: readonly string[]): string[] | null
   if (tokens[0] === 'happier' && tokens[1] === 'tools') return [...tokens];
   if (!isRuntimeExecutableToken(tokens[0] ?? '')) return null;
 
-  for (let index = 1; index < tokens.length - 2; index += 1) {
+  for (let index = 1; index < tokens.length - 2; index++) {
     if (!isLikelyHappierCliEntrypointToken(tokens[index] ?? '')) continue;
     if (tokens[index + 1] !== 'tools') continue;
     return ['happier', ...tokens.slice(index + 1)];
@@ -132,7 +132,7 @@ export function parseHappierToolsShellBridgeCommand(command: string): HappierToo
   if (!rawCommand) return null;
 
   let stripped = rawCommand;
-  for (let index = 0; index < 5; index += 1) {
+  for (let index = 0; index < 5; index++) {
     const next = stripSimpleUnsetPrelude(stripped).trim();
     if (next === stripped) break;
     stripped = next;
