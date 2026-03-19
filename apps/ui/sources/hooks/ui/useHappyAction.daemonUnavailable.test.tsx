@@ -138,4 +138,51 @@ describe('useHappyAction (daemon unavailable)', () => {
             expect.any(Array),
         );
     });
+
+    it('can queue a rerun after the current request completes', async () => {
+        vi.resetModules();
+        modalAlertSpy.mockClear();
+
+        let resolveFirst: null | (() => void) = null;
+        const firstPromise = new Promise<void>((resolve) => {
+            resolveFirst = resolve;
+        });
+        const action = vi
+            .fn<() => Promise<void>>()
+            .mockImplementationOnce(async () => {
+                await firstPromise;
+            })
+            .mockResolvedValueOnce(undefined);
+
+        const { useHappyAction } = await import('./useHappyAction');
+
+        let doAction: null | (() => void) = null;
+        function Test() {
+            const [_loading, run] = useHappyAction(action, { mode: 'rerun_latest' });
+            doAction = run;
+            return null;
+        }
+
+        await act(async () => {
+            renderer.create(React.createElement(Test));
+        });
+        if (!doAction) throw new Error('expected doAction to be set');
+
+        act(() => {
+            doAction!();
+            doAction!();
+        });
+
+        expect(action).toHaveBeenCalledTimes(1);
+        if (!resolveFirst) throw new Error('expected resolveFirst to be set');
+
+        await act(async () => {
+            resolveFirst!();
+            await new Promise((r) => setTimeout(r, 0));
+            await new Promise((r) => setTimeout(r, 0));
+        });
+
+        expect(action).toHaveBeenCalledTimes(2);
+        expect(modalAlertSpy).not.toHaveBeenCalled();
+    });
 });
