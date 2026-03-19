@@ -40,7 +40,12 @@ describe('SessionContinueWithReplayRequestSchema', () => {
       strategy: 'summary_plus_recent',
       recentMessagesCount: 16,
       seedMode: 'draft',
-      summaryRunner: { v: 1, backendId: 'claude', modelId: 'default', permissionMode: 'no_tools' },
+      summaryRunner: {
+        v: 1,
+        backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+        modelId: 'default',
+        permissionMode: 'no_tools',
+      },
     });
     expect(parsed.success).toBe(true);
   });
