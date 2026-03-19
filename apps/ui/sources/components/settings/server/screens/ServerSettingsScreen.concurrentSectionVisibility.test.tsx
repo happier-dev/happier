@@ -31,6 +31,7 @@ vi.mock('@/components/ui/lists/ItemList', () => ({
 vi.mock('@/components/settings/server/sections/SavedServersSection', () => ({
     SavedServersSection: (props: any) => React.createElement('SavedServersSection', props),
 }));
+
 vi.mock('@/components/settings/server/sections/ServerRetentionSection', () => ({
     ServerRetentionSection: (props: any) => React.createElement('ServerRetentionSection', props),
 }));
@@ -116,4 +117,3 @@ describe('ServerSettingsScreen (concurrent section visibility)', () => {
         expect(tree.root.findAllByType('ServerGroupsSection' as any)).toHaveLength(1);
     });
 });
-
