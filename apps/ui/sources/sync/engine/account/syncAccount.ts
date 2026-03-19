@@ -7,7 +7,7 @@ import type { Encryption } from '@/sync/encryption/encryption';
 import type { Profile } from '@/sync/domains/profiles/profile';
 import { profileParse } from '@/sync/domains/profiles/profile';
 import { settingsParse, SUPPORTED_SCHEMA_VERSION } from '@/sync/domains/settings/settings';
-import { pickLocalOnlyServerSelectionSettings } from '@/sync/domains/settings/localOnlyServerSelectionSettings';
+import { pickLocalOnlyAccountSettings } from '@/sync/domains/settings/localOnlyAccountSettings';
 import { TokenStorage, type AuthCredentials } from '@/auth/storage/tokenStorage';
 import { HappyError } from '@/utils/errors/errors';
 import { listServerProfiles } from '@/sync/domains/server/serverProfiles';
@@ -77,10 +77,10 @@ export async function handleUpdateAccountSocketUpdate(params: {
             const sealedSettings = sealSecretsDeep(parsedSettings, secretsKey);
 
             const localSettings = settingsParse(getLocalSettings ? getLocalSettings() : {});
-            const localServerSelectionSettings = pickLocalOnlyServerSelectionSettings(localSettings);
+            const localOnlyAccountSettings = pickLocalOnlyAccountSettings(localSettings);
             const mergedSettings = {
                 ...sealedSettings,
-                ...localServerSelectionSettings,
+                ...localOnlyAccountSettings,
             };
 
             applySettings(mergedSettings, version);
@@ -110,10 +110,10 @@ export async function handleUpdateAccountSocketUpdate(params: {
             }
 
             const localSettings = settingsParse(getLocalSettings ? getLocalSettings() : {});
-            const localServerSelectionSettings = pickLocalOnlyServerSelectionSettings(localSettings);
+            const localOnlyAccountSettings = pickLocalOnlyAccountSettings(localSettings);
             const mergedSettings = {
                 ...parsedSettings,
-                ...localServerSelectionSettings,
+                ...localOnlyAccountSettings,
             };
 
             applySettings(mergedSettings, accountUpdate.settings.version);

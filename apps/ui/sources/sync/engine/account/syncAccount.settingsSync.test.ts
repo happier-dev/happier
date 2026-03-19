@@ -24,6 +24,7 @@ vi.mock('@/sync/encryption/secretSettings', async (importOriginal) => {
 
 const settingsState: { current: Record<string, unknown> } = {
     current: {
+        lastUsedAgent: 'codex',
         serverSelectionGroups: [
             { id: 'grp-dev', name: 'Dev', serverIds: ['server-a', 'server-b'], presentation: 'grouped' },
         ],
@@ -35,6 +36,7 @@ const settingsState: { current: Record<string, unknown> } = {
 describe('handleUpdateAccountSocketUpdate settings merge', () => {
     beforeEach(() => {
         settingsState.current = {
+            lastUsedAgent: 'codex',
             serverSelectionGroups: [
                 { id: 'grp-dev', name: 'Dev', serverIds: ['server-a', 'server-b'], presentation: 'grouped' },
             ],
@@ -82,6 +84,7 @@ describe('handleUpdateAccountSocketUpdate settings merge', () => {
         expect(applySettings).toHaveBeenCalledWith(
             expect.objectContaining({
                 analyticsOptOut: true,
+                lastUsedAgent: 'codex',
                 serverSelectionGroups: [
                     { id: 'grp-dev', name: 'Dev', serverIds: ['server-a', 'server-b'], presentation: 'grouped' },
                 ],
