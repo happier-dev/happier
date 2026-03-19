@@ -19,6 +19,10 @@ import {
   EncryptionCapabilitiesSchema,
 } from './encryptionCapabilities.js';
 import {
+  DEFAULT_MACHINE_TRANSFER_CAPABILITIES,
+  MachineTransferCapabilitiesSchema,
+} from './machineTransferCapabilities.js';
+import {
   DEFAULT_SERVER_CAPABILITIES,
   ServerCapabilitiesSchema,
 } from './serverCapabilities.js';
@@ -28,6 +32,12 @@ export const CapabilitiesSchema = z.object({
   voice: VoiceCapabilitiesSchema.optional().default(DEFAULT_VOICE_CAPABILITIES),
   encryption: EncryptionCapabilitiesSchema.optional().default(DEFAULT_ENCRYPTION_CAPABILITIES),
   server: ServerCapabilitiesSchema.optional().default(DEFAULT_SERVER_CAPABILITIES),
+  machines: z
+    .object({
+      transfer: MachineTransferCapabilitiesSchema.optional().default(DEFAULT_MACHINE_TRANSFER_CAPABILITIES),
+    })
+    .optional()
+    .default({ transfer: DEFAULT_MACHINE_TRANSFER_CAPABILITIES }),
   social: z
     .object({
       friends: SocialFriendsCapabilitiesSchema.optional().default(DEFAULT_SOCIAL_FRIENDS_CAPABILITIES),
