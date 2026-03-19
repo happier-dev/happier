@@ -19,9 +19,9 @@ describe('fetchMessagesPage', () => {
   });
 
   it('includes scope and sidechainId query params when provided', async () => {
-    const fetchSpy = vi.fn(async (_url: string) =>
-      createFakeResponse({ messages: [], hasMore: false, nextAfterSeq: null }, { status: 200 }),
-    );
+    const fetchSpy = vi.fn(async (url: string) => {
+      return createFakeResponse({ messages: [], hasMore: false, nextAfterSeq: null }, { status: 200 });
+    });
     globalThis.fetch = fetchSpy as any;
 
     await fetchMessagesPage({
@@ -43,3 +43,4 @@ describe('fetchMessagesPage', () => {
     expect(url).toContain('sidechainId=sc_1');
   });
 });
+
