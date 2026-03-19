@@ -23,6 +23,7 @@ import { fetchJson } from '../../src/testkit/http';
 import { waitFor } from '../../src/testkit/timing';
 import { createSession, fetchAllMessages } from '../../src/testkit/sessions';
 import { fakeClaudeFixturePath } from '../../src/testkit/fakeClaude';
+import { unwrapSerializedJsonValue } from '../../src/testkit/unwrapSerializedJsonValue';
 
 const run = createRunDirs({ runLabel: 'core' });
 
@@ -303,21 +304,26 @@ describe('core e2e: replaySeedV1 is applied to the first provider prompt but not
     await waitFor(() => ui.isConnected(), { timeoutMs: 20_000 });
     const machineRpc = createDataKeyRpcClient(ui, machineKey);
 
-    const replay = await machineRpc.call(`${daemonMachineId}:${RPC_METHODS.SESSION_CONTINUE_WITH_REPLAY}`, {
-      directory: workspaceDir,
-      agent: 'claude',
-      approvedNewDirectoryCreation: true,
-      replay: {
-        previousSessionId,
-        strategy: 'recent_messages',
-        recentMessagesCount: 16,
-        seedMode: 'draft',
-      },
-    });
-    expect(replay.ok).toBe(true);
-    if (!replay.ok) throw new Error(replay.error ?? 'continueWithReplay failed');
+    let replayResult: unknown = null;
+    await waitFor(async () => {
+      const replay = await machineRpc.call(`${daemonMachineId}:${RPC_METHODS.SESSION_CONTINUE_WITH_REPLAY}`, {
+        directory: workspaceDir,
+        agent: 'claude',
+        approvedNewDirectoryCreation: true,
+        replay: {
+          previousSessionId,
+          strategy: 'recent_messages',
+          recentMessagesCount: 16,
+          seedMode: 'draft',
+        },
+      });
+      if (!replay.ok) return false;
+      replayResult = replay.result;
+      const parsed = SessionContinueWithReplayRpcResultSchema.safeParse(replay.result);
+      return parsed.success && parsed.data.type === 'success';
+    }, { timeoutMs: 30_000 });
 
-    const parsed = SessionContinueWithReplayRpcResultSchema.safeParse(replay.result);
+    const parsed = SessionContinueWithReplayRpcResultSchema.safeParse(replayResult);
     expect(parsed.success).toBe(true);
     if (!parsed.success || parsed.data.type !== 'success') throw new Error('Expected success continueWithReplay response');
     const childSessionId = parsed.data.sessionId;
@@ -366,7 +372,7 @@ describe('core e2e: replaySeedV1 is applied to the first provider prompt but not
 
     await waitFor(async () => {
       const latest = await fetchSessionV2({ baseUrl: server!.baseUrl, token: auth.token, sessionId: childSessionId });
-      const meta = decryptDataKeyBase64(latest.metadataCiphertextBase64, openedChildDek) as any;
+      const meta = unwrapSerializedJsonValue(decryptDataKeyBase64(latest.metadataCiphertextBase64, openedChildDek)) as any;
       const seed = meta?.replaySeedV1;
       if (!seed || seed.v !== 1) return false;
       if (typeof seed.seedText !== 'string') return false;
@@ -415,7 +421,7 @@ describe('core e2e: replaySeedV1 is applied to the first provider prompt but not
       controlToken,
       body: {
         directory: workspaceDir,
-        sessionId: childSessionId2,
+        existingSessionId: childSessionId2,
         terminal: { mode: 'plain' },
       },
     });
@@ -441,7 +447,7 @@ describe('core e2e: replaySeedV1 is applied to the first provider prompt but not
 
     await waitFor(async () => {
       const latest = await fetchSessionV2({ baseUrl: server!.baseUrl, token: auth.token, sessionId: childSessionId2 });
-      const meta = decryptDataKeyBase64(latest.metadataCiphertextBase64, openedChildDek2) as any;
+      const meta = unwrapSerializedJsonValue(decryptDataKeyBase64(latest.metadataCiphertextBase64, openedChildDek2)) as any;
       const seed = meta?.replaySeedV1;
       if (!seed || seed.v !== 1) return false;
       if (typeof seed.seedText !== 'string') return false;
