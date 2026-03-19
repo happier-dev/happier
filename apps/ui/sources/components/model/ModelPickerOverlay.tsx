@@ -15,6 +15,9 @@ export type ModelPickerOption = Readonly<{
 export type ModelPickerProbeState = Readonly<{
     phase: 'idle' | 'loading' | 'refreshing';
     onRefresh?: () => void;
+    refreshAccessibilityLabel?: string;
+    loadingAccessibilityLabel?: string;
+    refreshingAccessibilityLabel?: string;
 }>;
 
 export function ModelPickerOverlay(props: {
@@ -27,6 +30,7 @@ export function ModelPickerOverlay(props: {
     canEnterCustomModel: boolean;
     customLabel?: string;
     customDescription?: string;
+    searchPlaceholder?: string;
     onSelect: (value: string) => void;
     onRequestCustomModel?: () => void | Promise<void>;
     probe?: ModelPickerProbeState;
@@ -48,12 +52,13 @@ export function ModelPickerOverlay(props: {
     }, [normalizedQuery, props.options, showSearch]);
 
     return (
-        <View style={styles.section}>
+        <View testID="model-picker-overlay" style={styles.section}>
             <View style={styles.titleRow}>
                 <Text style={styles.title}>{props.title}</Text>
                     {probe ? (
                         typeof probe.onRefresh === 'function' ? (
                             <Pressable
+                                testID="model-picker-overlay-refresh"
                                 onPress={probe.phase === 'idle' ? probe.onRefresh : undefined}
                             style={({ pressed }) => [
                                 styles.refreshIconButton,
@@ -61,7 +66,7 @@ export function ModelPickerOverlay(props: {
                                 probe.phase !== 'idle' ? styles.refreshIconButtonDisabled : null,
                                 ]}
                                 accessibilityRole="button"
-                                accessibilityLabel={t('modelPickerOverlay.refreshModelsA11y')}
+                                accessibilityLabel={probe.refreshAccessibilityLabel ?? t('modelPickerOverlay.refreshModelsA11y')}
                                 hitSlop={6}
                             >
                                 {probe.phase === 'idle' ? (
@@ -70,8 +75,8 @@ export function ModelPickerOverlay(props: {
                                     <ActivityIndicator
                                         size="small"
                                         accessibilityLabel={probe.phase === 'loading'
-                                            ? t('modelPickerOverlay.loadingModelsA11y')
-                                            : t('modelPickerOverlay.refreshingModelsA11y')}
+                                            ? (probe.loadingAccessibilityLabel ?? t('modelPickerOverlay.loadingModelsA11y'))
+                                            : (probe.refreshingAccessibilityLabel ?? t('modelPickerOverlay.refreshingModelsA11y'))}
                                     />
                                 )}
                             </Pressable>
@@ -80,14 +85,14 @@ export function ModelPickerOverlay(props: {
                                 <ActivityIndicator
                                     size="small"
                                     accessibilityLabel={probe.phase === 'loading'
-                                        ? t('modelPickerOverlay.loadingModelsA11y')
-                                        : t('modelPickerOverlay.refreshingModelsA11y')}
+                                        ? (probe.loadingAccessibilityLabel ?? t('modelPickerOverlay.loadingModelsA11y'))
+                                        : (probe.refreshingAccessibilityLabel ?? t('modelPickerOverlay.refreshingModelsA11y'))}
                                 />
                             </View>
                         ) : null
                     ) : null}
                 </View>
-                <View style={styles.effectiveBlock}>
+                <View testID="model-picker-overlay-summary" style={styles.effectiveBlock}>
                     <Text style={styles.noteText}>{t('modelPickerOverlay.effectiveLabel', { label: props.effectiveLabel })}</Text>
                     {props.notes.map((note, idx) => (
                         <Text key={idx} style={styles.noteText}>{note}</Text>
@@ -99,9 +104,10 @@ export function ModelPickerOverlay(props: {
                         {showSearch ? (
                             <View style={styles.searchContainer}>
                                 <TextInput
+                                    testID="model-picker-overlay-search"
                                     value={query}
                                     onChangeText={setQuery}
-                                    placeholder={t('modelPickerOverlay.searchPlaceholder')}
+                                    placeholder={props.searchPlaceholder ?? t('modelPickerOverlay.searchPlaceholder')}
                                     placeholderTextColor={theme.colors.input.placeholder}
                                     autoCorrect={false}
                                     autoCapitalize="none"
@@ -114,6 +120,7 @@ export function ModelPickerOverlay(props: {
                         const isSelected = option.value === props.selectedValue;
                         return (
                             <Pressable
+                                testID={`model-picker-overlay-option:${option.value}`}
                                 key={option.value}
                                 onPress={() => props.onSelect(option.value)}
                                 style={({ pressed }) => [
@@ -137,6 +144,7 @@ export function ModelPickerOverlay(props: {
                     })}
                     {props.canEnterCustomModel && props.onRequestCustomModel ? (
                         <Pressable
+                            testID="model-picker-overlay-custom"
                             onPress={props.onRequestCustomModel}
                             style={({ pressed }) => [styles.row, pressed ? styles.rowPressed : null]}
                         >

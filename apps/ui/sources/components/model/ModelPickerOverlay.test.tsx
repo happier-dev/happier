@@ -74,6 +74,8 @@ describe('ModelPickerOverlay', () => {
 
         const fastOption = findPressableByLabel(tree!, 'Fast');
         expect(fastOption).toBeTruthy();
+        expect(fastOption?.props?.testID).toBe('model-picker-overlay-option:fast');
+        expect(() => tree!.root.findByProps({ testID: 'model-picker-overlay-summary' })).not.toThrow();
 
         act(() => {
             fastOption?.props?.onPress?.();
@@ -256,11 +258,49 @@ describe('ModelPickerOverlay', () => {
 
         const refreshButton = findPressableByAccessibilityLabel(tree!, 'modelPickerOverlay.refreshModelsA11y');
         expect(refreshButton).toBeTruthy();
+        expect(refreshButton?.props?.testID).toBe('model-picker-overlay-refresh');
 
         act(() => {
             refreshButton?.props?.onPress?.();
         });
 
         expect(onRefresh).toHaveBeenCalledTimes(1);
+    });
+
+    it('uses caller-provided search and refresh copy when supplied', async () => {
+        const onRefresh = vi.fn();
+        const { ModelPickerOverlay } = await import('./ModelPickerOverlay');
+
+        let tree: ReturnType<typeof renderer.create> | undefined;
+        act(() => {
+            tree = renderer.create(
+                <ModelPickerOverlay
+                    title="Branches"
+                    effectiveLabel="Current branch"
+                    notes={[]}
+                    options={Array.from({ length: 12 }).map((_, index) => ({
+                        value: `branch-${index}`,
+                        label: `Branch ${index}`,
+                        description: '',
+                    }))}
+                    selectedValue="branch-0"
+                    emptyText="empty"
+                    canEnterCustomModel={false}
+                    onSelect={() => {}}
+                    searchPlaceholder="Search branches…"
+                    probe={{
+                        phase: 'idle',
+                        onRefresh,
+                        refreshAccessibilityLabel: 'Refresh branches',
+                    }}
+                />,
+            );
+        });
+
+        const searchInput = tree!.root.findByProps({ testID: 'model-picker-overlay-search' });
+        expect(searchInput.props.placeholder).toBe('Search branches…');
+
+        const refreshButton = tree!.root.findByProps({ testID: 'model-picker-overlay-refresh' });
+        expect(refreshButton.props.accessibilityLabel).toBe('Refresh branches');
     });
 });
