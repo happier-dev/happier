@@ -18,9 +18,7 @@ function resetSettingValues() {
 
 resetSettingValues();
 
-vi.mock('react-native-unistyles', () => ({
-    useUnistyles: () => ({ theme: { dark: false } }),
-}));
+vi.mock('react-native', async () => await import('@/dev/reactNativeStub'));
 
 vi.mock('@/sync/domains/state/storage', () => ({
     useSetting: (key: string) => {
@@ -72,6 +70,44 @@ vi.mock('@pierre/diffs/react', async () => {
 describe('PierreDiffViewer (web)', () => {
     beforeEach(() => {
         resetSettingValues();
+    });
+
+    it('inherits maxHeight on the wrapper when virtualized', async () => {
+        fileDiffSpy.mockClear();
+        virtualizerSpy.mockClear();
+
+        const { PierreDiffViewer } = await import('./PierreDiffViewer.web');
+
+        const patch = [
+            'diff --git a/a.ts b/a.ts',
+            '--- a/a.ts',
+            '+++ b/a.ts',
+            '@@ -1,1 +1,1 @@',
+            '-foo',
+            '+bar',
+            '',
+        ].join('\n');
+
+        let tree: renderer.ReactTestRenderer;
+        renderer.act(() => {
+            tree = renderer.create(
+                <div style={{ maxHeight: 320 }}>
+                    <PierreDiffViewer
+                        mode="unified"
+                        filePath="src/a.ts"
+                        unifiedDiff={patch}
+                        wrapLines={true}
+                        showLineNumbers={true}
+                        showPrefix={true}
+                        virtualized={true}
+                    />
+                </div>,
+            );
+        });
+
+        // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
+        const wrapper = tree!.root.findByProps({ 'data-testid': 'pierre-diff-viewer' });
+        expect(wrapper.props.style?.maxHeight).toBe('inherit');
     });
 
     it('passes tokenization budgets into Pierre options', async () => {

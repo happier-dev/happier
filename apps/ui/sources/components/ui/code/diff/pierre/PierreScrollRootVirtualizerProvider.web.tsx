@@ -2,6 +2,7 @@ import * as React from 'react';
 
 import { Virtualizer as PierreVirtualizer } from '@pierre/diffs';
 import { VirtualizerContext } from '@pierre/diffs/react';
+import { iterateWebDescendantElements } from '@/components/ui/scroll/resolveWebScrollableElement';
 
 type ScrollToPatchRecord = Readonly<{
     original: ((...args: any[]) => any) | null;
@@ -67,8 +68,7 @@ function findNearestScrollRoot(anchor: HTMLElement): HTMLElement | Document {
         steps += 1;
     }
 
-    const descendants = Array.from(anchor.querySelectorAll('*')) as HTMLElement[];
-    for (const candidate of descendants) {
+    for (const candidate of iterateWebDescendantElements(anchor, { maxNodes: 1500 })) {
         if (!isElementScrollable(candidate)) continue;
         addCandidate(candidate, 'descendant', computeDescendantDepth(candidate));
     }
@@ -98,10 +98,14 @@ function patchElementScrollToOptionsIfNeeded(el: HTMLElement): void {
         return;
     }
 
-    // Detect whether this browser supports Element.scrollTo(ScrollToOptions). Some RN-web stacks
-    // expose `scrollTo` but ignore object arguments (no-op, no throw). Pierre uses object args
-    // for its scroll-fix logic; when ignored, the scroll position can "snap" back to the top
-    // during virtualization.
+    // Detect whether this browser supports Element.scrollTo(ScrollToOptions).
+    //
+    // Some environments (notably RN-web ScrollView hosts) expose `scrollTo` but:
+    // - ignore DOM-style ScrollToOptions objects ({ top, left, behavior }) (no-op, no throw), and/or
+    // - support only RN-style objects ({ x, y, animated }) or deprecated numeric signatures.
+    //
+    // Pierre uses DOM-style options objects for its scroll-fix logic; when ignored or translated
+    // incorrectly, the scroll position can "snap" back to the top during virtualization.
     const maxTop = Math.max(0, el.scrollHeight - el.clientHeight);
     const maxLeft = Math.max(0, el.scrollWidth - el.clientWidth);
 
@@ -137,11 +141,53 @@ function patchElementScrollToOptionsIfNeeded(el: HTMLElement): void {
         return;
     }
 
+    // RN-web ScrollView hosts typically support object args, but use {x,y} instead of DOM {top,left}.
+    // Prefer that path when available so we do not rely on `scrollTop` assignment (which may be ignored
+    // depending on how the scroll container is implemented).
+    let supportsXYOptions = false;
+    if (maxTop > 0 || maxLeft > 0) {
+        const beforeTop = el.scrollTop;
+        const beforeLeft = el.scrollLeft;
+        const probeTop = maxTop > 0
+            ? (beforeTop < maxTop ? beforeTop + 1 : Math.max(0, beforeTop - 1))
+            : beforeTop;
+        const probeLeft = maxLeft > 0
+            ? (beforeLeft < maxLeft ? beforeLeft + 1 : Math.max(0, beforeLeft - 1))
+            : beforeLeft;
+        try {
+            nativeScrollTo({ y: probeTop, x: probeLeft, animated: false } as any);
+            supportsXYOptions = el.scrollTop !== beforeTop || el.scrollLeft !== beforeLeft;
+        } catch {
+            supportsXYOptions = false;
+        } finally {
+            try {
+                el.scrollLeft = beforeLeft;
+                el.scrollTop = beforeTop;
+            } catch {
+                // ignore
+            }
+        }
+    }
+
     const patched = (...args: any[]) => {
         const first = args[0];
         if (first && typeof first === 'object') {
+            // Pass through RN-web-style objects ({x,y,animated}) untouched.
+            if ('x' in first || 'y' in first) {
+                return nativeScrollTo(first);
+            }
+
             const top = typeof first.top === 'number' && Number.isFinite(first.top) ? first.top : el.scrollTop;
             const left = typeof first.left === 'number' && Number.isFinite(first.left) ? first.left : el.scrollLeft;
+
+            if (supportsXYOptions) {
+                try {
+                    return nativeScrollTo({ x: left, y: top, animated: false } as any);
+                } catch {
+                    // ignore (fall back below)
+                }
+            }
+
             // Ignore non-standard `behavior: 'instant'` and other behavior hints. Pierre uses these
             // primarily as "not smooth"; numeric scrolling is deterministic across browsers.
             try {
@@ -149,8 +195,9 @@ function patchElementScrollToOptionsIfNeeded(el: HTMLElement): void {
             } catch {
                 // ignore (we'll fall back to direct assignment below)
             }
-            // Some environments expose Element.scrollTo but implement it as a no-op (especially
-            // in RN-web wrappers). Ensure the scroll position actually updates.
+            // Some environments expose Element.scrollTo but implement it as a no-op. Ensure the
+            // scroll position actually updates (best-effort; in some RN-web implementations this
+            // assignment can be ignored, hence the `supportsXYOptions` preferred path above).
             if (el.scrollTop !== top || el.scrollLeft !== left) {
                 try {
                     el.scrollLeft = left;
