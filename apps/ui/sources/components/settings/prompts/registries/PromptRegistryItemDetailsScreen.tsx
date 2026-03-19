@@ -26,7 +26,7 @@ import { useHappyAction } from '@/hooks/ui/useHappyAction';
 import { Modal } from '@/modal';
 import { useAllMachines, useSettingMutable } from '@/sync/domains/state/storage';
 import { machinePromptAssetsListTypes } from '@/sync/ops/machinePromptAssets';
-import { machinePromptRegistriesFetchItem } from '@/sync/ops/machinePromptRegistries';
+import { machinePromptRegistriesDownloadItem } from '@/sync/ops/machinePromptRegistries';
 import { installPromptRegistryItem } from '@/sync/ops/promptLibrary/installPromptRegistryItem';
 import { createPromptRegistrySkillArtifactFromFetchedItem } from '@/sync/ops/promptLibrary/promptRegistrySkillImports';
 import { translatePromptLibraryMessage } from '@/sync/ops/promptLibrary/translatePromptLibraryMessage';
@@ -120,7 +120,7 @@ export const PromptRegistryItemDetailsScreen = React.memo(function PromptRegistr
 
   const loadItem = React.useCallback(async () => {
     if (!selectedMachineId) return;
-    const response = await machinePromptRegistriesFetchItem(selectedMachineId, {
+    const response = await machinePromptRegistriesDownloadItem(selectedMachineId, {
       sourceId: props.sourceId,
       itemId: props.itemId,
       configuredSources: props.configuredSources,

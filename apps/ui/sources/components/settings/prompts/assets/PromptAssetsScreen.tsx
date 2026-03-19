@@ -17,7 +17,7 @@ import { ItemRowActions } from '@/components/ui/lists/ItemRowActions';
 import { useHappyAction } from '@/hooks/ui/useHappyAction';
 import { Modal } from '@/modal';
 import { useAllMachines, useArtifacts, useSettingMutable } from '@/sync/domains/state/storage';
-import { machinePromptAssetsDelete, machinePromptAssetsDiscover, machinePromptAssetsListTypes, machinePromptAssetsRead } from '@/sync/ops/machinePromptAssets';
+import { machinePromptAssetsDelete, machinePromptAssetsDiscover, machinePromptAssetsDownload, machinePromptAssetsListTypes } from '@/sync/ops/machinePromptAssets';
 import { removePromptExternalLink } from '@/sync/ops/promptLibrary/promptDocs';
 import { importPromptAssetToLibrary } from '@/sync/ops/promptLibrary/importPromptAssetToLibrary';
 import { usePrimaryMachineFromActiveSelection } from '@/components/settings/server/hooks/usePrimaryMachineFromActiveSelection';
@@ -208,7 +208,7 @@ export const PromptAssetsScreen = React.memo(function PromptAssetsScreen() {
             Modal.alert(t('common.error'), t('promptLibrary.externalAssetsProjectDirectoryRequired'));
             return;
         }
-        const response = await machinePromptAssetsRead(
+        const response = await machinePromptAssetsDownload(
             machineId,
             {
                 assetTypeId: item.assetTypeId,
