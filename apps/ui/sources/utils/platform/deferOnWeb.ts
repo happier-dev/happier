@@ -1,4 +1,5 @@
 import { Platform } from 'react-native';
+export { blurActiveElementOnWeb, navigateWithBlurOnWeb } from './navigateWithBlurOnWeb';
 
 /**
  * Best-effort helper for web: defer UI state mutations that would immediately
