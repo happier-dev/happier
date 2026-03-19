@@ -1,3 +1,4 @@
+import { readStoredSessionMessages } from '@/sync/domains/messages/readStoredSessionMessages';
 import { storage } from '@/sync/domains/state/storage';
 
 export async function getSessionActivityForVoiceTool(params: Readonly<{ sessionId: string; windowSeconds?: number }>): Promise<
@@ -14,7 +15,7 @@ export async function getSessionActivityForVoiceTool(params: Readonly<{ sessionI
   const requests = (session?.agentState?.requests ?? {}) as Record<string, unknown>;
   const permissionRequestIds = Object.keys(requests);
 
-  const messages = (state?.sessionMessages?.[sessionId]?.messages ?? []) as any[];
+  const messages = readStoredSessionMessages(state, sessionId) as any[];
   const messageCounts = messages.reduce(
     (acc, m) => {
       const kind = m?.kind;
@@ -37,4 +38,3 @@ export async function getSessionActivityForVoiceTool(params: Readonly<{ sessionI
     messageCounts,
   };
 }
-
