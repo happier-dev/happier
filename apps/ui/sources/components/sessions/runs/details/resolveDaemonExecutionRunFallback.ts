@@ -3,6 +3,7 @@ import type { Message } from '@/sync/domains/messages/messageTypes';
 
 import { machineExecutionRunsList } from '@/sync/ops/machineExecutionRuns';
 import { storage } from '@/sync/domains/state/storage';
+import { readDisplayMachineIdForSession } from '@/sync/ops/sessionMachineTarget';
 import { resolveServerIdForSessionIdFromLocalCache } from '@/sync/runtime/orchestration/serverScopedRpc/resolveServerIdForSessionIdFromLocalCache';
 import { t } from '@/text';
 
@@ -23,8 +24,11 @@ function readNonEmptyString(value: unknown): string | null {
 
 function resolveSessionMachineId(sessionId: string): string | null {
     const session = storage.getState().sessions?.[sessionId];
-    const rawMachineId = session?.metadata?.machineId;
-    return typeof rawMachineId === 'string' && rawMachineId.trim().length > 0 ? rawMachineId.trim() : null;
+    const machineId = readDisplayMachineIdForSession({
+        sessionId,
+        metadata: session?.metadata ?? null,
+    });
+    return machineId || null;
 }
 
 function buildDaemonProcessLine(entry: DaemonExecutionRunEntry | null): string | null {
