@@ -16,7 +16,7 @@
           "slash_command",
           "voice_panel"
         ],
-        "slash": { "tokens": ["/h.review"] },
+        "slash": { "tokens": ["/review", "/h.review"] },
         "bindings": { "voiceClientToolName": "startReview", "mcpToolName": "review_start" },
         "examples": {
           "voice": {
@@ -40,4 +40,3 @@
     ]
   }
 }
-
