@@ -6,6 +6,39 @@ function stripDiffPrefix(path: string): string {
     return path.replace(/^(a\/|b\/)/, '');
 }
 
+function parseApplyPatchTextChanges(patchText: string): Record<string, unknown> | null {
+    const lines = patchText.replace(/\r\n/g, '\n').split('\n');
+    const changes: Record<string, unknown> = {};
+    let currentFilePath: string | null = null;
+
+    for (const line of lines) {
+        const match = line.match(/^\*\*\*\s+(Update File|Add File|Delete File):\s+(.+)\s*$/);
+        if (match) {
+            const filePath = match[2]?.trim();
+            if (!filePath) continue;
+
+            const label = String(match[1]).toLowerCase();
+            const type = label.startsWith('add') ? 'add' : label.startsWith('delete') ? 'delete' : 'update';
+            changes[filePath] = { type };
+            currentFilePath = filePath;
+            continue;
+        }
+
+        const moveMatch = line.match(/^\*\*\*\s+Move to:\s+(.+)\s*$/);
+        if (!moveMatch || !currentFilePath) continue;
+        const movedPath = moveMatch[1]?.trim();
+        if (!movedPath) continue;
+
+        const change = changes[currentFilePath];
+        if (!change) continue;
+        delete changes[currentFilePath];
+        changes[movedPath] = change;
+        currentFilePath = movedPath;
+    }
+
+    return Object.keys(changes).length > 0 ? changes : null;
+}
+
 function parseUnifiedDiffFileBlock(unifiedDiff: string): {
     filePath: string | null;
     change: PatchChangeRecord | null;
@@ -102,7 +135,11 @@ export function normalizePatchFromUnifiedDiff(input: Record<string, unknown>): R
                 ? input.diff
                 : typeof input.patch === 'string'
                     ? input.patch
-                    : null;
+                    : typeof input['patchText'] === 'string'
+                        ? (input['patchText'] as string)
+                        : typeof input['patch_text'] === 'string'
+                            ? (input['patch_text'] as string)
+                            : null;
     if (!diff || diff.trim().length === 0) return null;
 
     const blocks = diff.split(/\n(?=diff --git )/g);
@@ -114,7 +151,11 @@ export function normalizePatchFromUnifiedDiff(input: Record<string, unknown>): R
         changes[filePath] = change;
     }
 
-    if (Object.keys(changes).length === 0) return null;
-    return { ...input, changes };
-}
+    if (Object.keys(changes).length > 0) {
+        return { ...input, changes };
+    }
 
+    const inferred = parseApplyPatchTextChanges(diff);
+    if (!inferred) return null;
+    return { ...input, changes: inferred };
+}
