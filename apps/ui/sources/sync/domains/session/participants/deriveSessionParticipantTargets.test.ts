@@ -841,7 +841,7 @@ describe('deriveSessionParticipantTargets', () => {
         ).toBe(true);
     });
 
-    it('removes broadcast and members after AgentTeamDelete for the same team', () => {
+    it('preserves broadcast and members when AgentTeamDelete fails for the same team', () => {
         const messages: Message[] = [
             createToolMessage({
                 id: 'create1',
