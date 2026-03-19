@@ -250,6 +250,44 @@ describe.sequential('doAuth (non-interactive)', () => {
     }
   }, 15_000);
 
+  it('keeps localhost in web auth links and describes it as same-machine only', async () => {
+    const home = await mkdtemp(join(tmpdir(), 'happier-cli-auth-noninteractive-web-loopback-'));
+    const envScope = createEnvKeyScope(envKeys);
+    const restoreTty = setStdioTtyForTest({ stdin: false, stdout: false });
+    const output = captureConsoleLogAndMuteStdout();
+    displayQRCodeMock.mockClear();
+
+    try {
+      envScope.patch({
+        HAPPIER_HOME_DIR: home,
+        HAPPIER_SERVER_URL: 'http://localhost:3010',
+        HAPPIER_WEBAPP_URL: 'http://happier-dev-auth.localhost:8082',
+        HAPPIER_PUBLIC_SERVER_URL: undefined,
+        HAPPIER_TAILSCALE_AUTO_PUBLIC_URL: '0',
+        HAPPIER_NO_BROWSER_OPEN: '1',
+        HAPPIER_AUTH_POLL_INTERVAL_MS: '1',
+        HAPPIER_AUTH_METHOD: 'web',
+      });
+
+      vi.resetModules();
+      const { doAuth } = await import('./auth');
+
+      const creds = await doAuth();
+      expect(creds?.token).toBe('tok');
+
+      const out = output.logs.join('\n').toLowerCase();
+      expect(out).toContain(encodeURIComponent('http://localhost:3010').toLowerCase());
+      expect(out).toContain('same machine');
+      expect(out).not.toContain('same lan');
+      expect(out).toContain('does not include a server url');
+    } finally {
+      output.restore();
+      restoreTty();
+      envScope.restore();
+      await rm(home, { recursive: true, force: true });
+    }
+  }, 15_000);
+
   it('uses apiServerUrl for auth API calls when HAPPIER_PUBLIC_SERVER_URL is set', async () => {
     const home = await mkdtemp(join(tmpdir(), 'happier-cli-auth-noninteractive-apiServerUrl-'));
     const envScope = createEnvKeyScope(envKeys);

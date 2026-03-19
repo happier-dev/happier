@@ -87,6 +87,14 @@ function printServerUrlReachabilityHint(serverUrl: string): void {
         return;
     }
 
+    if (isLoopbackServerHost(serverUrl) && url?.protocol !== 'https:') {
+        console.log('Note: your server URL is a localhost/loopback URL.');
+        console.log('This will work only on this same machine.');
+        console.log('For remote/phone access, use an HTTPS URL (Tailscale Serve or a reverse proxy) as your server URL.');
+        console.log('');
+        return;
+    }
+
     if (isLocalishServerUrl(serverUrl) && url?.protocol !== 'https:') {
         console.log('Note: your server URL looks like a LAN-only URL.');
         console.log('This will work only when your phone/laptop are on the same LAN/VPN.');
