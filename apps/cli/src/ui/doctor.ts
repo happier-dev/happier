@@ -14,9 +14,13 @@ import { readDaemonState, type DaemonLocallyPersistedState } from '@/persistence
 import { existsSync, readdirSync, statSync } from 'node:fs'
 import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
-import { projectPath } from '@/projectPath'
 import packageJson from '../../package.json'
 import { buildDoctorSnapshot, type DoctorSnapshot } from '@/ui/doctorSnapshot'
+import {
+    buildDoctorRuntimeDiagnostics,
+    formatDoctorRuntimeLabel,
+    formatDoctorSpawnPathLabel,
+} from '@/ui/doctorRuntimeDiagnostics'
 
 export function maskValue(value: string): string;
 export function maskValue(value: string | undefined): string | undefined;
@@ -140,20 +144,24 @@ export async function runDoctorCommand(filter?: 'all' | 'daemon'): Promise<void>
         console.log(chalk.bold('📋 Basic Information'));
         console.log(`Happier CLI Version: ${chalk.green(packageJson.version)}`);
         console.log(`Platform: ${chalk.green(process.platform)} ${process.arch}`);
-        console.log(`Node.js Version: ${chalk.green(process.version)}`);
+        const runtimeDiagnostics = buildDoctorRuntimeDiagnostics();
+        console.log(`Runtime: ${chalk.green(formatDoctorRuntimeLabel(runtimeDiagnostics))}`);
+        if (runtimeDiagnostics.runtime !== 'node' && runtimeDiagnostics.nodeCompatibilityVersion) {
+            console.log(`Node compatibility: ${chalk.green(runtimeDiagnostics.nodeCompatibilityVersion)}`);
+        }
         console.log('');
 
         // Daemon spawn diagnostics
         console.log(chalk.bold('🔧 Daemon Spawn Diagnostics'));
-        const projectRoot = projectPath();
-        const wrapperPath = join(projectRoot, 'bin', 'happier.mjs');
-        const cliEntrypoint = join(projectRoot, 'dist', 'index.mjs');
-        
-        console.log(`Project Root: ${chalk.blue(projectRoot)}`);
-        console.log(`Wrapper Script: ${chalk.blue(wrapperPath)}`);
-        console.log(`CLI Entrypoint: ${chalk.blue(cliEntrypoint)}`);
-        console.log(`Wrapper Exists: ${existsSync(wrapperPath) ? chalk.green('✓ Yes') : chalk.red('❌ No')}`);
-        console.log(`CLI Exists: ${existsSync(cliEntrypoint) ? chalk.green('✓ Yes') : chalk.red('❌ No')}`);
+        console.log(`Project Root: ${chalk.blue(runtimeDiagnostics.projectRoot)}`);
+        console.log(`Wrapper Script: ${chalk.blue(formatDoctorSpawnPathLabel(runtimeDiagnostics.wrapperPath))}`);
+        console.log(`CLI Entrypoint: ${chalk.blue(formatDoctorSpawnPathLabel(runtimeDiagnostics.cliEntrypointPath))}`);
+        if (runtimeDiagnostics.wrapperExists !== null) {
+            console.log(`Wrapper Exists: ${runtimeDiagnostics.wrapperExists ? chalk.green('✓ Yes') : chalk.red('❌ No')}`);
+        }
+        if (runtimeDiagnostics.cliEntrypointExists !== null) {
+            console.log(`CLI Exists: ${runtimeDiagnostics.cliEntrypointExists ? chalk.green('✓ Yes') : chalk.red('❌ No')}`);
+        }
         console.log('');
 
         // Configuration
