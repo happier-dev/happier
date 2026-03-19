@@ -1,7 +1,9 @@
-import { getAgentModelConfig, getAgentSessionModesKind } from '@happier-dev/agents';
-
 import type { AgentCoreConfig } from '@/agents/registry/registryCore';
+import { buildCatalogProviderCliUiConfig } from '@/agents/providers/shared/buildCatalogProviderCliUiConfig';
 import { buildAgentResumeUiConfig } from '@/agents/registry/buildAgentResumeUiConfig';
+import { buildAgentSessionStorageUiConfig } from '@/agents/registry/buildAgentSessionStorageUiConfig';
+import { buildAgentToolsUiConfig } from '@/agents/registry/buildAgentToolsUiConfig';
+import { getAgentModelConfig, getAgentSessionModesKind } from '@happier-dev/agents';
 
 export const PI_CORE: AgentCoreConfig = {
     id: 'pi',
@@ -15,16 +17,7 @@ export const PI_CORE: AgentCoreConfig = {
         connectRoute: null,
     },
     flavorAliases: ['pi', 'pi-coding-agent'],
-    cli: {
-        detectKey: 'pi',
-        machineLoginKey: 'pi',
-        installBanner: {
-            installKind: 'command',
-            installCommand: 'npm install -g @mariozechner/pi-coding-agent@latest',
-            guideUrl: 'https://github.com/badlogic/pi-mono',
-        },
-        spawnAgent: 'pi',
-    },
+    cli: buildCatalogProviderCliUiConfig('pi'),
     permissions: {
         modeGroup: 'codexLike',
         promptProtocol: 'codexDecision',
@@ -41,6 +34,8 @@ export const PI_CORE: AgentCoreConfig = {
     toolRendering: {
         hideUnknownToolsByDefault: true,
     },
+    tools: buildAgentToolsUiConfig({ agentId: 'pi' }),
+    sessionStorage: buildAgentSessionStorageUiConfig({ agentId: 'pi' }),
     ui: {
         agentPickerIconName: 'code-slash-outline',
         cliGlyphScale: 1.0,

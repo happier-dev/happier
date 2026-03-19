@@ -1,43 +1,45 @@
 import type { AgentCoreConfig } from '@/agents/registry/registryCore';
 import { buildCatalogProviderCliUiConfig } from '@/agents/providers/shared/buildCatalogProviderCliUiConfig';
+import { buildAgentLocalControlUiConfig } from '@/agents/registry/buildAgentLocalControlUiConfig';
 import { buildAgentResumeUiConfig } from '@/agents/registry/buildAgentResumeUiConfig';
 import { buildAgentSessionStorageUiConfig } from '@/agents/registry/buildAgentSessionStorageUiConfig';
 import { buildAgentToolsUiConfig } from '@/agents/registry/buildAgentToolsUiConfig';
 import { getAgentModelConfig, getAgentSessionModesKind } from '@happier-dev/agents';
 
-export const AUGGIE_CORE: AgentCoreConfig = {
-    id: 'auggie',
-    displayNameKey: 'agentInput.agent.auggie',
-    subtitleKey: 'profiles.aiBackend.auggieSubtitle',
+export const KIRO_CORE: AgentCoreConfig = {
+    id: 'kiro',
+    displayNameKey: 'agentInput.agent.kiro',
+    subtitleKey: 'profiles.aiBackend.kiroSubtitleExperimental',
     permissionModeI18nPrefix: 'agentInput.codexPermissionMode',
     availability: { experimental: true },
     connectedService: {
         id: null,
-        name: 'Auggie',
+        name: 'Kiro',
         connectRoute: null,
     },
-    flavorAliases: ['auggie'],
-    cli: buildCatalogProviderCliUiConfig('auggie'),
+    flavorAliases: ['kiro', 'kiro-cli'],
+    cli: buildCatalogProviderCliUiConfig('kiro'),
     permissions: {
         modeGroup: 'codexLike',
         promptProtocol: 'codexDecision',
     },
     sessionModes: {
-        kind: getAgentSessionModesKind('auggie'),
+        kind: getAgentSessionModesKind('kiro'),
     },
-    model: getAgentModelConfig('auggie'),
+    model: getAgentModelConfig('kiro'),
     resume: buildAgentResumeUiConfig({
-        agentId: 'auggie',
-        uiVendorResumeIdLabelKey: 'sessionInfo.auggieSessionId',
-        uiVendorResumeIdCopiedKey: 'sessionInfo.auggieSessionIdCopied',
+        agentId: 'kiro',
+        uiVendorResumeIdLabelKey: 'sessionInfo.kiroSessionId',
+        uiVendorResumeIdCopiedKey: 'sessionInfo.kiroSessionIdCopied',
     }),
+    localControl: buildAgentLocalControlUiConfig({ agentId: 'kiro' }),
     toolRendering: {
         hideUnknownToolsByDefault: false,
     },
-    tools: buildAgentToolsUiConfig({ agentId: 'auggie' }),
-    sessionStorage: buildAgentSessionStorageUiConfig({ agentId: 'auggie' }),
+    tools: buildAgentToolsUiConfig({ agentId: 'kiro' }),
+    sessionStorage: buildAgentSessionStorageUiConfig({ agentId: 'kiro' }),
     ui: {
-        agentPickerIconName: 'sparkles',
+        agentPickerIconName: 'flash-outline',
         cliGlyphScale: 1.0,
         profileCompatibilityGlyphScale: 1.0,
     },

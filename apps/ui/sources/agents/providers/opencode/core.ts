@@ -1,5 +1,9 @@
 import type { AgentCoreConfig } from '@/agents/registry/registryCore';
+import { buildCatalogProviderCliUiConfig } from '@/agents/providers/shared/buildCatalogProviderCliUiConfig';
+import { buildAgentLocalControlUiConfig } from '@/agents/registry/buildAgentLocalControlUiConfig';
 import { buildAgentResumeUiConfig } from '@/agents/registry/buildAgentResumeUiConfig';
+import { buildAgentSessionStorageUiConfig } from '@/agents/registry/buildAgentSessionStorageUiConfig';
+import { buildAgentToolsUiConfig } from '@/agents/registry/buildAgentToolsUiConfig';
 import { getAgentModelConfig, getAgentSessionModesKind } from '@happier-dev/agents';
 
 export const OPENCODE_CORE: AgentCoreConfig = {
@@ -14,16 +18,7 @@ export const OPENCODE_CORE: AgentCoreConfig = {
         connectRoute: null,
     },
     flavorAliases: ['opencode', 'open-code'],
-    cli: {
-        detectKey: 'opencode',
-        machineLoginKey: 'opencode',
-        installBanner: {
-            installKind: 'command',
-            installCommand: 'curl -fsSL https://opencode.ai/install | bash',
-            guideUrl: 'https://opencode.ai/docs',
-        },
-        spawnAgent: 'opencode',
-    },
+    cli: buildCatalogProviderCliUiConfig('opencode'),
     permissions: {
         modeGroup: 'codexLike',
         promptProtocol: 'codexDecision',
@@ -37,9 +32,12 @@ export const OPENCODE_CORE: AgentCoreConfig = {
         uiVendorResumeIdLabelKey: 'sessionInfo.opencodeSessionId',
         uiVendorResumeIdCopiedKey: 'sessionInfo.opencodeSessionIdCopied',
     }),
+    localControl: buildAgentLocalControlUiConfig({ agentId: 'opencode' }),
     toolRendering: {
         hideUnknownToolsByDefault: false,
     },
+    tools: buildAgentToolsUiConfig({ agentId: 'opencode' }),
+    sessionStorage: buildAgentSessionStorageUiConfig({ agentId: 'opencode' }),
     ui: {
         agentPickerIconName: 'code-slash-outline',
         cliGlyphScale: 1.0,
