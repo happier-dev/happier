@@ -38,6 +38,31 @@ describe('forkUiSupport', () => {
     expect(canForkFromMessage({ session, messageSeq: 5, replayEnabled: false })).toBe(false);
   });
 
+  it('allows conversation fork for Codex app-server when replay is disabled', () => {
+    const session = makeSession({ machineId: 'm1', flavor: 'codex', codexBackendMode: 'appServer' });
+    expect(canForkConversation({ session, replayEnabled: false })).toBe(true);
+  });
+
+  it('allows conversation fork for older Codex app-server sessions that only have generic codex control metadata', () => {
+    const session = makeSession({
+      machineId: 'm1',
+      flavor: 'codex',
+      codexSessionId: 'thread_123',
+      sessionConfigOptionsV1: {
+        v: 1,
+        provider: 'codex',
+        updatedAt: 1,
+        options: [],
+      },
+    });
+    expect(canForkConversation({ session, replayEnabled: false })).toBe(true);
+  });
+
+  it('does not allow fork-from-message for Codex app-server when replay is disabled', () => {
+    const session = makeSession({ machineId: 'm1', flavor: 'codex', codexBackendMode: 'appServer' });
+    expect(canForkFromMessage({ session, messageSeq: 5, replayEnabled: false })).toBe(false);
+  });
+
   it('allows fork conversation for OpenCode ACP when replay is disabled (ACP fork-latest)', () => {
     const session = makeSession({ machineId: 'm1', flavor: 'opencode', opencodeBackendMode: 'acp' });
     expect(canForkConversation({ session, replayEnabled: false })).toBe(true);
@@ -49,4 +74,3 @@ describe('forkUiSupport', () => {
     expect(canForkFromMessage({ session, messageSeq: 5, replayEnabled: false })).toBe(false);
   });
 });
-
