@@ -1,7 +1,6 @@
 import React, { useState, useMemo } from 'react';
 import { View, Pressable, Platform } from 'react-native';
 import { Stack, useRouter, useLocalSearchParams, useNavigation } from 'expo-router';
-import { CommonActions } from '@react-navigation/native';
 import { Typography } from '@/constants/Typography';
 import { useAllMachines, useSessions, useSetting, useSettingMutable } from '@/sync/domains/state/storage';
 import { Ionicons } from '@expo/vector-icons';
@@ -14,6 +13,7 @@ import { SearchHeader } from '@/components/ui/forms/SearchHeader';
 import { getRecentPathsForMachine } from '@/utils/sessions/recentPaths';
 import { Text } from '@/components/ui/text/Text';
 import { safeRouterBack } from '@/utils/navigation/safeRouterBack';
+import { setNewSessionPickerReturnParams } from '@/components/sessions/new/navigation/setNewSessionPickerReturnParams';
 
 
 export default React.memo(function PathPickerScreen() {
@@ -21,7 +21,14 @@ export default React.memo(function PathPickerScreen() {
     const styles = stylesheet;
     const router = useRouter();
     const navigation = useNavigation();
-    const params = useLocalSearchParams<{ machineId?: string; selectedPath?: string; path?: string }>();
+    const params = useLocalSearchParams<{
+        dataId?: string;
+        machineId?: string;
+        selectedPath?: string;
+        directory?: string;
+        path?: string;
+        spawnServerId?: string;
+    }>();
     const machines = useAllMachines();
     const sessions = useSessions();
     const recentMachinePaths = useSetting('recentMachinePaths');
@@ -31,7 +38,9 @@ export default React.memo(function PathPickerScreen() {
 
     const initialPath = typeof params.selectedPath === 'string' && params.selectedPath.length > 0
         ? params.selectedPath
-        : (typeof params.path === 'string' ? params.path : '');
+        : (typeof params.directory === 'string' && params.directory.length > 0
+            ? params.directory
+            : (typeof params.path === 'string' ? params.path : ''));
     const [customPath, setCustomPathState] = useState(initialPath);
     const customPathRef = React.useRef(customPath);
     const setCustomPath = React.useCallback((next: string) => {
@@ -65,25 +74,25 @@ export default React.memo(function PathPickerScreen() {
     const handleSelectPath = React.useCallback((pathOverride?: string) => {
         const rawPath = typeof pathOverride === 'string' ? pathOverride : customPathRef.current;
         const pathToUse = rawPath.trim() || machineHomeDir;
-        const state = navigation.getState();
-        const previousRoute = state?.routes?.[state.index - 1];
-        if (state && state.index > 0 && previousRoute) {
-            // Set params on the previous route first, then navigate back.
-            navigation.dispatch({
-                ...CommonActions.setParams({ path: pathToUse }),
-                source: previousRoute.key,
-            });
+        const dataId = typeof params.dataId === 'string' ? params.dataId : undefined;
+        const spawnServerId = typeof params.spawnServerId === 'string' && params.spawnServerId.trim().length > 0
+            ? params.spawnServerId
+            : undefined;
+        const returnMode = setNewSessionPickerReturnParams({
+            navigation,
+            router,
+            routeParams: { directory: pathToUse },
+            replaceParams: {
+                ...(dataId ? { dataId } : {}),
+                machineId: params.machineId,
+                directory: pathToUse,
+                ...(spawnServerId ? { spawnServerId } : {}),
+            },
+        });
+        if (returnMode === 'dispatch') {
             safeRouterBack({ router, navigation, fallbackHref: '/new' });
-        } else {
-            router.replace({
-                pathname: '/new',
-                params: {
-                    machineId: params.machineId,
-                    path: pathToUse,
-                },
-            } as never);
         }
-    }, [machineHomeDir, navigation, params.machineId, router]);
+    }, [machineHomeDir, navigation, params.dataId, params.machineId, params.spawnServerId, router]);
 
     const handleBackPress = React.useCallback(() => {
         safeRouterBack({ router, navigation, fallbackHref: '/new' });

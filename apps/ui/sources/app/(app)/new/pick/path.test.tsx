@@ -7,10 +7,18 @@ import renderer, { act } from 'react-test-renderer';
 const setParams = vi.fn();
 const replace = vi.fn();
 const safeRouterBack = vi.fn();
+const dispatch = vi.fn();
 let capturedPathSelectorProps: any = null;
 let localSearchParams: Record<string, string> = {
     machineId: 'machine-1',
     selectedPath: '/repo/current',
+};
+let navigationState: {
+    index: number;
+    routes: Array<{ key: string; name?: string; path?: string; params?: Record<string, unknown> }>;
+} = {
+    index: 0,
+    routes: [{ key: 'path-picker', name: '(app)/new/pick/path', path: '/new/pick/path' }],
 };
 const paramListeners = new Set<() => void>();
 
@@ -72,11 +80,8 @@ vi.mock('expo-router', () => ({
         );
     },
     useNavigation: () => ({
-        getState: () => ({
-            index: 0,
-            routes: [{ key: 'path-picker' }],
-        }),
-        dispatch: vi.fn(),
+        getState: () => navigationState,
+        dispatch,
     }),
 }));
 
@@ -151,6 +156,11 @@ describe('PathPickerScreen', () => {
         setParams.mockReset();
         replace.mockReset();
         safeRouterBack.mockReset();
+        dispatch.mockReset();
+        navigationState = {
+            index: 0,
+            routes: [{ key: 'path-picker', name: '(app)/new/pick/path', path: '/new/pick/path' }],
+        };
     });
 
     it('replaces to new session with path params when confirming without a previous route', async () => {
@@ -175,6 +185,101 @@ describe('PathPickerScreen', () => {
         });
         expect(setParams).not.toHaveBeenCalled();
         expect(safeRouterBack).not.toHaveBeenCalled();
+    });
+
+    it('replaces back to /new instead of mutating a non-new previous route under the modal stack', async () => {
+        navigationState = {
+            index: 1,
+            routes: [
+                {
+                    key: 'session-route',
+                    name: '(app)/session/[id]',
+                    path: '/session/s1',
+                    params: { id: 's1' },
+                },
+                {
+                    key: 'path-picker',
+                    name: '(app)/new/pick/path',
+                    path: '/new/pick/path',
+                },
+            ],
+        };
+
+        const PathPickerScreen = (await import('./path')).default;
+
+        await act(async () => {
+            renderer.create(React.createElement(PathPickerScreen));
+        });
+
+        expect(capturedPathSelectorProps).toBeTruthy();
+
+        await act(async () => {
+            capturedPathSelectorProps.onSubmitSelectedPath('/repo/selected');
+        });
+
+        expect(dispatch).not.toHaveBeenCalled();
+        expect(replace).toHaveBeenCalledWith({
+            pathname: '/new',
+            params: {
+                machineId: 'machine-1',
+                path: '/repo/selected',
+            },
+        });
+        expect(safeRouterBack).not.toHaveBeenCalled();
+    });
+
+    it('returns path updates to the actual /new screen instead of an intermediate picker route', async () => {
+        navigationState = {
+            index: 3,
+            routes: [
+                {
+                    key: 'session-route',
+                    name: '(app)/session/[id]',
+                    path: '/session/s1',
+                    params: { id: 's1' },
+                },
+                {
+                    key: 'new-route',
+                    name: '(app)/new/index',
+                    path: '/new',
+                    params: { machineId: 'machine-1' },
+                },
+                {
+                    key: 'profile-picker',
+                    name: '(app)/new/pick/profile',
+                    path: '/new/pick/profile',
+                    params: { profileId: 'profile-1' },
+                },
+                {
+                    key: 'path-picker',
+                    name: '(app)/new/pick/path',
+                    path: '/new/pick/path',
+                },
+            ],
+        };
+
+        const PathPickerScreen = (await import('./path')).default;
+
+        await act(async () => {
+            renderer.create(React.createElement(PathPickerScreen));
+        });
+
+        expect(capturedPathSelectorProps).toBeTruthy();
+
+        await act(async () => {
+            capturedPathSelectorProps.onSubmitSelectedPath('/repo/selected');
+        });
+
+        expect(dispatch).toHaveBeenCalledWith(expect.objectContaining({
+            source: 'new-route',
+            payload: expect.objectContaining({
+                params: expect.objectContaining({
+                    path: '/repo/selected',
+                }),
+            }),
+        }));
+        expect(replace).not.toHaveBeenCalled();
+        expect(safeRouterBack).toHaveBeenCalled();
     });
 
     it('uses the direct-entry path query as a fallback selected path', async () => {
