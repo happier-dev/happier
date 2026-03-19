@@ -31,6 +31,8 @@ const listeners = new Map<string, Set<(state: MachineCapabilitiesCacheState) => 
 const DEFAULT_STALE_MS = 24 * 60 * 60 * 1000; // 24 hours
 const DEFAULT_FETCH_TIMEOUT_MS = 2500;
 const DEFAULT_ERROR_BACKOFF_MS = 60_000;
+const DEFAULT_SLOW_FETCH_TIMEOUT_MS = 12_000;
+const DEFAULT_CLI_LOGIN_STATUS_TIMEOUT_MS = 20_000;
 
 type ScheduledFetch = Readonly<{
     requestKey: string;
@@ -105,15 +107,39 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
     return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
 }
 
+function withDurableDepVersionCheckTimestamp(result: CapabilityDetectResult): CapabilityDetectResult {
+    if (!result.ok) return result;
+    if (!isPlainObject(result.data)) return result;
+
+    const latestVersionCheck = result.data.latestVersionCheck;
+    if (!isPlainObject(latestVersionCheck)) return result;
+    if (typeof latestVersionCheck.checkedAt === 'number' && latestVersionCheck.checkedAt > 0) return result;
+    if (typeof result.checkedAt !== 'number' || result.checkedAt <= 0) return result;
+
+    return {
+        ...result,
+        data: {
+            ...result.data,
+            latestVersionCheck: {
+                ...latestVersionCheck,
+                checkedAt: result.checkedAt,
+            },
+        },
+    };
+}
+
 function mergeCapabilityResult(id: CapabilityId, prev: CapabilityDetectResult | undefined, next: CapabilityDetectResult): CapabilityDetectResult {
-    if (!prev) return next;
-    if (!prev.ok || !next.ok) return next;
+    const normalizedPrev = prev ? withDurableDepVersionCheckTimestamp(prev) : undefined;
+    const normalizedNext = withDurableDepVersionCheckTimestamp(next);
+
+    if (!normalizedPrev) return normalizedNext;
+    if (!normalizedPrev.ok || !normalizedNext.ok) return normalizedNext;
 
     // Only merge partial results for deps; CLI/tool checks should replace to avoid keeping stale paths/versions.
-    if (!id.startsWith('dep.')) return next;
-    if (!isPlainObject(prev.data) || !isPlainObject(next.data)) return next;
+    if (!id.startsWith('dep.')) return normalizedNext;
+    if (!isPlainObject(normalizedPrev.data) || !isPlainObject(normalizedNext.data)) return normalizedNext;
 
-    return { ...next, data: { ...prev.data, ...next.data } };
+    return { ...normalizedNext, data: { ...normalizedPrev.data, ...normalizedNext.data } };
 }
 
 function mergeDetectResponses(prev: CapabilitiesDetectResponse | null, next: CapabilitiesDetectResponse): CapabilitiesDetectResponse {
@@ -128,14 +154,28 @@ function mergeDetectResponses(prev: CapabilitiesDetectResponse | null, next: Cap
     };
 }
 
-function getTimeoutMsForRequest(request: CapabilitiesDetectRequest, fallback: number): number {
-    // Default fast timeout; opt into longer waits for npm registry checks.
+function hasSlowLoginStatusProbe(request: CapabilitiesDetectRequest): boolean {
     const requests = Array.isArray(request.requests) ? request.requests : [];
-    const hasRegistryCheck = requests.some((r) => Boolean((r.params as any)?.includeRegistry));
+    if (requests.some((entry) => Boolean((entry.params as any)?.includeLoginStatus))) {
+        return true;
+    }
+
+    const overrides = isPlainObject(request.overrides) ? Object.values(request.overrides) : [];
+    return overrides.some((entry) => Boolean((entry as any)?.params?.includeLoginStatus));
+}
+
+export function resolveMachineCapabilitiesTimeoutMs(request: CapabilitiesDetectRequest, fallback: number): number {
+    // Default fast timeout; opt into longer waits for release/version metadata checks.
+    const requests = Array.isArray(request.requests) ? request.requests : [];
+    const hasSlowVersionCheck = requests.some((r) => Boolean((r.params as any)?.includeLatestVersion) || Boolean((r.params as any)?.includeRegistry));
+    const hasExecutionRunsCheck = requests.some((r) => r?.id === 'tool.executionRuns');
+    const hasSlowLoginStatusCheck = hasSlowLoginStatusProbe(request);
     const isResumeChecklist = AGENT_IDS.some((agentId) => request.checklistId === resumeChecklistId(agentId));
     const isMachineDetailsChecklist = request.checklistId === CHECKLIST_IDS.MACHINE_DETAILS;
-    if (hasRegistryCheck || isResumeChecklist) return Math.max(fallback, 12_000);
-    if (isMachineDetailsChecklist) return Math.max(fallback, 8_000);
+    if (hasSlowLoginStatusCheck) return Math.max(fallback, DEFAULT_CLI_LOGIN_STATUS_TIMEOUT_MS);
+    if (hasExecutionRunsCheck) return Math.max(fallback, DEFAULT_SLOW_FETCH_TIMEOUT_MS);
+    if (hasSlowVersionCheck || isResumeChecklist) return Math.max(fallback, DEFAULT_SLOW_FETCH_TIMEOUT_MS);
+    if (isMachineDetailsChecklist) return Math.max(fallback, DEFAULT_SLOW_FETCH_TIMEOUT_MS);
     return fallback;
 }
 
@@ -186,6 +226,66 @@ function detectRequestKey(request: CapabilitiesDetectRequest): string {
         requests: normalizedRequests,
         overrides: normalizedOverrides,
     });
+}
+
+function requestNeedsRefetchFromState(state: MachineCapabilitiesCacheState, request: CapabilitiesDetectRequest): boolean {
+    const snapshot =
+        state.status === 'loaded'
+            ? state.snapshot
+            : state.status === 'loading'
+                ? state.snapshot
+                : state.status === 'error'
+                    ? state.snapshot
+                    : undefined;
+    if (!snapshot) return false;
+
+    const results = snapshot.response.results;
+    const requests = Array.isArray(request.requests) ? request.requests : [];
+    const overrideEntries = isPlainObject(request.overrides)
+        ? Object.entries(request.overrides as Record<string, { params?: Record<string, unknown> }>)
+        : [];
+
+    for (const entry of requests) {
+        const capabilityId = typeof entry?.id === 'string' ? entry.id : '';
+        if (!capabilityId) continue;
+        if (!results[capabilityId as CapabilityId]) {
+            return true;
+        }
+    }
+
+    for (const [capabilityId] of overrideEntries) {
+        if (!capabilityId) continue;
+        if (!results[capabilityId as CapabilityId]) {
+            return true;
+        }
+    }
+
+    const capabilityIdsNeedingLoginStatus = new Set<string>();
+
+    for (const entry of requests) {
+        if (!entry?.id?.startsWith('cli.')) continue;
+        if (Boolean((entry.params as any)?.includeLoginStatus)) {
+            capabilityIdsNeedingLoginStatus.add(entry.id);
+        }
+    }
+
+    for (const [capabilityId, override] of overrideEntries) {
+        if (!capabilityId.startsWith('cli.')) continue;
+        if (Boolean(override?.params?.includeLoginStatus)) {
+            capabilityIdsNeedingLoginStatus.add(capabilityId);
+        }
+    }
+
+    for (const capabilityId of capabilityIdsNeedingLoginStatus) {
+        const result = results[capabilityId as CapabilityId];
+        if (!result || !result.ok) return true;
+        const data = isPlainObject(result.data) ? result.data : null;
+        if (!data || !Object.prototype.hasOwnProperty.call(data, 'authStatus')) {
+            return true;
+        }
+    }
+
+    return false;
 }
 
 function shouldRefetchEntry(params: Readonly<{ entry: CacheEntry | null; staleMs: number; nowMs: number }>): boolean {
@@ -241,7 +341,7 @@ async function fetchAndMerge(params: {
 
         const timeoutMs = typeof params.timeoutMs === 'number'
             ? params.timeoutMs
-            : getTimeoutMsForRequest(params.request, DEFAULT_FETCH_TIMEOUT_MS);
+            : resolveMachineCapabilitiesTimeoutMs(params.request, DEFAULT_FETCH_TIMEOUT_MS);
 
         let result: MachineCapabilitiesDetectResult;
         try {
@@ -277,6 +377,10 @@ async function fetchAndMerge(params: {
 
             if (result.reason === 'not-supported') {
                 return { status: 'not-supported' } as const;
+            }
+
+            if (result.reason === 'server-switch-abort') {
+                return { status: 'idle' } as const;
             }
 
             return prevSnapshot
@@ -324,6 +428,14 @@ export function prefetchMachineCapabilitiesIfStale(params: {
     const cacheKey = toCacheKey(params.machineId, params.serverId);
     const existing = getEntry(cacheKey);
     if (!existing || existing.state.status === 'idle') {
+        return fetchAndMerge({
+            machineId: params.machineId,
+            serverId: params.serverId,
+            request: params.request,
+            timeoutMs: params.timeoutMs,
+        });
+    }
+    if (requestNeedsRefetchFromState(existing.state, params.request)) {
         return fetchAndMerge({
             machineId: params.machineId,
             serverId: params.serverId,
@@ -393,6 +505,11 @@ export function useMachineCapabilitiesCache(params: {
         if (entry) setState(entry.state);
 
         if (!enabled) {
+            return unsubscribe;
+        }
+
+        if (entry && requestNeedsRefetchFromState(entry.state, requestRef.current)) {
+            refresh();
             return unsubscribe;
         }
 
