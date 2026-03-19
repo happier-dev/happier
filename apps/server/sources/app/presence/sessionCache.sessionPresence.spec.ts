@@ -59,8 +59,8 @@ vi.mock("@/storage/db", () => ({
             updateMany: sessionUpdateMany,
         },
         machine: {
-            findUnique: machineFindUnique,
-            updateMany: machineUpdateMany,
+            findUnique: vi.fn(),
+            updateMany: vi.fn(),
         },
     },
 }));
