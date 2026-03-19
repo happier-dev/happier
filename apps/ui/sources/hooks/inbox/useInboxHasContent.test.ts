@@ -35,7 +35,7 @@ describe('useInboxHasContent', () => {
         (globalThis as any).__DEV__ = true;
         mockUpdateAvailable = false;
         mockHasUnread = false;
-        storage.setState({ friends: {}, feedItems: [] } as any);
+        storage.setState({ friends: {}, feedItems: [], isDataReady: true } as any);
     });
 
     afterEach(() => {
@@ -46,7 +46,7 @@ describe('useInboxHasContent', () => {
             tree = null;
         }
         (globalThis as any).__DEV__ = originalDevFlag;
-        storage.setState({ friends: {}, feedItems: [] } as any);
+        storage.setState({ friends: {}, feedItems: [], isDataReady: true } as any);
     });
 
     it('returns true when there are feed items', () => {
@@ -118,4 +118,73 @@ describe('useInboxHasContent', () => {
 
         expect(latest).toBe(true);
     });
+
+    it('returns true when there are open approval requests', () => {
+        storage.setState({
+            friends: {},
+            feedItems: [],
+            artifacts: {
+                a1: {
+                    id: 'a1',
+                    header: { v: 1, kind: 'approval_request.v1', title: 'Approve', approvalStatus: 'open' },
+                    title: 'Approve',
+                    body: undefined,
+                    headerVersion: 1,
+                    bodyVersion: 1,
+                    seq: 1,
+                    createdAt: 0,
+                    updatedAt: 0,
+                    isDecrypted: true,
+                },
+            },
+        } as any);
+
+        let latest: boolean | null = null;
+        function Test() {
+            latest = useInboxHasContent();
+            return React.createElement('View');
+        }
+
+        act(() => {
+            tree = renderer.create(React.createElement(Test));
+        });
+
+        expect(latest).toBe(true);
+    });
+
+    it('returns true when there are online sessions with pending permission requests', () => {
+        storage.setState({
+            friends: {},
+            feedItems: [],
+            sessions: {
+                s1: {
+                    id: 's1',
+                    presence: 'online',
+                    agentState: {
+                        requests: {
+                            r1: {
+                                tool: 'bash',
+                                kind: 'permission',
+                                arguments: { command: 'echo hello' },
+                                createdAt: 1,
+                            },
+                        },
+                    },
+                },
+            },
+        } as any);
+
+        let latest: boolean | null = null;
+        function Test() {
+            latest = useInboxHasContent();
+            return React.createElement('View');
+        }
+
+        act(() => {
+            tree = renderer.create(React.createElement(Test));
+        });
+
+        expect(latest).toBe(true);
+    });
+
 });
