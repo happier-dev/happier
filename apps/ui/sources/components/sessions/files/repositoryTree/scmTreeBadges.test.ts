@@ -20,7 +20,7 @@ function snapshot(entries: any[]) {
             writeRemoteFetch: false,
             writeRemotePull: false,
             writeRemotePush: false,
-            workspaceWorktreeCreate: false,
+            worktreeCreate: false,
             changeSetModel: 'index',
             supportedDiffAreas: ['pending'],
         },
