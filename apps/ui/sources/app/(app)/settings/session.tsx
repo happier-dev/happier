@@ -507,29 +507,6 @@ export default React.memo(function SessionSettingsScreen() {
                 ) : null}
             </ItemGroup>
 
-            {executionRunsEnabled ? (
-                <ItemGroup
-                    title={t('subAgentGuidance.settings.groupTitle')}
-                    footer={t('subAgentGuidance.settings.footer')}
-                >
-                    <Item
-                        title={t('subAgentGuidance.settings.rules.groupTitle')}
-                        subtitle={t('settingsSession.subAgentGuidanceEntry.openSubtitle')}
-                        icon={<Ionicons name="git-network-outline" size={29} color={theme.colors.accent.orange} />}
-                        onPress={() => router.push('/(app)/settings/sub-agent')}
-                    />
-                </ItemGroup>
-            ) : null}
-
-            <ItemGroup title={t('common.actions')} footer={t('settingsSession.actionsEntry.footer')}>
-                <Item
-                    title={t('common.actions')}
-                    subtitle={t('settingsSession.actionsEntry.openSubtitle')}
-                    icon={<Ionicons name="flash-outline" size={29} color={theme.colors.accent.orange} />}
-                    onPress={() => router.push('/(app)/settings/actions')}
-                />
-            </ItemGroup>
-
             <ItemGroup title={t('settingsSession.handoff.groupTitle')} footer={t('settingsSession.handoff.groupFooter')}>
                 <Item
                     title={t('settingsSession.handoff.title')}
