@@ -41,8 +41,10 @@ const modalShowSpy = vi.fn((config: any) => {
         onRequestClose: vi.fn(),
     });
 
-    act(() => {
-        element.props.onResolve?.(renameConflictStrategy);
+    queueMicrotask(() => {
+        act(() => {
+            element.props.onResolve?.(renameConflictStrategy);
+        });
     });
     return 'modal-1';
 });
@@ -159,6 +161,7 @@ vi.mock('@/modal', () => ({
         confirm: (title: string, message?: string, options?: Parameters<IModal['confirm']>[2]) => modalConfirmSpy(title, message, options),
         alert: (title: string, message?: string, buttons?: Parameters<IModal['alert']>[2]) => modalAlertSpy(title, message, buttons),
         show: (config: Parameters<IModal['show']>[0]) => modalShowSpy(config),
+        hide: vi.fn(),
     },
 }));
 
