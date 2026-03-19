@@ -1,4 +1,4 @@
-import { io, Socket } from 'socket.io-client';
+import { Socket } from 'socket.io-client';
 import { TokenStorage } from '@/auth/storage/tokenStorage';
 import { Encryption } from '@/sync/encryption/encryption';
 import { observeServerTimestamp } from '@/sync/runtime/time';
@@ -9,6 +9,14 @@ import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 import { runtimeFetch } from '@/utils/system/runtimeFetch';
 import { resolveSocketIoTransports } from '@/sync/runtime/socketIoTransports';
 import { storage } from '@/sync/domains/state/storage';
+import {
+    createManagedConnectionSupervisor,
+    DEFAULT_MANAGED_CONNECTION_POLICY,
+    type ManagedConnectionState,
+    type ManagedConnectionSupervisor,
+} from '@happier-dev/connection-supervisor';
+import { createSyncSocketReadinessProbe } from '@/sync/api/session/connection/createSyncSocketReadinessProbe';
+import { createSyncSocketTransport } from '@/sync/api/session/connection/createSyncSocketTransport';
 
 function readSessionEncryptionModeFromLocalState(sessionId: string): 'plain' | 'e2ee' | null {
     const sid = String(sessionId ?? '').trim();
@@ -23,6 +31,54 @@ function readSessionEncryptionModeFromLocalState(sessionId: string): 'plain' | '
     } catch {
         return null;
     }
+}
+
+const GLOBAL_IN_FLIGHT_HTTP_REQUESTS_KEY = '__HAPPIER_GLOBAL_IN_FLIGHT_HTTP_REQUESTS_BY_KEY__';
+
+function getInFlightHttpRequestsHost(): Record<string, unknown> {
+    // Vitest module isolation can evaluate the same module graph under separate `globalThis` realms.
+    // When available, prefer `process` as a stable cross-realm anchor so we still de-dupe in-flight
+    // HTTP requests across module instances.
+    const g = globalThis as unknown as Record<string, unknown>;
+    // Prefer the Node global `process` symbol when present; `globalThis.process` may be a realm-local
+    // shim/proxy under certain test runners.
+    const p = typeof process !== 'undefined' ? (process as unknown) : null;
+    if (p && typeof p === 'object') return p as Record<string, unknown>;
+
+    const gp = (g as any)?.process;
+    if (gp && typeof gp === 'object') return gp as Record<string, unknown>;
+
+    return g;
+}
+
+function getGlobalInFlightHttpRequestsByKey(): Map<string, Promise<Response>> {
+    const host = getInFlightHttpRequestsHost();
+    const existing = host[GLOBAL_IN_FLIGHT_HTTP_REQUESTS_KEY];
+    // Cross-realm: `instanceof Map` can fail when the Map was created in a different JS realm.
+    if (existing && Object.prototype.toString.call(existing) === '[object Map]') {
+        return existing as Map<string, Promise<Response>>;
+    }
+    const created = new Map<string, Promise<Response>>();
+    host[GLOBAL_IN_FLIGHT_HTTP_REQUESTS_KEY] = created;
+    return created;
+}
+
+function buildSocketRpcCallPayload(params: Readonly<{
+    method: string;
+    payload: unknown;
+    timeoutMs?: number;
+}>): Readonly<{ method: string; params: unknown; timeoutMs?: number }> {
+    if (typeof params.timeoutMs === 'number' && params.timeoutMs > 0) {
+        return {
+            method: params.method,
+            params: params.payload,
+            timeoutMs: params.timeoutMs,
+        };
+    }
+    return {
+        method: params.method,
+        params: params.payload,
+    };
 }
 
 //
@@ -55,8 +111,22 @@ class ApiSocket {
     private messageHandlers: Map<string, (data: any) => void> = new Map();
     private reconnectedListeners: Set<() => void> = new Set();
     private statusListeners: Set<(status: 'disconnected' | 'connecting' | 'connected' | 'error') => void> = new Set();
+    private connectionStateListeners: Set<(state: ManagedConnectionState) => void> = new Set();
     private errorListeners: Set<(error: Error | null) => void> = new Set();
     private currentStatus: 'disconnected' | 'connecting' | 'connected' | 'error' = 'disconnected';
+    private currentConnectionState: ManagedConnectionState = {
+        phase: 'idle',
+        reason: null,
+        attempt: 0,
+        nextRetryAt: null,
+        lastConnectedAt: null,
+        lastDisconnectedAt: null,
+        lastErrorMessage: null,
+    };
+    private inFlightHttpRequestsByKey: Map<string, Promise<Response>> = getGlobalInFlightHttpRequestsByKey();
+    private connectionSupervisor: ManagedConnectionSupervisor | null = null;
+    private hasConnectedOnce = false;
+    private pendingReconnectNotification = false;
 
     //
     // Initialization
@@ -73,34 +143,51 @@ class ApiSocket {
     //
 
     connect() {
-        if (!this.config || this.socket) {
+        if (!this.config) {
             return;
         }
 
-        this.updateStatus('connecting');
+        if (!this.connectionSupervisor) {
+            this.connectionSupervisor = createManagedConnectionSupervisor({
+                ...DEFAULT_MANAGED_CONNECTION_POLICY,
+                createTransport: () => {
+                    const { socket, transport } = createSyncSocketTransport({
+                        endpoint: this.config!.endpoint,
+                        token: this.config!.token,
+                        transports: resolveSocketIoTransports(),
+                    });
+                    this.socket = socket;
+                    this.installSocketEventHandlers(socket);
+                    return transport;
+                },
+                probeReadiness: async () => createSyncSocketReadinessProbe({
+                    endpoint: this.config!.endpoint,
+                    token: this.config!.token,
+                })(),
+                onStateChange: (state) => {
+                    this.applyManagedConnectionState(state);
+                },
+                onConnected: async () => {
+                    this.clearError();
+                    if (this.hasConnectedOnce && this.pendingReconnectNotification) {
+                        this.reconnectedListeners.forEach(listener => listener());
+                    }
+                    this.hasConnectedOnce = true;
+                    this.pendingReconnectNotification = false;
+                },
+                onAuthFailed: async ({ probe }) => {
+                    this.setError(new Error(probe.errorMessage ?? 'Authentication failed'));
+                    this.updateStatus('error');
+                },
+            });
+        }
 
-        const transports = resolveSocketIoTransports();
-        this.socket = io(this.config.endpoint, {
-            path: '/v1/updates',
-            auth: {
-                token: this.config.token,
-                clientType: 'user-scoped' as const
-            },
-            ...(transports ? { transports } : null),
-            reconnection: true,
-            reconnectionDelay: 1000,
-            reconnectionDelayMax: 5000,
-            reconnectionAttempts: Infinity
-        });
-
-        this.setupEventHandlers();
+        void this.connectionSupervisor.start();
     }
 
     disconnect() {
-        if (this.socket) {
-            this.socket.disconnect();
-            this.socket = null;
-        }
+        void this.connectionSupervisor?.stop();
+        this.socket = null;
         this.updateStatus('disconnected');
     }
 
@@ -118,6 +205,12 @@ class ApiSocket {
         // Immediately notify with current status
         listener(this.currentStatus);
         return () => this.statusListeners.delete(listener);
+    };
+
+    onConnectionStateChange = (listener: (state: ManagedConnectionState) => void) => {
+        this.connectionStateListeners.add(listener);
+        listener(this.currentConnectionState);
+        return () => this.connectionStateListeners.delete(listener);
     };
 
     onError = (listener: (error: Error | null) => void) => {
@@ -141,7 +234,7 @@ class ApiSocket {
     /**
      * RPC call for sessions - uses session-specific encryption
      */
-    async sessionRPC<R, A>(sessionId: string, method: string, params: A): Promise<R> {
+    async sessionRPC<R, A>(sessionId: string, method: string, params: A, options?: { timeoutMs?: number }): Promise<R> {
         const sessionEncryptionMode = readSessionEncryptionModeFromLocalState(sessionId);
         const usePlaintextParams = sessionEncryptionMode === 'plain';
         const sessionEncryption = usePlaintextParams ? null : this.encryption?.getSessionEncryption(sessionId);
@@ -160,10 +253,15 @@ class ApiSocket {
             if (!sessionEncryption) throw new Error(`Session encryption not found for ${sessionId}`);
             encryptedParams = await sessionEncryption.encryptRaw(params);
         }
-        const result: any = await this.socket!.emitWithAck(SOCKET_RPC_EVENTS.CALL, {
-            method: `${sessionId}:${method}`,
-            params: encryptedParams,
-        });
+        const result: any = await this.emitWithAck(
+            SOCKET_RPC_EVENTS.CALL,
+            buildSocketRpcCallPayload({
+                method: `${sessionId}:${method}`,
+                payload: encryptedParams,
+                timeoutMs: options?.timeoutMs,
+            }),
+            options,
+        );
         if (scmDebug) {
             const rawResult = result?.result;
             // eslint-disable-next-line no-console
@@ -218,10 +316,15 @@ class ApiSocket {
             throw new Error(`Machine encryption not found for ${machineId}`);
         }
 
-        const result: any = await this.emitWithAck(SOCKET_RPC_EVENTS.CALL, {
-            method: `${machineId}:${method}`,
-            params: await machineEncryption.encryptRaw(params)
-        }, options);
+        const result: any = await this.emitWithAck(
+            SOCKET_RPC_EVENTS.CALL,
+            buildSocketRpcCallPayload({
+                method: `${machineId}:${method}`,
+                payload: await machineEncryption.encryptRaw(params),
+                timeoutMs: options?.timeoutMs,
+            }),
+            options,
+        );
 
         if (result.ok) {
             return await machineEncryption.decryptRaw(result.result) as R;
@@ -264,15 +367,48 @@ class ApiSocket {
         }
 
         const url = `${this.config.endpoint}${path}`;
-        const headers = {
-            'Authorization': `Bearer ${credentials.token}`,
-            ...options?.headers
-        };
+        const method = String(options?.method ?? 'GET').toUpperCase();
+        const hasBody = options?.body != null;
+        const hasSignal = Boolean(options?.signal);
+        const headers = new Headers(options?.headers);
+        headers.set('Authorization', `Bearer ${credentials.token}`);
 
-        const response = await runtimeFetch(url, {
-            ...options,
-            headers
-        });
+        const canDedupe =
+            (method === 'GET' || method === 'HEAD')
+            && !hasBody
+            && !hasSignal;
+
+        const requestKey = canDedupe
+            // Intentionally exclude `snapshot.generation` from the de-dupe key so concurrent callers still share
+            // a single in-flight fetch even if the active server generation changes while bootstrapping.
+            ? `${snapshot.serverId ?? ''}:${method}:${url}:token:${credentials.token}`
+            : null;
+
+        let response: Response;
+        if (requestKey) {
+            const existing = this.inFlightHttpRequestsByKey.get(requestKey);
+            if (existing) {
+                response = await existing;
+            } else {
+                const promise = runtimeFetch(url, {
+                    ...options,
+                    headers,
+                }) as Promise<Response>;
+                this.inFlightHttpRequestsByKey.set(requestKey, promise);
+                try {
+                    response = await promise;
+                } finally {
+                    this.inFlightHttpRequestsByKey.delete(requestKey);
+                }
+            }
+            // Always return a clone when de-duping to keep bodies readable per caller.
+            response = response.clone();
+        } else {
+            response = await runtimeFetch(url, {
+                ...options,
+                headers,
+            });
+        }
 
         const current = getActiveServerSnapshot();
         if (current.generation !== snapshot.generation || current.serverId !== snapshot.serverId) {
@@ -322,41 +458,16 @@ class ApiSocket {
         }
     }
 
-    private setupEventHandlers() {
-        if (!this.socket) return;
-
-        // Connection events
-        this.socket.on('connect', () => {
-            // console.log('🔌 SyncSocket: Connected, recovered: ' + this.socket?.recovered);
-            // console.log('🔌 SyncSocket: Socket ID:', this.socket?.id);
-            this.updateStatus('connected');
-            // Clear last error on successful connect
-            this.errorListeners.forEach(listener => listener(null));
-            if (!this.socket?.recovered) {
-                this.reconnectedListeners.forEach(listener => listener());
-            }
+    private installSocketEventHandlers(socket: Socket) {
+        socket.on('connect_error', (error) => {
+            this.setError(error instanceof Error ? error : new Error(String(error)));
         });
 
-        this.socket.on('disconnect', (reason) => {
-            // console.log('🔌 SyncSocket: Disconnected', reason);
-            this.updateStatus('disconnected');
+        socket.on('error', (error) => {
+            this.setError(error instanceof Error ? error : new Error(String(error)));
         });
 
-        // Error events
-        this.socket.on('connect_error', (error) => {
-            // console.error('🔌 SyncSocket: Connection error', error);
-            this.updateStatus('error');
-            this.errorListeners.forEach(listener => listener(error));
-        });
-
-        this.socket.on('error', (error) => {
-            // console.error('🔌 SyncSocket: Error', error);
-            this.updateStatus('error');
-            this.errorListeners.forEach(listener => listener(error));
-        });
-
-        // Message handling
-        this.socket.onAny((event, data) => {
+        socket.onAny((event, data) => {
             // console.log(`📥 SyncSocket: Received event '${event}':`, JSON.stringify(data).substring(0, 200));
             const handler = this.messageHandlers.get(event);
             if (handler) {
@@ -366,6 +477,46 @@ class ApiSocket {
                 // console.log(`📥 SyncSocket: No handler registered for '${event}'`);
             }
         });
+    }
+
+    private applyManagedConnectionState(state: ManagedConnectionState) {
+        this.currentConnectionState = state;
+        for (const listener of this.connectionStateListeners) {
+            listener(state);
+        }
+        if (state.phase === 'offline') {
+            this.pendingReconnectNotification =
+                state.reason !== 'manual_disconnect'
+                && state.reason !== 'intentional_shutdown';
+        } else if (state.phase === 'idle' || state.phase === 'shutting_down') {
+            this.pendingReconnectNotification = false;
+        }
+        switch (state.phase) {
+            case 'connecting':
+                this.updateStatus('connecting');
+                return;
+            case 'online':
+                this.updateStatus('connected');
+                return;
+            case 'auth_failed':
+                this.updateStatus('error');
+                return;
+            case 'offline':
+            case 'idle':
+            case 'shutting_down':
+                this.updateStatus('disconnected');
+                return;
+            default:
+                this.updateStatus('disconnected');
+        }
+    }
+
+    private clearError() {
+        this.errorListeners.forEach(listener => listener(null));
+    }
+
+    private setError(error: Error) {
+        this.errorListeners.forEach(listener => listener(error));
     }
 }
 
