@@ -36,6 +36,16 @@ describe('canCreateNewSession', () => {
         })).toBe(false);
     });
 
+    it('allows offline machines when the authoring flow is saving an automation', () => {
+        const offlineMachine: any = { id: 'm1', active: false, activeAt: 0 };
+        expect(canCreateNewSession({
+            selectedMachineId: 'm1',
+            selectedMachine: offlineMachine,
+            selectedPath: '/repo',
+            allowOfflineMachine: true,
+        })).toBe(true);
+    });
+
     it('returns true when selected machine is online', () => {
         const onlineMachine: any = { id: 'm1', active: true, activeAt: Date.now() };
         expect(canCreateNewSession({

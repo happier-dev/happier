@@ -1,18 +1,17 @@
-import type { Machine } from '@/sync/domains/state/storageTypes';
-
+import type { SessionAuthoringDraft } from '@/components/sessions/authoring/draft/sessionAuthoringDraft';
 import { canCreateNewSession } from '@/components/sessions/new/modules/canCreateNewSession';
 import {
     resolveEffectiveAutomationDraft,
     shouldShowAutomationActionChips,
 } from '@/components/sessions/new/modules/automationFeatureGate';
 import type { NewSessionAutomationDraft } from '@/sync/domains/automations/automationDraft';
+import type { Machine } from '@/sync/domains/state/storageTypes';
 
 import type {
     NewSessionAuthoringContext,
     NewSessionAuthoringSubmissionMode,
     NewSessionSubmitAccessibilityLabelKey,
 } from './sessionAuthoringContext';
-import type { SessionAuthoringDraft } from '../draft/sessionAuthoringDraft';
 
 function resolveSubmissionMode(params: Readonly<{
     effectiveAutomationDraft: NewSessionAutomationDraft;
@@ -65,9 +64,9 @@ export function buildNewSessionAuthoringContext(params: Readonly<{
             selectedMachineId: params.selectedMachineId,
             selectedMachine: params.selectedMachine,
             selectedPath: params.selectedPath,
+            allowOfflineMachine: effectiveAutomationDraft.enabled,
         }),
         submissionMode,
         submitAccessibilityLabelKey: resolveSubmitAccessibilityLabelKey(submissionMode),
     };
 }
-
