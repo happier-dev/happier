@@ -1,8 +1,6 @@
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 
-import { ReviewStartInputSchema } from '@happier-dev/protocol';
-
 import type { AgentBackend, AgentMessageHandler, SessionId } from '@/agent/core/AgentBackend';
 import { killProcessTree } from '@/agent/acp/killProcessTree';
 import { resolveWindowsCommandInvocation } from '@happier-dev/cli-common/process';
@@ -11,6 +9,7 @@ import { readCodeRabbitReviewConfigFromEnv } from './readCodeRabbitReviewConfig.
 import { buildCodeRabbitEnv } from './buildCodeRabbitEnv.js';
 import { runWithCodeRabbitRateLimitRetries } from './runWithRateLimitRetries.js';
 import { resolveCodeRabbitBaseRef } from './preflightCodeRabbitReviewScope.js';
+import { normalizeCodeRabbitReviewStartInput } from './normalizeCodeRabbitReviewStartInput.js';
 
 type PendingProcess = Readonly<{
   kill: () => void;
@@ -50,14 +49,10 @@ export class CodeRabbitReviewBackend implements AgentBackend {
 
     const args = await (async () => {
       const rawIntentInput: any = this.start?.intentInput ?? null;
-      const parsed = ReviewStartInputSchema.safeParse(rawIntentInput);
-      const reviewInput = parsed.success
-        ? parsed.data
-        : ReviewStartInputSchema.parse({
-            engineIds: ['coderabbit'],
-            instructions: prompt,
-            ...(rawIntentInput && typeof rawIntentInput === 'object' ? rawIntentInput : {}),
-          });
+      const reviewInput = normalizeCodeRabbitReviewStartInput({
+        intentInput: rawIntentInput ?? {},
+        fallbackInstructions: prompt,
+      });
       const changeType = reviewInput.changeType;
 
       const cfg = reviewInput.engines?.coderabbit ?? null;
