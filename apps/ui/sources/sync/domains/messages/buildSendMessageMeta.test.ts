@@ -72,6 +72,15 @@ describe('buildSendMessageMeta', () => {
         expect(Object.prototype.hasOwnProperty.call(meta, 'displayText')).toBe(false);
     });
 
+    it('omits appendSystemPrompt when the caller does not provide one', () => {
+        const args = buildArgs({ agentId: null });
+        delete (args as any).appendSystemPrompt;
+
+        const meta = buildSendMessageMeta(args as any);
+
+        expect(Object.prototype.hasOwnProperty.call(meta, 'appendSystemPrompt')).toBe(false);
+    });
+
     it('includes optional model and fallbackModel when provided', () => {
         const meta = buildSendMessageMeta(
             buildArgs({

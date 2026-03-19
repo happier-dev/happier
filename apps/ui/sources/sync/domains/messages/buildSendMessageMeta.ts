@@ -7,7 +7,7 @@ import type { MessageMeta } from '@/sync/domains/messages/messageMetaTypes';
 export function buildSendMessageMeta(args: {
     sentFrom: string;
     permissionMode: NonNullable<MessageMeta['permissionMode']>;
-    appendSystemPrompt: string;
+    appendSystemPrompt?: string;
     model?: MessageMeta['model'];
     fallbackModel?: MessageMeta['fallbackModel'];
     displayText?: string;
