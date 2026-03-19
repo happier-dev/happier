@@ -25,7 +25,7 @@ export function addMcpServerCatalogEntryV1(settings: McpServersSettingsV1, entry
 export function deleteMcpServerCatalogEntryV1(settings: McpServersSettingsV1, serverId: string): McpServersSettingsV1 {
     const nextServers = settings.servers.filter((s) => s.id !== serverId);
     const nextBindings = settings.bindings.filter((b) => b.serverId !== serverId);
-    if (nextServers === settings.servers && nextBindings === settings.bindings) {
+    if (nextServers.length === settings.servers.length && nextBindings.length === settings.bindings.length) {
         return settings;
     }
     return { ...settings, servers: nextServers, bindings: nextBindings };
