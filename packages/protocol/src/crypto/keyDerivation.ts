@@ -4,6 +4,7 @@ import { sha512 } from '@noble/hashes/sha512.js';
 function encodeUtf8(value: string): Uint8Array {
   return new TextEncoder().encode(value);
 }
+
 function hmacSha512(key: Uint8Array, data: Uint8Array): Uint8Array {
   return hmac(sha512, key, data);
 }

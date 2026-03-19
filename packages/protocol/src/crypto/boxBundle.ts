@@ -9,6 +9,7 @@ export function deriveBoxSecretKeyFromSeed(seed: Uint8Array): Uint8Array {
   // libsodium crypto_box_seed_keypair uses SHA-512(seed) and takes the first 32 bytes as the scalar.
   return sha512(seed).slice(0, 32);
 }
+
 export function deriveBoxPublicKeyFromSeed(seed: Uint8Array): Uint8Array {
   const secretKey = deriveBoxSecretKeyFromSeed(seed);
   return tweetnacl.box.keyPair.fromSecretKey(secretKey).publicKey;
