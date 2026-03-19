@@ -6,8 +6,8 @@ import {
 import { makeSettings } from './registryUiBehavior.testHelpers';
 
 describe('buildResumeCapabilityOptionsFromUiState', () => {
-    it('treats Codex sessions as resumable in ACP mode without requiring any runtime results', () => {
-        const settings = makeSettings({ codexBackendMode: 'acp' });
+    it('uses the current Codex default backend without requiring runtime results', () => {
+        const settings = makeSettings({ codexBackendMode: 'appServer' as any });
         expect(buildResumeCapabilityOptionsFromUiState({
             settings,
             results: undefined,
