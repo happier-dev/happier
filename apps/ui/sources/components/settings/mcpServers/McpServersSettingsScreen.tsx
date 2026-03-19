@@ -145,7 +145,7 @@ export const McpServersSettingsScreen = React.memo(function McpServersSettingsSc
         setDetected(response.servers);
         setDetectWarnings(response.warnings ?? null);
     }, [directory, selectedMachineId]);
-    const [detectLoading, runDetect] = useHappyAction(detectAction);
+    const [detectLoading, runDetect] = useHappyAction(detectAction, { mode: 'rerun_latest' });
 
     const previewAction = React.useCallback(async () => {
         if (!selectedMachineId) {
