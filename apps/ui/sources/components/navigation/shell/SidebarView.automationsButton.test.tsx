@@ -10,6 +10,14 @@ const automationsSupportState = vi.hoisted(() => ({
     enabled: true,
 }));
 
+const friendRequestsState = vi.hoisted(() => ({
+    items: [] as Array<{ id: string }>,
+}));
+
+const inboxState = vi.hoisted(() => ({
+    hasContent: false,
+}));
+
 vi.mock('@/modal', () => ({
     Modal: {
         alert: vi.fn(),
@@ -77,6 +85,7 @@ vi.mock('react-native-unistyles', () => ({
 
 vi.mock('@expo/vector-icons', () => ({
     Ionicons: 'Ionicons',
+    Octicons: 'Octicons',
 }));
 
 vi.mock('expo-image', () => ({
@@ -97,14 +106,14 @@ vi.mock('@/text', () => ({
 
 vi.mock('@/sync/domains/state/storage', () => ({
     useSocketStatus: () => ({ status: 'connected', lastError: null }),
-    useFriendRequests: () => [],
+    useFriendRequests: () => friendRequestsState.items,
     useSetting: () => false,
     useSyncError: () => null,
     useRealtimeStatus: () => 'disconnected',
 }));
 
 vi.mock('@/hooks/inbox/useInboxHasContent', () => ({
-    useInboxHasContent: () => false,
+    useInboxHasContent: () => inboxState.hasContent,
 }));
 
 vi.mock('@/hooks/server/useFriendsEnabled', () => ({
@@ -115,7 +124,11 @@ vi.mock('@/hooks/server/useAutomationsSupport', () => ({
     useAutomationsSupport: () => ({ enabled: automationsSupportState.enabled }),
 }));
 
-const featureEnabledState: Record<string, boolean> = { voice: false };
+const featureEnabledState: Record<string, boolean> = {
+    voice: false,
+    'inbox.global': true,
+    'actions.approvals': false,
+};
 
 vi.mock('@/hooks/server/useFeatureEnabled', () => ({
     useFeatureEnabled: (featureId: string) => featureEnabledState[featureId] === true,
@@ -162,7 +175,35 @@ vi.mock('./MainView', () => ({
 }));
 
 function findPressableByLabel(tree: renderer.ReactTestRenderer, label: string) {
-    return tree.root.find((node) => (node.type as unknown) === 'Pressable' && node.props.accessibilityLabel === label);
+    return tree.root.find((node) => String(node.type) === 'Pressable' && node.props.accessibilityLabel === label);
+}
+
+function findUnlabeledNavButtons(tree: renderer.ReactTestRenderer) {
+    return tree.root.findAllByType('Pressable').filter((node) => node.props.accessibilityLabel == null);
+}
+
+function hasTextChild(node: renderer.ReactTestInstance, value: string) {
+    return node.findAll((child) => String(child.type) === 'Text' && String(child.props.children) === value).length > 0;
+}
+
+function hasIndicatorDot(node: renderer.ReactTestInstance) {
+    return node.findAll((child) => {
+        if (String(child.type) !== 'View') return false;
+        const style = child.props?.style ?? {};
+        return style.width === 6 && style.height === 6;
+    }).length > 0;
+}
+
+function flattenStyle(style: unknown) {
+    if (Array.isArray(style)) {
+        return style.reduce<Record<string, unknown>>((acc, item) => {
+            if (item && typeof item === 'object') {
+                Object.assign(acc, item as Record<string, unknown>);
+            }
+            return acc;
+        }, {});
+    }
+    return style ?? {};
 }
 
 describe('SidebarView header automations button', () => {
@@ -170,6 +211,8 @@ describe('SidebarView header automations button', () => {
         routerPushSpy.mockReset();
         automationsSupportState.enabled = true;
         featureEnabledState.voice = false;
+        friendRequestsState.items = [];
+        inboxState.hasContent = false;
     });
 
     it('navigates to home when logo is pressed', async () => {
@@ -188,7 +231,7 @@ describe('SidebarView header automations button', () => {
         expect(routerPushSpy).toHaveBeenCalledWith('/');
     });
 
-    it('shows automations button next to logo and navigates to automations', async () => {
+    it('does not render automations button in header', async () => {
         const { SidebarView } = await import('./SidebarView');
 
         let tree: renderer.ReactTestRenderer | null = null;
@@ -196,12 +239,10 @@ describe('SidebarView header automations button', () => {
             tree = renderer.create(<SidebarView />);
         });
 
-        const button = findPressableByLabel(tree!, 'automations.openA11y');
-        await act(async () => {
-            button.props.onPress();
-        });
-
-        expect(routerPushSpy).toHaveBeenCalledWith('/automations');
+        const buttons = tree!.root.findAll(
+            (node) => (node.type as unknown) === 'Pressable' && node.props.accessibilityLabel === 'automations.openA11y',
+        );
+        expect(buttons).toHaveLength(0);
     });
 
     it('does not render the wide FAB button in the sidebar', async () => {
@@ -236,5 +277,44 @@ describe('SidebarView header automations button', () => {
         });
 
         expect(tree!.root.findAllByType('VoiceSurface')).toHaveLength(1);
+    });
+
+    it('shows friend request counts on the friends button and only a dot on inbox', async () => {
+        friendRequestsState.items = [{ id: 'fr-1' }, { id: 'fr-2' }];
+        inboxState.hasContent = true;
+        const { SidebarView } = await import('./SidebarView');
+
+        let tree: renderer.ReactTestRenderer | null = null;
+        await act(async () => {
+            tree = renderer.create(<SidebarView />);
+        });
+
+        const [inboxButton, friendsButton] = findUnlabeledNavButtons(tree!);
+        expect(inboxButton).toBeTruthy();
+        expect(friendsButton).toBeTruthy();
+
+        expect(hasTextChild(inboxButton!, '2')).toBe(false);
+        expect(hasIndicatorDot(inboxButton!)).toBe(true);
+        expect(hasTextChild(friendsButton!, '2')).toBe(true);
+    });
+
+    it('constrains the server status row to the shrinking title column before the header icons', async () => {
+        const { SidebarView } = await import('./SidebarView');
+
+        let tree: renderer.ReactTestRenderer | null = null;
+        await act(async () => {
+            tree = renderer.create(<SidebarView />);
+        });
+
+        const control = tree!.root.findByType('ConnectionStatusControl' as any);
+        expect(control.props.variant).toBe('sidebar');
+
+        const wrapper = control.parent;
+        expect(flattenStyle(wrapper?.props.style)).toMatchObject({
+            alignSelf: 'stretch',
+            flexShrink: 1,
+            maxWidth: '100%',
+            minWidth: 0,
+        });
     });
 });
