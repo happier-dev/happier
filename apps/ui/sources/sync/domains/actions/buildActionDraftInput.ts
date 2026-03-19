@@ -1,15 +1,18 @@
+import type { BackendTargetRefV1 } from '@happier-dev/protocol';
 import type { ActionId } from '@happier-dev/protocol';
 import { buildActionDraftSeedInput, getActionSpec } from '@happier-dev/protocol';
 
 export function buildActionDraftInput(args: Readonly<{
   actionId: ActionId;
   sessionId?: string | null;
+  defaultBackendTarget?: BackendTargetRefV1 | null;
   defaultBackendId?: string | null;
   instructions?: string | null;
   extra?: Record<string, unknown> | null;
 }>): Record<string, unknown> {
   const spec = getActionSpec(args.actionId as any);
   const seed = buildActionDraftSeedInput(spec as any, {
+    defaultBackendTarget: args.defaultBackendTarget ?? null,
     defaultBackendId: args.defaultBackendId ?? null,
     instructions: args.instructions ?? null,
   });
@@ -23,4 +26,3 @@ export function buildActionDraftInput(args: Readonly<{
     ...(extra ?? null),
   };
 }
-
