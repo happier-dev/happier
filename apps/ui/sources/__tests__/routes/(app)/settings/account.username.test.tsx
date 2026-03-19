@@ -31,6 +31,13 @@ vi.mock('@/auth/context/AuthContext', () => ({
     }),
 }));
 
+vi.mock('@/hooks/auth/useConnectAccount', () => ({
+    useConnectAccount: () => ({
+        connectAccount: vi.fn(),
+        isLoading: false,
+    }),
+}));
+
 vi.mock('@/hooks/server/useFriendsEnabled', () => ({
     useFriendsEnabled: () => true,
 }));
@@ -48,6 +55,14 @@ vi.mock('@/hooks/server/useFriendsIdentityReadiness', () => ({
     }),
 }));
 
+vi.mock('@/hooks/server/useFeatureEnabled', () => ({
+    useFeatureEnabled: () => false,
+}));
+
+vi.mock('@/components/account/ProviderIdentityItems', () => ({
+    ProviderIdentityItems: () => null,
+}));
+
 describe('Settings → Account (username)', () => {
     afterEach(() => {
         vi.restoreAllMocks();
@@ -55,7 +70,6 @@ describe('Settings → Account (username)', () => {
     });
 
     it('shows a Username item and saves it when friendsAllowUsername is enabled', async () => {
-        vi.resetModules();
         storage.getState().applyProfile({ ...profileDefaults, linkedProviders: [], username: null });
 
         const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
