@@ -21,11 +21,11 @@ interface MachineCacheEntry {
 }
 
 function readErrorCode(error: unknown): string | null {
-    if (!error || typeof error !== "object") {
+    if (!error || typeof error !== 'object') {
         return null;
     }
     const { code } = error as { code?: unknown };
-    return typeof code === "string" ? code : null;
+    return typeof code === 'string' ? code : null;
 }
 
 class ActivityCache {
@@ -74,7 +74,7 @@ class ActivityCache {
 
     private shouldBackoffDbFlush(error: unknown): boolean {
         const code = readErrorCode(error);
-        if (code === "SQLITE_BUSY" || code === "P1008" || code === "P2028") {
+        if (code === 'SQLITE_BUSY' || code === 'P1008' || code === 'P2028') {
             return true;
         }
         const message = error instanceof Error ? error.message : String(error);
