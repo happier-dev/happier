@@ -1,6 +1,7 @@
 import type { Credentials } from '@/persistence';
 import { decodeBase64, decrypt, encodeBase64, encrypt } from '@/api/encryption';
 import { openSessionDataEncryptionKey } from '@/api/client/openSessionDataEncryptionKey';
+import { tryParseJsonRecord } from '@/utils/tryParseJsonRecord';
 
 export type SessionEncryptionContext = Readonly<{
   encryptionKey: Uint8Array;
@@ -31,16 +32,6 @@ export function resolveSessionEncryptionContextFromCredentials(
   });
 
   return { encryptionKey: opened ?? credentials.encryption.machineKey, encryptionVariant: 'dataKey' };
-}
-
-function tryParseJsonRecord(value: string): Record<string, unknown> | null {
-  try {
-    const parsed = JSON.parse(value);
-    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return null;
-    return parsed as Record<string, unknown>;
-  } catch {
-    return null;
-  }
 }
 
 export function tryDecryptSessionMetadata(params: Readonly<{
