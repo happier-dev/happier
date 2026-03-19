@@ -4,6 +4,14 @@ import { describe, expect, it, vi } from 'vitest';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
+vi.mock('react-native', () => ({
+    Pressable: ({ children, ...props }: any) => React.createElement('Pressable', props, children),
+}));
+
+vi.mock('@expo/vector-icons', () => ({
+    Ionicons: 'Ionicons',
+}));
+
 const openBottomSpy = vi.fn();
 const closeBottomSpy = vi.fn();
 const setBottomTabSpy = vi.fn();
@@ -97,5 +105,21 @@ describe('SessionHeaderTerminalButton', () => {
 
         expect(closeBottomSpy).toHaveBeenCalledTimes(1);
         expect(openBottomSpy).not.toHaveBeenCalled();
+    });
+
+    it('suppresses the header terminal button testID when the session screen is hidden', async () => {
+        const { SessionScreenTestIdsProvider } = await import('../shell/sessionScreenTestIds');
+        const { SessionHeaderTerminalButton } = await import('./SessionHeaderTerminalButton');
+
+        let tree: renderer.ReactTestRenderer;
+        await act(async () => {
+            tree = renderer.create(
+                <SessionScreenTestIdsProvider enabled={false}>
+                    <SessionHeaderTerminalButton sessionId="s1" scopeId="session:s1" />
+                </SessionScreenTestIdsProvider>,
+            );
+        });
+
+        expect((tree! as any).root.findAllByProps({ testID: 'session-header-terminal-button' })).toHaveLength(0);
     });
 });
