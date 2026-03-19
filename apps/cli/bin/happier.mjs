@@ -61,7 +61,7 @@ if (!hasNoWarnings || !hasNoDeprecation) {
   const projectRoot = dirname(dirname(fileURLToPath(import.meta.url)));
   const entrypoint = await prepareRuntimeEntrypoint(projectRoot, 'index.mjs');
   preflightRequiredDependencies(projectRoot);
-
+  
   // Execute the actual CLI directly with the correct flags
   try {
     execFileSync(process.execPath, [
