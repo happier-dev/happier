@@ -6,6 +6,7 @@ import { envFlag } from '../../env';
 import { parsePositiveInt } from '../../numbers';
 
 import type { ProviderScenario } from '../types';
+import { normalizeDecodedTranscriptValue } from '../normalizeDecodedTranscriptValue';
 
 const fatalAssistantErrorSubstrings = [
   'authentication required',
@@ -83,7 +84,7 @@ function asRecord(value: unknown): UnknownRecord | null {
 export function countTaskCompleteMessages(messages: unknown[]): number {
   let count = 0;
   for (const msg of messages) {
-    const record = asRecord(msg);
+    const record = asRecord(normalizeDecodedTranscriptValue(msg));
     if (record?.type === 'task_complete') count++;
   }
   return count;
@@ -140,6 +141,10 @@ function extractTextMessageContent(content: unknown): string | null {
   if (!content || typeof content !== 'object') return null;
   const value = content as Record<string, unknown>;
   if (typeof value.text === 'string') return value.text;
+  if (value.type === 'acp') {
+    const data = asRecord(value.data);
+    if (typeof data?.message === 'string') return data.message;
+  }
   if (Array.isArray(value.parts)) {
     for (const part of value.parts) {
       if (!part || typeof part !== 'object') continue;
@@ -168,9 +173,9 @@ function shouldIgnoreFatalSubstring(params: { needle: string; lowerSample: strin
 
 export function extractFatalAgentErrorMessage(messages: unknown[]): string | null {
   for (const message of messages) {
-    if (!message || typeof message !== 'object') continue;
-    const row = message as Record<string, unknown>;
-    if (row.role !== 'assistant') continue;
+    const row = asRecord(normalizeDecodedTranscriptValue(message));
+    if (!row) continue;
+    if (row.role !== 'assistant' && row.role !== 'agent') continue;
 
     const text = extractTextMessageContent(row.content);
     if (!text) continue;
@@ -338,6 +343,11 @@ export function shouldAssertPendingDrain(params: { assertPendingDrain?: boolean 
 export function resolveCliDistAvailabilityWaitMs(raw: string | undefined): number {
   const parsed = parsePositiveInt(raw, 180_000);
   return Math.max(30_000, Math.min(parsed, 600_000));
+}
+
+export function resolveCliDistBuildTimeoutMs(raw: string | undefined): number {
+  const parsed = parsePositiveInt(raw, 240_000);
+  return Math.max(60_000, Math.min(parsed, 1_800_000));
 }
 
 export function resolveCliDistPreflightAllowRebuild(): boolean {

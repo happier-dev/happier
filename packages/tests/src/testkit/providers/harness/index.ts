@@ -23,6 +23,8 @@ import { fetchJson } from '../../http';
 import { enqueuePendingQueueV2, listPendingQueueV2 } from '../../pendingQueueV2';
 import { seedCliAuthForServer } from '../../cliAuth';
 
+import { runWithFlakeRetry } from './flakeRetry';
+
 import type {
   ProviderContractMatrixResult,
   ProviderFixtureExamples,
@@ -48,6 +50,8 @@ import { resolveProviderAuthOverlay } from './providerAuthOverlay';
 import { applyCliDevTsxTsconfigEnv, applyHomeIsolationEnv } from './harnessEnv';
 import { resolveAcpToolPermissionPromptExpectation } from '../permissions/acpPermissionPrompts';
 import { stopOpenCodeManagedServerFromHomeDir } from '../opencode/stopOpenCodeManagedServerFromHomeDir';
+import { normalizeDecodedTranscriptValue } from '../normalizeDecodedTranscriptValue';
+import { registerOpenCodeManagedServerHomeForCleanup } from './opencodeManagedServerCleanupRegistry';
 import {
   extractFatalAgentErrorMessage,
   isSkippableProviderUnavailabilityError,
@@ -55,6 +59,7 @@ import {
   resolveTaskCompleteBaselineAtStepStart,
   resolveCliDistPreflightAllowRebuild,
   resolveCliDistAvailabilityWaitMs,
+  resolveCliDistBuildTimeoutMs,
   resolveScenarioWaitMs,
   resolveProviderInactivityTimeoutMs,
   resolveProviderPermissionBlockTimeoutMs,
@@ -101,6 +106,7 @@ export {
   readFatalProviderErrorFromCliLogs,
   resolveCliDistPreflightAllowRebuild,
   resolveCliDistAvailabilityWaitMs,
+  resolveCliDistBuildTimeoutMs,
   resolveScenarioWaitMs,
   resolveProviderInactivityTimeoutMs,
   resolveProviderPermissionBlockTimeoutMs,
@@ -1016,6 +1022,10 @@ async function runOneScenario(params: {
   await mkdir(cliHome, { recursive: true });
   await mkdir(workspaceDir, { recursive: true });
 
+  const unregisterOpenCodeManagedServerCleanup = provider.id === 'opencode_server'
+    ? registerOpenCodeManagedServerHomeForCleanup(cliHome)
+    : null;
+
   try {
   if (scenario.setup) {
     await scenario.setup({ workspaceDir, cliHome });
@@ -1189,6 +1199,9 @@ async function runOneScenario(params: {
           allowRebuild: false,
           waitForAvailabilityMs: resolveCliDistAvailabilityWaitMs(
             process.env.HAPPIER_E2E_CLI_DIST_WAIT_MS ?? process.env.HAPPY_E2E_CLI_DIST_WAIT_MS,
+          ),
+          buildTimeoutMs: resolveCliDistBuildTimeoutMs(
+            process.env.HAPPIER_E2E_CLI_DIST_BUILD_TIMEOUT_MS ?? process.env.HAPPY_E2E_CLI_DIST_BUILD_TIMEOUT_MS,
           ),
         },
       );
@@ -1458,7 +1471,7 @@ async function runOneScenario(params: {
             lastSeenMessageSeq = Math.max(lastSeenMessageSeq, ...newMessages.map((m) => m.seq));
             const decodedMessages = newMessages.flatMap((m) => {
               try {
-                return [decryptLegacyBase64(m.content.c, secret)];
+                return [normalizeDecodedTranscriptValue(decryptLegacyBase64(m.content.c, secret))];
               } catch {
                 return [];
               }
@@ -1883,6 +1896,7 @@ async function runOneScenario(params: {
     // we'd accumulate one server process per scenario and eventually hit resource exhaustion.
     if (provider.id === 'opencode_server') {
       await stopOpenCodeManagedServerFromHomeDir(cliHome).catch(() => {});
+      unregisterOpenCodeManagedServerCleanup?.();
     }
   }
 }
@@ -1894,20 +1908,14 @@ async function runProviderWithRetry(params: {
   testDir: string;
 }): Promise<void> {
   const allowFlakeRetry = envFlag('HAPPIER_E2E_PROVIDER_FLAKE_RETRY', false);
-  if (!allowFlakeRetry) {
-    await runOneScenario(params);
-    return;
-  }
-  try {
-    await runOneScenario(params);
-  } catch (e1: any) {
-    try {
-      await runOneScenario(params);
-    } catch {
-      throw e1;
-    }
-    throw new Error(`FLAKY: provider scenario passed on retry (${params.provider.id}.${params.scenario.id})`);
-  }
+  await runWithFlakeRetry({
+    enabled: allowFlakeRetry,
+    flakyErrorMessage: `FLAKY: provider scenario passed on retry (${params.provider.id}.${params.scenario.id})`,
+    runOnce: async (attempt) => {
+      const attemptDir = attempt === 1 ? params.testDir : `${params.testDir}.retry1`;
+      await runOneScenario({ ...params, testDir: attemptDir });
+    },
+  });
 }
 
 export async function runProviderContractMatrix(): Promise<ProviderContractMatrixResult> {
@@ -1936,6 +1944,9 @@ export async function runProviderContractMatrix(): Promise<ProviderContractMatri
         allowRebuild: resolveCliDistPreflightAllowRebuild(),
         waitForAvailabilityMs: resolveCliDistAvailabilityWaitMs(
           process.env.HAPPIER_E2E_CLI_DIST_WAIT_MS ?? process.env.HAPPY_E2E_CLI_DIST_WAIT_MS,
+        ),
+        buildTimeoutMs: resolveCliDistBuildTimeoutMs(
+          process.env.HAPPIER_E2E_CLI_DIST_BUILD_TIMEOUT_MS ?? process.env.HAPPY_E2E_CLI_DIST_BUILD_TIMEOUT_MS,
         ),
       },
     );
