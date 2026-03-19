@@ -1,16 +1,59 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { RPC_ERROR_CODES } from '@happier-dev/protocol/rpc';
+
 vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedSessionRpc', () => ({
   sessionRpcWithServerScope: vi.fn(),
+}));
+
+const settingsState: { current: any } = {
+  current: {
+    voice: {
+      providerId: 'local_conversation',
+      adapters: {
+        local_conversation: {
+          streaming: {
+            enabled: false,
+            turnReadPollIntervalMs: 25,
+            turnReadMaxEvents: 64,
+            turnStreamTimeoutMs: 300000,
+          },
+          networkTimeoutMs: 15000,
+        },
+      },
+    },
+  },
+};
+
+vi.mock('@/sync/domains/state/storage', () => ({
+  storage: {
+    getState: () => ({ settings: settingsState.current }),
+  },
 }));
 
 describe('DaemonVoiceAgentClient', () => {
   beforeEach(async () => {
     const { sessionRpcWithServerScope } = await import('@/sync/runtime/orchestration/serverScopedRpc/serverScopedSessionRpc');
     vi.mocked(sessionRpcWithServerScope).mockReset();
+    settingsState.current = {
+      voice: {
+        providerId: 'local_conversation',
+        adapters: {
+          local_conversation: {
+            streaming: {
+              enabled: false,
+              turnReadPollIntervalMs: 25,
+              turnReadMaxEvents: 64,
+              turnStreamTimeoutMs: 300000,
+            },
+            networkTimeoutMs: 15000,
+          },
+        },
+      },
+    };
   });
 
-  it('throws RPC errors with rpcErrorCode for fallback handling', async () => {
+  it('throws RPC errors with rpcErrorCode from ensureOrStart', async () => {
     const { sessionRpcWithServerScope } = await import('@/sync/runtime/orchestration/serverScopedRpc/serverScopedSessionRpc');
     vi.mocked(sessionRpcWithServerScope).mockResolvedValueOnce({ ok: false, error: 'unsupported', errorCode: 'VOICE_AGENT_UNSUPPORTED' } as any);
 
@@ -65,7 +108,7 @@ describe('DaemonVoiceAgentClient', () => {
           resume: true,
           start: expect.objectContaining({
             intent: 'voice_agent',
-            backendId: 'codex',
+            backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
             retentionPolicy: 'resumable',
             ioMode: 'streaming',
             commitIsolation: true,
@@ -73,6 +116,221 @@ describe('DaemonVoiceAgentClient', () => {
         }),
       }),
     );
+  });
+
+  it('forwards replay seed requests through the ensureOrStart start payload', async () => {
+    const { sessionRpcWithServerScope } = await import('@/sync/runtime/orchestration/serverScopedRpc/serverScopedSessionRpc');
+    vi.mocked(sessionRpcWithServerScope).mockResolvedValueOnce({ ok: true, runId: 'run_1', created: true } as any);
+
+    const { DaemonVoiceAgentClient } = await import('./daemonVoiceAgentClient');
+    const client = new DaemonVoiceAgentClient();
+
+    await client.start({
+      sessionId: 's1',
+      agentSource: 'agent',
+      agentId: 'codex',
+      verbosity: 'short',
+      chatModelId: 'fast',
+      commitModelId: 'fast',
+      permissionPolicy: 'read_only',
+      idleTtlSeconds: 300,
+      initialContext: 'ctx',
+      replay: {
+        kind: 'voice_session.v1',
+        previousSessionId: 'sys_voice',
+        transcriptEpoch: 3,
+        strategy: 'summary_plus_recent',
+        recentMessagesCount: 12,
+        summaryRunner: {
+          v: 1,
+          backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+          modelId: 'default',
+          permissionMode: 'no_tools',
+        },
+      },
+    } as any);
+
+    expect(vi.mocked(sessionRpcWithServerScope)).toHaveBeenCalledWith(
+      expect.objectContaining({
+        payload: expect.objectContaining({
+          start: expect.objectContaining({
+            replay: expect.objectContaining({
+              kind: 'voice_session.v1',
+              previousSessionId: 'sys_voice',
+              transcriptEpoch: 3,
+              strategy: 'summary_plus_recent',
+              recentMessagesCount: 12,
+            }),
+          }),
+        }),
+      }),
+    );
+  });
+
+  it('uses a startup RPC timeout aligned with the voice bootstrap timeout for ensureOrStart', async () => {
+    const { sessionRpcWithServerScope } = await import('@/sync/runtime/orchestration/serverScopedRpc/serverScopedSessionRpc');
+    vi.mocked(sessionRpcWithServerScope).mockResolvedValueOnce({ ok: true, runId: 'run_1', created: true } as any);
+
+    const { DaemonVoiceAgentClient } = await import('./daemonVoiceAgentClient');
+    const client = new DaemonVoiceAgentClient();
+
+    await client.start({
+      sessionId: 's1',
+      agentSource: 'agent',
+      agentId: 'claude',
+      verbosity: 'short',
+      chatModelId: 'fast',
+      commitModelId: 'fast',
+      permissionPolicy: 'read_only',
+      idleTtlSeconds: 300,
+      initialContext: 'ctx',
+    });
+
+    expect(vi.mocked(sessionRpcWithServerScope)).toHaveBeenCalledWith(
+      expect.objectContaining({
+        timeoutMs: 60_000,
+      }),
+    );
+  });
+
+  it('honors an explicit bootstrap timeout when it exceeds the network timeout', async () => {
+    const { sessionRpcWithServerScope } = await import('@/sync/runtime/orchestration/serverScopedRpc/serverScopedSessionRpc');
+    vi.mocked(sessionRpcWithServerScope).mockResolvedValueOnce({ ok: true, runId: 'run_1', created: true } as any);
+
+    const { DaemonVoiceAgentClient } = await import('./daemonVoiceAgentClient');
+    const client = new DaemonVoiceAgentClient();
+
+    await client.start({
+      sessionId: 's1',
+      agentSource: 'agent',
+      agentId: 'claude',
+      verbosity: 'short',
+      chatModelId: 'fast',
+      commitModelId: 'fast',
+      permissionPolicy: 'read_only',
+      idleTtlSeconds: 300,
+      initialContext: 'ctx',
+      bootstrapTimeoutMs: 90_000,
+    });
+
+    expect(vi.mocked(sessionRpcWithServerScope)).toHaveBeenCalledWith(
+      expect.objectContaining({
+        timeoutMs: 90_000,
+      }),
+    );
+  });
+
+  it('omits default sentinel model ids from the ensureOrStart start payload', async () => {
+    const { sessionRpcWithServerScope } = await import('@/sync/runtime/orchestration/serverScopedRpc/serverScopedSessionRpc');
+    vi.mocked(sessionRpcWithServerScope).mockResolvedValueOnce({ ok: true, runId: 'run_1', created: true } as any);
+
+    const { DaemonVoiceAgentClient } = await import('./daemonVoiceAgentClient');
+    const client = new DaemonVoiceAgentClient();
+
+    await client.start({
+      sessionId: 's1',
+      agentSource: 'agent',
+      agentId: 'codex',
+      verbosity: 'short',
+      chatModelId: 'default',
+      commitModelId: 'default',
+      permissionPolicy: 'read_only',
+      idleTtlSeconds: 300,
+      initialContext: 'ctx',
+    });
+
+    expect(vi.mocked(sessionRpcWithServerScope)).toHaveBeenCalledWith(
+      expect.objectContaining({
+        payload: expect.objectContaining({
+          start: expect.not.objectContaining({
+            chatModelId: expect.anything(),
+            commitModelId: expect.anything(),
+          }),
+        }),
+      }),
+    );
+  });
+
+  it('retries execution.run.ensureOrStart once when the initial RPC times out', async () => {
+    const { sessionRpcWithServerScope } = await import('@/sync/runtime/orchestration/serverScopedRpc/serverScopedSessionRpc');
+    vi.mocked(sessionRpcWithServerScope)
+      .mockRejectedValueOnce(new Error('operation has timed out'))
+      .mockResolvedValueOnce({ ok: true, runId: 'run_retry', created: true } as any);
+
+    const { DaemonVoiceAgentClient } = await import('./daemonVoiceAgentClient');
+    const client = new DaemonVoiceAgentClient();
+
+    await expect(
+      client.start({
+        sessionId: 's1',
+        agentSource: 'agent',
+        agentId: 'codex',
+        verbosity: 'short',
+        chatModelId: 'fast',
+        commitModelId: 'fast',
+        permissionPolicy: 'read_only',
+        idleTtlSeconds: 300,
+        initialContext: 'ctx',
+      }),
+    ).resolves.toEqual({ voiceAgentId: 'run_retry' });
+
+    expect(vi.mocked(sessionRpcWithServerScope)).toHaveBeenCalledTimes(2);
+  });
+
+  it('forwards displayUserText separately from the execution payload when starting a turn stream', async () => {
+    const { SESSION_RPC_METHODS } = await import('@happier-dev/protocol/rpc');
+    const { sessionRpcWithServerScope } = await import('@/sync/runtime/orchestration/serverScopedRpc/serverScopedSessionRpc');
+    vi.mocked(sessionRpcWithServerScope).mockResolvedValueOnce({ streamId: 'stream-1' } as any);
+
+    const { DaemonVoiceAgentClient } = await import('./daemonVoiceAgentClient');
+    const client = new DaemonVoiceAgentClient();
+
+    await expect(
+      client.startTurnStream({
+        sessionId: 'session-1',
+        voiceAgentId: 'run-1',
+        userText: 'Context updates since your last voice turn:\n\nSession asks a question.\n\nUser said:\nCreate the file.',
+        displayUserText: 'Create the file.',
+      } as any),
+    ).resolves.toEqual({ streamId: 'stream-1' });
+
+    expect(vi.mocked(sessionRpcWithServerScope)).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sessionId: 'session-1',
+        method: SESSION_RPC_METHODS.EXECUTION_RUN_STREAM_START,
+        payload: expect.objectContaining({
+          runId: 'run-1',
+          message: expect.stringContaining('Context updates since your last voice turn'),
+          displayMessage: 'Create the file.',
+        }),
+      }),
+    );
+  });
+
+  it('surfaces RPC method unavailable from ensureOrStart without falling back', async () => {
+    const { sessionRpcWithServerScope } = await import('@/sync/runtime/orchestration/serverScopedRpc/serverScopedSessionRpc');
+    vi.mocked(sessionRpcWithServerScope).mockRejectedValueOnce(
+      Object.assign(new Error('RPC method not available'), { rpcErrorCode: RPC_ERROR_CODES.METHOD_NOT_AVAILABLE }),
+    );
+
+    const { DaemonVoiceAgentClient } = await import('./daemonVoiceAgentClient');
+    const client = new DaemonVoiceAgentClient();
+
+    await expect(
+      client.start({
+        sessionId: 's1',
+        agentSource: 'agent',
+        agentId: 'codex',
+        verbosity: 'short',
+        chatModelId: 'fast',
+        commitModelId: 'fast',
+        permissionPolicy: 'read_only',
+        idleTtlSeconds: 300,
+        initialContext: 'ctx',
+      }),
+    ).rejects.toMatchObject({ message: 'RPC method not available', rpcErrorCode: RPC_ERROR_CODES.METHOD_NOT_AVAILABLE });
+
+    expect(vi.mocked(sessionRpcWithServerScope)).toHaveBeenCalledTimes(1);
   });
 
   it('throws invalid_rpc_response for malformed start payloads', async () => {
@@ -123,4 +381,179 @@ describe('DaemonVoiceAgentClient', () => {
       }),
     ).rejects.toThrow('invalid_rpc_response');
   });
+
+  it('sendTurn respects configured turnStreamTimeoutMs (not a hard-coded 30s)', async () => {
+    vi.useFakeTimers();
+    settingsState.current = {
+      voice: {
+        providerId: 'local_conversation',
+        adapters: {
+          local_conversation: {
+            streaming: {
+              enabled: false,
+              turnReadPollIntervalMs: 250,
+              turnReadMaxEvents: 64,
+              turnStreamTimeoutMs: 1000,
+            },
+            networkTimeoutMs: 15000,
+          },
+        },
+      },
+    };
+
+    const { SESSION_RPC_METHODS } = await import('@happier-dev/protocol/rpc');
+    const { sessionRpcWithServerScope } = await import('@/sync/runtime/orchestration/serverScopedRpc/serverScopedSessionRpc');
+    vi.mocked(sessionRpcWithServerScope).mockImplementation(async (args: any) => {
+      if (args?.method === SESSION_RPC_METHODS.EXECUTION_RUN_STREAM_START) {
+        return { streamId: 'stream-1' } as any;
+      }
+      if (args?.method === SESSION_RPC_METHODS.EXECUTION_RUN_STREAM_READ) {
+        return { streamId: 'stream-1', events: [], nextCursor: 0, done: false } as any;
+      }
+      if (args?.method === SESSION_RPC_METHODS.EXECUTION_RUN_STREAM_CANCEL) {
+        return { ok: true } as any;
+      }
+      throw new Error(`unexpected rpc method: ${String(args?.method ?? '')}`);
+    });
+
+    const { DaemonVoiceAgentClient } = await import('./daemonVoiceAgentClient');
+    const client = new DaemonVoiceAgentClient();
+
+    let settled = false;
+    let rejected: unknown = null;
+    client.sendTurn({ sessionId: 'session-1', voiceAgentId: 'm1', userText: 'hello' }).then(
+      () => {
+        settled = true;
+      },
+      (err: unknown) => {
+        settled = true;
+        rejected = err;
+      },
+    );
+
+    await vi.advanceTimersByTimeAsync(2000);
+    await Promise.resolve();
+
+    expect(settled).toBe(true);
+    expect(String((rejected as any)?.message ?? rejected)).toContain('stream_timeout');
+    vi.useRealTimers();
+  });
+
+  it('sendTurn does not fall back to networkTimeoutMs when turnStreamTimeoutMs is null', async () => {
+    vi.useFakeTimers();
+    settingsState.current = {
+      voice: {
+        providerId: 'local_conversation',
+        adapters: {
+          local_conversation: {
+            streaming: {
+              enabled: false,
+              turnReadPollIntervalMs: 250,
+              turnReadMaxEvents: 64,
+              turnStreamTimeoutMs: null,
+            },
+            networkTimeoutMs: 1000,
+          },
+        },
+      },
+    };
+
+    const { SESSION_RPC_METHODS } = await import('@happier-dev/protocol/rpc');
+    const { sessionRpcWithServerScope } = await import('@/sync/runtime/orchestration/serverScopedRpc/serverScopedSessionRpc');
+    let readCount = 0;
+    vi.mocked(sessionRpcWithServerScope).mockImplementation(async (args: any) => {
+      if (args?.method === SESSION_RPC_METHODS.EXECUTION_RUN_STREAM_START) {
+        return { streamId: 'stream-1' } as any;
+      }
+      if (args?.method === SESSION_RPC_METHODS.EXECUTION_RUN_STREAM_READ) {
+        readCount += 1;
+        if (readCount >= 8) {
+          return {
+            streamId: 'stream-1',
+            events: [{ t: 'done', assistantText: 'ok', actions: [] }],
+            nextCursor: readCount,
+            done: true,
+          } as any;
+        }
+        return { streamId: 'stream-1', events: [], nextCursor: readCount, done: false } as any;
+      }
+      if (args?.method === SESSION_RPC_METHODS.EXECUTION_RUN_STREAM_CANCEL) {
+        return { ok: true } as any;
+      }
+      throw new Error(`unexpected rpc method: ${String(args?.method ?? '')}`);
+    });
+
+    const { DaemonVoiceAgentClient } = await import('./daemonVoiceAgentClient');
+    const client = new DaemonVoiceAgentClient();
+
+    const sendPromise = client.sendTurn({ sessionId: 'session-1', voiceAgentId: 'm1', userText: 'hello' });
+
+    await vi.advanceTimersByTimeAsync(2000);
+    await Promise.resolve();
+
+    await expect(sendPromise).resolves.toEqual({ assistantText: 'ok', actions: [] });
+    expect(readCount).toBeGreaterThanOrEqual(8);
+    vi.useRealTimers();
+  });
+
+  it('sendTurn supports very long turnStreamTimeoutMs values (not clamped to 10min)', async () => {
+    vi.useFakeTimers();
+    settingsState.current = {
+      voice: {
+        providerId: 'local_conversation',
+        adapters: {
+          local_conversation: {
+            streaming: {
+              enabled: false,
+              turnReadPollIntervalMs: 500,
+              turnReadMaxEvents: 64,
+              turnStreamTimeoutMs: 900_000,
+            },
+            networkTimeoutMs: 15000,
+          },
+        },
+      },
+    };
+
+    const { SESSION_RPC_METHODS } = await import('@happier-dev/protocol/rpc');
+    const { sessionRpcWithServerScope } = await import('@/sync/runtime/orchestration/serverScopedRpc/serverScopedSessionRpc');
+    vi.mocked(sessionRpcWithServerScope).mockImplementation(async (args: any) => {
+      if (args?.method === SESSION_RPC_METHODS.EXECUTION_RUN_STREAM_START) {
+        return { streamId: 'stream-1' } as any;
+      }
+      if (args?.method === SESSION_RPC_METHODS.EXECUTION_RUN_STREAM_READ) {
+        return { streamId: 'stream-1', events: [], nextCursor: 0, done: false } as any;
+      }
+      if (args?.method === SESSION_RPC_METHODS.EXECUTION_RUN_STREAM_CANCEL) {
+        return { ok: true } as any;
+      }
+      throw new Error(`unexpected rpc method: ${String(args?.method ?? '')}`);
+    });
+
+    const { DaemonVoiceAgentClient } = await import('./daemonVoiceAgentClient');
+    const client = new DaemonVoiceAgentClient();
+
+    let settled = false;
+    let rejected: unknown = null;
+    client.sendTurn({ sessionId: 'session-1', voiceAgentId: 'm1', userText: 'hello' }).then(
+      () => {
+        settled = true;
+      },
+      (err: unknown) => {
+        settled = true;
+        rejected = err;
+      },
+    );
+
+    await vi.advanceTimersByTimeAsync(650_000);
+    await Promise.resolve();
+    expect(settled).toBe(false);
+
+    await vi.advanceTimersByTimeAsync(300_000);
+    await Promise.resolve();
+    expect(settled).toBe(true);
+    expect(String((rejected as any)?.message ?? rejected)).toContain('stream_timeout');
+    vi.useRealTimers();
+  });
+
 });

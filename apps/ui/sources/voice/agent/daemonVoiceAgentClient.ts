@@ -1,5 +1,7 @@
 import { createRpcCallError } from '@/sync/runtime/rpcErrors';
 import { sessionRpcWithServerScope } from '@/sync/runtime/orchestration/serverScopedRpc/serverScopedSessionRpc';
+import { storage } from '@/sync/domains/state/storage';
+import { isSocketIoAckTimeoutError } from '@/sync/runtime/socketIoAckTimeout';
 import { SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc';
 import {
   ExecutionRunActionResponseSchema,
@@ -12,6 +14,8 @@ import {
 import type { VoiceAssistantAction } from '@happier-dev/protocol';
 
 import type { VoiceAgentClient, VoiceAgentStartParams, VoiceAgentStartResult, VoiceAgentTurnStreamEvent } from './types';
+import { resolveVoiceAgentBootstrapTimeoutMs } from './resolveVoiceAgentBootstrapTimeoutMs';
+import { resolveVoiceTurnStreamReadConfig, type VoiceTurnStreamReadConfig } from './resolveVoiceTurnStreamReadConfig';
 
 type SafeParseSuccess<T> = { success: true; data: T };
 type SafeParseFailure = { success: false; error: unknown };
@@ -33,51 +37,106 @@ function throwIfRpcError(value: any): void {
   }
 }
 
+function normalizeVoiceAgentModelId(value: unknown): string | null {
+  if (typeof value !== 'string') return null;
+  const trimmed = value.trim();
+  if (!trimmed || trimmed === 'default') return null;
+  return trimmed;
+}
+
+function normalizeVoiceAgentProfileId(value: unknown): string | null {
+  if (typeof value !== 'string') return null;
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : null;
+}
+
 export class DaemonVoiceAgentClient implements VoiceAgentClient {
+  private resolveStartTimeoutMs(params: Readonly<{ bootstrapTimeoutMs?: number }>): number {
+    const settings: any = storage.getState().settings;
+    const localConversationSettings = settings?.voice?.adapters?.local_conversation ?? null;
+    const raw = Number(localConversationSettings?.networkTimeoutMs ?? NaN);
+    const networkTimeoutMs = Number.isFinite(raw) && raw > 0 ? Math.floor(raw) : 15_000;
+    const explicitBootstrapTimeoutMs = Number(params.bootstrapTimeoutMs);
+    const bootstrapTimeoutMs =
+      Number.isFinite(explicitBootstrapTimeoutMs) && explicitBootstrapTimeoutMs > 0
+        ? Math.floor(explicitBootstrapTimeoutMs)
+        : (resolveVoiceAgentBootstrapTimeoutMs(localConversationSettings) ?? 0);
+    return Math.max(networkTimeoutMs, bootstrapTimeoutMs, 30_000);
+  }
+
+  private resolveTurnStreamReadConfig(): VoiceTurnStreamReadConfig {
+    const settings: any = storage.getState().settings;
+    const voiceCfg = settings?.voice?.adapters?.local_conversation ?? null;
+    return resolveVoiceTurnStreamReadConfig(voiceCfg);
+  }
+
   async start(params: VoiceAgentStartParams): Promise<VoiceAgentStartResult> {
     const backendId = String(params.agentId ?? '').trim() || 'claude';
-    const res: any = await sessionRpcWithServerScope({
-      sessionId: params.sessionId,
-      method: SESSION_RPC_METHODS.EXECUTION_RUN_ENSURE_OR_START,
-      payload: {
-        runId: typeof params.existingRunId === 'string' ? params.existingRunId : null,
-        resume: params.resumeWhenInactive !== false,
-        start: {
-          intent: 'voice_agent',
-          backendId,
-          permissionMode: params.permissionPolicy,
-          retentionPolicy: params.retentionPolicy ?? 'ephemeral',
-          runClass: 'long_lived',
-          ioMode: 'streaming',
-          ...(params.resumeHandle ? { resumeHandle: params.resumeHandle } : {}),
-          // passthrough configuration consumed by the voice_agent intent runtime
-          chatModelId: params.chatModelId,
-          commitModelId: params.commitModelId,
-          ...(params.commitIsolation === true ? { commitIsolation: true } : {}),
-          idleTtlSeconds: params.idleTtlSeconds,
-          initialContext: params.initialContext,
-          verbosity: params.verbosity,
-          bootstrapMode: params.bootstrapMode,
-          ...(params.transcript ? { transcript: params.transcript } : {}),
+    const chatModelId = normalizeVoiceAgentModelId(params.chatModelId);
+    const commitModelId = normalizeVoiceAgentModelId(params.commitModelId);
+    const profileId = normalizeVoiceAgentProfileId(params.profileId);
+    const startPayload = {
+      intent: 'voice_agent',
+      backendTarget: { kind: 'builtInAgent', agentId: backendId },
+      permissionMode: params.permissionPolicy,
+      retentionPolicy: params.retentionPolicy ?? 'ephemeral',
+      runClass: 'long_lived',
+      ioMode: 'streaming',
+      ...(params.resumeHandle ? { resumeHandle: params.resumeHandle } : {}),
+      ...(chatModelId ? { chatModelId } : {}),
+      ...(commitModelId ? { commitModelId } : {}),
+      ...(params.commitIsolation === true ? { commitIsolation: true } : {}),
+      ...(profileId ? { profileId } : {}),
+      idleTtlSeconds: params.idleTtlSeconds,
+      initialContext: params.initialContext,
+      initialContextMode: params.initialContextMode,
+      verbosity: params.verbosity,
+      bootstrapMode: params.bootstrapMode,
+      ...(typeof params.bootstrapTimeoutMs === 'number' ? { bootstrapTimeoutMs: params.bootstrapTimeoutMs } : {}),
+      ...(Array.isArray(params.disabledActionIds) && params.disabledActionIds.length > 0 ? { disabledActionIds: params.disabledActionIds } : {}),
+      ...(params.transcript ? { transcript: params.transcript } : {}),
+      ...(params.replay ? { replay: params.replay } : {}),
+    };
+
+    const ensureOrStart = async () => {
+      const res: any = await sessionRpcWithServerScope({
+        sessionId: params.sessionId,
+        method: SESSION_RPC_METHODS.EXECUTION_RUN_ENSURE_OR_START,
+        timeoutMs: this.resolveStartTimeoutMs({ bootstrapTimeoutMs: params.bootstrapTimeoutMs }),
+        payload: {
+          runId: typeof params.existingRunId === 'string' ? params.existingRunId : null,
+          resume: params.resumeWhenInactive !== false,
+          start: startPayload,
         },
-      },
-    });
-    throwIfRpcError(res);
-    const parsed = ensureOk(res, ExecutionRunEnsureOrStartResponseSchema);
-    if (!parsed.ok) {
-      throw createRpcCallError({ error: parsed.error, errorCode: parsed.errorCode });
+      });
+      throwIfRpcError(res);
+      const parsed = ensureOk(res, ExecutionRunEnsureOrStartResponseSchema);
+      if (!parsed.ok) throw createRpcCallError({ error: parsed.error, errorCode: parsed.errorCode });
+      return { voiceAgentId: parsed.runId };
+    };
+
+    try {
+      return await ensureOrStart();
+    } catch (error) {
+      if (isSocketIoAckTimeoutError(error)) {
+        return await ensureOrStart();
+      }
+      throw error;
     }
-    return { voiceAgentId: parsed.runId };
   }
 
   async sendTurn(
-    params: Readonly<{ sessionId: string; voiceAgentId: string; userText: string }>,
+    params: Readonly<{ sessionId: string; voiceAgentId: string; userText: string; displayUserText?: string }>,
   ): Promise<{ assistantText: string; actions?: VoiceAssistantAction[] }> {
-    const started = await this.startTurnStream({ sessionId: params.sessionId, voiceAgentId: params.voiceAgentId, userText: params.userText });
+    const readCfg = this.resolveTurnStreamReadConfig();
+    const started = await this.startTurnStream({
+      sessionId: params.sessionId,
+      voiceAgentId: params.voiceAgentId,
+      userText: params.userText,
+      ...(typeof params.displayUserText === 'string' ? { displayUserText: params.displayUserText } : {}),
+    });
     let cursor = 0;
     const startedAt = Date.now();
-    const timeoutMs = 30_000;
-    const pollMs = 25;
     let merged = '';
 
     for (;;) {
@@ -86,7 +145,7 @@ export class DaemonVoiceAgentClient implements VoiceAgentClient {
         voiceAgentId: params.voiceAgentId,
         streamId: started.streamId,
         cursor,
-        maxEvents: 256,
+        maxEvents: readCfg.maxEvents,
       });
       cursor = read.nextCursor;
       for (const event of read.events) {
@@ -101,11 +160,11 @@ export class DaemonVoiceAgentClient implements VoiceAgentClient {
       if (read.done) {
         return { assistantText: merged.trim(), actions: [] };
       }
-      if (Date.now() - startedAt > timeoutMs) {
+      if (readCfg.streamTimeoutMs !== null && Date.now() - startedAt > readCfg.streamTimeoutMs) {
         await this.cancelTurnStream({ sessionId: params.sessionId, voiceAgentId: params.voiceAgentId, streamId: started.streamId }).catch(() => {});
         throw new Error('stream_timeout');
       }
-      await new Promise((r) => setTimeout(r, pollMs));
+      await new Promise((r) => setTimeout(r, readCfg.pollIntervalMs));
     }
   }
 
@@ -130,11 +189,18 @@ export class DaemonVoiceAgentClient implements VoiceAgentClient {
     return { assistantText };
   }
 
-  async startTurnStream(params: Readonly<{ sessionId: string; voiceAgentId: string; userText: string; resume?: boolean }>): Promise<{ streamId: string }> {
+  async startTurnStream(params: Readonly<{ sessionId: string; voiceAgentId: string; userText: string; displayUserText?: string; resume?: boolean }>): Promise<{ streamId: string }> {
     const res: any = await sessionRpcWithServerScope({
       sessionId: params.sessionId,
       method: SESSION_RPC_METHODS.EXECUTION_RUN_STREAM_START,
-      payload: { runId: params.voiceAgentId, message: params.userText, ...(params.resume === true ? { resume: true } : {}) },
+      payload: {
+        runId: params.voiceAgentId,
+        message: params.userText,
+        ...(typeof params.displayUserText === 'string' && params.displayUserText.trim().length > 0
+          ? { displayMessage: params.displayUserText }
+          : {}),
+        ...(params.resume === true ? { resume: true } : {}),
+      },
     });
     throwIfRpcError(res);
     return ensureOk(res, ExecutionRunTurnStreamStartResponseSchema);
