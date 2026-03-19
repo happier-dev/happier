@@ -10,6 +10,7 @@ export type VoiceActivityEventBase = Readonly<{
 export type VoiceActivityActionId =
   | 'sendSessionMessage'
   | 'processPermissionRequest'
+  | 'answerUserActionRequest'
   | 'listExecutionRuns'
   | 'getExecutionRun'
   | 'sendExecutionRunMessage'
