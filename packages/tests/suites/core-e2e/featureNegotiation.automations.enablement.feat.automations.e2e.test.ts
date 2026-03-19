@@ -18,6 +18,7 @@ describe('core e2e: feature negotiation automations enablement', () => {
     const testDir = run.testDir('feature-negotiation-automations-disabled');
     server = await startServerLight({
       testDir,
+      dbProvider: 'sqlite',
       extraEnv: {
         HAPPIER_FEATURE_AUTOMATIONS__ENABLED: '0',
       },
