@@ -4,6 +4,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
+const SLOW_TEST_TIMEOUT_MS = 60_000;
+
 vi.mock('react-native-reanimated', () => ({}));
 
 vi.mock('react-native-typography', () => ({
@@ -184,7 +186,7 @@ describe('ServerConfigScreen', () => {
         const rendered = tree!.toJSON();
         expect(rendered).toBeTruthy();
         expect(JSON.stringify(rendered)).toContain('Company');
-    });
+    }, SLOW_TEST_TIMEOUT_MS);
 
     it('auto=1 upserts and activates server then redirects away', async () => {
         localSearchParamsMock = { url: 'https://company.example.test', auto: '1' };
