@@ -84,6 +84,44 @@ afterEach(() => {
 });
 
 describe('Memory settings (enable switch)', () => {
+    it('loads daemon.memory.status alongside settings', async () => {
+        machineRpcSpy.mockImplementation(async (params: any) => {
+            if (params?.method === 'daemon.memory.settings.get') {
+                return { v: 1, enabled: false };
+            }
+            if (params?.method === 'daemon.memory.status') {
+                return {
+                    v: 1,
+                    enabled: false,
+                    indexMode: 'hints',
+                    hintsIndexReady: false,
+                    deepIndexReady: false,
+                    activeIndexReady: false,
+                    embeddingsEnabled: false,
+                    tier1DbPath: null,
+                    deepDbPath: null,
+                    tier1DbBytes: null,
+                    deepDbBytes: null,
+                };
+            }
+            return { v: 1 };
+        });
+
+        const mod = await import('@/app/(app)/settings/memory');
+        const Screen = mod.default;
+
+        await act(async () => {
+            renderer.create(React.createElement(Screen));
+        });
+        await act(async () => {
+            await Promise.resolve();
+        });
+
+        expect(machineRpcSpy).toHaveBeenCalledWith(expect.objectContaining({
+            method: 'daemon.memory.status',
+        }));
+    });
+
     it('does not fetch settings when memory.search is disabled', async () => {
         featureEnabledState['memory.search'] = false;
         machineRpcSpy.mockImplementation(async () => {
@@ -107,6 +145,21 @@ describe('Memory settings (enable switch)', () => {
         machineRpcSpy.mockImplementation(async (params: any) => {
             if (params?.method === 'daemon.memory.settings.get') {
                 return { v: 1, enabled: false };
+            }
+            if (params?.method === 'daemon.memory.status') {
+                return {
+                    v: 1,
+                    enabled: false,
+                    indexMode: 'hints',
+                    hintsIndexReady: false,
+                    deepIndexReady: false,
+                    activeIndexReady: false,
+                    embeddingsEnabled: false,
+                    tier1DbPath: null,
+                    deepDbPath: null,
+                    tier1DbBytes: null,
+                    deepDbBytes: null,
+                };
             }
             if (params?.method === 'daemon.memory.settings.set') {
                 return params.payload;
