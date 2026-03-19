@@ -1,7 +1,18 @@
 import * as React from 'react';
+import { Message } from '@/sync/domains/messages/messageTypes';
+import { readStoredSessionMessages } from '@/sync/domains/messages/readStoredSessionMessages';
+import { storage } from '@/sync/domains/state/storage';
 import { Session } from '@/sync/domains/state/storageTypes';
+import type { SessionListRenderableSession } from '@/sync/domains/session/listing/sessionListRenderable';
+import {
+    readDisplayMachineIdForSession,
+    readDisplayPathForSession,
+    readMachineTargetForSession,
+} from '@/sync/ops/sessionMachineTarget';
 import { t } from '@/text';
 import { resolveAgentRequestKind, shouldShowGenericPermissionPromptForRequest, type AgentRequestKind } from '@/utils/sessions/permissions/permissionPromptPolicy';
+import { formatPathRelativeToHome } from './formatPathRelativeToHome';
+export { formatPathRelativeToHome } from './formatPathRelativeToHome';
 
 export type SessionState = 'disconnected' | 'thinking' | 'waiting' | 'permission_required' | 'action_required';
 
@@ -26,80 +37,198 @@ export type PendingPermissionRequest = Readonly<{
     permissionSuggestions?: unknown;
 }>;
 
-function listPendingAgentRequests(session: Session): PendingPermissionRequest[] {
-    const requests = session.agentState?.requests;
-    if (!requests || Object.keys(requests).length === 0) return [];
+type SessionStatusSource = Session | SessionListRenderableSession;
 
-    const getPermissionSuggestions = (req: unknown): unknown[] | null => {
-        if (!req || typeof req !== 'object') return null;
-        const suggestions = (req as { permissionSuggestions?: unknown }).permissionSuggestions;
-        if (!Array.isArray(suggestions) || suggestions.length === 0) return null;
-        return suggestions as unknown[];
-    };
-
-    const completed = session.agentState?.completedRequests ?? null;
-    if (!completed) {
-        return Object.entries(requests)
-            .map(([id, req]) => ({
-            id,
-            tool: req.tool,
-            kind: resolveAgentRequestKind({ toolName: req.tool, requestKind: req.kind }),
-            arguments: req.arguments,
-            createdAt: typeof req.createdAt === 'number' ? req.createdAt : null,
-            ...(getPermissionSuggestions(req) ? { permissionSuggestions: getPermissionSuggestions(req) } : {}),
-        }));
-    }
-
-    // Some agents can leave stale entries in `requests` after completion/cancel/abort.
-    // Treat a request as pending only when it is not covered by an equal/newer completed record.
-    const pending: PendingPermissionRequest[] = [];
-    for (const [permId, req] of Object.entries(requests)) {
-        const done = completed[permId];
-        if (!done) {
-            pending.push({
-                id: permId,
-                tool: req.tool,
-                kind: resolveAgentRequestKind({ toolName: req.tool, requestKind: req.kind }),
-                arguments: req.arguments,
-                createdAt: typeof req.createdAt === 'number' ? req.createdAt : null,
-                ...(getPermissionSuggestions(req) ? { permissionSuggestions: getPermissionSuggestions(req) } : {}),
-            });
-            continue;
-        }
-
-        const pendingCreatedAt = req?.createdAt ?? 0;
-        const completedAt = done?.completedAt ?? done?.createdAt ?? 0;
-        if (pendingCreatedAt > completedAt) {
-            pending.push({
-                id: permId,
-                tool: req.tool,
-                kind: resolveAgentRequestKind({ toolName: req.tool, requestKind: req.kind }),
-                arguments: req.arguments,
-                createdAt: typeof req.createdAt === 'number' ? req.createdAt : null,
-                ...(getPermissionSuggestions(req) ? { permissionSuggestions: getPermissionSuggestions(req) } : {}),
-            });
-        }
-    }
-
-    return pending;
+function getRequestPermissionSuggestions(req: unknown): unknown[] | null {
+    if (!req || typeof req !== 'object') return null;
+    const suggestions = (req as { permissionSuggestions?: unknown }).permissionSuggestions;
+    if (!Array.isArray(suggestions) || suggestions.length === 0) return null;
+    return suggestions as unknown[];
 }
 
-export function listPendingPermissionRequests(session: Session): PendingPermissionRequest[] {
-    return listPendingAgentRequests(session).filter((r) =>
+function stringifyPendingRequestArguments(value: unknown): string | null {
+    if (typeof value === 'undefined') return null;
+    try {
+        return JSON.stringify(value);
+    } catch {
+        return null;
+    }
+}
+
+function arePendingRequestsEquivalent(left: PendingPermissionRequest, right: PendingPermissionRequest): boolean {
+    if (left.kind !== right.kind || left.tool !== right.tool) return false;
+
+    const leftArgs = stringifyPendingRequestArguments(left.arguments);
+    const rightArgs = stringifyPendingRequestArguments(right.arguments);
+    if (leftArgs && rightArgs && leftArgs === rightArgs) {
+        return true;
+    }
+
+    return left.createdAt !== null && right.createdAt !== null && left.createdAt === right.createdAt;
+}
+
+function mergePendingRequestMetadata(
+    preferred: PendingPermissionRequest,
+    secondary: PendingPermissionRequest,
+): PendingPermissionRequest {
+    return {
+        ...preferred,
+        arguments: typeof preferred.arguments !== 'undefined' ? preferred.arguments : secondary.arguments,
+        createdAt: preferred.createdAt ?? secondary.createdAt,
+        ...(preferred.permissionSuggestions
+            ? { permissionSuggestions: preferred.permissionSuggestions }
+            : secondary.permissionSuggestions
+                ? { permissionSuggestions: secondary.permissionSuggestions }
+                : {}),
+    };
+}
+
+function getRequestCompletedAt(completed: unknown): number {
+    const completedAt = typeof (completed as { completedAt?: unknown })?.completedAt === 'number'
+        ? (completed as { completedAt: number }).completedAt
+        : 0;
+    const createdAt = typeof (completed as { createdAt?: unknown })?.createdAt === 'number'
+        ? (completed as { createdAt: number }).createdAt
+        : 0;
+    return Math.max(completedAt, createdAt);
+}
+
+function isPendingRequestCoveredByCompleted(
+    completedRequests: Record<string, unknown> | null | undefined,
+    requestId: string,
+    createdAt: number | null,
+): boolean {
+    if (!completedRequests || typeof completedRequests !== 'object') return false;
+    const completed = completedRequests[requestId];
+    if (!completed) return false;
+    return (createdAt ?? 0) <= getRequestCompletedAt(completed);
+}
+
+function visitPendingTranscriptRequests(
+    messages: ReadonlyArray<Message> | null | undefined,
+    completedRequests: Record<string, unknown> | null | undefined,
+    out: Map<string, PendingPermissionRequest>,
+): void {
+    if (!Array.isArray(messages) || messages.length === 0) return;
+
+    for (const message of messages) {
+        if (!message || message.kind !== 'tool-call') continue;
+
+        const permission = message.tool?.permission;
+        const requestId = typeof permission?.id === 'string'
+            ? permission.id.trim()
+            : typeof message.tool?.id === 'string'
+                ? message.tool.id.trim()
+                : '';
+        const toolName = typeof message.tool?.name === 'string' ? message.tool.name.trim() : '';
+        const createdAt = typeof message.createdAt === 'number' ? message.createdAt : null;
+
+        if (
+            permission?.status === 'pending' &&
+            requestId &&
+            toolName &&
+            !out.has(requestId) &&
+            !isPendingRequestCoveredByCompleted(completedRequests, requestId, createdAt)
+        ) {
+            out.set(requestId, {
+                id: requestId,
+                tool: toolName,
+                kind: resolveAgentRequestKind({ toolName, requestKind: permission.kind }),
+                arguments: message.tool?.input,
+                createdAt,
+                ...(Array.isArray(permission.suggestions) && permission.suggestions.length > 0
+                    ? { permissionSuggestions: permission.suggestions }
+                    : {}),
+            });
+        }
+
+        visitPendingTranscriptRequests(message.children ?? [], completedRequests, out);
+    }
+}
+
+export function listPendingTranscriptRequests(
+    session: Session,
+    messages?: ReadonlyArray<Message>,
+): PendingPermissionRequest[] {
+    const transcriptMessages =
+        messages ??
+        readStoredSessionMessages(storage.getState(), session.id) ??
+        [];
+    const out = new Map<string, PendingPermissionRequest>();
+    visitPendingTranscriptRequests(
+        transcriptMessages,
+        (session.agentState?.completedRequests as Record<string, unknown> | null | undefined) ?? null,
+        out,
+    );
+    return Array.from(out.values());
+}
+
+function listPendingAgentRequests(session: Session, messages?: ReadonlyArray<Message>): PendingPermissionRequest[] {
+    const requests = session.agentState?.requests;
+    const completed = session.agentState?.completedRequests ?? null;
+    const pending = new Map<string, PendingPermissionRequest>();
+    const transcriptRequests = listPendingTranscriptRequests(session, messages);
+
+    for (const request of transcriptRequests) {
+        pending.set(request.id, request);
+    }
+
+    if (requests && Object.keys(requests).length > 0) {
+        for (const [permId, req] of Object.entries(requests)) {
+            const createdAt = typeof req?.createdAt === 'number' ? req.createdAt : null;
+            if (isPendingRequestCoveredByCompleted(completed, permId, createdAt)) continue;
+            const request: PendingPermissionRequest = {
+                id: permId,
+                tool: req.tool,
+                kind: resolveAgentRequestKind({ toolName: req.tool, requestKind: req.kind }),
+                arguments: req.arguments,
+                createdAt,
+                ...(getRequestPermissionSuggestions(req) ? { permissionSuggestions: getRequestPermissionSuggestions(req) } : {}),
+            };
+
+            const transcriptMatch = transcriptRequests.find((transcriptRequest) =>
+                arePendingRequestsEquivalent(transcriptRequest, request)
+            );
+            if (transcriptMatch) {
+                pending.set(
+                    transcriptMatch.id,
+                    mergePendingRequestMetadata(
+                        pending.get(transcriptMatch.id) ?? transcriptMatch,
+                        request,
+                    ),
+                );
+                continue;
+            }
+
+            pending.set(permId, request);
+        }
+    }
+
+    return Array.from(pending.values());
+}
+
+export function listPendingPermissionRequests(session: Session, messages?: ReadonlyArray<Message>): PendingPermissionRequest[] {
+    return listPendingAgentRequests(session, messages).filter((r) =>
         shouldShowGenericPermissionPromptForRequest({ toolName: r.tool, requestKind: r.kind })
     );
 }
 
-export function listPendingUserActionRequests(session: Session): PendingPermissionRequest[] {
-    return listPendingAgentRequests(session).filter((r) => r.kind === 'user_action');
+export function listPendingUserActionRequests(session: Session, messages?: ReadonlyArray<Message>): PendingPermissionRequest[] {
+    return listPendingAgentRequests(session, messages).filter((r) => r.kind === 'user_action');
 }
 
-function hasPendingPermissionRequests(session: Session): boolean {
-    return listPendingPermissionRequests(session).length > 0;
+function hasPendingPermissionRequests(session: SessionStatusSource): boolean {
+    if (typeof (session as SessionListRenderableSession).hasPendingPermissionRequests === 'boolean') {
+        return (session as SessionListRenderableSession).hasPendingPermissionRequests === true;
+    }
+    return listPendingPermissionRequests(session as Session).length > 0;
 }
 
-function hasPendingUserActionRequests(session: Session): boolean {
-    return listPendingUserActionRequests(session).length > 0;
+function hasPendingUserActionRequests(session: SessionStatusSource): boolean {
+    if (typeof (session as SessionListRenderableSession).hasPendingUserActionRequests === 'boolean') {
+        return (session as SessionListRenderableSession).hasPendingUserActionRequests === true;
+    }
+    return listPendingUserActionRequests(session as Session).length > 0;
 }
 
 export function shouldShowAbortButtonForSessionState(state: SessionState): boolean {
@@ -112,14 +241,16 @@ export function shouldShowAbortButtonForSessionState(state: SessionState): boole
  * Get the current state of a session based on presence and thinking status.
  * Uses centralized session state from storage.ts
  */
-export function getSessionStatus(session: Session, nowMs: number = Date.now(), vibingIndex?: number): SessionStatus {
+export function getSessionStatus(session: SessionStatusSource, nowMs: number = Date.now(), vibingIndex?: number): SessionStatus {
     const isOnline = session.presence === "online";
     const hasPermissions = hasPendingPermissionRequests(session);
     const hasUserActions = hasPendingUserActionRequests(session);
 
     const optimisticThinkingAt = session.optimisticThinkingAt ?? null;
     const isOptimisticThinking = typeof optimisticThinkingAt === 'number' && nowMs - optimisticThinkingAt < OPTIMISTIC_SESSION_THINKING_TIMEOUT_MS;
-    const isThinking = session.thinking === true || isOptimisticThinking;
+    const thinkingGraceUntil = session.thinkingGraceUntil ?? null;
+    const isThinkingGraceActive = typeof thinkingGraceUntil === 'number' && nowMs < thinkingGraceUntil;
+    const isThinking = session.thinking === true || isOptimisticThinking || isThinkingGraceActive;
 
     const vibingMessage = (() => {
         const idx = typeof vibingIndex === 'number'
@@ -189,7 +320,7 @@ export function getSessionStatus(session: Session, nowMs: number = Date.now(), v
 /**
  * Hook wrapper around `getSessionStatus` that keeps vibing text stable while the session is thinking.
  */
-export function useSessionStatus(session: Session): SessionStatus {
+export function useSessionStatus(session: SessionStatusSource): SessionStatus {
     const isOnline = session.presence === "online";
     const hasPermissions = hasPendingPermissionRequests(session);
     const hasUserActions = hasPendingUserActionRequests(session);
@@ -197,7 +328,9 @@ export function useSessionStatus(session: Session): SessionStatus {
     const now = Date.now();
     const optimisticThinkingAt = session.optimisticThinkingAt ?? null;
     const isOptimisticThinking = typeof optimisticThinkingAt === 'number' && now - optimisticThinkingAt < OPTIMISTIC_SESSION_THINKING_TIMEOUT_MS;
-    const isThinking = session.thinking === true || isOptimisticThinking;
+    const thinkingGraceUntil = session.thinkingGraceUntil ?? null;
+    const isThinkingGraceActive = typeof thinkingGraceUntil === 'number' && now < thinkingGraceUntil;
+    const isThinking = session.thinking === true || isOptimisticThinking || isThinkingGraceActive;
 
     const vibingIndex = React.useMemo(() => {
         return Math.floor(Math.random() * vibingMessages.length);
@@ -210,11 +343,19 @@ export function useSessionStatus(session: Session): SessionStatus {
  * Extracts a display name from a session's metadata path.
  * Returns the last segment of the path, or 'unknown' if no path is available.
  */
-export function getSessionName(session: Session): string {
-    if (session.metadata?.summary) {
-        return session.metadata.summary.text;
+export function getSessionName(session: SessionStatusSource): string {
+    const summaryText = (session.metadata as any)?.summary?.text ?? (session.metadata as any)?.summaryText;
+    if (typeof summaryText === 'string' && summaryText.trim()) {
+        return summaryText;
+    } else if (session.metadata?.name) {
+        const name = session.metadata.name.trim();
+        if (name.length > 0) return name;
     } else if (session.metadata) {
-        const segments = session.metadata.path.split('/').filter(Boolean);
+        const displayPath = readDisplayPathForSession({
+            sessionId: session.id,
+            metadata: session.metadata ?? null,
+        });
+        const segments = displayPath.split('/').filter(Boolean);
         const lastSegment = segments.pop();
         if (!lastSegment) {
             return t('status.unknown');
@@ -228,50 +369,29 @@ export function getSessionName(session: Session): string {
  * Generates a deterministic avatar ID from machine ID and path.
  * This ensures the same machine + path combination always gets the same avatar.
  */
-export function getSessionAvatarId(session: Session): string {
-    if (session.metadata?.machineId && session.metadata?.path) {
+export function getSessionAvatarId(session: SessionStatusSource): string {
+    const reachableMachineId = readDisplayMachineIdForSession({
+        sessionId: session.id,
+        metadata: session.metadata ?? null,
+    });
+    const reachablePath = readMachineTargetForSession(session.id)?.basePath ?? session.metadata?.path ?? null;
+
+    if (reachableMachineId && reachablePath) {
         // Combine machine ID and path for a unique, deterministic avatar
-        return `${session.metadata.machineId}:${session.metadata.path}`;
+        return `${reachableMachineId}:${reachablePath}`;
     }
     // Fallback to session ID if metadata is missing
     return session.id;
 }
 
 /**
- * Formats a path relative to home directory if possible.
- * If the path starts with the home directory, replaces it with ~
- * Otherwise returns the full path.
- */
-export function formatPathRelativeToHome(path: string, homeDir?: string): string {
-    if (!homeDir) return path;
-    
-    // Normalize paths to handle trailing slashes
-    const normalizedHome = homeDir.endsWith('/') ? homeDir.slice(0, -1) : homeDir;
-    const normalizedPath = path;
-    
-    // Check if path starts with home directory
-    if (normalizedPath.startsWith(normalizedHome)) {
-        // Replace home directory with ~
-        const relativePath = normalizedPath.slice(normalizedHome.length);
-        // Add ~ and ensure there's a / after it if needed
-        if (relativePath.startsWith('/')) {
-            return '~' + relativePath;
-        } else if (relativePath === '') {
-            return '~';
-        } else {
-            return '~/' + relativePath;
-        }
-    }
-    
-    return path;
-}
-
-/**
  * Returns the session path for the subtitle.
  */
-export function getSessionSubtitle(session: Session): string {
-    if (session.metadata) {
-        return formatPathRelativeToHome(session.metadata.path, session.metadata.homeDir);
+export function getSessionSubtitle(session: SessionStatusSource): string {
+    const reachableTarget = readMachineTargetForSession(session.id);
+    const path = reachableTarget?.basePath ?? session.metadata?.path ?? null;
+    if (path) {
+        return formatPathRelativeToHome(path, session.metadata?.homeDir ?? undefined);
     }
     return t('status.unknown');
 }

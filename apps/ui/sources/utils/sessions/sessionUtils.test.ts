@@ -1,11 +1,43 @@
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { Session } from '@/sync/domains/state/storageTypes';
+
+type MockStorageState = {
+    sessionMessages: Record<string, { messages: unknown[] }>;
+    sessions?: Record<string, unknown>;
+    machines?: Record<string, unknown>;
+    getProjectForSession?: (sessionId: string) => { key?: { machineId?: string; path?: string } } | null;
+};
+
+const mockStorageState: MockStorageState = {
+    sessionMessages: {},
+    sessions: {},
+    machines: {},
+    getProjectForSession: () => null,
+};
 
 vi.mock('@/text', () => {
     return {
         t: (key: string) => key,
     };
+});
+
+vi.mock('@/sync/domains/state/storage', () => ({
+    storage: {
+        getState: () => mockStorageState,
+        setState: (updater: ((state: typeof mockStorageState) => typeof mockStorageState) | typeof mockStorageState) => {
+            const next = typeof updater === 'function' ? updater(mockStorageState) : updater;
+            mockStorageState.sessionMessages = next.sessionMessages;
+        },
+    },
+}));
+
+beforeEach(() => {
+    vi.resetModules();
+    mockStorageState.sessionMessages = {};
+    mockStorageState.sessions = {};
+    mockStorageState.machines = {};
+    mockStorageState.getProjectForSession = () => null;
 });
 
 function createBaseSession(overrides: Partial<Session> = {}): Session {
@@ -132,6 +164,22 @@ describe('getSessionStatus', () => {
         expect(status.state).toBe('waiting');
     });
 
+    it('returns thinking when thinkingGraceUntil is in the future (debounced thinking)', async () => {
+        const { getSessionStatus } = await import('./sessionUtils');
+        const now = 1_000_000;
+        const session = createBaseSession({ thinkingGraceUntil: now + 1_000 });
+        const status = getSessionStatus(session, now, 0);
+        expect(status.state).toBe('thinking');
+    });
+
+    it('does not treat thinkingGraceUntil in the past as thinking', async () => {
+        const { getSessionStatus } = await import('./sessionUtils');
+        const now = 1_000_000;
+        const session = createBaseSession({ thinkingGraceUntil: now - 1 });
+        const status = getSessionStatus(session, now, 0);
+        expect(status.state).toBe('waiting');
+    });
+
     it('prioritizes permission_required over thinking state', async () => {
         const { getSessionStatus } = await import('./sessionUtils');
         const session = createBaseSession({
@@ -212,6 +260,269 @@ describe('listPendingPermissionRequests', () => {
             },
         ]);
     });
+
+    it('falls back to pending transcript tool-call permissions when agentState is missing', async () => {
+        const { listPendingPermissionRequests } = await import('./sessionUtils');
+        const session = createBaseSession({
+            id: 's-transcript-perm',
+            agentState: null,
+        });
+
+        expect(listPendingPermissionRequests(session, [
+            {
+                kind: 'tool-call',
+                id: 'm-tool-1',
+                localId: null,
+                createdAt: 2,
+                children: [],
+                tool: {
+                    id: 'perm_tool_1',
+                    name: 'Bash',
+                    state: 'completed',
+                    input: { command: 'printf hello > hello.txt' },
+                    createdAt: 2,
+                    startedAt: 2,
+                    completedAt: 3,
+                    description: 'Write file',
+                    result: {},
+                    permission: {
+                        id: 'perm_tool_1',
+                        status: 'pending',
+                    },
+                },
+            },
+        ] as any)).toEqual([
+            {
+                id: 'perm_tool_1',
+                tool: 'Bash',
+                kind: 'permission',
+                arguments: { command: 'printf hello > hello.txt' },
+                createdAt: 2,
+            },
+        ]);
+    });
+
+    it('reads pending transcript tool-call permissions from normalized stored session messages when no messages are passed', async () => {
+        const { listPendingPermissionRequests } = await import('./sessionUtils');
+        const session = createBaseSession({
+            id: 's-transcript-perm-normalized',
+            agentState: null,
+        });
+        const transcriptMessage = {
+            kind: 'tool-call',
+            id: 'm-tool-1',
+            localId: null,
+            createdAt: 2,
+            children: [],
+            tool: {
+                id: 'perm_tool_1',
+                name: 'Bash',
+                state: 'completed',
+                input: { command: 'printf hello > hello.txt' },
+                createdAt: 2,
+                startedAt: 2,
+                completedAt: 3,
+                description: 'Write file',
+                result: {},
+                permission: {
+                    id: 'perm_tool_1',
+                    status: 'pending',
+                },
+            },
+        } as any;
+
+        mockStorageState.sessionMessages = {
+            ...mockStorageState.sessionMessages,
+            's-transcript-perm-normalized': {
+                messageIdsOldestFirst: ['m-tool-1'],
+                messagesById: {
+                    'm-tool-1': transcriptMessage,
+                },
+                messagesMap: {
+                    'm-tool-1': transcriptMessage,
+                },
+            } as any,
+        };
+
+        expect(listPendingPermissionRequests(session)).toEqual([
+            {
+                id: 'perm_tool_1',
+                tool: 'Bash',
+                kind: 'permission',
+                arguments: { command: 'printf hello > hello.txt' },
+                createdAt: 2,
+            },
+        ]);
+    });
+
+    it('prefers the transcript permission id when agentState and transcript describe the same pending request', async () => {
+        const { listPendingPermissionRequests } = await import('./sessionUtils');
+        const suggestions = [{ type: 'setMode', mode: 'acceptEdits', destination: 'session' }];
+        const session = createBaseSession({
+            id: 's-permission-alias',
+            agentState: {
+                controlledByUser: null,
+                requests: {
+                    call_MRGAh1tIH4dBEwSc0mCt3MtU: {
+                        tool: 'writeTextFile',
+                        kind: 'permission',
+                        arguments: {
+                            path: '/Users/leeroy/Documents/Development/happier/dev/voice-permission-request.txt',
+                            bytes: 25,
+                        },
+                        createdAt: 10,
+                        permissionSuggestions: suggestions,
+                    },
+                },
+                completedRequests: null,
+            },
+        });
+
+        expect(listPendingPermissionRequests(session, [
+            {
+                kind: 'tool-call',
+                id: 'm-tool-1',
+                localId: null,
+                createdAt: 10,
+                children: [],
+                tool: {
+                    id: 'tool:acp-fs-write:64154962-012d-4d95-8211-b65855cc7476',
+                    name: 'writeTextFile',
+                    state: 'running',
+                    input: {
+                        path: '/Users/leeroy/Documents/Development/happier/dev/voice-permission-request.txt',
+                        bytes: 25,
+                    },
+                    createdAt: 10,
+                    startedAt: null,
+                    completedAt: null,
+                    description: 'Write file',
+                    permission: {
+                        id: 'acp-fs-write:64154962-012d-4d95-8211-b65855cc7476',
+                        status: 'pending',
+                        kind: 'permission',
+                        suggestions,
+                    },
+                },
+            },
+        ] as any)).toEqual([
+            {
+                id: 'acp-fs-write:64154962-012d-4d95-8211-b65855cc7476',
+                tool: 'writeTextFile',
+                kind: 'permission',
+                arguments: {
+                    path: '/Users/leeroy/Documents/Development/happier/dev/voice-permission-request.txt',
+                    bytes: 25,
+                },
+                createdAt: 10,
+                permissionSuggestions: suggestions,
+            },
+        ]);
+    });
+});
+
+describe('listPendingTranscriptRequests', () => {
+    it('returns pending transcript-backed user-action requests', async () => {
+        const { listPendingTranscriptRequests } = await import('./sessionUtils');
+        const session = createBaseSession({
+            id: 's-transcript-action',
+            agentState: null,
+        });
+
+        expect(listPendingTranscriptRequests(session, [
+            {
+                kind: 'tool-call',
+                id: 'm-tool-action-1',
+                localId: null,
+                createdAt: 7,
+                children: [],
+                tool: {
+                    id: 'ask_user_question_1',
+                    name: 'AskUserQuestion',
+                    state: 'completed',
+                    input: {
+                        questions: [
+                            {
+                                question: 'Should I continue with local voice QA?',
+                                options: [{ label: 'Yes' }, { label: 'No' }],
+                            },
+                        ],
+                    },
+                    createdAt: 7,
+                    startedAt: 7,
+                    completedAt: 8,
+                    description: 'Ask the user a question',
+                    result: {},
+                    permission: {
+                        id: 'ask_user_question_1',
+                        status: 'pending',
+                        kind: 'user_action',
+                    },
+                },
+            },
+        ] as any)).toEqual([
+            {
+                id: 'ask_user_question_1',
+                tool: 'AskUserQuestion',
+                kind: 'user_action',
+                arguments: {
+                    questions: [
+                        {
+                            question: 'Should I continue with local voice QA?',
+                            options: [{ label: 'Yes' }, { label: 'No' }],
+                        },
+                    ],
+                },
+                createdAt: 7,
+            },
+        ]);
+    });
+});
+
+describe('getSessionStatus', () => {
+    it('treats transcript-backed pending permissions as permission_required when agentState is missing', async () => {
+        const { storage } = await import('@/sync/domains/state/storage');
+        storage.setState((state: any) => ({
+            ...state,
+            sessionMessages: {
+                ...(state.sessionMessages ?? {}),
+                's-transcript-status': {
+                    messages: [
+                        {
+                            kind: 'tool-call',
+                            id: 'm-tool-2',
+                            localId: null,
+                            createdAt: 5,
+                            children: [],
+                            tool: {
+                                id: 'perm_tool_2',
+                                name: 'Bash',
+                                state: 'completed',
+                                input: { command: 'printf hi > hi.txt' },
+                                createdAt: 5,
+                                startedAt: 5,
+                                completedAt: 6,
+                                description: 'Write file',
+                                result: {},
+                                permission: {
+                                    id: 'perm_tool_2',
+                                    status: 'pending',
+                                },
+                            },
+                        },
+                    ],
+                },
+            },
+        }));
+        const { getSessionStatus } = await import('./sessionUtils');
+        const session = createBaseSession({
+            id: 's-transcript-status',
+            agentState: null,
+        });
+
+        const status = getSessionStatus(session, 1_000, 0);
+        expect(status.state).toBe('permission_required');
+    });
 });
 
 describe('shouldShowAbortButtonForSessionState', () => {
@@ -238,5 +549,159 @@ describe('shouldShowAbortButtonForSessionState', () => {
     it('returns false for disconnected sessions', async () => {
         const { shouldShowAbortButtonForSessionState } = await import('./sessionUtils');
         expect(shouldShowAbortButtonForSessionState('disconnected')).toBe(false);
+    });
+});
+
+describe('getSessionName', () => {
+    it('prefers metadata summary text over other fallbacks', async () => {
+        const { getSessionName } = await import('./sessionUtils');
+        const session = createBaseSession({
+            metadata: {
+                path: '/tmp/worktree',
+                host: 'mac',
+                name: 'Stored Name',
+                summary: {
+                    text: 'Summary Title',
+                    updatedAt: 1,
+                },
+            },
+        });
+        expect(getSessionName(session)).toBe('Summary Title');
+    });
+
+    it('falls back to metadata name before path segments', async () => {
+        const { getSessionName } = await import('./sessionUtils');
+        const session = createBaseSession({
+            metadata: {
+                path: '/tmp/worktree',
+                host: 'mac',
+                name: 'Linked Direct Session',
+            },
+        });
+        expect(getSessionName(session)).toBe('Linked Direct Session');
+    });
+
+    it('uses the reachable target base path when path-derived names are stale after handoff', async () => {
+        const { getSessionName } = await import('./sessionUtils');
+        const session = createBaseSession({
+            id: 'session-1',
+            metadata: {
+                machineId: 'machine-stale',
+                path: '/Users/test/workspace/stale-name',
+                homeDir: '/Users/test',
+                host: 'stale.local',
+            } as Session['metadata'],
+        });
+
+        mockStorageState.sessions = {
+            'session-1': {
+                active: true,
+                updatedAt: 10,
+                metadata: session.metadata,
+            },
+        };
+        mockStorageState.machines = {
+            'machine-target': {
+                id: 'machine-target',
+                active: true,
+                activeAt: 20,
+                metadata: { host: 'target.local' },
+            },
+        };
+        mockStorageState.getProjectForSession = (sessionId: string) =>
+            sessionId === 'session-1'
+                ? {
+                    key: {
+                        machineId: 'machine-target',
+                        path: '/Users/test/workspace/live-name',
+                    },
+                }
+                : null;
+
+        expect(getSessionName(session)).toBe('live-name');
+    });
+});
+
+describe('reachable target session display helpers', () => {
+    it('uses the reachable target base path for session subtitles when metadata is stale after handoff', async () => {
+        const { getSessionSubtitle } = await import('./sessionUtils');
+
+        const session = createBaseSession({
+            id: 'session-1',
+            metadata: {
+                machineId: 'machine-stale',
+                path: '/Users/test/workspace/stale',
+                homeDir: '/Users/test',
+                host: 'stale.local',
+            } as Session['metadata'],
+        });
+
+        mockStorageState.sessions = {
+            'session-1': {
+                active: true,
+                updatedAt: 10,
+                metadata: session.metadata,
+            },
+        };
+        mockStorageState.machines = {
+            'machine-target': {
+                id: 'machine-target',
+                active: true,
+                activeAt: 20,
+                metadata: { host: 'target.local' },
+            },
+        };
+        mockStorageState.getProjectForSession = (sessionId: string) =>
+            sessionId === 'session-1'
+                ? {
+                    key: {
+                        machineId: 'machine-target',
+                        path: '/Users/test/workspace/live',
+                    },
+                }
+                : null;
+
+        expect(getSessionSubtitle(session)).toBe('~/workspace/live');
+    });
+
+    it('uses the reachable target machine and base path for session avatar ids when metadata is stale after handoff', async () => {
+        const { getSessionAvatarId } = await import('./sessionUtils');
+
+        const session = createBaseSession({
+            id: 'session-1',
+            metadata: {
+                machineId: 'machine-stale',
+                path: '/Users/test/workspace/stale',
+                homeDir: '/Users/test',
+                host: 'stale.local',
+            } as Session['metadata'],
+        });
+
+        mockStorageState.sessions = {
+            'session-1': {
+                active: true,
+                updatedAt: 10,
+                metadata: session.metadata,
+            },
+        };
+        mockStorageState.machines = {
+            'machine-target': {
+                id: 'machine-target',
+                active: true,
+                activeAt: 20,
+                metadata: { host: 'target.local' },
+            },
+        };
+        mockStorageState.getProjectForSession = (sessionId: string) =>
+            sessionId === 'session-1'
+                ? {
+                    key: {
+                        machineId: 'machine-target',
+                        path: '/Users/test/workspace/live',
+                    },
+                }
+                : null;
+
+        expect(getSessionAvatarId(session)).toBe('machine-target:/Users/test/workspace/live');
     });
 });
