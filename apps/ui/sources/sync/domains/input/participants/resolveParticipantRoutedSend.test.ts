@@ -1,8 +1,36 @@
 import { describe, expect, it } from 'vitest';
 
-import { resolveParticipantRoutedSend } from './resolveParticipantRoutedSend';
+import { resolveParticipantRoutingDescriptor, resolveParticipantRoutedSend } from './resolveParticipantRoutedSend';
 
 describe('resolveParticipantRoutedSend', () => {
+    it('returns null for routing descriptors when the live target set does not contain the recipient', () => {
+        const descriptor = resolveParticipantRoutingDescriptor({
+            recipient: { kind: 'execution_run', runId: 'run_1' },
+            targets: [],
+        });
+
+        expect(descriptor).toBeNull();
+    });
+
+    it('resolves execution run routing descriptors from live participant targets', () => {
+        const descriptor = resolveParticipantRoutingDescriptor({
+            recipient: { kind: 'execution_run', runId: 'run_1' },
+            targets: [
+                {
+                    key: 'run-1',
+                    displayLabel: 'Run 1',
+                    recipient: { kind: 'execution_run', runId: 'run_1' },
+                },
+            ],
+        });
+
+        expect(descriptor).toEqual({
+            type: 'execution_run_send',
+            recipient: { kind: 'execution_run', runId: 'run_1' },
+            runId: 'run_1',
+        });
+    });
+
     it('routes agent team recipients to a session message with participant_message.v1 meta', () => {
         const outbound = resolveParticipantRoutedSend({
             text: 'hello',
