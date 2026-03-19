@@ -54,4 +54,3 @@ describe('SessionAuthoringAutomationToggleChip', () => {
         expect(onValueChange).toHaveBeenCalledWith(false);
     });
 });
-
