@@ -21,11 +21,9 @@ export type SessionHandoffRecoveryAction = z.infer<typeof SessionHandoffRecovery
 export const SessionHandoffCodexBackendModeSchema = z.enum(['mcp', 'acp', 'appServer']);
 export type SessionHandoffCodexBackendMode = z.infer<typeof SessionHandoffCodexBackendModeSchema>;
 
-export const SessionHandoffCodexAffinitySchema = z
-  .object({
-    backendMode: SessionHandoffCodexBackendModeSchema.nullable(),
-    source: DirectSessionsSourceSchema.optional(),
-    runtimeDescriptor: AgentRuntimeDescriptorV1Schema.optional(),
-  })
-  .strict();
+export const SessionHandoffCodexAffinitySchema = z.object({
+  backendMode: SessionHandoffCodexBackendModeSchema.nullable(),
+  source: DirectSessionsSourceSchema.optional(),
+  runtimeDescriptor: AgentRuntimeDescriptorV1Schema.optional(),
+}).strict();
 export type SessionHandoffCodexAffinity = z.infer<typeof SessionHandoffCodexAffinitySchema>;

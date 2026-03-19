@@ -9,7 +9,6 @@ export {
   SessionHandoffStartResponseSchema,
   SessionHandoffStatusGetRequestSchema,
   SessionHandoffStatusSchema,
-  SessionHandoffWorkspaceBundleSchema,
   type SessionHandoffAbortRequest,
   type SessionHandoffAbortResponse,
   type SessionHandoffCommitRequest,
@@ -23,13 +22,10 @@ export {
   type SessionHandoffStatusGetRequest,
   type SessionHandoffTransferredPayload,
   type SessionHandoffTransferredWorkspaceArtifacts,
-  type SessionHandoffWorkspaceBundle,
-  type SessionHandoffWorkspaceBundleEntry,
   type SessionHandoffWorkspaceTransfer,
   SessionHandoffProviderBundleSchema,
   SessionHandoffTransferredPayloadSchema,
   SessionHandoffTransferredWorkspaceArtifactsSchema,
-  SessionHandoffWorkspaceBundleSchema,
   SessionHandoffWorkspaceTransferSchema,
 } from './handoffSchemas.js';
 export {

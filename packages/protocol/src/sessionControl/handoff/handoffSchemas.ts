@@ -39,23 +39,6 @@ export type SessionHandoffTransferredWorkspaceArtifacts = z.infer<
   typeof SessionHandoffTransferredWorkspaceArtifactsSchema
 >;
 
-export const SessionHandoffWorkspaceBundleEntrySchema = z
-  .object({
-    relativePath: z.string().min(1),
-    contentBase64: z.string().min(1),
-  })
-  .strict();
-export type SessionHandoffWorkspaceBundleEntry = z.infer<
-  typeof SessionHandoffWorkspaceBundleEntrySchema
->;
-
-export const SessionHandoffWorkspaceBundleSchema = z
-  .object({
-    entries: z.array(SessionHandoffWorkspaceBundleEntrySchema),
-  })
-  .strict();
-export type SessionHandoffWorkspaceBundle = z.infer<typeof SessionHandoffWorkspaceBundleSchema>;
-
 const SESSION_HANDOFF_CODEX_BACKEND_MODES = ['mcp', 'acp', 'appServer'] as const;
 
 function normalizeLegacyCodexResumeTransport(value: unknown): unknown {
