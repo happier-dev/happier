@@ -86,6 +86,7 @@ describe('sync: voice permission request announcements', () => {
                         messageIdsOldestFirst: [],
                         messagesById,
                         messagesMap: messagesById,
+                        draftsByLocalId: {},
                         reducerState: createReducer(),
                         latestThinkingMessageId: null,
                         latestThinkingMessageActivityAtMs: null,

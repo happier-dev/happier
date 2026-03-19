@@ -13,6 +13,7 @@ describe('runAgentStatePermissionsPhase (pending request resets canceled tool)',
     state.toolIdToMessageId.set(permId, messageId);
     state.messages.set(messageId, {
       id: messageId,
+      localId: null,
       realID: null,
       seq: null,
       role: 'agent',
