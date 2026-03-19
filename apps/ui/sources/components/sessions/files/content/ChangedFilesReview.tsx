@@ -70,6 +70,7 @@ type ChangedFilesReviewProps = {
     onScrollTopChange?: (top: number) => void;
     diffAutoRefreshIntervalMs?: number;
     diffRefreshToken?: number;
+    providerDiffByPath?: ReadonlyMap<string, string> | null;
     reviewCommentsEnabled?: boolean;
     reviewCommentDrafts?: readonly ReviewCommentDraft[];
     onUpsertReviewCommentDraft?: (draft: ReviewCommentDraft) => void;
@@ -543,6 +544,7 @@ export function ChangedFilesReview(props: ChangedFilesReviewProps) {
         maxConcurrency: prefetch.maxDiffLoadConcurrency,
         minRefetchMs: diffAutoRefreshIntervalMs,
         refreshToken: diffRefreshToken,
+        providerDiffByPath: props.providerDiffByPath,
         normalizeError: plugin.errorNormalizer,
         fallbackError,
     });
