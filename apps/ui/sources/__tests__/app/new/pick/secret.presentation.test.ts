@@ -69,6 +69,6 @@ describe('SecretPickerScreen (iOS presentation)', () => {
         const backButton = options?.headerLeft?.();
         expect(typeof backButton?.props?.onPress).toBe('function');
         backButton?.props?.onPress?.();
-        expect(navigationMock.goBack).toHaveBeenCalledTimes(1);
+        expect(routerMock.back).toHaveBeenCalledTimes(1);
     });
 });
