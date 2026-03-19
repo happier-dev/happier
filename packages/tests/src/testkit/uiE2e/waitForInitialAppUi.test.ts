@@ -72,7 +72,6 @@ describe('waitForInitialAppUi', () => {
     const nowSpy = vi.spyOn(Date, 'now');
     nowSpy
       .mockReturnValueOnce(0)
-      .mockReturnValueOnce(0)
       .mockReturnValueOnce(300);
 
     const page = createFakePage({});
