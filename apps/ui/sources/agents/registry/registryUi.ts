@@ -11,6 +11,8 @@ import { AUGGIE_UI } from '@/agents/providers/auggie/ui';
 import { QWEN_UI } from '@/agents/providers/qwen/ui';
 import { KIMI_UI } from '@/agents/providers/kimi/ui';
 import { KILO_UI } from '@/agents/providers/kilo/ui';
+import { KIRO_UI } from '@/agents/providers/kiro/ui';
+import { CUSTOM_ACP_UI } from '@/agents/providers/customAcp/ui';
 import { PI_UI } from '@/agents/providers/pi/ui';
 import { COPILOT_UI } from '@/agents/providers/copilot/ui';
 
@@ -43,6 +45,8 @@ export const AGENTS_UI: Readonly<Record<AgentId, AgentUiConfig>> = Object.freeze
     qwen: QWEN_UI,
     kimi: KIMI_UI,
     kilo: KILO_UI,
+    kiro: KIRO_UI,
+    customAcp: CUSTOM_ACP_UI,
     pi: PI_UI,
     copilot: COPILOT_UI,
 });
