@@ -183,6 +183,6 @@ test.describe('ui e2e: server retention visibility', () => {
 
     await expect(page.getByTestId('server-retention-summary')).toContainText('60', { timeout: 120_000 });
     await expect(page.getByTestId('server-retention-row-accountChanges')).toContainText('90', { timeout: 60_000 });
-    await expect(page.getByText('Deletes inactive sessions after 30 days.')).toBeVisible({ timeout: 60_000 });
+    await expect(page.getByText('Deletes inactive sessions after 60 days.')).toBeVisible({ timeout: 60_000 });
   });
 });
