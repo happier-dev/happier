@@ -296,7 +296,7 @@ export class OpenCodeTransport implements TransportHandler {
     }
 
     // OpenCode uses `change_title` as the task/subagent tool in some ACP implementations.
-    // Map it to `Task` when ACP metadata indicates this is the task tool so that downstream
+    // Map it to `SubAgent` when ACP metadata indicates this is the task tool so that downstream
     // features (like sidechain replay import) can key off a stable name.
     if (isChangeTitleToolNameAlias(toolName)) {
       const acp = input?._acp;
@@ -304,7 +304,7 @@ export class OpenCodeTransport implements TransportHandler {
         acp && typeof acp === 'object' && !Array.isArray(acp) && typeof (acp as any).title === 'string'
           ? String((acp as any).title).trim().toLowerCase()
           : '';
-      if (acpTitle === 'task') return 'Task';
+      if (acpTitle === 'task') return 'SubAgent';
 
       const title = typeof input.title === 'string' ? input.title.trim() : '';
       const memory = typeof input.memory === 'string' ? input.memory.trim() : '';
@@ -315,7 +315,7 @@ export class OpenCodeTransport implements TransportHandler {
       const looksLikeChangeTitle = Boolean(title);
       const looksLikeSaveMemory = Boolean(memory);
 
-      if (looksLikeTaskTool && !looksLikeChangeTitle && !looksLikeSaveMemory) return 'Task';
+      if (looksLikeTaskTool && !looksLikeChangeTitle && !looksLikeSaveMemory) return 'SubAgent';
     }
 
     const directToolName = findToolNameFromId(toolName, OPENCODE_TOOL_PATTERNS, { preferLongestMatch: true });

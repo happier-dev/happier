@@ -20,18 +20,18 @@ describe('OpenCodeTransport determineToolName', () => {
       expected: 'change_title',
     },
     {
-      label: 'maps change_title task alias to Task when ACP metadata indicates a task tool',
+      label: 'maps change_title task alias to SubAgent when ACP metadata indicates a task tool',
       toolName: 'change_title',
       toolCallId: 'tool-2',
       input: { _acp: { title: 'task' }, prompt: 'Respond with EXACTLY: SUBTASK_OK' },
-      expected: 'Task',
+      expected: 'SubAgent',
     },
     {
-      label: 'maps change_title task alias to Task when input is task-shaped without ACP metadata',
+      label: 'maps change_title task alias to SubAgent when input is task-shaped without ACP metadata',
       toolName: 'change_title',
       toolCallId: 'tool-3',
       input: { prompt: 'Respond with EXACTLY: SUBTASK_OK', subagent_type: 'assistant' },
-      expected: 'Task',
+      expected: 'SubAgent',
     },
     {
       label: 'uses toolCallId pattern mapping (case-insensitive)',
