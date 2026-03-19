@@ -85,7 +85,7 @@ export async function handleSessionCommand(
   try {
     const subcommand = String(argv[0] ?? '').trim();
     if (!subcommand || subcommand === 'help' || subcommand === '--help' || subcommand === '-h') {
-      console.log('happier session list [--active] [--archived] [--limit N] [--cursor C] [--include-system] [--json]');
+      console.log('happier session list [--active] [--archived] [--limit N] [--cursor C] [--include-system] [--resumable] [--plain] [--json]');
       console.log('happier session history <session-id> [--limit N] [--format compact|raw] [--include-meta] [--include-structured-payload] [--json]');
       console.log('happier session set-title <session-id> <title> [--json]');
       console.log('happier session set-permission-mode <session-id> <mode> [--json]');
