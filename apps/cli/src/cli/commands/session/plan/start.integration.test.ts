@@ -105,8 +105,8 @@ describe('happier session plan start (integration)', () => {
         const decodedParams = decodeBase64(String(data.params ?? ''), 'base64');
         const decrypted = decrypt(dek, 'dataKey', decodedParams) as any;
         expect(decrypted.intent).toBe('plan');
-        expect(typeof decrypted.backendId).toBe('string');
-        expect(decrypted.intentInput?.backendId).toBe(decrypted.backendId);
+        expect(decrypted.backendTarget).toEqual({ kind: 'builtInAgent', agentId: 'claude' });
+        expect(decrypted.intentInput?.backendTargetKey).toBe('agent:claude');
 
         callIdx += 1;
         const resultPayload = { runId: `run_${callIdx}`, callId: `call_${callIdx}`, sidechainId: `call_${callIdx}` };
@@ -179,8 +179,8 @@ describe('happier session plan start (integration)', () => {
       expect(parsed.kind).toBe('session_plan_start');
       expect(parsed.data?.sessionId).toBe('sess_integration_plan_start_123');
       expect(parsed.data?.results?.length).toBe(2);
-      expect(parsed.data?.results?.[0]?.key).toBe('claude');
-      expect(parsed.data?.results?.[1]?.key).toBe('codex');
+      expect(parsed.data?.results?.[0]?.key).toBe('agent:claude');
+      expect(parsed.data?.results?.[1]?.key).toBe('agent:codex');
     } finally {
       logSpy.mockRestore();
     }
