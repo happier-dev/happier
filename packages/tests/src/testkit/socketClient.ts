@@ -138,10 +138,20 @@ export function createUserScopedSocketCollector(baseUrl: string, token: string):
   return new SocketCollector(socket);
 }
 
-export function createSessionScopedSocketCollector(baseUrl: string, token: string, sessionId: string): SocketCollector {
+export function createSessionScopedSocketCollector(
+  baseUrl: string,
+  token: string,
+  sessionId: string,
+  machineId?: string,
+): SocketCollector {
   const socket = io(baseUrl, {
     path: '/v1/updates',
-    auth: { token, clientType: 'session-scoped' as const, sessionId },
+    auth: {
+      token,
+      clientType: 'session-scoped' as const,
+      sessionId,
+      ...(typeof machineId === 'string' ? { machineId } : {}),
+    },
     transports: ['websocket'],
     reconnection: true,
     reconnectionAttempts: Infinity,
