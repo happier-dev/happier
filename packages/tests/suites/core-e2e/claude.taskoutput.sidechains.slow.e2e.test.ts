@@ -6,21 +6,21 @@ import { join, resolve } from 'node:path';
 import { createRunDirs } from '../../src/testkit/runDir';
 import { startServerLight, type StartedServer } from '../../src/testkit/process/serverLight';
 import { createTestAuth } from '../../src/testkit/auth';
-import { createSessionWithCiphertexts, fetchAllMessages } from '../../src/testkit/sessions';
+import { createSessionWithCiphertexts, fetchAllMessages, fetchMessagesPage, type SessionMessageRow } from '../../src/testkit/sessions';
 import { spawnLoggedProcess, type SpawnedProcess } from '../../src/testkit/process/spawnProcess';
 import { createUserScopedSocketCollector } from '../../src/testkit/socketClient';
 import { decryptLegacyBase64, encryptLegacyBase64 } from '../../src/testkit/messageCrypto';
 import { waitFor } from '../../src/testkit/timing';
 import { writeTestManifestForServer } from '../../src/testkit/manifestForServer';
-import { stopDaemonFromHomeDir } from '../../src/testkit/daemon/daemon';
-import { ensureCliDistBuilt } from '../../src/testkit/process/cliDist';
-import { yarnCommand } from '../../src/testkit/process/commands';
+import { stopDaemonFromHomeDir, waitForDaemonState } from '../../src/testkit/daemon/daemon';
+import { ensureCliSharedDepsBuilt } from '../../src/testkit/process/cliDist';
 import { fakeClaudeFixturePath } from '../../src/testkit/fakeClaude';
 import { postEncryptedUiTextMessage } from '../../src/testkit/uiMessages';
 import { requestSessionSwitchRpc } from '../../src/testkit/sessionSwitchRpc';
 import { writeCliSessionAttachFile } from '../../src/testkit/cliAttachFile';
 import { seedCliAuthForServer } from '../../src/testkit/cliAuth';
 import { repoRootDir } from '../../src/testkit/paths';
+import { resolveCliTestLaunchSpec } from '../../src/testkit/process/cliLaunchSpec';
 
 const run = createRunDirs({ runLabel: 'core' });
 
@@ -86,6 +86,35 @@ function collectToolResultBlocks(messages: unknown[], toolUseIds: Set<string>): 
   return results;
 }
 
+async function fetchAllMessagesForScope(params: {
+  baseUrl: string;
+  token: string;
+  sessionId: string;
+  scope: 'main' | 'sidechain' | 'all';
+  sidechainId?: string;
+}): Promise<SessionMessageRow[]> {
+  const rows: SessionMessageRow[] = [];
+  let afterSeq = 0;
+
+  for (;;) {
+    const page = await fetchMessagesPage({
+      baseUrl: params.baseUrl,
+      token: params.token,
+      sessionId: params.sessionId,
+      afterSeq,
+      limit: 500,
+      scope: params.scope,
+      sidechainId: params.sidechainId,
+    });
+    rows.push(...page.messages);
+
+    if (typeof page.nextAfterSeq !== 'number' || page.nextAfterSeq <= afterSeq) {
+      return rows;
+    }
+    afterSeq = page.nextAfterSeq;
+  }
+}
+
 describe('core e2e: Claude TaskOutput sidechains are imported with sidechainId + meta', () => {
   let server: StartedServer | null = null;
 
@@ -97,6 +126,7 @@ describe('core e2e: Claude TaskOutput sidechains are imported with sidechainId +
   it('imports TaskOutput JSONL messages into the Task sidechain and tags them as imported', async () => {
     const testDir = run.testDir('claude-taskoutput-sidechains');
     const startedAt = new Date().toISOString();
+    const fakeLog = resolve(join(testDir, 'fake-claude.jsonl'));
 
     server = await startServerLight({ testDir });
     const auth = await createTestAuth(server.baseUrl);
@@ -135,6 +165,7 @@ describe('core e2e: Claude TaskOutput sidechains are imported with sidechainId +
       env: {
         CI: process.env.CI,
         HAPPIER_CLAUDE_PATH: fakeClaudePath,
+        HAPPIER_E2E_FAKE_CLAUDE_LOG: fakeLog,
         HAPPIER_E2E_FAKE_CLAUDE_SCENARIO: 'taskoutput-sidechain',
       },
     });
@@ -148,17 +179,27 @@ describe('core e2e: Claude TaskOutput sidechains are imported with sidechainId +
       HAPPIER_WEBAPP_URL: server.baseUrl,
       HAPPIER_SESSION_ATTACH_FILE: attachFile,
       HAPPIER_CLAUDE_PATH: fakeClaudePath,
+      HAPPIER_E2E_FAKE_CLAUDE_LOG: fakeLog,
       HAPPIER_E2E_FAKE_CLAUDE_SCENARIO: 'taskoutput-sidechain',
       HAPPIER_E2E_FAKE_CLAUDE_SESSION_ID: `fake-claude-session-${randomUUID()}`,
+      HAPPIER_E2E_PROVIDER_USE_CLI_SOURCE_ENTRYPOINT: '1',
     };
 
-    await ensureCliDistBuilt({ testDir, env: cliEnv });
+    await ensureCliSharedDepsBuilt({ testDir, env: cliEnv }, { skipSourceFreshnessCheck: true });
+
+    const cliLaunchSpec = await resolveCliTestLaunchSpec(
+      { testDir, env: cliEnv },
+      { snapshotDir: resolve(join(testDir, 'cli-dist')), preferSourceEntrypoint: true },
+    );
 
     const proc: SpawnedProcess = spawnLoggedProcess({
-      command: yarnCommand(),
-      args: ['-s', 'workspace', '@happier-dev/cli', 'dev', 'claude', '--existing-session', sessionId, '--started-by', 'terminal'],
-      cwd: repoRootDir(),
-      env: cliEnv,
+      command: cliLaunchSpec.command,
+      args: [...cliLaunchSpec.args, 'claude', '--existing-session', sessionId, '--started-by', 'terminal'],
+      cwd: cliLaunchSpec.cwd ?? repoRootDir(),
+      env: {
+        ...cliEnv,
+        ...(cliLaunchSpec.env ?? {}),
+      },
       stdoutPath: resolve(join(testDir, 'cli.stdout.log')),
       stderrPath: resolve(join(testDir, 'cli.stderr.log')),
     });
@@ -168,6 +209,7 @@ describe('core e2e: Claude TaskOutput sidechains are imported with sidechainId +
 
     try {
       await waitFor(() => ui.isConnected(), { timeoutMs: 20_000 });
+      await waitForDaemonState(cliHome, { timeoutMs: 90_000 });
 
       await requestSessionSwitchRpc({ ui, sessionId, to: 'remote', secret, timeoutMs: 20_000 });
 
@@ -182,7 +224,12 @@ describe('core e2e: Claude TaskOutput sidechains are imported with sidechainId +
 
       await waitFor(
         async () => {
-          const rows = await fetchAllMessages(server!.baseUrl, auth.token, sessionId);
+          const rows = await fetchAllMessagesForScope({
+            baseUrl: server!.baseUrl,
+            token: auth.token,
+            sessionId,
+            scope: 'all',
+          });
           const plaintext = rows.flatMap((row) => {
             try {
               return [decryptLegacyBase64(row.content.c, secret)];
@@ -191,7 +238,7 @@ describe('core e2e: Claude TaskOutput sidechains are imported with sidechainId +
             }
           });
 
-          const taskToolUseIds = collectToolUseIds(plaintext, 'Task');
+          const taskToolUseIds = collectToolUseIds(plaintext, 'SubAgent');
           if (taskToolUseIds.size === 0) return false;
 
           const hasImportedSidechain = plaintext.some((msg) => {
@@ -210,8 +257,13 @@ describe('core e2e: Claude TaskOutput sidechains are imported with sidechainId +
         { timeoutMs: 15_000, intervalMs: 250 },
       );
 
-      const rows = await fetchAllMessages(server.baseUrl, auth.token, sessionId);
-      const plaintext = rows.flatMap((row) => {
+      const allRows = await fetchAllMessagesForScope({
+        baseUrl: server.baseUrl,
+        token: auth.token,
+        sessionId,
+        scope: 'all',
+      });
+      const allPlaintext = allRows.flatMap((row) => {
         try {
           return [decryptLegacyBase64(row.content.c, secret)];
         } catch {
@@ -219,10 +271,19 @@ describe('core e2e: Claude TaskOutput sidechains are imported with sidechainId +
         }
       });
 
-      const taskOutputToolUseIds = collectToolUseIds(plaintext, 'TaskOutput');
+      const taskOutputToolUseIds = collectToolUseIds(allPlaintext, 'TaskOutput');
       expect(taskOutputToolUseIds.size).toBeGreaterThan(0);
 
-      const taskOutputToolResults = collectToolResultBlocks(plaintext, taskOutputToolUseIds);
+      const mainRows = await fetchAllMessages(server.baseUrl, auth.token, sessionId);
+      const mainPlaintext = mainRows.flatMap((row) => {
+        try {
+          return [decryptLegacyBase64(row.content.c, secret)];
+        } catch {
+          return [];
+        }
+      });
+
+      const taskOutputToolResults = collectToolResultBlocks(mainPlaintext, taskOutputToolUseIds);
       expect(taskOutputToolResults.length).toBeGreaterThan(0);
 
       const hasCompactTaskOutputToolResult = taskOutputToolResults.some((b) => {
@@ -232,7 +293,7 @@ describe('core e2e: Claude TaskOutput sidechains are imported with sidechainId +
       });
       expect(hasCompactTaskOutputToolResult).toBe(true);
 
-      const hasRawPayloadInMainThread = plaintext.some((msg) => {
+      const hasRawPayloadInMainThread = mainPlaintext.some((msg) => {
         const data = extractOutputData(msg);
         if (!data || data.isSidechain === true) return false;
         return JSON.stringify(data).includes('FAKE_TASKOUTPUT_SIDECHAIN_OK_');
