@@ -14,6 +14,7 @@ import { getServerUrl, setServerUrl, validateServerUrl } from '@/sync/domains/se
 import { Switch } from '@/components/ui/forms/Switch';
 import { useUnistyles } from 'react-native-unistyles';
 import { setLastViewedVersion, getLatestVersion } from '@/changelog';
+import { t } from '@/text';
 
 export default function DevScreen() {
     const router = useRouter();
@@ -238,6 +239,12 @@ export default function DevScreen() {
                     subtitle="Run tests in the app environment"
                     icon={<Ionicons name="flask-outline" size={28} color="#34C759" />}
                     onPress={() => router.push('/dev/tests')}
+                />
+                <Item
+                    title={t('devVoiceQa.menuTitle')}
+                    subtitle={t('devVoiceQa.menuSubtitle')}
+                    icon={<Ionicons name="mic-outline" size={28} color="#AF52DE" />}
+                    onPress={() => router.push('/dev/voice-qa')}
                 />
                 <Item
                     title="Unistyles Demo"
