@@ -74,7 +74,7 @@ const renderedSpecificSubAgentRunViewSpy = vi.fn();
 
 vi.mock('@/components/tools/renderers/core/_registry', () => ({
     getToolViewComponent: (toolName: string) => {
-        if (toolName === 'Task') {
+        if (toolName === 'Task' || toolName === 'SubAgent') {
             return (props: any) => {
                 renderedSpecificTaskViewSpy(props);
                 return React.createElement('TaskSpecificView', null);
@@ -93,6 +93,7 @@ vi.mock('@/components/tools/renderers/core/_registry', () => ({
 vi.mock('@/components/tools/catalog', () => ({
     knownTools: {
         Task: { title: 'Task' },
+        SubAgent: { title: 'SubAgent' },
         SubAgentRun: { title: 'SubAgentRun' },
     },
 }));
