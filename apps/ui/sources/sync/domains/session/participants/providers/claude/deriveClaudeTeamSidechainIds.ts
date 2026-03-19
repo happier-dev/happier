@@ -1,4 +1,5 @@
 import type { Message, ToolCallMessage } from '@/sync/domains/messages/messageTypes';
+import { isGenericSubAgentToolName } from '@happier-dev/protocol/tools/v2';
 
 import {
     deriveClaudeSpawnedTeammateFromTaskToolInput,
@@ -12,7 +13,7 @@ export function deriveClaudeTeamSidechainIds(params: Readonly<{ messages: readon
         if (!message || message.kind !== 'tool-call') continue;
         const toolMessage = message as ToolCallMessage;
         const toolName = toolMessage.tool?.name;
-        if (toolName !== 'Task' && toolName !== 'Agent') continue;
+        if (!isGenericSubAgentToolName(toolName ?? '')) continue;
 
         const spawned =
             deriveClaudeSpawnedTeammateFromTaskToolResult(toolMessage.tool.result)

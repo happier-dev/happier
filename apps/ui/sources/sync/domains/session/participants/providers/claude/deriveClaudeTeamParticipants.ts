@@ -657,7 +657,7 @@ export function deriveClaudeTeamParticipants(params: Readonly<{ messages: readon
             }
         }
 
-        if (toolName === 'Task' || toolName === 'Agent') {
+        if (isGenericSubAgentToolName(toolName)) {
             const spawned =
                 deriveClaudeSpawnedTeammateFromTaskToolResult(toolMsg.tool.result) ??
                 deriveClaudeSpawnedTeammateFromTaskToolInput(toolMsg.tool.input);
@@ -716,3 +716,4 @@ export function deriveClaudeTeamParticipants(params: Readonly<{ messages: readon
     const members = Array.from(membersById.values());
     return { teamId, members };
 }
+import { isGenericSubAgentToolName } from '@happier-dev/protocol/tools/v2';
