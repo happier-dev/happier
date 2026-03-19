@@ -25,6 +25,7 @@ vi.mock('react-native', async () => {
     const actual = await vi.importActual<typeof import('react-native')>('react-native');
     return {
         ...actual,
+        Platform: { ...actual.Platform, OS: 'ios', select: (value: any) => value?.ios ?? value?.default ?? null },
         View: (props: any) => React.createElement('View', props, props.children),
         useWindowDimensions: () => ({
             width: 1400,
@@ -101,6 +102,16 @@ vi.mock('@/components/appShell/panes/hooks/useAppPaneScope', () => ({
     }),
 }));
 
+vi.mock('@/components/sessions/panes/url/sessionPaneUrlState', () => ({
+    serializeSessionPaneUrlState: (state: any) => state?.details?.kind === 'file'
+        ? { details: 'file', path: state.details.path }
+        : {},
+}));
+
+vi.mock('@/components/sessions/shell/SessionInvalidLinkFallback', () => ({
+    SessionInvalidLinkFallback: () => React.createElement('SessionInvalidLinkFallback', { testID: 'session-invalid-link' }),
+}));
+
 vi.mock('@/scm/scmLineSelection', () => ({
     buildFileLineSelectionFingerprint: () => 'fingerprint',
     canUseLineSelection: () => false,
@@ -151,14 +162,22 @@ describe('FileScreen session path hydration', () => {
         mockFilePathParam = '../secrets.txt';
         routerReplaceSpy.mockClear();
         openDetailsTabSpy.mockClear();
+        let tree: renderer.ReactTestRenderer | undefined;
+        try {
+            act(() => {
+                tree = renderer.create(React.createElement(FileScreen));
+            });
+            await act(async () => {
+                await new Promise((r) => setTimeout(r, 0));
+            });
 
-        await act(async () => {
-            renderer.create(React.createElement(FileScreen));
-            await new Promise((r) => setTimeout(r, 0));
-        });
-
-        expect(routerReplaceSpy).toHaveBeenCalledTimes(1);
-        expect(openDetailsTabSpy).not.toHaveBeenCalled();
+            expect(routerReplaceSpy).toHaveBeenCalledTimes(1);
+            expect(openDetailsTabSpy).not.toHaveBeenCalled();
+        } finally {
+            act(() => {
+                tree?.unmount();
+            });
+        }
     });
 
     it('redirects to panes when details routes should be in the right panel', async () => {
@@ -168,13 +187,89 @@ describe('FileScreen session path hydration', () => {
         mockFilePathParam = 'a.txt';
         routerReplaceSpy.mockClear();
         openDetailsTabSpy.mockClear();
+        let tree: renderer.ReactTestRenderer | undefined;
+        try {
+            act(() => {
+                tree = renderer.create(React.createElement(FileScreen));
+            });
+            await act(async () => {
+                await new Promise((r) => setTimeout(r, 0));
+            });
 
-        await act(async () => {
-            renderer.create(React.createElement(FileScreen));
-            await new Promise((r) => setTimeout(r, 0));
-        });
+            expect(openDetailsTabSpy).toHaveBeenCalledTimes(1);
+            expect(routerReplaceSpy).toHaveBeenCalledTimes(1);
+            expect(routerReplaceSpy).toHaveBeenLastCalledWith({ pathname: '/session/[id]', params: { id: 'session-1' } });
+        } finally {
+            act(() => {
+                tree?.unmount();
+            });
+        }
+    });
 
-        expect(openDetailsTabSpy).toHaveBeenCalledTimes(1);
-        expect(routerReplaceSpy).toHaveBeenCalledTimes(1);
+    it('renders the invalid link fallback when the file path param is missing on native', async () => {
+        vi.resetModules();
+        const { default: FileScreen } = await import('@/app/(app)/session/[id]/file');
+        shouldRedirectToPanes = false;
+        mockFilePathParam = '';
+        routerReplaceSpy.mockClear();
+        openDetailsTabSpy.mockClear();
+        let tree: renderer.ReactTestRenderer | undefined;
+        try {
+            act(() => {
+                tree = renderer.create(React.createElement(FileScreen));
+            });
+            await act(async () => {
+                await new Promise((r) => setTimeout(r, 0));
+            });
+
+            expect(tree!.root.findByProps({ testID: 'session-invalid-link' })).toBeTruthy();
+            expect(routerReplaceSpy).not.toHaveBeenCalled();
+            expect(openDetailsTabSpy).not.toHaveBeenCalled();
+        } finally {
+            act(() => {
+                tree?.unmount();
+            });
+        }
+    });
+
+    it('re-opens details when the file path param changes on the same native screen instance', async () => {
+        vi.resetModules();
+        const { default: FileScreen } = await import('@/app/(app)/session/[id]/file');
+        shouldRedirectToPanes = false;
+        mockFilePathParam = 'a.txt';
+        routerReplaceSpy.mockClear();
+        openDetailsTabSpy.mockClear();
+        let tree: renderer.ReactTestRenderer | undefined;
+        try {
+            await act(async () => {
+                tree = renderer.create(React.createElement(FileScreen));
+                await Promise.resolve();
+            });
+
+            expect(openDetailsTabSpy).toHaveBeenCalledTimes(1);
+            expect(routerReplaceSpy).toHaveBeenCalledTimes(1);
+
+            mockFilePathParam = 'b.txt';
+
+            await act(async () => {
+                tree!.update(React.createElement(FileScreen));
+                await Promise.resolve();
+            });
+
+            expect(openDetailsTabSpy).toHaveBeenCalledTimes(2);
+            expect(routerReplaceSpy).toHaveBeenCalledTimes(2);
+            expect(routerReplaceSpy).toHaveBeenNthCalledWith(1, {
+                pathname: '/session/[id]/details',
+                params: { id: 'session-1', details: 'file', path: 'a.txt' },
+            });
+            expect(routerReplaceSpy).toHaveBeenNthCalledWith(2, {
+                pathname: '/session/[id]/details',
+                params: { id: 'session-1', details: 'file', path: 'b.txt' },
+            });
+        } finally {
+            act(() => {
+                tree?.unmount();
+            });
+        }
     });
 });
