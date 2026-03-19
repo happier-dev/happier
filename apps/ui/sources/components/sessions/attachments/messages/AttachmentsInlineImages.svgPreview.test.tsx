@@ -1,8 +1,8 @@
 import * as React from 'react';
 import renderer, { act } from 'react-test-renderer';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-(globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
+const actEnvironmentGlobal = globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean };
 
 vi.mock('react-native-svg', () => ({
     SvgXml: (props: any) => React.createElement('SvgXml', props),
@@ -47,6 +47,16 @@ vi.mock('@/components/sessions/files/content/imagePreview/useSessionImagePreview
 }));
 
 describe('AttachmentsInlineImages (svg previews)', () => {
+    const previousActEnvironment = actEnvironmentGlobal.IS_REACT_ACT_ENVIRONMENT;
+
+    beforeEach(() => {
+        actEnvironmentGlobal.IS_REACT_ACT_ENVIRONMENT = true;
+    });
+
+    afterEach(() => {
+        actEnvironmentGlobal.IS_REACT_ACT_ENVIRONMENT = previousActEnvironment;
+    });
+
     it('renders an SvgXml preview for svg attachments on native', async () => {
         const { AttachmentsInlineImages } = await import('./AttachmentsInlineImages');
 
