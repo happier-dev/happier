@@ -75,6 +75,42 @@ describe('maybeAutoUpdateNotice', () => {
     }
   });
 
+
+  it('prefers the installed package-dist entrypoint for background update checks', () => {
+    const homeDir = mkdtempSync(join(tmpdir(), 'happy-cli-update-'));
+    const stderr = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const cliRootDir = join(homeDir, 'cli', 'current');
+    try {
+      mkdirSync(join(cliRootDir, 'package-dist'), { recursive: true });
+      writeFileSync(join(cliRootDir, 'package-dist', 'index.mjs'), 'export {};\n', 'utf8');
+      const cacheDir = join(homeDir, 'cache');
+      mkdirSync(cacheDir, { recursive: true });
+
+      const spawnDetached = vi.fn();
+
+      maybeAutoUpdateNotice({
+        argv: ['start'],
+        isTTY: true,
+        homeDir,
+        cliRootDir,
+        env: {},
+        nowMs: 100_000,
+        spawnDetached,
+        notifyIntervalMs: 1000,
+        checkIntervalMs: 0,
+      });
+
+      expect(spawnDetached).toHaveBeenCalledWith({
+        script: join(cliRootDir, 'package-dist', 'index.mjs'),
+        args: ['self', 'check', '--quiet'],
+        cwd: cliRootDir,
+        env: expect.objectContaining({ HAPPIER_CLI_UPDATE_CHECK_SPAWNED: '1' }),
+      });
+    } finally {
+      stderr.mockRestore();
+      rmSync(homeDir, { recursive: true, force: true });
+    }
+  });
   it('does not crash when spawnDetached throws', () => {
     const homeDir = mkdtempSync(join(tmpdir(), 'happy-cli-update-'));
     const stderr = vi.spyOn(console, 'error').mockImplementation(() => {});
