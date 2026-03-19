@@ -2,6 +2,7 @@ import type { AgentType } from '@/sync/domains/models/modelOptions';
 import type { Metadata } from '@/sync/domains/state/storageTypes';
 import { DEFAULT_AGENT_ID, getAgentCore, resolveAgentIdFromFlavor } from '@/agents/catalog/catalog';
 import { hasDynamicModelListForSession, getSelectableModelIdsForSession, supportsFreeformModelSelectionForSession } from '@/sync/domains/models/modelOptions';
+import { readSessionModelsState, readSessionModesState } from '@/sync/domains/sessionControl/readSessionControlMetadata';
 
 export type ModelApplyScope = 'live' | 'next_prompt' | 'spawn_only';
 
@@ -23,7 +24,7 @@ export function describeEffectiveModelMode(params: {
     const hasExplicitSelection = selectedModelId.length > 0;
     const effectiveModelId = hasExplicitSelection ? selectedModelId : core.model.defaultMode;
 
-    const isAcpSession = Boolean(params.metadata?.acpSessionModesV1 || params.metadata?.acpSessionModelsV1);
+    const isAcpSession = Boolean(readSessionModesState(params.metadata) || readSessionModelsState(params.metadata));
 
     let applyScope: ModelApplyScope = isAcpSession ? 'live' : core.model.nonAcpApplyScope;
     const notes: string[] = [];
