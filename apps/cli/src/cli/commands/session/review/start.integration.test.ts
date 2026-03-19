@@ -105,8 +105,7 @@ describe('happier session review start (integration)', () => {
         const decodedParams = decodeBase64(String(data.params ?? ''), 'base64');
         const decrypted = decrypt(dek, 'dataKey', decodedParams) as any;
         expect(decrypted.intent).toBe('review');
-        expect(typeof decrypted.backendId).toBe('string');
-        expect(decrypted.intentInput?.engineId).toBe(decrypted.backendId);
+        expect(decrypted.backendTarget).toEqual({ kind: 'builtInAgent', agentId: decrypted.intentInput?.engineId });
 
         callIdx += 1;
         const resultPayload = { runId: `run_${callIdx}`, callId: `call_${callIdx}`, sidechainId: `call_${callIdx}` };
