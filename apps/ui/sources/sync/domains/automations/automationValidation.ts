@@ -1,12 +1,20 @@
-import type { NewSessionAutomationDraft } from './automationDraft';
+import {
+    LEGACY_DEFAULT_NEW_SESSION_AUTOMATION_NAME,
+    type NewSessionAutomationDraft,
+} from './automationDraft';
 import type { AutomationTargetType, AutomationTemplate } from './automationTypes';
 
 export type AutomationScheduleInput =
     | Readonly<{ kind: 'interval'; everyMs: number; scheduleExpr?: undefined; timezone?: string | null }>
     | Readonly<{ kind: 'cron'; scheduleExpr: string; everyMs?: undefined; timezone?: string | null }>;
 
-export function normalizeAutomationName(input: string, fallback: string = 'Scheduled Session'): string {
+export const DEFAULT_AUTOMATION_NAME_FALLBACK = 'Scheduled automation';
+
+export function normalizeAutomationName(input: string, fallback: string = DEFAULT_AUTOMATION_NAME_FALLBACK): string {
     const normalized = typeof input === 'string' ? input.trim() : '';
+    if (normalized === LEGACY_DEFAULT_NEW_SESSION_AUTOMATION_NAME) {
+        return fallback;
+    }
     return normalized.length > 0 ? normalized : fallback;
 }
 
