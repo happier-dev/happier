@@ -34,30 +34,31 @@ export function useDemoMessages(messages: Message[]) {
             ...state,
             sessionMessages: {
                 ...state.sessionMessages,
-                  [DEMO_SESSION_ID]: {
-                      messageIdsOldestFirst,
-                      messagesById,
-                      messagesMap: messagesById,
-                      reducerState: createReducer(),
-                      latestThinkingMessageId,
-                      latestThinkingMessageActivityAtMs: null,
-                      messagesVersion: 1,
-                      isLoaded: true,
-                  },
-              },
-          }));
+                [DEMO_SESSION_ID]: {
+                    messageIdsOldestFirst,
+                    messagesById,
+                    messagesMap: messagesById,
+                    draftsByLocalId: {},
+                    reducerState: createReducer(),
+                    latestThinkingMessageId,
+                    latestThinkingMessageActivityAtMs: null,
+                    messagesVersion: 1,
+                    isLoaded: true,
+                },
+            },
+        }));
 
         // Cleanup function to remove the demo session
         return () => {
-              storage.setState((state) => {
-                  const { [DEMO_SESSION_ID]: _, ...restSessions } = state.sessionMessages;
-                  return {
-                      ...state,
-                      sessionMessages: restSessions,
-                  };
-              });
-          };
-      }, [messages]);
+            storage.setState((state) => {
+                const { [DEMO_SESSION_ID]: _ignored, ...restSessions } = state.sessionMessages;
+                return {
+                    ...state,
+                    sessionMessages: restSessions,
+                };
+            });
+        };
+    }, [messages]);
 
     return DEMO_SESSION_ID;
 }
