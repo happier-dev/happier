@@ -1,6 +1,14 @@
 import type { SocketCollector } from './socketClient';
-import { decryptLegacyBase64, encryptLegacyBase64 } from './messageCrypto';
-import { waitFor } from './timing';
+import { callLegacyEncryptedSessionRpc } from './sessionRpc';
+
+const BooleanRpcResultSchema = {
+  safeParse(input: unknown): { success: true; data: boolean } | { success: false } {
+    if (input === true || input === false) {
+      return { success: true, data: input };
+    }
+    return { success: false };
+  },
+};
 
 export async function requestSessionSwitchRpc(opts: {
   ui: SocketCollector;
@@ -9,18 +17,13 @@ export async function requestSessionSwitchRpc(opts: {
   secret: Uint8Array;
   timeoutMs?: number;
 }): Promise<boolean> {
-  let result: boolean | null = null;
-  const params = encryptLegacyBase64({ to: opts.to }, opts.secret);
-  await waitFor(
-    async () => {
-      const res = await opts.ui.rpcCall<{ ok: boolean; result?: string }>(`${opts.sessionId}:switch`, params);
-      if (!res || res.ok !== true || typeof res.result !== 'string') return false;
-      const decrypted = decryptLegacyBase64(res.result, opts.secret);
-      if (decrypted !== true && decrypted !== false) return false;
-      result = decrypted;
-      return true;
-    },
-    { timeoutMs: opts.timeoutMs ?? 20_000, context: `${opts.sessionId}:switch` },
-  );
-  return result ?? false;
+  return await callLegacyEncryptedSessionRpc({
+    ui: opts.ui,
+    sessionId: opts.sessionId,
+    method: 'switch',
+    req: { to: opts.to },
+    secret: opts.secret,
+    schema: BooleanRpcResultSchema,
+    timeoutMs: opts.timeoutMs ?? 20_000,
+  });
 }
