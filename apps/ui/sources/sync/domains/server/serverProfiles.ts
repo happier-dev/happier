@@ -420,7 +420,7 @@ export function upsertServerProfile(
             ?? defaultServerNameFromUrl(url)
             ?? id,
         ).trim() || id,
-        serverUrl: url,
+        serverUrl: existingEquivalent?.serverUrl ?? url,
         createdAt: existing?.createdAt ?? now,
         updatedAt: now,
         lastUsedAt: existing?.lastUsedAt ?? 0,
