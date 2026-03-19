@@ -48,7 +48,7 @@ describe('createHappierMcpBridge', () => {
       args: [
         '--no-warnings',
         '--no-deprecation',
-        '/repo/dist/backends/codex/happyMcpStdioBridge.mjs',
+        '/repo/package-dist/backends/codex/happyMcpStdioBridge.mjs',
         '--url',
         'http://127.0.0.1:12345',
       ],
@@ -64,11 +64,47 @@ describe('createHappierMcpBridge', () => {
       args: [
         '--no-warnings',
         '--no-deprecation',
-        '/repo/dist/backends/codex/happyMcpStdioBridge.mjs',
+        '/repo/package-dist/backends/codex/happyMcpStdioBridge.mjs',
         '--url',
         'http://127.0.0.1:12345',
       ],
     })
+  })
+
+  it('prefers the source entrypoint when the CLI source-entrypoint e2e flag is enabled', async () => {
+    const previousFlag = process.env.HAPPIER_E2E_PROVIDER_USE_CLI_SOURCE_ENTRYPOINT
+    process.env.HAPPIER_E2E_PROVIDER_USE_CLI_SOURCE_ENTRYPOINT = '1'
+    try {
+      vi.mocked(existsSync).mockImplementation((pathLike) => {
+        const path = String(pathLike)
+        if (path.endsWith('/package-dist/backends/codex/happyMcpStdioBridge.mjs')) return true
+        if (path.endsWith('/src/backends/codex/happyMcpStdioBridge.ts')) return true
+        return false
+      })
+
+      const session = {} as any
+      const { mcpServers } = await createHappierMcpBridge(session)
+
+      expect(mcpServers.happier).toEqual({
+        command: process.execPath,
+        args: [
+          '--no-warnings',
+          '--no-deprecation',
+          '--import',
+          '/repo/node_modules/tsx/dist/esm/index.mjs',
+          '/repo/src/backends/codex/happyMcpStdioBridge.ts',
+          '--url',
+          'http://127.0.0.1:12345',
+        ],
+        env: { TSX_TSCONFIG_PATH: '/repo/tsconfig.json' },
+      })
+    } finally {
+      if (previousFlag === undefined) {
+        delete process.env.HAPPIER_E2E_PROVIDER_USE_CLI_SOURCE_ENTRYPOINT
+      } else {
+        process.env.HAPPIER_E2E_PROVIDER_USE_CLI_SOURCE_ENTRYPOINT = previousFlag
+      }
+    }
   })
 
   it('falls back to TSX source entrypoint when dist bridge is unavailable', async () => {
@@ -108,7 +144,7 @@ describe('createHappierMcpBridge', () => {
       args: [
         '--no-warnings',
         '--no-deprecation',
-        '/repo/dist/backends/codex/happyMcpStdioBridge.mjs',
+        '/repo/package-dist/backends/codex/happyMcpStdioBridge.mjs',
         '--url',
         'http://127.0.0.1:12345',
       ],
