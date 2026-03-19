@@ -1,5 +1,34 @@
 import { describe, expect, it } from 'vitest';
+import { buildBackendTargetKey } from '@happier-dev/protocol';
+import { AIBackendProfileSchema } from './profileCompatibility';
 import { buildProfileGroups, toggleFavoriteProfileId } from './profileGrouping';
+
+function buildCustomProfile(params: {
+    id: string;
+    name: string;
+    compatibility: Record<'claude' | 'codex' | 'gemini', boolean>;
+}) {
+    return AIBackendProfileSchema.parse({
+        id: params.id,
+        name: params.name,
+        environmentVariables: [],
+        defaultPermissionModeByAgent: {},
+        defaultPermissionModeByTargetKey: {},
+        defaultPersistenceModeByAgent: {},
+        defaultPersistenceModeByTargetKey: {},
+        compatibility: params.compatibility,
+        compatibilityByTargetKey: {
+            [buildBackendTargetKey({ kind: 'builtInAgent', agentId: 'claude' })]: params.compatibility.claude,
+            [buildBackendTargetKey({ kind: 'builtInAgent', agentId: 'codex' })]: params.compatibility.codex,
+            [buildBackendTargetKey({ kind: 'builtInAgent', agentId: 'gemini' })]: params.compatibility.gemini,
+        },
+        envVarRequirements: [],
+        isBuiltIn: false,
+        createdAt: 0,
+        updatedAt: 0,
+        version: '1.0.0',
+    });
+}
 
 describe('toggleFavoriteProfileId', () => {
     it('adds the profile id to the front when missing', () => {
@@ -19,18 +48,11 @@ describe('toggleFavoriteProfileId', () => {
 describe('buildProfileGroups', () => {
     it('filters favoriteIds to resolvable profiles (preserves default environment favorite)', () => {
         const customProfiles = [
-            {
+            buildCustomProfile({
                 id: 'custom-profile',
                 name: 'Custom Profile',
-                environmentVariables: [],
-                defaultPermissionModeByAgent: {},
                 compatibility: { claude: true, codex: true, gemini: true },
-                envVarRequirements: [],
-                isBuiltIn: false,
-                createdAt: 0,
-                updatedAt: 0,
-                version: '1.0.0',
-            },
+            }),
         ];
 
         const groups = buildProfileGroups({
@@ -46,18 +68,11 @@ describe('buildProfileGroups', () => {
 
     it('hides profiles that are incompatible with all enabled agents', () => {
         const customProfiles = [
-            {
+            buildCustomProfile({
                 id: 'custom-gemini-only',
                 name: 'Gemini Only',
-                environmentVariables: [],
-                defaultPermissionModeByAgent: {},
                 compatibility: { claude: false, codex: false, gemini: true },
-                envVarRequirements: [],
-                isBuiltIn: false,
-                createdAt: 0,
-                updatedAt: 0,
-                version: '1.0.0',
-            },
+            }),
         ];
 
         const groups = buildProfileGroups({
