@@ -13,3 +13,4 @@ describe('RPC_METHODS (daemon direct sessions)', () => {
     expect((RPC_METHODS as any).DAEMON_DIRECT_SESSION_TAKEOVER_PERSIST).toBe('daemon.directSessions.takeoverPersist');
   });
 });
+
