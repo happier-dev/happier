@@ -69,7 +69,7 @@ let sessionListGroupOrderV1: Record<string, string[]> = {};
 const setSessionListGroupOrderV1 = vi.fn();
 let sessionTagsV1: Record<string, string[]> = {};
 const setSessionTagsV1 = vi.fn();
-const useSessionInlineDragSpy = vi.fn((_params: any) => ({ gesture: undefined, animatedStyle: {} }));
+const useSessionInlineDragSpy = vi.hoisted(() => vi.fn((params: any) => ({ gesture: undefined, animatedStyle: params ? {} : {} })));
 
 vi.mock('@/sync/domains/state/storage', () => ({
     useSetting: (key: string) => {
