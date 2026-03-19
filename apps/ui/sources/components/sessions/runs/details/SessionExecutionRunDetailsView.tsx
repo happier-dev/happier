@@ -369,7 +369,6 @@ export const SessionExecutionRunDetailsView = React.memo(React.forwardRef<Sessio
                     sessionId={props.sessionId}
                     session={session}
                     message={transcriptMessage}
-                    presentation={props.presentation}
                     showComposer={canShowSendComposer}
                 />
             ) : null}

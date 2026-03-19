@@ -102,10 +102,16 @@ vi.mock('react-native-unistyles', () => ({
             colors: {
                 surface: '#111',
                 surfaceHigh: '#222',
+                surfaceHighest: '#333',
                 divider: '#333',
                 text: '#eee',
                 textSecondary: '#aaa',
+                textLink: '#06f',
                 textDestructive: '#f44',
+                success: '#0a0',
+                warning: '#fa0',
+                warningCritical: '#f80',
+                accent: { indigo: '#33f' },
                 status: { error: '#f44' },
                 shadow: { color: '#000' },
             },
@@ -118,10 +124,16 @@ vi.mock('react-native-unistyles', () => ({
                     colors: {
                         surface: '#111',
                         surfaceHigh: '#222',
+                        surfaceHighest: '#333',
                         divider: '#333',
                         text: '#eee',
                         textSecondary: '#aaa',
+                        textLink: '#06f',
                         textDestructive: '#f44',
+                        success: '#0a0',
+                        warning: '#fa0',
+                        warningCritical: '#f80',
+                        accent: { indigo: '#33f' },
                         status: { error: '#f44' },
                         shadow: { color: '#000' },
                     },
@@ -310,8 +322,8 @@ describe('SessionExecutionRunDetailsView', () => {
                 id: 'tool-msg-1',
                 kind: 'tool-call',
             }),
-            presentation: 'panel',
         }));
+        expect(messageDetailsSpy.mock.calls.at(-1)?.[0]).not.toHaveProperty('presentation');
     });
 
     it('skips the execution-run info card when embedded under the subagent details header', async () => {
@@ -335,8 +347,8 @@ describe('SessionExecutionRunDetailsView', () => {
         expect(executionRunInfoCardSpy).not.toHaveBeenCalled();
         expect(messageDetailsSpy).toHaveBeenCalledWith(expect.objectContaining({
             sessionId: 's1',
-            presentation: 'panel',
         }));
+        expect(messageDetailsSpy.mock.calls.at(-1)?.[0]).not.toHaveProperty('presentation');
     });
 
     it('hides the legacy inline send composer when embedded under the shared subagent composer', async () => {
@@ -513,8 +525,8 @@ describe('SessionExecutionRunDetailsView', () => {
                 id: 'tool-msg-1',
                 kind: 'tool-call',
             }),
-            presentation: 'panel',
         }));
+        expect(messageDetailsSpy.mock.calls.at(-1)?.[0]).not.toHaveProperty('presentation');
     });
 
     it('hides the transcript composer when the run is no longer sendable', async () => {
@@ -537,9 +549,9 @@ describe('SessionExecutionRunDetailsView', () => {
 
         expect(messageDetailsSpy).toHaveBeenCalledWith(expect.objectContaining({
             sessionId: 's1',
-            presentation: 'panel',
             showComposer: false,
         }));
+        expect(messageDetailsSpy.mock.calls.at(-1)?.[0]).not.toHaveProperty('presentation');
     });
 
     it('loads main transcript messages before failing closed on execution.run.get not-found responses', async () => {
@@ -620,8 +632,8 @@ describe('SessionExecutionRunDetailsView', () => {
                 id: 'tool-msg-1',
                 kind: 'tool-call',
             }),
-            presentation: 'panel',
         }));
+        expect(messageDetailsSpy.mock.calls.at(-1)?.[0]).not.toHaveProperty('presentation');
         expect(tree!.root.findAllByType('TextInput')).toHaveLength(0);
     });
 
