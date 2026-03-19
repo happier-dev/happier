@@ -9,7 +9,7 @@ describe('getInstallablesRegistryEntries', () => {
 
         expect(entries.map((e) => e.key)).toEqual(INSTALLABLES_CATALOG.map((e) => e.key));
         expect(entries.map((e) => e.capabilityId)).toEqual(INSTALLABLES_CATALOG.map((e) => e.capabilityId));
-        expect(entries.map((e) => e.installSpecSettingKey)).toEqual(['codexAcpInstallSpec']);
+        expect(entries.map((e) => e.supportsManagedOverrideInstall)).toEqual([false]);
         expect(entries.map((e) => e.defaultPolicy)).toEqual([
             { autoInstallWhenNeeded: true, autoUpdateMode: 'auto' },
         ]);
