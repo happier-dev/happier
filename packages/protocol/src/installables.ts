@@ -1,6 +1,7 @@
 import type { CapabilityId } from './capabilities.js';
 
 export type InstallableKind = 'dep';
+export type InstallableSourceKind = 'github_release_binary';
 
 export type InstallableAutoUpdateMode = 'off' | 'notify' | 'auto';
 
@@ -13,11 +14,7 @@ export type InstallableCatalogEntry = Readonly<{
   key: string;
   kind: InstallableKind;
   capabilityId: Extract<CapabilityId, `dep.${string}`>;
-  /**
-   * Optional npm dist-tag used by the capability detect registry check.
-   * This is a metadata default; consumers may override when necessary.
-   */
-  defaultDistTag: string;
+  sourceKind: InstallableSourceKind;
   defaultPolicy: InstallableDefaultPolicy;
   experimental: boolean;
 }>;
@@ -38,7 +35,7 @@ export const INSTALLABLES_CATALOG = [
     key: INSTALLABLE_KEYS.CODEX_ACP,
     kind: 'dep',
     capabilityId: CODEX_ACP_DEP_ID,
-    defaultDistTag: CODEX_ACP_DIST_TAG,
+    sourceKind: 'github_release_binary',
     defaultPolicy: DEFAULT_POLICY,
     experimental: true,
   },
