@@ -1,3 +1,4 @@
+import type { SocketCollector } from '../socketClient';
 import { decryptDataKeyBase64, encryptDataKeyBase64 } from '../rpcCrypto';
 import { unwrapSerializedJsonValue } from '../unwrapSerializedJsonValue';
 

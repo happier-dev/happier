@@ -1,8 +1,9 @@
 import type { CapturedEvent } from '../socketClient';
-import { createSessionScopedSocketCollector, type SocketCollector } from '../socketClient';
+import { type SocketCollector } from '../socketClient';
 import { decryptDataKeyBase64, encryptDataKeyBase64 } from '../rpcCrypto';
 import { fetchSessionV2, patchSessionAgentState } from '../sessions';
 import { sleep, waitFor } from '../timing';
+import { createMachineBoundSessionScopedSocketCollector } from '../sessionSocketBinding';
 
 type PermissionRequest = {
   id: string;
@@ -53,26 +54,39 @@ export class SyntheticAgent {
   private readonly token: string;
   private readonly sessionId: string;
   private readonly dataKey: Uint8Array;
-  private readonly socket: SocketCollector;
+  private socket: SocketCollector | null = null;
 
   constructor(params: { baseUrl: string; token: string; sessionId: string; dataKey: Uint8Array }) {
     this.baseUrl = params.baseUrl;
     this.token = params.token;
     this.sessionId = params.sessionId;
     this.dataKey = params.dataKey;
-    this.socket = createSessionScopedSocketCollector(this.baseUrl, this.token, this.sessionId);
   }
 
   getEvents(): CapturedEvent[] {
-    return this.socket.getEvents();
+    return this.socket?.getEvents() ?? [];
   }
 
   async start(): Promise<void> {
-    this.socket.connect();
-    await waitFor(() => this.socket.isConnected(), { timeoutMs: 20_000 });
+    if (!this.socket) {
+      const created = await createMachineBoundSessionScopedSocketCollector({
+        baseUrl: this.baseUrl,
+        token: this.token,
+        sessionId: this.sessionId,
+      });
+      this.socket = created.socket;
+    }
+
+    const socket = this.socket;
+    if (!socket) {
+      throw new Error('SyntheticAgent socket initialization failed');
+    }
+
+    socket.connect();
+    await waitFor(() => socket.isConnected(), { timeoutMs: 20_000 });
 
     const method = `${this.sessionId}:permission`;
-    this.socket.onRpcRequest(async (req) => {
+    socket.onRpcRequest(async (req) => {
       if (req.method !== method) {
         // Return an encrypted METHOD_NOT_FOUND-like response; server also guards this.
         return encryptDataKeyBase64({ error: 'method-not-found' }, this.dataKey);
@@ -87,11 +101,11 @@ export class SyntheticAgent {
       return encryptDataKeyBase64({ ok: true }, this.dataKey);
     });
 
-    await this.socket.rpcRegister(method);
+    await socket.rpcRegister(method);
   }
 
   async stop(): Promise<void> {
-    this.socket.close();
+    this.socket?.close();
   }
 
   async publishPermissionRequest(req: PermissionRequest): Promise<void> {
