@@ -27,7 +27,7 @@ export async function ensureGeminiAcpSession(params: {
     const nextStoredResumeId = null; // consume once
     params.messageBuffer.addMessage('Resuming previous context…', 'status');
     let replay: any[] | null = null;
-    let acpSessionId: string;
+    let acpSessionId = resumeId;
 
     if (loadWithReplay) {
       const loaded = await loadWithReplay(resumeId);
@@ -40,8 +40,6 @@ export async function ensureGeminiAcpSession(params: {
       const loadExistingSession = loadSession;
       await loadExistingSession(resumeId);
       acpSessionId = resumeId;
-    } else {
-      throw new Error('Gemini ACP backend does not support loading sessions');
     }
 
     params.onDebug(`[gemini] ACP session loaded: ${acpSessionId}`);
