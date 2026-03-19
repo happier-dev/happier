@@ -265,6 +265,7 @@ export const PromptAssetExportScreen = React.memo((props: Readonly<{
 
   const exportAsset = React.useCallback(async () => {
     if (!artifactState || !machineId || !currentType) return;
+    if (scope === 'project' && !resolveProjectDirectory(workspacePath)) return;
     const resolvedInstallMode = artifactState.libraryKind === 'bundle'
       ? selectedInstallMode
       : undefined;
@@ -314,7 +315,7 @@ export const PromptAssetExportScreen = React.memo((props: Readonly<{
     } finally {
       setBusy(false);
     }
-  }, [artifactState, currentType, installMode, machineId, promptExternalLinksV1, props.artifactId, scope, setPromptExternalLinksV1, targetInput, workspacePath]);
+  }, [artifactState, currentType, machineId, promptExternalLinksV1, props.artifactId, scope, selectedInstallMode, setPromptExternalLinksV1, targetInput, workspacePath]);
 
   const deleteExport = React.useCallback(async () => {
     if (!machineId || !currentType || !currentLink) return;
@@ -473,7 +474,7 @@ export const PromptAssetExportScreen = React.memo((props: Readonly<{
         <SettingsActionFooter
           primaryLabel={t('promptLibrary.externalAssetsExportAction')}
           onPrimaryPress={() => { void exportAsset(); }}
-          primaryDisabled={busy || !artifactState || !machineId || !currentType || targetInput.trim().length === 0}
+          primaryDisabled={busy || !artifactState || !machineId || !currentType || targetInput.trim().length === 0 || (scope === 'project' && !resolveProjectDirectory(workspacePath))}
           primaryTestID="promptAssetExport.export"
           secondaryLabel={currentLink ? t('common.delete') : undefined}
           onSecondaryPress={currentLink ? (() => { void deleteExport(); }) : undefined}

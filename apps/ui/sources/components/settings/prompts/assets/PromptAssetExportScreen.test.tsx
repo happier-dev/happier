@@ -577,7 +577,7 @@ describe('PromptAssetExportScreen', () => {
       await tree.root.findByType('SettingsActionFooter').props.onPrimaryPress();
     });
 
-    expect(machinePromptAssetsWriteMock).not.toHaveBeenCalled();
+    expect(writePromptLibraryArtifactToExternalAssetMock).not.toHaveBeenCalled();
   });
 
   it('does not crash when the artifact body is malformed json', async () => {
