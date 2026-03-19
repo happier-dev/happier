@@ -302,7 +302,7 @@ describe('McpServersSettingsScreen', () => {
         );
         expect(agentDropdown).toBeTruthy();
         expect(agentDropdown!.props.items.map((item: { id: string }) => item.id)).toEqual(
-            expect.arrayContaining(listMcpPreviewAgentIds()),
+            expect.arrayContaining([...listMcpPreviewAgentIds()]),
         );
 
         await act(async () => {
