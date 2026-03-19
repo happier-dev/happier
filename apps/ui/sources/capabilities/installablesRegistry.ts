@@ -1,31 +1,25 @@
 import type { CapabilitiesDetectRequest, CapabilityDetectResult, CapabilityId } from '@/sync/api/capabilities/capabilitiesProtocol';
 import type { KnownSettings } from '@/sync/domains/settings/settings';
 import type { TranslationKey } from '@/text';
-import type { CodexAcpDepData } from '@/sync/api/capabilities/capabilitiesProtocol';
 import { t } from '@/text';
 import { INSTALLABLES_CATALOG, INSTALLABLE_KEYS, type InstallableAutoUpdateMode, type InstallableDefaultPolicy, type InstallableKey } from '@happier-dev/protocol/installables';
 
 export type { InstallableAutoUpdateMode, InstallableDefaultPolicy };
 
 import {
-    buildCodexAcpRegistryDetectRequest,
+    buildCodexAcpLatestVersionDetectRequest,
     getCodexAcpDepData,
     getCodexAcpDetectResult,
-    shouldPrefetchCodexAcpRegistry,
+    shouldPrefetchCodexAcpLatestVersion,
 } from './codexAcpDep';
-
-type SettingsKey = Extract<keyof KnownSettings, string>;
-
-export type InstallSpecSettingKey = {
-    [K in SettingsKey]: KnownSettings[K] extends string | null ? K : never;
-}[SettingsKey] | 'codexAcpInstallSpec';
 
 export type InstallableDepDataLike = {
     installed: boolean;
     installedVersion: string | null;
-    distTag: string;
+    sourceKind: string;
     lastInstallLogPath: string | null;
-    registry?: { ok: true; latestVersion: string | null } | { ok: false; errorMessage: string };
+    lastBackgroundUpdateCheckAtMs: number | null;
+    latestVersionCheck?: { ok: true; latestVersion: string | null; label: string | null } | { ok: false; errorMessage: string };
 };
 
 export type InstallableRegistryEntry = Readonly<{
@@ -37,9 +31,7 @@ export type InstallableRegistryEntry = Readonly<{
     title: string;
     iconName: string;
     groupTitleKey: TranslationKey;
-    installSpecSettingKey: InstallSpecSettingKey;
-    installSpecTitle: string;
-    installSpecDescription: string;
+    supportsManagedOverrideInstall: boolean;
     defaultPolicy: InstallableDefaultPolicy;
     installLabels: { installKey: TranslationKey; updateKey: TranslationKey; reinstallKey: TranslationKey };
     installModal: {
@@ -50,12 +42,12 @@ export type InstallableRegistryEntry = Readonly<{
     };
     getStatus: (results: Partial<Record<CapabilityId, CapabilityDetectResult>> | null | undefined) => InstallableDepDataLike | null;
     getDetectResult: (results: Partial<Record<CapabilityId, CapabilityDetectResult>> | null | undefined) => CapabilityDetectResult | null;
-    shouldPrefetchRegistry: (params: {
+    shouldPrefetchLatestVersion: (params: {
         requireExistingResult?: boolean;
         result?: CapabilityDetectResult | null;
         data?: InstallableDepDataLike | null;
     }) => boolean;
-    buildRegistryDetectRequest: () => CapabilitiesDetectRequest;
+    buildLatestVersionDetectRequest: () => CapabilitiesDetectRequest;
 }>;
 
 export function getInstallablesRegistryEntries(): readonly InstallableRegistryEntry[] {
@@ -65,9 +57,7 @@ export function getInstallablesRegistryEntries(): readonly InstallableRegistryEn
             title: t('deps.installable.codexAcp.title'),
             iconName: 'swap-horizontal-outline',
             groupTitleKey: 'newSession.codexAcpBanner.title',
-            installSpecSettingKey: 'codexAcpInstallSpec',
-            installSpecTitle: t('deps.installable.codexAcp.installSpecTitle'),
-            installSpecDescription: t('deps.installable.installSpecDescription'),
+            supportsManagedOverrideInstall: false,
             installLabels: {
                 installKey: 'newSession.codexAcpBanner.install',
                 updateKey: 'newSession.codexAcpBanner.update',
@@ -79,15 +69,15 @@ export function getInstallablesRegistryEntries(): readonly InstallableRegistryEn
                 reinstallTitleKey: 'newSession.codexAcpInstallModal.reinstallTitle',
                 descriptionKey: 'newSession.codexAcpInstallModal.description',
             },
-            getStatus: (results) => getCodexAcpDepData(results) as unknown as CodexAcpDepData | null,
+            getStatus: (results) => getCodexAcpDepData(results),
             getDetectResult: (results) => getCodexAcpDetectResult(results),
-            shouldPrefetchRegistry: ({ requireExistingResult, result, data }) =>
-                shouldPrefetchCodexAcpRegistry({
+            shouldPrefetchLatestVersion: ({ requireExistingResult, result, data }) =>
+                shouldPrefetchCodexAcpLatestVersion({
                     requireExistingResult,
                     result,
-                    data: data as any,
+                    data: data ?? null,
                 }),
-            buildRegistryDetectRequest: buildCodexAcpRegistryDetectRequest,
+            buildLatestVersionDetectRequest: buildCodexAcpLatestVersionDetectRequest,
         },
     };
 
