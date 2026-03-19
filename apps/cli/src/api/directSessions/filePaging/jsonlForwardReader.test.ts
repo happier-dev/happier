@@ -19,14 +19,14 @@ describe('readJsonlFileForward', () => {
     await writeFile(filePath, buildJsonl([{ i: 1 }, { i: 2 }, { i: 3 }, { i: 4 }, { i: 5 }]), 'utf8');
 
     const page1 = await readJsonlFileForward({ filePath, offsetBytes: 0, maxBytes: 1024, maxItems: 2 });
-    expect(page1.items.map((x) => (x.value as { i: number }).i)).toEqual([1, 2]);
+    expect(page1.items.map((x) => (x.value as any).i)).toEqual([1, 2]);
     expect(page1.truncated).toBe(false);
 
     const page2 = await readJsonlFileForward({ filePath, offsetBytes: page1.nextOffsetBytes, maxBytes: 1024, maxItems: 2 });
-    expect(page2.items.map((x) => (x.value as { i: number }).i)).toEqual([3, 4]);
+    expect(page2.items.map((x) => (x.value as any).i)).toEqual([3, 4]);
 
     const page3 = await readJsonlFileForward({ filePath, offsetBytes: page2.nextOffsetBytes, maxBytes: 1024, maxItems: 10 });
-    expect(page3.items.map((x) => (x.value as { i: number }).i)).toEqual([5]);
+    expect(page3.items.map((x) => (x.value as any).i)).toEqual([5]);
     expect(page3.reachedEnd).toBe(true);
   });
 
@@ -36,7 +36,7 @@ describe('readJsonlFileForward', () => {
     await writeFile(filePath, buildJsonl([{ i: 1 }, { i: 2 }], { trailingNewline: false }), 'utf8');
 
     const page = await readJsonlFileForward({ filePath, offsetBytes: 0, maxBytes: 1024, maxItems: 10 });
-    expect(page.items.map((x) => (x.value as { i: number }).i)).toEqual([1, 2]);
+    expect(page.items.map((x) => (x.value as any).i)).toEqual([1, 2]);
     expect(page.nextOffsetBytes).toBeGreaterThan(0);
   });
 
@@ -68,6 +68,6 @@ describe('readJsonlFileForward', () => {
     expect(page1.nextOffsetBytes).toBeGreaterThan(0);
 
     const page2 = await readJsonlFileForward({ filePath, offsetBytes: page1.nextOffsetBytes, maxBytes: 1024, maxItems: 10 });
-    expect(page2.items.map((x) => (x.value as { i: number }).i)).toEqual([2]);
+    expect(page2.items.map((x) => (x.value as any).i)).toEqual([2]);
   });
 });

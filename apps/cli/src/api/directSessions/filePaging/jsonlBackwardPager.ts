@@ -76,7 +76,7 @@ export async function readJsonlFileBackwardPage(params: Readonly<{
       const carryStartOffset = end;
 
       let segmentEndIndex = combined.length;
-      for (let i = combined.length - 1; i >= 0 && collectedNewestFirst.length < maxItems; i -= 1) {
+      for (let i = combined.length - 1; i >= 0 && collectedNewestFirst.length < maxItems; i--) {
         if (combined[i] !== 0x0a) continue; // '\n'
         const segmentStartIndex = i + 1;
         const segmentEndIndexExclusive = segmentEndIndex;
