@@ -2,6 +2,7 @@ import { resolvePromptStackSystemAppendBlocksV1 as resolvePromptStackSystemAppen
 import type { DecryptedArtifact } from '@/sync/domains/artifacts/artifactTypes';
 
 export async function resolvePromptStackSystemAppendBlocksV1(args: Readonly<{
+  surface: 'coding' | 'voice';
   promptStacksV1: PromptStacksV1 | null | undefined;
   profileId: string | null | undefined;
   artifactsById: Record<string, DecryptedArtifact | undefined>;
@@ -23,6 +24,7 @@ export async function resolvePromptStackSystemAppendBlocksV1(args: Readonly<{
   };
 
   return await resolvePromptStackSystemAppendBlocksProtocolV1({
+    surface: args.surface,
     promptStacksV1: args.promptStacksV1,
     profileId: args.profileId,
     readArtifactBody,
