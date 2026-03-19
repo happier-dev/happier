@@ -16,3 +16,4 @@ export function readHttpStatus(error: unknown): number | null {
   const status = response?.status;
   return typeof status === 'number' && Number.isFinite(status) ? status : null;
 }
+
