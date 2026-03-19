@@ -3,6 +3,7 @@ import { getResetToDefaultServerId } from './serverProfiles';
 import { setActiveServer, upsertAndActivateServer } from './serverRuntime';
 import { isStackContext } from './serverContext';
 import { canonicalizeServerUrl } from './url/serverUrlCanonical';
+import { readConfiguredServerUrlEnv } from './readConfiguredServerUrlEnv';
 
 function isWebRuntime(): boolean {
     return typeof window !== 'undefined' && typeof document !== 'undefined';
@@ -13,7 +14,7 @@ function normalizeUrl(raw: string): string {
 }
 
 function getDefaultServerUrl(): string {
-    const envUrl = normalizeUrl(String(process.env.EXPO_PUBLIC_HAPPY_SERVER_URL ?? ''));
+    const envUrl = normalizeUrl(readConfiguredServerUrlEnv());
     if (envUrl) return envUrl;
 
     if (isStackContext()) {
