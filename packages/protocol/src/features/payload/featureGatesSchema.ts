@@ -64,6 +64,48 @@ export const FeatureGatesSchema = z.object({
       contentKeys: DEFAULT_GATE_DISABLED,
       pendingQueueV2: DEFAULT_GATE_DISABLED,
     }),
+  sessions: z
+    .object({
+      enabled: z.boolean(),
+      handoff: z
+        .object({
+          enabled: z.boolean(),
+        })
+        .optional()
+        .default({ enabled: false }),
+    })
+    .optional()
+    .default({ enabled: false, handoff: { enabled: false } }),
+  machines: z
+    .object({
+      enabled: z.boolean(),
+      transfer: z
+        .object({
+          enabled: z.boolean(),
+          directPeer: z
+            .object({
+              enabled: z.boolean(),
+            })
+            .optional()
+            .default({ enabled: false }),
+          serverRouted: z
+            .object({
+              enabled: z.boolean(),
+            })
+            .optional()
+            .default({ enabled: false }),
+        })
+        .optional()
+        .default({ enabled: false, directPeer: { enabled: false }, serverRouted: { enabled: false } }),
+    })
+    .optional()
+    .default({ enabled: false, transfer: { enabled: false, directPeer: { enabled: false }, serverRouted: { enabled: false } } }),
+  terminal: z
+    .object({
+      embeddedPty: FeatureGateSchema.optional().default(DEFAULT_GATE_DISABLED),
+    })
+    .optional()
+    .default({ embeddedPty: DEFAULT_GATE_DISABLED }),
   voice: VoiceGateSchema.optional().default({ enabled: false, happierVoice: DEFAULT_GATE_DISABLED }),
   social: z
     .object({
