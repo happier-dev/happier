@@ -97,4 +97,15 @@ describe('resolveToolTranscriptSidechainId', () => {
         });
         expect(resolveToolTranscriptSidechainId({ tool, normalizedToolName: 'Task' })).toBe('tool_use_123');
     });
+
+    it('falls back to tool.id for SubAgent tools when no teammate id present', async () => {
+        const resolveToolTranscriptSidechainId = await loadSubject();
+        const tool = makeToolCall({
+            id: 'tool_use_subagent_123',
+            name: 'SubAgent',
+            input: { prompt: 'inspect repo' },
+            result: { status: 'ok' },
+        });
+        expect(resolveToolTranscriptSidechainId({ tool, normalizedToolName: 'SubAgent' })).toBe('tool_use_subagent_123');
+    });
 });

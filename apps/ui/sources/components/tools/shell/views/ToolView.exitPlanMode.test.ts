@@ -5,6 +5,12 @@ import { makeToolCall } from './ToolView.testHelpers';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
+vi.mock('@/sync/sync', () => ({
+    sync: {
+        ensureSidechainMessagesLoaded: vi.fn(),
+    },
+}));
+
 vi.mock('expo-router', () => ({
     useRouter: () => ({ push: vi.fn() }),
 }));
@@ -97,6 +103,7 @@ vi.mock('@/sync/domains/state/storage', () => ({
 
 vi.mock('@/agents/catalog/catalog', () => ({
     AGENT_IDS: ['claude', 'codex', 'gemini', 'opencode'],
+    DEFAULT_AGENT_ID: 'claude',
     getAgentCore: () => ({ toolRendering: { hideUnknownToolsByDefault: false } }),
     resolveAgentIdFromFlavor: () => null,
 }));

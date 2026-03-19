@@ -5,6 +5,14 @@ import { makeToolCall } from './ToolView.testHelpers';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
+const ensureSidechainMessagesLoadedMock = vi.fn();
+
+vi.mock('@/sync/sync', () => ({
+    sync: {
+        ensureSidechainMessagesLoaded: ensureSidechainMessagesLoadedMock,
+    },
+}));
+
 vi.mock('@expo/vector-icons', () => ({
     Ionicons: 'Ionicons',
 }));
@@ -16,6 +24,7 @@ vi.mock('react-native-device-info', () => ({
 vi.mock('@/sync/domains/state/storage', () => ({
     useLocalSetting: () => false,
     useSetting: () => false,
+    useSessionTranscriptDraftMessages: () => [],
 }));
 
 vi.mock('@/text', () => ({

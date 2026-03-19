@@ -4,6 +4,14 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
+const ensureSidechainMessagesLoadedMock = vi.fn();
+
+vi.mock('@/sync/sync', () => ({
+    sync: {
+        ensureSidechainMessagesLoaded: ensureSidechainMessagesLoadedMock,
+    },
+}));
+
 vi.mock('react-native', async () => ({
     Platform: { OS: 'web', select: (values: any) => values?.web ?? values?.default },
     View: 'View',

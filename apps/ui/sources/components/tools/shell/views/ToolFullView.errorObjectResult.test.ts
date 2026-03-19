@@ -5,6 +5,14 @@ import { collectHostText, makeToolCall } from './ToolView.testHelpers';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
+const ensureSidechainMessagesLoadedMock = vi.fn();
+
+vi.mock('@/sync/sync', () => ({
+    sync: {
+        ensureSidechainMessagesLoaded: ensureSidechainMessagesLoadedMock,
+    },
+}));
+
 vi.mock('react-native', async () => {
     const actual = await import('@/dev/reactNativeStub');
     return {
