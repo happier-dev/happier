@@ -7,12 +7,12 @@ import { parseArgs } from 'node:util';
 
 import { stageRepoForDagger } from './stage-repo-for-dagger.mjs';
 import { rewriteEasLocalBuildArtifactPath } from './rewrite-eas-local-build-artifact-path.mjs';
-import { normalizeInteractiveOverride, resolveExpoInteractivity } from './resolve-expo-interactivity.mjs';
-import { withEasGitCaseSensitiveEnv } from './eas-git-case-sensitive-env.mjs';
 import { assertDockerCanRunLinuxAmd64 } from '../docker/assert-docker-can-run-linux-amd64.mjs';
 import { createEasLocalBuildEnv } from './eas-local-build-env.mjs';
 import { ensureStagedGitRepo } from '../git/ensure-staged-git-repo.mjs';
 import { shouldStageRepoForEasLocalBuild } from './should-stage-eas-local-build-repo.mjs';
+import { withEasGitCaseSensitiveEnv } from './eas-git-case-sensitive-env.mjs';
+import { normalizeInteractiveOverride, resolveExpoInteractivity } from './resolve-expo-interactivity.mjs';
 
 function fail(message) {
   console.error(message);
@@ -209,6 +209,201 @@ function runCaptureWithHeartbeat(opts, cmd, args, extra) {
   });
 }
 
+/**
+ * @param {unknown} value
+ * @returns {any[]}
+ */
+function normalizeBuilds(value) {
+  return Array.isArray(value) ? value : [value];
+}
+
+/**
+ * @param {any} build
+ * @returns {string}
+ */
+function getBuildId(build) {
+  const id = build?.id ?? build?.buildId ?? null;
+  return id ? String(id) : '';
+}
+
+/**
+ * @param {any} build
+ * @returns {string | null}
+ */
+function getBuildDetailsUrl(build) {
+  return (
+    build?.buildDetailsPageUrl ||
+    build?.buildDetailsUrl ||
+    build?.detailsUrl ||
+    build?.url ||
+    null
+  );
+}
+
+/**
+ * @param {any} build
+ * @returns {number | null}
+ */
+function getBuildCreatedAtMs(build) {
+  const raw = String(build?.createdAt ?? build?.created ?? build?.updatedAt ?? '').trim();
+  if (!raw) return null;
+  const ms = Date.parse(raw);
+  return Number.isFinite(ms) ? ms : null;
+}
+
+/**
+ * @param {{ repoRoot: string; opts: { dryRun: boolean } }} params
+ * @returns {string}
+ */
+function resolveGitCommitHash({ repoRoot, opts }) {
+  const sha = String(process.env.GITHUB_SHA ?? '').trim();
+  if (sha) return sha;
+  if (opts.dryRun) return 'DRY_RUN_SHA';
+  return run(opts, 'git', ['rev-parse', 'HEAD'], {
+    cwd: repoRoot,
+    stdio: 'pipe',
+    timeoutMs: 10_000,
+  }).trim();
+}
+
+/**
+ * @param {{
+ *   opts: { dryRun: boolean };
+ *   uiDir: string;
+ *   easCliVersion: string;
+ *   platform: string;
+ *   profile: string;
+ *   gitCommitHash: string;
+ * }} params
+ * @returns {any[]}
+ */
+function fetchCloudBuildList({ opts, uiDir, easCliVersion, platform, profile, gitCommitHash }) {
+  const listJson = run(
+    opts,
+    'npx',
+    [
+      '--yes',
+      `eas-cli@${easCliVersion}`,
+      'build:list',
+      '--platform',
+      platform,
+      '--build-profile',
+      profile,
+      ...(gitCommitHash ? ['--git-commit-hash', gitCommitHash] : []),
+      '--limit',
+      '20',
+      '--json',
+      '--non-interactive',
+    ],
+    { cwd: uiDir, env: withEasGitCaseSensitiveEnv(process.env), stdio: 'pipe', timeoutMs: 5 * 60_000 },
+  ).trim();
+  return normalizeBuilds(JSON.parse(listJson));
+}
+
+/**
+ * @param {{
+ *   builds: any[];
+ *   platform: string;
+ *   scheduledAfterMs: number;
+ * }} params
+ * @returns {any[]}
+ */
+function selectScheduledCloudBuilds({ builds, platform, scheduledAfterMs }) {
+  const requestedPlatforms = platform === 'all' ? ['ios', 'android'] : [platform];
+  const selected = [];
+  for (const requestedPlatform of requestedPlatforms) {
+    const matching = builds
+      .filter((build) => String(build?.platform ?? '').toLowerCase() === requestedPlatform)
+      .sort((a, b) => (getBuildCreatedAtMs(b) ?? 0) - (getBuildCreatedAtMs(a) ?? 0));
+    if (matching.length === 0) {
+      fail(`Unable to resolve the scheduled ${requestedPlatform} cloud build from EAS build:list output.`);
+    }
+    const recent = matching.filter((build) => {
+      const createdAtMs = getBuildCreatedAtMs(build);
+      return createdAtMs !== null && createdAtMs >= scheduledAfterMs - 60_000;
+    });
+    const chosen = recent[0] ?? null;
+    if (!chosen) {
+      fail(`Unable to resolve the scheduled ${requestedPlatform} cloud build from EAS build:list output.`);
+    }
+    selected.push(chosen);
+  }
+  return selected;
+}
+
+/**
+ * @param {{
+ *   opts: { dryRun: boolean };
+ *   uiDir: string;
+ *   easCliVersion: string;
+ *   buildId: string;
+ * }} params
+ * @returns {any}
+ */
+function fetchBuildViewJson({ opts, uiDir, easCliVersion, buildId }) {
+  const viewJson = run(
+    opts,
+    'npx',
+    ['--yes', `eas-cli@${easCliVersion}`, 'build:view', String(buildId), '--json'],
+    { cwd: uiDir, env: withEasGitCaseSensitiveEnv(process.env), stdio: 'pipe', timeoutMs: 5 * 60_000 },
+  ).trim();
+  const viewParsed = JSON.parse(viewJson);
+  return Array.isArray(viewParsed) ? viewParsed[0] : viewParsed;
+}
+
+/**
+ * @param {any[]} builds
+ */
+function logCreatedBuilds(builds) {
+  console.log('EAS builds created by this run:');
+  for (const build of builds) {
+    const id = getBuildId(build) || null;
+    const status = build?.status ?? null;
+    const detailsUrl = getBuildDetailsUrl(build);
+    console.log(`- ${String(build?.platform ?? 'unknown')}: ${String(status ?? 'unknown')}${id ? ` (${id})` : ''}${detailsUrl ? ` ${detailsUrl}` : ''}`);
+  }
+}
+
+/**
+ * @param {{
+ *   opts: { dryRun: boolean };
+ *   uiDir: string;
+ *   easCliVersion: string;
+ *   builds: any[];
+ *   preloadedViews?: Map<string, any>;
+ * }} params
+ */
+function dumpBuildViews({ opts, uiDir, easCliVersion, builds, preloadedViews = new Map() }) {
+  const ids = builds.map((build) => getBuildId(build)).filter(Boolean);
+  for (const id of ids) {
+    console.log(`::group::eas build:view ${id}`);
+    const build = preloadedViews.get(id) ?? fetchBuildViewJson({ opts, uiDir, easCliVersion, buildId: id });
+    const error =
+      build?.error?.message ||
+      build?.error?.errors?.[0]?.message ||
+      (typeof build?.error === 'string' ? build.error : null) ||
+      null;
+    const out = {
+      id: build?.id ?? null,
+      platform: build?.platform ?? null,
+      status: build?.status ?? null,
+      detailsUrl: build?.buildDetailsPageUrl || build?.buildDetailsUrl || build?.detailsUrl || null,
+      error,
+      logs: build?.logs?.url || build?.logUrl || null,
+      artifacts: build?.artifacts ?? null,
+    };
+    console.log(JSON.stringify(out, null, 2));
+    console.log('');
+    console.log('eas build:view (human output):');
+    run(opts, 'npx', ['--yes', `eas-cli@${easCliVersion}`, 'build:view', String(id)], {
+      cwd: uiDir,
+      env: withEasGitCaseSensitiveEnv(process.env),
+      timeoutMs: 5 * 60_000,
+    });
+    console.log('::endgroup::');
+  }
+}
+
 async function main() {
   const repoRoot = path.resolve(process.cwd());
   const { values } = parseArgs({
@@ -259,9 +454,16 @@ async function main() {
     fail(/** @type {Error} */ (error).message);
   }
 
-  const isCi = String(process.env.CI ?? '').trim().toLowerCase() === 'true' || String(process.env.GITHUB_ACTIONS ?? '').trim() === 'true';
+  const interactivity =
+    localRuntime === 'dagger'
+      ? resolveExpoInteractivity({ interactiveOverride, defaultMode: 'non-interactive' })
+      : resolveExpoInteractivity({ interactiveOverride });
+  const { isCi, nonInteractive, source } = interactivity;
+  if (localRuntime === 'dagger' && source === 'arg-force-interactive') {
+    fail("Interactive Expo local builds are not supported with --local-runtime dagger. Use --local-runtime host or --interactive false.");
+  }
   const expoToken = String(process.env.EXPO_TOKEN ?? '').trim();
-  if ((buildMode === 'cloud' || localRuntime === 'dagger' || isCi) && !expoToken) {
+  if ((localRuntime === 'dagger' || (buildMode === 'cloud' && nonInteractive) || isCi) && !expoToken) {
     fail('EXPO_TOKEN is required for Expo native builds.');
   }
 
@@ -275,6 +477,7 @@ async function main() {
 
   const uiDir = path.join(repoRoot, 'apps', 'ui');
   const artifactOut = String(values['artifact-out'] ?? '').trim();
+  const easCommandEnv = withEasGitCaseSensitiveEnv(process.env);
 
   if (buildMode === 'local') {
     if (platform === 'all') {
@@ -433,11 +636,6 @@ async function main() {
     const effectiveRepoDir = staged?.stagedRepoDir ?? repoRoot;
     const effectiveUiDir = path.join(effectiveRepoDir, 'apps', 'ui');
 
-    const localNonInteractive = resolveExpoInteractivity({
-      interactiveOverride,
-      defaultMode: localRuntime === 'dagger' ? 'non-interactive' : 'tty',
-    }).nonInteractive;
-
     try {
       if (staged && effectiveRepoDir !== repoRoot) {
         maybeLinkNodeModulesIntoStage({ repoRoot, stagedRepoDir: effectiveRepoDir, dryRun });
@@ -454,13 +652,13 @@ async function main() {
         '--local',
         '--output',
         absOut,
-        ...(localNonInteractive ? ['--non-interactive'] : []),
+        ...(nonInteractive ? ['--non-interactive'] : []),
       ];
       run(
         opts,
         'npx',
         localArgs,
-        { cwd: effectiveUiDir, env: buildEnv, stdio: 'inherit' },
+        { cwd: effectiveUiDir, env: withEasGitCaseSensitiveEnv(buildEnv), stdio: 'inherit' },
       );
     } finally {
       if (staged) staged.cleanup();
@@ -489,79 +687,92 @@ async function main() {
   console.log(
     '[pipeline] expo native build (cloud): waiting for EAS to schedule builds (output is quiet until build IDs are returned; this can take several minutes on large uploads).',
   );
-  const cloudNonInteractive = resolveExpoInteractivity({ interactiveOverride }).nonInteractive;
-  const easJson = (
-    await runCaptureWithHeartbeat(
-      opts,
-      'npx',
-      [
-        '--yes',
-        `eas-cli@${easCliVersion}`,
-        'build',
-        '--platform',
-        platform,
-        '--profile',
-        profile,
-        ...(cloudNonInteractive ? ['--non-interactive'] : []),
-        '--json',
-      ],
-      { cwd: uiDir, heartbeatLabel: 'Expo cloud build scheduling', env: withEasGitCaseSensitiveEnv(process.env) },
-    )
-  ).trim();
+  /** @type {any[]} */
+  let builds = [];
+  /** @type {Map<string, any>} */
+  const preloadedViews = new Map();
 
-  if (!dryRun) {
+  if (nonInteractive) {
+    const easJson = (
+      await runCaptureWithHeartbeat(
+        opts,
+        'npx',
+        [
+          '--yes',
+          `eas-cli@${easCliVersion}`,
+          'build',
+          '--platform',
+          platform,
+          '--profile',
+          profile,
+          '--non-interactive',
+          '--json',
+        ],
+        { cwd: uiDir, env: easCommandEnv, heartbeatLabel: 'Expo cloud build scheduling' },
+      )
+    ).trim();
+
+    if (dryRun) return;
+
+    builds = normalizeBuilds(JSON.parse(easJson));
     fs.mkdirSync(path.dirname(path.resolve(outPath)), { recursive: true });
     fs.writeFileSync(outPath, `${easJson}\n`, 'utf8');
-
-    /** @type {any} */
-    const parsed = JSON.parse(easJson);
-    const builds = Array.isArray(parsed) ? parsed : [parsed];
-
-    console.log('EAS builds created by this run:');
-    for (const build of builds) {
-      const id = build?.id ?? build?.buildId ?? null;
-      const status = build?.status ?? null;
-      const detailsUrl =
-        build?.buildDetailsPageUrl ||
-        build?.buildDetailsUrl ||
-        build?.detailsUrl ||
-        build?.url ||
-        null;
-      console.log(`- ${String(build?.platform ?? 'unknown')}: ${String(status ?? 'unknown')}${id ? ` (${id})` : ''}${detailsUrl ? ` ${detailsUrl}` : ''}`);
+  } else {
+    const scheduledAfterMs = Date.now();
+    run(
+      opts,
+      'npx',
+      ['--yes', `eas-cli@${easCliVersion}`, 'build', '--platform', platform, '--profile', profile],
+      { cwd: uiDir, env: easCommandEnv, stdio: 'inherit' },
+    );
+    console.log('[pipeline] expo native build (cloud): resolving scheduled build metadata from EAS build:list/build:view');
+    const gitCommitHash = resolveGitCommitHash({ repoRoot, opts });
+    if (dryRun) {
+      run(
+        opts,
+        'npx',
+        [
+          '--yes',
+          `eas-cli@${easCliVersion}`,
+          'build:list',
+          '--platform',
+          platform,
+          '--build-profile',
+          profile,
+          ...(gitCommitHash ? ['--git-commit-hash', gitCommitHash] : []),
+          '--limit',
+          '20',
+          '--json',
+          '--non-interactive',
+        ],
+        { cwd: uiDir, env: easCommandEnv, stdio: 'pipe', timeoutMs: 5 * 60_000 },
+      );
+      run(
+        opts,
+        'npx',
+        ['--yes', `eas-cli@${easCliVersion}`, 'build:view', 'DRY_RUN_BUILD_ID', '--json'],
+        { cwd: uiDir, env: easCommandEnv, stdio: 'pipe', timeoutMs: 5 * 60_000 },
+      );
+      return;
     }
+    const buildList = fetchCloudBuildList({ opts, uiDir, easCliVersion, platform, profile, gitCommitHash });
+    const scheduledBuilds = selectScheduledCloudBuilds({ builds: buildList, platform, scheduledAfterMs });
+    builds = scheduledBuilds.map((build) => {
+      const buildId = getBuildId(build);
+      if (!buildId) fail('Resolved EAS build is missing an id.');
+      const resolved = fetchBuildViewJson({ opts, uiDir, easCliVersion, buildId });
+      preloadedViews.set(buildId, resolved);
+      return resolved;
+    });
+    if (!dryRun) {
+      writeJson(outPath, platform === 'all' ? builds : builds[0]);
+    }
+  }
 
-    const ids = builds.map((b) => b?.id ?? b?.buildId ?? null).filter(Boolean);
-    if (dumpView && ids.length > 0) {
-      for (const id of ids) {
-        console.log(`::group::eas build:view ${id}`);
-        const viewJson = run(
-          opts,
-          'npx',
-          ['--yes', `eas-cli@${easCliVersion}`, 'build:view', String(id), '--json'],
-          { cwd: uiDir, stdio: 'pipe', timeoutMs: 5 * 60_000 },
-        ).trim();
-        const viewParsed = JSON.parse(viewJson);
-        const build = Array.isArray(viewParsed) ? viewParsed[0] : viewParsed;
-        const error =
-          build?.error?.message ||
-          build?.error?.errors?.[0]?.message ||
-          (typeof build?.error === 'string' ? build.error : null) ||
-          null;
-        const out = {
-          id: build?.id ?? null,
-          platform: build?.platform ?? null,
-          status: build?.status ?? null,
-          detailsUrl: build?.buildDetailsPageUrl || build?.buildDetailsUrl || build?.detailsUrl || null,
-          error,
-          logs: build?.logs?.url || build?.logUrl || null,
-          artifacts: build?.artifacts ?? null,
-        };
-        console.log(JSON.stringify(out, null, 2));
-        console.log('');
-        console.log('eas build:view (human output):');
-        run(opts, 'npx', ['--yes', `eas-cli@${easCliVersion}`, 'build:view', String(id)], { cwd: uiDir, timeoutMs: 5 * 60_000 });
-        console.log('::endgroup::');
-      }
+  if (!dryRun) {
+    logCreatedBuilds(builds);
+    if (dumpView) {
+      dumpBuildViews({ opts, uiDir, easCliVersion, builds, preloadedViews });
     }
   }
 }
