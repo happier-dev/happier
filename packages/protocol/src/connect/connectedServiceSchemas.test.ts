@@ -72,20 +72,32 @@ describe('connectedServiceSchemas', () => {
         expect(sealed.format).toBe('account_scoped_v1');
     });
 
-    it('parses a quota snapshot', () => {
+    it('parses connected service quota snapshots', () => {
         const now = Date.now();
-        const snapshot = ConnectedServiceQuotaSnapshotV1Schema.parse({
+        const parsed = ConnectedServiceQuotaSnapshotV1Schema.parse({
             v: 1,
             serviceId: 'openai',
             profileId: 'work',
             fetchedAt: now,
             staleAfterMs: 60_000,
-            planLabel: 'Pro',
-            accountLabel: 'user@example.com',
-            meters: [],
+            planLabel: 'pro',
+            accountLabel: 'work@example.com',
+            meters: [
+                {
+                    meterId: 'requests',
+                    label: 'Requests',
+                    used: 10,
+                    limit: 100,
+                    unit: 'requests',
+                    utilizationPct: 10,
+                    resetsAt: now + 60_000,
+                    status: 'ok',
+                    details: {},
+                },
+            ],
         });
-        expect(snapshot.v).toBe(1);
-        expect(snapshot.serviceId).toBe('openai');
+        expect(parsed.meters).toHaveLength(1);
+        expect(parsed.meters[0]?.meterId).toBe('requests');
     });
 
     it('rejects invalid profile ids', () => {
