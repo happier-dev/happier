@@ -11,7 +11,7 @@ describe('settingsParse provider plugin defaults', () => {
         expect((settings as any).claudeRemoteSettingSourcesV2).toEqual(['user', 'project', 'local']);
         expect((settings as any).claudeRemoteIncludePartialMessages).toBe(false);
         expect((settings as any).claudeLocalPermissionBridgeEnabled).toBe(true);
-        expect((settings as any).claudeLocalPermissionBridgeWaitIndefinitely).toBe(false);
+        expect((settings as any).claudeLocalPermissionBridgeWaitIndefinitely).toBe(true);
         expect((settings as any).claudeLocalPermissionBridgeTimeoutSeconds).toBe(600);
         expect((settings as any).claudeRemoteEnableFileCheckpointing).toBe(false);
         expect((settings as any).claudeRemoteMaxThinkingTokens).toBe(null);
@@ -19,18 +19,18 @@ describe('settingsParse provider plugin defaults', () => {
         expect((settings as any).claudeRemoteStrictMcpServerConfig).toBe(false);
         expect((settings as any).claudeRemoteAdvancedOptionsJson).toBe('');
         expect((settings as any).claudeCodeExperimentalAgentTeamsEnabled).toBe(false);
-        expect((settings as any).codexBackendMode).toBe('acp');
+        expect((settings as any).codexBackendMode).toBe('appServer');
         expect((settings as any).backendCliSourcePreferenceById).toEqual({});
     });
 
-    it('forces Codex ACP when migrating settings from schema v5', () => {
+    it('preserves legacy Codex backend mode when migrating settings from schema v5', () => {
         const settings = settingsParse({
             schemaVersion: 5,
             codexBackendMode: 'mcp',
         } as any);
 
         expect((settings as any).schemaVersion).toBe(6);
-        expect((settings as any).codexBackendMode).toBe('acp');
+        expect((settings as any).codexBackendMode).toBe('mcp');
     });
 
     it('respects persisted Claude provider settings (can disable Agent SDK)', () => {
