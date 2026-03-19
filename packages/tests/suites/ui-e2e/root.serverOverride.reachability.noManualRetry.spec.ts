@@ -3,8 +3,8 @@ import { mkdir } from 'node:fs/promises';
 
 import { createRunDirs } from '../../src/testkit/runDir';
 import { startServerLight, type StartedServer } from '../../src/testkit/process/serverLight';
-import { startUiWeb, type StartedUiWeb } from '../../src/testkit/process/uiWeb';
-import { gotoDomContentLoadedWithRetries, normalizeLoopbackBaseUrl } from '../../src/testkit/uiE2e/pageNavigation';
+import { resolveUiWebBeforeAllTimeoutMs, startUiWeb, type StartedUiWeb } from '../../src/testkit/process/uiWeb';
+import { gotoDomContentLoadedWithPathFallback, normalizeLoopbackBaseUrl } from '../../src/testkit/uiE2e/pageNavigation';
 
 const run = createRunDirs({ runLabel: 'ui-e2e' });
 
@@ -17,8 +17,16 @@ test.describe('ui e2e: server override reachability', () => {
   let ui: StartedUiWeb | null = null;
   let uiBaseUrl: string | null = null;
 
+  const uiWebEnv = {
+    ...process.env,
+    EXPO_PUBLIC_DEBUG: '1',
+    // Start with an unreachable default so `?server=` must switch servers during the initial load.
+    EXPO_PUBLIC_HAPPY_SERVER_URL: 'http://127.0.0.1:1',
+    EXPO_PUBLIC_HAPPY_STORAGE_SCOPE: `e2e-${run.runId}-server-override`,
+  };
+
   test.beforeAll(async () => {
-    test.setTimeout(240_000);
+    test.setTimeout(resolveUiWebBeforeAllTimeoutMs(uiWebEnv));
     await mkdir(suiteDir, { recursive: true });
 
     server = await startServerLight({
@@ -31,13 +39,7 @@ test.describe('ui e2e: server override reachability', () => {
 
     ui = await startUiWeb({
       testDir: suiteDir,
-      env: {
-        ...process.env,
-        EXPO_PUBLIC_DEBUG: '1',
-        // Start with an unreachable default so `?server=` must switch servers during the initial load.
-        EXPO_PUBLIC_HAPPY_SERVER_URL: 'http://127.0.0.1:1',
-        EXPO_PUBLIC_HAPPY_STORAGE_SCOPE: `e2e-${run.runId}-server-override`,
-      },
+      env: uiWebEnv,
     });
 
     uiBaseUrl = normalizeLoopbackBaseUrl(ui.baseUrl);
@@ -57,7 +59,7 @@ test.describe('ui e2e: server override reachability', () => {
     await page.setViewportSize({ width: 1440, height: 900 });
 
     const url = `${uiBaseUrl}/?server=${encodeURIComponent(server.baseUrl)}`;
-    await gotoDomContentLoadedWithRetries(page, url);
+    await gotoDomContentLoadedWithPathFallback(page, url, '/');
 
     await expect(page.getByTestId('welcome-create-account')).toHaveCount(1, { timeout: 120_000 });
     await expect(page.getByTestId('welcome-retry-server')).toHaveCount(0);
