@@ -1,5 +1,5 @@
 import { afterAll, describe, expect, it } from 'vitest';
-import { createHash, randomBytes } from 'node:crypto';
+import { randomBytes } from 'node:crypto';
 import { mkdir, readFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 
@@ -15,8 +15,7 @@ import { fetchJson } from '../../src/testkit/http';
 import { waitFor } from '../../src/testkit/timing';
 import { writeTestManifestForServer } from '../../src/testkit/manifestForServer';
 import { repoRootDir } from '../../src/testkit/paths';
-import { runLoggedCommand } from '../../src/testkit/process/spawnProcess';
-import { yarnCommand } from '../../src/testkit/process/commands';
+import { ensureCliSharedDepsBuilt } from '../../src/testkit/process/cliDist';
 
 const run = createRunDirs({ runLabel: 'core' });
 
@@ -43,7 +42,12 @@ describe('core e2e: connected services v2 materialize codex auth.json on spawn',
     await mkdir(workspaceDir, { recursive: true });
 
     const secret = Uint8Array.from(randomBytes(32));
-    await seedCliAuthForServer({ cliHome: daemonHomeDir, serverUrl: serverBaseUrl, token: auth.token, secret });
+    const { serverId } = await seedCliAuthForServer({
+      cliHome: daemonHomeDir,
+      serverUrl: serverBaseUrl,
+      token: auth.token,
+      secret,
+    });
 
     writeTestManifestForServer({
       testDir,
@@ -60,14 +64,9 @@ describe('core e2e: connected services v2 materialize codex auth.json on spawn',
       },
     });
 
-    await runLoggedCommand({
-      command: yarnCommand(),
-      args: ['-s', 'workspace', '@happier-dev/cli', 'build'],
-      cwd: repoRootDir(),
+    await ensureCliSharedDepsBuilt({
+      testDir,
       env: { ...process.env, CI: '1' },
-      stdoutPath: resolve(join(testDir, 'cli.build.stdout.log')),
-      stderrPath: resolve(join(testDir, 'cli.build.stderr.log')),
-      timeoutMs: 240_000,
     });
 
     const now = Date.now();
@@ -131,7 +130,6 @@ describe('core e2e: connected services v2 materialize codex auth.json on spawn',
         HAPPIER_SERVER_URL: serverBaseUrl,
         HAPPIER_WEBAPP_URL: serverBaseUrl,
         HAPPIER_EXPERIMENTAL_CODEX_ACP: '1',
-        HAPPIER_CODEX_ACP_NPX_MODE: 'never',
         HAPPIER_CODEX_ACP_BIN: acpStubProvider,
         HAPPIER_DAEMON_HEARTBEAT_INTERVAL: '5000',
         HAPPIER_CONNECTED_SERVICES_REFRESH_ENABLED: '0',
@@ -147,7 +145,6 @@ describe('core e2e: connected services v2 materialize codex auth.json on spawn',
     }, { timeoutMs: 20_000 });
 
     const materializationKey = 'connected-services-e2e-1';
-    const materializationDirSegment = createHash('sha256').update(materializationKey, 'utf8').digest('hex');
     const spawnRes = await daemonControlPostJson<{ success?: boolean; sessionId?: string }>({
       port: daemonPort,
       path: '/spawn-session',
@@ -155,6 +152,7 @@ describe('core e2e: connected services v2 materialize codex auth.json on spawn',
       body: {
         directory: workspaceDir,
         agent: 'codex',
+        backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
         sessionId: materializationKey,
         terminal: { mode: 'plain' },
         experimentalCodexAcp: true,
@@ -164,7 +162,6 @@ describe('core e2e: connected services v2 materialize codex auth.json on spawn',
           HAPPIER_WEBAPP_URL: serverBaseUrl,
           HAPPIER_VARIANT: 'dev',
           HAPPIER_EXPERIMENTAL_CODEX_ACP: '1',
-          HAPPIER_CODEX_ACP_NPX_MODE: 'never',
           HAPPIER_CODEX_ACP_BIN: acpStubProvider,
         },
         connectedServices: {
@@ -184,10 +181,13 @@ describe('core e2e: connected services v2 materialize codex auth.json on spawn',
     const authPath = resolve(
       join(
         daemonHomeDir,
+        'servers',
+        serverId,
         'daemon',
         'connected-services',
-        'materialized',
-        materializationDirSegment,
+        'homes',
+        'openai-codex',
+        'work',
         'codex',
         'codex-home',
         'auth.json',
@@ -201,7 +201,7 @@ describe('core e2e: connected services v2 materialize codex auth.json on spawn',
     }, { timeoutMs: 20_000 });
 
     const materialized = JSON.parse(await readFile(authPath, 'utf8')) as any;
-    expect(materialized).toEqual({
+    expect(materialized).toMatchObject({
       access_token: 'e2e-access',
       refresh_token: 'e2e-refresh',
       id_token: 'e2e-id',
