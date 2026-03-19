@@ -3,7 +3,7 @@ import { readdir, readFile } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import * as protocol from './contract.js';
+import * as protocol from '../index.js';
 
 type EnvelopeSchema = Readonly<{ safeParse: (value: unknown) => { success: boolean; error?: unknown } }>;
 
@@ -60,32 +60,9 @@ describe('session-control JSON baselines', () => {
       const schema = schemasByKind[String(parsed?.kind ?? '')];
       expect(schema).toBeTruthy();
       const res = schema.safeParse(parsed);
-      expect(res.success).toBe(true);
+      if (!res.success) {
+        throw new Error(`Invalid session-control baseline: ${filename}`);
+      }
     }
-  });
-
-  it('accepts v2 session records with the extended pending counters', () => {
-    const parsed = (protocol as any).V2SessionRecordSchema.safeParse({
-      id: 'sess_1',
-      seq: 1,
-      createdAt: 1,
-      updatedAt: 1,
-      active: true,
-      activeAt: 1,
-      archivedAt: null,
-      encryptionMode: 'dataKey',
-      metadata: 'm',
-      metadataVersion: 1,
-      agentState: null,
-      agentStateVersion: 0,
-      lastViewedSessionSeq: 0,
-      pendingPermissionRequestCount: 0,
-      pendingUserActionRequestCount: 0,
-      pendingCount: 0,
-      pendingVersion: 0,
-      dataEncryptionKey: null,
-    });
-
-    expect(parsed.success).toBe(true);
   });
 });

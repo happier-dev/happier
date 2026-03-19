@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import * as protocol from './contract.js';
+import * as protocol from '../index.js';
 
 describe('sessionControl contract exports', () => {
   it('exports base and per-command envelope schemas', () => {
@@ -130,6 +130,9 @@ describe('sessionControl contract exports', () => {
           metadataVersion: 1,
           agentState: null,
           agentStateVersion: 0,
+          lastViewedSessionSeq: 4,
+          pendingPermissionRequestCount: 2,
+          pendingUserActionRequestCount: 1,
           pendingCount: 0,
           pendingVersion: 1,
           dataEncryptionKey: 'a2V5',
@@ -156,6 +159,9 @@ describe('sessionControl contract exports', () => {
           metadataVersion: 1,
           agentState: null,
           agentStateVersion: 0,
+          lastViewedSessionSeq: 4,
+          pendingPermissionRequestCount: 0,
+          pendingUserActionRequestCount: 0,
           dataEncryptionKey: null,
         },
       ],
@@ -183,60 +189,6 @@ describe('sessionControl contract exports', () => {
       },
     });
     expect(byIdParsed.success).toBe(true);
-  });
-
-  it('accepts the extended session record counters used by newer session control payloads', () => {
-    const parsed = (protocol as any).V2SessionRecordSchema.safeParse({
-      id: 'sess_1',
-      seq: 12,
-      createdAt: 1,
-      updatedAt: 2,
-      active: true,
-      activeAt: 3,
-      archivedAt: null,
-      encryptionMode: 'e2ee',
-      metadata: 'm',
-      metadataVersion: 1,
-      agentState: null,
-      agentStateVersion: 0,
-      lastViewedSessionSeq: 11,
-      pendingPermissionRequestCount: 2,
-      pendingUserActionRequestCount: 3,
-      pendingCount: 5,
-      pendingVersion: 7,
-      dataEncryptionKey: null,
-    });
-
-    expect(parsed.success).toBe(true);
-  });
-
-  it('types the extended session summary counters used by newer session control payloads', () => {
-    const summary = {
-      id: 'sess_1',
-      createdAt: 1,
-      updatedAt: 2,
-      active: true,
-      activeAt: 3,
-      archivedAt: null,
-      lastViewedSessionSeq: 11,
-      pendingPermissionRequestCount: 2,
-      pendingUserActionRequestCount: 3,
-      pendingCount: 5,
-      pendingVersion: 7,
-      encryption: { type: 'dataKey' },
-    } satisfies protocol.SessionSummary;
-
-    const lastViewedSessionSeq: number | null | undefined = summary.lastViewedSessionSeq;
-    const pendingPermissionRequestCount: number | undefined = summary.pendingPermissionRequestCount;
-    const pendingUserActionRequestCount: number | undefined = summary.pendingUserActionRequestCount;
-    const pendingCount: number | undefined = summary.pendingCount;
-    const pendingVersion: number | undefined = summary.pendingVersion;
-
-    expect(lastViewedSessionSeq).toBe(11);
-    expect(pendingPermissionRequestCount).toBe(2);
-    expect(pendingUserActionRequestCount).toBe(3);
-    expect(pendingCount).toBe(5);
-    expect(pendingVersion).toBe(7);
   });
 
   it('validates v2 session message responses', () => {
