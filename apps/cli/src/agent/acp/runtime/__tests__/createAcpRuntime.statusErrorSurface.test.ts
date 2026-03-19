@@ -21,6 +21,7 @@ describe('createAcpRuntime (status error surfacing)', () => {
         sendAgentMessage: (_provider, body) => {
           sent.push(body);
         },
+        sendTranscriptDraftDelta: () => {},
         sendAgentMessageCommitted: async () => {},
         sendUserTextMessageCommitted: async () => {},
         fetchRecentTranscriptTextItemsForAcpImport: async () => [],
@@ -42,4 +43,3 @@ describe('createAcpRuntime (status error surfacing)', () => {
     expect(sent.some((msg) => msg.type === 'turn_aborted')).toBe(true);
   });
 });
-
