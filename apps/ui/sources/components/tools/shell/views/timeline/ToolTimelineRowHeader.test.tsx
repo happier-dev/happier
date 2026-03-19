@@ -35,7 +35,10 @@ vi.mock('@/text', () => ({ t: (k: string) => k }));
 describe('ToolTimelineRowHeader', () => {
     it('shows an open action button with open-outline icon when canOpen is true', async () => {
         const { ToolTimelineRowHeader } = await import('./ToolTimelineRowHeader');
-        const onOpen = vi.fn();
+        const callOrder: string[] = [];
+        const onOpen = vi.fn(() => {
+            callOrder.push('onOpen');
+        });
 
         let tree: renderer.ReactTestRenderer;
         await act(async () => {
@@ -87,7 +90,10 @@ describe('ToolTimelineRowHeader', () => {
 
     it('stops propagation before invoking the open action button callback', async () => {
         const { ToolTimelineRowHeader } = await import('./ToolTimelineRowHeader');
-        const onOpen = vi.fn();
+        const callOrder: string[] = [];
+        const onOpen = vi.fn(() => {
+            callOrder.push('onOpen');
+        });
 
         let tree: renderer.ReactTestRenderer;
         await act(async () => {
@@ -105,7 +111,9 @@ describe('ToolTimelineRowHeader', () => {
 
         const pressables = tree!.root.findAllByType('Pressable') as any[];
         const openButton = pressables[1];
-        const stopPropagation = vi.fn();
+        const stopPropagation = vi.fn(() => {
+            callOrder.push('stopPropagation');
+        });
 
         await act(async () => {
             openButton.props.onPress?.({ stopPropagation });
@@ -113,6 +121,7 @@ describe('ToolTimelineRowHeader', () => {
 
         expect(stopPropagation).toHaveBeenCalledTimes(1);
         expect(onOpen).toHaveBeenCalledTimes(1);
+        expect(callOrder).toEqual(['stopPropagation', 'onOpen']);
     });
 
     it('keeps the open action visually hidden until hover on web', async () => {
