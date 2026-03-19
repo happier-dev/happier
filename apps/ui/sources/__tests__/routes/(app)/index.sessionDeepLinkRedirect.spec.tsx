@@ -5,11 +5,12 @@ import renderer, { act } from 'react-test-renderer';
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 const routerReplaceSpy = vi.fn();
+let mockSearchParams: { id?: string; messageId?: string; jumpChildId?: string } = { id: 'session-1', messageId: 'message-1' };
 
 vi.mock('expo-router', () => ({
   useRouter: () => ({ replace: routerReplaceSpy }),
   router: { replace: routerReplaceSpy },
-  useLocalSearchParams: () => ({ id: 'session-1', messageId: 'message-1' }),
+  useLocalSearchParams: () => mockSearchParams,
 }));
 
 vi.mock('react-native-reanimated', () => ({}));
@@ -36,6 +37,7 @@ describe('/ authenticated deep link redirects', () => {
   it('redirects to /session/:id/message/:messageId when query params are present', async () => {
     vi.resetModules();
     routerReplaceSpy.mockClear();
+    mockSearchParams = { id: 'session-1', messageId: 'message-1' };
 
     const { default: Screen } = await import('@/app/(app)/index');
 
@@ -45,5 +47,37 @@ describe('/ authenticated deep link redirects', () => {
     await act(async () => {});
 
     expect(routerReplaceSpy).toHaveBeenCalledWith('/session/session-1/message/message-1');
+  });
+
+  it('does not collapse a non-root web deep link to the session root', async () => {
+    vi.resetModules();
+    routerReplaceSpy.mockClear();
+    mockSearchParams = { id: 'session-1' };
+
+    const originalWindow = globalThis.window;
+    Object.defineProperty(globalThis, 'window', {
+      configurable: true,
+      value: {
+        location: {
+          pathname: '/session/session-1/message/message-1',
+        },
+      },
+    });
+
+    try {
+      const { default: Screen } = await import('@/app/(app)/index');
+
+      await act(async () => {
+        renderer.create(<Screen />);
+      });
+      await act(async () => {});
+
+      expect(routerReplaceSpy).not.toHaveBeenCalled();
+    } finally {
+      Object.defineProperty(globalThis, 'window', {
+        configurable: true,
+        value: originalWindow,
+      });
+    }
   });
 });

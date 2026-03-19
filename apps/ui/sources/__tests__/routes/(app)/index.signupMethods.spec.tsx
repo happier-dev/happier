@@ -87,6 +87,28 @@ describe('/ (welcome) signup methods', () => {
         getServerFeaturesSnapshotMock.mockResolvedValue({ status: 'ready', features: defaultWelcomeFeatures });
     });
 
+    it('uses an extended initial server-features timeout before showing the server unavailable state', async () => {
+        vi.resetModules();
+        const { default: Screen } = await import('@/app/(app)/index');
+
+        let tree: ReturnType<typeof renderer.create> | undefined;
+        try {
+            await act(async () => {
+                tree = renderer.create(<Screen />);
+            });
+            if (!tree) throw new Error('Expected welcome screen renderer');
+
+            expect(getServerFeaturesSnapshotMock).toHaveBeenCalledWith({
+                timeoutMs: 6000,
+                force: false,
+            });
+        } finally {
+            act(() => {
+                tree?.unmount();
+            });
+        }
+    });
+
     it('shows Create account and provider option when both are enabled', async () => {
         vi.resetModules();
         const { t } = await import('@/text');
