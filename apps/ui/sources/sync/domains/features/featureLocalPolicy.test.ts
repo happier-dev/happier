@@ -56,6 +56,22 @@ describe('featureLocalPolicy', () => {
         })).toBe(false);
     });
 
+    it('disables terminal.embeddedPty by default when experiments are on', () => {
+        expect(resolveLocalFeaturePolicyEnabled('terminal.embeddedPty', {
+            ...settingsDefaults,
+            experiments: true,
+            featureToggles: {},
+        })).toBe(false);
+    });
+
+    it('enables terminal.embeddedPty when explicitly enabled', () => {
+        expect(resolveLocalFeaturePolicyEnabled('terminal.embeddedPty', {
+            ...settingsDefaults,
+            experiments: true,
+            featureToggles: { 'terminal.embeddedPty': true },
+        })).toBe(true);
+    });
+
     it('enables memory.search when explicitly enabled', () => {
         expect(resolveLocalFeaturePolicyEnabled('memory.search', {
             ...settingsDefaults,
@@ -101,6 +117,22 @@ describe('featureLocalPolicy', () => {
             ...settingsDefaults,
             experiments: true,
             featureToggles: {},
+        })).toBe(true);
+    });
+
+    it('keeps sessions.direct disabled by default even when experiments are on', () => {
+        expect(resolveLocalFeaturePolicyEnabled('sessions.direct', {
+            ...settingsDefaults,
+            experiments: true,
+            featureToggles: {},
+        })).toBe(false);
+    });
+
+    it('enables sessions.direct when explicitly enabled', () => {
+        expect(resolveLocalFeaturePolicyEnabled('sessions.direct', {
+            ...settingsDefaults,
+            experiments: true,
+            featureToggles: { 'sessions.direct': true },
         })).toBe(true);
     });
 

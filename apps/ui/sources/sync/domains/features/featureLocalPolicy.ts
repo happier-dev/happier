@@ -29,11 +29,10 @@ const LOCAL_POLICY_BY_FEATURE: Readonly<Partial<Record<FeatureId, FeatureLocalPo
     'files.editor': (settings) => resolveUiFeatureToggleEnabled(settings, 'files.editor'),
     'files.syntaxHighlighting.advanced': (settings) => resolveUiFeatureToggleEnabled(settings, 'files.syntaxHighlighting.advanced'),
     'memory.search': (settings) => resolveUiFeatureToggleEnabled(settings, 'memory.search'),
-    'session.typeSelector': (settings) => resolveUiFeatureToggleEnabled(settings, 'session.typeSelector'),
+    'terminal.embeddedPty': (settings) => resolveUiFeatureToggleEnabled(settings, 'terminal.embeddedPty'),
+    'sessions.direct': (settings) => resolveUiFeatureToggleEnabled(settings, 'sessions.direct'),
     'zen.navigation': (settings) => resolveUiFeatureToggleEnabled(settings, 'zen.navigation'),
     'usage.reporting': (settings) => resolveUiFeatureToggleEnabled(settings, 'usage.reporting'),
-    'codex.resume.mcp': (settings) => settings.codexBackendMode === 'mcp_resume',
-    'codex.resume.acp': (settings) => settings.codexBackendMode === 'acp',
 };
 
 export function resolveLocalFeaturePolicyEnabled(featureId: FeatureId, settings: Settings): boolean {
