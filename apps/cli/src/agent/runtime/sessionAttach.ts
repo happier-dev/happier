@@ -13,6 +13,7 @@ export type SessionAttachSecret =
 export async function readSessionAttachFromEnv(): Promise<SessionAttachSecret | null> {
   const rawPath = typeof process.env.HAPPIER_SESSION_ATTACH_FILE === 'string' ? process.env.HAPPIER_SESSION_ATTACH_FILE.trim() : '';
   if (!rawPath) return null;
+  delete process.env.HAPPIER_SESSION_ATTACH_FILE;
 
   const filePath = resolve(rawPath);
   const baseDir = resolveSessionAttachBaseDir(configuration.happyHomeDir);

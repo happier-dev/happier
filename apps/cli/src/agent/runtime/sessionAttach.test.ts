@@ -150,6 +150,7 @@ describe('readSessionAttachFromEnv', () => {
 
       const res = await readSessionAttachFromEnv();
       expect(res).toEqual({ encryptionMode: 'plain' });
+      expect(process.env.HAPPIER_SESSION_ATTACH_FILE).toBeUndefined();
 
       // File should be deleted.
       await expect(stat(filePath)).rejects.toMatchObject({ code: 'ENOENT' });
