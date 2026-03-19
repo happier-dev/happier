@@ -1,24 +1,27 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { stubServerFeaturesFetch, stubServerFeaturesFetchFailure } from './serverFeaturesTestUtils';
+import { buildServerFeaturesResponse, stubServerFeaturesFetch, stubServerFeaturesFetchFailure } from './serverFeaturesTestUtils';
 import { renderHookAndCollectValues } from './serverFeatureHookHarness.testHelpers';
+import { resetServerFeaturesClientForTests, getServerFeaturesSnapshot } from '@/sync/api/capabilities/serverFeaturesClient';
+import { upsertServerProfile, setActiveServerId } from '@/sync/domains/server/serverProfiles';
+import { getStorage } from '@/sync/domains/state/storage';
+import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
+const initialStorageState = getStorage().getState();
+
+beforeEach(() => {
+    resetServerFeaturesClientForTests();
+    getStorage().setState(initialStorageState, true);
+});
+
 afterEach(() => {
     vi.unstubAllGlobals();
-    vi.resetModules();
 });
 
 describe('useFeatureDecision', () => {
     it('fails closed for main selection when servers disagree (mixed scope support)', async () => {
-        vi.resetModules();
-
-        const { buildServerFeaturesResponse } = await import('./serverFeaturesTestUtils');
-        const { upsertServerProfile, setActiveServerId } = await import('@/sync/domains/server/serverProfiles');
-        const { getStorage } = await import('@/sync/domains/state/storage');
-        const { getServerFeaturesSnapshot } = await import('@/sync/api/capabilities/serverFeaturesClient');
-
         const serverA = upsertServerProfile({ serverUrl: 'https://a.example', name: 'A', source: 'manual' });
         const serverB = upsertServerProfile({ serverUrl: 'https://b.example', name: 'B', source: 'manual' });
         setActiveServerId(serverA.id, { scope: 'device' });
@@ -65,11 +68,11 @@ describe('useFeatureDecision', () => {
     }, 30_000);
 
 	    it('returns enabled decision when the feature is available', async () => {
-	        vi.resetModules();
 	        stubServerFeaturesFetch({ voiceEnabled: true });
 
-	        const { getStorage } = await import('@/sync/domains/state/storage');
 	        getStorage().getState().applySettingsLocal({ experiments: true, featureToggles: { voice: true } });
+
+        await getServerFeaturesSnapshot({ serverId: getActiveServerSnapshot().serverId, force: true });
 
         const { useFeatureDecision } = await import('./useFeatureDecision');
         const seen = await renderHookAndCollectValues(() => useFeatureDecision('voice'));
@@ -79,7 +82,6 @@ describe('useFeatureDecision', () => {
     }, 30_000);
 
 	    it('returns unsupported when the features endpoint is missing', async () => {
-	        vi.resetModules();
 	        vi.stubGlobal(
 	            'fetch',
 	            vi.fn(async () => ({
@@ -89,8 +91,9 @@ describe('useFeatureDecision', () => {
             })) as any,
 	        );
 
-	        const { getStorage } = await import('@/sync/domains/state/storage');
 	        getStorage().getState().applySettingsLocal({ experiments: true, featureToggles: { voice: true } });
+
+        await getServerFeaturesSnapshot({ serverId: getActiveServerSnapshot().serverId, force: true });
 
         const { useFeatureDecision } = await import('./useFeatureDecision');
         const seen = await renderHookAndCollectValues(() => useFeatureDecision('voice'));
@@ -100,11 +103,11 @@ describe('useFeatureDecision', () => {
     }, 30_000);
 
 	    it('returns unknown when probing features fails', async () => {
-	        vi.resetModules();
 	        stubServerFeaturesFetchFailure();
 
-	        const { getStorage } = await import('@/sync/domains/state/storage');
 	        getStorage().getState().applySettingsLocal({ experiments: true, featureToggles: { voice: true } });
+
+        await getServerFeaturesSnapshot({ serverId: getActiveServerSnapshot().serverId, force: true });
 
         const { useFeatureDecision } = await import('./useFeatureDecision');
         const seen = await renderHookAndCollectValues(() => useFeatureDecision('voice'));

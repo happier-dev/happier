@@ -81,6 +81,27 @@ export function buildServerFeaturesResponse(overrides: FixtureOverrides = {}): F
                 contentKeys: { enabled: true },
                 pendingQueueV2: { enabled: false },
             },
+            sessions: {
+                enabled: false,
+                handoff: {
+                    enabled: false,
+                },
+            },
+            machines: {
+                enabled: false,
+                transfer: {
+                    enabled: false,
+                    directPeer: {
+                        enabled: false,
+                    },
+                    serverRouted: {
+                        enabled: false,
+                    },
+                },
+            },
+            terminal: {
+                embeddedPty: { enabled: false },
+            },
             voice: {
                 enabled: voiceEnabled,
                 happierVoice: { enabled: happierVoiceEnabled },
@@ -115,25 +136,32 @@ export function buildServerFeaturesResponse(overrides: FixtureOverrides = {}): F
                 uploadTimeoutMs: 20_000,
                 contextWindowMs: 30 * 60 * 1_000,
             },
-              voice: {
-                  configured: voiceConfigured,
-                  provider: voiceConfigured ? 'elevenlabs' : null,
-                  requested: voiceEnabled,
-                  disabledByBuildPolicy: false,
-              },
-              encryption: {
-                  storagePolicy: 'required_e2ee',
-                  allowAccountOptOut: false,
-                  defaultAccountMode: 'e2ee',
-                  plainAccountSettingsAtRest: 'server_sealed',
-                  plainAccountCredentialsAtRest: 'server_sealed',
-              },
-              server: {},
-              social: {
-                  friends: {
-                      allowUsername: overrides.friendsAllowUsername ?? false,
-                      requiredIdentityProviderId: overrides.friendsRequiredIdentityProviderId ?? null,
-                  },
+            voice: {
+                configured: voiceConfigured,
+                provider: voiceConfigured ? 'elevenlabs' : null,
+                requested: voiceEnabled,
+                disabledByBuildPolicy: false,
+            },
+            encryption: {
+                storagePolicy: 'required_e2ee',
+                allowAccountOptOut: false,
+                defaultAccountMode: 'e2ee',
+                plainAccountSettingsAtRest: 'server_sealed',
+                plainAccountCredentialsAtRest: 'server_sealed',
+            },
+            machines: {
+                transfer: {
+                    serverRouted: {
+                        maxBytes: null,
+                    },
+                },
+            },
+            server: {},
+            social: {
+                friends: {
+                    allowUsername: overrides.friendsAllowUsername ?? false,
+                    requiredIdentityProviderId: overrides.friendsRequiredIdentityProviderId ?? null,
+                },
             },
             oauth: {
                 providers: oauthProviders,
