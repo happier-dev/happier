@@ -65,8 +65,8 @@ export async function runLoggedCommand(params: {
     detached: process.platform !== 'win32',
   });
 
-  const stdout = createWriteStream(params.stdoutPath, { flags: 'a' });
-  const stderr = createWriteStream(params.stderrPath, { flags: 'a' });
+  const stdout = createWriteStream(params.stdoutPath, { flags: 'w' });
+  const stderr = createWriteStream(params.stderrPath, { flags: 'w' });
 
   child.stdout?.pipe(stdout);
   child.stderr?.pipe(stderr);
@@ -140,8 +140,8 @@ export function spawnLoggedProcess(params: {
     detached: process.platform !== 'win32',
   });
 
-  const stdout = createWriteStream(params.stdoutPath, { flags: 'a' });
-  const stderr = createWriteStream(params.stderrPath, { flags: 'a' });
+  const stdout = createWriteStream(params.stdoutPath, { flags: 'w' });
+  const stderr = createWriteStream(params.stderrPath, { flags: 'w' });
 
   child.stdout?.pipe(stdout);
   child.stderr?.pipe(stderr);
