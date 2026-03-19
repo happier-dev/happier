@@ -53,7 +53,10 @@ function flattenStyle(style: any): any {
 export const StyleSheet = { create: (styles: any) => styles, flatten: flattenStyle } as const;
 // Many components spread this object into style definitions.
 (StyleSheet as any).absoluteFillObject = {};
-export const TurboModuleRegistry = { getEnforcing: () => ({}) } as const;
+export const TurboModuleRegistry = {
+    get: (_name: string) => ({}),
+    getEnforcing: (_name: string) => ({}),
+} as const;
 export const registerCallableModule = () => {};
 
 class AnimatedValue {
