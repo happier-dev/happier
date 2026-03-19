@@ -6,8 +6,14 @@ import { logger } from '@/ui/logger';
 import { PushNotificationClient } from './pushNotifications';
 import { PUSH_NOTIFICATION_ANDROID_CHANNEL_IDS, PUSH_NOTIFICATION_CATEGORY_IDS } from '@happier-dev/protocol';
 
-const sendPushNotificationsAsyncSpy = vi.fn(async (_chunk: any[]) =>
-  _chunk.map(() => ({ status: 'ok' })),
+type MockExpoPushTicket = Readonly<{
+  status: string;
+  id?: string;
+  details?: Readonly<{ error?: string }>;
+}>;
+
+const sendPushNotificationsAsyncSpy = vi.fn(async (_chunk: any[]): Promise<MockExpoPushTicket[]> =>
+  _chunk.map((): MockExpoPushTicket => ({ status: 'ok' })),
 );
 const getPushNotificationReceiptsAsyncSpy = vi.fn(async (_ids: string[]) => ({}));
 
