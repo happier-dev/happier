@@ -3,9 +3,9 @@ import type { SwitchProps } from 'react-native';
 import { Pressable, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
-const TRACK_WIDTH = 44;
-const TRACK_HEIGHT = 24;
-const THUMB_SIZE = 20;
+const TRACK_WIDTH = 40;
+const TRACK_HEIGHT = 22;
+const THUMB_SIZE = 18;
 const PADDING = 2;
 
 const stylesheet = StyleSheet.create(() => ({
