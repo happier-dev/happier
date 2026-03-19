@@ -1,19 +1,13 @@
 import * as React from 'react';
 import { Platform } from 'react-native';
 
-import { uploadInChunks, downloadInChunks } from '@/sync/domains/files/transfers/chunkTransferClient';
-import { resolveKeepBothTargetPath } from '@/sync/domains/files/resolveKeepBothTargetPath';
+import { resolveLocalUploadSourceSizeBytes } from '@/sync/domains/files/transfers/localUploadSourceReader';
 import {
-    sessionFilesDownloadAbort,
-    sessionFilesDownloadChunk,
-    sessionFilesDownloadFinalize,
-    sessionFilesDownloadInit,
-    sessionFilesUploadAbort,
-    sessionFilesUploadChunk,
-    sessionFilesUploadFinalize,
-    sessionFilesUploadInit,
-    sessionStatFile,
-} from '@/sync/ops';
+    downloadSessionPathViaTransfer,
+} from '@/sync/domains/files/transfers/sessionPathTransferRpc';
+import { uploadLocalSourceToSessionPath } from '@/sync/domains/files/transfers/uploadLocalSourceToSessionPath';
+import { resolveKeepBothTargetPath } from '@/sync/domains/files/resolveKeepBothTargetPath';
+import { sessionStatFile } from '@/sync/ops';
 import { isSafeWorkspaceRelativePath } from '@/utils/path/isSafeWorkspaceRelativePath';
 
 export type WorkspaceUploadEntry =
@@ -66,24 +60,7 @@ function joinFileUri(baseUri: string, childPath: string): string {
     return `${withSlash}${child}`;
 }
 
-async function readNativeFileSizeBestEffort(uri: string): Promise<number | null> {
-    try {
-        const FileSystem: any = await import('expo-file-system');
-        const file = new FileSystem.File(uri);
-        const handle = file.open();
-        try {
-            const fromHandle = typeof handle?.size === 'number' && Number.isFinite(handle.size) ? handle.size : null;
-            const fromFile = typeof file?.size === 'number' && Number.isFinite(file.size) ? file.size : null;
-            return fromHandle ?? fromFile;
-        } finally {
-            try { handle.close(); } catch { }
-        }
-    } catch {
-        return null;
-    }
-}
-
-async function buildUploadEntryPlan(input: Readonly<{
+export async function buildUploadEntryPlan(input: Readonly<{
     sessionId: string;
     entries: readonly WorkspaceUploadEntry[];
     destinationDir: string;
@@ -107,7 +84,7 @@ async function buildUploadEntryPlan(input: Readonly<{
         } else {
             sizeBytes = typeof entry.sizeBytes === 'number' && Number.isFinite(entry.sizeBytes) ? entry.sizeBytes : null;
             if (sizeBytes == null) {
-                sizeBytes = await readNativeFileSizeBestEffort(entry.uri);
+                sizeBytes = await resolveLocalUploadSourceSizeBytes(entry);
             }
         }
 
@@ -125,7 +102,30 @@ async function buildUploadEntryPlan(input: Readonly<{
         return { ok: false, error: 'No valid files to upload' };
     }
 
-    const usedPaths = new Set<string>(tasks.map((t) => t.targetPath));
+    const usedPaths = new Set<string>();
+
+    // Detect collisions within the current upload batch (common on native when multiple picked files share a basename).
+    // Resolve them eagerly via keep-both logic so the upload plan never contains duplicate target paths.
+    for (let i = 0; i < tasks.length; i += 1) {
+        const existing = tasks[i]!;
+        if (!usedPaths.has(existing.targetPath)) {
+            usedPaths.add(existing.targetPath);
+            continue;
+        }
+
+        const resolved = await resolveKeepBothTargetPath({
+            desiredPath: existing.targetPath,
+            usedPaths,
+            maxAttempts: 50,
+            pathExists: async (candidatePath) => {
+                const stat = await sessionStatFile(input.sessionId, candidatePath);
+                return !stat.success || stat.exists === true;
+            },
+        });
+        tasks[i] = { ...existing, targetPath: resolved, overwrite: false };
+        usedPaths.add(resolved);
+    }
+
     const conflicts: Array<{ index: number; targetPath: string }> = [];
 
     for (let i = 0; i < tasks.length; i += 1) {
@@ -172,29 +172,10 @@ async function buildUploadEntryPlan(input: Readonly<{
             },
         });
         tasks[conflict.index] = { ...original, targetPath: resolved, overwrite: false };
+        usedPaths.add(resolved);
     }
 
     return { ok: true, tasks };
-}
-
-async function readUploadChunk(entry: WorkspaceUploadEntry, offset: number, length: number): Promise<Uint8Array> {
-    if (entry.kind === 'web') {
-        const nextEnd = Math.min(entry.file.size, offset + length);
-        const chunkBlob = entry.file.slice(offset, nextEnd);
-        return new Uint8Array(await chunkBlob.arrayBuffer());
-    }
-
-    const FileSystem: any = await import('expo-file-system');
-    const file = new FileSystem.File(entry.uri);
-    const handle = file.open();
-    try {
-        if (typeof handle.offset === 'number' || handle.offset === null) {
-            handle.offset = offset;
-        }
-        return handle.readBytes(length);
-    } finally {
-        try { handle.close(); } catch { }
-    }
 }
 
 async function writeNativeFileChunk(handle: any, bytes: Uint8Array): Promise<void> {
@@ -243,6 +224,8 @@ async function createNativeDownloadSink(input: Readonly<{ name: string }>): Prom
         return { ok: false, error: error instanceof Error ? error.message : 'Failed to create download sink' };
     }
 }
+
+type NativeDownloadSink = Extract<Awaited<ReturnType<typeof createNativeDownloadSink>>, { ok: true }>;
 
 export function useWorkspaceFileTransfers(params: Readonly<{
     sessionId: string;
@@ -330,17 +313,12 @@ export function useWorkspaceFileTransfers(params: Readonly<{
                     if (!task) return;
 
                     let lastUploaded = 0;
-                    const result = await uploadInChunks<any, any, any>({
-                        totalBytes: task.sizeBytes,
-                        readBytes: async (offset, length) => await readUploadChunk(task.entry, offset, length),
-                        init: async () => await sessionFilesUploadInit(params.sessionId, {
-                            path: task.targetPath,
-                            sizeBytes: task.sizeBytes,
-                            overwrite: task.overwrite,
-                        }),
-                        sendChunk: async ({ uploadId, index, contentBase64 }) => await sessionFilesUploadChunk(params.sessionId, { uploadId, index, contentBase64 }),
-                        finalize: async ({ uploadId }) => await sessionFilesUploadFinalize(params.sessionId, { uploadId }),
-                        abort: async ({ uploadId }) => await sessionFilesUploadAbort(params.sessionId, { uploadId }),
+                    const result = await uploadLocalSourceToSessionPath({
+                        sessionId: params.sessionId,
+                        source: task.entry,
+                        targetPath: task.targetPath,
+                        sizeBytes: task.sizeBytes,
+                        overwrite: task.overwrite,
                         signal: controller.signal,
                         onProgress: (progress) => {
                             const delta = progress.uploadedBytes - lastUploaded;
@@ -358,7 +336,7 @@ export function useWorkspaceFileTransfers(params: Readonly<{
 
                     if (!result.success) {
                         cancelOnce();
-                        setUploadState({ status: controller.signal.aborted ? 'canceled' : 'error', error: result.error });
+                        setUploadState(controller.signal.aborted ? { status: 'canceled' } : { status: 'error', error: result.error });
                         return;
                     }
 
@@ -395,42 +373,36 @@ export function useWorkspaceFileTransfers(params: Readonly<{
         const controller = new AbortController();
         downloadAbortRef.current = controller;
 
-        let nativeSink: Awaited<ReturnType<typeof createNativeDownloadSink>> | null = null;
+        const nativeSinkRef: { current: NativeDownloadSink | null } = { current: null };
+        const updateProgress = (progress: Readonly<{ downloadedBytes: number; totalBytes: number }>) => {
+            setDownloadState((prev) => prev.status === 'downloading'
+                ? { ...prev, downloadedBytes: progress.downloadedBytes, totalBytes: progress.totalBytes }
+                : prev);
+        };
 
         try {
-            const init = await sessionFilesDownloadInit(params.sessionId, { path: input.path, asZip: input.asZip });
-            if (!init.success) {
-                setDownloadState({ status: 'error', error: init.error });
-                return { ok: false, error: init.error };
-            }
-
-            setDownloadState({
-                status: 'downloading',
-                name: init.name,
-                downloadedBytes: 0,
-                totalBytes: init.sizeBytes,
-            });
-
             if (Platform.OS === 'web') {
                 const chunks: Array<Uint8Array<ArrayBuffer>> = [];
-
-                const res = await downloadInChunks<any, any, any>({
-                    init: async () => init,
-                    readChunk: async ({ downloadId, index }) => await sessionFilesDownloadChunk(params.sessionId, { downloadId, index }),
-                    finalize: async ({ downloadId }) => await sessionFilesDownloadFinalize(params.sessionId, { downloadId }),
-                    abort: async ({ downloadId }) => await sessionFilesDownloadAbort(params.sessionId, { downloadId }),
-                    signal: controller.signal,
-                    onProgress: (progress) => {
-                        setDownloadState((prev) => prev.status === 'downloading'
-                            ? { ...prev, downloadedBytes: progress.downloadedBytes, totalBytes: progress.totalBytes }
-                            : prev);
+                const res = await downloadSessionPathViaTransfer({
+                    sessionId: params.sessionId,
+                    path: input.path,
+                    asZip: input.asZip,
+                    onInit: async ({ name, sizeBytes }) => {
+                        setDownloadState({
+                            status: 'downloading',
+                            name,
+                            downloadedBytes: 0,
+                            totalBytes: sizeBytes,
+                        });
                     },
+                    signal: controller.signal,
+                    onProgress: updateProgress,
                     writeBytes: async (bytes) => {
                         chunks.push(new Uint8Array(bytes));
                     },
                 });
 
-                if (!res.ok) {
+                if (!res.success) {
                     setDownloadState(controller.signal.aborted ? { status: 'canceled' } : { status: 'error', error: res.error });
                     return { ok: false, error: res.error };
                 }
@@ -440,48 +412,63 @@ export function useWorkspaceFileTransfers(params: Readonly<{
                 try {
                     const anchor = document.createElement('a');
                     anchor.href = url;
-                    anchor.download = init.name || 'download';
+                    anchor.download = res.name || 'download';
                     anchor.rel = 'noopener noreferrer';
                     anchor.click();
                 } finally {
-                    try { URL.revokeObjectURL(url); } catch { }
+                    setTimeout(() => {
+                        try { URL.revokeObjectURL(url); } catch { }
+                    }, 1_000);
                 }
             } else {
-                const sink = await createNativeDownloadSink({ name: init.name || 'download' });
-                nativeSink = sink;
-                if (!sink.ok) {
-                    setDownloadState({ status: 'error', error: sink.error });
-                    return { ok: false, error: sink.error };
-                }
-
-                const res = await downloadInChunks<any, any, any>({
-                    init: async () => init,
-                    readChunk: async ({ downloadId, index }) => await sessionFilesDownloadChunk(params.sessionId, { downloadId, index }),
-                    finalize: async ({ downloadId }) => await sessionFilesDownloadFinalize(params.sessionId, { downloadId }),
-                    abort: async ({ downloadId }) => await sessionFilesDownloadAbort(params.sessionId, { downloadId }),
-                    signal: controller.signal,
-                    onProgress: (progress) => {
-                        setDownloadState((prev) => prev.status === 'downloading'
-                            ? { ...prev, downloadedBytes: progress.downloadedBytes, totalBytes: progress.totalBytes }
-                            : prev);
+                const res = await downloadSessionPathViaTransfer({
+                    sessionId: params.sessionId,
+                    path: input.path,
+                    asZip: input.asZip,
+                    onInit: async ({ name, sizeBytes }) => {
+                        const nextSink = await createNativeDownloadSink({ name: name || 'download' });
+                        if (!nextSink.ok) {
+                            throw new Error(nextSink.error);
+                        }
+                        nativeSinkRef.current = nextSink;
+                        setDownloadState({
+                            status: 'downloading',
+                            name,
+                            downloadedBytes: 0,
+                            totalBytes: sizeBytes,
+                        });
                     },
-                    writeBytes: async (bytes) => await sink.writeBytes(bytes),
+                    signal: controller.signal,
+                    onProgress: updateProgress,
+                    writeBytes: async (bytes) => {
+                        if (!nativeSinkRef.current) {
+                            throw new Error('Download sink unavailable');
+                        }
+                        await nativeSinkRef.current.writeBytes(bytes);
+                    },
                 });
 
-                if (!res.ok) {
-                    await sink.cleanup();
+                if (!res.success) {
+                    if (nativeSinkRef.current) {
+                        await nativeSinkRef.current.cleanup();
+                    }
                     setDownloadState(controller.signal.aborted ? { status: 'canceled' } : { status: 'error', error: res.error });
                     return { ok: false, error: res.error };
                 }
 
-                await sink.close();
+                if (!nativeSinkRef.current) {
+                    setDownloadState({ status: 'error', error: 'Download sink unavailable' });
+                    return { ok: false, error: 'Download sink unavailable' };
+                }
+
+                await nativeSinkRef.current.close();
 
                 try {
                     const Sharing: any = await import('expo-sharing');
                     if (Sharing && typeof Sharing.isAvailableAsync === 'function') {
                         const available = await Sharing.isAvailableAsync();
                         if (available && typeof Sharing.shareAsync === 'function') {
-                            await Sharing.shareAsync(sink.fileUri);
+                            await Sharing.shareAsync(nativeSinkRef.current.fileUri);
                         }
                     }
                 } catch {
@@ -490,14 +477,16 @@ export function useWorkspaceFileTransfers(params: Readonly<{
             }
 
             if (controller.signal.aborted) {
-                if (nativeSink && nativeSink.ok) {
-                    await nativeSink.cleanup();
+                if (nativeSinkRef.current) {
+                    await nativeSinkRef.current.cleanup();
                 }
                 setDownloadState({ status: 'canceled' });
                 return { ok: false, error: 'Download canceled' };
             }
 
-            setDownloadState({ status: 'done', name: init.name, totalBytes: init.sizeBytes });
+            setDownloadState((prev) => prev.status === 'downloading'
+                ? { status: 'done', name: prev.name, totalBytes: prev.totalBytes }
+                : prev);
             return { ok: true };
         } finally {
             downloadAbortRef.current = null;
