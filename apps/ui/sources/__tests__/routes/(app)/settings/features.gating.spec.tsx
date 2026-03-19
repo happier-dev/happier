@@ -57,6 +57,10 @@ vi.mock('@/components/ui/forms/Switch', () => ({
     Switch: (props: any) => React.createElement('Switch', props),
 }));
 
+vi.mock('@/components/ui/forms/dropdown/DropdownMenu', () => ({
+    DropdownMenu: (props: any) => React.createElement('DropdownMenu', props),
+}));
+
 const useServerFeaturesMainSelectionSnapshotMock = vi.fn();
 const useEffectiveServerSelectionMock = vi.fn();
 
@@ -283,5 +287,42 @@ describe('FeaturesSettingsScreen gating', () => {
         expect(quotasItem).toBeTruthy();
         expect(quotasItem!.props.rightElement.props.disabled).toBe(true);
         expect(quotasItem!.props.rightElement.props.value).toBe(false);
+    });
+
+    it('shows embedded terminal dock location setting when terminal.embeddedPty is enabled', async () => {
+        vi.resetModules();
+
+        useSettingMutableMock.mockImplementation((key: string) => {
+            if (key === 'experiments') return createNoopMutable(true);
+            if (key === 'featureToggles') return createNoopMutable({ 'terminal.embeddedPty': true });
+            if (key === 'useProfiles') return createNoopMutable(false);
+            if (key === 'agentInputEnterToSend') return createNoopMutable(false);
+            if (key === 'agentInputHistoryScope') return createNoopMutable('perSession');
+            if (key === 'hideInactiveSessions') return createNoopMutable(false);
+            if (key === 'groupInactiveSessionsByProject') return createNoopMutable(false);
+            if (key === 'showEnvironmentBadge') return createNoopMutable(false);
+            if (key === 'useEnhancedSessionWizard') return createNoopMutable(false);
+            if (key === 'useMachinePickerSearch') return createNoopMutable(false);
+            if (key === 'usePathPickerSearch') return createNoopMutable(false);
+            return createNoopMutable(null);
+        });
+
+        useLocalSettingMutableMock.mockImplementation((key: string) => {
+            if (key === 'commandPaletteEnabled') return createNoopMutable(false);
+            if (key === 'devModeEnabled') return createNoopMutable(false);
+            if (key === 'embeddedTerminalDockLocation') return createNoopMutable('sidebar');
+            return createNoopMutable(false);
+        });
+
+        const { default: FeaturesSettingsScreen } = await import('@/app/(app)/settings/features');
+
+        let tree: renderer.ReactTestRenderer;
+        await act(async () => {
+            tree = renderer.create(React.createElement(FeaturesSettingsScreen));
+        });
+
+        const menus = tree!.root.findAllByType('DropdownMenu' as any);
+        const menu = menus.find((m) => m.props?.itemTrigger?.title === 'terminalEmbedded.settings.locationTitle') ?? null;
+        expect(menu).toBeTruthy();
     });
 });

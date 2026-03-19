@@ -49,6 +49,10 @@ vi.mock('@/components/ui/forms/Switch', () => ({
     Switch: (props: any) => React.createElement('Switch', props),
 }));
 
+vi.mock('@/components/ui/forms/dropdown/DropdownMenu', () => ({
+    DropdownMenu: (props: any) => React.createElement('DropdownMenu', props),
+}));
+
 vi.mock('@/components/settings/features/FeatureDiagnosticsPanel', () => ({
     FeatureDiagnosticsPanel: () => null,
 }));
