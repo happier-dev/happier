@@ -4,9 +4,11 @@ import { join, resolve } from 'node:path';
 
 import { createRunDirs } from '../../src/testkit/runDir';
 import { startServerLight, type StartedServer } from '../../src/testkit/process/serverLight';
-import { startUiWeb, type StartedUiWeb } from '../../src/testkit/process/uiWeb';
+import { resolveUiWebBeforeAllTimeoutMs, startUiWeb, type StartedUiWeb } from '../../src/testkit/process/uiWeb';
 import { startCliAuthLoginForTerminalConnect, type StartedCliTerminalConnect } from '../../src/testkit/uiE2e/cliTerminalConnect';
 import { gotoDomContentLoadedWithRetries, normalizeLoopbackBaseUrl } from '../../src/testkit/uiE2e/pageNavigation';
+import { waitForInitialAppUi } from '../../src/testkit/uiE2e/waitForInitialAppUi';
+import { acknowledgeTerminalConnectSuccessIfPresent } from '../../src/testkit/uiE2e/acknowledgeTerminalConnectSuccessIfPresent';
 import { runCliJson } from '../../src/testkit/uiE2e/cliJson';
 
 const run = createRunDirs({ runLabel: 'ui-e2e' });
@@ -64,7 +66,17 @@ test.describe('ui e2e: plaintext mode + public share', () => {
   let uiBaseUrl: string | null = null;
 
   test.beforeAll(async () => {
-    test.setTimeout(420_000);
+    const uiWebEnv = {
+      ...process.env,
+      EXPO_PUBLIC_DEBUG: '1',
+      EXPO_PUBLIC_HAPPY_SERVER_URL: server?.baseUrl ?? '',
+      EXPO_PUBLIC_HAPPY_STORAGE_SCOPE: `e2e-${run.runId}`,
+      HAPPIER_E2E_UI_WEB_MODE: 'export',
+      HAPPIER_E2E_UI_WEB_EXPORT_TIMEOUT_MS: process.env.HAPPIER_E2E_UI_WEB_EXPORT_TIMEOUT_MS ?? '900000',
+      HAPPIER_E2E_UI_WEB_EXPORT_FALLBACK_TO_METRO: '0',
+      HAPPIER_E2E_UI_WEB_SCRIPT_FETCH_TIMEOUT_MS: process.env.HAPPIER_E2E_UI_WEB_SCRIPT_FETCH_TIMEOUT_MS ?? '480000',
+    };
+    test.setTimeout(resolveUiWebBeforeAllTimeoutMs(uiWebEnv));
     await mkdir(cliHomeDir, { recursive: true });
 
     server = await startServerLight({
@@ -86,10 +98,8 @@ test.describe('ui e2e: plaintext mode + public share', () => {
     ui = await startUiWeb({
       testDir: suiteDir,
       env: {
-        ...process.env,
-        EXPO_PUBLIC_DEBUG: '1',
+        ...uiWebEnv,
         EXPO_PUBLIC_HAPPY_SERVER_URL: server.baseUrl,
-        EXPO_PUBLIC_HAPPY_STORAGE_SCOPE: `e2e-${run.runId}`,
       },
     });
 
@@ -116,6 +126,7 @@ test.describe('ui e2e: plaintext mode + public share', () => {
     let thrown: unknown = null;
     try {
       await gotoDomContentLoadedWithRetries(page, uiBaseUrl);
+      await waitForInitialAppUi({ page, timeoutMs: 120_000 });
       await page.getByTestId('welcome-create-account').click();
       await expect(page.getByTestId('session-getting-started-kind-connect_machine')).not.toHaveCount(0, { timeout: 120_000 });
 
@@ -128,6 +139,7 @@ test.describe('ui e2e: plaintext mode + public share', () => {
           ...process.env,
           CI: '1',
           HAPPIER_DISABLE_CAFFEINATE: '1',
+          HAPPIER_E2E_PROVIDER_USE_CLI_SOURCE_ENTRYPOINT: '1',
           HAPPIER_VARIANT: 'dev',
         },
       });
@@ -136,6 +148,7 @@ test.describe('ui e2e: plaintext mode + public share', () => {
       await expect(page.getByTestId('terminal-connect-approve')).toHaveCount(1, { timeout: 60_000 });
       await page.getByTestId('terminal-connect-approve').click();
       await cliLogin.waitForSuccess();
+      await acknowledgeTerminalConnectSuccessIfPresent(page);
 
       await page.goto(`${uiBaseUrl}/settings/account`, { waitUntil: 'domcontentloaded' });
       await expect(page.getByTestId('settings-account-encryption-mode-switch')).toHaveCount(1, { timeout: 120_000 });
@@ -159,7 +172,10 @@ test.describe('ui e2e: plaintext mode + public share', () => {
         cliHomeDir,
         serverUrl: server.baseUrl,
         webappUrl: uiBaseUrl,
-        env: process.env,
+        env: {
+          ...process.env,
+          HAPPIER_E2E_PROVIDER_USE_CLI_SOURCE_ENTRYPOINT: '1',
+        },
         label: 'session-create',
         args: ['session', 'create', '--tag', tag, '--no-load-existing', '--json'],
         timeoutMs: 120_000,
@@ -177,7 +193,10 @@ test.describe('ui e2e: plaintext mode + public share', () => {
         cliHomeDir,
         serverUrl: server.baseUrl,
         webappUrl: uiBaseUrl,
-        env: process.env,
+        env: {
+          ...process.env,
+          HAPPIER_E2E_PROVIDER_USE_CLI_SOURCE_ENTRYPOINT: '1',
+        },
         label: 'session-send',
         args: ['session', 'send', sessionId, message, '--json'],
         timeoutMs: 120_000,
