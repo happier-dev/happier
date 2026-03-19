@@ -1,8 +1,11 @@
 import * as React from 'react';
 
 import { Modal } from '@/modal';
-import { machineCapabilitiesInvoke } from '@/sync/ops';
-import type { CapabilitiesInvokeRequest, CapabilitiesInvokeResponse } from '@/sync/ops';
+import {
+    machineCapabilitiesInvoke,
+    type CapabilitiesInvokeRequest,
+    type CapabilitiesInvokeResponse,
+} from '@/sync/ops/capabilities';
 import { t } from '@/text';
 
 type UnsupportedReason = 'not-supported' | 'error';
