@@ -26,3 +26,4 @@ describe('runVitestShards', () => {
     expect(resolveVitestConfigPath(['node', 'run'])).toBe(null);
   });
 });
+

@@ -39,3 +39,4 @@ describe('withNodeHeapLimit', () => {
     expect(resolveMaxOldSpaceSizeMb({ HAPPIER_CLI_TEST_MAX_OLD_SPACE_SIZE_MB: '4096' })).toBe(4096);
   });
 });
+

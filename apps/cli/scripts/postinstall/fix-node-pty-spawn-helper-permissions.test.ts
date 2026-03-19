@@ -33,3 +33,4 @@ describe('fixNodePtySpawnHelperPermissions', () => {
         expect(hasAnyExecuteBit(after.mode)).toBe(true);
     });
 });
+
