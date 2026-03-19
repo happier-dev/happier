@@ -40,8 +40,16 @@ export async function catchUpSessionMessagesAfterSeq(params: {
             const parsedContent = SessionMessageContentSchema.safeParse(content);
             if (!parsedContent.success) continue;
 
-            const localId = typeof (msg as any).localId === 'string' ? (msg as any).localId : undefined;
-            const createdAt = typeof (msg as any).createdAt === 'number' ? (msg as any).createdAt : Date.now();
+            const localIdRaw = (msg as any).localId;
+            const localId =
+                typeof localIdRaw === 'string' ? (localIdRaw.trim() || null) : null;
+            const sidechainIdRaw = (msg as any).sidechainId;
+            const sidechainId =
+                typeof sidechainIdRaw === 'string' ? (sidechainIdRaw.trim() || null) : null;
+            const createdAtRaw = (msg as any).createdAt;
+            const createdAt = typeof createdAtRaw === 'number' && Number.isFinite(createdAtRaw) ? Math.trunc(createdAtRaw) : Date.now();
+            const updatedAtRaw = (msg as any).updatedAt;
+            const updatedAt = typeof updatedAtRaw === 'number' && Number.isFinite(updatedAtRaw) ? Math.trunc(updatedAtRaw) : createdAt;
 
             const update: Update = {
                 id: `catchup-${id}`,
@@ -53,8 +61,11 @@ export async function catchUpSessionMessagesAfterSeq(params: {
                     message: {
                         id,
                         seq,
-                        ...(localId ? { localId } : {}),
+                        localId,
+                        sidechainId,
                         content: parsedContent.data,
+                        createdAt,
+                        updatedAt,
                     },
                 },
             } as Update;
