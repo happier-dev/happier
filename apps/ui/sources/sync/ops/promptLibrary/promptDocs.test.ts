@@ -135,6 +135,31 @@ describe('promptDocs ops', () => {
     }
   });
 
+  it('surfaces prompt_doc_invalid_body for malformed stored body json', async () => {
+    const { updatePromptDoc } = await import('./promptDocs');
+
+    storage.setState({
+      artifacts: {
+        p1: {
+          id: 'p1',
+          header: { v: 1, kind: 'prompt_doc.v2', title: 'Broken' },
+          title: 'Broken',
+          body: '{',
+          headerVersion: 1,
+          bodyVersion: 1,
+          seq: 1,
+          createdAt: 0,
+          updatedAt: 0,
+          isDecrypted: true,
+        },
+      },
+      isDataReady: true,
+    } as any);
+
+    await expect(updatePromptDoc({ artifactId: 'p1', title: 'Broken', markdown: 'new' })).rejects.toThrow('prompt_doc_invalid_body');
+    expect(updateArtifactWithHeaderMock).not.toHaveBeenCalled();
+  });
+
   it('duplicates a prompt doc into a new user-owned artifact', async () => {
     const { duplicatePromptDoc } = await import('./promptDocs');
 
