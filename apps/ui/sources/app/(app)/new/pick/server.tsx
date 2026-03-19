@@ -1,5 +1,4 @@
 import React from 'react';
-import { CommonActions } from '@react-navigation/native';
 import { Stack, useLocalSearchParams, useNavigation, useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { Platform, Pressable } from 'react-native';
@@ -15,8 +14,11 @@ import { useUnistyles } from 'react-native-unistyles';
 import { TokenStorage } from '@/auth/storage/tokenStorage';
 import { promptSignedOutServerSwitchConfirmation } from '@/components/settings/server/modals/ServerSwitchAuthPrompt';
 import { fireAndForget } from '@/utils/system/fireAndForget';
+import { safeRouterBack } from '@/utils/navigation/safeRouterBack';
+import { setNewSessionPickerReturnParams } from '@/components/sessions/new/navigation/setNewSessionPickerReturnParams';
 
 type ServerPickerParams = {
+    dataId?: string;
     selectedId?: string;
 };
 
@@ -84,18 +86,22 @@ export default React.memo(function ServerPickerScreen() {
     }, [activeServer.serverId, allowedServerIds, params.selectedId]);
 
     const setParamsOnPreviousAndClose = React.useCallback((serverId: string) => {
-        const state = navigation.getState();
-        const previousRoute = state?.routes?.[state.index - 1];
-        if (state && state.index > 0 && previousRoute) {
-            navigation.dispatch({
-                ...CommonActions.setParams({
-                    spawnServerId: serverId,
-                }),
-                source: previousRoute.key,
-            });
+        const dataId = typeof params.dataId === 'string' ? params.dataId : undefined;
+        const returnMode = setNewSessionPickerReturnParams({
+            navigation,
+            router,
+            routeParams: {
+                spawnServerId: serverId,
+            },
+            replaceParams: {
+                ...(dataId ? { dataId } : {}),
+                spawnServerId: serverId,
+            },
+        });
+        if (returnMode === 'dispatch') {
+            safeRouterBack({ router, navigation, fallbackHref: '/new' });
         }
-        router.back();
-    }, [navigation, router]);
+    }, [navigation, params.dataId, router]);
 
     const confirmSignedOutTarget = React.useCallback(async (serverId: string): Promise<{ allowed: boolean; signedOut: boolean }> => {
         const nextServerId = String(serverId ?? '').trim();
@@ -115,7 +121,7 @@ export default React.memo(function ServerPickerScreen() {
 
     const headerLeft = React.useCallback(() => (
         <Pressable
-            onPress={() => router.back()}
+            onPress={() => safeRouterBack({ router, navigation, fallbackHref: '/new' })}
             hitSlop={10}
             style={({ pressed }) => ({ padding: 2, opacity: pressed ? 0.7 : 1 })}
             accessibilityRole="button"
@@ -123,7 +129,7 @@ export default React.memo(function ServerPickerScreen() {
         >
             <Ionicons name="chevron-back" size={22} color={theme.colors.header.tint} />
         </Pressable>
-    ), [router, theme.colors.header.tint]);
+    ), [navigation, router, theme.colors.header.tint]);
 
     const screenOptions = React.useMemo(() => ({
         headerShown: true,
