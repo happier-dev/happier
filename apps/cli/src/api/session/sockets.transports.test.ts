@@ -41,6 +41,8 @@ describe('session sockets transports', () => {
     const opts = mockIo.mock.calls[0]?.[1] as any;
     expect(opts.path).toBe('/v1/updates');
     expect(opts.transports).toEqual(['websocket', 'polling']);
+    expect(opts.reconnection).toBe(false);
+    expect(opts.autoConnect).toBe(false);
   });
 
   it('can force websocket-only via config flag', async () => {
@@ -53,5 +55,7 @@ describe('session sockets transports', () => {
     const opts = mockIo.mock.calls[0]?.[1] as any;
     expect(opts.path).toBe('/v1/updates');
     expect(opts.transports).toEqual(['websocket']);
+    expect(opts.reconnection).toBe(false);
+    expect(opts.autoConnect).toBe(false);
   });
 });
