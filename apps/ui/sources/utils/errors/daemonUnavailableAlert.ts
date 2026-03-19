@@ -86,6 +86,29 @@ export function showDaemonUnavailableAlert(params: Readonly<{
     Modal.alert(t(params.titleKey), message, buttons);
 }
 
+export async function promptDaemonUnavailableRetry(params: Readonly<{
+    titleKey: TranslationKey;
+    bodyKey: TranslationKey;
+    machine?: MachineStatusLineInput;
+}>): Promise<'retry' | 'cancel'> {
+    const statusLine = buildMachineStatusLine(params.machine);
+    const message = `${t(params.bodyKey)}\n\n${statusLine}`;
+
+    return await new Promise<'retry' | 'cancel'>((resolve) => {
+        Modal.alert(t(params.titleKey), message, [
+            {
+                text: t('common.retry'),
+                onPress: () => resolve('retry'),
+            },
+            {
+                text: t('common.cancel'),
+                style: 'cancel',
+                onPress: () => resolve('cancel'),
+            },
+        ]);
+    });
+}
+
 export function tryShowDaemonUnavailableAlertForRpcError(params: Readonly<{
     error: unknown;
     machine?: MachineStatusLineInput;

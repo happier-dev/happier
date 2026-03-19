@@ -179,4 +179,21 @@ describe('daemonUnavailableAlert', () => {
         expect(shown2).toBe(false);
         expect(modalAlertSpy).not.toHaveBeenCalled();
     });
+
+    it('resolves a retry prompt when the Retry button is pressed', async () => {
+        modalAlertSpy.mockClear();
+        vi.resetModules();
+        const { promptDaemonUnavailableRetry } = await import('./daemonUnavailableAlert');
+
+        const pending = promptDaemonUnavailableRetry({
+            titleKey: 'errors.daemonUnavailableTitle',
+            bodyKey: 'errors.daemonUnavailableBody',
+        });
+        const args = modalAlertSpy.mock.calls[0] ?? [];
+        const buttons = args[2] as any[];
+        const retry = buttons.find((button) => button?.text === 'common.retry');
+        retry?.onPress?.();
+
+        await expect(pending).resolves.toBe('retry');
+    });
 });
