@@ -182,6 +182,39 @@ describe('ChainTranscriptList presentation parity', () => {
         );
     });
 
+    it('passes forced transcript permission prompts through to turn layouts', async () => {
+        settings.transcriptGroupingMode = 'turns';
+
+        const { ChainTranscriptList } = await import('./ChainTranscriptList');
+
+        const userMessage: Message = {
+            kind: 'user-text',
+            id: 'user-1',
+            localId: null,
+            createdAt: 1,
+            text: 'Start a subagent',
+        };
+
+        await act(async () => {
+            renderer.create(
+                React.createElement(ChainTranscriptList, {
+                    sessionId: 's1',
+                    messages: [userMessage],
+                    metadata: null,
+                    interaction: { canSendMessages: true, canApprovePermissions: true, disableToolNavigation: true },
+                    forcePermissionPromptsInTranscript: true,
+                }),
+            );
+            await Promise.resolve();
+        });
+
+        expect(turnViewSpy).toHaveBeenCalledWith(
+            expect.objectContaining({
+                forcePermissionPromptsInTranscript: true,
+            }),
+        );
+    });
+
     it('renders draft transcript messages after committed messages in the same chain', async () => {
         const { ChainTranscriptList } = await import('./ChainTranscriptList');
 
@@ -217,4 +250,5 @@ describe('ChainTranscriptList presentation parity', () => {
         expect(messageViewSpy.mock.calls.map((call) => call[0]?.message?.id)).toEqual(['msg-1', 'draft:local-1']);
         expect(messageViewSpy.mock.calls.at(-1)?.[0]?.message?.text).toBe('Draft tail');
     });
+
 });

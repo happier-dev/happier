@@ -221,4 +221,29 @@ describe('ToolCallsGroupView (motion wiring)', () => {
         const backgroundEntryCards = stylesCards.find((s: any) => s?.backgroundColor);
         expect(backgroundEntryCards?.backgroundColor).not.toBe('#fafafa');
     });
+
+    it('renders grouped tool rows through ToolView in cards mode when no structured message view is needed', async () => {
+        const { ToolCallsGroupView } = await import('./ToolCallsGroupView');
+        toolChromeMode = 'cards';
+        toolCallsGroupShowBackground = false;
+
+        let tree: ReturnType<typeof renderer.create> | undefined;
+        await act(async () => {
+            tree = renderer.create(
+                <ToolCallsGroupView
+                    id="toolCalls:1"
+                    status="completed"
+                    toolMessages={[makeToolMessage('m1', 1)]}
+                    metadata={null}
+                    sessionId="s1"
+                    expanded
+                    setExpanded={vi.fn()}
+                    interaction={{ canSendMessages: true, canApprovePermissions: true }}
+                />,
+            );
+        });
+
+        expect(tree!.root.findAllByType('ToolView' as any)).toHaveLength(1);
+        expect(tree!.root.findAllByType('ToolTimelineRow' as any)).toHaveLength(0);
+    });
 });

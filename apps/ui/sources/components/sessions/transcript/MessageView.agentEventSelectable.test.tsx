@@ -21,8 +21,12 @@ vi.mock('react-native-unistyles', () => ({
         success: '#0a0',
         text: '#111',
         textSecondary: '#555',
+        surface: '#fff',
+        surfaceHigh: '#f5f5f5',
         surfaceHighest: '#fff',
         divider: '#ddd',
+        overlay: { text: '#fff', scrimStrong: 'rgba(0,0,0,0.7)' },
+        shadow: { color: '#000' },
         input: { background: '#f7f7f7' },
         userMessageBackground: '#eef',
         agentEventText: '#777',
@@ -36,8 +40,12 @@ vi.mock('react-native-unistyles', () => ({
           success: '#0a0',
           text: '#111',
           textSecondary: '#555',
+          surface: '#fff',
+          surfaceHigh: '#f5f5f5',
           surfaceHighest: '#fff',
           divider: '#ddd',
+          overlay: { text: '#fff', scrimStrong: 'rgba(0,0,0,0.7)' },
+          shadow: { color: '#000' },
           input: { background: '#f7f7f7' },
           userMessageBackground: '#eef',
           agentEventText: '#777',
@@ -124,5 +132,29 @@ describe('MessageView (agent events)', () => {
     const texts = tree!.root.findAllByType('Text' as any);
     expect(texts.length).toBeGreaterThan(0);
     expect(texts.some((n: any) => n.props.selectable === true)).toBe(true);
+  });
+
+  it('renders agent events as inline left-aligned transcript rows with an icon', async () => {
+    const { MessageView } = await import('./MessageView');
+
+    const message: any = {
+      kind: 'agent-event',
+      event: { type: 'message', message: 'hello event' },
+    };
+
+    let tree: renderer.ReactTestRenderer | null = null;
+    await act(async () => {
+      tree = renderer.create(<MessageView message={message} metadata={null} sessionId="s1" />);
+    });
+
+    const icons = tree!.root.findAllByType('Ionicons' as any);
+    expect(icons.length).toBeGreaterThan(0);
+    expect(icons[0]?.props.color).toBe('#555');
+
+    const row = icons[0]?.parent?.parent as any;
+
+    expect(row).toBeTruthy();
+    expect(row.props.style.flexDirection).toBe('row');
+    expect(row.props.style.justifyContent).not.toBe('center');
   });
 });
