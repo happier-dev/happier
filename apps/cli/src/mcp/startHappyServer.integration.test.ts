@@ -207,7 +207,7 @@ describe('startHappyServer (MCP integration)', () => {
         name: 'execution_run_start',
         arguments: {
           intent: 'review',
-          backendId: 'claude',
+          backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
           instructions: 'Review.',
           permissionMode: 'read_only',
           retentionPolicy: 'ephemeral',
@@ -231,7 +231,7 @@ describe('startHappyServer (MCP integration)', () => {
         arguments: { runId: started.runId, includeStructured: true },
       });
       const gotStructured = parseMcpJsonText(gotStructuredRaw);
-      expect(gotStructured.structuredMeta?.kind).toBe('review_findings.v1');
+      expect(gotStructured.structuredMeta?.kind).toBe('review_findings.v2');
       expect(gotStructured.structuredMeta?.payload?.runRef?.runId).toBe(started.runId);
 
       const actionRaw = await client.callTool({
