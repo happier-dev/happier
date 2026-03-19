@@ -2,6 +2,7 @@ import React from 'react';
 import { Platform, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 
+import { DEFAULT_AGENT_ID } from '@/agents/catalog/catalog';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { ItemList } from '@/components/ui/lists/ItemList';
@@ -240,7 +241,7 @@ export const SourceControlSettingsView = React.memo(function SourceControlSettin
     const effectiveCommitMessageGeneratorEnabled = scmCommitMessageGeneratorEnabled === true;
     const effectiveCommitMessageGeneratorBackendId = typeof scmCommitMessageGeneratorBackendId === 'string' && scmCommitMessageGeneratorBackendId.trim()
         ? scmCommitMessageGeneratorBackendId.trim()
-        : 'claude';
+        : DEFAULT_AGENT_ID;
     const effectiveCommitMessageGeneratorInstructions = typeof scmCommitMessageGeneratorInstructions === 'string'
         ? scmCommitMessageGeneratorInstructions
         : '';
@@ -339,7 +340,7 @@ export const SourceControlSettingsView = React.memo(function SourceControlSettin
                     onPress={async () => {
                         const next = await Modal.prompt(t('settingsSourceControl.commitMessageGenerator.backendPromptTitle'), t('settingsSourceControl.commitMessageGenerator.backendPromptMessage'), {
                             defaultValue: effectiveCommitMessageGeneratorBackendId,
-                            placeholder: 'claude',
+                            placeholder: DEFAULT_AGENT_ID,
                             confirmText: t('common.save'),
                             cancelText: t('common.cancel'),
                         });
