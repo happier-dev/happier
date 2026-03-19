@@ -15,6 +15,7 @@ import { resolveConnectedServiceAuthForSpawn } from './resolveConnectedServiceAu
 describe('resolveConnectedServiceAuthForSpawn', () => {
   it('fetches, decrypts, and materializes auth for a spawn', async () => {
     const baseDir = await mkdtemp(join(tmpdir(), 'happier-connected-services-test-'));
+    const activeServerDir = await mkdtemp(join(tmpdir(), 'happier-connected-services-server-test-'));
 
     const record = buildConnectedServiceCredentialRecord({
       now: 10,
@@ -69,13 +70,16 @@ describe('resolveConnectedServiceAuthForSpawn', () => {
         },
       },
       materializationKey: 'session-1',
+      activeServerDir,
       baseDir,
       credentials,
       api,
     });
 
     expect(connectedServiceAuth).not.toBeNull();
-    expect(connectedServiceAuth!.env.CODEX_HOME).toContain(baseDir);
+    expect(connectedServiceAuth!.env.CODEX_HOME).toBe(
+      join(activeServerDir, 'daemon', 'connected-services', 'homes', 'openai-codex', 'work', 'codex', 'codex-home'),
+    );
     const auth = JSON.parse(await readFile(join(connectedServiceAuth!.env.CODEX_HOME, 'auth.json'), 'utf8'));
     expect(auth.access_token).toBe('access');
   });

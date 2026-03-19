@@ -76,6 +76,7 @@ export class ConnectedServiceRefreshCoordinator {
     api: ApiClient;
     credentials: Credentials;
     machineIdProvider: () => string;
+    activeServerDir: string;
     baseDir: string;
     refreshWindowMs: number;
     refreshLeaseMs: number;
@@ -241,6 +242,7 @@ export class ConnectedServiceRefreshCoordinator {
       await materializeConnectedServicesForSpawn({
         agentId: target.agentId,
         materializationKey: target.materializationKey,
+        activeServerDir: this.params.activeServerDir,
         baseDir: this.params.baseDir,
         recordsByServiceId: records,
       });

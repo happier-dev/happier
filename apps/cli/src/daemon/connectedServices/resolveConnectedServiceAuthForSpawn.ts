@@ -12,6 +12,7 @@ export async function resolveConnectedServiceAuthForSpawn(params: Readonly<{
   agentId: CatalogAgentId;
   connectedServicesBindingsRaw: unknown;
   materializationKey: string;
+  activeServerDir: string;
   baseDir: string;
   credentials: Credentials;
   api: ApiClient;
@@ -33,6 +34,7 @@ export async function resolveConnectedServiceAuthForSpawn(params: Readonly<{
   return await materializeConnectedServicesForSpawn({
     agentId: params.agentId,
     materializationKey: params.materializationKey,
+    activeServerDir: params.activeServerDir,
     baseDir: params.baseDir,
     recordsByServiceId,
   });
