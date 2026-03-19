@@ -2,6 +2,7 @@ import * as React from 'react';
 import { ActivityIndicator, Pressable, StyleProp, View, ViewStyle } from 'react-native';
 
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
+import { normalizeNodeForView } from '@/components/ui/rendering/normalizeNodeForView';
 
 const stylesheet = StyleSheet.create((theme) => ({
   root: {
@@ -69,7 +70,7 @@ export const PrimaryCircleIconButton = React.memo(
           {props.loading ? (
             <ActivityIndicator size="small" color={tintColor} />
           ) : (
-            props.children
+            normalizeNodeForView(props.children)
           )}
         </Pressable>
       </View>
