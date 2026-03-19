@@ -1,15 +1,27 @@
 import { z } from 'zod';
 
 export const E2eScenarioTierSchema = z.enum(['smoke', 'extended']);
+export const E2eProviderLaneScopeSchema = z.enum(['acp-only', 'declared-scenarios']);
+export const E2eProviderDefaultRuntimePathSchema = z.enum(['provider-lane', 'appServer']);
+export const E2eProviderAppServerCoverageSchema = z.enum(['excluded', 'not-applicable', 'capability-contract']);
+export const E2eProviderAppServerCapabilitySurfaceSchema = z.enum(['modes', 'models', 'speed', 'rollback']);
 
 const TierListsSchema = z.object({
   smoke: z.array(z.string().min(1)),
   extended: z.array(z.string().min(1)),
 });
 
+const CoverageExpectationSchema = z.object({
+  providerLaneScope: E2eProviderLaneScopeSchema,
+  defaultRuntimePath: E2eProviderDefaultRuntimePathSchema,
+  appServerCoverage: E2eProviderAppServerCoverageSchema,
+  appServerCapabilitySurfaces: z.array(E2eProviderAppServerCapabilitySurfaceSchema).optional(),
+});
+
 export const E2eCliProviderScenarioRegistryV1Schema = z.object({
   v: z.literal(1),
   tiers: TierListsSchema,
+  coverageExpectation: CoverageExpectationSchema.optional(),
   /**
    * Optional scenario tier overrides keyed by the provider auth mode.
    *
