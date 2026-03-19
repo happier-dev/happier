@@ -81,7 +81,7 @@ export const ConnectedServicesSettingsView = React.memo(function ConnectedServic
           const serviceId = serviceIdRaw;
           const svc = services.find((s) => s.serviceId === serviceId) ?? null;
           const entry = getConnectedServiceRegistryEntry(serviceId);
-          const label = resolveConnectedServiceDisplayName(serviceId);
+          const label = resolveConnectedServiceDisplayName(serviceId, t);
           const profiles = svc?.profiles ?? [];
           const connected = profiles.filter((p) => p.status === 'connected');
           const connectedIds = connected
