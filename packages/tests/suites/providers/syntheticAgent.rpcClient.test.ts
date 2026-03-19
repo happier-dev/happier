@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { stringifySerializedJsonValue } from '@happier-dev/protocol';
 
 import { encryptDataKeyBase64 } from '../../src/testkit/rpcCrypto';
+
 import { createDataKeyRpcClient } from '../../src/testkit/syntheticAgent/rpcClient';
 
 describe('testkit: synthetic agent rpc client', () => {
