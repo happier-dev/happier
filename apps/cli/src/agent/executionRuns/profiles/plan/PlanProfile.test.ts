@@ -49,6 +49,7 @@ describe('PlanProfile', () => {
       sidechainId: 'call_1',
       intent: 'plan',
       backendId: 'claude',
+      backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
       instructions: 'plan this',
       permissionMode: 'read_only',
       retentionPolicy: 'ephemeral',
