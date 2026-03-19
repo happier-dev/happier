@@ -132,4 +132,20 @@ describe('logger.debugLargeJson', () => {
             errorSpy.mockRestore();
         }
     });
+
+    it('does not throw when console logging hits EPIPE', async () => {
+        const { logger } = (await import('@/ui/logger')) as typeof import('@/ui/logger');
+        const epipeError = Object.assign(new Error('broken pipe'), { code: 'EPIPE' });
+        const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {
+            throw epipeError;
+        });
+
+        try {
+            expect(() => {
+                logger.warn('[TEST] warn survives broken stdout');
+            }).not.toThrow();
+        } finally {
+            consoleSpy.mockRestore();
+        }
+    });
 });
