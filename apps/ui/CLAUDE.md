@@ -172,6 +172,15 @@ Canonical entrypoints:
 - `sources/sync/{storage.ts,ops.ts,typesRaw.ts,sync.ts}` are canonical entrypoints that define the public surface for sync.
 - Extract internals under subfolders (`store/`, `ops/`, `typesRaw/`, `reducer/`, etc.) and have the entry files orchestrate them (import and compose).
 
+### Provider registry architecture (required)
+
+- Treat `sources/agents/registry/*` as the canonical provider-composition layer for generic UI logic.
+- Treat `sources/agents/providers/<provider>/*` as the only place for provider-specific UI behavior, provider-specific session payload shaping, direct-session source options, and other executable provider customizations.
+- If a new cross-provider UI feature needs provider-specific behavior, extend the shared registry/core types first (`registryCore.ts`, `registryUiBehavior.ts`, or shared helpers), then implement the provider-owned pieces inside each provider folder.
+- Do not add provider-name branching in generic screens/components/sync code when the behavior can be expressed through the existing registry/provider override surface.
+- Reuse shared provider facts from `@happier-dev/agents` for capabilities like session storage, local control, modes, models, and session capabilities; do not duplicate those support matrices in ad-hoc UI maps.
+- Generic UI/sync modules should depend on the registry abstractions, not on direct imports from another provider's implementation folder.
+
 ## Modals & dialogs (web + native)
 
 ### Rules of thumb
