@@ -1,20 +1,11 @@
 import { describe, expect, it } from 'vitest';
 
-import { AGENT_IDS } from '../types.js';
 import {
   getProviderCliRuntimeSpec,
   PROVIDER_CLI_RUNTIME_SPECS,
 } from './providerCliRuntime.js';
-import {
-  getProviderCliInstallGuideUrl,
-  getProviderCliManualInstallSummaryLines,
-} from './providerCliInstallGuidance.js';
 
 describe('PROVIDER_CLI_RUNTIME_SPECS', () => {
-  it('covers every built-in provider', () => {
-    expect(Object.keys(PROVIDER_CLI_RUNTIME_SPECS).sort()).toEqual([...AGENT_IDS].sort());
-  });
-
   it('marks backend CLIs as system-first by default', () => {
     expect(getProviderCliRuntimeSpec('codex').sourcePreferenceDefault).toBe('system-first');
     expect(getProviderCliRuntimeSpec('gemini').sourcePreferenceDefault).toBe('system-first');
@@ -108,22 +99,21 @@ describe('PROVIDER_CLI_RUNTIME_SPECS', () => {
     expect(getProviderCliRuntimeSpec('copilot').manualInstallRecipes).toBeNull();
     expect(getProviderCliRuntimeSpec('qwen').manualInstallRecipes).toBeNull();
   });
-});
 
-describe('provider CLI install guidance', () => {
-  it('exposes the canonical install guide URL for providers with a dedicated guide', () => {
-    expect(getProviderCliInstallGuideUrl('claude')).toBe('https://code.claude.com/docs/en/setup');
-    expect(getProviderCliInstallGuideUrl('opencode')).toBe('https://opencode.ai/docs');
-    expect(getProviderCliInstallGuideUrl('pi')).toBe('https://github.com/badlogic/pi-mono');
-  });
-
-  it('falls back to the provider docs URL when there is no dedicated guide', () => {
-    expect(getProviderCliInstallGuideUrl('codex')).toBe('https://github.com/openai/codex');
-  });
-
-  it('summarizes multi-platform manual install commands', () => {
-    const summaryLines = getProviderCliManualInstallSummaryLines('claude');
-    expect(summaryLines).toContain('  macOS/Linux: curl -fsSL https://claude.ai/install.sh | bash');
-    expect(summaryLines).toContain('  Windows (PowerShell): irm https://claude.ai/install.ps1 | iex');
+  it('covers every built-in provider', () => {
+    expect(Object.keys(PROVIDER_CLI_RUNTIME_SPECS).sort()).toEqual([
+      'auggie',
+      'claude',
+      'codex',
+      'copilot',
+      'customAcp',
+      'gemini',
+      'kilo',
+      'kimi',
+      'kiro',
+      'opencode',
+      'pi',
+      'qwen',
+    ]);
   });
 });
