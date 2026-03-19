@@ -4,7 +4,7 @@ import { join, resolve } from 'node:path';
 
 import { createRunDirs } from '../../src/testkit/runDir';
 import { startServerLight, type StartedServer } from '../../src/testkit/process/serverLight';
-import { startUiWeb, type StartedUiWeb } from '../../src/testkit/process/uiWeb';
+import { resolveUiWebBeforeAllTimeoutMs, startUiWeb, type StartedUiWeb } from '../../src/testkit/process/uiWeb';
 import { startTestDaemon, type StartedDaemon } from '../../src/testkit/daemon/daemon';
 import { startCliAuthLoginForTerminalConnect, type StartedCliTerminalConnect } from '../../src/testkit/uiE2e/cliTerminalConnect';
 import { fakeClaudeFixturePath } from '../../src/testkit/fakeClaude';
@@ -33,7 +33,15 @@ test.describe('ui e2e: mTLS login + terminal connect', () => {
   }
 
   test.beforeAll(async () => {
-    test.setTimeout(600_000);
+    const uiWebEnv = {
+      ...process.env,
+      EXPO_PUBLIC_DEBUG: '1',
+      EXPO_PUBLIC_HAPPY_SERVER_URL: proxyBaseUrl ?? '',
+      EXPO_PUBLIC_HAPPY_STORAGE_SCOPE: `e2e-${run.runId}`,
+      HAPPIER_E2E_UI_WEB_MODE: 'metro',
+      HAPPIER_E2E_UI_WEB_SCRIPT_FETCH_TIMEOUT_MS: process.env.HAPPIER_E2E_UI_WEB_SCRIPT_FETCH_TIMEOUT_MS ?? '480000',
+    };
+    test.setTimeout(resolveUiWebBeforeAllTimeoutMs(uiWebEnv));
     await mkdir(cliHomeDir, { recursive: true });
 
     server = await startServerLight({
@@ -81,10 +89,8 @@ test.describe('ui e2e: mTLS login + terminal connect', () => {
     ui = await startUiWeb({
       testDir: suiteDir,
       env: {
-        ...process.env,
-        EXPO_PUBLIC_DEBUG: '1',
+        ...uiWebEnv,
         EXPO_PUBLIC_HAPPY_SERVER_URL: proxy.baseUrl,
-        EXPO_PUBLIC_HAPPY_STORAGE_SCOPE: `e2e-${run.runId}`,
       },
     });
     uiBaseUrl = normalizeLoopbackBaseUrl(ui.baseUrl);
@@ -128,6 +134,7 @@ test.describe('ui e2e: mTLS login + terminal connect', () => {
           ...process.env,
           CI: '1',
           HAPPIER_DISABLE_CAFFEINATE: '1',
+          HAPPIER_E2E_PROVIDER_USE_CLI_SOURCE_ENTRYPOINT: '1',
           HAPPIER_VARIANT: 'dev',
         },
       });
@@ -152,6 +159,7 @@ test.describe('ui e2e: mTLS login + terminal connect', () => {
           HAPPIER_SERVER_URL: proxyBaseUrl,
           HAPPIER_WEBAPP_URL: uiBaseUrl,
           HAPPIER_DISABLE_CAFFEINATE: '1',
+          HAPPIER_E2E_PROVIDER_USE_CLI_SOURCE_ENTRYPOINT: '1',
           HAPPIER_VARIANT: 'dev',
           HAPPIER_CLAUDE_PATH: fakeClaudePath,
           HAPPIER_E2E_FAKE_CLAUDE_LOG: fakeClaudeLogPath,
