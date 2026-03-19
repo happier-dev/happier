@@ -39,7 +39,8 @@ describe('resolveCliMemoryRecallGuidanceEnabled', () => {
     const enabled = await resolveCliMemoryRecallGuidanceEnabled({
       surfaces: ['voice_tool', 'voice_action_block'],
       deps: {
-        isActionEnabledByEnv: (_actionId, ctx) => ctx?.surface === 'voice_tool',
+        isActionEnabledByEnv: (actionId, ctx) =>
+          ctx?.surface === 'voice_tool' && (actionId === 'memory.search' || actionId === 'memory.get_window'),
         readMemorySettingsFromDisk: async () => buildMemorySettings({
           enabled: true,
           indexMode: 'hints',
@@ -55,5 +56,31 @@ describe('resolveCliMemoryRecallGuidanceEnabled', () => {
     });
 
     expect(enabled).toBe(true);
+  });
+
+  it('returns false when required memory actions are split across different surfaces', async () => {
+    const enabled = await resolveCliMemoryRecallGuidanceEnabled({
+      surfaces: ['voice_tool', 'voice_action_block'],
+      deps: {
+        isActionEnabledByEnv: (actionId, ctx) => {
+          if (ctx?.surface === 'voice_tool') return actionId === 'memory.search';
+          if (ctx?.surface === 'voice_action_block') return actionId === 'memory.get_window';
+          return false;
+        },
+        readMemorySettingsFromDisk: async () => buildMemorySettings({
+          enabled: true,
+          indexMode: 'hints',
+        }),
+        resolveMemoryIndexPaths: () => ({
+          tier1DbPath: '/tmp/light.sqlite',
+          deepDbPath: '/tmp/deep.sqlite',
+          memoryDir: '/tmp',
+          modelsDir: '/tmp/models',
+        }),
+        stat: async (_path: string) => ({ size: 128 }),
+      },
+    });
+
+    expect(enabled).toBe(false);
   });
 });
