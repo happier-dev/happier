@@ -2,7 +2,7 @@ import * as React from 'react';
 import renderer, { act } from 'react-test-renderer';
 import { describe, expect, it, vi, beforeEach } from 'vitest';
 
-import type { AgentInputExtraActionChip } from '@/components/sessions/agentInput/AgentInput';
+import type { AgentInputExtraActionChip } from '@/components/sessions/agentInput/agentInputContracts';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 

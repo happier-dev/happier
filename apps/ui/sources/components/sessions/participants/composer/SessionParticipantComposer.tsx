@@ -3,7 +3,7 @@ import * as React from 'react';
 
 import { getSuggestions } from '@/components/autocomplete/suggestions';
 import { AgentInput } from '@/components/sessions/agentInput';
-import type { AgentInputExtraActionChip } from '@/components/sessions/agentInput/AgentInput';
+import type { AgentInputExtraActionChip } from '@/components/sessions/agentInput/agentInputContracts';
 import { Modal } from '@/modal';
 import { resolveParticipantRoutedSend } from '@/sync/domains/input/participants/resolveParticipantRoutedSend';
 import { isExecutionRunNotRunningSendError, sessionExecutionRunSend } from '@/sync/ops/sessionExecutionRuns';
