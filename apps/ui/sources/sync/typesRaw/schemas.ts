@@ -1,7 +1,6 @@
 import * as z from 'zod';
 import { MessageMetaSchema, MessageMeta } from '../domains/messages/messageMetaTypes';
 import { PERMISSION_MODES } from '@/constants/PermissionModes';
-import { AGENT_IDS } from '@happier-dev/agents';
 
 //
 // Raw types
@@ -264,7 +263,7 @@ const rawAgentRecordSchema = z.discriminatedUnion('type', [z.object({
 }), z.object({
     // ACP (Agent Communication Protocol) - unified format for all agent providers
     type: z.literal('acp'),
-    provider: z.enum(AGENT_IDS),
+    provider: z.string().trim().min(1),
     data: z.discriminatedUnion('type', [
         // Core message types
         z.object({ type: z.literal('reasoning'), message: z.string(), sidechainId: z.string().optional() }),
