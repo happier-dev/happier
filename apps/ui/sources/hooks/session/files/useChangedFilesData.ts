@@ -1,4 +1,5 @@
 import * as React from 'react';
+import type { SessionChangeSet } from '@happier-dev/protocol';
 
 import type { ScmProjectOperationLogEntry } from '@/sync/runtime/orchestration/projectManager';
 import type { ScmWorkingSnapshot } from '@/sync/domains/state/storageTypes';
@@ -6,9 +7,11 @@ import {
     buildChangedFilesAttribution,
     canOfferSessionChangedFilesView,
     getSessionAttributionReliability,
+    type SessionAttributedFile,
     type SessionAttributionReliability,
 } from '@/scm/scmAttribution';
 import { snapshotToScmStatusFiles, type ScmFileStatus, type ScmStatusFiles } from '@/scm/scmStatusFiles';
+import { deriveSessionWorkingTreeProjection } from '@/sync/domains/session/changes/derivation/deriveSessionWorkingTreeProjection';
 
 import { buildAllRepositoryChangedFiles } from '@/components/sessions/files/filesUtils';
 
@@ -20,6 +23,8 @@ type UseChangedFilesDataInput = {
     projectSessionIds: readonly string[];
     searchQuery: string;
     showAllRepositoryFiles: boolean;
+    latestTurnChangeSet?: SessionChangeSet | null;
+    sessionChangeSet?: SessionChangeSet | null;
     /**
      * Optional performance knob for repository-only surfaces (e.g. SCM sidebar commit list)
      * that never need session attribution. When false, skip attribution work entirely.
@@ -31,15 +36,43 @@ type UseChangedFilesDataInput = {
 
 export type UseChangedFilesDataResult = {
     attributionReliability: SessionAttributionReliability;
+    showTurnViewToggle: boolean;
     showSessionViewToggle: boolean;
     scmStatusFiles: ScmStatusFiles | null;
     changedFilesCount: number;
     shouldShowAllFiles: boolean;
     allRepositoryChangedFiles: ScmFileStatus[];
+    turnAttributedFiles: SessionAttributedFile[];
+    turnRepositoryOnlyFiles: ScmFileStatus[];
     sessionAttributedFiles: ReturnType<typeof buildChangedFilesAttribution>['sessionAttributedFiles'];
     repositoryOnlyFiles: ScmFileStatus[];
     suppressedInferredCount: number;
 };
+
+type ScopedProjectionResult = Readonly<{
+    attributedFiles: SessionAttributedFile[];
+    repositoryOnlyFiles: ScmFileStatus[];
+    suppressedInferredCount: number;
+    hasProviderProjection: boolean;
+}>;
+
+function buildProviderBackedScope(params: Readonly<{
+    allRepositoryChangedFiles: readonly ScmFileStatus[];
+    projection: NonNullable<ReturnType<typeof deriveSessionWorkingTreeProjection>>;
+}>): ScopedProjectionResult {
+    const filesByPath = new Map(params.allRepositoryChangedFiles.map((file) => [file.fullPath, file] as const));
+    const attributedFiles = params.projection.matchedFiles
+        .map((match) => filesByPath.get(match.repositoryPath))
+        .filter((file): file is ScmFileStatus => Boolean(file))
+        .map((file) => ({ file, confidence: 'high' as const }));
+    const attributedPaths = new Set(attributedFiles.map((entry) => entry.file.fullPath));
+    return {
+        attributedFiles,
+        repositoryOnlyFiles: params.allRepositoryChangedFiles.filter((file) => !attributedPaths.has(file.fullPath)),
+        suppressedInferredCount: 0,
+        hasProviderProjection: true,
+    };
+}
 
 export function useChangedFilesData(input: UseChangedFilesDataInput): UseChangedFilesDataResult {
     const {
@@ -50,6 +83,8 @@ export function useChangedFilesData(input: UseChangedFilesDataInput): UseChanged
         projectSessionIds,
         searchQuery,
         showAllRepositoryFiles,
+        latestTurnChangeSet = null,
+        sessionChangeSet = null,
         computeAttribution = true,
     } = input;
 
@@ -88,45 +123,108 @@ export function useChangedFilesData(input: UseChangedFilesDataInput): UseChanged
         [operationLog, sessionId]
     );
 
-    const { sessionAttributedFiles, repositoryOnlyFiles, suppressedInferredCount } = React.useMemo(() => {
+    const latestTurnProjection = React.useMemo(() => {
+        return deriveSessionWorkingTreeProjection({
+            sessionChangeSet: latestTurnChangeSet,
+            snapshot: scmSnapshot,
+        });
+    }, [latestTurnChangeSet, scmSnapshot]);
+
+    const sessionProjection = React.useMemo(() => {
+        return deriveSessionWorkingTreeProjection({
+            sessionChangeSet,
+            snapshot: scmSnapshot,
+        });
+    }, [scmSnapshot, sessionChangeSet]);
+
+    const turnScope = React.useMemo<ScopedProjectionResult>(() => {
         if (!computeAttribution) {
             return {
-                sessionAttributedFiles: [],
+                attributedFiles: [],
                 repositoryOnlyFiles: allRepositoryChangedFiles,
                 suppressedInferredCount: 0,
-            } satisfies Pick<UseChangedFilesDataResult, 'sessionAttributedFiles' | 'repositoryOnlyFiles' | 'suppressedInferredCount'>;
+                hasProviderProjection: false,
+            };
         }
 
-        return buildChangedFilesAttribution({
+        if (latestTurnProjection) {
+            return buildProviderBackedScope({
+                allRepositoryChangedFiles,
+                projection: latestTurnProjection,
+            });
+        }
+
+        return {
+            attributedFiles: [],
+            repositoryOnlyFiles: allRepositoryChangedFiles,
+            suppressedInferredCount: 0,
+            hasProviderProjection: false,
+        };
+    }, [allRepositoryChangedFiles, computeAttribution, latestTurnProjection]);
+
+    const sessionScope = React.useMemo<ScopedProjectionResult>(() => {
+        if (!computeAttribution) {
+            return {
+                attributedFiles: [],
+                repositoryOnlyFiles: allRepositoryChangedFiles,
+                suppressedInferredCount: 0,
+                hasProviderProjection: false,
+            };
+        }
+
+        if (sessionProjection) {
+            return buildProviderBackedScope({
+                allRepositoryChangedFiles,
+                projection: sessionProjection,
+            });
+        }
+
+        const inferred = buildChangedFilesAttribution({
             allChangedFiles: allRepositoryChangedFiles,
             touchedPaths,
             operationLog: sessionOperationLog,
             includeInferred: includeInferredAttribution,
         });
-    }, [allRepositoryChangedFiles, computeAttribution, includeInferredAttribution, sessionOperationLog, touchedPaths]);
+        return {
+            attributedFiles: inferred.sessionAttributedFiles,
+            repositoryOnlyFiles: inferred.repositoryOnlyFiles,
+            suppressedInferredCount: inferred.suppressedInferredCount,
+            hasProviderProjection: false,
+        };
+    }, [allRepositoryChangedFiles, computeAttribution, includeInferredAttribution, sessionOperationLog, sessionProjection, touchedPaths]);
 
     const highConfidenceAttributionCount = React.useMemo(() => {
         if (!computeAttribution) return 0;
-        return sessionAttributedFiles.filter((entry) => entry.confidence === 'high').length;
-    }, [computeAttribution, sessionAttributedFiles]);
+        return sessionScope.attributedFiles.filter((entry) => entry.confidence === 'high').length;
+    }, [computeAttribution, sessionScope.attributedFiles]);
+
+    const showTurnViewToggle = React.useMemo(() => {
+        if (!computeAttribution) return false;
+        if (turnScope.attributedFiles.length > 0) return true;
+        return Boolean(latestTurnChangeSet && latestTurnChangeSet.files.length > 0);
+    }, [computeAttribution, latestTurnChangeSet, turnScope.attributedFiles.length]);
 
     const showSessionViewToggle = React.useMemo(() => {
         if (!computeAttribution) return false;
+        if (sessionScope.hasProviderProjection) return true;
         return canOfferSessionChangedFilesView({
             reliability: attributionReliability,
             highConfidenceAttributionCount,
         });
-    }, [attributionReliability, computeAttribution, highConfidenceAttributionCount]);
+    }, [attributionReliability, computeAttribution, highConfidenceAttributionCount, sessionScope.hasProviderProjection]);
 
     return {
-        attributionReliability,
+        attributionReliability: sessionScope.hasProviderProjection ? 'high' : attributionReliability,
+        showTurnViewToggle,
         showSessionViewToggle,
         scmStatusFiles,
         changedFilesCount,
         shouldShowAllFiles,
         allRepositoryChangedFiles,
-        sessionAttributedFiles,
-        repositoryOnlyFiles,
-        suppressedInferredCount,
+        turnAttributedFiles: turnScope.attributedFiles,
+        turnRepositoryOnlyFiles: turnScope.repositoryOnlyFiles,
+        sessionAttributedFiles: sessionScope.attributedFiles,
+        repositoryOnlyFiles: sessionScope.repositoryOnlyFiles,
+        suppressedInferredCount: sessionScope.suppressedInferredCount,
     };
 }

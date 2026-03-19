@@ -1,6 +1,7 @@
 import * as React from 'react';
 import renderer, { act } from 'react-test-renderer';
 import { describe, expect, it } from 'vitest';
+import type { SessionChangeSet } from '@happier-dev/protocol';
 
 import type { ScmWorkingSnapshot } from '@/sync/domains/state/storageTypes';
 
@@ -214,6 +215,114 @@ describe('useChangedFilesData', () => {
         expect(result.showSessionViewToggle).toBe(true);
         expect(result.sessionAttributedFiles).toHaveLength(1);
         expect(result.sessionAttributedFiles[0]?.confidence).toBe('high');
+        act(() => {
+            root!.unmount();
+        });
+    });
+
+    it('prefers provider-backed session change sets over inferred attribution', () => {
+        let latest: UseChangedFilesDataResult | null = null;
+
+        const sessionChangeSet: SessionChangeSet = {
+            sessionId: 's1',
+            turns: [],
+            files: [{
+                filePath: 'src/a.ts',
+                changeKind: 'modified',
+                oldText: 'a\n',
+                newText: 'b\n',
+                source: 'provider_native',
+                confidence: 'exact',
+                provider: 'codex',
+                turns: ['turn_1'],
+            }],
+            rolledBackTurnIds: [],
+            confidenceSummary: {
+                source: 'provider_native',
+                confidence: 'exact',
+            },
+        };
+
+        function Test() {
+            latest = useChangedFilesData({
+                sessionId: 's1',
+                scmSnapshot: makeSnapshot(),
+                touchedPaths: [],
+                operationLog: [],
+                projectSessionIds: ['s1', 's2'],
+                searchQuery: '',
+                showAllRepositoryFiles: false,
+                sessionChangeSet,
+            });
+            return null;
+        }
+
+        let root: renderer.ReactTestRenderer;
+        act(() => {
+            root = renderer.create(<Test />);
+        });
+
+        expect(latest).not.toBeNull();
+        if (!latest) throw new Error('Expected hook result');
+        const result: UseChangedFilesDataResult = latest;
+        expect(result.sessionAttributedFiles).toHaveLength(1);
+        expect(result.sessionAttributedFiles[0]?.confidence).toBe('high');
+        expect(result.repositoryOnlyFiles).toHaveLength(0);
+        expect(result.showSessionViewToggle).toBe(true);
+        act(() => {
+            root!.unmount();
+        });
+    });
+
+    it('derives a latest-turn scope from provider-backed turn change sets', () => {
+        let latest: UseChangedFilesDataResult | null = null;
+
+        const latestTurnChangeSet: SessionChangeSet = {
+            sessionId: 's1',
+            turns: [],
+            files: [{
+                filePath: 'src/a.ts',
+                changeKind: 'modified',
+                oldText: 'b\n',
+                newText: 'c\n',
+                source: 'provider_native',
+                confidence: 'exact',
+                provider: 'codex',
+                turns: ['turn_2'],
+            }],
+            rolledBackTurnIds: [],
+            confidenceSummary: {
+                source: 'provider_native',
+                confidence: 'exact',
+            },
+        };
+
+        function Test() {
+            latest = useChangedFilesData({
+                sessionId: 's1',
+                scmSnapshot: makeSnapshot(),
+                touchedPaths: [],
+                operationLog: [],
+                projectSessionIds: ['s1', 's2'],
+                searchQuery: '',
+                showAllRepositoryFiles: false,
+                latestTurnChangeSet,
+            });
+            return null;
+        }
+
+        let root: renderer.ReactTestRenderer;
+        act(() => {
+            root = renderer.create(<Test />);
+        });
+
+        expect(latest).not.toBeNull();
+        if (!latest) throw new Error('Expected hook result');
+        const result: UseChangedFilesDataResult = latest;
+        expect(result.showTurnViewToggle).toBe(true);
+        expect(result.turnAttributedFiles).toHaveLength(1);
+        expect(result.turnAttributedFiles[0]?.confidence).toBe('high');
+        expect(result.turnRepositoryOnlyFiles).toHaveLength(0);
         act(() => {
             root!.unmount();
         });
