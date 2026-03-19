@@ -135,7 +135,7 @@ export class ClaudeRemoteSubagentFileCollector {
       // Execution runs and Claude agent teams both surface sub-agent transcripts as JSONL files.
       // - `Task` tool results often include `output_file`
       // - `Agent` (agent-teams) tool results typically do not, so we resolve by agent_id + session_id
-      if (toolName !== 'Task' && toolName !== 'Agent') continue;
+      if (!toolName || !isGenericSubAgentToolName(toolName)) continue;
 
       const toolResultText = coerceToolResultText(
         toolUseResult !== undefined ? { content: (item as any).content, tool_use_result: toolUseResult } : (item as any).content,
@@ -344,3 +344,4 @@ export class ClaudeRemoteSubagentFileCollector {
     }
   }
 }
+import { isGenericSubAgentToolName } from '@happier-dev/protocol/tools/v2';
