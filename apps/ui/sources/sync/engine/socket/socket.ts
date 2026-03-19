@@ -117,6 +117,7 @@ export async function handleSocketUpdate(params: {
     invalidateFriendRequests: () => void;
     invalidateFeed: () => void;
     invalidateAutomations: () => void;
+    invalidateAutomationsCoalesced?: () => void;
     invalidateTodos: () => void;
     onTaskLifecycleEvent?: (sessionId: string, event: import('@/sync/engine/sessions/taskLifecycle').TaskLifecycleEvent) => void;
     log: { log: (message: string) => void };
@@ -142,6 +143,7 @@ export async function handleSocketUpdate(params: {
         invalidateFriendRequests,
         invalidateFeed,
         invalidateAutomations,
+        invalidateAutomationsCoalesced,
         invalidateTodos,
         onTaskLifecycleEvent,
         log,
@@ -171,6 +173,7 @@ export async function handleSocketUpdate(params: {
         invalidateFriendRequests,
         invalidateFeed,
         invalidateAutomations,
+        invalidateAutomationsCoalesced,
         invalidateTodos,
         onTaskLifecycleEvent,
         log,
@@ -198,6 +201,7 @@ export async function handleUpdateContainer(params: {
     invalidateFriendRequests: () => void;
     invalidateFeed: () => void;
     invalidateAutomations: () => void;
+    invalidateAutomationsCoalesced?: () => void;
     invalidateTodos: () => void;
     onTaskLifecycleEvent?: (sessionId: string, event: import('@/sync/engine/sessions/taskLifecycle').TaskLifecycleEvent) => void;
     log: { log: (message: string) => void };
@@ -223,6 +227,7 @@ export async function handleUpdateContainer(params: {
         invalidateFriendRequests,
         invalidateFeed,
         invalidateAutomations,
+        invalidateAutomationsCoalesced,
         invalidateTodos,
         onTaskLifecycleEvent,
         log,
@@ -527,6 +532,7 @@ export async function handleUpdateContainer(params: {
     } else if (applyAutomationSocketUpdate({
         updateType: updateData.body.t,
         invalidateAutomations,
+        invalidateAutomationsCoalesced,
     })) {
         // handled by automation domain
     } else if (
