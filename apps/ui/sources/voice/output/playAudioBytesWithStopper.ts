@@ -168,44 +168,41 @@ export async function playAudioBytesWithStopper(opts: {
   return await new Promise<void>((resolve, reject) => {
     let settled = false;
     let clearStopper = () => {};
+    let cleanupPromise: Promise<void> | null = null;
+    const runCleanup = () => {
+      cleanupPromise ??= cleanup();
+      return cleanupPromise;
+    };
     const safeResolve = () => {
       if (settled) return;
+      void runCleanup().catch(() => {});
       settled = true;
       clearStopper();
       resolve();
     };
     const safeReject = (error: unknown) => {
       if (settled) return;
+      void runCleanup().catch(() => {});
       settled = true;
       clearStopper();
       reject(error);
     };
 
     const stopPlayback = () => {
-      void cleanup()
-        .then(() => safeResolve())
-        .catch(() => safeResolve());
+      safeResolve();
     };
     clearStopper = opts.registerPlaybackStopper(stopPlayback);
 
     subscription = player.addListener('playbackStatusUpdate', (status: any) => {
       if (!status?.didJustFinish) return;
-      void cleanup()
-        .then(() => safeResolve())
-        .catch((error) => safeReject(error));
+      safeResolve();
     });
 
     try {
       const result = player.play();
-      Promise.resolve(result).catch((error) => {
-        void cleanup()
-          .then(() => safeReject(error))
-          .catch(() => safeReject(error));
-      });
+      Promise.resolve(result).catch((error) => safeReject(error));
     } catch (error) {
-      void cleanup()
-        .then(() => safeReject(error))
-        .catch(() => safeReject(error));
+      safeReject(error);
     }
   });
 }
