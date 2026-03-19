@@ -40,6 +40,7 @@ export function runModeSwitchEventsPhase(params: Readonly<{
                 id: mid,
                 realID: msg.id,
                 seq: typeof msg.seq === 'number' ? msg.seq : null,
+                localId: msg.localId ?? null,
                 role: 'agent',
                 createdAt: msg.createdAt,
                 event: msg.content,
