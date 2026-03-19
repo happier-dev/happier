@@ -60,7 +60,7 @@ vi.mock('@/sync/ops', () => ({
     machinePreviewEnv: vi.fn(async () => ({ supported: false })),
 }));
 
-vi.mock('@/sync/domains/settings/settings', () => ({
+vi.mock('@/sync/domains/profiles/profileCompatibility', () => ({
     getProfileEnvironmentVariables: () => ({}),
 }));
 
