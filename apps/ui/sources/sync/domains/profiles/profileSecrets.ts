@@ -1,4 +1,4 @@
-import type { AIBackendProfile } from '@/sync/domains/settings/settings';
+import type { AIBackendProfile } from '@/sync/domains/profiles/profileCompatibility';
 
 export function getRequiredSecretEnvVarName(profile: AIBackendProfile | null | undefined): string | null {
     const required = profile?.envVarRequirements ?? [];
