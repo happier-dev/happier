@@ -1,46 +1,20 @@
 import React from 'react';
 import { describe, expect, it, vi } from 'vitest';
 import renderer, { act } from 'react-test-renderer';
-import type { AIBackendProfile } from '@/sync/domains/profiles/profileCompatibility';
+import { AIBackendProfileSchema, type AIBackendProfile } from '@/sync/domains/profiles/profileCompatibility';
+import { buildBackendTargetKey } from '@happier-dev/protocol';
 import { ProfileEditForm } from './ProfileEditForm';
 
-(
-    globalThis as typeof globalThis & {
-        IS_REACT_ACT_ENVIRONMENT?: boolean;
-    }
-).IS_REACT_ACT_ENVIRONMENT = true;
-
-const capture = vi.hoisted(() => ({
-    routerPush: vi.fn(),
-    modalShow: vi.fn(),
-    previewMachinePress: null as null | (() => void),
-    reset() {
-        this.routerPush.mockReset();
-        this.modalShow.mockReset();
-        this.previewMachinePress = null;
-    },
-}));
+(globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 vi.mock('@/text', () => ({
     t: (key: string) => key,
 }));
 
-vi.mock('react-native', () => ({
-    Platform: {
-        OS: 'ios',
-        select: (spec: { ios?: unknown; default?: unknown }) => (spec && 'ios' in spec ? spec.ios : spec?.default),
-    },
-    View: 'View',
-    Text: 'Text',
-    TextInput: 'TextInput',
-    Pressable: 'Pressable',
-    AppState: { addEventListener: () => ({ remove: () => {} }) },
-    Linking: {},
-    useWindowDimensions: () => ({ height: 800, width: 400 }),
-}));
+vi.mock('react-native', async () => await import('@/dev/reactNativeStub'));
 
 vi.mock('expo-router', () => ({
-    useRouter: () => ({ push: capture.routerPush }),
+    useRouter: () => ({ push: vi.fn() }),
     useLocalSearchParams: () => ({}),
 }));
 
@@ -68,30 +42,43 @@ vi.mock('@expo/vector-icons', () => ({
 
 vi.mock('@/modal', () => ({
     Modal: {
-        show: (...args: unknown[]) => capture.modalShow(...args),
+        show: vi.fn(),
         alert: vi.fn(),
     },
 }));
 
-vi.mock('@/sync/domains/state/storage', () => ({
-    useSetting: () => ({}),
-    useSettings: () => ({}),
-    useAllMachines: () => [{ id: 'm1', metadata: { displayName: 'M1' } }],
-    useMachine: () => null,
-    useSettingMutable: (key: string) => {
-        if (key === 'favoriteMachines') return [[], vi.fn()] as const;
-        if (key === 'secrets') return [[], vi.fn()] as const;
-        if (key === 'secretBindingsByProfileId') return [{}, vi.fn()] as const;
-        return [[], vi.fn()] as const;
-    },
+vi.mock('@/hooks/server/useFeatureEnabled', () => ({
+    useFeatureEnabled: () => false,
 }));
 
-vi.mock('@/components/sessions/new/components/MachineSelector', () => ({
-    MachineSelector: () => null,
+const settingsState = {
+    acpCatalogSettingsV1: {
+        v: 2 as const,
+        backends: [
+            {
+                id: 'custom-backend',
+                name: 'custom-backend',
+                title: 'Custom Backend',
+                command: 'custom-acp',
+                args: ['serve'],
+                env: {},
+                createdAt: 1,
+                updatedAt: 1,
+            },
+        ],
+    },
+};
+
+vi.mock('@/sync/domains/state/storage', () => ({
+    useSetting: () => ({}),
+    useAllMachines: () => [],
+    useMachine: () => null,
+    useSettings: () => settingsState,
+    useSettingMutable: () => [{}, vi.fn()] as const,
 }));
 
 vi.mock('@/hooks/auth/useCLIDetection', () => ({
-    useCLIDetection: () => ({ status: 'unknown' }),
+    useCLIDetection: () => ({ status: 'unknown', login: { codex: false, customAcp: false } }),
 }));
 
 vi.mock('@/components/profiles/environmentVariables/EnvironmentVariablesList', () => ({
@@ -99,12 +86,26 @@ vi.mock('@/components/profiles/environmentVariables/EnvironmentVariablesList', (
 }));
 
 vi.mock('@/agents/hooks/useEnabledAgentIds', () => ({
-    useEnabledAgentIds: () => [],
+    useEnabledAgentIds: () => ['codex', 'customAcp'],
 }));
 
 vi.mock('@/agents/catalog/catalog', () => ({
-    AGENT_IDS: [],
-    getAgentCore: () => ({ permissions: { modeGroup: 'default' } }),
+    AGENT_IDS: ['codex', 'customAcp'],
+    DEFAULT_AGENT_ID: 'codex',
+    getAgentCore: (agentId: string) => ({
+        permissions: { modeGroup: 'codexLike' },
+        // Both targets share the same machine-login key; this is the scenario that used to save an ambiguous profile.
+        cli: { machineLoginKey: 'codex' },
+        ui: { agentPickerIconName: 'terminal-outline' },
+        sessionStorage: { direct: false },
+        displayNameKey: agentId === 'customAcp' ? 'agent.customAcp' : 'agent.codex',
+        subtitleKey: 'profiles.aiBackend.subtitle',
+    }),
+    getAgentBehavior: () => ({
+        newSession: {
+            supportsTranscriptStorageMode: () => true,
+        },
+    }),
 }));
 
 vi.mock('@/components/ui/forms/dropdown/DropdownMenu', () => ({
@@ -120,12 +121,7 @@ vi.mock('@/components/ui/lists/ItemGroup', () => ({
 }));
 
 vi.mock('@/components/ui/lists/Item', () => ({
-    Item: (props: { title?: string; onPress?: () => void }) => {
-        if (props?.title === 'profiles.previewMachine.itemTitle' && typeof props.onPress === 'function') {
-            capture.previewMachinePress = props.onPress;
-        }
-        return null;
-    },
+    Item: ({ title, onPress }: any) => React.createElement('Item', { title, onPress }),
 }));
 
 vi.mock('@/components/ui/forms/Switch', () => ({
@@ -163,7 +159,7 @@ vi.mock('@/components/secrets/requirements', () => ({
 }));
 
 function buildProfile(): AIBackendProfile {
-    return {
+    return AIBackendProfileSchema.parse({
         id: 'p1',
         name: 'P',
         environmentVariables: [],
@@ -171,46 +167,51 @@ function buildProfile(): AIBackendProfile {
         defaultPermissionModeByTargetKey: {},
         defaultPersistenceModeByAgent: {},
         defaultPersistenceModeByTargetKey: {},
-        compatibility: { claude: true, codex: true, gemini: true },
+        compatibility: { codex: true, customAcp: true },
         compatibilityByTargetKey: {
-            'agent:claude': true,
-            'agent:codex': true,
-            'agent:gemini': true,
+            [buildBackendTargetKey({ kind: 'builtInAgent', agentId: 'codex' })]: true,
+            [buildBackendTargetKey({ kind: 'builtInAgent', agentId: 'customAcp' })]: true,
         },
+        authMode: 'machineLogin',
         envVarRequirements: [],
         isBuiltIn: false,
         createdAt: 0,
         updatedAt: 0,
         version: '1.0.0',
-    };
+    });
 }
 
-describe('ProfileEditForm (native preview machine picker)', () => {
-    it('opens a picker screen instead of a modal overlay on native', async () => {
-        capture.reset();
+describe('ProfileEditForm machine-login persistence', () => {
+    it('clears machine-login persistence when multiple compatible targets share a machine-login key', async () => {
+        const saveRef = { current: null as null | (() => boolean) };
+        const onSave = vi.fn((_: AIBackendProfile) => true);
+        const legacyCustomAcpTargetKey = buildBackendTargetKey({ kind: 'builtInAgent', agentId: 'customAcp' });
+        const configuredTargetKey = buildBackendTargetKey({ kind: 'configuredAcpBackend', backendId: 'custom-backend' });
 
         await act(async () => {
             renderer.create(
                 React.createElement(ProfileEditForm, {
                     profile: buildProfile(),
                     machineId: null,
-                    onSave: () => true,
+                    onSave,
                     onCancel: vi.fn(),
+                    saveRef,
                 }),
             );
         });
 
-        expect(capture.previewMachinePress).toBeTruthy();
-
-        await act(async () => {
-            capture.previewMachinePress?.();
-        });
-
-        expect(capture.modalShow).not.toHaveBeenCalled();
-        expect(capture.routerPush).toHaveBeenCalledTimes(1);
-        expect(capture.routerPush).toHaveBeenCalledWith({
-            pathname: '/new/pick/preview-machine',
-            params: {},
-        });
+        const result = saveRef.current?.();
+        expect(result).toBe(true);
+        expect(onSave).toHaveBeenCalledTimes(1);
+        const savedProfile = onSave.mock.calls[0]?.[0] as AIBackendProfile | undefined;
+        expect(savedProfile).toEqual(expect.objectContaining({
+            authMode: undefined,
+            requiresMachineLoginTargetKey: undefined,
+        }));
+        expect(savedProfile?.compatibilityByTargetKey).toEqual(expect.objectContaining({
+            [buildBackendTargetKey({ kind: 'builtInAgent', agentId: 'codex' })]: true,
+            [configuredTargetKey]: true,
+        }));
+        expect(savedProfile?.compatibilityByTargetKey?.[legacyCustomAcpTargetKey]).toBeUndefined();
     });
 });
