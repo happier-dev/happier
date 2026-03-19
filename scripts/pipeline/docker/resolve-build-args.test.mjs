@@ -67,23 +67,19 @@ test('resolveOptionalDockerBuildArgs includes POSTHOG_API_KEY and POSTHOG_HOST w
   ]);
 });
 
-test('resolveOptionalDockerBuildArgs prefers EXPO_PUBLIC_HAPPIER_SERVER_URL over legacy aliases', () => {
-  assert.deepEqual(
-    resolveOptionalDockerBuildArgs({
-      EXPO_PUBLIC_HAPPIER_SERVER_URL: 'https://api.example',
-      EXPO_PUBLIC_HAPPY_SERVER_URL: 'https://legacy.example',
-      EXPO_PUBLIC_SERVER_URL: 'https://server.example',
-    }),
-    ['--build-arg', 'EXPO_PUBLIC_HAPPIER_SERVER_URL=https://api.example'],
-  );
+test('resolveOptionalDockerBuildArgs includes EXPO_PUBLIC_HAPPIER_SERVER_URL when set', () => {
+  assert.deepEqual(resolveOptionalDockerBuildArgs({ EXPO_PUBLIC_HAPPIER_SERVER_URL: 'https://api.happier.dev' }), [
+    '--build-arg',
+    'EXPO_PUBLIC_HAPPIER_SERVER_URL=https://api.happier.dev',
+  ]);
 });
 
-test('resolveOptionalDockerBuildArgs falls back to legacy server URL aliases when canonical env is unset', () => {
-  assert.deepEqual(
-    resolveOptionalDockerBuildArgs({
-      EXPO_PUBLIC_HAPPY_SERVER_URL: 'https://legacy.example',
-      EXPO_PUBLIC_SERVER_URL: 'https://server.example',
-    }),
-    ['--build-arg', 'EXPO_PUBLIC_HAPPIER_SERVER_URL=https://legacy.example'],
-  );
+test('resolveOptionalDockerBuildArgs maps legacy server-url aliases to EXPO_PUBLIC_HAPPIER_SERVER_URL', () => {
+  assert.deepEqual(resolveOptionalDockerBuildArgs({
+    EXPO_PUBLIC_HAPPY_SERVER_URL: 'https://legacy-happy.example.test',
+    EXPO_PUBLIC_SERVER_URL: 'https://legacy-generic.example.test',
+  }), [
+    '--build-arg',
+    'EXPO_PUBLIC_HAPPIER_SERVER_URL=https://legacy-happy.example.test',
+  ]);
 });

@@ -1,18 +1,6 @@
 // @ts-check
 
 /**
- * @param {Array<string | undefined | null>} values
- * @returns {string}
- */
-function readFirstNonEmpty(values) {
-  for (const value of values) {
-    const raw = String(value ?? '').trim();
-    if (raw) return raw;
-  }
-  return '';
-}
-
-/**
  * @param {NodeJS.ProcessEnv} env
  * @param {{ defaultSentryRelease?: string }} [opts]
  * @returns {string[]}
@@ -52,15 +40,6 @@ export function resolveOptionalDockerBuildArgs(env, opts) {
   const sentryServerCentralDsn = String(env.SENTRY_SERVER_CENTRAL_DSN ?? '').trim();
   if (sentryServerCentralDsn) {
     args.push('--build-arg', `SENTRY_SERVER_CENTRAL_DSN=${sentryServerCentralDsn}`);
-  }
-
-  const serverUrl = readFirstNonEmpty([
-    env.EXPO_PUBLIC_HAPPIER_SERVER_URL,
-    env.EXPO_PUBLIC_HAPPY_SERVER_URL,
-    env.EXPO_PUBLIC_SERVER_URL,
-  ]);
-  if (serverUrl) {
-    args.push('--build-arg', `EXPO_PUBLIC_HAPPIER_SERVER_URL=${serverUrl}`);
   }
 
   const posthogApiKey = String(env.POSTHOG_API_KEY ?? '').trim();
