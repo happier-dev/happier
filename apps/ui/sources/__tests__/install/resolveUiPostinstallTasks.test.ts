@@ -13,6 +13,7 @@ describe('resolveUiPostinstallTasks', () => {
                 'vendor-kokoro-web',
                 'vendor-pierre-diffs-worker',
                 'vendor-codemirror-webview-bundle',
+                'vendor-xterm-webview-bundle',
             ]),
         );
     });
@@ -27,6 +28,7 @@ describe('resolveUiPostinstallTasks', () => {
                 'vendor-kokoro-web',
                 'vendor-pierre-diffs-worker',
                 'vendor-codemirror-webview-bundle',
+                'vendor-xterm-webview-bundle',
             ]),
         );
     });
