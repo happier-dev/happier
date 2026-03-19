@@ -1,695 +1,296 @@
 import * as React from 'react';
 import renderer, { act } from 'react-test-renderer';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
-type TestRenderer = import('react-test-renderer').ReactTestRenderer;
-
-const filesToolbarSpy = vi.fn();
+const routerBackSpy = vi.fn();
 const routerPushSpy = vi.fn();
-let mockLocalSearchParams: Record<string, any> = {};
-let sourceControlOperationsPanelProps: any = null;
-let changedFilesListProps: any = null;
-let changedFilesReviewProps: any = null;
-let repositoryTreeListProps: any = null;
-let focusEffectHasRun = false;
-const clearCommitSelectionPathsSpy = vi.fn();
-const clearCommitSelectionPatchesSpy = vi.fn();
-const setRepositoryTreeExpandedPathsSpy = vi.fn();
-let mockScmSnapshot: any = null;
-let mockScmSnapshotError: any = null;
-let mockSessionPath: string | null = '/repo';
-let mockSessionActive = true;
-let mockShouldShowAllFiles = false;
-const invalidateFromUserAndAwaitSpy = vi.fn(async (_sessionId: string) => {});
-let sourceControlUnavailableStateProps: any = null;
+const routerReplaceSpy = vi.fn();
+let mockSessionId = 'session-1';
+let isFocused = true;
+let canGoBack = true;
 
-vi.mock('react-native', () => {
-    const platform = {
-        OS: 'node',
-        select: (value: any) => value?.[platform.OS] ?? value?.default ?? value?.web ?? value?.ios ?? value?.android,
-    };
+const openRightSpy = vi.fn();
+const closeRightSpy = vi.fn();
+const setRightTabSpy = vi.fn();
+const ensureSessionVisibleSpy = vi.fn((_sessionId: string) => Promise.resolve());
+let scopeState: any = {
+    right: { isOpen: false, activeTabId: null, tabState: {} },
+    details: null,
+};
 
+vi.mock('@react-navigation/native', () => ({
+    useIsFocused: () => isFocused,
+}));
+
+vi.mock('react-native', async (importOriginal) => {
+    const rn = await importOriginal<typeof import('react-native')>();
     return {
+        ...rn,
         View: 'View',
-        ScrollView: 'ScrollView',
-        TextInput: 'TextInput',
         ActivityIndicator: 'ActivityIndicator',
-        Pressable: 'Pressable',
-        AppState: {
-            addEventListener: vi.fn(() => ({ remove: vi.fn() })),
-        },
-        Platform: platform,
     };
 });
 
-vi.mock('react-native-unistyles', () => ({
-    useUnistyles: () => ({
-        theme: {
-            colors: {
-                surface: '#111',
-                surfaceHigh: '#222',
-                groupped: { sectionTitle: '#eee' },
-                divider: '#333',
-                text: '#eee',
-                textSecondary: '#aaa',
-                textLink: '#08f',
-                warning: '#f80',
-                input: {
-                    background: '#222',
-                    placeholder: '#666',
-                },
-            },
-            dark: false,
-        },
-    }),
-    StyleSheet: {
-        create: (value: any) => {
-            const theme = {
-                colors: {
-                    surface: '#111',
-                    surfaceHigh: '#222',
-                    groupped: { sectionTitle: '#eee' },
-                    divider: '#333',
-                    text: '#eee',
-                    textSecondary: '#aaa',
-                    textLink: '#08f',
-                    warning: '#f80',
-                    input: {
-                        background: '#222',
-                        placeholder: '#666',
-                    },
-                },
-                dark: false,
-            };
-            return typeof value === 'function' ? value(theme, {}) : value;
-        },
-    },
-}));
-
-vi.mock('@react-navigation/native', () => ({
-    useRoute: () => ({ params: { id: 'session-1' } }),
-    useFocusEffect: (cb: any) => {
-        // Run once; the real hook triggers on focus, not on every render.
-        if (focusEffectHasRun) return;
-        focusEffectHasRun = true;
-        cb();
-    },
-}));
-
 vi.mock('expo-router', () => ({
-    useRouter: () => ({ push: routerPushSpy }),
-    useLocalSearchParams: () => mockLocalSearchParams,
-}));
-
-vi.mock('@expo/vector-icons', () => ({
-    Octicons: 'Octicons',
-}));
-
-vi.mock('@/components/ui/text/Text', () => ({
-    Text: 'Text',
-    TextInput: 'TextInput',
-}));
-
-vi.mock('@/components/ui/lists/ItemList', () => ({
-    ItemList: ({ children }: any) => React.createElement('ItemList', null, children),
-}));
-
-vi.mock('@/components/ui/layout/layout', () => ({
-    layout: { maxWidth: 999 },
-}));
-
-vi.mock('@/constants/Typography', () => ({
-    Typography: {
-        default: () => ({}),
-    },
-}));
-
-vi.mock('@/text', () => ({
-    t: (key: string) => key,
-}));
-
-vi.mock('@/modal', () => ({
-    Modal: {
-        alert: vi.fn(),
-        confirm: vi.fn(async () => true),
-    },
-}));
-
-vi.mock('@/scm/scmAttribution', () => ({
-    getDefaultChangedFilesViewMode: () => 'session',
-}));
-
-vi.mock('@/components/sessions/model/useSessionMachineReachability', () => ({
-    useSessionMachineReachability: () => ({ machineReachable: true, machineOnline: true }),
-}));
-
-vi.mock('@/scm/scmStatusSync', () => ({
-    scmStatusSync: {
-        invalidateFromUser: (sessionId: string) => void invalidateFromUserAndAwaitSpy(sessionId),
-        invalidateFromUserAndAwait: invalidateFromUserAndAwaitSpy,
-        invalidateFromAutoRefresh: vi.fn(),
-    },
-}));
-
-vi.mock('@/sync/domains/input/suggestionFile', () => ({
-    searchFiles: vi.fn(async () => []),
-}));
-
-vi.mock('@/sync/domains/state/storage', () => ({
-    storage: {
-        getState: () => ({
-            sessions: {
-                'session-1': {
-                    metadata: {
-                        path: mockSessionPath,
-                    },
-                },
-            },
-            clearSessionProjectScmCommitSelectionPaths: clearCommitSelectionPathsSpy,
-            clearSessionProjectScmCommitSelectionPatches: clearCommitSelectionPatchesSpy,
-            getSessionRepositoryTreeExpandedPaths: () => [],
-            setSessionRepositoryTreeExpandedPaths: setRepositoryTreeExpandedPathsSpy,
-        }),
-    },
-    useSession: () => (mockSessionPath
-        ? ({ metadata: { path: mockSessionPath }, active: mockSessionActive } as any)
-        : null),
-    useMachine: () => null,
-    useSessionProjectScmOperationLog: () => [],
-    useSessionProjectScmInFlightOperation: () => null,
-    useSessionProjectScmSnapshot: () => mockScmSnapshot,
-    useSessionProjectScmSnapshotError: () => mockScmSnapshotError,
-    useSessionProjectScmCommitSelectionPaths: () => [],
-    useSessionProjectScmCommitSelectionPatches: () => [{ path: 'a.txt', patch: 'diff --git a/a.txt b/a.txt\n' }],
-    useSessionProjectScmTouchedPaths: () => [],
-    useSessionRepositoryTreeExpandedPaths: () => [],
-    useProjectForSession: () => ({ id: 'project-1' }),
-    useProjectSessions: () => ['session-1', 'session-2'],
-    useSetting: () => true,
-}));
-
-vi.mock('@/hooks/server/useFeatureEnabled', () => ({
-    useFeatureEnabled: () => true,
-}));
-
-vi.mock('@/hooks/session/files/useChangedFilesData', () => ({
-    useChangedFilesData: () => ({
-        attributionReliability: 'limited',
-        showSessionViewToggle: false,
-        scmStatusFiles: {
-            branch: 'main',
-            hasChanges: true,
-            totalIncluded: 0,
-            totalPending: 1,
-            files: [],
-        },
-        changedFilesCount: 1,
-        shouldShowAllFiles: mockShouldShowAllFiles,
-        allRepositoryChangedFiles: [],
-        sessionAttributedFiles: [],
-        repositoryOnlyFiles: [],
-        suppressedInferredCount: 1,
+    useLocalSearchParams: () => ({ id: mockSessionId }),
+    useRouter: () => ({
+        back: routerBackSpy,
+        push: routerPushSpy,
+        replace: routerReplaceSpy,
+    }),
+    useNavigation: () => ({
+        canGoBack: () => canGoBack,
     }),
 }));
 
-vi.mock('@/hooks/session/files/useScmCommitHistory', () => ({
-    useScmCommitHistory: () => ({
-        historyEntries: [],
-        historyLoading: false,
-        historyHasMore: false,
-        loadCommitHistory: vi.fn(async () => {}),
+vi.mock('@/components/appShell/panes/hooks/useAppPaneScope', () => ({
+    useAppPaneScope: () => ({
+        scopeId: `session:${mockSessionId}`,
+        scopeState,
+        openRight: openRightSpy,
+        closeRight: closeRightSpy,
+        setRightTab: setRightTabSpy,
+        setRightTabState: vi.fn(),
+        openDetailsTab: vi.fn(),
+        setDetailsTabState: vi.fn(),
+        pinDetailsTab: vi.fn(),
+        closeDetails: vi.fn(),
+        closeDetailsTab: vi.fn(),
+        setActiveDetailsTab: vi.fn(),
     }),
 }));
 
-vi.mock('@/hooks/session/files/useFilesScmOperations', () => ({
-    useFilesScmOperations: () => ({
-        scmOperationBusy: false,
-        scmOperationStatus: null,
-        commitPreflight: { allowed: true, message: '' },
-        pullPreflight: { allowed: true, message: '' },
-        pushPreflight: { allowed: true, message: '' },
-        runRemoteOperation: vi.fn(async () => {}),
-        createCommit: vi.fn(async () => {}),
-        createCommitFromMessage: vi.fn(async () => ({ ok: true })),
-    }),
+vi.mock('@/components/sessions/panes/SessionRightPanel', () => ({
+    SessionRightPanel: (props: any) => React.createElement('SessionRightPanel', props),
 }));
 
-vi.mock('@/hooks/session/files/useScmOperationsVisibility', () => ({
-    shouldShowScmOperationsPanel: () => true,
-}));
-
-vi.mock('@/components/sessions/files/FilesToolbar', () => ({
-    FilesToolbar: (props: any) => {
-        filesToolbarSpy(props);
-        return React.createElement('FilesToolbar', props);
+vi.mock('@/sync/sync', () => ({
+    sync: {
+        ensureSessionVisibleForMessageRoute: (sessionId: string) => ensureSessionVisibleSpy(sessionId),
     },
 }));
 
-vi.mock('@/components/sessions/files/SourceControlBranchSummary', () => ({
-    SourceControlBranchSummary: () => null,
-}));
-
-vi.mock('@/components/sessions/sourceControl/changes/ScmChangeDiscardButton', () => ({
-    ScmChangeDiscardButton: (props: any) => React.createElement('ScmChangeDiscardButton', props),
-}));
-
-vi.mock('@/components/sessions/sourceControl/changes/ScmChangeOverflowMenu', () => ({
-    ScmChangeOverflowMenu: (props: any) => React.createElement('ScmChangeOverflowMenu', props),
-}));
-
-vi.mock('@/components/sessions/files/SourceControlOperationsPanel', () => ({
-    SourceControlOperationsPanel: (props: any) => {
-        sourceControlOperationsPanelProps = props;
-        return React.createElement('SourceControlOperationsPanel', props);
+vi.mock('@/hooks/session/useHydrateSessionForRoute', () => ({
+    useHydrateSessionForRoute: (sessionId: string) => {
+        ensureSessionVisibleSpy(sessionId);
+        return true;
     },
 }));
 
-vi.mock('@/components/sessions/files/content/SearchResultsList', () => ({
-    SearchResultsList: () => null,
-}));
+let SessionFilesRouteScreen: React.ComponentType<any>;
 
-vi.mock('@/components/sessions/files/content/RepositoryTreeList', () => ({
-    RepositoryTreeList: (props: any) => {
-        repositoryTreeListProps = props;
-        return React.createElement('RepositoryTreeList', props);
-    },
-}));
+describe('/session/[id]/files', () => {
+    beforeAll(async () => {
+        SessionFilesRouteScreen = (await import('@/app/(app)/session/[id]/files')).default;
+    }, 60_000);
 
-vi.mock('@/components/sessions/files/content/ChangedFilesList', () => ({
-    ChangedFilesList: (props: any) => {
-        changedFilesListProps = props;
-        return React.createElement('ChangedFilesList', props);
-    },
-}));
-
-vi.mock('@/components/sessions/files/content/ChangedFilesReview', () => ({
-    ChangedFilesReview: (props: any) => {
-        changedFilesReviewProps = props;
-        return React.createElement('ChangedFilesReview', props);
-    },
-}));
-
-vi.mock('@/components/sessions/sourceControl/states', () => ({
-    NotSourceControlRepositoryState: () => React.createElement('NotSourceControlRepositoryState'),
-    SourceControlUnavailableState: (props: any) => {
-        sourceControlUnavailableStateProps = props;
-        return React.createElement('SourceControlUnavailableState', props);
-    },
-    SourceControlSessionInactiveState: () => React.createElement('SourceControlSessionInactiveState'),
-}));
-
-describe('FilesScreen', () => {
     beforeEach(() => {
-        filesToolbarSpy.mockClear();
+        mockSessionId = 'session-1';
+        isFocused = true;
+        canGoBack = true;
+        scopeState = {
+            right: { isOpen: false, activeTabId: null, tabState: {} },
+            details: null,
+        };
+        openRightSpy.mockClear();
+        closeRightSpy.mockClear();
+        setRightTabSpy.mockClear();
+        routerBackSpy.mockClear();
         routerPushSpy.mockClear();
-        mockLocalSearchParams = {};
-        clearCommitSelectionPathsSpy.mockClear();
-        clearCommitSelectionPatchesSpy.mockClear();
-        setRepositoryTreeExpandedPathsSpy.mockClear();
-        sourceControlOperationsPanelProps = null;
-        changedFilesListProps = null;
-        changedFilesReviewProps = null;
-        repositoryTreeListProps = null;
-        focusEffectHasRun = false;
-        mockSessionPath = '/repo';
-        mockSessionActive = true;
-        invalidateFromUserAndAwaitSpy.mockClear();
-        mockScmSnapshot = {
-            projectKey: 'project-1',
-            fetchedAt: 0,
-            repo: { isRepo: true, rootPath: '/repo' },
-            branch: { head: 'main', upstream: null, ahead: 0, behind: 0, detached: false },
-            hasConflicts: false,
-            entries: [],
-            totals: {
-                includedFiles: 0,
-                pendingFiles: 0,
-                untrackedFiles: 0,
-                includedAdded: 0,
-                includedRemoved: 0,
-                pendingAdded: 0,
-                pendingRemoved: 0,
-            },
-            capabilities: {},
+        routerReplaceSpy.mockClear();
+        ensureSessionVisibleSpy.mockClear();
+        vi.clearAllMocks();
+    });
+
+    async function renderScreen() {
+        let tree: renderer.ReactTestRenderer | null = null;
+        await act(async () => {
+            tree = renderer.create(<SessionFilesRouteScreen />);
+            await Promise.resolve();
+        });
+        return tree!;
+    }
+
+    it('renders the shared SessionRightPanel surface fullscreen and opens the right pane state', async () => {
+        const tree = await renderScreen();
+
+        const panel = tree!.root.findByType('SessionRightPanel' as any);
+        expect(panel.props.sessionId).toBe('session-1');
+        expect(panel.props.scopeId).toBe('session:session-1');
+        expect(openRightSpy).toHaveBeenCalledWith({ tabId: 'files' });
+        expect(setRightTabSpy).toHaveBeenCalledWith('files');
+    });
+
+    it('forces the files tab even when another right-pane tab was remembered', async () => {
+        scopeState = {
+            right: { isOpen: true, activeTabId: 'terminal', tabState: {} },
+            details: null,
         };
-        mockScmSnapshotError = null;
-        sourceControlUnavailableStateProps = null;
-        mockShouldShowAllFiles = false;
+
+        await renderScreen();
+
+        expect(openRightSpy).toHaveBeenCalledWith({ tabId: 'files' });
+        expect(setRightTabSpy).toHaveBeenCalledWith('files');
     });
 
-    it('falls back to repository mode when session view is not available', async () => {
-        const Screen = (await import('@/app/(app)/session/[id]/files')).default;
+    it('hydrates the session for deep links by requesting session visibility', async () => {
+        await renderScreen();
 
-        await act(async () => {
-            renderer.create(<Screen />);
-        });
-        await act(async () => {});
-
-        expect(filesToolbarSpy).toHaveBeenCalled();
-        const seenModes = filesToolbarSpy.mock.calls.map((call) => call[0]?.changedFilesViewMode);
-        expect(seenModes).toContain('session');
-        expect(seenModes.at(-1)).toBe('repository');
-        expect(filesToolbarSpy.mock.calls.at(-1)?.[0]?.showSessionViewToggle).toBe(false);
+        expect(ensureSessionVisibleSpy).toHaveBeenCalledWith('session-1');
     });
 
-    it('navigates to commit screen without pre-encoding sha', async () => {
-        const Screen = (await import('@/app/(app)/session/[id]/files')).default;
+    it('closes by navigating back and closing the right-pane state', async () => {
+        const tree = await renderScreen();
 
+        const panel = tree!.root.findByType('SessionRightPanel' as any);
         await act(async () => {
-            renderer.create(<Screen />);
+            panel.props.onRequestClose();
         });
-        await act(async () => {});
 
-        const toolbarProps = filesToolbarSpy.mock.calls.at(-1)?.[0];
-        expect(typeof toolbarProps?.onToggleScmPanel).toBe('function');
+        expect(closeRightSpy).toHaveBeenCalled();
+        expect(routerBackSpy).toHaveBeenCalled();
+    });
+
+    it('falls back to the session route when closed without back history', async () => {
+        canGoBack = false;
+        const tree = await renderScreen();
+
+        const panel = tree!.root.findByType('SessionRightPanel' as any);
         await act(async () => {
-            toolbarProps.onToggleScmPanel();
+            panel.props.onRequestClose();
         });
-        await act(async () => {});
 
-        expect(sourceControlOperationsPanelProps).toBeTruthy();
+        expect(closeRightSpy).toHaveBeenCalled();
+        expect(routerBackSpy).not.toHaveBeenCalled();
+        expect(routerReplaceSpy).toHaveBeenCalledWith('/session/session-1');
+    });
 
-        sourceControlOperationsPanelProps.onOpenCommit('\n32a2a2aba05750117ad36d9386b396fdd5416a2e');
+    it('navigates to details when a details tab is opened from the shared surface', async () => {
+        scopeState = {
+            right: { isOpen: true, activeTabId: 'git', tabState: {} },
+            details: {
+                isOpen: true,
+                tabs: [{ key: 'file:README.md', kind: 'file', resource: { kind: 'file', path: 'README.md' } }],
+                activeTabKey: 'file:README.md',
+                tabState: {},
+            },
+        };
+        await renderScreen();
 
         expect(routerPushSpy).toHaveBeenCalledWith({
-            pathname: '/session/[id]/commit',
-            params: {
-                id: 'session-1',
-                sha: '32a2a2aba05750117ad36d9386b396fdd5416a2e',
-            },
+            pathname: '/session/[id]/details',
+            params: { id: 'session-1', details: 'file', path: 'README.md' },
         });
     });
 
-    it('applies deep-link params to open changed-files review mode', async () => {
-        mockLocalSearchParams = {
-            presentation: 'review',
-            focusPath: 'src/example.ts',
+    it('does not navigate to details when tabs exist but the details pane is closed', async () => {
+        scopeState = {
+            right: { isOpen: true, activeTabId: 'git', tabState: {} },
+            details: { isOpen: false, tabs: [{ key: 'file:README.md' }], activeTabKey: 'file:README.md', tabState: {} },
+        };
+        await renderScreen();
+
+        expect(routerPushSpy).not.toHaveBeenCalled();
+    });
+
+    it('does not navigate to details when the route is not focused', async () => {
+        isFocused = false;
+        scopeState = {
+            right: { isOpen: true, activeTabId: 'git', tabState: {} },
+            details: { isOpen: true, tabs: [{ key: 'file:README.md' }], activeTabKey: 'file:README.md', tabState: {} },
+        };
+        await renderScreen();
+
+        expect(routerPushSpy).not.toHaveBeenCalled();
+    });
+
+    it('encodes commit details params from commitHash resources', async () => {
+        scopeState = {
+            right: { isOpen: true, activeTabId: 'git', tabState: {} },
+            details: {
+                isOpen: true,
+                tabs: [{ key: 'commit:abc1234', kind: 'commit', resource: { kind: 'commit', commitHash: 'abc1234' } }],
+                activeTabKey: 'commit:abc1234',
+                tabState: {},
+            },
         };
 
-        const Screen = (await import('@/app/(app)/session/[id]/files')).default;
-
-        await act(async () => {
-            renderer.create(<Screen />);
-        });
-        await act(async () => {});
-
-        // Toolbar reflects the deep-linked presentation.
-        const lastToolbarProps = filesToolbarSpy.mock.calls.at(-1)?.[0];
-        expect(lastToolbarProps?.changedFilesPresentation).toBe('review');
-
-        // Review renderer receives the focus path so it can scroll + highlight.
-        expect(changedFilesReviewProps).toBeTruthy();
-        expect(changedFilesReviewProps.focusPath).toBe('src/example.ts');
-    });
-
-    it('sanitizes whitespace-containing commit refs when navigating to the commit screen', async () => {
-        const Screen = (await import('@/app/(app)/session/[id]/files')).default;
-
-        await act(async () => {
-            renderer.create(<Screen />);
-        });
-        await act(async () => {});
-
-        const toolbarProps = filesToolbarSpy.mock.calls.at(-1)?.[0];
-        expect(typeof toolbarProps?.onToggleScmPanel).toBe('function');
-        await act(async () => {
-            toolbarProps.onToggleScmPanel();
-        });
-        await act(async () => {});
-
-        expect(sourceControlOperationsPanelProps).toBeTruthy();
-
-        // Defensive: Some UIs may pass "oneline" strings by accident; only the first token is a valid ref.
-        sourceControlOperationsPanelProps.onOpenCommit('0338a0f chore: stage b.txt');
+        await renderScreen();
 
         expect(routerPushSpy).toHaveBeenCalledWith({
-            pathname: '/session/[id]/commit',
-            params: {
-                id: 'session-1',
-                sha: '0338a0f',
-            },
+            pathname: '/session/[id]/details',
+            params: { id: 'session-1', details: 'commit', sha: 'abc1234' },
         });
     });
 
-    it('navigates to file screen without pre-encoding path', async () => {
-        const Screen = (await import('@/app/(app)/session/[id]/files')).default;
+    it('can navigate again when the details pane is reopened with the same active tab', async () => {
+        scopeState = {
+            right: { isOpen: true, activeTabId: 'git', tabState: {} },
+            details: { isOpen: true, tabs: [{ key: 'scmReview:working' }], activeTabKey: 'scmReview:working', tabState: {} },
+        };
+        let tree = await renderScreen();
 
-        await act(async () => {
-            renderer.create(<Screen />);
-        });
-        await act(async () => {});
+        expect(routerPushSpy).toHaveBeenCalledTimes(1);
 
-        expect(changedFilesReviewProps).toBeTruthy();
-
-        changedFilesReviewProps.onFilePress({
-            fileName: 'hello world.txt',
-            fullPath: 'dir/hello world.txt',
-            status: 'modified',
-        });
-
-        expect(routerPushSpy).toHaveBeenCalledWith({
-            pathname: '/session/[id]/file',
-            params: {
-                id: 'session-1',
-                path: 'dir/hello world.txt',
-            },
-        });
-    });
-
-    it('defaults to review mode for changed files', async () => {
-        const Screen = (await import('@/app/(app)/session/[id]/files')).default;
-
-        await act(async () => {
-            renderer.create(<Screen />);
-        });
-        await act(async () => {});
-
-        expect(changedFilesReviewProps).toBeTruthy();
-    });
-
-    it('shows commit selection state when only patch selection exists and clears both stores', async () => {
-        const Screen = (await import('@/app/(app)/session/[id]/files')).default;
-
-        await act(async () => {
-            renderer.create(<Screen />);
-        });
-        await act(async () => {});
-
-        const toolbarProps = filesToolbarSpy.mock.calls.at(-1)?.[0];
-        expect(typeof toolbarProps?.onToggleScmPanel).toBe('function');
-        await act(async () => {
-            toolbarProps.onToggleScmPanel();
-        });
-        await act(async () => {});
-
-        expect(sourceControlOperationsPanelProps).toBeTruthy();
-        expect(sourceControlOperationsPanelProps.commitSelectionCount).toBe(1);
-        expect(typeof sourceControlOperationsPanelProps.onClearCommitSelection).toBe('function');
-
-        sourceControlOperationsPanelProps.onClearCommitSelection();
-        expect(clearCommitSelectionPathsSpy).toHaveBeenCalledWith('session-1');
-        expect(clearCommitSelectionPatchesSpy).toHaveBeenCalledWith('session-1');
-    });
-
-    it('renders a source-control unavailable state when snapshot refresh errors and no snapshot is available', async () => {
-        mockScmSnapshot = null;
-        mockScmSnapshotError = { message: 'Session RPC unavailable', at: 1 };
-
-        const Screen = (await import('@/app/(app)/session/[id]/files')).default;
-
-        let tree: TestRenderer;
-        await act(async () => {
-            tree = renderer.create(<Screen />);
-        });
-        await act(async () => {});
-
-        expect(tree!.root.findAllByType('SourceControlUnavailableState').length).toBe(1);
-    });
-
-    it('renders a session-inactive state when session is inactive and snapshot fetch fails', async () => {
-        mockScmSnapshot = null;
-        mockScmSnapshotError = { message: 'RPC method not available', at: 1 };
-        mockSessionActive = false;
-
-        const Screen = (await import('@/app/(app)/session/[id]/files')).default;
-
-        let tree: TestRenderer;
-        await act(async () => {
-            tree = renderer.create(<Screen />);
-        });
-        await act(async () => {});
-
-        expect(tree!.root.findAllByType('SourceControlSessionInactiveState').length).toBe(1);
-    });
-
-    it('renders a cli-update hint when scm is unsupported (method not available)', async () => {
-        const { SCM_OPERATION_ERROR_CODES } = await import('@happier-dev/protocol');
-        mockScmSnapshot = null;
-        mockScmSnapshotError = {
-            message: 'RPC method not available',
-            at: 1,
-            errorCode: SCM_OPERATION_ERROR_CODES.FEATURE_UNSUPPORTED,
+        // This route becomes unfocused while the fullscreen details route is on top.
+        // Ensure we still reset the "did push" latch so the next open can navigate again.
+        isFocused = false;
+        scopeState = {
+            ...scopeState,
+            details: { ...scopeState.details, isOpen: false },
         };
 
-        const Screen = (await import('@/app/(app)/session/[id]/files')).default;
+        await act(async () => {
+            tree!.update(<SessionFilesRouteScreen />);
+            await Promise.resolve();
+        });
+
+        isFocused = true;
+        scopeState = {
+            ...scopeState,
+            details: { ...scopeState.details, isOpen: true },
+        };
 
         await act(async () => {
-            renderer.create(<Screen />);
+            tree!.update(<SessionFilesRouteScreen />);
+            await Promise.resolve();
         });
-        await act(async () => {});
 
-        expect(sourceControlUnavailableStateProps?.details).toBe('deps.installNotSupported');
-        expect(typeof sourceControlUnavailableStateProps?.onRetry).toBe('function');
+        expect(routerPushSpy).toHaveBeenCalledTimes(2);
     });
 
-    it('refreshes scm snapshot once session path becomes available after first render', async () => {
-        mockSessionPath = null;
-
-        const Screen = (await import('@/app/(app)/session/[id]/files')).default;
-
-        let tree: TestRenderer;
-        await act(async () => {
-            tree = renderer.create(<Screen />);
-        });
-        await act(async () => {});
-
-        expect(invalidateFromUserAndAwaitSpy).toHaveBeenCalledTimes(0);
-
-        mockSessionPath = '/repo';
-        await act(async () => {
-            tree!.update(<Screen />);
-        });
-        await act(async () => {});
-
-        expect(invalidateFromUserAndAwaitSpy).toHaveBeenCalledTimes(1);
-    });
-
-    it('renders repository tree in all-files view when search query is empty', async () => {
-        const Screen = (await import('@/app/(app)/session/[id]/files')).default;
-
-        mockShouldShowAllFiles = true;
-
-        let tree: TestRenderer;
-        await act(async () => {
-            tree = renderer.create(<Screen />);
-        });
-        await act(async () => {});
-
-        // Switch to "All repository files" (search query stays empty).
-        const toolbarProps = filesToolbarSpy.mock.calls.at(-1)?.[0];
-        expect(toolbarProps).toBeTruthy();
-        await act(async () => {
-            toolbarProps.onShowAllRepositoryFiles();
-        });
-        await act(async () => {
-            tree!.update(<Screen />);
-        });
-        await act(async () => {});
-
-        expect(repositoryTreeListProps).toBeTruthy();
-        expect(repositoryTreeListProps.sessionId).toBe('session-1');
-    });
-
-    it('renders a combined trailing actions row with discard + overflow and reveal expands the tree', async () => {
-        mockScmSnapshot = {
-            ...mockScmSnapshot,
-            capabilities: {
-                ...(mockScmSnapshot?.capabilities ?? {}),
-                writeDiscard: true,
+    it('pushes the details route again when the session id changes even if the details key is unchanged', async () => {
+        scopeState = {
+            right: { isOpen: true, activeTabId: 'git', tabState: {} },
+            details: {
+                isOpen: true,
+                activeTabKey: 'file:README.md',
+                tabs: [{ key: 'file:README.md', kind: 'file', resource: { kind: 'file', path: 'README.md' } }],
+                tabState: {},
             },
         };
 
-        const Screen = (await import('@/app/(app)/session/[id]/files')).default;
+        const tree = await renderScreen();
+
+        expect(routerPushSpy).toHaveBeenCalledTimes(1);
+        expect(routerPushSpy).toHaveBeenLastCalledWith({
+            pathname: '/session/[id]/details',
+            params: { id: 'session-1', details: 'file', path: 'README.md' },
+        });
+
+        mockSessionId = 'session-2';
 
         await act(async () => {
-            renderer.create(<Screen />);
-        });
-        await act(async () => {});
-
-        expect(changedFilesReviewProps).toBeTruthy();
-        expect(typeof changedFilesReviewProps.renderFileTrailingActions).toBe('function');
-
-        const trailing = changedFilesReviewProps.renderFileTrailingActions({
-            fileName: 'index.ts',
-            filePath: 'apps/ui/sources',
-            fullPath: 'apps/ui/sources/index.ts',
-            status: 'modified',
-            linesAdded: 1,
-            linesRemoved: 0,
+            tree.update(<SessionFilesRouteScreen />);
+            await Promise.resolve();
         });
 
-        // react-test-renderer types can resolve incorrectly under some TS/vitest module settings in this repo;
-        // keep this local renderer instance untyped to avoid blocking typecheck.
-        let tree: any = null;
-        await act(async () => {
-            tree = renderer.create(trailing);
+        expect(routerPushSpy).toHaveBeenCalledTimes(2);
+        expect(routerPushSpy).toHaveBeenLastCalledWith({
+            pathname: '/session/[id]/details',
+            params: { id: 'session-2', details: 'file', path: 'README.md' },
         });
-        if (!tree) throw new Error('Expected renderer tree to be set');
-        expect(tree.root.findAllByType('ScmChangeDiscardButton').length).toBe(1);
-
-        const overflow = tree.root.findByType('ScmChangeOverflowMenu');
-        expect(typeof overflow.props.onRevealInTree).toBe('function');
-
-        await act(async () => {
-            overflow.props.onRevealInTree();
-        });
-
-        expect(setRepositoryTreeExpandedPathsSpy).toHaveBeenCalledWith('session-1', ['apps', 'apps/ui', 'apps/ui/sources']);
-    });
-
-    it('renders the operations panel inside the scroll container so the screen can scroll naturally', async () => {
-        const Screen = (await import('@/app/(app)/session/[id]/files')).default;
-
-        let tree: TestRenderer;
-        await act(async () => {
-            tree = renderer.create(<Screen />);
-        });
-        await act(async () => {});
-
-        const toolbarProps = filesToolbarSpy.mock.calls.at(-1)?.[0];
-        expect(typeof toolbarProps?.onToggleScmPanel).toBe('function');
-        await act(async () => {
-            toolbarProps.onToggleScmPanel();
-        });
-        await act(async () => {});
-
-        const list = tree!.root.findByType('ItemList');
-        expect(list.findAllByType('SourceControlOperationsPanel').length).toBe(1);
-    });
-
-    it('sets minHeight: 0 on web so the screen can scroll within flex layouts', async () => {
-        vi.resetModules();
-
-        const rn = await import('react-native');
-        const originalPlatformOs = rn.Platform.OS;
-        (rn.Platform as unknown as { OS: string }).OS = 'web';
-
-        const Screen = (await import('@/app/(app)/session/[id]/files')).default;
-
-        try {
-            let tree: TestRenderer;
-            await act(async () => {
-                tree = renderer.create(<Screen />);
-            });
-            await act(async () => {});
-
-            const viewNodes = tree!.root.findAllByType('View');
-            expect(viewNodes.length).toBeGreaterThan(0);
-            const rootView = viewNodes.find((node) => {
-                const styleProp = node.props?.style;
-                const entries = Array.isArray(styleProp) ? styleProp : [styleProp];
-                return entries.some((entry: any) => entry?.maxWidth === 999);
-            });
-            expect(rootView).toBeTruthy();
-
-            const rootStyleProp = rootView!.props?.style;
-            const rootEntries = Array.isArray(rootStyleProp) ? rootStyleProp : [rootStyleProp];
-            expect(rootEntries.some((entry: any) => entry?.minHeight === 0)).toBe(true);
-        } finally {
-            (rn.Platform as unknown as { OS: string }).OS = originalPlatformOs;
-            vi.resetModules();
-        }
     });
 });
