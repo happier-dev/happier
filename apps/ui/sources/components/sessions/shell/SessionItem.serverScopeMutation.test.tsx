@@ -72,6 +72,7 @@ vi.mock('@/sync/domains/state/storage', () => ({
     useHasUnreadMessages: () => false,
     useProfile: () => ({ id: 'u1' }),
     useSession: () => null,
+    useSessionListMeaningfulActivityAt: () => null,
 }));
 
 const modalAlertSpy = vi.fn();
