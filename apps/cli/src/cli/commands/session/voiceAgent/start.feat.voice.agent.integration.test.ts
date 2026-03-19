@@ -105,10 +105,10 @@ describe('happier session voice-agent start (integration)', () => {
         const decodedParams = decodeBase64(String(data.params ?? ''), 'base64');
         const decrypted = decrypt(dek, 'dataKey', decodedParams) as any;
         expect(decrypted.intent).toBe('voice_agent');
-        expect(typeof decrypted.backendId).toBe('string');
+        expect(decrypted.backendTarget).toEqual({ kind: 'builtInAgent', agentId: 'claude' });
         expect(decrypted.runClass).toBe('long_lived');
         expect(decrypted.ioMode).toBe('streaming');
-        expect(decrypted.intentInput?.backendId).toBe(decrypted.backendId);
+        expect(decrypted.intentInput?.backendTargetKey).toBe('agent:claude');
 
         callIdx += 1;
         const resultPayload = { runId: `run_${callIdx}`, callId: `call_${callIdx}`, sidechainId: `call_${callIdx}` };
@@ -181,7 +181,7 @@ describe('happier session voice-agent start (integration)', () => {
       expect(parsed.kind).toBe('session_voice_agent_start');
       expect(parsed.data?.sessionId).toBe('sess_integration_voice_agent_start_123');
       expect(parsed.data?.results?.length).toBe(1);
-      expect(parsed.data?.results?.[0]?.key).toBe('claude');
+      expect(parsed.data?.results?.[0]?.key).toBe('agent:claude');
     } finally {
       logSpy.mockRestore();
     }
