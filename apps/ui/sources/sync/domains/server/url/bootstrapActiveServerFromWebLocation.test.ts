@@ -51,4 +51,18 @@ describe('bootstrapActiveServerFromWebLocation', () => {
         expect(getActiveServerUrl()).toBe('http://localhost:57010');
         expect(result?.serverUrl).toBe('http://localhost:57010');
     });
+
+    it('updates an equivalent loopback server profile url when the query string requests a different loopback host', async () => {
+        process.env.EXPO_PUBLIC_HAPPY_STORAGE_SCOPE = randomScope();
+        process.env.EXPO_PUBLIC_HAPPY_SERVER_URL = 'http://[::1]:57010';
+
+        stubWebLocation('http://happier-github-auth-e2ee.localhost:19081/?server=http%3A%2F%2F127.0.0.1%3A57010');
+
+        const { bootstrapActiveServerFromWebLocation } = await importFreshBootstrap();
+        const result = bootstrapActiveServerFromWebLocation({ scope: 'device' });
+
+        const { getActiveServerUrl } = await importFreshServerProfiles();
+        expect(getActiveServerUrl()).toBe('http://127.0.0.1:57010');
+        expect(result?.serverUrl).toBe('http://127.0.0.1:57010');
+    });
 });
