@@ -12,6 +12,7 @@ vi.mock('react-native', () => ({
         OS: 'web',
         select: (values: any) => values?.default ?? values?.web ?? values?.ios ?? values?.android,
     },
+    AppState: { currentState: 'active', addEventListener: vi.fn(() => ({ remove: vi.fn() })) },
 }));
 
 vi.mock('@expo/vector-icons', () => ({

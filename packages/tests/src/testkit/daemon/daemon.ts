@@ -6,7 +6,7 @@ import { spawnSync } from 'node:child_process';
 
 import { repoRootDir } from '../paths';
 import { spawnLoggedProcess, type SpawnedProcess } from '../process/spawnProcess';
-import { ensureCliDistSnapshotEntrypoint } from '../process/cliDist';
+import { resolveCliTestLaunchSpec } from '../process/cliLaunchSpec';
 import { terminateProcessTreeByPid } from '../process/processTree';
 
 export type DaemonState = {
@@ -306,7 +306,6 @@ export async function stopDaemonFromHomeDir(
   if (!state) return;
 
   const inspector = opts?.inspectProcess ?? inspectProcess;
-  const hardKill = opts?.hardKill ?? true;
 
   const controlToken = typeof state.controlToken === 'string' ? state.controlToken.trim() : '';
   const headers: Record<string, string> = {
@@ -333,6 +332,7 @@ export async function stopDaemonFromHomeDir(
       daemonPidAlive = false;
     }
 
+    const hardKill = opts?.hardKill ?? true;
     if (daemonPidAlive && hardKill) {
       await hardKillDaemonPid({ phase: 'unreachable', state, inspector });
     }
@@ -346,6 +346,7 @@ export async function stopDaemonFromHomeDir(
   const exited = await waitForPidExit(state.pid, gracefulTimeoutMs);
   if (exited) return;
 
+  const hardKill = opts?.hardKill ?? true;
   if (!hardKill) return;
 
   // Best-effort hard stop to avoid leaking daemons across test runs.
@@ -380,23 +381,40 @@ export function sanitizeDaemonEnvForSpawn(env: NodeJS.ProcessEnv): NodeJS.Proces
   return sanitized;
 }
 
+function resolveDaemonSubprocessEntrypointEnv(cliLaunchSpec: Readonly<{ command: string; args: string[] }>): NodeJS.ProcessEnv {
+  if (cliLaunchSpec.command !== process.execPath) return {};
+  if (cliLaunchSpec.args.length !== 1) return {};
+  const entrypoint = cliLaunchSpec.args[0]?.trim() ?? '';
+  if (!entrypoint.endsWith('.mjs')) return {};
+  return {
+    HAPPIER_CLI_SUBPROCESS_RUNTIME: 'node',
+    HAPPIER_CLI_SUBPROCESS_ENTRYPOINT: entrypoint,
+  };
+}
+
 export async function startTestDaemon(params: {
   testDir: string;
   happyHomeDir: string;
   env: NodeJS.ProcessEnv;
+  startupTimeoutMs?: number;
 }): Promise<StartedDaemon> {
-  const snapshotDir = resolve(params.testDir, 'cli-dist');
-  const cliDistEntrypoint = await ensureCliDistSnapshotEntrypoint(
+  const cliLaunchSpec = await resolveCliTestLaunchSpec(
     { testDir: params.testDir, env: params.env },
-    { snapshotDir },
+    {
+      snapshotDir: resolve(params.testDir, 'cli-dist'),
+      skipDistIntegrityCheck: true,
+      skipSourceFreshnessCheck: true,
+    },
   );
 
   const proc = spawnLoggedProcess({
-    command: process.execPath,
-    args: [cliDistEntrypoint, 'daemon', 'start-sync'],
-    cwd: repoRootDir(),
+    command: cliLaunchSpec.command,
+    args: [...cliLaunchSpec.args, 'daemon', 'start-sync'],
+    cwd: cliLaunchSpec.cwd ?? repoRootDir(),
     env: {
       ...sanitizeDaemonEnvForSpawn(params.env),
+      ...(cliLaunchSpec.env ?? {}),
+      ...resolveDaemonSubprocessEntrypointEnv(cliLaunchSpec),
       CI: '1',
       HAPPIER_HOME_DIR: params.happyHomeDir,
     },
@@ -407,7 +425,7 @@ export async function startTestDaemon(params: {
   let state: DaemonState;
   try {
     state = await Promise.race([
-      waitForDaemonState(params.happyHomeDir, { timeoutMs: 45_000 }),
+      waitForDaemonState(params.happyHomeDir, { timeoutMs: params.startupTimeoutMs ?? 45_000 }),
       new Promise<never>((_, reject) => {
         proc.child.once('exit', (code, signal) => {
           const detail = signal ? `signal=${String(signal)}` : `code=${String(code)}`;
