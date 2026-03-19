@@ -15,6 +15,7 @@ import {
     type CapabilitiesInvokeResponse,
 } from '../api/capabilities/capabilitiesProtocol';
 import { machineRpcWithServerScope } from '@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc';
+import { ServerFetchAbortedForServerSwitchError } from '@/sync/http/client';
 
 export type {
     CapabilitiesDescribeResponse,
@@ -51,7 +52,7 @@ export async function machineCapabilitiesDescribe(
 
 export type MachineCapabilitiesDetectResult =
     | { supported: true; response: CapabilitiesDetectResponse }
-    | { supported: false; reason: 'not-supported' | 'error' };
+    | { supported: false; reason: 'not-supported' | 'error' | 'server-switch-abort' };
 
 export async function machineCapabilitiesDetect(
     machineId: string,
@@ -74,12 +75,17 @@ export async function machineCapabilitiesDetect(
         ]);
 
         if (isRpcMethodNotFoundResult(result)) return { supported: false, reason: 'not-supported' };
-        if (isPlainObject(result) && typeof result.error === 'string') return { supported: false, reason: 'error' };
+        if (isPlainObject(result) && typeof result.error === 'string') {
+            return { supported: false, reason: 'error' };
+        }
 
         const parsed = parseCapabilitiesDetectResponse(result);
         if (!parsed) return { supported: false, reason: 'error' };
         return { supported: true, response: parsed };
-    } catch {
+    } catch (error) {
+        if (error instanceof ServerFetchAbortedForServerSwitchError) {
+            return { supported: false, reason: 'server-switch-abort' };
+        }
         return { supported: false, reason: 'error' };
     }
 }
