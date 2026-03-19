@@ -1,9 +1,3 @@
-import { spawn } from 'node:child_process';
-
-export function yarnCommand() {
-  return process.platform === 'win32' ? 'yarn.cmd' : 'yarn';
-}
-
 export function parseHeartbeatArgs(argv) {
   const args = argv.slice(2);
   let config = null;
@@ -16,66 +10,27 @@ export function parseHeartbeatArgs(argv) {
       index += 1;
       continue;
     }
+    if (typeof arg === 'string' && arg.startsWith('--config=')) {
+      config = arg.slice('--config='.length) || null;
+      continue;
+    }
     passThrough.push(arg);
   }
 
   return { config, passThrough };
 }
 
-export function resolveHeartbeatMs(raw) {
-  const heartbeatMs = Number.parseInt(String(raw ?? '30000'), 10);
-  return Number.isFinite(heartbeatMs) && heartbeatMs >= 1000 ? heartbeatMs : 30000;
-}
-
-function elapsedSeconds(startedAtMs) {
-  return Math.floor((Date.now() - startedAtMs) / 1000);
-}
-
-export async function runHeartbeatCommand(params) {
-  const startedAt = Date.now();
-  // eslint-disable-next-line no-console
-  console.log(`[tests] starting: yarn ${params.childArgs.join(' ')}`);
-
-  const child = spawn(yarnCommand(), params.childArgs, {
+export function createPlaywrightSpawnOptions(env) {
+  return {
     stdio: 'inherit',
-    env: params.env,
+    env,
     detached: process.platform !== 'win32',
-  });
-
-  const heartbeat = setInterval(() => {
-    // eslint-disable-next-line no-console
-    console.log(`[tests] still running (${elapsedSeconds(startedAt)}s elapsed): ${params.label}`);
-  }, params.heartbeatMs);
-
-  let finished = false;
-  const clearHeartbeat = () => {
-    if (finished) return;
-    finished = true;
-    clearInterval(heartbeat);
   };
+}
 
-  for (const signal of ['SIGINT', 'SIGTERM', 'SIGHUP']) {
-    process.on(signal, () => {
-      if (!child.killed) {
-        child.kill(signal);
-      }
-    });
-  }
-
-  return await new Promise((resolve) => {
-    child.once('error', (error) => {
-      clearHeartbeat();
-      // eslint-disable-next-line no-console
-      console.error(`[tests] failed to start ${params.startupLabel}: ${error.message}`);
-      resolve(1);
-    });
-
-    child.once('exit', (code, signal) => {
-      clearHeartbeat();
-      const exitCode = typeof code === 'number' ? code : signal ? 128 : 1;
-      // eslint-disable-next-line no-console
-      console.log(`[tests] completed in ${elapsedSeconds(startedAt)}s with code ${exitCode}`);
-      resolve(exitCode);
-    });
-  });
+export function resolveSignalExitCode(signal) {
+  if (signal === 'SIGINT') return 130;
+  if (signal === 'SIGTERM') return 143;
+  if (signal === 'SIGHUP') return 129;
+  return 1;
 }

@@ -1,16 +1,12 @@
-export type HeartbeatArgs = {
+export function parseHeartbeatArgs(argv: readonly string[]): {
   config: string | null;
   passThrough: string[];
 };
 
-export type RunHeartbeatCommandParams = {
-  childArgs: string[];
+export function createPlaywrightSpawnOptions(env: NodeJS.ProcessEnv): {
+  stdio: 'inherit';
   env: NodeJS.ProcessEnv;
-  heartbeatMs: number;
-  label: string;
-  startupLabel: string;
+  detached: boolean;
 };
 
-export function parseHeartbeatArgs(argv: string[]): HeartbeatArgs;
-export function resolveHeartbeatMs(raw: unknown): number;
-export function runHeartbeatCommand(params: RunHeartbeatCommandParams): Promise<number>;
+export function resolveSignalExitCode(signal: NodeJS.Signals | null): number;
