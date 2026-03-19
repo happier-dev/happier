@@ -6,14 +6,14 @@ const mockMachineRPC = vi.fn();
 const mockSessionRPC = vi.fn();
 const getStateSpy = vi.fn();
 
-vi.mock('../api/session/apiSocket', () => ({
+vi.mock('@/sync/api/session/apiSocket', () => ({
     apiSocket: {
         machineRPC: mockMachineRPC,
         sessionRPC: mockSessionRPC,
     },
 }));
 
-vi.mock('../domains/state/storage', () => ({
+vi.mock('@/sync/domains/state/storage', () => ({
     storage: {
         getState: () => getStateSpy(),
     },
