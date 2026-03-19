@@ -283,7 +283,7 @@ describe('CommitScreen', () => {
     it('shows missing context error when storage is ready but session is unknown', async () => {
         storageFixture.isStorageDataReady = true;
         storageFixture.sessionById = {};
-        searchParams = { id: '', sha: '' } as any;
+        searchParams = { id: 'session-unknown', sha: 'abc123' } as any;
         const Screen = (await import('@/app/(app)/session/[id]/commit')).default;
 
           let tree: renderer.ReactTestRenderer | null = null;
