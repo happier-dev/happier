@@ -9,7 +9,7 @@
       "callId": "call_1",
       "sidechainId": "side_1",
       "intent": "review",
-      "backendId": "claude",
+      "backendTarget": { "kind": "builtInAgent", "agentId": "claude" },
       "permissionMode": "ask",
       "retentionPolicy": "resumable",
       "runClass": "bounded",
@@ -19,4 +19,3 @@
     }
   }
 }
-
