@@ -1,6 +1,6 @@
 import { z } from 'zod';
 
-import { SessionRollbackTargetSchema } from '../sessionChanges/rollbacks.js';
+import { SessionRollbackTargetSchema } from '../sessionRollback.js';
 
 export function createSessionRollbackRangeV1Schema(zod: typeof z) {
   return zod
