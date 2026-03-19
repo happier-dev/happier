@@ -5,6 +5,21 @@ import { describe, expect, it, vi } from 'vitest';
 import { SearchableListSelector } from './SearchableListSelector';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
+const mockEnv = vi.hoisted(() => ({
+    iconsRenderAsText: false,
+}));
+
+type RenderedItemNode = { props: Record<string, any> };
+type RenderedTree = {
+    root: {
+        findAllByType(type: unknown): RenderedItemNode[];
+    };
+    unmount(): void;
+};
+type RenderedAccessoryTree = {
+    toJSON(): unknown;
+    unmount(): void;
+};
 
 vi.mock('react-native', () => ({
     Platform: {
@@ -19,7 +34,8 @@ vi.mock('react-native', () => ({
 }));
 
 vi.mock('@expo/vector-icons', () => ({
-    Ionicons: 'Ionicons',
+    Ionicons: (props: any) =>
+        mockEnv.iconsRenderAsText ? React.createElement(React.Fragment, null, '.') : React.createElement('Ionicons', props, null),
 }));
 
 vi.mock('react-native-unistyles', () => ({
@@ -53,7 +69,15 @@ vi.mock('@/components/ui/lists/ItemGroup', () => ({
 }));
 
 vi.mock('@/components/ui/lists/Item', () => ({
-    Item: (props: any) => React.createElement('Item', props),
+    Item: (props: any) => React.createElement(
+        'Item',
+        props,
+        [
+            props.leftElement == null ? null : React.createElement('Text', { key: 'left' }, props.leftElement),
+            props.rightElement == null ? null : React.createElement(React.Fragment, { key: 'right' }, props.rightElement),
+            props.subtitle == null ? null : React.createElement('Text', { key: 'subtitle' }, props.subtitle),
+        ],
+    ),
 }));
 
 vi.mock('@/components/ui/status/StatusDot', () => ({
@@ -92,7 +116,7 @@ describe('SearchableListSelector (disabled items)', () => {
             isItemDisabled: (item: any) => item.id === 'b',
         };
 
-        let tree: renderer.ReactTestRenderer | null = null;
+        let tree: RenderedTree | null = null;
         await act(async () => {
             tree = renderer.create(
                 <SearchableListSelector
@@ -147,7 +171,7 @@ describe('SearchableListSelector (disabled items)', () => {
             allowCustomInput: false,
         };
 
-        let tree: renderer.ReactTestRenderer | null = null;
+        let tree: RenderedTree | null = null;
         await act(async () => {
             tree = renderer.create(
                 <SearchableListSelector
@@ -165,5 +189,89 @@ describe('SearchableListSelector (disabled items)', () => {
         const rowB = renderedItems.find((n) => n.props.title === 'B');
         expect(rowA?.props.testID).toBe('selector:a');
         expect(rowB?.props.testID).toBe('selector:b');
+    });
+
+    it('does not emit raw text nodes inside row accessories when icons render as text on web', async () => {
+        const items = [{ id: 'a', title: 'A' }] as const;
+
+        const config: any = {
+            getItemId: (item: any) => item.id,
+            getItemTitle: (item: any) => item.title,
+            getItemIcon: () => null,
+            getItemStatus: () => ({ text: 'Online', color: '#0a0', dotColor: '#0a0' }),
+            formatForDisplay: (item: any) => item.title,
+            parseFromDisplay: () => null,
+            filterItem: () => true,
+            searchPlaceholder: 'Search…',
+            recentSectionTitle: 'Recent',
+            favoritesSectionTitle: 'Favorites',
+            allSectionTitle: 'All',
+            noItemsMessage: 'Empty',
+            showFavorites: true,
+            showRecent: false,
+            showSearch: false,
+            allowCustomInput: false,
+        };
+
+        mockEnv.iconsRenderAsText = true;
+
+        const renderState: {
+            tree: RenderedTree | null;
+            accessoryTree: RenderedAccessoryTree | null;
+        } = {
+            tree: null,
+            accessoryTree: null,
+        };
+        try {
+            await act(async () => {
+                renderState.tree = renderer.create(
+                    <SearchableListSelector
+                        config={config}
+                        items={[...items] as any}
+                        favoriteItems={[...items] as any}
+                        selectedItem={items[0] as any}
+                        onSelect={() => {}}
+                        onToggleFavorite={() => {}}
+                    />,
+                );
+            });
+
+            const renderedTree = renderState.tree;
+            if (!renderedTree) throw new Error('Expected rendered selector tree');
+            const renderedItems = renderedTree.root.findAllByType('Item');
+            const rowA = renderedItems.find((n) => n.props.title === 'A');
+            expect(rowA?.props.rightElement).toBeTruthy();
+
+            const badNodes: Array<{ parent: string | null; value: string }> = [];
+            const walk = (node: any, parentType: string | null) => {
+                if (node == null) return;
+                if (typeof node === 'string' || typeof node === 'number') {
+                    const value = String(node);
+                    if (parentType !== 'Text' && value.trim().length > 0) badNodes.push({ parent: parentType, value });
+                    return;
+                }
+                if (Array.isArray(node)) {
+                    for (const child of node) walk(child, parentType);
+                    return;
+                }
+                const nextParent = typeof node.type === 'string' ? node.type : parentType;
+                const children = Array.isArray(node.children) ? node.children : [];
+                for (const child of children) walk(child, nextParent);
+            };
+
+            await act(async () => {
+                renderState.accessoryTree = renderer.create(rowA!.props.rightElement);
+            });
+            const renderedAccessoryTree = renderState.accessoryTree;
+            if (!renderedAccessoryTree) throw new Error('Expected accessory tree');
+            walk(renderedAccessoryTree.toJSON(), null);
+            expect(badNodes).toEqual([]);
+        } finally {
+            mockEnv.iconsRenderAsText = false;
+            act(() => {
+                renderState.accessoryTree?.unmount();
+                renderState.tree?.unmount();
+            });
+        }
     });
 });

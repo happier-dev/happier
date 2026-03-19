@@ -9,6 +9,7 @@ import { t } from '@/text';
 import { StatusDot } from '@/components/ui/status/StatusDot';
 import { SearchHeader } from '@/components/ui/forms/SearchHeader';
 import { Text } from '@/components/ui/text/Text';
+import { normalizeNodeForView } from '@/components/ui/rendering/normalizeNodeForView';
 
 
 /**
@@ -220,11 +221,13 @@ export function SearchableListSelector<T>(props: SearchableListSelectorProps<T>)
                     onToggleFavorite(item);
                 }}
             >
-                <Ionicons
-                    name={isFavorite ? 'star' : 'star-outline'}
-                    size={24}
-                    color={disabled ? theme.colors.textSecondary : color}
-                />
+                {normalizeNodeForView(
+                    <Ionicons
+                        name={isFavorite ? 'star' : 'star-outline'}
+                        size={24}
+                        color={disabled ? theme.colors.textSecondary : color}
+                    />,
+                )}
             </Pressable>
         );
     };
@@ -265,12 +268,14 @@ export function SearchableListSelector<T>(props: SearchableListSelectorProps<T>)
                             {statusExtra}
                         </View>
                         <View style={{ width: 24, alignItems: 'center', justifyContent: 'center' }}>
-                            <Ionicons
-                                name="checkmark-circle"
-                                size={24}
-                                color={selectedColor}
-                                style={{ opacity: isSelected ? 1 : 0 }}
-                            />
+                            {normalizeNodeForView(
+                                <Ionicons
+                                    name="checkmark-circle"
+                                    size={24}
+                                    color={selectedColor}
+                                    style={{ opacity: isSelected ? 1 : 0 }}
+                                />,
+                            )}
                         </View>
                         {renderFavoriteToggle(item, isFavorite)}
                     </View>
