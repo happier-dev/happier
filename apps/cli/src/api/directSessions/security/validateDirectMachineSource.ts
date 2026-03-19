@@ -1,27 +1,12 @@
-import { homedir } from 'node:os';
 import { realpathSync } from 'node:fs';
 import { resolve } from 'node:path';
 
 import type { DirectSessionsProviderId, DirectSessionsSource } from '@happier-dev/protocol';
 
-function expandHomeDirForDirectSessions(raw: string): string {
-  const trimmed = raw.trim();
-  if (trimmed === '~') return homedir();
-  if (trimmed.startsWith('~/') || trimmed.startsWith('~\\')) return resolve(homedir(), trimmed.slice(2));
-  return trimmed;
-}
-
-function resolveConfiguredClaudeConfigDir(params: Readonly<{ env: NodeJS.ProcessEnv }>): string {
-  const fromEnv =
-    typeof params.env.HAPPIER_CLAUDE_CONFIG_DIR === 'string' && params.env.HAPPIER_CLAUDE_CONFIG_DIR.trim().length > 0
-      ? params.env.HAPPIER_CLAUDE_CONFIG_DIR.trim()
-      : typeof params.env.CLAUDE_CONFIG_DIR === 'string'
-        ? params.env.CLAUDE_CONFIG_DIR.trim()
-        : '';
-
-  const resolved = fromEnv || resolve(homedir(), '.claude');
-  return expandHomeDirForDirectSessions(resolved) || resolve(homedir(), '.claude');
-}
+import {
+  expandHomeDirForDirectSessions,
+  resolveConfiguredClaudeConfigDir,
+} from '@/backends/claude/directSessions/resolveClaudeConfigDir';
 
 type DirectSourceValidationResult =
   | Readonly<{ ok: true; source: DirectSessionsSource }>
