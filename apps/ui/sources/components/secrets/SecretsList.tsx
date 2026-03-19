@@ -9,7 +9,7 @@ import { ItemList } from '@/components/ui/lists/ItemList';
 import { ItemRowActions } from '@/components/ui/lists/ItemRowActions';
 import { InlineAddExpander } from '@/components/ui/forms/InlineAddExpander';
 import { Modal } from '@/modal';
-import type { SavedSecret } from '@/sync/domains/settings/settings';
+import type { SavedSecret } from '@/sync/domains/settings/savedSecretTypes';
 import { Typography } from '@/constants/Typography';
 import { t } from '@/text';
 import { Text, TextInput } from '@/components/ui/text/Text';
