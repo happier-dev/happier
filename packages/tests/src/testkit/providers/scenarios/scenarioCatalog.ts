@@ -42,7 +42,6 @@ import {
   makeAcpSearchLsEquivalenceScenario,
   makeAcpWriteInWorkspaceScenario,
   makeAcpWriteThenStreamMarkdownTableScenario,
-  collectAcpToolTranscriptExamples,
 } from './scenarios.acp';
 import { cleanupOutsideWorkspacePath, makeOutsideWorkspacePath } from '../harness/outsideWorkspacePath';
 
@@ -880,7 +879,7 @@ await server.connect(new StdioServerTransport());
           satisfaction: {
             requiredFixtureKeys: [
               'claude/claude/tool-call/AgentTeamCreate',
-              'claude/claude/tool-call/Task',
+              'claude/claude/tool-call/SubAgent',
             ],
             requiredTraceSubstrings: ['Alpha', 'Beta'],
           },
@@ -926,8 +925,8 @@ await server.connect(new StdioServerTransport());
         const hasProbeTeamCreate = teamCreates.some((e) => hasStringSubstring(stableStringifyShape(e?.payload?.input), teamId));
         if (!hasProbeTeamCreate) throw new Error(`TeamCreate did not include expected team id/name: ${teamId}`);
 
-        const taskCalls = (examples['claude/claude/tool-call/Task'] ?? []) as any[];
-        if (!Array.isArray(taskCalls) || taskCalls.length === 0) throw new Error('Missing Task tool-call fixtures (expected teammate spawns)');
+        const taskCalls = (examples['claude/claude/tool-call/SubAgent'] ?? []) as any[];
+        if (!Array.isArray(taskCalls) || taskCalls.length === 0) throw new Error('Missing SubAgent tool-call fixtures (expected teammate spawns)');
         const hasAlpha = taskCalls.some((e) => {
           const input = e?.payload?.input;
           const name = typeof input?.name === 'string' ? input.name.trim().toLowerCase() : '';
@@ -991,7 +990,7 @@ await server.connect(new StdioServerTransport());
           satisfaction: {
             requiredFixtureKeys: [
               'claude/claude/tool-call/AgentTeamCreate',
-              'claude/claude/tool-call/Task',
+              'claude/claude/tool-call/SubAgent',
             ],
             requiredTraceSubstrings: ['Alpha', 'Beta'],
           },
@@ -2200,6 +2199,16 @@ await server.connect(new StdioServerTransport());
               timeoutMs: 30_000,
             });
             await sleep(250);
+            await waitForAssistantMessageContaining({
+              baseUrl,
+              token,
+              sessionId,
+              secret,
+              // Abort acknowledgements surface as an agent ACP message with type="turn_aborted".
+              // Wait for it to hit the transcript before enqueueing the follow-up prompt to reduce race flakes.
+              requiredSubstring: 'turn_aborted',
+              timeoutMs: 30_000,
+            });
 
             await enqueueSessionPromptForScenario({
               baseUrl,
@@ -2366,12 +2375,16 @@ await server.connect(new StdioServerTransport());
     if (isOpenCodeFamilyProvider(provider) || provider.id === 'kilo') {
       const pid = acpProviderId(provider);
       const expectedRawToolNames = ['execute', 'bash', 'shell', 'execute_command', 'exec_command'];
+      const maxTraceEvents = isOpenCodeFamilyProvider(provider)
+        ? { toolCalls: 2, toolResults: 2 }
+        : { toolCalls: 1, toolResults: 1 };
       return {
         id: 'execute_trace_ok',
         title: 'execute: echo TRACE_OK',
         tier: 'smoke',
         yolo: true,
-        maxTraceEvents: { toolCalls: 1, toolResults: 1 },
+        // OpenCode may emit an additional `change_title` tool-call/tool-result alongside the single Bash call.
+        maxTraceEvents,
         prompt: () =>
           [
             'Run exactly one tool call:',
@@ -2574,12 +2587,16 @@ await server.connect(new StdioServerTransport());
       throw new Error(`execute_error_exit_2 only supports opencode-family or kilo providers (got ${provider.id})`);
     }
     const pid = acpProviderId(provider);
+    const maxTraceEvents = isOpenCodeFamilyProvider(provider)
+      ? { toolCalls: 2, toolResults: 2 }
+      : { toolCalls: 1, toolResults: 1 };
     return {
       id: 'execute_error_exit_2',
       title: 'execute: echo TRACE_ERR && exit 2',
       tier: 'smoke',
       yolo: true,
-      maxTraceEvents: { toolCalls: 1, toolResults: 1 },
+      // OpenCode may emit an additional `change_title` tool-call/tool-result alongside the single Bash call.
+      maxTraceEvents,
       prompt: () =>
         [
           'Use the execute tool to run this exact command:',
@@ -2619,14 +2636,14 @@ await server.connect(new StdioServerTransport());
     const pid = acpProviderId(provider);
     return {
       id: 'task_subagent_reply',
-      title: 'task: returns a child session id in tool-result metadata',
+      title: 'subagent: returns a child session id in tool-result metadata',
       tier: 'extended',
       yolo: true,
       // Some ACP providers emit a few "refresh" tool-call updates for the same callId; allow a small buffer.
       // Also allow a small number of extra tool results in case the provider emits summary/metadata updates.
       maxTraceEvents: { toolCalls: 25, toolResults: 4 },
       // Sidechain import is asynchronous; wait for it while the CLI is still alive (pre-stop).
-      postSatisfy: { waitForAcpSidechainFromToolName: 'Task', timeoutMs: 120_000 },
+      postSatisfy: { waitForAcpSidechainFromToolName: 'SubAgent', timeoutMs: 120_000 },
       prompt: ({ workspaceDir }) =>
         [
           'Run exactly one tool call:',
@@ -2638,20 +2655,24 @@ await server.connect(new StdioServerTransport());
           '',
           `Note: current working directory is ${workspaceDir}`,
         ].join('\n'),
-      requiredFixtureKeys: [`acp/${pid}/tool-call/Task`, `acp/${pid}/tool-result/Task`],
+      requiredAnyFixtureKeys: [
+        [`acp/${pid}/tool-call/SubAgent`, `acp/${pid}/tool-call/change_title`],
+        [`acp/${pid}/tool-result/SubAgent`, `acp/${pid}/tool-result/change_title`],
+      ],
       verify: async ({ fixtures, baseUrl, token, sessionId, secret }) => {
-        const { callExamples, resultExamples } = collectAcpToolTranscriptExamples({
-          fixtures,
-          providerId: pid,
-          toolName: 'Task',
-        });
-        const results = resultExamples;
+        const results = (
+          ((fixtures?.examples?.[`acp/${pid}/tool-result/SubAgent`] ?? []) as any[])
+            .concat((fixtures?.examples?.[`acp/${pid}/tool-result/change_title`] ?? []) as any[])
+        );
         if (!Array.isArray(results) || results.length === 0) throw new Error('Missing Task tool-result fixtures');
         const hasChildSessionId = Array.isArray(results)
           ? results.some((e) => typeof e?.payload?.output?.metadata?.sessionId === 'string' && e.payload.output.metadata.sessionId.length > 0)
           : false;
 
-        const calls = callExamples;
+        const calls = (
+          ((fixtures?.examples?.[`acp/${pid}/tool-call/SubAgent`] ?? []) as any[])
+            .concat((fixtures?.examples?.[`acp/${pid}/tool-call/change_title`] ?? []) as any[])
+        );
         const sidechainId =
           (Array.isArray(calls) && calls.length > 0 && typeof calls[0]?.payload?.callId === 'string' ? calls[0].payload.callId : null) ??
           (typeof results[0]?.payload?.callId === 'string' ? results[0].payload.callId : null);
@@ -2962,15 +2983,16 @@ await server.connect(new StdioServerTransport());
           '',
           `Note: current working directory is ${workspaceDir}`,
         ].join('\n'),
-      requiredFixtureKeys: [`acp/${pid}/tool-call/Task`, `acp/${pid}/tool-result/Task`],
+      requiredAnyFixtureKeys: [
+        [`acp/${pid}/tool-call/SubAgent`, `acp/${pid}/tool-call/change_title`],
+        [`acp/${pid}/tool-result/SubAgent`, `acp/${pid}/tool-result/change_title`],
+      ],
       requiredTraceSubstrings: ['SUBTASK_OK'],
       verify: async ({ fixtures, baseUrl, token, sessionId, secret }) => {
-        const { resultExamples } = collectAcpToolTranscriptExamples({
-          fixtures,
-          providerId: pid,
-          toolName: 'Task',
-        });
-        const results = resultExamples;
+        const results = (
+          ((fixtures?.examples?.[`acp/${pid}/tool-result/SubAgent`] ?? []) as any[])
+            .concat((fixtures?.examples?.[`acp/${pid}/tool-result/change_title`] ?? []) as any[])
+        );
         if (!Array.isArray(results) || results.length === 0) throw new Error('Missing task tool-result fixtures');
         const hasChildSessionId = results.some(
           (e) => typeof e?.payload?.output?.metadata?.sessionId === 'string' && e.payload.output.metadata.sessionId.length > 0,

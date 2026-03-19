@@ -15,7 +15,6 @@ import {
   makeAcpSearchKnownTokenScenario,
   makeAcpGlobListFilesScenario,
   makeAcpWriteInWorkspaceScenario,
-  collectAcpToolTranscriptExamples,
 } from './scenarios.acp';
 
 export const scenarios: ProviderScenario[] = [
@@ -24,7 +23,8 @@ export const scenarios: ProviderScenario[] = [
     title: 'execute: echo TRACE_OK',
     tier: 'smoke',
     yolo: true,
-    maxTraceEvents: { toolCalls: 1, toolResults: 1 },
+    // OpenCode may emit an additional `change_title` tool-call/tool-result alongside the single Bash call.
+    maxTraceEvents: { toolCalls: 2, toolResults: 2 },
     prompt: () =>
       [
         'Run exactly one tool call:',
@@ -94,7 +94,8 @@ export const scenarios: ProviderScenario[] = [
     title: 'execute: echo TRACE_ERR && exit 2',
     tier: 'smoke',
     yolo: true,
-    maxTraceEvents: { toolCalls: 1, toolResults: 1 },
+    // OpenCode may emit an additional `change_title` tool-call/tool-result alongside the single Bash call.
+    maxTraceEvents: { toolCalls: 2, toolResults: 2 },
     prompt: () =>
       [
         'Use the execute tool to run this exact command:',
@@ -114,13 +115,13 @@ export const scenarios: ProviderScenario[] = [
   },
   {
     id: 'task_subagent_reply',
-    title: 'task: returns a child session id in tool-result metadata',
+    title: 'subagent: returns a child session id in tool-result metadata',
     tier: 'extended',
     yolo: true,
     // Some ACP providers emit a few "refresh" tool-call updates for the same callId; allow a small buffer.
     // Also allow a small number of extra tool results in case the provider emits summary/metadata updates.
     maxTraceEvents: { toolCalls: 25, toolResults: 4 },
-    postSatisfy: { waitForAcpSidechainFromToolName: 'Task', timeoutMs: 60_000 },
+    postSatisfy: { waitForAcpSidechainFromToolName: 'SubAgent', timeoutMs: 60_000 },
     prompt: ({ workspaceDir }) =>
       [
         'Run exactly one tool call:',
@@ -132,21 +133,16 @@ export const scenarios: ProviderScenario[] = [
         '',
         `Note: current working directory is ${workspaceDir}`,
       ].join('\n'),
-    requiredFixtureKeys: ['acp/opencode/tool-call/Task', 'acp/opencode/tool-result/Task'],
+    requiredFixtureKeys: ['acp/opencode/tool-call/SubAgent', 'acp/opencode/tool-result/SubAgent'],
     // OpenCode task results include a <task_metadata> section with a child session id.
     requiredTraceSubstrings: ['session_id:', 'SUBTASK_OK'],
     verify: async ({ fixtures, baseUrl, token, sessionId, secret }) => {
-      const { callExamples, resultExamples } = collectAcpToolTranscriptExamples({
-        fixtures,
-        providerId: 'opencode',
-        toolName: 'Task',
-      });
-      const results = resultExamples;
+      const results = (fixtures?.examples?.['acp/opencode/tool-result/SubAgent'] ?? []) as any[];
       if (!Array.isArray(results) || results.length === 0) throw new Error('Missing task tool-result fixtures');
       const hasChildSessionId = results.some((e) => typeof e?.payload?.output?.metadata?.sessionId === 'string' && e.payload.output.metadata.sessionId.length > 0);
       if (!hasChildSessionId) throw new Error('task tool-result did not include metadata.sessionId (child session id)');
 
-      const calls = callExamples;
+      const calls = (fixtures?.examples?.['acp/opencode/tool-call/SubAgent'] ?? []) as any[];
       const sidechainId =
         (Array.isArray(calls) && calls.length > 0 && typeof calls[0]?.payload?.callId === 'string' ? calls[0].payload.callId : null) ??
         (typeof results[0]?.payload?.callId === 'string' ? results[0].payload.callId : null);
