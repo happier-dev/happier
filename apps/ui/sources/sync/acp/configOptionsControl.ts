@@ -1,5 +1,16 @@
 import type { AgentId } from '@/agents/catalog/catalog';
 import type { Metadata } from '@/sync/domains/state/storageTypes';
+import {
+    LEGACY_ACP_CONFIG_OPTIONS_STATE_KEY,
+    LEGACY_ACP_CONFIG_OPTION_OVERRIDES_KEY,
+    LEGACY_ACP_SESSION_MODELS_STATE_KEY,
+    LEGACY_ACP_SESSION_MODES_STATE_KEY,
+    readMetadataAliasValue,
+    SESSION_CONFIG_OPTIONS_STATE_KEY,
+    SESSION_CONFIG_OPTION_OVERRIDES_KEY,
+    SESSION_MODELS_STATE_KEY,
+    SESSION_MODES_STATE_KEY,
+} from '@happier-dev/agents';
 
 import {
     parseAcpConfigOptionsState,
@@ -42,33 +53,37 @@ export type AcpConfigOptionControl = Readonly<{
     isPending: boolean;
 }>;
 
-export function computeAcpConfigOptionControls(params: {
-    agentId: AgentId;
-    metadata: Metadata | null | undefined;
-}): AcpConfigOptionControl[] | null {
-    const state = parseAcpConfigOptionsState(params.metadata?.acpConfigOptionsV1);
-    if (!state) return null;
-    if (state.provider !== params.agentId) return null;
-    if (state.configOptions.length === 0) return null;
+function buildAcpConfigOptionControls(params: Readonly<{
+    providerId: string;
+    provider: string | null;
+    configOptions: ReadonlyArray<{
+        id: string;
+        name: string;
+        description?: string;
+        type: string;
+        currentValue: unknown;
+        options?: ReadonlyArray<{
+            value: unknown;
+            name: string;
+            description?: string;
+        }>;
+    }>;
+    overrides?: Readonly<Record<string, Readonly<{ value: unknown }>>> | null;
+    hideModeOption: boolean;
+    hideModelOption: boolean;
+}>): AcpConfigOptionControl[] | null {
+    if (params.provider !== params.providerId) return null;
 
-    const sessionModes = parseAcpSessionModesState(params.metadata?.acpSessionModesV1);
-    const hasDedicatedModeControl = sessionModes?.provider === params.agentId && sessionModes.availableModes.length > 0;
-
-    const sessionModels = parseAcpSessionModelsState(params.metadata?.acpSessionModelsV1);
-    const hasDedicatedModelControl =
-        sessionModels?.provider === params.agentId && sessionModels.availableModels.length > 0;
-
-    const overrides = parseAcpConfigOptionOverridesState((params.metadata as any)?.acpConfigOptionOverridesV1);
     const controls: AcpConfigOptionControl[] = [];
 
-    for (const entry of state.configOptions) {
+    for (const entry of params.configOptions) {
         const id = entry.id.trim();
         const name = entry.name.trim();
         const type = entry.type.trim();
         if (!id || !name || !type) continue;
 
-        if (hasDedicatedModeControl && id === 'mode') continue;
-        if (hasDedicatedModelControl && (id === 'models' || id === 'model')) continue;
+        if (params.hideModeOption && id === 'mode') continue;
+        if (params.hideModelOption && (id === 'models' || id === 'model')) continue;
 
         const currentValue = normalizeValueId(entry.currentValue);
         if (!currentValue) continue;
@@ -94,7 +109,7 @@ export function computeAcpConfigOptionControls(params: {
             ...(options.length > 0 ? { options } : {}),
         };
 
-        const requestedValue = normalizeValueId(overrides?.overrides?.[id]?.value) ?? undefined;
+        const requestedValue = normalizeValueId(params.overrides?.[id]?.value) ?? undefined;
         const effectiveValue = requestedValue ?? currentValue;
         const isPending = requestedValue !== undefined && requestedValue !== currentValue;
 
@@ -107,4 +122,69 @@ export function computeAcpConfigOptionControls(params: {
     }
 
     return controls.length > 0 ? controls : null;
+}
+
+export function computeAcpConfigOptionControls(params: {
+    agentId: AgentId;
+    metadata: Metadata | null | undefined;
+}): AcpConfigOptionControl[] | null {
+    const state = parseAcpConfigOptionsState(
+        readMetadataAliasValue((params.metadata as any) ?? {}, SESSION_CONFIG_OPTIONS_STATE_KEY, LEGACY_ACP_CONFIG_OPTIONS_STATE_KEY),
+    );
+    if (!state) return null;
+    if (state.provider !== params.agentId) return null;
+    if (state.configOptions.length === 0) return null;
+
+    const sessionModes = parseAcpSessionModesState(
+        readMetadataAliasValue((params.metadata as any) ?? {}, SESSION_MODES_STATE_KEY, LEGACY_ACP_SESSION_MODES_STATE_KEY),
+    );
+    const hasDedicatedModeControl = sessionModes?.provider === params.agentId && sessionModes.availableModes.length > 0;
+
+    const sessionModels = parseAcpSessionModelsState(
+        readMetadataAliasValue((params.metadata as any) ?? {}, SESSION_MODELS_STATE_KEY, LEGACY_ACP_SESSION_MODELS_STATE_KEY),
+    );
+    const hasDedicatedModelControl =
+        sessionModels?.provider === params.agentId && sessionModels.availableModels.length > 0;
+
+    const overrides = parseAcpConfigOptionOverridesState(
+        readMetadataAliasValue((params.metadata as any) ?? {}, SESSION_CONFIG_OPTION_OVERRIDES_KEY, LEGACY_ACP_CONFIG_OPTION_OVERRIDES_KEY),
+    );
+    return buildAcpConfigOptionControls({
+        providerId: params.agentId,
+        provider: state.provider,
+        configOptions: state.configOptions,
+        overrides: overrides?.overrides ?? null,
+        hideModeOption: hasDedicatedModeControl,
+        hideModelOption: hasDedicatedModelControl,
+    });
+}
+
+export function computeAcpConfigOptionControlsForProvider(params: Readonly<{
+    providerId: string;
+    configOptions: ReadonlyArray<AcpConfigOption> | null | undefined;
+    overrides?: Readonly<Record<string, Readonly<{ value: unknown }>>> | null;
+    hideModeOption?: boolean;
+    hideModelOption?: boolean;
+}>): AcpConfigOptionControl[] | null {
+    if (!Array.isArray(params.configOptions) || params.configOptions.length === 0) return null;
+    return buildAcpConfigOptionControls({
+        providerId: params.providerId,
+        provider: params.providerId,
+        configOptions: params.configOptions,
+        overrides: params.overrides ?? null,
+        hideModeOption: params.hideModeOption ?? false,
+        hideModelOption: params.hideModelOption ?? false,
+    });
+}
+
+export function computeAcpConfigOptionControlsFromOverride(params: Readonly<{
+    agentId: AgentId;
+    configOptions: ReadonlyArray<AcpConfigOption> | null | undefined;
+    overrides?: Readonly<Record<string, Readonly<{ value: unknown }>>> | null;
+}>): AcpConfigOptionControl[] | null {
+    return computeAcpConfigOptionControlsForProvider({
+        providerId: params.agentId,
+        configOptions: params.configOptions,
+        overrides: params.overrides ?? null,
+    });
 }

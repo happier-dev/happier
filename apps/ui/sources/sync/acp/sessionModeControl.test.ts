@@ -20,13 +20,13 @@ describe('sessionModeControl', () => {
     const { supportsSessionModeOverrides } = await import('./sessionModeControl');
     expect(supportsSessionModeOverrides('opencode')).toBe(true);
     expect(supportsSessionModeOverrides('claude')).toBe(true);
-    expect(supportsSessionModeOverrides('codex')).toBe(false);
+    expect(supportsSessionModeOverrides('codex')).toBe(true);
   });
 
   it('computeSessionModePickerControl returns ACP modes and effective selection', async () => {
     const { computeSessionModePickerControl } = await import('./sessionModeControl');
     const metadata = createMetadata({
-      acpSessionModesV1: {
+      sessionModesV1: {
         v: 1,
         provider: 'opencode',
         updatedAt: 1,
@@ -48,14 +48,14 @@ describe('sessionModeControl', () => {
   it('computeSessionModePickerControl marks pending when requested override differs from current (ACP)', async () => {
     const { computeSessionModePickerControl } = await import('./sessionModeControl');
     const metadata = createMetadata({
-      acpSessionModesV1: {
+      sessionModesV1: {
         v: 1,
         provider: 'opencode',
         updatedAt: 1,
         currentModeId: 'build',
         availableModes: [{ id: 'build', name: 'Build' }, { id: 'plan', name: 'Plan' }],
       },
-      acpSessionModeOverrideV1: { v: 1, updatedAt: 2, modeId: 'plan' },
+      sessionModeOverrideV1: { v: 1, updatedAt: 2, modeId: 'plan' },
     });
 
     const res = computeSessionModePickerControl({ agentId: 'opencode', metadata });
@@ -81,5 +81,45 @@ describe('sessionModeControl', () => {
     const res = computeSessionModePickerControl({ agentId: 'claude', metadata });
     expect(res?.requestedModeId).toBe('plan');
     expect(res?.effectiveModeId).toBe('plan');
+  });
+
+  it('falls back to legacy ACP metadata keys when canonical keys are absent', async () => {
+    const { computeSessionModePickerControl } = await import('./sessionModeControl');
+    const metadata = createMetadata({
+      acpSessionModesV1: {
+        v: 1,
+        provider: 'opencode',
+        updatedAt: 1,
+        currentModeId: 'build',
+        availableModes: [{ id: 'build', name: 'Build' }, { id: 'plan', name: 'Plan' }],
+      },
+      acpSessionModeOverrideV1: { v: 1, updatedAt: 2, modeId: 'plan' },
+    });
+
+    const res = computeSessionModePickerControl({ agentId: 'opencode', metadata });
+    expect(res?.effectiveModeId).toBe('plan');
+  });
+
+  it('computeSessionModePickerControl returns Codex app-server modes from generic session metadata', async () => {
+    const { computeSessionModePickerControl } = await import('./sessionModeControl');
+    const metadata = createMetadata({
+      sessionModesV1: {
+        v: 1,
+        provider: 'codex',
+        updatedAt: 1,
+        currentModeId: 'default',
+        availableModes: [
+          { id: 'default', name: 'Default' },
+          { id: 'plan', name: 'Plan', description: 'Think first' },
+        ],
+      },
+      sessionModeOverrideV1: { v: 1, updatedAt: 2, modeId: 'plan' },
+    });
+
+    const res = computeSessionModePickerControl({ agentId: 'codex', metadata });
+    expect(res).not.toBeNull();
+    expect(res?.effectiveModeId).toBe('plan');
+    expect(res?.isPending).toBe(true);
+    expect(res?.options.map((option) => option.id)).toEqual(['default', 'plan']);
   });
 });
