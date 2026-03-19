@@ -2,9 +2,18 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { VOICE_AGENT_GLOBAL_SESSION_ID } from '@/voice/agent/voiceAgentGlobalSessionId';
 
-const ensureCarrierSpy = vi.fn(async (_args: any) => 'carrier-1');
-vi.mock('@/voice/agent/voiceCarrierSession', () => ({
-  ensureVoiceCarrierSessionForSessionRoot: (args: any) => ensureCarrierSpy(args),
+const ensureBoundSpy = vi.fn(async (_args: any) => ({
+  adapterId: 'local_conversation',
+  controlSessionId: VOICE_AGENT_GLOBAL_SESSION_ID,
+  conversationSessionId: 'carrier-1',
+  transcriptMode: 'native_session',
+  targetSessionId: 's1',
+  updatedAt: 1,
+}));
+vi.mock('@/voice/sessionBinding/voiceSessionBindingRuntime', () => ({
+  voiceSessionBindingManager: {
+    ensureBound: (args: any) => ensureBoundSpy(args),
+  },
 }));
 
 const stopSpy = vi.fn(async (_sessionId: string) => {});
@@ -35,18 +44,22 @@ vi.mock('@/sync/domains/state/storage', () => ({
 describe('teleportVoiceAgentToSessionRoot', () => {
   beforeEach(() => {
     vi.resetModules();
-    ensureCarrierSpy.mockReset();
+    ensureBoundSpy.mockReset();
     stopSpy.mockReset();
     state.settings.voice.providerId = 'local_conversation';
     state.settings.voice.adapters.local_conversation.conversationMode = 'agent';
     state.settings.voice.adapters.local_conversation.agent = { backend: 'daemon', stayInVoiceHome: false, teleportEnabled: true };
   });
 
-  it('touches the session-root carrier and restarts the global voice agent run', async () => {
+  it('rebinds the global voice agent to the requested session root before stopping the global run', async () => {
     const { teleportVoiceAgentToSessionRoot } = await import('./teleportVoiceAgentToSessionRoot');
 
     await expect(teleportVoiceAgentToSessionRoot({ sessionId: 's1' })).resolves.toEqual({ ok: true });
-    expect(ensureCarrierSpy).toHaveBeenCalledWith({ sessionId: 's1' });
+    expect(ensureBoundSpy).toHaveBeenCalledWith({
+      adapterId: 'local_conversation',
+      controlSessionId: VOICE_AGENT_GLOBAL_SESSION_ID,
+      requestedTargetSessionId: 's1',
+    });
     expect(stopSpy).toHaveBeenCalledWith(VOICE_AGENT_GLOBAL_SESSION_ID);
   });
 
@@ -55,7 +68,7 @@ describe('teleportVoiceAgentToSessionRoot', () => {
     state.settings.voice.adapters.local_conversation.agent.teleportEnabled = false;
 
     await expect(teleportVoiceAgentToSessionRoot({ sessionId: 's1' })).resolves.toEqual({ ok: false, code: 'VOICE_TELEPORT_DISABLED' });
-    expect(ensureCarrierSpy).not.toHaveBeenCalled();
+    expect(ensureBoundSpy).not.toHaveBeenCalled();
     expect(stopSpy).not.toHaveBeenCalled();
   });
 
@@ -64,7 +77,7 @@ describe('teleportVoiceAgentToSessionRoot', () => {
     state.settings.voice.adapters.local_conversation.agent.stayInVoiceHome = true;
 
     await expect(teleportVoiceAgentToSessionRoot({ sessionId: 's1' })).resolves.toEqual({ ok: false, code: 'VOICE_TELEPORT_BLOCKED_BY_HOME' });
-    expect(ensureCarrierSpy).not.toHaveBeenCalled();
+    expect(ensureBoundSpy).not.toHaveBeenCalled();
     expect(stopSpy).not.toHaveBeenCalled();
   });
 });
