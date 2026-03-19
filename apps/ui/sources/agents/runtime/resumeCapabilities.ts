@@ -6,18 +6,59 @@
  * - experimental (requires explicit opt-in).
  */
 
-import { AGENTS_CORE, evaluateVendorResumeEligibility, resolveAgentIdFromFlavor } from '@happier-dev/agents';
+import { buildBackendTargetKey } from '@happier-dev/protocol';
+import { AGENTS_CORE, evaluateVendorResumeEligibility, resolveAgentIdFromFlavor, resolveAgentIdFromSessionMetadata } from '@happier-dev/agents';
+import type { Settings } from '@/sync/domains/settings/settings';
+
+import { deriveAcpBackendIdFromFlavor, isAcpFlavorPrefix } from './acpFlavor';
 
 export type ResumeCapabilityOptions = {
-    accountSettings?: Record<string, unknown> | null;
+    accountSettings?: Partial<Settings> | null;
 };
+
+function isConfiguredAcpBackendEnabled(backendId: string, options?: ResumeCapabilityOptions): boolean {
+    const backendEnabledByTargetKey = options?.accountSettings?.backendEnabledByTargetKey;
+    if (!backendEnabledByTargetKey || typeof backendEnabledByTargetKey !== 'object') {
+        return true;
+    }
+
+    const targetKey = buildBackendTargetKey({ kind: 'configuredAcpBackend', backendId });
+    return (backendEnabledByTargetKey as Record<string, unknown>)[targetKey] !== false;
+}
+
+function getConfiguredAcpBackendId(
+    flavor: string | null | undefined,
+    metadata?: SessionMetadata | null,
+): string | null {
+    const backendIdFromFlavor = deriveAcpBackendIdFromFlavor(flavor);
+    if (backendIdFromFlavor === null) {
+        return null;
+    }
+
+    const backendIdFromMetadata =
+        typeof metadata?.acpConfiguredBackendV1 === 'object'
+            && metadata.acpConfiguredBackendV1 !== null
+            && 'backendId' in metadata.acpConfiguredBackendV1
+            && typeof metadata.acpConfiguredBackendV1.backendId === 'string'
+            ? metadata.acpConfiguredBackendV1.backendId.trim()
+            : '';
+
+    return backendIdFromMetadata.length > 0 ? backendIdFromMetadata : backendIdFromFlavor;
+}
 
 export function canAgentResume(agent: string | null | undefined, options?: ResumeCapabilityOptions): boolean {
     if (typeof agent !== 'string') return false;
+
+    if (isAcpFlavorPrefix(agent)) {
+        const backendId = getConfiguredAcpBackendId(agent);
+        return backendId !== null && isConfiguredAcpBackendEnabled(backendId, options);
+    }
+
     const agentId = resolveAgentIdFromFlavor(agent);
     if (!agentId) return false;
 
-    const field = AGENTS_CORE[agentId]?.resume?.vendorResumeIdField ?? null;
+    const resume = AGENTS_CORE[agentId]?.resume;
+    const field = resume && 'vendorResumeIdField' in resume ? resume.vendorResumeIdField : null;
     if (!field) return false;
 
     // Use a synthetic metadata payload to evaluate enablement without requiring
@@ -44,16 +85,19 @@ export interface SessionMetadata {
 
 export function canResumeSession(metadata: SessionMetadata | null | undefined): boolean {
     if (!metadata) return false;
-
-    const agent = metadata.flavor;
-    if (!canAgentResume(agent)) return false;
     return canResumeSessionWithOptions(metadata, undefined);
 }
 
 export function canResumeSessionWithOptions(metadata: SessionMetadata | null | undefined, options?: ResumeCapabilityOptions): boolean {
     if (!metadata) return false;
     const flavor = metadata.flavor;
-    const agentId = resolveAgentIdFromFlavor(flavor);
+
+    if (isAcpFlavorPrefix(flavor)) {
+        const backendId = getConfiguredAcpBackendId(flavor, metadata);
+        return backendId !== null && isConfiguredAcpBackendEnabled(backendId, options);
+    }
+
+    const agentId = resolveAgentIdFromSessionMetadata(metadata) ?? resolveAgentIdFromFlavor(flavor);
     if (!agentId) return false;
 
     return (
@@ -76,7 +120,12 @@ export function getAgentVendorResumeId(
     options?: ResumeCapabilityOptions,
 ): string | null {
     if (!metadata) return null;
-    const agentId = resolveAgentIdFromFlavor(agent);
+
+    if (isAcpFlavorPrefix(metadata.flavor) || isAcpFlavorPrefix(agent)) {
+        return null;
+    }
+
+    const agentId = resolveAgentIdFromFlavor(agent) ?? resolveAgentIdFromSessionMetadata(metadata);
     if (!agentId) return null;
 
     const eligibility = evaluateVendorResumeEligibility({
