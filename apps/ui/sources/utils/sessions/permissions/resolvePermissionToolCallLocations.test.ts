@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import type { ToolCallMessage } from '@/sync/domains/messages/messageTypes';
+import { buildMessageRouteId } from '@/sync/domains/messages/messageRouteIds';
 
 import { resolvePermissionToolCallLocations } from './resolvePermissionToolCallLocations';
 
@@ -8,6 +9,8 @@ function toolMessage(params: Readonly<{
     id: string;
     seq?: number;
     permissionId?: string;
+    toolId?: string | null;
+    realID?: string | null;
     children?: ToolCallMessage[];
 }>): ToolCallMessage {
     return {
@@ -16,7 +19,7 @@ function toolMessage(params: Readonly<{
         localId: null,
         createdAt: 1,
         tool: {
-            id: `call:${params.id}`,
+            ...(typeof params.toolId === 'string' ? { id: params.toolId } : params.toolId === null ? {} : { id: `call:${params.id}` }),
             name: 'tool',
             state: 'completed',
             input: {},
@@ -27,6 +30,7 @@ function toolMessage(params: Readonly<{
             result: {},
             ...(params.permissionId ? { permission: { id: params.permissionId, status: 'pending' as const } } : {}),
         } as any,
+        ...(typeof params.realID === 'string' ? { realID: params.realID } : {}),
         ...(typeof params.seq === 'number' ? { seq: params.seq } : {}),
         children: params.children ?? [],
     } as any;
@@ -44,9 +48,10 @@ describe('resolvePermissionToolCallLocations', () => {
             messageIdsOldestFirst: ids,
             messagesById,
             toolIdToMessageId,
+            resolveRouteMessageId: (_messageId, message) => (message ? buildMessageRouteId(message) : null),
         });
 
-        expect(out.get('p1')).toEqual({ kind: 'top', messageId: 't1', seq: 10 });
+        expect(out.get('p1')).toEqual({ kind: 'top', messageId: 'tool:call:t1', seq: 10 });
     });
 
     it('resolves nested tool call locations (child -> root parent)', () => {
@@ -61,9 +66,15 @@ describe('resolvePermissionToolCallLocations', () => {
             messageIdsOldestFirst: ids,
             messagesById,
             toolIdToMessageId,
+            resolveRouteMessageId: (_messageId, message) => (message ? buildMessageRouteId(message) : null),
         });
 
-        expect(out.get('p2')).toEqual({ kind: 'nested', parentMessageId: 'p0', messageId: 'c1', seq: 11 });
+        expect(out.get('p2')).toEqual({
+            kind: 'nested',
+            parentMessageId: 'tool:call:p0',
+            messageId: 'tool:call:c1',
+            seq: 11,
+        });
     });
 
     it('returns null for unknown permission ids', () => {
@@ -76,5 +87,19 @@ describe('resolvePermissionToolCallLocations', () => {
         });
 
         expect(out.get('p-missing')).toBeNull();
+    });
+
+    it('uses the provided route-id resolver when a tool call has no provider tool id', () => {
+        const top = toolMessage({ id: 'internal-1', realID: 'server-msg-1', toolId: null, seq: 10, permissionId: 'p3' });
+
+        const out = resolvePermissionToolCallLocations({
+            permissionIds: ['p3'],
+            messageIdsOldestFirst: ['internal-1'],
+            messagesById: { 'internal-1': top },
+            toolIdToMessageId: new Map<string, string>([['p3', 'internal-1']]),
+            resolveRouteMessageId: (messageId) => (messageId === 'internal-1' ? 'server:server-msg-1' : messageId),
+        });
+
+        expect(out.get('p3')).toEqual({ kind: 'top', messageId: 'server:server-msg-1', seq: 10 });
     });
 });

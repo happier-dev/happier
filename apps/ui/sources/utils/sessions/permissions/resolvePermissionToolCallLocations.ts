@@ -1,5 +1,4 @@
 import type { Message, ToolCallMessage } from '@/sync/domains/messages/messageTypes';
-
 import type { PermissionToolCallMessageLocation } from './permissionToolCallLocationTypes';
 
 function normalizeSeq(seq: unknown): number | null {
@@ -15,6 +14,7 @@ export function resolvePermissionToolCallLocations(params: Readonly<{
     messageIdsOldestFirst: readonly string[];
     messagesById: Readonly<Record<string, Message>>;
     toolIdToMessageId?: ReadonlyMap<string, string> | null;
+    resolveRouteMessageId?: ((messageId: string, message: ToolCallMessage | undefined | null) => string | null) | null;
 }>): ReadonlyMap<string, PermissionToolCallMessageLocation | null> {
     const ids = params.permissionIds
         .map((id) => (typeof id === 'string' ? id.trim() : ''))
@@ -25,13 +25,16 @@ export function resolvePermissionToolCallLocations(params: Readonly<{
 
     const topLevelToolCallIds = new Set<string>();
     const childToRootParent = new Map<string, string>();
+    const resolveRouteMessageId = (messageId: string, message: ToolCallMessage | undefined | null): string => {
+        return params.resolveRouteMessageId?.(messageId, message) ?? messageId;
+    };
 
-    const visitToolChildren = (rootParentId: string, children: readonly Message[] | null | undefined) => {
+    const visitToolChildren = (rootParentRouteId: string, children: readonly Message[] | null | undefined) => {
         if (!Array.isArray(children) || children.length === 0) return;
         for (const child of children) {
             if (!isToolCallMessage(child)) continue;
-            childToRootParent.set(child.id, rootParentId);
-            visitToolChildren(rootParentId, child.children ?? []);
+            childToRootParent.set(child.id, rootParentRouteId);
+            visitToolChildren(rootParentRouteId, child.children ?? []);
         }
     };
 
@@ -39,25 +42,26 @@ export function resolvePermissionToolCallLocations(params: Readonly<{
         const m = params.messagesById[messageId];
         if (!isToolCallMessage(m)) continue;
         topLevelToolCallIds.add(m.id);
-        visitToolChildren(m.id, m.children ?? []);
+        visitToolChildren(resolveRouteMessageId(m.id, m), m.children ?? []);
     }
 
     const resolveLocationForToolMessageId = (permissionId: string, toolMessageId: string): void => {
         const msg = params.messagesById[toolMessageId];
         const seq = msg ? normalizeSeq((msg as any).seq) : null;
+        const routeMessageId = isToolCallMessage(msg) ? resolveRouteMessageId(toolMessageId, msg) : toolMessageId;
 
         if (topLevelToolCallIds.has(toolMessageId)) {
-            out.set(permissionId, { kind: 'top', messageId: toolMessageId, seq });
+            out.set(permissionId, { kind: 'top', messageId: routeMessageId, seq });
             return;
         }
 
         const parentMessageId = childToRootParent.get(toolMessageId) ?? null;
         if (parentMessageId) {
-            out.set(permissionId, { kind: 'nested', parentMessageId, messageId: toolMessageId, seq });
+            out.set(permissionId, { kind: 'nested', parentMessageId, messageId: routeMessageId, seq });
             return;
         }
 
-        out.set(permissionId, { kind: 'top', messageId: toolMessageId, seq });
+        out.set(permissionId, { kind: 'top', messageId: routeMessageId, seq });
     };
 
     if (params.toolIdToMessageId && typeof params.toolIdToMessageId.get === 'function') {
@@ -89,16 +93,20 @@ export function resolvePermissionToolCallLocations(params: Readonly<{
                         out.set(permissionId, {
                             kind: 'nested',
                             parentMessageId: rootToolMessageId,
-                            messageId: toolMessage.id,
+                            messageId: resolveRouteMessageId(toolMessage.id, toolMessage),
                             seq: normalizeSeq((toolMessage as any).seq),
                         });
                     } else {
-                        out.set(permissionId, { kind: 'top', messageId: toolMessage.id, seq: normalizeSeq((toolMessage as any).seq) });
+                        out.set(permissionId, {
+                            kind: 'top',
+                            messageId: resolveRouteMessageId(toolMessage.id, toolMessage),
+                            seq: normalizeSeq((toolMessage as any).seq),
+                        });
                     }
                     if (out.size >= pendingPermissionIds.size) return;
                 }
 
-                visit(toolMessage.children ?? [], nextRootToolMessageId);
+                visit(toolMessage.children ?? [], rootToolMessageId ?? resolveRouteMessageId(toolMessage.id, toolMessage));
                 if (out.size >= pendingPermissionIds.size) return;
             }
         };
