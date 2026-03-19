@@ -1,6 +1,6 @@
 import type { PromptRegistryConfiguredSourceV1, PromptRegistryFetchedItemV1 } from '@happier-dev/protocol';
 
-import { machinePromptRegistriesFetchItem } from '@/sync/ops/machinePromptRegistries';
+import { machinePromptRegistriesDownloadItem } from '@/sync/ops/machinePromptRegistries';
 
 import { createPromptBundleArtifact } from './promptBundles';
 
@@ -38,7 +38,7 @@ export async function importPromptRegistrySkillItem(args: Readonly<{
   sourceId: string;
   itemId: string;
 }>): Promise<PromptRegistrySkillImportResult> {
-  const response = await machinePromptRegistriesFetchItem(args.machineId, {
+  const response = await machinePromptRegistriesDownloadItem(args.machineId, {
     sourceId: args.sourceId,
     itemId: args.itemId,
     configuredSources: args.configuredSources,

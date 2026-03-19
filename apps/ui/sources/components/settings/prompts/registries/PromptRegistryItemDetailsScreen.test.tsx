@@ -8,7 +8,7 @@ import type { PromptRegistryFetchItemResponseV1 } from '@happier-dev/protocol';
 const routerPushSpy = vi.fn();
 const modalAlertSpy = vi.hoisted(() => vi.fn());
 const modalConfirmSpy = vi.hoisted(() => vi.fn(async () => true));
-const machinePromptRegistriesFetchItemMock = vi.hoisted(() => vi.fn<() => Promise<PromptRegistryFetchItemResponseV1>>(async () => ({
+const machinePromptRegistriesDownloadItemMock = vi.hoisted(() => vi.fn<() => Promise<PromptRegistryFetchItemResponseV1>>(async () => ({
   ok: true,
   item: {
     sourceId: 'skills_sh:featured',
@@ -179,7 +179,7 @@ vi.mock('@/modal', () => ({
 }));
 
 vi.mock('@/sync/ops/machinePromptRegistries', () => ({
-  machinePromptRegistriesFetchItem: machinePromptRegistriesFetchItemMock,
+  machinePromptRegistriesDownloadItem: machinePromptRegistriesDownloadItemMock,
 }));
 
 vi.mock('@/sync/ops/machinePromptAssets', () => ({
@@ -220,7 +220,7 @@ describe('PromptRegistryItemDetailsScreen', () => {
     routerPushSpy.mockReset();
     modalAlertSpy.mockReset();
     modalConfirmSpy.mockReset();
-    machinePromptRegistriesFetchItemMock.mockClear();
+    machinePromptRegistriesDownloadItemMock.mockClear();
     createPromptRegistrySkillArtifactFromFetchedItemMock.mockClear();
     installPromptRegistryItemMock.mockClear();
     machinePromptAssetsListTypesMock.mockClear();
@@ -242,7 +242,7 @@ describe('PromptRegistryItemDetailsScreen', () => {
     });
     await act(async () => {});
 
-    expect(machinePromptRegistriesFetchItemMock).toHaveBeenCalledWith(
+    expect(machinePromptRegistriesDownloadItemMock).toHaveBeenCalledWith(
       'machine-1',
       expect.objectContaining({
         sourceId: 'skills_sh:featured',
