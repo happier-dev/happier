@@ -100,8 +100,8 @@ describe('SavedServersSection retention', () => {
             tree = renderer.create(
                 React.createElement(SavedServersSection, {
                     servers: [
-                        { id: 'server-a', name: 'Active', serverUrl: 'https://active.example', source: 'manual' },
-                        { id: 'server-b', name: 'Archive', serverUrl: 'https://archive.example', source: 'manual' },
+                        { id: 'server-a', name: 'Active', serverUrl: 'https://active.example', source: 'manual', createdAt: 1, updatedAt: 1, lastUsedAt: 1 },
+                        { id: 'server-b', name: 'Archive', serverUrl: 'https://archive.example', source: 'manual', createdAt: 1, updatedAt: 1, lastUsedAt: 1 },
                     ],
                     activeServerId: 'server-a',
                     authStatusByServerId: {
