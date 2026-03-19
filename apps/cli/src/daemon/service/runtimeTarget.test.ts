@@ -11,7 +11,7 @@ describe('resolveDaemonServiceRuntimeTarget', () => {
       }),
     ).toEqual({
       nodePath: '/opt/homebrew/bin/bun',
-      entryPath: expect.stringContaining('/apps/cli/bin/happier.mjs'),
+      entryPath: expect.stringContaining('/apps/cli/package-dist/index.mjs'),
     });
   });
 
@@ -23,7 +23,7 @@ describe('resolveDaemonServiceRuntimeTarget', () => {
       }),
     ).toEqual({
       nodePath: '/Users/test/.happier/tools/js-runtime/current/bin/happier-js-runtime',
-      entryPath: expect.stringContaining('/apps/cli/bin/happier.mjs'),
+      entryPath: expect.stringContaining('/apps/cli/package-dist/index.mjs'),
     });
   });
 

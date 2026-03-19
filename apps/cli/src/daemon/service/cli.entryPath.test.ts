@@ -33,7 +33,7 @@ describe('resolveDaemonServiceCliRuntimeFromEnv entrypoint resolution', () => {
       const { resolveDaemonServiceCliRuntimeFromEnv } = await import('./cli.js');
       const runtime = resolveDaemonServiceCliRuntimeFromEnv();
       expect(runtime.nodePath).toBe('/Users/test/.happier/tools/js-runtime/current/bin/happier-js-runtime');
-      expect(runtime.entryPath).toContain('/apps/cli/bin/happier.mjs');
+      expect(runtime.entryPath).toContain('/apps/cli/package-dist/index.mjs');
     } finally {
       warn.mockRestore();
     }
