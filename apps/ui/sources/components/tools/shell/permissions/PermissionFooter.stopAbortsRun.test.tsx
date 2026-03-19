@@ -6,9 +6,9 @@ import { PermissionFooter } from '../permissions/PermissionFooter';
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 const runtime = vi.hoisted(() => ({
-    flavor: 'opencode' as 'codex' | 'opencode' | 'gemini',
+    flavor: 'opencode' as 'claude' | 'codex' | 'opencode' | 'gemini',
     protocol: 'claude' as 'codexDecision' | 'claude',
-    setProtocol(protocol: 'codexDecision' | 'claude', flavor: 'codex' | 'opencode' | 'gemini') {
+    setProtocol(protocol: 'codexDecision' | 'claude', flavor: 'claude' | 'codex' | 'opencode' | 'gemini') {
         this.protocol = protocol;
         this.flavor = flavor;
     },
@@ -127,7 +127,7 @@ describe('PermissionFooter stop action', () => {
         {
             name: 'non-codex protocol',
             protocol: 'claude' as const,
-            flavor: 'opencode' as const,
+            flavor: 'claude' as const,
             toolName: 'Read',
             toolInput: { filepath: '/etc/hosts' },
             shouldSendFollowupPrompt: false,
