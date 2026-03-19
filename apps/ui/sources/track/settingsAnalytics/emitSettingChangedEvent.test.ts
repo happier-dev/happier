@@ -84,6 +84,34 @@ describe('emitAccountSettingChangedEvents', () => {
         expect(mocks.tracking.flush).toHaveBeenCalledTimes(1);
     });
 
+    it('captures per-active-server provider edits under the logical provider field key', () => {
+        emitAccountSettingChangedEvents({
+            previousSettings: settingsDefaults,
+            nextSettings: {
+                ...settingsDefaults,
+                opencodeServerBaseUrlByServerIdV1: {
+                    server1: 'https://example.com/',
+                },
+            },
+            source: 'ui',
+        });
+
+        expect(mocks.tracking.capture).toHaveBeenCalledWith(
+            'setting_changed',
+            expect.objectContaining({
+                setting_key: 'opencodeServerBaseUrl',
+                scope: 'account_setting',
+                identity_scope: 'person',
+                source: 'ui',
+                prev_value: false,
+                next_value: true,
+            }),
+        );
+        expect(
+            mocks.tracking.capture.mock.calls.some(([, payload]) => payload?.setting_key === 'opencodeServerBaseUrlByServerIdV1'),
+        ).toBe(false);
+    });
+
     it('captures structured account settings through canonical analytics property serializers', () => {
         const nextSettings = {
             ...settingsDefaults,
@@ -112,6 +140,32 @@ describe('emitAccountSettingChangedEvents', () => {
             }),
         );
         expect(mocks.tracking.flush).toHaveBeenCalledTimes(1);
+    });
+
+    it('captures configured backend transcript-storage overrides through canonical target-key analytics', () => {
+        const configuredTargetKey = buildBackendTargetKey({ kind: 'configuredAcpBackend', backendId: 'review-bot' });
+        emitAccountSettingChangedEvents({
+            previousSettings: settingsDefaults,
+            nextSettings: {
+                ...settingsDefaults,
+                newSessionDefaultPersistenceModeByTargetKeyV1: {
+                    [configuredTargetKey]: 'direct',
+                },
+            },
+            source: 'ui',
+        });
+
+        expect(mocks.tracking.capture).toHaveBeenCalledWith(
+            'setting_changed',
+            expect.objectContaining({
+                setting_key: `newSessionDefaultPersistenceModeByTargetKeyV1__${configuredTargetKey}`,
+                scope: 'account_setting',
+                identity_scope: 'person',
+                source: 'ui',
+                prev_value: null,
+                next_value: 'direct',
+            }),
+        );
     });
 
     it('captures structured voice settings through canonical account analytics serializers', () => {
