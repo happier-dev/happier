@@ -14,7 +14,6 @@ import { encryptLegacyBase64 } from '../../src/testkit/messageCrypto';
 import { waitFor } from '../../src/testkit/timing';
 import { writeTestManifestForServer } from '../../src/testkit/manifestForServer';
 import { stopDaemonFromHomeDir } from '../../src/testkit/daemon/daemon';
-import { ensureCliDistBuilt } from '../../src/testkit/process/cliDist';
 import { yarnCommand } from '../../src/testkit/process/commands';
 import { fakeClaudeFixturePath, type FakeClaudeInvocation, waitForFakeClaudeInvocation } from '../../src/testkit/fakeClaude';
 import { postEncryptedUiTextMessage } from '../../src/testkit/uiMessages';
@@ -96,8 +95,6 @@ describe('core e2e: Claude switching preserves args + permissions', () => {
       HAPPIER_E2E_FAKE_CLAUDE_LOG: fakeLog,
       HAPPIER_E2E_FAKE_CLAUDE_SESSION_ID: `fake-claude-session-${randomUUID()}`,
     };
-
-    await ensureCliDistBuilt({ testDir, env: cliEnv });
 
     const proc: SpawnedProcess = spawnLoggedProcess({
       command: yarnCommand(),
@@ -265,8 +262,6 @@ describe('core e2e: Claude switching preserves args + permissions', () => {
       HAPPIER_E2E_FAKE_CLAUDE_SESSION_ID: `fake-claude-session-${randomUUID()}`,
     };
 
-    await ensureCliDistBuilt({ testDir, env: cliEnv });
-
     const proc: SpawnedProcess = spawnLoggedProcess({
       command: yarnCommand(),
       args: [
@@ -426,8 +421,6 @@ describe('core e2e: Claude switching preserves args + permissions', () => {
       HAPPIER_E2E_FAKE_CLAUDE_LOG: fakeLog,
       HAPPIER_E2E_FAKE_CLAUDE_SESSION_ID: `fake-claude-session-${randomUUID()}`,
     };
-
-    await ensureCliDistBuilt({ testDir, env: cliEnv });
 
     const proc: SpawnedProcess = spawnLoggedProcess({
       command: yarnCommand(),
