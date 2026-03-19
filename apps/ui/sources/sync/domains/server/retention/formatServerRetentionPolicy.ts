@@ -44,11 +44,11 @@ function formatDomainPolicyDetail(params: {
     if (domainPolicy.mode === 'keep_forever') {
         return t('server.retention.keepForever');
     }
-    if (params.domainKey === 'sessions') {
+    if (params.domainKey === 'sessions' && domainPolicy.mode === 'delete_inactive') {
         return t('server.retention.deleteInactiveSessionsDays', { count: domainPolicy.inactivityDays });
     }
 
-    return formatAgePolicy(domainPolicy);
+    return formatAgePolicy(domainPolicy as Extract<typeof domainPolicy, { mode: 'delete_older_than' }>);
 }
 
 export function formatServerRetentionRows(policy: ServerRetentionPolicy | null | undefined): RetentionRow[] {

@@ -1,10 +1,11 @@
+import type { TranslationKeyNoParams } from '@/text';
 import type { ServerRetentionPolicy } from './serverRetentionPolicy';
 
 export type ServerRetentionDomainKey = Exclude<keyof ServerRetentionPolicy, 'policyVersion' | 'enabled'>;
 
 export type ServerRetentionDomainMetadata = Readonly<{
     key: ServerRetentionDomainKey;
-    titleKey: string;
+    titleKey: TranslationKeyNoParams;
 }>;
 
 export const SERVER_RETENTION_DOMAIN_METADATA: readonly ServerRetentionDomainMetadata[] = Object.freeze([
