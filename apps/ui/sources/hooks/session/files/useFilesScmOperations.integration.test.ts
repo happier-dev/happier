@@ -12,8 +12,10 @@ const {
 	    modalPrompt,
 	    showScmCommitMessageEditorModal,
 	    invalidateFromMutationAndAwait,
-	    trackingCapture,
-	    mockMachineRPC,
+    trackingCapture,
+    mockMachineRPC,
+    readMachineTargetForSession,
+    resolvePreferredServerIdForSessionId,
 	} = vi.hoisted(() => ({
 	    mockSessionRPC: vi.fn(),
 	    modalAlert: vi.fn(),
@@ -27,6 +29,8 @@ const {
 	        (err as Error & { rpcErrorCode?: string }).rpcErrorCode = 'RPC_METHOD_NOT_AVAILABLE';
 	        throw err;
 	    }),
+        readMachineTargetForSession: vi.fn(() => null),
+        resolvePreferredServerIdForSessionId: vi.fn(() => undefined),
 	}));
 
 	vi.mock('@/sync/api/session/apiSocket', () => ({
@@ -64,10 +68,22 @@ vi.mock('@/scm/scmStatusSync', () => ({
     },
 }));
 
+vi.mock('@/sync/ops/sessionMachineTarget', async (importOriginal) => {
+    const actual = await importOriginal<typeof import('@/sync/ops/sessionMachineTarget')>();
+    return {
+        ...actual,
+        readMachineTargetForSession,
+    };
+});
+
 vi.mock('@/track', () => ({
     tracking: {
         capture: trackingCapture,
     },
+}));
+
+vi.mock('@/sync/runtime/orchestration/serverScopedRpc/resolvePreferredServerIdForSessionId', () => ({
+    resolvePreferredServerIdForSessionId,
 }));
 
 import { sessionScmStatusSnapshot } from '@/sync/ops';
@@ -83,7 +99,7 @@ import { SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
-const initialStorageState = storage.getState();
+const initialStorageState = storage.getInitialState();
 
 type HookProps = Parameters<typeof useFilesScmOperations>[0];
 
@@ -97,7 +113,6 @@ function createSession(sessionId: string, workspacePath: string) {
         active: true,
         activeAt: now,
         metadata: {
-            machineId: 'machine-1',
             path: workspacePath,
             host: 'localhost',
             version: '1.0.0',
@@ -142,16 +157,21 @@ describe('useFilesScmOperations integration', () => {
     beforeEach(() => {
         storage.setState(initialStorageState, true);
         projectManager.clear();
+        storage.getState().applySettingsLocal({ scmGitRepoPreferredBackend: 'git' } as any);
 
 	        mockSessionRPC.mockReset();
 	        mockMachineRPC.mockReset();
 	        modalAlert.mockReset();
 	        modalConfirm.mockReset();
 	        modalPrompt.mockReset();
-	        showScmCommitMessageEditorModal.mockReset();
+        showScmCommitMessageEditorModal.mockReset();
         invalidateFromMutationAndAwait.mockReset();
         invalidateFromMutationAndAwait.mockImplementation(async () => {});
-	        trackingCapture.mockReset();
+        trackingCapture.mockReset();
+        readMachineTargetForSession.mockReset();
+        readMachineTargetForSession.mockReturnValue(null);
+        resolvePreferredServerIdForSessionId.mockReset();
+        resolvePreferredServerIdForSessionId.mockReturnValue(undefined);
 
 	        mockMachineRPC.mockImplementation(async () => {
 	            const err = new Error('RPC method not available');
