@@ -1,5 +1,10 @@
 import { randomUUID } from '@/platform/randomUUID';
 import type { AgentId } from '@/agents/catalog/catalog';
+import type { NewSessionCheckoutCreationDraft } from '@/sync/domains/state/newSessionCheckoutDraft';
+import type { AcpConfigOptionOverridesV1, BackendTargetRefV1, SessionMcpSelectionV1 } from '@happier-dev/protocol';
+import type { CodexBackendMode } from '@happier-dev/agents';
+import type { PermissionMode, ModelMode } from '@/sync/domains/permissions/permissionTypes';
+import type { NewSessionAutomationDraft } from '@/sync/domains/automations/automationDraft';
 
 export interface TempDataEntry {
     data: any;
@@ -9,9 +14,21 @@ export interface TempDataEntry {
 export interface NewSessionData {
     prompt?: string;
     machineId?: string;
+    directory?: string;
     path?: string;
+    checkoutCreationDraft?: NewSessionCheckoutCreationDraft | null;
     agentType?: AgentId;
-    sessionType?: 'simple' | 'worktree';
+    backendTarget?: BackendTargetRefV1;
+    selectedProfileId?: string | null;
+    transcriptStorage?: 'persisted' | 'direct';
+    permissionMode?: PermissionMode;
+    modelMode?: ModelMode;
+    acpSessionModeId?: string | null;
+    sessionConfigOptionOverrides?: AcpConfigOptionOverridesV1 | null;
+    codexBackendMode?: CodexBackendMode | null;
+    mcpSelection?: SessionMcpSelectionV1 | null;
+    automationDraft?: NewSessionAutomationDraft | null;
+    agentNewSessionOptionStateByAgentId?: Record<string, Record<string, unknown>>;
     resumeSessionId?: string;
     taskId?: string;
     taskTitle?: string;
