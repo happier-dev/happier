@@ -124,7 +124,24 @@ vi.mock('@/sync/api/capabilities/serverFeaturesClient', () => ({
     getServerFeaturesSnapshot: getServerFeaturesSnapshotMock,
 }));
 
+async function renderWelcomeScreen(): Promise<void> {
+    const { default: Screen } = await import('@/app/(app)/index');
+    let tree: ReturnType<typeof renderer.create> | undefined;
+    try {
+        await act(async () => {
+            tree = renderer.create(<Screen />);
+        });
+        await act(async () => {});
+    } finally {
+        act(() => {
+            tree?.unmount();
+        });
+    }
+}
+
 describe('/ (welcome) auto redirect on web', () => {
+    const testTimeoutMs = 60_000;
+
     beforeEach(() => {
         openURL.mockClear();
         getServerFeaturesMock.mockClear();
@@ -160,4 +177,5 @@ describe('/ (welcome) auto redirect on web', () => {
             (globalThis as any).window = originalWindow;
         }
     });
+
 });

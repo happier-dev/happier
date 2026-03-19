@@ -159,7 +159,7 @@ describe('/ (welcome) auto redirect', () => {
         const { default: Screen } = await import('@/app/(app)/index');
         let tree: ReturnType<typeof renderer.create> | undefined;
         try {
-            await act(async () => {
+            act(() => {
                 tree = renderer.create(<Screen />);
             });
             await act(async () => {});
@@ -188,7 +188,7 @@ describe('/ (welcome) auto redirect', () => {
         const { default: Screen } = await import('@/app/(app)/index');
         let tree: ReturnType<typeof renderer.create> | undefined;
         try {
-            await act(async () => {
+            act(() => {
                 tree = renderer.create(
                     <React.StrictMode>
                         <Screen />
