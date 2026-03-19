@@ -8,6 +8,7 @@ import { buildDataKeyCredentialsForToken } from '@/auth/flows/buildDataKeyCreden
 import { Modal } from '@/modal';
 import { t } from '@/text';
 import { formatOperationFailedDebugMessage } from '@/utils/errors/formatOperationFailedDebugMessage';
+import { readConfiguredServerUrlEnv } from '@/sync/domains/server/readConfiguredServerUrlEnv';
 
 export default function MtlsCallbackScreen() {
     const auth = useAuth();
@@ -32,7 +33,7 @@ export default function MtlsCallbackScreen() {
 
                 const snapshot = getActiveServerSnapshot();
                 const rawServerUrl = snapshot.serverUrl ? String(snapshot.serverUrl).trim() : '';
-                const serverUrl = rawServerUrl.replace(/\/+$/, '');
+                const serverUrl = rawServerUrl.replace(/\/+$/, '') || readConfiguredServerUrlEnv().replace(/\/+$/, '');
                 if (!serverUrl) {
                     await Modal.alert(t('common.error'), t('errors.operationFailed'));
                     router.replace('/');
