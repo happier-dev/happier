@@ -82,6 +82,7 @@ vi.mock('@/sync/domains/state/storage', async (importOriginal) => {
   const actual = await importOriginal<any>();
   return {
     ...actual,
+    useSettings: () => ({}),
     useSetting: (key: string) => {
       if (key === 'recentMachinePaths') return settingsState.current.recentMachinePaths;
       return null;
@@ -141,6 +142,8 @@ function withProvider(voice: VoiceSettings, providerId: VoiceSettings['providerI
 async function loadLocalConversationSection() {
   // Ensure per-file mocks apply even when another test file imported the module earlier in the same worker.
   vi.resetModules();
+  vi.unmock('@/components/settings/pickers/agentDropdownItems');
+  vi.unmock('@/components/settings/pickers/modelDropdownItems');
   const mod = await import('@/voice/settings/panels/LocalConversationSection');
   return mod.LocalConversationSection;
 }
@@ -229,6 +232,50 @@ describe('LocalConversationSection', () => {
     const modelDropdown = dropdowns.find((d: any) => (d.props.items ?? []).some((it: any) => it?.id === 'm1'));
     if (!modelDropdown) throw new Error('Expected voice agent chat model dropdown to be rendered');
     expect(modelDropdown.props.selectedId).toBe('m1');
+  });
+
+  it('wraps chat model dropdown icons instead of exposing raw icon nodes to item rows', async () => {
+    const LocalConversationSection = await loadLocalConversationSection();
+    const voice: VoiceSettings = {
+      ...withProvider(voiceSettingsDefaults, 'local_conversation'),
+      adapters: {
+        ...voiceSettingsDefaults.adapters,
+        local_conversation: {
+          ...voiceSettingsDefaults.adapters.local_conversation,
+          conversationMode: 'agent',
+          agent: {
+            ...voiceSettingsDefaults.adapters.local_conversation.agent,
+            backend: 'daemon',
+            agentSource: 'agent',
+            agentId: 'codex',
+            chatModelSource: 'custom',
+            chatModelId: 'm1',
+            commitModelSource: 'session',
+          },
+        },
+      },
+    };
+
+    let tree!: ReactTestRenderer;
+    act(() => {
+      tree = renderer.create(<LocalConversationSection voice={voice} setVoice={() => {}} />);
+    });
+
+    const dropdowns = tree.root.findAllByType('DropdownMenu' as any);
+    const modelDropdown = dropdowns.find((d: any) => (d.props.items ?? []).some((it: any) => it?.id === 'm1'));
+    if (!modelDropdown) throw new Error('Expected voice agent chat model dropdown to be rendered');
+
+    const iconTypesById = Object.fromEntries(
+      (modelDropdown.props.items ?? [])
+        .filter((item: any) => ['__refresh_models__', 'm1', '__custom__'].includes(String(item?.id)))
+        .map((item: any) => [String(item.id), item?.icon?.type ?? null]),
+    );
+
+    expect(iconTypesById).toEqual({
+      __refresh_models__: expect.not.stringContaining('Ionicons'),
+      m1: expect.not.stringContaining('Ionicons'),
+      __custom__: expect.not.stringContaining('Ionicons'),
+    });
   });
 
   it('renders a commit model dropdown for the voice agent when commitModelSource=custom', async () => {
