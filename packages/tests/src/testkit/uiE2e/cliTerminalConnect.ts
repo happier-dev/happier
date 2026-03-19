@@ -1,7 +1,7 @@
 import { readFile } from 'node:fs/promises';
 import { resolve as resolvePath } from 'node:path';
 
-import { ensureCliDistSnapshotEntrypoint } from '../process/cliDist';
+import { resolveCliTestLaunchSpec } from '../process/cliLaunchSpec';
 import { spawnLoggedProcess, type SpawnedProcess } from '../process/spawnProcess';
 import { repoRootDir } from '../paths';
 import { waitForRegexInFile } from '../waitForRegexInFile';
@@ -69,7 +69,7 @@ export async function startCliAuthLoginForTerminalConnect(params: Readonly<{
   webappUrl: string;
   env: NodeJS.ProcessEnv;
 }>): Promise<StartedCliTerminalConnect> {
-  const cliDistEntrypoint = await ensureCliDistSnapshotEntrypoint(
+  const cliLaunchSpec = await resolveCliTestLaunchSpec(
     { testDir: params.testDir, env: params.env },
     { snapshotDir: resolvePath(params.testDir, 'cli-dist') },
   );
@@ -78,11 +78,12 @@ export async function startCliAuthLoginForTerminalConnect(params: Readonly<{
   const stderrPath = resolvePath(params.testDir, 'cli.auth.login.stderr.log');
 
   const proc = spawnLoggedProcess({
-    command: process.execPath,
-    args: [cliDistEntrypoint, 'auth', 'login', '--force', '--no-open', '--method', 'web'],
+    command: cliLaunchSpec.command,
+    args: [...cliLaunchSpec.args, 'auth', 'login', '--force', '--no-open', '--method', 'web'],
     cwd: repoRootDir(),
     env: {
       ...params.env,
+      ...(cliLaunchSpec.env ?? {}),
       CI: '1',
       HAPPIER_SESSION_AUTOSTART_DAEMON: '0',
       HAPPIER_HOME_DIR: params.cliHomeDir,

@@ -1,7 +1,7 @@
 import { readFile } from 'node:fs/promises';
 import { join, resolve as resolvePath } from 'node:path';
 
-import { ensureCliDistSnapshotEntrypoint } from '../process/cliDist';
+import { resolveCliTestLaunchSpec } from '../process/cliLaunchSpec';
 import { runLoggedCommand } from '../process/spawnProcess';
 import { repoRootDir } from '../paths';
 
@@ -43,7 +43,7 @@ export async function runCliJson(params: Readonly<{
   args: string[];
   timeoutMs?: number;
 }>): Promise<JsonEnvelope> {
-  const cliDistEntrypoint = await ensureCliDistSnapshotEntrypoint(
+  const cliLaunchSpec = await resolveCliTestLaunchSpec(
     { testDir: params.testDir, env: params.env },
     { snapshotDir: resolvePath(join(params.testDir, 'cli-dist')) },
   );
@@ -51,11 +51,12 @@ export async function runCliJson(params: Readonly<{
   const stderrPath = resolvePath(join(params.testDir, `cli.${params.label}.stderr.log`));
 
   await runLoggedCommand({
-    command: process.execPath,
-    args: [cliDistEntrypoint, ...params.args],
+    command: cliLaunchSpec.command,
+    args: [...cliLaunchSpec.args, ...params.args],
     cwd: repoRootDir(),
     env: {
       ...params.env,
+      ...(cliLaunchSpec.env ?? {}),
       CI: '1',
       HAPPIER_SESSION_AUTOSTART_DAEMON: '0',
       HAPPIER_HOME_DIR: params.cliHomeDir,
