@@ -180,6 +180,10 @@ The entrypoint is `suites/providers/provider.matrix.test.ts`, backed by:
 - `src/testkit/providers/scenarios/scenarios.codex.ts`
 - `src/testkit/providers/scenarios/scenarios.opencode.ts`
 
+Current Codex scope note:
+- `HAPPIER_E2E_PROVIDER_CODEX=1` exercises the Codex ACP provider lane only.
+- Codex app-server behavior is covered outside the provider lane in targeted CLI/backend tests (for example `apps/cli/src/capabilities/probes/agentModesProbe.codexAppServer.test.ts`, `apps/cli/src/capabilities/probes/agentModelsProbe.codexAppServer.test.ts`, and `apps/cli/src/backends/codex/runCodex.acpResumePreflight.integration.test.ts`).
+
 ### Environment flags
 
 - `HAPPIER_E2E_PROVIDERS=1`: enable provider contract matrix
