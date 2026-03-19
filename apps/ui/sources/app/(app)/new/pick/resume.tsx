@@ -1,7 +1,7 @@
 import React from 'react';
 import { View, Pressable, InteractionManager } from 'react-native';
 import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
-import { CommonActions, useFocusEffect, useNavigation } from '@react-navigation/native';
+import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { Typography } from '@/constants/Typography';
@@ -15,6 +15,7 @@ import { DEFAULT_AGENT_ID, getAgentCore, isAgentId } from '@/agents/catalog/cata
 import { getClipboardStringTrimmedSafe } from '@/utils/ui/clipboard';
 import { Text } from '@/components/ui/text/Text';
 import { safeRouterBack } from '@/utils/navigation/safeRouterBack';
+import { setNewSessionPickerReturnParams } from '@/components/sessions/new/navigation/setNewSessionPickerReturnParams';
 
 
 const stylesheet = StyleSheet.create((theme) => ({
@@ -108,35 +109,25 @@ export default function ResumePickerScreen() {
 
     const handleSave = () => {
         const trimmed = inputValue.trim();
-        const state = navigation.getState();
-        if (!state) {
+        const returnMode = setNewSessionPickerReturnParams({
+            navigation,
+            router,
+            routeParams: { resumeSessionId: trimmed },
+        });
+        if (returnMode === 'dispatch') {
             safeRouterBack({ router, navigation, fallbackHref: '/new' });
-            return;
         }
-        const previousRoute = state.routes[state.index - 1];
-        if (previousRoute) {
-            navigation.dispatch({
-                ...CommonActions.setParams({ resumeSessionId: trimmed }),
-                source: previousRoute.key,
-            } as never);
-        }
-        safeRouterBack({ router, navigation, fallbackHref: '/new' });
     };
 
     const handleClear = () => {
-        const state = navigation.getState();
-        if (!state) {
+        const returnMode = setNewSessionPickerReturnParams({
+            navigation,
+            router,
+            routeParams: { resumeSessionId: '' },
+        });
+        if (returnMode === 'dispatch') {
             safeRouterBack({ router, navigation, fallbackHref: '/new' });
-            return;
         }
-        const previousRoute = state.routes[state.index - 1];
-        if (previousRoute) {
-            navigation.dispatch({
-                ...CommonActions.setParams({ resumeSessionId: '' }),
-                source: previousRoute.key,
-            } as never);
-        }
-        safeRouterBack({ router, navigation, fallbackHref: '/new' });
     };
 
     const handlePaste = async () => {
