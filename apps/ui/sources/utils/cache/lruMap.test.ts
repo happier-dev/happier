@@ -18,3 +18,4 @@ describe('LruMap', () => {
         expect(map.get('c')).toBe(3);
     });
 });
+
