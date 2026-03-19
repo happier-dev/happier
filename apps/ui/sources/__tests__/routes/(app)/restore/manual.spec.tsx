@@ -18,12 +18,17 @@ vi.mock('react-native', () => ({
     View: 'View',
     Text: 'Text',
     TextInput: 'TextInput',
+    Pressable: 'Pressable',
     ScrollView: 'ScrollView',
     ActivityIndicator: 'ActivityIndicator',
     AppState: {
         addEventListener: vi.fn(() => ({ remove: vi.fn() })),
     },
     Platform: { OS: 'web' },
+}));
+
+vi.mock('@expo/vector-icons/Ionicons', () => ({
+    default: 'Ionicons',
 }));
 
 vi.mock('expo-router', () => ({
@@ -96,6 +101,34 @@ describe('/restore/manual', () => {
             const inputs = tree.root.findAll((node) => (node.type as unknown) === 'TextInput');
             expect(inputs.length).toBeGreaterThan(0);
             expect(inputs[0]?.props?.autoCapitalize).toBe('none');
+        } finally {
+            act(() => {
+                tree?.unmount();
+            });
+        }
+    });
+
+    it('masks the secret key input by default and allows toggling visibility', async () => {
+        vi.resetModules();
+        const { default: Screen } = await import('@/app/(app)/restore/manual');
+
+        let tree: ReturnType<typeof renderer.create> | undefined;
+        try {
+            await act(async () => {
+                tree = renderer.create(<Screen />);
+            });
+            if (!tree) throw new Error('Expected renderer');
+
+            const input = tree.root.find((node) => (node.props as any)?.testID === 'restore-manual-secret-input');
+            expect((input.props as any)?.secureTextEntry).toBe(true);
+            expect((input.props as any)?.multiline).toBe(false);
+
+            const reveal = tree.root.find((node) => (node.props as any)?.testID === 'restore-manual-secret-reveal');
+            await act(async () => {
+                reveal.props.onPress?.();
+            });
+            const revealedInput = tree.root.find((node) => (node.props as any)?.testID === 'restore-manual-secret-input');
+            expect((revealedInput.props as any)?.secureTextEntry).toBe(false);
         } finally {
             act(() => {
                 tree?.unmount();
