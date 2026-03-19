@@ -4,13 +4,12 @@ import { Drawer } from 'expo-router/drawer';
 import { useIsTablet } from '@/utils/platform/responsive';
 import { SidebarView } from './SidebarView';
 import { CollapsedSidebarView } from './CollapsedSidebarView';
-import { Pressable, View, useWindowDimensions, Platform } from 'react-native';
+import { View, useWindowDimensions, Platform } from 'react-native';
 import { useLocalSetting, useLocalSettingMutable } from '@/sync/domains/state/storage';
-import { SidebarExpandIcon } from './SidebarIcons';
-import { ResizableDockedPane } from '@/components/ui/panels/ResizableDockedPane';
+import { ResizableDockedPane, type ResizableDockedPaneCommitMeta } from '@/components/ui/panels/ResizableDockedPane';
 import { resolveScaledPaneWidthPx } from '@/components/appShell/panes/layout/paneSizing';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
-import { resolveSidebarDockMaxWidthPx } from './sidebarSizing';
+import { resolveSidebarDockMaxWidthPx, SIDEBAR_COLLAPSED_WIDTH_PX, SIDEBAR_DOCK_MIN_WIDTH_PX } from './sidebarSizing';
 
 export const SidebarNavigator = React.memo(() => {
     const auth = useAuth();
@@ -27,6 +26,7 @@ export const SidebarNavigator = React.memo(() => {
     const [, setSidebarWidthPx] = useLocalSettingMutable('sidebarWidthPx');
     const [, setSidebarWidthBasisPx] = useLocalSettingMutable('sidebarWidthBasisPx');
     const [dragSidebarWidthPx, setDragSidebarWidthPx] = React.useState<number | null>(null);
+    const collapseTriggeredDuringDragRef = React.useRef(false);
 
     const stopScrollEventPropagationOnWeb = React.useCallback((event: any) => {
         // Expo Router (Vaul/Radix) modals on web often install document-level scroll-lock listeners
@@ -44,7 +44,7 @@ export const SidebarNavigator = React.memo(() => {
             preferredWidthPx: sidebarWidthPx,
             basisContainerWidthPx: sidebarWidthBasisPx,
             containerWidthPx: windowWidth,
-            minPx: 250,
+            minPx: SIDEBAR_DOCK_MIN_WIDTH_PX,
             maxPx: sidebarMaxWidthPx,
         });
     }, [sidebarMaxWidthPx, sidebarWidthBasisPx, sidebarWidthPx, windowWidth]);
@@ -52,9 +52,40 @@ export const SidebarNavigator = React.memo(() => {
     // Calculate drawer width only when needed
     const drawerWidth = React.useMemo(() => {
         if (!showPermanentDrawer) return 280; // default width; hidden drawers are not rendered
-        if (sidebarCollapsed) return 72;
+        if (sidebarCollapsed) return SIDEBAR_COLLAPSED_WIDTH_PX;
         return dragSidebarWidthPx ?? effectiveSidebarWidthPx;
     }, [dragSidebarWidthPx, effectiveSidebarWidthPx, showPermanentDrawer, sidebarCollapsed]);
+
+    const handleSidebarWidthDrag = React.useCallback((nextWidthPx: number | null, dragMeta?: ResizableDockedPaneCommitMeta | null) => {
+        if (nextWidthPx == null) {
+            collapseTriggeredDuringDragRef.current = false;
+            setDragSidebarWidthPx(null);
+            return;
+        }
+
+        const shouldCollapseToCompactView =
+            Platform.OS === 'web'
+            && !sidebarCollapsed
+            && !collapseTriggeredDuringDragRef.current
+            && nextWidthPx <= SIDEBAR_DOCK_MIN_WIDTH_PX
+            && dragMeta?.exceededMinPx === true;
+
+        if (shouldCollapseToCompactView) {
+            collapseTriggeredDuringDragRef.current = true;
+            setDragSidebarWidthPx(null);
+            setSidebarCollapsed(true);
+            return;
+        }
+
+        setDragSidebarWidthPx(nextWidthPx);
+    }, [setSidebarCollapsed, sidebarCollapsed]);
+
+    const handleSidebarWidthCommit = React.useCallback((nextWidthPx: number) => {
+        collapseTriggeredDuringDragRef.current = false;
+        setDragSidebarWidthPx(null);
+        setSidebarWidthPx(nextWidthPx);
+        setSidebarWidthBasisPx(windowWidth);
+    }, [setSidebarWidthBasisPx, setSidebarWidthPx, windowWidth]);
 
     const drawerNavigationOptions = React.useMemo(() => {
         const base = {
@@ -114,15 +145,11 @@ export const SidebarNavigator = React.memo(() => {
             return (
                 <ResizableDockedPane
                     widthPx={drawerWidth}
-                    minWidthPx={250}
+                    minWidthPx={SIDEBAR_DOCK_MIN_WIDTH_PX}
                     maxWidthPx={sidebarMaxWidthPx}
                     resizeEdge="right"
-                    onDragWidthPx={setDragSidebarWidthPx}
-                    onCommitWidthPx={(nextWidthPx) => {
-                        setDragSidebarWidthPx(null);
-                        setSidebarWidthPx(nextWidthPx);
-                        setSidebarWidthBasisPx(windowWidth);
-                    }}
+                    onDragWidthPx={handleSidebarWidthDrag}
+                    onCommitWidthPx={handleSidebarWidthCommit}
                 >
                     <View
                         style={{ flex: 1, flexShrink: 0, minHeight: 0 }}
@@ -131,31 +158,11 @@ export const SidebarNavigator = React.memo(() => {
                             : {})}
                     >
                         <SidebarView sidebarWidthPx={drawerWidth} />
-                        {Platform.OS === 'web' ? (
-                            <Pressable
-                                testID="sidebar-collapse-button"
-                                onPress={() => setSidebarCollapsed(true)}
-                                style={{
-                                    position: 'absolute',
-                                    top: 56,
-                                    right: 8,
-                                    width: 28,
-                                    height: 28,
-                                    borderRadius: 8,
-                                    opacity: 0.7,
-                                    alignItems: 'center',
-                                    justifyContent: 'center',
-                                }}
-                                accessibilityRole="button"
-                            >
-                                <SidebarExpandIcon />
-                            </Pressable>
-                        ) : null}
                     </View>
                 </ResizableDockedPane>
             );
         },
-        [drawerWidth, setSidebarCollapsed, setSidebarWidthBasisPx, setSidebarWidthPx, sidebarCollapsed, sidebarMaxWidthPx, windowWidth]
+        [drawerWidth, handleSidebarWidthCommit, handleSidebarWidthDrag, sidebarCollapsed, sidebarMaxWidthPx]
     );
 
     return (

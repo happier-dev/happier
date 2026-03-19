@@ -7,6 +7,8 @@ import renderer, { act } from 'react-test-renderer';
 const localSettingsStore = (() => {
   let sidebarCollapsed = false;
   let editorFocusModeEnabled = false;
+  let sidebarWidthPx = 320;
+  let sidebarWidthBasisPx = 1200;
   const listeners = new Set<() => void>();
 
   return {
@@ -16,12 +18,26 @@ const localSettingsStore = (() => {
     get editorFocusModeEnabled() {
       return editorFocusModeEnabled;
     },
+    get sidebarWidthPx() {
+      return sidebarWidthPx;
+    },
+    get sidebarWidthBasisPx() {
+      return sidebarWidthBasisPx;
+    },
     setSidebarCollapsed(next: boolean) {
       sidebarCollapsed = next;
       for (const l of listeners) l();
     },
     setEditorFocusModeEnabled(next: boolean) {
       editorFocusModeEnabled = next;
+      for (const l of listeners) l();
+    },
+    setSidebarWidthPx(next: number) {
+      sidebarWidthPx = next;
+      for (const l of listeners) l();
+    },
+    setSidebarWidthBasisPx(next: number) {
+      sidebarWidthBasisPx = next;
       for (const l of listeners) l();
     },
     subscribe(listener: () => void) {
@@ -83,15 +99,15 @@ vi.mock('@/sync/domains/state/storage', async () => {
         () => {
           if (key === 'sidebarCollapsed') return localSettingsStore.sidebarCollapsed;
           if (key === 'editorFocusModeEnabled') return localSettingsStore.editorFocusModeEnabled;
-          if (key === 'sidebarWidthPx') return 320;
-          if (key === 'sidebarWidthBasisPx') return 1200;
+          if (key === 'sidebarWidthPx') return localSettingsStore.sidebarWidthPx;
+          if (key === 'sidebarWidthBasisPx') return localSettingsStore.sidebarWidthBasisPx;
           return false;
         },
         () => {
           if (key === 'sidebarCollapsed') return localSettingsStore.sidebarCollapsed;
           if (key === 'editorFocusModeEnabled') return localSettingsStore.editorFocusModeEnabled;
-          if (key === 'sidebarWidthPx') return 320;
-          if (key === 'sidebarWidthBasisPx') return 1200;
+          if (key === 'sidebarWidthPx') return localSettingsStore.sidebarWidthPx;
+          if (key === 'sidebarWidthBasisPx') return localSettingsStore.sidebarWidthBasisPx;
           return false;
         }
       );
@@ -102,22 +118,23 @@ vi.mock('@/sync/domains/state/storage', async () => {
         () => {
           if (key === 'sidebarCollapsed') return localSettingsStore.sidebarCollapsed;
           if (key === 'editorFocusModeEnabled') return localSettingsStore.editorFocusModeEnabled;
-          if (key === 'sidebarWidthPx') return 320;
-          if (key === 'sidebarWidthBasisPx') return 1200;
+          if (key === 'sidebarWidthPx') return localSettingsStore.sidebarWidthPx;
+          if (key === 'sidebarWidthBasisPx') return localSettingsStore.sidebarWidthBasisPx;
           return false;
         },
         () => {
           if (key === 'sidebarCollapsed') return localSettingsStore.sidebarCollapsed;
           if (key === 'editorFocusModeEnabled') return localSettingsStore.editorFocusModeEnabled;
-          if (key === 'sidebarWidthPx') return 320;
-          if (key === 'sidebarWidthBasisPx') return 1200;
+          if (key === 'sidebarWidthPx') return localSettingsStore.sidebarWidthPx;
+          if (key === 'sidebarWidthBasisPx') return localSettingsStore.sidebarWidthBasisPx;
           return false;
         }
       );
-      return [val, (next: boolean) => {
-        if (key === 'sidebarCollapsed') localSettingsStore.setSidebarCollapsed(next);
-        if (key === 'editorFocusModeEnabled') localSettingsStore.setEditorFocusModeEnabled(next);
-        // Sidebar width settings are out-of-scope for this suite.
+      return [val, (next: unknown) => {
+        if (key === 'sidebarCollapsed' && typeof next === 'boolean') localSettingsStore.setSidebarCollapsed(next);
+        if (key === 'editorFocusModeEnabled' && typeof next === 'boolean') localSettingsStore.setEditorFocusModeEnabled(next);
+        if (key === 'sidebarWidthPx' && typeof next === 'number') localSettingsStore.setSidebarWidthPx(next);
+        if (key === 'sidebarWidthBasisPx' && typeof next === 'number') localSettingsStore.setSidebarWidthBasisPx(next);
       }] as const;
     },
   };
@@ -132,7 +149,14 @@ vi.mock('./CollapsedSidebarView', () => ({
     React.createElement(
       'CollapsedSidebarView',
       {},
-      React.createElement('Pressable', { testID: 'sidebar-expand-button' }, React.createElement('SidebarCollapseIcon', {}, null))
+      React.createElement(
+        'Pressable',
+        {
+          testID: 'sidebar-expand-button',
+          onPress: () => localSettingsStore.setSidebarCollapsed(false),
+        },
+        React.createElement('SidebarCollapseIcon', {}, null)
+      )
     ),
 }));
 
@@ -145,11 +169,19 @@ function getDrawer(tree: renderer.ReactTestRenderer) {
   return tree.root.findByType('Drawer' as any);
 }
 
+function getResizableSidebarPane(tree: renderer.ReactTestRenderer) {
+  return tree.root.find((node) => {
+    return typeof node.props?.onCommitWidthPx === 'function' && node.props?.minWidthPx === 250;
+  });
+}
+
 describe('SidebarNavigator (collapsed sidebar)', () => {
   beforeEach(() => {
     act(() => {
       localSettingsStore.setSidebarCollapsed(false);
       localSettingsStore.setEditorFocusModeEnabled(false);
+      localSettingsStore.setSidebarWidthPx(320);
+      localSettingsStore.setSidebarWidthBasisPx(1200);
     });
     platformOS = 'web';
     windowDimensions = { width: 1000, height: 800 };
@@ -221,7 +253,7 @@ describe('SidebarNavigator (collapsed sidebar)', () => {
     expect(drawer.props.screenOptions.drawerStyle.display).toBe('none');
   });
 
-  it('collapses when the collapse button is pressed', async () => {
+  it('keeps the full sidebar when resized down to the minimum width', async () => {
     const { SidebarNavigator } = await import('./SidebarNavigator');
     let tree!: renderer.ReactTestRenderer;
 
@@ -230,59 +262,58 @@ describe('SidebarNavigator (collapsed sidebar)', () => {
     });
 
     expect(localSettingsStore.sidebarCollapsed).toBe(false);
-
-    const collapseButton = tree.root.findByProps({ testID: 'sidebar-collapse-button' });
+    const resizablePane = getResizableSidebarPane(tree);
 
     await act(async () => {
-      collapseButton.props.onPress();
+      resizablePane.props.onDragWidthPx(250, {
+        attemptedSizePx: 250,
+        clampedSizePx: 250,
+        exceededMinPx: false,
+        exceededMaxPx: false,
+      });
+      resizablePane.props.onCommitWidthPx(250, {
+        attemptedSizePx: 250,
+        clampedSizePx: 250,
+        exceededMinPx: false,
+        exceededMaxPx: false,
+      });
+    });
+
+    expect(localSettingsStore.sidebarCollapsed).toBe(false);
+    expect(localSettingsStore.sidebarWidthPx).toBe(250);
+
+    const drawer = getDrawer(tree);
+    expect(drawer.props.screenOptions.drawerStyle.width).toBe(250);
+  });
+
+  it('collapses into compact view when resized narrower again from the minimum width', async () => {
+    act(() => {
+      localSettingsStore.setSidebarWidthPx(250);
+      localSettingsStore.setSidebarWidthBasisPx(1000);
+    });
+
+    const { SidebarNavigator } = await import('./SidebarNavigator');
+    let tree!: renderer.ReactTestRenderer;
+
+    await act(async () => {
+      tree = renderer.create(<SidebarNavigator />);
+    });
+
+    const resizablePane = getResizableSidebarPane(tree);
+
+    await act(async () => {
+      resizablePane.props.onDragWidthPx(250, {
+        attemptedSizePx: 200,
+        clampedSizePx: 250,
+        exceededMinPx: true,
+        exceededMaxPx: false,
+      });
     });
 
     expect(localSettingsStore.sidebarCollapsed).toBe(true);
 
     const drawer = getDrawer(tree);
     expect(drawer.props.screenOptions.drawerStyle.width).toBe(72);
-  });
-
-  it('renders the collapse icon button on desktop', async () => {
-    const { SidebarNavigator } = await import('./SidebarNavigator');
-    let tree!: renderer.ReactTestRenderer;
-
-    await act(async () => {
-      tree = renderer.create(<SidebarNavigator />);
-    });
-
-    const collapseButton = tree.root.findByProps({ testID: 'sidebar-collapse-button' });
-    expect(collapseButton.findByType('SidebarExpandIcon' as any)).toBeDefined();
-  });
-
-  it('keeps the desktop collapse button inside the sidebar hit area', async () => {
-    const { SidebarNavigator } = await import('./SidebarNavigator');
-    let tree!: renderer.ReactTestRenderer;
-
-    await act(async () => {
-      tree = renderer.create(<SidebarNavigator />);
-    });
-
-    const collapseButton = tree.root.findByProps({ testID: 'sidebar-collapse-button' });
-    const right = Number((collapseButton.props.style ?? {}).right);
-    const top = Number((collapseButton.props.style ?? {}).top);
-    expect(Number.isFinite(right)).toBe(true);
-    expect(right).toBeGreaterThanOrEqual(0);
-    expect(Number.isFinite(top)).toBe(true);
-    expect(top).toBeGreaterThanOrEqual(48);
-  });
-
-  it('does not render collapse button on mobile', async () => {
-    platformOS = 'ios';
-    const { SidebarNavigator } = await import('./SidebarNavigator');
-    let tree!: renderer.ReactTestRenderer;
-
-    await act(async () => {
-      tree = renderer.create(<SidebarNavigator />);
-    });
-
-    const collapseButtons = tree.root.findAllByProps({ testID: 'sidebar-collapse-button' });
-    expect(collapseButtons).toHaveLength(0);
   });
 
   it('renders the expand icon button in collapsed sidebar on desktop', async () => {
@@ -298,6 +329,58 @@ describe('SidebarNavigator (collapsed sidebar)', () => {
 
     const expandButton = tree.root.findByProps({ testID: 'sidebar-expand-button' });
     expect(expandButton.findByType('SidebarCollapseIcon' as any)).toBeDefined();
+  });
+
+  it('can collapse again on the first resize attempt after expanding from compact view', async () => {
+    act(() => {
+      localSettingsStore.setSidebarWidthPx(250);
+      localSettingsStore.setSidebarWidthBasisPx(1000);
+    });
+
+    const { SidebarNavigator } = await import('./SidebarNavigator');
+    let tree!: renderer.ReactTestRenderer;
+
+    await act(async () => {
+      tree = renderer.create(<SidebarNavigator />);
+    });
+
+    let resizablePane = getResizableSidebarPane(tree);
+    let onDragWidthPx = resizablePane.props.onDragWidthPx;
+
+    await act(async () => {
+      onDragWidthPx(250, {
+        attemptedSizePx: 200,
+        clampedSizePx: 250,
+        exceededMinPx: true,
+        exceededMaxPx: false,
+      });
+    });
+
+    expect(localSettingsStore.sidebarCollapsed).toBe(true);
+
+    await act(async () => {
+      onDragWidthPx(null, null);
+    });
+
+    const expandButton = tree.root.findByProps({ testID: 'sidebar-expand-button' });
+    await act(async () => {
+      expandButton.props.onPress();
+    });
+
+    expect(localSettingsStore.sidebarCollapsed).toBe(false);
+
+    resizablePane = getResizableSidebarPane(tree);
+    onDragWidthPx = resizablePane.props.onDragWidthPx;
+    await act(async () => {
+      onDragWidthPx(250, {
+        attemptedSizePx: 200,
+        clampedSizePx: 250,
+        exceededMinPx: true,
+        exceededMaxPx: false,
+      });
+    });
+
+    expect(localSettingsStore.sidebarCollapsed).toBe(true);
   });
 
   it('hides the permanent drawer when editorFocusModeEnabled toggles without remounting (so session state is preserved)', async () => {
