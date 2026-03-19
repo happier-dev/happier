@@ -39,12 +39,19 @@ vi.mock('@/track', () => ({
 
 vi.mock('@/sync/domains/state/storage', () => ({
     useAcceptedFriends: () => [],
+    useArtifacts: () => [],
     useFriendRequests: () => [],
     useRequestedFriends: () => [],
     useFeedItems: () => [],
     useFeedLoaded: () => true,
     useFriendsLoaded: () => true,
+    useSettings: () => ({ experiments: false, featureToggles: {} }),
     useAllSessions: () => [],
+    useMachine: () => null,
+}));
+
+vi.mock('@/components/ui/text/Text', () => ({
+    Text: 'Text',
 }));
 
 vi.mock('@/sync/domains/state/storageStore', () => {
@@ -81,6 +88,14 @@ vi.mock('@/components/inbox/cards/FeedItemCard', () => ({
     FeedItemCard: 'FeedItemCard',
 }));
 
+vi.mock('@/components/inbox/cards/ApprovalInboxCard', () => ({
+    ApprovalInboxCard: 'ApprovalInboxCard',
+}));
+
+vi.mock('@/components/inbox/sessionAttention/InboxSessionAttentionGroupCard', () => ({
+    InboxSessionAttentionGroupCard: 'InboxSessionAttentionGroupCard',
+}));
+
 vi.mock('@/components/voice/surface/VoiceSurface', () => ({
     VoiceSurface: 'VoiceSurface',
 }));
@@ -91,6 +106,10 @@ vi.mock('@/components/friends/RequireFriendsIdentityForFriends', () => ({
 
 vi.mock('@/hooks/server/useFriendsIdentityReadiness', () => ({
     useFriendsIdentityReadiness: () => ({ isReady: true }),
+}));
+
+vi.mock('@/hooks/server/useFriendsEnabled', () => ({
+    useFriendsEnabled: () => false,
 }));
 
 vi.mock('@/utils/platform/responsive', () => ({

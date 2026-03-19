@@ -5,6 +5,39 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 const pushSpy = vi.fn();
+const storageState = {
+    profile: { id: 'me' },
+    sessionMessages: {
+        'session-1': { messages: [] },
+    },
+    sessions: {
+        'session-1': {
+            active: false,
+            metadata: {
+                machineId: 'machine-stale',
+                path: '/Users/leeroy/repo',
+                homeDir: '/Users/leeroy',
+            },
+        },
+    },
+    machines: {
+        'machine-target': {
+            id: 'machine-target',
+            active: true,
+            activeAt: 10,
+            metadata: { host: 'workstation.local' },
+        },
+    },
+    getProjectForSession: (sessionId: string) =>
+        sessionId === 'session-1'
+            ? {
+                key: {
+                    machineId: 'machine-target',
+                    path: '/Users/leeroy/repo',
+                },
+            }
+            : null,
+};
 
 vi.mock('react-native', async (importOriginal) => {
     const actual = await importOriginal<any>();
@@ -79,7 +112,7 @@ vi.mock('@/sync/domains/state/storage', async (importOriginal) => {
                     name: 'Repo session',
                     path: '/Users/leeroy/repo',
                     homeDir: '/Users/leeroy',
-                    machineId: 'machine-1',
+                    machineId: 'machine-stale',
                 },
                 agentState: {
                     requests: {
@@ -104,12 +137,15 @@ vi.mock('@/sync/domains/state/storage', async (importOriginal) => {
             },
         ],
         useMachine: (machineId: string) =>
-            machineId === 'machine-1'
+            machineId === 'machine-target'
                 ? {
-                      id: 'machine-1',
-                      metadata: { displayName: 'Workstation', host: 'workstation.local' },
+                      id: 'machine-target',
+                      metadata: { displayName: 'Rebound workstation', host: 'workstation.local' },
                   }
                 : null,
+        storage: {
+            getState: () => storageState,
+        },
     };
 });
 
@@ -118,16 +154,10 @@ vi.mock('@/components/ui/text/Text', () => ({
 }));
 
 vi.mock('@/sync/domains/state/storageStore', () => {
-    const state = {
-        profile: { id: 'me' },
-        sessionMessages: {
-            'session-1': { messages: [] },
-        },
-    };
     const storage = Object.assign(
-        (selector: (value: typeof state) => unknown) => selector(state),
+        (selector: (value: typeof storageState) => unknown) => selector(storageState),
         {
-            getState: () => state,
+            getState: () => storageState,
         },
     );
     return { storage, getStorage: () => storage };
@@ -215,7 +245,7 @@ describe('InboxView session attention', () => {
 
         const text = collectText(tree!);
         expect(text).toContain('Repo session');
-        expect(text).toContain('Workstation');
+        expect(text).toContain('Rebound workstation');
         expect(text).toContain('~/repo');
         expect(text).not.toContain('status.permissionRequired');
     });
