@@ -112,6 +112,34 @@ function npmPack(pkgDir, opts) {
     return { filename: 'DRY_RUN.tgz', tgzPath: path.join(pkgDir, 'DRY_RUN.tgz') };
   }
 
+  if (pkgDir.endsWith(path.join('apps', 'cli'))) {
+    const scriptPath = path.join(pkgDir, 'scripts', 'packTarball.mjs');
+    const raw = execFileSync(process.execPath, [scriptPath, '--dest-dir', pkgDir], {
+      cwd: pkgDir,
+      env: { ...process.env },
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'inherit'],
+      timeout: 10 * 60_000,
+    }).trim();
+
+    let parsed;
+    try {
+      parsed = raw ? JSON.parse(raw) : [];
+    } catch (err) {
+      throw new Error(`CLI pack helper returned invalid JSON (cwd: ${pkgDir}): ${err}`);
+    }
+    const entry = Array.isArray(parsed) ? parsed[0] : parsed;
+    const filename = typeof entry?.filename === 'string' ? entry.filename.trim() : '';
+    if (!filename) {
+      throw new Error(`CLI pack helper did not return a valid filename (cwd: ${pkgDir})`);
+    }
+    const tgzPath = path.resolve(pkgDir, filename);
+    if (!tgzPath.endsWith('.tgz') || !fs.existsSync(tgzPath) || !fs.statSync(tgzPath).isFile()) {
+      throw new Error(`CLI pack helper did not produce an expected .tgz file (cwd: ${pkgDir}): ${tgzPath}`);
+    }
+    return { filename, tgzPath };
+  }
+
   const env = { ...process.env };
   const invocation = resolveWindowsCommandInvocation({
     command: 'npm',
@@ -166,31 +194,6 @@ function packTo(repoRoot, pkgDir, outDir, outName, opts) {
   }
 
   fs.mkdirSync(absOutDir, { recursive: true });
-  if (pkgDir === 'apps/cli') {
-    const helper = withinRepo(repoRoot, 'apps/cli/scripts/packTarball.mjs');
-    const raw = execFileSync(process.execPath, [helper, '--dest-dir', absOutDir], {
-      cwd: absPkgDir,
-      env: { ...process.env },
-      encoding: 'utf8',
-      stdio: ['ignore', 'pipe', 'inherit'],
-      timeout: 10 * 60_000,
-    }).trim();
-    /** @type {any[]} */
-    const parsed = raw ? JSON.parse(raw) : [];
-    const entry = Array.isArray(parsed) ? parsed[0] : parsed;
-    const filename = String(entry?.filename ?? '').trim();
-    if (!filename) {
-      throw new Error(`apps/cli pack helper did not return a filename (cwd: ${absPkgDir})`);
-    }
-    const tgzPath = path.resolve(absOutDir, filename);
-    if (!fs.existsSync(tgzPath)) {
-      throw new Error(`apps/cli pack helper did not produce expected tarball: ${tgzPath}`);
-    }
-    if (path.basename(tgzPath) !== outName) {
-      fs.renameSync(tgzPath, absOutPath);
-    }
-    return absOutPath;
-  }
   const { tgzPath } = npmPack(absPkgDir, opts);
   fs.renameSync(tgzPath, absOutPath);
   return absOutPath;

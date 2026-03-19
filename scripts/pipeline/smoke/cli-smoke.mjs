@@ -40,15 +40,20 @@ function run(opts, cmd, args, extra) {
   }
 
   const stdio = extra?.stdio ?? 'inherit';
-  const needsShell =
-    process.platform === 'win32' && (String(cmd).toLowerCase().endsWith('.cmd') || String(cmd).toLowerCase().endsWith('.bat'));
-  return execFileSync(cmd, args, {
+  const env = { ...process.env, ...(extra?.env ?? {}) };
+  const invocation = resolveWindowsCommandInvocation({
+    command: cmd,
+    args,
+    env,
+    resolveCommandOnPath: true,
+  });
+  return execFileSync(invocation.command, invocation.args, {
     cwd,
-    env: { ...process.env, ...(extra?.env ?? {}) },
+    env,
     encoding: stdio === 'inherit' ? 'utf8' : 'utf8',
     stdio,
-    shell: needsShell,
     timeout,
+    ...(invocation.windowsVerbatimArguments ? { windowsVerbatimArguments: true } : {}),
   });
 }
 
@@ -76,15 +81,17 @@ function mkTmpDir(prefix) {
  */
 function npmPack(pkgDir, destDir, opts) {
   if (opts.dryRun) {
-    const printable = `npm pack --silent --pack-destination ${destDir}`;
+    const printable = path.basename(pkgDir) === 'cli'
+      ? `${process.execPath} apps/cli/scripts/packTarball.mjs --dest-dir ${destDir}`
+      : `npm pack --silent --pack-destination ${destDir}`;
     console.log(`[dry-run] (cwd: ${pkgDir}) ${printable}`);
     return path.join(destDir, 'DRY_RUN.tgz');
   }
 
   fs.mkdirSync(destDir, { recursive: true });
-  if (path.basename(pkgDir) === 'cli' && pkgDir.endsWith(path.join('apps', 'cli'))) {
-    const helper = path.resolve(pkgDir, 'scripts', 'packTarball.mjs');
-    const raw = execFileSync(process.execPath, [helper, '--dest-dir', destDir], {
+  if (path.basename(pkgDir) === 'cli') {
+    const scriptPath = path.resolve(pkgDir, 'scripts', 'packTarball.mjs');
+    const raw = execFileSync(process.execPath, [scriptPath, '--dest-dir', destDir], {
       cwd: pkgDir,
       env: { ...process.env },
       encoding: 'utf8',
@@ -93,16 +100,17 @@ function npmPack(pkgDir, destDir, opts) {
     }).trim();
     const parsed = raw ? JSON.parse(raw) : [];
     const entry = Array.isArray(parsed) ? parsed[0] : parsed;
-    const filename = String(entry?.filename ?? '').trim();
+    const filename = typeof entry?.filename === 'string' ? entry.filename.trim() : '';
     if (!filename) {
-      throw new Error(`apps/cli pack helper did not return a tarball filename (cwd: ${pkgDir})`);
+      throw new Error(`CLI pack helper did not return a valid filename (cwd: ${pkgDir})`);
     }
     const tgzPath = path.resolve(destDir, filename);
     if (!tgzPath.endsWith('.tgz') || !fs.existsSync(tgzPath) || !fs.statSync(tgzPath).isFile()) {
-      throw new Error(`apps/cli pack helper did not produce an expected .tgz file (cwd: ${pkgDir}): ${tgzPath}`);
+      throw new Error(`CLI pack helper did not produce an expected .tgz file (cwd: ${pkgDir}): ${tgzPath}`);
     }
     return tgzPath;
   }
+
   const env = { ...process.env };
   const invocation = resolveWindowsCommandInvocation({
     command: 'npm',
