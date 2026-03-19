@@ -1,4 +1,5 @@
 import { logger } from '@/ui/logger';
+import { readStartedByArg } from '@/cli/readStartedByArg';
 
 import { isDaemonRunningCurrentlyInstalledHappyVersion } from './controlClient';
 import { spawnHappyCLI } from '@/utils/spawnHappyCLI';
@@ -35,6 +36,7 @@ export function shouldAutoStartDaemonAfterAuth(params: Readonly<{ env: NodeJS.Pr
 
 export function applyDaemonAutostartEnvForInvocation(params: Readonly<{ args: string[]; env: NodeJS.ProcessEnv }>): void {
   if (!shouldEnsureDaemonForInvocation({ args: params.args })) return;
+  if (readStartedByArg(params.args).value === 'daemon') return;
   const current = (params.env.HAPPIER_SESSION_AUTOSTART_DAEMON ?? '').toString().trim();
   if (current.length > 0) return;
   params.env.HAPPIER_SESSION_AUTOSTART_DAEMON = '1';
