@@ -145,6 +145,10 @@ vi.mock('@/components/sessions/files/content/ChangedFilesTreeList', () => ({
     ChangedFilesTreeList: () => React.createElement('ChangedFilesTreeList'),
 }));
 
+vi.mock('@/components/sessions/files/views/repositoryTreeBrowser/RepositoryTreeChangedFilesPane', () => ({
+    RepositoryTreeChangedFilesPane: () => React.createElement('RepositoryTreeChangedFilesPane'),
+}));
+
 vi.mock('@/components/sessions/files/content/SearchResultsList', () => ({
     SearchResultsList: () => React.createElement('SearchResultsList'),
 }));
