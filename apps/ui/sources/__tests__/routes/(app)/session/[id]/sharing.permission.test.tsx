@@ -7,10 +7,12 @@ import { describe, expect, it, vi } from 'vitest';
 const getSessionSharesSpy = vi.fn(async (..._args: any[]) => []);
 const getPublicShareSpy = vi.fn(async (..._args: any[]) => null);
 const getFriendsListSpy = vi.fn(async (..._args: any[]) => []);
+let sessionHydrated = true;
 
 vi.mock('react-native', () => ({
     View: 'View',
     Text: 'Text',
+    ActivityIndicator: 'ActivityIndicator',
 }));
 
 vi.mock('react-native-unistyles', () => ({
@@ -42,6 +44,10 @@ vi.mock('@/constants/Typography', () => ({
     },
 }));
 
+vi.mock('@/components/ui/text/Text', () => ({
+    Text: ({ children }: { children?: React.ReactNode }) => React.createElement('Text', null, children),
+}));
+
 vi.mock('@/text', () => ({
     t: (key: string) => key,
 }));
@@ -53,6 +59,10 @@ vi.mock('@/sync/domains/state/storage', () => ({
         // Editors should not be allowed to manage sharing.
         accessLevel: 'edit',
     }),
+}));
+
+vi.mock('@/hooks/session/useHydrateSessionForRoute', () => ({
+    useHydrateSessionForRoute: () => sessionHydrated,
 }));
 
 vi.mock('@/sync/sync', () => ({
@@ -94,6 +104,21 @@ vi.mock('@/components/sessions/sharing', () => ({
 }));
 
 describe('Session Sharing Screen permissions', () => {
+    it('waits for session hydration before rendering sharing content', async () => {
+        sessionHydrated = false;
+        const Screen = (await import('@/app/(app)/session/[id]/sharing')).default;
+
+        let tree: renderer.ReactTestRenderer | null = null;
+        await act(async () => {
+            tree = renderer.create(<Screen />);
+        });
+
+        expect(tree!.root.findByType('ActivityIndicator' as any)).toBeDefined();
+        expect(getSessionSharesSpy).not.toHaveBeenCalled();
+        expect(getPublicShareSpy).not.toHaveBeenCalled();
+        expect(getFriendsListSpy).not.toHaveBeenCalled();
+    });
+
     it('does not attempt to load or manage shares when user is not an admin', async () => {
         const Screen = (await import('@/app/(app)/session/[id]/sharing')).default;
 
