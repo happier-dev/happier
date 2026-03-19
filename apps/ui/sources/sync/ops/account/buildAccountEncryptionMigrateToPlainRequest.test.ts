@@ -3,6 +3,9 @@ import { describe, expect, it } from 'vitest';
 import type { AuthCredentials } from '@/auth/storage/tokenStorage';
 import {
   buildConnectedServiceCredentialRecord,
+  deriveAccountMachineKeyFromRecoverySecret,
+  deriveSettingsSecretsKeyV1,
+  encryptSecretStringV1,
   openConnectedServiceCredentialCiphertext,
   sealConnectedServiceCredentialCiphertext,
 } from '@happier-dev/protocol';
@@ -12,11 +15,11 @@ import { resolveAccountScopedCryptoMaterialFromCredentials } from '@/sync/domain
 import { buildAccountEncryptionMigrateToPlainRequest } from './buildAccountEncryptionMigrateToPlainRequest';
 import { encodeAutomationTemplateForTransport } from '@/sync/domains/automations/automationTemplateTransport';
 
-function createLegacyCredentials(): AuthCredentials {
+function createLegacyCredentials(): Extract<AuthCredentials, { secret: string }> {
   return {
     token: 't',
     secret: Buffer.from(new Uint8Array(32).fill(4)).toString('base64url'),
-  } as any;
+  };
 }
 
 function assertObject(value: unknown, name: string): asserts value is Record<string, unknown> {
@@ -158,5 +161,52 @@ describe('buildAccountEncryptionMigrateToPlainRequest', () => {
     assertString(safe.templateCiphertext, 'safe automation templateCiphertext');
     const plainEnvelope = JSON.parse(safe.templateCiphertext);
     expect(plainEnvelope.kind).toBe('happier_automation_template_plain_v1');
+  });
+
+  it('unseals canonical machine-key-sealed saved secrets when migrating a legacy account to plain storage', async () => {
+    const credentials = createLegacyCredentials();
+    const recoverySecret = Buffer.from(credentials.secret, 'base64url');
+    const machineKey = deriveAccountMachineKeyFromRecoverySecret(recoverySecret);
+    const canonicalSettingsKey = deriveSettingsSecretsKeyV1(machineKey);
+
+    const request = await buildAccountEncryptionMigrateToPlainRequest({
+      credentials,
+      expectedSettingsVersion: 9,
+      settings: {
+        schemaVersion: 2,
+        backendEnabledById: {},
+        secrets: [
+          {
+            id: 'sec1',
+            name: 'Canonical Secret',
+            kind: 'apiKey',
+            encryptedValue: {
+              _isSecretValue: true,
+              encryptedValue: encryptSecretStringV1(
+                'sk-canonical',
+                canonicalSettingsKey,
+                () => new Uint8Array(24).fill(8),
+              ),
+            },
+            createdAt: 1,
+            updatedAt: 1,
+          },
+        ],
+      } as any,
+      connectedServiceProfiles: [],
+      automations: [],
+      fetchConnectedServiceCredentialSealed: async () => {
+        throw new Error('unexpected fetchConnectedServiceCredentialSealed');
+      },
+      decryptAutomationTemplateRaw: async () => {
+        throw new Error('unexpected decryptAutomationTemplateRaw');
+      },
+    });
+
+    expect(request.settingsContent?.t).toBe('plain');
+    if (!request.settingsContent || request.settingsContent.t !== 'plain') {
+      throw new Error('expected plain settings content');
+    }
+    expect((request.settingsContent.v as any)?.secrets?.[0]?.encryptedValue?.value).toBe('sk-canonical');
   });
 });
