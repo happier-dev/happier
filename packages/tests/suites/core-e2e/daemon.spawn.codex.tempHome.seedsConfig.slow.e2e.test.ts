@@ -113,7 +113,6 @@ await import(pathToFileURL(${JSON.stringify(stubProviderPath)}).href);
         CODEX_HOME: sourceCodexHomeDir,
         // Ensure Codex uses ACP so we can run with a deterministic stub provider.
         HAPPIER_EXPERIMENTAL_CODEX_ACP: '1',
-        HAPPIER_CODEX_ACP_NPX_MODE: 'never',
         HAPPIER_CODEX_ACP_BIN: wrapperPath,
         // Keep daemon steady for the test.
         HAPPIER_DAEMON_HEARTBEAT_INTERVAL: '5000',
@@ -146,7 +145,6 @@ await import(pathToFileURL(${JSON.stringify(stubProviderPath)}).href);
           HAPPIER_WEBAPP_URL: serverBaseUrl,
           HAPPIER_VARIANT: 'dev',
           HAPPIER_EXPERIMENTAL_CODEX_ACP: '1',
-          HAPPIER_CODEX_ACP_NPX_MODE: 'never',
           HAPPIER_CODEX_ACP_BIN: wrapperPath,
         },
       },
