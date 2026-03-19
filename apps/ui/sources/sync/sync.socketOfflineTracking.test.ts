@@ -111,7 +111,14 @@ describe('sync socket offline tracking', () => {
     upsertAndActivateServer({ serverUrl: 'http://localhost:53288', scope: 'tab' });
 
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
-      const url = typeof input === 'string' ? input : input.toString();
+      const url: string =
+        typeof input === 'string'
+          ? input
+          : input instanceof Request
+            ? input.url
+            : 'url' in input
+              ? String(input.url)
+              : input.toString();
       if (url.includes('/v2/sessions')) {
         return new Response(
           JSON.stringify({ sessions: [], nextCursor: null, hasNext: false }),
