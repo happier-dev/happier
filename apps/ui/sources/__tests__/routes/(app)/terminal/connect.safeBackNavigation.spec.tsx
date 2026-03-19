@@ -101,7 +101,6 @@ vi.mock('@/components/ui/lists/Item', () => ({
 
 describe('TerminalConnectScreen safe navigation', () => {
     beforeEach(() => {
-        vi.resetModules();
         backMock.mockClear();
         replaceMock.mockClear();
         canGoBackMock.mockClear();
@@ -149,4 +148,3 @@ describe('TerminalConnectScreen safe navigation', () => {
         expect(replaceMock).toHaveBeenCalledWith('/terminal');
     });
 });
-
