@@ -1,9 +1,13 @@
 import React from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import renderer, { act, type ReactTestInstance } from 'react-test-renderer';
-import { PendingMessagesTranscriptBlock } from './PendingMessagesTranscriptBlock';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
+
+async function loadPendingMessagesTranscriptBlock() {
+    const mod = await import('./PendingMessagesTranscriptBlock');
+    return mod.PendingMessagesTranscriptBlock;
+}
 
 vi.mock('./PendingMessagesDragReorderList', () => ({
     PendingMessagesDragReorderList: (props: any) => {
@@ -21,7 +25,7 @@ vi.mock('./PendingMessagesDragReorderList', () => ({
     },
 }));
 
-const sendMessage = vi.fn();
+const sendPendingMessageNow = vi.fn();
 const deletePendingMessage = vi.fn();
 const discardPendingMessage = vi.fn();
 const sessionAbort = vi.fn();
@@ -41,7 +45,7 @@ vi.mock('@/sync/domains/state/storage', () => ({
 
 vi.mock('@/sync/sync', () => ({
     sync: {
-        sendMessage: (...args: any[]) => sendMessage(...args),
+        sendPendingMessageNow: (...args: any[]) => sendPendingMessageNow(...args),
         deletePendingMessage: (...args: any[]) => deletePendingMessage(...args),
         discardPendingMessage: (...args: any[]) => discardPendingMessage(...args),
         updatePendingMessage: vi.fn(),
@@ -144,7 +148,8 @@ vi.mock('@/components/ui/layout/layout', () => ({
 
 describe('PendingMessagesTranscriptBlock discard fallback', () => {
     beforeEach(() => {
-        sendMessage.mockReset();
+        vi.resetModules();
+        sendPendingMessageNow.mockReset();
         deletePendingMessage.mockReset();
         discardPendingMessage.mockReset();
         sessionAbort.mockReset();
@@ -169,9 +174,10 @@ describe('PendingMessagesTranscriptBlock discard fallback', () => {
     }
 
     it('falls back to discarding when delete fails after send', async () => {
+        const PendingMessagesTranscriptBlock = await loadPendingMessagesTranscriptBlock();
         modalConfirm.mockResolvedValueOnce(true);
         sessionAbort.mockResolvedValueOnce(undefined);
-        sendMessage.mockResolvedValueOnce(undefined);
+        sendPendingMessageNow.mockResolvedValueOnce(undefined);
         deletePendingMessage.mockRejectedValueOnce(new Error('delete failed'));
         discardPendingMessage.mockResolvedValueOnce(undefined);
 

@@ -159,7 +159,7 @@ export function PendingMessagesTranscriptBlock(props: Readonly<{
         }
     }, [props.sessionId]);
 
-    const handleSteerNow = React.useCallback(async (pendingId: string, text: string) => {
+    const handleSteerNow = React.useCallback(async (message: PendingMessage) => {
         const confirmed = await Modal.confirm(
             t('session.pendingMessages.steerConfirm.title'),
             t('session.pendingMessages.steerConfirm.body'),
@@ -168,14 +168,20 @@ export function PendingMessagesTranscriptBlock(props: Readonly<{
         if (!confirmed) return;
 
         try {
-            await sync.sendMessage(props.sessionId, text);
-            await deleteOrDiscardAfterSend(pendingId);
+            await sync.sendPendingMessageNow(props.sessionId, {
+                localId: message.id,
+                createdAt: message.createdAt,
+                rawRecord: message.rawRecord,
+                text: message.text,
+                displayText: message.displayText,
+            });
+            await deleteOrDiscardAfterSend(message.id);
         } catch (e) {
             Modal.alert(t('common.error'), e instanceof Error ? e.message : t('session.pendingMessages.errors.sendFailed'));
         }
     }, [deleteOrDiscardAfterSend, props.sessionId]);
 
-    const handleSendNow = React.useCallback(async (pendingId: string, text: string) => {
+    const handleSendNow = React.useCallback(async (message: PendingMessage) => {
         const confirmed = await Modal.confirm(
             canSteerNow ? t('session.pendingMessages.sendConfirm.interruptTitle') : t('session.pendingMessages.sendConfirm.title'),
             t('session.pendingMessages.sendConfirm.body'),
@@ -185,8 +191,14 @@ export function PendingMessagesTranscriptBlock(props: Readonly<{
 
         try {
             await sessionAbort(props.sessionId);
-            await sync.sendMessage(props.sessionId, text);
-            await deleteOrDiscardAfterSend(pendingId);
+            await sync.sendPendingMessageNow(props.sessionId, {
+                localId: message.id,
+                createdAt: message.createdAt,
+                rawRecord: message.rawRecord,
+                text: message.text,
+                displayText: message.displayText,
+            });
+            await deleteOrDiscardAfterSend(message.id);
         } catch (e) {
             Modal.alert(t('common.error'), e instanceof Error ? e.message : t('session.pendingMessages.errors.sendFailed'));
         }
@@ -214,7 +226,7 @@ export function PendingMessagesTranscriptBlock(props: Readonly<{
         }
     }, [props.sessionId]);
 
-    const handleSteerDiscardedNow = React.useCallback(async (pendingId: string, text: string) => {
+    const handleSteerDiscardedNow = React.useCallback(async (message: DiscardedPendingMessage) => {
         const confirmed = await Modal.confirm(
             t('session.pendingMessages.steerConfirm.title'),
             t('session.pendingMessages.steerConfirm.body'),
@@ -223,14 +235,20 @@ export function PendingMessagesTranscriptBlock(props: Readonly<{
         if (!confirmed) return;
 
         try {
-            await sync.sendMessage(props.sessionId, text);
-            await sync.deleteDiscardedPendingMessage(props.sessionId, pendingId);
+            await sync.sendPendingMessageNow(props.sessionId, {
+                localId: message.id,
+                createdAt: message.createdAt,
+                rawRecord: message.rawRecord,
+                text: message.text,
+                displayText: message.displayText,
+            });
+            await sync.deleteDiscardedPendingMessage(props.sessionId, message.id);
         } catch (e) {
             Modal.alert(t('common.error'), e instanceof Error ? e.message : t('session.pendingMessages.errors.sendDiscardedFailed'));
         }
     }, [props.sessionId]);
 
-    const handleSendDiscardedNow = React.useCallback(async (pendingId: string, text: string) => {
+    const handleSendDiscardedNow = React.useCallback(async (message: DiscardedPendingMessage) => {
         const confirmed = await Modal.confirm(
             canSteerNow ? t('session.pendingMessages.sendConfirm.interruptTitle') : t('session.pendingMessages.sendConfirm.title'),
             t('session.pendingMessages.sendConfirm.body'),
@@ -240,8 +258,14 @@ export function PendingMessagesTranscriptBlock(props: Readonly<{
 
         try {
             await sessionAbort(props.sessionId);
-            await sync.sendMessage(props.sessionId, text);
-            await sync.deleteDiscardedPendingMessage(props.sessionId, pendingId);
+            await sync.sendPendingMessageNow(props.sessionId, {
+                localId: message.id,
+                createdAt: message.createdAt,
+                rawRecord: message.rawRecord,
+                text: message.text,
+                displayText: message.displayText,
+            });
+            await sync.deleteDiscardedPendingMessage(props.sessionId, message.id);
         } catch (e) {
             Modal.alert(t('common.error'), e instanceof Error ? e.message : t('session.pendingMessages.errors.sendDiscardedFailed'));
         }
@@ -291,8 +315,8 @@ export function PendingMessagesTranscriptBlock(props: Readonly<{
                     setOpenMenuKey(null);
                     if (itemId === 'edit') await handleEdit(message.id, message.text);
                     if (itemId === 'remove') await handleRemove(message.id);
-                    if (itemId === 'steerNow') await handleSteerNow(message.id, message.text);
-                    if (itemId === 'sendNow') await handleSendNow(message.id, message.text);
+                    if (itemId === 'steerNow') await handleSteerNow(message);
+                    if (itemId === 'sendNow') await handleSendNow(message);
                 }}
                 placement="top"
                 gap={6}
@@ -406,14 +430,14 @@ export function PendingMessagesTranscriptBlock(props: Readonly<{
                                         testID={`pendingMessages.steerNow:${message.id}`}
                                         accessibilityLabel={t('session.pendingMessages.actions.steerNow')}
                                         icon="navigate-outline"
-                                        onPress={() => handleSteerNow(message.id, message.text)}
+                                        onPress={() => handleSteerNow(message)}
                                     />
                                 ) : null}
                                 <IconAction
                                     testID={`pendingMessages.sendNow:${message.id}`}
                                     accessibilityLabel={canSteerNow ? t('session.pendingMessages.actions.sendNowInterrupt') : t('session.pendingMessages.actions.sendNow')}
                                     icon="paper-plane-outline"
-                                    onPress={() => handleSendNow(message.id, message.text)}
+                                    onPress={() => handleSendNow(message)}
                                 />
                             </View>
                         ) : props.pendingMessages.length > 1 ? (
@@ -478,8 +502,8 @@ export function PendingMessagesTranscriptBlock(props: Readonly<{
                     setOpenMenuKey(null);
                     if (itemId === 'requeue') await handleRequeueDiscarded(message.id);
                     if (itemId === 'remove') await handleRemoveDiscarded(message.id);
-                    if (itemId === 'steerNow') await handleSteerDiscardedNow(message.id, message.text);
-                    if (itemId === 'sendNow') await handleSendDiscardedNow(message.id, message.text);
+                    if (itemId === 'steerNow') await handleSteerDiscardedNow(message);
+                    if (itemId === 'sendNow') await handleSendDiscardedNow(message);
                 }}
                 placement="top"
                 gap={6}
@@ -540,14 +564,14 @@ export function PendingMessagesTranscriptBlock(props: Readonly<{
                                         testID={`pendingMessages.discarded.steerNow:${message.id}`}
                                         accessibilityLabel={t('session.pendingMessages.actions.steerNow')}
                                         icon="navigate-outline"
-                                        onPress={() => handleSteerDiscardedNow(message.id, message.text)}
+                                        onPress={() => handleSteerDiscardedNow(message)}
                                     />
                                 ) : null}
                                 <IconAction
                                     testID={`pendingMessages.discarded.sendNow:${message.id}`}
                                     accessibilityLabel={canSteerNow ? t('session.pendingMessages.actions.sendNowInterrupt') : t('session.pendingMessages.actions.sendNow')}
                                     icon="paper-plane-outline"
-                                    onPress={() => handleSendDiscardedNow(message.id, message.text)}
+                                    onPress={() => handleSendDiscardedNow(message)}
                                 />
                             </View>
                         ) : null}

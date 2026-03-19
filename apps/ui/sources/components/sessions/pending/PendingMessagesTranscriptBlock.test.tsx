@@ -1,9 +1,13 @@
 import React from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import renderer, { act, type ReactTestInstance } from 'react-test-renderer';
-import { PendingMessagesTranscriptBlock } from './PendingMessagesTranscriptBlock';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
+
+async function loadPendingMessagesTranscriptBlock() {
+    const mod = await import('./PendingMessagesTranscriptBlock');
+    return mod.PendingMessagesTranscriptBlock;
+}
 
 vi.mock('./PendingMessagesDragReorderList', () => ({
     PendingMessagesDragReorderList: (props: any) => {
@@ -21,7 +25,7 @@ vi.mock('./PendingMessagesDragReorderList', () => ({
     },
 }));
 
-const sendMessage = vi.fn();
+const sendPendingMessageNow = vi.fn();
 const deletePendingMessage = vi.fn();
 const discardPendingMessage = vi.fn();
 const sessionAbort = vi.fn();
@@ -44,7 +48,7 @@ vi.mock('@/sync/domains/state/storage', () => ({
 
 vi.mock('@/sync/sync', () => ({
     sync: {
-        sendMessage: (...args: any[]) => sendMessage(...args),
+        sendPendingMessageNow: (...args: any[]) => sendPendingMessageNow(...args),
         deletePendingMessage: (...args: any[]) => deletePendingMessage(...args),
         discardPendingMessage: (...args: any[]) => discardPendingMessage(...args),
         updatePendingMessage: vi.fn(),
@@ -154,7 +158,8 @@ vi.mock('@/components/ui/layout/layout', () => ({
 
 describe('PendingMessagesTranscriptBlock', () => {
     beforeEach(() => {
-        sendMessage.mockReset();
+        vi.resetModules();
+        sendPendingMessageNow.mockReset();
         deletePendingMessage.mockReset();
         discardPendingMessage.mockReset();
         sessionAbort.mockReset();
@@ -198,9 +203,10 @@ describe('PendingMessagesTranscriptBlock', () => {
     }
 
     it('aborts+send+delete in order when send-now is pressed', async () => {
+        const PendingMessagesTranscriptBlock = await loadPendingMessagesTranscriptBlock();
         modalConfirm.mockResolvedValueOnce(true);
         sessionAbort.mockResolvedValueOnce(undefined);
-        sendMessage.mockResolvedValueOnce(undefined);
+        sendPendingMessageNow.mockResolvedValueOnce(undefined);
         deletePendingMessage.mockResolvedValueOnce(undefined);
 
         let tree: ReturnType<typeof renderer.create> | undefined;
@@ -223,11 +229,12 @@ describe('PendingMessagesTranscriptBlock', () => {
         });
 
         expect(sessionAbort).toHaveBeenCalledTimes(1);
-        expect(sendMessage).toHaveBeenCalledTimes(1);
+        expect(sendPendingMessageNow).toHaveBeenCalledTimes(1);
+        expect(sendPendingMessageNow).toHaveBeenCalledWith('s1', expect.objectContaining({ localId: 'p1' }));
         expect(deletePendingMessage).toHaveBeenCalledTimes(1);
 
         const abortOrder = sessionAbort.mock.invocationCallOrder[0]!;
-        const sendOrder = sendMessage.mock.invocationCallOrder[0]!;
+        const sendOrder = sendPendingMessageNow.mock.invocationCallOrder[0]!;
         const deleteOrder = deletePendingMessage.mock.invocationCallOrder[0]!;
 
         expect(abortOrder).toBeLessThan(sendOrder);
@@ -235,6 +242,7 @@ describe('PendingMessagesTranscriptBlock', () => {
     });
 
     it('renders a per-message pending affordance label', async () => {
+        const PendingMessagesTranscriptBlock = await loadPendingMessagesTranscriptBlock();
         let tree: ReturnType<typeof renderer.create> | undefined;
         await act(async () => {
             tree = renderer.create(React.createElement(PendingMessagesTranscriptBlock, {
@@ -250,6 +258,7 @@ describe('PendingMessagesTranscriptBlock', () => {
     });
 
     it('renders a block header label that reads as a section header', async () => {
+        const PendingMessagesTranscriptBlock = await loadPendingMessagesTranscriptBlock();
         let tree: ReturnType<typeof renderer.create> | undefined;
         await act(async () => {
             tree = renderer.create(React.createElement(PendingMessagesTranscriptBlock, {
@@ -266,6 +275,7 @@ describe('PendingMessagesTranscriptBlock', () => {
     });
 
     it('wires reorder persistence via PendingMessagesDragReorderList', async () => {
+        const PendingMessagesTranscriptBlock = await loadPendingMessagesTranscriptBlock();
         let tree: ReturnType<typeof renderer.create> | undefined;
         await act(async () => {
             tree = renderer.create(React.createElement(PendingMessagesTranscriptBlock, {
@@ -288,6 +298,7 @@ describe('PendingMessagesTranscriptBlock', () => {
     });
 
     it('does not show per-message action icons until hover on web', async () => {
+        const PendingMessagesTranscriptBlock = await loadPendingMessagesTranscriptBlock();
         let tree: ReturnType<typeof renderer.create> | undefined;
         await act(async () => {
             tree = renderer.create(React.createElement(PendingMessagesTranscriptBlock, {
@@ -313,6 +324,7 @@ describe('PendingMessagesTranscriptBlock', () => {
     });
 
     it('offers steer-now while a steer-capable session is thinking and does not abort the turn', async () => {
+        const PendingMessagesTranscriptBlock = await loadPendingMessagesTranscriptBlock();
         sessionValue = {
             thinking: true,
             presence: 'online',
@@ -321,7 +333,7 @@ describe('PendingMessagesTranscriptBlock', () => {
         };
 
         modalConfirm.mockResolvedValueOnce(true);
-        sendMessage.mockResolvedValueOnce(undefined);
+        sendPendingMessageNow.mockResolvedValueOnce(undefined);
         deletePendingMessage.mockResolvedValueOnce(undefined);
 
         let tree: ReturnType<typeof renderer.create> | undefined;
@@ -343,11 +355,13 @@ describe('PendingMessagesTranscriptBlock', () => {
         });
 
         expect(sessionAbort).toHaveBeenCalledTimes(0);
-        expect(sendMessage).toHaveBeenCalledTimes(1);
+        expect(sendPendingMessageNow).toHaveBeenCalledTimes(1);
+        expect(sendPendingMessageNow).toHaveBeenCalledWith('s1', expect.objectContaining({ localId: 'p1' }));
         expect(deletePendingMessage).toHaveBeenCalledTimes(1);
     });
 
     it('renders with app theme shape (no secondary background / no danger box)', async () => {
+        const PendingMessagesTranscriptBlock = await loadPendingMessagesTranscriptBlock();
         await expect((async () => {
             await act(async () => {
                     renderer.create(React.createElement(PendingMessagesTranscriptBlock, {
@@ -360,9 +374,10 @@ describe('PendingMessagesTranscriptBlock', () => {
     });
 
     it('does not delete or close when send fails', async () => {
+        const PendingMessagesTranscriptBlock = await loadPendingMessagesTranscriptBlock();
         modalConfirm.mockResolvedValueOnce(true);
         sessionAbort.mockResolvedValueOnce(undefined);
-        sendMessage.mockRejectedValueOnce(new Error('send failed'));
+        sendPendingMessageNow.mockRejectedValueOnce(new Error('send failed'));
 
         let tree: ReturnType<typeof renderer.create> | undefined;
         await act(async () => {
@@ -387,6 +402,7 @@ describe('PendingMessagesTranscriptBlock', () => {
     });
 
     it('uses a smaller default max-height for the pending queue block', async () => {
+        const PendingMessagesTranscriptBlock = await loadPendingMessagesTranscriptBlock();
         let tree: ReturnType<typeof renderer.create> | undefined;
         await act(async () => {
             tree = renderer.create(React.createElement(PendingMessagesTranscriptBlock, {
@@ -401,6 +417,7 @@ describe('PendingMessagesTranscriptBlock', () => {
     });
 
     it('does not show discarded action icons until hover on web', async () => {
+        const PendingMessagesTranscriptBlock = await loadPendingMessagesTranscriptBlock();
         let tree: ReturnType<typeof renderer.create> | undefined;
         await act(async () => {
             tree = renderer.create(React.createElement(PendingMessagesTranscriptBlock, {
@@ -428,6 +445,7 @@ describe('PendingMessagesTranscriptBlock', () => {
     });
 
     it('hides the next pending chip while hovering a message on web', async () => {
+        const PendingMessagesTranscriptBlock = await loadPendingMessagesTranscriptBlock();
         let tree: ReturnType<typeof renderer.create> | undefined;
         await act(async () => {
             tree = renderer.create(React.createElement(PendingMessagesTranscriptBlock, {
@@ -452,6 +470,7 @@ describe('PendingMessagesTranscriptBlock', () => {
     });
 
     it('does not render per-message up/down chevron actions', async () => {
+        const PendingMessagesTranscriptBlock = await loadPendingMessagesTranscriptBlock();
         let tree: ReturnType<typeof renderer.create> | undefined;
         await act(async () => {
             tree = renderer.create(React.createElement(PendingMessagesTranscriptBlock, {
@@ -470,6 +489,7 @@ describe('PendingMessagesTranscriptBlock', () => {
     });
 
     it('renders reorder affordance without nested pressable action', async () => {
+        const PendingMessagesTranscriptBlock = await loadPendingMessagesTranscriptBlock();
         let tree: ReturnType<typeof renderer.create> | undefined;
         await act(async () => {
             tree = renderer.create(React.createElement(PendingMessagesTranscriptBlock, {
