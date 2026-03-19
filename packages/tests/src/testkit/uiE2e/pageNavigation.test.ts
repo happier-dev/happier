@@ -1,6 +1,10 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import { gotoDomContentLoadedWithPathFallback, gotoDomContentLoadedWithRetries } from './pageNavigation';
+import {
+  gotoDomContentLoadedWithPathFallback,
+  gotoDomContentLoadedWithRetries,
+  normalizeLoopbackBaseUrl,
+} from './pageNavigation';
 
 describe('gotoDomContentLoadedWithRetries', () => {
   it('retries retryable network errors before succeeding', async () => {
@@ -52,5 +56,13 @@ describe('gotoDomContentLoadedWithRetries', () => {
 
     await expect(gotoDomContentLoadedWithPathFallback(page as never, targetUrl, '/')).resolves.toBeUndefined();
     expect(goto).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('normalizeLoopbackBaseUrl', () => {
+  it('preserves routable IPv4 loopback hosts and rewrites non-routable loopback hosts to 127.0.0.1', () => {
+    expect(normalizeLoopbackBaseUrl('http://127.0.0.1:60674/')).toBe('http://127.0.0.1:60674');
+    expect(normalizeLoopbackBaseUrl('http://0.0.0.0:60674/')).toBe('http://127.0.0.1:60674');
+    expect(normalizeLoopbackBaseUrl('http://[::1]:60674/')).toBe('http://127.0.0.1:60674');
   });
 });

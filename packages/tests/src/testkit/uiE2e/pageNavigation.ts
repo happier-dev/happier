@@ -3,12 +3,16 @@ import type { Page } from '@playwright/test';
 export function normalizeLoopbackBaseUrl(input: string): string {
   try {
     const parsed = new URL(input);
-    // Expo web dev server is started with `--host localhost`, and recent Webpack/Metro stacks can
-    // reject loopback IP Host headers (127.0.0.1/::1) depending on allowedHosts configuration.
-    // Normalise to `localhost` so deep links (e.g. /terminal/connect#key=...) work reliably in
-    // Playwright E2E across environments.
-    if (parsed.hostname === '127.0.0.1' || parsed.hostname === '0.0.0.0' || parsed.hostname === '::1') {
-      parsed.hostname = 'localhost';
+    // Keep browser navigation on a routable IPv4 loopback. Some local environments resolve
+    // `localhost` to IPv6 first, while these test servers only listen on 127.0.0.1.
+    if (
+      parsed.hostname === '127.0.0.1'
+      || parsed.hostname === '0.0.0.0'
+      || parsed.hostname === '::1'
+      || parsed.hostname === '[::1]'
+    ) {
+      const port = parsed.port ? `:${parsed.port}` : '';
+      return `${parsed.protocol}//127.0.0.1${port}${parsed.pathname}${parsed.search}${parsed.hash}`.replace(/\/+$/, '');
     }
     return parsed.toString().replace(/\/+$/, '');
   } catch {
