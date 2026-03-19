@@ -11,6 +11,11 @@ function isAnalyticsScalar(value: unknown): value is SettingsAnalyticsPropertyVa
     );
 }
 
+function canUseRawAnalyticsFallback(definition: SettingDefinition): boolean {
+    const valueKind = definition.analytics?.valueKind;
+    return valueKind === 'boolean' || valueKind === 'enum';
+}
+
 export function serializeTrackedSettingEntries(
     definition: SettingDefinition,
     rawValue: unknown,
@@ -34,7 +39,9 @@ export function serializeTrackedSettingEntries(
         ? definition.analytics.serializeCurrentWithContext(rawValue, record)
         : definition.analytics?.serializeCurrent
             ? definition.analytics.serializeCurrent(rawValue)
-            : rawValue;
+            : canUseRawAnalyticsFallback(definition)
+                ? rawValue
+                : undefined;
 
     if (isAnalyticsScalar(serialized)) {
         properties[propertyKey] = serialized;

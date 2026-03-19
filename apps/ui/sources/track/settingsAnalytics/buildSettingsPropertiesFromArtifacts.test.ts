@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { buildSettingArtifacts, defineSettingDefinitions } from '@happier-dev/protocol';
 
 import { buildSettingsPropertiesFromArtifacts } from './buildSettingsPropertiesFromArtifacts';
+import { serializeTrackedSettingEntries } from './serializeTrackedSettingEntries';
 
 describe('buildSettingsPropertiesFromArtifacts', () => {
     it('serializes tracked current-state and derived properties for the requested identity scope', () => {
@@ -154,5 +155,27 @@ describe('buildSettingsPropertiesFromArtifacts', () => {
             acct_setting__sessionReplaySummaryRunnerV1: true,
             derived__sessionReplaySummaryRunnerConfigured: true,
         });
+    });
+
+    it('does not emit raw free-form scalar values without an explicit serializer', () => {
+        const properties = serializeTrackedSettingEntries(
+            {
+                schema: z.string(),
+                default: '',
+                description: 'Free-form text',
+                storageScope: 'account',
+                analytics: {
+                    trackCurrentState: true,
+                    trackChanges: true,
+                    valueKind: 'presence',
+                    privacy: 'presence_only',
+                    identityScope: 'person',
+                },
+            },
+            'secret-ish value',
+            'acct_setting__freeformText',
+        );
+
+        expect(properties).toEqual({});
     });
 });
