@@ -51,11 +51,19 @@ describe('registerHappierMcpBridgeTools', () => {
     expect(names).toContain('execution_run_action');
 
     const start = calls.find((c) => c.name === 'execution_run_start');
-    const res = await start.handler({ intent: 'review', backendId: 'claude', instructions: 'Review.' });
+    const res = await start.handler({
+      intent: 'review',
+      backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+      instructions: 'Review.',
+    });
     expect(res.isError).toBe(false);
     expect(forwarded[0]).toEqual({
       name: 'execution_run_start',
-      args: { intent: 'review', backendId: 'claude', instructions: 'Review.' },
+      args: {
+        intent: 'review',
+        backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+        instructions: 'Review.',
+      },
     });
   });
 });
