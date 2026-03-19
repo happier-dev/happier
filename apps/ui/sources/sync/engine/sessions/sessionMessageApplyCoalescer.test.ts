@@ -99,4 +99,23 @@ describe('createSessionMessageApplyCoalescer', () => {
 
         expect(coalescer.getQueuedMaxSeq('s1')).toBe(0);
     });
+
+    it('drops queued messages by id before a delayed flush', () => {
+        const applyBatch = vi.fn();
+        const coalescer = createSessionMessageApplyCoalescer({
+            getConfig: () => ({ enabled: true, windowMs: 16, maxBatchSize: 200 }),
+            applyBatch,
+        });
+
+        coalescer.enqueue('s1', [
+            buildUserTextMessage('m1', 1),
+            buildUserTextMessage('m2', 2),
+        ]);
+
+        coalescer.dropQueuedMessageIds('s1', ['m1']);
+        vi.advanceTimersByTime(16);
+
+        expect(applyBatch).toHaveBeenCalledTimes(1);
+        expect((applyBatch.mock.calls[0]?.[1] as NormalizedMessage[]).map((message) => message.id)).toEqual(['m2']);
+    });
 });
