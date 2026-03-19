@@ -128,16 +128,17 @@ describe('machineRpcWithServerScope', () => {
 
         expect(result).toEqual({ decoded: true });
         expect(machineRpcSpy).not.toHaveBeenCalled();
-            expect(ioSpy).toHaveBeenCalledWith(
-                'https://server-b.example.test',
-                expect.objectContaining({
-                    path: '/v1/updates',
-                    auth: expect.objectContaining({
-                        token: 'token-b',
-                        clientType: 'user-scoped',
-                    }),
+        expect(ioSpy).toHaveBeenCalledWith(
+            'https://server-b.example.test',
+            expect.objectContaining({
+                path: '/v1/updates',
+                auth: expect.objectContaining({
+                    token: 'token-b',
+                    clientType: 'user-scoped',
                 }),
-            );
+                forceNew: true,
+            }),
+        );
             const opts = ioSpy.mock.calls[0]?.[1] as any;
             expect(opts).not.toHaveProperty('transports');
         expect(machineEncryption.encryptRaw).toHaveBeenCalledWith({ value: 2 });
@@ -204,6 +205,7 @@ describe('machineRpcWithServerScope', () => {
                     token: 'token-a',
                     clientType: 'user-scoped',
                 }),
+                forceNew: true,
             }),
         );
         expect(machineEncryption.encryptRaw).toHaveBeenCalledWith({ value: 3 });
@@ -267,6 +269,7 @@ describe('machineRpcWithServerScope', () => {
                     token: 'token-a',
                     clientType: 'user-scoped',
                 }),
+                forceNew: true,
             }),
         );
         expect(machineEncryption.encryptRaw).toHaveBeenCalledWith({ directory: '/tmp/repo' });
@@ -332,6 +335,7 @@ describe('machineRpcWithServerScope', () => {
                     token: 'token-a',
                     clientType: 'user-scoped',
                 }),
+                forceNew: true,
             }),
         );
         expect(machineEncryption.encryptRaw).toHaveBeenCalledWith({ handoffId: 'handoff_1' });
@@ -343,5 +347,67 @@ describe('machineRpcWithServerScope', () => {
         });
         expect(fakeSocket.disconnect).toHaveBeenCalledTimes(1);
         vi.useRealTimers();
+    });
+
+    it('routes directly through a scoped socket when preferScoped is requested on the active server', async () => {
+        getActiveServerSnapshotSpy.mockReturnValue({
+            serverId: 'server-a',
+            serverUrl: 'https://server-a.example.test',
+            kind: 'custom',
+            generation: 1,
+        });
+        getCredentialsSpy.mockResolvedValue({ token: 'token-a', secret: 'secret-a' });
+
+        const machineEncryption = {
+            encryptRaw: vi.fn(async () => 'encrypted-payload'),
+            decryptRaw: vi.fn(async () => ({ decoded: true })),
+        };
+        createEncryptionSpy.mockResolvedValue({
+            decryptEncryptionKey: vi.fn(async () => null),
+            initializeMachines: vi.fn(async () => {}),
+            getMachineEncryption: vi.fn(() => machineEncryption),
+        });
+
+        vi.stubGlobal('fetch', vi.fn(async () => ({
+            ok: true,
+            json: async () => [{ id: 'machine-1', dataEncryptionKey: null }],
+        })));
+
+        const fakeSocket = {
+            on: vi.fn((event: string, cb: () => void) => {
+                if (event === 'connect') cb();
+            }),
+            off: vi.fn(),
+            timeout: vi.fn(() => ({
+                emitWithAck: vi.fn(async () => ({ ok: true, result: 'encrypted-result' })),
+            })),
+            disconnect: vi.fn(),
+        };
+        ioSpy.mockReturnValue(fakeSocket);
+
+        const { machineRpcWithServerScope } = await import('./serverScopedMachineRpc');
+        const result = await machineRpcWithServerScope({
+            machineId: 'machine-1',
+            method: 'daemon.sessionHandoff.prepareTarget',
+            payload: { handoffId: 'handoff_1' },
+            timeoutMs: 1_000,
+            preferScoped: true,
+        });
+
+        expect(result).toEqual({ decoded: true });
+        expect(machineRpcSpy).not.toHaveBeenCalled();
+        expect(ioSpy).toHaveBeenCalledWith(
+            'https://server-a.example.test',
+            expect.objectContaining({
+                path: '/v1/updates',
+                auth: expect.objectContaining({
+                    token: 'token-a',
+                    clientType: 'user-scoped',
+                }),
+            }),
+        );
+        expect(machineEncryption.encryptRaw).toHaveBeenCalledWith({ handoffId: 'handoff_1' });
+        expect(machineEncryption.decryptRaw).toHaveBeenCalledWith('encrypted-result');
+        expect(fakeSocket.disconnect).toHaveBeenCalledTimes(1);
     });
 });
