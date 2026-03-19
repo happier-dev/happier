@@ -10,6 +10,7 @@ import {
   parseMcpConfigs,
   runHookForwarder,
 } from '../../src/fixtures/fake-claude-code-cli.helpers.cjs';
+import { fakeClaudeFixturePath } from '../../src/testkit/fakeClaude';
 
 async function withTempDir<T>(run: (dir: string) => Promise<T>): Promise<T> {
   const dir = await mkdtemp(join(tmpdir(), 'fake-claude-fixture-'));
@@ -65,6 +66,24 @@ describe('fake Claude fixture helpers', () => {
     });
   });
 
+  it('parses SessionStart hook command when the runtime executable path is quoted', async () => {
+    await withTempDir(async (dir) => {
+      const settingsPath = join(dir, 'settings.json');
+      const runtimePath = join(dir, 'managed node');
+      const scriptPath = join(dir, 'forwarder.js');
+      await writeFile(
+        settingsPath,
+        JSON.stringify({
+          hooks: { SessionStart: [{ hooks: [{ command: `${JSON.stringify(runtimePath)} ${JSON.stringify(scriptPath)} 7123` }] }] },
+        }),
+        'utf8',
+      );
+
+      const hook = parseHookForwarderCommand(settingsPath);
+      expect(hook).toEqual({ type: 'node', scriptPath, port: 7123 });
+    });
+  });
+
   it('records skipped raw hook commands', async () => {
     await withTempDir(async (dir) => {
       const logPath = join(dir, 'fixture-log.jsonl');
@@ -88,5 +107,10 @@ describe('fake Claude fixture helpers', () => {
         command: 'echo unsafe',
       });
     });
+  });
+
+  it('returns the fake Claude JavaScript wrapper entrypoint path', () => {
+    const fixturePath = fakeClaudeFixturePath();
+    expect(fixturePath.endsWith('fake-claude-code-cli.js')).toBe(true);
   });
 });
