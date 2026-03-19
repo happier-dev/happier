@@ -5,6 +5,12 @@ import { makeToolCall } from './ToolView.testHelpers';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
+vi.mock('@/sync/sync', () => ({
+    sync: {
+        ensureSidechainMessagesLoaded: vi.fn(),
+    },
+}));
+
 vi.mock('@expo/vector-icons', () => ({
     Ionicons: 'Ionicons',
     Octicons: 'Octicons',

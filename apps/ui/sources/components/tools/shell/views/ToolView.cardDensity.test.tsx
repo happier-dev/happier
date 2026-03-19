@@ -8,6 +8,12 @@ import { makeToolCall } from './ToolView.testHelpers';
 
 let toolViewDetailLevelDefaultSetting: any = 'summary';
 
+vi.mock('@/sync/sync', () => ({
+    sync: {
+        ensureSidechainMessagesLoaded: vi.fn(),
+    },
+}));
+
 vi.mock('expo-router', () => ({
     useRouter: () => ({ push: vi.fn() }),
 }));
