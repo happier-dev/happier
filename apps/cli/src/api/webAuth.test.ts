@@ -58,6 +58,23 @@ describe('generateWebAuthUrl', () => {
     );
   });
 
+  it('keeps the loopback server URL in the web auth link when the web app is served from that same local origin', async () => {
+    process.env.HAPPIER_SERVER_URL = 'http://127.0.0.1:26731';
+    process.env.HAPPIER_WEBAPP_URL = 'http://127.0.0.1:26731';
+    delete process.env.HAPPIER_PUBLIC_SERVER_URL;
+
+    vi.resetModules();
+    const { generateWebAuthUrl } = await import('./webAuth');
+    const { encodeBase64 } = await import('./encryption');
+
+    const publicKey = new Uint8Array(32).fill(13);
+    const key = encodeBase64(publicKey, 'base64url');
+    const url = generateWebAuthUrl(publicKey);
+    expect(url).toBe(
+      `http://127.0.0.1:26731/terminal/connect#key=${key}&server=${encodeURIComponent('http://127.0.0.1:26731')}`,
+    );
+  });
+
   it('uses persisted canonical serverUrl from the active server profile when HAPPIER_PUBLIC_SERVER_URL is unset', async () => {
     const home = await mkdtemp(join(tmpdir(), 'happier-webAuth-public-profile-'));
 
