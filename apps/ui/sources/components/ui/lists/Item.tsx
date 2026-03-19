@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { View, Pressable, StyleProp, ViewStyle, TextStyle, Platform, ActivityIndicator } from 'react-native';
+import { View, Pressable, StyleProp, ViewStyle, TextStyle, Platform, ActivityIndicator, type AccessibilityRole } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { Typography } from '@/constants/Typography';
 import * as Clipboard from 'expo-clipboard';
@@ -44,6 +44,7 @@ export interface ItemProps {
     onDoublePress?: () => void;
     onLongPress?: () => void;
     onMouseDownCapture?: (event: unknown) => void;
+    accessibilityRole?: AccessibilityRole;
     disabled?: boolean;
     loading?: boolean;
     selected?: boolean;
@@ -236,6 +237,7 @@ export const Item = React.memo<ItemProps>((props) => {
         onDoublePress,
         onLongPress,
         onMouseDownCapture,
+        accessibilityRole,
         disabled,
         loading,
         selected,
@@ -559,6 +561,7 @@ export const Item = React.memo<ItemProps>((props) => {
                 onHoverIn={isWeb && isSelectableRow && !disabled && !loading ? () => setIsHovered(true) : undefined}
                 onHoverOut={isWeb ? () => setIsHovered(false) : undefined}
                 onMouseDownCapture={isWeb ? (onMouseDownCapture as any) : undefined}
+                accessibilityRole={accessibilityRole ?? 'button'}
                 disabled={disabled || loading}
                 style={({ pressed }) => {
                     const backgroundColor = (() => {

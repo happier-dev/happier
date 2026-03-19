@@ -6,7 +6,7 @@ export type ItemAction = {
     title: string;
     icon: React.ComponentProps<typeof Ionicons>['name'];
     onPress: () => void;
+    disabled?: boolean;
     destructive?: boolean;
     color?: string;
 };
-
