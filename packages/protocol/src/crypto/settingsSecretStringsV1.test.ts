@@ -157,7 +157,7 @@ describe('settingsSecretStringsV1', () => {
     );
 
     const resealed = resealSecretsDeepV1(
-      { secret: { _isSecretValue: true, encryptedValue: legacyEncryptedValue } satisfies SecretStringV1 },
+      { secret: { _isSecretValue: true as const, encryptedValue: legacyEncryptedValue } },
       { readKeys: legacyKeySet.readKeys, writeKey: legacyKeySet.writeKey, randomBytes },
     );
 
