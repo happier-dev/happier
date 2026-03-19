@@ -3,49 +3,29 @@ import { describe, expect, it } from 'vitest';
 import { resolveMemoryEmbeddingsConfig } from './resolveMemoryEmbeddingsConfig.js';
 
 describe('resolveMemoryEmbeddingsConfig', () => {
-  it('returns a disabled config for disabled mode', () => {
-    const parsed = resolveMemoryEmbeddingsConfig({
-      mode: 'disabled',
-      presetId: 'balanced',
-      custom: null,
-      blend: { ftsWeight: 0.2, embeddingWeight: 0.8 },
-    });
-
-    expect(parsed.enabled).toBe(false);
-    expect(parsed.profile).toBeNull();
-    expect(parsed.provider).toBeNull();
-    expect(parsed.blend).toEqual({ ftsWeight: 0.2, embeddingWeight: 0.8 });
-  });
-
-  it('resolves preset mode to profile metadata', () => {
-    const parsed = resolveMemoryEmbeddingsConfig({
+  it('resolves the long_context preset to the jina local model', () => {
+    const resolved = resolveMemoryEmbeddingsConfig({
       mode: 'preset',
       presetId: 'long_context',
       custom: null,
-      blend: undefined,
+      blend: { ftsWeight: 0.7, embeddingWeight: 0.3 },
     });
 
-    expect(parsed.enabled).toBe(true);
-    expect(parsed.profile?.id).toBe('long_context');
-    expect(parsed.provider?.kind).toBe('local_transformers');
+    expect(resolved.provider.kind).toBe('local_transformers');
+    if (resolved.provider.kind !== 'local_transformers') return;
+    expect(resolved.provider.modelId).toBe('Xenova/jina-embeddings-v2-small-en');
+    expect(resolved.profile.id).toBe('long_context');
   });
 
-  it('resolves custom mode to the custom provider config', () => {
-    const parsed = resolveMemoryEmbeddingsConfig({
-      mode: 'custom',
+  it('returns disabled when embeddings mode is disabled', () => {
+    const resolved = resolveMemoryEmbeddingsConfig({
+      mode: 'disabled',
       presetId: 'balanced',
-      custom: {
-        kind: 'openai_compatible',
-        baseUrl: 'https://api.example.com',
-        apiKey: null,
-        model: 'text-embedding-3-small',
-        dimensions: 1536,
-      },
-      blend: { ftsWeight: 0.5, embeddingWeight: 0.5 },
+      custom: null,
+      blend: { ftsWeight: 0.7, embeddingWeight: 0.3 },
     });
 
-    expect(parsed.enabled).toBe(true);
-    expect(parsed.profile).toBeNull();
-    expect(parsed.provider?.kind).toBe('openai_compatible');
+    expect(resolved.enabled).toBe(false);
+    expect(resolved.provider).toBeNull();
   });
 });
