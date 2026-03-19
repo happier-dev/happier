@@ -112,6 +112,48 @@ describe('resolveScopedMachineDataKey', () => {
         expect(fetchSpy).toHaveBeenCalledTimes(1);
     });
 
+    it('retries machine key fetch when the first lookup returns no key', async () => {
+        const fetchSpy = vi.fn(async () => {
+            if (fetchSpy.mock.calls.length === 1) {
+                return {
+                    ok: true,
+                    json: async () => [
+                        { id: 'machine-1', dataEncryptionKey: null },
+                    ],
+                };
+            }
+            return {
+                ok: true,
+                json: async () => [
+                    { id: 'machine-1', dataEncryptionKey: 'encrypted-key' },
+                ],
+            };
+        });
+        vi.stubGlobal('fetch', fetchSpy);
+
+        const decryptSpy = vi.fn(async () => new Uint8Array([9, 9, 9]));
+
+        const first = await resolveScopedMachineDataKey({
+            serverId: 'server-b',
+            serverUrl: 'https://server-b.example.test',
+            token: 'token-b',
+            machineId: 'machine-1',
+            decryptEncryptionKey: decryptSpy,
+        });
+        const second = await resolveScopedMachineDataKey({
+            serverId: 'server-b',
+            serverUrl: 'https://server-b.example.test',
+            token: 'token-b',
+            machineId: 'machine-1',
+            decryptEncryptionKey: decryptSpy,
+        });
+
+        expect(first).toBeNull();
+        expect(second).toEqual(new Uint8Array([9, 9, 9]));
+        expect(fetchSpy).toHaveBeenCalledTimes(2);
+        expect(decryptSpy).toHaveBeenCalledTimes(1);
+    });
+
     it('evicts oldest machine keys when cache exceeds EXPO_PUBLIC_HAPPIER_SCOPED_RPC_MACHINE_KEY_CACHE_MAX', async () => {
         process.env.EXPO_PUBLIC_HAPPIER_SCOPED_RPC_MACHINE_KEY_CACHE_MAX = '1';
 
