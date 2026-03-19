@@ -3,7 +3,7 @@ import { RPC_ERROR_CODES } from '@happier-dev/protocol/rpc';
 
 const getStateSpy = vi.fn();
 
-vi.mock('../domains/state/storage', () => ({
+vi.mock('@/sync/domains/state/storage', () => ({
     storage: {
         getState: () => getStateSpy(),
     },
@@ -176,6 +176,109 @@ describe('sessionMachineTarget', () => {
         expect(readMachineTargetForSession('s1')).toEqual({
             machineId: 'm-peer',
             basePath: '/workspace/repo',
+        });
+    });
+
+    it('prefers the reachable machine target for display when metadata machine id is stale', async () => {
+        const { readDisplayMachineIdForSession } = await import('./sessionMachineTarget');
+        getStateSpy.mockReturnValue({
+            sessions: {
+                s1: {
+                    active: false,
+                    metadata: {
+                        machineId: 'm-stale',
+                        path: '/workspace/repo',
+                    },
+                },
+            },
+            machines: {
+                'm-project': {
+                    id: 'm-project',
+                    active: true,
+                    activeAt: 10,
+                    metadata: { host: 'mbp-host' },
+                },
+            },
+            getProjectForSession: (sessionId: string) =>
+                sessionId === 's1'
+                    ? {
+                        key: {
+                            machineId: 'm-project',
+                            path: '/workspace/repo',
+                        },
+                    }
+                    : null,
+        });
+
+        expect(readDisplayMachineIdForSession({
+            sessionId: 's1',
+            metadata: {
+                machineId: 'm-stale',
+                path: '/workspace/repo',
+            },
+        } as any)).toBe('m-project');
+    });
+
+    it('falls back to the linked direct-session machine id for display when no reachable target exists', async () => {
+        const { readDisplayMachineIdForSession } = await import('./sessionMachineTarget');
+        getStateSpy.mockReturnValue({
+            sessions: {},
+            machines: {},
+        });
+
+        expect(readDisplayMachineIdForSession({
+            sessionId: 'missing',
+            metadata: {
+                directSessionV1: {
+                    v: 1,
+                    providerId: 'claude',
+                    machineId: 'm-direct',
+                    remoteSessionId: 'remote-1',
+                    source: { kind: 'claudeConfig', configDir: '/tmp/claude' },
+                },
+            },
+        } as any)).toBe('m-direct');
+    });
+
+    it('prefers the reachable project path when the stored session path is stale after handoff', async () => {
+        const { readMachineTargetForSession } = await import('./sessionMachineTarget');
+        getStateSpy.mockReturnValue({
+            sessions: {
+                s1: {
+                    active: false,
+                    metadata: {
+                        machineId: 'm-stale',
+                        path: '/Users/test/workspace/stale',
+                        homeDir: '/Users/test',
+                        host: 'stale.local',
+                    },
+                },
+            },
+            machines: {
+                'm-project': {
+                    id: 'm-project',
+                    active: true,
+                    activeAt: 10,
+                    metadata: {
+                        host: 'project.local',
+                        homeDir: '/workspace',
+                    },
+                },
+            },
+            getProjectForSession: (sessionId: string) =>
+                sessionId === 's1'
+                    ? {
+                        key: {
+                            machineId: 'm-project',
+                            path: '/Volumes/target/workspace/live',
+                        },
+                    }
+                    : null,
+        });
+
+        expect(readMachineTargetForSession('s1')).toEqual({
+            machineId: 'm-project',
+            basePath: '/Volumes/target/workspace/live',
         });
     });
 
