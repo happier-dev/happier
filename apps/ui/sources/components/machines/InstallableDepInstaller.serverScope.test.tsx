@@ -1,15 +1,14 @@
 import * as React from 'react';
 import renderer, { act, type ReactTestRenderer } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
+import { CODEX_ACP_DEP_ID } from '@happier-dev/protocol/installables';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 const alertMock = vi.fn();
-const promptMock = vi.fn(async () => null);
 const machineCapabilitiesInvokeMock = vi.fn(
     async (_machineId: string, _request: unknown, _options: unknown) => ({ supported: false, reason: 'not-supported' }),
 );
-const installSpecState = vi.hoisted(() => ({ value: null as string | null }));
 
 vi.mock('react-native', () => ({
     ActivityIndicator: 'ActivityIndicator',
@@ -36,12 +35,7 @@ vi.mock('@/text', () => ({
 vi.mock('@/modal', () => ({
     Modal: {
         alert: alertMock,
-        prompt: promptMock,
     },
-}));
-
-vi.mock('@/sync/domains/state/storage', () => ({
-    useSettingMutable: () => [installSpecState.value, vi.fn()],
 }));
 
 vi.mock('@/sync/ops', () => ({
@@ -68,19 +62,17 @@ describe('InstallableDepInstaller', () => {
                     serverId="server-b"
                     enabled
                     groupTitle="Dependencies"
-                    depId="dep.codexAcp"
+                    depId={CODEX_ACP_DEP_ID}
                     depTitle="Codex ACP"
                     depIconName="construct-outline"
                     depStatus={{
                         installed: false,
                         installedVersion: null,
-                        distTag: 'latest',
+                        sourceKind: 'github_release_binary',
                         lastInstallLogPath: null,
+                        lastBackgroundUpdateCheckAtMs: null,
                     }}
                     capabilitiesStatus="loaded"
-                    installSpecSettingKey="codexAcpInstallSpec"
-                    installSpecTitle="Install source"
-                    installSpecDescription="Install source details"
                     installLabels={{
                         install: 'Install now',
                         update: 'Update now',
@@ -115,14 +107,12 @@ describe('InstallableDepInstaller', () => {
 
         expect(machineCapabilitiesInvokeMock).toHaveBeenCalledWith(
             'machine-1',
-            expect.objectContaining({ id: 'dep.codexAcp', method: 'install' }),
+            expect.objectContaining({ id: CODEX_ACP_DEP_ID, method: 'install' }),
             expect.objectContaining({ timeoutMs: 5 * 60_000, serverId: 'server-b' }),
         );
     });
 
-    it('drops whitespace-containing install specs when invoking installs', async () => {
-        installSpecState.value = "not-a-valid-install-spec\\nwith whitespace";
-
+    it('invokes installs without install-spec params', async () => {
         const { InstallableDepInstaller } = await import('./InstallableDepInstaller');
 
         let tree!: ReactTestRenderer;
@@ -133,19 +123,17 @@ describe('InstallableDepInstaller', () => {
                     serverId="server-b"
                     enabled
                     groupTitle="Dependencies"
-                    depId="dep.codexAcp"
+                    depId={CODEX_ACP_DEP_ID}
                     depTitle="Codex ACP"
                     depIconName="construct-outline"
                     depStatus={{
                         installed: false,
                         installedVersion: null,
-                        distTag: 'latest',
+                        sourceKind: 'github_release_binary',
                         lastInstallLogPath: null,
+                        lastBackgroundUpdateCheckAtMs: null,
                     }}
                     capabilitiesStatus="loaded"
-                    installSpecSettingKey="codexAcpInstallSpec"
-                    installSpecTitle="Install source"
-                    installSpecDescription="Install source details"
                     installLabels={{
                         install: 'Install now',
                         update: 'Update now',
@@ -184,7 +172,55 @@ describe('InstallableDepInstaller', () => {
         expect(lastCall?.[2]).toMatchObject({ timeoutMs: 5 * 60_000, serverId: 'server-b' });
 
         const request = lastCall?.[1] as Record<string, unknown> | undefined;
-        expect(request).toMatchObject({ id: 'dep.codexAcp', method: 'install' });
+        expect(request).toMatchObject({ id: CODEX_ACP_DEP_ID, method: 'install' });
         expect(request).not.toHaveProperty('params');
+    });
+
+    it('renders the last background update check in the existing installables UI', async () => {
+        const { InstallableDepInstaller } = await import('./InstallableDepInstaller');
+        vi.spyOn(Date.prototype, 'toLocaleString').mockReturnValue('Mar 10, 2026, 6:13 PM');
+
+        const depStatus = {
+            installed: true,
+            installedVersion: '0.9.5',
+            sourceKind: 'github_release_binary',
+            lastInstallLogPath: null,
+            lastBackgroundUpdateCheckAtMs: 1_773_164_020_808,
+        };
+
+        let tree!: ReactTestRenderer;
+        await act(async () => {
+            tree = renderer.create(
+                <InstallableDepInstaller
+                    machineId="machine-1"
+                    serverId="server-b"
+                    enabled
+                    groupTitle="Dependencies"
+                    depId={CODEX_ACP_DEP_ID}
+                    depTitle="Codex ACP"
+                    depIconName="construct-outline"
+                    depStatus={depStatus}
+                    capabilitiesStatus="loaded"
+                    installLabels={{
+                        install: 'Install now',
+                        update: 'Update now',
+                        reinstall: 'Reinstall now',
+                    }}
+                    installModal={{
+                        installTitle: 'Install dependency',
+                        updateTitle: 'Update dependency',
+                        reinstallTitle: 'Reinstall dependency',
+                        description: 'Confirm install',
+                    }}
+                    refreshStatus={() => {}}
+                />,
+            );
+        });
+
+        const lastCheckedItem = tree.root.findAllByType('Item' as any).find(
+            (item) => item.props.title === 'settingsProviders.authentication.lastCheckedTitle',
+        );
+        expect(lastCheckedItem).toBeTruthy();
+        expect(lastCheckedItem?.props.subtitle).toBe('Mar 10, 2026, 6:13 PM');
     });
 });

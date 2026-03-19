@@ -7,20 +7,26 @@ import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { useMachineCapabilityInvokeWithAlerts } from '@/hooks/machine/useMachineCapabilityInvokeWithAlerts';
 import { Modal } from '@/modal';
 import { t } from '@/text';
-import { useSettingMutable } from '@/sync/domains/state/storage';
 import type { CapabilityId } from '@/sync/api/capabilities/capabilitiesProtocol';
-import type { InstallSpecSettingKey } from '@/capabilities/installablesRegistry';
 import { isInstallableDepUpdateAvailable } from '@/capabilities/installablesUpdateAvailable';
-import { normalizeInstallSpecSettingValue } from '@/capabilities/normalizeInstallSpecSettingValue';
 import { useUnistyles } from 'react-native-unistyles';
 
 type InstallableDepData = {
     installed: boolean;
     installedVersion: string | null;
-    distTag: string;
+    sourceKind: string;
     lastInstallLogPath: string | null;
-    registry?: { ok: true; latestVersion: string | null } | { ok: false; errorMessage: string };
+    lastBackgroundUpdateCheckAtMs: number | null;
+    latestVersionCheck?: { ok: true; latestVersion: string | null; label: string | null } | { ok: false; errorMessage: string };
 };
+
+function formatTimestamp(ms: number): string {
+    try {
+        return new Date(ms).toLocaleString();
+    } catch {
+        return String(ms);
+    }
+}
 
 export type InstallableDepInstallerProps = {
     machineId: string;
@@ -33,18 +39,14 @@ export type InstallableDepInstallerProps = {
     depStatus: InstallableDepData | null;
     capabilitiesStatus: 'idle' | 'loading' | 'loaded' | 'error' | 'not-supported';
     extraItems?: React.ReactNode;
-    installSpecSettingKey: InstallSpecSettingKey;
-    installSpecTitle: string;
-    installSpecDescription: string;
     installLabels: { install: string; update: string; reinstall: string };
     installModal: { installTitle: string; updateTitle: string; reinstallTitle: string; description: string };
     refreshStatus: () => void;
-    refreshRegistry?: () => void;
+    refreshLatestVersion?: () => void;
 };
 
 export function InstallableDepInstaller(props: InstallableDepInstallerProps) {
     const { theme } = useUnistyles();
-    const [installSpec, setInstallSpec] = useSettingMutable(props.installSpecSettingKey);
     const { isInvoking: isInstalling, invokeWithAlerts } = useMachineCapabilityInvokeWithAlerts();
 
     if (!props.enabled) return null;
@@ -60,8 +62,8 @@ export function InstallableDepInstaller(props: InstallableDepInstallerProps) {
         if (props.depStatus?.installed) {
             if (updateAvailable) {
                 const installedV = props.depStatus.installedVersion ?? 'unknown';
-                const latestV = props.depStatus.registry && props.depStatus.registry.ok
-                    ? (props.depStatus.registry.latestVersion ?? 'unknown')
+                const latestV = props.depStatus.latestVersionCheck && props.depStatus.latestVersionCheck.ok
+                    ? (props.depStatus.latestVersionCheck.latestVersion ?? 'unknown')
                     : 'unknown';
                 return t('deps.ui.installedUpdateAvailable', { installedVersion: installedV, latestVersion: latestV });
             }
@@ -77,26 +79,9 @@ export function InstallableDepInstaller(props: InstallableDepInstallerProps) {
         ? (updateAvailable ? props.installLabels.update : props.installLabels.reinstall)
         : props.installLabels.install;
 
-    const openInstallSpecPrompt = async () => {
-        const next = await Modal.prompt(
-            props.installSpecTitle,
-            props.installSpecDescription,
-            {
-                defaultValue: typeof installSpec === 'string' ? installSpec : '',
-                placeholder: t('deps.ui.installSpecPlaceholder'),
-                confirmText: t('common.save'),
-                cancelText: t('common.cancel'),
-            },
-        );
-        if (typeof next === 'string') {
-            setInstallSpec(next);
-        }
-    };
-
     const runInstall = async () => {
         const isInstalled = props.depStatus?.installed === true;
         const method = isInstalled ? (updateAvailable ? 'upgrade' : 'install') : 'install';
-        const spec = normalizeInstallSpecSettingValue(installSpec) ?? undefined;
 
         try {
             await invokeWithAlerts({
@@ -104,7 +89,6 @@ export function InstallableDepInstaller(props: InstallableDepInstallerProps) {
                 request: {
                     id: props.depId,
                     method,
-                    ...(spec ? { params: { installSpec: spec } } : {}),
                 },
                 timeoutMs: 5 * 60_000,
                 serverId: props.serverId,
@@ -118,7 +102,7 @@ export function InstallableDepInstaller(props: InstallableDepInstallerProps) {
                 },
             });
             props.refreshStatus();
-            props.refreshRegistry?.();
+            props.refreshLatestVersion?.();
         } catch (e) {
             Modal.alert(t('common.error'), e instanceof Error ? e.message : t('deps.installFailed'));
         }
@@ -131,35 +115,31 @@ export function InstallableDepInstaller(props: InstallableDepInstallerProps) {
                 subtitle={subtitle}
                 icon={<Ionicons name={props.depIconName} size={22} color={theme.colors.textSecondary} />}
                 showChevron={false}
-                onPress={() => props.refreshRegistry?.()}
+                onPress={() => props.refreshLatestVersion?.()}
             />
 
             {props.extraItems}
 
-            {props.depStatus?.registry && props.depStatus.registry.ok && props.depStatus.registry.latestVersion && (
+            {props.depStatus?.latestVersionCheck && props.depStatus.latestVersionCheck.ok && props.depStatus.latestVersionCheck.latestVersion && (
                 <Item
                     title={t('deps.ui.latest')}
-                    subtitle={t('deps.ui.latestSubtitle', { version: props.depStatus.registry.latestVersion, tag: props.depStatus.distTag })}
+                    subtitle={t('deps.ui.latestSubtitle', {
+                        version: props.depStatus.latestVersionCheck.latestVersion,
+                        tag: props.depStatus.latestVersionCheck.label ?? props.depStatus.sourceKind,
+                    })}
                     icon={<Ionicons name="cloud-download-outline" size={22} color={theme.colors.textSecondary} />}
                     showChevron={false}
                 />
             )}
 
-            {props.depStatus?.registry && !props.depStatus.registry.ok && (
+            {props.depStatus?.latestVersionCheck && !props.depStatus.latestVersionCheck.ok && (
                 <Item
                     title={t('deps.ui.registryCheck')}
-                    subtitle={t('deps.ui.registryCheckFailed', { error: props.depStatus.registry.errorMessage })}
+                    subtitle={t('deps.ui.registryCheckFailed', { error: props.depStatus.latestVersionCheck.errorMessage })}
                     icon={<Ionicons name="cloud-offline-outline" size={22} color={theme.colors.textSecondary} />}
                     showChevron={false}
                 />
             )}
-
-            <Item
-                title={t('deps.ui.installSource')}
-                subtitle={typeof installSpec === 'string' && installSpec.trim() ? installSpec.trim() : t('deps.ui.installSourceDefault')}
-                icon={<Ionicons name="link-outline" size={22} color={theme.colors.textSecondary} />}
-                onPress={openInstallSpecPrompt}
-            />
 
             <Item
                 title={installButtonLabel}
@@ -189,6 +169,15 @@ export function InstallableDepInstaller(props: InstallableDepInstallerProps) {
                     icon={<Ionicons name="document-text-outline" size={22} color={theme.colors.textSecondary} />}
                     showChevron={false}
                     onPress={() => Modal.alert(t('deps.ui.installLogTitle'), props.depStatus?.lastInstallLogPath ?? '')}
+                />
+            )}
+
+            {typeof props.depStatus?.lastBackgroundUpdateCheckAtMs === 'number' && Number.isFinite(props.depStatus.lastBackgroundUpdateCheckAtMs) && (
+                <Item
+                    title={t('settingsProviders.authentication.lastCheckedTitle')}
+                    subtitle={formatTimestamp(props.depStatus.lastBackgroundUpdateCheckAtMs)}
+                    icon={<Ionicons name="time-outline" size={22} color={theme.colors.textSecondary} />}
+                    showChevron={false}
                 />
             )}
         </ItemGroup>
