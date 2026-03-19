@@ -23,6 +23,7 @@ import { useConnectionTargetActions } from '@/components/navigation/connection/u
 import { ConnectionTargetList } from '@/components/navigation/connection/ConnectionTargetList';
 import { promptSignedOutServerSwitchConfirmation } from '@/components/settings/server/modals/ServerSwitchAuthPrompt';
 import { Text } from '@/components/ui/text/Text';
+import { useConnectionHealth } from '@/components/navigation/connectionStatus/useConnectionHealth';
 
 type Variant = 'sidebar' | 'header';
 
@@ -31,12 +32,17 @@ const stylesheet = StyleSheet.create((theme) => ({
         position: 'relative',
         zIndex: 2000,
         overflow: 'visible',
+        flexShrink: 1,
+        minWidth: 0,
+        maxWidth: '100%',
     },
     statusContainer: {
         flexDirection: 'row',
         alignItems: 'center',
         marginTop: -2,
         flexWrap: 'nowrap' as const,
+        flexShrink: 1,
+        minWidth: 0,
         maxWidth: '100%',
         overflow: 'visible',
     },
@@ -44,7 +50,9 @@ const stylesheet = StyleSheet.create((theme) => ({
         fontWeight: '500',
         lineHeight: 16,
         ...Typography.default(),
+        flexGrow: 0,
         flexShrink: 1,
+        minWidth: 0,
     },
     statusChevron: {
         marginLeft: 2,
@@ -104,6 +112,7 @@ export const ConnectionStatusControl = React.memo(function ConnectionStatusContr
     const socketStatus = useSocketStatus();
     const syncError = useSyncError();
     const lastSyncAt = useLastSyncAt();
+    const connectionHealth = useConnectionHealth();
     const [serverSelectionGroups] = useSettingMutable('serverSelectionGroups');
     const [serverSelectionActiveTargetKind, setServerSelectionActiveTargetKind] = useSettingMutable('serverSelectionActiveTargetKind');
     const [serverSelectionActiveTargetId, setServerSelectionActiveTargetId] = useSettingMutable('serverSelectionActiveTargetId');
@@ -111,21 +120,6 @@ export const ConnectionStatusControl = React.memo(function ConnectionStatusContr
     const [open, setOpen] = React.useState(false);
     const anchorRef = React.useRef<React.ElementRef<typeof View> | null>(null);
     const [authStatusByServerId, setAuthStatusByServerId] = React.useState<Record<string, 'signedIn' | 'signedOut' | 'unknown'>>({});
-
-    const connectionStatus = React.useMemo((): { color: string; isPulsing: boolean } => {
-        switch (socketStatus.status) {
-            case 'connected':
-                return { color: theme.colors.status.connected, isPulsing: false };
-            case 'connecting':
-                return { color: theme.colors.status.connecting, isPulsing: true };
-            case 'disconnected':
-                return { color: theme.colors.status.disconnected, isPulsing: false };
-            case 'error':
-                return { color: theme.colors.status.error, isPulsing: false };
-            default:
-                return { color: theme.colors.status.default, isPulsing: false };
-        }
-    }, [socketStatus.status, theme.colors.status]);
 
     const textSize = props.textSize ?? (props.variant === 'sidebar' ? 11 : 12);
     const dotSize = props.dotSize ?? 6;
@@ -303,21 +297,22 @@ export const ConnectionStatusControl = React.memo(function ConnectionStatusContr
                     accessibilityRole="button"
                 >
                     <StatusDot
-                        color={connectionStatus.color}
-                        isPulsing={connectionStatus.isPulsing}
+                        color={connectionHealth.color}
+                        isPulsing={connectionHealth.isPulsing}
                         size={dotSize}
                         style={{ marginRight: 4 }}
                     />
                     <Text
-                        style={[styles.statusText, { color: connectionStatus.color, fontSize: textSize }]}
+                        style={[styles.statusText, { color: connectionHealth.color, fontSize: textSize }]}
                         numberOfLines={1}
+                        ellipsizeMode="tail"
                     >
                         {activeServerLabel}
                     </Text>
                     <Ionicons
                         name={open ? "chevron-up" : "chevron-down"}
                         size={chevronSize}
-                        color={connectionStatus.color}
+                        color={connectionHealth.color}
                         style={styles.statusChevron}
                     />
                 </Pressable>
@@ -345,6 +340,16 @@ export const ConnectionStatusControl = React.memo(function ConnectionStatusContr
                             >
                                 <View style={{ paddingTop: 8 }}>
                                     <Text style={styles.popoverTitle}>{t('connectionStatus.title')}</Text>
+
+                                    <View style={styles.popoverRow}>
+                                        <Text style={styles.popoverLabel}>{t('profile.status')}</Text>
+                                        <Text style={styles.popoverValue}>{t(connectionHealth.statusLabelKey)}</Text>
+                                    </View>
+
+                                    <View style={styles.popoverRow}>
+                                        <Text style={styles.popoverLabel}>{t('settings.machines')}</Text>
+                                        <Text style={styles.popoverValue}>{t(connectionHealth.machineLabelKey)}</Text>
+                                    </View>
 
                                     <View style={styles.popoverRow}>
                                         <Text style={styles.popoverLabel}>{t('connectionStatus.labels.server')}</Text>

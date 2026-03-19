@@ -75,6 +75,7 @@ vi.mock('react-native-unistyles', () => ({
                 status: {
                     connected: '#00ff00',
                     connecting: '#ffcc00',
+                    actionRequired: '#ff9900',
                     disconnected: '#ff0000',
                     error: '#ff0000',
                     default: '#999999',
@@ -92,6 +93,7 @@ vi.mock('react-native-unistyles', () => ({
                         status: {
                             connected: string;
                             connecting: string;
+                            actionRequired: string;
                             disconnected: string;
                             error: string;
                             default: string;
@@ -109,6 +111,7 @@ vi.mock('react-native-unistyles', () => ({
                         status: {
                             connected: '#00ff00',
                             connecting: '#ffcc00',
+                            actionRequired: '#ff9900',
                             disconnected: '#ff0000',
                             error: '#ff0000',
                             default: '#999999',
@@ -202,6 +205,16 @@ vi.mock('@/sync/runtime/orchestration/connectionManager', () => ({
     switchConnectionToActiveServer: connectionMocks.switchConnectionToActiveServer,
 }));
 
+vi.mock('@/components/navigation/connectionStatus/useConnectionHealth', () => ({
+    useConnectionHealth: () => ({
+        kind: 'no_machine',
+        color: '#ff9900',
+        isPulsing: false,
+        statusLabelKey: 'status.actionRequired',
+        machineLabelKey: 'newSession.noMachinesFound',
+    }),
+}));
+
 function getActionLabels(): string[] {
     return capture.actionSections.flatMap((section) =>
         (section.actions ?? []).flatMap((action) => {
@@ -274,6 +287,29 @@ describe('ConnectionStatusControl (native popover config)', () => {
         await act(async () => {
             tree?.unmount();
         });
+    });
+
+    it('shows readiness and machines rows in the popover', async () => {
+        const ConnectionStatusControl = await importConnectionStatusControl();
+        let tree: renderer.ReactTestRenderer | undefined;
+        await act(async () => {
+            tree = renderer.create(React.createElement(ConnectionStatusControl, { variant: 'sidebar' }));
+        });
+
+        const trigger = tree!.root.findByType('Pressable');
+        await act(async () => {
+            trigger.props.onPress();
+        });
+
+        const textNodes = tree!.root.findAllByType('Text' as any);
+        const allText = textNodes
+            .map((node: any) => String(node.props.children ?? ''))
+            .join('\n');
+
+        expect(allText).toContain('profile.status');
+        expect(allText).toContain('status.actionRequired');
+        expect(allText).toContain('settings.machines');
+        expect(allText).toContain('newSession.noMachinesFound');
     });
 
     it('includes server and group target actions when configured', async () => {
