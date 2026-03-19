@@ -31,11 +31,23 @@ export type CapabilitiesDetectRequest = {
     overrides?: Partial<Record<CapabilityId, { params?: Record<string, unknown> }>>;
 };
 
+export type CliAuthStatusData = {
+    state: 'logged_in' | 'logged_out' | 'unknown';
+    method?: 'api_key_env' | 'auth_token_env' | 'credentials_file' | 'oauth_cli' | 'config_file' | 'gcloud_adc' | 'unknown' | null;
+    accountLabel?: string | null;
+    reason?: 'missing_credentials' | 'expired' | 'cli_missing' | 'probe_failed' | 'timeout' | 'unsupported' | 'interactive_blocked' | 'not_configured' | null;
+    source?: 'env' | 'file' | 'command' | 'mixed' | null;
+    checkedAt: number;
+};
+
 export type CliCapabilityData = {
     available: boolean;
     resolvedPath?: string;
+    resolvedCommand?: string;
+    resolutionSource?: 'override' | 'system' | 'managed';
     version?: string;
     isLoggedIn?: boolean | null;
+    authStatus?: CliAuthStatusData | null;
 };
 
 export type TmuxCapabilityData = {
@@ -44,24 +56,17 @@ export type TmuxCapabilityData = {
     version?: string;
 };
 
-export type CodexMcpResumeDepData = {
-    installed: boolean;
-    installDir: string;
-    binPath: string | null;
-    installedVersion: string | null;
-    distTag: string;
-    lastInstallLogPath: string | null;
-    registry?: { ok: true; latestVersion: string | null } | { ok: false; errorMessage: string };
-};
-
 export type CodexAcpDepData = {
     installed: boolean;
     installDir: string;
     binPath: string | null;
     installedVersion: string | null;
-    distTag: string;
+    sourceKind: 'github_release_binary';
     lastInstallLogPath: string | null;
-    registry?: { ok: true; latestVersion: string | null } | { ok: false; errorMessage: string };
+    lastBackgroundUpdateCheckAtMs: number | null;
+    latestVersionCheck?:
+      | { ok: true; latestVersion: string | null; label: string | null; checkedAt?: number }
+      | { ok: false; errorMessage: string; checkedAt?: number };
 };
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
