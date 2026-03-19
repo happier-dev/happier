@@ -17,6 +17,7 @@ const settingsState: any = {
     },
   },
 };
+const resolveUiVoicePromptStackBlocks = vi.fn(async (_args?: { profileId?: string | null }) => []);
 
 vi.mock('@/sync/domains/state/storage', () => ({
   storage: {
@@ -32,12 +33,18 @@ vi.mock('@/sync/sync', () => ({
   },
 }));
 
+vi.mock('@/voice/agent/resolveUiVoicePromptStackBlocks', () => ({
+  resolveUiVoicePromptStackBlocks: (args: { profileId?: string | null }) => resolveUiVoicePromptStackBlocks(args),
+}));
+
 describe('OpenAiCompatVoiceAgentClient', () => {
   const originalFetch = globalThis.fetch;
 
   beforeEach(() => {
     globalThis.fetch = vi.fn() as any;
     settingsState.voice.adapters.local_conversation.networkTimeoutMs = 5_000;
+    resolveUiVoicePromptStackBlocks.mockClear();
+    resolveUiVoicePromptStackBlocks.mockResolvedValue([]);
   });
 
   afterEach(() => {
@@ -127,7 +134,60 @@ describe('OpenAiCompatVoiceAgentClient', () => {
     await client.sendTurn({ sessionId: 's1', voiceAgentId, userText: 'hello' });
     const first = bodies[0];
     expect(first?.messages?.[0]?.role).toBe('system');
-    expect(String(first?.messages?.[0]?.content ?? '')).toMatch(/sessionId\s*:\s*s1/i);
+    expect(String(first?.messages?.[0]?.content ?? '')).toMatch(/Active coding session\s*\(internal tool target\)\s*:\s*s1/i);
+  });
+
+  it('passes profileId through when resolving UI voice prompt-stack blocks', async () => {
+    (globalThis.fetch as any).mockImplementation(async () => ({
+      ok: true,
+      json: async () => ({ choices: [{ message: { content: 'ok' } }] }),
+    }));
+
+    const { OpenAiCompatVoiceAgentClient } = await import('./openaiCompatVoiceAgentClient');
+
+    const client = new OpenAiCompatVoiceAgentClient();
+    await client.start({
+      sessionId: 's1',
+      profileId: 'work',
+      chatModelId: 'fast-model',
+      commitModelId: 'commit-model',
+      permissionPolicy: 'read_only',
+      idleTtlSeconds: 300,
+      initialContext: 'Initial context',
+    });
+
+    expect(resolveUiVoicePromptStackBlocks).toHaveBeenCalledWith({ profileId: 'work' });
+  });
+
+  it('welcome inserts an assistant greeting into message history', async () => {
+    const bodies: any[] = [];
+    (globalThis.fetch as any).mockImplementation(async (_url: string, init?: any) => {
+      bodies.push(JSON.parse(String(init?.body ?? 'null')));
+      return {
+        ok: true,
+        json: async () => ({ choices: [{ message: { content: 'ok' } }] }),
+      };
+    });
+
+    const { OpenAiCompatVoiceAgentClient } = await import('./openaiCompatVoiceAgentClient');
+
+    const client = new OpenAiCompatVoiceAgentClient();
+    const { voiceAgentId } = await client.start({
+      sessionId: 's1',
+      chatModelId: 'fast-model',
+      commitModelId: 'commit-model',
+      permissionPolicy: 'read_only',
+      idleTtlSeconds: 300,
+      initialContext: 'Initial context',
+    });
+
+    await expect(client.welcome({ sessionId: 's1', voiceAgentId, welcomeText: 'Welcome!' })).resolves.toEqual({ assistantText: 'Welcome!' });
+
+    await client.sendTurn({ sessionId: 's1', voiceAgentId, userText: 'hello' });
+    const first = bodies[0];
+    const roles = (first?.messages ?? []).map((m: any) => ({ role: m?.role, content: m?.content }));
+    expect(roles).toContainEqual({ role: 'assistant', content: 'Welcome!' });
+    expect(roles).toContainEqual({ role: 'user', content: 'hello' });
   });
 
   it('extracts voice actions from assistant responses', async () => {
@@ -165,6 +225,36 @@ describe('OpenAiCompatVoiceAgentClient', () => {
     const result = await client.sendTurn({ sessionId: 's1', voiceAgentId, userText: 'hello' });
     expect(result.assistantText).toBe('Ok, sending.');
     expect((result as any).actions?.[0]?.t).toBe('sendSessionMessage');
+  });
+
+  it('omits disabled voice tools from the system prompt when disabledActionIds are provided', async () => {
+    const bodies: any[] = [];
+    (globalThis.fetch as any).mockImplementation(async (_url: string, init?: any) => {
+      bodies.push(JSON.parse(String(init?.body ?? 'null')));
+      return {
+        ok: true,
+        json: async () => ({ choices: [{ message: { content: 'ok' } }] }),
+      };
+    });
+
+    const { OpenAiCompatVoiceAgentClient } = await import('./openaiCompatVoiceAgentClient');
+
+    const client = new OpenAiCompatVoiceAgentClient();
+    const { voiceAgentId } = await client.start({
+      sessionId: 's1',
+      chatModelId: 'fast-model',
+      commitModelId: 'commit-model',
+      permissionPolicy: 'read_only',
+      idleTtlSeconds: 300,
+      initialContext: 'Initial context',
+      disabledActionIds: ['review.start', 'machines.list'],
+    } as any);
+
+    await client.sendTurn({ sessionId: 's1', voiceAgentId, userText: 'hello' });
+    const prompt = String(bodies[0]?.messages?.[0]?.content ?? '');
+    expect(prompt).not.toContain('startReview');
+    expect(prompt).not.toContain('listMachines');
+    expect(prompt).toContain('listAgentBackends');
   });
 
   it('throws when commit produces an empty response', async () => {

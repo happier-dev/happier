@@ -4,6 +4,10 @@ import { buildOpenAiChatCompletionRequest, parseOpenAiChatCompletionAssistantTex
 import { fetchWithTimeout, resolveVoiceNetworkTimeoutMs } from '@/voice/runtime/fetchWithTimeout';
 import { extractVoiceActionsFromAssistantText, type VoiceAssistantAction } from '@happier-dev/protocol';
 import { buildLocalVoiceAgentSystemPrompt } from '@happier-dev/agents';
+import { resolveDisabledVoiceActionIdsFromState } from '@/voice/tools/resolveDisabledVoiceActionIds';
+import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
+import { resolveUiMemoryRecallGuidanceEnabled } from '@/sync/domains/memory/resolveUiMemoryRecallGuidanceEnabled';
+import { resolveUiVoicePromptStackBlocks } from '@/voice/agent/resolveUiVoicePromptStackBlocks';
 
 import type { VoiceAgentClient, VoiceAgentStartParams, VoiceAgentStartResult, VoiceAgentTurnStreamEvent } from './types';
 
@@ -50,9 +54,28 @@ export class OpenAiCompatVoiceAgentClient implements VoiceAgentClient {
         ? (globalThis as any).crypto.randomUUID()
         : `${Date.now()}-${Math.random().toString(16).slice(2)}`;
     const verbosity = params.verbosity === 'balanced' ? 'balanced' : 'short';
+    const disabledActionIds = Array.isArray(params.disabledActionIds)
+      ? params.disabledActionIds
+      : resolveDisabledVoiceActionIdsFromState(storage.getState() as any);
+    const session = (storage.getState() as any)?.sessions?.[params.sessionId] ?? null;
+    const memoryRecallGuidanceEnabled = await resolveUiMemoryRecallGuidanceEnabled({
+      settings,
+      serverId: getActiveServerSnapshot().serverId,
+      machineId: typeof session?.metadata?.machineId === 'string' ? session.metadata.machineId : null,
+      surfaces: ['voice_action_block'],
+    });
+    const systemAppendBlocks = await resolveUiVoicePromptStackBlocks({
+      profileId: params.profileId ?? null,
+    });
     const system: OpenAiCompatChatMessage = {
       role: 'system',
-      content: [buildLocalVoiceAgentSystemPrompt({ verbosity, sessionId: params.sessionId }), '', params.initialContext].join('\n'),
+      content: [buildLocalVoiceAgentSystemPrompt({
+        verbosity,
+        sessionId: params.sessionId,
+        disabledActionIds,
+        memoryRecallGuidanceEnabled,
+        extraSystemAppendBlocks: systemAppendBlocks,
+      }), '', params.initialContext].join('\n'),
     };
 
     this.voiceAgents.set(voiceAgentId, {
@@ -70,7 +93,7 @@ export class OpenAiCompatVoiceAgentClient implements VoiceAgentClient {
   }
 
   async sendTurn(
-    params: Readonly<{ sessionId: string; voiceAgentId: string; userText: string }>,
+    params: Readonly<{ sessionId: string; voiceAgentId: string; userText: string; displayUserText?: string }>,
   ): Promise<{ assistantText: string; actions?: VoiceAssistantAction[] }> {
     const state = this.voiceAgents.get(params.voiceAgentId);
     if (!state || state.sessionId !== params.sessionId) throw new Error('VOICE_AGENT_NOT_FOUND');
@@ -101,11 +124,16 @@ export class OpenAiCompatVoiceAgentClient implements VoiceAgentClient {
   }
 
   async welcome(_params: Readonly<{ sessionId: string; voiceAgentId: string; welcomeText?: string }>): Promise<{ assistantText: string }> {
-    // OpenAI-compatible mode does not have a daemon-side bootstrap action.
-    return { assistantText: '' };
+    const state = this.voiceAgents.get(_params.voiceAgentId);
+    if (!state || state.sessionId !== _params.sessionId) throw new Error('VOICE_AGENT_NOT_FOUND');
+    const override = typeof _params.welcomeText === 'string' ? _params.welcomeText.trim() : '';
+    const assistantText = override || 'Hey! What are we working on today?';
+    state.messages.push({ role: 'assistant', content: assistantText });
+    state.messages = this.capMessages(state.messages);
+    return { assistantText };
   }
 
-  async startTurnStream(params: Readonly<{ sessionId: string; voiceAgentId: string; userText: string; resume?: boolean }>): Promise<{ streamId: string }> {
+  async startTurnStream(params: Readonly<{ sessionId: string; voiceAgentId: string; userText: string; displayUserText?: string; resume?: boolean }>): Promise<{ streamId: string }> {
     const streamId =
       typeof (globalThis as any)?.crypto?.randomUUID === 'function'
         ? (globalThis as any).crypto.randomUUID()
