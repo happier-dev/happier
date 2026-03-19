@@ -1,6 +1,7 @@
-import { fetchAllMessages, type SessionMessageRow } from '../sessions';
+import { fetchAllSidechainMessages, type SessionMessageRow } from '../sessions';
 import { decryptLegacyBase64 } from '../messageCrypto';
 import { sleep } from '../timing';
+import { normalizeDecodedTranscriptValue } from './normalizeDecodedTranscriptValue';
 
 export function hasStringSubstring(value: unknown, needle: string): boolean {
   if (typeof value === 'string') return value.includes(needle);
@@ -21,17 +22,22 @@ export function decryptSessionMessageLegacy(row: SessionMessageRow, secret: Uint
   const ciphertext = row?.content?.c;
   if (typeof ciphertext !== 'string' || ciphertext.length === 0) return null;
   const decoded = decryptLegacyBase64(ciphertext, secret);
-  if (!decoded || typeof decoded !== 'object') return null;
-  return decoded as DecryptedSessionMessage;
+  const normalized = normalizeDecodedTranscriptValue(decoded);
+  if (!normalized || typeof normalized !== 'object') return null;
+  return normalized as DecryptedSessionMessage;
 }
 
-export function isAcpSidechainMessage(msg: DecryptedSessionMessage, sidechainId: string): boolean {
-  const content = msg?.content;
+export function isAcpSidechainMessage(msg: unknown, sidechainId: string): boolean {
+  const normalized = normalizeDecodedTranscriptValue(msg);
+  const content = normalized && typeof normalized === 'object' && !Array.isArray(normalized)
+    ? (normalized as Record<string, unknown>).content
+    : null;
   if (!content || typeof content !== 'object') return false;
-  if (content.type !== 'acp') return false;
-  const data = (content as any).data;
+  const contentRecord = content as Record<string, unknown>;
+  if (contentRecord.type !== 'acp') return false;
+  const data = contentRecord.data;
   if (!data || typeof data !== 'object') return false;
-  return (data as any).sidechainId === sidechainId;
+  return (data as Record<string, unknown>).sidechainId === sidechainId;
 }
 
 export async function waitForAcpSidechainMessages(params: {
@@ -44,7 +50,12 @@ export async function waitForAcpSidechainMessages(params: {
 }): Promise<{ rows: SessionMessageRow[]; messages: DecryptedSessionMessage[] }> {
   const startedAt = Date.now();
   while (Date.now() - startedAt < params.timeoutMs) {
-    const rows = await fetchAllMessages(params.baseUrl, params.token, params.sessionId);
+    const rows = await fetchAllSidechainMessages({
+      baseUrl: params.baseUrl,
+      token: params.token,
+      sessionId: params.sessionId,
+      sidechainId: params.sidechainId,
+    });
     const messages = rows
       .map((row) => decryptSessionMessageLegacy(row, params.secret))
       .filter((m): m is DecryptedSessionMessage => Boolean(m))
@@ -52,7 +63,12 @@ export async function waitForAcpSidechainMessages(params: {
     if (messages.length > 0) return { rows, messages };
     await sleep(500);
   }
-  const rows = await fetchAllMessages(params.baseUrl, params.token, params.sessionId);
+  const rows = await fetchAllSidechainMessages({
+    baseUrl: params.baseUrl,
+    token: params.token,
+    sessionId: params.sessionId,
+    sidechainId: params.sidechainId,
+  });
   const messages = rows
     .map((row) => decryptSessionMessageLegacy(row, params.secret))
     .filter((m): m is DecryptedSessionMessage => Boolean(m))
