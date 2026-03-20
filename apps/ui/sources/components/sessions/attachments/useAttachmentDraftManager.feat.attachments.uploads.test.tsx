@@ -55,5 +55,40 @@ describe('useAttachmentDraftManager (attachments.uploads)', () => {
         expect(manager!.agentInputAttachments[0]!.status).toBe('uploading');
         expect(manager!.agentInputAttachments[0]!.onRemove).toEqual(expect.any(Function));
     });
-});
 
+    it('skips web previews safely when URL globals are unavailable', async () => {
+        const originalUrl = globalThis.URL;
+        // @ts-expect-error test deletes URL to simulate missing browser global
+        delete globalThis.URL;
+
+        try {
+            const { useAttachmentDraftManager } = await import('./useAttachmentDraftManager');
+
+            let manager: ReturnType<typeof useAttachmentDraftManager> | null = null;
+            function Harness() {
+                manager = useAttachmentDraftManager({ enabled: true, maxFileBytes: 25 * 1024 * 1024 });
+                return null;
+            }
+
+            act(() => {
+                renderer.create(React.createElement(Harness));
+            });
+
+            const file = typeof File === 'function'
+                ? new File([new Uint8Array([1, 2, 3])], 'image.png', { type: 'image/png' })
+                : ({ name: 'image.png', size: 3, type: 'image/png', slice: () => new Blob([new Uint8Array([1, 2, 3])]) } as File);
+
+            expect(() => {
+                act(() => {
+                    manager!.addWebFiles([file]);
+                });
+            }).not.toThrow();
+            expect(manager!.agentInputAttachments[0]?.preview).toBeUndefined();
+        } finally {
+            Object.defineProperty(globalThis, 'URL', {
+                configurable: true,
+                value: originalUrl,
+            });
+        }
+    });
+});

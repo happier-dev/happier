@@ -6,6 +6,8 @@ import { clearAllMainMergeCursors, setStreamMergeCursor, setThinkingMergeCursor 
 import { mergeThinkingText, normalizeThinkingChunk } from '../helpers/thinkingText';
 import { cancelRunningTools } from '../helpers/cancelRunningApprovedTools';
 import { drainAndApplyOrphanToolResultsToMessage } from '../helpers/drainAndApplyOrphanToolResultsToMessage';
+import { readStreamSegmentMetaV1 } from '../helpers/streamSegmentMeta';
+import { upsertStreamSegmentSnapshotMessage } from '../helpers/upsertStreamSegmentSnapshotMessage';
 
 export function runUserAndTextPhase(params: Readonly<{
     state: ReducerState;
@@ -70,6 +72,7 @@ export function runUserAndTextPhase(params: Readonly<{
                 id: mid,
                 realID: msg.id,
                 seq: typeof msg.seq === 'number' ? msg.seq : null,
+                localId: msg.localId ?? null,
                 role: 'user',
                 createdAt: msg.createdAt,
                 text: msg.content.text,
@@ -92,9 +95,41 @@ export function runUserAndTextPhase(params: Readonly<{
                 processUsageData(state, msg.usage, msg.createdAt);
             }
 
-            // Process text and thinking content (tool calls handled in Phase 2)
-            for (let c of msg.content) {
-                if (c.type === 'text') {
+	            // Process text and thinking content (tool calls handled in Phase 2)
+                let thinkingRunIndex = 0;
+                let isThinkingRunOpen = false;
+	            for (let c of msg.content) {
+                    if (c.type !== 'thinking' && isThinkingRunOpen) {
+                        thinkingRunIndex += 1;
+                        isThinkingRunOpen = false;
+                    }
+
+	                if (c.type === 'text') {
+	                    const streamSegmentMeta = readStreamSegmentMetaV1(msg.meta);
+	                    const streamSegmentKind = streamSegmentMeta?.segmentKind ?? null;
+	                    const streamSegmentLocalId = streamSegmentMeta?.segmentLocalId ?? msg.localId;
+	                    if (streamSegmentKind === 'assistant' && streamSegmentLocalId) {
+                        const nextText = String(c.text ?? '');
+                        const hasVisibleText = nextText.trim().length > 0;
+                        const upsert = upsertStreamSegmentSnapshotMessage({
+                            state,
+                            allocateId,
+                            localId: streamSegmentLocalId,
+                            realID: msg.id,
+                            createdAt: msg.createdAt,
+                            seq: msg.seq,
+                            isThinking: false,
+                            text: nextText,
+                            meta: msg.meta,
+                            markChanged: (messageId) => changed.add(messageId),
+                        });
+
+                        if (upsert.accepted && hasVisibleText) {
+                            setThinkingCursor(null, 'agent-text-stream-segment');
+                        }
+                        continue;
+	                    }
+
                     const streamKeyFromMeta =
                         msg.meta && typeof (msg.meta as any).happierStreamKey === 'string'
                             ? String((msg.meta as any).happierStreamKey)
@@ -151,6 +186,7 @@ export function runUserAndTextPhase(params: Readonly<{
                         id: mid,
                         realID: msg.id,
                         seq: typeof msg.seq === 'number' ? msg.seq : null,
+                        localId: msg.localId ?? null,
                         role: 'agent',
                         createdAt: msg.createdAt,
                         text: c.text,
@@ -164,12 +200,70 @@ export function runUserAndTextPhase(params: Readonly<{
                         setThinkingCursor(null, 'agent-text-create');
                     }
                     setStreamCursor(streamKey ? { messageId: mid, streamKey } : null, 'agent-text-create');
-                } else if (c.type === 'thinking') {
+	                } else if (c.type === 'thinking') {
+	                    const streamSegmentMeta = readStreamSegmentMetaV1(msg.meta);
+	                    const streamSegmentKind = streamSegmentMeta?.segmentKind ?? null;
+	                    const streamSegmentLocalId = streamSegmentMeta?.segmentLocalId ?? msg.localId;
+	                    if (streamSegmentKind === 'thinking' && streamSegmentLocalId) {
+	                        const nextText = typeof c.thinking === 'string' ? normalizeThinkingChunk(c.thinking) : '';
+	                        const hasVisibleText = nextText.trim().length > 0;
+                        const upsert = upsertStreamSegmentSnapshotMessage({
+                            state,
+                            allocateId,
+                            localId: streamSegmentLocalId,
+                            realID: msg.id,
+                            createdAt: msg.createdAt,
+                            seq: msg.seq,
+                            isThinking: true,
+                            text: nextText,
+                            meta: msg.meta,
+                            markChanged: (messageId) => changed.add(messageId),
+                        });
+
+                        if (upsert.didCreate && upsert.messageId) {
+                            setThinkingCursor(upsert.messageId, 'agent-thinking-stream-segment');
+                        }
+
+                        if (upsert.accepted && hasVisibleText) {
+                            setStreamCursor(null, 'agent-thinking-stream-segment');
+                        }
+                        continue;
+	                    }
+
                     const chunk = typeof c.thinking === 'string' ? normalizeThinkingChunk(c.thinking) : '';
                     const hasVisibleText = chunk.trim().length > 0;
                     const hasParagraphBreak = chunk.includes('\n\n');
                     if (!hasVisibleText && !hasParagraphBreak) {
                         continue;
+                    }
+
+                    isThinkingRunOpen = true;
+
+                    const thinkingUuid =
+                        typeof (c as any).uuid === 'string' && (c as any).uuid.trim().length > 0
+                            ? (c as any).uuid.trim()
+                            : null;
+                    const thinkingSegmentKey = thinkingUuid ? `${thinkingUuid}#${thinkingRunIndex}` : null;
+
+                    if (thinkingSegmentKey) {
+                        const mappedId = state.thinkingSegmentKeyToMessageId.get(thinkingSegmentKey);
+                        if (mappedId) {
+                            const mapped = state.messages.get(mappedId) ?? null;
+                            if (mapped && mapped.role === 'agent' && mapped.isThinking && typeof mapped.text === 'string') {
+                                mapped.text = mergeThinkingText(mapped.text, chunk);
+                                if (typeof msg.seq === 'number') {
+                                    const nextSeq = Math.trunc(msg.seq);
+                                    if (mapped.seq === null || nextSeq > mapped.seq) {
+                                        mapped.seq = nextSeq;
+                                    }
+                                }
+                                changed.add(mappedId);
+                                setThinkingCursor(mappedId, 'agent-thinking-uuid-merge');
+                                continue;
+                            }
+
+                            state.thinkingSegmentKeyToMessageId.delete(thinkingSegmentKey);
+                        }
                     }
 
                     const prevThinkingId = lastMainThinkingMessageId;
@@ -193,12 +287,16 @@ export function runUserAndTextPhase(params: Readonly<{
                             changed.add(prevThinkingId!);
                         }
                         setThinkingCursor(prevThinkingId!, 'agent-thinking-append');
+                        if (thinkingSegmentKey) {
+                            state.thinkingSegmentKeyToMessageId.set(thinkingSegmentKey, prevThinkingId!);
+                        }
                     } else {
                         let mid = allocateId();
                         state.messages.set(mid, {
                             id: mid,
                             realID: msg.id,
                             seq: typeof msg.seq === 'number' ? msg.seq : null,
+                            localId: msg.localId ?? null,
                             role: 'agent',
                             createdAt: msg.createdAt,
                             text: chunk,
@@ -209,6 +307,9 @@ export function runUserAndTextPhase(params: Readonly<{
                         });
                         changed.add(mid);
                         setThinkingCursor(mid, 'agent-thinking-create');
+                        if (thinkingSegmentKey) {
+                            state.thinkingSegmentKeyToMessageId.set(thinkingSegmentKey, mid);
+                        }
                     }
                 } else if (c.type === 'tool-call') {
                     // Tool calls are handled in Phase 2 for permission matching and late-arriving updates,
@@ -217,7 +318,7 @@ export function runUserAndTextPhase(params: Readonly<{
                     clearAllCursors('agent-tool-call');
 
                     const existingMessageId = state.toolIdToMessageId.get(c.id);
-                    if (existingMessageId) {
+                    if (existingMessageId != null) {
                         continue;
                     }
 
@@ -270,6 +371,7 @@ export function runUserAndTextPhase(params: Readonly<{
                         id: mid,
                         realID: msg.id,
                         seq: typeof msg.seq === 'number' ? msg.seq : null,
+                        localId: msg.localId ?? null,
                         role: 'agent',
                         createdAt: msg.createdAt,
                         text: null,

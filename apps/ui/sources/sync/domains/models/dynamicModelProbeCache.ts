@@ -82,7 +82,7 @@ function normalizePersistedModelList(input: unknown): PreflightModelList | null 
     if (!input || typeof input !== 'object' || Array.isArray(input)) return null;
     const modelsRaw = (input as any).availableModels;
     const supportsFreeformRaw = (input as any).supportsFreeform;
-    if (!Array.isArray(modelsRaw) || modelsRaw.length === 0) return null;
+    if (!Array.isArray(modelsRaw)) return null;
 
     const models = modelsRaw
         .filter((m: any) => m && typeof m.id === 'string' && typeof m.name === 'string')
@@ -91,8 +91,9 @@ function normalizePersistedModelList(input: unknown): PreflightModelList | null 
             name: String(m.name),
             ...(typeof m.description === 'string' ? { description: m.description } : {}),
         }));
-    if (models.length === 0) return null;
-    return { availableModels: models, supportsFreeform: Boolean(supportsFreeformRaw) };
+    const supportsFreeform = Boolean(supportsFreeformRaw);
+    if (models.length === 0 && supportsFreeform !== true) return null;
+    return { availableModels: models, supportsFreeform };
 }
 
 function readPersistedState(): PersistedState | null {

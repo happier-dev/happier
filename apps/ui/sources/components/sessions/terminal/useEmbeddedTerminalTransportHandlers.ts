@@ -17,13 +17,11 @@ export function useEmbeddedTerminalTransportHandlers(params: Readonly<{
     const inputFlushTimeoutRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
     const flushPendingInput = React.useCallback(() => {
         if (!params.machineId) {
-            pendingInputRef.current = '';
             return;
         }
 
         const terminalId = params.terminalIdRef.current;
         if (!terminalId) {
-            pendingInputRef.current = '';
             return;
         }
 
@@ -37,6 +35,11 @@ export function useEmbeddedTerminalTransportHandlers(params: Readonly<{
             // The read-loop owns error surfaces; ignore transient input failures.
         });
     }, [params.machineId, params.terminalIdRef]);
+    const flushPendingInputRef = React.useRef(flushPendingInput);
+
+    React.useEffect(() => {
+        flushPendingInputRef.current = flushPendingInput;
+    }, [flushPendingInput]);
 
     const onInput = React.useCallback((data: string) => {
         if (!data) return;
@@ -51,6 +54,13 @@ export function useEmbeddedTerminalTransportHandlers(params: Readonly<{
             flushPendingInput();
         }, 0);
     }, [flushPendingInput]);
+
+    React.useEffect(() => {
+        if (!params.machineId) return;
+        if (!params.terminalIdRef.current) return;
+        if (!pendingInputRef.current) return;
+        flushPendingInput();
+    }, [flushPendingInput, params.machineId, params.terminalIdRef]);
 
     const resizeDebounceTimeoutRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
     const pendingResizeRef = React.useRef<TerminalSize | null>(null);
@@ -88,6 +98,9 @@ export function useEmbeddedTerminalTransportHandlers(params: Readonly<{
 
     React.useEffect(() => {
         return () => {
+            if (pendingInputRef.current) {
+                flushPendingInputRef.current();
+            }
             safeTimeoutClear(inputFlushTimeoutRef.current);
             inputFlushTimeoutRef.current = null;
             safeTimeoutClear(resizeDebounceTimeoutRef.current);

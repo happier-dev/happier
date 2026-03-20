@@ -57,7 +57,7 @@ describe('modelOptions', () => {
         const out = getModelOptionsForSession(
             'opencode',
             withMetadata({
-                acpSessionModelsV1: {
+                sessionModelsV1: {
                     v: 1,
                     provider: 'opencode',
                     updatedAt: 1,
@@ -77,7 +77,7 @@ describe('modelOptions', () => {
 
     it('treats ACP session models as selectable', () => {
         const metadata = withMetadata({
-            acpSessionModelsV1: {
+            sessionModelsV1: {
                 v: 1,
                 provider: 'opencode',
                 updatedAt: 1,
@@ -131,7 +131,7 @@ describe('modelOptions', () => {
         const out = getModelOptionsForSession(
             'opencode',
             withMetadata({
-                acpSessionModelsV1: {
+                sessionModelsV1: {
                     v: 1,
                     provider: 'claude',
                     updatedAt: 1,
@@ -149,7 +149,7 @@ describe('modelOptions', () => {
             hasDynamicModelListForSession(
                 'opencode',
                 withMetadata({
-                    acpSessionModelsV1: {
+                    sessionModelsV1: {
                         v: 1,
                         provider: 'opencode',
                         updatedAt: 1,
@@ -164,7 +164,7 @@ describe('modelOptions', () => {
             hasDynamicModelListForSession(
                 'opencode',
                 withMetadata({
-                    acpSessionModelsV1: {
+                    sessionModelsV1: {
                         v: 1,
                         provider: 'gemini',
                         updatedAt: 1,
@@ -174,5 +174,22 @@ describe('modelOptions', () => {
                 }),
             ),
         ).toBe(false);
+    });
+
+    it('falls back to legacy ACP session models when canonical key is absent', () => {
+        const out = getModelOptionsForSession(
+            'opencode',
+            withMetadata({
+                acpSessionModelsV1: {
+                    v: 1,
+                    provider: 'opencode',
+                    updatedAt: 1,
+                    currentModelId: 'model-a',
+                    availableModels: [{ id: 'model-a', name: 'Model A' }],
+                },
+            }),
+        );
+
+        expect(out.map((o) => o.value)).toEqual(['default', 'model-a']);
     });
 });
