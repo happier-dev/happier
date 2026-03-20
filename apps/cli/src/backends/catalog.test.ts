@@ -3,7 +3,14 @@ import { describe, expect, it } from 'vitest';
 import { AGENT_IDS, DEFAULT_AGENT_ID } from '@happier-dev/agents';
 import { AGENTS_CORE } from '@happier-dev/agents';
 
-import { AGENTS } from './catalog';
+import {
+  AGENTS,
+  getAcpForkContinuationHandler,
+  getDirectSessionProviderOps,
+  getProviderAttachOps,
+  getProviderNativeForkHandler,
+  requireCatalogEntry,
+} from './catalog';
 import { DEFAULT_CATALOG_AGENT_ID } from './types';
 
 describe('AGENTS', () => {
@@ -45,7 +52,7 @@ describe('AGENTS', () => {
   it('keeps cloud connect config in sync with catalog entries', async () => {
     for (const id of AGENT_IDS) {
       const core = AGENTS_CORE[id];
-      const entry = AGENTS[id];
+      const entry = requireCatalogEntry(id);
 
       if (core.cloudConnect) {
         expect(entry.getCloudConnectTarget).toBeTruthy();
@@ -59,11 +66,52 @@ describe('AGENTS', () => {
   });
 
   it('forces remote starting mode for claude headless tmux sessions', async () => {
-    const transform = await AGENTS.claude.getHeadlessTmuxArgvTransform!();
+    const transform = await requireCatalogEntry('claude').getHeadlessTmuxArgvTransform!();
     expect(transform(['--foo'])).toEqual(['--foo', '--happy-starting-mode', 'remote']);
   });
 
   it('does not define a headless tmux argv transform for codex', () => {
-    expect(AGENTS.codex.getHeadlessTmuxArgvTransform).toBeUndefined();
+    expect(requireCatalogEntry('codex').getHeadlessTmuxArgvTransform).toBeUndefined();
+  });
+
+  it('registers runnable CLI command handlers for built-in generic ACP agents', () => {
+    expect(requireCatalogEntry('customAcp').getCliCommandHandler).toBeTypeOf('function');
+    expect(requireCatalogEntry('kiro').getCliCommandHandler).toBeTypeOf('function');
+  });
+
+  it('loads direct-session provider ops through backend catalog hooks', async () => {
+    await expect(getDirectSessionProviderOps('claude')).resolves.toMatchObject({
+      listCandidates: expect.any(Function),
+      pageTranscript: expect.any(Function),
+      readAfterTranscript: expect.any(Function),
+      getActivity: expect.any(Function),
+      resolveTakeoverSpawnOptions: expect.any(Function),
+    });
+    await expect(getDirectSessionProviderOps('codex')).resolves.toMatchObject({
+      listCandidates: expect.any(Function),
+    });
+    await expect(getDirectSessionProviderOps('opencode')).resolves.toMatchObject({
+      listCandidates: expect.any(Function),
+    });
+  });
+
+  it('loads provider-attach ops through backend catalog hooks only for supporting providers', async () => {
+    await expect(getProviderAttachOps('opencode')).resolves.toMatchObject({
+      evaluateEligibility: expect.any(Function),
+      runAttach: expect.any(Function),
+    });
+    await expect(getProviderAttachOps('claude')).resolves.toBeNull();
+  });
+
+  it('loads provider-native fork handlers through backend catalog hooks only for supporting providers', async () => {
+    await expect(getProviderNativeForkHandler('codex')).resolves.toBeTypeOf('function');
+    await expect(getProviderNativeForkHandler('opencode')).resolves.toBeTypeOf('function');
+    await expect(getProviderNativeForkHandler('claude')).resolves.toBeNull();
+  });
+
+  it('loads ACP fork continuation handlers through backend catalog hooks only for supporting providers', async () => {
+    await expect(getAcpForkContinuationHandler('codex')).resolves.toBeTypeOf('function');
+    await expect(getAcpForkContinuationHandler('opencode')).resolves.toBeTypeOf('function');
+    await expect(getAcpForkContinuationHandler('claude')).resolves.toBeNull();
   });
 });
