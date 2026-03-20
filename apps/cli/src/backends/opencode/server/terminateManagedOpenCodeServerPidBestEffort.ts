@@ -1,21 +1,6 @@
 import { isOpenCodeServerPidAlive } from './openCodeServerProcessState';
-
-function readPositiveIntEnv(name: string): number | null {
-  const raw = typeof process.env[name] === 'string' ? process.env[name]!.trim() : '';
-  if (!raw) return null;
-  const n = Number(raw);
-  if (!Number.isFinite(n)) return null;
-  if (!Number.isInteger(n)) return null;
-  if (n <= 0) return null;
-  return n;
-}
-
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => {
-    const timer = setTimeout(resolve, ms);
-    timer.unref?.();
-  });
-}
+import { readPositiveIntEnv } from '@/utils/readPositiveIntEnv';
+import { delayUnref } from '@/utils/time';
 
 function trySignalProcessGroup(pid: number, signal: NodeJS.Signals): boolean {
   try {
@@ -41,7 +26,7 @@ async function waitForPidExit(pid: number, timeoutMs: number, pollMs: number): P
   const startedAt = Date.now();
   while (Date.now() - startedAt < timeoutMs) {
     if (!isOpenCodeServerPidAlive(pid)) return true;
-    await sleep(pollMs);
+    await delayUnref(pollMs);
   }
   return !isOpenCodeServerPidAlive(pid);
 }

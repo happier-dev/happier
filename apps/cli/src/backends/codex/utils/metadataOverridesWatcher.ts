@@ -1,9 +1,4 @@
-function sleepMs(ms: number): Promise<void> {
-  return new Promise<void>((resolve) => {
-    const timer = setTimeout(resolve, ms);
-    timer.unref?.();
-  });
-}
+import { delayUnref } from '@/utils/time';
 
 export async function runMetadataOverridesWatcherLoop(args: Readonly<{
   shouldExit: () => boolean;
@@ -23,7 +18,7 @@ export async function runMetadataOverridesWatcherLoop(args: Readonly<{
     if (!didUpdate) {
       // Avoid a hot loop when waitForMetadataUpdate resolves immediately for an already-aborted signal.
       if (signal?.aborted) {
-        await sleepMs(abortedBackoffMs);
+        await delayUnref(abortedBackoffMs);
       }
       continue;
     }
