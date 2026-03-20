@@ -1,5 +1,6 @@
 import axios from 'axios';
 import {
+  type SessionStoredMessageContent,
   type V2SessionByIdResponse,
   type V2SessionListResponse,
   V2SessionByIdResponseSchema,
@@ -153,9 +154,23 @@ export async function commitSessionEncryptedMessage(params: Readonly<{
   ciphertext: string;
   localId: string;
 }>): Promise<{ didWrite: boolean; messageId: string; seq: number; createdAt: number }> {
+  return await commitSessionStoredMessage({
+    token: params.token,
+    sessionId: params.sessionId,
+    content: { t: 'encrypted', c: params.ciphertext },
+    localId: params.localId,
+  });
+}
+
+export async function commitSessionStoredMessage(params: Readonly<{
+  token: string;
+  sessionId: string;
+  content: SessionStoredMessageContent;
+  localId: string;
+}>): Promise<{ didWrite: boolean; messageId: string; seq: number; createdAt: number }> {
   const serverUrl = resolveServerHttpBaseUrl();
   const response = await axios.post(`${serverUrl}/v2/sessions/${params.sessionId}/messages`, {
-    ciphertext: params.ciphertext,
+    content: params.content,
     localId: params.localId,
   }, {
     headers: {
