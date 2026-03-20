@@ -9,6 +9,7 @@ let machineCapabilitiesStateMock: any = { status: 'idle' };
 let hydrateReady = true;
 let enabledAgentIdsMock: string[] = ['claude', 'codex'];
 let localSearchParamsMock: any = { id: 'session-1', intent: 'review' };
+let sessionExecutionRunsSupportedMock = true;
 let settingsMock: any = {
     executionRunsGuidanceEnabled: false,
     executionRunsGuidanceMaxChars: 4_000,
@@ -47,6 +48,19 @@ const startRunSpy = vi.fn(async (_sessionId: string, _request: any) => ({
 const routerPushSpy = vi.fn();
 const stackScreenSpy = vi.fn((_props: any) => null);
 let NewRunScreen: typeof import('@/app/(app)/session/[id]/runs/new').default;
+
+function getNodeText(node: any): string {
+    const children = Array.isArray(node?.children) ? node.children : node?.props?.children;
+    if (Array.isArray(children)) return children.map((child) => (typeof child === 'string' ? child : getNodeText(child))).join('');
+    return typeof children === 'string' ? children : '';
+}
+
+function findPressableByText(root: renderer.ReactTestInstance, text: string) {
+    return root.findAllByType('Pressable').find((node: any) => {
+        const textChildren = node.findAllByType('Text');
+        return textChildren.some((child: any) => getNodeText(child) === text);
+    });
+}
 
 vi.mock('react-native', () => ({
     View: 'View',
@@ -95,6 +109,7 @@ vi.mock('@/text', () => ({
         if (key === 'executionRuns.newRun.instructionsPlaceholder') return 'What should the sub-agent do?';
         if (key === 'executionRuns.newRun.actions.start') return 'Start';
         if (key === 'executionRuns.newRun.guidancePreview') return 'Guidance preview';
+        if (key === 'session.actionsDraft.validation.requiredField') return `${String(params?.field ?? 'Field')} is required.`;
         if (key === 'common.unavailable') return 'Not available';
         if (key === 'executionRuns.newRun.a11y.startRun') return 'Start run';
         if (key === 'executionRuns.newRun.a11y.cancel') return 'Cancel';
@@ -122,8 +137,11 @@ vi.mock('@/agents/hooks/useEnabledAgentIds', () => ({
 vi.mock('@/hooks/server/useExecutionRunsBackendsForSession', () => ({
     useExecutionRunsBackendsForSession: () => executionRunsBackendsMock,
 }));
+vi.mock('@/hooks/server/useFeatureEnabled', () => ({
+    useFeatureEnabled: () => true,
+}));
 vi.mock('@/hooks/server/useSessionExecutionRunsSupported', () => ({
-    useSessionExecutionRunsSupported: () => true,
+    useSessionExecutionRunsSupported: () => sessionExecutionRunsSupportedMock,
 }));
 vi.mock('@/components/sessions/model/useDirectSessionRuntime', () => ({
     useDirectSessionRuntime: () => directSessionRuntimeMock,
@@ -234,6 +252,7 @@ describe('Session New Run Screen', () => {
             executionRunsGuidanceEntries: [],
             acpCatalogSettingsV1: { v: 2, backends: [] },
         };
+        sessionExecutionRunsSupportedMock = true;
         sessionMachineReachabilityMock = {
             machineReachable: true,
             machineOnline: true,
@@ -282,6 +301,7 @@ describe('Session New Run Screen', () => {
 
     it('shows unavailable state when the session has no live execution-run backends', async () => {
         executionRunsBackendsMock = null;
+        machineCapabilitiesStateMock = { status: 'loaded' };
         enabledAgentIdsMock = ['claude', 'codex'];
         localSearchParamsMock = { id: 'session-1', intent: 'delegate' };
         let tree: renderer.ReactTestRenderer | null = null;
@@ -299,6 +319,36 @@ describe('Session New Run Screen', () => {
             codex: { available: true, intents: ['review', 'plan', 'delegate', 'voice_agent'] },
             coderabbit: { available: true, intents: ['review'] },
         };
+    });
+
+    it('keeps showing a loading state while execution-run capabilities are still resolving', async () => {
+        executionRunsBackendsMock = null;
+        machineCapabilitiesStateMock = { status: 'loading' };
+        sessionExecutionRunsSupportedMock = false;
+        localSearchParamsMock = { id: 'session-1', intent: 'review' };
+
+        let tree: renderer.ReactTestRenderer | null = null;
+        await act(async () => {
+            tree = renderer.create(React.createElement(NewRunScreen));
+        });
+
+        expect(tree!.root.findAllByType('ActivityIndicator').length).toBeGreaterThan(0);
+        expect(tree!.root.findAllByType('TextInput')).toHaveLength(0);
+    });
+
+    it('keeps showing a loading state while live execution-run capabilities are still idle even after prior runs proved support', async () => {
+        executionRunsBackendsMock = null;
+        machineCapabilitiesStateMock = { status: 'idle' };
+        sessionExecutionRunsSupportedMock = true;
+        localSearchParamsMock = { id: 'session-1', intent: 'review' };
+
+        let tree: renderer.ReactTestRenderer | null = null;
+        await act(async () => {
+            tree = renderer.create(React.createElement(NewRunScreen));
+        });
+
+        expect(tree!.root.findAllByType('ActivityIndicator').length).toBeGreaterThan(0);
+        expect(tree!.root.findAllByType('TextInput')).toHaveLength(0);
     });
 
     it('shows unavailable state when the session is inactive and not resumable even if live execution-run backends exist', async () => {
@@ -323,7 +373,7 @@ describe('Session New Run Screen', () => {
         expect(startButton).toBeUndefined();
     });
 
-    it('resumes an inactive resumable session before starting a Happier subagent', async () => {
+    it('resumes an inactive resumable session before starting a Subagent', async () => {
         sessionMock = {
             id: 'session-1',
             active: false,
@@ -349,6 +399,12 @@ describe('Session New Run Screen', () => {
         const input = tree!.root.findByType('TextInput');
         await act(async () => {
             input.props.onChangeText?.('please review this');
+        });
+
+        const selectClaude = findPressableByText(tree!.root, 'claude');
+        expect(selectClaude).toBeDefined();
+        await act(async () => {
+            selectClaude!.props.onPress?.();
         });
 
         const startButton = tree!.root.findAllByType('Pressable').find((b: any) => b.props.accessibilityLabel === 'Start run');
@@ -456,7 +512,73 @@ describe('Session New Run Screen', () => {
         expect(textNodes.some((n: any) => String(n.props.children).includes('Prefer Claude for UI changes'))).toBe(true);
     });
 
-    it('starts a review run for the default backend', async () => {
+    it('exposes the canonical review.start fields and submits advanced review options', async () => {
+        startRunSpy.mockClear();
+        enabledAgentIdsMock = ['claude', 'codex'];
+        executionRunsBackendsMock = {
+            claude: { available: true, intents: ['review', 'plan', 'delegate', 'voice_agent'] },
+            codex: { available: true, intents: ['review', 'plan', 'delegate', 'voice_agent'] },
+            coderabbit: { available: true, intents: ['review'] },
+        };
+        localSearchParamsMock = { id: 'session-1', intent: 'review' };
+
+        let tree: renderer.ReactTestRenderer | null = null;
+        await act(async () => {
+            tree = renderer.create(React.createElement(NewRunScreen));
+        });
+
+        const textNodes = tree!.root.findAllByType('Text');
+        expect(textNodes.some((node: any) => getNodeText(node) === 'Change type')).toBe(true);
+        expect(textNodes.some((node: any) => getNodeText(node) === 'Base selection')).toBe(true);
+
+        const selectCoderabbit = findPressableByText(tree!.root, 'coderabbit');
+        const selectAllChanges = findPressableByText(tree!.root, 'All');
+        const selectBaseBranch = findPressableByText(tree!.root, 'Base branch');
+
+        expect(selectCoderabbit).toBeDefined();
+        expect(selectAllChanges).toBeDefined();
+        expect(selectBaseBranch).toBeDefined();
+
+        await act(async () => {
+            selectCoderabbit!.props.onPress?.();
+            selectAllChanges!.props.onPress?.();
+            selectBaseBranch!.props.onPress?.();
+        });
+
+        const textInputs = tree!.root.findAllByType('TextInput');
+        expect(textInputs.length).toBeGreaterThanOrEqual(3);
+
+        await act(async () => {
+            textInputs[0]!.props.onChangeText?.('review everything deeply');
+            textInputs[1]!.props.onChangeText?.('main');
+            textInputs[2]!.props.onChangeText?.('.coderabbit.yaml, .coderabbit.local.yaml');
+        });
+
+        const startButton = tree!.root.findAllByType('Pressable').find((b: any) => b.props.accessibilityLabel === 'Start run');
+        expect(startButton).toBeDefined();
+
+        await act(async () => {
+            await startButton!.props.onPress?.();
+        });
+
+        expect(startRunSpy).toHaveBeenCalledWith(
+            'session-1',
+            expect.objectContaining({
+                intent: 'review',
+                backendId: 'coderabbit',
+                instructions: 'review everything deeply',
+                changeType: 'all',
+                base: { kind: 'branch', baseBranch: 'main' },
+                engines: {
+                    coderabbit: {
+                        configFiles: ['.coderabbit.yaml', '.coderabbit.local.yaml'],
+                    },
+                },
+            }),
+        );
+    });
+
+    it('requires an explicit review engine selection before starting a review run', async () => {
         startRunSpy.mockClear();
         routerPushSpy.mockClear();
         actionExecutorExecuteResultMock = {
@@ -471,7 +593,11 @@ describe('Session New Run Screen', () => {
             tree = renderer.create(React.createElement(NewRunScreen));
         });
 
+        const reviewPermissionOverride = tree!.root.findAllByType('Pressable').find((b: any) => b.props.accessibilityLabel === 'Select permissionMode yolo');
+        expect(reviewPermissionOverride).toBeUndefined();
+
         const input = tree!.root.findByType('TextInput');
+        expect(input.props.testID).toBe('execution-run-new-instructions-input');
         await act(async () => {
             input.props.onChangeText?.('please review this');
         });
@@ -479,9 +605,21 @@ describe('Session New Run Screen', () => {
         const buttons = tree!.root.findAllByType('Pressable');
         const startButton = buttons.find((b: any) => b.props.accessibilityLabel === 'Start run');
         expect(startButton).toBeDefined();
+        expect(startButton!.props.disabled).toBe(true);
+
+        const selectClaude = findPressableByText(tree!.root, 'claude');
+        expect(selectClaude).toBeDefined();
 
         await act(async () => {
-            await startButton!.props.onPress?.();
+            selectClaude!.props.onPress?.();
+        });
+
+        const enabledStartButton = tree!.root.findAllByType('Pressable').find((b: any) => b.props.accessibilityLabel === 'Start run');
+        expect(enabledStartButton).toBeDefined();
+        expect(enabledStartButton!.props.disabled).toBe(false);
+
+        await act(async () => {
+            await enabledStartButton!.props.onPress?.();
         });
 
         expect(startRunSpy).toHaveBeenCalledWith(
@@ -491,9 +629,32 @@ describe('Session New Run Screen', () => {
                 backendId: 'claude',
                 instructions: 'please review this',
                 permissionMode: 'read-only',
-                changeType: 'committed',
+                changeType: 'uncommitted',
             }),
         );
+    });
+
+    it('disables start and shows a field-aware validation hint when review instructions are empty', async () => {
+        localSearchParamsMock = { id: 'session-1', intent: 'review' };
+
+        let tree: renderer.ReactTestRenderer | null = null;
+        await act(async () => {
+            tree = renderer.create(React.createElement(NewRunScreen));
+        });
+
+        const selectClaude = findPressableByText(tree!.root, 'claude');
+        expect(selectClaude).toBeDefined();
+        await act(async () => {
+            selectClaude!.props.onPress?.();
+        });
+
+        const startButton = tree!.root.findAllByType('Pressable').find((b: any) => b.props.accessibilityLabel === 'Start run');
+        expect(startButton).toBeDefined();
+        expect(startButton!.props.disabled).toBe(true);
+
+        const texts = tree!.root.findAllByType('Text');
+        expect(texts.some((node: any) => getNodeText(node) === 'Instructions is required.')).toBe(true);
+        expect(startRunSpy).not.toHaveBeenCalled();
     });
 
     it('shows an inline error when the execution run start fanout returns a failed result', async () => {
@@ -516,6 +677,12 @@ describe('Session New Run Screen', () => {
         const input = tree!.root.findByType('TextInput');
         await act(async () => {
             input.props.onChangeText?.('please review this');
+        });
+
+        const selectClaude = findPressableByText(tree!.root, 'claude');
+        expect(selectClaude).toBeDefined();
+        await act(async () => {
+            selectClaude!.props.onPress?.();
         });
 
         const startButton = tree!.root.findAllByType('Pressable').find((b: any) => b.props.accessibilityLabel === 'Start run');
@@ -611,10 +778,10 @@ describe('Session New Run Screen', () => {
         );
     });
 
-    it('allows overriding the permission mode before starting', async () => {
+    it('allows overriding the permission mode before starting a delegate run', async () => {
         startRunSpy.mockClear();
         enabledAgentIdsMock = ['claude', 'codex'];
-        localSearchParamsMock = { id: 'session-1', intent: 'review' };
+        localSearchParamsMock = { id: 'session-1', intent: 'delegate' };
 
         let tree: renderer.ReactTestRenderer | null = null;
         await act(async () => {
@@ -634,7 +801,15 @@ describe('Session New Run Screen', () => {
             input.props.onChangeText?.('review with default permissions');
         });
 
+        const selectClaude = findPressableByText(tree!.root, 'claude');
+        expect(selectClaude).toBeDefined();
+        await act(async () => {
+            selectClaude!.props.onPress?.();
+        });
+
         const startButton = tree!.root.findAllByType('Pressable').find((b: any) => b.props.accessibilityLabel === 'Start run');
+        expect(startButton).toBeDefined();
+        expect(startButton!.props.disabled).toBe(false);
         await act(async () => {
             await startButton!.props.onPress?.();
         });

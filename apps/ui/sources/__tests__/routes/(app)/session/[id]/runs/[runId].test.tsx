@@ -85,6 +85,7 @@ vi.mock('react-native-unistyles', () => ({
                 textSecondary: '#aaa',
                 textLink: '#06f',
                 textDestructive: '#f00',
+                accent: { indigo: '#33f' },
                 groupped: { sectionTitle: '#888' },
                 shadow: { color: '#000' },
             },
@@ -103,6 +104,7 @@ vi.mock('react-native-unistyles', () => ({
                     link: '#06f',
                     textLink: '#06f',
                     textDestructive: '#f00',
+                    accent: { indigo: '#33f' },
                     groupped: { sectionTitle: '#888' },
                     shadow: { color: '#000' },
                 },
@@ -160,8 +162,34 @@ vi.mock('@/sync/domains/state/storage', async (importOriginal) => {
         storage: {
             getState: () => ({
                 sessions: {
-                    'session-1': { id: 'session-1', updatedAt: 0, metadata: { machineId: 'machine-1' } },
+                    'session-1': {
+                        id: 'session-1',
+                        active: false,
+                        updatedAt: 0,
+                        metadata: {
+                            machineId: 'machine-stale',
+                            path: '/Users/leeroy/repo',
+                            homeDir: '/Users/leeroy',
+                        },
+                    },
                 },
+                machines: {
+                    'machine-target': {
+                        id: 'machine-target',
+                        active: true,
+                        activeAt: 10,
+                        metadata: { host: 'workstation.local' },
+                    },
+                },
+                getProjectForSession: (sessionId: string) =>
+                    sessionId === 'session-1'
+                        ? {
+                            key: {
+                                machineId: 'machine-target',
+                                path: '/Users/leeroy/repo',
+                            },
+                        }
+                        : null,
                 sessionMessages: {
                     'session-1': {
                         reducerState: {
@@ -264,7 +292,7 @@ describe('Session Run Details Screen', () => {
         expect(tree!.root.findByProps({ testID: 'session-invalid-link' })).toBeTruthy();
     });
 
-    it('still loads run details while hydration is pending so deleted-session recovery is not blocked', async () => {
+    it('does not load run details until route hydration is ready', async () => {
         hydrateReady = false;
 
         let tree: renderer.ReactTestRenderer | null = null;
@@ -274,7 +302,8 @@ describe('Session Run Details Screen', () => {
         });
 
         expect(tree).not.toBeNull();
-        expect(getRunSpy).toHaveBeenCalledWith('session-1', expect.objectContaining({ runId: 'run_1' }));
+        expect(tree!.root.findAllByType('ActivityIndicator')).toHaveLength(1);
+        expect(getRunSpy).not.toHaveBeenCalled();
     });
 
     it('loads run details via session execution run get', async () => {
@@ -331,7 +360,7 @@ describe('Session Run Details Screen', () => {
             await Promise.resolve();
         });
 
-        expect(machineExecutionRunsListSpy).toHaveBeenCalledWith('machine-1', expect.anything());
+        expect(machineExecutionRunsListSpy).toHaveBeenCalledWith('machine-target', expect.anything());
         const textNodes = tree!.root.findAllByType('Text');
         const joined = textNodes.map((n: any) => String(n.props.children)).join('\n');
         expect(joined).toContain('pid 123');

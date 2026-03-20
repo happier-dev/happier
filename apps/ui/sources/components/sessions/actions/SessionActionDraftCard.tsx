@@ -2,9 +2,11 @@ import * as React from 'react';
 import { Pressable, View } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
 import { getActionSpec, resolveEffectiveActionInputFields } from '@happier-dev/protocol';
+import { useRouter } from 'expo-router';
 
 import { storage, useSession } from '@/sync/domains/state/storage';
 import { createDefaultActionExecutor } from '@/sync/ops/actions/defaultActionExecutor';
+import { resolveActionExecutionFailureMessage } from '@/sync/ops/actions/resolveActionExecutionFailureMessage';
 import { resolveServerIdForSessionIdFromLocalCache } from '@/sync/runtime/orchestration/serverScopedRpc/resolveServerIdForSessionIdFromLocalCache';
 import { useEnabledAgentIds } from '@/agents/hooks/useEnabledAgentIds';
 import { useExecutionRunsBackendsForSession } from '@/hooks/server/useExecutionRunsBackendsForSession';
@@ -13,46 +15,12 @@ import { t } from '@/text';
 import type { SessionActionDraft } from '@/sync/domains/sessionActions/sessionActionDraftTypes';
 import { buildAvailableReviewEngineOptions } from '@/sync/domains/reviews/reviewEngineCatalog';
 import { layout } from '@/components/ui/layout/layout';
-import { Text, TextInput } from '@/components/ui/text/Text';
+import { Text } from '@/components/ui/text/Text';
+import { resolveActionInputValidationError } from '@/sync/domains/actions/resolveActionInputValidationError';
+import { ActionInputFields } from './ActionInputFields';
 
 
 type EngineOption = Readonly<{ id: string; label: string; disabled?: boolean }>;
-
-function getValueAtPath(input: Record<string, unknown>, path: string): unknown {
-  const parts = path.split('.').filter(Boolean);
-  let cur: any = input;
-  for (const p of parts) {
-    if (!cur || typeof cur !== 'object') return undefined;
-    cur = cur[p];
-  }
-  return cur;
-}
-
-function setValueAtTopLevelPatch(input: Record<string, unknown>, path: string, value: unknown): Record<string, unknown> {
-  const parts = path.split('.').filter(Boolean);
-  if (parts.length === 0) return {};
-  const top = parts[0]!;
-  if (parts.length === 1) return { [top]: value };
-
-  const rest = parts.slice(1);
-  const prevTop: any = (input as any)[top];
-  const nextTop = (() => {
-    const base = prevTop && typeof prevTop === 'object' ? { ...(prevTop as any) } : {};
-    let cur: any = base;
-    for (let i = 0; i < rest.length; i++) {
-      const key = rest[i]!;
-      if (i === rest.length - 1) {
-        cur[key] = value;
-      } else {
-        const existing = cur[key];
-        cur[key] = existing && typeof existing === 'object' ? { ...(existing as any) } : {};
-        cur = cur[key];
-      }
-    }
-    return base;
-  })();
-  return { [top]: nextTop };
-}
 
 function useReviewEngineOptions(sessionId: string): readonly EngineOption[] {
   const enabledAgentIds = useEnabledAgentIds();
@@ -80,39 +48,25 @@ function useExecutionBackendOptions(): readonly EngineOption[] {
   );
 }
 
-function Chip(props: Readonly<{ selected: boolean; label: string; onPress: () => void; disabled?: boolean }>) {
-  const { theme } = useUnistyles();
-  return (
-    <Pressable
-      accessibilityRole="button"
-      accessibilityState={{ selected: props.selected, disabled: props.disabled === true }}
-      onPress={props.disabled ? undefined : props.onPress}
-      style={({ pressed }) => ({
-        paddingVertical: 8,
-        paddingHorizontal: 10,
-        borderRadius: 8,
-        borderWidth: 1,
-        borderColor: theme.colors.divider,
-        opacity: props.disabled ? 0.4 : pressed ? 0.7 : 1,
-        backgroundColor: props.selected ? 'rgba(0,0,0,0.06)' : 'transparent',
-      })}
-    >
-      <Text style={{ color: theme.colors.text }}>{props.label}</Text>
-    </Pressable>
-  );
-}
-
 export function SessionActionDraftCard(props: Readonly<{ sessionId: string; draft: SessionActionDraft }>) {
   const { theme } = useUnistyles();
+  const router = useRouter();
   const spec = getActionSpec(props.draft.actionId as any);
   const executor = React.useMemo(
-    () => createDefaultActionExecutor({ resolveServerIdForSessionId: resolveServerIdForSessionIdFromLocalCache }),
-    [],
+    () => createDefaultActionExecutor({
+      resolveServerIdForSessionId: resolveServerIdForSessionIdFromLocalCache,
+      openSession: (sessionId) => {
+        router.push((`/session/${sessionId}`) as any);
+      },
+    }),
+    [router],
   );
 
   const input: Record<string, unknown> = props.draft.input ?? {};
   const engineOptions = useReviewEngineOptions(props.sessionId);
   const backendOptions = useExecutionBackendOptions();
+  const submitInFlightRef = React.useRef(false);
+  const [isSubmitting, setIsSubmitting] = React.useState(false);
 
   const resolveFieldOptions = React.useCallback(
     (field: any): ReadonlyArray<Readonly<{ value: string; label: string; disabled?: boolean }>> => {
@@ -139,6 +93,7 @@ export function SessionActionDraftCard(props: Readonly<{ sessionId: string; draf
   const setInputPatch = React.useCallback(
     (patch: Record<string, unknown>) => {
       storage.getState().updateSessionActionDraftInput(props.sessionId, props.draft.id, patch);
+      storage.getState().setSessionActionDraftStatus(props.sessionId, props.draft.id, 'editing', null);
     },
     [props.draft.id, props.sessionId],
   );
@@ -154,23 +109,30 @@ export function SessionActionDraftCard(props: Readonly<{ sessionId: string; draf
     storage.getState().deleteSessionActionDraft(props.sessionId, props.draft.id);
   }, [props.draft.id, props.sessionId]);
 
-  const validate = React.useCallback((): string | null => {
-    const parsed = (spec.inputSchema as any).safeParse({
+  const fields = React.useMemo(() => {
+    return resolveEffectiveActionInputFields(spec as any, { sessionId: props.sessionId, ...(props.draft.input ?? {}) });
+  }, [props.draft.input, props.sessionId, spec]);
+
+  const validationError = React.useMemo(
+    () => resolveActionInputValidationError({
       sessionId: props.sessionId,
-      ...(props.draft.input ?? {}),
-    });
-    if (parsed.success) return null;
-    const first = Array.isArray(parsed.error?.issues) ? parsed.error.issues[0] : null;
-    return typeof first?.message === 'string' && first.message.trim() ? first.message.trim() : 'Invalid input';
-  }, [props.draft.input, props.sessionId, spec.inputSchema]);
+      input,
+      spec: spec as any,
+      fields: fields as any,
+    }),
+    [fields, input, props.sessionId, spec],
+  );
 
   const submit = React.useCallback(async () => {
-    const err = validate();
+    if (submitInFlightRef.current) return;
+    const err = validationError;
     if (err) {
       setStatus('editing', err);
       return;
     }
 
+    submitInFlightRef.current = true;
+    setIsSubmitting(true);
     setStatus('running', null);
     try {
       const res = await executor.execute(
@@ -181,15 +143,9 @@ export function SessionActionDraftCard(props: Readonly<{ sessionId: string; draf
         },
         { defaultSessionId: props.sessionId, surface: 'ui_button', placement: 'session_action_menu' } as any,
       );
-      if (!res.ok) {
-        setStatus('editing', res.error ?? 'Failed to start');
-        return;
-      }
-      const inner: any = res.result;
-      const results: any[] = Array.isArray(inner?.results) ? inner.results : [];
-      if (results.some((r) => r && r.ok === false)) {
-        const first = results.find((r) => r && r.ok === false);
-        setStatus('editing', String(first?.error ?? 'Failed to start'));
+      const errorMessage = resolveActionExecutionFailureMessage(res, 'Failed to start');
+      if (errorMessage) {
+        setStatus('editing', errorMessage);
         return;
       }
       setStatus('succeeded', null);
@@ -198,15 +154,15 @@ export function SessionActionDraftCard(props: Readonly<{ sessionId: string; draf
       cancel();
     } catch (e) {
       setStatus('editing', e instanceof Error ? e.message : 'Failed to start');
+    } finally {
+      submitInFlightRef.current = false;
+      setIsSubmitting(false);
     }
-  }, [cancel, executor, input, props.draft.actionId, props.draft.input, props.sessionId, setStatus, validate]);
+  }, [cancel, executor, props.draft.actionId, props.draft.input, props.sessionId, setStatus, validationError]);
 
   const title = spec.title;
-  const error = props.draft.error ? String(props.draft.error) : '';
-
-  const fields = React.useMemo(() => {
-    return resolveEffectiveActionInputFields(spec as any, { sessionId: props.sessionId, ...(props.draft.input ?? {}) });
-  }, [props.draft.input, props.sessionId, spec]);
+  const error = validationError ?? (props.draft.error ? String(props.draft.error) : '');
+  const startDisabled = props.draft.status === 'running' || isSubmitting || validationError !== null;
 
   return (
     <View style={{ flexDirection: 'row', justifyContent: 'center' }}>
@@ -225,157 +181,14 @@ export function SessionActionDraftCard(props: Readonly<{ sessionId: string; draf
             <Text style={{ color: theme.colors.text, fontWeight: '600', marginBottom: 8 }}>{title}</Text>
 
             {fields.length > 0 ? (
-              fields.map((field: any) => {
-                const path = typeof field?.path === 'string' ? field.path : '';
-                const widget = typeof field?.widget === 'string' ? field.widget : '';
-                if (!path || !widget) return null;
-
-                const label = typeof field?.title === 'string' ? field.title : path;
-                const value = getValueAtPath(input, path);
-                const editable = props.draft.status !== 'running';
-                const disabled = (field as any)?.disabled === true;
-
-                if (widget === 'multiselect') {
-                  const selected = Array.isArray(value) ? (value as unknown[]).map(String) : [];
-                  const options = resolveFieldOptions(field);
-                  return (
-                    <View key={path} style={{ marginTop: 10 }}>
-                      <Text style={{ color: theme.colors.textSecondary, marginBottom: 6 }}>{label}</Text>
-                      <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 10 }}>
-                        {options.map((opt) => {
-                          const isSelected = selected.includes(opt.value);
-                          return (
-                            <Chip
-                              key={opt.value}
-                              label={opt.label}
-                              selected={isSelected}
-                              disabled={!editable || disabled || opt.disabled === true}
-                              onPress={() => {
-                                if (!editable || disabled || opt.disabled === true) return;
-                                const next = isSelected ? selected.filter((id) => id !== opt.value) : [...selected, opt.value];
-                                setInputPatch(setValueAtTopLevelPatch(input, path, next));
-                              }}
-                            />
-                          );
-                        })}
-                      </View>
-                    </View>
-                  );
-                }
-
-              if (widget === 'select') {
-                const selected = typeof value === 'string' ? value : '';
-                const options = resolveFieldOptions(field);
-                return (
-                  <View key={path} style={{ marginTop: 10 }}>
-                    <Text style={{ color: theme.colors.textSecondary, marginBottom: 6 }}>{label}</Text>
-                    <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 10 }}>
-                      {options.map((opt) => (
-                        <Chip
-                          key={opt.value}
-                          label={opt.label}
-                          selected={selected === opt.value}
-                          disabled={!editable || disabled || opt.disabled === true}
-                          onPress={() => {
-                            if (!editable || disabled || opt.disabled === true) return;
-                            setInputPatch(setValueAtTopLevelPatch(input, path, opt.value));
-                          }}
-                        />
-                      ))}
-                    </View>
-                  </View>
-                );
-              }
-
-              if (widget === 'toggle' || widget === 'checkbox') {
-                const selected = value === true;
-                return (
-                  <View key={path} style={{ marginTop: 10 }}>
-                    <Text style={{ color: theme.colors.textSecondary, marginBottom: 6 }}>{label}</Text>
-                    <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 10 }}>
-                      <Chip
-                        label={t('common.on')}
-                        selected={selected}
-                        disabled={!editable || disabled}
-                        onPress={() => {
-                          if (!editable || disabled) return;
-                          setInputPatch(setValueAtTopLevelPatch(input, path, true));
-                        }}
-                      />
-                      <Chip
-                        label={t('common.off')}
-                        selected={!selected}
-                        disabled={!editable || disabled}
-                        onPress={() => {
-                          if (!editable || disabled) return;
-                          setInputPatch(setValueAtTopLevelPatch(input, path, false));
-                        }}
-                      />
-                    </View>
-                  </View>
-                );
-              }
-
-              if (widget === 'text_list') {
-                const sep = field?.listSeparator === 'newline' ? '\n' : ',';
-                const arr = Array.isArray(value) ? (value as unknown[]).map((v) => String(v ?? '').trim()).filter(Boolean) : [];
-                const str = sep === '\n' ? arr.join('\n') : arr.join(', ');
-                return (
-                  <View key={path} style={{ marginTop: 10 }}>
-                    <Text style={{ color: theme.colors.textSecondary, marginBottom: 6 }}>{label}</Text>
-                    <TextInput
-                      editable={editable && !disabled}
-                      value={str}
-                      onChangeText={(text) => {
-                        const parts = sep === '\n'
-                          ? String(text ?? '').split('\n')
-                          : String(text ?? '').split(',');
-                        const next = parts.map((p) => p.trim()).filter((p) => p.length > 0);
-                        setInputPatch(setValueAtTopLevelPatch(input, path, next));
-                      }}
-                      multiline={field?.listSeparator === 'newline'}
-                      placeholderTextColor={theme.colors.textSecondary}
-                      style={{
-                        borderWidth: 1,
-                        borderColor: theme.colors.divider,
-                        borderRadius: 10,
-                        padding: 10,
-                        ...(field?.listSeparator === 'newline' ? { minHeight: 80 } : {}),
-                        color: theme.colors.text,
-                      }}
-                    />
-                  </View>
-                );
-              }
-
-              if (widget === 'textarea' || widget === 'text') {
-                const str = typeof value === 'string' ? value : '';
-                const multiline = widget === 'textarea';
-                return (
-                  <View key={path} style={{ marginTop: 10 }}>
-                    <Text style={{ color: theme.colors.textSecondary, marginBottom: 6 }}>{label}</Text>
-                    <TextInput
-                      editable={editable && !disabled}
-                      value={str}
-                      onChangeText={(text) => setInputPatch(setValueAtTopLevelPatch(input, path, text))}
-                      multiline={multiline}
-                      placeholderTextColor={theme.colors.textSecondary}
-                      style={{
-                        borderWidth: 1,
-                        borderColor: theme.colors.divider,
-                        borderRadius: 10,
-                        padding: 10,
-                        ...(multiline ? { minHeight: 80 } : {}),
-                        color: theme.colors.text,
-                      }}
-                    />
-                  </View>
-                );
-              }
-
-              return null;
-            })
-          ) : (
+              <ActionInputFields
+                fields={fields as any}
+                input={input}
+                editable={props.draft.status !== 'running' && !isSubmitting}
+                resolveFieldOptions={(field) => resolveFieldOptions(field as any)}
+                onPatch={setInputPatch}
+              />
+            ) : (
             <Text style={{ color: theme.colors.textSecondary }}>{t('session.actionsDraft.noInputHints')}</Text>
           )}
 
@@ -387,12 +200,12 @@ export function SessionActionDraftCard(props: Readonly<{ sessionId: string; draf
             <Pressable
               accessibilityRole="button"
               onPress={cancel}
-              disabled={props.draft.status === 'running'}
+              disabled={props.draft.status === 'running' || isSubmitting}
               style={({ pressed }) => ({
                 paddingVertical: 10,
                 paddingHorizontal: 12,
                 borderRadius: 10,
-                opacity: props.draft.status === 'running' ? 0.4 : pressed ? 0.7 : 1,
+                opacity: props.draft.status === 'running' || isSubmitting ? 0.4 : pressed ? 0.7 : 1,
               })}
             >
               <Text style={{ color: theme.colors.textSecondary }}>{t('common.cancel')}</Text>
@@ -400,13 +213,13 @@ export function SessionActionDraftCard(props: Readonly<{ sessionId: string; draf
             <Pressable
               accessibilityRole="button"
               onPress={() => void submit()}
-              disabled={props.draft.status === 'running'}
+              disabled={startDisabled}
               style={({ pressed }) => ({
                 paddingVertical: 10,
                 paddingHorizontal: 12,
                 borderRadius: 10,
                 backgroundColor: theme.colors.button.primary.background,
-                opacity: props.draft.status === 'running' ? 0.5 : pressed ? 0.8 : 1,
+                opacity: startDisabled ? 0.5 : pressed ? 0.8 : 1,
               })}
             >
               <Text style={{ color: theme.colors.button.primary.tint, fontWeight: '600' }}>{t('common.start')}</Text>

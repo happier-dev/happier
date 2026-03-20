@@ -43,7 +43,14 @@ vi.mock('@/components/ui/text/Text', () => ({
   TextInput: 'TextInput',
 }));
 
-vi.mock('@/text', () => ({ t: (key: string) => key }));
+vi.mock('@/text', () => ({
+  t: (key: string, params?: any) => {
+    if (key === 'session.actionsDraft.validation.requiredField') {
+      return `${String(params?.field ?? 'Field')} is required.`;
+    }
+    return key;
+  },
+}));
 
 vi.mock('@/agents/hooks/useEnabledAgentIds', () => ({
   useEnabledAgentIds: () => ['claude'],
@@ -105,16 +112,16 @@ describe('SessionActionDraftCard', () => {
     deleteSessionActionDraft.mockClear();
   });
 
-  it('submits a valid plan.start draft via the default action executor', async () => {
+  it('submits a valid subagents.plan.start draft via the default action executor', async () => {
     const { SessionActionDraftCard } = await import('./SessionActionDraftCard');
 
     const draft = {
       id: 'd1',
       sessionId: 's1',
-      actionId: 'plan.start',
+      actionId: 'subagents.plan.start',
       createdAt: 1,
       status: 'editing',
-      input: { backendIds: ['claude'], instructions: 'Plan this.' },
+      input: { backendTargetKeys: ['agent:claude'], instructions: 'Plan this.' },
     } as const;
 
     let tree: renderer.ReactTestRenderer | null = null;
@@ -130,8 +137,8 @@ describe('SessionActionDraftCard', () => {
     });
 
     expect(executeSpy).toHaveBeenCalledWith(
-      'plan.start',
-      { sessionId: 's1', backendIds: ['claude'], instructions: 'Plan this.' },
+      'subagents.plan.start',
+      { sessionId: 's1', backendTargetKeys: ['agent:claude'], instructions: 'Plan this.' },
       { defaultSessionId: 's1', surface: 'ui_button', placement: 'session_action_menu' },
     );
 
@@ -149,10 +156,10 @@ describe('SessionActionDraftCard', () => {
     const draft = {
       id: 'd1',
       sessionId: 's1',
-      actionId: 'delegate.start',
+      actionId: 'subagents.delegate.start',
       createdAt: 1,
       status: 'editing',
-      input: { backendIds: ['claude'], instructions: 'Delegate this.' },
+      input: { backendTargetKeys: ['agent:claude'], instructions: 'Delegate this.' },
     } as const;
 
     let tree: renderer.ReactTestRenderer | null = null;
@@ -172,17 +179,65 @@ describe('SessionActionDraftCard', () => {
     expect(deleteSessionActionDraft).not.toHaveBeenCalled();
   });
 
+  it('ignores duplicate start presses while an action launch is already in flight', async () => {
+    let resolveExecute: ((value: ExecuteResult) => void) | null = null;
+    executeSpy.mockImplementationOnce(
+      () =>
+        new Promise<ExecuteResult>((resolve) => {
+          resolveExecute = resolve;
+        }),
+    );
+
+    const { SessionActionDraftCard } = await import('./SessionActionDraftCard');
+
+    const draft = {
+      id: 'd1',
+      sessionId: 's1',
+      actionId: 'review.start',
+      createdAt: 1,
+      status: 'editing',
+      input: {
+        engineIds: ['coderabbit'],
+        instructions: 'Review this repository.',
+        changeType: 'all',
+        base: { kind: 'none' },
+      },
+    } as const;
+
+    let tree: renderer.ReactTestRenderer | null = null;
+    await act(async () => {
+      tree = renderer.create(React.createElement(SessionActionDraftCard, { sessionId: 's1', draft: draft as any }));
+    });
+
+    const start = findPressableByText(tree!, 'common.start');
+    expect(start).toBeTruthy();
+
+    await act(async () => {
+      start!.props.onPress?.();
+      start!.props.onPress?.();
+    });
+
+    expect(executeSpy).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      resolveExecute?.({ ok: true, result: {} });
+    });
+
+    expect(setSessionActionDraftStatus).toHaveBeenCalledWith('s1', 'd1', 'running', null);
+    expect(setSessionActionDraftStatus).toHaveBeenCalledWith('s1', 'd1', 'succeeded', null);
+  });
+
   it('allows retrying a failed draft without recreating it', async () => {
     const { SessionActionDraftCard } = await import('./SessionActionDraftCard');
 
     const draft = {
       id: 'd1',
       sessionId: 's1',
-      actionId: 'delegate.start',
+      actionId: 'subagents.delegate.start',
       createdAt: 1,
       status: 'failed',
       error: 'RPC method not available',
-      input: { backendIds: ['claude'], instructions: 'Delegate this.' },
+      input: { backendTargetKeys: ['agent:claude'], instructions: 'Delegate this.' },
     } as const;
 
     let tree: renderer.ReactTestRenderer | null = null;
@@ -195,7 +250,7 @@ describe('SessionActionDraftCard', () => {
     expect(start!.props.disabled).toBe(false);
   });
 
-  it('shows a validation error and does not execute when required inputs are missing', async () => {
+  it('disables start and shows a field-aware validation error when required inputs are missing', async () => {
     executeSpy.mockClear();
     setSessionActionDraftStatus.mockClear();
 
@@ -204,10 +259,10 @@ describe('SessionActionDraftCard', () => {
     const draft = {
       id: 'd1',
       sessionId: 's1',
-      actionId: 'plan.start',
+      actionId: 'subagents.plan.start',
       createdAt: 1,
       status: 'editing',
-      input: { backendIds: ['claude'], instructions: '   ' },
+      input: { backendTargetKeys: ['agent:claude'], instructions: '   ' },
     } as const;
 
     let tree: renderer.ReactTestRenderer | null = null;
@@ -217,14 +272,73 @@ describe('SessionActionDraftCard', () => {
 
     const start = findPressableByText(tree!, 'common.start');
     expect(start).toBeTruthy();
+    expect(start!.props.disabled).toBe(true);
 
+    const texts = tree!.root.findAllByType('Text');
+    expect(texts.some((node: any) => node.props?.children === 'Instructions is required.')).toBe(true);
+    expect(executeSpy).not.toHaveBeenCalled();
+    expect(setSessionActionDraftStatus).not.toHaveBeenCalled();
+  });
+
+  it('maps missing review engine selection to a required-field validation message', async () => {
+    executeSpy.mockClear();
+    setSessionActionDraftStatus.mockClear();
+
+    const { SessionActionDraftCard } = await import('./SessionActionDraftCard');
+
+    const draft = {
+      id: 'd1',
+      sessionId: 's1',
+      actionId: 'review.start',
+      createdAt: 1,
+      status: 'editing',
+      input: { instructions: '', changeType: 'committed', base: { kind: 'none' } },
+    } as const;
+
+    let tree: renderer.ReactTestRenderer | null = null;
     await act(async () => {
-      await start!.props.onPress?.();
+      tree = renderer.create(React.createElement(SessionActionDraftCard, { sessionId: 's1', draft: draft as any }));
     });
 
-    expect(executeSpy).not.toHaveBeenCalled();
-    // Error message is schema-driven; don't pin exact wording.
-    expect(setSessionActionDraftStatus).toHaveBeenCalledWith('s1', 'd1', 'editing', expect.any(String));
+    const start = findPressableByText(tree!, 'common.start');
+    expect(start).toBeTruthy();
+    expect(start!.props.disabled).toBe(true);
+
+    const texts = tree!.root.findAllByType('Text');
+    expect(texts.some((node: any) => node.props?.children === 'Review engines is required.')).toBe(true);
+    expect(
+      texts.some((node: any) => String(node.props?.children ?? '').includes('Invalid input: expected array, received undefined')),
+    ).toBe(false);
+  });
+
+  it('clears stale draft errors when the user edits an input', async () => {
+    updateSessionActionDraftInput.mockClear();
+    setSessionActionDraftStatus.mockClear();
+
+    const { SessionActionDraftCard } = await import('./SessionActionDraftCard');
+
+    const draft = {
+      id: 'd1',
+      sessionId: 's1',
+      actionId: 'review.start',
+      createdAt: 1,
+      status: 'editing',
+      error: 'Instructions is required.',
+      input: { engineIds: ['claude'], instructions: '', changeType: 'committed', base: { kind: 'none' } },
+    } as const;
+
+    let tree: renderer.ReactTestRenderer | null = null;
+    await act(async () => {
+      tree = renderer.create(React.createElement(SessionActionDraftCard, { sessionId: 's1', draft: draft as any }));
+    });
+
+    const input = tree!.root.findAllByType('TextInput')[0]!;
+    await act(async () => {
+      input.props.onChangeText?.('Review this.');
+    });
+
+    expect(updateSessionActionDraftInput).toHaveBeenCalledWith('s1', 'd1', { instructions: 'Review this.' });
+    expect(setSessionActionDraftStatus).toHaveBeenCalledWith('s1', 'd1', 'editing', null);
   });
 
   it('hides conditional review base fields when base.kind is none', async () => {
