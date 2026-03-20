@@ -1,9 +1,9 @@
 import Constants from 'expo-constants';
 import { apiSocket } from '@/sync/api/session/apiSocket';
-import { type AuthCredentials, isLegacyAuthCredentials } from '@/auth/storage/tokenStorage';
+import { type AuthCredentials } from '@/auth/storage/tokenStorage';
 import { createEncryptionFromAuthCredentials } from '@/auth/encryption/createEncryptionFromAuthCredentials';
 import { Encryption } from '@/sync/encryption/encryption';
-import { decodeBase64, encodeBase64 } from '@/encryption/base64';
+import { encodeBase64 } from '@/encryption/base64';
 import { storage } from './domains/state/storage';
 import { ApiMessage } from './api/types/apiTypes';
 import type { ApiEphemeralActivityUpdate } from './api/types/apiTypes';
@@ -52,6 +52,7 @@ import { fireAndForget } from '@/utils/system/fireAndForget';
 import { RevenueCat } from './domains/purchases';
 import { trackPaywallPresented, trackPaywallPurchased, trackPaywallCancelled, trackPaywallRestored, trackPaywallError } from '@/track';
 import { getActiveServerSnapshot } from './domains/server/serverRuntime';
+import type { SettingsAnalyticsSource } from '@/track/settingsAnalytics/types';
 import { setActiveServerSessionListCache } from './store/sessionListCache';
 import { config } from '@/config';
 import { log } from '@/log';
@@ -62,7 +63,6 @@ import { voiceHooks } from '@/voice/context/voiceHooks';
 import { notifyActivityReady } from '@/activity/notifications/runtime/activityLocalNotificationBus';
 import { Message } from './domains/messages/messageTypes';
 import { EncryptionCache } from './encryption/encryptionCache';
-import { resolveSessionAppendSystemPromptV1 } from '../agents/prompt/resolveSessionAppendSystemPromptV1';
 import { nowServerMs } from './runtime/time';
 import { getAgentCore, resolveAgentIdFromFlavor } from '@/agents/catalog/catalog';
 import { computeNextReadStateV1 } from './domains/state/readStateV1';
@@ -88,19 +88,40 @@ import { UserProfile } from './domains/social/friendTypes';
 import { buildSendMessageMeta } from './domains/messages/buildSendMessageMeta';
 import { HappyError } from '@/utils/errors/errors';
 import { dbgSettings, isSettingsSyncDebugEnabled, summarizeSettings, summarizeSettingsDelta } from './domains/settings/debugSettings';
-import { deriveSettingsSecretsKey, decryptSecretValue, encryptSecretString, sealSecretsDeep } from './encryption/secretSettings';
+import {
+    decryptSecretValueWithKeys,
+    deriveSettingsSecretsKeySet,
+    encryptSecretString,
+    sealSecretsDeep,
+} from './encryption/secretSettings';
 import { didControlReturnToMobile } from './domains/session/control/controlledByUserTransitions';
 import { chooseSubmitMode } from './domains/session/control/submitMode';
-import type { SavedSecret } from './domains/settings/settings';
+import type { SavedSecret } from './domains/settings/savedSecretTypes';
 import type { PermissionMode } from './domains/permissions/permissionTypes';
 import { scheduleDebouncedPendingSettingsFlush } from './engine/pending/pendingSettings';
-import { applySettingsLocalDelta, syncSettings as syncSettingsEngine } from './engine/settings/syncSettings';
+import {
+    applySettingsLocalDelta,
+    syncSettings as syncSettingsEngine,
+    type SyncSettingsParams,
+} from './engine/settings/syncSettings';
 import { getOfferings as getOfferingsEngine, presentPaywall as presentPaywallEngine, purchaseProduct as purchaseProductEngine, syncPurchases as syncPurchasesEngine } from './engine/purchases/syncPurchases';
 import { fetchChanges } from './api/session/apiChanges';
 import { runWithInFlightDedupe } from '@/sync/runtime/orchestration/runWithInFlightDedupe';
 import { runTasksWithLimit } from '@/sync/runtime/orchestration/runTasksWithLimit';
 import { decideMessageCatchUpPolicy } from '@/sync/runtime/orchestration/messageCatchUpPolicy';
 import { applyMessageCatchUpDecision } from '@/sync/runtime/orchestration/applyMessageCatchUpDecision';
+import { readDirectSessionLink } from '@/sync/domains/session/directSessions/readDirectSessionLink';
+import { normalizeDirectTranscriptMessages } from '@/sync/runtime/directSessions/normalizeDirectTranscriptMessages';
+import { readStoredSessionRawRecord } from '@/sync/runtime/readStoredSessionContent';
+import { resolvePreferredServerIdForSessionId } from '@/sync/runtime/orchestration/serverScopedRpc/resolvePreferredServerIdForSessionId';
+import { emitSessionMetadataUpdateWithServerScope } from '@/sync/runtime/orchestration/serverScopedRpc/emitSessionMetadataUpdateWithServerScope';
+import { fetchSessionByIdWithServerScope } from '@/sync/runtime/orchestration/serverScopedRpc/fetchSessionByIdWithServerScope';
+import { createSessionRequestWithServerScope } from '@/sync/runtime/orchestration/serverScopedRpc/createSessionRequestWithServerScope';
+import { sessionRpcWithPreferredSessionScope } from '@/sync/runtime/orchestration/serverScopedRpc/sessionRpcWithPreferredSessionScope';
+import {
+    machineDirectSessionTranscriptPage,
+    machineDirectSessionTranscriptReadAfter,
+} from '@/sync/ops/machineDirectSessions';
 import {
     createArtifactViaApi,
     createArtifactWithHeaderViaApi,
@@ -127,6 +148,7 @@ import { publishAcpSessionModeOverrideToMetadata as publishAcpSessionModeOverrid
 import { publishModelOverrideToMetadata as publishModelOverrideToMetadataEngine } from './engine/overrides/modelOverridePublish';
 import { publishAcpConfigOptionOverrideToMetadata as publishAcpConfigOptionOverrideToMetadataEngine, type AcpConfigOptionOverrideValueId } from './engine/overrides/acpConfigOptionOverridePublish';
 import { MessageAckResponseSchema, type MessageAckResponse } from '@happier-dev/protocol/updates';
+import { resolveAccountScopedCryptoMaterialFromCredentials } from '@/sync/domains/connectedServices/resolveAccountScopedCryptoMaterialFromCredentials';
 import { serverFetch } from './http/client';
 import {
     buildUpdatedSessionFromSocketUpdate,
@@ -179,6 +201,10 @@ function createDefaultMessageTransport(): SyncMessageTransport {
     };
 }
 
+function readOptionalSessionMetadataString(value: unknown): string | null {
+    return typeof value === 'string' && value.trim().length > 0 ? value : null;
+}
+
 class Sync {
     // Spawned agents (especially in spawn mode) can take noticeable time to connect.
     private static readonly SESSION_READY_TIMEOUT_MS = 10000;
@@ -193,9 +219,10 @@ class Sync {
       private isForeground = AppState.currentState === 'active';
       public encryptionCache = new EncryptionCache();
       private sessionsSync: InvalidateSync;
-      private messagesSync = new Map<string, InvalidateSync>();
+    private messagesSync = new Map<string, InvalidateSync>();
     private activeServerSessionIds = new Set<string>();
     private hasFetchedSessionsSnapshotForActiveServer = false;
+    private serverScopeGeneration = 0;
       private sessionByIdHydrationInFlight = new Map<string, Promise<boolean>>();
       private sessionReceivedMessages = new Map<string, Map<string, number>>();
       private sessionMessagesBeforeSeqByKey = new Map<string, number>();
@@ -205,6 +232,9 @@ class Sync {
       private sessionMessagesLoadingOlderByKey = new Set<string>();
       private sessionMessagesLoadingNewerByKey = new Set<string>();
       private sessionMessagesPaginationSupportedByKey = new Map<string, boolean>();
+      private directSessionOlderCursorBySessionId = new Map<string, string | null>();
+      private directSessionHasMoreOlderBySessionId = new Map<string, boolean>();
+      private directSessionTailCursorBySessionId = new Map<string, string | null>();
       private sessionViewport = new Map<string, { isPinned: boolean; offsetY: number; lastUpdatedAt: number }>();
       private deferredForwardLoadingSessions = new Set<string>();
       private sessionDataKeys = new Map<string, Uint8Array>(); // Store session data encryption keys internally
@@ -239,6 +269,7 @@ class Sync {
       private lastSocketDisconnectedAtMs: number | null = null;
       revenueCatInitialized = false;
     private settingsSecretsKey: Uint8Array | null = null;
+    private settingsSecretsReadKeys: readonly Uint8Array[] = [];
     private messageTransport: SyncMessageTransport = createDefaultMessageTransport();
     private updatesSubscribed = false;
 
@@ -402,14 +433,12 @@ class Sync {
         // Derive a stable per-account key for field-level secret settings.
         // This is separate from the outer settings blob encryption.
         try {
-            const secretKey = isLegacyAuthCredentials(credentials)
-                ? decodeBase64(credentials.secret, 'base64url')
-                : decodeBase64(credentials.encryption.machineKey, 'base64');
-            if (secretKey.length === 32) {
-                this.settingsSecretsKey = await deriveSettingsSecretsKey(secretKey);
-            }
+            const keySet = deriveSettingsSecretsKeySet(resolveAccountScopedCryptoMaterialFromCredentials(credentials));
+            this.settingsSecretsKey = keySet.writeKey;
+            this.settingsSecretsReadKeys = keySet.readKeys;
         } catch {
             this.settingsSecretsKey = null;
+            this.settingsSecretsReadKeys = [];
         }
         this.hydrateWarmCachesForActiveServer();
         await this.#init();
@@ -435,14 +464,12 @@ class Sync {
         this.changesCursor = loadChangesCursor(this.getChangesCursorScope());
         this.changesCursorDirty = false;
         try {
-            const secretKey = isLegacyAuthCredentials(credentials)
-                ? decodeBase64(credentials.secret, 'base64url')
-                : decodeBase64(credentials.encryption.machineKey, 'base64');
-            if (secretKey.length === 32) {
-                this.settingsSecretsKey = await deriveSettingsSecretsKey(secretKey);
-            }
+            const keySet = deriveSettingsSecretsKeySet(resolveAccountScopedCryptoMaterialFromCredentials(credentials));
+            this.settingsSecretsKey = keySet.writeKey;
+            this.settingsSecretsReadKeys = keySet.readKeys;
         } catch {
             this.settingsSecretsKey = null;
+            this.settingsSecretsReadKeys = [];
         }
         this.hydrateWarmCachesForActiveServer();
         await this.#init();
@@ -469,6 +496,7 @@ class Sync {
     }
 
     private resetServerScopedRuntimeState = () => {
+        this.serverScopeGeneration += 1;
         apiSocket.disconnect();
         this.activityAccumulator.reset();
         this.machineActivityAccumulator.reset();
@@ -574,7 +602,7 @@ class Sync {
      * Prefer this over adding per-field helpers unless a field needs special handling.
      */
     public decryptSecretValue(input: import('./encryption/secretSettings').SecretString | null | undefined): string | null {
-        return decryptSecretValue(input, this.settingsSecretsKey);
+        return decryptSecretValueWithKeys(input, this.settingsSecretsReadKeys);
     }
 
     async #init() {
@@ -617,6 +645,12 @@ class Sync {
         }
     }
 
+        refreshSessionMessages = async (sessionId: string): Promise<void> => {
+            const normalized = String(sessionId ?? '').trim();
+            if (!normalized) return;
+            await this.getOrCreateMessagesSync(normalized).invalidateAndAwait();
+        }
+
         /**
          * Hydrate a visible session by id for deep links / hard refreshes.
          *
@@ -625,21 +659,31 @@ class Sync {
          * the active server snapshot may not include that session id yet, which causes message fetch to no-op.
          * This helper fetches `/v2/sessions/:id` and initializes encryption so messages can be loaded.
          */
-        ensureSessionVisibleForMessageRoute = async (sessionId: string): Promise<void> => {
+        ensureSessionVisibleForMessageRoute = async (
+            sessionId: string,
+            options?: Readonly<{ forceRefresh?: boolean }>,
+        ): Promise<boolean> => {
             const normalized = String(sessionId ?? '').trim();
-            if (!normalized) return;
+            if (!normalized) return true;
+            const forceRefresh = options?.forceRefresh === true;
 
             const DEBUG_SESSION_HYDRATE =
                 typeof globalThis !== 'undefined'
                 && (
                     (globalThis as any).__HAPPIER_DEBUG_SESSION_HYDRATE__ === true
-                    || (typeof localStorage !== 'undefined' && localStorage.getItem('happier.debug.sessionHydrate') === '1')
+                    || (() => {
+                        try {
+                            return typeof localStorage !== 'undefined' && localStorage.getItem('happier.debug.sessionHydrate') === '1';
+                        } catch {
+                            return false;
+                        }
+                    })()
                 );
 
             // Fast-path when we already know the session exists on this server and, for e2ee sessions,
             // encryption has been initialized (deep links can occur before the sessions snapshot bootstraps).
             const existingSession = storage.getState().sessions[normalized];
-            if (this.isSessionKnownOnActiveServer(normalized) && existingSession) {
+            if (!forceRefresh && this.isSessionKnownOnActiveServer(normalized) && existingSession) {
                 const encryptionMode: 'e2ee' | 'plain' = existingSession.encryptionMode === 'plain' ? 'plain' : 'e2ee';
                 const hasEncryption = Boolean(this.encryption.getSessionEncryption(normalized));
                 if (DEBUG_SESSION_HYDRATE) {
@@ -649,7 +693,7 @@ class Sync {
                     if (DEBUG_SESSION_HYDRATE) {
                         log.log(`[sessionHydrate] fast-path hit ${normalized}`);
                     }
-                    return;
+                    return true;
                 }
             }
 
@@ -659,7 +703,7 @@ class Sync {
                 if (DEBUG_SESSION_HYDRATE) {
                     log.log(`[sessionHydrate] missing credentials for ${normalized}`);
                 }
-                return;
+                return false;
             }
 
             const existing = this.sessionByIdHydrationInFlight.get(normalized);
@@ -667,8 +711,7 @@ class Sync {
                 if (DEBUG_SESSION_HYDRATE) {
                     log.log(`[sessionHydrate] awaiting in-flight hydration for ${normalized}`);
                 }
-                await existing;
-                return;
+                return await existing;
             }
 
             const inFlight = (async () => {
@@ -676,16 +719,25 @@ class Sync {
                     if (DEBUG_SESSION_HYDRATE) {
                         log.log(`[sessionHydrate] fetching session by id ${normalized}`);
                     }
-                    const result = await fetchAndApplySessionById({
+                    const result = await fetchSessionByIdWithServerScope({
                         sessionId: normalized,
-                        credentials,
-                        encryption: this.encryption,
+                        serverId: resolvePreferredServerIdForSessionId(normalized),
+                        activeCredentials: credentials,
+                        activeEncryption: this.encryption,
                         sessionDataKeys: this.sessionDataKeys,
-                        request: (path, init) => apiSocket.request(path, init),
+                        activeRequest: (path, init) => apiSocket.request(path, init),
+                        getExistingSession: (sessionId) => storage.getState().sessions[sessionId] ?? null,
                         applySessions: (sessions) => this.applySessions(sessions),
                         log,
                     });
-                    if (!result.ok) return false;
+                    if (!result.ok) {
+                        const code = typeof result.errorCode === 'string' ? result.errorCode : '';
+                        // Terminal errors should not spin forever in route hydration. Let the route render and fail closed.
+                        if (code === 'not_found' || code === 'unauthorized' || code === 'forbidden') {
+                            return true;
+                        }
+                        return false;
+                    }
 
                     // Ensure the *current* encryption instance is initialized for this session.
                     // During app bootstrap / key restoration, the sync encryption instance can change while
@@ -717,10 +769,17 @@ class Sync {
             if (ok) {
                 this.getOrCreateMessagesSync(normalized).invalidateCoalesced();
             }
+            return ok;
         }
 
 
-    async sendMessage(sessionId: string, text: string, displayText?: string, metaOverrides?: Record<string, unknown>) {
+    async sendMessage(
+        sessionId: string,
+        text: string,
+        displayText?: string,
+        metaOverrides?: Record<string, unknown>,
+        options?: Readonly<{ profileId?: string | null }>
+    ) {
         storage.getState().markSessionOptimisticThinking(sessionId);
 
         // Get session data from storage
@@ -746,16 +805,6 @@ class Sync {
             const localId = randomUUID();
 
             const sentFrom = resolveSentFrom();
-            const state = storage.getState();
-            const appendSystemPrompt = await resolveSessionAppendSystemPromptV1({
-                settings: state.settings,
-                promptStacksV1: state.settings.promptStacksV1,
-                profileId: session.metadata?.profileId,
-                artifactsById: state.artifacts,
-                fetchArtifactWithBody: (artifactId) => this.fetchArtifactWithBody(artifactId),
-                updateArtifact: (artifact) => state.updateArtifact(artifact),
-            });
-
             const model = agentId && getAgentCore(agentId).model.supportsSelection && modelMode !== 'default' ? modelMode : undefined;
             // Create user message content with metadata
             const content: RawRecord = {
@@ -768,7 +817,6 @@ class Sync {
                     sentFrom,
                     permissionMode: permissionMode || 'default',
                     model,
-                    appendSystemPrompt,
                     displayText,
                     agentId,
                     settings: storage.getState().settings,
@@ -825,7 +873,10 @@ class Sync {
                 onNoAck: () => this.schedulePendingMessageCommitRetry({ sessionId, localId }),
             });
 
-            if (!rawAck) return;
+            if (!rawAck) {
+                storage.getState().clearSessionOptimisticThinking(sessionId);
+                return;
+            }
 
             const parsedAck = MessageAckResponseSchema.safeParse(rawAck);
             if (!parsedAck.success) {
@@ -934,15 +985,6 @@ class Sync {
                 const modelMode = session.modelMode || (agentId ? getAgentCore(agentId).model.defaultMode : 'default');
                 const model = agentId && getAgentCore(agentId).model.supportsSelection && modelMode !== 'default' ? modelMode : undefined;
                 const state = storage.getState();
-                const appendSystemPrompt = await resolveSessionAppendSystemPromptV1({
-                    settings: state.settings,
-                    promptStacksV1: state.settings.promptStacksV1,
-                    profileId: session.metadata?.profileId,
-                    artifactsById: state.artifacts,
-                    fetchArtifactWithBody: (artifactId) => this.fetchArtifactWithBody(artifactId),
-                    updateArtifact: (artifact) => state.updateArtifact(artifact),
-                });
-
                 return {
                     role: 'user',
                     content: { type: 'text', text: pending.text },
@@ -950,7 +992,6 @@ class Sync {
                         sentFrom: resolveSentFrom(),
                         permissionMode: permissionMode || 'default',
                         model,
-                        appendSystemPrompt,
                         displayText: pending.displayText,
                         agentId,
                         settings: storage.getState().settings,
@@ -988,7 +1029,10 @@ class Sync {
                 onNoAck: () => this.schedulePendingMessageCommitRetry({ sessionId, localId }),
             });
 
-            if (!rawAck) return;
+            if (!rawAck) {
+                storage.getState().clearSessionOptimisticThinking(sessionId);
+                return;
+            }
 
             const parsedAck = MessageAckResponseSchema.safeParse(rawAck);
             if (!parsedAck.success) {
@@ -999,6 +1043,7 @@ class Sync {
             const ack = parsedAck.data;
 
             if (ack.ok !== true) {
+                storage.getState().removePendingMessage(sessionId, pending.localId);
                 throw new Error(ack.error || 'Message send rejected');
             }
 
@@ -1176,8 +1221,12 @@ class Sync {
     }
 
     async abortSession(sessionId: string): Promise<void> {
-        await apiSocket.sessionRPC(sessionId, 'abort', {
+        await sessionRpcWithPreferredSessionScope<void, { reason: string }>({
+            sessionId,
+            method: 'abort',
+            payload: {
             reason: `The user doesn't want to proceed with this tool use. The tool use was rejected (eg. if it was a file edit, the new_string was NOT written to the file). STOP what you are doing and wait for the user to tell you how to proceed.`
+            },
         });
     }
 
@@ -1215,7 +1264,20 @@ class Sync {
                 return { metadataVersion: s.metadataVersion, metadata: s.metadata };
             },
             refreshSessions: async () => {
-                await this.refreshSessions();
+                if (!this.credentials) {
+                    throw new Error('Sync credentials not available');
+                }
+                await fetchSessionByIdWithServerScope({
+                    sessionId,
+                    serverId: resolvePreferredServerIdForSessionId(sessionId),
+                    activeCredentials: this.credentials,
+                    activeEncryption: this.encryption,
+                    sessionDataKeys: this.sessionDataKeys,
+                    activeRequest: (path, init) => apiSocket.request(path, init),
+                    applySessions: (sessions) => this.applySessions(sessions),
+                    getExistingSession: (targetSessionId) => storage.getState().sessions[targetSessionId] ?? null,
+                    log,
+                });
             },
             encryptMetadata: async (metadata) => {
                 if (sessionEncryptionMode === 'plain') {
@@ -1235,7 +1297,11 @@ class Sync {
                     return null;
                 }
             },
-            emitUpdateMetadata: async (payload) => apiSocket.emitWithAck<UpdateMetadataAck>('update-metadata', payload),
+            emitUpdateMetadata: async (payload) => await emitSessionMetadataUpdateWithServerScope({
+                sessionId,
+                expectedVersion: payload.expectedVersion,
+                metadata: payload.metadata,
+            }),
             applySessionMetadata: ({ metadataVersion, metadata }) => {
                 const currentSession = storage.getState().sessions[sessionId];
                 if (!currentSession) return;
@@ -1380,14 +1446,16 @@ class Sync {
     }
 
     async fetchPendingMessages(sessionId: string): Promise<void> {
+        const request = this.createSessionRequest(sessionId);
         await fetchAndApplyPendingMessagesV2({
             sessionId,
             encryption: this.encryption,
-            request: (path, init) => apiSocket.request(path, init),
+            request,
         });
     }
 
     async enqueuePendingMessage(sessionId: string, text: string, displayText?: string, metaOverrides?: Record<string, unknown>): Promise<void> {
+        const request = this.createSessionRequest(sessionId);
         await enqueuePendingMessageV2({
             sessionId,
             text,
@@ -1396,11 +1464,12 @@ class Sync {
             encryption: this.encryption,
             fetchArtifactWithBody: (artifactId) => this.fetchArtifactWithBody(artifactId),
             updateArtifact: (artifact) => storage.getState().updateArtifact(artifact),
-            request: (path, init) => apiSocket.request(path, init),
+            request,
         });
     }
 
     async updatePendingMessage(sessionId: string, pendingId: string, text: string): Promise<void> {
+        const request = this.createSessionRequest(sessionId);
         await updatePendingMessageV2({
             sessionId,
             pendingId,
@@ -1408,15 +1477,16 @@ class Sync {
             encryption: this.encryption,
             fetchArtifactWithBody: (artifactId) => this.fetchArtifactWithBody(artifactId),
             updateArtifact: (artifact) => storage.getState().updateArtifact(artifact),
-            request: (path, init) => apiSocket.request(path, init),
+            request,
         });
     }
 
     async deletePendingMessage(sessionId: string, pendingId: string): Promise<void> {
+        const request = this.createSessionRequest(sessionId);
         await deletePendingMessageV2({
             sessionId,
             pendingId,
-            request: (path, init) => apiSocket.request(path, init),
+            request,
         });
     }
 
@@ -1425,43 +1495,47 @@ class Sync {
         pendingId: string,
         opts?: { reason?: 'switch_to_local' | 'manual' }
     ): Promise<void> {
+        const request = this.createSessionRequest(sessionId);
         await discardPendingMessageV2({
             sessionId,
             pendingId,
             reason: opts?.reason ?? 'manual',
             encryption: this.encryption,
-            request: (path, init) => apiSocket.request(path, init),
+            request,
         });
     }
 
     async restoreDiscardedPendingMessage(sessionId: string, pendingId: string): Promise<void> {
+        const request = this.createSessionRequest(sessionId);
         await restoreDiscardedPendingMessageV2({
             sessionId,
             pendingId,
             encryption: this.encryption,
-            request: (path, init) => apiSocket.request(path, init),
+            request,
         });
     }
 
     async deleteDiscardedPendingMessage(sessionId: string, pendingId: string): Promise<void> {
+        const request = this.createSessionRequest(sessionId);
         await deleteDiscardedPendingMessageV2({
             sessionId,
             pendingId,
             encryption: this.encryption,
-            request: (path, init) => apiSocket.request(path, init),
+            request,
         });
     }
 
     async reorderPendingMessages(sessionId: string, orderedLocalIds: string[]): Promise<void> {
+        const request = this.createSessionRequest(sessionId);
         await reorderPendingMessagesV2({
             sessionId,
             orderedLocalIds,
             encryption: this.encryption,
-            request: (path, init) => apiSocket.request(path, init),
+            request,
         });
     }
 
-    applySettings = (delta: Partial<Settings>) => {
+    applySettings = (delta: Partial<Settings>, options?: { source?: SettingsAnalyticsSource }) => {
         applySettingsLocalDelta({
             delta,
             settingsSecretsKey: this.settingsSecretsKey,
@@ -1470,6 +1544,7 @@ class Sync {
                 this.pendingSettings = next;
             },
             schedulePendingSettingsFlush: () => this.schedulePendingSettingsFlush(),
+            source: options?.source,
         });
     }
 
@@ -1578,15 +1653,23 @@ class Sync {
 
     private fetchSessions = async () => {
         if (!this.credentials) return;
+        const generation = this.serverScopeGeneration;
+        const shouldContinue = () => this.serverScopeGeneration === generation;
         const cachedSessionListEntries = buildSessionListCacheEntriesFromRenderables(storage.getState().sessionListRenderables);
         await fetchAndApplySessions({
+            serverId: String(getActiveServerSnapshot().serverId ?? '').trim() || null,
             credentials: this.credentials,
             encryption: this.encryption,
             sessionDataKeys: this.sessionDataKeys,
             getExistingSession: (sessionId) => storage.getState().sessions[sessionId] ?? null,
             cachedSessionListEntries,
-            applySessionListRenderables: (sessions) => storage.getState().replaceSessionListRenderables(sessions),
+            shouldContinue,
+            applySessionListRenderables: (sessions) => {
+                if (!shouldContinue()) return;
+                storage.getState().replaceSessionListRenderables(sessions);
+            },
             onSnapshotFetched: (sessionIds) => {
+                if (!shouldContinue()) return;
                 this.activeServerSessionIds = new Set(sessionIds);
                 this.hasFetchedSessionsSnapshotForActiveServer = true;
             },
@@ -1594,6 +1677,7 @@ class Sync {
             sessionListEagerHydrationCount: this.syncTuning.sessionListEagerHydrationCount,
             sessionListHydrationConcurrencyLimit: this.syncTuning.sessionListHydrationConcurrencyLimit,
             applySessions: (sessions) => {
+                if (!shouldContinue()) return;
                 this.applySessions(sessions);
             },
             repairInvalidReadStateV1: (params) => this.repairInvalidReadStateV1(params),
@@ -1611,6 +1695,28 @@ class Sync {
         }
 
         return false;
+    }
+
+    private isSessionKnownOnResolvedOwnerServer = (sessionId: string): boolean => {
+        if (this.isSessionKnownOnActiveServer(sessionId)) {
+            return true;
+        }
+
+        const preferredServerId = resolvePreferredServerIdForSessionId(sessionId);
+        const activeServerId = String(getActiveServerSnapshot().serverId ?? '').trim();
+        return Boolean(preferredServerId && preferredServerId !== activeServerId);
+    }
+
+    private createSessionRequest = (sessionId: string): ((path: string, init?: RequestInit) => Promise<Response>) => {
+        return createSessionRequestWithServerScope({
+            serverId: resolvePreferredServerIdForSessionId(sessionId),
+            activeRequest: (path, init) => apiSocket.request(path, init),
+        });
+    }
+
+    private createSessionMessagesRequest = (sessionId: string): ((path: string) => Promise<Response>) => {
+        const request = this.createSessionRequest(sessionId);
+        return (path: string) => request(path, { method: 'GET' });
     }
 
     /**
@@ -2058,6 +2164,8 @@ class Sync {
 
     private fetchMachines = async () => {
         if (!this.credentials) return;
+        const generation = this.serverScopeGeneration;
+        const shouldContinue = () => this.serverScopeGeneration === generation;
         const cachedMachineDisplayEntries = buildMachineDisplayCacheEntriesFromRenderables(storage.getState().machineDisplayById);
 
         await fetchAndApplyMachines({
@@ -2066,9 +2174,16 @@ class Sync {
             machineDataKeys: this.machineDataKeys,
             getExistingMachine: (machineId) => storage.getState().machines[machineId] ?? null,
             cachedMachineDisplayEntries,
-            applyMachineDisplayEntries: (machines) => storage.getState().replaceMachineDisplays(machines),
+            shouldContinue,
+            applyMachineDisplayEntries: (machines) => {
+                if (!shouldContinue()) return;
+                storage.getState().replaceMachineDisplays(machines);
+            },
             machineDisplayHydrationConcurrencyLimit: this.syncTuning.machineDisplayHydrationConcurrencyLimit,
-            applyMachines: (machines, replace) => storage.getState().applyMachines(machines, replace),
+            applyMachines: (machines, replace) => {
+                if (!shouldContinue()) return;
+                storage.getState().applyMachines(machines, replace);
+            },
             replace: false,
         });
     }
@@ -2104,6 +2219,8 @@ class Sync {
         await fetchAndApplyAutomations({
             credentials: this.credentials,
             applyAutomations: (automations) => storage.getState().applyAutomations(automations),
+            loadedAutomationRunIds: Object.keys(storage.getState().automationRunsByAutomationId),
+            setAutomationRuns: (automationId, runs) => storage.getState().setAutomationRuns(automationId, runs),
         });
     }
 
@@ -2131,16 +2248,18 @@ class Sync {
 
     private syncSettings = async () => {
         if (!this.credentials) return;
-        await syncSettingsEngine({
+        const settingsSyncParams: SyncSettingsParams = {
             credentials: this.credentials,
             encryption: this.encryption,
             pendingSettings: this.pendingSettings,
             settingsSecretsKey: this.settingsSecretsKey,
+            settingsSecretsReadKeys: this.settingsSecretsReadKeys,
             clearPendingSettings: () => {
                 this.pendingSettings = {};
                 savePendingSettings({});
             },
-        });
+        };
+        await syncSettingsEngine(settingsSyncParams);
     }
 
     private fetchProfile = async () => {
@@ -2269,10 +2388,10 @@ class Sync {
     }
 
     private fetchMessages = async (sessionId: string) => {
-        if (this.hasFetchedSessionsSnapshotForActiveServer && !this.isSessionKnownOnActiveServer(sessionId)) {
-            // Do not fetch messages for sessions that are not known to the current active server snapshot.
-            // This avoids cross-server message fetches (wrong token/encryption) while keeping the UI state
-            // non-destructive during server-switch races.
+        if (this.hasFetchedSessionsSnapshotForActiveServer && !this.isSessionKnownOnResolvedOwnerServer(sessionId)) {
+            // Do not fetch messages when we cannot resolve the session to either the active server
+            // or a locally known owner server. This avoids cross-server message fetches while keeping
+            // the UI state non-destructive during server-switch races.
             if (storage.getState().sessionMessages[sessionId]?.isLoaded !== true) {
                 storage.getState().applyMessagesLoaded(sessionId);
             }
@@ -2280,6 +2399,7 @@ class Sync {
         }
 
           const session = storage.getState().sessions[sessionId] ?? null;
+          const directSessionLink = readDirectSessionLink(session?.metadata);
           const hasLoadedMessages = storage.getState().sessionMessages[sessionId]?.isLoaded === true;
           // IMPORTANT: `session.seq` is a "latest known session message seq" hint (often coming from `/sessions`),
           // not necessarily the last message seq that *this device has materialized*. Using it here can cause gaps.
@@ -2288,14 +2408,25 @@ class Sync {
           const viewport = this.sessionViewport.get(sessionId) ?? null;
           const isPinned = viewport?.isPinned ?? true;
           const offlineForMs = this.lastSocketDisconnectedAtMs ? (Date.now() - this.lastSocketDisconnectedAtMs) : 0;
+          const requestMessages = this.createSessionMessagesRequest(sessionId);
+
+          if (directSessionLink) {
+              if (!hasLoadedMessages) {
+                  await this.fetchDirectSessionMessages(sessionId, directSessionLink);
+                  return;
+              }
+
+              await this.catchUpDirectSessionMessages(sessionId, directSessionLink);
+              return;
+          }
 
           if (!hasLoadedMessages) {
               this.deferredForwardLoadingSessions.delete(sessionId);
               await fetchAndApplyMessages({
                   sessionId,
                   getSessionEncryption: (id) => this.encryption.getSessionEncryption(id),
-                  isSessionKnown: (id) => this.isSessionKnownOnActiveServer(id),
-                  request: (path) => apiSocket.request(path),
+                  isSessionKnown: (id) => this.isSessionKnownOnResolvedOwnerServer(id),
+                  request: requestMessages,
                   sessionReceivedMessages: this.sessionReceivedMessages,
                   applyMessages: (sid, messages) => this.applyMessages(sid, messages),
                   onTaskLifecycleEvent: (event) => this.applySessionThinkingFromTaskLifecycle(sessionId, event),
@@ -2332,8 +2463,8 @@ class Sync {
                       afterSeq: cursor,
                       limit: SESSION_MESSAGES_PAGE_SIZE,
                       getSessionEncryption: (id) => this.encryption.getSessionEncryption(id),
-                      isSessionKnown: (id) => this.isSessionKnownOnActiveServer(id),
-                      request: (path) => apiSocket.request(path),
+                      isSessionKnown: (id) => this.isSessionKnownOnResolvedOwnerServer(id),
+                      request: requestMessages,
                       sessionReceivedMessages: this.sessionReceivedMessages,
                       applyMessages: (sid, messages) => this.applyMessages(sid, messages),
                       onNormalizedMessages: (messages) => ingestWorkspaceMutationMessages(sessionId, messages),
@@ -2353,8 +2484,8 @@ class Sync {
                   await fetchAndApplyMessages({
                       sessionId,
                       getSessionEncryption: (id) => this.encryption.getSessionEncryption(id),
-                      isSessionKnown: (id) => this.isSessionKnownOnActiveServer(id),
-                      request: (path) => apiSocket.request(path),
+                      isSessionKnown: (id) => this.isSessionKnownOnResolvedOwnerServer(id),
+                      request: requestMessages,
                       sessionReceivedMessages: this.sessionReceivedMessages,
                       applyMessages: (sid, messages) => this.applyMessages(sid, messages),
                       onTaskLifecycleEvent: (event) => this.applySessionThinkingFromTaskLifecycle(sessionId, event),
@@ -2428,6 +2559,98 @@ class Sync {
                   this.sessionMessagesLoadingNewerByKey.delete(key);
               }
           }
+          this.directSessionOlderCursorBySessionId.delete(sessionId);
+          this.directSessionHasMoreOlderBySessionId.delete(sessionId);
+          this.directSessionTailCursorBySessionId.delete(sessionId);
+      }
+
+      private getDirectSessionServerScope(sessionId: string): string | undefined {
+          return resolvePreferredServerIdForSessionId(sessionId);
+      }
+
+      private createServerScopeGuard(): () => boolean {
+          const generation = this.serverScopeGeneration;
+          return () => this.serverScopeGeneration === generation;
+      }
+
+      private async fetchDirectSessionMessages(
+          sessionId: string,
+          directSessionLink: ReturnType<typeof readDirectSessionLink> extends infer T ? Exclude<T, null> : never,
+      ): Promise<void> {
+          const shouldContinue = this.createServerScopeGuard();
+          const page = await machineDirectSessionTranscriptPage({
+              machineId: directSessionLink.machineId,
+              providerId: directSessionLink.providerId,
+              remoteSessionId: directSessionLink.remoteSessionId,
+              source: directSessionLink.source,
+              direction: 'older',
+          }, { serverId: this.getDirectSessionServerScope(sessionId) });
+          if (!shouldContinue()) return;
+
+          if (!page.ok) {
+              throw new Error(page.error);
+          }
+
+          const normalizedMessages = normalizeDirectTranscriptMessages(page.items);
+          if (normalizedMessages.length > 0) {
+              this.applyMessages(sessionId, normalizedMessages, { notifyVoice: false });
+          }
+
+          this.directSessionOlderCursorBySessionId.set(sessionId, page.nextCursor ?? null);
+          this.directSessionHasMoreOlderBySessionId.set(sessionId, page.hasMore === true);
+          storage.getState().applyMessagesLoaded(sessionId);
+
+          if (typeof page.tailCursor === 'string' && page.tailCursor.trim().length > 0) {
+              this.directSessionTailCursorBySessionId.set(sessionId, page.tailCursor);
+              return;
+          }
+
+          const tail = await machineDirectSessionTranscriptReadAfter({
+              machineId: directSessionLink.machineId,
+              providerId: directSessionLink.providerId,
+              remoteSessionId: directSessionLink.remoteSessionId,
+              source: directSessionLink.source,
+              cursor: 'tail',
+          }, { serverId: this.getDirectSessionServerScope(sessionId) });
+          if (!shouldContinue()) return;
+
+          if (!tail.ok) {
+              throw new Error(tail.error);
+          }
+
+          this.directSessionTailCursorBySessionId.set(sessionId, tail.nextCursor ?? null);
+      }
+
+      private async catchUpDirectSessionMessages(
+          sessionId: string,
+          directSessionLink: ReturnType<typeof readDirectSessionLink> extends infer T ? Exclude<T, null> : never,
+      ): Promise<void> {
+          const shouldContinue = this.createServerScopeGuard();
+          const cursor = this.directSessionTailCursorBySessionId.get(sessionId) ?? 'tail';
+          const tail = await machineDirectSessionTranscriptReadAfter({
+              machineId: directSessionLink.machineId,
+              providerId: directSessionLink.providerId,
+              remoteSessionId: directSessionLink.remoteSessionId,
+              source: directSessionLink.source,
+              cursor,
+          }, { serverId: this.getDirectSessionServerScope(sessionId) });
+          if (!shouldContinue()) return;
+
+          if (!tail.ok) {
+              throw new Error(tail.error);
+          }
+
+          if (tail.truncated === true) {
+              this.resetSessionTranscriptState(sessionId);
+              await this.fetchDirectSessionMessages(sessionId, directSessionLink);
+              return;
+          }
+
+          const normalizedMessages = normalizeDirectTranscriptMessages(tail.items);
+          if (normalizedMessages.length > 0) {
+              this.applyMessages(sessionId, normalizedMessages, { notifyVoice: false });
+          }
+          this.directSessionTailCursorBySessionId.set(sessionId, tail.nextCursor ?? null);
       }
 
       private async loadOlderMessagesForChain(params: Readonly<{
@@ -2440,6 +2663,70 @@ class Sync {
           hasMore: boolean;
           status: 'loaded' | 'no_more' | 'not_ready' | 'in_flight';
       }> {
+          if (params.scope === 'main') {
+              const session = storage.getState().sessions[params.sessionId] ?? null;
+              const directSessionLink = readDirectSessionLink(session?.metadata);
+              if (directSessionLink) {
+                  const loadingKey = `${params.sessionId}:direct`;
+                  if (this.sessionMessagesLoadingOlderByKey.has(loadingKey)) {
+                      return {
+                          loaded: 0,
+                          hasMore: this.directSessionHasMoreOlderBySessionId.get(params.sessionId) ?? true,
+                          status: 'in_flight',
+                      };
+                  }
+
+                  const knownHasMore = this.directSessionHasMoreOlderBySessionId.get(params.sessionId);
+                  if (knownHasMore === false) {
+                      return { loaded: 0, hasMore: false, status: 'no_more' };
+                  }
+
+                  const cursor = this.directSessionOlderCursorBySessionId.get(params.sessionId) ?? null;
+                  if (!cursor) {
+                      return { loaded: 0, hasMore: knownHasMore ?? false, status: 'not_ready' };
+                  }
+
+                  this.sessionMessagesLoadingOlderByKey.add(loadingKey);
+                  try {
+                      const shouldContinue = this.createServerScopeGuard();
+                      const page = await machineDirectSessionTranscriptPage({
+                          machineId: directSessionLink.machineId,
+                          providerId: directSessionLink.providerId,
+                          remoteSessionId: directSessionLink.remoteSessionId,
+                          source: directSessionLink.source,
+                          direction: 'older',
+                          cursor,
+                      }, { serverId: this.getDirectSessionServerScope(params.sessionId) });
+                      if (!shouldContinue()) {
+                          return { loaded: 0, hasMore: knownHasMore ?? true, status: 'not_ready' };
+                      }
+
+                      if (!page.ok) {
+                          throw new Error(page.error);
+                      }
+
+                      const normalizedMessages = normalizeDirectTranscriptMessages(page.items);
+                      if (normalizedMessages.length > 0) {
+                          this.applyMessages(params.sessionId, normalizedMessages, { notifyVoice: false });
+                      }
+
+                      this.directSessionOlderCursorBySessionId.set(params.sessionId, page.nextCursor ?? null);
+                      this.directSessionHasMoreOlderBySessionId.set(params.sessionId, page.hasMore === true);
+
+                      return {
+                          loaded: normalizedMessages.length,
+                          hasMore: page.hasMore === true,
+                          status: page.hasMore === true ? 'loaded' : 'no_more',
+                      };
+                  } catch (error) {
+                      console.error('Failed to load older direct session messages:', error);
+                      return { loaded: 0, hasMore: knownHasMore ?? true, status: 'loaded' };
+                  } finally {
+                      this.sessionMessagesLoadingOlderByKey.delete(loadingKey);
+                  }
+              }
+          }
+
           const pagingKey = this.buildSessionMessagesPaginationKey({
               sessionId: params.sessionId,
               scope: params.scope,
@@ -2477,6 +2764,7 @@ class Sync {
           }
 
           this.sessionMessagesLoadingOlderByKey.add(pagingKey);
+          const requestMessages = this.createSessionMessagesRequest(params.sessionId);
           try {
               const result = await fetchAndApplyOlderMessages({
                   sessionId: params.sessionId,
@@ -2485,8 +2773,8 @@ class Sync {
                   scope: params.scope,
                   sidechainId: params.sidechainId ?? null,
                   getSessionEncryption: (id) => this.encryption.getSessionEncryption(id),
-                  isSessionKnown: (id) => this.isSessionKnownOnActiveServer(id),
-                  request: (path) => apiSocket.request(path),
+                  isSessionKnown: (id) => this.isSessionKnownOnResolvedOwnerServer(id),
+                  request: requestMessages,
                   sessionReceivedMessages: this.sessionReceivedMessages,
                   applyMessages: (sid, messages) => this.applyMessages(sid, messages, { notifyVoice: false }),
                   log,
@@ -2562,14 +2850,15 @@ class Sync {
           }
 
           this.sessionMessagesFetchLatestInFlightByKey.add(pagingKey);
+          const requestMessages = this.createSessionMessagesRequest(normalizedSessionId);
           try {
               await fetchAndApplyMessages({
                   sessionId: normalizedSessionId,
                   scope: 'sidechain',
                   sidechainId: normalizedSidechainId,
                   getSessionEncryption: (id) => this.encryption.getSessionEncryption(id),
-                  isSessionKnown: (id) => this.isSessionKnownOnActiveServer(id),
-                  request: (path) => apiSocket.request(path),
+                  isSessionKnown: (id) => this.isSessionKnownOnResolvedOwnerServer(id),
+                  request: requestMessages,
                   sessionReceivedMessages: this.sessionReceivedMessages,
                   applyMessages: (sid, messages) => this.applyMessages(sid, messages, { notifyVoice: false }),
                   markMessagesLoaded: () => {},
@@ -2736,14 +3025,15 @@ class Sync {
           }
 
           this.sessionMessagesLoadingNewerByKey.add(pagingKey);
+          const requestMessages = this.createSessionMessagesRequest(sessionId);
           try {
               const result = await fetchAndApplyNewerMessages({
                   sessionId,
                   afterSeq,
                   limit: SESSION_MESSAGES_PAGE_SIZE,
                   getSessionEncryption: (id) => this.encryption.getSessionEncryption(id),
-                  isSessionKnown: (id) => this.isSessionKnownOnActiveServer(id),
-                  request: (path) => apiSocket.request(path),
+                  isSessionKnown: (id) => this.isSessionKnownOnResolvedOwnerServer(id),
+                  request: requestMessages,
                   sessionReceivedMessages: this.sessionReceivedMessages,
                   applyMessages: (sid, messages) => this.applyMessages(sid, messages, { notifyVoice: false }),
                   onNormalizedMessages: (messages) => ingestWorkspaceMutationMessages(sessionId, messages),
@@ -2945,6 +3235,7 @@ class Sync {
             invalidateFriendRequests: () => this.friendRequestsSync.invalidate(),
             invalidateFeed: () => this.feedSync.invalidate(),
             invalidateAutomations: () => this.automationsSync.invalidate(),
+            invalidateAutomationsCoalesced: () => this.automationsSync.invalidateCoalesced(),
             invalidateTodos: () => this.todosSync.invalidate(),
             onTaskLifecycleEvent: (sessionId, event) => this.applySessionThinkingFromTaskLifecycle(sessionId, event),
             log,
@@ -2972,20 +3263,12 @@ class Sync {
         if (!sessionId || !localId) return;
 
         const sessionEncryption = this.encryption.getSessionEncryption(sessionId);
-        if (!sessionEncryption) return;
+        const record = await readStoredSessionRawRecord({
+            content: updateData.delta,
+            decryptEncrypted: sessionEncryption ? (ciphertext) => sessionEncryption.decryptRaw(ciphertext) : undefined,
+        });
+        if (!record) return;
 
-        const delta: any = updateData.delta;
-        const rawContent = delta?.t === 'encrypted'
-            ? await sessionEncryption.decryptRaw(delta.c)
-            : delta?.t === 'plain'
-                ? delta.v
-                : null;
-        if (!rawContent) return;
-
-        const parsed = RawRecordSchema.safeParse(rawContent);
-        if (!parsed.success) return;
-
-        const record: RawRecord = parsed.data;
         const deltaText = (() => {
             if (record.role !== 'agent') return null;
             const content: any = (record as any).content;
