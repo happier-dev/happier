@@ -3,6 +3,7 @@ import type { DirectSessionsSource, DirectTranscriptRawMessageV1 } from '@happie
 import { createOpenCodeDirectClient } from './createOpenCodeDirectClient';
 import { mapOpenCodeMessageToDirectItem } from './mapOpenCodeMessageToDirectItem';
 import { encodeOpenCodeDirectAfterCursor } from './openCodeDirectAfterCursor';
+import { measureDirectTranscriptItemBytes } from './measureDirectTranscriptItemBytes';
 
 type OpenCodeBackwardCursorV1 = Readonly<{
   v: 1;
@@ -44,6 +45,7 @@ export async function pageOpenCodeTranscript(params: Readonly<{
 
   try {
     const rawMessages = await client.sessionMessagesList({ sessionId: params.remoteSessionId });
+    const maxBytes = Math.max(1, Math.trunc(params.maxBytes));
     const maxItems = Math.max(1, Math.trunc(params.maxItems));
     const decoded = decodeBackwardCursor(params.cursor);
 
@@ -53,16 +55,34 @@ export async function pageOpenCodeTranscript(params: Readonly<{
     const tailCursor = encodeOpenCodeDirectAfterCursor({ v: 1, kind: 'opencodeAfter', nextIndex: rawMessages.length });
 
     const pageMessages = rawMessages.slice(startIndex, endIndex);
-    const items: DirectTranscriptRawMessageV1[] = [];
-    for (let i = 0; i < pageMessages.length; i++) {
+    const itemsReversed: DirectTranscriptRawMessageV1[] = [];
+    let firstReturnedIndex: number | null = null;
+    let remainingBytes = maxBytes;
+    let truncated = false;
+    for (let i = pageMessages.length - 1; i >= 0; i -= 1) {
       const msg = mapOpenCodeMessageToDirectItem(pageMessages[i], startIndex + i);
       if (!msg) continue;
-      items.push(msg);
+      const itemBytes = measureDirectTranscriptItemBytes(msg);
+      if (itemBytes > remainingBytes) {
+        if (itemsReversed.length === 0) {
+          itemsReversed.push(msg);
+          firstReturnedIndex = startIndex + i;
+          remainingBytes = 0;
+          continue;
+        }
+        truncated = true;
+        break;
+      }
+      itemsReversed.push(msg);
+      firstReturnedIndex = startIndex + i;
+      remainingBytes -= itemBytes;
     }
 
-    const hasMore = startIndex > 0;
-    const nextCursor = hasMore ? encodeBackwardCursor({ v: 1, kind: 'opencodeBackward', endIndex: startIndex }) : null;
-    return { items, nextCursor, tailCursor, hasMore };
+    const items = itemsReversed.reverse();
+    const nextEndIndex = firstReturnedIndex ?? endIndex;
+    const hasMore = nextEndIndex > 0;
+    const nextCursor = hasMore ? encodeBackwardCursor({ v: 1, kind: 'opencodeBackward', endIndex: nextEndIndex }) : null;
+    return { items, nextCursor, tailCursor, hasMore, ...(truncated ? { truncated } : {}) };
   } finally {
     await client.dispose().catch(() => {});
   }

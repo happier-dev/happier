@@ -1,3 +1,4 @@
+import { buildOpenCodeAgentRuntimeDescriptor } from '@happier-dev/agents';
 import type { DirectSessionCandidateV1, DirectSessionsSource } from '@happier-dev/protocol';
 
 import { deriveDirectSessionActivityFromTimestamp } from '@/api/directSessions/activity/deriveDirectSessionActivityFromTimestamp';
@@ -53,9 +54,21 @@ export async function listOpenCodeSessionCandidates(params: Readonly<{
       const activity = isOpenCodeSessionBusy(statuses[parsed.remoteSessionId])
         ? 'running'
         : deriveDirectSessionActivityFromTimestamp({ updatedAtMs: parsed.updatedAtMs });
+      const serverBaseUrl = params.source.kind === 'opencodeServer' && typeof params.source.baseUrl === 'string' && params.source.baseUrl.trim().length > 0
+        ? params.source.baseUrl.trim()
+        : null;
       candidates.push({
         ...parsed,
         activity,
+        details: {
+          ...(parsed.details ?? {}),
+          agentRuntimeDescriptorV1: buildOpenCodeAgentRuntimeDescriptor({
+            backendMode: 'server',
+            vendorSessionId: parsed.remoteSessionId,
+            ...(serverBaseUrl ? { serverBaseUrl } : {}),
+            ...(serverBaseUrl ? { serverBaseUrlExplicit: true } : {}),
+          }),
+        },
       });
     }
 

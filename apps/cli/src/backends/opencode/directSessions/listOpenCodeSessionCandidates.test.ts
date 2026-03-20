@@ -73,13 +73,47 @@ describe('listOpenCodeSessionCandidates', () => {
       remoteSessionId: 's2',
       updatedAtMs: updated2,
       activity: 'running',
-      details: { path: '/tmp/opencode-second' },
+      details: {
+        path: '/tmp/opencode-second',
+        agentRuntimeDescriptorV1: {
+          v: 1,
+          providerId: 'opencode',
+          provider: {
+            backendMode: 'server',
+            vendorSessionId: 's2',
+            providerExtra: {
+              v: 1,
+              runtimeHandle: {
+                backendMode: 'server',
+                vendorSessionId: 's2',
+              },
+            },
+          },
+        },
+      },
     });
     expect(first.candidates[1]).toMatchObject({
       remoteSessionId: 's1',
       updatedAtMs: updated1,
       activity: 'idle',
-      details: { path: '/tmp/opencode-first' },
+      details: {
+        path: '/tmp/opencode-first',
+        agentRuntimeDescriptorV1: {
+          v: 1,
+          providerId: 'opencode',
+          provider: {
+            backendMode: 'server',
+            vendorSessionId: 's1',
+            providerExtra: {
+              v: 1,
+              runtimeHandle: {
+                backendMode: 'server',
+                vendorSessionId: 's1',
+              },
+            },
+          },
+        },
+      },
     });
     expect(first.nextCursor).toBeTruthy();
 
