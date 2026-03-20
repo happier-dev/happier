@@ -121,7 +121,26 @@ describe('describeEffectivePermissionMode', () => {
         expect(reasonCodes(res)).toContain('mcp_sandbox_restrictions_apply_on_spawn');
     });
 
-    it('does not emit MCP spawn restriction reason when ACP metadata is present (even if malformed)', () => {
+    it('does not emit MCP spawn restriction reason when generic session-control metadata is present', () => {
+        const res = describeEffectivePermissionMode({
+            agentType: 'codex',
+            selectedMode: 'default',
+            metadata: buildMetadata({
+                sessionModesV1: {
+                    v: 1,
+                    provider: 'unexpected-provider',
+                    updatedAt: 1,
+                    currentModeId: 'default',
+                    availableModes: [],
+                },
+            }),
+            applyTiming: 'immediate',
+        });
+
+        expect(reasonCodes(res)).not.toContain('mcp_sandbox_restrictions_apply_on_spawn');
+    });
+
+    it('falls back to legacy ACP metadata keys when generic session-control keys are absent', () => {
         const res = describeEffectivePermissionMode({
             agentType: 'codex',
             selectedMode: 'default',
