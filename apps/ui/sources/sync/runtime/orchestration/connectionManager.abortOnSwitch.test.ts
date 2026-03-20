@@ -6,9 +6,11 @@ afterEach(() => {
 });
 
 describe('switchConnectionToActiveServer', () => {
-    it('aborts in-flight server fetches before switching sync server', async () => {
+    it('uses server-scoped credentials for the active server when switching sync server', async () => {
         const abortSpy = vi.fn();
         const syncSwitchServerSpy = vi.fn(async (_credentials: { token: string; secret: string }) => {});
+        const getCredentialsSpy = vi.fn(async () => null);
+        const getCredentialsForServerUrlSpy = vi.fn(async () => ({ token: 'scoped-token', secret: 'scoped-secret' }));
 
         vi.doMock('@/sync/domains/server/serverRuntime', () => ({
             getActiveServerSnapshot: () => ({
@@ -20,7 +22,46 @@ describe('switchConnectionToActiveServer', () => {
         }));
         vi.doMock('@/auth/storage/tokenStorage', () => ({
             TokenStorage: {
-                getCredentials: vi.fn(async () => ({ token: 't', secret: 's' })),
+                getCredentials: getCredentialsSpy,
+                getCredentialsForServerUrl: getCredentialsForServerUrlSpy,
+            },
+        }));
+        vi.doMock('@/sync/sync', () => ({
+            syncSwitchServer: syncSwitchServerSpy,
+        }));
+        vi.doMock('@/sync/http/client', () => ({
+            abortServerFetches: abortSpy,
+        }));
+
+        const { switchConnectionToActiveServer } = await import('./connectionManager');
+        await expect(switchConnectionToActiveServer()).resolves.toEqual({
+            token: 'scoped-token',
+            secret: 'scoped-secret',
+        });
+
+        expect(getCredentialsForServerUrlSpy).toHaveBeenCalledWith('https://api.example.test', { serverId: 'server-a' });
+        expect(getCredentialsSpy).not.toHaveBeenCalled();
+        expect(syncSwitchServerSpy).toHaveBeenCalledWith({ token: 'scoped-token', secret: 'scoped-secret' });
+    });
+
+    it('aborts in-flight server fetches before switching sync server', async () => {
+        const abortSpy = vi.fn();
+        const syncSwitchServerSpy = vi.fn(async (_credentials: { token: string; secret: string }) => {});
+        const getCredentialsSpy = vi.fn(async () => ({ token: 'fallback', secret: 'fallback-secret' }));
+        const getCredentialsForServerUrlSpy = vi.fn(async () => ({ token: 't', secret: 's' }));
+
+        vi.doMock('@/sync/domains/server/serverRuntime', () => ({
+            getActiveServerSnapshot: () => ({
+                serverId: 'server-a',
+                serverUrl: 'https://api.example.test',
+                kind: 'custom',
+                generation: 42,
+            }),
+        }));
+        vi.doMock('@/auth/storage/tokenStorage', () => ({
+            TokenStorage: {
+                getCredentials: getCredentialsSpy,
+                getCredentialsForServerUrl: getCredentialsForServerUrlSpy,
             },
         }));
         vi.doMock('@/sync/sync', () => ({
@@ -33,6 +74,8 @@ describe('switchConnectionToActiveServer', () => {
         const { switchConnectionToActiveServer } = await import('./connectionManager');
         await switchConnectionToActiveServer();
 
+        expect(getCredentialsForServerUrlSpy).toHaveBeenCalledWith('https://api.example.test', { serverId: 'server-a' });
+        expect(getCredentialsSpy).not.toHaveBeenCalled();
         expect(abortSpy).toHaveBeenCalledTimes(1);
         expect(syncSwitchServerSpy).toHaveBeenCalledTimes(1);
     });
@@ -42,6 +85,12 @@ describe('switchConnectionToActiveServer', () => {
         const abortSpy = vi.fn();
         const deferred: { resolve: (() => void) | null } = { resolve: null };
         let syncCallCount = 0;
+        const getCredentialsSpy = vi.fn(async () => null);
+        const getCredentialsForServerUrlSpy = vi.fn(async (serverUrl: string) =>
+            serverUrl === 'https://a.example.test'
+                ? { token: 'token-a', secret: 's' }
+                : { token: 'token-b', secret: 's' },
+        );
         const syncSwitchServerSpy = vi.fn(async (_credentials: { token: string; secret: string }) => {
             syncCallCount += 1;
             if (syncCallCount > 1) return;
@@ -60,8 +109,8 @@ describe('switchConnectionToActiveServer', () => {
         }));
         vi.doMock('@/auth/storage/tokenStorage', () => ({
             TokenStorage: {
-                getCredentials: vi.fn(async () =>
-                    generation === 1 ? { token: 'token-a', secret: 's' } : { token: 'token-b', secret: 's' }),
+                getCredentials: getCredentialsSpy,
+                getCredentialsForServerUrl: getCredentialsForServerUrlSpy,
             },
         }));
         vi.doMock('@/sync/sync', () => ({
@@ -86,6 +135,9 @@ describe('switchConnectionToActiveServer', () => {
 
         expect(abortSpy).toHaveBeenCalledTimes(2);
         expect(syncSwitchServerSpy).toHaveBeenCalledTimes(2);
+        expect(getCredentialsForServerUrlSpy).toHaveBeenNthCalledWith(1, 'https://a.example.test', { serverId: 'server-a' });
+        expect(getCredentialsForServerUrlSpy).toHaveBeenNthCalledWith(2, 'https://b.example.test', { serverId: 'server-b' });
+        expect(getCredentialsSpy).not.toHaveBeenCalled();
         expect(syncSwitchServerSpy.mock.calls.at(-1)?.[0]).toEqual({ token: 'token-b', secret: 's' });
     });
 });
