@@ -6,6 +6,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 const alertSpy = vi.fn(async () => {});
 const confirmSpy = vi.fn(async () => true);
+const applySettingsSpy = vi.fn(async () => {});
 
 vi.mock('expo-router', () => ({
   useRouter: () => ({ back: vi.fn(), push: vi.fn() }),
@@ -54,6 +55,10 @@ vi.mock('@/sync/sync', () => ({
   sync: { refreshProfile: vi.fn(async () => {}), applySettings: vi.fn(async () => {}) },
 }));
 
+vi.mock('@/sync/store/settingsWriters', () => ({
+  useApplySettings: () => applySettingsSpy,
+}));
+
 const deleteSpy = vi.fn(async () => {
   throw new Error('boom');
 });
@@ -93,4 +98,3 @@ describe('ConnectedServiceDetailView disconnect error handling', () => {
     expect(alertSpy).toHaveBeenCalled();
   });
 });
-

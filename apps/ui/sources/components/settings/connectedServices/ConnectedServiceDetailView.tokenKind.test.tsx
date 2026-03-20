@@ -8,6 +8,7 @@ const backSpy = vi.fn();
 const promptSpy = vi.fn<() => Promise<string | null>>(async () => null);
 const alertSpy = vi.fn(async () => {});
 const storeCredentialSpy = vi.fn(async () => {});
+const applySettingsSpy = vi.fn(async () => {});
 
 vi.mock('expo-router', () => ({
   useRouter: () => ({ back: backSpy, push: vi.fn() }),
@@ -53,6 +54,10 @@ vi.mock('@/sync/store/hooks', async () => {
 
 vi.mock('@/sync/sync', () => ({
   sync: { refreshProfile: vi.fn(async () => {}), applySettings: vi.fn(async () => {}) },
+}));
+
+vi.mock('@/sync/store/settingsWriters', () => ({
+  useApplySettings: () => applySettingsSpy,
 }));
 
 vi.mock('@/sync/domains/connectedServices/storeConnectedServiceCredentialForAccount', () => ({

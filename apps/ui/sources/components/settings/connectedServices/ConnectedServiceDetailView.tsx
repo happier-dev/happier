@@ -10,8 +10,8 @@ import { Modal } from '@/modal';
 import { t } from '@/text';
 import { useAuth } from '@/auth/context/AuthContext';
 import { sync } from '@/sync/sync';
-import { useProfile } from '@/sync/store/hooks';
-import { useSettings } from '@/sync/store/hooks';
+import { useProfile, useSettings } from '@/sync/store/hooks';
+import { useApplySettings } from '@/sync/store/settingsWriters';
 import { deleteConnectedServiceCredentialForAccount, storeConnectedServiceCredentialForAccount } from '@/sync/domains/connectedServices/storeConnectedServiceCredentialForAccount';
 import { getConnectedServiceRegistryEntry } from '@/sync/domains/connectedServices/connectedServiceRegistry';
 import { connectedServiceProfileKey, resolveConnectedServiceProfileLabel } from '@/sync/domains/connectedServices/connectedServiceProfilePreferences';
@@ -44,13 +44,14 @@ export const ConnectedServiceDetailView = React.memo(function ConnectedServiceDe
   const quotasEnabled = useFeatureEnabled('connectedServices.quotas');
   const profile = useProfile();
   const settings = useSettings();
+  const applySettings = useApplySettings();
   const [quotaSnapshotsByKey, setQuotaSnapshotsByKey] = React.useState<Record<string, ConnectedServiceQuotaSnapshotV1 | null>>({});
 
   const rawServiceId = asStringParam((params as Record<string, unknown>).serviceId).trim();
   const parsedServiceId = ConnectedServiceIdSchema.safeParse(rawServiceId);
   const serviceId: ConnectedServiceId | null = parsedServiceId.success ? parsedServiceId.data : null;
   const entry = serviceId ? getConnectedServiceRegistryEntry(serviceId) : null;
-  const serviceLabel = serviceId ? resolveConnectedServiceDisplayName(serviceId) : t('connectedServices.fallbackName');
+  const serviceLabel = serviceId ? resolveConnectedServiceDisplayName(serviceId, t) : t('connectedServices.fallbackName');
 
   const services = profile.connectedServicesV2;
   const svc = serviceId ? (services.find((s) => s.serviceId === serviceId) ?? null) : null;
@@ -214,7 +215,7 @@ export const ConnectedServiceDetailView = React.memo(function ConnectedServiceDe
       );
       return;
     }
-    await sync.applySettings({ connectedServicesDefaultProfileByServiceId: nextMap });
+    applySettings({ connectedServicesDefaultProfileByServiceId: nextMap });
   };
 
   const handleEditProfileLabel = async (profileId: string) => {
@@ -252,7 +253,7 @@ export const ConnectedServiceDetailView = React.memo(function ConnectedServiceDe
     if (trimmed) nextMap[key] = trimmed;
     else delete nextMap[key];
 
-    await sync.applySettings({ connectedServicesProfileLabelByKey: nextMap });
+    applySettings({ connectedServicesProfileLabelByKey: nextMap });
   };
 
   const setPinnedQuotaMeters = async (profileId: string, nextPinned: ReadonlyArray<string>) => {
@@ -264,7 +265,7 @@ export const ConnectedServiceDetailView = React.memo(function ConnectedServiceDe
     } else {
       nextMap[key] = [...nextPinned];
     }
-    await sync.applySettings({ connectedServicesQuotaPinnedMeterIdsByKey: nextMap });
+    applySettings({ connectedServicesQuotaPinnedMeterIdsByKey: nextMap });
   };
 
   if (!connectedServicesEnabled) {

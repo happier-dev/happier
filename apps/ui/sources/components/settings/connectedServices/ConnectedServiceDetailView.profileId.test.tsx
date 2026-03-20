@@ -18,12 +18,17 @@ vi.mock('@/auth/context/AuthContext', () => ({
 
 const promptSpy = vi.fn(async () => 'work/bad');
 const alertSpy = vi.fn(async () => {});
+const applySettingsSpy = vi.fn(async () => {});
 vi.mock('@/modal', () => ({
   Modal: {
     prompt: promptSpy,
     alert: alertSpy,
     confirm: vi.fn(async () => false),
   },
+}));
+
+vi.mock('@/sync/store/settingsWriters', () => ({
+  useApplySettings: () => applySettingsSpy,
 }));
 
 let connectedServicesEnabled = true;

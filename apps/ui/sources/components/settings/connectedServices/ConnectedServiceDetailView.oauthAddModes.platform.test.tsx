@@ -5,6 +5,7 @@ import { describe, expect, it, vi, afterEach } from 'vitest';
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 const pushSpy = vi.fn();
+const applySettingsSpy = vi.fn(async () => {});
 
 vi.mock('expo-router', () => ({
   useRouter: () => ({ back: vi.fn(), push: pushSpy }),
@@ -51,6 +52,10 @@ vi.mock('@/sync/store/hooks', async () => {
 
 vi.mock('@/sync/sync', () => ({
   sync: { refreshProfile: vi.fn(async () => {}), applySettings: vi.fn(async () => {}) },
+}));
+
+vi.mock('@/sync/store/settingsWriters', () => ({
+  useApplySettings: () => applySettingsSpy,
 }));
 
 vi.mock('@/sync/domains/connectedServices/storeConnectedServiceCredentialForAccount', () => ({
