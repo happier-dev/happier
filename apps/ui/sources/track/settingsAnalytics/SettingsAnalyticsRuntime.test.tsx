@@ -21,6 +21,8 @@ const { trackingMock, analyticsRuntimeState } = vi.hoisted(() => ({
         },
     },
 }));
+const trackingIdentityListeners = new Set<() => void>();
+let trackingAnonymousUserId = 'anon-user';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -50,7 +52,11 @@ vi.mock('@/sync/domains/features/featureDecisionRuntime', async (importOriginal)
 });
 
 vi.mock('@/track', () => ({
-    getTrackingAnonymousUserId: () => 'anon-user',
+    getTrackingAnonymousUserId: () => trackingAnonymousUserId,
+    subscribeTrackingAnonymousUserId: (listener: () => void) => {
+        trackingIdentityListeners.add(listener);
+        return () => trackingIdentityListeners.delete(listener);
+    },
 }));
 
 vi.mock('expo-constants', () => ({
@@ -63,6 +69,8 @@ import { SettingsAnalyticsRuntime } from './SettingsAnalyticsRuntime';
 
 describe('SettingsAnalyticsRuntime', () => {
     beforeEach(() => {
+        trackingAnonymousUserId = 'anon-user';
+        trackingIdentityListeners.clear();
         analyticsRuntimeState.settings = {
             ...settingsDefaults,
             analyticsOptOut: false,
@@ -145,5 +153,40 @@ describe('SettingsAnalyticsRuntime', () => {
         expect(trackingMock.identify).toHaveBeenCalledTimes(1);
         expect(trackingMock.group).toHaveBeenCalledTimes(1);
         expect(trackingMock.flush).toHaveBeenCalledTimes(1);
+    });
+
+    it('resets cached snapshots when the tracking identity changes', async () => {
+        trackingMock.identify.mockReset();
+        trackingMock.group.mockReset();
+        trackingMock.flush.mockReset();
+        trackingMock.flush.mockResolvedValue(undefined);
+
+        let tree: renderer.ReactTestRenderer;
+        await act(async () => {
+            tree = renderer.create(<SettingsAnalyticsRuntime />);
+        });
+
+        trackingAnonymousUserId = 'anon-user-2';
+        await act(async () => {
+            trackingIdentityListeners.forEach((listener) => listener());
+            tree!.update(<SettingsAnalyticsRuntime />);
+        });
+
+        expect(trackingMock.identify).toHaveBeenNthCalledWith(
+            2,
+            'anon-user-2',
+            expect.objectContaining({
+                acct_setting__analyticsOptOut: false,
+            }),
+        );
+        expect(trackingMock.group).toHaveBeenNthCalledWith(
+            2,
+            'device_user',
+            'anon-user-2:install-123',
+            expect.objectContaining({
+                local_setting__themePreference: 'dark',
+            }),
+        );
+        expect(trackingMock.flush).toHaveBeenCalledTimes(2);
     });
 });
