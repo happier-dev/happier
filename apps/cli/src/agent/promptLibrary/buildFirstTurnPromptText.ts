@@ -1,23 +1,19 @@
 export function buildFirstTurnPromptText(args: Readonly<{
   isFirstTurn: boolean;
   userText: string;
-  appendSystemPrompt?: string | null;
-  fallbackAppendSystemPrompt?: string | null;
+  systemPromptText?: string | null;
 }>): { prompt: string; nextIsFirstTurn: boolean } {
   if (!args.isFirstTurn) {
     return { prompt: args.userText, nextIsFirstTurn: false };
   }
 
-  const appendSystemPromptSource = args.appendSystemPrompt === undefined
-    ? args.fallbackAppendSystemPrompt
-    : args.appendSystemPrompt;
-  const append = typeof appendSystemPromptSource === 'string' ? appendSystemPromptSource.trim() : '';
-  if (!append) {
+  const systemPromptText = typeof args.systemPromptText === 'string' ? args.systemPromptText.trim() : '';
+  if (!systemPromptText) {
     return { prompt: args.userText, nextIsFirstTurn: true };
   }
 
   return {
-    prompt: `${append}\n\n${args.userText}`,
+    prompt: `${systemPromptText}\n\n${args.userText}`,
     nextIsFirstTurn: false,
   };
 }
