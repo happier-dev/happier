@@ -1,12 +1,9 @@
 import React from 'react';
-import { Pressable } from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
 
 import { Modal } from '@/modal';
 import { t } from '@/text';
-import { normalizeNodeForView } from '@/components/ui/rendering/normalizeNodeForView';
-import type { AgentInputExtraActionChip } from '@/components/sessions/agentInput/AgentInput';
-import { AgentInputChipLabel } from '@/components/sessions/agentInput/components/AgentInputChipLabel';
+import type { AgentInputExtraActionChip } from '@/components/sessions/agentInput/agentInputContracts';
+import { createConnectedServicesAuthActionChip } from '@/components/sessions/agentInput/definitions/createConnectedServicesAuthActionChip';
 import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
 import { useProfile } from '@/sync/store/hooks';
 import type { ConnectedServiceId } from '@happier-dev/agents';
@@ -105,33 +102,18 @@ export function useNewSessionConnectedServices(params: Readonly<{
     supportedConnectedServiceIds,
   ]);
 
-    const connectedServicesAuthChip = React.useMemo<AgentInputExtraActionChip | null>(() => {
+  const connectedServicesAuthChip = React.useMemo<AgentInputExtraActionChip | null>(() => {
         if (supportedConnectedServiceIds.length === 0) return null;
         const connectedCount = supportedConnectedServiceIds.filter(
             (serviceId) => connectedServicesBindingsByServiceId[serviceId]?.source === 'connected',
         ).length;
-    const label = t('connectedServices.authChip.label');
-    return {
-      key: 'new-session-connected-services-auth',
-      render: ({ chipStyle, iconColor, showLabel, textStyle, countTextStyle }) => (
-        <Pressable
-          onPress={openConnectedServicesAuthModal}
-          hitSlop={{ top: 5, bottom: 10, left: 0, right: 0 }}
-          style={(p) => chipStyle(p.pressed)}
-        >
-          {normalizeNodeForView(<Ionicons name="key-outline" size={16} color={iconColor} />)}
-          {showLabel ? (
-            <AgentInputChipLabel
-              label={label}
-              count={connectedCount}
-              textStyle={textStyle}
-              countTextStyle={countTextStyle}
-            />
-          ) : null}
-        </Pressable>
-      ),
-    };
-  }, [connectedServicesBindingsByServiceId, openConnectedServicesAuthModal, supportedConnectedServiceIds]);
+        const label = t('connectedServices.authChip.label');
+        return createConnectedServicesAuthActionChip({
+            label,
+            connectedCount,
+            onPress: openConnectedServicesAuthModal,
+        });
+    }, [connectedServicesBindingsByServiceId, openConnectedServicesAuthModal, supportedConnectedServiceIds]);
 
   return { connectedServicesBindingsPayload, connectedServicesAuthChip };
 }

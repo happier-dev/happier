@@ -1,13 +1,10 @@
 import React from 'react';
-import { Pressable } from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
 
 import type { AgentId } from '@/agents/catalog/catalog';
-import type { AgentInputExtraActionChip } from '@/components/sessions/agentInput/AgentInput';
-import { AgentInputChipLabel } from '@/components/sessions/agentInput/components/AgentInputChipLabel';
+import type { AgentInputExtraActionChip } from '@/components/sessions/agentInput/agentInputContracts';
+import { createMcpActionChip } from '@/components/sessions/agentInput/definitions/createMcpActionChip';
 import { NewSessionMcpSelectionModal } from '@/components/sessions/new/components/NewSessionMcpSelectionModal';
 import { countSelectedSessionMcpPreviewEntries } from '@/components/sessions/new/modules/sessionMcpSelectionState';
-import { normalizeNodeForView } from '@/components/ui/rendering/normalizeNodeForView';
 import { Text } from '@/components/ui/text/Text';
 import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
 import { Modal } from '@/modal';
@@ -171,27 +168,11 @@ export function useNewSessionMcpSelection(params: Readonly<{
     const mcpChip = React.useMemo<AgentInputExtraActionChip | null>(() => {
         if (!mcpServersEnabled) return null;
 
-        return {
-            key: 'new-session-mcp',
-            render: ({ chipStyle, iconColor, showLabel, textStyle, countTextStyle }) => (
-                <Pressable
-                    testID="new-session-mcp-chip"
-                    onPress={openMcpModal}
-                    hitSlop={{ top: 5, bottom: 10, left: 0, right: 0 }}
-                    style={(p) => chipStyle(p.pressed)}
-                >
-                    {normalizeNodeForView(<Ionicons name="server-outline" size={16} color={iconColor} />)}
-                    {showLabel ? (
-                        <AgentInputChipLabel
-                            label={chipLabel}
-                            count={selectedCount}
-                            textStyle={textStyle}
-                            countTextStyle={countTextStyle}
-                        />
-                    ) : null}
-                </Pressable>
-            ),
-        };
+        return createMcpActionChip({
+            label: chipLabel,
+            selectedCount,
+            onPress: openMcpModal,
+        });
     }, [chipLabel, mcpServersEnabled, openMcpModal, selectedCount]);
 
     return { mcpChip, mcpPreview, mcpPreviewLoading };

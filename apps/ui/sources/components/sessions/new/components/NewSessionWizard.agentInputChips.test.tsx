@@ -1,0 +1,378 @@
+import * as React from 'react';
+import { describe, expect, it, vi } from 'vitest';
+import renderer, { act } from 'react-test-renderer';
+
+(globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
+
+const AgentInputMock = vi.fn((_props: any) => null);
+const ProfilesListMock = vi.fn((_props: any) => null);
+const EnvironmentVariablesPreviewPanelMock = vi.fn((_props: any) => null);
+
+vi.mock('react-native', () => ({
+    View: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
+        React.createElement('View', props, props.children),
+    Text: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
+        React.createElement('Text', props, props.children),
+    Pressable: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
+        React.createElement('Pressable', props, props.children),
+    ScrollView: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
+        React.createElement('ScrollView', props, props.children),
+    Platform: { OS: 'web', select: (value: any) => value.web ?? value.default ?? null },
+    Dimensions: { get: () => ({ width: 800, height: 600, scale: 1, fontScale: 1 }) },
+}));
+
+vi.mock('react-native-keyboard-controller', () => ({
+    KeyboardAvoidingView: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
+        React.createElement('KeyboardAvoidingView', props, props.children),
+}));
+
+vi.mock('expo-linear-gradient', () => ({
+    LinearGradient: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
+        React.createElement('LinearGradient', props, props.children),
+}));
+
+vi.mock('color', () => ({
+    default: () => ({
+        alpha: () => ({ rgb: () => ({ string: () => 'rgba(0,0,0,0.08)' }) }),
+    }),
+}));
+
+vi.mock('@expo/vector-icons', () => ({
+    Ionicons: () => React.createElement('Ionicons'),
+}));
+
+vi.mock('@/text', () => ({
+    t: (key: string) => key,
+}));
+
+vi.mock('@/components/ui/lists/Item', () => ({
+    Item: () => null,
+}));
+
+vi.mock('@/components/ui/lists/ItemGroup', () => ({
+    ItemGroup: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
+        React.createElement('ItemGroup', props, props.children),
+}));
+
+vi.mock('@/components/sessions/agentInput', () => ({
+    AgentInput: AgentInputMock,
+}));
+
+vi.mock('@/components/sessions/attachments/AttachmentFilePicker', () => ({
+    AttachmentFilePicker: () => null,
+}));
+
+vi.mock('@/components/sessions/attachments/useAttachmentsUploadConfig', () => ({
+    useAttachmentsUploadConfig: () => ({ maxFileBytes: 1 }),
+}));
+
+vi.mock('@/components/sessions/attachments/useAttachmentDraftManager', () => ({
+    useAttachmentDraftManager: () => ({
+        filePickerRef: { current: null },
+        drafts: [],
+        hasSendableAttachments: false,
+        agentInputAttachments: [],
+        addWebFiles: () => {},
+        addPickedAttachments: () => {},
+        applyDraftPatch: () => {},
+        clearDrafts: () => {},
+    }),
+}));
+
+vi.mock('@/components/sessions/attachments/uploadAttachmentDraftsToSession', () => ({
+    uploadAttachmentDraftsToSession: vi.fn(),
+    formatAttachmentsBlock: vi.fn(() => ''),
+}));
+
+vi.mock('@/hooks/server/useFeatureEnabled', () => ({
+    useFeatureEnabled: () => false,
+}));
+
+vi.mock('@/sync/sync', () => ({
+    sync: { sendMessage: vi.fn() },
+}));
+
+vi.mock('@/modal', () => ({
+    Modal: { alert: vi.fn(), confirm: vi.fn() },
+}));
+
+vi.mock('@/components/profiles/ProfilesList', () => ({
+    ProfilesList: ProfilesListMock,
+}));
+
+vi.mock('@/components/sessions/new/components/EnvironmentVariablesPreviewPanel', () => ({
+    EnvironmentVariablesPreviewPanel: EnvironmentVariablesPreviewPanelMock,
+}));
+
+vi.mock('@/components/sessions/new/components/MachineSelector', () => ({
+    MachineSelector: () => null,
+}));
+
+vi.mock('@/components/sessions/new/components/PathSelector', () => ({
+    PathSelector: () => null,
+}));
+
+function buildProps() {
+    const openProfileEnvVarsPreview = vi.fn();
+    return {
+        layout: {
+            theme: {
+                colors: {
+                    divider: '#ddd',
+                    shadow: { color: '#000' },
+                    groupped: { background: '#fff' },
+                    text: '#000',
+                    textSecondary: '#666',
+                    input: { background: '#fff' },
+                    button: { secondary: { tint: '#000' } },
+                    warning: '#d97706',
+                    box: { warning: { background: '#fff8e1', border: '#f5d38f' } },
+                    status: { connected: '#22c55e' },
+                },
+            } as any,
+            styles: {} as any,
+            safeAreaBottom: 0,
+            headerHeight: 44,
+            newSessionSidePadding: 0,
+            newSessionBottomPadding: 0,
+        },
+        profiles: {
+            useProfiles: true,
+            profiles: [{ id: 'profile-1', name: 'Work', compatibility: {}, compatibilityByTargetKey: {}, environmentVariables: [], isBuiltIn: false }],
+            favoriteProfileIds: [],
+            setFavoriteProfileIds: () => {},
+            selectedProfileId: 'profile-1',
+            onPressDefaultEnvironment: () => {},
+            onPressProfile: () => {},
+            selectedMachineId: 'machine-1',
+            getProfileDisabled: () => false,
+            getProfileSubtitleExtra: () => null,
+            handleAddProfile: () => {},
+            openProfileEdit: () => {},
+            handleDuplicateProfile: () => {},
+            handleDeleteProfile: () => {},
+            openProfileEnvVarsPreview,
+            suppressNextSecretAutoPromptKeyRef: { current: null },
+            openSecretRequirementModal: () => {},
+            profilesGroupTitles: { favorites: '', custom: '', builtIn: '' },
+            getSecretOverrideReady: () => false,
+            getSecretSatisfactionForProfile: () => ({ isSatisfied: true, hasSecretRequirements: false, items: [] }),
+            getSecretMachineEnvOverride: () => null,
+            secretBindingsByProfileId: {},
+            selectedSecretIdByProfileIdByEnvVarName: {},
+            setSecretBindingChoice: () => {},
+            setSessionOnlySecretValueEnc: () => {},
+        } as any,
+        agent: {
+            cliAvailability: { available: true },
+            tmuxRequested: false,
+            enabledAgentIds: ['codex'],
+            isAgentSelectable: () => true,
+            isCliBannerDismissed: () => true,
+            dismissCliBanner: () => {},
+            agentType: 'codex',
+            setAgentType: () => {},
+            selectedIndicatorColor: '#000',
+            profileMap: new Map([['profile-1', { id: 'profile-1', name: 'Work', compatibility: {}, compatibilityByTargetKey: {}, environmentVariables: [], isBuiltIn: false }]]),
+            permissionMode: 'default',
+            handlePermissionModeChange: () => {},
+            modelOptions: [{ value: 'default', label: 'Default', description: '' }],
+            modelMode: 'default',
+            setModelMode: () => {},
+        } as any,
+        machine: {
+            machines: [],
+            serverId: null,
+            selectedMachine: { metadata: { displayName: 'Machine 1', host: 'machine-1.local' } } as any,
+            recentMachines: [],
+            favoriteMachineItems: [],
+            useMachinePickerSearch: false,
+            onRefreshMachines: () => {},
+            setSelectedMachineId: () => {},
+            getBestPathForMachine: () => '',
+            setSelectedPath: () => {},
+            favoriteMachines: [],
+            setFavoriteMachines: () => {},
+            selectedPath: '',
+            recentPaths: [],
+            usePathPickerSearch: false,
+            favoriteDirectories: [],
+            setFavoriteDirectories: () => {},
+        },
+        footer: {
+            sessionPrompt: '',
+            setSessionPrompt: () => {},
+            handleCreateSession: () => {},
+            canCreate: true,
+            isCreating: false,
+            emptyAutocompletePrefixes: [],
+            emptyAutocompleteSuggestions: async () => [],
+            selectedProfileEnvVarsCount: 2,
+            envVarsPopover: {
+                renderContent: () => null,
+            },
+            agentInputExtraActionChips: [],
+        } as any,
+    };
+}
+
+describe('NewSessionWizard agent input chips', () => {
+    it('passes engine picker popover props to AgentInput instead of the legacy agent click handler', async () => {
+        const { NewSessionWizard } = await import('./NewSessionWizard');
+        const onAgentPickerSelect = vi.fn();
+
+        AgentInputMock.mockClear();
+
+        await act(async () => {
+            renderer.create(React.createElement(NewSessionWizard, {
+                ...buildProps(),
+                agent: {
+                    ...buildProps().agent,
+                    agentPickerTitle: 'Select engine',
+                    agentPickerOptions: [
+                        { id: 'agent:claude', label: 'Claude' },
+                        { id: 'agent:codex', label: 'Codex' },
+                    ],
+                    agentPickerSelectedOptionId: 'agent:claude',
+                    onAgentPickerSelect,
+                },
+            } as any));
+        });
+
+        expect(AgentInputMock).toHaveBeenCalled();
+        const props = (AgentInputMock.mock.calls[0]?.[0] ?? {}) as any;
+
+        expect(props.agentPickerTitle).toBe('Select engine');
+        expect(props.agentPickerSelectedOptionId).toBe('agent:claude');
+        expect(props.agentPickerOptions).toEqual([
+            { id: 'agent:claude', label: 'Claude' },
+            { id: 'agent:codex', label: 'Codex' },
+        ]);
+        expect(props.onAgentPickerSelect).toBe(onAgentPickerSelect);
+        expect(props.onAgentClick).toBeUndefined();
+    });
+
+    it('passes Profile and Env popover configs to AgentInput instead of legacy click handlers', async () => {
+        const { NewSessionWizard } = await import('./NewSessionWizard');
+
+        AgentInputMock.mockClear();
+        ProfilesListMock.mockClear();
+        EnvironmentVariablesPreviewPanelMock.mockClear();
+
+        await act(async () => {
+            renderer.create(React.createElement(NewSessionWizard, buildProps() as any));
+        });
+
+        expect(AgentInputMock).toHaveBeenCalled();
+        const props = (AgentInputMock.mock.calls[0]?.[0] ?? {}) as any;
+
+        expect(props.profilePopover).toBeTruthy();
+        expect(typeof props.profilePopover?.renderContent).toBe('function');
+        expect(props.onProfileClick).toBeUndefined();
+
+        expect(props.envVarsPopover).toBeTruthy();
+        expect(typeof props.envVarsPopover?.renderContent).toBe('function');
+        expect(props.onEnvVarsClick).toBeUndefined();
+    });
+
+    it('passes ACP config probe props through to AgentInput for the wizard action menu popover', async () => {
+        const { NewSessionWizard } = await import('./NewSessionWizard');
+        const props = buildProps();
+        props.agent.acpConfigOptionsProbe = { phase: 'idle', onRefresh: vi.fn() };
+        props.agent.acpConfigOptions = [
+            {
+                id: 'speed',
+                name: 'Speed',
+                type: 'select',
+                currentValue: 'standard',
+                options: [
+                    { value: 'standard', name: 'Standard' },
+                    { value: 'fast', name: 'Fast' },
+                ],
+            },
+        ];
+        props.agent.setAcpConfigOptionOverride = vi.fn();
+
+        AgentInputMock.mockClear();
+
+        await act(async () => {
+            renderer.create(React.createElement(NewSessionWizard, props as any));
+        });
+
+        expect(AgentInputMock).toHaveBeenCalled();
+        const agentInputProps = (AgentInputMock.mock.calls[0]?.[0] ?? {}) as any;
+        expect(agentInputProps.acpConfigOptionsOverrideProbe).toEqual({
+            phase: 'idle',
+            onRefresh: expect.any(Function),
+        });
+    });
+
+    it('uses the shared environment preview panel for wizard profile actions instead of the legacy callback', async () => {
+        const { NewSessionWizard } = await import('./NewSessionWizard');
+        const props = buildProps();
+
+        ProfilesListMock.mockClear();
+        EnvironmentVariablesPreviewPanelMock.mockClear();
+
+        await act(async () => {
+            renderer.create(React.createElement(NewSessionWizard, props as any));
+        });
+
+        const profilesListProps = ProfilesListMock.mock.calls[0]?.[0] as
+            | React.ComponentProps<typeof import('@/components/profiles/ProfilesList').ProfilesList>
+            | undefined;
+
+        expect(profilesListProps?.onViewEnvironmentVariables).toBeTypeOf('function');
+
+        await act(async () => {
+            profilesListProps?.onViewEnvironmentVariables?.(props.profiles.profiles[0]);
+        });
+
+        expect(props.profiles.openProfileEnvVarsPreview).not.toHaveBeenCalled();
+        expect(EnvironmentVariablesPreviewPanelMock).toHaveBeenCalled();
+    });
+
+    it('uses the shared environment preview panel inside profile popover content instead of the legacy callback', async () => {
+        const { NewSessionWizard } = await import('./NewSessionWizard');
+        const props = buildProps();
+
+        AgentInputMock.mockClear();
+        ProfilesListMock.mockClear();
+        EnvironmentVariablesPreviewPanelMock.mockClear();
+
+        await act(async () => {
+            renderer.create(React.createElement(NewSessionWizard, props as any));
+        });
+
+        const agentInputProps = (AgentInputMock.mock.calls[0]?.[0] ?? {}) as {
+            profilePopover?: { renderContent?: (args: { maxHeight: number; requestClose: () => void }) => React.ReactNode };
+        };
+        let popoverTree: renderer.ReactTestRenderer | null = null;
+
+        await act(async () => {
+            popoverTree = renderer.create(
+                agentInputProps.profilePopover?.renderContent?.({
+                    maxHeight: 420,
+                    requestClose: () => {},
+                }) as React.ReactElement,
+            );
+        });
+
+        const popoverProfilesListProps = ProfilesListMock.mock.calls.at(-1)?.[0] as
+            | React.ComponentProps<typeof import('@/components/profiles/ProfilesList').ProfilesList>
+            | undefined;
+
+        expect(popoverProfilesListProps?.onViewEnvironmentVariables).toBeTypeOf('function');
+
+        await act(async () => {
+            popoverProfilesListProps?.onViewEnvironmentVariables?.(props.profiles.profiles[0]);
+        });
+
+        expect(props.profiles.openProfileEnvVarsPreview).not.toHaveBeenCalled();
+        expect(EnvironmentVariablesPreviewPanelMock).toHaveBeenCalled();
+
+        await act(async () => {
+            popoverTree?.unmount();
+        });
+    });
+});

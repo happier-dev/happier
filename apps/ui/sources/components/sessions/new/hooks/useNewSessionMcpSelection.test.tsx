@@ -146,6 +146,7 @@ describe('useNewSessionMcpSelection', () => {
         );
 
         expect(chip?.key).toBe('new-session-mcp');
+        expect(chip?.controlId).toBe('mcp');
         let chipTree: renderer.ReactTestRenderer | null = null;
         act(() => {
             chipTree = renderer.create(chip.render({
@@ -165,6 +166,12 @@ describe('useNewSessionMcpSelection', () => {
             chipTree!.root.findByType('Pressable').props.onPress();
         });
 
+        chip?.collapsedAction?.({
+            tint: '#000',
+            dismiss: () => {},
+            blurInput: () => {},
+        }).onPress();
+
         expect(modalShowSpy).toHaveBeenCalledWith(expect.objectContaining({
             component: 'NewSessionMcpSelectionModal',
             props: expect.objectContaining({
@@ -174,6 +181,7 @@ describe('useNewSessionMcpSelection', () => {
                 directory: '/workspace',
             }),
         }));
+        expect(modalShowSpy).toHaveBeenCalledTimes(2);
 
         const modalConfig = modalShowSpy.mock.calls[0]?.[0] as { props: { onSelectionChange: (selection: any) => void } };
         await act(async () => {

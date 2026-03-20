@@ -4,7 +4,17 @@ import renderer, { act } from 'react-test-renderer';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
-const AgentInputMock = vi.fn((_props: any) => null);
+const AgentInputMock = vi.fn((_props: any): React.ReactNode => null);
+const attachmentDraftState = vi.hoisted(() => ({
+    drafts: [] as Array<{ id: string }>,
+    hasSendableAttachments: false,
+    agentInputAttachments: [] as Array<unknown>,
+    clearDrafts: vi.fn(),
+    applyDraftPatch: vi.fn(),
+}));
+const uploadAttachmentDraftsToSessionSpy = vi.hoisted(() => vi.fn());
+const formatAttachmentsBlockSpy = vi.hoisted(() => vi.fn(() => ''));
+const followUpSpawnedSessionWithServerScopeSpy = vi.hoisted(() => vi.fn());
 
 vi.mock('react-native', () => ({
     View: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
@@ -57,32 +67,39 @@ vi.mock('@/components/sessions/attachments/useAttachmentsUploadConfig', () => ({
         vcsIgnoreStrategy: 'git_info_exclude',
         vcsIgnoreWritesEnabled: true,
         maxFileBytes: 25 * 1024 * 1024,
-        uploadTtlMs: 5 * 60 * 1000,
-        chunkSizeBytes: 256 * 1024,
     }),
 }));
 
 vi.mock('@/components/sessions/attachments/useAttachmentDraftManager', () => ({
     useAttachmentDraftManager: () => ({
         filePickerRef: { current: null },
-        drafts: [],
-        hasSendableAttachments: false,
-        agentInputAttachments: [],
+        drafts: attachmentDraftState.drafts,
+        hasSendableAttachments: attachmentDraftState.hasSendableAttachments,
+        agentInputAttachments: attachmentDraftState.agentInputAttachments,
         addWebFiles: addWebFilesSpy,
         addPickedAttachments: addPickedAttachmentsSpy,
         removeDraft: vi.fn(),
-        clearDrafts: vi.fn(),
-        applyDraftPatch: vi.fn(),
+        clearDrafts: attachmentDraftState.clearDrafts,
+        applyDraftPatch: attachmentDraftState.applyDraftPatch,
     }),
 }));
 
 vi.mock('@/components/sessions/attachments/uploadAttachmentDraftsToSession', () => ({
-    uploadAttachmentDraftsToSession: vi.fn(),
-    formatAttachmentsBlock: vi.fn(() => ''),
+    uploadAttachmentDraftsToSession: uploadAttachmentDraftsToSessionSpy,
+    formatAttachmentsBlock: formatAttachmentsBlockSpy,
 }));
 
 vi.mock('@/sync/sync', () => ({
     sync: { sendMessage: vi.fn() },
+}));
+
+vi.mock('@/sync/runtime/orchestration/serverScopedRpc/followUpSpawnedSession', () => ({
+    followUpSpawnedSessionWithServerScope: followUpSpawnedSessionWithServerScopeSpy,
+}));
+
+vi.mock('@/utils/platform/deferOnWeb', () => ({
+    blurActiveElementOnWeb: vi.fn(),
+    deferOnWeb: (callback: () => void) => callback(),
 }));
 
 vi.mock('@/hooks/server/useFeatureEnabled', () => ({
@@ -115,9 +132,6 @@ vi.mock('@/components/sessions/new/components/WizardSectionHeaderRow', () => ({
 }));
 vi.mock('@/components/profiles/ProfilesList', () => ({
     ProfilesList: () => null,
-}));
-vi.mock('@/components/ui/forms/SessionTypeSelector', () => ({
-    SessionTypeSelectorRows: () => null,
 }));
 vi.mock('@/modal', () => ({
     Modal: { alert: vi.fn(), confirm: vi.fn() },
@@ -181,6 +195,7 @@ describe('NewSessionWizard (attachments.uploads)', () => {
                         cliAvailability: { available: true },
                         tmuxRequested: false,
                         enabledAgentIds: ['codex'],
+                        isAgentSelectable: () => true,
                         isCliBannerDismissed: () => true,
                         dismissCliBanner: () => {},
                         agentType: 'codex',
@@ -220,7 +235,7 @@ describe('NewSessionWizard (attachments.uploads)', () => {
                         emptyAutocompletePrefixes: [],
                         emptyAutocompleteSuggestions: async () => [],
                         selectedProfileEnvVarsCount: 0,
-                        handleEnvVarsClick: () => {},
+                        envVarsPopover: undefined,
                         agentInputExtraActionChips: [],
                     },
                 }),
@@ -229,10 +244,236 @@ describe('NewSessionWizard (attachments.uploads)', () => {
 
         expect(AgentInputMock).toHaveBeenCalled();
         const props = (AgentInputMock.mock.calls[0]?.[0] ?? {}) as any;
+        const attachmentChip = props.extraActionChips.find((c: any) => c?.key === 'attachments-add');
 
         expect(typeof props.onAttachmentsAdded).toBe('function');
         expect(Array.isArray(props.extraActionChips)).toBe(true);
-        expect(props.extraActionChips.some((c: any) => c?.key === 'attachments-add')).toBe(true);
+        expect(attachmentChip).toMatchObject({
+            key: 'attachments-add',
+            controlId: 'attachments',
+        });
+        expect(typeof attachmentChip?.collapsedAction).toBe('function');
+    });
+
+    it('renders an inline automation section when provided by the shared composer model', async () => {
+        const { NewSessionWizard } = await import('./NewSessionWizard');
+
+        let tree: renderer.ReactTestRenderer | null = null;
+        await act(async () => {
+            tree = renderer.create(
+                React.createElement(NewSessionWizard, {
+                    layout: {
+                        theme: {
+                            colors: {
+                                divider: '#ddd',
+                                shadow: { color: '#000' },
+                                groupped: { background: '#fff' },
+                                text: '#000',
+                                textSecondary: '#666',
+                                input: { background: '#fff' },
+                                button: { secondary: { tint: '#000' } },
+                            },
+                        },
+                        styles: {},
+                        safeAreaBottom: 0,
+                        headerHeight: 44,
+                        newSessionSidePadding: 0,
+                        newSessionBottomPadding: 0,
+                    },
+                    profiles: {
+                        useProfiles: false,
+                        profiles: [],
+                        favoriteProfileIds: [],
+                        setFavoriteProfileIds: () => {},
+                        selectedProfileId: null,
+                        onPressDefaultEnvironment: () => {},
+                        onPressProfile: () => {},
+                        selectedMachineId: null,
+                        getProfileDisabled: () => false,
+                        getProfileSubtitleExtra: () => null,
+                        handleAddProfile: () => {},
+                        openProfileEdit: () => {},
+                        handleDuplicateProfile: () => {},
+                        handleDeleteProfile: () => {},
+                        openProfileEnvVarsPreview: () => {},
+                        suppressNextSecretAutoPromptKeyRef: { current: null },
+                        openSecretRequirementModal: () => {},
+                        profilesGroupTitles: { favorites: '', custom: '', builtIn: '' },
+                        getSecretOverrideReady: () => false,
+                        getSecretSatisfactionForProfile: () => ({ isSatisfied: true, hasSecretRequirements: false, items: [] }),
+                        getSecretMachineEnvOverride: () => null,
+                        secretBindingsByProfileId: {},
+                        selectedSecretIdByProfileIdByEnvVarName: {},
+                        setSecretBindingChoice: () => {},
+                        setSessionOnlySecretValueEnc: () => {},
+                    } as any,
+                    agent: {
+                        cliAvailability: { available: true },
+                        tmuxRequested: false,
+                        enabledAgentIds: ['codex'],
+                        isAgentSelectable: () => true,
+                        isCliBannerDismissed: () => true,
+                        dismissCliBanner: () => {},
+                        agentType: 'codex',
+                        setAgentType: () => {},
+                        selectedIndicatorColor: '#000',
+                        permissionMode: 'default',
+                        handlePermissionModeChange: () => {},
+                        modelOptions: [{ value: 'default', label: 'Default', description: '' }],
+                        modelMode: 'default',
+                        setModelMode: () => {},
+                    } as any,
+                    machine: {
+                        machines: [],
+                        serverId: null,
+                        selectedMachine: null,
+                        recentMachines: [],
+                        favoriteMachineItems: [],
+                        useMachinePickerSearch: false,
+                        onRefreshMachines: () => {},
+                        setSelectedMachineId: () => {},
+                        getBestPathForMachine: () => '',
+                        setSelectedPath: () => {},
+                        favoriteMachines: [],
+                        setFavoriteMachines: () => {},
+                        selectedPath: '',
+                        recentPaths: [],
+                        usePathPickerSearch: false,
+                        favoriteDirectories: [],
+                        setFavoriteDirectories: () => {},
+                    },
+                    footer: {
+                        sessionPrompt: '',
+                        setSessionPrompt: () => {},
+                        handleCreateSession: () => {},
+                        canCreate: true,
+                        isCreating: false,
+                        emptyAutocompletePrefixes: [],
+                        emptyAutocompleteSuggestions: async () => [],
+                        selectedProfileEnvVarsCount: 0,
+                        envVarsPopover: undefined,
+                        automationSection: React.createElement('AutomationSection'),
+                        agentInputExtraActionChips: [],
+                    },
+                }),
+            );
+        });
+
+        expect(() => tree!.root.findByType('AutomationSection' as any)).not.toThrow();
+    });
+
+    it('renders the automation section after the agent input when provided by the shared composer model', async () => {
+        const { NewSessionWizard } = await import('./NewSessionWizard');
+        AgentInputMock.mockImplementation(() => React.createElement('AgentInput', null));
+
+        let tree: renderer.ReactTestRenderer | null = null;
+        await act(async () => {
+            tree = renderer.create(
+                React.createElement(NewSessionWizard, {
+                    layout: {
+                        theme: {
+                            colors: {
+                                divider: '#ddd',
+                                shadow: { color: '#000' },
+                                groupped: { background: '#fff' },
+                                text: '#000',
+                                textSecondary: '#666',
+                                input: { background: '#fff' },
+                                button: { secondary: { tint: '#000' } },
+                            },
+                        },
+                        styles: {},
+                        safeAreaBottom: 0,
+                        headerHeight: 44,
+                        newSessionSidePadding: 0,
+                        newSessionBottomPadding: 0,
+                    },
+                    profiles: {
+                        useProfiles: false,
+                        profiles: [],
+                        favoriteProfileIds: [],
+                        setFavoriteProfileIds: () => {},
+                        selectedProfileId: null,
+                        onPressDefaultEnvironment: () => {},
+                        onPressProfile: () => {},
+                        selectedMachineId: null,
+                        getProfileDisabled: () => false,
+                        getProfileSubtitleExtra: () => null,
+                        handleAddProfile: () => {},
+                        openProfileEdit: () => {},
+                        handleDuplicateProfile: () => {},
+                        handleDeleteProfile: () => {},
+                        openProfileEnvVarsPreview: () => {},
+                        suppressNextSecretAutoPromptKeyRef: { current: null },
+                        openSecretRequirementModal: () => {},
+                        profilesGroupTitles: { favorites: '', custom: '', builtIn: '' },
+                        getSecretOverrideReady: () => false,
+                        getSecretSatisfactionForProfile: () => ({ isSatisfied: true, hasSecretRequirements: false, items: [] }),
+                        getSecretMachineEnvOverride: () => null,
+                        secretBindingsByProfileId: {},
+                        selectedSecretIdByProfileIdByEnvVarName: {},
+                        setSecretBindingChoice: () => {},
+                        setSessionOnlySecretValueEnc: () => {},
+                    } as any,
+                    agent: {
+                        cliAvailability: { available: true },
+                        tmuxRequested: false,
+                        enabledAgentIds: ['codex'],
+                        isAgentSelectable: () => true,
+                        isCliBannerDismissed: () => true,
+                        dismissCliBanner: () => {},
+                        agentType: 'codex',
+                        setAgentType: () => {},
+                        selectedIndicatorColor: '#000',
+                        permissionMode: 'default',
+                        handlePermissionModeChange: () => {},
+                        modelOptions: [{ value: 'default', label: 'Default', description: '' }],
+                        modelMode: 'default',
+                        setModelMode: () => {},
+                    } as any,
+                    machine: {
+                        machines: [],
+                        serverId: null,
+                        selectedMachine: null,
+                        recentMachines: [],
+                        favoriteMachineItems: [],
+                        useMachinePickerSearch: false,
+                        onRefreshMachines: () => {},
+                        setSelectedMachineId: () => {},
+                        getBestPathForMachine: () => '',
+                        setSelectedPath: () => {},
+                        favoriteMachines: [],
+                        setFavoriteMachines: () => {},
+                        selectedPath: '',
+                        recentPaths: [],
+                        usePathPickerSearch: false,
+                        favoriteDirectories: [],
+                        setFavoriteDirectories: () => {},
+                    },
+                    footer: {
+                        sessionPrompt: '',
+                        setSessionPrompt: () => {},
+                        handleCreateSession: () => {},
+                        canCreate: true,
+                        isCreating: false,
+                        emptyAutocompletePrefixes: [],
+                        emptyAutocompleteSuggestions: async () => [],
+                        selectedProfileEnvVarsCount: 0,
+                        envVarsPopover: undefined,
+                        automationSection: React.createElement('AutomationSection'),
+                        agentInputExtraActionChips: [],
+                    },
+                }),
+            );
+        });
+
+        const renderedOrder = tree!.root.findAll((node) => (
+            String(node.type) === 'AutomationSection' || String(node.type) === 'AgentInput'
+        )).map((node) => String(node.type));
+
+        expect(renderedOrder).toEqual(['AgentInput', 'AutomationSection']);
+
+        AgentInputMock.mockImplementation((_props: any) => null);
     });
 
     it('shows an inline warning when the selected machine is offline', async () => {
@@ -293,6 +534,7 @@ describe('NewSessionWizard (attachments.uploads)', () => {
                         cliAvailability: { available: true },
                         tmuxRequested: false,
                         enabledAgentIds: ['codex'],
+                        isAgentSelectable: () => true,
                         isCliBannerDismissed: () => true,
                         dismissCliBanner: () => {},
                         agentType: 'codex',
@@ -370,7 +612,7 @@ describe('NewSessionWizard (attachments.uploads)', () => {
                         emptyAutocompletePrefixes: [],
                         emptyAutocompleteSuggestions: async () => [],
                         selectedProfileEnvVarsCount: 0,
-                        handleEnvVarsClick: () => {},
+                        envVarsPopover: undefined,
                         agentInputExtraActionChips: [],
                     },
                 }),
@@ -388,5 +630,297 @@ describe('NewSessionWizard (attachments.uploads)', () => {
 
         expect(textValues).toContain('newSession.machineOfflineInlineTitle');
         expect(textValues).toContain('newSession.machineOfflineInlineBody');
+    });
+
+    it('does not leave raw string children under non-Text host views', async () => {
+        const { NewSessionWizard } = await import('./NewSessionWizard');
+
+        let tree: renderer.ReactTestRenderer | null = null;
+        await act(async () => {
+            tree = renderer.create(
+                React.createElement(NewSessionWizard, {
+                    layout: {
+                        theme: {
+                            colors: {
+                                divider: '#ddd',
+                                shadow: { color: '#000' },
+                                groupped: { background: '#fff' },
+                                text: '#000',
+                                textSecondary: '#666',
+                                input: { background: '#fff' },
+                                button: { secondary: { tint: '#000' } },
+                            },
+                        },
+                        styles: {},
+                        safeAreaBottom: 0,
+                        headerHeight: 44,
+                        newSessionSidePadding: 0,
+                        newSessionBottomPadding: 0,
+                    },
+                    profiles: {
+                        useProfiles: false,
+                        profiles: [],
+                        favoriteProfileIds: [],
+                        setFavoriteProfileIds: () => {},
+                        selectedProfileId: null,
+                        onPressDefaultEnvironment: () => {},
+                        onPressProfile: () => {},
+                        selectedMachineId: null,
+                        getProfileDisabled: () => false,
+                        getProfileSubtitleExtra: () => null,
+                        handleAddProfile: () => {},
+                        openProfileEdit: () => {},
+                        handleDuplicateProfile: () => {},
+                        handleDeleteProfile: () => {},
+                        openProfileEnvVarsPreview: () => {},
+                        suppressNextSecretAutoPromptKeyRef: { current: null },
+                        openSecretRequirementModal: () => {},
+                        profilesGroupTitles: { favorites: '', custom: '', builtIn: '' },
+                        getSecretOverrideReady: () => false,
+                        getSecretSatisfactionForProfile: () => ({ isSatisfied: true, hasSecretRequirements: false, items: [] }),
+                        getSecretMachineEnvOverride: () => null,
+                        secretBindingsByProfileId: {},
+                        selectedSecretIdByProfileIdByEnvVarName: {},
+                        setSecretBindingChoice: () => {},
+                        setSessionOnlySecretValueEnc: () => {},
+                    } as any,
+                    agent: {
+                        cliAvailability: { available: true },
+                        tmuxRequested: false,
+                        enabledAgentIds: ['codex'],
+                        isAgentSelectable: () => true,
+                        isCliBannerDismissed: () => true,
+                        dismissCliBanner: () => {},
+                        agentType: 'codex',
+                        setAgentType: () => {},
+                        selectedIndicatorColor: '#000',
+                        permissionMode: 'default',
+                        handlePermissionModeChange: () => {},
+                        modelOptions: [{ value: 'default', label: 'Default', description: '' }],
+                        modelMode: 'default',
+                        setModelMode: () => {},
+                    } as any,
+                    machine: {
+                        machines: [],
+                        serverId: null,
+                        selectedMachine: null,
+                        recentMachines: [],
+                        favoriteMachineItems: [],
+                        useMachinePickerSearch: false,
+                        onRefreshMachines: () => {},
+                        setSelectedMachineId: () => {},
+                        getBestPathForMachine: () => '',
+                        setSelectedPath: () => {},
+                        favoriteMachines: [],
+                        setFavoriteMachines: () => {},
+                        selectedPath: '',
+                        recentPaths: [],
+                        usePathPickerSearch: false,
+                        favoriteDirectories: [],
+                        setFavoriteDirectories: () => {},
+                    },
+                    footer: {
+                        sessionPrompt: '',
+                        setSessionPrompt: () => {},
+                        handleCreateSession: () => {},
+                        canCreate: true,
+                        isCreating: false,
+                        emptyAutocompletePrefixes: [],
+                        emptyAutocompleteSuggestions: async () => [],
+                        selectedProfileEnvVarsCount: 0,
+                        envVarsPopover: undefined,
+                        agentInputExtraActionChips: [],
+                    },
+                }),
+            );
+        });
+
+        const invalidStrings: Array<{ parentType: string | null; value: string }> = [];
+        const walk = (node: any, parentType: string | null) => {
+            if (node == null) return;
+            if (typeof node === 'string') {
+                if (parentType !== 'Text') {
+                    invalidStrings.push({ parentType, value: node });
+                }
+                return;
+            }
+            if (Array.isArray(node)) {
+                for (const child of node) walk(child, parentType);
+                return;
+            }
+            const nextParent = typeof node.type === 'string' ? node.type : parentType;
+            const children = Array.isArray(node.children) ? node.children : [];
+            for (const child of children) walk(child, nextParent);
+        };
+
+        walk(tree!.toJSON(), null);
+
+        expect(invalidStrings).toEqual([]);
+    });
+
+    it('routes first attachment follow-up through the server-scoped spawned-session helper', async () => {
+        const { NewSessionWizard } = await import('./NewSessionWizard');
+
+        AgentInputMock.mockClear();
+        attachmentDraftState.drafts = [{ id: 'draft-1' }];
+        attachmentDraftState.hasSendableAttachments = true;
+        attachmentDraftState.agentInputAttachments = [{ key: 'draft-1', label: 'notes.txt' }];
+        attachmentDraftState.clearDrafts.mockReset();
+        attachmentDraftState.applyDraftPatch.mockReset();
+        uploadAttachmentDraftsToSessionSpy.mockReset();
+        formatAttachmentsBlockSpy.mockReset();
+        followUpSpawnedSessionWithServerScopeSpy.mockReset();
+
+        uploadAttachmentDraftsToSessionSpy.mockResolvedValue({
+            uploaded: [{
+                name: 'notes.txt',
+                path: '.happier/uploads/notes.txt',
+                mimeType: 'text/plain',
+                sizeBytes: 12,
+                sha256: 'abc123',
+            }],
+        });
+        formatAttachmentsBlockSpy.mockReturnValue('[attachments block]');
+
+        const handleCreateSession = vi.fn();
+
+        await act(async () => {
+            renderer.create(
+                React.createElement(NewSessionWizard, {
+                    layout: {
+                        theme: {
+                            colors: {
+                                divider: '#ddd',
+                                shadow: { color: '#000' },
+                                groupped: { background: '#fff' },
+                                text: '#000',
+                                textSecondary: '#666',
+                                input: { background: '#fff' },
+                                button: { secondary: { tint: '#000' } },
+                            },
+                        },
+                        styles: {},
+                        safeAreaBottom: 0,
+                        headerHeight: 44,
+                        newSessionSidePadding: 0,
+                        newSessionBottomPadding: 0,
+                    },
+                    profiles: {
+                        useProfiles: true,
+                        profiles: [],
+                        favoriteProfileIds: [],
+                        setFavoriteProfileIds: () => {},
+                        selectedProfileId: 'profile-work',
+                        onPressDefaultEnvironment: () => {},
+                        onPressProfile: () => {},
+                        selectedMachineId: null,
+                        getProfileDisabled: () => false,
+                        getProfileSubtitleExtra: () => null,
+                        handleAddProfile: () => {},
+                        openProfileEdit: () => {},
+                        handleDuplicateProfile: () => {},
+                        handleDeleteProfile: () => {},
+                        openProfileEnvVarsPreview: () => {},
+                        suppressNextSecretAutoPromptKeyRef: { current: null },
+                        openSecretRequirementModal: () => {},
+                        profilesGroupTitles: { favorites: '', custom: '', builtIn: '' },
+                        getSecretOverrideReady: () => false,
+                        getSecretSatisfactionForProfile: () => ({ isSatisfied: true, hasSecretRequirements: false, items: [] }),
+                        getSecretMachineEnvOverride: () => null,
+                        secretBindingsByProfileId: {},
+                        selectedSecretIdByProfileIdByEnvVarName: {},
+                        setSecretBindingChoice: () => {},
+                        setSessionOnlySecretValueEnc: () => {},
+                    } as any,
+                    agent: {
+                        cliAvailability: { available: true },
+                        tmuxRequested: false,
+                        enabledAgentIds: ['codex'],
+                        isAgentSelectable: () => true,
+                        isCliBannerDismissed: () => true,
+                        dismissCliBanner: () => {},
+                        agentType: 'codex',
+                        setAgentType: () => {},
+                        selectedIndicatorColor: '#000',
+                        permissionMode: 'default',
+                        handlePermissionModeChange: () => {},
+                        modelOptions: [{ value: 'default', label: 'Default', description: '' }],
+                        modelMode: 'default',
+                        setModelMode: () => {},
+                    } as any,
+                    machine: {
+                        machines: [],
+                        serverId: 'server-b',
+                        selectedMachine: null,
+                        recentMachines: [],
+                        favoriteMachineItems: [],
+                        useMachinePickerSearch: false,
+                        onRefreshMachines: () => {},
+                        setSelectedMachineId: () => {},
+                        getBestPathForMachine: () => '',
+                        setSelectedPath: () => {},
+                        favoriteMachines: [],
+                        setFavoriteMachines: () => {},
+                        selectedPath: '',
+                        recentPaths: [],
+                        usePathPickerSearch: false,
+                        favoriteDirectories: [],
+                        setFavoriteDirectories: () => {},
+                    },
+                    footer: {
+                        sessionPrompt: 'Investigate this bug',
+                        setSessionPrompt: () => {},
+                        handleCreateSession,
+                        canCreate: true,
+                        isCreating: false,
+                        emptyAutocompletePrefixes: [],
+                        emptyAutocompleteSuggestions: async () => [],
+                        selectedProfileEnvVarsCount: 0,
+                        envVarsPopover: undefined,
+                        agentInputExtraActionChips: [],
+                    },
+                }),
+            );
+        });
+
+        const props = (AgentInputMock.mock.calls[0]?.[0] ?? {}) as any;
+        await act(async () => {
+            props.onSend();
+        });
+
+        expect(handleCreateSession).toHaveBeenCalledWith(expect.objectContaining({ initialMessage: 'skip' }));
+
+        const afterCreated = handleCreateSession.mock.calls[0]?.[0]?.afterCreated;
+        expect(typeof afterCreated).toBe('function');
+
+        await act(async () => {
+            await afterCreated({
+                sessionId: 'sess_target',
+                effectiveSpawnServerId: 'server-a',
+            });
+        });
+
+        expect(followUpSpawnedSessionWithServerScopeSpy).toHaveBeenCalledWith({
+            sessionId: 'sess_target',
+            targetServerId: 'server-a',
+            initialMessageText: 'Investigate this bug\n\n[attachments block]',
+            displayText: 'Investigate this bug',
+            profileId: 'profile-work',
+            metaOverrides: {
+                happier: {
+                    kind: 'attachments.v1',
+                    payload: {
+                        attachments: [{
+                            name: 'notes.txt',
+                            path: '.happier/uploads/notes.txt',
+                            mimeType: 'text/plain',
+                            sizeBytes: 12,
+                            sha256: 'abc123',
+                        }],
+                    },
+                },
+            },
+        });
+        expect(attachmentDraftState.clearDrafts).toHaveBeenCalledTimes(1);
     });
 });

@@ -1,55 +1,24 @@
 import * as React from 'react';
 
+import { resolvePreferredMachineId } from '@/components/settings/pickers/resolvePreferredMachineId';
+import { normalizeOptionalParam } from '@/profileRouteParams';
 import type { Machine } from '@/sync/domains/state/storageTypes';
 import { getRecentPathsForMachine } from '@/utils/sessions/recentPaths';
-import { isMachineOnline } from '@/utils/sessions/machineUtils';
 
 type RecentMachinePathsList = Array<{ machineId: string; path: string }>;
 
 function normalizeMachineIdParam(raw: unknown): string {
-    return typeof raw === 'string' ? raw.trim() : '';
+    const normalized = normalizeOptionalParam(
+        typeof raw === 'string' || Array.isArray(raw) ? raw : undefined,
+    );
+    return typeof normalized === 'string' ? normalized.trim() : '';
 }
 
 function normalizePathParam(raw: unknown): string {
-    return typeof raw === 'string' ? raw.trim() : '';
-}
-
-function findFirstOnlineMachineId(machines: ReadonlyArray<Machine>): string | null {
-    for (const machine of machines) {
-        if (isMachineOnline(machine)) return machine.id;
-    }
-    return null;
-}
-
-function resolvePreferredMachineId(params: Readonly<{
-    machines: ReadonlyArray<Machine>;
-    preferredMachineId: string | null;
-    recentMachinePaths: RecentMachinePathsList;
-}>): string | null {
-    const { machines, preferredMachineId, recentMachinePaths } = params;
-    if (machines.length === 0) return null;
-
-    if (preferredMachineId) {
-        const preferred = machines.find((m) => m.id === preferredMachineId) ?? null;
-        if (preferred && isMachineOnline(preferred)) return preferredMachineId;
-        const fallbackOnline = findFirstOnlineMachineId(machines);
-        if (fallbackOnline) return fallbackOnline;
-        if (preferred) return preferredMachineId;
-    }
-
-    if (recentMachinePaths.length > 0) {
-        for (const recent of recentMachinePaths) {
-            const machine = machines.find((m) => m.id === recent.machineId) ?? null;
-            if (machine && isMachineOnline(machine)) return recent.machineId;
-        }
-        for (const recent of recentMachinePaths) {
-            if (machines.some((m) => m.id === recent.machineId)) {
-                return recent.machineId;
-            }
-        }
-    }
-
-    return findFirstOnlineMachineId(machines) ?? machines[0]!.id;
+    const normalized = normalizeOptionalParam(
+        typeof raw === 'string' || Array.isArray(raw) ? raw : undefined,
+    );
+    return typeof normalized === 'string' ? normalized.trim() : '';
 }
 
 export function useNewSessionMachinePathState(params: Readonly<{
@@ -68,6 +37,21 @@ export function useNewSessionMachinePathState(params: Readonly<{
         return Array.isArray(params.recentMachinePaths) ? (params.recentMachinePaths as any[]).slice() as any : [];
     }, [params.recentMachinePaths]);
 
+    const resolveMachineId = React.useCallback((preferredMachineId: string | null): string | null => {
+        const preferredOnlineMachineId = resolvePreferredMachineId({
+            machines: params.machines,
+            preferredMachineId,
+            recentMachinePaths,
+            onlineOnly: true,
+        });
+        if (preferredOnlineMachineId) return preferredOnlineMachineId;
+        return resolvePreferredMachineId({
+            machines: params.machines,
+            preferredMachineId,
+            recentMachinePaths,
+        });
+    }, [params.machines, recentMachinePaths]);
+
     const getBestPathForMachine = React.useCallback((machineId: string | null): string => {
         if (!machineId) return '';
         const recent = getRecentPathsForMachine({
@@ -81,68 +65,98 @@ export function useNewSessionMachinePathState(params: Readonly<{
     }, [params.machines, recentMachinePaths]);
 
     const [selectedMachineId, setSelectedMachineId] = React.useState<string | null>(() => {
-        return resolvePreferredMachineId({
-            machines: params.machines,
-            preferredMachineId: null,
-            recentMachinePaths,
-        });
+        return resolveMachineId(null);
     });
 
-    const [selectedPath, setSelectedPath] = React.useState<string>(() => {
+    const [selectedPath, setSelectedPathState] = React.useState<string>(() => {
         return getBestPathForMachine(selectedMachineId);
     });
+    const hasUserEditedPathRef = React.useRef(false);
+    const lastAppliedPathParamRef = React.useRef<string>('');
+
+    const setSelectedPath = React.useCallback<React.Dispatch<React.SetStateAction<string>>>((next) => {
+        hasUserEditedPathRef.current = true;
+        setSelectedPathState((current) => typeof next === 'function' ? next(current) : next);
+    }, []);
+
+    const hasMachine = React.useCallback((machineId: string | null): boolean => {
+        if (!machineId) return false;
+        return params.machines.some((machine) => machine.id === machineId);
+    }, [params.machines]);
 
     // Handle machine route param from picker screens (main's navigation pattern)
     React.useEffect(() => {
         const machineId = normalizeMachineIdParam(params.machineIdParam);
         if (!machineId) return;
-        if (!params.machines.some((m) => m.id === machineId)) return;
-        const resolved = resolvePreferredMachineId({
-            machines: params.machines,
-            preferredMachineId: machineId,
-            recentMachinePaths,
-        });
-        if (resolved === selectedMachineId) return;
-        setSelectedMachineId(resolved);
-        setSelectedPath(getBestPathForMachine(resolved));
-    }, [getBestPathForMachine, params.machineIdParam, params.machines, recentMachinePaths, selectedMachineId]);
+        if (!hasMachine(machineId)) return;
+        if (machineId === selectedMachineId) return;
+        setSelectedMachineId(machineId);
+        hasUserEditedPathRef.current = false;
+        setSelectedPathState(getBestPathForMachine(machineId));
+    }, [getBestPathForMachine, hasMachine, params.machineIdParam, selectedMachineId]);
 
     // Ensure a machine is pre-selected once machines have loaded (wizard expects this).
     React.useEffect(() => {
         if (selectedMachineId !== null) return;
         if (params.machines.length === 0) return;
-        const machineIdToUse = resolvePreferredMachineId({
-            machines: params.machines,
-            preferredMachineId: null,
-            recentMachinePaths,
-        });
+        const machineIdToUse = resolveMachineId(null);
 
         setSelectedMachineId(machineIdToUse);
-        setSelectedPath(getBestPathForMachine(machineIdToUse));
-    }, [getBestPathForMachine, params.machines, recentMachinePaths, selectedMachineId]);
+        hasUserEditedPathRef.current = false;
+        setSelectedPathState(getBestPathForMachine(machineIdToUse));
+    }, [getBestPathForMachine, params.machines, resolveMachineId, selectedMachineId]);
 
     // Keep selection valid when machine snapshots change (server/account switch, revoke, reconnect).
     React.useEffect(() => {
         if (selectedMachineId === null) return;
-        const selectedStillExists = params.machines.some((machine) => machine.id === selectedMachineId);
-        if (selectedStillExists) return;
-        const machineIdToUse = resolvePreferredMachineId({
-            machines: params.machines,
-            preferredMachineId: null,
-            recentMachinePaths,
-        });
+        if (hasMachine(selectedMachineId)) return;
+
+        const machineIdToUse = resolveMachineId(null);
+        if (machineIdToUse === selectedMachineId) return;
 
         setSelectedMachineId(machineIdToUse);
-        setSelectedPath(getBestPathForMachine(machineIdToUse));
-    }, [getBestPathForMachine, params.machines, recentMachinePaths, selectedMachineId]);
+        hasUserEditedPathRef.current = false;
+        setSelectedPathState(getBestPathForMachine(machineIdToUse));
+    }, [getBestPathForMachine, hasMachine, resolveMachineId, selectedMachineId]);
 
     // Handle path route param from picker screens (main's navigation pattern)
     React.useEffect(() => {
         const trimmedPath = normalizePathParam(params.pathParam);
-        if (trimmedPath && trimmedPath !== selectedPath) {
-            setSelectedPath(trimmedPath);
+        const routeMachineId = normalizeMachineIdParam(params.machineIdParam);
+
+        if (routeMachineId && !hasMachine(routeMachineId)) {
+            return;
         }
-    }, [params.pathParam, selectedPath]);
+
+        if (trimmedPath === lastAppliedPathParamRef.current) {
+            return;
+        }
+
+        lastAppliedPathParamRef.current = trimmedPath;
+        if (trimmedPath && trimmedPath !== selectedPath) {
+            hasUserEditedPathRef.current = false;
+            setSelectedPathState(trimmedPath);
+        }
+    }, [hasMachine, params.machineIdParam, params.pathParam, selectedPath]);
+
+    React.useEffect(() => {
+        if (!selectedMachineId) {
+            return;
+        }
+        if (selectedPath.trim().length > 0) {
+            return;
+        }
+        if (hasUserEditedPathRef.current) {
+            return;
+        }
+
+        const bestPath = getBestPathForMachine(selectedMachineId);
+        if (!bestPath) {
+            return;
+        }
+
+        setSelectedPathState(bestPath);
+    }, [getBestPathForMachine, selectedMachineId, selectedPath]);
 
     return {
         selectedMachineId,

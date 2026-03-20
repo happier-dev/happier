@@ -35,7 +35,7 @@ describe('useNewSessionPreflightSessionModesState (cache)', () => {
 
     function Harness() {
       useNewSessionPreflightSessionModesState({
-        agentType: 'opencode' as any,
+        backendTarget: { kind: 'builtInAgent', agentId: 'opencode' },
         selectedMachineId: 'machine-1',
         capabilityServerId: 'server-1',
         cwd: '/repo',
@@ -64,4 +64,3 @@ describe('useNewSessionPreflightSessionModesState (cache)', () => {
     expect(machineCapabilitiesInvokeMock).toHaveBeenCalledTimes(1);
   });
 });
-

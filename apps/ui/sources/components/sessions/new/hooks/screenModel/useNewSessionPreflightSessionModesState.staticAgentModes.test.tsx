@@ -43,7 +43,7 @@ describe('useNewSessionPreflightSessionModesState (staticAgentModes)', () => {
     let latest: any = null;
     function Harness() {
       latest = useNewSessionPreflightSessionModesState({
-        agentType: 'claude' as any,
+        backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
         selectedMachineId: null,
         capabilityServerId: 'server-1',
         cwd: '/repo',

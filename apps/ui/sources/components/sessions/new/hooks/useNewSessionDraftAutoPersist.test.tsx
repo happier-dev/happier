@@ -10,7 +10,7 @@ async function flushAsync(): Promise<void> {
     await Promise.resolve();
 }
 
-async function renderHook(useValue: () => void): Promise<{ unmount: () => void }> {
+async function renderHook(useValue: () => void): Promise<{ unmount: () => void; rerender: () => Promise<void> }> {
     function Test() {
         useValue();
         return null;
@@ -27,6 +27,13 @@ async function renderHook(useValue: () => void): Promise<{ unmount: () => void }
             if (!root) return;
             act(() => {
                 root?.unmount();
+            });
+        },
+        rerender: async () => {
+            if (!root) return;
+            await act(async () => {
+                root?.update(React.createElement(Test));
+                await flushAsync();
             });
         },
     };
@@ -53,6 +60,39 @@ describe('useNewSessionDraftAutoPersist', () => {
             });
 
             expect(persistDraftNow).toHaveBeenCalledTimes(1);
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+
+    it('does not flush a pending persist callback after persistence is disabled', async () => {
+        vi.useFakeTimers();
+        try {
+            const persistDraftNow = vi.fn();
+            let persistenceEnabled = true;
+
+            const hook = await renderHook(() =>
+                useNewSessionDraftAutoPersist({
+                    persistDraftNow,
+                    persistenceEnabled,
+                }),
+            );
+
+            persistenceEnabled = false;
+            await hook.rerender();
+
+            await act(async () => {
+                vi.runAllTimers();
+                await Promise.resolve();
+            });
+
+            hook.unmount();
+
+            await act(async () => {
+                await Promise.resolve();
+            });
+
+            expect(persistDraftNow).not.toHaveBeenCalled();
         } finally {
             vi.useRealTimers();
         }

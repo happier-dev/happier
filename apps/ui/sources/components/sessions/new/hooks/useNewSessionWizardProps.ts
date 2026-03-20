@@ -3,7 +3,8 @@ import * as React from 'react';
 import type { AgentId } from '@/agents/catalog/catalog';
 import { t } from '@/text';
 import { getRequiredSecretEnvVarNames } from '@/sync/domains/profiles/profileSecrets';
-import type { AIBackendProfile, SavedSecret } from '@/sync/domains/settings/settings';
+import type { AIBackendProfile } from '@/sync/domains/profiles/profileCompatibility';
+import type { SavedSecret } from '@/sync/domains/settings/savedSecretTypes';
 import type { Machine } from '@/sync/domains/state/storageTypes';
 import type { PermissionMode, ModelMode } from '@/sync/domains/permissions/permissionTypes';
 import type { CLIAvailability } from '@/hooks/auth/useCLIDetection';
@@ -52,7 +53,6 @@ export function useNewSessionWizardProps(params: Readonly<{
     openProfileEdit: (params: { profileId: string }) => void;
     handleDuplicateProfile: (profile: AIBackendProfile) => void;
     handleDeleteProfile: (profile: AIBackendProfile) => void;
-    openProfileEnvVarsPreview: (profile: AIBackendProfile) => void;
     suppressNextSecretAutoPromptKeyRef: React.MutableRefObject<string | null>;
     openSecretRequirementModal: (profile: AIBackendProfile, opts: { revertOnCancel: boolean }) => void;
     profilesGroupTitles: { favorites: string; custom: string; builtIn: string };
@@ -72,42 +72,50 @@ export function useNewSessionWizardProps(params: Readonly<{
     cliAvailability: CLIAvailability;
     tmuxRequested: boolean;
     enabledAgentIds: AgentId[];
+    isAgentSelectable: (agentId: AgentId) => boolean;
     isCliBannerDismissed: (agentId: AgentId) => boolean;
     dismissCliBanner: (agentId: AgentId, scope: CliNotDetectedBannerDismissScope) => void;
     agentType: AgentId;
+    agentLabel?: string;
     setAgentType: (agent: AgentId) => void;
+    agentPickerTitle?: NewSessionWizardAgentProps['agentPickerTitle'];
+    agentPickerOptions?: NewSessionWizardAgentProps['agentPickerOptions'];
+    agentPickerSelectedOptionId?: NewSessionWizardAgentProps['agentPickerSelectedOptionId'];
+    onAgentPickerSelect?: NewSessionWizardAgentProps['onAgentPickerSelect'];
     modelOptions: ReadonlyArray<{ value: ModelMode; label: string; description: string }>;
     modelOptionsProbe?: NewSessionWizardAgentProps['modelOptionsProbe'];
     acpSessionModeOptions?: NewSessionWizardAgentProps['acpSessionModeOptions'];
     acpSessionModeProbe?: NewSessionWizardAgentProps['acpSessionModeProbe'];
     acpSessionModeId?: NewSessionWizardAgentProps['acpSessionModeId'];
     setAcpSessionModeId?: NewSessionWizardAgentProps['setAcpSessionModeId'];
+    acpConfigOptions?: NewSessionWizardAgentProps['acpConfigOptions'];
+    acpConfigOptionsProbe?: NewSessionWizardAgentProps['acpConfigOptionsProbe'];
+    acpConfigOptionOverrides?: NewSessionWizardAgentProps['acpConfigOptionOverrides'];
+    setAcpConfigOptionOverride?: NewSessionWizardAgentProps['setAcpConfigOptionOverride'];
     modelMode: ModelMode | undefined;
     setModelMode: (mode: ModelMode) => void;
     selectedIndicatorColor: string;
     profileMap: Map<string, AIBackendProfile>;
     permissionMode: PermissionMode;
     handlePermissionModeChange: (mode: PermissionMode) => void;
-    sessionType: 'simple' | 'worktree';
-    setSessionType: (t: 'simple' | 'worktree') => void;
 
     // Machine section
-    machines: Machine[];
+    machines: ReadonlyArray<Machine>;
     targetServerId?: string | null;
     selectedMachine: Machine | null;
-    recentMachines: Machine[];
-    favoriteMachineItems: Machine[];
+    recentMachines: ReadonlyArray<Machine>;
+    favoriteMachineItems: ReadonlyArray<Machine>;
     useMachinePickerSearch: boolean;
     refreshMachineData: () => void;
     setSelectedMachineId: (id: string) => void;
     getBestPathForMachine: (id: string | null) => string;
     setSelectedPath: (path: string) => void;
-    favoriteMachines: string[];
+    favoriteMachines: ReadonlyArray<string>;
     setFavoriteMachines: (ids: string[]) => void;
     selectedPath: string;
-    recentPaths: string[];
+    recentPaths: ReadonlyArray<string>;
     usePathPickerSearch: boolean;
-    favoriteDirectories: string[];
+    favoriteDirectories: ReadonlyArray<string>;
     setFavoriteDirectories: (dirs: string[]) => void;
 
     // Footer section
@@ -116,17 +124,20 @@ export function useNewSessionWizardProps(params: Readonly<{
     handleCreateSession: () => void;
     canCreate: boolean;
     isCreating: boolean;
+    submitAccessibilityLabel?: NewSessionWizardFooterProps['submitAccessibilityLabel'];
     emptyAutocompletePrefixes: any;
     emptyAutocompleteSuggestions: any;
     connectionStatus?: any;
     selectedProfileEnvVarsCount: number;
-    handleEnvVarsClick: () => void;
+    envVarsPopover?: NewSessionWizardFooterProps['envVarsPopover'];
     resumeSessionId: string;
     showResumePicker: boolean;
     handleResumeClick: () => void;
     isResumeSupportChecking: boolean;
     sessionPromptInputMaxHeight: number;
+    automationSection?: React.ReactNode;
     agentInputExtraActionChips?: ReadonlyArray<AgentInputExtraActionChip>;
+    attachmentFlowId?: string | null;
 }>): Readonly<{
     layout: NewSessionWizardLayoutProps;
     profiles: NewSessionWizardProfilesProps;
@@ -216,7 +227,6 @@ export function useNewSessionWizardProps(params: Readonly<{
             openProfileEdit: params.openProfileEdit,
             handleDuplicateProfile: params.handleDuplicateProfile,
             handleDeleteProfile: params.handleDeleteProfile,
-            openProfileEnvVarsPreview: params.openProfileEnvVarsPreview,
             suppressNextSecretAutoPromptKeyRef: params.suppressNextSecretAutoPromptKeyRef,
             openSecretRequirementModal: params.openSecretRequirementModal,
             profilesGroupTitles: params.profilesGroupTitles,
@@ -234,7 +244,6 @@ export function useNewSessionWizardProps(params: Readonly<{
         params.onPressDefaultEnvironment,
         params.onPressProfile,
         params.openProfileEdit,
-        params.openProfileEnvVarsPreview,
         params.openSecretRequirementModal,
         params.profiles,
         params.profilesGroupTitles,
@@ -262,9 +271,6 @@ export function useNewSessionWizardProps(params: Readonly<{
             depIconName: entry.iconName as any,
             depStatus,
             capabilitiesStatus: params.selectedMachineCapabilities.status,
-            installSpecSettingKey: entry.installSpecSettingKey,
-            installSpecTitle: entry.installSpecTitle,
-            installSpecDescription: entry.installSpecDescription,
             installLabels: {
                 install: tNoParams(entry.installLabels.installKey),
                 update: tNoParams(entry.installLabels.updateKey),
@@ -283,11 +289,11 @@ export function useNewSessionWizardProps(params: Readonly<{
                     request: CAPABILITIES_REQUEST_NEW_SESSION,
                 });
             },
-            refreshRegistry: () => {
+            refreshLatestVersion: () => {
                 void prefetchMachineCapabilities({
                     machineId: params.selectedMachineId!,
                     serverId: params.targetServerId,
-                    request: entry.buildRegistryDetectRequest(),
+                    request: entry.buildLatestVersionDetectRequest(),
                     timeoutMs: 12_000,
                 });
             },
@@ -299,31 +305,44 @@ export function useNewSessionWizardProps(params: Readonly<{
             cliAvailability: params.cliAvailability,
             tmuxRequested: params.tmuxRequested,
             enabledAgentIds: params.enabledAgentIds,
+            isAgentSelectable: params.isAgentSelectable,
             isCliBannerDismissed: params.isCliBannerDismissed,
             dismissCliBanner: params.dismissCliBanner,
             agentType: params.agentType,
+            agentLabel: params.agentLabel,
             setAgentType: params.setAgentType,
+            agentPickerTitle: params.agentPickerTitle,
+            agentPickerOptions: params.agentPickerOptions,
+            agentPickerSelectedOptionId: params.agentPickerSelectedOptionId,
+            onAgentPickerSelect: params.onAgentPickerSelect,
             modelOptions: params.modelOptions,
             modelOptionsProbe: params.modelOptionsProbe,
             acpSessionModeOptions: params.acpSessionModeOptions,
             acpSessionModeProbe: params.acpSessionModeProbe,
             acpSessionModeId: params.acpSessionModeId,
             setAcpSessionModeId: params.setAcpSessionModeId,
+            acpConfigOptions: params.acpConfigOptions,
+            acpConfigOptionsProbe: params.acpConfigOptionsProbe,
+            acpConfigOptionOverrides: params.acpConfigOptionOverrides,
+            setAcpConfigOptionOverride: params.setAcpConfigOptionOverride,
             modelMode: params.modelMode,
             setModelMode: params.setModelMode,
             selectedIndicatorColor: params.selectedIndicatorColor,
             profileMap: params.profileMap,
             permissionMode: params.permissionMode,
             handlePermissionModeChange: params.handlePermissionModeChange,
-            sessionType: params.sessionType,
-            setSessionType: params.setSessionType,
             installableDepInstallers,
         };
     }, [
         params.agentType,
+        params.agentLabel,
+        params.agentPickerOptions,
+        params.agentPickerSelectedOptionId,
+        params.agentPickerTitle,
         params.cliAvailability,
         params.dismissCliBanner,
         params.enabledAgentIds,
+        params.isAgentSelectable,
         params.isCliBannerDismissed,
         params.modelMode,
         params.modelOptions,
@@ -331,14 +350,17 @@ export function useNewSessionWizardProps(params: Readonly<{
         params.acpSessionModeId,
         params.acpSessionModeOptions,
         params.acpSessionModeProbe,
+        params.acpConfigOptions,
+        params.acpConfigOptionsProbe,
+        params.acpConfigOptionOverrides,
         params.permissionMode,
         params.profileMap,
         params.selectedIndicatorColor,
-        params.sessionType,
+        params.onAgentPickerSelect,
         params.setAgentType,
+        params.setAcpConfigOptionOverride,
         params.setAcpSessionModeId,
         params.setModelMode,
-        params.setSessionType,
         params.handlePermissionModeChange,
         params.tmuxRequested,
         installableDepInstallers,
@@ -391,16 +413,19 @@ export function useNewSessionWizardProps(params: Readonly<{
             handleCreateSession: params.handleCreateSession,
             canCreate: params.canCreate,
             isCreating: params.isCreating,
+            submitAccessibilityLabel: params.submitAccessibilityLabel,
             emptyAutocompletePrefixes: params.emptyAutocompletePrefixes,
             emptyAutocompleteSuggestions: params.emptyAutocompleteSuggestions,
             connectionStatus: params.connectionStatus,
             selectedProfileEnvVarsCount: params.selectedProfileEnvVarsCount,
-            handleEnvVarsClick: params.handleEnvVarsClick,
+            envVarsPopover: params.envVarsPopover,
             resumeSessionId: params.resumeSessionId,
             onResumeClick: params.showResumePicker ? params.handleResumeClick : undefined,
             resumeIsChecking: params.isResumeSupportChecking,
             inputMaxHeight: params.sessionPromptInputMaxHeight,
+            automationSection: params.automationSection,
             agentInputExtraActionChips: params.agentInputExtraActionChips,
+            attachmentFlowId: params.attachmentFlowId,
         };
         // NOTE: Agent selection doesn't affect these props, but keeping dependencies
         // broad mirrors the previous in-screen memoization behavior and avoids subtle
@@ -408,12 +433,14 @@ export function useNewSessionWizardProps(params: Readonly<{
     }, [
         params.agentType,
         params.agentInputExtraActionChips,
+        params.attachmentFlowId,
+        params.automationSection,
         params.canCreate,
         params.connectionStatus,
         params.emptyAutocompletePrefixes,
         params.emptyAutocompleteSuggestions,
+        params.envVarsPopover,
         params.handleCreateSession,
-        params.handleEnvVarsClick,
         params.handleResumeClick,
         params.isCreating,
         params.isResumeSupportChecking,

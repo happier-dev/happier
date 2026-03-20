@@ -2,22 +2,24 @@ import React from 'react';
 import { View, ScrollView, Pressable, Platform, useWindowDimensions } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
+
 import { Typography } from '@/constants/Typography';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { Item } from '@/components/ui/lists/Item';
+import { normalizeNodeForView } from '@/components/ui/rendering/normalizeNodeForView';
 import { useEnvironmentVariables } from '@/hooks/server/useEnvironmentVariables';
 import { t } from '@/text';
 import { formatEnvVarTemplate, parseEnvVarTemplate } from '@/utils/profiles/envVarTemplate';
 import { Text } from '@/components/ui/text/Text';
 
-
-export interface EnvironmentVariablesPreviewModalProps {
+export interface EnvironmentVariablesPreviewPanelProps {
     environmentVariables: Record<string, string>;
     machineId: string | null;
     serverId?: string | null;
     machineName?: string | null;
     profileName?: string | null;
     onClose: () => void;
+    surfaceVariant?: 'modal' | 'popover';
 }
 
 function isSecretLike(name: string) {
@@ -40,6 +42,9 @@ function extractVarRefsFromValue(value: string): string[] {
 
 const stylesheet = StyleSheet.create((theme, runtime) => ({
     container: {
+        flexShrink: 1,
+    },
+    modalContainer: {
         width: '92%',
         maxWidth: 560,
         backgroundColor: theme.colors.groupped.background,
@@ -47,7 +52,11 @@ const stylesheet = StyleSheet.create((theme, runtime) => ({
         overflow: 'hidden',
         borderWidth: 1,
         borderColor: theme.colors.divider,
-        flexShrink: 1,
+    },
+    popoverContainer: {
+        width: 420,
+        maxWidth: '100%',
+        backgroundColor: theme.colors.surface,
     },
     header: {
         paddingHorizontal: 16,
@@ -82,7 +91,7 @@ const stylesheet = StyleSheet.create((theme, runtime) => ({
         ...Typography.default(),
     },
     machineNameText: {
-        color: theme.colors.status.connected,
+        color: theme.colors.status?.connected ?? theme.colors.textSecondary,
         ...Typography.default('semiBold'),
     },
     detailText: {
@@ -91,19 +100,18 @@ const stylesheet = StyleSheet.create((theme, runtime) => ({
     },
 }));
 
-export function EnvironmentVariablesPreviewModal(props: EnvironmentVariablesPreviewModalProps) {
+export function EnvironmentVariablesPreviewPanel(props: EnvironmentVariablesPreviewPanelProps) {
     const { theme } = useUnistyles();
     const styles = stylesheet;
     const { height: windowHeight } = useWindowDimensions();
     const scrollRef = React.useRef<ScrollView>(null);
     const scrollYRef = React.useRef(0);
+    const surfaceVariant = props.surfaceVariant ?? 'modal';
 
     const handleScroll = React.useCallback((e: any) => {
         scrollYRef.current = e?.nativeEvent?.contentOffset?.y ?? 0;
     }, []);
 
-    // On web, RN ScrollView inside a modal doesn't reliably respond to mouse wheel / trackpad scroll.
-    // Manually translate wheel deltas into scrollTo.
     const handleWheel = React.useCallback((e: any) => {
         if (Platform.OS !== 'web') return;
         const deltaY = e?.deltaY;
@@ -125,7 +133,6 @@ export function EnvironmentVariablesPreviewModal(props: EnvironmentVariablesPrev
     const refsToQuery = React.useMemo(() => {
         const refs = new Set<string>();
         envVarEntries.forEach((envVar) => {
-            // Query both target keys and any referenced keys so preview can show the effective spawned value.
             refs.add(envVar.name);
             extractVarRefsFromValue(envVar.value).forEach((ref) => refs.add(ref));
         });
@@ -154,12 +161,18 @@ export function EnvironmentVariablesPreviewModal(props: EnvironmentVariablesPrev
     const title = props.profileName
         ? t('profiles.environmentVariables.previewModal.titleWithProfile', { profileName: props.profileName })
         : t('profiles.environmentVariables.title');
-    const maxHeight = Math.min(720, Math.max(360, Math.floor(windowHeight * 0.85)));
+    const maxHeight = surfaceVariant === 'modal'
+        ? Math.min(720, Math.max(360, Math.floor(windowHeight * 0.85)))
+        : Math.min(480, Math.max(280, Math.floor(windowHeight * 0.6)));
     const emptyValue = t('profiles.environmentVariables.preview.emptyValue');
 
     return (
         <View
-            style={[styles.container, { height: maxHeight, maxHeight }]}
+            style={[
+                styles.container,
+                surfaceVariant === 'modal' ? styles.modalContainer : styles.popoverContainer,
+                { height: maxHeight, maxHeight },
+            ]}
             {...(Platform.OS === 'web' ? ({ onWheel: handleWheel } as any) : {})}
         >
             <View style={styles.header}>
@@ -172,7 +185,7 @@ export function EnvironmentVariablesPreviewModal(props: EnvironmentVariablesPrev
                     hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
                     style={({ pressed }) => ({ opacity: pressed ? 0.7 : 1 })}
                 >
-                    <Ionicons name="close" size={20} color={theme.colors.textSecondary} />
+                    {normalizeNodeForView(<Ionicons name="close" size={20} color={theme.colors.textSecondary} />)}
                 </Pressable>
             </View>
 
@@ -229,7 +242,6 @@ export function EnvironmentVariablesPreviewModal(props: EnvironmentVariablesPrev
                                     displayValue = emptyValue;
                                 }
                             } else if (secret) {
-                                // If daemon policy is known and allows showing secrets, we would have used targetEntry above.
                                 displayValue = machineEnvPolicy === 'full' || machineEnvPolicy === 'redacted' ? (envVar.value || emptyValue) : '•••';
                             } else if (parsed) {
                                 if (!hasMachineContext) {
@@ -247,38 +259,48 @@ export function EnvironmentVariablesPreviewModal(props: EnvironmentVariablesPrev
                                 displayValue = envVar.value || emptyValue;
                             }
 
-                            type DetailKind = 'fixed' | 'machine' | 'checking' | 'fallback' | 'missing';
-
-                            const detailKind: DetailKind | undefined = (() => {
+                            const detailKind = (() => {
                                 if (secret) return undefined;
-                                if (!isMachineBased) return 'fixed';
+                                if (!isMachineBased) return 'static';
                                 if (!hasMachineContext) return 'machine';
                                 if (parsed?.sourceVar && resolvedValue === undefined) return 'checking';
-                                if (parsed?.sourceVar && resolvedValue && (resolvedValue.display === 'unset' || resolvedValue.value === null || resolvedValue.value === '')) {
-                                    return parsed?.fallback ? 'fallback' : 'missing';
+                                if (
+                                    parsed?.sourceVar
+                                    && resolvedValue
+                                    && (resolvedValue.display === 'unset' || resolvedValue.value === null || resolvedValue.value === '')
+                                ) {
+                                    return parsed.fallback ? 'fallback' : 'missing';
                                 }
                                 return 'machine';
                             })();
 
                             const detailLabel = (() => {
                                 if (!detailKind) return undefined;
-                                return detailKind === 'fixed'
-                                    ? t('profiles.environmentVariables.previewModal.detail.fixed')
-                                    : detailKind === 'machine'
-                                        ? t('profiles.environmentVariables.previewModal.detail.machine')
-                                        : detailKind === 'checking'
-                                            ? t('profiles.environmentVariables.previewModal.detail.checking')
-                                            : detailKind === 'fallback'
-                                                ? t('profiles.environmentVariables.previewModal.detail.fallback')
-                                                : t('profiles.environmentVariables.previewModal.detail.missing');
+                                switch (detailKind) {
+                                    case 'static':
+                                        return t('profiles.environmentVariables.previewModal.detail.fixed');
+                                    case 'machine':
+                                        return t('profiles.environmentVariables.previewModal.detail.machine');
+                                    case 'checking':
+                                        return t('profiles.environmentVariables.previewModal.detail.checking');
+                                    case 'fallback':
+                                        return t('profiles.environmentVariables.previewModal.detail.fallback');
+                                    default:
+                                        return t('profiles.environmentVariables.previewModal.detail.missing');
+                                }
                             })();
 
-                            const detailColor =
-                                detailKind === 'machine'
-                                    ? theme.colors.status.connected
-                                    : detailKind === 'fallback' || detailKind === 'missing'
-                                        ? theme.colors.warning
-                                        : theme.colors.textSecondary;
+                            const detailColor = (() => {
+                                switch (detailKind) {
+                                    case 'machine':
+                                        return theme.colors.status?.connected ?? theme.colors.textSecondary;
+                                    case 'fallback':
+                                    case 'missing':
+                                        return theme.colors.warning;
+                                    default:
+                                        return theme.colors.textSecondary;
+                                }
+                            })();
 
                             const rightElement = (() => {
                                 if (secret) return undefined;

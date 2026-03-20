@@ -36,6 +36,9 @@ async function setupHarness() {
       sendMessage: vi.fn(async () => {}),
     },
   }));
+  vi.doMock('@/sync/store/settingsWriters', () => ({
+    useApplySettings: () => vi.fn(),
+  }));
   vi.doMock('@/sync/domains/state/storage', () => ({
     storage: {
       getState: () => ({
@@ -47,7 +50,47 @@ async function setupHarness() {
       }),
     },
   }));
-  vi.doMock('@/sync/domains/state/persistence', () => ({ clearNewSessionDraft: vi.fn() }));
+  vi.doMock('@/sync/domains/state/persistence', () => ({
+    clearNewSessionDraft: vi.fn(),
+    loadSettings: () => ({ settings: {}, version: null }),
+    loadDeviceAnalyticsId: () => null,
+    saveDeviceAnalyticsId: vi.fn(),
+    saveSettings: vi.fn(),
+    loadPendingSettings: () => ({}),
+    savePendingSettings: vi.fn(),
+    loadLocalSettings: () => ({}),
+    saveLocalSettings: vi.fn(),
+    loadThemePreference: () => 'adaptive',
+    loadPurchases: () => ({}),
+    savePurchases: vi.fn(),
+    loadSessionDrafts: () => ({}),
+    saveSessionDrafts: vi.fn(),
+    loadSessionReviewCommentsDrafts: () => ({}),
+    saveSessionReviewCommentsDrafts: vi.fn(),
+    loadSessionActionDrafts: () => ({}),
+    saveSessionActionDrafts: vi.fn(),
+    loadNewSessionDraft: () => null,
+    saveNewSessionDraft: vi.fn(),
+    loadSessionPermissionModes: () => ({}),
+    saveSessionPermissionModes: vi.fn(),
+    loadSessionPermissionModeUpdatedAts: () => ({}),
+    saveSessionPermissionModeUpdatedAts: vi.fn(),
+    loadSessionLastViewed: () => ({}),
+    saveSessionLastViewed: vi.fn(),
+    loadSessionModelModes: () => ({}),
+    saveSessionModelModes: vi.fn(),
+    loadSessionModelModeUpdatedAts: () => ({}),
+    saveSessionModelModeUpdatedAts: vi.fn(),
+    loadSessionMaterializedMaxSeqById: () => ({}),
+    saveSessionMaterializedMaxSeqById: vi.fn(),
+    loadChangesCursor: () => null,
+    saveChangesCursor: vi.fn(),
+    loadLastChangesCursorByAccountId: () => ({}),
+    saveLastChangesCursorByAccountId: vi.fn(),
+    loadProfile: () => ({}),
+    saveProfile: vi.fn(),
+    clearPersistence: vi.fn(),
+  }));
   vi.doMock('@/sync/domains/server/serverRuntime', () => ({
     getActiveServerSnapshot: vi.fn(() => ({
       serverId: 'server-a',
@@ -57,6 +100,15 @@ async function setupHarness() {
     })),
     setActiveServer: vi.fn(),
   }));
+  vi.doMock('@/sync/domains/server/selection/serverSelectionResolver', () => ({
+    resolveNewSessionServerTarget: vi.fn((params: { requestedServerId?: string | null; allowedServerIds: string[] }) => ({
+      targetServerId: params.requestedServerId ?? params.allowedServerIds[0] ?? null,
+      rejectedRequestedServerId: null,
+    })),
+  }));
+  vi.doMock('@/sync/domains/features/featureLocalPolicy', () => ({
+    resolveLocalFeaturePolicyEnabled: vi.fn((featureId: string, settings: { featureToggles?: Record<string, boolean> }) => settings.featureToggles?.[featureId] === true),
+  }));
   vi.doMock('@/sync/runtime/orchestration/connectionManager', () => ({
     switchConnectionToActiveServer: vi.fn(async () => ({ token: 'next-token', secret: 'next-secret' })),
   }));
@@ -64,6 +116,9 @@ async function setupHarness() {
   vi.doMock('@/hooks/server/useMachineCapabilitiesCache', () => ({
     getMachineCapabilitiesSnapshot: vi.fn(() => ({ supported: true, response: { protocolVersion: 1, results: {} } })),
     prefetchMachineCapabilities: vi.fn(async () => {}),
+  }));
+  vi.doMock('@/utils/sessions/tempDataStore', () => ({
+    storeTempData: vi.fn(() => 'temp-data-key'),
   }));
   vi.doMock('@/agents/catalog/catalog', async () => {
     const actual = await vi.importActual<typeof import('@/agents/catalog/catalog')>('@/agents/catalog/catalog');
@@ -74,11 +129,9 @@ async function setupHarness() {
       buildSpawnSessionExtrasFromUiState: vi.fn(() => ({})),
       getAgentResumeExperimentsFromSettings: vi.fn(() => ({})),
       getNewSessionPreflightIssues: vi.fn(() => []),
-      getResumeRuntimeSupportPrefetchPlan: vi.fn(() => null),
       buildResumeCapabilityOptionsFromUiState: vi.fn(() => ({})),
     };
   });
-  vi.doMock('@/agents/runtime/acpRuntimeResume', () => ({ describeAcpLoadSessionSupport: vi.fn(() => ({ kind: 'unknown' })) }));
   vi.doMock('@/agents/runtime/resumeCapabilities', () => ({ canAgentResume: vi.fn(() => false) }));
   vi.doMock('@/components/sessions/new/modules/formatResumeSupportDetailCode', () => ({ formatResumeSupportDetailCode: vi.fn(() => '') }));
   vi.doMock('@/sync/ops', () => ({ machineSpawnNewSession: machineSpawnNewSessionSpy }));
@@ -123,7 +176,6 @@ describe('useCreateNewSession (daemon unavailable UX)', () => {
         selectedMachine: { id: 'm1', active: false, activeAt: Date.now() - 5 * 60_000, metadata: { host: 'devbox' } },
         setIsCreating,
         setIsResumeSupportChecking: vi.fn(),
-        sessionType: 'simple',
         settings,
         useProfiles: false,
         selectedProfileId: null,
@@ -135,7 +187,6 @@ describe('useCreateNewSession (daemon unavailable UX)', () => {
         sessionPrompt: '',
         resumeSessionId: '',
         agentNewSessionOptions: null,
-        automationDraft: null,
         machineEnvPresence,
         secrets: [],
         secretBindingsByProfileId: {},
@@ -197,7 +248,6 @@ describe('useCreateNewSession (daemon unavailable UX)', () => {
         selectedMachine: { id: 'm1', active: false, activeAt: Date.now() - 5 * 60_000, metadata: { host: 'devbox' } },
         setIsCreating,
         setIsResumeSupportChecking: vi.fn(),
-        sessionType: 'simple',
         settings,
         useProfiles: false,
         selectedProfileId: null,
@@ -209,7 +259,6 @@ describe('useCreateNewSession (daemon unavailable UX)', () => {
         sessionPrompt: '',
         resumeSessionId: '',
         agentNewSessionOptions: null,
-        automationDraft: null,
         machineEnvPresence,
         secrets: [],
         secretBindingsByProfileId: {},
@@ -282,7 +331,6 @@ describe('useCreateNewSession (daemon unavailable UX)', () => {
         selectedMachine: { id: 'm1', active: true, activeAt: Date.now(), metadata: { host: 'devbox' } },
         setIsCreating: vi.fn(),
         setIsResumeSupportChecking: vi.fn(),
-        sessionType: 'simple',
         settings,
         useProfiles: false,
         selectedProfileId: null,
@@ -294,7 +342,6 @@ describe('useCreateNewSession (daemon unavailable UX)', () => {
         sessionPrompt: '',
         resumeSessionId: '',
         agentNewSessionOptions: null,
-        automationDraft: null,
         machineEnvPresence,
         secrets: [],
         secretBindingsByProfileId: {},

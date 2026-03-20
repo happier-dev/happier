@@ -5,21 +5,19 @@ import { Modal } from '@/modal';
 import { sync } from '@/sync/sync';
 import { useApplySettings } from '@/sync/store/settingsWriters';
 import { storage } from '@/sync/domains/state/storage';
-import { machineSpawnNewSession } from '@/sync/ops';
+import { machineBash, machineSpawnNewSession } from '@/sync/ops';
 import { resolveTerminalSpawnOptions } from '@/sync/domains/settings/terminalSettings';
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 import { resolveNewSessionServerTarget } from '@/sync/domains/server/selection/serverSelectionResolver';
-import { resolveLocalFeaturePolicyEnabled } from '@/sync/domains/features/featureLocalPolicy';
-import { createWorktree } from '@/utils/worktree/createWorktree';
 import { getMissingRequiredConfigEnvVarNames } from '@/utils/profiles/profileConfigRequirements';
 import { getSecretSatisfaction } from '@/utils/secrets/secretSatisfaction';
 import type { SecretChoiceByProfileIdByEnvVarName } from '@/utils/secrets/secretRequirementApply';
-import { clearNewSessionDraft } from '@/sync/domains/state/persistence';
+import { clearNewSessionDraft, loadSessionDrafts, saveSessionDrafts } from '@/sync/domains/state/persistence';
+import { storeTempData } from '@/utils/sessions/tempDataStore';
 import { getBuiltInProfile } from '@/sync/domains/profiles/profileUtils';
 import type { AIBackendProfile } from '@/sync/domains/profiles/profileCompatibility';
 import type { Settings } from '@/sync/domains/settings/settings';
 import type { SavedSecret } from '@/sync/domains/settings/savedSecretTypes';
-import type { NewSessionAutomationDraft } from '@/sync/domains/automations/automationDraft';
 import { resolveEffectiveWindowsRemoteSessionLaunchMode } from '@/sync/domains/session/spawn/windowsRemoteSessionLaunchMode';
 import { getAgentCore, type AgentId } from '@/agents/catalog/catalog';
 import { buildSpawnEnvironmentVariablesFromUiState, buildSpawnSessionExtrasFromUiState, getAgentResumeExperimentsFromSettings, getNewSessionPreflightIssues } from '@/agents/catalog/catalog';
@@ -28,9 +26,10 @@ import type { UseMachineEnvPresenceResult } from '@/hooks/machine/useMachineEnvP
 import { getMachineCapabilitiesSnapshot } from '@/hooks/server/useMachineCapabilitiesCache';
 import type { PermissionMode, ModelMode } from '@/sync/domains/permissions/permissionTypes';
 import { SPAWN_SESSION_ERROR_CODES, type BackendTargetRefV1, type WindowsRemoteSessionLaunchMode } from '@happier-dev/protocol';
+import type { AcpConfigOptionOverridesV1 } from '@happier-dev/protocol';
 import { parsePermissionIntentAlias } from '@happier-dev/agents';
+import type { CodexBackendMode } from '@happier-dev/agents';
 import { nowServerMs } from '@/sync/runtime/time';
-import { buildAutomationTemplate } from '@/components/sessions/new/modules/buildAutomationTemplate';
 import { encodeAutomationTemplateCiphertextForAccount } from '@/sync/domains/automations/encodeAutomationTemplateCiphertextForAccount';
 import { resolveSessionComposerSend } from '@/sync/domains/input/slashCommands/resolveSessionComposerSend';
 import { expandPromptTemplateInvocation } from '@/sync/domains/input/slashCommands/expandPromptTemplateInvocation';
@@ -42,12 +41,49 @@ import {
 } from '@/sync/domains/automations/automationValidation';
 import { delay } from '@/utils/timing/time';
 import { showDaemonUnavailableAlert } from '@/utils/errors/daemonUnavailableAlert';
+import { captureExceptionIfEnabled } from '@/utils/system/sentry';
 import { useMountedRef } from '@/hooks/ui/useMountedRef';
 import type { SessionMcpSelectionV1 } from '@happier-dev/protocol';
+import type { NewSessionCheckoutCreationDraft } from '@/sync/domains/state/newSessionCheckoutDraft';
+import { materializeNewSessionCheckout } from '@/components/sessions/new/modules/materializeNewSessionCheckout';
+import { rollbackNewSessionArtifacts } from '@/components/sessions/new/modules/rollbackNewSessionArtifacts';
+import {
+    followUpSpawnedSessionWithServerScope,
+    readRecoverableFollowUpPayload,
+} from '@/sync/runtime/orchestration/serverScopedRpc/followUpSpawnedSession';
+import {
+    buildAutomationTemplateFromSessionAuthoringDraft,
+    buildNewSessionAuthoringDraftFromResolvedInputs,
+    buildSpawnSessionOptionsFromAuthoringDraft,
+} from '@/components/sessions/authoring/draft/sessionAuthoringDraftAdapters';
+import type { SessionAuthoringDraft } from '@/components/sessions/authoring/draft/sessionAuthoringDraft';
+import type { AttachmentDraft } from '@/components/sessions/attachments/attachmentDraftModel';
+import { readRecoverableAttachmentDrafts } from '@/components/sessions/attachments/recoverableAttachmentDrafts';
 
 type MutableSettingsDelta = {
     -readonly [TKey in keyof Settings]?: Settings[TKey];
 };
+
+function buildRecoveryDataIdFromError(error: unknown): string | null {
+    const attachmentDrafts = readRecoverableAttachmentDrafts(error);
+    if (!attachmentDrafts || attachmentDrafts.length === 0) {
+        return null;
+    }
+
+    return storeTempData({
+        attachmentDrafts: attachmentDrafts as AttachmentDraft[],
+    });
+}
+
+export type CreatedSessionFollowUpContext = Readonly<{
+    sessionId: string;
+    effectiveSpawnServerId: string | null;
+}>;
+
+type HandleCreateSessionOptions = Readonly<{
+    initialMessage?: 'send' | 'skip';
+    afterCreated?: (context: CreatedSessionFollowUpContext) => void | Promise<void>;
+}>;
 
 export function useCreateNewSession(params: Readonly<{
     router: { push: (options: any) => void; replace: (path: any, options?: any) => void };
@@ -59,7 +95,11 @@ export function useCreateNewSession(params: Readonly<{
     setIsCreating: (v: boolean) => void;
     setIsResumeSupportChecking: (v: boolean) => void;
 
-    sessionType: 'simple' | 'worktree';
+    /**
+     * Legacy compatibility only.
+     * New-session checkout materialization is now driven exclusively by `checkoutCreationDraft`.
+     */
+    checkoutCreationDraft?: NewSessionCheckoutCreationDraft | null;
     settings: Settings;
     useProfiles: boolean;
     selectedProfileId: string | null;
@@ -77,11 +117,14 @@ export function useCreateNewSession(params: Readonly<{
      * Applied before the first message is sent.
      */
     acpSessionModeId?: string | null;
+    sessionConfigOptionOverrides?: AcpConfigOptionOverridesV1 | null;
+    codexBackendModeOverride?: CodexBackendMode | null;
 
     sessionPrompt: string;
     resumeSessionId: string;
     agentNewSessionOptions?: Record<string, unknown> | null;
-    automationDraft?: NewSessionAutomationDraft | null;
+    authoringDraft?: SessionAuthoringDraft | null;
+    automationEditId?: string | null;
     mcpSelection?: SessionMcpSelectionV1 | null;
     windowsRemoteSessionLaunchModeOverride?: WindowsRemoteSessionLaunchMode | null;
 
@@ -94,115 +137,104 @@ export function useCreateNewSession(params: Readonly<{
     selectedMachineCapabilities: any;
     targetServerId?: string | null;
     allowedTargetServerIds?: ReadonlyArray<string>;
+    disableDraftPersistence?: () => void;
 }>): Readonly<{
-    handleCreateSession: (opts?: Readonly<{ initialMessage?: 'send' | 'skip'; afterCreated?: (sessionId: string) => void | Promise<void> }>) => void;
+    handleCreateSession: (opts?: HandleCreateSessionOptions) => void;
 }> {
     const mountedRef = useMountedRef();
     const applySettings = useApplySettings();
-    const handleCreateSession = React.useCallback(async (opts?: Readonly<{ initialMessage?: 'send' | 'skip'; afterCreated?: (sessionId: string) => void | Promise<void> }>) => {
-            if (!params.selectedMachineId) {
-                Modal.alert(t('common.error'), t('newSession.noMachineSelected'));
-                return;
-            }
-        if (!params.selectedPath) {
+    const latestParamsRef = React.useRef(params);
+
+    React.useEffect(() => {
+        latestParamsRef.current = params;
+    }, [params]);
+
+    const handleCreateSession = React.useCallback(async (opts?: HandleCreateSessionOptions) => {
+        const current = latestParamsRef.current;
+        let rollbackActualPath: string | null = null;
+        let rollbackServerId: string | null = current.targetServerId ?? null;
+        const isRepoNativeWorktreeLaunch = current.checkoutCreationDraft?.kind === 'git_worktree';
+
+        if (!current.selectedMachineId) {
+            Modal.alert(t('common.error'), t('newSession.noMachineSelected'));
+            return;
+        }
+        if (!current.selectedPath) {
             Modal.alert(t('common.error'), t('newSession.noPathSelected'));
             return;
         }
 
-        params.setIsCreating(true);
+        current.setIsCreating(true);
 
-            try {
-            const targetServerId = typeof params.targetServerId === 'string' ? params.targetServerId.trim() : '';
+        try {
+            const targetServerId = typeof current.targetServerId === 'string' ? current.targetServerId.trim() : '';
             const snapshot = getActiveServerSnapshot();
-            const allowedTargetServerIds = Array.isArray(params.allowedTargetServerIds)
-                ? params.allowedTargetServerIds
+            const allowedTargetServerIds = Array.isArray(current.allowedTargetServerIds)
+                ? current.allowedTargetServerIds
                 : [snapshot.serverId];
             const targetResolution = resolveNewSessionServerTarget({
                 requestedServerId: targetServerId,
                 activeServerId: snapshot.serverId,
                 allowedServerIds: allowedTargetServerIds,
             });
-            const resolvedTargetServerId = targetResolution.targetServerId ?? snapshot.serverId;
+            const resolvedTargetServerId = typeof targetResolution.targetServerId === 'string'
+                && targetResolution.targetServerId.trim().length > 0
+                ? targetResolution.targetServerId
+                : snapshot.serverId;
+            rollbackServerId = resolvedTargetServerId;
 
-            let actualPath = params.selectedPath;
+            const updatedPaths = [{ machineId: current.selectedMachineId, path: current.selectedPath }, ...current.recentMachinePaths.filter((rp) => rp.machineId !== current.selectedMachineId)].slice(0, 10);
+            const profilesActive = current.useProfiles;
 
-            // Handle worktree creation
-            if (params.sessionType === 'worktree' && resolveLocalFeaturePolicyEnabled('session.typeSelector', params.settings) === true) {
-                const worktreeResult = await createWorktree(params.selectedMachineId, params.selectedPath);
-
-                if (!worktreeResult.success) {
-                    if (worktreeResult.error === 'Not a Git repository') {
-                        Modal.alert(t('common.error'), t('newSession.worktree.notGitRepo'));
-                    } else {
-                        Modal.alert(t('common.error'), t('newSession.worktree.failed', { error: worktreeResult.error || 'Unknown error' }));
-                    }
-                    params.setIsCreating(false);
-                    return;
-                }
-
-                actualPath = worktreeResult.worktreePath;
-            }
-
-            // Save settings
-            const updatedPaths = [{ machineId: params.selectedMachineId, path: params.selectedPath }, ...params.recentMachinePaths.filter(rp => rp.machineId !== params.selectedMachineId)].slice(0, 10);
-            const profilesActive = params.useProfiles;
-
-            // Keep prod session creation behavior unchanged:
-            // only persist/apply profiles & model when an explicit opt-in flag is enabled.
             const settingsUpdate: MutableSettingsDelta = {
                 recentMachinePaths: updatedPaths,
-                lastUsedAgent: params.agentType,
+                lastUsedAgent: current.agentType,
+                lastUsedBackendTarget: current.backendTarget,
             };
             if (profilesActive) {
-                settingsUpdate.lastUsedProfile = params.selectedProfileId;
+                settingsUpdate.lastUsedProfile = current.selectedProfileId;
             }
             applySettings(settingsUpdate);
 
-            // Get environment variables from selected profile
             let environmentVariables = undefined;
-            if (profilesActive && params.selectedProfileId) {
-                const selectedProfile = params.profileMap.get(params.selectedProfileId) || getBuiltInProfile(params.selectedProfileId);
+            if (profilesActive && current.selectedProfileId) {
+                const selectedProfile = current.profileMap.get(current.selectedProfileId) || getBuiltInProfile(current.selectedProfileId);
                 if (selectedProfile) {
                     environmentVariables = transformProfileToEnvironmentVars(selectedProfile);
 
-                    // Spawn-time secret injection overlay (saved key / session-only key)
-                    const selectedSecretIdByEnvVarName = params.selectedSecretIdByProfileIdByEnvVarName[params.selectedProfileId] ?? {};
-                    const sessionOnlySecretValueByEnvVarName = params.sessionOnlySecretValueByProfileIdByEnvVarName[params.selectedProfileId] ?? {};
+                    const selectedSecretIdByEnvVarName = current.selectedSecretIdByProfileIdByEnvVarName[current.selectedProfileId] ?? {};
+                    const sessionOnlySecretValueByEnvVarName = current.sessionOnlySecretValueByProfileIdByEnvVarName[current.selectedProfileId] ?? {};
                     const machineEnvReadyByName = Object.fromEntries(
-                        Object.entries(params.machineEnvPresence.meta ?? {}).map(([k, v]) => [k, Boolean(v?.isSet)]),
+                        Object.entries(current.machineEnvPresence.meta ?? {}).map(([k, v]) => [k, Boolean(v?.isSet)]),
                     );
 
-                    if (params.machineEnvPresence.isPreviewEnvSupported && !params.machineEnvPresence.isLoading) {
+                    if (current.machineEnvPresence.isPreviewEnvSupported && !current.machineEnvPresence.isLoading) {
                         const missingConfig = getMissingRequiredConfigEnvVarNames(selectedProfile, machineEnvReadyByName);
                         if (missingConfig.length > 0) {
                             Modal.alert(
                                 t('common.error'),
                                 t('profiles.requirements.missingConfigForProfile', { env: missingConfig.join(', ') })
                             );
-                            params.setIsCreating(false);
+                            current.setIsCreating(false);
                             return;
                         }
                     }
 
                     const satisfaction = getSecretSatisfaction({
                         profile: selectedProfile,
-                        secrets: params.secrets,
-                        defaultBindings: params.secretBindingsByProfileId[params.selectedProfileId] ?? null,
+                        secrets: current.secrets,
+                        defaultBindings: current.secretBindingsByProfileId[current.selectedProfileId] ?? null,
                         selectedSecretIds: selectedSecretIdByEnvVarName,
                         sessionOnlyValues: sessionOnlySecretValueByEnvVarName,
                         machineEnvReadyByName,
                     });
 
                     if (!satisfaction.isSatisfied) {
-                        // If not satisfied, prompt the user to resolve secrets.
-                        // Note: The wizard already encourages resolving before creating; this is a last-resort guard.
                         Modal.alert(t('common.error'), t('profiles.requirements.modalBody'));
-                        params.setIsCreating(false);
+                        current.setIsCreating(false);
                         return;
                     }
 
-                    // Inject any secrets that were satisfied via saved key or session-only.
-                    // Machine-env satisfied secrets are not injected (daemon will resolve from its env).
                     for (const item of satisfaction.items) {
                         if (!item.isSatisfied) continue;
                         let injected: string | null = null;
@@ -215,7 +247,7 @@ export function useCreateNewSession(params: Readonly<{
                             item.satisfiedBy === 'defaultSaved'
                         ) {
                             const id = item.savedSecretId;
-                            const secret = id ? (params.secrets.find((k) => k.id === id) ?? null) : null;
+                            const secret = id ? (current.secrets.find((key) => key.id === id) ?? null) : null;
                             injected = sync.decryptSecretValue(secret?.encryptedValue ?? null);
                         }
 
@@ -230,27 +262,29 @@ export function useCreateNewSession(params: Readonly<{
             }
 
             environmentVariables = buildSpawnEnvironmentVariablesFromUiState({
-                agentId: params.agentType,
-                settings: params.settings,
+                agentId: current.agentType,
+                settings: current.settings,
                 environmentVariables,
-                newSessionOptions: params.agentNewSessionOptions,
+                newSessionOptions: {
+                    ...(current.agentNewSessionOptions ?? {}),
+                    targetServerId: resolvedTargetServerId,
+                },
             });
-            const backendTarget: BackendTargetRefV1 = params.backendTarget ?? { kind: 'builtInAgent', agentId: params.agentType };
-
-            const connectedServices = (params.agentNewSessionOptions as any)?.connectedServices;
+            const backendTarget: BackendTargetRefV1 = current.backendTarget ?? { kind: 'builtInAgent', agentId: current.agentType };
+            const connectedServices = (current.agentNewSessionOptions as any)?.connectedServices;
 
             const terminal = resolveTerminalSpawnOptions({
                 settings: storage.getState().settings,
-                machineId: params.selectedMachineId,
+                machineId: current.selectedMachineId,
             });
 
-            const machineCapsSnapshot = getMachineCapabilitiesSnapshot(params.selectedMachineId, resolvedTargetServerId);
+            const machineCapsSnapshot = getMachineCapabilitiesSnapshot(current.selectedMachineId, resolvedTargetServerId);
             const machineCapsResults = machineCapsSnapshot?.response.results as any;
-            const experiments = getAgentResumeExperimentsFromSettings(params.agentType, params.settings);
+            const experiments = getAgentResumeExperimentsFromSettings(current.agentType, current.settings);
             const preflightIssues = getNewSessionPreflightIssues({
-                agentId: params.agentType,
+                agentId: current.agentType,
                 experiments,
-                resumeSessionId: params.resumeSessionId,
+                resumeSessionId: current.resumeSessionId,
                 results: machineCapsResults,
             });
             const blockingIssue = preflightIssues[0] ?? null;
@@ -261,200 +295,337 @@ export function useCreateNewSession(params: Readonly<{
                     { confirmText: t(blockingIssue.confirmTextKey) }
                 );
                 if (openMachine && blockingIssue.action === 'openMachine') {
-                    params.router.push(`/machine/${params.selectedMachineId}` as any);
+                    current.router.push(`/machine/${current.selectedMachineId}` as any);
                 }
-                params.setIsCreating(false);
+                current.setIsCreating(false);
                 return;
             }
 
-            // Resume is best-effort and handled by the CLI/runtime: attempt loadSession, fall back to a fresh start.
-            // The UI must not hard-block on pre-spawn capability probes (self-hosted transports can make probes flaky).
-            const resumeId = params.resumeSessionId.trim().length > 0 ? params.resumeSessionId.trim() : undefined;
+            const resumeId = current.resumeSessionId.trim().length > 0 ? current.resumeSessionId.trim() : undefined;
+            const spawnPermissionMode = parsePermissionIntentAlias(current.permissionMode) ?? 'default';
+            const spawnPermissionModeUpdatedAt = nowServerMs();
+            const normalizedAcpModeId = typeof current.acpSessionModeId === 'string' ? current.acpSessionModeId.trim() : '';
+            const spawnModelId =
+                getAgentCore(current.agentType).model.supportsSelection === true &&
+                typeof current.modelMode === 'string' &&
+                current.modelMode.trim().length > 0 &&
+                current.modelMode !== 'default'
+                    ? current.modelMode
+                    : undefined;
+            const spawnModelUpdatedAt = spawnModelId ? spawnPermissionModeUpdatedAt : undefined;
+            const windowsRemoteSessionLaunchMode = resolveEffectiveWindowsRemoteSessionLaunchMode({
+                machineMetadata: current.selectedMachine?.metadata,
+                settings: current.settings,
+                sessionOverride: current.windowsRemoteSessionLaunchModeOverride ?? undefined,
+            }).mode;
+            const normalizedSessionPrompt = current.sessionPrompt.trim();
+            const effectiveSpawnSettings = current.agentType === 'codex' && current.codexBackendModeOverride
+                ? { ...current.settings, codexBackendMode: current.codexBackendModeOverride }
+                : current.settings;
+            const spawnSessionExtras = buildSpawnSessionExtrasFromUiState({
+                agentId: current.agentType,
+                settings: effectiveSpawnSettings,
+                resumeSessionId: current.resumeSessionId,
+            });
+            const authoringDraft = buildNewSessionAuthoringDraftFromResolvedInputs({
+                directory: current.selectedPath,
+                checkoutCreationDraft: current.checkoutCreationDraft ?? null,
+                prompt: normalizedSessionPrompt,
+                displayText: normalizedSessionPrompt,
+                agentId: current.agentType,
+                backendTarget,
+                transcriptStorage: current.transcriptStorage ?? null,
+                profileId: profilesActive ? (current.selectedProfileId ?? '') : null,
+                environmentVariables: environmentVariables ?? null,
+                resumeSessionId: resumeId ?? null,
+                permissionMode: spawnPermissionMode,
+                permissionModeUpdatedAt: spawnPermissionModeUpdatedAt,
+                modelId: spawnModelId ?? null,
+                modelUpdatedAt: spawnModelUpdatedAt ?? null,
+                mcpSelection: current.mcpSelection ?? null,
+                connectedServices: connectedServices ?? null,
+                terminal: terminal ?? null,
+                windowsRemoteSessionLaunchMode: windowsRemoteSessionLaunchMode ?? null,
+                windowsRemoteSessionConsole: null,
+                codexBackendMode: typeof spawnSessionExtras.codexBackendMode === 'string'
+                    ? spawnSessionExtras.codexBackendMode as CodexBackendMode
+                    : null,
+                acpSessionModeId: normalizedAcpModeId || null,
+                sessionConfigOptionOverrides: current.sessionConfigOptionOverrides ?? null,
+                automation: current.authoringDraft?.automation ?? null,
+            });
 
-              const spawnPermissionMode = parsePermissionIntentAlias(params.permissionMode) ?? 'default';
-              const spawnPermissionModeUpdatedAt = nowServerMs();
-                const spawnModelId =
-                    getAgentCore(params.agentType).model.supportsSelection === true &&
-                    typeof params.modelMode === 'string' &&
-                    params.modelMode.trim().length > 0 &&
-                    params.modelMode !== 'default'
-                        ? params.modelMode
-                        : undefined;
-                const spawnModelUpdatedAt = spawnModelId ? spawnPermissionModeUpdatedAt : undefined;
-                const windowsRemoteSessionLaunchMode = resolveEffectiveWindowsRemoteSessionLaunchMode({
-                    machineMetadata: params.selectedMachine?.metadata,
-                    settings: params.settings,
-                    sessionOverride: params.windowsRemoteSessionLaunchModeOverride ?? undefined,
-                }).mode;
+            const activeAutomationDraft = authoringDraft.automation ?? null;
 
-                if (params.automationDraft?.enabled === true) {
-                    const schedule = buildAutomationScheduleFromDraft(params.automationDraft);
+            if (activeAutomationDraft?.enabled === true) {
+                const schedule = buildAutomationScheduleFromDraft(activeAutomationDraft);
+                const template = buildAutomationTemplateFromSessionAuthoringDraft({
+                    ...authoringDraft,
+                    ...spawnSessionExtras,
+                });
+                validateAutomationTemplateTarget({
+                    targetType: 'new_session',
+                    template,
+                });
+                const templateCiphertext = await encodeAutomationTemplateCiphertextForAccount({
+                    credentials: sync.getCredentials(),
+                    template,
+                    encryptRaw: (value) => sync.encryption.encryptAutomationTemplateRaw(value),
+                });
 
-                    const template = buildAutomationTemplate({
-                        directory: actualPath,
-                        agentType: params.agentType,
-                        transcriptStorage: params.transcriptStorage,
-                        ...(params.sessionPrompt.trim().length > 0 ? { prompt: params.sessionPrompt.trim() } : {}),
-                        ...(profilesActive ? { profileId: params.selectedProfileId ?? '' } : {}),
-                        ...(environmentVariables ? { environmentVariables } : {}),
-                        ...(resumeId ? { resume: resumeId } : {}),
-                        permissionMode: spawnPermissionMode,
-                        permissionModeUpdatedAt: spawnPermissionModeUpdatedAt,
-                        ...(spawnModelId ? { modelId: spawnModelId, modelUpdatedAt: spawnModelUpdatedAt } : {}),
-                        ...(params.mcpSelection ? { mcpSelection: params.mcpSelection } : {}),
-                        ...(terminal ? { terminal } : {}),
-                        ...(windowsRemoteSessionLaunchMode ? { windowsRemoteSessionLaunchMode } : {}),
-                        ...(connectedServices ? { connectedServices } : {}),
-                        ...buildSpawnSessionExtrasFromUiState({
-                            agentId: params.agentType,
-                            settings: params.settings,
-                            resumeSessionId: params.resumeSessionId,
-                        }),
-                    });
-                    validateAutomationTemplateTarget({
-                        targetType: 'new_session',
-                        template,
-                    });
-                    const templateCiphertext = await encodeAutomationTemplateCiphertextForAccount({
-                        credentials: sync.getCredentials(),
-                        template,
-                        encryptRaw: (value) => sync.encryption.encryptAutomationTemplateRaw(value),
-                    });
+                const normalizedAutomationInput = {
+                    enabled: true,
+                    name: normalizeAutomationName(activeAutomationDraft.name),
+                    description: normalizeAutomationDescription(activeAutomationDraft.description),
+                    schedule,
+                    templateCiphertext,
+                };
+                const automationEditId = typeof current.automationEditId === 'string'
+                    ? current.automationEditId.trim()
+                    : '';
 
-                    await sync.createAutomation({
-                        name: normalizeAutomationName(params.automationDraft.name),
-                        description: normalizeAutomationDescription(params.automationDraft.description),
-                        enabled: true,
-                        schedule,
-                        targetType: 'new_session',
-                        templateCiphertext,
-                        assignments: [{ machineId: params.selectedMachineId, enabled: true, priority: 100 }],
-                    });
+                if (automationEditId.length > 0) {
+                    await sync.updateAutomation(automationEditId, normalizedAutomationInput);
+                    current.disableDraftPersistence?.();
                     clearNewSessionDraft();
                     await sync.refreshAutomations();
-                    params.router.replace('/automations' as any);
+                    current.router.replace(`/automations/${automationEditId}` as any);
                     return;
                 }
 
-                  const result = await machineSpawnNewSession({
-                          machineId: params.selectedMachineId,
-                          serverId: resolvedTargetServerId,
-                          directory: actualPath,
-                          approvedNewDirectoryCreation: true,
-                          backendTarget,
-                          transcriptStorage: params.transcriptStorage,
-                          profileId: profilesActive ? (params.selectedProfileId ?? '') : undefined,
-                          environmentVariables,
-                          resume: resumeId,
-                          permissionMode: spawnPermissionMode,
-                          permissionModeUpdatedAt: spawnPermissionModeUpdatedAt,
-                          ...(spawnModelId ? { modelId: spawnModelId, modelUpdatedAt: spawnModelUpdatedAt } : {}),
-                          ...(connectedServices ? { connectedServices } : {}),
-                          ...(params.mcpSelection ? { mcpSelection: params.mcpSelection } : {}),
-                          ...buildSpawnSessionExtrasFromUiState({
-                          agentId: params.agentType,
-                          settings: params.settings,
-                          resumeSessionId: params.resumeSessionId,
-                      }),
-                      terminal,
-                      windowsRemoteSessionLaunchMode,
-                  });
-
-                if (result.type === 'success' && result.sessionId) {
-                // Clear draft state on successful session creation
+                await sync.createAutomation({
+                    ...normalizedAutomationInput,
+                    targetType: 'new_session',
+                    assignments: [{ machineId: current.selectedMachineId, enabled: true, priority: 100 }],
+                });
+                current.disableDraftPersistence?.();
                 clearNewSessionDraft();
+                await sync.refreshAutomations();
+                current.router.replace('/automations' as any);
+                return;
+            }
 
-                await sync.refreshSessions();
+            const checkoutResult = await materializeNewSessionCheckout({
+                machineId: current.selectedMachineId,
+                selectedPath: current.selectedPath,
+                checkoutCreationDraft: current.checkoutCreationDraft,
+            });
 
-                // Set permission mode and model mode on the session
-                storage.getState().updateSessionPermissionMode(result.sessionId, params.permissionMode);
-                if (getAgentCore(params.agentType).model.supportsSelection && params.modelMode && params.modelMode !== 'default') {
-                    storage.getState().updateSessionModelMode(result.sessionId, params.modelMode);
+            if (!checkoutResult.success) {
+                if (checkoutResult.error === 'Not a Git repository') {
+                    Modal.alert(t('common.error'), t('newSession.worktree.notGitRepo'));
+                } else {
+                    Modal.alert(t('common.error'), t('newSession.worktree.failed', { error: checkoutResult.error || 'Unknown error' }));
                 }
+                current.setIsCreating(false);
+                return;
+            }
+            const actualPath = checkoutResult.path;
+            const sessionPath = checkoutResult.sessionPath;
+            rollbackActualPath = actualPath;
 
-                const normalizedAcpModeId = typeof params.acpSessionModeId === 'string' ? params.acpSessionModeId.trim() : '';
-                if (normalizedAcpModeId && normalizedAcpModeId !== 'default') {
-                    const core = getAgentCore(params.agentType);
-                    if (core.sessionModes.kind === 'acpAgentModes' || core.sessionModes.kind === 'staticAgentModes') {
-                        try {
-                            await sync.publishSessionAcpSessionModeOverrideToMetadata({
-                                sessionId: result.sessionId,
-                                modeId: normalizedAcpModeId,
-                                updatedAt: nowServerMs(),
+            const result = await machineSpawnNewSession({
+                ...buildSpawnSessionOptionsFromAuthoringDraft({
+                    draft: {
+                        ...authoringDraft,
+                        directory: sessionPath,
+                    },
+                    machineId: current.selectedMachineId,
+                    serverId: resolvedTargetServerId,
+                    approvedNewDirectoryCreation: true,
+                    agentModeUpdatedAt: normalizedAcpModeId ? spawnPermissionModeUpdatedAt : null,
+                }),
+                ...spawnSessionExtras,
+            });
+
+            const rollbackSpawnArtifacts = async (): Promise<string | null> => {
+                try {
+                    await rollbackNewSessionArtifacts({
+                        machineId: current.selectedMachineId!,
+                        selectedPath: current.selectedPath,
+                        actualPath,
+                        checkoutCreationDraft: current.checkoutCreationDraft,
+                        serverId: resolvedTargetServerId,
+                        machineBash,
+                    });
+                    return null;
+                } catch (error) {
+                    return error instanceof Error ? error.message : 'Failed to clean up created worktree artifacts';
+                }
+            };
+
+            if (result.type === 'success' && result.sessionId) {
+                let postSpawnFollowUpError: unknown = null;
+                let initialMessageText = '';
+                let recoverableCreatedSessionDraft = '';
+
+                try {
+                    const shouldSendInitialMessage = (opts?.initialMessage ?? 'send') !== 'skip';
+                    const shouldPrepareInitialMessage = shouldSendInitialMessage && current.sessionPrompt.trim();
+                    if (shouldPrepareInitialMessage) {
+                        const promptInvocationsV1 = storage.getState().settings.promptInvocationsV1;
+                        const resolvedInitialMessage = resolveSessionComposerSend({
+                            input: current.sessionPrompt,
+                            executionRunsEnabled: false,
+                            promptInvocationsV1,
+                        });
+
+                        initialMessageText = current.sessionPrompt;
+                        if (resolvedInitialMessage.kind === 'template') {
+                            initialMessageText = await expandPromptTemplateInvocation({
+                                targetArtifactId: resolvedInitialMessage.targetArtifactId,
+                                argsText: resolvedInitialMessage.rest,
                             });
-                        } catch {
-                            // Non-blocking: session is created and will be opened regardless.
+                        } else if (resolvedInitialMessage.kind === 'send') {
+                            initialMessageText = resolvedInitialMessage.text;
+                        } else if (resolvedInitialMessage.kind === 'noop') {
+                            initialMessageText = '';
                         }
                     }
+
+                    await followUpSpawnedSessionWithServerScope({
+                        sessionId: result.sessionId,
+                        targetServerId: resolvedTargetServerId,
+                        initialMessageText,
+                        profileId: profilesActive ? (current.selectedProfileId ?? '') : null,
+                    });
+                } catch (error) {
+                    postSpawnFollowUpError = error;
+                    recoverableCreatedSessionDraft = initialMessageText;
                 }
 
-                // Send initial message if provided
-                const shouldSendInitialMessage = (opts?.initialMessage ?? 'send') !== 'skip';
-                if (shouldSendInitialMessage && params.sessionPrompt.trim()) {
-                    const promptInvocationsV1 = storage.getState().settings.promptInvocationsV1;
-                    const resolvedInitialMessage = resolveSessionComposerSend({
-                        input: params.sessionPrompt,
-                        executionRunsEnabled: false,
-                        promptInvocationsV1,
-                    });
+                storage.getState().updateSessionPermissionMode(result.sessionId, current.permissionMode);
+                if (getAgentCore(current.agentType).model.supportsSelection && current.modelMode && current.modelMode !== 'default') {
+                    storage.getState().updateSessionModelMode(result.sessionId, current.modelMode);
+                }
 
-                    let initialMessageText = params.sessionPrompt;
-                    if (resolvedInitialMessage.kind === 'template') {
-                        initialMessageText = await expandPromptTemplateInvocation({
-                            targetArtifactId: resolvedInitialMessage.targetArtifactId,
-                            argsText: resolvedInitialMessage.rest,
-                        });
-                    } else if (resolvedInitialMessage.kind === 'send') {
-                        initialMessageText = resolvedInitialMessage.text;
-                    } else if (resolvedInitialMessage.kind === 'noop') {
-                        initialMessageText = '';
+                const createdSessionId = result.sessionId;
+
+                const persistCreatedSessionDraftForRecovery = (draft: string) => {
+                    const normalizedDraft = draft.trim();
+                    if (!normalizedDraft) {
+                        return;
                     }
 
-                    if (initialMessageText.trim().length > 0) {
-                        await sync.sendMessage(
-                            result.sessionId,
-                            initialMessageText,
-                            undefined,
-                            undefined,
-                            profilesActive ? { profileId: params.selectedProfileId ?? '' } : undefined,
+                    const storedSession = storage.getState().sessions[createdSessionId];
+                    if (storedSession) {
+                        storage.getState().updateSessionDraft(createdSessionId, normalizedDraft);
+                        return;
+                    }
+
+                    saveSessionDrafts({
+                        ...loadSessionDrafts(),
+                        [createdSessionId]: normalizedDraft,
+                    });
+                };
+
+                const ensureCreatedSessionHydratedForNavigation = async (): Promise<boolean> => {
+                    if (storage.getState().sessions[createdSessionId]) {
+                        return true;
+                    }
+
+                    try {
+                        await sync.ensureSessionVisibleForMessageRoute(createdSessionId, { forceRefresh: true });
+                    } catch {
+                        // Best effort only. Navigation is gated on the local session snapshot below.
+                    }
+
+                    return Boolean(storage.getState().sessions[createdSessionId]);
+                };
+
+                if (!postSpawnFollowUpError && opts?.afterCreated) {
+                    try {
+                        await opts.afterCreated({
+                            sessionId: result.sessionId,
+                            effectiveSpawnServerId: resolvedTargetServerId,
+                        });
+                    } catch (error) {
+                        postSpawnFollowUpError = error;
+                        const recoverableFollowUpPayload = readRecoverableFollowUpPayload(error)
+                            ?? ((error instanceof Error
+                                && typeof (error as Error & { recoverableFollowUpPayload?: { draftText?: unknown } }).recoverableFollowUpPayload?.draftText === 'string')
+                                ? (error as Error & {
+                                    recoverableFollowUpPayload: {
+                                        draftText: string;
+                                    };
+                                }).recoverableFollowUpPayload
+                                : null);
+                        recoverableCreatedSessionDraft = recoverableFollowUpPayload?.draftText ?? (
+                            typeof current.sessionPrompt === 'string'
+                                ? current.sessionPrompt
+                                : (typeof params.sessionPrompt === 'string' ? params.sessionPrompt : '')
                         );
                     }
                 }
 
-                if (opts?.afterCreated) {
-                    try {
-                        await opts.afterCreated(result.sessionId);
-                    } catch {
-                        // Non-blocking: session is created and will be opened regardless.
-                    }
-                }
+                if (postSpawnFollowUpError) {
+                    const normalizedRecoveryDraft = typeof recoverableCreatedSessionDraft === 'string'
+                        ? recoverableCreatedSessionDraft.trim()
+                        : '';
 
-                params.router.replace(`/session/${result.sessionId}`, {
-                    dangerouslySingular() {
-                        return 'session'
-                    },
-                });
-              } else if (result.type === 'requestToApproveDirectoryCreation') {
-                  Modal.alert(t('common.error'), t('newSession.failedToStart'));
-                  params.setIsCreating(false);
-              } else if (result.type === 'error') {
-                    if (result.errorCode === SPAWN_SESSION_ERROR_CODES.DAEMON_RPC_UNAVAILABLE) {
-                        params.setIsCreating(false);
-                        showDaemonUnavailableAlert({
-                            titleKey: 'newSession.daemonRpcUnavailableTitle',
-                            bodyKey: 'newSession.daemonRpcUnavailableBody',
-                            machine: params.selectedMachine,
-                            onRetry: () => {
-                                void handleCreateSession(opts);
-                            },
-                            shouldContinue: () => mountedRef.current,
-                        });
+                    if (normalizedRecoveryDraft.length > 0) {
+                        persistCreatedSessionDraftForRecovery(normalizedRecoveryDraft);
+                    }
+
+                    const createdSessionHydrated = await ensureCreatedSessionHydratedForNavigation();
+
+                    if (createdSessionHydrated && normalizedRecoveryDraft.length > 0) {
+                        storage.getState().updateSessionDraft(createdSessionId, normalizedRecoveryDraft);
+                    }
+
+                    if (createdSessionHydrated) {
+                        current.disableDraftPersistence?.();
+                        clearNewSessionDraft();
+                    }
+
+                    Modal.alert(
+                        t('common.error'),
+                        postSpawnFollowUpError instanceof Error ? postSpawnFollowUpError.message : t('common.error'),
+                    );
+
+                    if (!createdSessionHydrated) {
+                        current.setIsCreating(false);
                         return;
                     }
-                  const extraDetail = (() => {
-                      switch (result.errorCode) {
-                          case SPAWN_SESSION_ERROR_CODES.RESUME_NOT_SUPPORTED:
-                              return 'Resume is not supported for this agent on this machine.';
+                } else {
+                    current.disableDraftPersistence?.();
+                    clearNewSessionDraft();
+                }
+
+                const recoveryDataId = postSpawnFollowUpError ? buildRecoveryDataIdFromError(postSpawnFollowUpError) : null;
+                const sessionRoute = recoveryDataId
+                    ? `/session/${result.sessionId}?recoveryDataId=${encodeURIComponent(recoveryDataId)}`
+                    : `/session/${result.sessionId}`;
+
+                current.router.replace(sessionRoute, {
+                    dangerouslySingular() {
+                        return 'session';
+                    },
+                });
+            } else if (result.type === 'requestToApproveDirectoryCreation') {
+                const rollbackErrorMessage = await rollbackSpawnArtifacts();
+                const rollbackDetail = rollbackErrorMessage ? `\n\n${t('common.details')}: ${rollbackErrorMessage}` : '';
+                Modal.alert(t('common.error'), `${t('newSession.failedToStart')}${rollbackDetail}`);
+                current.setIsCreating(false);
+            } else if (result.type === 'error') {
+                const rollbackErrorMessage = await rollbackSpawnArtifacts();
+                if (result.errorCode === SPAWN_SESSION_ERROR_CODES.DAEMON_RPC_UNAVAILABLE) {
+                    current.setIsCreating(false);
+                    showDaemonUnavailableAlert({
+                        titleKey: 'newSession.daemonRpcUnavailableTitle',
+                        bodyKey: 'newSession.daemonRpcUnavailableBody',
+                        machine: current.selectedMachine,
+                        onRetry: () => {
+                            void handleCreateSession(opts);
+                        },
+                        shouldContinue: () => mountedRef.current,
+                    });
+                    return;
+                }
+                const extraDetail = (() => {
+                    switch (result.errorCode) {
+                        case SPAWN_SESSION_ERROR_CODES.RESUME_NOT_SUPPORTED:
+                            return 'Resume is not supported for this agent on this machine.';
                         case SPAWN_SESSION_ERROR_CODES.CHILD_EXITED_BEFORE_WEBHOOK:
                             return 'The agent process exited before it could connect. Check that the agent CLI is installed and available to the daemon (PATH).';
                         case SPAWN_SESSION_ERROR_CODES.SESSION_WEBHOOK_TIMEOUT:
@@ -464,14 +635,53 @@ export function useCreateNewSession(params: Readonly<{
                     }
                 })();
                 const detail = extraDetail ? `\n\n${t('common.details')}: ${extraDetail}` : '';
-                Modal.alert(t('common.error'), `${result.errorMessage}${detail}`);
-                params.setIsCreating(false);
+                const rollbackDetail = rollbackErrorMessage ? `\n\n${t('common.details')}: ${rollbackErrorMessage}` : '';
+                Modal.alert(t('common.error'), `${result.errorMessage}${detail}${rollbackDetail}`);
+                current.setIsCreating(false);
             } else {
                 throw new Error('Session spawning failed - no session ID returned.');
             }
         } catch (error) {
-            console.error('Failed to start session', error);
-            let errorMessage = 'Failed to start session. Make sure the daemon is running on the target machine.';
+            if (rollbackActualPath) {
+                try {
+                    await rollbackNewSessionArtifacts({
+                        machineId: current.selectedMachineId,
+                        selectedPath: current.selectedPath,
+                        actualPath: rollbackActualPath,
+                        checkoutCreationDraft: current.checkoutCreationDraft,
+                        serverId: rollbackServerId,
+                        machineBash,
+                    });
+                } catch (rollbackError) {
+                    captureExceptionIfEnabled(rollbackError, {
+                        tags: {
+                            area: 'new_session',
+                            action: 'rollback_artifacts',
+                        },
+                        extra: {
+                            phase: 'rollback_artifacts',
+                            machineId: current.selectedMachineId,
+                            selectedPath: current.selectedPath,
+                            actualPath: rollbackActualPath,
+                        },
+                    });
+                }
+            }
+            captureExceptionIfEnabled(error, {
+                tags: {
+                    area: 'new_session',
+                    action: 'create_session',
+                },
+                extra: {
+                    phase: 'create_session',
+                    machineId: current.selectedMachineId,
+                    selectedPath: current.selectedPath,
+                    hadRollbackPath: rollbackActualPath !== null,
+                },
+            });
+            let errorMessage = error instanceof Error
+                ? error.message
+                : 'Failed to start session. Make sure the daemon is running on the target machine.';
             if (error instanceof Error) {
                 if (error.message.includes('timeout')) {
                     errorMessage = 'Session startup timed out. The machine may be slow or the daemon may not be responding.';
@@ -480,41 +690,9 @@ export function useCreateNewSession(params: Readonly<{
                 }
             }
             Modal.alert(t('common.error'), errorMessage);
-            params.setIsCreating(false);
+            latestParamsRef.current.setIsCreating(false);
         }
-        }, [
-            applySettings,
-            mountedRef,
-            params.agentType,
-            params.machineEnvPresence.meta,
-            params.modelMode,
-            params.permissionMode,
-        params.profileMap,
-        params.recentMachinePaths,
-        params.resumeSessionId,
-        params.router,
-        params.agentNewSessionOptions,
-        params.settings,
-        params.secretBindingsByProfileId,
-        params.secrets,
-        params.selectedMachineCapabilities,
-        params.allowedTargetServerIds,
-        params.targetServerId,
-          params.selectedSecretIdByProfileIdByEnvVarName,
-          params.selectedMachine?.metadata?.platform,
-          params.selectedMachine?.metadata?.windowsRemoteSessionLaunchMode,
-          params.selectedMachine?.metadata?.windowsRemoteSessionConsole,
-          params.windowsRemoteSessionLaunchModeOverride,
-          params.selectedMachineId,
-          params.selectedPath,
-          params.selectedProfileId,
-          params.sessionOnlySecretValueByProfileIdByEnvVarName,
-          params.sessionPrompt,
-        params.sessionType,
-        params.setIsCreating,
-        params.setIsResumeSupportChecking,
-        params.useProfiles,
-    ]);
+    }, [applySettings, mountedRef]);
 
     return { handleCreateSession };
 }

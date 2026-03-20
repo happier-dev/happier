@@ -8,10 +8,10 @@ import { t } from '@/text';
 import { MachineCliGlyphs } from '@/components/sessions/new/components/MachineCliGlyphs';
 
 export interface MachineSelectorProps {
-    machines: Machine[];
+    machines: ReadonlyArray<Machine>;
     selectedMachine: Machine | null;
-    recentMachines?: Machine[];
-    favoriteMachines?: Machine[];
+    recentMachines?: ReadonlyArray<Machine>;
+    favoriteMachines?: ReadonlyArray<Machine>;
     onSelect: (machine: Machine) => void;
     onToggleFavorite?: (machine: Machine) => void;
     showFavorites?: boolean;

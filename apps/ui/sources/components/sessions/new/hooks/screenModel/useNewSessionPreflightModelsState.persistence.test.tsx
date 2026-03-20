@@ -36,7 +36,7 @@ describe('useNewSessionPreflightModelsState (persistence)', () => {
 
     function Harness() {
       useNewSessionPreflightModelsState({
-        agentType: 'codex' as any,
+        backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
         selectedMachineId: 'machine-1',
         capabilityServerId: 'server-1',
         cwd: '/repo',
@@ -60,7 +60,7 @@ describe('useNewSessionPreflightModelsState (persistence)', () => {
 
     function Harness2() {
       useNewSessionPreflightModelsState2({
-        agentType: 'codex' as any,
+        backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
         selectedMachineId: 'machine-1',
         capabilityServerId: 'server-1',
         cwd: '/repo',
@@ -80,4 +80,3 @@ describe('useNewSessionPreflightModelsState (persistence)', () => {
     expect(machineCapabilitiesInvokeMock).toHaveBeenCalledTimes(1);
   });
 });
-

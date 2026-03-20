@@ -1,0 +1,195 @@
+import * as React from 'react';
+
+import type { ActionId, BackendTargetRefV1, WindowsRemoteSessionLaunchMode } from '@happier-dev/protocol';
+import type { Router } from 'expo-router';
+
+import { AutomationSettingsForm, type AutomationSettingsValue } from '@/components/automations/editor/AutomationSettingsForm';
+import { useNewSessionCheckoutActionChip } from '@/components/sessions/new/hooks/screenModel/useNewSessionCheckoutActionChip';
+import { useNewSessionAgentInputExtraActionChips } from '@/components/sessions/new/hooks/screenModel/useNewSessionAgentInputExtraActionChips';
+import { getAutomationChipLabel } from '@/components/sessions/new/modules/automationChipModel';
+import type { NewSessionAutomationDraft } from '@/sync/domains/automations/automationDraft';
+import { sanitizeNewSessionAutomationDraft } from '@/sync/domains/automations/automationDraft';
+import { buildExecutionRunActionDraftInputForUi } from '@/sync/domains/actions/buildExecutionRunActionDraftInputForUi';
+import type { AgentId } from '@/agents/catalog/catalog';
+import type { AgentInputExtraActionChip } from '@/components/sessions/agentInput/agentInputContracts';
+import type { ScmWorkingSnapshot, Machine } from '@/sync/domains/state/storageTypes';
+import { isMachineOnline } from '@/utils/sessions/machineUtils';
+import { storage } from '@/sync/domains/state/storage';
+import type { NewSessionCheckoutChipModel } from '@/components/sessions/new/modules/newSessionCheckoutChipModel';
+import type { NewSessionCheckoutCreationDraft } from '@/sync/domains/state/newSessionCheckoutDraft';
+import type { NewSessionTranscriptStorage } from '@/components/sessions/new/modules/newSessionTranscriptStorage';
+import { t } from '@/text';
+
+type ThemeLike = Readonly<{
+    colors: Readonly<{
+        success: string;
+        textDestructive: string;
+    }>;
+}>;
+
+export function useNewSessionAgentInputPresentation(params: Readonly<{
+    theme: ThemeLike;
+    selectedMachine: Machine | null;
+    automationFeatureEnabled: boolean;
+    automationDraft: NewSessionAutomationDraft;
+    effectiveAutomationDraft: AutomationSettingsValue;
+    setAutomationDraft: React.Dispatch<React.SetStateAction<NewSessionAutomationDraft>>;
+    repoScmSnapshot: ScmWorkingSnapshot | null;
+    checkoutChipModel: NewSessionCheckoutChipModel;
+    checkoutPickerOpen: boolean;
+    setCheckoutPickerOpen: React.Dispatch<React.SetStateAction<boolean>>;
+    checkoutCreationDraft: NewSessionCheckoutCreationDraft | null;
+    selectedMachineId: string | null;
+    selectedPath: string;
+    setSelectedPath: React.Dispatch<React.SetStateAction<string>>;
+    setCheckoutCreationDraft: React.Dispatch<React.SetStateAction<NewSessionCheckoutCreationDraft | null>>;
+    pendingGitWorktreeBaseRefRef: React.MutableRefObject<string | null>;
+    pendingGitWorktreeSourceKindRef: React.MutableRefObject<'current' | 'local' | 'remote'>;
+    shouldReconcileInitialHydratedCheckoutCreationDraftRef: React.MutableRefObject<boolean>;
+    router: Router;
+    sessionPrompt: string;
+    handleCreateSession: (opts?: Readonly<{ initialMessage?: 'send' | 'skip'; afterCreated?: (context: Readonly<{ sessionId: string }>) => void | Promise<void> }>) => void;
+    backendTarget: BackendTargetRefV1;
+    agentType: AgentId;
+    agentOptionState?: Record<string, unknown> | null;
+    setAgentOptionStateForCurrentAgent: (key: string, next: unknown) => void;
+    connectedServicesAuthChip?: AgentInputExtraActionChip | null;
+    showAutomationActionChips: boolean;
+    showServerPickerChip: boolean;
+    targetServerName: string;
+    handleServerClick: () => void;
+    mcpChip?: AgentInputExtraActionChip | null;
+    directSessionsFeatureEnabled: boolean;
+    supportsDirectTranscriptStorage: boolean;
+    transcriptStorage: NewSessionTranscriptStorage;
+    hasUserSelectedTranscriptStorageRef: React.MutableRefObject<boolean>;
+    setTranscriptStorage: React.Dispatch<React.SetStateAction<NewSessionTranscriptStorage>>;
+    selectedMachineIsWindows: boolean;
+    effectiveWindowsRemoteSessionLaunchMode: WindowsRemoteSessionLaunchMode | null;
+    windowsTerminalAvailable: boolean;
+    setWindowsRemoteSessionLaunchModeOverride: (mode: WindowsRemoteSessionLaunchMode | null) => void;
+}>): Readonly<{
+    connectionStatus: Readonly<{
+        text: string;
+        color: string;
+        dotColor: string;
+        isPulsing: boolean;
+    }> | undefined;
+    automationSection: React.ReactNode;
+    agentInputExtraActionChips: ReadonlyArray<AgentInputExtraActionChip>;
+}> {
+    const connectionStatus = React.useMemo(() => {
+        if (!params.selectedMachine) return undefined;
+        const online = isMachineOnline(params.selectedMachine);
+
+        return {
+            text: online ? t('status.online') : t('newSession.machineOfflineCannotStartStatus'),
+            color: online ? params.theme.colors.success : params.theme.colors.textDestructive,
+            dotColor: online ? params.theme.colors.success : params.theme.colors.textDestructive,
+            isPulsing: online,
+        };
+    }, [params.selectedMachine, params.theme.colors.success, params.theme.colors.textDestructive]);
+
+    const handleAutomationToggle = React.useCallback((next: boolean) => {
+        if (!params.automationFeatureEnabled) return;
+        params.setAutomationDraft((prev) => sanitizeNewSessionAutomationDraft({
+            ...prev,
+            enabled: next,
+        }));
+    }, [params.automationFeatureEnabled, params.setAutomationDraft]);
+
+    const handleAutomationSettingsChange = React.useCallback((next: AutomationSettingsValue) => {
+        params.setAutomationDraft(sanitizeNewSessionAutomationDraft(next));
+    }, [params.setAutomationDraft]);
+
+    const automationSection = React.useMemo(() => {
+        if (!params.automationFeatureEnabled || !params.effectiveAutomationDraft.enabled) {
+            return null;
+        }
+
+        return (
+            <AutomationSettingsForm
+                variant="new-session"
+                showEnabledToggle={false}
+                value={params.effectiveAutomationDraft}
+                onChange={handleAutomationSettingsChange}
+            />
+        );
+    }, [
+        handleAutomationSettingsChange,
+        params.automationFeatureEnabled,
+        params.effectiveAutomationDraft,
+    ]);
+
+    const toggleTranscriptStorage = React.useCallback(() => {
+        params.hasUserSelectedTranscriptStorageRef.current = true;
+        params.setTranscriptStorage((current) => current === 'direct' ? 'persisted' : 'direct');
+    }, [params.hasUserSelectedTranscriptStorageRef, params.setTranscriptStorage]);
+
+    const checkoutActionChip = useNewSessionCheckoutActionChip({
+        repoScmSnapshot: params.repoScmSnapshot,
+        checkoutChipModel: params.checkoutChipModel,
+        checkoutPickerOpen: params.checkoutPickerOpen,
+        setCheckoutPickerOpen: params.setCheckoutPickerOpen,
+        checkoutCreationDraft: params.checkoutCreationDraft,
+        selectedMachineId: params.selectedMachineId,
+        selectedPath: params.selectedPath,
+        setSelectedPath: params.setSelectedPath,
+        setCheckoutCreationDraft: params.setCheckoutCreationDraft,
+        pendingGitWorktreeBaseRefRef: params.pendingGitWorktreeBaseRefRef,
+        pendingGitWorktreeSourceKindRef: params.pendingGitWorktreeSourceKindRef,
+        shouldReconcileInitialHydratedCheckoutCreationDraftRef: params.shouldReconcileInitialHydratedCheckoutCreationDraftRef,
+        router: params.router,
+    });
+
+    const handleActionShortcutPress = React.useCallback((actionId: ActionId) => {
+        const instructions = String(params.sessionPrompt ?? '');
+        params.handleCreateSession({
+            initialMessage: 'skip',
+            afterCreated: async ({ sessionId }) => {
+                const input = buildExecutionRunActionDraftInputForUi({
+                    actionId,
+                    sessionId,
+                    defaultBackendTarget: params.backendTarget,
+                    defaultBackendId: params.agentType,
+                    instructions,
+                });
+                storage.getState().createSessionActionDraft(sessionId, {
+                    actionId,
+                    input,
+                });
+            },
+        });
+    }, [params.agentType, params.backendTarget, params.handleCreateSession, params.sessionPrompt]);
+
+    const agentInputExtraActionChips = useNewSessionAgentInputExtraActionChips({
+        agentId: params.agentType,
+        agentOptionState: params.agentOptionState,
+        setAgentOptionState: params.setAgentOptionStateForCurrentAgent,
+        connectedServicesAuthChip: params.connectedServicesAuthChip,
+        showAutomationActionChips: params.showAutomationActionChips,
+        automationEnabled: params.automationDraft.enabled,
+        automationLabel: getAutomationChipLabel(params.automationDraft),
+        onAutomationToggle: handleAutomationToggle,
+        checkoutActionChip,
+        showServerPickerChip: params.showServerPickerChip,
+        targetServerName: params.targetServerName,
+        onServerClick: params.handleServerClick,
+        mcpChip: params.mcpChip,
+        directSessionsFeatureEnabled: params.directSessionsFeatureEnabled,
+        supportsDirectTranscriptStorage: params.supportsDirectTranscriptStorage,
+        transcriptStorage: params.transcriptStorage,
+        onToggleTranscriptStorage: toggleTranscriptStorage,
+        selectedMachineIsWindows: params.selectedMachineIsWindows,
+        windowsRemoteSessionLaunchMode: params.effectiveWindowsRemoteSessionLaunchMode,
+        windowsTerminalAvailable: params.windowsTerminalAvailable,
+        onWindowsRemoteSessionLaunchModeChange: params.setWindowsRemoteSessionLaunchModeOverride,
+        onActionShortcutPress: handleActionShortcutPress,
+    });
+
+    return {
+        connectionStatus,
+        automationSection,
+        agentInputExtraActionChips,
+    };
+}
