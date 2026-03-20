@@ -14,21 +14,16 @@ export const codexAcpDepCapability: Capability = {
         },
     },
     detect: async ({ request }) => {
-        const includeRegistry = Boolean((request.params ?? {}).includeRegistry);
+        const includeLatestVersion = Boolean((request.params ?? {}).includeLatestVersion);
         const onlyIfInstalled = Boolean((request.params ?? {}).onlyIfInstalled);
-        const distTag = typeof (request.params ?? {}).distTag === 'string' ? String((request.params ?? {}).distTag) : undefined;
-        return await getCodexAcpDepStatus({ includeRegistry, onlyIfInstalled, distTag });
+        return await getCodexAcpDepStatus({ includeLatestVersion, onlyIfInstalled });
     },
-    invoke: async ({ method, params }) => {
+    invoke: async ({ method }) => {
         if (method !== 'install' && method !== 'upgrade') {
             throw new CapabilityError(`Unsupported method: ${method}`, 'unsupported-method');
         }
 
-        const installSpec = method === 'install' && typeof params?.installSpec === 'string'
-            ? String(params.installSpec)
-            : undefined;
-
-        const result = await installCodexAcp(installSpec);
+        const result = await installCodexAcp();
         if (!result.ok) {
             return { ok: false, error: { message: result.errorMessage, code: 'install-failed' }, logPath: result.logPath };
         }
