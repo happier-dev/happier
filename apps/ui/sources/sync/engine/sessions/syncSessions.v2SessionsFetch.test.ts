@@ -203,6 +203,9 @@ describe('fetchAndApplySessions (/v2/sessions snapshot)', () => {
                         encryptionMode: 'plain',
                         metadata: JSON.stringify({ path: '/repo', host: 'dev' }),
                         agentState: JSON.stringify({}),
+                        lastViewedSessionSeq: 4,
+                        pendingPermissionRequestCount: 2,
+                        pendingUserActionRequestCount: 1,
                     }),
                 ],
                 nextCursor: null,
@@ -234,6 +237,50 @@ describe('fetchAndApplySessions (/v2/sessions snapshot)', () => {
                 encryptionMode: 'plain',
                 metadata: expect.objectContaining({ path: '/repo', host: 'dev' }),
                 agentState: {},
+                lastViewedSessionSeq: 4,
+                pendingPermissionRequestCount: 2,
+                pendingUserActionRequestCount: 1,
+            }),
+        );
+    });
+
+    it('stores the owning serverId on sessions fetched from a known server snapshot', async () => {
+        const requestSpy = vi.fn(async () =>
+            jsonResponse({
+                sessions: [
+                    buildSessionRow({
+                        id: 's_owned',
+                        dataEncryptionKey: null,
+                        encryptionMode: 'plain',
+                        metadata: JSON.stringify({ path: '/repo', host: 'dev' }),
+                        agentState: JSON.stringify({}),
+                    }),
+                ],
+                nextCursor: null,
+                hasNext: false,
+            }),
+        );
+
+        const { encryption } = createEncryptionHarness();
+        const appliedSessions: Array<Record<string, unknown>> = [];
+
+        await fetchAndApplySessions({
+            serverId: 'server-owned',
+            credentials: { token: 't', secret: 's' },
+            encryption,
+            sessionDataKeys: new Map<string, Uint8Array>(),
+            request: requestSpy,
+            applySessions: (sessions) => {
+                appliedSessions.push(...(sessions as unknown as Array<Record<string, unknown>>));
+            },
+            repairInvalidReadStateV1: async () => {},
+            log: { log: () => {} },
+        });
+
+        expect(appliedSessions[0]).toEqual(
+            expect.objectContaining({
+                id: 's_owned',
+                serverId: 'server-owned',
             }),
         );
     });
@@ -416,6 +463,8 @@ describe('fetchAndApplySessions (/v2/sessions snapshot)', () => {
                         dataEncryptionKey: 'k-cold',
                         metadata: 'meta-cold',
                         metadataVersion: 3,
+                        pendingPermissionRequestCount: 0,
+                        pendingUserActionRequestCount: 2,
                     }),
                 ],
                 nextCursor: null,
@@ -452,10 +501,50 @@ describe('fetchAndApplySessions (/v2/sessions snapshot)', () => {
                 id: 's_cold',
                 metadataVersion: 3,
                 metadata: null,
-                hasPendingPermissionRequests: undefined,
-                hasPendingUserActionRequests: undefined,
+                hasPendingPermissionRequests: false,
+                hasPendingUserActionRequests: true,
             }),
         ], { replace: true });
+        expect(applySessions).not.toHaveBeenCalled();
+    });
+
+    it('skips background hydration when the caller scope is no longer active', async () => {
+        const requestSpy = vi.fn(async () =>
+            jsonResponse({
+                sessions: [
+                    buildSessionRow({
+                        id: 's_cold',
+                        dataEncryptionKey: 'k-cold',
+                        metadata: 'meta-cold',
+                        metadataVersion: 3,
+                    }),
+                ],
+                nextCursor: null,
+                hasNext: false,
+            }),
+        );
+
+        const { encryption } = createEncryptionHarness();
+        const applySessions = vi.fn();
+        const applySessionListRenderables = vi.fn();
+
+        await fetchAndApplySessions({
+            credentials: { token: 't', secret: 's' },
+            encryption,
+            sessionDataKeys: new Map<string, Uint8Array>(),
+            request: requestSpy,
+            applySessions,
+            applySessionListRenderables,
+            cachedSessionListEntries: {},
+            shouldContinue: () => false,
+            repairInvalidReadStateV1: async () => {},
+            log: { log: () => {} },
+        });
+
+        // Yield to allow any background tasks to run if they were scheduled.
+        await new Promise((r) => setTimeout(r, 0));
+        await new Promise((r) => setTimeout(r, 0));
+
         expect(applySessions).not.toHaveBeenCalled();
     });
 

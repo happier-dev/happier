@@ -15,6 +15,24 @@ export { handleMessageUpdatedSocketUpdate } from './sessionSocketUpdate';
 export { fetchAndApplySessions } from './sessionSnapshot';
 export type { SessionListEncryption } from './sessionSnapshot';
 
+function applySidechainScopeMetadata(params: Readonly<{
+    normalizedMessage: NormalizedMessage;
+    inputSidechainId: unknown;
+    scope?: 'main' | 'sidechain' | 'all';
+    requestedSidechainId?: string | null;
+}>): void {
+    const inputSidechainId = typeof params.inputSidechainId === 'string' && params.inputSidechainId.trim().length > 0
+        ? params.inputSidechainId.trim()
+        : null;
+    const requestedSidechainId = typeof params.requestedSidechainId === 'string' && params.requestedSidechainId.trim().length > 0
+        ? params.requestedSidechainId.trim()
+        : null;
+    const resolvedSidechainId = inputSidechainId ?? (params.scope === 'sidechain' ? requestedSidechainId : null);
+    if (!resolvedSidechainId) return;
+    params.normalizedMessage.sidechainId = resolvedSidechainId;
+    params.normalizedMessage.isSidechain = true;
+}
+
 type SessionEncryption = {
     decryptAgentState: (version: number, value: string | null) => Promise<any>;
     decryptMetadata: (version: number, value: string) => Promise<any>;
@@ -76,6 +94,18 @@ export async function buildUpdatedSessionFromSocketUpdate(params: {
         encryptionMode,
         agentState,
         agentStateVersion: updateBody.agentState ? updateBody.agentState.version : session.agentStateVersion,
+        lastViewedSessionSeq:
+            typeof updateBody.lastViewedSessionSeq === 'number'
+                ? updateBody.lastViewedSessionSeq
+                : session.lastViewedSessionSeq,
+        pendingPermissionRequestCount:
+            typeof updateBody.pendingPermissionRequestCount === 'number'
+                ? updateBody.pendingPermissionRequestCount
+                : session.pendingPermissionRequestCount,
+        pendingUserActionRequestCount:
+            typeof updateBody.pendingUserActionRequestCount === 'number'
+                ? updateBody.pendingUserActionRequestCount
+                : session.pendingUserActionRequestCount,
         metadata,
         metadataVersion: updateBody.metadata ? updateBody.metadata.version : session.metadataVersion,
         updatedAt: updateCreatedAt,
@@ -266,11 +296,12 @@ export async function fetchAndApplyMessages(params: {
             // Normalize the decrypted message
             const normalized = normalizeRawMessage(decrypted.id, decrypted.localId, decrypted.createdAt, decrypted.content, { seq: decrypted.seq ?? undefined });
             if (normalized) {
-                const rawSidechainId = inputMessage?.sidechainId;
-                if (typeof rawSidechainId === 'string' && rawSidechainId.trim().length > 0) {
-                    normalized.sidechainId = rawSidechainId.trim();
-                    normalized.isSidechain = true;
-                }
+                applySidechainScopeMetadata({
+                    normalizedMessage: normalized,
+                    inputSidechainId: inputMessage?.sidechainId,
+                    scope: params.scope,
+                    requestedSidechainId: params.sidechainId ?? null,
+                });
                 normalizedMessages.push(normalized);
             }
         }
@@ -355,16 +386,16 @@ export async function fetchAndApplyOlderMessages(params: {
     const data = parsed.data;
     params.onMessagesPage?.(data);
 
-    let eixstingMessages = sessionReceivedMessages.get(sessionId);
-    if (!eixstingMessages) {
-        eixstingMessages = new Map<string, number>();
-        sessionReceivedMessages.set(sessionId, eixstingMessages);
+    let existingMessages = sessionReceivedMessages.get(sessionId);
+    if (!existingMessages) {
+        existingMessages = new Map<string, number>();
+        sessionReceivedMessages.set(sessionId, existingMessages);
     }
 
     const messagesToDecrypt: ApiMessage[] = [];
     for (const msg of [...data.messages].reverse()) {
         const msgUpdatedAt = typeof msg.updatedAt === 'number' ? msg.updatedAt : msg.createdAt;
-        const existingUpdatedAt = eixstingMessages.get(msg.id);
+        const existingUpdatedAt = existingMessages.get(msg.id);
         if (existingUpdatedAt === undefined || msgUpdatedAt > existingUpdatedAt) {
             messagesToDecrypt.push(msg);
         }
@@ -383,7 +414,7 @@ export async function fetchAndApplyOlderMessages(params: {
                 ? (typeof inputMessage.updatedAt === 'number' ? inputMessage.updatedAt : inputMessage.createdAt)
                 : decrypted.createdAt;
             if (decrypted.content !== null || !inputWasEncrypted) {
-                eixstingMessages.set(decrypted.id, inputUpdatedAt);
+                existingMessages.set(decrypted.id, inputUpdatedAt);
             }
             if (inputWasEncrypted && decrypted.content === null) {
                 continue;
@@ -393,11 +424,12 @@ export async function fetchAndApplyOlderMessages(params: {
             // newer/socket flows.
             const normalized = normalizeRawMessage(decrypted.id, decrypted.localId, decrypted.createdAt, decrypted.content, { seq: decrypted.seq ?? undefined });
             if (normalized) {
-                const rawSidechainId = inputMessage?.sidechainId;
-                if (typeof rawSidechainId === 'string' && rawSidechainId.trim().length > 0) {
-                    normalized.sidechainId = rawSidechainId.trim();
-                    normalized.isSidechain = true;
-                }
+                applySidechainScopeMetadata({
+                    normalizedMessage: normalized,
+                    inputSidechainId: inputMessage?.sidechainId,
+                    scope,
+                    requestedSidechainId: sidechainId,
+                });
                 normalizedMessages.push(normalized);
             }
         }
@@ -501,11 +533,12 @@ export async function fetchAndApplyNewerMessages(params: {
             }
             const normalized = normalizeRawMessage(decrypted.id, decrypted.localId, decrypted.createdAt, decrypted.content, { seq: decrypted.seq ?? undefined });
             if (normalized) {
-                const rawSidechainId = inputMessage?.sidechainId;
-                if (typeof rawSidechainId === 'string' && rawSidechainId.trim().length > 0) {
-                    normalized.sidechainId = rawSidechainId.trim();
-                    normalized.isSidechain = true;
-                }
+                applySidechainScopeMetadata({
+                    normalizedMessage: normalized,
+                    inputSidechainId: inputMessage?.sidechainId,
+                    scope,
+                    requestedSidechainId: sidechainId,
+                });
                 normalizedMessages.push(normalized);
             }
         }

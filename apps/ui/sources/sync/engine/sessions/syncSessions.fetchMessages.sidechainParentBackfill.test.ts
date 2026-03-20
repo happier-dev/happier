@@ -215,4 +215,51 @@ describe('fetchAndApplyMessages (sidechain parent backfill)', () => {
     expect(applyMessages).toHaveBeenCalledTimes(1);
     expect(markMessagesLoaded).toHaveBeenCalledTimes(1);
   });
+
+  it('marks scope=sidechain messages as sidechain messages even when the response omits sidechainId', async () => {
+    const applyMessages = vi.fn();
+    const markMessagesLoaded = vi.fn();
+
+    const request = vi.fn(async () => new Response(
+      JSON.stringify({
+        messages: [buildApiMessage('side1', 101)],
+        hasMore: false,
+        nextBeforeSeq: null,
+        nextAfterSeq: null,
+      }),
+      { status: 200, headers: { 'Content-Type': 'application/json' } },
+    ));
+
+    const decryptMessages = vi.fn(async (apiMessages: ApiMessage[]) => apiMessages.map((m) => ({
+      id: m.id,
+      seq: m.seq,
+      localId: null,
+      createdAt: m.createdAt,
+      content: {
+        role: 'user',
+        content: {
+          type: 'text',
+          text: 'hello',
+        },
+      },
+    })));
+
+    await fetchAndApplyMessages({
+      sessionId: 's1',
+      scope: 'sidechain',
+      sidechainId: 'tool_task_1',
+      getSessionEncryption: () => ({ decryptMessages } as any),
+      request,
+      sessionReceivedMessages: new Map<string, Map<string, number>>(),
+      applyMessages,
+      markMessagesLoaded,
+      log: { log: () => {} },
+    });
+
+    expect(applyMessages).toHaveBeenCalledWith('s1', [expect.objectContaining({
+      id: 'side1',
+      isSidechain: true,
+      sidechainId: 'tool_task_1',
+    })]);
+  });
 });
