@@ -1,12 +1,14 @@
-import type { Update } from '../types';
+import type { SocketRpcCallPayload, SocketRpcCallResponse, SocketRpcRequestPayload, Update } from '../types';
 import { SOCKET_RPC_EVENTS } from '@happier-dev/protocol/socketRpc';
+import type { MachineTransferReceiveEnvelope, MachineTransferSendEnvelope } from '@happier-dev/protocol';
 
 export interface ServerToDaemonEvents {
   update: (data: Update) => void;
-  [SOCKET_RPC_EVENTS.REQUEST]: (data: { method: string; params: string }, callback: (response: string) => void) => void;
+  [SOCKET_RPC_EVENTS.REQUEST]: (data: SocketRpcRequestPayload, callback: (response: unknown) => void) => void;
   [SOCKET_RPC_EVENTS.REGISTERED]: (data: { method: string }) => void;
   [SOCKET_RPC_EVENTS.UNREGISTERED]: (data: { method: string }) => void;
   [SOCKET_RPC_EVENTS.ERROR]: (data: { type: string; error: string }) => void;
+  [SOCKET_RPC_EVENTS.MACHINE_TRANSFER_ENVELOPE]: (data: MachineTransferReceiveEnvelope) => void;
   auth: (data: { success: boolean; user: string }) => void;
   error: (data: { message: string }) => void;
 }
@@ -38,7 +40,8 @@ export interface DaemonToServerEvents {
   [SOCKET_RPC_EVENTS.REGISTER]: (data: { method: string }) => void;
   [SOCKET_RPC_EVENTS.UNREGISTER]: (data: { method: string }) => void;
   [SOCKET_RPC_EVENTS.CALL]: (
-    data: { method: string; params: any },
-    callback: (response: { ok: boolean; result?: any; error?: string }) => void
+    data: SocketRpcCallPayload,
+    callback: (response: SocketRpcCallResponse) => void
   ) => void;
+  [SOCKET_RPC_EVENTS.MACHINE_TRANSFER_ENVELOPE]: (data: MachineTransferSendEnvelope) => void;
 }
