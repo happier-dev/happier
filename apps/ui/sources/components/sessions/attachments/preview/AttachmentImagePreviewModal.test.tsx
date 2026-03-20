@@ -1,11 +1,11 @@
 import * as React from 'react';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import renderer, { act } from 'react-test-renderer';
 
-(globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
+const actEnvironmentGlobal = globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean };
 
 const previewState = vi.hoisted(() => ({
-    value: { status: 'loaded', uri: 'data:image/png;base64,reset', svgXml: null, error: null } as
+    value: { status: 'loaded', uri: 'data:image/png;base64,.happier/uploads/messages/m1/file.png', svgXml: null, error: null } as
         | { status: 'loaded'; uri: string; svgXml: string | null; error: null }
         | { status: 'error'; uri: null; svgXml: null; error: string },
 }));
@@ -43,8 +43,15 @@ vi.mock('@/components/sessions/files/content/imagePreview/useSessionImagePreview
 }));
 
 describe('AttachmentImagePreviewModal', () => {
+    const previousActEnvironment = actEnvironmentGlobal.IS_REACT_ACT_ENVIRONMENT;
+
     beforeEach(() => {
+        actEnvironmentGlobal.IS_REACT_ACT_ENVIRONMENT = true;
         previewState.value = { status: 'loaded', uri: 'data:image/png;base64,reset', svgXml: null, error: null };
+    });
+
+    afterEach(() => {
+        actEnvironmentGlobal.IS_REACT_ACT_ENVIRONMENT = previousActEnvironment;
     });
 
     it('renders the current direct image with inline width and height sizing for expo-image', async () => {
@@ -159,7 +166,7 @@ describe('AttachmentImagePreviewModal', () => {
         });
     }, 120_000);
 
-    it('shows the underlying preview error when session image loading fails', async () => {
+    it('shows a generic localized error instead of raw preview details', async () => {
         const { AttachmentImagePreviewModal } = await import('./AttachmentImagePreviewModal');
         previewState.value = { status: 'error', uri: null, svgXml: null, error: 'internal disk path leaked' };
 
@@ -184,7 +191,8 @@ describe('AttachmentImagePreviewModal', () => {
             );
         });
 
-        expect(tree!.root.findByProps({ children: 'internal disk path leaked' })).toBeTruthy();
-        expect(() => tree!.root.findByProps({ children: 'common.error' })).toThrow();
+        const textNodes = tree!.root.findAllByProps({ children: 'common.error' });
+        expect(textNodes.length).toBeGreaterThan(0);
+        expect(() => tree!.root.findByProps({ children: 'internal disk path leaked' })).toThrow();
     }, 120_000);
 });
