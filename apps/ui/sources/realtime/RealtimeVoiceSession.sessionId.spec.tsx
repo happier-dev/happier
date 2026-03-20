@@ -6,6 +6,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 (globalThis as any).__DEV__ = false;
 
 const modalAlert = vi.fn();
+const appendRealtimeVoiceTranscriptEvent = vi.fn();
+const getBindingByControlSessionId = vi.fn((_controlSessionId: string) => null as any);
+const ensureVoiceBinding = vi.fn(async (_params: any) => null);
 
 vi.mock('@/modal', () => ({
   Modal: {
@@ -34,17 +37,21 @@ vi.mock('./elevenlabs/elevenLabsApi', () => ({
 const conversationStartSession = vi.fn(async (..._args: any[]) => 'conv_1');
 const conversationGetId = vi.fn((..._args: any[]) => null);
 const conversationEndSession = vi.fn(async (..._args: any[]) => {});
+let lastConversationOptions: any = null;
 
 const useConversationMock = vi.fn((_opts: any) => ({
-  startSession: (...args: any[]) => conversationStartSession(...args),
-  getId: (...args: any[]) => conversationGetId(...args),
-  endSession: (...args: any[]) => conversationEndSession(...args),
+  startSession: conversationStartSession,
+  getId: conversationGetId,
+  endSession: conversationEndSession,
   sendUserMessage: vi.fn(),
   sendContextualUpdate: vi.fn(),
 }));
 
 vi.mock('@elevenlabs/react-native', () => ({
-  useConversation: (opts: any) => useConversationMock(opts),
+  useConversation: (opts: any) => {
+    lastConversationOptions = opts;
+    return useConversationMock(opts);
+  },
 }));
 
 const state: any = {
@@ -73,6 +80,19 @@ const state: any = {
 vi.mock('@/sync/domains/state/storage', () => ({
   storage: { getState: () => state },
 }));
+vi.mock('@/voice/sessionBinding/resolveVoiceSessionBinding', () => ({
+  resolveVoiceSessionBindingByControlSessionId: (params: { controlSessionId: string }) =>
+    getBindingByControlSessionId(params.controlSessionId),
+}));
+vi.mock('@/voice/sessionBinding/voiceSessionBindingRuntime', () => ({
+  voiceSessionBindingManager: {
+    ensureBound: (params: any) => ensureVoiceBinding(params),
+    syncTargetSession: vi.fn(),
+  },
+}));
+vi.mock('./realtimeVoiceTranscriptBridge', () => ({
+  appendRealtimeVoiceTranscriptEvent: (params: any) => appendRealtimeVoiceTranscriptEvent(params),
+}));
 
 const sendMessage = vi.fn(async (..._args: any[]) => {});
 
@@ -98,6 +118,12 @@ describe('RealtimeVoiceSession (native) sessionId tracking', () => {
     conversationGetId.mockClear();
     conversationEndSession.mockClear();
     useConversationMock.mockClear();
+    lastConversationOptions = null;
+    appendRealtimeVoiceTranscriptEvent.mockReset();
+    getBindingByControlSessionId.mockReset();
+    getBindingByControlSessionId.mockReturnValue(null);
+    ensureVoiceBinding.mockReset();
+    sendMessage.mockReset();
     (globalThis as any).fetch = vi.fn(async () => ({
       ok: true,
       status: 200,
@@ -108,6 +134,21 @@ describe('RealtimeVoiceSession (native) sessionId tracking', () => {
   afterEach(async () => {
     vi.resetModules();
   });
+
+  const startRealtimeSessionWithTimeout = (startRealtimeSession: (sessionId: string, initialContext?: string) => Promise<void>, sessionId: string, initialContext: string) =>
+    new Promise<void>((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error('startRealtimeSession timed out')), 2_000);
+      startRealtimeSession(sessionId, initialContext).then(
+        () => {
+          clearTimeout(timer);
+          resolve();
+        },
+        (error) => {
+          clearTimeout(timer);
+          reject(error);
+        },
+      );
+    });
 
   it('starts even when invoked with an empty session id and routes tool calls via voice target store', async () => {
     const { RealtimeVoiceSession } = await import('./RealtimeVoiceSession');
@@ -121,14 +162,13 @@ describe('RealtimeVoiceSession (native) sessionId tracking', () => {
       tree = renderer.create(<RealtimeVoiceSession />);
     });
 
-    await Promise.race([
-      startRealtimeSession('', 'ctx'),
-      new Promise<void>((_resolve, reject) => setTimeout(() => reject(new Error('startRealtimeSession timed out')), 2_000)),
-    ]);
+    await startRealtimeSessionWithTimeout(startRealtimeSession, '', 'ctx');
 
     const { realtimeClientTools } = await import('./realtimeClientTools');
     await realtimeClientTools.sendSessionMessage({ message: 'hello' });
-    expect(sendMessage).toHaveBeenCalledWith('s1', 'hello');
+    expect(sendMessage).toHaveBeenCalledTimes(1);
+    expect(sendMessage.mock.lastCall?.[0]).toBe('s1');
+    expect(sendMessage.mock.lastCall?.[1]).toBe('hello');
 
     await act(async () => {
       tree.unmount();
@@ -148,16 +188,13 @@ describe('RealtimeVoiceSession (native) sessionId tracking', () => {
       tree = renderer.create(<RealtimeVoiceSession />);
     });
 
-    await Promise.race([
-      startRealtimeSession('', 'ctx'),
-      new Promise<void>((_resolve, reject) =>
-        setTimeout(() => reject(new Error('startRealtimeSession timed out')), 2_000),
-      ),
-    ]);
+    await startRealtimeSessionWithTimeout(startRealtimeSession, '', 'ctx');
 
     const { realtimeClientTools } = await import('./realtimeClientTools');
     await realtimeClientTools.sendSessionMessage({ message: 'hello' });
-    expect(sendMessage).toHaveBeenCalledWith('s2', 'hello');
+    expect(sendMessage).toHaveBeenCalledTimes(1);
+    expect(sendMessage.mock.lastCall?.[0]).toBe('s2');
+    expect(sendMessage.mock.lastCall?.[1]).toBe('hello');
 
     await act(async () => {
       tree.unmount();
@@ -178,12 +215,76 @@ describe('RealtimeVoiceSession (native) sessionId tracking', () => {
       tree = renderer.create(<RealtimeVoiceSession />);
     });
 
-    await Promise.race([
-      startRealtimeSession('s3', 'ctx'),
-      new Promise<void>((_resolve, reject) => setTimeout(() => reject(new Error('startRealtimeSession timed out')), 2_000)),
-    ]);
+    await startRealtimeSessionWithTimeout(startRealtimeSession, 's3', 'ctx');
 
     expect(useVoiceTargetStore.getState().primaryActionSessionId).toBe('s3');
+
+    await act(async () => {
+      tree.unmount();
+    });
+  });
+
+  it('records realtime provider message payloads for the text QA harness', async () => {
+    const { resetVoiceQaStoreForTests, useVoiceQaStore } = await import('@/voice/qa/voiceQaStore');
+    resetVoiceQaStoreForTests();
+    useVoiceQaStore.getState().begin('realtime_elevenlabs', 's1');
+    useVoiceQaStore.getState().setStatus('running');
+
+    const { RealtimeVoiceSession } = await import('./RealtimeVoiceSession');
+
+    let tree!: renderer.ReactTestRenderer;
+    await act(async () => {
+      tree = renderer.create(<RealtimeVoiceSession />);
+    });
+
+    expect(lastConversationOptions).toBeTruthy();
+
+    await act(async () => {
+      lastConversationOptions.onMessage?.({
+        type: 'agent_response',
+        transcript: 'I found the available backends.',
+      });
+    });
+
+    const entries = useVoiceQaStore.getState().entries;
+    expect(entries.some((entry) => entry.kind === 'provider.raw' && entry.text.includes('transcript: I found the available backends.'))).toBe(true);
+
+    await act(async () => {
+      tree.unmount();
+    });
+  });
+
+  it('mirrors provider messages into the hidden voice conversation transcript binding', async () => {
+    getBindingByControlSessionId.mockReturnValueOnce({
+      conversationSessionId: 'carrier-s1',
+    });
+
+    const { RealtimeVoiceSession } = await import('./RealtimeVoiceSession');
+    const { startRealtimeSession } = await import('./RealtimeSession');
+
+    let tree!: renderer.ReactTestRenderer;
+    await act(async () => {
+      tree = renderer.create(<RealtimeVoiceSession />);
+    });
+
+    await startRealtimeSessionWithTimeout(startRealtimeSession, 's3', 'ctx');
+
+    await act(async () => {
+      lastConversationOptions.onMessage?.({
+        type: 'agent_response',
+        agent_response_event: {
+          agent_response: 'Hello from ElevenLabs',
+          event_id: 1,
+        },
+      });
+    });
+
+    expect(appendRealtimeVoiceTranscriptEvent).toHaveBeenCalledWith({
+      conversationSessionId: 'carrier-s1',
+      payload: expect.objectContaining({
+        type: 'agent_response',
+      }),
+    });
 
     await act(async () => {
       tree.unmount();

@@ -6,9 +6,13 @@ import { Modal } from '@/modal';
 import { TokenStorage } from '@/auth/storage/tokenStorage';
 import { t } from '@/text';
 import { requestMicrophonePermission, showMicrophonePermissionDeniedAlert } from '@/utils/platform/microphonePermissions';
-import { fetchElevenLabsConversationTokenByo } from './elevenLabsByo';
-import { useVoiceTargetStore } from '@/voice/runtime/voiceTargetStore';
+import { fetchElevenLabsConversationSignedUrlByo, fetchElevenLabsConversationTokenByo } from './elevenLabsByo';
 import { disableVoiceBackgroundCallAudioMode, enableVoiceBackgroundCallAudioMode } from '@/voice/runtime/voiceAudioMode';
+import { VOICE_AGENT_GLOBAL_SESSION_ID } from '@/voice/agent/voiceAgentGlobalSessionId';
+import { voiceSessionBindingManager } from '@/voice/sessionBinding/voiceSessionBindingRuntime';
+import { resolveVoiceSessionBindingByControlSessionId } from '@/voice/sessionBinding/resolveVoiceSessionBinding';
+import { appendVoiceConversationNoteText } from '@/voice/sessionBinding/voiceConversationTranscript';
+import { applyVoiceSessionTargetSelection } from '@/voice/sessionBinding/applyVoiceSessionTargetSelection';
 
 let voiceSession: VoiceSession | null = null;
 let voiceSessionStarted: boolean = false;
@@ -17,18 +21,87 @@ let startInFlightAbortController: AbortController | null = null;
 let currentLeaseId: string | null = null;
 let currentProviderConversationId: string | null = null;
 let currentBilledMode: 'happier' | 'byo' | null = null;
+let currentControlSessionId: string | null = null;
+let currentLeaseExpiresAtMs: number | null = null;
+let currentLeaseWarningTimer: ReturnType<typeof setTimeout> | null = null;
+let currentLeaseExpiryTimer: ReturnType<typeof setTimeout> | null = null;
+let latestRequestedTargetSessionId: string | null = null;
+
+function clearRealtimeLeaseTimers(): void {
+    if (currentLeaseWarningTimer) {
+        clearTimeout(currentLeaseWarningTimer);
+        currentLeaseWarningTimer = null;
+    }
+    if (currentLeaseExpiryTimer) {
+        clearTimeout(currentLeaseExpiryTimer);
+        currentLeaseExpiryTimer = null;
+    }
+}
+
+function formatVoiceLeaseDurationShort(ms: number): string {
+    const bounded = Math.max(0, Math.floor(ms));
+    if (bounded < 90_000) {
+        return `${Math.max(1, Math.ceil(bounded / 1000))}s`;
+    }
+    return `${Math.max(1, Math.ceil(bounded / 60_000))}m`;
+}
+
+function appendRealtimeLeaseNote(text: string): void {
+    const controlSessionId = currentControlSessionId;
+    if (!controlSessionId) return;
+    const binding = resolveVoiceSessionBindingByControlSessionId({
+        controlSessionId,
+        adapterId: 'realtime_elevenlabs',
+    });
+    const conversationSessionId = binding?.conversationSessionId?.trim();
+    if (!conversationSessionId) return;
+    appendVoiceConversationNoteText({
+        conversationSessionId,
+        text,
+    });
+}
+
+function scheduleRealtimeLeaseAnnouncements(expiresAtMs: number): void {
+    clearRealtimeLeaseTimers();
+    currentLeaseExpiresAtMs = expiresAtMs;
+
+    const remainingMs = expiresAtMs - Date.now();
+    if (!Number.isFinite(remainingMs) || remainingMs <= 0) return;
+
+    appendRealtimeLeaseNote(t('errors.voiceSessionLimitStarted', { duration: formatVoiceLeaseDurationShort(remainingMs) }));
+
+    const warningLeadMs = 60_000;
+    const warningDelayMs = remainingMs - warningLeadMs;
+    if (warningDelayMs <= 0) {
+        appendRealtimeLeaseNote(t('errors.voiceSessionLimitExpiring', { duration: formatVoiceLeaseDurationShort(remainingMs) }));
+    } else {
+        currentLeaseWarningTimer = setTimeout(() => {
+            appendRealtimeLeaseNote(t('errors.voiceSessionLimitExpiring', { duration: formatVoiceLeaseDurationShort(Math.max(0, expiresAtMs - Date.now())) }));
+        }, warningDelayMs);
+    }
+
+    currentLeaseExpiryTimer = setTimeout(() => {
+        appendRealtimeLeaseNote(t('errors.voiceSessionLimitExpired'));
+    }, remainingMs);
+}
+
+function normalizeRequestedTargetSessionId(sessionId: string | null): string | null {
+    const trimmed = typeof sessionId === 'string' ? sessionId.trim() : '';
+    if (!trimmed || trimmed === VOICE_AGENT_GLOBAL_SESSION_ID) return null;
+    return trimmed;
+}
 
 function buildElevenLabsWelcomeContext(welcomeCfg: any): string {
     if (!welcomeCfg || welcomeCfg.enabled !== true) return '';
     const mode = welcomeCfg.mode === 'on_first_turn' ? 'on_first_turn' : 'immediate';
     if (mode === 'on_first_turn') {
         return [
-            'On your first reply, start with a short friendly greeting (one sentence).',
+            'On your first reply, start with one short friendly greeting (one sentence).',
             'Then continue with your response.',
         ].join('\n');
     }
     return [
-        'Start this session with a short friendly greeting and ask what we are working on today.',
+        'Start this session with one short friendly greeting.',
         'Then wait for the user to speak again.',
     ].join('\n');
 }
@@ -42,7 +115,12 @@ function appendOptionalWelcomeToContext(baseContext: string | null | undefined, 
     return `${base}\n\n${welcome}`;
 }
 
-export async function startRealtimeSession(sessionId: string, initialContext?: string, retryAfterPaywall = false) {
+export async function startRealtimeSession(
+    sessionId: string,
+    initialContext?: string,
+    retryAfterPaywall = false,
+    options?: Readonly<{ textOnly?: boolean }>,
+) {
     const session = voiceSession;
     if (!session) {
         console.warn('No voice session registered');
@@ -50,9 +128,15 @@ export async function startRealtimeSession(sessionId: string, initialContext?: s
     }
 
     const normalizedSessionId = String(sessionId ?? '').trim();
-    if (normalizedSessionId.length > 0) {
-        useVoiceTargetStore.getState().setPrimaryActionSessionId(normalizedSessionId);
-        useVoiceTargetStore.getState().setLastFocusedSessionId(normalizedSessionId);
+    const requestedTargetSessionId = normalizeRequestedTargetSessionId(normalizedSessionId);
+    const controlSessionId = normalizedSessionId || VOICE_AGENT_GLOBAL_SESSION_ID;
+    latestRequestedTargetSessionId = requestedTargetSessionId;
+    if (requestedTargetSessionId) {
+        applyVoiceSessionTargetSelection({
+            controlSessionId,
+            targetSessionId: requestedTargetSessionId,
+            updateLastFocused: true,
+        });
     }
 
     const settings: any = storage.getState().settings;
@@ -72,12 +156,16 @@ export async function startRealtimeSession(sessionId: string, initialContext?: s
 
     const run = async () => {
         try {
-            // Request microphone permission before starting voice session
-            // Critical for iOS/Android - first session will fail without this
-            const permissionResult = await requestMicrophonePermission();
-            if (!permissionResult.granted) {
-                showMicrophonePermissionDeniedAlert(permissionResult.canAskAgain);
-                return;
+            clearRealtimeLeaseTimers();
+            currentLeaseExpiresAtMs = null;
+            if (options?.textOnly !== true) {
+                // Request microphone permission before starting voice session
+                // Critical for iOS/Android - first session will fail without this
+                const permissionResult = await requestMicrophonePermission();
+                if (!permissionResult.granted) {
+                    showMicrophonePermissionDeniedAlert(permissionResult.canAskAgain);
+                    return;
+                }
             }
 
             if (abortController.signal.aborted) {
@@ -87,6 +175,11 @@ export async function startRealtimeSession(sessionId: string, initialContext?: s
             const realtimeCfg = settings?.voice?.adapters?.realtime_elevenlabs ?? null;
             const billingMode = realtimeCfg?.billingMode === 'byo' ? 'byo' : 'happier';
             const effectiveInitialContext = appendOptionalWelcomeToContext(initialContext, realtimeCfg?.welcome);
+            await voiceSessionBindingManager.ensureBound({
+                adapterId: 'realtime_elevenlabs',
+                controlSessionId,
+                requestedTargetSessionId,
+            });
 
             if (billingMode === 'byo') {
                 const agentId = String(realtimeCfg?.byo?.agentId ?? '').trim();
@@ -96,14 +189,21 @@ export async function startRealtimeSession(sessionId: string, initialContext?: s
                     return;
                 }
 
-                const token = await fetchElevenLabsConversationTokenByo({ agentId, apiKey });
+                const signedUrl = options?.textOnly === true
+                    ? await fetchElevenLabsConversationSignedUrlByo({ agentId, apiKey })
+                    : null;
+                const token = signedUrl
+                    ? null
+                    : await fetchElevenLabsConversationTokenByo({ agentId, apiKey });
                 if (abortController.signal.aborted) return;
 
                 await enableVoiceBackgroundCallAudioMode();
                 const conversationId = await session.startSession({
-                    sessionId,
+                    sessionId: controlSessionId,
                     initialContext: effectiveInitialContext,
-                    token,
+                    token: token ?? undefined,
+                    signedUrl: signedUrl ?? undefined,
+                    textOnly: options?.textOnly === true,
                 });
                 if (typeof conversationId !== 'string' || conversationId.trim().length === 0) {
                     await disableVoiceBackgroundCallAudioMode();
@@ -121,7 +221,15 @@ export async function startRealtimeSession(sessionId: string, initialContext?: s
                 currentProviderConversationId = conversationId;
                 currentLeaseId = null;
                 currentBilledMode = 'byo';
+                currentControlSessionId = controlSessionId;
                 voiceSessionStarted = true;
+                if (latestRequestedTargetSessionId && latestRequestedTargetSessionId !== requestedTargetSessionId) {
+                    applyVoiceSessionTargetSelection({
+                        controlSessionId,
+                        targetSessionId: latestRequestedTargetSessionId,
+                        updateLastFocused: false,
+                    });
+                }
                 return;
             }
 
@@ -134,14 +242,18 @@ export async function startRealtimeSession(sessionId: string, initialContext?: s
 
             let hasRetriedAfterPaywall = retryAfterPaywall;
             for (;;) {
-                const response = await fetchHappierVoiceToken(credentials, { sessionId, signal: abortController.signal });
+                const response = await fetchHappierVoiceToken(credentials, {
+                    sessionId: requestedTargetSessionId,
+                    signal: abortController.signal,
+                });
                 if (abortController.signal.aborted) return;
                 if (response.allowed) {
                     await enableVoiceBackgroundCallAudioMode();
                     const conversationId = await session.startSession({
-                        sessionId,
+                        sessionId: controlSessionId,
                         initialContext: effectiveInitialContext,
                         token: response.token,
+                        textOnly: options?.textOnly === true,
                     });
                     if (typeof conversationId !== 'string' || conversationId.trim().length === 0) {
                         await disableVoiceBackgroundCallAudioMode();
@@ -159,7 +271,16 @@ export async function startRealtimeSession(sessionId: string, initialContext?: s
                     currentProviderConversationId = conversationId;
                     currentLeaseId = response.leaseId;
                     currentBilledMode = 'happier';
+                    currentControlSessionId = controlSessionId;
                     voiceSessionStarted = true;
+                    if (latestRequestedTargetSessionId && latestRequestedTargetSessionId !== requestedTargetSessionId) {
+                        applyVoiceSessionTargetSelection({
+                            controlSessionId,
+                            targetSessionId: latestRequestedTargetSessionId,
+                            updateLastFocused: false,
+                        });
+                    }
+                    scheduleRealtimeLeaseAnnouncements(response.expiresAtMs);
                     return;
                 }
 
@@ -190,6 +311,7 @@ export async function startRealtimeSession(sessionId: string, initialContext?: s
             currentProviderConversationId = null;
             currentLeaseId = null;
             currentBilledMode = null;
+            currentControlSessionId = null;
             Modal.alert(t('common.error'), t('errors.voiceServiceUnavailable'));
         }
     };
@@ -212,6 +334,7 @@ export async function stopRealtimeSession() {
     }
     
     try {
+        clearRealtimeLeaseTimers();
         // Best-effort cancel any token-minting in-flight so stop can't deadlock.
         startInFlightAbortController?.abort();
         const inFlight = startInFlight;
@@ -244,9 +367,12 @@ export async function stopRealtimeSession() {
 	        }
 
         voiceSessionStarted = false;
+        latestRequestedTargetSessionId = null;
         currentLeaseId = null;
+        currentLeaseExpiresAtMs = null;
         currentProviderConversationId = null;
         currentBilledMode = null;
+        currentControlSessionId = null;
     } catch (error) {
         console.error('Failed to stop realtime session:', error);
     } finally {
@@ -264,4 +390,12 @@ export function isVoiceSessionStarted(): boolean {
 
 export function getVoiceSession(): VoiceSession | null {
     return voiceSession;
+}
+
+export function getCurrentRealtimeControlSessionId(): string | null {
+    return currentControlSessionId;
+}
+
+export function setCurrentRealtimeControlSessionId(sessionId: string | null): void {
+    currentControlSessionId = sessionId;
 }

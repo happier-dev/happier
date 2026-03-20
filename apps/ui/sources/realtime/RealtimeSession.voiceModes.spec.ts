@@ -25,9 +25,11 @@ vi.mock('@/modal', () => ({
 
 vi.mock('@/text', () => ({ t: (key: string) => key }));
 
+const requestMicrophonePermission = vi.fn(async () => ({ granted: true, canAskAgain: true }));
+const showMicrophonePermissionDeniedAlert = vi.fn();
 vi.mock('@/utils/platform/microphonePermissions', () => ({
-  requestMicrophonePermission: vi.fn(async () => ({ granted: true, canAskAgain: true })),
-  showMicrophonePermissionDeniedAlert: vi.fn(),
+  requestMicrophonePermission,
+  showMicrophonePermissionDeniedAlert,
 }));
 
 const fetchHappierVoiceToken = vi.fn();
@@ -36,6 +38,18 @@ vi.mock('@/sync/api/voice/apiVoice', () => ({
   fetchHappierVoiceToken,
   completeHappierVoiceSession,
 }));
+const fetchElevenLabsConversationTokenByo = vi.fn();
+const fetchElevenLabsConversationSignedUrlByo = vi.fn();
+const appendVoiceConversationNoteText = vi.fn();
+const resolveVoiceSessionBindingByControlSessionId = vi.fn((_params: any) => ({
+  conversationSessionId: 'voice-conversation-1',
+}));
+vi.mock('./elevenLabsByo', () => ({
+  fetchElevenLabsConversationTokenByo,
+  fetchElevenLabsConversationSignedUrlByo,
+}));
+const ensureVoiceBinding = vi.fn(async (_params: any) => null);
+const syncVoiceBindingTarget = vi.fn(async (_params: any) => {});
 
 const getCredentials = vi.fn(async () => ({ token: 't', secret: 's' }));
 vi.mock('@/auth/storage/tokenStorage', () => ({
@@ -123,6 +137,9 @@ const state: {
 vi.mock('@/sync/domains/state/storage', () => ({
   storage: { getState: () => state },
 }));
+vi.mock('@/voice/sessionBinding/resolveVoiceSessionBinding', () => ({
+  resolveVoiceSessionBindingByControlSessionId: (params: any) => resolveVoiceSessionBindingByControlSessionId(params),
+}));
 
 function createJsonResponse(payload: unknown, ok = true, status = 200): Response {
   return {
@@ -173,9 +190,27 @@ describe('Realtime voice modes', () => {
     state.setRealtimeStatus.mockReset();
     state.setRealtimeMode.mockReset();
     state.clearRealtimeModeDebounce.mockReset();
+    requestMicrophonePermission.mockResolvedValue({ granted: true, canAskAgain: true });
     installFetchMock();
     fetchHappierVoiceToken.mockReset();
     completeHappierVoiceSession.mockReset();
+    fetchElevenLabsConversationTokenByo.mockReset();
+    fetchElevenLabsConversationSignedUrlByo.mockReset();
+    ensureVoiceBinding.mockReset();
+    syncVoiceBindingTarget.mockReset();
+    resolveVoiceSessionBindingByControlSessionId.mockReset();
+    resolveVoiceSessionBindingByControlSessionId.mockReturnValue({
+      conversationSessionId: 'voice-conversation-1',
+    });
+    vi.doMock('@/voice/sessionBinding/voiceSessionBindingRuntime', () => ({
+      voiceSessionBindingManager: {
+        ensureBound: (params: any) => ensureVoiceBinding(params),
+        syncTargetSession: (params: any) => syncVoiceBindingTarget(params),
+      },
+    }));
+    vi.doMock('@/voice/sessionBinding/voiceConversationTranscript', () => ({
+      appendVoiceConversationNoteText: (params: any) => appendVoiceConversationNoteText(params),
+    }));
   });
 
   afterEach(() => {
@@ -215,6 +250,47 @@ describe('Realtime voice modes', () => {
   });
 
   describe('happier voice lifecycle', () => {
+    it('records the session limit and announces when the server-minted lease is near expiry', async () => {
+      vi.useFakeTimers();
+      fetchHappierVoiceToken.mockResolvedValueOnce({
+        allowed: true,
+        token: 'conv_token',
+        leaseId: 'lease_1',
+        expiresAtMs: Date.now() + 30_000,
+      });
+
+      const { registerVoiceSession, startRealtimeSession, stopRealtimeSession } = await import('./RealtimeSession');
+      const { session } = makeVoiceSession('conv_0');
+      registerVoiceSession(session);
+
+      await startRealtimeSession('s1', 'BASE_CTX');
+
+      expect(appendVoiceConversationNoteText).toHaveBeenCalledWith(
+        expect.objectContaining({
+          conversationSessionId: 'voice-conversation-1',
+          text: 'errors.voiceSessionLimitStarted',
+        }),
+      );
+      expect(appendVoiceConversationNoteText).toHaveBeenCalledWith(
+        expect.objectContaining({
+          conversationSessionId: 'voice-conversation-1',
+          text: 'errors.voiceSessionLimitExpiring',
+        }),
+      );
+
+      vi.advanceTimersByTime(30_000);
+
+      expect(appendVoiceConversationNoteText).toHaveBeenCalledWith(
+        expect.objectContaining({
+          conversationSessionId: 'voice-conversation-1',
+          text: 'errors.voiceSessionLimitExpired',
+        }),
+      );
+
+      await stopRealtimeSession();
+      vi.useRealTimers();
+    });
+
     it('appends welcome instructions to the initial context when enabled (immediate)', async () => {
       fetchHappierVoiceToken.mockResolvedValueOnce({
         allowed: true,
@@ -235,7 +311,8 @@ describe('Realtime voice modes', () => {
       // `makeVoiceSession` returns a typed mock; extracting args via `mock.calls` needs casting in this test harness.
       const startArgs = (startSession as any).mock.calls[0]?.[0];
       expect(String(startArgs?.initialContext ?? '')).toContain('BASE_CTX');
-      expect(String(startArgs?.initialContext ?? '')).toContain('Start this session with a short friendly greeting');
+      expect(String(startArgs?.initialContext ?? '')).toContain('Start this session with one short friendly greeting');
+      expect(String(startArgs?.initialContext ?? '')).not.toContain('ask what we are working on today');
     });
 
     it('starts Happier Voice via server token minting', async () => {
@@ -253,7 +330,80 @@ describe('Realtime voice modes', () => {
       await startRealtimeSession('s1', 'hi');
 
       expect(startSession).toHaveBeenCalledWith(expect.objectContaining({ token: 'conv_token' }));
+      expect(ensureVoiceBinding).toHaveBeenCalledWith({
+        adapterId: 'realtime_elevenlabs',
+        controlSessionId: 's1',
+        requestedTargetSessionId: 's1',
+      });
       expect(setAudioModeAsync).toHaveBeenCalledWith(expect.objectContaining({ shouldPlayInBackground: true }));
+    });
+
+    it('starts realtime voice in text-only mode when explicitly requested', async () => {
+      fetchHappierVoiceToken.mockResolvedValueOnce({
+        allowed: true,
+        token: 'conv_token',
+        leaseId: 'lease_1',
+        expiresAtMs: Date.now() + 60_000,
+      });
+
+      const { registerVoiceSession, startRealtimeSession } = await import('./RealtimeSession');
+      const { session, startSession } = makeVoiceSession('conv_1');
+      registerVoiceSession(session);
+
+      await startRealtimeSession('s1', 'hi', false, { textOnly: true });
+
+      expect(startSession).toHaveBeenCalledWith(expect.objectContaining({ textOnly: true }));
+      expect(requestMicrophonePermission).not.toHaveBeenCalled();
+    });
+
+    it('uses a signed websocket URL for BYO text-only sessions', async () => {
+      state.settings.voice.providerId = 'realtime_elevenlabs';
+      state.settings.voice.adapters.realtime_elevenlabs.billingMode = 'byo';
+      state.settings.voice.adapters.realtime_elevenlabs.byo.agentId = 'agent_1';
+      state.settings.voice.adapters.realtime_elevenlabs.byo.apiKey = { value: 'api_key_1' };
+      fetchElevenLabsConversationSignedUrlByo.mockResolvedValueOnce('wss://signed.example');
+
+      const { registerVoiceSession, startRealtimeSession } = await import('./RealtimeSession');
+      const { session, startSession } = makeVoiceSession('conv_1');
+      registerVoiceSession(session);
+
+      await startRealtimeSession('s1', 'hi', false, { textOnly: true });
+
+      expect(fetchElevenLabsConversationSignedUrlByo).toHaveBeenCalledWith({
+        agentId: 'agent_1',
+        apiKey: 'api_key_1',
+      });
+      expect(fetchElevenLabsConversationTokenByo).not.toHaveBeenCalled();
+      expect(startSession).toHaveBeenCalledWith(expect.objectContaining({
+        textOnly: true,
+        signedUrl: 'wss://signed.example',
+      }));
+    });
+
+    it('treats the global voice sentinel as a control id and not a target session id', async () => {
+      fetchHappierVoiceToken.mockResolvedValueOnce({
+        allowed: true,
+        token: 'conv_token',
+        leaseId: 'lease_1',
+        expiresAtMs: Date.now() + 60_000,
+      });
+
+      const { registerVoiceSession, startRealtimeSession } = await import('./RealtimeSession');
+      const { session, startSession } = makeVoiceSession('conv_1');
+      registerVoiceSession(session);
+
+      await startRealtimeSession('__voice_agent__', 'hi', false, { textOnly: true });
+
+      expect(ensureVoiceBinding).toHaveBeenCalledWith({
+        adapterId: 'realtime_elevenlabs',
+        controlSessionId: '__voice_agent__',
+        requestedTargetSessionId: null,
+      });
+      expect(fetchHappierVoiceToken).toHaveBeenCalledWith(
+        { token: 't', secret: 's' },
+        expect.objectContaining({ sessionId: null }),
+      );
+      expect(startSession).toHaveBeenCalledWith(expect.objectContaining({ textOnly: true }));
     });
 
     it('does not mark the voice session started when provider returns no conversation id', async () => {
@@ -350,6 +500,10 @@ describe('Realtime voice modes', () => {
 
       expect(fetchHappierVoiceToken).toHaveBeenCalledTimes(1);
       expect(startSession).toHaveBeenCalledTimes(1);
+      expect(syncVoiceBindingTarget).toHaveBeenCalledWith({
+        controlSessionId: 's1',
+        targetSessionId: 's2',
+      });
     });
 
     it('does not alert when a start is already in-flight (even with a different session id)', async () => {
