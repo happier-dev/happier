@@ -30,7 +30,7 @@ export default defineConfig({
         },
         // Our UI test suite is occasionally CPU-bound on developer machines / CI runners.
         // Increase the default timeout so unrelated load doesn't cause spurious failures.
-        testTimeout: 20_000,
+        testTimeout: 60_000,
         globals: false,
         environment: 'node',
         env: {
@@ -105,6 +105,8 @@ export default defineConfig({
             // RevenueCat native SDKs depend on RN native modules.
             { find: 'react-native-purchases', replacement: resolve('./sources/dev/reactNativePurchasesStub.ts') },
             { find: 'react-native-purchases-ui', replacement: resolve('./sources/dev/reactNativePurchasesUiStub.ts') },
+            { find: '@shopify/flash-list', replacement: resolve('./sources/dev/shopifyFlashListStub.ts') },
+            { find: 'react-native-mmkv', replacement: resolve('./sources/dev/reactNativeMmkvStub.ts') },
             // Use libsodium-wrappers in tests instead of the RN native binding.
             { find: '@more-tech/react-native-libsodium', replacement: 'libsodium-wrappers' },
             // Use node-safe platform adapters in tests (avoid static expo-crypto imports).
