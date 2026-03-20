@@ -126,9 +126,9 @@ vi.mock('@/components/ui/text/Text', () => ({
 vi.mock('@/text', () => ({
     t: (key: string, values?: Record<string, unknown>) => {
         if (key === 'session.subagents.intent.review') return 'Review';
-        if (key === 'executionRuns.details.titles.executionRun') return 'Happier subagent';
+        if (key === 'executionRuns.details.titles.executionRun') return 'Subagent';
         if (key === 'executionRuns.details.titles.executionRunWithIntent' && values?.intent) {
-            return `${values.intent} Happier subagent`;
+            return `${values.intent} Subagent`;
         }
         if (key === 'session.subagents.panel.sectionCount' && typeof values?.count === 'number') {
             return `${values.count}`;
@@ -156,8 +156,23 @@ vi.mock('@/sync/store/hooks', () => ({
     useSessionMessages: () => ({ messages: [] }),
     useSessionMessagesReducerState: () => ({
         sidechains: new Map([
-            ['toolu_1', [{ id: 'sidechain-msg-1', role: 'agent', text: 'Alpha is validating the auth flow now.', tool: null, event: null }]],
+            ['toolu_1', [
+                {
+                    id: 'sidechain-msg-1',
+                    role: 'agent',
+                    text: 'Alpha is validating the auth flow now.',
+                    tool: {
+                        permission: {
+                            id: 'perm-alpha',
+                            status: 'pending',
+                            kind: 'permission',
+                        },
+                    },
+                    event: null,
+                },
+            ]],
         ]),
+        permissions: new Map(),
     }),
 }));
 
@@ -199,6 +214,10 @@ vi.mock('@/hooks/server/useSessionExecutionRunsSupported', () => ({
 
 vi.mock('@/hooks/server/useExecutionRunsBackendsForSession', () => ({
     useExecutionRunsBackendsForSession: () => executionRunsBackendsState.backends,
+}));
+
+vi.mock('@/hooks/server/useFeatureEnabled', () => ({
+    useFeatureEnabled: () => true,
 }));
 
 vi.mock('@/components/sessions/model/useDirectSessionRuntime', () => ({
@@ -358,7 +377,7 @@ describe('SessionRightPanelAgentsView', () => {
             timestamps: {},
         } as SessionSubagent);
 
-        expect(tab.title).toBe('Review Happier subagent');
+        expect(tab.title).toBe('Review Subagent');
     });
 
     it('opens execution-run rows into the shared subagent transcript details pane', async () => {
@@ -458,7 +477,16 @@ describe('SessionRightPanelAgentsView', () => {
         );
     });
 
-    it('keeps Happier subagent launch shortcuts available when the session is inactive but resumable', async () => {
+    it('marks subagent rows that are blocked waiting for permission', async () => {
+        let tree: renderer.ReactTestRenderer | null = null;
+        await act(async () => {
+            tree = renderer.create(<SessionRightPanelAgentsView sessionId="s1" scopeId="session:s1" />);
+        });
+
+        expect(findHostNodesByTestId(tree!, 'session-subagent-permission-blocked:agent_team_member:team-1:alpha', 'View')).toHaveLength(1);
+    });
+
+    it('keeps Subagent launch shortcuts available when the session is inactive but resumable', async () => {
         sessionState.session = {
             id: 's1',
             active: false,
@@ -484,7 +512,31 @@ describe('SessionRightPanelAgentsView', () => {
         expect(findHostNodesByTestId(tree!, 'session-subagent-launch-claude-team', 'Pressable')).toHaveLength(1);
     });
 
-    it('still hides Happier subagent launch shortcuts when the session is inactive and not resumable', async () => {
+    it('keeps the Subagent launch card visible while live execution-run backends are still loading for an active local session', async () => {
+        sessionState.session = {
+            id: 's1',
+            active: true,
+            metadata: {
+                flavor: 'claude',
+            },
+        };
+        sessionExecutionRunsSupportedState.supported = false;
+        executionRunsBackendsState.backends = null;
+
+        let tree: renderer.ReactTestRenderer | null = null;
+        await act(async () => {
+            tree = renderer.create(<SessionRightPanelAgentsView sessionId="s1" scopeId="session:s1" />);
+        });
+
+        const [toggle] = findHostNodesByTestId(tree!, 'session-subagents-launch-section-toggle', 'Pressable');
+        await act(async () => {
+            toggle.props.onPress();
+        });
+
+        expect(findHostNodesByTestId(tree!, 'session-subagent-launch-execution-run', 'View')).toHaveLength(1);
+    });
+
+    it('still hides Subagent launch shortcuts when the session is inactive and not resumable', async () => {
         sessionState.session = {
             id: 's1',
             active: false,

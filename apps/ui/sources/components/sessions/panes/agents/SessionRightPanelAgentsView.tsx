@@ -9,6 +9,7 @@ import { useSessionMessages, useSessionMessagesReducerState } from '@/sync/store
 import { deriveSessionActiveSubagents } from '@/sync/domains/session/subagents/deriveSessionActiveSubagents';
 import { deriveSessionRecentSubagents } from '@/sync/domains/session/subagents/deriveSessionRecentSubagents';
 import { deriveSessionSubagentActivityPreview } from '@/sync/domains/session/subagents/deriveSessionSubagentActivityPreview';
+import { deriveSessionSubagentHasPendingPermission } from '@/sync/domains/session/subagents/deriveSessionSubagentHasPendingPermission';
 import { useAppPaneScope } from '@/components/appShell/panes/hooks/useAppPaneScope';
 import { t } from '@/text';
 import { useDeviceType } from '@/utils/platform/responsive';
@@ -70,6 +71,20 @@ export const SessionRightPanelAgentsView = React.memo((props: Readonly<{ session
         }
         return previews;
     }, [reducerState, subagents]);
+    const pendingPermissionById = React.useMemo(() => {
+        const pending = new Map<string, boolean>();
+        for (const subagent of subagents) {
+            if (!deriveSessionSubagentHasPendingPermission({
+                subagent,
+                reducerState,
+                messages,
+            })) {
+                continue;
+            }
+            pending.set(subagent.id, true);
+        }
+        return pending;
+    }, [messages, reducerState, subagents]);
     const openFull = React.useCallback((subagent: SessionSubagent) => {
         const route = resolveSessionSubagentFullRoute({
             sessionId: props.sessionId,
@@ -122,6 +137,7 @@ export const SessionRightPanelAgentsView = React.memo((props: Readonly<{ session
                     emptyLabel={t('session.subagents.panel.emptyActive')}
                     subagents={activeSubagents}
                     activityPreviewById={activityPreviewById}
+                    pendingPermissionById={pendingPermissionById}
                     onOpenPreview={openPreview}
                     onOpenFull={openFull}
                     onOpenAdvanced={openAdvanced}
@@ -134,6 +150,7 @@ export const SessionRightPanelAgentsView = React.memo((props: Readonly<{ session
                     emptyLabel={t('session.subagents.panel.emptyRecent')}
                     subagents={recentSubagents}
                     activityPreviewById={activityPreviewById}
+                    pendingPermissionById={pendingPermissionById}
                     onOpenPreview={openPreview}
                     onOpenFull={openFull}
                     onOpenAdvanced={openAdvanced}
