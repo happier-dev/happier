@@ -6,21 +6,168 @@
  */
 
 import type { TranslationStructure } from "../_types";
+import { memoryEmbeddingsTranslationExtensions } from './memoryEmbeddingsExtension';
+import { mcpServersUxTranslationExtension } from './mcpServersUxExtension';
+import { newSessionMcpTranslationExtensions } from './newSessionMcpExtension';
+import { promptLibraryUxRefinementTranslationExtension } from './promptLibraryUxRefinementExtension';
+import { sessionHandoffTranslationExtensions, settingsSessionHandoffTranslationExtensions } from './sessionHandoffExtension';
+import { settingsAppearanceTranslationExtensions } from './settingsAppearanceExtension';
+import { acpCatalogTranslationExtensions } from './acpCatalogExtension';
+
+const newSessionMcpTranslationExtension = newSessionMcpTranslationExtensions.ja;
+const settingsAppearanceTranslationExtension = settingsAppearanceTranslationExtensions.ja;
+const acpCatalogTranslationExtension = acpCatalogTranslationExtensions.ja;
+const memoryEmbeddingsTranslationExtension = memoryEmbeddingsTranslationExtensions.ja;
 
 export const ja: TranslationStructure = {
   tabs: {
     // Tab navigation labels
-    inbox: "友達",
+    inbox: "受信箱",
+    friends: "友達",
     sessions: "ターミナル",
     settings: "設定",
   },
 
   inbox: {
     // Inbox screen
-    emptyTitle: "友達のアクティビティはまだありません",
-    emptyDescription:
-      "友達を追加してセッションを共有し、ここでアクティビティを確認できます。",
+    emptyTitle: "すべて完了です",
+    emptyDescription: "現在、保留中のリクエストや更新はありません。",
+    approvals: "承認",
+    permissions: "権限",
     updates: "アクティビティ",
+  },
+
+  approvals: {
+    title: "承認",
+    untitled: "無題の承認",
+    details: "詳細",
+    fieldStatus: "ステータス",
+    fieldAction: "アクション",
+    approve: "承認",
+    reject: "拒否",
+    loadError: "承認を読み込めませんでした。",
+    decisionError: "承認を更新できませんでした。",
+    confirmApproveTitle: "承認しますか？",
+    confirmApproveBody: "要求されたアクションを実行します。",
+    confirmRejectTitle: "拒否しますか？",
+    confirmRejectBody: "要求を拒否します。",
+    status: {
+      open: "保留中",
+      approved: "承認済み",
+      rejected: "拒否済み",
+      executed: "実行済み",
+      failed: "失敗",
+      canceled: "キャンセル",
+    },
+  },
+
+  promptLibrary: {
+    sections: "セクション",
+    library: "ライブラリ",
+    librarySubtitle: "プロンプトとスキルを管理",
+    create: "作成",
+    newPrompt: "新しいプロンプト",
+    newSkill: "新しいスキル",
+    prompts: "プロンプト",
+    skills: "スキル",
+    untitledPrompt: "無題のプロンプト",
+    untitledSkill: "無題のスキル",
+    origin: "由来",
+    schema: "スキーマ",
+    editPrompt: "プロンプトを編集",
+    editSkill: "スキルを編集",
+    titlePlaceholder: "タイトル",
+	    saveError: "保存できませんでした。",
+	    templates: "テンプレート",
+	    templatesSubtitle: "/スラッシュ テンプレートを作成・管理",
+	    newTemplate: "新しいテンプレート",
+	    stacks: "スタック",
+	    stacksSubtitle: "プロンプトとスキルをセッションとプロフィールに追加",
+        externalAssets: "外部アセット",
+        externalAssetsSubtitle: "接続済みマシンからスキルとプロンプトアセットをインポート",
+        externalAssetsContext: "検出コンテキスト",
+        externalAssetsMachine: "マシン",
+        externalAssetsScope: "スコープ",
+        externalAssetsProjectScope: "プロジェクト",
+        externalAssetsProjectScopeSubtitle: "ワークスペースのパス内にあるアセットを検出",
+        externalAssetsUserScope: "ユーザー",
+        externalAssetsUserScopeSubtitle: "ユーザー レベルのフォルダーにあるアセットを検出",
+        externalAssetsProjectDirectory: "プロジェクト ディレクトリ",
+        externalAssetsProjectDirectoryRequired: "プロジェクト範囲のアセットをインポートまたはエクスポートする前に、プロジェクト ディレクトリを選択してください。",
+        externalAssetsRefresh: "外部アセットを更新",
+        externalAssetsRefreshSubtitle: "選択したマシンとスコープのプロンプトアセットを検出",
+        externalAssetsTypes: "アセットの種類",
+        externalAssetsNoMachine: "続行するにはマシンを選択してください。",
+        externalAssetsNoTypes: "外部アセットの種類がありません",
+        externalAssetsNoTypesSubtitle: "このマシンはまだプロンプトアセット アダプターを公開していません。",
+        externalAssetsNoItems: "外部アセットが見つかりません",
+        externalAssetsNoItemsSubtitle: "マシン、スコープ、またはディレクトリを選択してから更新してください。",
+        externalAssetsUnsupportedImport: "ここでは bundle ベースのプロンプトアセットのみインポートできます。",
+        externalAssetsExportTitle: "外部アセットをエクスポート",
+        externalAssetsExportOptions: "エクスポート設定",
+        externalAssetsExportType: "アセットの種類",
+        externalAssetsExportAction: "エクスポート",
+        externalAssetsExportConfirmTitle: "外部アセットをエクスポートしますか？",
+        externalAssetsExportConfirmBody: "選択したプロンプト資産を外部の場所に書き出します。",
+        externalAssetsExportTargetPathPlaceholder: "保存先パス（例: review/code.md）",
+        externalAssetsExportTargetNamePlaceholder: "保存先名（例: reviewer）",
+        externalAssetsDeleteConfirmTitle: "外部アセットを削除しますか？",
+        externalAssetsDeleteConfirmBody: "リンクされた外部アセットをディスクから削除します。",
+        externalAssetsLinkedTitle: "リンクされた外部アセット",
+        registries: "レジストリ",
+        registriesSubtitle: "スキル レジストリを参照し、bundle をライブラリにインポート",
+        registriesContext: "レジストリ コンテキスト",
+        registriesNoMachine: "続行するにはマシンを選択してください。",
+        registriesRefresh: "レジストリを更新",
+        registriesRefreshSubtitle: "選択したマシンの組み込みおよび設定済みレジストリ ソースを読み込む",
+        registriesAddGitSource: "Git ソースを追加",
+        registriesAddGitSourceAction: "Git ソースを保存",
+        registriesAddGitSourceActionSubtitle: "このリポジトリをレジストリ ソースとして保存",
+        registriesAddGitSourceError: "タイトルとリポジトリ URL の両方を追加してください。",
+        registriesSourceTitlePlaceholder: "ソース タイトル",
+        registriesSourceUrlPlaceholder: "リポジトリ URL またはローカル パス",
+        registriesSources: "ソース",
+        registriesNoSources: "レジストリ ソースが読み込まれていません",
+        registriesNoSourcesSubtitle: "Git ソースを追加するか、更新して組み込みソースを読み込んでください。",
+        registriesItems: "レジストリ項目",
+        registriesNoItems: "レジストリ項目がありません",
+        registriesNoItemsSubtitle: "利用可能なスキルをスキャンするソースを選択してください。",
+	    editTemplate: "テンプレートを編集",
+    tokenPlaceholder: "トークン（例: /daily）",
+    codingStack: "コーディングスタック",
+    codingStackSubtitle: "コーディングセッションに適用",
+    voiceStack: "音声スタック",
+    voiceStackSubtitle: "Happier Voice に適用",
+    profileStacks: "プロフィールスタック",
+    profileStacksSubtitle: ({ count }: { count: number }) => `${count}件のプロフィール`,
+    profileStackCount: ({ count }: { count: number }) => `${count}件`,
+    noProfilesTitle: "プロフィールがありません",
+    noProfilesSubtitle: "プロフィールスタックを使うにはプロフィールを作成してください。",
+    stackEntries: "スタック項目",
+    stackPlacementSkill: "スキル指示",
+    stackPlacementComposer: "コンポーザーに挿入",
+    stackPlacementSystem: "システムに追加",
+    stackEmptyTitle: "このスタックは空です",
+    stackEmptySubtitle: "プロンプトやスキルを追加して開始します。",
+    actions: "操作",
+    addToStack: "スタックに追加",
+    stackAlreadyContainsPrompt: "このスタックには既にその項目があります。",
+    stackPickerNoPrompts: "プロンプトがありません。",
+    stackPickerNoSkills: "スキルがありません。",
+    removeFromStack: "スタックから削除しますか？",
+    removeFromStackConfirm: "この項目をスタックから削除します。",
+    deleteTemplate: "テンプレートを削除しますか？",
+    deleteTemplateConfirm: "テンプレートを削除します。",
+    templateTokenReserved: "そのトークンは予約されています。",
+    templateTokenConflictsWithAction: "そのトークンは組み込みアクションと競合します。",
+    templateTokenDuplicate: "そのトークンは既に使用されています。",
+    templateTarget: "対象プロンプト",
+    templateBehavior: "動作",
+    templateBehaviorInsert: "挿入",
+    templateBehaviorInsertAndSend: "挿入して送信",
+    templateAllowArgs: "引数を許可",
+    templateAllowArgsSubtitle: "有効にすると、トークン後のテキストが $args として渡されます。",
+        ...promptLibraryUxRefinementTranslationExtension.ja,
   },
 
   runs: {
@@ -72,6 +219,17 @@ export const ja: TranslationStructure = {
       sendLabel: "送信",
       sendingLabel: "送信中…",
       failedToSend: "送信に失敗しました",
+    },
+    delivery: {
+      title: "送信方法",
+      cardDelivery: ({ label }: { label: string }) => `送信方法: ${label}`,
+      steerLabel: "誘導",
+      steerHelp:
+        "実行がビジーの間に誘導メッセージを送信します（対応している場合）。",
+      interruptLabel: "割り込み",
+      interruptHelp:
+        "現在のターンをキャンセルしてから、新しいターンとしてメッセージを送信します。",
+      promptLabel: "プロンプト",
     },
   },
 
@@ -133,7 +291,7 @@ export const ja: TranslationStructure = {
         timezoneOptional: "タイムゾーン（任意）",
       },
       placeholders: {
-        name: "スケジュール済みセッション",
+        name: "毎日のサマリー",
         description: "このオートメーションは何をしますか？",
         everyMinutes: "60",
         cronExpression: "*/5 * * * *",
@@ -246,6 +404,7 @@ export const ja: TranslationStructure = {
     // Simple string constants
     add: "追加",
     edit: "編集",
+    duplicate: "複製",
     actions: "操作",
     moreActions: "その他の操作",
     moreActionsHint: "追加の操作メニューを開きます",
@@ -254,15 +413,21 @@ export const ja: TranslationStructure = {
       open: "開く",
       done: "完了",
       reorder: "並べ替え",
+      moveUp: "上に移動",
+      moveDown: "下に移動",
       authenticate: "認証",
       save: "保存",
-    error: "エラー",
-    success: "成功",
-    ok: "OK",
-    continue: "続行",
-    back: "戻る",
-    start: "開始",
-    create: "作成",
+		    error: "エラー",
+		    success: "成功",
+		    info: "情報",
+		    comingSoon: "近日公開",
+		    ok: "OK",
+		    continue: "続行",
+		    back: "戻る",
+        previous: "前へ",
+        next: "次へ",
+	    start: "開始",
+	    create: "作成",
     rename: "名前を変更",
     remove: "削除",
     update: "更新",
@@ -287,6 +452,7 @@ export const ja: TranslationStructure = {
     copied: "コピーしました",
     copy: "コピー",
     copyWithLabel: ({ label }: { label: string }) => `${label} をコピー`,
+    paste: "貼り付け",
     expand: "展開",
     collapse: "折りたたむ",
     command: "コマンド",
@@ -514,7 +680,6 @@ export const ja: TranslationStructure = {
         useOnceButton: "一度だけ使用（セッションのみ）",
       },
     },
-    defaultSessionType: "デフォルトのセッションタイプ",
     defaultPermissionMode: {
       title: "デフォルトの権限モード",
       descriptions: {
@@ -533,6 +698,13 @@ export const ja: TranslationStructure = {
       useAccountDefault: "アカウントの既定を使用",
       currently: ({ label }: { label: string }) => `現在: ${label}`,
     },
+    defaultStorage: {
+      title: 'Default session storage',
+      footer: 'Overrides the account-level default synced/direct session mode for new sessions when this profile is selected.',
+      accountDefaultSubtitle: ({ label }: { label: string }) => `Account default: ${label}`,
+      useAccountDefault: 'Use account default',
+      currently: ({ label }: { label: string }) => `Currently: ${label}`,
+    },
     aiBackend: {
       title: "AIバックエンド",
       selectAtLeastOneError:
@@ -545,6 +717,8 @@ export const ja: TranslationStructure = {
       qwenSubtitleExperimental: "Qwen Code CLI（実験）",
       kimiSubtitleExperimental: "Kimi CLI（実験）",
       kiloSubtitleExperimental: "Kilo CLI（実験）",
+      kiroSubtitleExperimental: "Kiro CLI（実験）",
+      customAcpSubtitleExperimental: "カスタム ACP CLI（実験）",
       piSubtitleExperimental: "Pi CLI（実験）",
       copilotSubtitleExperimental: "GitHub Copilot CLI（実験的）",
     },
@@ -944,7 +1118,20 @@ export const ja: TranslationStructure = {
       machineLabel: ({ machine }: { machine: string }) => `マシン: ${machine}`,
       searchPlaceholder: "メモリを検索",
       enableLocalSearch: "ローカルメモリ検索を有効化",
+      emptyResults: 'No memory results yet',
     },
+        status: {
+            title: 'Local index status',
+            diskUsageTitle: 'Disk usage',
+            disabled: 'Local memory search is disabled on this machine',
+            readyLight: 'Light index ready on this machine',
+            readyDeep: 'Deep index ready on this machine',
+            unavailableLight: 'Light index is not ready on this machine yet',
+            unavailableDeep: 'Deep index is not ready on this machine yet',
+            diskUsage: ({ lightMb, deepMb }: { lightMb: number; deepMb: number }) => `Light ${lightMb} MB · Deep ${deepMb} MB`,
+            diskUsageUnavailable: 'Disk usage unavailable',
+            ...memoryEmbeddingsTranslationExtension.status,
+        },
     machine: {
       title: "マシン",
       changeTitle: "マシンを変更",
@@ -1002,15 +1189,10 @@ export const ja: TranslationStructure = {
       },
     },
     embeddings: {
-      groupTitle: "埋め込み",
-      groupFooter:
-        "任意: Deep モード使用時の意味検索精度を上げるため、ローカルモデルをダウンロードします。",
-      enableTitle: "埋め込みを有効化",
-      enableSubtitle:
-        "深い検索のランキングを改善します（初回使用時にモデルをダウンロードします）",
       modelTitle: "埋め込みモデル",
       promptBody: "ローカルの transformers モデル ID を入力してください。",
       modelPlaceholder: "Xenova/all-MiniLM-L6-v2",
+      ...memoryEmbeddingsTranslationExtension.embeddings,
     },
   },
 
@@ -1078,7 +1260,7 @@ export const ja: TranslationStructure = {
       },
     },
     settings: {
-      groupTitle: "サブエージェント",
+      groupTitle: "Subagents",
       disabled: {
         footer:
           "Execution Runs が無効です。設定 → 機能 で Execution Runs を有効にして、委任ガイダンスを利用してください。",
@@ -1089,6 +1271,32 @@ export const ja: TranslationStructure = {
       },
       footer:
         "ルールはシステムプロンプトに追加され、メインエージェントがサブエージェント実行の好み（いつ・どのように）を把握できるようにします。",
+      overview: {
+        groupTitle: "Overview",
+        footer:
+          "Use this page to configure Subagent guidance and jump to related provider, backend, and session settings.",
+        explainerTitle: "What this page controls",
+        explainerSubtitle:
+          "Delegation guidance for Subagents, plus links to provider-specific subagent settings.",
+        happierStatusTitle: "Subagents",
+        happierStatusEnabledSubtitle:
+          "Enabled. You can launch Subagents from supported sessions.",
+        happierStatusDisabledSubtitle:
+          "Disabled. Open Features settings to enable Subagents.",
+      },
+      related: {
+        groupTitle: "Related settings",
+        footer:
+          "Subagent launch and control also depend on session behavior, providers, and configured backends.",
+        sessionTitle: "Session behavior",
+        sessionSubtitle:
+          "Message sending, busy steering, and replay/resume behavior.",
+        providersTitle: "Providers",
+        providersSubtitle:
+          "Provider-specific auth, runtime, and agent settings.",
+        backendsTitle: "ACP catalog",
+        backendsSubtitle: "Configured backends and custom launch targets.",
+      },
       enableInjection: {
         title: "ガイダンス注入を有効化",
       },
@@ -1122,11 +1330,39 @@ export const ja: TranslationStructure = {
           "これはシステムプロンプトに追加される（切り詰められた）テキストです。",
         systemPromptLabel: "システムプロンプト（追加）",
       },
+      providers: {
+        claude: {
+          title: "Claude team agents",
+          footer: "Provider-specific subagent behavior stays owned by the provider settings screen.",
+          openTitle: "Claude subagent options",
+          openSubtitle: "Manage Agent Teams and other Claude-specific subagent behavior.",
+        },
+      },
     },
   },
 
   settings: {
     title: "設定",
+
+    // Main settings hub category groups
+    profileAndAccount: 'プロフィールとアカウント',
+    aiAndAgents: 'AI とエージェント',
+    sessionsBehavior: 'セッションと動作',
+    general: '一般',
+    filesAndSourceControl: 'ファイルとソース管理',
+    system: 'システム',
+
+    // Renamed / promoted items
+    sessions: 'セッション',
+    transcript: 'トランスクリプト',
+    transcriptSubtitle: '思考、ツール表示、コード表示',
+    permissions: '権限',
+    permissionsSubtitle: '権限モードと承認の動作',
+    filesSourceControl: 'ファイルとソース管理',
+    filesSourceControlSubtitle: 'エディタ、差分、ソース管理連携',
+    workspaces: 'ワークスペース',
+    workspacesSubtitle: 'リンク済みワークスペース、場所、チェックアウトを管理',
+
     connectedAccounts: "接続済みアカウント",
     connectedAccountsDisabled: "接続サービスは無効になっています。",
     connectAccount: "アカウントを接続",
@@ -1138,6 +1374,16 @@ export const ja: TranslationStructure = {
     accountSubtitle: "アカウントの詳細を管理",
     addYourPhone: "スマホを追加",
     addYourPhoneSubtitle: "スマホでサインインするためのQRコードを表示します",
+    addMachine: "Add a machine",
+    machineSetupCurrentMachineTitle: "This computer",
+    machineSetupCurrentMachineSubtitle: "Bootstrap Happier directly on this device",
+    machineSetupSshMachineTitle: "Remote machine over SSH",
+    machineSetupSshMachineSubtitle: "Connect a dev box, VM, or server with SSH",
+    machineSetupStagesTitle: "What happens",
+    machineSetupStageConnect: "Connect and validate access",
+    machineSetupStageInstall: "Install Happier and pair the machine",
+    machineSetupStageFinish: "Finish setup in the built-in terminal",
+    machineSetupComingSoon: "Machine bootstrap is coming soon.",
     appearance: "外観",
     appearanceSubtitle: "アプリの見た目をカスタマイズ",
     voiceAssistant: "音声アシスタント",
@@ -1163,7 +1409,7 @@ export const ja: TranslationStructure = {
     actionsSettingsAboutSubtitle:
       "アクションをグローバルに、サーフェス（UI/音声/MCP）別、配置（UI 内の表示場所）別に有効/無効にできます。無効化されたアクションは実行時に安全側（フェイルクローズ）でブロックされます。",
     aboutFooter:
-      "Happier CoderはCodexとClaude Codeのモバイルクライアントです。完全なエンドツーエンド暗号化を採用し、アカウントはデバイスにのみ保存されます。Anthropicとは提携していません。",
+      "Happier CoderはCodexとClaude Codeのモバイルクライアントです。デフォルトでエンドツーエンド暗号化され、他のデバイスでもアカウントを復元できます。Anthropicとは提携していません。",
     whatsNew: "新機能",
     whatsNewSubtitle: "最新のアップデートと改善を確認",
     reportIssue: "問題を報告",
@@ -1190,14 +1436,174 @@ export const ja: TranslationStructure = {
     session: "セッション",
     sessionSubtitleTmuxEnabled: "Tmux 有効",
     sessionSubtitleMessageSendingAndTmux: "メッセージ送信と tmux",
+        actionsSubtitle: 'Choose where every action appears across the app, voice, and integrations.',
+    prompts: "プロンプトとスキル",
+    promptsSubtitle: "プロンプトライブラリ、テンプレート、スタック",
     servers: "サーバー",
-    serversSubtitle: "保存済みサーバー、グループ、既定値",
-    systemStatus: "システム状態",
-    systemStatusSubtitle: "サーバー、アカウント、マシン、デーモン",
+	    serversSubtitle: "保存済みサーバー、グループ、既定値",
+		    systemStatus: "システム状態",
+		    systemStatusSubtitle: "サーバー、アカウント、マシン、デーモン",
+		    mcpServers: "MCP servers",
+		    mcpServersSubtitle: "Manage MCP servers and bindings",
+		    mcpServersComingSoon: "MCP servers settings are coming soon.",
+		    mcpServersStrictMode: "Strict mode",
+		    mcpServersStrictModeSubtitle: "Fail closed when MCP server settings are invalid.",
+		    mcpServersCatalogTitle: "Catalog",
+		    mcpServersUnnamed: "Unnamed server",
+		    mcpServersEmptyTitle: "No MCP servers yet",
+		    mcpServersEmptySubtitle: "Add MCP servers to use them in sessions.",
+		    mcpServersAddServer: "Add server",
+		    mcpServersAddServerSubtitle: "Create a new MCP server entry",
+		    mcpServersEditorTitle: "MCP server",
+		    mcpServersPickSecretTitle: "Pick a secret",
+		    mcpServersPickSecretNoneSubtitle: "No secret selected",
+		    mcpServersEditorBasics: "Basics",
+		    mcpServersEditorStdio: "Stdio",
+		    mcpServersEditorRemote: "Remote",
+		    mcpServersEditorBindings: "Bindings",
+		    mcpServersFieldName: "Name",
+		    mcpServersFieldTitle: "Title",
+		    mcpServersFieldTitlePlaceholder: "Optional display title",
+		    mcpServersFieldTransport: "Transport",
+		    mcpServersFieldCommand: "Command",
+		    mcpServersFieldArgs: "Args",
+		    mcpServersFieldUrl: "URL",
+		    mcpServersBindingTitle: "Binding",
+		    mcpServersBindingEnabled: "Enabled",
+		    mcpServersBindingEnabledSubtitle: "Toggle this binding on or off",
+		    mcpServersBindingTarget: "Target",
+		    mcpServersBindingTargetSubtitle: "Where this server is available",
+		    mcpServersBindingMachine: "Machine",
+		    mcpServersBindingMachineSubtitle: "Select a machine",
+		    mcpServersBindingDeleteSubtitle: "Remove this binding",
+		    mcpServersBindingTargetAllMachines: "All machines",
+		    mcpServersBindingTargetMachine: ({ machine }: { machine: string }) => `Machine: ${machine}`,
+		    mcpServersBindingTargetWorkspace: ({ machine, path }: { machine: string; path: string }) =>
+		      `Workspace: ${machine} • ${path}`,
+		    mcpServersBindingTargetAllMachinesSubtitle: "Enable on every machine",
+		    mcpServersBindingTargetMachineTitle: "Machine",
+		    mcpServersBindingTargetMachineSubtitle: "Enable on a single machine",
+		    mcpServersBindingTargetWorkspaceTitle: "Workspace",
+		    mcpServersBindingTargetWorkspaceSubtitle: "Enable only for a specific workspace path",
+		    mcpServersValidationFailed: "MCP server settings are invalid.",
+		    mcpServersServerNotFound: "Server not found.",
+		    mcpServersBindingsEmptyTitle: "No bindings yet",
+		    mcpServersBindingsEmptySubtitle: "Add a binding to use this server.",
+		    mcpServersAddBinding: "Add binding",
+		    mcpServersAddBindingSubtitle: "Enable this server for machines or workspaces",
+		    mcpServersSaveDisabledSubtitle: "No changes to save.",
+			    mcpServersDeleteTitle: "Delete MCP server?",
+			    mcpServersDeleteConfirm: ({ name }: { name: string }) => `Delete "${name}"?`,
+			    mcpServersDeleteSubtitle: "Remove this server from your catalog",
+			    mcpServersNoMachineSelected: "No machine selected",
+			    mcpServersDetectedTitle: "Detected from provider configs",
+			    mcpServersDetectedMachineTitle: "Machine",
+			    mcpServersDetectedRefreshTitle: "Refresh detected servers",
+			    mcpServersDetectedRefreshSubtitle: "Scan provider config files on this machine",
+			    mcpServersDetectedWarningsTitle: "Detection warnings",
+			    mcpServersDetectedEmptyTitle: "No detected MCP servers",
+			    mcpServersDetectedEmptySubtitle: "Click refresh to scan Claude/Codex/OpenCode configs.",
+			    mcpServersImportTitle: "Import MCP server?",
+			    mcpServersImportConfirm: ({ provider, name }: { provider: string; name: string }) =>
+			      `Import "${name}" from ${provider}?`,
+			    mcpServersImportAction: "Import",
+			    mcpServersBindingSummaryAllMachines: "All machines",
+			    mcpServersBindingSummaryMachines: ({ count }: { count: number }) =>
+			      `${count} machine${count === 1 ? "" : "s"}`,
+			    mcpServersBindingSummaryWorkspaces: ({ count }: { count: number }) =>
+			      `${count} workspace${count === 1 ? "" : "s"}`,
+			    mcpServersBindingSummaryNone: "Not bound",
+			    mcpServersPickWorkspaceTitle: "Pick a workspace root",
+			    mcpServersBindingWorkspaceRootTitle: "Workspace root",
+			    mcpServersBindingOverridesTitle: "Overrides",
+			    mcpServersBindingOverridesNone: "No overrides",
+			    mcpServersBindingOverridesCount: ({ count }: { count: number }) =>
+			      `${count} override${count === 1 ? "" : "s"}`,
+			    mcpServersEditorEnv: "Environment",
+			    mcpServersEnvAdd: "Add env var",
+			    mcpServersEnvAddSubtitle: "Set environment variables for this server",
+			    mcpServersEnvEmptyTitle: "No env vars",
+			    mcpServersEnvEmptySubtitle: "Add env vars or use Saved Secrets.",
+			    mcpServersEditorHeaders: "Headers",
+			    mcpServersHeadersAdd: "Add header",
+			    mcpServersHeadersAddSubtitle: "Set HTTP/SSE headers for this server",
+			    mcpServersHeadersEmptyTitle: "No headers",
+			    mcpServersHeadersEmptySubtitle: "Add headers if your server requires auth.",
+			    mcpServersEnvEditorTitle: "Edit env var",
+			    mcpServersHeadersEditorTitle: "Edit header",
+			    mcpServersEnvKeyLabel: "Env var name",
+			    mcpServersEnvKeyPlaceholder: "API_KEY",
+			    mcpServersHeaderKeyLabel: "Header name",
+			    mcpServersHeaderKeyPlaceholder: "Authorization",
+			    mcpServersValueSourceTitle: "Value source",
+			    mcpServersArgsPlaceholder: "--flag\nvalue",
+			    mcpServersValueSourceLiteral: "Literal",
+			    mcpServersValueSourceLiteralSubtitle: "Store a value (supports ${VAR} templates)",
+			    mcpServersValueSourceSavedSecret: "Saved secret",
+			    mcpServersValueSourceSavedSecretNamed: ({ name }: { name: string }) => `Saved secret: ${name}`,
+			    mcpServersValueSourceSavedSecretSubtitle: "Reference a Saved Secret",
+			    mcpServersValueLiteralLabel: "Value",
+			    mcpServersValueLiteralPlaceholder: "Value or ${ENV_VAR}",
+			    mcpServersValueSecretLabel: "Saved secret",
+			    mcpServersValueSecretSelect: "Select secret",
+			    mcpServersValueSecretSelectSubtitle: "Choose a Saved Secret",
+			    mcpServersKeyInvalid: "Key is invalid.",
+			    mcpServersKeyAlreadyExists: "Key already exists.",
+			    mcpServersOverridesStdioTitle: "Stdio overrides",
+			    mcpServersOverridesCommandTitle: "Override command",
+			    mcpServersOverridesCommandSubtitle: "Use a different command for this binding",
+			    mcpServersOverridesArgsTitle: "Override args",
+			    mcpServersOverridesArgsSubtitle: "Use different args for this binding (blank = empty args)",
+			    mcpServersOverridesRemoteTitle: "Remote overrides",
+			    mcpServersOverridesUrlTitle: "Override URL",
+			    mcpServersOverridesUrlSubtitle: "Use a different URL for this binding",
+			    mcpServersOverridesEnvPatchTitle: "Env patch",
+			    mcpServersOverridesEnvPatchEmptyTitle: "No env overrides",
+			    mcpServersOverridesEnvPatchEmptySubtitle: "Add overrides or deletions for env vars.",
+			    mcpServersOverridesHeadersPatchTitle: "Headers patch",
+			    mcpServersOverridesHeadersPatchEmptyTitle: "No header overrides",
+			    mcpServersOverridesHeadersPatchEmptySubtitle: "Add overrides or deletions for headers.",
+			    mcpServersOverridesDeleteValue: "Delete this key for this binding",
+			    mcpServersOverridesEnvPatchAddTitle: "Add env override",
+			    mcpServersOverridesEnvPatchAddSubtitle: "Set or override an env var for this binding",
+			    mcpServersOverridesEnvPatchDeleteTitle: "Delete env key",
+			    mcpServersOverridesEnvPatchDeleteSubtitle: "Remove an env var for this binding",
+			    mcpServersOverridesHeadersPatchAddTitle: "Add header override",
+			    mcpServersOverridesHeadersPatchAddSubtitle: "Set or override a header for this binding",
+			    mcpServersOverridesHeadersPatchDeleteTitle: "Delete header key",
+			    mcpServersOverridesHeadersPatchDeleteSubtitle: "Remove a header for this binding",
+			    mcpServersOverridesDeleteEnvTitle: "Delete env key",
+			    mcpServersOverridesDeleteEnvPrompt: "Enter the env var name to delete for this binding.",
+			    mcpServersOverridesDeleteHeaderTitle: "Delete header key",
+			    mcpServersOverridesDeleteHeaderPrompt: "Enter the header name to delete for this binding.",
+			    mcpServersOverridesCommandRequired: "Command override is enabled but empty.",
+			    mcpServersOverridesUrlRequired: "URL override is enabled but empty.",
+			    mcpServersTestTitle: "Test",
+			    mcpServersTestFooter: "Runs on the selected machine. No secrets are shown in results.",
+			    mcpServersTestMachineTitle: "Test on machine",
+			    mcpServersTestBindingTitle: "Use binding",
+			    mcpServersTestNoBinding: "No binding",
+			    mcpServersTestNoBindingSubtitle: "Test without binding overrides",
+			    mcpServersTestDirectoryTitle: "Working directory",
+			    mcpServersTestDirectorySubtitle: "Tap to set a directory",
+			    mcpServersTestDirectoryPrompt: "Enter the working directory for the test.",
+			    mcpServersTestRunTitle: "Test server",
+			    mcpServersTestRunSubtitle: "Connect and list tools",
+			    mcpServersTestResultOkTitle: "Test succeeded",
+			    mcpServersTestResultOkSubtitle: ({
+			      toolCount,
+			      durationMs,
+			    }: {
+			      toolCount: number;
+			      durationMs: number;
+			    }) => `${toolCount} tools · ${durationMs}ms`,
+			    mcpServersTestResultErrorTitle: "Test failed",
+        ...mcpServersUxTranslationExtension,
+        ...acpCatalogTranslationExtension.settings,
 
-    // Dynamic settings messages
-    accountConnected: ({ service }: { service: string }) =>
-      `${service}アカウントが接続されました`,
+			    // Dynamic settings messages
+			    accountConnected: ({ service }: { service: string }) =>
+			      `${service}アカウントが接続されました`,
     machineStatus: ({
       name,
       status,
@@ -1205,19 +1611,19 @@ export const ja: TranslationStructure = {
       name: string;
       status: "online" | "offline";
     }) => `${name}は${status === "online" ? "オンライン" : "オフライン"}です`,
-  featureToggled: ({
-      feature,
-      enabled,
-    }: {
-      feature: string;
-      enabled: boolean;
-    }) => `${feature}を${enabled ? "有効" : "無効"}にしました`,
-  },
+		  featureToggled: ({
+		      feature,
+		      enabled,
+		    }: {
+		      feature: string;
+		      enabled: boolean;
+		    }) => `${feature}を${enabled ? "有効" : "無効"}にしました`,
+		  },
 
-  systemStatus: {
-    sections: {
-      appHealth: "アプリ + 同期の状態",
-      currentServer: "現在のサーバー",
+	  systemStatus: {
+	    sections: {
+	      appHealth: "アプリ + 同期の状態",
+	      currentServer: "現在のサーバー",
       identity: "サインイン情報",
       configuredServers: "設定済みサーバー",
       machinesActiveServer: "マシン（アクティブサーバー）",
@@ -1658,23 +2064,15 @@ export const ja: TranslationStructure = {
         promptMessage: "例: 25MB の場合は 26214400。",
         invalidValueMessage: "1024 から 1073741824 の間の数値を入力してください。",
       },
-      uploadTtl: {
-        title: "アップロード TTL（ms）",
-        promptTitle: "アップロード TTL（ms）",
-        promptMessage:
-          "アップロードが期限切れになるまでアイドル状態でいられる時間。",
-        invalidValueMessage: "5000 から 3600000 の間の数値を入力してください。",
-      },
-      chunkSize: {
-        title: "推奨チャンクサイズ（バイト）",
-        promptTitle: "推奨チャンクサイズ（バイト）",
-        promptMessage: "CLI が安全な範囲に丸める場合があります。",
-        invalidValueMessage: "4096 から 1048576 の間の数値を入力してください。",
-      },
     },
   },
 
   settingsSourceControl: {
+  title: 'ファイルとソース管理',
+  editor: 'エディタ',
+  editorFooter: 'ファイルエディタの動作を設定します。',
+  editorAutoSave: '自動保存',
+  editorAutoSaveDescription: '編集後にファイルを自動的に保存します。',
     commitStrategy: {
       title: "コミット戦略",
       footer:
@@ -1979,6 +2377,10 @@ export const ja: TranslationStructure = {
       entrySubtitle: "プロバイダー固有のオプションを設定します",
       footer:
       "プロバイダー固有のオプションを設定します。これらの設定はセッションの動作に影響する場合があります。",
+      configuration: '設定',
+      cliConnection: 'CLI 接続',
+      capabilities: '機能',
+      models: 'モデル',
     providerSubtitle: "プロバイダー固有の設定",
       stateEnabled: "有効",
       stateDisabled: "無効",
@@ -1999,8 +2401,6 @@ export const ja: TranslationStructure = {
       localControlTitle: "ローカル制御",
       resumeSupportSupported: "対応",
       resumeSupportSupportedExperimental: "対応（実験）",
-      resumeSupportRuntimeGatedAcpLoadSession:
-        "ACP loadSession による実行時ゲート",
       resumeSupportNotSupported: "未対応",
       sessionModeNone: "ACP モードなし",
       sessionModeAcpPolicyPresets: "ACP ポリシープリセット",
@@ -2032,6 +2432,21 @@ export const ja: TranslationStructure = {
       installSetupTitle: "インストール / セットアップ",
       installInfoSeeSetupGuide: "セットアップガイドを見る",
       installInfoUseProviderCliInstaller: "プロバイダーの CLI インストーラーを使用",
+      cliSourcePreference: {
+        title: "CLI ソースの優先順位",
+        subtitle:
+          "両方が存在する場合に、システムの CLI と Happier 管理インストールのどちらを優先するかを選択します。",
+        options: {
+          systemFirst: {
+            title: "システムのインストールを優先",
+            subtitle: "このマシンにすでにインストールされている CLI を優先します。",
+          },
+          managedFirst: {
+            title: "管理インストールを優先",
+            subtitle: "このプロバイダー用に Happier がインストールした CLI を優先します。",
+          },
+        },
+      },
       cliInstaller: {
         installTitle: ({ provider }: { provider: string }) => `${provider} CLI をインストール`,
         reinstallTitle: ({ provider }: { provider: string }) => `${provider} CLI を再インストール`,
@@ -2040,6 +2455,12 @@ export const ja: TranslationStructure = {
           "選択したマシンにプロバイダー CLI をインストールします（ベストエフォート）。",
         reinstallSubtitle:
           "CLI が既に存在する場合でも、プロバイダーのインストーラーを再実行します。",
+        confirmInstallTitle: ({ provider }: { provider: string }) => `${provider} CLI をインストールしますか？`,
+        confirmReinstallTitle: ({ provider }: { provider: string }) => `${provider} CLI を再インストールしますか？`,
+        confirmBody: ({ provider }: { provider: string }) =>
+          `選択したマシンで ${provider} のインストーラー コマンドを実行します。プロバイダーを信頼できる場合のみ続行してください。`,
+        confirmInstallConfirm: "インストール",
+        confirmReinstallConfirm: "再インストール",
         noMachineSelected: "マシンが選択されていません。",
         installNotSupported: "このマシンではインストールに対応していません。",
         installFailed: "インストールに失敗しました。",
@@ -2047,15 +2468,234 @@ export const ja: TranslationStructure = {
         logPath: ({ logPath }: { logPath: string }) => `ログ: ${logPath}`,
       },
       setupGuideUrlTitle: "セットアップガイド URL",
+      authentication: {
+        title: "認証",
+        footer: "ローカル CLI の認証状態を確認し、対応している場合はサインインを開始します。",
+        terminalTitle: "プロバイダー ログイン端末",
+        logInTitle: "ログイン",
+        logInSubtitle: "このマシンでターミナルを開き、プロバイダーのサインインを実行します。",
+        reauthenticateTitle: "再認証",
+        reauthenticateSubtitle: "このマシンでターミナルを開き、プロバイダーのサインインを更新します。",
+        checkNowTitle: "今すぐ確認",
+        checkNowSubtitle: "検出されたローカル認証状態を更新します。",
+        statusTitle: "状態",
+        loggedInAsTitle: "ログイン中のアカウント",
+        methodTitle: "認証方法",
+        sourceTitle: "認証情報の取得元",
+        reasonTitle: "問題",
+        lastCheckedTitle: "最終確認",
+        stateUnknown: "不明",
+        stateLoggedIn: "ログイン済み",
+        stateLoggedOut: "ログアウト済み",
+        methods: {
+          apiKeyEnv: "API キー環境変数",
+          authTokenEnv: "認証トークン環境変数",
+          credentialsFile: "認証情報ファイル",
+          oauthCli: "CLI OAuth ログイン",
+          configFile: "設定ファイル",
+          gcloudAdc: "Google Cloud アプリケーションのデフォルト認証情報",
+          unknown: "不明",
+        },
+        reasons: {
+          missingCredentials: "認証情報がありません",
+          expired: "認証情報の有効期限が切れています",
+          cliMissing: "CLI がインストールされていません",
+          probeFailed: "状態確認に失敗しました",
+          timeout: "状態確認がタイムアウトしました",
+          unsupported: "ローカル認証はサポートされていません",
+          interactiveBlocked: "対話型ログインはブロックされています",
+          notConfigured: "未設定",
+        },
+        sources: {
+          environment: "環境",
+          file: "ファイル",
+          command: "コマンド",
+          mixed: "混在",
+        },
+      },
       connectedServiceTitle: "接続済みサービス",
       notFoundTitle: "プロバイダーが見つかりません",
     notFoundSubtitle: "このプロバイダーには設定画面がありません。",
     noOptionsAvailable: "利用可能なオプションはありません",
     invalidNumber: "無効な数値です",
     invalidJson: "無効なJSONです",
+    plugins: {
+            claude: {
+                title: "Claude（リモート）",
+                sections: {
+                    claudeCodeExperiments: {
+                        title: "Claude Code の実験機能",
+                        footer: "これらの設定は、Happier から開始する Claude のローカル（ターミナル）およびリモート（Agent SDK）セッションの両方に適用されます。"
+                    },
+                    claudeRemoteSdk: {
+                        title: "Claude Agent SDK（リモートモード）",
+                        footer: "リモートモードでは Claude をあなたのマシンで実行しつつ、Happier UI から操作します。ローカルモードはターミナル上の Claude Code TUI です。これらの設定はリモートモードにのみ適用されます。"
+                    }
+                },
+                fields: {
+                    claudeCodeExperimentalAgentTeamsEnabled: {
+                        title: "Agent Teams を強制的に有効化",
+                        subtitle: "Happier から開始するすべての Claude セッションで、Claude Code の実験的 Agent Teams（エージェント群）を有効にします。"
+                    },
+                    claudeRemoteAgentSdkEnabled: {
+                        title: "Agent SDK を使用（リモート）",
+                        subtitle: "リモートモードで公式の @anthropic-ai/claude-agent-sdk を使用します。"
+                    },
+                    claudeRemoteSettingSourcesV2: {
+                        title: "設定ソース",
+                        subtitle: "どの Claude 設定を読み込むかを制御します。",
+                        options: {
+                            user: {
+                                title: "ユーザー",
+                                subtitle: "Claude のユーザー全体設定を読み込みます。"
+                            },
+                            project: {
+                                title: "プロジェクト",
+                                subtitle: "リポジトリ設定（CLAUDE.md を含む）を読み込みます。"
+                            },
+                            local: {
+                                title: "ローカル",
+                                subtitle: "ローカル専用の上書きを読み込みます。"
+                            }
+                        }
+                    },
+                    claudeRemoteIncludePartialMessages: {
+                        title: "部分的なストリーミング更新",
+                        subtitle: "Claude がまだ応答中でも、アシスタントの部分出力を表示します。"
+                    },
+                    claudeLocalPermissionBridgeEnabled: {
+                        title: "実験的: ローカル権限ブリッジ",
+                        subtitle: "Claude のローカルモード権限プロンプトを Happier に転送し、UI から承認または拒否できるようにします。"
+                    },
+                    claudeLocalPermissionBridgeWaitIndefinitely: {
+                        title: "応答があるまで要求を開いたままにする",
+                        subtitle: "有効にすると、Happier は UI から承認または拒否するまで Claude のローカル権限要求を保留のまま維持します。"
+                    },
+                    claudeLocalPermissionBridgeTimeoutSeconds: {
+                        title: "任意の権限タイムアウト（秒）",
+                        subtitle: "無期限待機をオフにした場合にのみ使用されます。この時間を過ぎると、Happier は Claude のターミナルプロンプトにフォールバックします。"
+                    },
+                    claudeRemoteEnableFileCheckpointing: {
+                        title: "ファイルチェックポイント + /rewind",
+                        subtitle: "ファイルチェックポイントと /rewind を有効にします（ファイルのみ。会話は巻き戻しません）。一覧は /checkpoints、適用は /rewind --confirm を使います（オーバーヘッド増）。"
+                    },
+                    claudeRemoteMaxThinkingTokens: {
+                        title: "思考トークン上限",
+                        subtitle: "Claude の内部思考予算を制限します（null = 既定）。"
+                    },
+                    claudeRemoteDisableTodos: {
+                        title: "TODO を無効化",
+                        subtitle: "リモートモードで Claude が TODO 項目を作成しないようにします。"
+                    },
+                    claudeRemoteStrictMcpServerConfig: {
+                        title: "厳格な MCP サーバー設定",
+                        subtitle: "いずれかの MCP サーバー設定が無効な場合は失敗します。"
+                    },
+                    claudeRemoteAdvancedOptionsJson: {
+                        title: "高度なオプション（JSON）",
+                        subtitle: "上級者向けの Agent SDK 上書き設定です（クライアント側で検証）。"
+                    }
+                }
+            },
+            opencode: {
+                title: "OpenCode",
+                sections: {
+                    backendMode: {
+                        title: "バックエンドモード",
+                        footer: "サーバーモードでは質問機能とネイティブフォークが使えます。ACP モードはレガシーなフォールバックです。"
+                    },
+                    server: {
+                        title: "サーバー接続",
+                        footer: "空のままにすると、Happier 管理の OpenCode サーバーライフサイクルを使います。既存の OpenCode サーバーに接続するには絶対 http(s) URL を設定します。"
+                    }
+                },
+                fields: {
+                    opencodeBackendMode: {
+                        title: "OpenCode バックエンドモード",
+                        subtitle: "統合バックエンドを選択します。",
+                        options: {
+                            server: {
+                                title: "サーバー（推奨）",
+                                subtitle: "OpenCode サーバー API を使用し、より豊富な機能と高い信頼性を提供します。"
+                            },
+                            acp: {
+                                title: "ACP（レガシー）",
+                                subtitle: "OpenCode を ACP 経由で利用します。機能は少なめです。"
+                            }
+                        }
+                    },
+                    opencodeServerBaseUrl: {
+                        title: "既存の OpenCode サーバー URL",
+                        subtitle: "ユーザー管理の OpenCode サーバー向けの任意の上書きです。"
+                    }
+                }
+            },
+            auggie: {
+                title: "Auggie"
+            },
+            copilot: {
+                title: "Copilot"
+            },
+            customAcp: {
+                title: "カスタム ACP"
+            },
+            gemini: {
+                title: "Gemini"
+            },
+            kilo: {
+                title: "Kilo"
+            },
+            kimi: {
+                title: "Kimi"
+            },
+            kiro: {
+                title: "Kiro"
+            },
+            pi: {
+                title: "Pi"
+            },
+            qwen: {
+                title: "Qwen Code"
+            },
+            codex: {
+        title: "Codex",
+        sections: {
+          backendMode: {
+            title: "ルーティングモード",
+            footer:
+              "Codex のルーティング方法を選択します。推奨される既定は App Server です。ローカル/リモート切り替えと再開は App Server で利用でき、ACP は引き続きレガシーなフォールバックとして使えます。",
+          },
+          installOverrides: {
+            title: "インストール元の上書き",
+            footer: "任意。空欄のままにすると既定のインストール元を使用します。",
+          },
+        },
+        fields: {
+          codexBackendMode: {
+            title: "Codex ルーティングモード",
+            subtitle: "App Server、ACP、または MCP を選択します。",
+            options: {
+              appServer: {
+                title: "App Server",
+                subtitle: "推奨される公式 Codex app-server モード",
+              },
+              acp: {
+                title: "ACP",
+                subtitle: "ACP 経由で Codex をルーティング (codex-acp)",
+              },
+              mcp: {
+                title: "MCP",
+                subtitle: "既定の Codex MCP モード",
+              },
+            },
+          },
+        },
+      },
+    },
   },
 
   settingsAppearance: {
+    ...settingsAppearanceTranslationExtension,
     // Appearance settings screen
     theme: "テーマ",
     themeDescription: "お好みの配色を選択",
@@ -2148,6 +2788,16 @@ export const ja: TranslationStructure = {
       xlarge: "特大",
       xxlarge: "超特大",
     },
+    itemDensity: "項目密度",
+    itemDensityDescription: "アプリ全体でリスト行や設定項目の大きさを選択します",
+    itemDensityOptions: {
+      comfortable: "標準",
+      comfortableDescription: "標準の行サイズと余白を使います",
+      cozy: "中間",
+      cozyDescription: "コンパクト表示ほど詰めずに、少しだけ密度を上げます",
+      compact: "コンパクト",
+      compactDescription: "余白を詰めて画面により多くの行を表示します",
+    },
   },
 
   settingsFeatures: {
@@ -2203,6 +2853,9 @@ export const ja: TranslationStructure = {
     expFilesEditor: "埋め込みファイルエディタ",
     expFilesEditorSubtitle:
       "ファイルブラウザから直接編集を有効化（Web/デスクトップはMonaco、ネイティブはCodeMirror）",
+    expEmbeddedTerminal: "埋め込みターミナル",
+    expEmbeddedTerminalSubtitle:
+      "セッション内で本物のターミナルを開きます。",
     expSessionType: "セッションタイプ選択",
     expSessionTypeSubtitle:
       "セッションタイプ選択を表示（シンプル/ワークツリー）",
@@ -2223,6 +2876,8 @@ export const ja: TranslationStructure = {
       "連携サービスのクォータバッジと使用量メーターを表示",
     expMemorySearch: "メモリ検索",
     expMemorySearchSubtitle: "ローカルメモリ検索の画面と設定を有効化",
+    expSessionsDirect: "ダイレクトセッション",
+    expSessionsDirectSubtitle: "サイドバーでプロバイダー直結のダイレクトセッションを一覧表示して開く",
     expFriends: "友だち",
     expFriendsSubtitle: "友だち機能（受信箱タブとセッション共有）を有効化",
     webFeatures: "Web機能",
@@ -2295,6 +2950,12 @@ export const ja: TranslationStructure = {
       sessionNotFound: "セッションが見つかりません",
       voiceSessionFailed: "音声セッションの開始に失敗しました",
       voiceServiceUnavailable: "音声サービスは一時的に利用できません",
+      voiceSessionLimitStarted: ({ duration }: { duration: string }) =>
+      `音声セッションの上限: 約${duration}です。`,
+      voiceSessionLimitExpiring: ({ duration }: { duration: string }) =>
+      `音声セッションは約${duration}後に終了します。`,
+      voiceSessionLimitExpired:
+      "音声セッションが現在の時間上限に達して終了しました。",
     voiceAlreadyStarting: "音声は別のセッションで起動中です",
     oauthInitializationFailed: "OAuth フローの初期化に失敗しました",
     tokenStorageFailed: "認証トークンの保存に失敗しました",
@@ -2352,7 +3013,7 @@ export const ja: TranslationStructure = {
     invalidShareLink: "無効または期限切れの共有リンク",
     missingPermissionId: "権限リクエストIDがありません",
     codexResumeNotInstalledTitle:
-      "このマシンには Codex resume がインストールされていません",
+      "このマシンには Codex 再開サーバーがインストールされていません",
     codexResumeNotInstalledMessage:
       "Codex の会話を再開するには、対象のマシンに Codex resume サーバーをインストールしてください（マシン詳細 → Installables）。",
     codexAcpNotInstalledTitle:
@@ -2370,14 +3031,10 @@ export const ja: TranslationStructure = {
     installable: {
       codexResume: {
         title: "Codex 再開サーバー",
-        installSpecTitle: "Codex resume のインストール元",
       },
       codexAcp: {
         title: "Codex ACP アダプター",
-        installSpecTitle: "Codex ACP のインストール元",
       },
-      installSpecDescription:
-        "（実験的）`npm install` に渡す NPM/Git/ファイル指定。空欄の場合はデーモンの既定を使用します。",
     },
     ui: {
       notAvailable: "利用できません",
@@ -2402,14 +3059,14 @@ export const ja: TranslationStructure = {
       registryCheckFailed: ({ error }: { error: string }) => `失敗: ${error}`,
       installSource: "インストール元",
       installSourceDefault: "（既定）",
-      installSpecPlaceholder:
-        "例: file:/path/to/pkg または github:owner/repo#branch",
       lastInstallLog: "前回のインストールログ",
       installLogTitle: "インストールログ",
     },
   },
 
   newSession: {
+    ...newSessionMcpTranslationExtension,
+    ...acpCatalogTranslationExtension.newSession,
     // Used by new-session screen and launch flows
     title: "新しいセッションを開始",
     selectAiProfileTitle: "AIプロファイルを選択",
@@ -2437,6 +3094,44 @@ export const ja: TranslationStructure = {
     selectModelTitle: "AIモデルを選択",
     selectModelDescription:
       "このセッションで使用するモデルを選択してください。",
+    checkout: {
+      selectTitle: "チェックアウトを選択",
+      noWorktree: "現在のフォルダー",
+      noWorktreeSubtitle:
+        "すでに選択したフォルダーを使い、workspace checkout はリンクしません。",
+      noWorktreeSectionTitle: "現在のフォルダー",
+      existingWorktreesSectionTitle: "リンク済みチェックアウト",
+      actionsSectionTitle: "アクション",
+      newWorktree: "新しい worktree",
+      newWorktreeSubtitle: "このセッション用に新しい Git worktree を作成して使用します。",
+      newWorktreeDetailWorkspace:
+        "この workspace に新しいリンク済み checkout を作成します。",
+      newWorktreeDetailBranch:
+        "現在のリポジトリ状態から開始し、新しい branch/worktree 名を選びます。",
+      branchPickerTitle: "Start From",
+      branchPickerCurrentHead: "Current Branch",
+      branchPickerCurrentHeadDescription: "Start from the branch currently checked out in this repository.",
+      branchPickerEmpty: "No branches available for this repository.",
+      branchPickerSearchPlaceholder: "Search branches…",
+      branchPickerRefreshA11y: "Refresh branches",
+      branchPickerLoadingA11y: "Loading branches",
+      branchPickerRefreshingA11y: "Refreshing branches",
+      primaryDetailDescription:
+        "選択したマシン上で、この workspace のメインのリンク済み checkout を使います。",
+      gitWorktreeDetailDescription:
+        "このセッションに既存のリンク済み Git worktree checkout を使います。",
+      existingBranchWorktreeDescription:
+        "This branch already has a worktree. You can reuse it directly or create a new branch from it.",
+      existingBranchDescription:
+        "This branch can be used directly in a new worktree, or you can create a new branch from it.",
+      createNewBranchFromBranchHint:
+        "Use Apply to create a new branch and worktree from this branch.",
+      useExistingBranchAction: "Use Existing Branch",
+      useExistingWorktreeAction: "Use Existing Worktree",
+      detailBranch: ({ branch }: { branch: string }) => `ブランチ: ${branch}`,
+      detailPath: ({ path }: { path: string }) => `パス: ${path}`,
+      detailLinkedWorkspace: "現在のワークスペースにリンクされています。",
+    },
     selectSessionTypeTitle: "セッションタイプを選択",
     selectSessionTypeDescription:
       "シンプルなセッション、またはGitのワークツリーに紐づくセッションを選択してください。",
@@ -2448,6 +3143,11 @@ export const ja: TranslationStructure = {
     machineOfflineInlineBody:
       "このマシンでデーモンを起動するか、別のマシンを選んでからセッションを作成してください。",
     machineOfflineCannotStartStatus: "オフライン（セッションを開始できません）",
+    automationChip: {
+      default: "自動化",
+      interval: ({ minutes }: { minutes: number }) => `${minutes}分ごと`,
+      cron: "Cron スケジュール",
+    },
     machineDetails: "マシンの詳細を表示 →",
     directoryDoesNotExist: "ディレクトリが見つかりません",
     createDirectoryConfirm: ({ directory }: { directory: string }) =>
@@ -2480,6 +3180,7 @@ export const ja: TranslationStructure = {
       enterPathTitle: "パスを入力",
       enterPathPlaceholder: "パスを入力...",
       customPathTitle: "カスタムパス",
+      truncatedDirectoryInfo: ({ count }: { count: number }) => `最初の${count}件を表示`,
       recentTitle: "最近",
       favoritesTitle: "お気に入り",
       suggestedTitle: "おすすめ",
@@ -2499,6 +3200,9 @@ export const ja: TranslationStructure = {
       requiresAgent: ({ agent }: { agent: string }) => `${agent} が必要`,
       cliNotDetected: ({ cli }: { cli: string }) =>
         `${cli} CLI が検出されません`,
+    },
+    profileSelection: {
+      workspaceDefault: "ワークスペースの既定",
     },
     cliBanners: {
       cliNotDetectedTitle: ({ cli }: { cli: string }) =>
@@ -2537,7 +3241,7 @@ export const ja: TranslationStructure = {
         "この再開IDは現在適用できません。代わりに新しいセッションを開始します。",
     },
     codexResumeBanner: {
-      title: "Codex 再開",
+      title: "Codex 再開サーバー",
       updateAvailable: "更新があります",
       systemCodexVersion: ({ version }: { version: string }) =>
         `システム Codex: ${version}`,
@@ -2552,9 +3256,9 @@ export const ja: TranslationStructure = {
       reinstall: "再インストール",
     },
     codexResumeInstallModal: {
-      installTitle: "Codex resume をインストールしますか？",
-      updateTitle: "Codex resume を更新しますか？",
-      reinstallTitle: "Codex resume を再インストールしますか？",
+      installTitle: "Codex 再開サーバーをインストールしますか？",
+      updateTitle: "Codex 再開サーバーを更新しますか？",
+      reinstallTitle: "Codex 再開サーバーを再インストールしますか？",
       description:
         "これは再開操作にのみ使用する、実験的な Codex MCP サーバーラッパーをインストールします。",
     },
@@ -2583,6 +3287,8 @@ export const ja: TranslationStructure = {
     viewAll: "すべてのセッションを表示",
   },
 
+  sessionHandoff: sessionHandoffTranslationExtensions.ja,
+
   session: {
     inputPlaceholder: "メッセージを入力...",
     toolCalls: "ツール呼び出し",
@@ -2594,15 +3300,22 @@ export const ja: TranslationStructure = {
       openParent: "開く",
       openParentA11y: "親セッションを開く",
       forkFromMessageA11y: "このメッセージから分岐",
-    },
-    resuming: "再開中...",
-    resumeFailed: "セッションの再開に失敗しました",
-    pendingQueuedResumeFailedTitle: "メッセージはキューに保存されました",
-    pendingQueuedResumeFailedBody: "メッセージは保留キューに保存されましたが、Happier はこのセッションを再開できませんでした。再試行して開始してください。",
-    resumeSupportNoteChecking:
-      "注: Happier はこのマシンでプロバイダーのセッションを再開できるか確認中です。",
-    resumeSupportNoteUnverified:
-      "注: Happier はこのマシンでの再開サポートを確認できませんでした。",
+	    },
+	    rollback: {
+	      latestTurnA11y: '最新のターンをロールバック',
+	      beforeUserMessageA11y: 'このメッセージの前までロールバック',
+	    },
+	    resuming: "再開中...",
+	    resumeFailed: "セッションの再開に失敗しました",
+	    pendingQueuedResumeFailedTitle: "メッセージはキューに保存されました",
+	    pendingQueuedResumeFailedBody:
+	      "メッセージは保留キューに保存されましたが、Happier はこのセッションを再開できませんでした。再試行して開始してください。",
+	    invalidLinkTitle: "無効なセッションリンク",
+	    invalidLinkDescription: "セッションリンクが見つからないか無効です。URL を確認してもう一度お試しください。",
+	    resumeSupportNoteChecking:
+	      "注: Happier はこのマシンでプロバイダーのセッションを再開できるか確認中です。",
+	    resumeSupportNoteUnverified:
+	      "注: Happier はこのマシンでの再開サポートを確認できませんでした。",
     resumeSupportDetails: {
       cliNotDetected: "このマシンで CLI が検出されませんでした。",
       capabilityProbeFailed: "機能の確認に失敗しました。",
@@ -2623,7 +3336,7 @@ export const ja: TranslationStructure = {
         "マシンがオフラインです。オンラインに戻してこのセッションを再開してください。",
         openRuns: "セッションの実行を開く",
         openAutomations: "セッションの自動化を開く",
-        openSubagents: ({ count }: { count: number }) => (count > 0 ? `Open agents (${count})` : 'Open agents'),
+        openSubagents: ({ count }: { count: number }) => (count > 0 ? `エージェントを開く (${count})` : 'エージェントを開く'),
         participants: {
           to: '宛先',
           lead: 'メイン',
@@ -2676,10 +3389,10 @@ export const ja: TranslationStructure = {
             teammateInstructionsPlaceholder: "このチームメイトは何をするべきですか？",
             launchTeammateA11y: "チームメイトを起動",
             launchTeammateAction: "チームメイトを起動",
-            typeFact: ({ value }: { value: string }) => `Type: ${value}`,
-            providerFact: ({ value }: { value: string }) => `Provider: ${value}`,
-            backendFact: ({ value }: { value: string }) => `Backend: ${value}`,
-            intentFact: ({ value }: { value: string }) => `Intent: ${value}`,
+            typeFact: ({ value }: { value: string }) => `種類: ${value}`,
+            providerFact: ({ value }: { value: string }) => `プロバイダー: ${value}`,
+            backendFact: ({ value }: { value: string }) => `バックエンド: ${value}`,
+            intentFact: ({ value }: { value: string }) => `インテント: ${value}`,
             errors: {
               teamIdRequired: "先にチーム ID を入力してください。",
               memberTeamIdRequired: "先にチームメイトのチーム ID を入力してください。",
@@ -2693,7 +3406,7 @@ export const ja: TranslationStructure = {
           kind: {
             execution_run: "実行",
             agent_team_member: "チームエージェント",
-            task_sidechain: "タスクエージェント",
+            subagent_sidechain: "サブエージェント",
           },
           intent: {
             review: "レビュー",
@@ -2710,6 +3423,7 @@ export const ja: TranslationStructure = {
         closeA11y: "詳細を閉じる",
           openTabA11y: ({ title }: { title: string }) => `${title} を開く`,
           pinTabA11y: "タブを固定",
+          unpinTabA11y: "タブの固定を解除",
           pinnedTabA11y: "固定されたタブ",
           closeTabA11y: "タブを閉じる",
           enterFocusModeA11y: "エディタ集中モードに入る",
@@ -2718,6 +3432,10 @@ export const ja: TranslationStructure = {
   
       actionsDraft: {
         noInputHints: "このアクションには入力ヒントがありません。",
+        validation: {
+          requiredField: ({ field }: { field: string }) =>
+            `${field} は必須です。`,
+        },
       },
 
     planOutput: {
@@ -2735,6 +3453,8 @@ export const ja: TranslationStructure = {
 
     reviewFindings: {
       title: ({ count }: { count: number }) => `レビュー結果（${count}件）`,
+      questionsTitle: "レビュアーからの質問",
+      assumptionsTitle: "前提",
       findingTitle: ({
         status,
         severity,
@@ -2747,22 +3467,26 @@ export const ja: TranslationStructure = {
         title: string;
       }) => `[${status}] [${severity}/${category}] ${title}`,
       status: {
-        untriaged: "未分類",
-        accept: "承認",
-        reject: "却下",
-        defer: "保留",
-        needsRefinement: "要精査",
+        untriaged: "未決定",
+        accept: "修正を実装",
+        reject: "無視",
+        defer: "後で決める",
+        needsRefinement: "説明を求める",
       },
-      refinementPlaceholder: "精査のための任意コメント",
+      refinementPlaceholder: "何を確認したいですか？",
       actions: {
-        applyTriage: "分類を適用",
+        applyTriage: "レビュー対応を適用",
         applying: "適用中…",
-        applyAcceptedFindings: "承認済み結果を適用",
+        askReviewer: "レビュアーに質問",
+        answerQuestion: "レビュアーに回答",
+        applyAcceptedFindings: "選択した修正を実装",
+        sendFollowUp: "フォローアップを送信",
         sending: "送信中…",
       },
       errors: {
-        applyTriageFailed: "分類の適用に失敗しました。",
-        applyAcceptedFailed: "承認済み結果の適用に失敗しました。",
+        applyTriageFailed: "レビュー対応を適用できませんでした。",
+        followUpFailed: "レビューのフォローアップを送信できませんでした。",
+        applyAcceptedFailed: "選択した修正を送信できませんでした。",
       },
     },
 
@@ -2941,6 +3665,8 @@ export const ja: TranslationStructure = {
       teleport: "音声エージェントをテレポート",
       toggleActivity: "音声アクティビティを切り替え",
       clearActivity: "音声アクティビティをクリア",
+      bargeIn: "割り込み",
+      cancelTurn: "応答をキャンセル",
     },
   },
 
@@ -2961,6 +3687,38 @@ export const ja: TranslationStructure = {
       errorFallback: "エラー",
       eventFallback: "イベント",
     },
+  },
+
+  devVoiceQa: {
+    menuTitle: "音声QAハーネス",
+    menuSubtitle: "テキストプロンプトで実際の音声エージェントを操作",
+    title: "音声QAハーネス",
+    subtitle: "設定済みの音声ランタイムを起動し、マイクを使わずにプロンプトを送信します。",
+    instructions: "この画面では、実際のローカル音声エージェントや ElevenLabs セッションを、再現可能なテキストプロンプトで検証できます。セッション ID を空のままにすると、現在の音声ターゲットまたはグローバル音声エージェントセッションが使われます。",
+    configurationTitle: "設定",
+    configuredProvider: "設定済みプロバイダー",
+    qaProvider: "アクティブなQAプロバイダー",
+    qaStatus: "QAステータス",
+    targetSession: "現在の対象セッション",
+    runtimeSession: "アクティブなランタイムセッション",
+    inputsTitle: "入力",
+    sessionIdLabel: "セッションID上書き",
+    sessionIdPlaceholder: "空のままにすると現在の音声ターゲットを使用します",
+    initialContextLabel: "初期コンテキスト",
+    initialContextPlaceholder: "QA セッション開始時に送信する任意のコンテキスト",
+    promptLabel: "プロンプト",
+    promptPlaceholder: "音声エージェントに送信するテキストを入力",
+    contextUpdateLabel: "コンテキスト更新",
+    contextUpdatePlaceholder: "任意の追加入力コンテキスト",
+    actionsTitle: "アクション",
+    sendContext: "コンテキストを送信",
+    usesCurrentProvider: "このハーネスは常に現在の音声設定と実際のランタイム統合を使用します。",
+    localModeHint: "ローカル QA には、会話モードを Agent に設定した Local voice が必要です。",
+    elevenLabsHint: "ElevenLabs QA には、ElevenLabs プロバイダーが設定済みで、リアルタイムセッションが正常に接続できることが必要です。",
+    transcriptTitle: "QA 文字起こし",
+    transcriptEmpty: "QA 文字起こしはまだありません。",
+    activityTitle: "音声アクティビティ",
+    activityEmpty: "現在の QA セッションでは、まだ音声アクティビティが記録されていません。",
   },
 
   server: {
@@ -3032,28 +3790,28 @@ export const ja: TranslationStructure = {
     serverGroupServersLabel: "サーバー",
     saveServerGroup: "グループを保存",
     serverGroupMustHaveServer:
-    retention: {
-      title: "Retention policy",
-      summary: "Summary",
-      keepForever: "No automatic deletion",
-      deleteInactiveSessionsDays: ({ count }: { count: number }) => `Deletes inactive sessions after ${count} ${plural({ count, singular: 'day', plural: 'days' })}.`,
-      deleteOlderThanDays: ({ count }: { count: number }) => `Deletes data after ${count} ${plural({ count, singular: 'day', plural: 'days' })}.`,
-      sessionNotice: ({ count }: { count: number }) => `This server deletes inactive sessions after ${count} ${plural({ count, singular: 'day', plural: 'days' })} of inactivity.`,
-      sessions: "Sessions",
-      accountChanges: "Account changes",
-      voiceSessionLeases: "Voice session leases",
-      feedItems: "Feed items",
-      sessionShareAccessLogs: "Session share access logs",
-      publicShareAccessLogs: "Public share access logs",
-      terminalAuthRequests: "Terminal auth requests",
-      accountAuthRequests: "Account auth requests",
-      authPairingSessions: "Auth pairing sessions",
-      repeatKeys: "Repeat keys",
-      globalLocks: "Global locks",
-      automationRuns: "Automation runs",
-      automationRunEvents: "Automation run events",
-    },
       "サーバーグループには少なくとも1つのサーバーが必要です。",
+    retention: {
+      title: "保持ポリシー",
+      summary: "概要",
+      keepForever: "自動削除なし",
+      deleteInactiveSessionsDays: ({ count }: { count: number }) => `${count}日後に非アクティブなセッションを削除します。`,
+      deleteOlderThanDays: ({ count }: { count: number }) => `${count}日後にデータを削除します。`,
+      sessionNotice: ({ count }: { count: number }) => `このサーバーは、${count}日間非アクティブなセッションを削除します。`,
+      sessions: "セッション",
+      accountChanges: "アカウント変更",
+      voiceSessionLeases: "音声セッションのリース",
+      feedItems: "フィード項目",
+      sessionShareAccessLogs: "共有セッションのアクセスログ",
+      publicShareAccessLogs: "公開共有のアクセスログ",
+      terminalAuthRequests: "ターミナル認証リクエスト",
+      accountAuthRequests: "アカウント認証リクエスト",
+      authPairingSessions: "認証ペアリングセッション",
+      repeatKeys: "リピートキー",
+      globalLocks: "グローバルロック",
+      automationRuns: "自動化の実行",
+      automationRunEvents: "自動化実行イベント",
+    },
     multiServerView: {
       title: "複数サーバー同時表示",
       footer: "複数のサーバーを 1 つのセッション一覧にまとめるか選択します。",
@@ -3079,7 +3837,54 @@ export const ja: TranslationStructure = {
 
   sessionsList: {
     serverHeader: ({ server }: { server: string }) => `サーバー: ${server}`,
+    storagePersistedTab: "同期済み",
+    storageDirectTab: "ダイレクト",
+    renameWorkspace: 'ワークスペース名を変更',
+    renameWorkspacePromptTitle: 'ワークスペース名を変更',
+    renameWorkspacePromptPlaceholder: '名前を入力...',
+    resetWorkspaceName: '名前をリセット',
   },
+
+  directSessions: {
+    browseTitle: "プロバイダー セッションを参照",
+    browseOpenExisting: "プロバイダー セッションを参照",
+    browseFiltersTitle: "ソースを選択",
+    browseMachines: "マシン",
+    browseProviders: "プロバイダー",
+    browseSources: "ソース",
+    browseSourceCodexUserHome: "自分の Codex ホーム",
+    browseSourceCodexConnectedServices: ({ service }: { service: string }) => `${service} connected services`,
+    browseSourceClaudeDefault: "デフォルトの Claude 設定",
+    browseSourceOpenCodeDefault: "デフォルトの OpenCode サーバー",
+    browseCandidates: "利用可能なセッション",
+    browseNoMachines: "直接セッションに利用できるマシンはまだありません。",
+    browseNoCandidates: "このマシンとプロバイダーに対するセッションは見つかりませんでした。",
+    browseActivityRunning: "実行中",
+        browseActivityRunningNow: "実行中",
+    browseActivityRecent: "最近アクティブ",
+    browseActivityIdle: "アイドル",
+    browseActivityUnknown: "不明",
+        browseSearchPlaceholder: "読み込み済みセッションを検索…",
+        browseNoSearchResults: "この検索に一致する読み込み済みセッションはまだありません。",
+    browseLoadMore: "さらにセッションを読み込む",
+    browseFailedToLoad: "プロバイダー セッションの読み込みに失敗しました。",
+    browseLinkFailed: "選択したプロバイダー セッションのリンクに失敗しました。",
+  },
+
+    workspacePresentation: {
+        checkoutKinds: {
+            primary: 'Primary checkout',
+            git_worktree: 'Git worktree',
+        },
+    },
+    sourceControlWorkspace: {
+        createTitle: 'Create linked workspace',
+        createSubtitle: 'この checkout をリンク済みワークスペースに追加して設定を開きます。',
+        otherCheckoutsTitle: 'Other checkouts',
+        unlinkedWorktreesTitle: 'Unlinked worktrees',
+        createSessionInWorktreeTitle: 'Create session here',
+        adoptWorktreeTitle: 'Add worktree to workspace',
+    },
 
 	  sessionInfo: {
 	    // Used by Session Info screen (app/(app)/session/[id]/info.tsx)
@@ -3090,6 +3895,16 @@ export const ja: TranslationStructure = {
     stopSessionConfirm: "このセッションを停止してもよろしいですか？",
     archiveSession: "セッションをアーカイブ",
     archiveSessionConfirm: "このセッションをアーカイブしてもよろしいですか？",
+    workspaceTitle: "ワークスペース",
+    workspaceLabel: "ワークスペース",
+    linkWorkspaceTitle: "このワークスペースをリンク",
+    linkWorkspaceSubtitle: "このセッションのパスからリンク済みワークスペースを作成し、その設定を開きます。",
+    openWorkspaceTitle: "ワークスペースを開く",
+    openWorkspaceSubtitle: "リンク済みワークスペースの詳細と設定を開きます。",
+    createWorktreeTitle: "worktree を作成",
+    createWorktreeSubtitle: "このリンク済みワークスペースで Git worktree を作成する新しいセッションを開始します。",
+    locationLabel: "場所",
+    checkoutLabel: "チェックアウト",
     happySessionIdCopied:
       "Happier セッション ID をクリップボードにコピーしました",
     failedToCopySessionId: "Happier セッション ID のコピーに失敗しました",
@@ -3121,6 +3936,10 @@ export const ja: TranslationStructure = {
     kimiSessionIdCopied: "Kimi セッション ID をクリップボードにコピーしました",
     kiloSessionId: "Kilo セッション ID",
     kiloSessionIdCopied: "Kilo セッション ID をクリップボードにコピーしました",
+    kiroSessionId: "Kiro セッション ID",
+    kiroSessionIdCopied: "Kiro セッション ID をクリップボードにコピーしました",
+    customAcpSessionId: "カスタム ACP セッション ID",
+    customAcpSessionIdCopied: "カスタム ACP セッション ID をクリップボードにコピーしました",
     piSessionId: "Pi セッション ID",
     piSessionIdCopied: "Pi セッション ID をクリップボードにコピーしました",
     copilotSessionId: "Copilot セッション ID",
@@ -3186,7 +4005,7 @@ export const ja: TranslationStructure = {
     }) =>
       `バージョン ${currentVersion} がインストールされています。${requiredVersion} 以降に更新してください`,
     updateCliInstructions:
-      "npm install -g @happier-dev/cli@latest を実行してください",
+      "happier self update を実行してください",
     deleteSession: "セッションを削除",
     deleteSessionSubtitle: "このセッションを完全に削除",
     deleteSessionConfirm: "セッションを完全に削除しますか？",
@@ -3213,7 +4032,6 @@ export const ja: TranslationStructure = {
       runIt: "実行する",
       scanQrCode: "QRコードをスキャン",
       openCamera: "カメラを開く",
-      installCommand: "$ npm i -g @happier-dev/cli",
       runCommand: "$ happier",
     },
     emptyMessages: {
@@ -3294,6 +4112,8 @@ export const ja: TranslationStructure = {
       qwen: "Qwen Code",
       kimi: "Kimi",
       kilo: "Kilo",
+      kiro: "Kiro",
+      customAcp: "Custom ACP",
       pi: "Pi",
       copilot: "Copilot",
     },
@@ -3367,7 +4187,6 @@ export const ja: TranslationStructure = {
       sectionTitle: "モード",
       badge: ({ name }: { name: string }) => `モード: ${name}`,
       badgePending: ({ name }: { name: string }) => `モード: ${name} (保留中)`,
-      badgeA11y: ({ name }: { name: string }) => `モード: ${name}`,
       refreshModesA11y: "モードを更新",
       pendingSwitching: ({ from, to }: { from: string; to: string }) =>
         `保留中: ${from} から ${to} に切り替え中`,
@@ -3483,6 +4302,17 @@ export const ja: TranslationStructure = {
       result: "結果",
       items: "項目",
       more: ({ count }: { count: number }) => `+${count} 件`,
+    },
+    taskLikeSummary: {
+      createTaskWithSubject: ({ subject }: { subject: string }) => `サブエージェントを作成: ${subject}`,
+      createTask: "サブエージェントを作成",
+      listTasks: "サブエージェントを一覧表示",
+      updateTaskWithIdStatus: ({ id, status }: { id: string; status: string }) => `サブエージェント ${id} を更新 → ${status}`,
+      updateTaskWithId: ({ id }: { id: string }) => `サブエージェント ${id} を更新`,
+      updateTask: "サブエージェントを更新",
+    },
+    taskView: {
+      moreTools: ({ count }: { count: number }) => `さらに ${count} 個のツール`,
     },
     workspaceIndexingPermission: {
       defaultTitle: "ワークスペースのインデックス作成",
@@ -3609,15 +4439,50 @@ export const ja: TranslationStructure = {
     createFileInvalidPath:
       "無効なファイルパスです。src/new-file.ts のようなワークスペース相対パスを使用してください。",
     createFileFailed: "ファイルの作成に失敗しました。",
-    createFolderPromptTitle: "フォルダーを作成",
-    createFolderPromptBody: "プロジェクトのルートからの相対フォルダーパスを入力してください。",
-    createFolderInvalidPath:
-      "無効なフォルダーパスです。src/new-folder のようなワークスペース相対パスを使用してください。",
-    createFolderFailed: "フォルダーの作成に失敗しました。",
-    changeRow: {
-      viewDiffA11y: ({ file }: { file: string }) => `${file} の差分を表示`,
-      status: {
-        untracked: "未追跡ファイル",
+	    createFolderPromptTitle: "フォルダーを作成",
+	    createFolderPromptBody: "プロジェクトのルートからの相対フォルダーパスを入力してください。",
+	    createFolderInvalidPath:
+	      "無効なフォルダーパスです。src/new-folder のようなワークスペース相対パスを使用してください。",
+	    createFolderFailed: "フォルダーの作成に失敗しました。",
+	    repositoryTree: {
+	      actions: {
+	        copyPath: "パスをコピー",
+	        download: "ダウンロード",
+	        downloadAsZip: "ZIPでダウンロード",
+	      },
+	      dropToUpload: "ファイルをドロップしてアップロード",
+	      rename: {
+	        title: "名前を変更",
+	        body: "プロジェクトのルートからの相対パスで新しいパスを入力してください。",
+	        invalidPath:
+	          "無効なパスです。src/new-file.ts のようなワークスペース相対パスを使用してください。",
+	        failed: "名前の変更に失敗しました。",
+	        conflicts: {
+	          title: "保存先はすでに存在します",
+	          body: ({ path }: { path: string }) => `「${path}」はすでに存在します。どうしますか？`,
+	        },
+	      },
+	      deleteFolder: {
+	        title: "フォルダーを削除しますか？",
+	        body: ({ path }: { path: string }) =>
+	          `フォルダー ${path} とその内容をすべて削除しますか？`,
+	        confirm: "フォルダーを削除",
+	      },
+	      deleteFile: {
+	        title: "ファイルを削除しますか？",
+	        body: ({ path }: { path: string }) => `ファイル ${path} を削除しますか？`,
+	      },
+	      delete: {
+	        failed: "削除に失敗しました。",
+	      },
+	      download: {
+	        notReady: "ダウンロードはまだ利用できません。",
+	      },
+	    },
+	    changeRow: {
+	      viewDiffA11y: ({ file }: { file: string }) => `${file} の差分を表示`,
+	      status: {
+	        untracked: "未追跡ファイル",
         added: "新規ファイル",
         deleted: "削除されたファイル",
         renamed: "名前変更されたファイル",
@@ -3631,6 +4496,105 @@ export const ja: TranslationStructure = {
       searchFailed: "検索に失敗しました。もう一度お試しください。",
     },
     detachedHead: "切り離された HEAD",
+    branchSwitchDialog: {
+      title: "ブランチを切り替え",
+      body: "未コミットの変更があります。どのように扱いますか？",
+      leaveTitle: ({ branch }: { branch: string }) => `${branch} に変更を残す`,
+      leaveSubtitle: "現在のブランチにスタッシュして切り替えます。",
+      bringTitle: ({ branch }: { branch: string }) => `${branch} に変更を持っていく`,
+      bringSubtitle: "切り替えを試み、変更を新しいブランチに引き継ぎます。",
+    },
+    branchMenu: {
+      openA11y: "ブランチメニューを開く",
+      failedToLoad: "ブランチの読み込みに失敗しました。",
+      unavailable: "ブランチ一覧を利用できません",
+      empty: "ブランチが見つかりません",
+      searchPlaceholder: "ブランチを検索...",
+      category: {
+        actions: "操作",
+        branches: "ブランチ",
+        worktrees: "Worktrees",
+        remote: "リモート",
+        local: "ローカル",
+        options: "オプション",
+      },
+      publish: {
+        title: "ブランチを公開",
+        subtitle: "現在のブランチを上流のリモートブランチにプッシュします",
+        short: "公開",
+        failed: "ブランチの公開に失敗しました。",
+      },
+      create: {
+        title: "ブランチを作成",
+        subtitle: ({ name }: { name: string }) => `「${name}」を作成`,
+        failed: "ブランチの作成に失敗しました。",
+      },
+      switch: {
+        failed: "ブランチの切り替えに失敗しました。",
+      },
+      branch: {
+        upstream: ({ upstream }: { upstream: string }) => `上流：${upstream}`,
+      },
+      remotes: {
+        show: "リモートブランチを表示",
+        hide: "リモートブランチを非表示",
+        subtitle: "一覧にリモートブランチを含めます",
+      },
+      worktrees: {
+        createFromCurrentBranchTitle: "New worktree from current branch",
+        createFromCurrentBranchSubtitle: ({ branch }: { branch: string }) =>
+          `Create a new worktree from ${branch} and start a session there.`,
+        createFromCurrentBranchDetachedSubtitle:
+          "Switch to a branch before creating a worktree from the current branch.",
+        createFromAnotherBranchTitle: "New worktree from another branch",
+        createFromAnotherBranchSubtitle:
+          "Open the new-session flow to choose another branch or reuse an existing worktree.",
+        removeTitle: "Remove worktree",
+        removeSubtitle: ({ target }: { target: string }) =>
+          `Remove ${target} from this repository.`,
+        removeConfirmTitle: "Remove worktree?",
+        removeConfirmBody: ({ path }: { path: string }) =>
+          `Remove the worktree at ${path}? This cannot be undone.`,
+        removeConfirmButton: "Remove worktree",
+        pruneTitle: "Prune stale worktrees",
+        pruneSubtitle: "Clean up stale worktree metadata for this repository.",
+        createFailed: "Failed to create worktree.",
+        removeFailed: "Failed to remove worktree.",
+        pruneFailed: "Failed to prune worktrees.",
+      },
+      stashOverwrite: {
+        title: "ブランチのスタッシュを上書きしますか？",
+        body: ({ branch }: { branch: string }) =>
+          `${branch} のスタッシュは既に存在します。上書きしますか？`,
+        confirm: "スタッシュを上書き",
+      },
+    },
+    stash: {
+      summaryA11y: "スタッシュの詳細を開く",
+      summaryTitle: "管理されたスタッシュ",
+      detailsTitle: "管理されたスタッシュ",
+      empty: "管理されたスタッシュはありません。",
+      failedToLoad: "スタッシュの読み込みに失敗しました。",
+      failedToLoadDiff: "スタッシュ差分の読み込みに失敗しました。",
+      diffTruncated: "差分が途中で切り詰められました（出力上限）。",
+      writeDisabled: "ソースコントロールの書き込み操作が無効です。",
+      noSelection: "続行するにはスタッシュを選択してください。",
+      selectA11y: ({ stash }: { stash: string }) => `スタッシュ ${stash} を選択`,
+      restore: "復元",
+      discard: "破棄",
+      restoreFailed: "スタッシュの復元に失敗しました。",
+      discardFailed: "スタッシュの破棄に失敗しました。",
+      restoreConfirm: {
+        title: "スタッシュした変更を復元しますか？",
+        body: "スタッシュした変更を作業ツリーに適用します。競合は手動で解決する必要がある場合があります。",
+        confirm: "復元",
+      },
+      discardConfirm: {
+        title: "スタッシュした変更を破棄しますか？",
+        body: "このスタッシュは完全に削除されます。",
+        confirm: "破棄",
+      },
+    },
     summary: ({ staged, unstaged }: { staged: number; unstaged: number }) =>
       `ステージ済み ${staged} • 未ステージ ${unstaged}`,
     branchSummary: {
@@ -3662,6 +4626,10 @@ export const ja: TranslationStructure = {
       `リポジトリの変更ファイル (${count})`,
     sessionAttributedChanges: ({ count }: { count: number }) =>
       `セッションに紐づく変更 (${count})`,
+    latestTurnChanges: ({ count }: { count: number }) =>
+      `直近のターンの変更（${count}）`,
+    latestTurnDescription:
+      '直近で完了したターンのプロバイダ由来の変更です。',
     otherRepositoryChanges: ({ count }: { count: number }) =>
       `その他のリポジトリ変更 (${count})`,
     attributionReliabilityHigh:
@@ -3675,6 +4643,8 @@ export const ja: TranslationStructure = {
       `${count}件の推定ファイルを「リポジトリのみの変更」に残しました。`,
     noSessionAttributedChanges:
       "現在、セッションに紐づく変更は検出されていません。",
+    noLatestTurnChanges:
+      "直近のターンの変更は検出されていません。",
     notRepo: "ソース管理リポジトリではありません",
     notUnderSourceControl: "このディレクトリはソース管理下にありません",
     searching: "ファイルを検索中...",
@@ -3707,6 +4677,7 @@ export const ja: TranslationStructure = {
         `未ステージの変更 (${count})`,
       // File viewer strings
       fileReadFailed: "ファイルを読み込めませんでした",
+      fileTooLargeToPreview: "ファイルが大きすぎてプレビューできません",
       fileWriteFailed: "ファイルを書き込めませんでした",
       fileEditor: {
         experimentalHint:
@@ -3782,12 +4753,67 @@ export const ja: TranslationStructure = {
     },
     toolbar: {
       changedFiles: "変更されたファイル",
+      details: "詳細",
+      upload: "アップロード",
+      uploadFiles: "ファイルをアップロード",
+      uploadFolder: "フォルダーをアップロード",
       allRepositoryFiles: "リポジトリ内のすべてのファイル",
       repositoryView: "リポジトリ表示",
+      turnView: "ターン表示",
       sessionView: "セッション表示",
       review: "レビュー",
       list: "一覧",
       scm: "Git",
+    },
+    transfers: {
+      preparingUpload: ({ count }: { count: number }) =>
+        `アップロード準備中（${count} 件）…`,
+      uploading: ({
+        completed,
+        total,
+        uploaded,
+        totalBytes,
+      }: {
+        completed: number;
+        total: number;
+        uploaded: string;
+        totalBytes: string;
+      }) => `アップロード中 ${completed}/${total} · ${uploaded} / ${totalBytes}`,
+      downloading: ({
+        name,
+        downloaded,
+        totalBytes,
+      }: {
+        name: string;
+        downloaded: string;
+        totalBytes: string;
+      }) => `ダウンロード中 ${name} · ${downloaded} / ${totalBytes}`,
+    },
+    upload: {
+      conflicts: {
+        title: "アップロードの競合",
+        body: ({
+          conflictCount,
+          totalCount,
+        }: {
+          conflictCount: number;
+          totalCount: number;
+        }) =>
+          `${conflictCount}/${totalCount} 件のファイルが既に存在します。どうしますか？`,
+        keepBoth: {
+          title: "両方保持",
+          subtitle:
+            "競合する名前に「 (1)」「 (2)」… を追加します。",
+        },
+        replace: {
+          title: "置き換える",
+          subtitle: "既存のファイルを上書きします。",
+        },
+        skip: {
+          title: "スキップ",
+          subtitle: "存在しないファイルのみアップロードします。",
+        },
+      },
     },
     fileEmpty: "ファイルは空です",
     noChanges: "表示する変更はありません",
@@ -3858,7 +4884,17 @@ export const ja: TranslationStructure = {
       },
     },
     details: {
+      titles: {
+        executionRun: "実行",
+        executionRunWithIntent: ({ intent }: { intent: string }) => `${intent} · 実行`,
+      },
       labels: {
+        status: "ステータス",
+        statusValue: ({ value }: { value: string }) => `Status: ${value}`,
+        runId: ({ value }: { value: string }) => `Run ID: ${value}`,
+        backend: ({ value }: { value: string }) => `Backend: ${value}`,
+        permissions: ({ value }: { value: string }) => `Permissions: ${value}`,
+        mode: ({ value }: { value: string }) => `Mode: ${value}`,
         intent: "意図",
         backendId: "バックエンドID",
         permissionMode: "権限モード",
@@ -3873,7 +4909,108 @@ export const ja: TranslationStructure = {
     },
   },
 
-  settingsSession: {
+      settingsActions: {
+        aboutSubtitle: 'Choose where each action is surfaced across the app, voice, and integrations. Unavailable tiles stay visible so you can understand what is blocked by features, privacy, or runtime support.',
+        aboutFooter: 'These settings apply globally to your account defaults. Unavailable tiles explain why a target is currently blocked.',
+        searchPlaceholder: 'Search actions',
+        noResults: 'No actions match your current search.',
+        noDescription: 'No description available yet.',
+        sections: {
+            app: 'In the app',
+            voice: 'Voice',
+            integrations: 'Integrations',
+        },
+        badges: {
+            unavailable: 'Unavailable',
+        },
+        reasons: {
+            voiceFeature: 'Enable Voice Assistant settings to use this target.',
+            voiceInventoryPrivacy: 'Turn on Share device inventory in Voice Assistant privacy settings to use this target.',
+            mcpFeature: 'Enable MCP servers to surface this action through MCP.',
+            executionRunsFeature: 'Enable execution runs to use this action or target.',
+            memorySearchFeature: 'Enable Local Memory Search to use this action.',
+            sessionHandoffFeature: 'Enable session handoff support to use this action.',
+            notAvailableInThisApp: 'このターゲットは、このクライアントではまだ表示されません。',
+        },
+        targets: {
+            session_header: {
+                title: 'Session header',
+                subtitle: 'Visible in the session header toolbar.',
+            },
+            session_action_menu: {
+                title: 'Session menu',
+                subtitle: 'Visible in the session actions menu.',
+            },
+            session_info: {
+                title: 'Session details',
+                subtitle: 'Visible in the session info screen.',
+            },
+            command_palette: {
+                title: 'Command palette',
+                subtitle: 'Visible in the global command palette.',
+            },
+            slash_command: {
+                title: 'Slash command',
+                subtitle: 'Available from slash-command style action pickers.',
+            },
+            agent_input_chips: {
+                title: 'Composer chips',
+                subtitle: 'Shown as quick chips near the agent input.',
+            },
+            voice_panel: {
+                title: 'Voice panel',
+                subtitle: 'Shown in the voice assistant panel.',
+            },
+            run_list: {
+                title: 'Runs list',
+                subtitle: 'Visible from execution run lists.',
+            },
+            run_card: {
+                title: 'Run cards',
+                subtitle: 'Visible on execution run cards.',
+            },
+            voice_tool: {
+                title: 'Voice tool',
+                subtitle: 'Available to the voice agent as a callable tool.',
+            },
+            voice_action_block: {
+                title: 'Voice action block',
+                subtitle: 'Shown inside voice action blocks and affordances.',
+            },
+            mcp: {
+                title: 'MCP',
+                subtitle: 'Available through the MCP action catalog.',
+            },
+            session_control_cli: {
+                title: 'Session control CLI',
+                subtitle: 'Available through the session control CLI surface.',
+            },
+            contextual_ui: {
+                title: 'Contextual UI',
+                subtitle: 'Shown in contextual UI surfaces that do not have a dedicated placement.',
+            },
+        },
+    },
+
+settingsSession: {
+    sessionList: {
+        title: 'セッション一覧',
+        footer: '各セッション行に表示する内容をカスタマイズします。',
+        tagsTitle: 'セッションタグ',
+        tagsEnabledSubtitle: 'セッション一覧にタグ操作を表示',
+        tagsDisabledSubtitle: 'タグ操作を非表示',
+    },
+    input: {
+        title: '入力',
+        footer: 'エージェント入力バーの表示と動作を設定します。',
+    },
+    windows: {
+        title: 'Windows',
+        defaultModeTitle: 'Windows リモートセッションの既定モード',
+    },
+    advanced: {
+        title: '詳細',
+    },
     messageSending: {
       title: "メッセージ送信",
       footer:
@@ -3962,6 +5099,8 @@ export const ja: TranslationStructure = {
         entrySubtitle: "トランスクリプト設定を開く",
         footer:
           "チャットの表示方法とトランスクリプトの挙動をカスタマイズします。",
+        codeDiffs: 'コードと差分',
+        codeDiffsFooter: 'トランスクリプトでコードと差分コンテンツをどのように表示するか設定します。',
         layoutTitle: "レイアウト",
         layoutFooter:
           "シンプルな線形トランスクリプトとターン表示を選べます。",
@@ -4142,11 +5281,7 @@ export const ja: TranslationStructure = {
       subAgentGuidanceEntry: {
         openSubtitle: "サブエージェント設定を開く",
       },
-      actionsEntry: {
-        footer:
-          "サーフェスと配置（UI、音声、MCP）ごとにアクションを有効化し、表示場所を制御します。",
-        openSubtitle: "アクション設定を開く",
-      },
+      handoff: settingsSessionHandoffTranslationExtensions.ja,
       defaultPermissions: {
         title: "デフォルト権限",
         footer:
@@ -4156,6 +5291,16 @@ export const ja: TranslationStructure = {
           "実行中セッションにすぐ適用（セッションメタデータを更新）。",
         applyPermissionChangesNextPromptSubtitle: "次のメッセージでのみ適用します。",
       },
+          defaultStorage: {
+              title: 'Default session storage',
+              footer: 'Choose whether new sessions start as synced Happier sessions or direct provider-backed sessions.',
+              globalTitle: 'Global default',
+              persistedSubtitle: 'Store new sessions in Happier and sync them across devices by default.',
+              directSubtitle: 'Start machine-bound direct sessions when the provider supports it.',
+              globalSubtitle: ({ label }: { label: string }) => `Global default: ${label}`,
+              useGlobalDefault: 'Use global default',
+              currently: ({ label }: { label: string }) => `Currently: ${label}`,
+          },
       replayResume: {
         title: "リプレイ再開",
         footer:
@@ -4216,13 +5361,17 @@ export const ja: TranslationStructure = {
         legacySecretExportDisabledSubtitle:
           "無効（推奨）：コンテンツキーのみでターミナルをプロビジョニングします（Terminal Connect V2）。",
       },
-    sessionList: {
-      title: "セッション一覧",
-      footer: "各セッション行に表示する内容をカスタマイズします。",
-      tagsTitle: "セッションタグ",
-      tagsEnabledSubtitle: "セッション一覧にタグ操作を表示",
-      tagsDisabledSubtitle: "タグ操作を非表示",
-    },
+  },
+  windowsRemoteSessionLaunchMode: {
+    hidden: "非表示",
+    shortHidden: "非表示",
+    hiddenSubtitle: "ターミナルウィンドウを開かず、バックグラウンドでセッションを開始します。",
+    windowsTerminal: "Windows Terminal",
+    shortWindowsTerminal: "WT",
+    windowsTerminalSubtitle: "専用の Windows Terminal ウィンドウでセッションを開きます。",
+    console: "コンソール",
+    shortConsole: "コンソール",
+    consoleSubtitle: "標準の Windows コンソールウィンドウでセッションを開きます。",
   },
   settingsVoice: {
     // Voice settings screen
@@ -4772,6 +5921,17 @@ export const ja: TranslationStructure = {
             "必要に応じてエージェントを別マシンへ移動できます。",
           teleportDisabledSubtitle: "テレポート無効。",
         },
+        machineRecovery: {
+          switchTitle: "音声マシンを利用できません",
+          switchBody: ({ currentMachine, nextMachine }: { currentMachine: string; nextMachine: string }) =>
+            `現在の音声マシン（${currentMachine}）は利用できません。\n\n音声を ${nextMachine} に切り替えますか？`,
+          switchAction: "マシンを切り替える",
+          replayTitle: "会話を引き継ぎますか？",
+          replayBody: ({ nextMachine }: { nextMachine: string }) =>
+            `${nextMachine} で新しく始めることも、前のマシンから最近の音声コンテキストを再生して切り替えることもできます。`,
+          replayAction: "切り替えて最近の音声コンテキストを再生する",
+          startFreshAction: "新しく始める",
+        },
         agentSource: {
           followSessionTitle: "セッションに追従",
           followSessionSubtitle:
@@ -4856,7 +6016,11 @@ export const ja: TranslationStructure = {
         streaming: {
           title: "ストリーミング",
           enableTitle: "ストリーミングを有効化",
+          enableSubtitle:
+            "生成中にエージェントの部分テキストをストリーミングします（ストリーミング音声用）。",
           enableTtsTitle: "TTS ストリーミングを有効化",
+          enableTtsSubtitle:
+            "ストリーミング中に応答を読み上げます（ストリーミングが必要）。",
           ttsChunkCharsTitle: "TTS チャンク文字数",
           ttsChunkCharsPromptBody:
             "次の TTS チャンクを要求する前にバッファする文字数（32–2000）。",
@@ -5170,6 +6334,36 @@ export const ja: TranslationStructure = {
       `This connection is for ${serverUrl}. Switch servers and continue?`,
   },
 
+  terminalEmbedded: {
+    dockMenuA11y: "ターミナルをドック",
+    settings: {
+      locationTitle: "埋め込みターミナルの場所",
+    },
+    quickKeys: {
+      esc: "ESC",
+      tab: "TAB",
+      ctrlC: "Ctrl + C",
+      ctrlD: "Ctrl + D",
+      enter: "改行",
+    },
+    location: {
+      sidebar: "サイドバー",
+      details: "詳細パネル",
+      bottom: "下部パネル",
+    },
+    errors: {
+      missingMachineTarget: "このセッションにはマシンターゲットがありません。",
+      rpcTargetUnavailable: "このマシンでは Machine RPC が利用できません。",
+      machineUnreachable: "マシンに到達できません。",
+      disabled: "デーモン設定でターミナル機能が無効になっています。有効にしてデーモンを再起動してください。",
+      notFound: "ターミナルセッションが見つかりません。再起動してみてください。",
+      cwdDenied: "デーモンにはこの作業ディレクトリを使用する権限がありません。",
+      spawnFailed: "ターミナルプロセスの起動に失敗しました。",
+      invalidRequest: "無効なターミナルリクエストです。",
+      busy: "ターミナルが使用中です。もう一度お試しください。",
+    },
+  },
+
   modals: {
     // Used across connect flows and settings
     authenticateTerminal: "ターミナルを認証",
@@ -5238,7 +6432,7 @@ export const ja: TranslationStructure = {
     // Main welcome screen for unauthenticated users
     title: "CodexとClaude Codeのモバイルクライアント",
     subtitle:
-      "エンドツーエンド暗号化され、アカウントはデバイスにのみ保存されます。",
+      "デフォルトでエンドツーエンド暗号化され、他のデバイスでもアカウントを復元できます。",
     createAccount: "アカウントを作成",
     chooseEncryptionTitle: "暗号化を選択",
     chooseEncryptionBody: "このサーバーは暗号化あり／なしのアカウントに対応しています。アカウントデータの保存方法を選択してください。",
@@ -5265,17 +6459,18 @@ export const ja: TranslationStructure = {
     notReally: "あまり...",
   },
 
-  items: {
-    // Used by Item component for copy toast
-    copiedToClipboard: ({ label }: { label: string }) =>
-      `${label}がクリップボードにコピーされました`,
-  },
+	  items: {
+	    // Used by Item component for copy toast
+	    copiedToClipboard: ({ label }: { label: string }) =>
+	      `${label}がクリップボードにコピーされました`,
+	    failedToCopyToClipboard: "クリップボードへのコピーに失敗しました",
+	  },
 
     machine: {
     launchNewSessionInDirectory: "ディレクトリで新しいセッションを起動",
     offlineUnableToSpawn: "マシンがオフラインのためランチャーは無効です",
     offlineHelp:
-      "• コンピューターがオンラインであることを確認してください\n• `happier daemon status`を実行して診断してください\n• 最新のCLIバージョンを使用していますか？`npm install -g @happier-dev/cli@latest`でアップグレードしてください",
+      "• コンピューターがオンラインであることを確認してください\n• `happier daemon status`を実行して診断してください\n• 最新のCLIバージョンを使用していますか？`happier self update`を実行してください",
     customPathPlaceholder: "カスタムパスを入力",
     tools: {
       title: "ツール",
@@ -5350,6 +6545,7 @@ export const ja: TranslationStructure = {
     never: "なし",
     metadataVersion: "メタデータバージョン",
     detectedClis: "検出されたCLI",
+    detectedCliDetected: "検出済み",
     detectedCliNotDetected: "未検出",
     detectedCliUnknown: "不明",
     detectedCliNotSupported: "未対応（@happier-dev/cliを更新してください）",
@@ -5378,6 +6574,13 @@ export const ja: TranslationStructure = {
         "リモートセッションはウィンドウの開閉/点滅を避けるため非表示で開始します。",
       remoteSessionConsoleUpdateFailed:
         "Windows セッションのコンソール設定を更新できませんでした。",
+      remoteSessionModeTitle: "リモートセッションモード",
+      remoteSessionModeOverrideTitle: "グローバルな Windows セッションモードを上書き",
+      remoteSessionModeOverrideEnabledSubtitle:
+        "このマシンは独自の Windows リモートセッションモードを使用します。",
+      remoteSessionModeOverrideDisabledSubtitle:
+        "このマシンはグローバルな Windows リモートセッションモードに従います。",
+      windowsTerminalUnavailableSuffix: "このマシンでは Windows Terminal が検出されていません。",
     },
   },
 
@@ -5395,15 +6598,31 @@ export const ja: TranslationStructure = {
       "権限はターミナルにのみ表示されます。リセットするかメッセージを送信して、アプリから制御してください。",
     sessionRunningLocally:
       "このセッションはこのコンピュータでローカル実行されています。アプリから制御するにはリモートに切り替えられます。",
-    switchToRemote: "リモートに切り替え",
-    localModeAvailable: "このセッションではローカルモードを利用できます。",
-    localModeUnavailableMachineOffline:
-      "このマシンがオフラインの間はローカルモードを利用できません。",
-    localModeUnavailableDaemonStarted:
-      "デーモンによって開始されたセッションではローカルモードを利用できません。",
-    localModeUnavailableNeedsResume:
-      "ローカルモードには、このプロバイダーの再開サポートが必要です。",
+    sessionRunningLocallyAndRemotely:
+      "このセッションは OpenCode にローカル接続されたままで、アプリからも引き続き操作できます。",
+    switchingToRemote: "リモートモードに切り替え中…",
     switchToLocal: "ローカルに切り替え",
+    switchToRemote: "リモートに切り替え",
+    detachLocalTerminal: "ターミナルを切り離す",
+    directSessionTakeoverAvailable:
+      "この直接セッションはあなたのマシンで利用できます。ここで操作するために Happier で引き継いでください。",
+    directSessionMachineOffline:
+      "この直接セッションは、マシンがオフラインのため現在利用できません。",
+    switchingToDirectTakeover: "この直接セッションを引き継いでいます…",
+    switchingToPersistedTakeover: "このセッションを引き継いで同期しています…",
+    takeOverDirect: "引き継ぐ",
+    takeOverPersist: "引き継いで同期",
+    directTakeoverDialogTitle: "この直接セッションを Happier で続けますか？",
+    directTakeoverDialogBody: "どのように Happier が制御を引き継ぐかを選択してください。Direct はプロバイダーのトランスクリプトをそのまま使い続けます。同期はトランスクリプトを Happier に取り込みます。",
+    directTakeoverDialogDirectTitle: "引き継ぐ",
+    directTakeoverDialogDirectBody: "トランスクリプトを Happier に同期せずに、このセッションを Happier で操作します。",
+    directTakeoverDialogPersistTitle: "引き継いで同期",
+    directTakeoverDialogPersistBody: "トランスクリプトを Happier に取り込み、同期済みセッションの機能をすべて使って続けます。",
+    directTakeoverDialogForceStopTitle: "最初にローカル プロセスの停止を試す",
+    directTakeoverDialogForceStopBody: "Happier はこのセッションに対応する信頼済みローカル プロセスを見つけました。引き継ぐ前に停止したい場合はこれを有効にしてください。",
+    directTakeoverForceStopConfirmTitle: "最初にローカル プロセスを停止しますか？",
+    directTakeoverForceStopConfirmBody: "Happier はこの直接セッションに対応する信頼済みローカル プロセスを見つけました。ここで引き継ぐ前に停止しますか？",
+    directTakeoverForceStopConfirmAction: "停止して引き継ぐ",
   },
 
     codex: {
@@ -5513,6 +6732,9 @@ export const ja: TranslationStructure = {
     howToFind: "友達を見つける方法",
     findInstructions:
       "ユーザー名で友達を検索します。サーバーによっては、友達を使うためにプロバイダの接続またはユーザー名の設定が必要になる場合があります。",
+    emptyTitle: "友達のアクティビティはまだありません",
+    emptyDescription: "友達を追加してセッションを共有し、ここでアクティビティを確認できます。",
+    activity: "アクティビティ",
     requestSent: "友達リクエストが送信されました！",
     requestAccepted: "友達リクエストが承認されました！",
     requestRejected: "友達リクエストが拒否されました",

@@ -1,3 +1,10 @@
+import { mcpServersUxTranslationExtension } from './mcpServersUxExtension';
+import { memoryEmbeddingsTranslationExtension } from './memoryEmbeddingsExtension';
+import { newSessionMcpTranslationExtension } from './newSessionMcpExtension';
+import { providerAuthenticationTranslationExtension } from './providerAuthenticationExtension';
+import { settingsAppearanceTranslationExtension } from './settingsAppearanceExtension';
+import { acpCatalogTranslationExtension } from './acpCatalogExtension';
+
 /**
  * English plural helper function
  * English has 2 plural forms: singular, plural
@@ -313,6 +320,15 @@ export const en = {
             sendingLabel: 'Sending…',
             failedToSend: 'Failed to send',
         },
+        delivery: {
+            title: 'Delivery',
+            cardDelivery: ({ label }: { label: string }) => `Delivery: ${label}`,
+            steerLabel: 'Steer',
+            steerHelp: 'Send a steering message while the run is busy (if supported).',
+            interruptLabel: 'Interrupt',
+            interruptHelp: 'Cancel the current turn, then send your message as a new turn.',
+            promptLabel: 'Prompt',
+        },
     },
 
     sessionLog: {
@@ -367,7 +383,7 @@ export const en = {
                 timezoneOptional: 'TIMEZONE (OPTIONAL)',
             },
             placeholders: {
-                name: 'Scheduled Session',
+                name: 'Daily summary',
                 description: 'What should this automation do?',
                 everyMinutes: '60',
                 cronExpression: '*/5 * * * *',
@@ -467,32 +483,36 @@ export const en = {
         reload: 'Reload',
     },
 
-    common: {
-        // Simple string constants
-        add: 'Add',
-        edit: 'Edit',
-        duplicate: 'Duplicate',
-        actions: 'Actions',
-        moreActions: 'More actions',
-        moreActionsHint: 'Opens a menu with more actions',
-        cancel: 'Cancel',
-        close: 'Close',
-        open: 'Open',
-        done: 'Done',
-        reorder: 'Reorder',
-        moveUp: 'Move up',
-        moveDown: 'Move down',
-        authenticate: 'Authenticate',
-        save: 'Save',
-        saveAs: 'Save As',
-        error: 'Error',
-        success: 'Success',
-        ok: 'OK',
-        continue: 'Continue',
-        back: 'Back',
-        start: 'Start',
-        create: 'Create',
-        rename: 'Rename',
+	    common: {
+	        // Simple string constants
+	        add: 'Add',
+	        edit: 'Edit',
+            duplicate: 'Duplicate',
+	        actions: 'Actions',
+	        moreActions: 'More actions',
+	        moreActionsHint: 'Opens a menu with more actions',
+	        cancel: 'Cancel',
+	        close: 'Close',
+	        open: 'Open',
+	        done: 'Done',
+	        reorder: 'Reorder',
+            moveUp: 'Move up',
+            moveDown: 'Move down',
+	        authenticate: 'Authenticate',
+	        save: 'Save',
+	        saveAs: 'Save As',
+		        error: 'Error',
+		        success: 'Success',
+		        info: 'Info',
+		        comingSoon: 'Coming soon',
+		        ok: 'OK',
+		        continue: 'Continue',
+		        back: 'Back',
+                previous: 'Previous',
+                next: 'Next',
+	        start: 'Start',
+	        create: 'Create',
+	        rename: 'Rename',
         remove: 'Remove',
         update: 'Update',
         commit: 'Commit',
@@ -516,6 +536,7 @@ export const en = {
         copy: 'Copy',
         copyWithLabel: ({ label }: { label: string }) => `Copy ${label}`,
         copied: 'Copied',
+        paste: 'Paste',
         expand: 'Expand',
         collapse: 'Collapse',
         command: 'Command',
@@ -833,6 +854,19 @@ export const en = {
             machineLabel: ({ machine }: { machine: string }) => `Machine: ${machine}`,
             searchPlaceholder: 'Search memory',
             enableLocalSearch: 'Enable Local Memory Search',
+            emptyResults: 'No memory results yet',
+        },
+        status: {
+            title: 'Local index status',
+            diskUsageTitle: 'Disk usage',
+            disabled: 'Local memory search is disabled on this machine',
+            readyLight: 'Light index ready on this machine',
+            readyDeep: 'Deep index ready on this machine',
+            unavailableLight: 'Light index is not ready on this machine yet',
+            unavailableDeep: 'Deep index is not ready on this machine yet',
+            diskUsage: ({ lightMb, deepMb }: { lightMb: number; deepMb: number }) => `Light ${lightMb} MB · Deep ${deepMb} MB`,
+            diskUsageUnavailable: 'Disk usage unavailable',
+            ...memoryEmbeddingsTranslationExtension.status,
         },
         machine: {
             title: 'Machine',
@@ -887,13 +921,10 @@ export const en = {
             },
         },
         embeddings: {
-            groupTitle: 'Embeddings',
-            groupFooter: 'Optional: download a local model to improve semantic matches when using Deep mode.',
-            enableTitle: 'Enable embeddings',
-            enableSubtitle: 'Improves ranking for deep search (downloads a model on first use)',
             modelTitle: 'Embeddings model',
             promptBody: 'Enter a local transformers model id.',
             modelPlaceholder: 'Xenova/all-MiniLM-L6-v2',
+            ...memoryEmbeddingsTranslationExtension.embeddings,
         },
     },
 
@@ -961,10 +992,10 @@ export const en = {
               },
           },
           settings: {
-              groupTitle: 'Sub-agent',
+              groupTitle: 'Subagents',
               disabled: {
                   footer:
-                      'Execution runs are disabled. Enable Execution Runs in Settings → Features to use delegation guidance.',
+                      'Subagents are disabled. Enable Happier Subagents in Settings → Features to use delegation guidance.',
                   enableExecutionRuns: {
                       title: 'Enable Execution Runs',
                       subtitle: 'Open Features settings',
@@ -972,6 +1003,25 @@ export const en = {
               },
               footer:
                   'Rules are appended to the system prompt so the main agent knows when and how you prefer it to launch sub-agent runs.',
+              overview: {
+                  groupTitle: 'Overview',
+                  footer: 'Use this page to configure Subagent guidance and jump to related provider, backend, and session settings.',
+                  explainerTitle: 'What this page controls',
+                  explainerSubtitle: 'Delegation guidance for Subagents, plus links to provider-specific subagent settings.',
+                  happierStatusTitle: 'Subagents',
+                  happierStatusEnabledSubtitle: 'Enabled. You can launch Subagents from supported sessions.',
+                  happierStatusDisabledSubtitle: 'Disabled. Open Features settings to enable Subagents.',
+              },
+              related: {
+                  groupTitle: 'Related settings',
+                  footer: 'Subagent launch and control also depend on session behavior, providers, and configured backends.',
+                  sessionTitle: 'Session behavior',
+                  sessionSubtitle: 'Message sending, busy steering, and replay/resume behavior.',
+                  providersTitle: 'Providers',
+                  providersSubtitle: 'Provider-specific auth, runtime, and agent settings.',
+                  backendsTitle: 'ACP catalog',
+                  backendsSubtitle: 'Configured backends and custom launch targets.',
+              },
               enableInjection: {
                   title: 'Enable guidance injection',
               },
@@ -1003,11 +1053,39 @@ export const en = {
                   footer: 'This is the (truncated) text appended to the system prompt.',
                   systemPromptLabel: 'System prompt (appended)',
               },
+              providers: {
+                  claude: {
+                      title: 'Claude team agents',
+                      footer: 'Provider-specific subagent behavior stays owned by the provider settings screen.',
+                      openTitle: 'Claude subagent options',
+                      openSubtitle: 'Manage Agent Teams and other Claude-specific subagent behavior.',
+                  },
+              },
           },
       },
 
     settings: {
         title: 'Settings',
+
+        // Main settings hub category groups
+        profileAndAccount: 'Profile & Account',
+        aiAndAgents: 'AI & Agents',
+        sessionsBehavior: 'Sessions & Behavior',
+        general: 'General',
+        filesAndSourceControl: 'Files & Source Control',
+        system: 'System',
+
+        // Renamed / promoted items
+        sessions: 'Sessions',
+        transcript: 'Transcript',
+        transcriptSubtitle: 'Thinking, tool rendering, and code display',
+        permissions: 'Permissions',
+        permissionsSubtitle: 'Permission mode and approval behavior',
+        filesSourceControl: 'Files & Source Control',
+        filesSourceControlSubtitle: 'Editor, diffs, and source control integration',
+        workspaces: 'Workspaces',
+        workspacesSubtitle: 'Manage linked workspaces, locations, and checkouts',
+
         connectedAccounts: 'Connected Accounts',
         connectedAccountsDisabled: 'Connected services are disabled.',
         connectAccount: 'Connect account',
@@ -1019,6 +1097,16 @@ export const en = {
         accountSubtitle: 'Manage your account details',
         addYourPhone: 'Add your phone',
         addYourPhoneSubtitle: 'Show a QR code to sign in on your phone',
+        addMachine: 'Add a machine',
+        machineSetupCurrentMachineTitle: 'This computer',
+        machineSetupCurrentMachineSubtitle: 'Bootstrap Happier directly on this device',
+        machineSetupSshMachineTitle: 'Remote machine over SSH',
+        machineSetupSshMachineSubtitle: 'Connect a dev box, VM, or server with SSH',
+        machineSetupStagesTitle: 'What happens',
+        machineSetupStageConnect: 'Connect and validate access',
+        machineSetupStageInstall: 'Install Happier and pair the machine',
+        machineSetupStageFinish: 'Finish setup in the built-in terminal',
+        machineSetupComingSoon: 'Machine bootstrap is coming soon.',
         appearance: 'Appearance',
         appearanceSubtitle: 'Customize how the app looks',
         voiceAssistant: 'Voice Assistant',
@@ -1033,7 +1121,7 @@ export const en = {
         sourceControlSubtitle: 'Commit strategy and backend behavior',
         automations: 'Automations',
         automationsSubtitle: 'Manage scheduled sessions and recurring runs',
-        executionRunsSubtitle: 'Execution runs across machines',
+        executionRunsSubtitle: 'Subagents across machines',
         connectedServices: 'Connected services',
         connectedServicesSubtitle: 'Claude/Codex subscriptions and OAuth profiles',
         featuresTitle: 'Features',
@@ -1042,7 +1130,7 @@ export const en = {
         developerTools: 'Developer Tools',
         about: 'About',
         actionsSettingsAboutSubtitle: 'Enable or disable actions globally, per surface (UI/voice/MCP), and per placement (where they appear in the UI). Disabled actions are fail-closed at runtime.',
-        aboutFooter: 'Happier is a Codex, Claude Code and OpenCode mobile client. It\'s fully end-to-end encrypted and your account is stored only on your device. Not affiliated with Anthropic.',
+        aboutFooter: 'Happier is a Codex, Claude Code and OpenCode mobile client. It\'s end-to-end encrypted by default, with account restore for your other devices. Not affiliated with Anthropic.',
         whatsNew: 'What\'s New',
         whatsNewSubtitle: 'See the latest updates and improvements',
         reportIssue: 'Report an Issue',
@@ -1064,22 +1152,170 @@ export const en = {
         profiles: 'Profiles',
         profilesSubtitle: 'Manage environment variable profiles for sessions',
         secrets: 'Secrets',
-        prompts: 'Prompts & Skills',
-        promptsSubtitle: 'Prompt library, templates, and stacks',
         secretsSubtitle: 'Manage saved secrets (never shown again after entry)',
         terminal: 'Terminal',
         session: 'Session',
         sessionSubtitleTmuxEnabled: 'Tmux enabled',
         sessionSubtitleMessageSendingAndTmux: 'Message sending and tmux',
-        servers: 'Servers',
-        serversSubtitle: 'Saved servers, groups, and defaults',
-        systemStatus: 'System Status',
-        systemStatusSubtitle: 'Servers, account, machines, daemon',
+        actionsSubtitle: 'Choose where every action appears across the app, voice, and integrations.',
+        prompts: 'Prompts & Skills',
+        promptsSubtitle: 'Prompt library, templates, and stacks',
+	        servers: 'Servers',
+		        serversSubtitle: 'Saved servers, groups, and defaults',
+		        systemStatus: 'System Status',
+		        systemStatusSubtitle: 'Servers, account, machines, daemon',
+		        mcpServers: 'MCP servers',
+		        mcpServersSubtitle: 'Manage MCP servers and bindings',
+		        mcpServersComingSoon: 'MCP servers settings are coming soon.',
+		        mcpServersStrictMode: 'Strict mode',
+		        mcpServersStrictModeSubtitle: 'Fail closed when MCP server settings are invalid.',
+		        mcpServersCatalogTitle: 'Catalog',
+		        mcpServersUnnamed: 'Unnamed server',
+		        mcpServersEmptyTitle: 'No MCP servers yet',
+		        mcpServersEmptySubtitle: 'Add MCP servers to use them in sessions.',
+		        mcpServersAddServer: 'Add server',
+		        mcpServersAddServerSubtitle: 'Create a new MCP server entry',
+		        mcpServersEditorTitle: 'MCP server',
+		        mcpServersPickSecretTitle: 'Pick a secret',
+		        mcpServersPickSecretNoneSubtitle: 'No secret selected',
+		        mcpServersEditorBasics: 'Basics',
+		        mcpServersEditorStdio: 'Stdio',
+		        mcpServersEditorRemote: 'Remote',
+		        mcpServersEditorBindings: 'Bindings',
+		        mcpServersFieldName: 'Name',
+		        mcpServersFieldTitle: 'Title',
+		        mcpServersFieldTitlePlaceholder: 'Optional display title',
+		        mcpServersFieldTransport: 'Transport',
+		        mcpServersFieldCommand: 'Command',
+		        mcpServersFieldArgs: 'Args',
+		        mcpServersFieldUrl: 'URL',
+		        mcpServersBindingTitle: 'Binding',
+		        mcpServersBindingEnabled: 'Enabled',
+		        mcpServersBindingEnabledSubtitle: 'Toggle this binding on or off',
+		        mcpServersBindingTarget: 'Target',
+		        mcpServersBindingTargetSubtitle: 'Where this server is available',
+		        mcpServersBindingMachine: 'Machine',
+		        mcpServersBindingMachineSubtitle: 'Select a machine',
+		        mcpServersBindingDeleteSubtitle: 'Remove this binding',
+		        mcpServersBindingTargetAllMachines: 'All machines',
+		        mcpServersBindingTargetMachine: ({ machine }: { machine: string }) => `Machine: ${machine}`,
+		        mcpServersBindingTargetWorkspace: ({ machine, path }: { machine: string; path: string }) =>
+		            `Workspace: ${machine} • ${path}`,
+		        mcpServersBindingTargetAllMachinesSubtitle: 'Enable on every machine',
+		        mcpServersBindingTargetMachineTitle: 'Machine',
+		        mcpServersBindingTargetMachineSubtitle: 'Enable on a single machine',
+		        mcpServersBindingTargetWorkspaceTitle: 'Workspace',
+		        mcpServersBindingTargetWorkspaceSubtitle: 'Enable only for a specific workspace path',
+		        mcpServersValidationFailed: 'MCP server settings are invalid.',
+		        mcpServersServerNotFound: 'Server not found.',
+		        mcpServersBindingsEmptyTitle: 'No bindings yet',
+		        mcpServersBindingsEmptySubtitle: 'Add a binding to use this server.',
+		        mcpServersAddBinding: 'Add binding',
+		        mcpServersAddBindingSubtitle: 'Enable this server for machines or workspaces',
+		        mcpServersSaveDisabledSubtitle: 'No changes to save.',
+			        mcpServersDeleteTitle: 'Delete MCP server?',
+			        mcpServersDeleteConfirm: ({ name }: { name: string }) => `Delete "${name}"?`,
+			        mcpServersDeleteSubtitle: 'Remove this server from your catalog',
+			        mcpServersNoMachineSelected: 'No machine selected',
+			        mcpServersDetectedTitle: 'Detected from provider configs',
+			        mcpServersDetectedMachineTitle: 'Machine',
+			        mcpServersDetectedRefreshTitle: 'Refresh detected servers',
+			        mcpServersDetectedRefreshSubtitle: 'Scan provider config files on this machine',
+			        mcpServersDetectedWarningsTitle: 'Detection warnings',
+			        mcpServersDetectedEmptyTitle: 'No detected MCP servers',
+			        mcpServersDetectedEmptySubtitle: 'Click refresh to scan Claude/Codex/OpenCode configs.',
+			        mcpServersImportTitle: 'Import MCP server?',
+			        mcpServersImportConfirm: ({ provider, name }: { provider: string; name: string }) => `Import "${name}" from ${provider}?`,
+			        mcpServersImportAction: 'Import',
+			        mcpServersBindingSummaryAllMachines: 'All machines',
+			        mcpServersBindingSummaryMachines: ({ count }: { count: number }) => `${count} machine${count === 1 ? '' : 's'}`,
+			        mcpServersBindingSummaryWorkspaces: ({ count }: { count: number }) => `${count} workspace${count === 1 ? '' : 's'}`,
+			        mcpServersBindingSummaryNone: 'Not bound',
+			        mcpServersPickWorkspaceTitle: 'Pick a workspace root',
+			        mcpServersBindingWorkspaceRootTitle: 'Workspace root',
+			        mcpServersBindingOverridesTitle: 'Overrides',
+			        mcpServersBindingOverridesNone: 'No overrides',
+			        mcpServersBindingOverridesCount: ({ count }: { count: number }) => `${count} override${count === 1 ? '' : 's'}`,
+			        mcpServersEditorEnv: 'Environment',
+			        mcpServersEnvAdd: 'Add env var',
+			        mcpServersEnvAddSubtitle: 'Set environment variables for this server',
+			        mcpServersEnvEmptyTitle: 'No env vars',
+			        mcpServersEnvEmptySubtitle: 'Add env vars or use Saved Secrets.',
+			        mcpServersEditorHeaders: 'Headers',
+			        mcpServersHeadersAdd: 'Add header',
+			        mcpServersHeadersAddSubtitle: 'Set HTTP/SSE headers for this server',
+			        mcpServersHeadersEmptyTitle: 'No headers',
+			        mcpServersHeadersEmptySubtitle: 'Add headers if your server requires auth.',
+			        mcpServersEnvEditorTitle: 'Edit env var',
+			        mcpServersHeadersEditorTitle: 'Edit header',
+			        mcpServersEnvKeyLabel: 'Env var name',
+			        mcpServersEnvKeyPlaceholder: 'API_KEY',
+			        mcpServersHeaderKeyLabel: 'Header name',
+			        mcpServersHeaderKeyPlaceholder: 'Authorization',
+			        mcpServersValueSourceTitle: 'Value source',
+			        mcpServersArgsPlaceholder: '--flag\nvalue',
+			        mcpServersValueSourceLiteral: 'Literal',
+			        mcpServersValueSourceLiteralSubtitle: 'Store a value (supports ${VAR} templates)',
+			        mcpServersValueSourceSavedSecret: 'Saved secret',
+			        mcpServersValueSourceSavedSecretNamed: ({ name }: { name: string }) => `Saved secret: ${name}`,
+			        mcpServersValueSourceSavedSecretSubtitle: 'Reference a Saved Secret',
+			        mcpServersValueLiteralLabel: 'Value',
+			        mcpServersValueLiteralPlaceholder: 'Value or ${ENV_VAR}',
+			        mcpServersValueSecretLabel: 'Saved secret',
+			        mcpServersValueSecretSelect: 'Select secret',
+			        mcpServersValueSecretSelectSubtitle: 'Choose a Saved Secret',
+			        mcpServersKeyInvalid: 'Key is invalid.',
+			        mcpServersKeyAlreadyExists: 'Key already exists.',
+			        mcpServersOverridesStdioTitle: 'Stdio overrides',
+			        mcpServersOverridesCommandTitle: 'Override command',
+			        mcpServersOverridesCommandSubtitle: 'Use a different command for this binding',
+			        mcpServersOverridesArgsTitle: 'Override args',
+			        mcpServersOverridesArgsSubtitle: 'Use different args for this binding (blank = empty args)',
+			        mcpServersOverridesRemoteTitle: 'Remote overrides',
+			        mcpServersOverridesUrlTitle: 'Override URL',
+			        mcpServersOverridesUrlSubtitle: 'Use a different URL for this binding',
+			        mcpServersOverridesEnvPatchTitle: 'Env patch',
+			        mcpServersOverridesEnvPatchEmptyTitle: 'No env overrides',
+			        mcpServersOverridesEnvPatchEmptySubtitle: 'Add overrides or deletions for env vars.',
+			        mcpServersOverridesHeadersPatchTitle: 'Headers patch',
+			        mcpServersOverridesHeadersPatchEmptyTitle: 'No header overrides',
+			        mcpServersOverridesHeadersPatchEmptySubtitle: 'Add overrides or deletions for headers.',
+			        mcpServersOverridesDeleteValue: 'Delete this key for this binding',
+			        mcpServersOverridesEnvPatchAddTitle: 'Add env override',
+			        mcpServersOverridesEnvPatchAddSubtitle: 'Set or override an env var for this binding',
+			        mcpServersOverridesEnvPatchDeleteTitle: 'Delete env key',
+			        mcpServersOverridesEnvPatchDeleteSubtitle: 'Remove an env var for this binding',
+			        mcpServersOverridesHeadersPatchAddTitle: 'Add header override',
+			        mcpServersOverridesHeadersPatchAddSubtitle: 'Set or override a header for this binding',
+			        mcpServersOverridesHeadersPatchDeleteTitle: 'Delete header key',
+			        mcpServersOverridesHeadersPatchDeleteSubtitle: 'Remove a header for this binding',
+			        mcpServersOverridesDeleteEnvTitle: 'Delete env key',
+			        mcpServersOverridesDeleteEnvPrompt: 'Enter the env var name to delete for this binding.',
+			        mcpServersOverridesDeleteHeaderTitle: 'Delete header key',
+			        mcpServersOverridesDeleteHeaderPrompt: 'Enter the header name to delete for this binding.',
+			        mcpServersOverridesCommandRequired: 'Command override is enabled but empty.',
+			        mcpServersOverridesUrlRequired: 'URL override is enabled but empty.',
+			        mcpServersTestTitle: 'Test',
+			        mcpServersTestFooter: 'Runs on the selected machine. No secrets are shown in results.',
+			        mcpServersTestMachineTitle: 'Test on machine',
+			        mcpServersTestBindingTitle: 'Use binding',
+			        mcpServersTestNoBinding: 'No binding',
+			        mcpServersTestNoBindingSubtitle: 'Test without binding overrides',
+			        mcpServersTestDirectoryTitle: 'Working directory',
+			        mcpServersTestDirectorySubtitle: 'Tap to set a directory',
+			        mcpServersTestDirectoryPrompt: 'Enter the working directory for the test.',
+			        mcpServersTestRunTitle: 'Test server',
+			        mcpServersTestRunSubtitle: 'Connect and list tools',
+			        mcpServersTestResultOkTitle: 'Test succeeded',
+			        mcpServersTestResultOkSubtitle: ({ toolCount, durationMs }: { toolCount: number; durationMs: number }) => `${toolCount} tools · ${durationMs}ms`,
+			        mcpServersTestResultErrorTitle: 'Test failed',
+			        ...mcpServersUxTranslationExtension,
+                    ...acpCatalogTranslationExtension.settings,
 
-        // Dynamic settings messages
-        accountConnected: ({ service }: { service: string }) => `${service} account connected`,
-        machineStatus: ({ name, status }: { name: string; status: 'online' | 'offline' }) =>
-            `${name} is ${status}`,
+			        // Dynamic settings messages
+			        accountConnected: ({ service }: { service: string }) => `${service} account connected`,
+		        machineStatus: ({ name, status }: { name: string; status: 'online' | 'offline' }) =>
+	            `${name} is ${status}`,
         featureToggled: ({ feature, enabled }: { feature: string; enabled: boolean }) =>
             `${feature} ${enabled ? 'enabled' : 'disabled'}`,
     },
@@ -1514,22 +1750,15 @@ export const en = {
                 promptMessage: 'Example: 26214400 for 25MB.',
                 invalidValueMessage: 'Enter a number between 1024 and 1073741824.',
             },
-            uploadTtl: {
-                title: 'Upload TTL (ms)',
-                promptTitle: 'Upload TTL (ms)',
-                promptMessage: 'How long an upload can stay idle before it expires.',
-                invalidValueMessage: 'Enter a number between 5000 and 3600000.',
-            },
-            chunkSize: {
-                title: 'Preferred chunk size (bytes)',
-                promptTitle: 'Preferred chunk size (bytes)',
-                promptMessage: 'The CLI may clamp this to safe bounds.',
-                invalidValueMessage: 'Enter a number between 4096 and 1048576.',
-            },
         },
     },
 
     settingsSourceControl: {
+        title: 'Files & Source Control',
+        editor: 'Editor',
+        editorFooter: 'Configure the file editor behavior.',
+        editorAutoSave: 'Auto-Save',
+        editorAutoSaveDescription: 'Automatically save files after editing.',
         commitStrategy: {
             title: 'Commit strategy',
             footer: 'Atomic commit avoids cross-agent index interference. Git staging enables interactive include/exclude workflows.',
@@ -1596,7 +1825,7 @@ export const en = {
         },
         commitMessageGenerator: {
             title: 'Commit message generator',
-            footer: 'Optional: generate commit message suggestions using a one-shot LLM task. Requires execution runs support on the daemon.',
+            footer: 'Optional: generate commit message suggestions using a one-shot LLM task. Requires Subagent support on the daemon.',
             backendItemTitle: ({ backendId }: { backendId: string }) => `Generator backend: ${backendId}`,
             backendItemSubtitle: 'Backend id used for one-shot commit message generation.',
             backendPromptTitle: 'Commit message backend',
@@ -1803,9 +2032,14 @@ export const en = {
     },
 
     settingsProviders: {
+        ...providerAuthenticationTranslationExtension,
         title: 'AI backends',
         entrySubtitle: 'View capabilities and configure each backend',
         footer: 'Manage backend availability, capabilities, model support, and provider-specific settings.',
+        configuration: 'Configuration',
+        cliConnection: 'CLI Connection',
+        capabilities: 'Capabilities',
+        models: 'Models',
         providerSubtitle: 'Backend settings',
         stateEnabled: 'Enabled',
         stateDisabled: 'Disabled',
@@ -1826,7 +2060,6 @@ export const en = {
         localControlTitle: 'Local control',
         resumeSupportSupported: 'Supported',
         resumeSupportSupportedExperimental: 'Supported (experimental)',
-        resumeSupportRuntimeGatedAcpLoadSession: 'Runtime-gated via ACP loadSession',
         resumeSupportNotSupported: 'Not supported',
         sessionModeNone: 'No ACP modes',
         sessionModeAcpPolicyPresets: 'ACP policy presets',
@@ -1858,12 +2091,32 @@ export const en = {
         installSetupTitle: 'Install / setup',
         installInfoSeeSetupGuide: 'See setup guide',
         installInfoUseProviderCliInstaller: 'Use the provider CLI installer',
+        cliSourcePreference: {
+            title: 'CLI source preference',
+            subtitle: 'Choose whether Happier prefers the system CLI or the managed install when both exist.',
+            options: {
+                systemFirst: {
+                    title: 'System install first',
+                    subtitle: 'Prefer the CLI already installed on this machine.',
+                },
+                managedFirst: {
+                    title: 'Managed install first',
+                    subtitle: 'Prefer the CLI installed by Happier for this provider.',
+                },
+            },
+        },
         cliInstaller: {
             installTitle: ({ provider }: { provider: string }) => `Install ${provider} CLI`,
             reinstallTitle: ({ provider }: { provider: string }) => `Reinstall ${provider} CLI`,
             autoInstallUnavailable: 'Auto-install is not available for this machine.',
             installSubtitle: 'Installs the provider CLI on the selected machine (best-effort).',
             reinstallSubtitle: 'Re-runs the provider installer even if the CLI is already present.',
+            confirmInstallTitle: ({ provider }: { provider: string }) => `Install ${provider} CLI?`,
+            confirmReinstallTitle: ({ provider }: { provider: string }) => `Reinstall ${provider} CLI?`,
+            confirmBody: ({ provider }: { provider: string }) =>
+                `This will run ${provider}'s installer commands on the selected machine. Only continue if you trust the provider.`,
+            confirmInstallConfirm: 'Install',
+            confirmReinstallConfirm: 'Reinstall',
             noMachineSelected: 'No machine selected.',
             installNotSupported: 'Install not supported on this machine.',
             installFailed: 'Install failed.',
@@ -1871,15 +2124,233 @@ export const en = {
             logPath: ({ logPath }: { logPath: string }) => `Log: ${logPath}`,
         },
         setupGuideUrlTitle: 'Setup guide URL',
+        authentication: {
+            title: 'Authentication',
+            footer: 'Review local CLI authentication state and launch sign-in when supported.',
+            terminalTitle: 'Provider login terminal',
+            logInTitle: 'Log in',
+            logInSubtitle: 'Open a terminal and run the provider sign-in flow on this machine.',
+            reauthenticateTitle: 'Reauthenticate',
+            reauthenticateSubtitle: 'Open a terminal and refresh the provider sign-in on this machine.',
+            checkNowTitle: 'Check now',
+            checkNowSubtitle: 'Refresh the detected local authentication state.',
+            statusTitle: 'Status',
+            loggedInAsTitle: 'Logged in as',
+            methodTitle: 'Authentication method',
+            sourceTitle: 'Credentials source',
+            reasonTitle: 'Issue',
+            lastCheckedTitle: 'Last checked',
+            stateUnknown: 'Unknown',
+            stateLoggedIn: 'Logged in',
+            stateLoggedOut: 'Logged out',
+            methods: {
+                apiKeyEnv: 'API key environment variable',
+                authTokenEnv: 'Auth token environment variable',
+                credentialsFile: 'Credentials file',
+                oauthCli: 'CLI OAuth login',
+                configFile: 'Config file',
+                gcloudAdc: 'Google Cloud application default credentials',
+                unknown: 'Unknown',
+            },
+            reasons: {
+                missingCredentials: 'Missing credentials',
+                expired: 'Expired credentials',
+                cliMissing: 'CLI not installed',
+                probeFailed: 'Status check failed',
+                timeout: 'Status check timed out',
+                unsupported: 'Local authentication is not supported',
+                interactiveBlocked: 'Interactive login is blocked',
+                notConfigured: 'Not configured',
+            },
+            sources: {
+                environment: 'Environment',
+                file: 'File',
+                command: 'Command',
+                mixed: 'Mixed',
+            },
+        },
         connectedServiceTitle: 'Connected service',
         notFoundTitle: 'Provider not found',
         notFoundSubtitle: 'This provider has no settings screen.',
-        noOptionsAvailable: 'No options available',
-        invalidNumber: 'Invalid number',
-        invalidJson: 'Invalid JSON',
-    },
+	        noOptionsAvailable: 'No options available',
+	        invalidNumber: 'Invalid number',
+	        invalidJson: 'Invalid JSON',
+	        plugins: {
+            claude: {
+                title: "Claude (remote)",
+                sections: {
+                    claudeCodeExperiments: {
+                        title: "Claude Code experiments",
+                        footer: "These settings apply to both local Claude (terminal) and remote Claude (Agent SDK) sessions started by Happier."
+                    },
+                    claudeRemoteSdk: {
+                        title: "Claude Agent SDK (remote mode)",
+                        footer: "Remote mode runs Claude on your machine, but controlled from the Happier UI. Local mode is the Claude Code TUI in your terminal. These settings affect remote mode only."
+                    }
+                },
+                fields: {
+                    claudeCodeExperimentalAgentTeamsEnabled: {
+                        title: "Force-enable Agent Teams",
+                        subtitle: "Enable Claude Code experimental Agent Teams (agent swarm) in all Claude sessions started by Happier."
+                    },
+                    claudeRemoteAgentSdkEnabled: {
+                        title: "Use Agent SDK (remote)",
+                        subtitle: "Use the official @anthropic-ai/claude-agent-sdk for remote mode."
+                    },
+                    claudeRemoteSettingSourcesV2: {
+                        title: "Setting sources",
+                        subtitle: "Controls which Claude settings are loaded.",
+                        options: {
+                            user: {
+                                title: "User",
+                                subtitle: "Loads user-global Claude config."
+                            },
+                            project: {
+                                title: "Project",
+                                subtitle: "Loads repo settings (including CLAUDE.md)."
+                            },
+                            local: {
+                                title: "Local",
+                                subtitle: "Loads local-only overrides."
+                            }
+                        }
+                    },
+                    claudeRemoteIncludePartialMessages: {
+                        title: "Partial streaming updates",
+                        subtitle: "Show partial assistant output while Claude is still responding."
+                    },
+                    claudeLocalPermissionBridgeEnabled: {
+                        title: "Experimental: local permission bridge",
+                        subtitle: "Forward Claude local-mode permission prompts to Happier so you can approve or deny from the app UI."
+                    },
+                    claudeLocalPermissionBridgeWaitIndefinitely: {
+                        title: "Keep requests open until answered",
+                        subtitle: "When enabled, Happier keeps Claude local permission requests pending until you approve or deny them from the app UI."
+                    },
+                    claudeLocalPermissionBridgeTimeoutSeconds: {
+                        title: "Optional permission timeout (seconds)",
+                        subtitle: "Only used when indefinite waiting is turned off. After this delay, Happier falls back to Claude’s terminal prompt."
+                    },
+                    claudeRemoteEnableFileCheckpointing: {
+                        title: "File checkpointing + /rewind",
+                        subtitle: "Enables file checkpoints and /rewind (files-only; does not rewind the conversation). Use /checkpoints to list and /rewind --confirm to apply (higher overhead)."
+                    },
+                    claudeRemoteMaxThinkingTokens: {
+                        title: "Max thinking tokens",
+                        subtitle: "Limit Claude’s internal thinking budget (null = default)."
+                    },
+                    claudeRemoteDisableTodos: {
+                        title: "Disable TODOs",
+                        subtitle: "Prevent Claude from creating TODO items in remote mode."
+                    },
+                    claudeRemoteStrictMcpServerConfig: {
+                        title: "Strict MCP server config",
+                        subtitle: "Fail if any MCP server config is invalid."
+                    },
+                    claudeRemoteAdvancedOptionsJson: {
+                        title: "Advanced options (JSON)",
+                        subtitle: "Power-user Agent SDK overrides (validated client-side)."
+                    }
+                }
+            },
+            opencode: {
+                title: "OpenCode",
+                sections: {
+                    backendMode: {
+                        title: "Backend mode",
+                        footer: "Server mode unlocks questions and native forking. ACP mode is a legacy fallback."
+                    },
+                    server: {
+                        title: "Server connection",
+                        footer: "Leave empty to use Happier-managed OpenCode server lifecycle. Set an absolute http(s) URL to connect to an existing OpenCode server instead."
+                    }
+                },
+                fields: {
+                    opencodeBackendMode: {
+                        title: "OpenCode backend mode",
+                        subtitle: "Choose the integration backend.",
+                        options: {
+                            server: {
+                                title: "Server (recommended)",
+                                subtitle: "Uses OpenCode server APIs for richer features and reliability."
+                            },
+                            acp: {
+                                title: "ACP (legacy)",
+                                subtitle: "Routes OpenCode through ACP; fewer features."
+                            }
+                        }
+                    },
+                    opencodeServerBaseUrl: {
+                        title: "Existing OpenCode server URL",
+                        subtitle: "Optional override for a user-managed OpenCode server."
+                    }
+                }
+            },
+            auggie: {
+                title: "Auggie"
+            },
+            copilot: {
+                title: "Copilot"
+            },
+            customAcp: {
+                title: "Custom ACP"
+            },
+            gemini: {
+                title: "Gemini"
+            },
+            kilo: {
+                title: "Kilo"
+            },
+            kimi: {
+                title: "Kimi"
+            },
+            kiro: {
+                title: "Kiro"
+            },
+            pi: {
+                title: "Pi"
+            },
+            qwen: {
+                title: "Qwen Code"
+            },
+            codex: {
+	                title: 'Codex',
+	                sections: {
+	                    backendMode: {
+	                        title: 'Routing mode',
+	                        footer: 'Choose how Codex is routed. App Server is the recommended default. Local/remote switching and resume work with App Server; ACP remains available as a legacy fallback.',
+	                    },
+	                    installOverrides: {
+	                        title: 'Install source overrides',
+	                        footer: 'Optional. Leave empty to use default install sources.',
+	                    },
+	                },
+	                fields: {
+	                    codexBackendMode: {
+	                        title: 'Codex routing mode',
+	                        subtitle: 'Select App Server, ACP, or MCP.',
+	                        options: {
+	                            appServer: {
+	                                title: 'App Server',
+	                                subtitle: 'Recommended official Codex app-server mode',
+	                            },
+	                            acp: {
+	                                title: 'ACP',
+	                                subtitle: 'Route Codex through ACP (codex-acp)',
+	                            },
+	                            mcp: {
+	                                title: 'MCP',
+	                                subtitle: 'Default Codex MCP mode',
+	                            },
+	                        },
+	                    },
+	                },
+	            },
+	        },
+	    },
 
     settingsAppearance: {
+        ...settingsAppearanceTranslationExtension,
         // Appearance settings screen
         theme: 'Theme',
         themeDescription: 'Choose your preferred color scheme',
@@ -1947,6 +2418,16 @@ export const en = {
         compactSessionViewDescription: 'Show active sessions in a more compact layout',
         compactSessionViewMinimal: 'Minimal Compact View',
         compactSessionViewMinimalDescription: 'Remove avatars and show a very compact session row layout',
+        sessionListDensity: {
+            title: 'Session List Density',
+            subtitle: 'Choose how sessions are displayed in the sidebar',
+            detailed: 'Detailed',
+            detailedDescription: 'Full-size rows with avatars and status',
+            cozy: 'Cozy',
+            cozyDescription: 'Slightly tighter rows with avatars',
+            narrow: 'Narrow',
+            narrowDescription: 'Minimal rows without avatars',
+        },
         text: 'Text',
         textDescription: 'Adjust text size across the app',
         textSize: 'Text Size',
@@ -1959,6 +2440,16 @@ export const en = {
             large: 'Large',
             xlarge: 'Extra large',
             xxlarge: 'Extra extra large',
+        },
+        itemDensity: 'Item Density',
+        itemDensityDescription: 'Choose how large list rows and settings items appear throughout the app',
+        itemDensityOptions: {
+            comfortable: 'Default',
+            comfortableDescription: 'Use the standard row size and spacing',
+            cozy: 'Cozy',
+            cozyDescription: 'Use slightly tighter rows without switching to the compact layout',
+            compact: 'Compact',
+            compactDescription: 'Fit more rows on screen with tighter spacing',
         },
     },
 
@@ -1983,8 +2474,8 @@ export const en = {
         },
         expAutomations: 'Automations',
         expAutomationsSubtitle: 'Enable automations UI surfaces and scheduling',
-        expExecutionRuns: 'Execution runs',
-        expExecutionRunsSubtitle: 'Enable execution runs (sub-agents / reviews) control plane surfaces',
+        expExecutionRuns: 'Subagents',
+        expExecutionRunsSubtitle: 'Enable Subagents (reviews / delegation) control plane surfaces',
         expAttachmentsUploads: 'Attachment uploads',
         expAttachmentsUploadsSubtitle: 'Enable file/image uploads so the agent can read them from disk',
         expUsageReporting: 'Usage reporting',
@@ -1999,6 +2490,8 @@ export const en = {
         expFilesAdvancedSyntaxHighlightingSubtitle: 'Use heavier, higher-fidelity syntax highlighting (web only, may be slower)',
         expFilesEditor: 'Embedded file editor',
         expFilesEditorSubtitle: 'Enable editing files directly from the file browser (Monaco on web/desktop, CodeMirror on native)',
+        expEmbeddedTerminal: 'Embedded terminal',
+        expEmbeddedTerminalSubtitle: 'Open a real terminal inside sessions.',
         expSessionType: 'Session type selector',
         expSessionTypeSubtitle: 'Show the session type selector (simple vs worktree)',
         expZen: 'Zen',
@@ -2008,13 +2501,15 @@ export const en = {
         voice: 'Voice',
         voiceSubtitle: 'Enable voice input/output and voice assistant settings',
         expVoiceAgent: 'Voice agent',
-        expVoiceAgentSubtitle: 'Enable daemon-backed voice agent surfaces (requires execution runs)',
+        expVoiceAgentSubtitle: 'Enable daemon-backed voice agent surfaces (requires Subagents)',
         expConnectedServices: 'Connected services',
         expConnectedServicesSubtitle: 'Enable connected services settings and session bindings',
         expConnectedServicesQuotas: 'Connected services quotas',
         expConnectedServicesQuotasSubtitle: 'Show quota badges and usage meters for connected services',
         expMemorySearch: 'Memory search',
         expMemorySearchSubtitle: 'Enable local memory search screens and settings',
+        expSessionsDirect: 'Direct sessions',
+        expSessionsDirectSubtitle: 'List and open provider-backed direct sessions in the sidebar',
             expFriends: 'Friends',
             expFriendsSubtitle: 'Enable Friends features (Inbox tab and session sharing)',
             webFeatures: 'Web Features',
@@ -2081,6 +2576,9 @@ export const en = {
         sessionNotFound: 'Session not found',
         voiceSessionFailed: 'Failed to start voice session',
         voiceServiceUnavailable: 'Voice service is temporarily unavailable',
+        voiceSessionLimitStarted: ({ duration }: { duration: string }) => `Voice session limit: about ${duration}.`,
+        voiceSessionLimitExpiring: ({ duration }: { duration: string }) => `Voice session will end in about ${duration}.`,
+        voiceSessionLimitExpired: 'Voice session reached the current time limit and ended.',
         voiceAlreadyStarting: 'Voice is already starting in another session',
         oauthInitializationFailed: 'Failed to initialize OAuth flow',
         tokenStorageFailed: 'Failed to store authentication tokens',
@@ -2127,7 +2625,7 @@ export const en = {
         consentRequired: 'Consent required for access',
         maxUsesReached: 'Maximum uses reached',
         missingPermissionId: 'Missing permission request id',
-        codexResumeNotInstalledTitle: 'Codex resume is not installed on this machine',
+        codexResumeNotInstalledTitle: 'Codex resume server is not installed on this machine',
         codexResumeNotInstalledMessage:
             'To resume a Codex conversation, install the Codex resume server on the target machine (Machine Details → Installables).',
         codexAcpNotInstalledTitle: 'Codex ACP is not installed on this machine',
@@ -2143,13 +2641,10 @@ export const en = {
         installable: {
             codexResume: {
                 title: 'Codex resume server',
-                installSpecTitle: 'Codex resume install source',
             },
             codexAcp: {
                 title: 'Codex ACP adapter',
-                installSpecTitle: 'Codex ACP install source',
             },
-            installSpecDescription: 'NPM/Git/file spec passed to `npm install` (experimental). Leave empty to use daemon default.',
         },
         ui: {
             notAvailable: 'Not available',
@@ -2166,13 +2661,14 @@ export const en = {
             registryCheckFailed: ({ error }: { error: string }) => `Failed: ${error}`,
             installSource: 'Install source',
             installSourceDefault: '(default)',
-            installSpecPlaceholder: 'e.g. file:/path/to/pkg or github:owner/repo#branch',
             lastInstallLog: 'Last install log',
             installLogTitle: 'Install log',
         },
     },
 
     newSession: {
+        ...newSessionMcpTranslationExtension,
+        ...acpCatalogTranslationExtension.newSession,
         // Used by new-session screen and launch flows
         title: 'Start New Session',
         selectAiProfileTitle: 'Select AI Profile',
@@ -2193,6 +2689,36 @@ export const en = {
         selectPermissionModeDescription: 'Control how strictly actions require approval.',
         selectModelTitle: 'Select AI Model',
         selectModelDescription: 'Choose the model used by this session.',
+        checkout: {
+            selectTitle: 'Select Worktree',
+            noWorktree: 'No Worktree',
+            noWorktreeSubtitle: 'Start in the selected folder without creating or using a Git worktree.',
+            noWorktreeSectionTitle: 'No Worktree',
+            existingWorktreesSectionTitle: 'Existing Worktrees',
+            actionsSectionTitle: 'Actions',
+            newWorktree: 'New Worktree',
+            newWorktreeSubtitle: 'Create and use a new Git worktree for this session.',
+            newWorktreeDetailWorkspace: 'Create a new Git worktree for this repository.',
+            newWorktreeDetailBranch: 'Start from the current repository state and choose a new branch/worktree name.',
+            branchPickerTitle: 'Start From',
+            branchPickerCurrentHead: 'Current Branch',
+            branchPickerCurrentHeadDescription: 'Start from the branch currently checked out in this repository.',
+            branchPickerEmpty: 'No branches available for this repository.',
+            branchPickerSearchPlaceholder: 'Search branches…',
+            branchPickerRefreshA11y: 'Refresh branches',
+            branchPickerLoadingA11y: 'Loading branches',
+            branchPickerRefreshingA11y: 'Refreshing branches',
+            primaryDetailDescription: 'Use the primary linked checkout for this workspace on the selected machine.',
+            gitWorktreeDetailDescription: 'Use an existing Git worktree for this session.',
+            existingBranchWorktreeDescription: 'This branch already has a worktree. You can reuse it directly or create a new branch from it.',
+            existingBranchDescription: 'This branch can be used directly in a new worktree, or you can create a new branch from it.',
+            createNewBranchFromBranchHint: 'Use Apply to create a new branch and worktree from this branch.',
+            useExistingBranchAction: 'Use Existing Branch',
+            useExistingWorktreeAction: 'Use Existing Worktree',
+            detailBranch: ({ branch }: { branch: string }) => `Branch: ${branch}`,
+            detailPath: ({ path }: { path: string }) => `Path: ${path}`,
+            detailLinkedWorkspace: 'Linked to the current workspace.',
+        },
         selectSessionTypeTitle: 'Select Session Type',
         selectSessionTypeDescription: 'Choose a simple session or one tied to a Git worktree.',
         searchPathsPlaceholder: 'Search paths...',
@@ -2201,6 +2727,11 @@ export const en = {
         machineOfflineInlineTitle: 'Machine is offline',
         machineOfflineInlineBody: 'Start the daemon on this machine or choose another machine before creating a session.',
         machineOfflineCannotStartStatus: 'offline (cannot start session)',
+        automationChip: {
+            default: 'Automate',
+            interval: ({ minutes }: { minutes: number }) => `Every ${minutes}m`,
+            cron: 'Cron schedule',
+        },
         machineDetails: 'View machine details →',
         directoryDoesNotExist: 'Directory Not Found',
         createDirectoryConfirm: ({ directory }: { directory: string }) => `The directory ${directory} does not exist. Do you want to create it?`,
@@ -2228,6 +2759,7 @@ export const en = {
             enterPathTitle: 'Enter Path',
             enterPathPlaceholder: 'Enter a path...',
             customPathTitle: 'Custom Path',
+            truncatedDirectoryInfo: ({ count }: { count: number }) => `Showing first ${count} items`,
             recentTitle: 'Recent',
             favoritesTitle: 'Favorites',
             suggestedTitle: 'Suggested',
@@ -2246,6 +2778,9 @@ export const en = {
         profileAvailability: {
             requiresAgent: ({ agent }: { agent: string }) => `Requires ${agent}`,
             cliNotDetected: ({ cli }: { cli: string }) => `${cli} CLI not detected`,
+        },
+        profileSelection: {
+            workspaceDefault: 'Workspace default',
         },
         cliBanners: {
             cliNotDetectedTitle: ({ cli }: { cli: string }) => `${cli} CLI Not Detected`,
@@ -2274,10 +2809,10 @@ export const en = {
             clearAndRemove: 'Clear',
             helpText: 'You can find session IDs in the Session Info screen.',
             cannotApplyBody:
-                'This resume ID can’t be applied right now. Happier will start a new session instead.\n\nIf you expected resume to work, check that the provider is configured for resume (e.g. Codex backend mode set to ACP or MCP + resume) and that the required machine dependencies are installed.',
+                'This resume ID can’t be applied right now. Happier will start a new session instead.\n\nIf you expected resume to work, check that the provider is configured for resume (e.g. Codex routing mode set to App Server, ACP, or MCP + resume) and that the required machine dependencies are installed.',
         },
         codexResumeBanner: {
-            title: 'Codex resume',
+            title: 'Codex resume server',
             updateAvailable: 'Update available',
             systemCodexVersion: ({ version }: { version: string }) => `System codex: ${version}`,
             resumeServerVersion: ({ version }: { version: string }) => `Codex resume server: ${version}`,
@@ -2289,9 +2824,9 @@ export const en = {
             reinstall: 'Reinstall',
         },
         codexResumeInstallModal: {
-            installTitle: 'Install Codex resume?',
-            updateTitle: 'Update Codex resume?',
-            reinstallTitle: 'Reinstall Codex resume?',
+            installTitle: 'Install Codex resume server?',
+            updateTitle: 'Update Codex resume server?',
+            reinstallTitle: 'Reinstall Codex resume server?',
             description: 'This installs an experimental Codex MCP server wrapper used only for resume operations.',
         },
         codexAcpBanner: {
@@ -2318,6 +2853,29 @@ export const en = {
         viewAll: 'View all sessions',
     },
 
+    sessionHandoff: {
+        activeWarning: {
+            title: 'This session is still running here',
+            message: 'Handoff will stop this session on this machine before transferring it to the selected machine.',
+            confirm: 'Hand off and stop here',
+        },
+        progress: {
+            title: 'Handing off session',
+            message: 'Preparing the target machine and moving the session state.',
+        },
+        failure: {
+            title: 'Session handoff failed',
+            message: 'The handoff could not be completed. You can retry the transfer.',
+        },
+        recovery: {
+            title: 'Session stopped here before handoff completed',
+            messageAfterSourceStop:
+                'Happier already stopped this session on this machine, but could not finish starting it on the target machine. Restart it here, or keep it stopped while you recover the target machine.',
+            restartOnSource: 'Restart on source',
+            keepStopped: 'Keep stopped',
+        },
+    },
+
     session: {
         inputPlaceholder: 'What would you like to work on?',
         toolCalls: 'Tool calls',
@@ -2330,10 +2888,17 @@ export const en = {
             openParentA11y: 'Open parent session',
             forkFromMessageA11y: 'Fork from this message',
         },
+        rollback: {
+            latestTurnA11y: 'Roll back the latest turn',
+            beforeUserMessageA11y: 'Roll back to before this message',
+        },
         resuming: 'Resuming...',
         resumeFailed: 'Failed to resume session',
         pendingQueuedResumeFailedTitle: 'Message queued',
-        pendingQueuedResumeFailedBody: 'Your message was saved in the pending queue, but Happier couldn’t resume this session. Retry to start it.',
+        pendingQueuedResumeFailedBody:
+            'Your message was saved in the pending queue, but Happier couldn’t resume this session. Retry to start it.',
+        invalidLinkTitle: 'Invalid session link',
+        invalidLinkDescription: 'The session link is missing or invalid. Please check the URL and try again.',
         resumeSupportNoteChecking: 'Note: Happier is still checking whether this machine can resume the provider session.',
         resumeSupportNoteUnverified: 'Note: Happier couldn’t verify resume support for this machine.',
         resumeSupportDetails: {
@@ -2389,11 +2954,11 @@ export const en = {
                 send: 'Send message',
                 delete: 'Delete',
                 launchSectionTitle: 'Launch',
-                launchSectionSubtitle: 'Start new agents and Happier subagents from this session.',
+                launchSectionSubtitle: 'Start new agents and Subagents from this session.',
                 sectionCount: ({ count }: { count: number }) => `${count}`,
-                groupCount: ({ count }: { count: number }) => `${count} agents`,
-                launchExecutionRunsTitle: 'Launch Happier subagents',
-                launchExecutionRunsSubtitle: 'Open the Happier subagent launcher with review, plan, or delegate backends.',
+                groupCount: ({ count }: { count: number }) => `${count} ${plural({ count, singular: 'agent', plural: 'agents' })}`,
+                launchExecutionRunsTitle: 'Launch Subagents',
+                launchExecutionRunsSubtitle: 'Open the Subagent launcher with review, plan, or delegate backends.',
                 launchExecutionRunsAdvanced: 'Advanced…',
                 launchClaudeTeamsTitle: 'Launch Claude teams',
                 launchClaudeTeamsSubtitle: 'Create a team or spawn a teammate with structured Claude team commands.',
@@ -2422,9 +2987,9 @@ export const en = {
                 unavailable: 'This agent transcript is not available anymore.',
             },
             kind: {
-                execution_run: 'Happier subagent',
+                execution_run: 'Subagent',
                 agent_team_member: 'Team agent',
-                task_sidechain: 'Task agent',
+                subagent_sidechain: 'Subagent',
             },
             intent: {
                 review: 'Review',
@@ -2441,6 +3006,7 @@ export const en = {
             closeA11y: 'Close details',
             openTabA11y: ({ title }: { title: string }) => `Open ${title}`,
             pinTabA11y: 'Pin tab',
+            unpinTabA11y: 'Unpin tab',
             pinnedTabA11y: 'Pinned tab',
             closeTabA11y: 'Close tab',
             enterFocusModeA11y: 'Enter editor focus mode',
@@ -2449,6 +3015,9 @@ export const en = {
 
         actionsDraft: {
             noInputHints: 'This action has no input hints.',
+            validation: {
+                requiredField: ({ field }: { field: string }) => `${field} is required.`,
+            },
         },
 
         planOutput: {
@@ -2466,6 +3035,8 @@ export const en = {
 
         reviewFindings: {
             title: ({ count }: { count: number }) => `Review findings (${count})`,
+            questionsTitle: 'Questions from reviewer',
+            assumptionsTitle: 'Assumptions',
             findingTitle: ({
                 status,
                 severity,
@@ -2478,22 +3049,26 @@ export const en = {
                 title: string;
             }) => `[${status}] [${severity}/${category}] ${title}`,
             status: {
-                untriaged: 'Untriaged',
-                accept: 'Accept',
-                reject: 'Reject',
-                defer: 'Defer',
-                needsRefinement: 'Needs refinement',
+                untriaged: 'Pending',
+                accept: 'Implement fix',
+                reject: 'Ignore',
+                defer: 'Decide later',
+                needsRefinement: 'Ask for clarification',
             },
-            refinementPlaceholder: 'Optional comment for refinement',
+            refinementPlaceholder: 'What needs clarification?',
             actions: {
-                applyTriage: 'Apply triage',
+                applyTriage: 'Apply review actions',
                 applying: 'Applying…',
-                applyAcceptedFindings: 'Apply accepted findings',
+                askReviewer: 'Ask reviewer',
+                answerQuestion: 'Answer reviewer',
+                applyAcceptedFindings: 'Implement selected fixes',
+                sendFollowUp: 'Send follow-up',
                 sending: 'Sending…',
             },
             errors: {
-                applyTriageFailed: 'Failed to apply triage.',
-                applyAcceptedFailed: 'Failed to apply accepted findings.',
+                applyTriageFailed: 'Failed to apply review actions.',
+                followUpFailed: 'Failed to send review follow-up.',
+                applyAcceptedFailed: 'Failed to send selected fixes.',
             },
         },
 
@@ -2662,6 +3237,8 @@ export const en = {
             teleport: 'Teleport voice agent',
             toggleActivity: 'Toggle voice activity',
             clearActivity: 'Clear voice activity',
+            bargeIn: 'Barge in',
+            cancelTurn: 'Cancel response',
         },
     },
 
@@ -2682,6 +3259,39 @@ export const en = {
             errorFallback: 'error',
             eventFallback: 'event',
         },
+    },
+
+    devVoiceQa: {
+        menuTitle: 'Voice QA Harness',
+        menuSubtitle: 'Drive the real voice agent with text prompts',
+        title: 'Voice QA Harness',
+        subtitle: 'Launch the configured voice runtime and send prompts without using the microphone.',
+        instructions:
+            'Use this to exercise the real local voice agent or ElevenLabs session with deterministic text prompts. Leave Session ID empty to target the current voice target or the global voice agent session.',
+        configurationTitle: 'Configuration',
+        configuredProvider: 'Configured provider',
+        qaProvider: 'Active QA provider',
+        qaStatus: 'QA status',
+        targetSession: 'Current target session',
+        runtimeSession: 'Active runtime session',
+        inputsTitle: 'Inputs',
+        sessionIdLabel: 'Session ID override',
+        sessionIdPlaceholder: 'Leave empty to use the current voice target',
+        initialContextLabel: 'Initial context',
+        initialContextPlaceholder: 'Optional context sent when the QA session starts',
+        promptLabel: 'Prompt',
+        promptPlaceholder: 'Type the text you want to send to the voice agent',
+        contextUpdateLabel: 'Context update',
+        contextUpdatePlaceholder: 'Optional follow-up context update',
+        actionsTitle: 'Actions',
+        sendContext: 'Send context',
+        usesCurrentProvider: 'This harness always uses your current voice settings and the real runtime integrations.',
+        localModeHint: 'Local QA requires Local voice with conversation mode set to Agent.',
+        elevenLabsHint: 'ElevenLabs QA requires your ElevenLabs provider to be configured and the realtime session to connect successfully.',
+        transcriptTitle: 'QA transcript',
+        transcriptEmpty: 'No QA transcript yet.',
+        activityTitle: 'Voice activity',
+        activityEmpty: 'No voice activity captured for the active QA session yet.',
     },
 
     server: {
@@ -2791,6 +3401,38 @@ export const en = {
 
     sessionsList: {
         serverHeader: ({ server }: { server: string }) => `Server: ${server}`,
+        storagePersistedTab: 'Synced',
+        storageDirectTab: 'Direct',
+        renameWorkspace: 'Rename workspace',
+        renameWorkspacePromptTitle: 'Rename workspace',
+        renameWorkspacePromptPlaceholder: 'Enter a name...',
+        resetWorkspaceName: 'Reset name',
+    },
+
+    directSessions: {
+        browseTitle: 'Browse provider sessions',
+        browseOpenExisting: 'Browse provider sessions',
+        browseFiltersTitle: 'Select source',
+        browseMachines: 'Machines',
+        browseProviders: 'Providers',
+        browseSources: 'Sources',
+        browseSourceCodexUserHome: 'My Codex home',
+        browseSourceCodexConnectedServices: ({ service }: { service: string }) => `${service} connected services`,
+        browseSourceClaudeDefault: 'Default Claude config',
+        browseSourceOpenCodeDefault: 'Default OpenCode server',
+        browseCandidates: 'Available sessions',
+        browseNoMachines: 'No machines are available for direct sessions yet.',
+        browseNoCandidates: 'No provider sessions were found for this machine and provider.',
+        browseActivityRunning: 'Running',
+        browseActivityRunningNow: 'Running now',
+        browseActivityRecent: 'Recent',
+        browseActivityIdle: 'Idle',
+        browseActivityUnknown: 'Unknown',
+        browseSearchPlaceholder: 'Search loaded sessions…',
+        browseNoSearchResults: 'No loaded sessions match this search yet.',
+        browseLoadMore: 'Load more sessions',
+        browseFailedToLoad: 'Failed to load provider sessions.',
+        browseLinkFailed: 'Failed to link the selected provider session.',
     },
 
 	    sessionInfo: {
@@ -2802,6 +3444,16 @@ export const en = {
         stopSessionConfirm: 'Are you sure you want to stop this session?',
         archiveSession: 'Archive Session',
         archiveSessionConfirm: 'Are you sure you want to archive this session?',
+        workspaceTitle: 'Workspace',
+        workspaceLabel: 'Workspace',
+        linkWorkspaceTitle: 'Link this workspace',
+        linkWorkspaceSubtitle: 'Create a linked workspace from this session path and open its settings.',
+        openWorkspaceTitle: 'Open workspace',
+        openWorkspaceSubtitle: 'Open the linked workspace details and settings.',
+        createWorktreeTitle: 'Create worktree',
+        createWorktreeSubtitle: 'Start a new session that will create a Git worktree in this linked workspace.',
+        locationLabel: 'Location',
+        checkoutLabel: 'Checkout',
         happySessionIdCopied: 'Happier Session ID copied to clipboard',
         failedToCopySessionId: 'Failed to copy Happier Session ID',
         happySessionId: 'Happier Session ID',
@@ -2825,6 +3477,10 @@ export const en = {
         kimiSessionIdCopied: 'Kimi Session ID copied to clipboard',
         kiloSessionId: 'Kilo Session ID',
         kiloSessionIdCopied: 'Kilo Session ID copied to clipboard',
+        kiroSessionId: 'Kiro Session ID',
+        kiroSessionIdCopied: 'Kiro Session ID copied to clipboard',
+        customAcpSessionId: 'Custom ACP Session ID',
+        customAcpSessionIdCopied: 'Custom ACP Session ID copied to clipboard',
         piSessionId: 'Pi Session ID',
         piSessionIdCopied: 'Pi Session ID copied to clipboard',
         copilotSessionId: 'Copilot Session ID',
@@ -2839,7 +3495,7 @@ export const en = {
         lastUpdated: 'Last Updated',
         sequence: 'Sequence',
         quickActions: 'Quick Actions',
-        executionRunsSubtitle: 'See execution runs for this session',
+        executionRunsSubtitle: 'See Subagents for this session',
         automationsTitle: 'Automations',
         automationsSubtitle: 'Manage scheduled messages for this session',
         viewSessionLogTitle: 'View session log',
@@ -2884,7 +3540,7 @@ export const en = {
         cliVersionOutdated: 'CLI Update Required',
         cliVersionOutdatedMessage: ({ currentVersion, requiredVersion }: { currentVersion: string; requiredVersion: string }) =>
             `Version ${currentVersion} installed. Update to ${requiredVersion} or later`,
-        updateCliInstructions: 'Please run npm install -g @happier-dev/cli@latest',
+        updateCliInstructions: 'Please run happier self update',
         deleteSession: 'Delete Session',
         deleteSessionSubtitle: 'Permanently remove this session',
         deleteSessionConfirm: 'Delete Session Permanently?',
@@ -2901,6 +3557,21 @@ export const en = {
 
     },
 
+    workspacePresentation: {
+        checkoutKinds: {
+            primary: 'Primary checkout',
+            git_worktree: 'Git worktree',
+        },
+    },
+    sourceControlWorkspace: {
+        createTitle: 'Create linked workspace',
+        createSubtitle: 'Add this checkout to a linked workspace and open its settings.',
+        otherCheckoutsTitle: 'Other checkouts',
+        unlinkedWorktreesTitle: 'Unlinked worktrees',
+        createSessionInWorktreeTitle: 'Create session here',
+        adoptWorktreeTitle: 'Add worktree to workspace',
+    },
+
     components: {
         emptyMainScreen: {
             // Used by SessionGettingStartedGuidance component
@@ -2909,7 +3580,6 @@ export const en = {
             runIt: 'Run it',
             scanQrCode: 'Scan the QR code',
             openCamera: 'Open Camera',
-            installCommand: '$ npm i -g @happier-dev/cli',
             runCommand: '$ happier',
         },
         emptyMessages: {
@@ -2980,6 +3650,8 @@ export const en = {
             qwen: 'Qwen Code',
             kimi: 'Kimi',
             kilo: 'Kilo',
+            kiro: 'Kiro',
+            customAcp: 'Custom ACP',
             pi: 'Pi',
             copilot: 'Copilot',
         },
@@ -3053,7 +3725,6 @@ export const en = {
             sectionTitle: 'Mode',
             badge: ({ name }: { name: string }) => `Mode: ${name}`,
             badgePending: ({ name }: { name: string }) => `Mode: ${name} (pending)`,
-            badgeA11y: ({ name }: { name: string }) => `Mode: ${name}`,
             refreshModesA11y: 'Refresh modes',
             pendingSwitching: ({ from, to }: { from: string; to: string }) => `Pending: switching from ${from} to ${to}`,
             currentMode: ({ name }: { name: string }) => `Current: ${name}`,
@@ -3131,17 +3802,13 @@ export const en = {
             hide: 'Hide',
             rawJsonDevMode: 'Raw JSON (Dev Mode)',
         },
-        taskView: {
-            initializing: 'Initializing agent...',
-            moreTools: ({ count }: { count: number }) => `+${count} more ${plural({ count, singular: 'tool', plural: 'tools' })}`,
-        },
-        taskLikeSummary: {
-            createTask: 'Create task',
-            createTaskWithSubject: ({ subject }: { subject: string }) => `Create task: ${subject}`,
-            listTasks: 'List tasks',
-            updateTask: 'Update task',
-            updateTaskWithId: ({ id }: { id: string }) => `Update task ${id}`,
-            updateTaskWithIdStatus: ({ id, status }: { id: string; status: string }) => `Update task ${id}: ${status}`,
+        agentTeamView: {
+          team: 'Team',
+          member: 'Member',
+          type: 'Type',
+          content: 'Content',
+          status: 'Status',
+          description: 'Description',
         },
         subAgentRunView: {
             planTitle: 'Plan',
@@ -3165,12 +3832,12 @@ export const en = {
             more: ({ count }: { count: number }) => `+${count} more`,
         },
         taskLikeSummary: {
-            createTaskWithSubject: ({ subject }: { subject: string }) => `Create task: ${subject}`,
-            createTask: 'Create task',
-            listTasks: 'List tasks',
-            updateTaskWithIdStatus: ({ id, status }: { id: string; status: string }) => `Update task ${id} → ${status}`,
-            updateTaskWithId: ({ id }: { id: string }) => `Update task ${id}`,
-            updateTask: 'Update task',
+            createTaskWithSubject: ({ subject }: { subject: string }) => `Create subagent: ${subject}`,
+            createTask: 'Create subagent',
+            listTasks: 'List subagents',
+            updateTaskWithIdStatus: ({ id, status }: { id: string; status: string }) => `Update subagent ${id} → ${status}`,
+            updateTaskWithId: ({ id }: { id: string }) => `Update subagent ${id}`,
+            updateTask: 'Update subagent',
         },
         taskView: {
             moreTools: ({ count }: { count: number }) => `+${count} more tools`,
@@ -3205,7 +3872,7 @@ export const en = {
         },
         names: {
             task: 'Task',
-            subAgent: 'Sub-agent',
+            subAgent: 'Subagent',
             terminal: 'Terminal',
             searchFiles: 'Search Files',
             search: 'Search',
@@ -3278,27 +3945,153 @@ export const en = {
                 createFilePromptBody: 'Enter a path relative to the project root.',
                 createFileInvalidPath: 'Invalid file path. Use a workspace-relative path like src/new-file.ts.',
                 createFileFailed: 'Failed to create file.',
-                createFolderPromptTitle: 'Create folder',
-                createFolderPromptBody: 'Enter a folder path relative to the project root.',
-                createFolderInvalidPath: 'Invalid folder path. Use a workspace-relative path like src/new-folder.',
-                createFolderFailed: 'Failed to create folder.',
-                changeRow: {
-                    viewDiffA11y: ({ file }: { file: string }) => `View diff for ${file}`,
-                    status: {
-                        untracked: 'Untracked file',
+	                createFolderPromptTitle: 'Create folder',
+	                createFolderPromptBody: 'Enter a folder path relative to the project root.',
+	                createFolderInvalidPath: 'Invalid folder path. Use a workspace-relative path like src/new-folder.',
+	                createFolderFailed: 'Failed to create folder.',
+	                repositoryTree: {
+	                    actions: {
+	                        copyPath: 'Copy path',
+	                        download: 'Download',
+	                        downloadAsZip: 'Download as zip',
+	                    },
+	                    dropToUpload: 'Drop files to upload',
+	                    rename: {
+	                        title: 'Rename',
+	                        body: 'Enter a new path relative to the project root.',
+	                        invalidPath: 'Invalid path. Use a workspace-relative path like src/new-file.ts.',
+	                        failed: 'Failed to rename.',
+	                        conflicts: {
+	                            title: 'Destination already exists',
+	                            body: ({ path }: { path: string }) => `"${path}" already exists. What do you want to do?`,
+	                        },
+	                    },
+	                    deleteFolder: {
+	                        title: 'Delete folder?',
+	                        body: ({ path }: { path: string }) => `Delete folder ${path} and all its contents?`,
+	                        confirm: 'Delete folder',
+	                    },
+	                    deleteFile: {
+	                        title: 'Delete file?',
+	                        body: ({ path }: { path: string }) => `Delete file ${path}?`,
+	                    },
+	                    delete: {
+	                        failed: 'Failed to delete.',
+	                    },
+	                    download: {
+	                        notReady: 'Download is not available yet.',
+	                    },
+	                },
+	                changeRow: {
+	                    viewDiffA11y: ({ file }: { file: string }) => `View diff for ${file}`,
+	                    status: {
+	                        untracked: 'Untracked file',
                         added: 'New file',
                         deleted: 'Deleted file',
                         renamed: 'Renamed file',
                         copied: 'Copied file',
                         conflicted: 'Conflicted file',
                         modified: 'Modified file',
-                    },
+	              },
+	            },
+	          projectLinkPicker: {
+	              title: 'Link project file',
+	              searchFailed: 'Search failed. Try again.',
+	          },
+	            detachedHead: 'detached HEAD',
+	            branchSwitchDialog: {
+	                title: 'Switch branches',
+	                body: 'You have uncommitted changes. How would you like to handle them?',
+	                leaveTitle: ({ branch }: { branch: string }) => `Leave my changes on ${branch}`,
+	                leaveSubtitle: 'Create a stash on the current branch and switch.',
+	                bringTitle: ({ branch }: { branch: string }) => `Bring my changes to ${branch}`,
+	                bringSubtitle: 'Try to switch and keep your changes on the new branch.',
+	            },
+	            branchMenu: {
+	                openA11y: 'Open branch menu',
+	                failedToLoad: 'Failed to load branches.',
+	                unavailable: 'Branch list unavailable',
+                empty: 'No branches found',
+                searchPlaceholder: 'Search branches...',
+                category: {
+                    actions: 'Actions',
+                    branches: 'Branches',
+                    worktrees: 'Worktrees',
+                    remote: 'Remote',
+                    local: 'Local',
+                    options: 'Options',
                 },
-              projectLinkPicker: {
-                  title: 'Link project file',
-                  searchFailed: 'Search failed. Try again.',
-              },
-            detachedHead: 'detached HEAD',
+                publish: {
+                    title: 'Publish branch',
+                    subtitle: 'Push the current branch to an upstream remote branch',
+                    short: 'Publish',
+                    failed: 'Failed to publish branch.',
+                },
+                create: {
+                    title: 'Create branch',
+                    subtitle: ({ name }: { name: string }) => `Create "${name}"`,
+                    failed: 'Failed to create branch.',
+                },
+                switch: {
+                    failed: 'Failed to switch branch.',
+                },
+                branch: {
+                    upstream: ({ upstream }: { upstream: string }) => `Upstream: ${upstream}`,
+                },
+                remotes: {
+                    show: 'Show remote branches',
+                    hide: 'Hide remote branches',
+                    subtitle: 'Include remote branches in the list',
+                },
+                worktrees: {
+                    createFromCurrentBranchTitle: 'New worktree from current branch',
+                    createFromCurrentBranchSubtitle: ({ branch }: { branch: string }) => `Create a new worktree from ${branch} and start a session there.`,
+                    createFromCurrentBranchDetachedSubtitle: 'Switch to a branch before creating a worktree from the current branch.',
+                    createFromAnotherBranchTitle: 'New worktree from another branch',
+                    createFromAnotherBranchSubtitle: 'Open the new-session flow to choose another branch or reuse an existing worktree.',
+                    removeTitle: 'Remove worktree',
+                    removeSubtitle: ({ target }: { target: string }) => `Remove ${target} from this repository.`,
+                    removeConfirmTitle: 'Remove worktree?',
+                    removeConfirmBody: ({ path }: { path: string }) => `Remove the worktree at ${path}? This cannot be undone.`,
+                    removeConfirmButton: 'Remove worktree',
+                    pruneTitle: 'Prune stale worktrees',
+                    pruneSubtitle: 'Clean up stale worktree metadata for this repository.',
+                    createFailed: 'Failed to create worktree.',
+                    removeFailed: 'Failed to remove worktree.',
+                    pruneFailed: 'Failed to prune worktrees.',
+                },
+                stashOverwrite: {
+                    title: 'Overwrite branch stash?',
+                    body: ({ branch }: { branch: string }) => `A stash for ${branch} already exists. Overwrite it?`,
+                    confirm: 'Overwrite stash',
+                },
+            },
+	            stash: {
+	                summaryA11y: 'Open stash details',
+	                summaryTitle: 'Managed stashes',
+	                detailsTitle: 'Managed stashes',
+	                empty: 'No managed stashes.',
+	                failedToLoad: 'Failed to load stashes.',
+	                failedToLoadDiff: 'Failed to load stash diff.',
+	                diffTruncated: 'Diff truncated (output limit).',
+	                writeDisabled: 'Source control write operations are disabled.',
+	                noSelection: 'Select a stash to continue.',
+	                selectA11y: ({ stash }: { stash: string }) => `Select stash ${stash}`,
+	                restore: 'Restore',
+	                discard: 'Discard',
+	                restoreFailed: 'Failed to restore stash.',
+	                discardFailed: 'Failed to discard stash.',
+	                restoreConfirm: {
+	                    title: 'Restore stashed changes?',
+	                    body: 'Apply the stashed changes to your working tree. Conflicts may require manual resolution.',
+	                    confirm: 'Restore',
+	                },
+	                discardConfirm: {
+	                    title: 'Discard stashed changes?',
+	                    body: 'This will permanently delete this stash.',
+	                    confirm: 'Discard',
+	                },
+	            },
             summary: ({ staged, unstaged }: { staged: number; unstaged: number }) => `${staged} staged • ${unstaged} unstaged`,
                 branchSummary: {
                     ahead: 'Ahead',
@@ -3325,6 +4118,8 @@ export const en = {
                 },
             repositoryChangedFiles: ({ count }: { count: number }) => `Repository changed files (${count})`,
             sessionAttributedChanges: ({ count }: { count: number }) => `Session-attributed changes (${count})`,
+            latestTurnChanges: ({ count }: { count: number }) => `Latest turn changes (${count})`,
+            latestTurnDescription: 'Provider-backed changes from the most recent completed turn.',
             otherRepositoryChanges: ({ count }: { count: number }) => `Other repository changes (${count})`,
           attributionReliabilityHigh: 'Best effort attribution. Repository view remains the source of truth.',
           attributionReliabilityLimited: 'Reliability limited: multiple sessions are active for this repository. Showing direct attribution only.',
@@ -3333,6 +4128,7 @@ export const en = {
           inferredSuppressed: ({ count }: { count: number }) =>
               `${count} inferred file${count === 1 ? '' : 's'} kept in repository-only changes.`,
           noSessionAttributedChanges: 'No session-attributed changes currently detected.',
+          noLatestTurnChanges: 'No latest-turn changes currently detected.',
           notRepo: 'Not a source-control repository',
           notUnderSourceControl: 'This directory is not under source control',
           searching: 'Searching files...',
@@ -3363,6 +4159,7 @@ export const en = {
           unstagedChanges: ({ count }: { count: number }) => `Unstaged Changes (${count})`,
             // File viewer strings
             fileReadFailed: 'Failed to read file',
+            fileTooLargeToPreview: 'File is too large to preview',
             fileWriteFailed: 'Failed to write file',
                 fileEditor: {
                     experimentalHint: 'Editing is experimental. Save to write changes back to the session worktree.',
@@ -3434,12 +4231,43 @@ export const en = {
             },
             toolbar: {
                 changedFiles: 'Changed files',
+                details: 'Details',
+                upload: 'Upload',
+                uploadFiles: 'Upload files',
+                uploadFolder: 'Upload folder',
                 allRepositoryFiles: 'All repository files',
                 repositoryView: 'Repository view',
+                turnView: 'Turn view',
                 sessionView: 'Session view',
                 review: 'Review',
                 list: 'List',
                 scm: 'SCM',
+            },
+            transfers: {
+                preparingUpload: ({ count }: { count: number }) => `Preparing upload (${count} files)…`,
+                uploading: ({ completed, total, uploaded, totalBytes }: { completed: number; total: number; uploaded: string; totalBytes: string }) =>
+                    `Uploading ${completed}/${total} · ${uploaded} / ${totalBytes}`,
+                downloading: ({ name, downloaded, totalBytes }: { name: string; downloaded: string; totalBytes: string }) =>
+                    `Downloading ${name} · ${downloaded} / ${totalBytes}`,
+            },
+            upload: {
+                conflicts: {
+                    title: 'Upload conflicts',
+                    body: ({ conflictCount, totalCount }: { conflictCount: number; totalCount: number }) =>
+                        `${conflictCount} of ${totalCount} files already exist. What do you want to do?`,
+                    keepBoth: {
+                        title: 'Keep both',
+                        subtitle: 'Add “ (1)”, “ (2)”, … to conflicting names.',
+                    },
+                    replace: {
+                        title: 'Replace',
+                        subtitle: 'Overwrite existing files.',
+                    },
+                    skip: {
+                        title: 'Skip',
+                        subtitle: 'Upload only files that do not already exist.',
+                    },
+                },
             },
         fileEmpty: 'File is empty',
         noChanges: 'No changes to display',
@@ -3505,7 +4333,17 @@ export const en = {
             },
         },
         details: {
+            titles: {
+                executionRun: 'Subagent',
+                executionRunWithIntent: ({ intent }: { intent: string }) => `${intent} Subagent`,
+            },
             labels: {
+                status: 'Status',
+                statusValue: ({ value }: { value: string }) => `Status: ${value}`,
+                runId: ({ value }: { value: string }) => `Run ID: ${value}`,
+                backend: ({ value }: { value: string }) => `Backend: ${value}`,
+                permissions: ({ value }: { value: string }) => `Permissions: ${value}`,
+                mode: ({ value }: { value: string }) => `Mode: ${value}`,
                 intent: 'Intent',
                 backendId: 'Backend ID',
                 permissionMode: 'Permission mode',
@@ -3520,7 +4358,104 @@ export const en = {
         },
     },
 
-      settingsSession: {
+          settingsActions: {
+        aboutSubtitle: 'Choose where each action is surfaced across the app, voice, and integrations. Unavailable tiles stay visible so you can understand what is blocked by features, privacy, or runtime support.',
+        aboutFooter: 'These settings apply globally to your account defaults. Unavailable tiles explain why a target is currently blocked.',
+        searchPlaceholder: 'Search actions',
+        noResults: 'No actions match your current search.',
+        noDescription: 'No description available yet.',
+        sections: {
+            app: 'In the app',
+            voice: 'Voice',
+            integrations: 'Integrations',
+        },
+        badges: {
+            unavailable: 'Unavailable',
+        },
+        reasons: {
+            voiceFeature: 'Enable Voice Assistant settings to use this target.',
+            voiceInventoryPrivacy: 'Turn on Share device inventory in Voice Assistant privacy settings to use this target.',
+            mcpFeature: 'Enable MCP servers to surface this action through MCP.',
+            executionRunsFeature: 'Enable execution runs to use this action or target.',
+            memorySearchFeature: 'Enable Local Memory Search to use this action.',
+            sessionHandoffFeature: 'Enable session handoff support to use this action.',
+            notAvailableInThisApp: 'This target is not surfaced in this client yet.',
+        },
+        targets: {
+            session_header: {
+                title: 'Session header',
+                subtitle: 'Visible in the session header toolbar.',
+            },
+            session_action_menu: {
+                title: 'Session menu',
+                subtitle: 'Visible in the session actions menu.',
+            },
+            session_info: {
+                title: 'Session details',
+                subtitle: 'Visible in the session info screen.',
+            },
+            command_palette: {
+                title: 'Command palette',
+                subtitle: 'Visible in the global command palette.',
+            },
+            slash_command: {
+                title: 'Slash command',
+                subtitle: 'Available from slash-command style action pickers.',
+            },
+            agent_input_chips: {
+                title: 'Composer chips',
+                subtitle: 'Shown as quick chips near the agent input.',
+            },
+            voice_panel: {
+                title: 'Voice panel',
+                subtitle: 'Shown in the voice assistant panel.',
+            },
+            run_list: {
+                title: 'Runs list',
+                subtitle: 'Visible from execution run lists.',
+            },
+            run_card: {
+                title: 'Run cards',
+                subtitle: 'Visible on execution run cards.',
+            },
+            voice_tool: {
+                title: 'Voice tool',
+                subtitle: 'Available to the voice agent as a callable tool.',
+            },
+            voice_action_block: {
+                title: 'Voice action block',
+                subtitle: 'Shown inside voice action blocks and affordances.',
+            },
+            mcp: {
+                title: 'MCP',
+                subtitle: 'Available through the MCP action catalog.',
+            },
+            session_control_cli: {
+                title: 'Session control CLI',
+                subtitle: 'Available through the session control CLI surface.',
+            },
+            contextual_ui: {
+                title: 'Contextual UI',
+                subtitle: 'Shown in contextual UI surfaces that do not have a dedicated placement.',
+            },
+        },
+    },
+
+settingsSession: {
+          sessionList: {
+              title: 'Session List',
+              footer: 'Appearance and behavior of the session sidebar list.',
+              tagsTitle: 'Session tags',
+              tagsEnabledSubtitle: 'Tag controls visible in the session list',
+              tagsDisabledSubtitle: 'Tag controls hidden',
+          },
+          input: {
+              title: 'Input',
+              footer: 'Configure the agent input bar appearance and behavior.',
+          },
+          advanced: {
+              title: 'Advanced',
+          },
           messageSending: {
               title: 'Message sending',
               footer: 'Controls what happens when you send a message while the agent is running.',
@@ -3597,6 +4532,8 @@ export const en = {
             title: 'Transcript',
             entrySubtitle: 'Open transcript settings',
             footer: 'Customize how chats are displayed and how the transcript behaves.',
+            codeDiffs: 'Code & Diffs',
+            codeDiffsFooter: 'Configure how code and diff content is displayed in the transcript.',
             layoutTitle: 'Layout',
             layoutFooter: 'Choose between a simple linear transcript and turn grouping.',
             layoutPickerTitle: 'Transcript layout',
@@ -3744,18 +4681,73 @@ export const en = {
             },
         },
         subAgentGuidanceEntry: {
-            openSubtitle: 'Open Sub-agent settings',
+            openSubtitle: 'Open Subagents settings',
         },
-        actionsEntry: {
-            footer: 'Enable actions per surface and placement (UI, voice, MCP) and control where they appear.',
-            openSubtitle: 'Open actions settings',
-        },
+          handoff: {
+              title: 'Session handoff',
+              groupTitle: 'Session handoff',
+              groupFooter: 'Choose default options for moving a session between machines.',
+              entrySubtitle: 'Open handoff defaults',
+              workspaceTransfer: {
+                  groupTitle: 'Workspace transfer',
+                  groupFooter: 'Decide whether handoff should copy the workspace and how conflicts are handled by default.',
+                  title: 'Transfer workspace',
+                  enabledSubtitle: 'Copy the workspace to the target machine by default.',
+                  disabledSubtitle: 'Keep the target workspace unchanged by default.',
+                  strategy: {
+                      title: 'Workspace transfer strategy',
+                      subtitle: 'Choose whether handoff transfers a full snapshot or syncs only the needed changes.',
+                      transferSnapshotTitle: 'Transfer snapshot',
+                      transferSnapshotSubtitle: 'Export and transfer a full workspace snapshot.',
+                      syncChangesTitle: 'Sync changes',
+                      syncChangesSubtitle: 'Compare source and target workspaces and apply only the required one-way changes.',
+                  },
+              },
+              conflictPolicy: {
+                  title: 'Workspace conflict policy',
+                  subtitle: 'Choose what happens when the target path already exists.',
+                  createSiblingCopyTitle: 'Create sibling copy',
+                  createSiblingCopySubtitle: 'Preserve the existing target path and create a sibling copy for the handoff.',
+                  replaceExistingTitle: 'Replace existing path',
+                  replaceExistingSubtitle: 'Replace the existing target path after confirmation.',
+              },
+              includeIgnoredMode: {
+                  title: 'Ignored files',
+                  subtitle: 'Choose how git-ignored files are treated during workspace transfer.',
+                  excludeTitle: 'Exclude ignored files',
+                  excludeSubtitle: 'Skip ignored files by default.',
+                  includeSelectedTitle: 'Include selected ignored files',
+                  includeSelectedSubtitle: 'Copy only ignored paths that match the configured globs.',
+                  globsTitle: 'Ignored include globs',
+                  globsPlaceholder: 'dist/**, .env.local',
+              },
+              directTargetMode: {
+                  title: 'Direct session target mode',
+                  subtitle: 'Choose what should happen when handing off a direct session.',
+                  groupTitle: 'Direct session handoff',
+                  groupFooter: 'Applies only when the source session is currently direct.',
+                  keepDirectTitle: 'Keep direct',
+                  keepDirectSubtitle: 'Resume the target as a direct session when the provider supports it.',
+                  convertToPersistedTitle: 'Convert to synced',
+                  convertToPersistedSubtitle: 'Import the transcript and continue as a synced Happier session.',
+              },
+          },
           defaultPermissions: {
               title: 'Default permissions',
               footer: 'Applies when starting a new session. Profiles can optionally override this.',
               applyPermissionChangesTitle: 'Apply permission changes',
               applyPermissionChangesImmediateSubtitle: 'Apply immediately for running sessions (updates session metadata).',
               applyPermissionChangesNextPromptSubtitle: 'Apply on next message only.',
+          },
+          defaultStorage: {
+              title: 'Default session storage',
+              footer: 'Choose whether new sessions start as synced Happier sessions or direct provider-backed sessions.',
+              globalTitle: 'Global default',
+              persistedSubtitle: 'Store new sessions in Happier and sync them across devices by default.',
+              directSubtitle: 'Start machine-bound direct sessions when the provider supports it.',
+              globalSubtitle: ({ label }: { label: string }) => `Global default: ${label}`,
+              useGlobalDefault: 'Use global default',
+              currently: ({ label }: { label: string }) => `Currently: ${label}`,
           },
           replayResume: {
               title: 'Replay resume',
@@ -3812,13 +4804,21 @@ export const en = {
             legacySecretExportDisabledSubtitle:
                 'Disabled (recommended): provision terminals with the content key only (Terminal Connect V2).',
         },
-        sessionList: {
-            title: 'Session list',
-            footer: 'Customize what appears on each session row.',
-            tagsTitle: 'Session tags',
-            tagsEnabledSubtitle: 'Tag controls visible in the session list',
-            tagsDisabledSubtitle: 'Tag controls hidden',
+        windows: {
+            title: 'Windows',
+            defaultModeTitle: 'Default Windows remote session mode',
         },
+    },
+    windowsRemoteSessionLaunchMode: {
+        hidden: 'Hidden',
+        shortHidden: 'Hidden',
+        hiddenSubtitle: 'Start the session in the background without opening a terminal window.',
+        windowsTerminal: 'Windows Terminal',
+        shortWindowsTerminal: 'WT',
+        windowsTerminalSubtitle: 'Open the session in a dedicated Windows Terminal window.',
+        console: 'Console',
+        shortConsole: 'Console',
+        consoleSubtitle: 'Open the session in a standard Windows console window.',
     },
     settingsVoice: {
         // Voice settings screen
@@ -4341,6 +5341,17 @@ export const en = {
                     teleportEnabledSubtitle: 'Allow teleporting the agent to another machine when needed.',
                     teleportDisabledSubtitle: 'Teleport disabled.',
                 },
+                machineRecovery: {
+                    switchTitle: 'Voice machine unavailable',
+                    switchBody: ({ currentMachine, nextMachine }: { currentMachine: string; nextMachine: string }) =>
+                        `The current voice machine (${currentMachine}) is unavailable.\n\nSwitch voice to ${nextMachine}?`,
+                    switchAction: 'Switch machine',
+                    replayTitle: 'Bring conversation over?',
+                    replayBody: ({ nextMachine }: { nextMachine: string }) =>
+                        `You can start fresh on ${nextMachine}, or switch and replay recent voice context from the previous machine.`,
+                    replayAction: 'Switch and replay recent voice context',
+                    startFreshAction: 'Start fresh',
+                },
                 agentSource: {
                     followSessionTitle: 'Follow session',
                     followSessionSubtitle: 'Use the session backend and configuration.',
@@ -4404,13 +5415,15 @@ export const en = {
                     shortSubtitle: 'Keep agent responses brief.',
                     balancedSubtitle: 'Allow slightly more detail when needed.',
                 },
-                streaming: {
-                    title: 'Streaming',
-                    enableTitle: 'Enable streaming',
-                    enableTtsTitle: 'Enable TTS streaming',
-                    ttsChunkCharsTitle: 'TTS chunk chars',
-                    ttsChunkCharsPromptBody: 'How many characters to buffer before requesting the next TTS chunk (32–2000).',
-                },
+	                streaming: {
+	                    title: 'Streaming',
+	                    enableTitle: 'Enable streaming',
+	                    enableSubtitle: 'Stream partial agent text as it is generated (used for streaming speech).',
+	                    enableTtsTitle: 'Enable TTS streaming',
+	                    enableTtsSubtitle: 'Speak the response while it is streaming (requires streaming).',
+	                    ttsChunkCharsTitle: 'TTS chunk chars',
+	                    ttsChunkCharsPromptBody: 'How many characters to buffer before requesting the next TTS chunk (32–2000).',
+	                },
                 network: {
                     title: 'Network',
                     timeoutTitle: 'Network timeout (ms)',
@@ -4677,6 +5690,36 @@ export const en = {
             `This connection is for ${serverUrl}. Switch servers and continue?`,
     },
 
+    terminalEmbedded: {
+        dockMenuA11y: 'Dock terminal',
+        settings: {
+            locationTitle: 'Embedded terminal location',
+        },
+        quickKeys: {
+            esc: 'Esc',
+            tab: 'Tab',
+            ctrlC: 'Ctrl+C',
+            ctrlD: 'Ctrl+D',
+            enter: 'Enter',
+        },
+        location: {
+            sidebar: 'Sidebar',
+            details: 'Details panel',
+            bottom: 'Bottom panel',
+        },
+        errors: {
+            missingMachineTarget: 'This session is missing a machine target.',
+            rpcTargetUnavailable: 'Machine RPC is unavailable for this machine.',
+            machineUnreachable: 'Machine is unreachable.',
+            disabled: 'Terminal support is disabled by the daemon configuration. Enable it and restart the daemon.',
+            notFound: 'Terminal session not found. Try restarting.',
+            cwdDenied: 'The daemon does not have permission to use this working directory.',
+            spawnFailed: 'Failed to spawn the terminal process.',
+            invalidRequest: 'Invalid terminal request.',
+            busy: 'Terminal is busy. Try again.',
+        },
+    },
+
     modals: {
         // Used across connect flows and settings
         authenticateTerminal: 'Authenticate Terminal',
@@ -4738,7 +5781,7 @@ export const en = {
     welcome: {
         // Main welcome screen for unauthenticated users
         title: 'Codex, Claude Code and OpenCode mobile client',
-        subtitle: 'End-to-end encrypted and your account is stored only on your device.',
+        subtitle: 'End-to-end encrypted by default, with account restore for your other devices.',
         createAccount: 'Create account',
         chooseEncryptionTitle: 'Choose encryption',
         chooseEncryptionBody: 'This server supports both encrypted and non-encrypted accounts. Choose how you want to store your account data.',
@@ -4764,15 +5807,16 @@ export const en = {
         notReally: 'Not really'
     },
 
-    items: {
-        // Used by Item component for copy toast
-        copiedToClipboard: ({ label }: { label: string }) => `${label} copied to clipboard`
-    },
+	    items: {
+	        // Used by Item component for copy toast
+	        copiedToClipboard: ({ label }: { label: string }) => `${label} copied to clipboard`,
+	        failedToCopyToClipboard: 'Failed to copy to clipboard',
+	    },
 
     machine: {
         launchNewSessionInDirectory: 'Launch New Session in Directory',
         offlineUnableToSpawn: 'Launcher disabled while machine is offline',
-        offlineHelp: '• Make sure your computer is online\n• Run `happier daemon status` to diagnose\n• Are you running the latest CLI version? Upgrade with `npm install -g @happier-dev/cli@latest`',
+        offlineHelp: '• Make sure your computer is online\n• Run `happier daemon status` to diagnose\n• Are you running the latest CLI version? Run `happier self update`',
         customPathPlaceholder: 'Enter custom path',
         tools: {
             title: 'Tools',
@@ -4835,6 +5879,7 @@ export const en = {
         never: 'Never',
         metadataVersion: 'Metadata Version',
         detectedClis: 'Detected CLIs',
+        detectedCliDetected: 'Detected',
         detectedCliNotDetected: 'Not detected',
         detectedCliUnknown: 'Unknown',
         detectedCliNotSupported: 'Not supported (update @happier-dev/cli)',
@@ -4857,6 +5902,11 @@ export const en = {
             remoteSessionConsoleVisibleSubtitle: 'Remote sessions open in a visible console window on this machine.',
             remoteSessionConsoleHiddenSubtitle: 'Remote sessions start hidden to avoid opening/flickering windows.',
             remoteSessionConsoleUpdateFailed: 'Failed to update Windows session console setting.',
+            remoteSessionModeTitle: 'Remote session mode',
+            remoteSessionModeOverrideTitle: 'Override global Windows session mode',
+            remoteSessionModeOverrideEnabledSubtitle: 'This machine uses its own Windows remote session mode.',
+            remoteSessionModeOverrideDisabledSubtitle: 'This machine follows your global Windows remote session mode.',
+            windowsTerminalUnavailableSuffix: 'Windows Terminal is not detected on this machine.',
         },
     },
 
@@ -4871,12 +5921,28 @@ export const en = {
     chatFooter: {
         permissionsTerminalOnly: 'Permissions are shown in the terminal only. Reset or send a message to control from the app.',
         sessionRunningLocally: 'This session is running locally on this computer. You can switch to remote to control it from the app.',
-        switchToRemote: 'Switch to remote',
-        localModeAvailable: 'Local mode is available for this session.',
-        localModeUnavailableMachineOffline: 'Local mode is unavailable while this machine is offline.',
-        localModeUnavailableDaemonStarted: 'Local mode is unavailable for daemon-started sessions.',
-        localModeUnavailableNeedsResume: 'Local mode requires resume support for this provider.',
+        sessionRunningLocallyAndRemotely: 'This session is attached locally in OpenCode and is still controllable from the app.',
+        switchingToRemote: 'Switching to remote mode…',
         switchToLocal: 'Switch to local',
+        switchToRemote: 'Switch to remote',
+        detachLocalTerminal: 'Detach terminal',
+        directSessionTakeoverAvailable: 'This direct session is available on your machine. Take it over in Happier to control it here.',
+        directSessionMachineOffline: 'This direct session is currently unavailable because the machine is offline.',
+        switchingToDirectTakeover: 'Taking over this direct session…',
+        switchingToPersistedTakeover: 'Taking over and syncing this session…',
+        takeOverDirect: 'Take over',
+        takeOverPersist: 'Take over + Sync',
+        directTakeoverDialogTitle: 'Continue this direct session in Happier?',
+        directTakeoverDialogBody: 'Choose how you want Happier to take control. Direct keeps using the provider transcript. Sync imports the transcript into Happier.',
+        directTakeoverDialogDirectTitle: 'Take over',
+        directTakeoverDialogDirectBody: 'Control this session in Happier without syncing the transcript into Happier.',
+        directTakeoverDialogPersistTitle: 'Take over + Sync',
+        directTakeoverDialogPersistBody: 'Import the transcript into Happier and continue with full synced session features.',
+        directTakeoverDialogForceStopTitle: 'Try to stop the local process first',
+        directTakeoverDialogForceStopBody: 'Happier found a trusted local process for this session. Enable this if you want Happier to stop it before taking over.',
+        directTakeoverForceStopConfirmTitle: 'Stop the local process first?',
+        directTakeoverForceStopConfirmBody: 'Happier found a trusted local process for this direct session. Stop it before taking over here?',
+        directTakeoverForceStopConfirmAction: 'Stop and take over',
     },
 
     codex: {
@@ -5246,7 +6312,6 @@ export const en = {
                 useOnceButton: 'Use once (session only)',
             },
         },
-        defaultSessionType: 'Default Session Type',
         defaultPermissionMode: {
             title: 'Default Permission Mode',
             descriptions: {
@@ -5263,6 +6328,13 @@ export const en = {
             useAccountDefault: 'Use account default',
             currently: ({ label }: { label: string }) => `Currently: ${label}`,
         },
+    defaultStorage: {
+      title: 'Default session storage',
+      footer: 'Overrides the account-level default synced/direct session mode for new sessions when this profile is selected.',
+      accountDefaultSubtitle: ({ label }: { label: string }) => `Account default: ${label}`,
+      useAccountDefault: 'Use account default',
+      currently: ({ label }: { label: string }) => `Currently: ${label}`,
+    },
         aiBackend: {
             title: 'AI Backend',
             selectAtLeastOneError: 'Select at least one AI backend.',
@@ -5274,6 +6346,8 @@ export const en = {
             qwenSubtitleExperimental: 'Qwen Code CLI (experimental)',
             kimiSubtitleExperimental: 'Kimi CLI (experimental)',
             kiloSubtitleExperimental: 'Kilo CLI (experimental)',
+            kiroSubtitleExperimental: 'Kiro CLI (experimental)',
+            customAcpSubtitleExperimental: 'Custom ACP CLI (experimental)',
             piSubtitleExperimental: 'Pi CLI (experimental)',
             copilotSubtitleExperimental: 'GitHub Copilot CLI (experimental)',
         },

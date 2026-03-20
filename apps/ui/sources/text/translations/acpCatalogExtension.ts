@@ -1,6 +1,4 @@
-import type { SupportedLanguage } from '../_all';
-
-const settingsAcpCatalogTranslationExtension = {
+const settingsAcpCatalogExtension = {
     acpCatalog: 'ACP Backends',
     acpCatalogSubtitle: 'Manage built-in and custom ACP backends',
     acpCatalogBuiltIn: 'Built-in ACP',
@@ -44,29 +42,24 @@ const settingsAcpCatalogTranslationExtension = {
     acpCatalogDeleteBackendTitle: 'Delete ACP backend?',
     acpCatalogDeleteBackendConfirm: ({ name }: { name: string }) => `Delete "${name}"?`,
     acpCatalogValidationFailed: 'ACP catalog settings are invalid.',
-} as const;
-
-const newSessionAcpCatalogTranslationExtension = {} as const;
-
-export const acpCatalogTranslationExtensions: Record<
-    SupportedLanguage,
-    {
-        readonly settings: typeof settingsAcpCatalogTranslationExtension;
-        readonly newSession: typeof newSessionAcpCatalogTranslationExtension;
-    }
-> = {
-    en: { settings: settingsAcpCatalogTranslationExtension, newSession: newSessionAcpCatalogTranslationExtension },
-    ru: { settings: settingsAcpCatalogTranslationExtension, newSession: newSessionAcpCatalogTranslationExtension },
-    pl: { settings: settingsAcpCatalogTranslationExtension, newSession: newSessionAcpCatalogTranslationExtension },
-    es: { settings: settingsAcpCatalogTranslationExtension, newSession: newSessionAcpCatalogTranslationExtension },
-    it: { settings: settingsAcpCatalogTranslationExtension, newSession: newSessionAcpCatalogTranslationExtension },
-    pt: { settings: settingsAcpCatalogTranslationExtension, newSession: newSessionAcpCatalogTranslationExtension },
-    ca: { settings: settingsAcpCatalogTranslationExtension, newSession: newSessionAcpCatalogTranslationExtension },
-    'zh-Hans': { settings: settingsAcpCatalogTranslationExtension, newSession: newSessionAcpCatalogTranslationExtension },
-    'zh-Hant': { settings: settingsAcpCatalogTranslationExtension, newSession: newSessionAcpCatalogTranslationExtension },
-    ja: { settings: settingsAcpCatalogTranslationExtension, newSession: newSessionAcpCatalogTranslationExtension },
 };
 
-export type AcpCatalogTranslationExtension = (typeof acpCatalogTranslationExtensions)['en'];
+const newSessionAcpCatalogExtension = {
+    // Intentionally empty for now: ACP catalog UX is currently settings-first, but translation files
+    // spread `acpCatalogTranslationExtension.newSession` to keep extension ownership consistent.
+};
+
+export const acpCatalogTranslationExtensions = {
+    en: { settings: settingsAcpCatalogExtension, newSession: newSessionAcpCatalogExtension },
+    ru: { settings: settingsAcpCatalogExtension, newSession: newSessionAcpCatalogExtension },
+    pl: { settings: settingsAcpCatalogExtension, newSession: newSessionAcpCatalogExtension },
+    es: { settings: settingsAcpCatalogExtension, newSession: newSessionAcpCatalogExtension },
+    it: { settings: settingsAcpCatalogExtension, newSession: newSessionAcpCatalogExtension },
+    pt: { settings: settingsAcpCatalogExtension, newSession: newSessionAcpCatalogExtension },
+    ca: { settings: settingsAcpCatalogExtension, newSession: newSessionAcpCatalogExtension },
+    'zh-Hans': { settings: settingsAcpCatalogExtension, newSession: newSessionAcpCatalogExtension },
+    'zh-Hant': { settings: settingsAcpCatalogExtension, newSession: newSessionAcpCatalogExtension },
+    ja: { settings: settingsAcpCatalogExtension, newSession: newSessionAcpCatalogExtension },
+} as const;
 
 export const acpCatalogTranslationExtension = acpCatalogTranslationExtensions.en;
