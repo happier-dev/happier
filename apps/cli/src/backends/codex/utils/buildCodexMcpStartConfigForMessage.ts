@@ -9,6 +9,7 @@ export function buildCodexMcpStartConfigForMessage(opts: Readonly<{
   mcpServers: unknown;
   mode: { model?: string | null | undefined };
   systemPromptText?: string | null | undefined;
+  cwd?: string | null | undefined;
 }>): CodexSessionConfig {
   const systemPromptText = typeof opts.systemPromptText === 'string' ? opts.systemPromptText.trim() : '';
 
@@ -23,5 +24,6 @@ export function buildCodexMcpStartConfigForMessage(opts: Readonly<{
     approvalPolicy: opts.approvalPolicy,
     mcpServers: opts.mcpServers,
     model: opts.mode.model,
+    cwd: opts.cwd ?? null,
   });
 }

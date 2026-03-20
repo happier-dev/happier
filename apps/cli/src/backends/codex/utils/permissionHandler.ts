@@ -34,6 +34,7 @@ export class CodexPermissionHandler extends CodexLikePermissionHandler {
     opts?: {
       pushSender?: PermissionRequestPushSender | null;
       getAccountSettings?: (() => AccountSettings | null) | null;
+      getAccountSettingsSecretsReadKeys?: (() => ReadonlyArray<Uint8Array | null | undefined>) | null;
       onAbortRequested?: (() => void | Promise<void>) | null;
       toolTrace?: { protocol: ToolTraceProtocol; provider: string } | null;
       triggerAbortCallbackOnAbortDecision?: boolean;
@@ -44,6 +45,7 @@ export class CodexPermissionHandler extends CodexLikePermissionHandler {
       logPrefix: '[Codex]',
       pushSender: opts?.pushSender ?? null,
       getAccountSettings: opts?.getAccountSettings ?? null,
+      getAccountSettingsSecretsReadKeys: opts?.getAccountSettingsSecretsReadKeys ?? null,
       onAbortRequested: opts?.onAbortRequested ?? null,
       toolTrace: opts?.toolTrace ?? null,
       triggerAbortCallbackOnAbortDecision: opts?.triggerAbortCallbackOnAbortDecision,

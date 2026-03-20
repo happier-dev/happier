@@ -28,8 +28,16 @@ describe('DiffProcessor (Codex)', () => {
 
     const { calls, results } = collectByType(sent);
     expect(calls).toHaveLength(1);
-    expect(calls[0].name).toBe('CodexDiff');
-    expect(calls[0].input.unified_diff).toBe('diff-2');
+    expect(calls[0].name).toBe('Diff');
+    expect(calls[0].input).toEqual(expect.objectContaining({
+      files: expect.any(Array),
+      _happier: expect.objectContaining({
+        provider: 'codex',
+        rawToolName: 'CodexDiff',
+        canonicalToolName: 'Diff',
+        sessionChangeScope: 'turn',
+      }),
+    }));
 
     expect(results).toHaveLength(1);
     expect(results[0].callId).toBe(calls[0].callId);
@@ -64,7 +72,12 @@ describe('DiffProcessor (Codex)', () => {
 
     const { calls, results } = collectByType(sent);
     expect(calls).toHaveLength(1);
-    expect(calls[0].input.unified_diff).toBe('diff-late-callback');
+    expect(calls[0].name).toBe('Diff');
+    expect(calls[0].input).toEqual(expect.objectContaining({
+      _happier: expect.objectContaining({
+        provider: 'codex',
+      }),
+    }));
     expect(results).toHaveLength(1);
     expect(results[0].callId).toBe(calls[0].callId);
   });
