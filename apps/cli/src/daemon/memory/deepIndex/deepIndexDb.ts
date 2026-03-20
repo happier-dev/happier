@@ -39,6 +39,17 @@ export type DeepIndexDbHandle = Readonly<{
     modelId: string;
     keys: ReadonlyArray<Readonly<{ sessionId: string; seqFrom: number; seqTo: number }>>;
   }>) => Map<string, Float32Array>;
+  listChunksWithoutEmbeddings: (args: Readonly<{
+    sessionId: string;
+    provider: string;
+    modelId: string;
+    limit: number;
+  }>) => ReadonlyArray<Readonly<{
+    sessionId: string;
+    seqFrom: number;
+    seqTo: number;
+    text: string;
+  }>>;
   search: (args: Readonly<{ query: string; scope: DeepIndexSearchScope; maxResults: number }>) => DeepIndexSearchHit[];
   deleteOldestChunks: (args: Readonly<{ limit: number }>) => number;
   checkpointAndVacuum: () => void;
@@ -195,6 +206,20 @@ export function openDeepIndexDb(args: Readonly<{ dbPath: string }>): DeepIndexDb
       embedding = excluded.embedding,
       updatedAtMs = excluded.updatedAtMs;
   `);
+  const listChunksWithoutEmbeddingsStmt = db.prepare(`
+    SELECT c.sessionId, c.seqFrom, c.seqTo, c.text
+    FROM message_chunks c
+    LEFT JOIN chunk_embeddings e
+      ON e.sessionId = c.sessionId
+     AND e.seqFrom = c.seqFrom
+     AND e.seqTo = c.seqTo
+     AND e.provider = ?
+     AND e.modelId = ?
+    WHERE c.sessionId = ?
+      AND e.sessionId IS NULL
+    ORDER BY c.createdAtToMs ASC, c.seqTo ASC
+    LIMIT ?;
+  `);
 
   const embeddingKey = (sessionId: string, seqFrom: number, seqTo: number): string => `${sessionId}:${seqFrom}-${seqTo}`;
 
@@ -295,6 +320,22 @@ export function openDeepIndexDb(args: Readonly<{ dbPath: string }>): DeepIndexDb
         map.set(embeddingKey(sid, Math.trunc(from), Math.trunc(to)), embedding);
       }
       return map;
+    },
+    listChunksWithoutEmbeddings: ({ sessionId, provider, modelId, limit }) => {
+      const sid = String(sessionId ?? '').trim();
+      const prov = String(provider ?? '').trim();
+      const mid = String(modelId ?? '').trim();
+      const cappedLimit = Number.isFinite(limit) ? Math.max(1, Math.trunc(limit)) : 1;
+      if (!sid || !prov || !mid) return [];
+      const rows = listChunksWithoutEmbeddingsStmt.all(prov, mid, sid, cappedLimit) as any[];
+      return rows
+        .map((row) => ({
+          sessionId: typeof row?.sessionId === 'string' ? row.sessionId : '',
+          seqFrom: typeof row?.seqFrom === 'number' ? row.seqFrom : Number(row?.seqFrom ?? NaN),
+          seqTo: typeof row?.seqTo === 'number' ? row.seqTo : Number(row?.seqTo ?? NaN),
+          text: typeof row?.text === 'string' ? row.text : '',
+        }))
+        .filter((row) => row.sessionId && Number.isFinite(row.seqFrom) && Number.isFinite(row.seqTo) && row.text.trim().length > 0);
     },
     search: ({ query, scope, maxResults }) => {
       const normalized = normalizeQuery(query);

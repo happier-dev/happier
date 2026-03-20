@@ -4,6 +4,8 @@ import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 import { compareVersions } from '@happier-dev/cli-common/update';
+import { ensureJavaScriptRuntimeExecutable } from '../../../runtime/js/ensureJavaScriptRuntimeExecutable';
+import { isBun } from '../../../utils/runtime';
 
 function packageJsonPathForNodeModules(params: Readonly<{ rootDir: string; packageName: string }>): string | null {
   const name = String(params.packageName ?? '').trim();
@@ -21,16 +23,19 @@ export function resolveRuntimeEntrypointPath(params: Readonly<{ homeDir: string;
   return join(params.homeDir, 'runtime', 'node_modules', ...parts, 'dist', 'index.mjs');
 }
 
-export function maybeReexecToRuntime(params: Readonly<{
+export async function maybeReexecToRuntime(params: Readonly<{
   cliRootDir: string;
   homeDir: string;
   packageName: string;
   argv: string[];
   env: NodeJS.ProcessEnv;
   exec?: typeof execFileSync;
+  exit?: typeof process.exit;
+  isBunRuntime?: boolean;
   exists?: (path: string) => boolean;
   readVersion?: (packageJsonPath: string) => string | null;
-}>): void {
+  ensureRuntimeExecutable?: typeof ensureJavaScriptRuntimeExecutable;
+}>): Promise<void> {
   const env = params.env;
   if (String(env.HAPPIER_CLI_RUNTIME_DISABLE ?? '').trim() === '1') return;
   if (String(env.HAPPIER_CLI_RUNTIME_REEXEC ?? '').trim() === '1') return;
@@ -57,16 +62,20 @@ export function maybeReexecToRuntime(params: Readonly<{
   if (compareVersions(runtimeVersion, localVersion) <= 0) return;
 
   const execImpl = params.exec ?? execFileSync;
+  const ensureRuntimeExecutable = params.ensureRuntimeExecutable ?? ensureJavaScriptRuntimeExecutable;
+  const runtimeExecutable = await ensureRuntimeExecutable({ isBunRuntime: params.isBunRuntime ?? isBun() });
+  if (!runtimeExecutable) return;
   const childEnv = { ...env, HAPPIER_CLI_RUNTIME_REEXEC: '1' };
   const opts: ExecFileSyncOptions = { stdio: 'inherit', env: childEnv };
+  const exitImpl = params.exit ?? process.exit;
   let exitCode = 0;
   try {
-    execImpl(process.execPath, [runtimeEntrypoint, ...params.argv], opts);
+    execImpl(runtimeExecutable, [runtimeEntrypoint, ...params.argv], opts);
   } catch (err: unknown) {
     const e = err as { status?: unknown; exitCode?: unknown };
     const status = typeof e?.status === 'number' ? e.status : typeof e?.exitCode === 'number' ? e.exitCode : null;
     exitCode = status ?? 1;
   }
 
-  process.exit(exitCode);
+  exitImpl(exitCode);
 }

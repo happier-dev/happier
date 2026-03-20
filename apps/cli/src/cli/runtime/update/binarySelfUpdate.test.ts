@@ -1,4 +1,4 @@
-import { chmodSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
@@ -6,7 +6,7 @@ import { createHash, generateKeyPairSync, sign, type KeyObject } from 'node:cryp
 
 import { describe, expect, it } from 'vitest';
 
-import { updateBinaryFromReleaseAssets, resolveCliBinaryAssetBundleFromReleaseAssets } from './binarySelfUpdate';
+import { updateBinaryFromReleaseAssets, resolveCliBinaryAssetBundleFromReleaseAssets, updateInstalledCliPayloadFromReleaseAssets } from './binarySelfUpdate';
 
 function b64(buf: Buffer) {
   return Buffer.from(buf).toString('base64');
@@ -124,6 +124,63 @@ describe('binarySelfUpdate', () => {
       });
 
       expect(readFileSync(targetBin, 'utf8')).toBe('new\n');
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('downloads + verifies + promotes a full cli payload into the versioned install layout', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'happier-payload-update-'));
+    try {
+      const happyHomeDir = join(root, 'home');
+      const scratch = join(root, 'scratch');
+      mkdirSync(happyHomeDir, { recursive: true });
+      mkdirSync(scratch, { recursive: true });
+
+      const version = '9.9.10-preview.3';
+      const stem = `happier-v${version}-linux-x64`;
+      const artifactDir = join(scratch, stem);
+      mkdirSync(join(artifactDir, 'package-dist'), { recursive: true });
+      writeFileSync(join(artifactDir, 'happier'), 'new-binary\n', 'utf8');
+      chmodSync(join(artifactDir, 'happier'), 0o755);
+      writeFileSync(join(artifactDir, 'package-dist', 'index.mjs'), 'export default "ok";\n', 'utf8');
+
+      const archiveName = `${stem}.tar.gz`;
+      const archivePath = join(scratch, archiveName);
+      const tarRes = spawnSync('tar', ['-czf', archivePath, '-C', scratch, stem], { encoding: 'utf8' });
+      expect(tarRes.status).toBe(0);
+
+      const archiveBytes = readFileSync(archivePath);
+      const archiveSha = sha256Hex(archiveBytes);
+
+      const { pubkeyFile, keyId, privateKey } = createMinisignKeyPair();
+      const checksumsText = `${archiveSha}  ${archiveName}\n`;
+      const sigFile = signMinisignMessage({ message: Buffer.from(checksumsText, 'utf-8'), keyId, privateKey });
+
+      const archiveUrl = `data:application/octet-stream;base64,${archiveBytes.toString('base64')}`;
+      const checksumsUrl = `data:text/plain,${encodeURIComponent(checksumsText)}`;
+      const sigUrl = `data:text/plain,${encodeURIComponent(sigFile)}`;
+
+      const assets = [
+        { name: archiveName, browser_download_url: archiveUrl },
+        { name: `checksums-happier-v${version}.txt`, browser_download_url: checksumsUrl },
+        { name: `checksums-happier-v${version}.txt.minisig`, browser_download_url: sigUrl },
+      ];
+
+      const result = await updateInstalledCliPayloadFromReleaseAssets({
+        assets,
+        os: 'linux',
+        arch: 'x64',
+        happyHomeDir,
+        minisignPubkeyFile: pubkeyFile,
+        preferVersion: null,
+      });
+
+      expect(result.updatedTo).toBe(version);
+      expect(readFileSync(join(happyHomeDir, 'cli', 'current', 'happier'), 'utf8')).toBe('new-binary\n');
+      expect(readFileSync(join(happyHomeDir, 'cli', 'current', 'package-dist', 'index.mjs'), 'utf8')).toContain('ok');
+      expect(existsSync(join(happyHomeDir, 'cli', 'versions', version))).toBe(true);
+      expect(existsSync(join(happyHomeDir, 'bin', 'happier'))).toBe(true);
     } finally {
       rmSync(root, { recursive: true, force: true });
     }

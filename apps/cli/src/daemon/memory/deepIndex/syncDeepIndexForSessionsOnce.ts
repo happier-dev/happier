@@ -1,9 +1,11 @@
 import type { DecryptedTranscriptRow } from '@/session/replay/decryptTranscriptRows';
 import { configuration } from '@/configuration';
+import { logger } from '@/ui/logger';
 
 import type { SummaryShardIndexDbHandle } from '../summaryShardIndexDb';
 import type { DeepIndexDbHandle } from './deepIndexDb';
 import { chunkTranscriptRows } from './chunkTranscriptRows';
+import type { OperationalMemoryEmbeddingsSettings } from '../resolveOperationalMemoryEmbeddingsSettings';
 
 export type SyncDeepIndexSettings = Readonly<{
   enabled: boolean;
@@ -16,11 +18,7 @@ export type SyncDeepIndexSettings = Readonly<{
     failureBackoffBaseMs: number;
     failureBackoffMaxMs: number;
   }>;
-  embeddings?: Readonly<{
-    enabled: boolean;
-    provider: string;
-    modelId: string;
-  }>;
+  embeddings?: OperationalMemoryEmbeddingsSettings | null;
 }>;
 
 function isMemoryArtifactMeta(meta: unknown): boolean {
@@ -88,9 +86,7 @@ export async function syncDeepIndexForSessionsOnce(params: Readonly<{
       });
       continue;
     }
-    if (rows.length === 0) continue;
-
-    const lastScannedSeq = rows[rows.length - 1]!.seq;
+    const lastScannedSeq = rows.length > 0 ? rows[rows.length - 1]!.seq : afterSeq;
 
     try {
       const indexable: Array<{ seq: number; createdAtMs: number; text: string; role: 'user' | 'agent' }> = [];
@@ -124,19 +120,25 @@ export async function syncDeepIndexForSessionsOnce(params: Readonly<{
       }
 
       const emb = params.settings.embeddings;
-      if (emb?.enabled === true && typeof params.embedDocuments === 'function' && chunks.length > 0) {
-        const provider = String(emb.provider ?? '').trim();
-        const modelId = String(emb.modelId ?? '').trim();
-        if (provider && modelId) {
+      const provider = String(emb?.providerKind ?? '').trim();
+      const modelId = String(emb?.modelId ?? '').trim();
+      if (emb?.enabled === true && typeof params.embedDocuments === 'function' && provider && modelId) {
+        const chunksToEmbed = params.deep.listChunksWithoutEmbeddings({
+          sessionId,
+          provider,
+          modelId,
+          limit: Math.max(1, Math.max(chunks.length, pageLimit)),
+        });
+        if (chunksToEmbed.length > 0) {
           try {
-            const vectors = await params.embedDocuments(chunks.map((c) => c.text));
-            if (Array.isArray(vectors) && vectors.length === chunks.length) {
-              for (let i = 0; i < chunks.length; i += 1) {
-                const chunk = chunks[i]!;
+            const vectors = await params.embedDocuments(chunksToEmbed.map((chunk) => chunk.text));
+            if (Array.isArray(vectors) && vectors.length === chunksToEmbed.length) {
+              for (let i = 0; i < chunksToEmbed.length; i += 1) {
+                const chunk = chunksToEmbed[i]!;
                 const vec = vectors[i]!;
                 if (!(vec instanceof Float32Array) || vec.length === 0) continue;
                 params.deep.upsertEmbedding({
-                  sessionId,
+                  sessionId: chunk.sessionId,
                   seqFrom: chunk.seqFrom,
                   seqTo: chunk.seqTo,
                   provider,
@@ -146,13 +148,21 @@ export async function syncDeepIndexForSessionsOnce(params: Readonly<{
                 });
               }
             }
-          } catch {
-            // Best-effort: embeddings are optional; do not fail deep indexing.
+          } catch (error) {
+            logger.debug('[memoryWorker] Missing chunk embeddings backfill failed (best-effort)', {
+              sessionId,
+              provider,
+              modelId,
+              chunkCount: chunksToEmbed.length,
+              message: error instanceof Error ? error.message : String(error),
+            });
           }
         }
       }
 
-      params.tier1.markDeepIndexSuccess({ sessionId, seqTo: lastScannedSeq, nowMs });
+      if (rows.length > 0) {
+        params.tier1.markDeepIndexSuccess({ sessionId, seqTo: lastScannedSeq, nowMs });
+      }
     } catch {
       params.tier1.markDeepIndexFailure({
         sessionId,
