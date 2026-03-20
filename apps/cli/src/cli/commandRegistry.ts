@@ -10,12 +10,16 @@ import { handleDaemonCliCommand } from './commands/daemon';
 import { handleDoctorCliCommand } from './commands/doctor';
 import { handleInstallCliCommand } from './commands/install';
 import { handleLogoutCliCommand } from './commands/logout';
+import { handleMcpCliCommand } from './commands/mcp';
 import { handleNotifyCliCommand } from './commands/notify';
+import { handleProfilesCliCommand } from './commands/profiles';
 import { handleResumeCliCommand } from './commands/resume';
 import { handleSessionCliCommand } from './commands/session/index';
 import { handleServerCliCommand } from './commands/server';
 import { handleSelfCliCommand } from './commands/self';
 import { handleSelfUpdateCliCommand } from './commands/selfUpdate';
+import { handleToolsCliCommand } from './commands/tools';
+import { handleConfiguredAcpCatalogCliCommand } from '@/agent/acp/catalog/configured/handleConfiguredAcpCatalogCliCommand';
 
 export type CommandContext = Readonly<{
   args: string[];
@@ -41,6 +45,7 @@ function buildAgentCommandRegistry(): Readonly<Record<string, CommandHandler>> {
 
 export const commandRegistry: Readonly<Record<string, CommandHandler>> = {
   attach: handleAttachCliCommand,
+  'acp-catalog': handleConfiguredAcpCatalogCliCommand,
   auth: handleAuthCliCommand,
   'bug-report': handleBugReportCliCommand,
   connect: handleConnectCliCommand,
@@ -48,11 +53,15 @@ export const commandRegistry: Readonly<Record<string, CommandHandler>> = {
   doctor: handleDoctorCliCommand,
   install: handleInstallCliCommand,
   logout: handleLogoutCliCommand,
+  mcp: handleMcpCliCommand,
   notify: handleNotifyCliCommand,
+  profile: handleProfilesCliCommand,
+  profiles: handleProfilesCliCommand,
   resume: handleResumeCliCommand,
   session: handleSessionCliCommand,
   server: handleServerCliCommand,
   self: handleSelfCliCommand,
   'self-update': handleSelfUpdateCliCommand,
+  tools: handleToolsCliCommand,
   ...buildAgentCommandRegistry(),
 };

@@ -22,4 +22,26 @@ describe('commandRegistry install/update aliases', () => {
   it('registers session top-level command', () => {
     expect(commandRegistry.session).toBeTypeOf('function');
   });
+
+  it('registers profiles command namespace + alias', () => {
+    expect(commandRegistry.profiles).toBeTypeOf('function');
+    expect(commandRegistry.profile).toBeTypeOf('function');
+  });
+
+  it('registers mcp command namespace', () => {
+    expect(commandRegistry.mcp).toBeTypeOf('function');
+  });
+
+  it('registers tools command namespace', () => {
+    expect(commandRegistry.tools).toBeTypeOf('function');
+  });
+
+  it('registers built-in generic ACP agent commands', () => {
+    expect(commandRegistry.customAcp).toBeTypeOf('function');
+    expect(commandRegistry.kiro).toBeTypeOf('function');
+  });
+
+  it('registers the configured ACP catalog command namespace', () => {
+    expect(commandRegistry['acp-catalog']).toBeTypeOf('function');
+  });
 });
