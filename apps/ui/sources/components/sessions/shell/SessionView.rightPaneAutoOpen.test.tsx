@@ -94,6 +94,7 @@ vi.mock('react-native-unistyles', () => ({
 
 vi.mock('@react-navigation/native', () => ({
   useFocusEffect: () => {},
+  useIsFocused: () => true,
 }));
 
 vi.mock('expo-router', () => ({
@@ -182,6 +183,7 @@ vi.mock('@/components/sessions/model/useSessionMachineReachability', () => ({
 }));
 vi.mock('@/sync/domains/server/serverRuntime', () => ({
   getActiveServerSnapshot: () => ({ serverId: 'server-1' }),
+  subscribeActiveServer: () => () => {},
 }));
 vi.mock('@/voice/session/voiceSession', () => ({
   useVoiceSessionSnapshot: () => ({ status: 'disconnected' }),
@@ -285,7 +287,6 @@ vi.mock('@/sync/acp/sessionModeControl', () => ({
   supportsSessionModeOverrides: () => false,
 }));
 vi.mock('@/sync/domains/session/control/localControlSwitch', () => ({
-  getSwitchToLocalControlDisabledReason: () => null,
   shouldRenderChatTimelineForSession: () => true,
   shouldRequestRemoteControlAfterPendingEnqueue: () => false,
 }));
@@ -297,6 +298,8 @@ vi.mock('@/sync/runtime/time', () => ({
 vi.mock('@/utils/system/fireAndForget', () => ({
   fireAndForget: () => {},
 }));
+
+const { SessionView } = await import('./SessionView');
 
 describe('SessionView (right pane auto-open)', () => {
   beforeEach(() => {
@@ -311,7 +314,6 @@ describe('SessionView (right pane auto-open)', () => {
 
   it('opens right pane on first visit when sessionsRightPaneDefaultOpen is enabled and no prior tab state exists', async () => {
     sessionsRightPaneDefaultOpen = true;
-    const { SessionView } = await import('./SessionView');
     let tree!: renderer.ReactTestRenderer;
 
     act(() => {
@@ -334,8 +336,6 @@ describe('SessionView (right pane auto-open)', () => {
     sessionsRightPaneDefaultOpen = true;
     rightScopeState = { right: { isOpen: false, activeTabId: 'git', tabState: {} }, details: { isOpen: false, tabs: [], activeTabKey: null } };
 
-    const { SessionView } = await import('./SessionView');
-
     let tree!: renderer.ReactTestRenderer;
     act(() => {
       tree = renderer.create(
@@ -354,8 +354,6 @@ describe('SessionView (right pane auto-open)', () => {
 
   it('does not open right pane when the setting is disabled', async () => {
     sessionsRightPaneDefaultOpen = false;
-    const { SessionView } = await import('./SessionView');
-
     let tree!: renderer.ReactTestRenderer;
     act(() => {
       tree = renderer.create(
@@ -376,8 +374,6 @@ describe('SessionView (right pane auto-open)', () => {
     editorFocusModeEnabled = true;
     // Ensure at least one pane is open so focus mode is meaningful.
     rightScopeState = { right: { isOpen: true, activeTabId: 'files', tabState: {} }, details: { isOpen: false, tabs: [], activeTabKey: null } };
-
-    const { SessionView } = await import('./SessionView');
 
     let tree!: renderer.ReactTestRenderer;
     act(() => {
@@ -400,8 +396,6 @@ describe('SessionView (right pane auto-open)', () => {
 
   it('keeps URL pane sync enabled when multi-pane setting is unset', async () => {
     uiMultiPanePanelsEnabledSetting = undefined;
-
-    const { SessionView } = await import('./SessionView');
 
     let tree!: renderer.ReactTestRenderer;
     act(() => {

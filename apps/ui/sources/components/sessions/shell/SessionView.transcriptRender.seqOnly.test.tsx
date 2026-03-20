@@ -112,6 +112,7 @@ vi.mock('react-native-unistyles', () => ({
 
 vi.mock('@react-navigation/native', () => ({
   useFocusEffect: () => {},
+  useIsFocused: () => true,
 }));
 
 vi.mock('expo-router', () => ({
@@ -201,6 +202,7 @@ vi.mock('@/components/sessions/model/useSessionMachineReachability', () => ({
 
 vi.mock('@/sync/domains/server/serverRuntime', () => ({
   getActiveServerSnapshot: () => ({ serverId: 'server-1' }),
+  subscribeActiveServer: () => () => {},
 }));
 vi.mock('@/voice/session/voiceSession', () => ({
   useVoiceSessionSnapshot: () => ({ status: 'disconnected' }),
@@ -255,7 +257,12 @@ vi.mock('@/agents/catalog/catalog', async (importOriginal) => {
   const actual = await importOriginal<any>();
   return {
     ...actual,
-    getAgentCore: () => ({ model: { defaultMode: 'default' }, resume: { vendorResumeIdField: null, runtimeGate: null } }),
+    getAgentCore: () => ({
+      displayNameKey: 'agents.codex',
+      cli: { spawnAgent: 'codex' },
+      model: { defaultMode: 'default' },
+      resume: { vendorResumeIdField: null },
+    }),
     resolveAgentIdFromFlavor: () => 'codex',
     DEFAULT_AGENT_ID: 'codex',
   };
@@ -288,7 +295,7 @@ vi.mock('@/platform/randomUUID', () => ({
 }));
 
 vi.mock('@/sync/domains/state/storage', () => {
-  const session: any = {
+  let session: any = {
     id: 's1',
     seq: 25,
     presence: 'online',
@@ -299,7 +306,7 @@ vi.mock('@/sync/domains/state/storage', () => {
   };
   const storage = {
     getState: () => ({
-      sessions: { s1: session },
+      sessions: session ? { s1: session } : {},
       settings: { sessionMessageSendMode: 'direct', sessionBusySteerSendPolicy: 'steerImmediately' },
       sessionListViewDataByServerId: {},
     }),
@@ -307,6 +314,9 @@ vi.mock('@/sync/domains/state/storage', () => {
     return {
       storage,
       useSession: () => session,
+      __setSessionForTest: (next: any) => {
+        session = next;
+      },
       useIsDataReady: () => true,
       useRealtimeStatus: () => realtimeStatusValue.current,
       useSessionMessages: () => ({ messages: [], isLoaded: true }),
@@ -356,7 +366,6 @@ vi.mock('@/sync/acp/sessionModeControl', () => ({
   supportsSessionModeOverrides: () => false,
 }));
 vi.mock('@/sync/domains/session/control/localControlSwitch', () => ({
-  getSwitchToLocalControlDisabledReason: () => null,
   shouldRenderChatTimelineForSession: (args: any) => shouldRenderChatTimelineForSessionMock(args),
   shouldRequestRemoteControlAfterPendingEnqueue: () => false,
 }));
@@ -369,12 +378,13 @@ vi.mock('@/utils/system/fireAndForget', () => ({
   fireAndForget: (p: any) => p,
 }));
 
+const { SessionView } = await import('./SessionView');
+
 describe('SessionView (transcript rendering for seq-only sessions)', () => {
   it('renders ChatList when session.seq > 0 even if visible committed messages are empty', async () => {
     shouldRenderChatTimelineForSessionMock.mockClear();
     onSessionVisibleSpy.mockClear();
     realtimeStatusValue.current = { status: 'connected' };
-    const { SessionView } = await import('./SessionView');
     let tree: renderer.ReactTestRenderer;
     await act(async () => {
       tree = renderer.create(
@@ -405,7 +415,6 @@ describe('SessionView (transcript rendering for seq-only sessions)', () => {
     (storageMod as any).useSession().seq = 0;
     (storageMod as any).useSession().metadata.forkV1 = { v: 1, parentSessionId: 'parent-1', parentCutoffSeqInclusive: 9 };
 
-    const { SessionView } = await import('./SessionView');
     let tree: renderer.ReactTestRenderer;
     await act(async () => {
       tree = renderer.create(
@@ -435,8 +444,6 @@ describe('SessionView (transcript rendering for seq-only sessions)', () => {
     shouldRenderChatTimelineForSessionMock.mockClear();
     onSessionVisibleSpy.mockClear();
     realtimeStatusValue.current = { status: 'connected' };
-    const { SessionView } = await import('./SessionView');
-
     let tree: renderer.ReactTestRenderer;
     await act(async () => {
       tree = renderer.create(
@@ -466,8 +473,6 @@ describe('SessionView (transcript rendering for seq-only sessions)', () => {
 
   it('does not render a restore prompt for encrypted sessions when credentials include dataKey material', async () => {
     authCredentials = { token: 't', encryption: { publicKey: 'pk', machineKey: 'mk' } };
-    const { SessionView } = await import('./SessionView');
-
     let tree: renderer.ReactTestRenderer;
     await act(async () => {
       tree = renderer.create(
@@ -484,5 +489,36 @@ describe('SessionView (transcript rendering for seq-only sessions)', () => {
     await act(async () => {
       tree!.unmount();
     });
+  });
+
+  it('does not crash when the session is missing (e.g. deep link before hydration)', async () => {
+    const storageMod = await import('@/sync/domains/state/storage');
+    (storageMod as any).__setSessionForTest(null);
+    expect((storageMod as any).useSession()).toBeNull();
+
+    let error: unknown = null;
+    try {
+      await act(async () => {
+        renderer.create(
+          <AppPaneProvider>
+            <SessionView id="s1" />
+          </AppPaneProvider>
+        );
+      });
+    } catch (err) {
+      error = err;
+    } finally {
+      (storageMod as any).__setSessionForTest({
+        id: 's1',
+        seq: 25,
+        presence: 'online',
+        active: true,
+        accessLevel: 'edit',
+        metadata: { machineId: 'm1', flavor: 'codex', version: '0.0.0', path: '/tmp', homeDir: '/tmp' },
+        agentState: {},
+      });
+    }
+
+    expect(error).toBeNull();
   });
 });

@@ -65,11 +65,16 @@ vi.mock('@/sync/ops', () => ({
     sessionArchiveWithServerScope: vi.fn(async () => ({ success: true })),
 }));
 
-vi.mock('@/sync/domains/state/storage', () => ({
-    useHasUnreadMessages: () => false,
-    useProfile: () => ({ id: 'u1' }),
-    useSession: () => null,
-}));
+vi.mock('@/sync/domains/state/storage', async (importOriginal) => {
+    const actual = await importOriginal<typeof import('@/sync/domains/state/storage')>();
+    return {
+        ...actual,
+        useHasUnreadMessages: () => false,
+        useProfile: () => ({ id: 'u1' }),
+        useSession: () => null,
+        useSessionListMeaningfulActivityAt: () => null,
+    };
+});
 
 vi.mock('@/text', () => ({
     t: (key: string) => key,
@@ -83,6 +88,8 @@ vi.mock('./sessionPinIcons', () => ({
     PinIcon: (props: Record<string, unknown>) => React.createElement('PinIcon', props),
     PinSlashIcon: (props: Record<string, unknown>) => React.createElement('PinSlashIcon', props),
 }));
+
+const sessionItemModulePromise = import('./SessionItem');
 
 function createSession(id: string) {
     return {
@@ -113,38 +120,8 @@ function findPinPressable(tree: renderer.ReactTestRenderer) {
     return tree.root.findByProps({ accessibilityLabel: 'sessionInfo.pinSession' });
 }
 
-function resolveOpacity(style: unknown): number | null {
-    if (!style) return null;
-    if (Array.isArray(style)) {
-        for (let i = style.length - 1; i >= 0; i--) {
-            const entry = style[i] as any;
-            if (entry && typeof entry === 'object' && typeof entry.opacity === 'number') return entry.opacity;
-        }
-        return null;
-    }
-    if (typeof style === 'object' && typeof (style as any).opacity === 'number') return (style as any).opacity;
-    return null;
-}
-
-function resolvePointerEvents(node: renderer.ReactTestInstance | null | undefined): string | undefined {
-    if (!node) return undefined;
-    const fromProp = node.props?.pointerEvents;
-    if (typeof fromProp === 'string') return fromProp;
-    const style = node.props?.style;
-    if (!style) return undefined;
-    if (Array.isArray(style)) {
-        for (let i = style.length - 1; i >= 0; i--) {
-            const entry = style[i] as any;
-            if (entry && typeof entry === 'object' && typeof entry.pointerEvents === 'string') {
-                return entry.pointerEvents;
-            }
-        }
-        return undefined;
-    }
-    if (typeof style === 'object' && typeof (style as any).pointerEvents === 'string') {
-        return (style as any).pointerEvents;
-    }
-    return undefined;
+function findPinPressables(tree: renderer.ReactTestRenderer) {
+    return tree.root.findAllByProps({ accessibilityLabel: 'sessionInfo.pinSession' });
 }
 
 function triggerHoverEnter(node: renderer.ReactTestInstance) {
@@ -159,10 +136,15 @@ function triggerHoverLeave(node: renderer.ReactTestInstance) {
     node.props.onPointerLeave?.();
 }
 
+function findRightArea(tree: renderer.ReactTestRenderer) {
+    // The right area View has onPointerEnter/onPointerLeave handlers
+    const views = tree.root.findAllByType('View');
+    return views.find((v) => v.props.onPointerEnter && v.props.onPointerLeave);
+}
+
 describe('SessionItem pin hover affordance (web)', () => {
     it('hides the pin action promptly after leaving the row', async () => {
-        const { SessionItem } = await import('./SessionItem');
-
+        const { SessionItem } = await sessionItemModulePromise;
         const session = createSession('sess_1');
         const onTogglePinned = vi.fn();
 
@@ -185,28 +167,28 @@ describe('SessionItem pin hover affordance (web)', () => {
         });
 
         const row = findRowPressable(tree!);
-        const pin = findPinPressable(tree!);
-        const overlay = pin.parent;
-        expect(overlay?.props.pointerEvents).toBeUndefined();
-        expect(resolvePointerEvents(overlay)).toBe('none');
-        expect(resolveOpacity(overlay?.props.style)).toBe(0);
+
+        // Before hover: pin button should NOT be in the DOM
+        expect(findPinPressables(tree!)).toHaveLength(0);
 
         await act(async () => {
             triggerHoverEnter(row);
         });
-        expect(resolvePointerEvents(overlay)).toBe('auto');
-        expect(resolveOpacity(overlay?.props.style)).toBe(1);
+
+        // After hover: pin button should be in the DOM
+        expect(findPinPressables(tree!)).toHaveLength(1);
+        expect(findPinPressable(tree!)).toBeTruthy();
 
         await act(async () => {
             triggerHoverLeave(row);
         });
-        expect(resolvePointerEvents(overlay)).toBe('none');
-        expect(resolveOpacity(overlay?.props.style)).toBe(0);
+
+        // After leaving: pin button should be gone again
+        expect(findPinPressables(tree!)).toHaveLength(0);
     });
 
-    it('keeps the actions visible when moving the cursor from the row to the pin action', async () => {
-        const { SessionItem } = await import('./SessionItem');
-
+    it('keeps the actions visible when moving the cursor from the row to the actions area', async () => {
+        const { SessionItem } = await sessionItemModulePromise;
         const session = createSession('sess_3');
         const onTogglePinned = vi.fn();
 
@@ -229,36 +211,30 @@ describe('SessionItem pin hover affordance (web)', () => {
         });
 
         const row = findRowPressable(tree!);
-        const pin = findPinPressable(tree!);
-        const overlay = pin.parent;
-        expect(resolvePointerEvents(overlay)).toBe('none');
-        expect(resolveOpacity(overlay?.props.style)).toBe(0);
+        expect(findPinPressables(tree!)).toHaveLength(0);
 
         await act(async () => {
             triggerHoverEnter(row);
         });
-        expect(resolvePointerEvents(overlay)).toBe('auto');
-        expect(resolveOpacity(overlay?.props.style)).toBe(1);
+        expect(findPinPressables(tree!)).toHaveLength(1);
 
-        // Some web implementations can fire a hover-leave on the row when moving onto nested action buttons.
-        // The actions should remain visible as long as the cursor is still within the actions overlay.
+        // Move cursor from the row to the right area (actions).
+        // The actions should remain visible because actions area hover keeps them shown.
+        const rightArea = findRightArea(tree!);
         await act(async () => {
             triggerHoverLeave(row);
-            if (overlay) triggerHoverEnter(overlay);
+            if (rightArea) triggerHoverEnter(rightArea);
         });
-        expect(resolvePointerEvents(overlay)).toBe('auto');
-        expect(resolveOpacity(overlay?.props.style)).toBe(1);
+        expect(findPinPressables(tree!)).toHaveLength(1);
 
         await act(async () => {
-            if (overlay) triggerHoverLeave(overlay);
+            if (rightArea) triggerHoverLeave(rightArea);
         });
-        expect(resolvePointerEvents(overlay)).toBe('none');
-        expect(resolveOpacity(overlay?.props.style)).toBe(0);
+        expect(findPinPressables(tree!)).toHaveLength(0);
     });
 
     it('shows the actions when hovered and hides them when leaving the row', async () => {
-        const { SessionItem } = await import('./SessionItem');
-
+        const { SessionItem } = await sessionItemModulePromise;
         const session = createSession('sess_2');
         const onTogglePinned = vi.fn();
 
@@ -281,20 +257,16 @@ describe('SessionItem pin hover affordance (web)', () => {
         });
 
         const row = findRowPressable(tree!);
-        const pin = findPinPressable(tree!);
-        const overlay = pin.parent;
 
         await act(async () => {
             triggerHoverEnter(row);
         });
-        expect(resolvePointerEvents(overlay)).toBe('auto');
-        expect(resolveOpacity(overlay?.props.style)).toBe(1);
+        expect(findPinPressables(tree!)).toHaveLength(1);
 
         await act(async () => {
             triggerHoverLeave(row);
         });
 
-        expect(resolvePointerEvents(overlay)).toBe('none');
-        expect(resolveOpacity(overlay?.props.style)).toBe(0);
+        expect(findPinPressables(tree!)).toHaveLength(0);
     });
 });

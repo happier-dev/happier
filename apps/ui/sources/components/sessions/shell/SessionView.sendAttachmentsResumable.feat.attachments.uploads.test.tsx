@@ -87,6 +87,7 @@ vi.mock('react-native-unistyles', () => ({
                 header: { tint: '#000' },
                 modal: { border: '#ddd' },
                 status: { error: '#f00' },
+                radio: { active: '#007AFF' },
                 shadow: { color: '#000', opacity: 0.2 },
                 groupped: { background: '#F5F5F5', chevron: '#C7C7CC', sectionTitle: '#8E8E93' },
             },
@@ -117,6 +118,7 @@ vi.mock('react-native-unistyles', () => ({
                               header: { tint: '#000' },
                               modal: { border: '#ddd' },
                               status: { error: '#f00' },
+                              radio: { active: '#007AFF' },
                               shadow: { color: '#000', opacity: 0.2 },
                               groupped: { background: '#F5F5F5', chevron: '#C7C7CC', sectionTitle: '#8E8E93' },
                           },
@@ -130,6 +132,7 @@ vi.mock('react-native-unistyles', () => ({
 
 vi.mock('@react-navigation/native', () => ({
     useFocusEffect: () => {},
+  useIsFocused: () => true,
 }));
 
 vi.mock('expo-router', () => ({
@@ -196,6 +199,7 @@ vi.mock('@/components/sessions/model/useSessionMachineReachability', () => ({
 
 vi.mock('@/sync/domains/server/serverRuntime', () => ({
     getActiveServerSnapshot: () => ({ serverId: 'server-1' }),
+    subscribeActiveServer: () => () => {},
 }));
 vi.mock('@/voice/session/voiceSession', () => ({
     useVoiceSessionSnapshot: () => ({ status: 'disconnected' }),
@@ -234,7 +238,7 @@ vi.mock('@/sync/ops', () => ({
     machineCapabilitiesInvoke: vi.fn(async () => ({ type: 'success' })),
 }));
 
-vi.mock('@/sync/ops/sessionAttachmentsUpload', () => ({
+vi.mock('@/sync/domains/transfers/ops/uploadSessionAttachment', () => ({
     sessionAttachmentsUploadFile: (...args: any[]) => uploadSpy(...args),
 }));
 
@@ -320,7 +324,6 @@ vi.mock('@/agents/catalog/catalog', async (importOriginal) => {
             localControl: { supported: true },
             resume: {
                 vendorResumeIdField: 'codexSessionId',
-                runtimeGate: null,
                 supportsVendorResume: true,
                 experimental: true,
             },
@@ -346,15 +349,20 @@ vi.mock('@/hooks/server/useMachineCapabilitiesCache', async (importOriginal) => 
         getMachineCapabilitiesSnapshot: vi.fn(),
     };
 });
-vi.mock('@/utils/sessions/sessionUtils', () => ({
-    useSessionStatus: () => ({ statusText: '', statusColor: '#000', statusDotColor: '#000' }),
-    shouldShowAbortButtonForSessionState: () => false,
-    getSessionAvatarId: () => '1',
-    getSessionName: () => 'Session',
-    listPendingPermissionRequests: () => [],
-    formatPathRelativeToHome: () => '',
-    getSessionSubtitle: () => '',
-}));
+vi.mock('@/utils/sessions/sessionUtils', async (importOriginal) => {
+    const actual = await importOriginal<any>();
+    return {
+        ...actual,
+        useSessionStatus: () => ({ statusText: '', statusColor: '#000', statusDotColor: '#000' }),
+        shouldShowAbortButtonForSessionState: () => false,
+        getSessionAvatarId: () => '1',
+        getSessionName: () => 'Session',
+        listPendingPermissionRequests: () => [],
+        listPendingUserActionRequests: () => [],
+        formatPathRelativeToHome: () => '',
+        getSessionSubtitle: () => '',
+    };
+});
 vi.mock('@/utils/platform/platform', () => ({
     isRunningOnMac: () => false,
 }));
@@ -379,7 +387,6 @@ vi.mock('@/sync/domains/session/control/submitMode', () => ({
     chooseSubmitMode: () => 'server_pending',
 }));
 vi.mock('@/sync/domains/session/control/localControlSwitch', () => ({
-    getSwitchToLocalControlDisabledReason: () => null,
     shouldRenderChatTimelineForSession: () => true,
     shouldRequestRemoteControlAfterPendingEnqueue: () => false,
 }));
@@ -393,12 +400,108 @@ vi.mock('@/sync/domains/automations/automationSessionLink', () => ({
     countEnabledAutomationsLinkedToSession: () => 0,
 }));
 
+const { AppPaneProvider } = await import('@/components/appShell/panes/AppPaneProvider');
+const { getInactiveSessionUiState } = await import('@/components/sessions/model/inactiveSessionUi');
+const { SessionView } = await import('./SessionView');
+
 describe('SessionView (attachments.uploads resumable send)', () => {
+    it('hydrates recoverable attachment drafts so retry can reuse uploaded files', async () => {
+        sendMessageSpy.mockClear();
+        resumeSessionSpy.mockClear();
+        uploadSpy.mockClear();
+        modalAlertSpy.mockClear();
+        resolveSessionComposerSendMock.mockClear();
+        pendingFireAndForget.length = 0;
+
+        let tree: renderer.ReactTestRenderer | undefined;
+        try {
+            act(() => {
+                tree = renderer.create(
+                    <AppPaneProvider>
+                        <SessionView
+                            id="s1"
+                            initialAttachmentDrafts={[{
+                                id: 'draft-retry',
+                                source: {
+                                    kind: 'native',
+                                    uri: 'file:///tmp/retry.txt',
+                                    name: 'retry.txt',
+                                    sizeBytes: 1,
+                                    mimeType: 'text/plain',
+                                },
+                                status: 'uploaded',
+                                uploadedPath: 'p1',
+                                uploadedSizeBytes: 1,
+                                uploadedMimeType: 'text/plain',
+                                sha256: 'h1',
+                            }]}
+                        />
+                    </AppPaneProvider>
+                );
+            });
+
+            pendingFireAndForget.length = 0;
+
+            const renderedTree = tree;
+            expect(renderedTree).toBeDefined();
+            if (!renderedTree) throw new Error('SessionView test renderer did not mount');
+
+            const agentInputCandidates = renderedTree.root.findAll(
+                (node) => typeof node.props?.onSend === 'function' && typeof node.props?.onAttachmentsAdded === 'function',
+            );
+            expect(agentInputCandidates.length).toBeGreaterThan(0);
+            const agentInput = agentInputCandidates[0]!;
+
+            expect(agentInput.props.attachments).toEqual(expect.arrayContaining([
+                expect.objectContaining({
+                    key: 'draft-retry',
+                    label: 'retry.txt',
+                    status: 'uploaded',
+                }),
+            ]));
+
+            await act(async () => {
+                agentInput.props.onSend();
+            });
+
+            expect(pendingFireAndForget.length).toBe(1);
+            await pendingFireAndForget[0];
+
+            expect(uploadSpy).not.toHaveBeenCalled();
+            expect(sendMessageSpy).toHaveBeenCalledTimes(1);
+
+            const [sentSessionId, sentText, sentDisplayText, sentMetaOverrides] = sendMessageSpy.mock.calls[0] ?? [];
+            expect(sentSessionId).toBe('s1');
+            expect(String(sentText)).toContain('[attachments]');
+            expect(String(sentText)).toContain('- p1');
+            expect(String(sentText)).toContain('retry.txt');
+            expect(sentDisplayText).toBe('hello');
+            expect(sentMetaOverrides).toMatchObject({
+                happier: {
+                    kind: 'attachments.v1',
+                    payload: {
+                        attachments: [
+                            expect.objectContaining({
+                                name: 'retry.txt',
+                                path: 'p1',
+                                mimeType: 'text/plain',
+                                sizeBytes: 1,
+                                sha256: 'h1',
+                            }),
+                        ],
+                    },
+                },
+            });
+        } finally {
+            act(() => {
+                tree?.unmount();
+            });
+            pendingFireAndForget.length = 0;
+        }
+    });
+
     it('resumes and sends attachments even when chooseSubmitMode selects server_pending', async () => {
-        const { AppPaneProvider } = await import('@/components/appShell/panes/AppPaneProvider');
-        const { getInactiveSessionUiState } = await import('@/components/sessions/model/inactiveSessionUi');
         expect(getInactiveSessionUiState({ isSessionActive: true, isResumable: true, isMachineOnline: true })).toMatchObject({ shouldShowInput: true });
-        const { SessionView } = await import('./SessionView');
 
         sendMessageSpy.mockClear();
         resumeSessionSpy.mockClear();
@@ -407,65 +510,76 @@ describe('SessionView (attachments.uploads resumable send)', () => {
         resolveSessionComposerSendMock.mockClear();
         pendingFireAndForget.length = 0;
 
-        let tree!: renderer.ReactTestRenderer;
-        await act(async () => {
-            tree = renderer.create(
-                <AppPaneProvider>
-                    <SessionView id="s1" />
-                </AppPaneProvider>
+        let tree: renderer.ReactTestRenderer | undefined;
+        try {
+            act(() => {
+                tree = renderer.create(
+                    <AppPaneProvider>
+                        <SessionView id="s1" />
+                    </AppPaneProvider>
+                );
+            });
+
+            // Ignore mount-time fire-and-forget work; we only care about the send flow.
+            pendingFireAndForget.length = 0;
+
+            const renderedTree = tree;
+            expect(renderedTree).toBeDefined();
+            if (!renderedTree) throw new Error('SessionView test renderer did not mount');
+
+            const agentInputCandidates = renderedTree.root.findAll(
+                (node) => typeof node.props?.onSend === 'function' && typeof node.props?.onAttachmentsAdded === 'function',
             );
-        });
+            expect(agentInputCandidates.length).toBeGreaterThan(0);
+            const agentInput = agentInputCandidates[0]!;
+            expect(typeof agentInput.props.onAttachmentsAdded).toBe('function');
 
-        // Ignore mount-time fire-and-forget work; we only care about the send flow.
-        pendingFireAndForget.length = 0;
+            await act(async () => {
+                agentInput.props.onAttachmentsAdded([
+                    { name: 'a.txt', size: 1, type: 'text/plain', slice: () => new Blob([new Uint8Array([97])]) } as any,
+                ]);
+            });
 
-        const agentInputCandidates = tree.root.findAll(
-            (node) => typeof node.props?.onSend === 'function' && typeof node.props?.onAttachmentsAdded === 'function',
-        );
-        expect(agentInputCandidates.length).toBeGreaterThan(0);
-        const agentInput = agentInputCandidates[0]!;
-        expect(typeof agentInput.props.onAttachmentsAdded).toBe('function');
+            await act(async () => {
+                agentInput.props.onSend();
+            });
 
-        await act(async () => {
-            agentInput.props.onAttachmentsAdded([
-                { name: 'a.txt', size: 1, type: 'text/plain', slice: () => new Blob([new Uint8Array([97])]) } as any,
-            ]);
-        });
+            expect(pendingFireAndForget.length).toBe(1);
+            await pendingFireAndForget[0];
 
-        await act(async () => {
-            agentInput.props.onSend();
-        });
+            // Should not show the legacy "attachments require direct sending" error anymore.
+            expect(modalAlertSpy.mock.calls.some((c) => String(c?.[1] ?? '').includes('Attachments require direct sending'))).toBe(false);
+            expect(resumeSessionSpy).toHaveBeenCalled();
+            expect(uploadSpy).toHaveBeenCalled();
+            expect(sendMessageSpy).toHaveBeenCalledTimes(1);
 
-        expect(pendingFireAndForget.length).toBe(1);
-        await pendingFireAndForget[0];
-
-        // Should not show the legacy "attachments require direct sending" error anymore.
-        expect(modalAlertSpy.mock.calls.some((c) => String(c?.[1] ?? '').includes('Attachments require direct sending'))).toBe(false);
-        expect(resumeSessionSpy).toHaveBeenCalled();
-        expect(uploadSpy).toHaveBeenCalled();
-        expect(sendMessageSpy).toHaveBeenCalledTimes(1);
-
-        const [sentSessionId, sentText, sentDisplayText, sentMetaOverrides] = sendMessageSpy.mock.calls[0] ?? [];
-        expect(sentSessionId).toBe('s1');
-        expect(String(sentText)).toContain('[attachments]');
-        expect(String(sentText)).toContain('- p1');
-        expect(String(sentText)).toContain('a.txt');
-        expect(sentDisplayText).toBe('hello');
-        expect(sentMetaOverrides).toMatchObject({
-            happier: {
-                kind: 'attachments.v1',
-                payload: {
-                    attachments: [
-                        {
-                            name: 'a.txt',
-                            path: 'p1',
-                            mimeType: 'text/plain',
-                            sizeBytes: 1,
-                            sha256: 'h1',
-                        },
-                    ],
+            const [sentSessionId, sentText, sentDisplayText, sentMetaOverrides] = sendMessageSpy.mock.calls[0] ?? [];
+            expect(sentSessionId).toBe('s1');
+            expect(String(sentText)).toContain('[attachments]');
+            expect(String(sentText)).toContain('- p1');
+            expect(String(sentText)).toContain('a.txt');
+            expect(sentDisplayText).toBe('hello');
+            expect(sentMetaOverrides).toMatchObject({
+                happier: {
+                    kind: 'attachments.v1',
+                    payload: {
+                        attachments: [
+                            {
+                                name: 'a.txt',
+                                path: 'p1',
+                                mimeType: 'text/plain',
+                                sizeBytes: 1,
+                                sha256: 'h1',
+                            },
+                        ],
+                    },
                 },
-            },
-        });
+            });
+        } finally {
+            act(() => {
+                tree?.unmount();
+            });
+            pendingFireAndForget.length = 0;
+        }
     });
 });

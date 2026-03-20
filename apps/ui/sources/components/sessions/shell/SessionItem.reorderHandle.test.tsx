@@ -10,8 +10,10 @@ vi.mock('@/components/ui/forms/dropdown/DropdownMenu', () => ({
     DropdownMenu: (props: any) => React.createElement('DropdownMenu', props),
 }));
 
+const mockGesture = { type: 'pan' };
 vi.mock('react-native-gesture-handler', () => ({
     Swipeable: 'Swipeable',
+    GestureDetector: (props: any) => React.createElement('GestureDetector', { gesture: props.gesture }, props.children),
 }));
 
 vi.mock('react-native', async () => {
@@ -65,11 +67,16 @@ vi.mock('@/sync/ops', () => ({
     sessionArchiveWithServerScope: vi.fn(async () => ({ success: true })),
 }));
 
-vi.mock('@/sync/domains/state/storage', () => ({
-    useHasUnreadMessages: () => false,
-    useProfile: () => ({ id: 'u1' }),
-    useSession: () => null,
-}));
+vi.mock('@/sync/domains/state/storage', async (importOriginal) => {
+    const actual = await importOriginal<typeof import('@/sync/domains/state/storage')>();
+    return {
+        ...actual,
+        useHasUnreadMessages: () => false,
+        useProfile: () => ({ id: 'u1' }),
+        useSession: () => null,
+        useSessionListMeaningfulActivityAt: () => null,
+    };
+});
 
 vi.mock('@/text', () => ({
     t: (key: string) => key,
@@ -79,12 +86,24 @@ vi.mock('@/modal', () => ({
     Modal: { alert: vi.fn() },
 }));
 
-describe('SessionItem reorder handle', () => {
-    it('renders a reorder handle that calls onRequestReorder when pressed', async () => {
-        const onRequestReorder = vi.fn();
-        const stopPropagation = vi.fn();
-        const { SessionItem } = await import('./SessionItem');
+const sessionItemModulePromise = import('./SessionItem');
 
+function findRowPressable(tree: renderer.ReactTestRenderer) {
+    const pressables = tree.root.findAllByType('Pressable');
+    const row = pressables.find((p) => !p.props.accessibilityLabel);
+    if (!row) throw new Error('Row Pressable not found');
+    return row;
+}
+
+function triggerHoverEnter(node: renderer.ReactTestInstance) {
+    node.props.onMouseEnter?.();
+    node.props.onHoverIn?.();
+    node.props.onPointerEnter?.();
+}
+
+describe('SessionItem reorder handle', () => {
+    it('renders a GestureDetector-wrapped reorder handle when reorderHandleGesture is provided', async () => {
+        const { SessionItem } = await sessionItemModulePromise;
         const session = {
             id: 'sess_1',
             seq: 1,
@@ -115,21 +134,112 @@ describe('SessionItem reorder handle', () => {
                     isSingle={true}
                     variant="default"
                     compact={false}
-                    onRequestReorder={onRequestReorder}
+                    reorderHandleGesture={mockGesture as any}
                 />,
             );
         });
 
-        const handles = (tree as any).root
-            .findAllByType('Pressable')
-            .filter((n: any) => n?.props?.testID === 'session-item-reorder-handle');
+        // On web, actions are only rendered on hover. Trigger hover first.
+        const row = findRowPressable(tree!);
+        await act(async () => {
+            triggerHoverEnter(row);
+        });
+
+        const handles = (tree as any).root.findAllByProps({ testID: 'session-item-reorder-handle' });
         expect(handles).toHaveLength(1);
 
+        // Verify the handle is wrapped in a GestureDetector
+        const gestureDetectors = (tree as any).root.findAllByType('GestureDetector');
+        expect(gestureDetectors.length).toBeGreaterThanOrEqual(1);
+        const handleDetector = gestureDetectors.find((g: any) => g.props.gesture === mockGesture);
+        expect(handleDetector).toBeTruthy();
+    });
+
+    it('renders the reorder handle without hover when isBeingDragged is true', async () => {
+        const { SessionItem } = await sessionItemModulePromise;
+        const session = {
+            id: 'sess_3',
+            seq: 1,
+            createdAt: 1,
+            updatedAt: 1,
+            active: true,
+            activeAt: 1,
+            metadata: null,
+            metadataVersion: 1,
+            agentState: null,
+            agentStateVersion: 1,
+            thinking: false,
+            thinkingAt: 0,
+            presence: 'online',
+        } as any;
+
+        let tree: renderer.ReactTestRenderer | null = null;
         await act(async () => {
-            handles[0].props.onPressIn({ stopPropagation });
-            handles[0].props.onPress({ stopPropagation });
+            tree = renderer.create(
+                <SessionItem
+                    session={session}
+                    serverId="server_a"
+                    serverName="Server A"
+                    showServerBadge={true}
+                    selected={false}
+                    isFirst={true}
+                    isLast={true}
+                    isSingle={true}
+                    variant="default"
+                    compact={false}
+                    reorderHandleGesture={mockGesture as any}
+                    isBeingDragged={true}
+                />,
+            );
         });
-        expect(stopPropagation).toHaveBeenCalledTimes(2);
-        expect(onRequestReorder).toHaveBeenCalledTimes(1);
+
+        // Do NOT trigger hover — isBeingDragged should force the handle visible
+        const handles = (tree as any).root.findAllByProps({ testID: 'session-item-reorder-handle' });
+        expect(handles).toHaveLength(1);
+    });
+
+    it('does not render a reorder handle when reorderHandleGesture is not provided', async () => {
+        const { SessionItem } = await sessionItemModulePromise;
+        const session = {
+            id: 'sess_2',
+            seq: 1,
+            createdAt: 1,
+            updatedAt: 1,
+            active: true,
+            activeAt: 1,
+            metadata: null,
+            metadataVersion: 1,
+            agentState: null,
+            agentStateVersion: 1,
+            thinking: false,
+            thinkingAt: 0,
+            presence: 'online',
+        } as any;
+
+        let tree: renderer.ReactTestRenderer | null = null;
+        await act(async () => {
+            tree = renderer.create(
+                <SessionItem
+                    session={session}
+                    serverId="server_a"
+                    serverName="Server A"
+                    showServerBadge={true}
+                    selected={false}
+                    isFirst={true}
+                    isLast={true}
+                    isSingle={true}
+                    variant="default"
+                    compact={false}
+                />,
+            );
+        });
+
+        const row = findRowPressable(tree!);
+        await act(async () => {
+            triggerHoverEnter(row);
+        });
+
+        const handles = (tree as any).root.findAllByProps({ testID: 'session-item-reorder-handle' });
+        expect(handles).toHaveLength(0);
     });
 });

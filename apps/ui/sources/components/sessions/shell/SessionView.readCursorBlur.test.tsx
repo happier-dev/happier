@@ -281,13 +281,17 @@ vi.mock('@/sync/domains/state/storage', () => ({
 vi.mock('@/sync/store/settingsWriters', () => ({
     useApplyLocalSettings: () => vi.fn(),
 }));
-vi.mock('@/agents/catalog/catalog', () => ({
-    AGENT_IDS: ['default'],
-    DEFAULT_AGENT_ID: 'default',
-    buildResumeSessionExtrasFromUiState: () => null,
-    getAgentCore: () => ({ title: 'Agent', modelMode: { defaultMode: 'build' } }),
-    resolveAgentIdFromFlavor: () => 'default',
-}));
+vi.mock('@/agents/catalog/catalog', async () => {
+    const actual = await vi.importActual<typeof import('@/agents/catalog/catalog')>('@/agents/catalog/catalog');
+    return {
+        ...actual,
+        AGENT_IDS: ['default'],
+        DEFAULT_AGENT_ID: 'default',
+        buildResumeSessionExtrasFromUiState: () => null,
+        getAgentCore: () => ({ title: 'Agent', model: { defaultMode: 'build' } }),
+        resolveAgentIdFromFlavor: () => 'default',
+    };
+});
 vi.mock('@/agents/runtime/resumeCapabilities', () => ({
     canResumeSessionWithOptions: () => false,
 }));
@@ -360,10 +364,10 @@ vi.mock('@/sync/domains/permissions/permissionModeOverride', () => ({
 vi.mock('@/sync/domains/models/modelOverride', () => ({
     getModelOverrideForSpawn: () => null,
 }));
-vi.mock('@/components/sessions/agentInput/recipient/RecipientChip', () => ({
+vi.mock('@/components/sessions/agentInput/routing/RecipientChip', () => ({
     RecipientChip: () => null,
 }));
-vi.mock('@/components/sessions/agentInput/recipient/useSessionRecipientState', () => ({
+vi.mock('@/components/sessions/agentInput/routing/useSessionRecipientState', () => ({
     useSessionRecipientState: () => ({
         recipientId: null,
         recipientChipProps: null,
@@ -371,12 +375,18 @@ vi.mock('@/components/sessions/agentInput/recipient/useSessionRecipientState', (
         selectedParticipant: null,
     }),
 }));
-vi.mock('@/components/sessions/agentInput/recipient/ExecutionRunDeliveryChip', () => ({
+vi.mock('@/components/sessions/agentInput/routing/ExecutionRunDeliveryChip', () => ({
     ExecutionRunDeliveryChip: () => null,
 }));
-vi.mock('@/sync/domains/input/participants/resolveParticipantRoutedSend', () => ({
-    resolveParticipantRoutedSend: () => null,
-}));
+vi.mock('@/sync/domains/input/participants/resolveParticipantRoutedSend', async () => {
+    const actual = await vi.importActual<typeof import('@/sync/domains/input/participants/resolveParticipantRoutedSend')>(
+        '@/sync/domains/input/participants/resolveParticipantRoutedSend',
+    );
+    return {
+        ...actual,
+        resolveParticipantRoutedSend: () => null,
+    };
+});
 vi.mock('@/hooks/session/useEnsureSidechainsLoaded', () => ({
     useEnsureSidechainsLoaded: () => {},
 }));
@@ -405,6 +415,9 @@ vi.mock('@/sync/domains/session/control/submitMode', () => ({
 vi.mock('@/sync/domains/session/control/sessionLocalControl', () => ({
     getSessionLocalControlState: () => null,
     isSessionLocallyAttached: () => true,
+}));
+vi.mock('@/sync/domains/session/control/effectiveRuntimeControlSurface', () => ({
+    supportsEffectiveLocalControlForSession: () => true,
 }));
 vi.mock('@/sync/domains/session/subagents/deriveSessionSubagentCounts', () => ({
     deriveSessionSubagentCounts: () => ({ total: 0, active: 0 }),

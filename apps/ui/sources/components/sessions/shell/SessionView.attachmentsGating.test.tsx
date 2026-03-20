@@ -130,6 +130,7 @@ vi.mock('react-native-unistyles', () => ({
 
 vi.mock('@react-navigation/native', () => ({
   useFocusEffect: () => {},
+  useIsFocused: () => true,
 }));
 
 vi.mock('expo-router', () => ({
@@ -202,6 +203,7 @@ vi.mock('@/components/sessions/model/useSessionMachineReachability', () => ({
 
 vi.mock('@/sync/domains/server/serverRuntime', () => ({
   getActiveServerSnapshot: () => ({ serverId: 'server-1' }),
+  subscribeActiveServer: () => () => {},
 }));
 vi.mock('@/voice/session/voiceSession', () => ({
   useVoiceSessionSnapshot: () => ({ status: 'disconnected' }),
@@ -302,7 +304,7 @@ vi.mock('@/agents/catalog/catalog', async (importOriginal) => {
   const actual = await importOriginal<any>();
   return {
     ...actual,
-    getAgentCore: () => ({ model: { defaultMode: 'default' }, resume: { vendorResumeIdField: null, runtimeGate: null } }),
+    getAgentCore: () => ({ model: { defaultMode: 'default' }, resume: { vendorResumeIdField: null } }),
     resolveAgentIdFromFlavor: () => 'codex',
     DEFAULT_AGENT_ID: 'codex',
   };
@@ -324,15 +326,20 @@ vi.mock('@/hooks/server/useMachineCapabilitiesCache', async (importOriginal) => 
     getMachineCapabilitiesSnapshot: vi.fn(),
   };
 });
-vi.mock('@/utils/sessions/sessionUtils', () => ({
-  useSessionStatus: () => ({ statusText: '', statusColor: '#000', statusDotColor: '#000' }),
-  shouldShowAbortButtonForSessionState: () => false,
-  getSessionAvatarId: () => '1',
-  getSessionName: () => 'Session',
-  listPendingPermissionRequests: () => [],
-  formatPathRelativeToHome: () => '',
-  getSessionSubtitle: () => '',
-}));
+vi.mock('@/utils/sessions/sessionUtils', async (importOriginal) => {
+  const actual = await importOriginal<any>();
+  return {
+    ...actual,
+    useSessionStatus: () => ({ statusText: '', statusColor: '#000', statusDotColor: '#000' }),
+    shouldShowAbortButtonForSessionState: () => false,
+    getSessionAvatarId: () => '1',
+    getSessionName: () => 'Session',
+    listPendingPermissionRequests: () => [],
+    listPendingUserActionRequests: () => [],
+    formatPathRelativeToHome: () => '',
+    getSessionSubtitle: () => '',
+  };
+});
 vi.mock('@/utils/platform/platform', () => ({
   isRunningOnMac: () => false,
 }));
@@ -349,7 +356,6 @@ vi.mock('@/sync/domains/session/control/submitMode', () => ({
   chooseSubmitMode: () => 'direct',
 }));
 vi.mock('@/sync/domains/session/control/localControlSwitch', () => ({
-  getSwitchToLocalControlDisabledReason: () => null,
   shouldRenderChatTimelineForSession: () => true,
   shouldRequestRemoteControlAfterPendingEnqueue: () => false,
 }));
@@ -363,10 +369,11 @@ vi.mock('@/sync/domains/automations/automationSessionLink', () => ({
   countEnabledAutomationsLinkedToSession: () => 0,
 }));
 
+const { SessionView } = await import('./SessionView');
+
 describe('SessionView attachments gating', () => {
   it('does not wire drag/drop/paste attachments when attachments.uploads is disabled', async () => {
     featureEnabledState['attachments.uploads'] = false;
-    const { SessionView } = await import('./SessionView');
 
     let tree!: renderer.ReactTestRenderer;
     await act(async () => {

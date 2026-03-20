@@ -7,6 +7,15 @@ import { AppPaneProvider } from '@/components/appShell/panes/AppPaneProvider';
 (globalThis as any).__DEV__ = false;
 
 const headerActionMenuSpy = vi.hoisted(() => vi.fn());
+const routerPushSpy = vi.hoisted(() => vi.fn());
+const navigateWithBlurOnWebSpy = vi.hoisted(() => vi.fn((action: () => void) => action()));
+const platformState = vi.hoisted(() => ({ os: 'web' as 'web' | 'android' }));
+const responsiveState = vi.hoisted(() => ({ deviceType: 'phone' as 'phone' | 'tablet', isLandscape: false }));
+const executionRunsFeatureState = vi.hoisted(() => ({ enabled: false }));
+const sessionExecutionRunsSupportedState = vi.hoisted(() => ({ supported: false }));
+const executionRunsBackendsState = vi.hoisted(() => ({ backends: null as Record<string, unknown> | null }));
+const sessionMessagesState = vi.hoisted(() => ({ messages: [] as any[] }));
+const automationsSupportState = vi.hoisted(() => ({ enabled: false }));
 
 vi.mock('react-native-reanimated', () => ({}));
 vi.mock('expo-linear-gradient', () => ({
@@ -25,9 +34,11 @@ vi.mock('react-native', async (importOriginal) => {
     ActivityIndicator: 'ActivityIndicator',
     Platform: {
       ...actual.Platform,
-      OS: 'web',
+      OS: platformState.os,
       select: (spec: Record<string, unknown>) =>
-        spec && Object.prototype.hasOwnProperty.call(spec, 'web') ? (spec as any).web : (spec as any).default,
+        spec && Object.prototype.hasOwnProperty.call(spec, platformState.os)
+          ? (spec as any)[platformState.os]
+          : (spec as any).default,
     },
   };
 });
@@ -106,9 +117,10 @@ vi.mock('react-native-unistyles', () => ({
 
 vi.mock('@react-navigation/native', () => ({
   useFocusEffect: () => {},
+  useIsFocused: () => true,
 }));
 vi.mock('expo-router', () => ({
-  useRouter: () => ({ push: vi.fn(), back: vi.fn() }),
+  useRouter: () => ({ push: routerPushSpy, back: vi.fn() }),
   usePathname: () => '/',
 }));
 vi.mock('@/auth/context/AuthContext', () => ({
@@ -155,6 +167,9 @@ vi.mock('@/components/sessions/actions/SessionHeaderActionMenu', () => ({
     return React.createElement('SessionHeaderActionMenu');
   },
 }));
+vi.mock('@/components/ui/icons/DependabotIcon', () => ({
+  DependabotIcon: 'DependabotIcon',
+}));
 vi.mock('@/components/voice/surface/VoiceSurface', () => ({
   VoiceSurface: () => null,
 }));
@@ -163,15 +178,24 @@ vi.mock('@/components/sessions/attachments/AttachmentFilePicker', () => ({
 }));
 
 vi.mock('@/hooks/server/useFeatureEnabled', () => ({
-  useFeatureEnabled: () => false,
+  useFeatureEnabled: () => executionRunsFeatureState.enabled,
+}));
+vi.mock('@/hooks/server/useSessionExecutionRunsSupported', () => ({
+  useSessionExecutionRunsSupported: () => sessionExecutionRunsSupportedState.supported,
+}));
+vi.mock('@/hooks/server/useExecutionRunsBackendsForSession', () => ({
+  useExecutionRunsBackendsForSession: () => executionRunsBackendsState.backends,
 }));
 vi.mock('@/hooks/server/useAutomationsSupport', () => ({
-  useAutomationsSupport: () => ({ enabled: false }),
+  useAutomationsSupport: () => ({ enabled: automationsSupportState.enabled }),
+}));
+vi.mock('@/utils/platform/navigateWithBlurOnWeb', () => ({
+  navigateWithBlurOnWeb: navigateWithBlurOnWebSpy,
 }));
 vi.mock('@/utils/platform/responsive', () => ({
-  useDeviceType: () => 'phone',
+  useDeviceType: () => responsiveState.deviceType,
   useHeaderHeight: () => 0,
-  useIsLandscape: () => false,
+  useIsLandscape: () => responsiveState.isLandscape,
   useIsTablet: () => false,
 }));
 vi.mock('@/hooks/session/useDraft', () => ({
@@ -185,6 +209,7 @@ vi.mock('@/components/sessions/model/useSessionMachineReachability', () => ({
 }));
 vi.mock('@/sync/domains/server/serverRuntime', () => ({
   getActiveServerSnapshot: () => ({ serverId: 'server-1' }),
+  subscribeActiveServer: () => () => {},
 }));
 vi.mock('@/voice/session/voiceSession', () => ({
   useVoiceSessionSnapshot: () => ({ status: 'disconnected' }),
@@ -196,6 +221,7 @@ vi.mock('@/sync/sync', () => ({
     fetchPendingMessages: async () => {},
     refreshSessions: async () => {},
     onSessionVisible: () => () => {},
+    ensureSidechainMessagesLoaded: async () => {},
     sendMessage: async () => {},
     enqueuePendingMessage: async () => {},
     submitMessage: async () => {},
@@ -238,7 +264,7 @@ vi.mock('@/sync/domains/state/storage', () => {
     useSession: () => session,
     useIsDataReady: () => true,
     useRealtimeStatus: () => ({ current: { status: 'connected' } as any }),
-    useSessionMessages: () => ({ messages: [], isLoaded: true }),
+    useSessionMessages: () => ({ messages: sessionMessagesState.messages, isLoaded: true }),
     useSessionTranscriptIds: () => ({ ids: [], isLoaded: true }),
     useSessionPendingMessages: () => ({ messages: [] }),
     useSessionReviewCommentsDrafts: () => [],
@@ -261,7 +287,6 @@ vi.mock('@/sync/domains/state/storage', () => {
 });
 
 vi.mock('@/sync/domains/session/control/localControlSwitch', () => ({
-  getSwitchToLocalControlDisabledReason: () => null,
   shouldRenderChatTimelineForSession: () => true,
   shouldRequestRemoteControlAfterPendingEnqueue: () => false,
 }));
@@ -274,10 +299,51 @@ vi.mock('@/utils/system/fireAndForget', () => ({
   fireAndForget: (p: any) => p,
 }));
 
+const { SessionView } = await import('./SessionView');
+
 describe('SessionView header action menu visibility', () => {
-  it('renders SessionHeaderActionMenu even when automations and execution runs are disabled', async () => {
-    headerActionMenuSpy.mockClear();
-    const { SessionView } = await import('./SessionView');
+  it('hides the open runs button when execution runs are unsupported for the session', async () => {
+    platformState.os = 'web';
+    responsiveState.deviceType = 'phone';
+    responsiveState.isLandscape = false;
+    executionRunsFeatureState.enabled = true;
+    sessionExecutionRunsSupportedState.supported = false;
+    executionRunsBackendsState.backends = null;
+    let tree: renderer.ReactTestRenderer;
+    await act(async () => {
+      tree = renderer.create(
+        <AppPaneProvider>
+          <SessionView id="s1" />
+        </AppPaneProvider>
+      );
+    });
+
+    const pressables = tree!.root.findAllByType('Pressable' as any);
+    const openRunsButton = pressables.find((node: any) => node.props?.accessibilityLabel === 'session.openRuns');
+
+    expect(openRunsButton).toBeUndefined();
+
+    await act(async () => {
+      tree!.unmount();
+    });
+
+    executionRunsFeatureState.enabled = false;
+    sessionExecutionRunsSupportedState.supported = false;
+    executionRunsBackendsState.backends = null;
+    sessionMessagesState.messages = [];
+  });
+
+  it('routes to session automations through blur-safe navigation', async () => {
+    platformState.os = 'web';
+    responsiveState.deviceType = 'phone';
+    responsiveState.isLandscape = false;
+    executionRunsFeatureState.enabled = false;
+    sessionExecutionRunsSupportedState.supported = false;
+    executionRunsBackendsState.backends = null;
+    sessionMessagesState.messages = [];
+    automationsSupportState.enabled = true;
+    routerPushSpy.mockReset();
+    navigateWithBlurOnWebSpy.mockClear();
 
     let tree: renderer.ReactTestRenderer;
     await act(async () => {
@@ -288,10 +354,205 @@ describe('SessionView header action menu visibility', () => {
       );
     });
 
-    expect(headerActionMenuSpy).toHaveBeenCalledTimes(1);
+    const pressables = tree!.root.findAllByType('Pressable' as any);
+    const openAutomationsButton = pressables.find((node: any) => node.props?.accessibilityLabel === 'session.openAutomations');
+
+    expect(openAutomationsButton).toBeDefined();
+
+    await act(async () => {
+      openAutomationsButton!.props.onPress();
+    });
+
+    expect(navigateWithBlurOnWebSpy).toHaveBeenCalledTimes(1);
+    expect(routerPushSpy).toHaveBeenCalledWith('/session/s1/automations');
 
     await act(async () => {
       tree!.unmount();
     });
+
+    automationsSupportState.enabled = false;
+  });
+
+  it('keeps the open runs button visible when the transcript already contains execution-run signals', async () => {
+    platformState.os = 'web';
+    responsiveState.deviceType = 'phone';
+    responsiveState.isLandscape = false;
+    executionRunsFeatureState.enabled = true;
+    sessionExecutionRunsSupportedState.supported = true;
+    executionRunsBackendsState.backends = null;
+    sessionMessagesState.messages = [
+      {
+        kind: 'tool-call',
+        tool: { name: 'SubAgentRun', input: { runId: 'run_1' }, result: { runId: 'run_1' } },
+      },
+    ];
+
+    let tree: renderer.ReactTestRenderer;
+    await act(async () => {
+      tree = renderer.create(
+        <AppPaneProvider>
+          <SessionView id="s1" />
+        </AppPaneProvider>
+      );
+    });
+
+    const pressables = tree!.root.findAllByType('Pressable' as any);
+    const openRunsButton = pressables.find((node: any) => node.props?.accessibilityLabel === 'session.openRuns');
+
+    expect(openRunsButton).toBeDefined();
+
+    await act(async () => {
+      tree!.unmount();
+    });
+
+    executionRunsFeatureState.enabled = false;
+    sessionExecutionRunsSupportedState.supported = false;
+    executionRunsBackendsState.backends = null;
+    sessionMessagesState.messages = [];
+  });
+
+  it('renders a header subagents button when the transcript contains subagent activity', async () => {
+    platformState.os = 'web';
+    responsiveState.deviceType = 'phone';
+    responsiveState.isLandscape = false;
+    executionRunsFeatureState.enabled = false;
+    sessionExecutionRunsSupportedState.supported = false;
+    executionRunsBackendsState.backends = null;
+    sessionMessagesState.messages = [
+      {
+        id: 'tool-msg-1',
+        kind: 'tool-call',
+        createdAt: 1,
+        tool: {
+          name: 'Task',
+          id: 'toolu_task_1',
+          input: { name: 'Investigate regression', team_name: 'qa-team', agent_id: 'alpha@qa-team' },
+          result: { tool_use_result: { team_name: 'qa-team', agent_id: 'alpha@qa-team', name: 'alpha' } },
+          state: 'running',
+        },
+      },
+    ];
+
+    let tree: renderer.ReactTestRenderer;
+    await act(async () => {
+      tree = renderer.create(
+        <AppPaneProvider>
+          <SessionView id="s1" />
+        </AppPaneProvider>
+      );
+    });
+
+    const pressables = tree!.root.findAllByType('Pressable' as any);
+    const openSubagentsButton = pressables.find((node: any) => node.props?.accessibilityLabel === 'session.openSubagents');
+
+    expect(openSubagentsButton).toBeDefined();
+
+    await act(async () => {
+      tree!.unmount();
+    });
+
+    executionRunsFeatureState.enabled = false;
+    sessionExecutionRunsSupportedState.supported = false;
+    executionRunsBackendsState.backends = null;
+    sessionMessagesState.messages = [];
+  });
+
+  it('renders a header subagents button when launch surfaces are available even before any subagents exist', async () => {
+    platformState.os = 'web';
+    responsiveState.deviceType = 'phone';
+    responsiveState.isLandscape = false;
+    executionRunsFeatureState.enabled = true;
+    sessionExecutionRunsSupportedState.supported = true;
+    executionRunsBackendsState.backends = {
+      codex: {
+        available: true,
+        intents: ['review', 'plan', 'delegate'],
+      },
+    };
+    sessionMessagesState.messages = [];
+
+    let tree: renderer.ReactTestRenderer;
+    await act(async () => {
+      tree = renderer.create(
+        <AppPaneProvider>
+          <SessionView id="s1" />
+        </AppPaneProvider>
+      );
+    });
+
+    const pressables = tree!.root.findAllByType('Pressable' as any);
+    const openSubagentsButton = pressables.find((node: any) => node.props?.accessibilityLabel === 'session.openSubagents');
+
+    expect(openSubagentsButton).toBeDefined();
+
+    await act(async () => {
+      tree!.unmount();
+    });
+
+    executionRunsFeatureState.enabled = false;
+    sessionExecutionRunsSupportedState.supported = false;
+    executionRunsBackendsState.backends = null;
+    sessionMessagesState.messages = [];
+  });
+
+  it('renders SessionHeaderActionMenu even when automations and execution runs are disabled', async () => {
+    platformState.os = 'web';
+    responsiveState.deviceType = 'phone';
+    responsiveState.isLandscape = false;
+    executionRunsFeatureState.enabled = false;
+    sessionExecutionRunsSupportedState.supported = false;
+    executionRunsBackendsState.backends = null;
+    headerActionMenuSpy.mockClear();
+    let tree: renderer.ReactTestRenderer;
+    await act(async () => {
+      tree = renderer.create(
+        <AppPaneProvider>
+          <SessionView id="s1" />
+        </AppPaneProvider>
+      );
+    });
+
+    expect(headerActionMenuSpy).toHaveBeenCalled();
+
+    await act(async () => {
+      tree!.unmount();
+    });
+  });
+
+  it('renders a raised landscape back button on Android phones when the top header is hidden', async () => {
+    platformState.os = 'android';
+    responsiveState.deviceType = 'phone';
+    responsiveState.isLandscape = true;
+    let tree: renderer.ReactTestRenderer;
+    await act(async () => {
+      tree = renderer.create(
+        <AppPaneProvider>
+          <SessionView id="s1" />
+        </AppPaneProvider>
+      );
+    });
+
+    const pressables = tree!.root.findAllByType('Pressable' as any);
+    const landscapeBackButton = pressables.find((node: any) => {
+      const style = node.props?.style;
+      return style
+        && typeof style === 'object'
+        && style.position === 'absolute'
+        && style.left === 16
+        && style.width === 44
+        && style.height === 44;
+    });
+
+    expect(landscapeBackButton).toBeTruthy();
+    expect((landscapeBackButton as any).props.hitSlop).toBe(15);
+    expect((landscapeBackButton as any).props.style.zIndex).toBe(1000);
+    expect((landscapeBackButton as any).props.style.elevation).toBe(10);
+
+    await act(async () => {
+      tree!.unmount();
+    });
+
+    platformState.os = 'web';
+    responsiveState.isLandscape = false;
   });
 });

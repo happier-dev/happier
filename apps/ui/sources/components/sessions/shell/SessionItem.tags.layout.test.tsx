@@ -8,10 +8,44 @@ vi.mock('react-native-reanimated', () => ({}));
 
 vi.mock('react-native-gesture-handler', () => ({
     Swipeable: (props: any) => React.createElement('Swipeable', props),
+    GestureDetector: (props: any) => React.createElement('GestureDetector', props, props.children),
+}));
+
+vi.mock('@expo/vector-icons', () => ({
+    Ionicons: 'Ionicons',
+    Octicons: 'Octicons',
+}));
+
+vi.mock('react-native-unistyles', () => ({
+    StyleSheet: {
+        create: (input: any) =>
+            typeof input === 'function'
+                ? input({
+                    colors: {
+                        surface: '#fff',
+                        surfaceSelected: '#eee',
+                        divider: '#ddd',
+                        text: '#111',
+                        textSecondary: '#666',
+                        textLink: '#07f',
+                        input: { background: '#f0f0f0' },
+                        groupped: { background: '#f7f7f7' },
+                        status: { error: '#f00' },
+                        button: { primary: { tint: '#fff' } },
+                    },
+                })
+                : input,
+    },
+}));
+
+vi.mock('@/constants/Typography', () => ({
+    Typography: {
+        default: () => ({}),
+    },
 }));
 
 vi.mock('react-native', async () => {
-    const stub = await import('@/dev/reactNativeStub');
+    const stub = await import('../../../dev/reactNativeStub');
     return {
         ...stub,
         Platform: { ...stub.Platform, OS: 'ios' },
@@ -48,6 +82,10 @@ vi.mock('@/components/ui/status/StatusDot', () => ({
     StatusDot: 'StatusDot',
 }));
 
+vi.mock('@/components/sessions/pendingBadge', () => ({
+    formatPendingCountBadge: () => null,
+}));
+
 vi.mock('@/hooks/session/useNavigateToSession', () => ({
     useNavigateToSession: () => vi.fn(),
 }));
@@ -60,10 +98,25 @@ vi.mock('@/hooks/ui/useHappyAction', () => ({
     useHappyAction: (fn: any) => [false, fn],
 }));
 
+vi.mock('@/utils/errors/errors', () => ({
+    HappyError: class HappyError extends Error {},
+}));
+
+vi.mock('@/sync/ops', () => ({
+    sessionStopWithServerScope: vi.fn(async () => ({ success: true })),
+    sessionArchiveWithServerScope: vi.fn(async () => ({ success: true })),
+    sessionRename: vi.fn(async () => ({ success: true })),
+}));
+
 vi.mock('@/sync/domains/state/storage', () => ({
     useHasUnreadMessages: () => false,
     useProfile: () => ({ id: 'u1' }),
     useSession: () => null,
+    useSessionListMeaningfulActivityAt: () => null,
+}));
+
+vi.mock('@/utils/time/formatShortRelativeTime', () => ({
+    formatShortRelativeTime: () => '1m',
 }));
 
 vi.mock('@/modal', () => ({
@@ -72,6 +125,15 @@ vi.mock('@/modal', () => ({
 
 vi.mock('@/text', () => ({
     t: (key: string) => key,
+}));
+
+vi.mock('./sessionPinIcons', () => ({
+    PinIcon: (props: Record<string, unknown>) => React.createElement('PinIcon', props),
+    PinSlashIcon: (props: Record<string, unknown>) => React.createElement('PinSlashIcon', props),
+}));
+
+vi.mock('./sessionTagIcons', () => ({
+    TagIcon: (props: Record<string, unknown>) => React.createElement('TagIcon', props),
 }));
 
 function createSession(): any {

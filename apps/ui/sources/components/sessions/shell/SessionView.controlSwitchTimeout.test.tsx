@@ -5,7 +5,8 @@ import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest';
 import { AppPaneProvider } from '@/components/appShell/panes/AppPaneProvider';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
-(globalThis as any).__DEV__ = false;
+
+const previousDev = (globalThis as { __DEV__?: boolean }).__DEV__;
 
 const sessionSwitchSpy = vi.hoisted(() => vi.fn(async (..._args: unknown[]) => true));
 const modalAlertSpy = vi.hoisted(() => vi.fn());
@@ -59,6 +60,7 @@ const themeColors = {
   },
   modal: { border: '#ddd' },
   input: { background: '#f5f5f5', placeholder: '#999' },
+  radio: { active: '#007AFF' },
   header: { tint: '#000' },
   status: { error: '#f00' },
   shadow: { color: '#000', opacity: 0.2 },
@@ -88,6 +90,7 @@ vi.mock('react-native-unistyles', () => ({
 
 vi.mock('@react-navigation/native', () => ({
   useFocusEffect: () => {},
+  useIsFocused: () => true,
 }));
 
 vi.mock('expo-router', () => ({
@@ -227,7 +230,6 @@ vi.mock('@/sync/domains/session/control/localControlSwitch', async (importOrigin
   const actual = await importOriginal<any>();
   return {
     ...actual,
-    getSwitchToLocalControlDisabledReason: () => null,
   };
 });
 
@@ -275,6 +277,7 @@ vi.mock('@/sync/domains/state/storage', () => {
 
 describe('SessionView (control switch timeout)', () => {
   beforeEach(() => {
+    (globalThis as { __DEV__?: boolean }).__DEV__ = false;
     sessionSwitchSpy.mockResolvedValue(true);
     modalAlertSpy.mockClear();
     vi.useFakeTimers();
@@ -283,12 +286,16 @@ describe('SessionView (control switch timeout)', () => {
 
   afterEach(() => {
     vi.useRealTimers();
+    (globalThis as { __DEV__?: boolean }).__DEV__ = previousDev;
     // eslint-disable-next-line @typescript-eslint/no-dynamic-delete
     delete process.env.EXPO_PUBLIC_HAPPIER_CONTROL_SWITCH_UI_TIMEOUT_MS;
   });
 
-  it('clears switching state after a timeout when controlledByUser never updates', async () => {
+  it('keeps local-control UI hidden and clears remote switching state after a timeout when controlledByUser never updates', async () => {
+    sessionSwitchSpy.mockImplementationOnce(() => new Promise(() => {}));
     const { SessionView } = await import('./SessionView');
+    const { storage } = await import('@/sync/domains/state/storage');
+    (storage.getState().sessions.s1 as any).agentState = { controlledByUser: true };
     let tree!: renderer.ReactTestRenderer;
 
     act(() => {
@@ -303,13 +310,14 @@ describe('SessionView (control switch timeout)', () => {
 
     const chatList = (tree as any).root.findByType('ChatList');
     expect(chatList.props.controlSwitchTo).toBeNull();
+    expect(typeof chatList.props.onRequestSwitchToRemote).toBe('function');
 
     act(() => {
-      chatList.props.localControlFooter.onRequestSwitchToLocal();
+      chatList.props.onRequestSwitchToRemote();
     });
     await act(async () => {});
 
-    expect((tree as any).root.findByType('ChatList').props.controlSwitchTo).toBe('local');
+    expect((tree as any).root.findByType('ChatList').props.controlSwitchTo).toBe('remote');
 
     await act(async () => {
       vi.advanceTimersByTime(1_000);
@@ -317,6 +325,86 @@ describe('SessionView (control switch timeout)', () => {
     await act(async () => {});
 
     expect((tree as any).root.findByType('ChatList').props.controlSwitchTo).toBeNull();
+    expect(modalAlertSpy).toHaveBeenCalledWith('common.error', 'errors.failedToSwitchControl');
+
+    act(() => {
+      tree.unmount();
+    });
+  });
+
+  it('surfaces switch-to-local for attachable exclusive local-control sessions', async () => {
+    const { SessionView } = await import('./SessionView');
+    const { storage } = await import('@/sync/domains/state/storage');
+    (storage.getState().sessions.s1 as any).agentState = {
+      controlledByUser: false,
+      localControl: {
+        attached: false,
+        topology: 'exclusive',
+        remoteWritable: true,
+        canAttach: true,
+        canDetach: false,
+      },
+    };
+
+    let tree!: renderer.ReactTestRenderer;
+    act(() => {
+      tree = renderer.create(
+        <AppPaneProvider>
+          <SessionView id="s1" />
+        </AppPaneProvider>,
+      );
+    });
+
+    await act(async () => {});
+
+    const chatList = (tree as any).root.findByType('ChatList');
+    expect(typeof chatList.props.onRequestSwitchToLocal).toBe('function');
+
+    act(() => {
+      tree.unmount();
+    });
+  });
+
+  it('shows only one failure alert when a timed-out switch later fails', async () => {
+    let rejectSwitch: ((error: Error) => void) | null = null;
+    sessionSwitchSpy.mockImplementationOnce(
+      () =>
+        new Promise((_, reject) => {
+          rejectSwitch = reject;
+        }),
+    );
+
+    const { SessionView } = await import('./SessionView');
+    const { storage } = await import('@/sync/domains/state/storage');
+    (storage.getState().sessions.s1 as any).agentState = { controlledByUser: true };
+
+    let tree!: renderer.ReactTestRenderer;
+    act(() => {
+      tree = renderer.create(
+        <AppPaneProvider>
+          <SessionView id="s1" />
+        </AppPaneProvider>,
+      );
+    });
+
+    await act(async () => {});
+
+    const chatList = (tree as any).root.findByType('ChatList');
+    act(() => {
+      chatList.props.onRequestSwitchToRemote();
+    });
+    await act(async () => {});
+
+    await act(async () => {
+      vi.advanceTimersByTime(1_000);
+    });
+
+    await act(async () => {
+      rejectSwitch?.(new Error('slow failure'));
+      await Promise.resolve();
+    });
+
+    expect(modalAlertSpy).toHaveBeenCalledTimes(1);
     expect(modalAlertSpy).toHaveBeenCalledWith('common.error', 'errors.failedToSwitchControl');
 
     act(() => {
