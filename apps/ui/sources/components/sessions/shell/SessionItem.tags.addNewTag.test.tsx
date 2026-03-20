@@ -64,6 +64,7 @@ vi.mock('@/sync/domains/state/storage', () => ({
     useHasUnreadMessages: () => false,
     useProfile: () => ({ id: 'u1' }),
     useSession: () => null,
+    useSessionListMeaningfulActivityAt: () => null,
 }));
 
 const promptSpy = vi.fn(async () => 'new-tag');
@@ -133,7 +134,8 @@ describe('SessionItem tags (new tag)', () => {
             tagButton.props.onPress();
         });
 
-        const dropdown = (tree as any).root.findByType('DropdownMenu');
+        const dropdowns = (tree as any).root.findAllByType('DropdownMenu');
+        const dropdown = dropdowns.find((d: any) => d.props.search === true);
         expect(dropdown.props.emptyLabel).toBe(null);
         expect(dropdown.props.showCategoryTitles).toBe(false);
         expect(typeof dropdown.props.createItemDisplay).toBe('function');
