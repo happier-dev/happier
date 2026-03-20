@@ -13,19 +13,19 @@ type AcpBackendLike = {
   };
 };
 
-function withTempHome<T>(fn: (homeDir: string) => T): T {
+async function withTempHome<T>(fn: (homeDir: string) => Promise<T> | T): Promise<T> {
   const prevHome = process.env.HOME;
   const dir = mkdtempSync(join(tmpdir(), 'happier-gemini-home-'));
   process.env.HOME = dir;
   try {
-    return fn(dir);
+    return await fn(dir);
   } finally {
     process.env.HOME = prevHome;
     rmSync(dir, { recursive: true, force: true });
   }
 }
 
-function withFakeGeminiCli<T>(fn: (geminiPath: string) => T): T {
+async function withFakeGeminiCli<T>(fn: (geminiPath: string) => Promise<T> | T): Promise<T> {
   const prevGeminiPath = process.env.HAPPIER_GEMINI_PATH;
   const dir = mkdtempSync(join(tmpdir(), 'happier-gemini-bin-'));
   const geminiPath = join(dir, 'gemini');
@@ -34,7 +34,7 @@ function withFakeGeminiCli<T>(fn: (geminiPath: string) => T): T {
   process.env.HAPPIER_GEMINI_PATH = geminiPath;
 
   try {
-    return fn(geminiPath);
+    return await fn(geminiPath);
   } finally {
     if (prevGeminiPath === undefined) delete process.env.HAPPIER_GEMINI_PATH;
     else process.env.HAPPIER_GEMINI_PATH = prevGeminiPath;
@@ -43,8 +43,8 @@ function withFakeGeminiCli<T>(fn: (geminiPath: string) => T): T {
 }
 
 describe('createGeminiBackend auth method', () => {
-  it('defaults to oauth-personal when no API key is present', () => {
-    withTempHome(() => withFakeGeminiCli(() => {
+  it('defaults to oauth-personal when no API key is present', async () => {
+    await withTempHome(() => withFakeGeminiCli(() => {
       const prevGeminiKey = process.env.GEMINI_API_KEY;
       const prevGoogleKey = process.env.GOOGLE_API_KEY;
       delete process.env.GEMINI_API_KEY;
@@ -67,8 +67,8 @@ describe('createGeminiBackend auth method', () => {
     }));
   });
 
-  it('uses gemini-api-key when GEMINI_API_KEY is present', () => {
-    withTempHome(() => withFakeGeminiCli(() => {
+  it('uses gemini-api-key when GEMINI_API_KEY is present', async () => {
+    await withTempHome(() => withFakeGeminiCli(() => {
       const prevGeminiKey = process.env.GEMINI_API_KEY;
       const prevGoogleKey = process.env.GOOGLE_API_KEY;
       process.env.GEMINI_API_KEY = 'AIzaFakeKey';
@@ -91,7 +91,7 @@ describe('createGeminiBackend auth method', () => {
   });
 
   it('creates a temporary Gemini CLI home for MCP-backed sessions and cleans it up on dispose', async () => {
-    withTempHome((homeDir) => withFakeGeminiCli(() => {
+    await withTempHome((homeDir) => withFakeGeminiCli(async () => {
       mkdirSync(join(homeDir, '.gemini'), { recursive: true });
 
       const result = createGeminiBackend({
@@ -125,9 +125,8 @@ describe('createGeminiBackend auth method', () => {
       });
       expect(JSON.stringify(settings)).not.toContain('secret');
 
-      return result.backend.dispose().then(() => {
-        expect(() => readFileSync(settingsPath, 'utf8')).toThrow();
-      });
+      await result.backend.dispose();
+      expect(() => readFileSync(settingsPath, 'utf8')).toThrow();
     }));
   });
 
