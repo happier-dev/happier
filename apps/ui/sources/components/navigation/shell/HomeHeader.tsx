@@ -1,6 +1,5 @@
 import * as React from 'react';
 import { Header } from '@/components/navigation/Header';
-import { useSocketStatus } from '@/sync/domains/state/storage';
 import { Platform, Pressable, View } from 'react-native';
 import { Typography } from '@/constants/Typography';
 import { StatusDot } from '@/components/ui/status/StatusDot';
@@ -12,6 +11,7 @@ import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { t } from '@/text';
 import { useAutomationsSupport } from '@/hooks/server/useAutomationsSupport';
 import { Text } from '@/components/ui/text/Text';
+import { useConnectionHealth } from '@/components/navigation/connectionStatus/useConnectionHealth';
 
 
 const stylesheet = StyleSheet.create((theme, runtime) => ({
@@ -61,22 +61,6 @@ const stylesheet = StyleSheet.create((theme, runtime) => ({
         fontWeight: '500',
         lineHeight: 16,
         ...Typography.default(),
-    },
-    // Status colors
-    statusConnected: {
-        color: theme.colors.status.connected,
-    },
-    statusConnecting: {
-        color: theme.colors.status.connecting,
-    },
-    statusDisconnected: {
-        color: theme.colors.status.disconnected,
-    },
-    statusError: {
-        color: theme.colors.status.error,
-    },
-    statusDefault: {
-        color: theme.colors.status.default,
     },
     centeredTitle: {
         textAlign: Platform.OS === 'ios' ? 'center' : 'left',
@@ -182,54 +166,10 @@ function HeaderLeft(props: { showAutomations: boolean }) {
 }
 
 function HeaderTitleWithSubtitle({ subtitle }: { subtitle?: string }) {
-    const socketStatus = useSocketStatus();
+    const connectionHealth = useConnectionHealth();
     const styles = stylesheet;
-
-    // Get connection status styling (matching sessionUtils.ts pattern)
-    const getConnectionStatus = () => {
-        const { status } = socketStatus;
-        switch (status) {
-            case 'connected':
-                return {
-                    color: styles.statusConnected.color,
-                    isPulsing: false,
-                    text: t('status.connected'),
-                    textColor: styles.statusConnected.color
-                };
-            case 'connecting':
-                return {
-                    color: styles.statusConnecting.color,
-                    isPulsing: true,
-                    text: t('status.connecting'),
-                    textColor: styles.statusConnecting.color
-                };
-            case 'disconnected':
-                return {
-                    color: styles.statusDisconnected.color,
-                    isPulsing: false,
-                    text: t('status.disconnected'),
-                    textColor: styles.statusDisconnected.color
-                };
-            case 'error':
-                return {
-                    color: styles.statusError.color,
-                    isPulsing: false,
-                    text: t('status.error'),
-                    textColor: styles.statusError.color
-                };
-            default:
-                return {
-                    color: styles.statusDefault.color,
-                    isPulsing: false,
-                    text: '',
-                    textColor: styles.statusDefault.color
-                };
-        }
-    };
-
     const hasCustomSubtitle = !!subtitle;
-    const connectionStatus = getConnectionStatus();
-    const showConnectionStatus = !hasCustomSubtitle && connectionStatus.text;
+    const showConnectionStatus = !hasCustomSubtitle && Boolean(connectionHealth.statusLabelKey);
 
     return (
         <View style={styles.titleContainer}>
@@ -244,16 +184,16 @@ function HeaderTitleWithSubtitle({ subtitle }: { subtitle?: string }) {
             {showConnectionStatus && (
                 <View style={styles.statusContainer}>
                     <StatusDot
-                        color={connectionStatus.color}
-                        isPulsing={connectionStatus.isPulsing}
+                        color={connectionHealth.color}
+                        isPulsing={connectionHealth.isPulsing}
                         size={6}
                         style={styles.statusDot}
                     />
                     <Text style={[
                         styles.statusText,
-                        { color: connectionStatus.textColor }
+                        { color: connectionHealth.color }
                     ]}>
-                        {connectionStatus.text}
+                        {t(connectionHealth.statusLabelKey)}
                     </Text>
                 </View>
             )}

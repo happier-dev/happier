@@ -12,6 +12,8 @@ const buildPolicyState = vi.hoisted(() => ({
     decision: 'neutral' as 'allow' | 'deny' | 'neutral',
 }));
 
+const setSessionsListStorageTabSpy = vi.hoisted(() => vi.fn());
+
 vi.mock('react-native', async (importOriginal) => {
     const actual = await importOriginal<any>();
     return {
@@ -36,10 +38,20 @@ vi.mock('@expo/vector-icons', () => ({
     Ionicons: 'Ionicons',
 }));
 
-vi.mock('@/sync/domains/state/storage', () => ({
+vi.mock('@/sync/domains/state/storage', async (importOriginal) => {
+    const actual = await importOriginal<typeof import('@/sync/domains/state/storage')>();
+
+    return {
+        ...actual,
     useFriendRequests: () => [],
     useSocketStatus: () => ({ status: 'connected' }),
     useRealtimeStatus: () => ({ status: 'idle' }),
+    useLocalSettingMutable: (name: string) => {
+        if (name === 'sessionsListStorageTab') {
+            return ['persisted', setSessionsListStorageTabSpy] as const;
+        }
+        throw new Error(`Unexpected local setting: ${name}`);
+    },
     useSetting: (key: string) => {
         if (key === 'serverSelectionGroups') return [];
         if (key === 'serverSelectionActiveTargetKind') return 'main_selection';
@@ -47,7 +59,8 @@ vi.mock('@/sync/domains/state/storage', () => ({
         return null;
     },
     useSettings: () => ({}),
-}));
+    };
+});
 
 vi.mock('@/hooks/session/useVisibleSessionListViewData', () => ({
     useVisibleSessionListViewData: () => sessionListState.data,
@@ -71,6 +84,18 @@ vi.mock('@/hooks/server/useAutomationsSupport', () => ({
 
 vi.mock('@/hooks/server/useFeatureEnabled', () => ({
     useFeatureEnabled: () => false,
+}));
+
+vi.mock('@/hooks/server/useFeatureDecision', () => ({
+    useFeatureDecision: () => ({
+        state: 'disabled',
+        blockerCode: 'feature_disabled',
+        blockedBy: 'local_policy',
+        diagnostics: [],
+        evaluatedAt: 0,
+        featureId: 'sessions.direct',
+        scope: { scopeKind: 'main_selection' },
+    }),
 }));
 
 vi.mock('@/hooks/ui/useTabState', () => ({
@@ -145,6 +170,7 @@ describe('MainView (tablet primary pane)', () => {
     beforeEach(() => {
         sessionListState.data = [];
         buildPolicyState.decision = 'neutral';
+        setSessionsListStorageTabSpy.mockReset();
     });
 
     it('shows getting started guidance instead of a blank view', async () => {
