@@ -124,6 +124,53 @@ describe('PermissionHandler (late permission responses)', () => {
     handler.dispose();
   });
 
+  it('auto-approves pending requests when a late approval changes the mode without allowlist updates', async () => {
+    const { session, client } = createPermissionHandlerSessionStub('s2-mode-only');
+    const handler = new PermissionHandler(session);
+
+    const abortedController = new AbortController();
+    const pendingController = new AbortController();
+    const firstId = 'perm-late-mode-only-1';
+    const secondId = 'perm-late-mode-only-2';
+
+    const aborted = handler.handleToolCall(
+      'Read',
+      { file_path: '/tmp/a.txt' },
+      { permissionMode: 'default' } as any,
+      { signal: abortedController.signal, toolUseId: firstId },
+    );
+
+    const pending = handler.handleToolCall(
+      'Read',
+      { file_path: '/tmp/b.txt' },
+      { permissionMode: 'default' } as any,
+      { signal: pendingController.signal, toolUseId: secondId },
+    );
+
+    abortedController.abort();
+    await expect(aborted).rejects.toBeTruthy();
+
+    const permissionRpc = client.rpcHandlerManager.getHandler('permission');
+    expect(permissionRpc).toBeTruthy();
+    await permissionRpc?.({
+      id: firstId,
+      approved: true,
+      mode: 'yolo',
+    } as any);
+
+    await expect(expectResolvesWithin(pending)).resolves.toEqual({
+      behavior: 'allow',
+      updatedInput: { file_path: '/tmp/b.txt' },
+    });
+    expect(session.setLastPermissionMode).toHaveBeenCalledWith('yolo');
+    expect((client.agentState as any).requests?.[secondId]).toBeUndefined();
+    expect((client.agentState as any).completedRequests?.[secondId]).toMatchObject({
+      status: 'approved',
+      mode: 'yolo',
+    });
+    handler.dispose();
+  });
+
   it('does not apply late denied allowlist side-effects to pending or future requests', async () => {
     const { session, client } = createPermissionHandlerSessionStub('s3');
     const handler = new PermissionHandler(session);
