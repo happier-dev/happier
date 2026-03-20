@@ -2542,7 +2542,10 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
         ? true
         : publishApkReleaseMode === 'false'
           ? false
-          : shouldDownloadAndroidApk && supportsApkReleasePublishing;
+          : supportsApkReleasePublishing &&
+            (nativeBuildMode === 'local'
+              ? shouldHandleAndroid && localArtifactOutForPlatform('android', appVersion || '0.0.0').endsWith('.apk')
+              : shouldDownloadAndroidApk);
 
     if (nativeBuildMode === 'local') {
       if (nativeLocalRuntime === 'dagger' && platform !== 'android') {
