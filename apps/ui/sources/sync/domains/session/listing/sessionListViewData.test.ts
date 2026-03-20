@@ -144,6 +144,62 @@ describe('buildSessionListViewData', () => {
         ]);
     });
 
+    it('groups sessions by the canonical reachable machine target when metadata machine ids are stale', () => {
+        const machineTarget = makeMachine({
+            id: 'm-target',
+            metadata: { host: 'target.local', platform: 'darwin', happyCliVersion: '0.0.0', happyHomeDir: '/h', homeDir: '/home/u' },
+        });
+
+        const sessions: Record<string, Session> = {
+            stale: makeSession({
+                id: 'stale',
+                createdAt: 2,
+                updatedAt: 100,
+                metadata: {
+                    machineId: 'm-stale',
+                    path: '/home/u/repoA',
+                    homeDir: '/home/u',
+                    host: 'stale.local',
+                    version: '0.0.0',
+                    flavor: 'claude',
+                },
+            }),
+            peer: makeSession({
+                id: 'peer',
+                createdAt: 3,
+                updatedAt: 200,
+                metadata: {
+                    machineId: 'm-target',
+                    path: '/home/u/repoA',
+                    homeDir: '/home/u',
+                    host: 'target.local',
+                    version: '0.0.0',
+                    flavor: 'claude',
+                },
+            }),
+        };
+
+        const data = buildSessionListViewData(
+            sessions,
+            { [machineTarget.id]: machineTarget },
+            {
+                groupInactiveSessionsByProject: true,
+                sessionTargetState: {
+                    sessions,
+                    machines: { [machineTarget.id]: machineTarget },
+                    getProjectForSession: () => null,
+                },
+            } as any,
+        );
+
+        const projectHeaders = data.filter((item): item is Extract<typeof item, { type: 'header' }> =>
+            item.type === 'header' && item.headerKind === 'project',
+        );
+
+        expect(projectHeaders).toHaveLength(1);
+        expect(projectHeaders[0]?.subtitle).toBe('target.local');
+    });
+
     it('does not treat /home/userfoo as inside /home/user', () => {
         const machine = makeMachine({ id: 'm1', metadata: { host: 'm1', platform: 'darwin', happyCliVersion: '0.0.0', happyHomeDir: '/h', homeDir: '/home/user' } });
 
