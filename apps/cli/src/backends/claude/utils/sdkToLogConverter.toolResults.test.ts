@@ -4,10 +4,12 @@ import type { SDKUserMessage } from '@/backends/claude/sdk';
 import { convertSDKToLog } from './sdkToLogConverter';
 import { asRecord, conversionContext, createConverter } from './sdkToLogConverter.testkit';
 
-type PermissionMode = 'default' | 'acceptEdits' | 'bypassPermissions' | 'plan';
-
 describe('SDKToLogConverter tool result mode metadata', () => {
-  function createResponses(entries: Array<{ id: string; approved: boolean; mode?: PermissionMode; reason?: string }>) {
+  type ClaudeResponseMap = Parameters<typeof createConverter>[0];
+  type ClaudeResponseValue = ClaudeResponseMap extends Map<string, infer TValue> | undefined ? TValue : never;
+  type ClaudePermissionMode = ClaudeResponseValue extends { mode?: infer TMode } ? TMode : never;
+
+  function createResponses(entries: Array<{ id: string; approved: boolean; mode?: ClaudePermissionMode; reason?: string }>) {
     return new Map(entries.map((entry) => [entry.id, { approved: entry.approved, mode: entry.mode, reason: entry.reason }]));
   }
 
