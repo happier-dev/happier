@@ -8,6 +8,7 @@ const deleteArtifactMock = vi.hoisted(() => vi.fn(async () => undefined));
 const modalConfirmMock = vi.hoisted(() => vi.fn(async () => true));
 const duplicatePromptDocMock = vi.hoisted(() => vi.fn(async () => 'doc-1-copy'));
 const duplicatePromptBundleMock = vi.hoisted(() => vi.fn(async () => 'bundle-1-copy'));
+const modalAlertMock = vi.hoisted(() => vi.fn());
 const routerPushSpy = vi.fn();
 const routerBackSpy = vi.fn();
 const setPromptInvocationsMock = vi.fn();
@@ -93,7 +94,7 @@ vi.mock('@/components/ui/forms/settingsTextInputMetrics', () => ({
 vi.mock('@/modal', () => ({
     Modal: {
         confirm: modalConfirmMock,
-        alert: vi.fn(),
+        alert: modalAlertMock,
     },
 }));
 
@@ -192,6 +193,7 @@ describe('PromptLibraryEntryListScreen', () => {
         setPromptFoldersMock.mockClear();
         duplicatePromptDocMock.mockClear();
         duplicatePromptBundleMock.mockClear();
+        modalAlertMock.mockClear();
     });
 
     it('renders entries before the add item and exposes row actions for each prompt', async () => {
@@ -290,5 +292,49 @@ describe('PromptLibraryEntryListScreen', () => {
 
         expect(duplicatePromptDocMock).toHaveBeenCalledWith('doc-1');
         expect(routerPushSpy).toHaveBeenCalledWith('/(app)/settings/prompts/docs/doc-1-copy');
+    });
+
+    it('keeps local references unchanged when deleting a prompt artifact fails', async () => {
+        deleteArtifactMock.mockRejectedValueOnce(new Error('delete failed'));
+        const { PromptLibraryEntryListScreen } = await import('./PromptLibraryEntryListScreen');
+
+        let tree!: ReactTestRenderer;
+        await act(async () => {
+            tree = renderer.create(React.createElement(PromptLibraryEntryListScreen, { kind: 'doc' }));
+        });
+
+        const actions = tree.root.findAllByType('ItemRowActions');
+        const deleteAction = actions[0]?.props?.actions?.find((action: any) => action.id === 'delete');
+        expect(deleteAction).toBeTruthy();
+
+        await act(async () => {
+            await deleteAction?.onPress?.();
+        });
+
+        expect(setPromptInvocationsMock).not.toHaveBeenCalled();
+        expect(setPromptStacksMock).not.toHaveBeenCalled();
+        expect(setPromptExternalLinksMock).not.toHaveBeenCalled();
+        expect(modalAlertMock).toHaveBeenCalledWith('common.error', 'errors.unknownError');
+    });
+
+    it('shows an error and stays on the current screen when duplication fails', async () => {
+        duplicatePromptDocMock.mockRejectedValueOnce(new Error('copy failed'));
+        const { PromptLibraryEntryListScreen } = await import('./PromptLibraryEntryListScreen');
+
+        let tree!: ReactTestRenderer;
+        await act(async () => {
+            tree = renderer.create(React.createElement(PromptLibraryEntryListScreen, { kind: 'doc' }));
+        });
+
+        const actions = tree.root.findAllByType('ItemRowActions');
+        const duplicateAction = actions[0]?.props?.actions?.find((action: any) => action.id === 'duplicate');
+        expect(duplicateAction).toBeTruthy();
+
+        await act(async () => {
+            await duplicateAction?.onPress?.();
+        });
+
+        expect(routerPushSpy).not.toHaveBeenCalled();
+        expect(modalAlertMock).toHaveBeenCalledWith('common.error', 'errors.unknownError');
     });
 });

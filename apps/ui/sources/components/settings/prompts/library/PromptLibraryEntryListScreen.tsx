@@ -132,7 +132,12 @@ export const PromptLibraryEntryListScreen = React.memo((props: Readonly<{ kind: 
       return;
     }
 
-    await deleteArtifact(credentials, artifactId);
+    try {
+      await deleteArtifact(credentials, artifactId);
+    } catch {
+      Modal.alert(t('common.error'), t('errors.unknownError'));
+      return;
+    }
     storage.getState().deleteArtifact(artifactId);
 
     const next = removePromptLibraryArtifactReferences({
@@ -147,10 +152,14 @@ export const PromptLibraryEntryListScreen = React.memo((props: Readonly<{ kind: 
   }, [promptExternalLinksV1, promptInvocationsV1, promptStacksV1, setPromptExternalLinksV1, setPromptInvocationsV1, setPromptStacksV1]);
 
   const duplicateEntry = React.useCallback(async (artifactId: string) => {
-    const nextArtifactId = props.kind === 'doc'
-      ? await duplicatePromptDoc(artifactId)
-      : await duplicatePromptBundle(artifactId);
-    router.push(screen.editHref(nextArtifactId));
+    try {
+      const nextArtifactId = props.kind === 'doc'
+        ? await duplicatePromptDoc(artifactId)
+        : await duplicatePromptBundle(artifactId);
+      router.push(screen.editHref(nextArtifactId));
+    } catch {
+      Modal.alert(t('common.error'), t('errors.unknownError'));
+    }
   }, [props.kind, router, screen]);
 
   return (

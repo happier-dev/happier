@@ -91,7 +91,13 @@ export const PromptFoldersScreen = React.memo(function PromptFoldersScreen() {
           }
         }
         if (!bodyText) continue;
-        const parsed = PromptDocBodyV1Schema.safeParse(JSON.parse(bodyText));
+        let bodyJson: unknown;
+        try {
+          bodyJson = JSON.parse(bodyText);
+        } catch {
+          continue;
+        }
+        const parsed = PromptDocBodyV1Schema.safeParse(bodyJson);
         if (!parsed.success) continue;
         await updatePromptDoc({
           artifactId: artifact.id,
@@ -110,7 +116,13 @@ export const PromptFoldersScreen = React.memo(function PromptFoldersScreen() {
           }
         }
         if (!bodyText) continue;
-        const parsed = PromptBundleBodyV1Schema.safeParse(JSON.parse(bodyText));
+        let bodyJson: unknown;
+        try {
+          bodyJson = JSON.parse(bodyText);
+        } catch {
+          continue;
+        }
+        const parsed = PromptBundleBodyV1Schema.safeParse(bodyJson);
         if (!parsed.success) continue;
         await updateSkillPromptBundle({
           artifactId: artifact.id,

@@ -11,6 +11,7 @@ const createSkillPromptBundleSpy = vi.fn(async () => 'new-bundle');
 const updateSkillPromptBundleSpy = vi.fn(async () => {});
 const setPromptFoldersSpy = vi.fn();
 let latestFocusEffect: (() => void) | undefined;
+const fetchArtifactWithBodySpy = vi.fn(async () => null);
 const promptExternalLinksState = vi.hoisted(() => ({
     value: {
         v: 1,
@@ -25,6 +26,14 @@ const promptExternalLinksState = vi.hoisted(() => ({
                 externalRef: { skillName: 'reviewer' },
                 lastExternalDigest: 'digest-1',
             },
+        ],
+    },
+}));
+const promptFoldersState = vi.hoisted(() => ({
+    value: {
+        v: 1,
+        folders: [
+            { id: 'folder-1', name: 'Ops', parentId: null },
         ],
     },
 }));
@@ -148,7 +157,7 @@ vi.mock('@/modal', () => ({
 vi.mock('@/sync/sync', () => ({
     sync: {
         getCredentials: () => ({ ok: true }),
-        fetchArtifactWithBody: vi.fn(async () => null),
+        fetchArtifactWithBody: fetchArtifactWithBodySpy,
     },
 }));
 
@@ -195,12 +204,7 @@ vi.mock('@/sync/domains/state/storage', () => ({
     },
     useSettingMutable: (key: string) => {
         if (key === 'promptFoldersV1') {
-            return [{
-                v: 1,
-                folders: [
-                    { id: 'folder-1', name: 'Ops', parentId: null },
-                ],
-            }, setPromptFoldersSpy];
+            return [promptFoldersState.value, setPromptFoldersSpy];
         }
         return [null, vi.fn()];
     },
@@ -219,6 +223,7 @@ describe('SkillBundleEditorScreen', () => {
         routerPushSpy.mockReset();
         createSkillPromptBundleSpy.mockClear();
         updateSkillPromptBundleSpy.mockClear();
+        fetchArtifactWithBodySpy.mockClear();
         setPromptFoldersSpy.mockClear();
         latestFocusEffect = undefined;
         artifactBodiesState.value = {
@@ -258,7 +263,8 @@ describe('SkillBundleEditorScreen', () => {
         const saveFooter = tree.root.findByType('SettingsActionFooter');
 
         await act(async () => {
-            await saveFooter.props.onPrimaryPress();
+            saveFooter.props.onPrimaryPress();
+            await updateSkillPromptBundleSpy.mock.results[0]?.value;
         });
 
         expect(updateSkillPromptBundleSpy).toHaveBeenCalledWith({
@@ -308,7 +314,8 @@ describe('SkillBundleEditorScreen', () => {
 
         const saveButton = tree.root.findByType('SettingsActionFooter');
         await act(async () => {
-            await saveButton.props.onPrimaryPress();
+            saveButton.props.onPrimaryPress();
+            await createSkillPromptBundleSpy.mock.results[0]?.value;
         });
 
         expect(createSkillPromptBundleSpy).toHaveBeenCalledWith({
@@ -318,6 +325,34 @@ describe('SkillBundleEditorScreen', () => {
             tags: [],
         });
         expect(routerReplaceSpy).toHaveBeenCalledWith('/settings/prompts/skills');
+    });
+
+    it('keeps existing skill editors locked when the requested artifact body does not load', async () => {
+        artifactBodiesState.value = {
+            'bundle-1': {
+                id: 'bundle-1',
+                header: { title: 'Skill title' },
+                body: undefined,
+            },
+        };
+        fetchArtifactWithBodySpy.mockResolvedValueOnce(null);
+
+        const { SkillBundleEditorScreen } = await import('./SkillBundleEditorScreen');
+
+        let tree!: ReactTestRenderer;
+        await act(async () => {
+            tree = renderer.create(React.createElement(SkillBundleEditorScreen, { artifactId: 'bundle-1' }));
+            await Promise.resolve();
+            await Promise.resolve();
+        });
+
+        const titleInput = tree.root.findByProps({ testID: 'skillBundle.title' });
+        const editor = tree.root.findByProps({ testID: 'skillBundle.editor' });
+        const footer = tree.root.findByType('SettingsActionFooter');
+
+        expect(titleInput.props.editable).toBe(false);
+        expect(editor.props.readOnly).toBe(true);
+        expect(footer.props.primaryDisabled).toBe(true);
     });
 
     it('renders linked exports and a settings footer for existing skills', async () => {

@@ -198,4 +198,36 @@ describe('PromptFoldersScreen', () => {
       folders: [],
     });
   });
+
+  it('skips malformed artifact bodies when deleting a folder', async () => {
+    artifactsState.value = [
+      {
+        id: 'doc-1',
+        title: 'Broken Doc',
+        header: { kind: 'prompt_doc.v2', title: 'Broken Doc', folderId: 'folder-1', tags: ['alpha'] },
+        body: '{',
+      },
+    ];
+
+    const { PromptFoldersScreen } = await import('./PromptFoldersScreen');
+
+    let tree!: ReactTestRenderer;
+    await act(async () => {
+      tree = renderer.create(<PromptFoldersScreen />);
+    });
+
+    const rowActions = tree.root.findByType('ItemRowActions');
+    const deleteAction = rowActions.props.actions.find((action: any) => action.id === 'delete');
+
+    await act(async () => {
+      await deleteAction.onPress();
+    });
+
+    expect(updatePromptDocMock).not.toHaveBeenCalled();
+    expect(updateSkillPromptBundleMock).not.toHaveBeenCalled();
+    expect(setPromptFoldersMock).toHaveBeenCalledWith({
+      v: 1,
+      folders: [],
+    });
+  });
 });
