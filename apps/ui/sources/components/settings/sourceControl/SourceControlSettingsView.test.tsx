@@ -2,23 +2,41 @@ import * as React from 'react';
 import renderer, { act } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
 
+import { DEFAULT_AGENT_ID } from '@/agents/catalog/catalog';
+
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
-const setScmCommitStrategy = vi.fn();
-const setScmGitRepoPreferredBackend = vi.fn();
-const setScmRemoteConfirmPolicy = vi.fn();
-const setScmPushRejectPolicy = vi.fn();
-const setScmDefaultDiffModeByBackend = vi.fn();
-const setFilesDiffSyntaxHighlightingMode = vi.fn();
-const setFilesDiffRendererMode = vi.fn();
-const setFilesDiffPresentationStyle = vi.fn();
-let filesDiffPresentationStyleValue: any = 'split';
-const setFilesChangedFilesRowDensity = vi.fn();
-const setScmCommitMessageGeneratorEnabled = vi.fn();
-const setScmCommitMessageGeneratorBackendId = vi.fn();
-const setScmCommitMessageGeneratorInstructions = vi.fn();
+const {
+    setScmCommitStrategy,
+    setScmGitRepoPreferredBackend,
+    setScmRemoteConfirmPolicy,
+    setScmPushRejectPolicy,
+    setScmDefaultDiffModeByBackend,
+    setFilesDiffSyntaxHighlightingMode,
+    setFilesDiffRendererMode,
+    setFilesDiffPresentationStyle,
+    setFilesChangedFilesRowDensity,
+    setScmCommitMessageGeneratorEnabled,
+    setScmCommitMessageGeneratorBackendId,
+    setScmCommitMessageGeneratorInstructions,
+    modalPrompt,
+} = vi.hoisted(() => ({
+    setScmCommitStrategy: vi.fn(),
+    setScmGitRepoPreferredBackend: vi.fn(),
+    setScmRemoteConfirmPolicy: vi.fn(),
+    setScmPushRejectPolicy: vi.fn(),
+    setScmDefaultDiffModeByBackend: vi.fn(),
+    setFilesDiffSyntaxHighlightingMode: vi.fn(),
+    setFilesDiffRendererMode: vi.fn(),
+    setFilesDiffPresentationStyle: vi.fn(),
+    setFilesChangedFilesRowDensity: vi.fn(),
+    setScmCommitMessageGeneratorEnabled: vi.fn(),
+    setScmCommitMessageGeneratorBackendId: vi.fn(),
+    setScmCommitMessageGeneratorInstructions: vi.fn(),
+    modalPrompt: vi.fn(),
+}));
 
-const modalPrompt = vi.fn();
+let filesDiffPresentationStyleValue: any = 'split';
 
 vi.mock('react-native', async () => await import('@/dev/reactNativeStub'));
 
@@ -38,7 +56,7 @@ vi.mock('@/sync/domains/state/storage', () => ({
         if (name === 'filesDiffPresentationStyle') return [filesDiffPresentationStyleValue, setFilesDiffPresentationStyle];
         if (name === 'filesChangedFilesRowDensity') return ['comfortable', setFilesChangedFilesRowDensity];
         if (name === 'scmCommitMessageGeneratorEnabled') return [true, setScmCommitMessageGeneratorEnabled];
-        if (name === 'scmCommitMessageGeneratorBackendId') return ['claude', setScmCommitMessageGeneratorBackendId];
+        if (name === 'scmCommitMessageGeneratorBackendId') return [DEFAULT_AGENT_ID, setScmCommitMessageGeneratorBackendId];
         if (name === 'scmCommitMessageGeneratorInstructions') return ['', setScmCommitMessageGeneratorInstructions];
         return [null, vi.fn()];
     },
