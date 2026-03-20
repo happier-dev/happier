@@ -7,6 +7,18 @@ import {
   runScmRoute,
 } from '@/scm/rpc/dispatch';
 
+type ScmSnapshotEntry = Readonly<{
+  path: string;
+  hasIncludedDelta?: boolean;
+  hasPendingDelta?: boolean;
+}>;
+
+function isScmSnapshotEntry(value: unknown): value is ScmSnapshotEntry {
+  if (!value || typeof value !== 'object') return false;
+  const anyValue = value as { path?: unknown };
+  return typeof anyValue.path === 'string' && anyValue.path.trim().length > 0;
+}
+
 export async function loadScmCommitMessageContext(params: Readonly<{
   workingDirectory: string;
   maxFiles: number;
@@ -61,8 +73,9 @@ export async function loadScmCommitMessageContext(params: Readonly<{
     }
 
     return (snapshot.entries ?? [])
-      .filter((e) => e && typeof e.path === 'string' && (e.hasIncludedDelta || e.hasPendingDelta))
-      .map((e) => e.path)
+      .filter(isScmSnapshotEntry)
+      .filter((e) => Boolean(e.hasIncludedDelta || e.hasPendingDelta))
+      .map((e) => e.path.trim())
       .slice(0, maxFiles);
   };
 
