@@ -79,6 +79,42 @@ describe('importAcpReplayHistoryV1', () => {
     expect(calls.updateMetadata).toBe(0);
   });
 
+  it('treats earlier change-title instruction text as part of the visible transcript', async () => {
+    let permissionPrompted = false;
+    const { session, calls } = createFakeSession({
+      existing: [
+        { role: 'user', text: `Please quote ${CHANGE_TITLE_INSTRUCTION} and say alpha` },
+        { role: 'agent', text: 'hello' },
+      ],
+    });
+
+    await importAcpReplayHistoryV1({
+      session,
+      provider: 'opencode',
+      remoteSessionId: 'session-123',
+      replay: [
+        {
+          type: 'message',
+          role: 'user',
+          text: `Please quote ${CHANGE_TITLE_INSTRUCTION} and say beta\n\n${CHANGE_TITLE_INSTRUCTION}`,
+        },
+        { type: 'message', role: 'agent', text: 'hello' },
+      ] as any,
+      permissionHandler: {
+        handleToolCall: async () => {
+          permissionPrompted = true;
+          return { decision: 'denied' };
+        },
+      } as any,
+    });
+
+    expect(calls.fetch).toBe(1);
+    expect(permissionPrompted).toBe(true);
+    expect(calls.sendUser).toBe(0);
+    expect(calls.sendAgent).toBe(0);
+    expect(calls.updateMetadata).toBe(0);
+  });
+
   it('fails closed when remoteSessionId contains path separators', async () => {
     const { session, calls } = createFakeSession();
 
