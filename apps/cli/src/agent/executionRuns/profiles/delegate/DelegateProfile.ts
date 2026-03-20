@@ -8,6 +8,7 @@ import type {
   ExecutionRunStructuredMeta,
 } from '../ExecutionRunIntentProfile';
 import { parseTrailingJsonObject } from '../shared/parseTrailingJsonObject';
+import { deriveLooseDelegateDeliverables } from '../shared/deriveLooseDelegateDeliverables';
 
 function buildDelegateGuidanceBlock(): string {
   return [
@@ -25,55 +26,6 @@ function buildDelegateGuidanceBlock(): string {
   ].join('\n');
 }
 
-function clampString(value: string, maxLength: number): string {
-  return value.length <= maxLength ? value : value.slice(0, maxLength);
-}
-
-function parseLooseDelegateDeliverables(text: string): { summary: string; deliverables: { id: string; title: string }[] } | null {
-  const lines = text
-    .split(/\r?\n/)
-    .map((line) => line.trim())
-    .filter((line) => line.length > 0);
-
-  if (lines.length === 0) return null;
-
-  const deliverables: { id: string; title: string }[] = [];
-  for (const line of lines) {
-    const markerMatch = line.match(/^(?:[-*•]|\d+[.)])\s*(.+)$/u);
-    if (!markerMatch) continue;
-
-    const stripped = markerMatch[1]!.trim();
-    if (!stripped) continue;
-
-    const match = stripped.match(/^([^:]{1,200}):\s*(.+)$/u);
-    if (match) {
-      deliverables.push({
-        id: clampString(match[1]!.trim(), 200),
-        title: clampString(match[2]!.trim(), 400),
-      });
-      continue;
-    }
-
-    deliverables.push({
-      id: `d${deliverables.length + 1}`,
-      title: clampString(stripped, 400),
-    });
-  }
-
-  if (deliverables.length === 0) {
-    const firstLine = lines[0]!;
-    return {
-      summary: clampString(firstLine, 20_000),
-      deliverables: [{ id: 'd1', title: clampString(firstLine, 400) }],
-    };
-  }
-
-  return {
-    summary: clampString(lines[0]!, 20_000),
-    deliverables,
-  };
-}
-
 function normalizeDelegateBoundedCompletion(params: Readonly<{
   runId: string;
   callId: string;
@@ -84,6 +36,25 @@ function normalizeDelegateBoundedCompletion(params: Readonly<{
   finishedAtMs: number;
   rawText: string;
 }>): ExecutionRunProfileBoundedCompleteResult {
+  const clampString = (value: string, maxLength: number): string => {
+    if (value.length <= maxLength) return value;
+    return value.slice(0, maxLength);
+  };
+
+  const deriveSingleDeliverableFallback = (text: string): { summary: string; deliverables: { id: string; title: string }[] } | null => {
+    const firstLine = String(text ?? '')
+      .split(/\r?\n/)
+      .map((l) => l.trim())
+      .find((l) => l.length > 0);
+    if (!firstLine) return null;
+
+    const title = clampString(firstLine, 400);
+    return {
+      summary: clampString(firstLine, 20_000),
+      deliverables: [{ id: 'd1', title }],
+    };
+  };
+
   const trimmed = params.rawText.trim();
   const parsedJson: any = parseTrailingJsonObject(trimmed);
   const ModelOutputSchema = z.object({
@@ -96,10 +67,12 @@ function normalizeDelegateBoundedCompletion(params: Readonly<{
   }).passthrough();
   const parsedModel = ModelOutputSchema.safeParse(parsedJson);
   if (!parsedModel.success) {
+    const canRecoverLoosely = params.backendId === 'pi' || params.backendId === 'codex';
     const loose =
-      params.backendId === 'pi' || params.backendId === 'codex'
-        ? parseLooseDelegateDeliverables(trimmed)
-        : null;
+      canRecoverLoosely ?
+        deriveLooseDelegateDeliverables(trimmed) ??
+          (params.backendId === 'codex' ? deriveSingleDeliverableFallback(trimmed) : null)
+      : null;
     if (loose) {
       const payload = DelegateOutputV1Schema.parse({
         runRef: {
@@ -116,10 +89,10 @@ function normalizeDelegateBoundedCompletion(params: Readonly<{
       const summary = payload.summary || 'Delegation completed.';
       const structuredMeta: ExecutionRunStructuredMeta = { kind: 'delegate_output.v1', payload };
 
-      const deliverablesDigest = payload.deliverables.slice(0, 20).map((deliverable) => ({
-        id: deliverable.id,
-        title: deliverable.title,
-        ...(deliverable.details ? { details: deliverable.details.slice(0, 500) } : {}),
+      const deliverablesDigest = payload.deliverables.slice(0, 20).map((d) => ({
+        id: d.id,
+        title: d.title,
+        ...(d.details ? { details: d.details.slice(0, 500) } : {}),
       }));
 
       return {
@@ -140,51 +113,6 @@ function normalizeDelegateBoundedCompletion(params: Readonly<{
         toolResultMeta: { happier: structuredMeta } as any,
         structuredMeta,
       };
-    }
-
-    if (params.backendId === 'codex') {
-      const firstLine = trimmed.split(/\r?\n/).map((line) => line.trim()).find((line) => line.length > 0);
-      if (firstLine) {
-        const payload = DelegateOutputV1Schema.parse({
-          runRef: {
-            runId: params.runId,
-            callId: params.callId,
-            backendId: params.backendId,
-            backendTarget: params.backendTarget,
-          },
-          summary: clampString(firstLine, 20_000),
-          deliverables: [{ id: 'd1', title: clampString(firstLine, 400) }],
-          generatedAtMs: params.finishedAtMs,
-        });
-
-        const summary = payload.summary || 'Delegation completed.';
-        const structuredMeta: ExecutionRunStructuredMeta = { kind: 'delegate_output.v1', payload };
-
-        const deliverablesDigest = payload.deliverables.slice(0, 20).map((deliverable) => ({
-          id: deliverable.id,
-          title: deliverable.title,
-          ...(deliverable.details ? { details: deliverable.details.slice(0, 500) } : {}),
-        }));
-
-        return {
-          status: 'succeeded',
-          summary,
-          toolResultOutput: {
-            status: 'succeeded',
-            summary,
-            runId: params.runId,
-            callId: params.callId,
-            sidechainId: params.sidechainId,
-            backendId: params.backendId,
-            intent: 'delegate',
-            startedAtMs: params.startedAtMs,
-            finishedAtMs: params.finishedAtMs,
-            deliverablesDigest,
-          },
-          toolResultMeta: { happier: structuredMeta } as any,
-          structuredMeta,
-        };
-      }
     }
 
     const summary = 'Invalid delegate output (expected strict JSON).';
@@ -221,10 +149,10 @@ function normalizeDelegateBoundedCompletion(params: Readonly<{
   const summary = payload.summary || 'Delegation completed.';
   const structuredMeta: ExecutionRunStructuredMeta = { kind: 'delegate_output.v1', payload };
 
-  const deliverablesDigest = payload.deliverables.slice(0, 20).map((deliverable) => ({
-    id: deliverable.id,
-    title: deliverable.title,
-    ...(deliverable.details ? { details: deliverable.details.slice(0, 500) } : {}),
+  const deliverablesDigest = payload.deliverables.slice(0, 20).map((d) => ({
+    id: d.id,
+    title: d.title,
+    ...(d.details ? { details: d.details.slice(0, 500) } : {}),
   }));
 
   return {
