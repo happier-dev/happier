@@ -1,17 +1,49 @@
 # Agent Constitution
 
-You are an AGENT in the Edison framework. This constitution defines your mandatory behaviors.
+This constitution defines your mandatory behaviors.
 
 ## CRITICAL: Re-read this entire file:
 - At the start of every task assignment
 - After any context compaction
-- When instructed by the orchestrator
 
 ---
 
 ## Core Principles (CRITICAL)
 
-## TDD Principles (All Roles)
+<default_follow_through_policy>
+- If the user’s intent is clear and the next step is reversible and low-risk, proceed without asking.
+- Ask permission only if the next step is:
+  (a) irreversible,
+  (b) has external side effects (for example sending, purchasing, deleting, or writing to production), or
+  (c) requires missing sensitive information or a choice that would materially change the outcome.
+- If proceeding, briefly state what you did and what remains optional.
+</default_follow_through_policy>
+
+<parallel_tool_calling>
+- When multiple retrieval or lookup steps are independent, prefer parallel tool calls to reduce wall-clock time.
+- Do not parallelize steps that have prerequisite dependencies or where one result determines the next action.
+- After parallel retrieval, pause to synthesize the results before making more calls.
+- Prefer selective parallelism: parallelize independent evidence gathering, not speculative or redundant tool use.
+</parallel_tool_calling>
+
+<completeness_contract>
+- Treat the task as incomplete until all requested items are covered or explicitly marked [blocked].
+- Keep an internal checklist of required deliverables.
+- For lists, batches, or paginated results:
+  - determine expected scope when possible,
+  - track processed items or pages,
+  - confirm coverage before finalizing.
+- If any item is blocked by missing data, mark it [blocked] and state exactly what is missing.
+</completeness_contract>
+
+<autonomy_and_persistence>
+Persist until the task is fully handled end-to-end within the current turn whenever feasible: do not stop at analysis or partial fixes; carry changes through implementation, verification, and a clear explanation of outcomes unless the user explicitly pauses or redirects you.
+
+Unless the user explicitly asks for a plan, asks a question about the code, is brainstorming potential solutions, or some other intent that makes it clear that code should not be written, assume the user wants you to make code changes or run tools to solve the user's problem. In these cases, it's bad to output your proposed solution in a message, you should go ahead and actually implement the change. If you encounter challenges or blockers, you should attempt to resolve them yourself.
+</autonomy_and_persistence>
+
+<mandatory_critical_testing_rules>
+## TDD Principles
 
 Test-Driven Development is NON-NEGOTIABLE for behavior-changing implementation work.
 
@@ -91,17 +123,18 @@ If implementation exists before the test:
 - Avoid near-duplicate tests that assert the same behavior through different fixtures unless each fixture represents a distinct risk.
 - When a new test overlaps an old one, consolidate and remove or rewrite the weaker test.
 
+### Test Maintenance When Contracts Change - CRITICAL
+- Keep positive-path fixtures aligned with the real runtime contract. If behavior now depends on session state, capabilities, feature flags, permissions, or availability, update happy-path fixtures to satisfy the new contract and keep invalid/offline/inactive fixtures only in explicit negative-path tests.
+- Prefer contract-focused assertions over incidental implementation details. Assert stable observable behavior and durable fields, not exact callback arity, exact call ordering, or other details that are not part of the published contract.
+- Remove or narrow redundant slow coverage when a smaller direct test already proves the same behavior. Do not keep duplicate smoke/integration/e2e coverage for the same contract if the duplicate primarily adds flake risk instead of new signal.
+- Reset shared state in tests that rely on dynamic imports, module-level caches, mutable globals, or reused mocks. Order-dependent tests are test bugs and must be fixed at the isolation layer.
+- After fixing a targeted failing test in a shared-runtime area, rerun at least one broader lane that can expose related stale fixtures or shared-state issues. A single-file green run is not enough when multiple suites share the same contract.
+
 ## Test Suite Selection (Fast vs Slow)
-
-Projects differ; Edison is framework- and language-agnostic. Use the project’s configured test command as the authoritative baseline:
-
-```bash
-yarn test
-```
 
 **Rule of thumb**:
 - For tight iteration loops (RED/GREEN): run the *smallest relevant subset* (single test file, single package, targeted command) to iterate quickly.
-- Before handoff, and whenever touching cross-cutting behavior (session/task/worktree/evidence/composition/config loading): run the project’s **full** required test run
+- Before handoff, and whenever touching cross-cutting behavior: run the project’s **full** required test run AND typechecks
 
 ### Test Lane Contract (Required)
 - Treat `test` and `test:unit` (where defined; do not create `test:unit` unless intentionally splitting lanes) as fast lanes only; avoid heavy process/network/database orchestration in unit tests.
@@ -142,6 +175,11 @@ UI e2e authoring rules (Playwright + Expo web):
 - UI e2e artifacts (screenshots/videos/diagnostics) are written under `packages/tests/.project/logs/e2e/ui-playwright/`.
 - UI e2e runtime process logs (server/ui-web/daemon) are written under `.project/logs/e2e/*ui-e2e*/`.
 
+Manual QA note (Expo web hot reload):
+- If concurrent agents are making frequent changes, Expo web Fast Refresh can make manual QA hard because the page reloads on save.
+- You can disable web Fast Refresh/HMR **per browser tab** (session-scoped) by opening the UI with `?happier_hmr=0` (re-enable with `?happier_hmr=1`).
+- This opt-out is **web-only** and **dev-only**; it does not affect production builds or native (iOS/Android).
+
 When introducing or moving a lane/pattern, update all three in the same change:
 - package-level test config/scripts
 - root `package.json` lane scripts
@@ -158,7 +196,7 @@ For full prerequisites/env matrix and examples, follow:
 - Evidence must be generated by trusted runners, not manually fabricated
 - No duplicate test intent: each test must own a distinct behavior/risk
 
-## No Internal Mocks Philosophy (All Roles)
+## No Internal Mocks Philosophy
 
 ### Core Principle
 Test real internal behavior, not mocked internal behavior. Mocking internal code usually tests wiring, not behavior.
@@ -180,8 +218,9 @@ Test real internal behavior, not mocked internal behavior. Mocking internal code
 - **Allowed (system boundaries)**: third-party APIs, payment/email providers, platform/native SDK surfaces, OS/process/time/random/env adapters.
 - **Not allowed (internal behavior)**: domain logic, reducers/selectors, normalization/parsing logic, permission/state machines, app orchestration helpers, store logic.
 - **If a boundary mock is used**: document why the boundary is required and assert outcomes/state (not only call counts/spies).
-
-## Quality Principles (All Roles)
+</mandatory_critical_testing_rules>
+<mandatory_critical_quality_principles>
+## Quality Principles - CRITICAL
 
 ### Type Safety
 - No untyped escape hatches in production or tests
@@ -191,7 +230,16 @@ Test real internal behavior, not mocked internal behavior. Mocking internal code
 - Prefer `satisfies`, explicit interfaces, and typed fixtures over casting
 - Type safety settings come from project configuration
 - Do not weaken tsconfig/type rules to make tests or builds pass
-- When TypeScript code changes, run the relevant package `typecheck` lane before handoff
+- When TypeScript code changes, run the relevant package `typecheck` lane before handoff - CRITICAL
+- Project-specific expectation for this repo:
+  - run the canonical touched-package typecheck/build lane, not just tests
+  - examples:
+    - `yarn workspace @happier-dev/protocol typecheck` (or the package’s canonical build/type-enforcing lane)
+    - `yarn workspace @happier-dev/agents typecheck` (or canonical build/type-enforcing lane)
+    - `yarn workspace @happier-dev/cli typecheck`
+    - `yarn workspace @happier-dev/tests typecheck`
+    - for UI/server packages, use the canonical package lane that enforces types if no dedicated `typecheck` script exists
+  - before final handoff, rerun all relevant touched-package typecheck lanes after the last refactor pass
 
 ### Code Hygiene
 - No TODO/FIXME placeholders in production code
@@ -211,6 +259,37 @@ Test real internal behavior, not mocked internal behavior. Mocking internal code
 - Avoid compatibility shims for renames/moves by default. When restructuring, update all imports directly so the final structure is canonical.
 - Split crowded folders by domain (for example: `runtime/`, `session/`, `spawn/`, `permission/`) instead of accumulating many cross-cutting files at one level.
 - Keep files single-purpose. If a file starts owning multiple responsibilities, extract cohesive modules with explicit names.
+
+### Registry / Catalog Pattern (Required)
+- Before introducing a new registry, metadata map, field contract, or control-definition system, inspect the nearest existing patterns in the same package first and follow them.
+- Prefer one canonical typed definition map or catalog plus small derived-artifact helpers over multiple parallel “registry”, “descriptors”, “ids”, and “schema” files that can drift.
+- In protocol packages, follow the existing `define...(...)` + `build...Artifacts(...)` style used by established catalogs/registries when introducing new field or metadata systems.
+- In UI packages, prefer one explicit registry file plus focused `resolve...` helpers and a `definitions/` folder over large “manager” modules or multiple competing registries.
+- Do not create a second “metadata registry” beside an existing canonical field/catalog contract. New ids, schemas, descriptors, defaults, and visibility/editability metadata should be derived from the same source of truth whenever possible.
+- When refactoring old ad hoc logic into a catalog/registry, preserve the external contract first and move the internal resolution logic behind the new registry rather than replacing user-facing behavior and architecture at the same time.
+- When the app already has a central registry + core resolution path for a domain (for example backends, providers, source control, installables, session provider behavior), shared/core code must call that registry/core resolution path instead of branching on provider/vendor/source names directly.
+- Do not bake provider-specific or backend-specific branching into generalized core, shared reducers, shared screen logic, shared sync logic, or shared registries-of-registries when an existing adapter hook/registry contract already exists.
+- If a new provider-specific behavior is needed, extend the canonical registry entry shape or adapter hook surface and implement it in the provider-owned module. Then make shared/core code consume that hook/result.
+- The source of truth must stay singular:
+  - canonical catalog/registry declares support/capabilities/adapter hooks
+  - shared/core code resolves through that catalog/registry
+  - provider/source-specific code stays in provider/source-owned folders
+- When you see existing code bypassing the registry and branching in core, treat that as architectural debt to remove during the refactor rather than copying the same pattern into new code.
+
+### Backend / Provider Extension Architecture (Required)
+- Reuse the existing catalog-and-provider-hook architecture; do not invent side registries when the backend catalog/registry already exists.
+- Declarative provider support belongs in centralized catalogs only:
+  - shared/provider-agnostic support facts in `packages/agents/*`
+  - CLI executable backend wiring in `apps/cli/src/backends/catalog.ts` + `apps/cli/src/backends/<provider>/index.ts`
+  - UI provider composition in `apps/ui/sources/agents/registry/*` + `apps/ui/sources/agents/providers/<provider>/*`
+- Executable provider-specific behavior MUST stay inside the provider folder (`apps/cli/src/backends/<provider>/...`, `apps/ui/sources/agents/providers/<provider>/...`).
+- Core/shared layers MUST stay provider-agnostic. Do not add provider-name branching (`codex`, `claude`, `opencode`, etc.) in core orchestration when the behavior can be obtained through the existing catalog/registry hook surface.
+- When a new cross-provider feature needs provider-specific behavior, extend the existing catalog/entry type with a new hook/field and implement that hook in each provider's `index.ts`/provider module; do not add a new ad-hoc registry in unrelated core code.
+- Before adding provider-specific logic anywhere outside a provider folder, stop and check whether it belongs as:
+  - declarative capability/support in `packages/agents`
+  - executable hook in backend/UI provider entrypoints
+  - provider-agnostic orchestration in shared core that calls those hooks
+- For UI, follow the same rule: generic screens/components/sync logic must consume provider behavior through the registry/core abstractions, while provider-only behavior lives in `sources/agents/providers/<provider>/core.ts`, `uiBehavior.ts`, and nearby provider-owned modules.
 
 ### File Size and Complexity Guard (Required)
 - Applies to all implementation code and tests, not tests only.
@@ -254,8 +333,10 @@ NO hardcoded values. ALL configuration.
 - Environment-specific settings
 - Audit trail for configuration
 - Easier testing (override config)
+</mandatory_critical_quality_principles>
 
-## Feature gating (Canonical system, 2026-02-17)
+<feature_gating>
+## Feature gating
 
 This repo has a single canonical feature gating system. New code must use it instead of ad-hoc env checks, direct payload poking, or feature-specific inference logic.
 
@@ -313,17 +394,13 @@ When a feature is intended to be **user-opt-in via the UI Experimental Features 
   - Text must be rendered via `apps/ui/sources/components/ui/text/Text.tsx` so the user-selected in-app font size scales correctly (and stacks with OS Dynamic Type).
   - All user-visible strings (including accessibility labels/placeholders) must use `t(...)` and be added to all locales under `apps/ui/sources/text/translations/`.
 
-### Voice (Happier Voice) special note
-- `voice.happierVoice` is a first-class SERVER feature gate and must be explicitly provided by the server.
-- Fail closed: if the server snapshot is missing/unavailable, or if `features.voice.happierVoice.enabled` is not `true`, Happier Voice must be treated as disabled.
-- Do not infer `voice.happierVoice` from `features.voice`, from any `capabilities.voice` fields, or from local env.
-
 ### Test gating by feature id (no registry)
 - Feature-scoped tests must include `.feat.<featureId>.` in the filename, for example:
   - `something.feat.connectedServices.quotas.slow.e2e.test.ts`
 - Vitest automatically excludes denied feature tests using `scripts/testing/featureTestGating.ts` (dependency closure included).
 - Use `HAPPIER_TEST_FEATURES_DENY` (in addition to `HAPPIER_BUILD_FEATURES_DENY`) when you need to disable a feature’s tests in CI without changing the embedded policy.
-
+</feature_gating>
+<encryption_storage_modes>
 ## Encryption storage modes (E2EE vs plaintext storage)
 
 This repo supports both encrypted-at-rest (E2EE-style) and plaintext-at-rest session storage. Treat this as a **storage-mode** choice; it is **not** the same thing as transport security (TLS) or authentication (key-challenge login still exists).
@@ -362,82 +439,31 @@ Plaintext storage E2E tests live under `packages/tests/suites/core-e2e/` and are
 Testkit notes:
 - Social friends setup helpers: `packages/tests/src/testkit/socialFriends.ts`
 - Pending queue v2 testkit currently models encrypted-only rows; plaintext pending E2E should use direct `fetchJson` unless/until the helper is generalized.
-
-## UI App Structure Rules (Happier UI)
+</encryption_storage_modes>
+<ui_app_critical_rules>
+## UI App Critical Rules (Happier UI) - `apps/ui/`
 
 Applies to `apps/ui/sources`.
 
-### Root Density Rule
+### Structure
+
+#### Root Density Rule
 - Keep `components/`, `hooks/`, `utils/`, and `sync/` roots thin.
 - Prefer domain subfolders for real implementations.
 - Root-level files in these folders should be true domain entry points only.
 
-### Canonical Domain Layout
-- `components/ui/*` for reusable visual primitives and shared UI building blocks.
-- `components/sessions/*` for session-specific composition and transcript UI.
-- `components/sessions/sharing/*` for session sharing dialogs and selectors.
-- `components/settings/*` for settings-domain view composition.
-- `components/zen/*` for Zen task UI composition, navigation, and screens.
-- `hooks/server/*`, `hooks/inbox/*`, `hooks/search/*`, `hooks/session/*`, `hooks/auth/*`, `hooks/machine/*`, `hooks/ui/*`.
-- `utils/worktree/*`, `utils/timing/*`, `utils/platform/*`, `utils/path/*`, `utils/errors/*`, `utils/strings/*`, `utils/sessions/*`, `utils/auth/*`, `utils/system/*`, `utils/tools/*`, `utils/url/*`.
-- `sync/api/*`, `sync/runtime/*`, plus `sync/domains/*`, plus existing `sync/engine/*`, `sync/store/*`, `sync/reducer/*`, etc.
-- `sync/api/{account,artifacts,capabilities,session,social,types,voice}/*` for protocol-layer clients grouped by external API surface.
-- `sync/domains/permissions/*`, `sync/domains/profiles/*`, `sync/domains/pending/*`, `sync/domains/models/*`, `sync/domains/messages/*`, `sync/domains/server/*`, `sync/domains/settings/*`, `sync/domains/state/*`, `sync/domains/session/*`, `sync/domains/todos/*`, `sync/domains/input/*`, `sync/domains/purchases/*`, `sync/domains/social/*`, `sync/domains/artifacts/*`.
-- `sync/engine/{account,artifacts,machines,overrides,pending,purchases,sessions,socket,social,settings,todos}/*` for effectful sync runtime flows grouped by concern.
-- `sync/encryption/*` for cryptographic primitives and settings/share encryption helpers.
-- `agents/prompt/*` for agent/system prompt composition.
-- `components/tools/catalog/*`, `components/tools/renderers/*`, `components/tools/normalization/*`, `components/tools/shell/*`, `components/tools/legacy/*`.
-- `components/tools/shell/{views,presentation,permissions}/*`:
-  `views` = orchestration-level tool shells (`ToolView`, `ToolFullView`), `presentation` = display-only shell blocks (`ToolHeader`, `ToolSectionView`, status/error/diff UI), `permissions` = permission action footer and tests.
-- `components/tools/renderers/{core,fileOps,workflow,web,system}/*`:
-  `core` = registry/types/test helpers, `fileOps` = filesystem renderers, `workflow` = plan/task/question/todo renderers, `web` = web fetch/search renderers, `system` = shell/mcp/system renderers.
-
-### Sync Placement Boundaries (Mandatory)
+#### Sync Placement Boundaries (Mandatory)
 - `sync/` root may contain only cross-domain runtime layers and folders (`api`, `domains`, `runtime`, `engine`, `store`, `reducer`, `git`, `http`, `encryption`, `ops`) plus explicit wiring entrypoints.
 - Do not add domain-owned feature modules directly under `sync/` root; place them under `sync/domains/<domain>/`.
 - `sync/api/*`: request/response adapters and protocol mapping only (includes capabilities protocol parsing).
-- `sync/api/account/*`: account-level API calls (username, usage, kv, vendor tokens).
-- `sync/api/artifacts/*`: artifact CRUD API client.
-- `sync/api/capabilities/*`: capabilities/feature negotiation and capability protocol mapping.
-- `sync/api/session/*`: session transport APIs (changes, push, socket request helpers).
-- `sync/api/social/*`: feed/friends/sharing transport APIs.
-- `sync/api/types/*`: API schema contracts shared by transport clients.
-- `sync/api/voice/*`: voice API transport.
-- `sync/domains/permissions/*`: permission types/defaults/options/override/apply logic.
-- `sync/domains/profiles/*`: profile definitions, grouping, compatibility, and mutations.
-- `sync/domains/pending/*`: pending queue, pending navigation state, terminal pending connect flow.
-- `sync/domains/models/*`: model mode/options/override logic.
-- `sync/domains/messages/*`: message metadata, message type contracts, send-meta shaping, and unread derivation.
-- `sync/domains/server/*`: active server runtime/snapshot/config/profile selection, server targeting, and server switch helpers.
-- `sync/domains/settings/*`: settings schema/selection/normalization plus local settings, debug settings, terminal options, and secret binding pruning.
-- `sync/domains/state/*`: persistence/storage state contracts and serialization boundaries.
-- `sync/domains/session/*`: session lifecycle helpers, session view/payload derivation, and session-specific console mode derivation.
-- `sync/domains/todos/*`: Zen todo sync/state operations and task-session linking.
-- `sync/domains/input/*`: prompt-adjacent file/command suggestion helpers used by agent input and autocomplete.
-- `sync/domains/purchases/*`: purchase payload parsing and RevenueCat adapters/types.
-- `sync/domains/social/*`: feed/friend/sharing type contracts and social-domain sync payload shaping.
-- `sync/domains/artifacts/*`: artifact payload contracts and artifact-domain type shaping.
 - `sync/runtime/*`: small cross-cutting runtime helpers (time, rpc error shaping, lightweight sequencing helpers) that are not domain-owned.
-- `sync/runtime/orchestration/*`: sync coordination pipelines (connection switching, reconnect catch-up, planner/applier orchestration, project-scoped runtime coordination).
 - `sync/encryption/*`: secret encryption/decryption/sealing and share-key crypto helpers.
-- `agents/prompt/*`: system prompt composition and prompt policy assembly.
 - `sync/engine/*`: orchestration and effectful runtime flows.
-- `sync/engine/account/*`: account bootstrap/push token registration flows.
-- `sync/engine/artifacts/*`: artifact fetch/socket apply + crypto coordination.
-- `sync/engine/machines/*`: machine fetch/socket apply flows.
-- `sync/engine/overrides/*`: ACP/model/permission override publish flows.
-- `sync/engine/pending/*`: pending queue V2 orchestration.
-- `sync/engine/purchases/*`: purchase sync/runtime triggers.
-- `sync/engine/sessions/*`: session fetch/snapshot/socket message update orchestration.
-- `sync/engine/socket/*`: socket transport parsing/reconnect/container handling.
-- `sync/engine/social/*`: feed + relationship socket/fetch orchestration.
-- `sync/engine/settings/*`: settings fetch/apply/seal orchestration.
-- `sync/engine/todos/*`: todo domain sync orchestration.
 - `sync/store/*`: state domains/selectors/normalization and persistence-facing state shape.
 - `sync/store/*` may depend on `sync/domains/*`, but domain modules must not depend on `sync/store/*`.
 - `sync/ops/*`: orchestration-facing operation entrypoints (spawn/session/machine actions) that compose domain + runtime helpers.
 
-### Naming and File Markers
+#### Naming and File Markers
 - One concept per file; avoid mixed-responsibility modules.
 - Co-locate tests with implementation using `*.test.ts`, `*.spec.ts`, `*.test.tsx`, `*.spec.tsx`.
 - Underscore-prefixed markers are allowed only for intentional structural internals (for example: `_registry.ts`, `_types.ts`, `_shared.ts`).
@@ -445,26 +471,119 @@ Applies to `apps/ui/sources`.
 - Do not use `-` prefixed feature folders (`-zen`, `-session`) in `apps/ui/sources`.
 - Do not use singular `components/session/*`; use `components/sessions/*`.
 
-### Import and Migration Rules
+#### Import and Migration Rules
 - Prefer canonical alias imports (`@/components/...`, `@/hooks/...`, `@/utils/...`, `@/sync/...`) over fragile long relative paths.
 - During moves, bulk-update imports in the same change.
 - Do not commit compatibility wrappers after canonical import rewrites are complete.
-- Use `components/tools/{catalog,renderers,normalization,shell,legacy}` canonical paths. Do not import from legacy locations (`components/tools/views`, `components/tools/knownTools`, `components/tools/utils`).
-- Use `components/tools/renderers/{core,fileOps,workflow,web,system}` canonical renderer paths; do not create flat renderer files at `components/tools/renderers/` root.
-- Use canonical sync aliases after domainization (for example: `@/sync/domains/messages/*`, `@/sync/domains/server/*`, `@/sync/domains/settings/*`, `@/sync/domains/session/*`, `@/sync/domains/purchases/*`, `@/sync/domains/social/*`, `@/sync/domains/artifacts/*`, `@/sync/runtime/orchestration/*`, `@/sync/api/capabilitiesProtocol`, `@/sync/encryption/*`, `@/agents/prompt/*`).
 
----
+#### Development Guidelines
 
+- Use **4 spaces** for indentation
+- Use **yarn** instead of npm for package management
+- Path alias `@/*` maps to `./sources/*`
+- TypeScript strict mode is enabled - ensure all code is properly typed
+- Follow existing component patterns when creating new UI components
+- Real-time sync is orchestrated by the `Sync` singleton in `sources/sync/sync.ts`, with domain logic extracted into `sources/sync/engine/*`
+- Store all temporary scripts and any test outside of unit tests in sources/trash folder
+- When setting screen parameters ALWAYS set them in _layout.tsx if possible this avoids layout shifts
+- **Never use Alert module from React Native, always use @sources/modal/index.ts instead**
+- **Always apply layout width constraints** from `@/components/layout` to full-screen ScrollViews and content containers for responsive design across device sizes
+- Always run `yarn typecheck` after all changes to ensure type safety
+
+#### Theme, Typography, and i18n (Required)
+
+- **No hardcoded colors**: do not introduce raw hex/rgb colors (e.g. `#000`, `#fff`) for UI styling. Use `useUnistyles()` theme tokens (`theme.colors.*`) or existing themed styles so light/dark/adaptive themes stay correct.
+- **Icons must be themed**: icon `color` and background/tint props must come from theme tokens (avoid `black`/`white`).
+- **Text must respect UI font scaling**:
+  - Prefer `@/components/ui/text/Text` and `@/components/ui/text/TextInput` over `react-native` `Text`/`TextInput`.
+  - Avoid hardcoded font sizes in new UI code. If you must set a base size, ensure it scales via `uiFontScale` (and stacks with OS Dynamic Type on native).
+  - For embedded editors, use `resolveCodeEditorFontMetrics(...)` and propagate scale to Monaco/CodeMirror surfaces.
+- **All user-facing copy must be translated**: use `t('...')` for UI strings, add keys to all supported locale files under `sources/text/translations/`, and avoid hardcoding English in components.
+
+#### Important Rules for i18n
+- **Never hardcode strings** in JSX - always use `t('key')`
+- **Dev pages exception** - Development/debug pages can skip i18n
+- **Check common first** - Before adding new keys, check if a suitable translation exists in `common`
+- **Context matters** - Consider where the string appears to choose the right section
+- **Update all languages** - New strings must be added to every language file
+- **Use centralized language names** - Import language names from `_all.ts` instead of translation keys
+- **Always re-read translations** - When new strings are added, always re-read the translation files to understand the existing structure and patterns before adding new keys
+- **Use translations for common strings** - Always use the translation function `t()` for any user-visible string that is translatable, especially common UI elements like buttons, labels, and messages
+- **Use the i18n-translator agent** - When adding new translatable strings or verifying existing translations, use the i18n-translator agent to ensure consistency across all language files
+- **Beware of technical terms** - When translating technical terms, consider:
+  - Keep universally understood terms like "CLI", "API", "URL", "JSON" in their original form
+  - Translate terms that have well-established equivalents in the target language
+  - Use descriptive translations for complex technical concepts when direct translations don't exist
+  - Maintain consistency across all technical terminology within the same language
+
+#### Web implementation (Radix)
+On web, `BaseModal` renders a Radix `Dialog` (portal to `document.body`) so focus, scroll, and pointer events behave correctly when stacking modals (including when an Expo Router / Vaul drawer is already open).
+
+**Critical invariant:** Radix “singleton” stacks (DismissableLayer / FocusScope) must be shared across *all* dialogs. With Metro + package `exports`, mixing ESM and CJS entrypoints can load *two* Radix module instances and break focus/stacking.
+
+- Use the CJS entrypoints via `sources/utils/radixCjs.ts` (`requireRadixDialog()` / `requireRadixDismissableLayer()`) for any web dialog primitives.
+- Wrap stacked dialog content with `DismissableLayer.Branch` so underlying Radix/Vaul layers don’t treat the top dialog as “outside” and dismiss.
+- Only the top-most modal should render a backdrop; `ModalProvider` handles this via `showBackdrop`.
+
+#### Native implementation (iOS/Android)
+On native, stacking a React Navigation / Expo Router modal screen with an RN `<Modal>` can produce “invisible overlay blocks touches” and z-index ordering bugs.
+
+- `BaseModal` renders a “portal-style” overlay inside the current screen tree (absolute fill + high `zIndex`) so touches/focus stay within the same navigation presentation context.
+- `Modal.alert()` / `Modal.confirm()` use the native system alert UI on iOS/Android (good accessibility + expected platform UX).
+- `Modal.prompt()` uses the app prompt modal on all platforms for consistent behavior (since `Alert.prompt` is iOS-only).
+
+#### Popovers (menus/tooltips)
+Use the app `Popover` + `FloatingOverlay` for menus/tooltips/context menus.
+
+- Use `portal={{ web: { target: 'body' }, native: true }}` when the anchor is inside overflow-clipped containers (headers, lists, scrollviews).
+- For settings-style lists, prefer `ItemList` as the popover boundary (it provides a `PopoverBoundaryProvider` for the screen ScrollView). Avoid binding popover boundaries to `ItemGroup` containers, which can incorrectly clamp dropdown sizing/placement.
+- When a popover must be constrained to a scroll container, pass the **scroll container ref** as the boundary (`DropdownMenu popoverBoundaryRef=...` / `Popover boundaryRef=...`). Do not use a nested non-scroll wrapper `View` ref unless you intentionally want viewport-wide bounds and have validated scroll alignment on web.
+- When the backdrop is enabled (default), `onRequestClose` is required (Popover is controlled).
+- For context-menu style overlays, prefer `backdrop={{ effect: 'blur', anchorOverlay: ..., closeOnPan: true }}` so the trigger stays crisp above the blur without cutout seams.
+- On web, portaled popovers are wrapped in Radix `DismissableLayer.Branch` (via `radixCjs.ts`) so Expo Router/Vaul/Radix layers don’t treat them as “outside”.
+
+#### Settings Screens And Item Groups (Required)
+- Treat settings list screens as two separate concerns:
+  - existing objects/items
+  - creation/attachment actions
+- `ItemGroup` / `ItemList` sections that represent a list of existing objects must contain only real items from that list. Do not place detached `Create`, `Add`, `Attach`, `Link`, or similar action rows inside the same item group as the real items.
+- Put list-level creation/attachment actions in a separate item group below the list (for example: workspaces list above, `Create workspace` group below; locations list above, `Attach location` group below).
+- If an action logically applies to one item, surface it on that item via row actions / item action affordances instead of detached rows elsewhere in the list.
+- When a screen has both “manage” and “launch/use” actions, keep management primary in management screens (for example workspace detail, location list, checkout list). Launching/starting a session can still exist, but should usually be a row action rather than the dominant row tap affordance.
+- Prefer consistency with existing settings screens such as profiles, secrets, and other list-driven settings surfaces.
+- Do not surface internal implementation/domain terms like `graph` in user-facing settings copy unless explicitly required by product language. Prefer user-intent labels such as `Workspace Sync Status`, `Workspace Status`, `Locations`, `Checkouts`, `Worktrees`, etc.
+
+#### Workspace vs Worktree UX (Required)
+- `Workspace` is a Happier product concept (defaults, linking locations/devices, sync relationships). `Worktree` is a source-control concept. Worktrees must remain usable even when no workspace exists.
+- Do not make worktree creation/usage depend on first creating a workspace. Users should be able to start a session in a new or existing worktree without creating a workspace first.
+- New-session UX should optimize for user intent, not internal models. Prefer one clear checkout/worktree choice surface over multiple overlapping workspace/worktree chips or redirects into workspace creation.
+- Do not redirect session creation into workspace creation just because the selected folder is not already part of a workspace. Workspace creation should stay an explicit action from a settings/session management surface, while session launches infer workspace membership automatically when it already exists.
+- Worktrees belong in source-control management surfaces. Workspaces should not consume large vertical space inside the source-control sidebar unless product design explicitly calls for it.
+
+## Folder Structure & Naming Conventions
+
+These conventions are **additive** to the guidelines above. The goal is to keep screens and sync logic easy to reason about.
+
+### Naming
+- Buckets are lowercase (e.g. `components`, `hooks`, `sync`, `utils`).
+- Feature folders are `camelCase` (e.g. `newSession`, `agentInput`, `profileEdit`).
+- Avoid `_folders` except Expo Router special files (e.g. `_layout.tsx`) and `__tests__`.
+- Allowed `_*.ts` markers (organization only) inside module-ish folders: `_types.ts`, `_shared.ts`, `_constants.ts`.
+
+### Screens and feature code
+- Expo Router routes live in `sources/app/**`.
+- Keep route files (Expo Router) as the screen entrypoints; extract non-trivial UI/logic into `sources/components/**`.
+</ui_app_critical_rules>
+<critical_git_safety_rules>
 ## Git Safety (Non-Negotiable)
 - **Never switch branches in the primary checkout.** LLMs MUST NOT run `git checkout` / `git switch` in the primary worktree.
-- **Branch creation/deletion is restricted.** Only create/delete branches if requested explicitely to do so.
+- **Branch creation/deletion is restricted.** Only create/delete branches if requested explicitly to do so.
 - **NEVER use `git reset`, `git restore`, `git clean`, `git checkout -- <file>`, or any other destructive commands without user approval.** If you see unrelated changes/work to what you expect, NEVER discard them without explicit user confirmation. Many agents/LLMs may be working on the same task concurrently, so "unrelated" changes is expected and you should NEVER discard them, except via explicit user instruction.
 
 - Do **not** create ad-hoc summary/report/status files.
 - Before marking work complete, ensure there are no stray `*_SUMMARY.md` / `*_ANALYSIS.md` files or similar; delete unapproved summaries.
-
----
-
+</critical_git_safety_rules>
+<internal_packages>
 ## Internal Packages & CLI Packaging (CRITICAL)
 
 This repo has several **private workspace packages** (for example `packages/protocol`, `packages/agents`, `packages/cli-common`, `packages/release-runtime`) that are *not* published independently, but **must ship inside** published npm packages (currently: `apps/cli`, `apps/stack`, `packages/relay-server`).
@@ -503,7 +622,7 @@ If a bundled workspace imports another internal workspace at runtime, the host p
 
 ### “Missing dist / invalid exports” failures (Metro/Node)
 Internal packages use `package.json#exports` pointing at `dist/**`. If `dist` is missing, consumers may fail with messages like:
-- “invalid package.json configuration… exports … dist/<file>.js does not exist”
+- “invalid package.json configuration… exports … dist/FILE.js does not exist”
 
 Fixes/guardrails:
 - Build the workspace: `yarn workspace @happier-dev/protocol build` (or the relevant package).
@@ -514,35 +633,50 @@ Fixes/guardrails:
 - Validate the tarball contents:
   - `cd apps/cli && node scripts/bundleWorkspaceDeps.mjs && npm pack`
   - Ensure protocol deps appear under `package/node_modules/@happier-dev/protocol/node_modules/**` (not duplicated at `package/node_modules/**` unless `apps/cli` imports them directly).
+</internal_packages>
+<binary_safe_critical_rules>
+## Binary-Safe Runtime Contract (CRITICAL)
 
-## principles
+Happier ships binary installers. Treat binary-safe runtime behavior as a correctness requirement for first-party features.
 
-Default to human-readable CLI output.
+### Required design rule
+- Any new first-party runtime path must work when Happier is installed from our binary installers on a machine that does **not** have system `node`, `npm`, `npx`, `pnpm`, `yarn`, or `bunx`.
 
-- Prefer plain text/Markdown output when reading command results inside an LLM conversation.
-- Use `--json` only when you need structured output for tools/scripts or when explicitly requested.
+### Do not introduce these directly in product runtime paths
+- `spawn('node', ...)`
+- direct runtime calls to `npm`, `npx`, `pnpm`, `yarn`, `bunx`
+- direct shell-installer execution from UI/daemon/runtime code
+- PATH-only provider detection as the sole source of truth
 
-## agent
+These may only appear behind the centralized managed runtime/tooling abstractions.
 
-Agents should default to non-JSON output while implementing; only use `--json` when required by a specific workflow step or when the orchestrator requests structured output.
+### Provider/runtime classification is mandatory
+Before adding or changing a provider/runtime/install/update flow, classify it explicitly as one of:
+- system-first backend CLI
+- managed-first internal prerequisite
+- managed package
+- vendor install recipe
+- managed JS runtime dependent
 
----
+### Resolution consistency
+- Provider detection, install status, daemon validation, runtime spawning, and UI/installables must reuse the same managed tool/source-of-truth.
+- Backend CLIs must prefer the user/system install by default over any Happier-managed install unless an explicit source-preference setting says otherwise.
 
-## TDD Execution (Agents)
+### Reviewer checklist
+- Does this runtime path still work on a machine with no system Node/package manager?
+- If both system and managed backend CLIs exist, does resolution prefer the system one by default?
+</binary_safe_critical_rules>
+<tdd_execution_rules>
+## TDD Execution
 
 ### Mandatory Workflow
 
 #### 1. RED Phase: Write Tests First
 Write tests BEFORE any implementation code. Tests MUST fail initially.
-If the change is truly content-only (Markdown/YAML/templates/UI) and no executable behavior is changed, do not add tests that pin content; just run the relevant existing checks. If the change does not make sense to be tested because it is too trivial and tests for this would be "tests just for the sake of writing tests" and that would be over-engineered, do not add tests. If tests already exists for the change you are applying, update the existing tests.
+If the change is truly content-only (Markdown/templates/UI) and no executable behavior is changed, do not add tests that pin content; just run the relevant existing checks. If the change does not make sense to be tested because it is too trivial and tests for this would be "tests just for the sake of writing tests" and that would be over-engineered, do not add tests. If tests already exists for the change you are applying, update the existing tests.
 
 **Verify RED Phase**:
-```bash
-yarn test
-# Expected: Test FAILS for the right reason (feature/behavior missing)
-```
-
-**Evidence note:** failing RED runs are not “evidence”. Evidence capture is for *passing* command outputs that validators will trust.
+Execute targeted tests, and prove that they FAIL for the right reason (feature/behavior missing)
 
 **RED Phase Checklist**:
 - [ ] Test written BEFORE implementation
@@ -557,10 +691,7 @@ yarn test
 Write the MINIMUM code needed to make the test pass.
 
 **Verify GREEN Phase**:
-```bash
-yarn test
-# Expected: Test PASSES
-```
+Execute targeted tests, and prove that they PASS
 
 **GREEN Phase Checklist**:
 - [ ] Implementation makes test pass
@@ -620,12 +751,12 @@ yarn test
 | API/Service tests | <100ms each | Service layer with real dependencies |
 | UI/Component tests | <200ms each | Rendering and interaction tests |
 | End-to-End tests | <5000ms each | Full user journey tests |
-
----
-
+</tdd_execution_rules>
+<context7_knowledge_refresh>
 ## Context7 Knowledge Refresh (CRITICAL)
 
 Use Context7 MCP to refresh your knowledge **before** implementing or validating when work touches any configured post-training package.
+</context7_knowledge_refresh>
 
 ## Rules
 
@@ -635,10 +766,8 @@ Keep working methodically and protect context:
 - Avoid pasting large logs; summarize and reference artifacts by path.
 - If approaching limits, follow the project's compaction/recovery guidance.
 
-### RULE.CONTINUATION.NO_IDLE_UNTIL_COMPLETE: Do not stop early; continue until the session is complete
-When continuation is enabled and work remains:
-- Continue iterating until Edison reports the session complete.
-- Use the loop driver: `edison session next <session-id>`
+### RULE.CONTINUATION.NO_IDLE_UNTIL_COMPLETE: Do not stop early; continue until your task/work is complete
+- Continue iterating until your task/work is FULLY complete and validated
 - Do not stop early when work remains.
 
 ### RULE.GIT.NO_DESTRUCTIVE_DEFAULT: CRITICAL: NEVER “clean up” unrelated diffs with destructive git
@@ -686,6 +815,10 @@ In multi-LLM sessions it is normal to see unrelated diffs from other in-flight w
 
 If you believe a change is truly accidental, escalate and ask before taking any destructive action.
 
+CRITICAL: Do not stop early; continue until your task/work is complete
+- Continue iterating until your task/work is FULLY complete and validated
+- Do not stop early when work remains.
+
 CRITICAL: Do not add “content policing” tests
 Never add tests (or assertions inside otherwise-good tests) whose primary purpose is to lock down wording/copy, whitespace, Markdown formatting, or docs/example config files. If a content-only change breaks an existing test, fix the test to assert stable behavior instead of exact strings.
 
@@ -694,6 +827,8 @@ Before writing any new test, search for existing coverage and update/consolidate
 
 CRITICAL: Extend/update/refine existing tests before creating new tests
 ONLY add tests that add distinct behavior/risk coverage.
+
+CRITICAL: ALWAYS update/refactor existing tests when refactoring/changing code
 
 CRITICAL: Mock only system boundaries, never internal behavior
 Boundary mocks are allowed for external/platform interfaces. Internal domain logic, parsers, reducers, store logic, and orchestration helpers must be tested with real implementations.
@@ -704,7 +839,7 @@ CRITICAL: Keep TypeScript strict everywhere
 CRITICAL: Enforce file size and responsibility boundaries
 If a file is large or multi-purpose, split it by domain/responsibility instead of expanding a monolith.
 
-## Encryption Opt-Out / Plaintext Session Storage (2026-02)
+## Encryption Opt-Out / Plaintext Session Storage
 
 Sessions can be stored in two modes, controlled by `Session.encryptionMode`:
 - `e2ee`: message/pending content is `{ t: 'encrypted', c: <base64> }` and must be decrypted client-side.
