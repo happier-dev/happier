@@ -39,6 +39,29 @@ vi.mock('@/components/ui/buttons/RoundButton', () => ({
     RoundButton: (props: any) => React.createElement('RoundButton', props),
 }));
 
+vi.mock('@/agents/backendCatalog/getResolvedBackendCatalogEntries', () => ({
+    getResolvedBackendCatalogEntries: () => [
+        {
+            target: { kind: 'builtInAgent', agentId: 'claude' },
+            targetKey: 'agent:claude',
+            family: 'builtInAgent',
+            builtInAgentId: 'claude',
+            iconAgentId: 'claude',
+            title: 'Claude',
+            subtitle: 'claude',
+        },
+        {
+            target: { kind: 'configuredAcpBackend', backendId: 'custom-preset' },
+            targetKey: 'acpBackend:custom-preset',
+            family: 'configuredAcpBackend',
+            builtInAgentId: null,
+            iconAgentId: 'customAcp',
+            title: 'Custom Review Bot',
+            subtitle: 'Custom ACP',
+        },
+    ],
+}));
+
 vi.mock('@/agents/hooks/useEnabledAgentIds', () => ({
     useEnabledAgentIds: () => ['claude'],
 }));
@@ -51,11 +74,11 @@ vi.mock('@/agents/catalog/catalog', () => ({
 }));
 
 vi.mock('@/components/sessions/new/hooks/screenModel/useNewSessionPreflightModelsState', () => ({
-    useNewSessionPreflightModelsState: () => ({
+    useNewSessionPreflightModelsState: vi.fn(() => ({
         preflightModels: null,
         modelOptions: [{ value: 'model1', label: 'Model 1', description: 'Default' }],
         probe: { phase: 'idle', refreshedAt: null, refresh: () => {} },
-    }),
+    })),
 }));
 
 vi.mock('@/sync/domains/server/serverRuntime', () => ({
@@ -122,7 +145,12 @@ describe('SubAgentGuidanceRuleEditorModal', () => {
             tree = renderer.create(
                 React.createElement(SubAgentGuidanceRuleEditorModal, {
                     mode: 'create',
-                    entry: { id: 'guidance_2', description: 'Delegate UI tasks', enabled: true },
+                    entry: {
+                        id: 'guidance_2',
+                        description: 'Delegate UI tasks',
+                        enabled: true,
+                        suggestedBackendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+                    },
                     onResolve,
                     onClose,
                 }),
@@ -145,6 +173,60 @@ describe('SubAgentGuidanceRuleEditorModal', () => {
                 entry: expect.objectContaining({
                     id: 'guidance_2',
                     description: 'Delegate UI tasks',
+                    suggestedBackendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+                }),
+            }),
+        );
+    });
+
+    it('preserves a configured ACP backend target and probes models against it', async () => {
+        const onResolve = vi.fn();
+        const onClose = vi.fn();
+
+        const { useNewSessionPreflightModelsState } = await import('@/components/sessions/new/hooks/screenModel/useNewSessionPreflightModelsState');
+        const { SubAgentGuidanceRuleEditorModal } = await import('./subAgentGuidanceRuleEditorModal');
+
+        let tree: renderer.ReactTestRenderer | null = null;
+        await act(async () => {
+            tree = renderer.create(
+                React.createElement(SubAgentGuidanceRuleEditorModal, {
+                    mode: 'edit',
+                    entry: {
+                        id: 'guidance_3',
+                        description: 'Review custom ACP changes',
+                        enabled: true,
+                        suggestedBackendTarget: { kind: 'configuredAcpBackend', backendId: 'custom-preset' },
+                    },
+                    onResolve,
+                    onClose,
+                }),
+            );
+        });
+
+        const dropdowns = tree!.root.findAllByType('DropdownMenu' as any);
+        expect(dropdowns).toHaveLength(3);
+        expect(dropdowns[0]!.props.selectedId).toBe('acpBackend:custom-preset');
+        expect(dropdowns[1]!.props.selectedId).toBe('');
+
+        expect(useNewSessionPreflightModelsState).toHaveBeenCalledWith(
+            expect.objectContaining({
+                backendTarget: { kind: 'configuredAcpBackend', backendId: 'custom-preset' },
+            }),
+        );
+
+        const buttons = tree!.root.findAllByType('RoundButton' as any);
+        const saveButton = buttons.find((b: any) => b.props?.title === 'common.save');
+        expect(saveButton).toBeTruthy();
+
+        await act(async () => {
+            saveButton!.props.onPress?.();
+        });
+
+        expect(onResolve).toHaveBeenCalledWith(
+            expect.objectContaining({
+                kind: 'save',
+                entry: expect.objectContaining({
+                    suggestedBackendTarget: { kind: 'configuredAcpBackend', backendId: 'custom-preset' },
                 }),
             }),
         );
