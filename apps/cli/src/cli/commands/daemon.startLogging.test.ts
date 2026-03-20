@@ -1,7 +1,12 @@
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+
+const { checkIfDaemonRunningMock, getLatestDaemonLogMock } = vi.hoisted(() => ({
+  checkIfDaemonRunningMock: vi.fn(async () => true),
+  getLatestDaemonLogMock: vi.fn(async () => null as null | { path: string }),
+}));
 
 async function captureConsole(fn: () => Promise<void> | void): Promise<string> {
   const chunks: string[] = [];
@@ -26,19 +31,30 @@ function buildJwtWithSub(sub: string): string {
   return `${header}.${payload}.x`;
 }
 
-vi.mock('@/utils/spawnHappyCLI', () => ({
-  spawnHappyCLI: () => ({ unref: () => {} }),
+vi.mock('@/daemon/runtime/spawnDetachedDaemonStartSync', () => ({
+  spawnDetachedDaemonStartSync: async () => ({ unref: () => {} }),
 }));
 
 vi.mock('@/daemon/controlClient', async (importOriginal) => {
   const actual = await importOriginal<any>();
   return {
     ...actual,
-    checkIfDaemonRunningAndCleanupStaleState: vi.fn(async () => true),
+    checkIfDaemonRunningAndCleanupStaleState: () => checkIfDaemonRunningMock(),
   };
 });
 
+vi.mock('@/ui/logger', () => ({
+  getLatestDaemonLog: () => getLatestDaemonLogMock(),
+}));
+
 describe('happier daemon start output', () => {
+  beforeEach(() => {
+    checkIfDaemonRunningMock.mockReset();
+    checkIfDaemonRunningMock.mockResolvedValue(true);
+    getLatestDaemonLogMock.mockReset();
+    getLatestDaemonLogMock.mockResolvedValue(null);
+  });
+
   it('prints server url, active server id, and account subject', async () => {
     // Defensive: other test files may enable fake timers and forget to restore them.
     // This command uses real setTimeout polling when the daemon isn't immediately detected.
@@ -93,5 +109,30 @@ describe('happier daemon start output', () => {
       process.env = prevEnv;
       await rm(tmp, { recursive: true, force: true });
     }
-  }, 30_000);
+  }, 60_000);
+
+  it('prints the daemon log path when startup does not succeed', async () => {
+    vi.useRealTimers();
+    checkIfDaemonRunningMock.mockResolvedValue(false);
+    getLatestDaemonLogMock.mockResolvedValue({ path: '/tmp/happier-daemon.log' });
+
+    const stdout = await captureConsole(async () => {
+      const exitSpy = vi.spyOn(process, 'exit').mockImplementation(((code?: number) => {
+        throw new Error(`exit:${code ?? ''}`);
+      }) as any);
+
+      try {
+        const { handleDaemonCliCommand } = await import('./daemon');
+        await handleDaemonCliCommand({ args: ['daemon', 'start'], rawArgv: [], terminalRuntime: null });
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        if (!msg.includes('exit:1')) throw err;
+      } finally {
+        exitSpy.mockRestore();
+      }
+    });
+
+    expect(stdout).toContain('Failed to start daemon');
+    expect(stdout).toContain('/tmp/happier-daemon.log');
+  }, 60_000);
 });
