@@ -11,7 +11,11 @@ import { storage } from '@/sync/domains/state/storage';
 import { loadPendingSettings } from '@/sync/domains/state/persistence';
 import type { AuthCredentials } from '@/auth/storage/tokenStorage';
 import type { Encryption } from '@/sync/encryption/encryption';
-import { sealSecretsDeep, unsealSecretsDeep } from '@/sync/encryption/secretSettings';
+import {
+    resealSecretsDeep,
+    sealSecretsDeep,
+    unsealSecretsDeepWithKeys,
+} from '@/sync/encryption/secretSettings';
 import { serverFetch } from '@/sync/http/client';
 import { fetchAccountEncryptionMode } from '@/sync/api/account/apiAccountEncryptionMode';
 import { getRandomBytes } from '@/platform/cryptoRandom';
@@ -22,16 +26,22 @@ import {
     sealAccountScopedBlobCiphertext,
 } from '@happier-dev/protocol';
 import { applyCrashReportsOptOut } from '@/utils/system/sentry';
+import { emitAccountSettingChangedEvents } from '@/track/settingsAnalytics/emitSettingChangedEvent';
+import type { SettingsAnalyticsSource } from '@/track/settingsAnalytics/types';
 
-export async function syncSettings(params: {
+export type SyncSettingsParams = {
     credentials: AuthCredentials;
     encryption: Encryption;
     pendingSettings: Partial<Settings>;
     clearPendingSettings: () => void;
     settingsSecretsKey?: Uint8Array | null;
-}): Promise<void> {
+    settingsSecretsReadKeys?: ReadonlyArray<Uint8Array | null | undefined>;
+};
+
+export async function syncSettings(params: SyncSettingsParams): Promise<void> {
     const { credentials, encryption, pendingSettings, clearPendingSettings } = params;
     const settingsSecretsKey = params.settingsSecretsKey ?? null;
+    const settingsSecretsReadKeys = params.settingsSecretsReadKeys ?? (settingsSecretsKey ? [settingsSecretsKey] : []);
 
     const activeServerUrl = getActiveServerSnapshot().serverUrl;
     const maxRetries = 3;
@@ -137,15 +147,36 @@ export async function syncSettings(params: {
         if (params.mode === 'plain') {
             return sealSecretsDeep(parsed, settingsSecretsKey);
         }
+        if (settingsSecretsKey) {
+            return resealSecretsDeep(parsed, {
+                readKeys: settingsSecretsReadKeys,
+                writeKey: settingsSecretsKey,
+            }).value as Settings;
+        }
         return parsed;
     }
 
-    function normalizeSettingsForServerStorage(params: { raw: Settings; mode: 'plain' | 'e2ee' }): Record<string, unknown> {
+    function normalizeSettingsForServerStorageResult(params: {
+        raw: Settings | Record<string, unknown>;
+        mode: 'plain' | 'e2ee';
+    }): { value: Record<string, unknown>; changed: boolean } {
         const stripped = stripLocalOnlyAccountSettings(params.raw);
         if (params.mode === 'plain') {
-            return unsealSecretsDeep(stripped, settingsSecretsKey) as any;
+            const unsealed = unsealSecretsDeepWithKeys(stripped, settingsSecretsReadKeys) as Record<string, unknown>;
+            return { value: unsealed, changed: unsealed !== stripped };
         }
-        return stripped as any;
+        if (!settingsSecretsKey) {
+            return { value: stripped as Record<string, unknown>, changed: false };
+        }
+        const resealed = resealSecretsDeep(stripped, {
+            readKeys: settingsSecretsReadKeys,
+            writeKey: settingsSecretsKey,
+        });
+        return { value: resealed.value as Record<string, unknown>, changed: resealed.changed };
+    }
+
+    function normalizeSettingsForServerStorage(params: { raw: Settings | Record<string, unknown>; mode: 'plain' | 'e2ee' }): Record<string, unknown> {
+        return normalizeSettingsForServerStorageResult(params).value;
     }
 
     // Apply pending settings
@@ -364,12 +395,19 @@ export async function syncSettings(params: {
                   ciphertext,
               })
             : null;
-        if (!opened || opened.format !== 'account_scoped_v1') {
-            try {
+        try {
+            const migratedServerSettings = normalizeSettingsForServerStorageResult({
+                raw: decryptedSettings as Record<string, unknown>,
+                mode: 'e2ee',
+            });
+            const needsMigration = !opened
+                || opened.format !== 'account_scoped_v1'
+                || migratedServerSettings.changed;
+            if (needsMigration) {
                 const migrateCiphertext = sealAccountScopedBlobCiphertext({
                     kind: 'account_settings',
                     material: { type: 'dataKey', machineKey },
-                    payload: normalizeSettingsForServerStorage({ raw: parsedSettings, mode: 'e2ee' }),
+                    payload: migratedServerSettings.value,
                     randomBytes: getRandomBytes,
                 });
                 const migrateRes = await updateSettingsV2({
@@ -379,9 +417,9 @@ export async function syncSettings(params: {
                 if ((migrateRes as any)?.success) {
                     storage.getState().applySettings(nextSettings, (migrateRes as any).version);
                 }
-            } catch {
-                // ignore migration failures (non-fatal)
             }
+        } catch {
+            // ignore migration failures (non-fatal)
         }
     }
 }
@@ -411,6 +449,7 @@ export function applySettingsLocalDelta(params: {
     getPendingSettings: () => Partial<Settings>;
     setPendingSettings: (next: Partial<Settings>) => void;
     schedulePendingSettingsFlush: () => void;
+    source?: SettingsAnalyticsSource;
 }): void {
     const { settingsSecretsKey, getPendingSettings, setPendingSettings, schedulePendingSettingsFlush } = params;
     let { delta } = params;
@@ -467,6 +506,12 @@ export function applySettingsLocalDelta(params: {
         });
     }
 
+    const nextSettings = applySettings(currentSettings, delta);
+    emitAccountSettingChangedEvents({
+        previousSettings: currentSettings,
+        nextSettings,
+        source: params.source,
+    });
     storage.getState().applySettingsLocal(delta);
 
     const deltaForServer = stripLocalOnlyAccountSettings(delta);
@@ -486,12 +531,10 @@ export function applySettingsLocalDelta(params: {
 
     // Sync PostHog opt-out state if it was changed
     if (tracking && 'analyticsOptOut' in delta) {
-        const currentSettings = storage.getState().settings;
-        currentSettings.analyticsOptOut ? tracking.optOut() : tracking.optIn();
+        nextSettings.analyticsOptOut ? tracking.optOut() : tracking.optIn();
     }
     if ('crashReportsOptOut' in delta) {
-        const currentSettings = storage.getState().settings;
-        applyCrashReportsOptOut(currentSettings.crashReportsOptOut);
+        applyCrashReportsOptOut(nextSettings.crashReportsOptOut);
     }
 
     schedulePendingSettingsFlush();

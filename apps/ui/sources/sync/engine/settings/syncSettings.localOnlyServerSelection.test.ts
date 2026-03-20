@@ -4,7 +4,36 @@ import type { AuthCredentials } from '@/auth/storage/tokenStorage';
 import type { Encryption } from '@/sync/encryption/encryption';
 import { openAccountScopedBlobCiphertext, sealAccountScopedBlobCiphertext } from '@happier-dev/protocol';
 
+function createBaseMockSettings(): Record<string, unknown> {
+    return {
+        analyticsOptOut: false,
+        claudeLocalPermissionBridgeEnabled: true,
+        terminalConnectLegacySecretExportEnabled: false,
+        crashReportsOptOut: false,
+        experiments: true,
+        sessionListDensity: 'comfortable',
+        notificationsSettingsV1: {
+            v: 1,
+            pushEnabled: true,
+            ready: true,
+            permissionRequest: true,
+            userActionRequest: true,
+            foregroundBehavior: 'banner',
+        },
+        sessionHandoffDefaultsV1: {
+            v: 1,
+            workspaceTransferEnabled: true,
+            conflictPolicy: 'create_sibling_copy',
+            includeIgnoredMode: 'exclude',
+            ignoredIncludeGlobs: [],
+            directTargetMode: 'keep_direct',
+        },
+        preferredLanguage: null,
+    };
+}
+
 const mocks = vi.hoisted(() => {
+    const callSequence: string[] = [];
     const settingsParse = vi.fn((value: unknown) => {
         const record =
             value && typeof value === 'object' && !Array.isArray(value)
@@ -20,16 +49,32 @@ const mocks = vi.hoisted(() => {
     return {
         serverFetch: vi.fn(),
         loadPendingSettings: vi.fn(() => ({})),
+        callSequence,
+        tracking: {
+            capture: vi.fn((..._args: unknown[]) => {
+                callSequence.push('capture');
+            }),
+            identify: vi.fn((..._args: unknown[]) => {
+                callSequence.push('identify');
+            }),
+            flush: vi.fn((..._args: unknown[]) => {
+                callSequence.push('flush');
+                return Promise.resolve();
+            }),
+            optOut: vi.fn((..._args: unknown[]) => {
+                callSequence.push('optOut');
+            }),
+            optIn: vi.fn((..._args: unknown[]) => {
+                callSequence.push('optIn');
+            }),
+        },
         applySettingsFn: vi.fn((base: Record<string, unknown>, delta: Record<string, unknown>) => ({
             ...base,
             ...delta,
         })),
         settingsParse,
         storageState: {
-            settings: {
-                analyticsOptOut: false,
-                claudeLocalPermissionBridgeEnabled: true,
-            } as Record<string, unknown>,
+            settings: createBaseMockSettings(),
             settingsVersion: 9,
             applySettings: vi.fn(),
             replaceSettings: vi.fn(),
@@ -39,7 +84,8 @@ const mocks = vi.hoisted(() => {
 });
 
 vi.mock('@/track', () => ({
-    tracking: null,
+    tracking: mocks.tracking,
+    getTrackingAnonymousUserId: () => 'anon-user',
 }));
 
 vi.mock('@/utils/errors/errors', () => ({
@@ -52,7 +98,7 @@ vi.mock('@/utils/errors/errors', () => ({
 
 vi.mock('@/sync/domains/settings/settings', () => ({
     applySettings: mocks.applySettingsFn,
-    settingsDefaults: { analyticsOptOut: false },
+    settingsDefaults: createBaseMockSettings(),
     settingsParse: mocks.settingsParse,
 }));
 
@@ -75,6 +121,44 @@ vi.mock('@/sync/domains/state/storage', () => ({
 
 vi.mock('@/sync/domains/state/persistence', () => ({
     loadPendingSettings: mocks.loadPendingSettings,
+    loadSettings: () => ({ settings: createBaseMockSettings(), version: 9 }),
+    loadLocalSettings: () => ({}),
+    loadPurchases: () => ({}),
+    loadProfile: () => ({}),
+    loadThemePreference: () => 'adaptive',
+    loadSessionDrafts: () => ({}),
+    loadSessionReviewCommentsDrafts: () => ({}),
+    loadSessionActionDrafts: () => ({}),
+    loadNewSessionDraft: () => null,
+    loadSessionPermissionModes: () => ({}),
+    loadSessionPermissionModeUpdatedAts: () => ({}),
+    loadSessionLastViewed: () => ({}),
+    loadSessionModelModes: () => ({}),
+    loadSessionModelModeUpdatedAts: () => ({}),
+    loadSessionMaterializedMaxSeqById: () => ({}),
+    loadChangesCursor: () => null,
+    loadLastChangesCursorByAccountId: () => ({}),
+    loadDeviceAnalyticsId: () => null,
+    saveSettings: vi.fn(),
+    saveLocalSettings: vi.fn(),
+    savePurchases: vi.fn(),
+    saveProfile: vi.fn(),
+    saveSessionDrafts: vi.fn(),
+    saveSessionReviewCommentsDrafts: vi.fn(),
+    saveSessionActionDrafts: vi.fn(),
+    saveNewSessionDraft: vi.fn(),
+    clearNewSessionDraft: vi.fn(),
+    saveSessionPermissionModes: vi.fn(),
+    saveSessionPermissionModeUpdatedAts: vi.fn(),
+    saveSessionLastViewed: vi.fn(),
+    saveSessionModelModes: vi.fn(),
+    saveSessionModelModeUpdatedAts: vi.fn(),
+    saveSessionMaterializedMaxSeqById: vi.fn(),
+    saveChangesCursor: vi.fn(),
+    saveLastChangesCursorByAccountId: vi.fn(),
+    savePendingSettings: vi.fn(),
+    saveDeviceAnalyticsId: vi.fn(),
+    clearPersistence: vi.fn(),
 }));
 
 vi.mock('@/sync/encryption/secretSettings', async (importOriginal) => {
@@ -111,13 +195,21 @@ describe('syncSettings local-only server-selection settings', () => {
         mocks.serverFetch.mockReset();
         mocks.loadPendingSettings.mockReset();
         mocks.loadPendingSettings.mockReturnValue({});
+        mocks.callSequence.length = 0;
+        mocks.tracking.capture.mockClear();
+        mocks.tracking.identify.mockClear();
+        mocks.tracking.flush.mockClear();
+        mocks.tracking.optOut.mockClear();
+        mocks.tracking.optIn.mockClear();
         mocks.applySettingsFn.mockClear();
         mocks.settingsParse.mockClear();
-        mocks.storageState.settings = {
-            analyticsOptOut: false,
-            claudeLocalPermissionBridgeEnabled: true,
-            terminalConnectLegacySecretExportEnabled: false,
-        };
+        mocks.storageState.settings = createBaseMockSettings();
+        mocks.storageState.applySettingsLocal.mockImplementation((delta: Record<string, unknown>) => {
+            mocks.storageState.settings = {
+                ...mocks.storageState.settings,
+                ...delta,
+            };
+        });
         mocks.storageState.settingsVersion = 9;
         mocks.storageState.applySettings.mockReset();
         mocks.storageState.replaceSettings.mockReset();
@@ -152,13 +244,13 @@ describe('syncSettings local-only server-selection settings', () => {
         expect(mocks.serverFetch).toHaveBeenCalledTimes(2);
         expect(encryptionStub.encryptRaw).not.toHaveBeenCalled();
         expect(mocks.storageState.applySettings).toHaveBeenCalledWith(
-            {
+            expect.objectContaining({
                 analyticsOptOut: false,
                 serverSelectionGroups: undefined,
                 serverSelectionActiveTargetKind: undefined,
                 serverSelectionActiveTargetId: undefined,
                 terminalConnectLegacySecretExportEnabled: false,
-            },
+            }),
             12,
         );
     });
@@ -194,14 +286,14 @@ describe('syncSettings local-only server-selection settings', () => {
         expect(mocks.serverFetch).toHaveBeenCalledTimes(2);
         expect(encryptionStub.decryptRaw).not.toHaveBeenCalled();
         expect(mocks.storageState.applySettings).toHaveBeenCalledWith(
-            {
+            expect.objectContaining({
                 analyticsOptOut: true,
                 claudeLocalPermissionBridgeEnabled: false,
                 serverSelectionGroups: undefined,
                 serverSelectionActiveTargetKind: undefined,
                 serverSelectionActiveTargetId: undefined,
                 terminalConnectLegacySecretExportEnabled: false,
-            },
+            }),
             4,
         );
     });
@@ -243,13 +335,13 @@ describe('syncSettings local-only server-selection settings', () => {
         });
 
         expect(mocks.storageState.applySettings).toHaveBeenCalledWith(
-            {
+            expect.objectContaining({
                 analyticsOptOut: true,
                 serverSelectionGroups: [{ id: 'grp-dev', name: 'Dev', serverIds: ['server-a', 'server-b'], presentation: 'grouped' }],
                 serverSelectionActiveTargetKind: 'group',
                 serverSelectionActiveTargetId: 'grp-dev',
                 terminalConnectLegacySecretExportEnabled: true,
-            },
+            }),
             7,
         );
     });
@@ -391,13 +483,13 @@ describe('syncSettings local-only server-selection settings', () => {
         });
 
         expect(mocks.storageState.applySettings).toHaveBeenCalledWith(
-            {
+            expect.objectContaining({
                 analyticsOptOut: true,
                 serverSelectionGroups: [],
                 serverSelectionActiveTargetKind: null,
                 serverSelectionActiveTargetId: null,
                 terminalConnectLegacySecretExportEnabled: false,
-            },
+            }),
             8,
         );
     });
@@ -440,7 +532,7 @@ describe('syncSettings local-only server-selection settings', () => {
 describe('applySettingsLocalDelta server-selection local-only keys', () => {
     beforeEach(() => {
         mocks.storageState.settings = {
-            analyticsOptOut: false,
+            ...createBaseMockSettings(),
             serverSelectionGroups: [],
             serverSelectionActiveTargetKind: null,
             serverSelectionActiveTargetId: null,
@@ -489,4 +581,54 @@ describe('applySettingsLocalDelta server-selection local-only keys', () => {
         expect(setPendingSettings).not.toHaveBeenCalled();
         expect(schedulePendingSettingsFlush).not.toHaveBeenCalled();
     });
+
+    it('captures tracked account and derived setting changes before opting out of analytics', () => {
+        const setPendingSettings = vi.fn();
+        const schedulePendingSettingsFlush = vi.fn();
+
+        applySettingsLocalDelta({
+            delta: {
+                analyticsOptOut: true,
+                sessionListDensity: 'narrow',
+            },
+            settingsSecretsKey: null,
+            getPendingSettings: () => ({}),
+            setPendingSettings,
+            schedulePendingSettingsFlush,
+            source: 'ui',
+        });
+
+        expect(mocks.tracking.capture).toHaveBeenCalledWith(
+            'setting_changed',
+            expect.objectContaining({
+                setting_key: 'analyticsOptOut',
+                scope: 'account_setting',
+                identity_scope: 'person',
+                source: 'ui',
+                prev_value: false,
+                next_value: true,
+            }),
+        );
+        expect(mocks.tracking.capture).toHaveBeenCalledWith(
+            'setting_changed',
+            expect.objectContaining({
+                setting_key: 'compact_session_view_minimal',
+                scope: 'derived',
+                identity_scope: 'person',
+                source: 'ui',
+                prev_value: false,
+                next_value: true,
+            }),
+        );
+        expect(mocks.tracking.identify).toHaveBeenCalledWith('anon-user', {
+            acct_setting__analyticsOptOut: true,
+        });
+        expect(mocks.callSequence.indexOf('capture')).toBeGreaterThanOrEqual(0);
+        expect(mocks.callSequence.indexOf('identify')).toBeGreaterThanOrEqual(0);
+        expect(mocks.callSequence.indexOf('flush')).toBeGreaterThanOrEqual(0);
+        expect(mocks.callSequence.indexOf('capture')).toBeLessThan(mocks.callSequence.indexOf('optOut'));
+        expect(mocks.callSequence.indexOf('identify')).toBeLessThan(mocks.callSequence.indexOf('optOut'));
+        expect(mocks.callSequence.indexOf('flush')).toBeLessThan(mocks.callSequence.indexOf('optOut'));
+    });
+
 });

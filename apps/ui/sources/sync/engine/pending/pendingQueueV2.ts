@@ -3,7 +3,7 @@ import type { Encryption } from '@/sync/encryption/encryption';
 import { nowServerMs } from '@/sync/runtime/time';
 import { RawRecordSchema, type RawRecord } from '@/sync/typesRaw';
 import { randomUUID } from '@/platform/randomUUID';
-import { buildSessionAppendSystemPrompt } from '@/agents/prompt/buildSessionAppendSystemPrompt';
+import type { DecryptedArtifact } from '@/sync/domains/artifacts/artifactTypes';
 import { getAgentCore, resolveAgentIdFromFlavor } from '@/agents/catalog/catalog';
 import { resolveSentFrom } from '@/sync/domains/messages/sentFrom';
 import { buildSendMessageMeta } from '@/sync/domains/messages/buildSendMessageMeta';
@@ -177,6 +177,8 @@ export async function enqueuePendingMessageV2(params: {
     displayText?: string;
     encryption: Encryption;
     metaOverrides?: Record<string, unknown>;
+    fetchArtifactWithBody?: (artifactId: string) => Promise<DecryptedArtifact | null>;
+    updateArtifact?: (artifact: DecryptedArtifact) => void;
     request: (path: string, init?: RequestInit) => Promise<Response>;
 }): Promise<void> {
     const { sessionId, text, displayText, encryption, request, metaOverrides } = params;
@@ -200,8 +202,6 @@ export async function enqueuePendingMessageV2(params: {
     const agentId = resolveAgentIdFromFlavor(flavor);
     const modelMode = session.modelMode || (agentId ? getAgentCore(agentId).model.defaultMode : 'default');
     const model = agentId && getAgentCore(agentId).model.supportsSelection && modelMode !== 'default' ? modelMode : undefined;
-    const appendSystemPrompt = buildSessionAppendSystemPrompt({ settings: storage.getState().settings });
-
     const localId = randomUUID();
     const rawRecord: RawRecord = {
         role: 'user',
@@ -210,7 +210,6 @@ export async function enqueuePendingMessageV2(params: {
             sentFrom: resolveSentFrom(),
             permissionMode: permissionMode || 'default',
             model,
-            appendSystemPrompt,
             displayText,
             agentId,
             settings: storage.getState().settings,
@@ -267,6 +266,8 @@ export async function updatePendingMessageV2(params: {
     pendingId: string;
     text: string;
     encryption: Encryption;
+    fetchArtifactWithBody?: (artifactId: string) => Promise<DecryptedArtifact | null>;
+    updateArtifact?: (artifact: DecryptedArtifact) => void;
     request: (path: string, init?: RequestInit) => Promise<Response>;
 }): Promise<void> {
     const { sessionId, pendingId, text, encryption, request } = params;
@@ -283,16 +284,15 @@ export async function updatePendingMessageV2(params: {
         throw new Error('Pending message not found');
     }
 
-    const appendSystemPrompt = buildSessionAppendSystemPrompt({ settings: storage.getState().settings });
-
     const rawRecord: RawRecord = (() => {
         if (existing.rawRecord) {
             const record = existing.rawRecord as any;
             const existingMeta = isPlainObject(record?.meta) ? record.meta : {};
+            const { appendSystemPrompt: _appendSystemPrompt, ...nextMeta } = existingMeta;
             return {
                 ...record,
                 content: { type: 'text', text },
-                meta: { ...existingMeta, appendSystemPrompt },
+                meta: nextMeta,
             };
         }
 
@@ -310,7 +310,6 @@ export async function updatePendingMessageV2(params: {
                 sentFrom: resolveSentFrom(),
                 permissionMode: permissionMode || 'default',
                 model,
-                appendSystemPrompt,
                 displayText: typeof existing.displayText === 'string' ? existing.displayText : undefined,
                 agentId,
                 settings: storage.getState().settings,

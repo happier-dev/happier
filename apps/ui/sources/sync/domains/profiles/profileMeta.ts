@@ -1,7 +1,6 @@
-import { type AIBackendProfile } from '../settings/settings';
 import type { AgentId } from '@/agents/catalog/catalog';
 import * as agentCatalog from '@/agents/catalog/catalog';
-import { isProfileCompatibleWithAgent } from '../settings/settings';
+import { isProfileCompatibleWithAgent, type AIBackendProfile, type ProfileCompatibilitySummary } from './profileCompatibility';
 import { getBuiltInProfile } from './profileCatalog';
 
 export type ProfilePrimaryCli = AgentId | 'multi' | 'none';
@@ -37,14 +36,29 @@ const ALLOWED_PROFILE_CLIS = new Set<string>(allowedProfileClis);
 
 export function getProfileSupportedAgentIds(profile: AIBackendProfile | null | undefined): AgentId[] {
     if (!profile) return [];
-    return Object.entries(profile.compatibility ?? {})
-        .filter(([, isSupported]) => isSupported)
-        .map(([cli]) => cli)
-        .filter((cli): cli is AgentId => ALLOWED_PROFILE_CLIS.has(cli));
+    const supported = new Set<AgentId>();
+
+    for (const [cli, isSupported] of Object.entries(profile.compatibility ?? {})) {
+        if (!isSupported) continue;
+        if (ALLOWED_PROFILE_CLIS.has(cli)) {
+            supported.add(cli as AgentId);
+        }
+    }
+
+    for (const [targetKey, isSupported] of Object.entries(profile.compatibilityByTargetKey ?? {})) {
+        if (!isSupported) continue;
+        if (!targetKey.startsWith('agent:')) continue;
+        const cli = targetKey.slice('agent:'.length);
+        if (ALLOWED_PROFILE_CLIS.has(cli)) {
+            supported.add(cli as AgentId);
+        }
+    }
+
+    return Array.from(supported);
 }
 
 export function getProfileCompatibleAgentIds(
-    profile: Pick<AIBackendProfile, 'compatibility' | 'isBuiltIn'> | null | undefined,
+    profile: ProfileCompatibilitySummary | null | undefined,
     agentIds: readonly AgentId[],
 ): AgentId[] {
     if (!profile) return [];
@@ -52,7 +66,7 @@ export function getProfileCompatibleAgentIds(
 }
 
 export function isProfileCompatibleWithAnyAgent(
-    profile: Pick<AIBackendProfile, 'compatibility' | 'isBuiltIn'> | null | undefined,
+    profile: ProfileCompatibilitySummary | null | undefined,
     agentIds: readonly AgentId[],
 ): boolean {
     return getProfileCompatibleAgentIds(profile, agentIds).length > 0;
