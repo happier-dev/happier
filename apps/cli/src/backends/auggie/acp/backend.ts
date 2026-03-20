@@ -9,10 +9,10 @@
  */
 
 import { AcpBackend, type AcpBackendOptions, type AcpPermissionHandler } from '@/agent/acp/AcpBackend';
-import { resolveCliPathOverride } from '@/agent/acp/resolveCliPathOverride';
 import type { AgentBackend, AgentFactoryOptions, McpServerConfig } from '@/agent/core';
 import { auggieTransport } from '@/backends/auggie/acp/transport';
 import type { PermissionMode } from '@/api/types';
+import { requireProviderCliLaunchSpec } from '@/runtime/managedTools/requireProviderCliLaunchSpec';
 import { buildAuggiePermissionArgs } from './permissions';
 
 export interface AuggieBackendOptions extends AgentFactoryOptions {
@@ -24,14 +24,16 @@ export interface AuggieBackendOptions extends AgentFactoryOptions {
 
 export function createAuggieBackend(options: AuggieBackendOptions): AgentBackend {
   const allowIndexing = options.allowIndexing === true;
+  const processEnv = { ...process.env, ...options.env };
+  const launch = requireProviderCliLaunchSpec('auggie', { processEnv });
 
   const args = ['--acp', ...(allowIndexing ? ['--allow-indexing'] : []), ...buildAuggiePermissionArgs(options.permissionMode)];
 
   const backendOptions: AcpBackendOptions = {
     agentName: 'auggie',
     cwd: options.cwd,
-    command: resolveCliPathOverride({ agentId: 'auggie' }) ?? 'auggie',
-    args,
+    command: launch.command,
+    args: [...launch.args, ...args],
     env: {
       ...options.env,
       // Keep output clean; ACP must own stdout.
