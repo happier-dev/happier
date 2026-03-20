@@ -1,13 +1,13 @@
 import type { CapabilityDetectRequest, CapabilityDetectResult, CapabilityId } from '@/sync/api/capabilities/capabilitiesProtocol';
+import type { CapabilitiesInvokeRequest } from '@/sync/api/capabilities/capabilitiesProtocol';
 import { getMachineCapabilitiesSnapshot, prefetchMachineCapabilities } from '@/hooks/server/useMachineCapabilitiesCache';
 import { machineCapabilitiesInvoke } from '@/sync/ops';
 import { getAgentResumeExperimentsFromSettings, getNewSessionRelevantInstallableDepKeys, type AgentId } from '@/agents/catalog/catalog';
 import type { Settings } from '@/sync/domains/settings/settings';
-import { resolveInstallablePolicy } from '@/sync/domains/settings/installablesPolicy';
+import { resolveInstallablePolicy } from '@happier-dev/protocol/installablesPolicy';
 
 import { getInstallablesRegistryEntries } from './installablesRegistry';
 import { planInstallablesBackgroundActions } from './installablesBackgroundPlan';
-import { normalizeInstallSpecSettingValue } from './normalizeInstallSpecSettingValue';
 
 type MachineCapabilitiesSnapshotLike = ReturnType<typeof getMachineCapabilitiesSnapshot>;
 
@@ -18,15 +18,31 @@ type Deps = Readonly<{
 }>;
 
 const BACKGROUND_INVOKE_SUCCESS_COOLDOWN_MS = 10 * 60_000;
+const BACKGROUND_INVOKE_IN_FLIGHT_TTL_MS = 5 * 60_000;
+const BACKGROUND_ACTION_CACHE_MAX_ENTRIES = 200;
 
-// Keyed by (machineId, serverId, installableKey, method, installSpec).
+// Keyed by (machineId, serverId, installableKey, request fingerprint).
 // Values represent a "blocked until" timestamp (ms). `Infinity` means an invoke is currently in-flight.
 const blockedActionUntilMsByKey = new Map<string, number>();
 
+function pruneBlockedActions(nowMs: number): void {
+    for (const [actionKey, blockedUntilMs] of blockedActionUntilMsByKey) {
+        if (blockedUntilMs <= nowMs) {
+            blockedActionUntilMsByKey.delete(actionKey);
+        }
+    }
+
+    while (blockedActionUntilMsByKey.size > BACKGROUND_ACTION_CACHE_MAX_ENTRIES) {
+        const oldestKey = blockedActionUntilMsByKey.keys().next().value;
+        if (typeof oldestKey !== 'string') break;
+        blockedActionUntilMsByKey.delete(oldestKey);
+    }
+}
+
 function isActionBlocked(actionKey: string, nowMs: number): boolean {
+    pruneBlockedActions(nowMs);
     const blockedUntilMs = blockedActionUntilMsByKey.get(actionKey);
     if (blockedUntilMs == null) return false;
-    if (blockedUntilMs === Number.POSITIVE_INFINITY) return true;
     if (blockedUntilMs > nowMs) return true;
     blockedActionUntilMsByKey.delete(actionKey);
     return false;
@@ -40,13 +56,41 @@ function buildDetectRequestsForInstallables(capabilityIds: readonly CapabilityId
     return { requests: capabilityIds.map((id) => ({ id })) };
 }
 
+function normalizeActionKeyValue(value: unknown): unknown {
+    if (Array.isArray(value)) return value.map((item) => normalizeActionKeyValue(item));
+    if (value && typeof value === 'object') {
+        return Object.fromEntries(
+            Object.entries(value as Record<string, unknown>)
+                .sort(([left], [right]) => left.localeCompare(right))
+                .map(([key, nested]) => [key, normalizeActionKeyValue(nested)]),
+        );
+    }
+    return value;
+}
+
+export function buildInstallablesBackgroundActionKey(params: Readonly<{
+    machineId: string;
+    serverId?: string | null;
+    installableKey: string;
+    request: CapabilitiesInvokeRequest;
+}>): string {
+    return JSON.stringify([
+        params.machineId,
+        params.serverId ?? null,
+        params.installableKey,
+        params.request.id,
+        params.request.method,
+        normalizeActionKeyValue(params.request.params ?? null),
+    ]);
+}
+
 export async function ensureAgentInstallablesBackground(
     opts: Readonly<{
         agentId: AgentId;
         machineId: string;
         serverId?: string | null;
         settings: Settings;
-        resumeSessionId: string;
+        resumeSessionId: string | null;
     }>,
     depsOverrides: Partial<Deps> = {},
 ): Promise<void> {
@@ -59,8 +103,9 @@ export async function ensureAgentInstallablesBackground(
     const experiments = getAgentResumeExperimentsFromSettings(opts.agentId, opts.settings);
     const relevantKeys = getNewSessionRelevantInstallableDepKeys({
         agentId: opts.agentId,
+        settings: opts.settings,
         experiments,
-        resumeSessionId: opts.resumeSessionId,
+        resumeSessionId: opts.resumeSessionId ?? '',
     });
     if (relevantKeys.length === 0) return;
 
@@ -87,27 +132,27 @@ export async function ensureAgentInstallablesBackground(
         results = readResults();
     }
 
-    // 2) Prefetch registry details when stale/missing (used for update decisions).
-    const registryRequests: CapabilityDetectRequest[] = entries
+    // 2) Prefetch latest-version details when stale/missing (used for update decisions).
+    const latestVersionRequests: CapabilityDetectRequest[] = entries
         .filter((entry) =>
-            entry.shouldPrefetchRegistry({
+            entry.shouldPrefetchLatestVersion({
                 requireExistingResult: true,
                 result: entry.getDetectResult(results),
                 data: entry.getStatus(results),
             }),
         )
-        .flatMap((entry) => entry.buildRegistryDetectRequest().requests ?? []) as CapabilityDetectRequest[];
+        .flatMap((entry) => entry.buildLatestVersionDetectRequest().requests ?? []) as CapabilityDetectRequest[];
 
-    if (registryRequests.length > 0) {
+    if (latestVersionRequests.length > 0) {
         try {
             await deps.prefetchMachineCapabilities({
                 machineId: opts.machineId,
                 serverId: opts.serverId,
-                request: { requests: registryRequests },
+                request: { requests: latestVersionRequests },
                 timeoutMs: 12_000,
             });
         } catch {
-            // Best-effort: updates will be skipped if registry data is unavailable.
+            // Best-effort: updates will be skipped if latest-version data is unavailable.
         }
         results = readResults();
     }
@@ -123,31 +168,20 @@ export async function ensureAgentInstallablesBackground(
                 installableKey: entry.key,
                 defaults: entry.defaultPolicy,
             }),
-            installSpec: (() => {
-                const raw = opts.settings[entry.installSpecSettingKey];
-                return normalizeInstallSpecSettingValue(raw);
-            })(),
         })),
     });
 
     for (const action of planned) {
         const nowMs = Date.now();
-        const installSpec = (() => {
-            const params = (action.request as { params?: unknown }).params;
-            if (!params || typeof params !== 'object') return null;
-            const raw = (params as { installSpec?: unknown }).installSpec;
-            return typeof raw === 'string' ? raw : null;
-        })();
-        const actionKey = JSON.stringify([
-            opts.machineId,
-            opts.serverId ?? null,
-            action.installableKey,
-            action.request.id,
-            action.request.method,
-            installSpec,
-        ]);
+        const actionKey = buildInstallablesBackgroundActionKey({
+            machineId: opts.machineId,
+            serverId: opts.serverId,
+            installableKey: action.installableKey,
+            request: action.request,
+        });
         if (isActionBlocked(actionKey, nowMs)) continue;
-        blockedActionUntilMsByKey.set(actionKey, Number.POSITIVE_INFINITY);
+        blockedActionUntilMsByKey.set(actionKey, nowMs + BACKGROUND_INVOKE_IN_FLIGHT_TTL_MS);
+        pruneBlockedActions(nowMs);
 
         let invokeResult: Awaited<ReturnType<typeof deps.machineCapabilitiesInvoke>> | null = null;
         try {
