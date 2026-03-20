@@ -4,35 +4,44 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
-const automationState = vi.hoisted(() => ({
-    automation: null as any,
-}));
-
-const machineState = vi.hoisted(() => ({
-    machines: [] as Array<{ id: string }>,
-}));
-
-const runState = vi.hoisted(() => ({
-    runs: [] as Array<{ id: string; state: string; scheduledAt: number; updatedAt: number; errorMessage?: string | null }>,
-}));
-
+const routerPushSpy = vi.hoisted(() => vi.fn());
+const routerBackSpy = vi.hoisted(() => vi.fn());
+const routerReplaceSpy = vi.hoisted(() => vi.fn());
+const navigateWithBlurOnWebSpy = vi.hoisted(() => vi.fn((action: () => void) => action()));
+const modalConfirmSpy = vi.hoisted(() => vi.fn(async () => true));
 const syncSpies = vi.hoisted(() => ({
     refreshAutomations: vi.fn(async () => {}),
-    fetchAutomationRuns: vi.fn(async (_id: string) => {}),
-    runAutomationNow: vi.fn(async (_id: string) => {}),
-    pauseAutomation: vi.fn(async (_id: string) => {}),
-    resumeAutomation: vi.fn(async (_id: string) => {}),
-    deleteAutomation: vi.fn(async (_id: string) => {}),
-    replaceAutomationAssignments: vi.fn(async (_id: string, _assignments: unknown) => {}),
+    fetchAutomationRuns: vi.fn(async () => {}),
+    runAutomationNow: vi.fn(async () => {}),
+    pauseAutomation: vi.fn(async () => {}),
+    resumeAutomation: vi.fn(async () => {}),
+    deleteAutomation: vi.fn(async () => {}),
+    replaceAutomationAssignments: vi.fn(async () => {}),
+}));
+const automationState = vi.hoisted(() => ({
+    automation: {
+        id: 'a1',
+        name: 'Nightly',
+        enabled: true,
+        description: null as string | null,
+        schedule: { kind: 'interval' as const, everyMs: 60_000, scheduleExpr: null as string | null, timezone: null as string | null },
+        nextRunAt: null as number | null,
+        assignments: [] as Array<{ machineId: string; enabled: boolean; priority: number }>,
+    },
+}));
+const machinesState = vi.hoisted(() => ({
+    list: [] as Array<{
+        id: string;
+        active?: boolean;
+        activeAt?: number;
+        revokedAt?: number | null;
+        metadata?: { displayName?: string; host?: string; platform?: string };
+    }>,
 }));
 
-const routerPushSpy = vi.hoisted(() => vi.fn());
-const routerReplaceSpy = vi.hoisted(() => vi.fn());
-const modalConfirmSpy = vi.hoisted(() => vi.fn(async () => true));
-const modalAlertSpy = vi.hoisted(() => vi.fn(async () => {}));
-
-vi.mock('@/utils/platform/deferOnWeb', () => ({
-    deferOnWeb: (action: () => void) => action(),
+vi.mock('expo-router', () => ({
+    useRouter: () => ({ push: routerPushSpy, back: routerBackSpy, replace: routerReplaceSpy }),
+    useLocalSearchParams: () => ({ id: 'a1' }),
 }));
 
 vi.mock('react-native-unistyles', () => ({
@@ -41,14 +50,6 @@ vi.mock('react-native-unistyles', () => ({
             colors: {
                 textSecondary: '#777',
                 text: '#111',
-                groupped: { background: '#fff' },
-                surface: '#fff',
-                surfaceHigh: '#f7f7f7',
-                surfaceHighest: '#eee',
-                surfacePressedOverlay: '#f0f0f0',
-                divider: '#ddd',
-                warningCritical: '#f00',
-                success: '#0a0',
                 accent: { blue: '#0a84ff' },
             },
         },
@@ -59,14 +60,6 @@ vi.mock('react-native-unistyles', () => ({
                 colors: {
                     textSecondary: '#777',
                     text: '#111',
-                    groupped: { background: '#fff' },
-                    surface: '#fff',
-                    surfaceHigh: '#f7f7f7',
-                    surfaceHighest: '#eee',
-                    surfacePressedOverlay: '#f0f0f0',
-                    divider: '#ddd',
-                    warningCritical: '#f00',
-                    success: '#0a0',
                     accent: { blue: '#0a84ff' },
                 },
             }),
@@ -77,30 +70,12 @@ vi.mock('@expo/vector-icons', () => ({
     Ionicons: 'Ionicons',
 }));
 
-vi.mock('expo-router', () => ({
-    useRouter: () => ({ push: routerPushSpy, replace: routerReplaceSpy }),
-    useLocalSearchParams: () => ({ id: 'automation-1' }),
+vi.mock('@/utils/platform/deferOnWeb', () => ({
+    navigateWithBlurOnWeb: navigateWithBlurOnWebSpy,
 }));
 
-vi.mock('@/modal', () => ({
-    Modal: {
-        confirm: modalConfirmSpy,
-        alert: modalAlertSpy,
-    },
-}));
-
-vi.mock('@/sync/domains/state/storage', () => ({
-    useAutomation: () => automationState.automation,
-    useAutomationRuns: () => runState.runs,
-    useAllMachines: () => machineState.machines,
-}));
-
-vi.mock('@/sync/sync', () => ({
-    sync: syncSpies,
-}));
-
-vi.mock('@/components/ui/forms/Switch', () => ({
-    Switch: (props: any) => React.createElement('Switch', props),
+vi.mock('@/components/ui/lists/ItemList', () => ({
+    ItemList: (props: any) => React.createElement('ItemList', props, props.children),
 }));
 
 vi.mock('@/components/ui/lists/ItemGroup', () => ({
@@ -108,89 +83,241 @@ vi.mock('@/components/ui/lists/ItemGroup', () => ({
 }));
 
 vi.mock('@/components/ui/lists/Item', () => ({
-    Item: (props: any) => React.createElement(
-        'Pressable',
-        props,
-        React.createElement('Text', null, props.title ?? props.detail ?? props.subtitle ?? ''),
-    ),
+    Item: (props: any) =>
+        React.createElement(
+            'Pressable',
+            { onPress: props.onPress, accessibilityLabel: props.title, subtitle: props.subtitle },
+            React.createElement('Text', null, props.title),
+            props.rightElement ?? null,
+        ),
+}));
+
+vi.mock('@/components/ui/forms/Switch', () => ({
+    Switch: (props: any) => React.createElement('Switch', props),
 }));
 
 vi.mock('@/components/ui/text/Text', () => ({
     Text: (props: any) => React.createElement('Text', props, props.children),
 }));
 
-vi.mock('@/text', () => ({
-    t: (key: string) => key,
+vi.mock('@/components/ui/layout/layout', () => ({
+    layout: { maxWidth: 1000 },
 }));
 
-function findPressableByText(tree: renderer.ReactTestRenderer, text: string) {
-    const textNode = tree.root.find((node) => {
-        if ((node.type as unknown) !== 'Text') return false;
-        const children = node.props.children;
-        if (typeof children === 'string') return children === text;
-        if (Array.isArray(children)) return children.includes(text);
-        return false;
-    });
-    let current: any = textNode;
-    while (current && (current.type as unknown) !== 'Pressable') {
-        current = current.parent;
-    }
-    if (!current) throw new Error(`Pressable with text "${text}" not found`);
-    return current;
-}
+vi.mock('@/text', () => ({
+    t: (key: string) => {
+        const labels: Record<string, string> = {
+            'automations.detail.runNowTitle': 'Run now',
+            'automations.detail.editAutomation': 'Edit automation',
+            'automations.detail.deleteAutomation': 'Delete automation',
+            'automations.detail.machineAssignmentsTitle': 'Machine assignments',
+            'status.online': 'online',
+            'status.offline': 'offline',
+        };
+        return labels[key] ?? key;
+    },
+}));
+
+vi.mock('@/sync/domains/state/storage', () => ({
+    useAutomation: () => automationState.automation,
+    useAutomationRuns: () => [],
+    useAllMachines: () => machinesState.list,
+}));
+
+vi.mock('@/sync/sync', () => ({
+    sync: syncSpies,
+}));
+
+vi.mock('@/modal', () => ({
+    Modal: {
+        alert: vi.fn(async () => {}),
+        confirm: modalConfirmSpy,
+    },
+}));
 
 describe('AutomationDetailScreen', () => {
     beforeEach(() => {
         automationState.automation = {
-            id: 'automation-1',
+            id: 'a1',
             name: 'Nightly',
             enabled: true,
+            description: null,
+            schedule: { kind: 'interval', everyMs: 60_000, scheduleExpr: null, timezone: null },
             nextRunAt: null,
-            schedule: { kind: 'interval', everyMs: 60_000, scheduleExpr: null },
             assignments: [],
         };
-        machineState.machines = [{ id: 'machine-1' }];
-        runState.runs = [];
+        machinesState.list = [];
         routerPushSpy.mockReset();
+        routerBackSpy.mockReset();
         routerReplaceSpy.mockReset();
+        navigateWithBlurOnWebSpy.mockClear();
         modalConfirmSpy.mockReset();
         modalConfirmSpy.mockResolvedValue(true);
-        modalAlertSpy.mockReset();
+        syncSpies.deleteAutomation.mockClear();
         syncSpies.refreshAutomations.mockClear();
         syncSpies.fetchAutomationRuns.mockClear();
         syncSpies.runAutomationNow.mockClear();
-        syncSpies.pauseAutomation.mockClear();
-        syncSpies.resumeAutomation.mockClear();
-        syncSpies.deleteAutomation.mockClear();
         syncSpies.replaceAutomationAssignments.mockClear();
     });
 
-    it('routes to edit and deletes back to the automations list', async () => {
+    it('blurs the active element before navigating to edit automation', async () => {
         const { AutomationDetailScreen } = await import('./AutomationDetailScreen');
 
         let tree: renderer.ReactTestRenderer | null = null;
         await act(async () => {
-            tree = renderer.create(<AutomationDetailScreen />);
-        });
-        await act(async () => {
+            tree = renderer.create(React.createElement(AutomationDetailScreen));
             await Promise.resolve();
         });
 
-        const edit = findPressableByText(tree!, 'automations.detail.editAutomation');
+        const editButton = tree!.root.find(
+            (node) => String(node.type) === 'Pressable' && node.props.accessibilityLabel === 'Edit automation',
+        );
         await act(async () => {
-            edit.props.onPress();
-        });
-        expect(routerPushSpy).toHaveBeenCalledWith({
-            pathname: '/automations/edit',
-            params: { id: 'automation-1' },
+            editButton.props.onPress();
         });
 
-        const deleteRow = findPressableByText(tree!, 'automations.detail.deleteAutomation');
-        await act(async () => {
-            deleteRow.props.onPress();
+        expect(navigateWithBlurOnWebSpy).toHaveBeenCalledTimes(1);
+        expect(routerPushSpy).toHaveBeenCalledWith({
+            pathname: '/automations/edit',
+            params: { id: 'a1' },
         });
-        expect(modalConfirmSpy).toHaveBeenCalledTimes(1);
-        expect(syncSpies.deleteAutomation).toHaveBeenCalledWith('automation-1');
+    });
+
+    it('updates machine assignments without forcing a full automations refresh', async () => {
+        machinesState.list = [
+            {
+                id: 'm1',
+                metadata: { displayName: 'Primary machine', host: 'primary.local', platform: 'macOS' },
+            },
+        ];
+
+        const { AutomationDetailScreen } = await import('./AutomationDetailScreen');
+
+        let tree: renderer.ReactTestRenderer | null = null;
+        await act(async () => {
+            tree = renderer.create(React.createElement(AutomationDetailScreen));
+            await Promise.resolve();
+        });
+        const refreshCallsBeforeToggle = syncSpies.refreshAutomations.mock.calls.length;
+
+        const toggle = tree!.root.find((node) => String(node.type) === 'Switch');
+        await act(async () => {
+            toggle.props.onValueChange(true);
+        });
+
+        expect(syncSpies.replaceAutomationAssignments).toHaveBeenCalledWith('a1', [
+            { machineId: 'm1', enabled: true, priority: 0 },
+        ]);
+        expect(syncSpies.refreshAutomations).toHaveBeenCalledTimes(refreshCallsBeforeToggle);
+    });
+
+    it('queues a run-now action without immediately refetching automation runs', async () => {
+        const { AutomationDetailScreen } = await import('./AutomationDetailScreen');
+
+        let tree: renderer.ReactTestRenderer | null = null;
+        await act(async () => {
+            tree = renderer.create(React.createElement(AutomationDetailScreen));
+            await Promise.resolve();
+        });
+        const fetchRunsCallsBeforeRunNow = syncSpies.fetchAutomationRuns.mock.calls.length;
+
+        const runNowButton = tree!.root.find(
+            (node) => String(node.type) === 'Pressable' && node.props.accessibilityLabel === 'Run now',
+        );
+        await act(async () => {
+            await runNowButton.props.onPress();
+        });
+
+        expect(syncSpies.runAutomationNow).toHaveBeenCalledWith('a1');
+        expect(syncSpies.fetchAutomationRuns).toHaveBeenCalledTimes(fetchRunsCallsBeforeRunNow);
+    });
+
+    it('hides the machine-assignment warning once at least one machine is enabled', async () => {
+        automationState.automation.assignments = [
+            { machineId: 'm1', enabled: true, priority: 1 },
+        ];
+        machinesState.list = [
+            {
+                id: 'm1',
+                metadata: { displayName: 'Primary machine', host: 'primary.local', platform: 'macOS' },
+            },
+        ];
+
+        const { AutomationDetailScreen } = await import('./AutomationDetailScreen');
+
+        let tree: renderer.ReactTestRenderer | null = null;
+        await act(async () => {
+            tree = renderer.create(React.createElement(AutomationDetailScreen));
+            await Promise.resolve();
+        });
+
+        const machineAssignmentsGroup = tree!.root.find(
+            (node) => String(node.type) === 'ItemGroup' && node.props.title === 'Machine assignments',
+        );
+
+        expect(machineAssignmentsGroup.props.footer).toBeUndefined();
+    });
+
+    it('disambiguates duplicate machine rows with online state in the subtitle', async () => {
+        const now = Date.now();
+        machinesState.list = [
+            {
+                id: 'm1',
+                active: true,
+                activeAt: now,
+                revokedAt: null,
+                metadata: { displayName: 'Leeroys-MacBook-Pro', host: 'Leeroys-MacBook-Pro', platform: 'darwin' },
+            },
+            {
+                id: 'm2',
+                active: false,
+                activeAt: now - 10 * 60_000,
+                revokedAt: null,
+                metadata: { displayName: 'Leeroys-MacBook-Pro', host: 'Leeroys-MacBook-Pro', platform: 'darwin' },
+            },
+        ];
+
+        const { AutomationDetailScreen } = await import('./AutomationDetailScreen');
+
+        let tree: renderer.ReactTestRenderer | null = null;
+        await act(async () => {
+            tree = renderer.create(React.createElement(AutomationDetailScreen));
+            await Promise.resolve();
+        });
+
+        const machineRows = tree!.root.findAll(
+            (node) =>
+                String(node.type) === 'Pressable'
+                && node.props.accessibilityLabel === 'Leeroys-MacBook-Pro',
+        );
+
+        expect(machineRows.map((node) => node.props.subtitle)).toEqual(
+            expect.arrayContaining([
+                expect.stringContaining('online'),
+                expect.stringContaining('offline'),
+            ]),
+        );
+    });
+
+    it('navigates to the automations list after deleting instead of relying on history back', async () => {
+        const { AutomationDetailScreen } = await import('./AutomationDetailScreen');
+
+        let tree: renderer.ReactTestRenderer | null = null;
+        await act(async () => {
+            tree = renderer.create(React.createElement(AutomationDetailScreen));
+            await Promise.resolve();
+        });
+
+        const deleteButton = tree!.root.find(
+            (node) => String(node.type) === 'Pressable' && node.props.accessibilityLabel === 'Delete automation',
+        );
+        await act(async () => {
+            await deleteButton.props.onPress();
+        });
+
+        expect(syncSpies.deleteAutomation).toHaveBeenCalledWith('a1');
+        expect(navigateWithBlurOnWebSpy).toHaveBeenCalledTimes(1);
         expect(routerReplaceSpy).toHaveBeenCalledWith('/automations');
+        expect(routerBackSpy).not.toHaveBeenCalled();
     });
 });

@@ -3,15 +3,14 @@ import { ActivityIndicator, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { AutomationSettingsForm } from '@/components/automations/editor/AutomationSettingsForm';
-import type { ExistingSessionAutomationAvailability } from '@/components/sessions/authoring/context/sessionAuthoringContext';
+import { ExistingSessionAutomationComposer } from '@/components/automations/shared/ExistingSessionAutomationComposer';
+import { ExistingSessionAutomationContextSection } from '@/components/automations/shared/ExistingSessionAutomationContextSection';
+import { ExistingSessionAutomationUnavailableNotice } from '@/components/automations/shared/ExistingSessionAutomationUnavailableNotice';
 import { buildExistingSessionAutomationAuthoringContext } from '@/components/sessions/authoring/context/buildExistingSessionAutomationAuthoringContext';
 import type { SessionAuthoringDraft } from '@/components/sessions/authoring/draft/sessionAuthoringDraft';
 import { updateSessionAuthoringDraftAutomation } from '@/components/sessions/authoring/draft/updateSessionAuthoringDraftFields';
+import type { ExistingSessionAutomationAvailability } from '@/sync/domains/automations/existingSessionAutomationAvailability';
 import type { Session } from '@/sync/domains/state/storageTypes';
-
-import { ExistingSessionAutomationComposer } from './ExistingSessionAutomationComposer';
-import { ExistingSessionAutomationContextSection } from './ExistingSessionAutomationContextSection';
-import { ExistingSessionAutomationUnavailableNotice } from './ExistingSessionAutomationUnavailableNotice';
 
 const styles = StyleSheet.create(() => ({
     loadingContainer: {
@@ -49,38 +48,42 @@ export function ExistingSessionAutomationAuthoringSurface(props: Readonly<{
         return <ExistingSessionAutomationUnavailableNotice reason={props.unavailableReason} />;
     }
 
-    if (!props.session || !props.draft || !props.draft.automation) {
-        return (
-            <View style={styles.loadingContainer}>
-                <ActivityIndicator size="small" color={theme.colors.textSecondary} />
-            </View>
-        );
-    }
-
-    const context = buildExistingSessionAutomationAuthoringContext({
-        session: props.session,
-        draft: props.draft,
-        availability: props.availability,
-    });
+    const automationDraft = props.draft?.automation ?? null;
+    const authoringContext = props.session && props.draft
+        ? buildExistingSessionAutomationAuthoringContext({
+            session: props.session,
+            draft: props.draft,
+            availability: props.availability,
+            sessionDekBase64: props.draft.sessionEncryptionKeyBase64,
+        })
+        : null;
 
     return (
         <>
-            <AutomationSettingsForm
-                variant={props.formVariant}
-                value={props.draft.automation}
-                onChange={(next) => {
-                    props.onChangeDraft((current) => current ? updateSessionAuthoringDraftAutomation(current, next) : current);
-                }}
-            />
-            <ExistingSessionAutomationContextSection context={context} />
-            <ExistingSessionAutomationComposer
-                context={context}
-                onChangeDraft={props.onChangeDraft}
-                onSubmit={props.onSubmit}
-                submitAccessibilityLabel={props.submitAccessibilityLabel}
-                isSubmitDisabled={props.isSubmitDisabled}
-                editable={props.editable}
-            />
+            {automationDraft ? (
+                <AutomationSettingsForm
+                    variant={props.formVariant}
+                    value={automationDraft}
+                    onChange={(next) => {
+                        props.onChangeDraft((current) => current ? updateSessionAuthoringDraftAutomation(current, next) : current);
+                    }}
+                />
+            ) : null}
+            {authoringContext ? (
+                <ExistingSessionAutomationContextSection
+                    context={authoringContext}
+                />
+            ) : null}
+            {authoringContext ? (
+                <ExistingSessionAutomationComposer
+                    context={authoringContext}
+                    onChangeDraft={props.onChangeDraft}
+                    onSubmit={props.onSubmit}
+                    submitAccessibilityLabel={props.submitAccessibilityLabel}
+                    isSubmitDisabled={props.isSubmitDisabled}
+                    editable={props.editable}
+                />
+            ) : null}
         </>
     );
 }

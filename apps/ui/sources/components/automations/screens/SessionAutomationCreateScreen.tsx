@@ -1,6 +1,6 @@
 import React from 'react';
 import { View } from 'react-native';
-import { StyleSheet } from 'react-native-unistyles';
+import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { useRouter } from 'expo-router';
 
 import { ItemList } from '@/components/ui/lists/ItemList';
@@ -8,20 +8,24 @@ import { layout } from '@/components/ui/layout/layout';
 import { buildAutomationScheduleInputFromForm } from '@/components/automations/editor/buildAutomationScheduleInputFromForm';
 import { ExistingSessionAutomationAuthoringSurface } from '@/components/automations/shared/ExistingSessionAutomationAuthoringSurface';
 import { getExistingSessionAutomationUnavailableReason } from '@/components/automations/shared/existingSessionAutomationAvailabilityUi';
-import { resolveExistingSessionAutomationAvailability } from '@/components/automations/shared/resolveExistingSessionAutomationAvailability';
-import { buildExistingSessionAuthoringDraftFromSession } from '@/components/sessions/authoring/draft/buildExistingSessionAuthoringDraftFromSession';
-import { buildAutomationTemplateFromSessionAuthoringDraft } from '@/components/sessions/authoring/draft/buildAutomationTemplateFromSessionAuthoringDraft';
+import {
+    buildAutomationTemplateFromSessionAuthoringDraft,
+    refreshExistingSessionAuthoringDraftFromSessionSnapshot,
+} from '@/components/sessions/authoring/draft/sessionAuthoringDraftAdapters';
 import type { SessionAuthoringDraft } from '@/components/sessions/authoring/draft/sessionAuthoringDraft';
 import { useSessionAuthoringDraftState } from '@/components/sessions/authoring/draft/useSessionAuthoringDraftState';
+import { useHydrateSessionForRoute } from '@/hooks/session/useHydrateSessionForRoute';
 import { Modal } from '@/modal';
-import { DEFAULT_NEW_SESSION_AUTOMATION_DRAFT, sanitizeNewSessionAutomationDraft } from '@/sync/domains/automations/automationDraft';
-import { encodeAutomationTemplateCiphertextForAccount } from '@/sync/domains/automations/encodeAutomationTemplateCiphertextForAccount';
-import { normalizeAutomationDescription, normalizeAutomationName, validateAutomationTemplateTarget } from '@/sync/domains/automations/automationValidation';
 import { useSession, useSettings } from '@/sync/domains/state/storage';
+import { resolveExistingSessionAutomationAvailability } from '@/sync/domains/automations/existingSessionAutomationAvailability';
+import { normalizeAutomationDescription, normalizeAutomationName, validateAutomationTemplateTarget } from '@/sync/domains/automations/automationValidation';
+import { isAutomationSettingsDraftValid } from '@/sync/domains/automations/isAutomationSettingsDraftValid';
+import { sanitizeNewSessionAutomationDraft } from '@/sync/domains/automations/automationDraft';
+import { encodeAutomationTemplateCiphertextForAccount } from '@/sync/domains/automations/encodeAutomationTemplateCiphertextForAccount';
 import { readMachineTargetForSession } from '@/sync/ops/sessionMachineTarget';
 import { sync } from '@/sync/sync';
 import { t } from '@/text';
-import { deferOnWeb } from '@/utils/platform/deferOnWeb';
+import { navigateWithBlurOnWeb } from '@/utils/platform/deferOnWeb';
 
 const stylesheet = StyleSheet.create((theme) => ({
     container: {
@@ -30,61 +34,71 @@ const stylesheet = StyleSheet.create((theme) => ({
     },
 }));
 
+function isExistingSessionAutomationCreateDraftValid(
+    draft: SessionAuthoringDraft | null,
+    availabilityKind: ReturnType<typeof resolveExistingSessionAutomationAvailability>['kind'],
+): boolean {
+    const automationDraft = draft?.automation;
+    const messageOk = (draft?.prompt ?? '').trim().length > 0;
+    return isAutomationSettingsDraftValid(automationDraft) && messageOk && availabilityKind === 'ready';
+}
+
 export function SessionAutomationCreateScreen(props: { sessionId: string }) {
+    useUnistyles();
     const styles = stylesheet;
     const router = useRouter();
+    const sessionHydrated = useHydrateSessionForRoute(props.sessionId, 'SessionAutomationCreateScreen.hydrateTargetSession');
     const session = useSession(props.sessionId);
     const settings = useSettings();
+
     const { draft, setDraft, latestDraftRef } = useSessionAuthoringDraftState();
+
     const sessionDekBase64 = sync.getSessionEncryptionKeyBase64ForResume(props.sessionId);
     const machineIdOverride = readMachineTargetForSession(props.sessionId)?.machineId ?? null;
-
     const availability = React.useMemo(() => resolveExistingSessionAutomationAvailability({
+        sessionHydrated,
         session,
         machineIdOverride,
         sessionDekBase64,
         accountSettings: settings,
-    }), [machineIdOverride, session, sessionDekBase64, settings]);
+    }), [machineIdOverride, session, sessionDekBase64, sessionHydrated, settings]);
+    const machineId = availability.kind === 'ready' ? availability.machineId : null;
 
     React.useEffect(() => {
         if (!session) return;
         setDraft((current) => {
-            if (current) {
-                if (current.automation) return current;
-                return {
-                    ...current,
-                    automation: sanitizeNewSessionAutomationDraft(DEFAULT_NEW_SESSION_AUTOMATION_DRAFT),
-                };
-            }
-
-            return {
-                ...buildExistingSessionAuthoringDraftFromSession({
-                    session,
-                    message: '',
-                    sessionDekBase64,
-                }),
-                automation: sanitizeNewSessionAutomationDraft(DEFAULT_NEW_SESSION_AUTOMATION_DRAFT),
-            } satisfies SessionAuthoringDraft;
+            const defaultAutomationDraft = sanitizeNewSessionAutomationDraft({
+                enabled: true,
+                name: t('automations.create.defaultName'),
+                description: '',
+                scheduleKind: 'interval',
+                everyMinutes: 60,
+                cronExpr: '0 * * * *',
+                timezone: null,
+            });
+            return refreshExistingSessionAuthoringDraftFromSessionSnapshot({
+                session,
+                currentDraft: current,
+                sessionDekBase64,
+                fallbackAutomationDraft: defaultAutomationDraft,
+            });
         });
-    }, [session, sessionDekBase64, setDraft]);
+    }, [session, sessionDekBase64]);
 
-    const currentDraft = latestDraftRef.current ?? draft;
-    const missingReason = React.useMemo(
-        () => getExistingSessionAutomationUnavailableReason(availability),
-        [availability],
+    const isValid = React.useMemo(
+        () => isExistingSessionAutomationCreateDraftValid(draft, availability.kind),
+        [availability.kind, draft],
     );
-    const isValid = Boolean(currentDraft?.automation)
-        && availability.kind === 'ready'
-        && (currentDraft?.prompt.trim().length ?? 0) > 0;
 
     const handleCreate = React.useCallback(async () => {
-        const current = latestDraftRef.current;
-        if (!session || !current || availability.kind !== 'ready') return;
-        if (!current.automation || current.prompt.trim().length === 0) return;
-
+        const currentDraft = latestDraftRef.current;
+        if (!session || !machineId || !currentDraft) return;
+        if (!isExistingSessionAutomationCreateDraftValid(currentDraft, availability.kind)) return;
+        const currentAutomationDraft = currentDraft.automation;
+        if (!currentAutomationDraft) return;
         try {
             const credentials = sync.getCredentials();
-            const template = buildAutomationTemplateFromSessionAuthoringDraft(current);
+            const template = buildAutomationTemplateFromSessionAuthoringDraft(currentDraft);
             validateAutomationTemplateTarget({
                 targetType: 'existing_session',
                 template,
@@ -96,23 +110,25 @@ export function SessionAutomationCreateScreen(props: { sessionId: string }) {
             });
 
             await sync.createAutomation({
-                name: normalizeAutomationName(current.automation.name),
-                description: normalizeAutomationDescription(current.automation.description),
-                enabled: current.automation.enabled,
-                schedule: buildAutomationScheduleInputFromForm(current.automation),
+                name: normalizeAutomationName(currentAutomationDraft.name),
+                description: normalizeAutomationDescription(currentAutomationDraft.description),
+                enabled: currentAutomationDraft.enabled,
+                schedule: buildAutomationScheduleInputFromForm(currentAutomationDraft),
                 targetType: 'existing_session',
                 templateCiphertext,
-                assignments: [{ machineId: availability.machineId, enabled: true, priority: 100 }],
+                assignments: [{ machineId, enabled: true, priority: 100 }],
             });
-            await sync.refreshAutomations();
-            deferOnWeb(() => router.replace(`/session/${props.sessionId}/automations` as any));
+            navigateWithBlurOnWeb(() => router.replace(`/session/${props.sessionId}/automations` as any));
         } catch (error) {
             await Modal.alert(
                 t('common.error'),
                 error instanceof Error ? error.message : t('automations.create.createFailed')
             );
         }
-    }, [availability, latestDraftRef, props.sessionId, router, session]);
+    }, [availability.kind, machineId, props.sessionId, router, session]);
+
+    const missingReason = React.useMemo(() => getExistingSessionAutomationUnavailableReason(availability), [availability]);
+    const isWaitingForSessionHydration = availability.kind === 'hydrating';
 
     return (
         <View style={styles.container}>
@@ -124,7 +140,7 @@ export function SessionAutomationCreateScreen(props: { sessionId: string }) {
                         draft={draft}
                         onChangeDraft={setDraft}
                         availability={availability}
-                        isWaiting={false}
+                        isWaiting={isWaitingForSessionHydration}
                         unavailableReason={missingReason}
                         onSubmit={() => { void handleCreate(); }}
                         submitAccessibilityLabel={t('automations.create.createButtonTitle')}

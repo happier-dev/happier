@@ -8,17 +8,18 @@ import { ItemList } from '@/components/ui/lists/ItemList';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { Item } from '@/components/ui/lists/Item';
 import { layout } from '@/components/ui/layout/layout';
+import { getExistingSessionAutomationUnavailableReason } from '@/components/automations/shared/existingSessionAutomationAvailabilityUi';
 import { Modal } from '@/modal';
+import { useHydrateSessionForRoute } from '@/hooks/session/useHydrateSessionForRoute';
 import { useAutomations, useSession, useSettings } from '@/sync/domains/state/storage';
+import { resolveExistingSessionAutomationAvailability } from '@/sync/domains/automations/existingSessionAutomationAvailability';
+import { readMachineTargetForSession } from '@/sync/ops/sessionMachineTarget';
 import { sync } from '@/sync/sync';
 import { filterAutomationsLinkedToSession } from '@/sync/domains/automations/automationSessionLink';
 import { AutomationListGroup } from '@/components/automations/list/AutomationListGroup';
 import { AutomationsEmptyState } from '@/components/automations/shared/AutomationsEmptyState';
-import { getExistingSessionAutomationUnavailableReason } from '@/components/automations/shared/existingSessionAutomationAvailabilityUi';
-import { resolveExistingSessionAutomationAvailability } from '@/components/automations/shared/resolveExistingSessionAutomationAvailability';
-import { readMachineTargetForSession } from '@/sync/ops/sessionMachineTarget';
-import { deferOnWeb } from '@/utils/platform/deferOnWeb';
 import { t } from '@/text';
+import { navigateWithBlurOnWeb } from '@/utils/platform/deferOnWeb';
 
 const stylesheet = StyleSheet.create((theme) => ({
     container: {
@@ -37,8 +38,10 @@ export function SessionAutomationsScreen(props: { sessionId: string }) {
     const styles = stylesheet;
     const router = useRouter();
     const automations = useAutomations();
+    const sessionHydrated = useHydrateSessionForRoute(props.sessionId, 'SessionAutomationsScreen.hydrateTargetSession');
     const session = useSession(props.sessionId);
     const settings = useSettings();
+    const sessionDekBase64 = sync.getSessionEncryptionKeyBase64ForResume(props.sessionId);
     const [loading, setLoading] = React.useState(true);
 
     const refresh = React.useCallback(async () => {
@@ -62,14 +65,14 @@ export function SessionAutomationsScreen(props: { sessionId: string }) {
     const linked = React.useMemo(() => {
         return filterAutomationsLinkedToSession(automations, props.sessionId);
     }, [automations, props.sessionId]);
-    const sessionDekBase64 = sync.getSessionEncryptionKeyBase64ForResume(props.sessionId);
     const machineIdOverride = readMachineTargetForSession(props.sessionId)?.machineId ?? null;
     const availability = React.useMemo(() => resolveExistingSessionAutomationAvailability({
+        sessionHydrated,
         session,
         machineIdOverride,
         sessionDekBase64,
         accountSettings: settings,
-    }), [machineIdOverride, session, sessionDekBase64, settings]);
+    }), [machineIdOverride, session, sessionDekBase64, sessionHydrated, settings]);
     const addAutomationUnavailableReason = React.useMemo(
         () => getExistingSessionAutomationUnavailableReason(availability),
         [availability],
@@ -101,7 +104,7 @@ export function SessionAutomationsScreen(props: { sessionId: string }) {
                             title={t('automations.session.addAutomation')}
                             subtitle={addAutomationUnavailableReason ?? undefined}
                             icon={<Ionicons name="add-outline" size={29} color={theme.colors.accent.blue} />}
-                            onPress={() => deferOnWeb(() => router.push(`/session/${props.sessionId}/automations/new` as any))}
+                            onPress={() => navigateWithBlurOnWeb(() => router.push(`/session/${props.sessionId}/automations/new` as any))}
                             disabled={availability.kind !== 'ready'}
                         />
                     </ItemGroup>

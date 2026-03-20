@@ -6,6 +6,7 @@ import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { Modal } from '@/modal';
 import { useAllMachines, useAutomation, useAutomationRuns } from '@/sync/domains/state/storage';
+import type { Machine } from '@/sync/domains/state/storageTypes';
 import { sync } from '@/sync/sync';
 import { upsertAutomationAssignmentToggle } from '@/components/automations/screens/automationAssignmentsModel';
 import { formatAutomationScheduleLabel } from '@/components/automations/list/automationListFormatting';
@@ -16,7 +17,8 @@ import { Switch } from '@/components/ui/forms/Switch';
 import { Text } from '@/components/ui/text/Text';
 import { layout } from '@/components/ui/layout/layout';
 import { t } from '@/text';
-import { deferOnWeb } from '@/utils/platform/deferOnWeb';
+import { navigateWithBlurOnWeb } from '@/utils/platform/deferOnWeb';
+import { getMachineDisplayName, isMachineOnline } from '@/utils/sessions/machineUtils';
 
 const stylesheet = StyleSheet.create((theme) => ({
     loading: {
@@ -44,6 +46,30 @@ function formatDate(ms: number, unknownLabel: string): string {
     }
 }
 
+function formatAutomationAssignmentSubtitle(params: {
+    machine: Machine;
+    duplicateTitle: boolean;
+}): string {
+    const host = typeof params.machine.metadata?.host === 'string' ? params.machine.metadata.host.trim() : '';
+    const displayName = typeof params.machine.metadata?.displayName === 'string'
+        ? params.machine.metadata.displayName.trim()
+        : '';
+    const platform = typeof params.machine.metadata?.platform === 'string' ? params.machine.metadata.platform.trim() : '';
+    const statusText = t(isMachineOnline(params.machine) ? 'status.online' : 'status.offline');
+    const detailParts = [
+        platform || null,
+        statusText,
+        params.duplicateTitle ? params.machine.id.slice(0, 8) : null,
+    ].filter((value): value is string => Boolean(value));
+    const secondaryLine = detailParts.join(' • ');
+
+    if (host && displayName && host !== displayName) {
+        return secondaryLine ? `${host}\n${secondaryLine}` : host;
+    }
+
+    return secondaryLine || host || params.machine.id;
+}
+
 export function AutomationDetailScreen() {
     const { theme } = useUnistyles();
     const styles = stylesheet;
@@ -53,6 +79,14 @@ export function AutomationDetailScreen() {
     const automation = useAutomation(automationId);
     const runs = useAutomationRuns(automationId);
     const machines = useAllMachines();
+    const machineTitleCounts = React.useMemo(() => {
+        const counts = new Map<string, number>();
+        for (const machine of machines) {
+            const title = getMachineDisplayName(machine) ?? machine.id;
+            counts.set(title, (counts.get(title) ?? 0) + 1);
+        }
+        return counts;
+    }, [machines]);
     const [loading, setLoading] = React.useState(true);
     const [runNowState, setRunNowState] = React.useState<'idle' | 'running' | 'queued'>('idle');
 
@@ -83,7 +117,6 @@ export function AutomationDetailScreen() {
         try {
             setRunNowState('running');
             await sync.runAutomationNow(automationId);
-            await sync.fetchAutomationRuns(automationId);
             setRunNowState('queued');
             setTimeout(() => {
                 setRunNowState((prev) => (prev === 'queued' ? 'idle' : prev));
@@ -123,7 +156,7 @@ export function AutomationDetailScreen() {
         if (!confirmed) return;
         try {
             await sync.deleteAutomation(automationId);
-            deferOnWeb(() => router.replace('/automations'));
+            navigateWithBlurOnWeb(() => router.replace('/automations'));
         } catch (error) {
             await Modal.alert(
                 t('common.error'),
@@ -134,7 +167,7 @@ export function AutomationDetailScreen() {
 
     const handleEditAutomation = React.useCallback(() => {
         if (!automationId) return;
-        deferOnWeb(() => router.push({
+        navigateWithBlurOnWeb(() => router.push({
             pathname: '/automations/edit',
             params: { id: automationId },
         } as any));
@@ -149,7 +182,6 @@ export function AutomationDetailScreen() {
                 enabled,
             });
             await sync.replaceAutomationAssignments(automationId, nextAssignments);
-            await sync.refreshAutomations();
         } catch (error) {
             await Modal.alert(
                 t('common.error'),
@@ -197,6 +229,7 @@ export function AutomationDetailScreen() {
     const nextRunLabel = automation.nextRunAt
         ? formatDate(automation.nextRunAt, unknownDate)
         : t('automations.detail.notScheduled');
+    const hasEnabledAssignments = automation.assignments.some((assignment) => assignment.enabled);
 
     return (
         <ItemList style={{ paddingTop: 0 }}>
@@ -243,24 +276,27 @@ export function AutomationDetailScreen() {
                     />
                 </ItemGroup>
 
-                <ItemGroup title={t('automations.detail.machineAssignmentsTitle')} footer={t('automations.detail.machineAssignmentsFooter')}>
+                <ItemGroup
+                    title={t('automations.detail.machineAssignmentsTitle')}
+                    footer={hasEnabledAssignments ? undefined : t('automations.detail.machineAssignmentsFooter')}
+                >
                     {machines.length === 0 ? (
                         <Item title={t('newSession.machinePicker.emptyMessage')} showChevron={false} />
                     ) : machines.map((machine) => {
                         const assignment = automation.assignments.find((item) => item.machineId === machine.id);
                         const isEnabled = assignment?.enabled === true;
-                        const machineName =
-                            machine.metadata?.displayName
-                            || machine.metadata?.host
-                            || machine.id;
-                        const machineMeta = machine.metadata?.platform ?? machine.id;
+                        const machineName = getMachineDisplayName(machine) ?? machine.id;
+                        const machineMeta = formatAutomationAssignmentSubtitle({
+                            machine,
+                            duplicateTitle: (machineTitleCounts.get(machineName) ?? 0) > 1,
+                        });
 
                         return (
                             <Item
                                 key={machine.id}
                                 title={machineName}
                                 subtitle={machineMeta}
-                                subtitleLines={1}
+                                subtitleLines={0}
                                 rightElement={(
                                     <Switch
                                         value={isEnabled}
