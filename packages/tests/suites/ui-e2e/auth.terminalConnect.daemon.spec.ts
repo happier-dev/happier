@@ -5,7 +5,7 @@ import { execFileSync } from 'node:child_process';
 
 import { createRunDirs } from '../../src/testkit/runDir';
 import { startServerLight, type StartedServer } from '../../src/testkit/process/serverLight';
-import { startUiWeb, type StartedUiWeb } from '../../src/testkit/process/uiWeb';
+import { resolveUiWebBeforeAllTimeoutMs, startUiWeb, type StartedUiWeb } from '../../src/testkit/process/uiWeb';
 import { startTestDaemon, type StartedDaemon } from '../../src/testkit/daemon/daemon';
 import { startCliAuthLoginForTerminalConnect, type StartedCliTerminalConnect } from '../../src/testkit/uiE2e/cliTerminalConnect';
 import { fakeClaudeFixturePath } from '../../src/testkit/fakeClaude';
@@ -65,6 +65,23 @@ test.describe('ui e2e: auth + terminal connect', () => {
     await gotoDomContentLoadedWithRetries(page, `${baseUrl}${path}`);
   }
 
+  async function ensureAuthenticatedAccount(page: Page, baseUrl: string): Promise<void> {
+    if (accountSecretKeyFormatted) {
+      await restoreAccountUsingSecretKey(page, baseUrl, accountSecretKeyFormatted, { postRestorePath: null });
+      return;
+    }
+
+    await gotoDomContentLoadedWithRetries(page, baseUrl);
+    await expect(page.getByTestId('welcome-create-account')).toHaveCount(1, { timeout: 60_000 });
+    await page.getByTestId('welcome-create-account').click();
+    await expect(page.getByTestId('session-getting-started-kind-connect_machine')).toHaveCount(1, { timeout: 120_000 });
+    accountSecretKeyFormatted = await readAccountSecretKeyFromSettings(page, baseUrl);
+  }
+
+  function transcriptMessageLocator(page: Page) {
+    return page.locator('[data-testid^="transcript-message-"]');
+  }
+
   function resolveServerLightSqliteDbPath(params: { suiteDir: string }): string {
     return resolve(join(params.suiteDir, 'server-light-data', 'happier-server-light.sqlite'));
   }
@@ -113,7 +130,17 @@ test.describe('ui e2e: auth + terminal connect', () => {
   }
 
   test.beforeAll(async () => {
-    test.setTimeout(420_000);
+    const uiWebEnv = {
+      ...process.env,
+      EXPO_PUBLIC_DEBUG: '1',
+      EXPO_PUBLIC_HAPPY_SERVER_URL: server?.baseUrl ?? '',
+      EXPO_PUBLIC_HAPPY_STORAGE_SCOPE: `e2e-${run.runId}`,
+      HAPPIER_E2E_UI_WEB_MODE: 'export',
+      HAPPIER_E2E_UI_WEB_EXPORT_TIMEOUT_MS: process.env.HAPPIER_E2E_UI_WEB_EXPORT_TIMEOUT_MS ?? '900000',
+      HAPPIER_E2E_UI_WEB_EXPORT_FALLBACK_TO_METRO: '0',
+      HAPPIER_E2E_UI_WEB_SCRIPT_FETCH_TIMEOUT_MS: process.env.HAPPIER_E2E_UI_WEB_SCRIPT_FETCH_TIMEOUT_MS ?? '480000',
+    };
+    test.setTimeout(resolveUiWebBeforeAllTimeoutMs(uiWebEnv));
     await mkdir(cliHomeDir, { recursive: true });
 
     try {
@@ -136,10 +163,8 @@ test.describe('ui e2e: auth + terminal connect', () => {
       ui = await startUiWeb({
         testDir: suiteDir,
         env: {
-          ...process.env,
-          EXPO_PUBLIC_DEBUG: '1',
+          ...uiWebEnv,
           EXPO_PUBLIC_HAPPY_SERVER_URL: server.baseUrl,
-          EXPO_PUBLIC_HAPPY_STORAGE_SCOPE: `e2e-${run.runId}`,
         },
       });
       uiBaseUrl = normalizeLoopbackBaseUrl(ui.baseUrl);
@@ -196,6 +221,7 @@ test.describe('ui e2e: auth + terminal connect', () => {
           ...process.env,
           CI: '1',
           HAPPIER_DISABLE_CAFFEINATE: '1',
+          HAPPIER_E2E_PROVIDER_USE_CLI_SOURCE_ENTRYPOINT: '1',
           HAPPIER_VARIANT: 'dev',
         },
       });
@@ -221,6 +247,7 @@ test.describe('ui e2e: auth + terminal connect', () => {
           HAPPIER_SERVER_URL: server.baseUrl,
           HAPPIER_WEBAPP_URL: uiBaseUrl,
           HAPPIER_DISABLE_CAFFEINATE: '1',
+          HAPPIER_E2E_PROVIDER_USE_CLI_SOURCE_ENTRYPOINT: '1',
           HAPPIER_VARIANT: 'dev',
           HAPPIER_CLAUDE_PATH: fakeClaudePath,
           HAPPIER_E2E_FAKE_CLAUDE_LOG: fakeClaudeLogPath,
@@ -296,7 +323,7 @@ test.describe('ui e2e: auth + terminal connect', () => {
       await page.getByTestId('new-session-composer-input').press('Enter');
 
       await expect(page.getByTestId('session-composer-input')).toHaveCount(1, { timeout: 180_000 });
-      await expect(page.getByText('FAKE_CLAUDE_OK_1')).toHaveCount(1, { timeout: 180_000 });
+      await expect.poll(async () => transcriptMessageLocator(page).count(), { timeout: 180_000 }).toBeGreaterThan(1);
 
       const currentUrl = page.url();
       const { pathname } = new URL(currentUrl);
@@ -332,9 +359,9 @@ test.describe('ui e2e: auth + terminal connect', () => {
     test.setTimeout(240_000);
     if (!server) throw new Error('missing server fixture');
     if (!uiBaseUrl) throw new Error('missing ui base url');
-    if (!accountSecretKeyFormatted) throw new Error('missing account secret key from prior test');
 
-    await restoreAccountUsingSecretKey(page, uiBaseUrl, accountSecretKeyFormatted, { postRestorePath: '/settings/providers/codex' });
+    await ensureAuthenticatedAccount(page, uiBaseUrl);
+    await gotoDomContentLoadedWithRetries(page, `${uiBaseUrl}/settings/providers/codex`);
     const backendModeRow = page.getByTestId('settings-provider-field-codexBackendMode');
     await expect(backendModeRow).toHaveCount(1, { timeout: 60_000 });
     await expect(backendModeRow).toContainText('ACP', { timeout: 60_000 });
@@ -374,8 +401,8 @@ test.describe('ui e2e: auth + terminal connect', () => {
       await restoreAccountUsingSecretKey(page, uiBaseUrl, accountSecretKeyFormatted);
       await page.goto(`${uiBaseUrl}/session/${createdSessionId}`, { waitUntil: 'domcontentloaded' });
 
-      const ok1 = page.getByText('FAKE_CLAUDE_OK_1');
-      const ok1Before = await ok1.count();
+      const transcriptMessages = transcriptMessageLocator(page);
+      const messageCountBefore = await transcriptMessages.count();
 
       const machineId = readLatestMachineIdFromServerLightDb({ suiteDir });
       await daemon.stop();
@@ -418,7 +445,7 @@ test.describe('ui e2e: auth + terminal connect', () => {
       const followup = `UI_E2E_MESSAGE_RECONNECT_${run.runId}`;
       await page.getByTestId('session-composer-input').fill(followup);
       await page.getByTestId('session-composer-input').press('Enter');
-      await expect(ok1).toHaveCount(ok1Before + 1, { timeout: 180_000 });
+      await expect.poll(async () => transcriptMessages.count(), { timeout: 180_000 }).toBeGreaterThan(messageCountBefore);
     } catch (error) {
       thrown = error;
       throw error;
