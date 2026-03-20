@@ -112,8 +112,8 @@ vi.mock('@/text', () => ({
         if (key === 'session.reviewFindings.title' && params && typeof params.count === 'number') {
             return `Review findings (${params.count})`;
         }
-        if (key === 'session.reviewFindings.actions.applyAcceptedFindings') return 'Apply accepted findings';
-        if (key === 'session.reviewFindings.actions.applyTriage') return 'Apply triage';
+        if (key === 'session.reviewFindings.actions.applyAcceptedFindings') return 'Implement selected fixes';
+        if (key === 'session.reviewFindings.actions.applyTriage') return 'Apply review actions';
         if (key === 'session.reviewFindings.actions.sending') return 'Sending…';
         if (key === 'session.reviewFindings.actions.applying') return 'Applying…';
         return key;
@@ -125,10 +125,22 @@ vi.mock('@/modal', () => ({
     Modal: { alert: vi.fn(), show: (config: unknown) => modalShowSpy(config) },
 }));
 
-const sendMessageSpy = vi.fn<(sessionId: string, text: string, opts?: unknown) => Promise<void>>(async () => undefined);
+const sendMessageSpy = vi.fn<
+    (
+        sessionId: string,
+        text: string,
+        displayText?: string,
+        metaOverrides?: Record<string, unknown>,
+    ) => Promise<void>
+>(async () => undefined);
 vi.mock('@/sync/sync', () => ({
     sync: {
-        sendMessage: (sessionId: string, text: string, opts?: unknown) => sendMessageSpy(sessionId, text, opts),
+        sendMessage: (
+            sessionId: string,
+            text: string,
+            displayText?: string,
+            metaOverrides?: Record<string, unknown>,
+        ) => sendMessageSpy(sessionId, text, displayText, metaOverrides),
         submitMessage: vi.fn(),
     },
 }));
@@ -161,12 +173,15 @@ vi.mock('@/hooks/server/useFeatureEnabled', () => ({
 let thinkingDisplayMode: 'inline' | 'tool' | 'hidden' = 'inline';
 let thinkingInlinePresentation: 'full' | 'summary' = 'full';
 let filesImagePreviewMaxBytes: number | null = null;
+let toolViewTimelineChromeMode: 'activity_feed' | 'cards' | null = null;
 vi.mock('@/sync/domains/state/storage', () => ({
     useSession: () => null,
+    useSessionMessages: () => ({ messages: [], isLoaded: true }),
     useSetting: (key: string) => {
         if (key === 'sessionThinkingDisplayMode') return thinkingDisplayMode;
         if (key === 'sessionThinkingInlinePresentation') return thinkingInlinePresentation;
         if (key === 'filesImagePreviewMaxBytes') return filesImagePreviewMaxBytes;
+        if (key === 'toolViewTimelineChromeMode') return toolViewTimelineChromeMode;
         return null;
     },
     useSessionMessagesById: () => ({}),
@@ -177,6 +192,7 @@ afterEach(() => {
     thinkingDisplayMode = 'inline';
     thinkingInlinePresentation = 'full';
     filesImagePreviewMaxBytes = null;
+    toolViewTimelineChromeMode = null;
 });
 
 vi.mock('@/utils/sessions/discardedCommittedMessages', () => ({
@@ -323,7 +339,7 @@ describe('MessageView (structured meta)', { timeout: 60_000 }, () => {
             text: [
                 'hello',
                 '',
-                'Attachments: read each file path with the Read tool before answering.',
+                'Attachments: open and analyze these files before answering.',
                 '[attachments]',
                 '- .happier/uploads/messages/m1/file.png (file.png, image/png, 10 bytes)',
                 '[/attachments]',
@@ -415,6 +431,32 @@ describe('MessageView (structured meta)', { timeout: 60_000 }, () => {
         expect(tree!.toJSON()).toBeNull();
     });
 
+    it('hides voice transcript turns whose normalized text is empty after trimming', async () => {
+        const { MessageView } = await import('./MessageView');
+
+        const message: any = {
+            kind: 'agent-text',
+            id: 'voice-empty',
+            localId: null,
+            createdAt: 1,
+            text: '   ',
+            isThinking: false,
+            meta: {
+                happier: {
+                    kind: 'voice_agent_turn.v1',
+                    payload: { v: 1, epoch: 4, role: 'assistant', voiceAgentId: 'mid', ts: 101 },
+                },
+            },
+        };
+
+        let tree: renderer.ReactTestRenderer | null = null;
+        await act(async () => {
+            tree = renderer.create(<MessageView message={message} metadata={null} sessionId="s1" />);
+        });
+
+        expect(tree!.toJSON()).toBeNull();
+    });
+
     it('renders a placeholder tile for inline image attachments when filesImagePreviewMaxBytes is tiny', async () => {
         const { MessageView } = await import('./MessageView');
 
@@ -427,7 +469,7 @@ describe('MessageView (structured meta)', { timeout: 60_000 }, () => {
             text: [
                 'hello',
                 '',
-                'Attachments: read each file path with the Read tool before answering.',
+                'Attachments: open and analyze these files before answering.',
                 '[attachments]',
                 `- ${path} (file.png, image/png, 10 bytes)`,
                 '[/attachments]',
@@ -466,7 +508,7 @@ describe('MessageView (structured meta)', { timeout: 60_000 }, () => {
             text: [
                 'hello',
                 '',
-                'Attachments: read each file path with the Read tool before answering.',
+                'Attachments: open and analyze these files before answering.',
                 '[attachments]',
                 `- ${firstPath} (one.png, image/png, 10 bytes)`,
                 `- ${secondPath} (two.png, image/png, 10 bytes)`,
@@ -590,10 +632,11 @@ describe('MessageView (structured meta)', { timeout: 60_000 }, () => {
             children: [],
             meta: {
                 happier: {
-                    kind: 'review_findings.v1',
+                    kind: 'review_findings.v2',
                     payload: {
                         runRef: { runId: 'run_1', callId: 'call_1', backendId: 'b1' },
                         summary: 'All good.',
+                        overviewMarkdown: '## Overview\n\nAll good.',
                         findings: [
                             {
                                 id: 'f1',
@@ -609,6 +652,8 @@ describe('MessageView (structured meta)', { timeout: 60_000 }, () => {
                         triage: {
                             findings: [{ id: 'f1', status: 'accept' }],
                         },
+                        questions: [],
+                        assumptions: [],
                         generatedAtMs: 1,
                     },
                 },
@@ -627,6 +672,53 @@ describe('MessageView (structured meta)', { timeout: 60_000 }, () => {
         });
 
         expect(tree!.root.findAllByType(ReviewFindingsMessageCard as any)).toHaveLength(1);
+    });
+
+    it('suppresses the duplicate ToolTimelineRow for structured review tool-calls in activity feed mode', async () => {
+        toolViewTimelineChromeMode = 'activity_feed';
+        const { MessageView } = await import('./MessageView');
+        const { ReviewFindingsMessageCard } = await import('../reviews/messages/ReviewFindingsMessageCard');
+
+        const message: any = {
+            kind: 'tool-call',
+            id: 'msg-tool-1',
+            localId: null,
+            createdAt: 1,
+            tool: {
+                id: 'call_1',
+                name: 'SubAgentRun',
+                state: 'completed',
+                input: {},
+                createdAt: 1,
+                startedAt: 1,
+                completedAt: 2,
+                description: null,
+                result: { ok: true },
+            },
+            children: [],
+            meta: {
+                happier: {
+                    kind: 'review_findings.v2',
+                    payload: {
+                        runRef: { runId: 'run_1', callId: 'call_1', backendId: 'b1' },
+                        summary: 'All good.',
+                        overviewMarkdown: '## Overview\n\nAll good.',
+                        findings: [],
+                        questions: [],
+                        assumptions: [],
+                        generatedAtMs: 1,
+                    },
+                },
+            },
+        };
+
+        let tree: renderer.ReactTestRenderer | null = null;
+        await act(async () => {
+            tree = renderer.create(<MessageView message={message} metadata={null} sessionId="s1" />);
+        });
+
+        expect(tree!.root.findAllByType(ReviewFindingsMessageCard as any)).toHaveLength(1);
+        expect(tree!.root.findAllByType('ToolTimelineRow' as any)).toHaveLength(0);
     });
 
     it('renders a structured plan-output card for tool-call messages when meta.happier.kind is plan_output.v1', async () => {
@@ -824,7 +916,6 @@ describe('MessageView (structured meta)', { timeout: 60_000 }, () => {
         await act(async () => {
             tree = renderer.create(<MessageView message={message} metadata={null} sessionId="s1" />);
         });
-        // Expand the finding and select "accept" so the card has an accepted finding to apply.
         const findingHeaders = tree!.root.findAll((node) => {
             if ((node as any).type !== 'Pressable') return false;
             if (typeof (node as any).props?.onPress !== 'function') return false;
@@ -836,22 +927,11 @@ describe('MessageView (structured meta)', { timeout: 60_000 }, () => {
             findingHeaders[0]!.props.onPress();
         });
 
-        const acceptChips = tree!.root.findAll((node) => {
-            if ((node as any).type !== 'Pressable') return false;
-            if (typeof (node as any).props?.onPress !== 'function') return false;
-            const textChildren = node.findAllByType('Text' as any);
-            return textChildren.some((t: any) => (t.children || []).join('') === 'accept');
-        });
-        expect(acceptChips.length).toBeGreaterThan(0);
-        await act(async () => {
-            acceptChips[0]!.props.onPress();
-        });
-
         const applyButtons = tree!.root.findAll((node) => {
             if ((node as any).type !== 'Pressable') return false;
             if (typeof (node as any).props?.onPress !== 'function') return false;
             const textChildren = node.findAllByType('Text' as any);
-            return textChildren.some((t: any) => (t.children || []).join('') === 'Apply accepted findings');
+            return textChildren.some((t: any) => (t.children || []).join('') === 'Implement selected fixes');
         });
 
         expect(applyButtons.length).toBe(1);
@@ -860,10 +940,18 @@ describe('MessageView (structured meta)', { timeout: 60_000 }, () => {
         });
 
         expect(sendMessageSpy).toHaveBeenCalledTimes(1);
-        const [sessionId, text] = sendMessageSpy.mock.calls[0] as any[];
+        const [sessionId, text, _displayText, metaOverrides] = sendMessageSpy.mock.calls[0] as any[];
         expect(sessionId).toBe('s1');
-        expect(String(text)).toContain('@happier/review.apply_accepted_findings');
-        expect(String(text)).toContain('"acceptedFindingIds":["f1"]');
+        expect(String(text)).toContain('Please implement the accepted review findings below.');
+        expect(metaOverrides).toEqual({
+            happier: {
+                kind: 'review_publish_request.v1',
+                payload: expect.objectContaining({
+                    sourceRunRef: { runId: 'run_1', callId: 'call_1', backendId: 'b1' },
+                    findingIds: ['f1'],
+                }),
+            },
+        });
     });
 
     it('renders a thinking label for agent thinking messages and passes markdown through unchanged', async () => {

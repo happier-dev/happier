@@ -26,8 +26,12 @@ vi.mock('react-native-unistyles', () => ({
                 text: '#111',
                 textSecondary: '#555',
                 link: '#06f',
+                surface: '#fff',
+                surfaceHigh: '#f5f5f5',
                 surfaceHighest: '#fff',
                 divider: '#ddd',
+                overlay: { text: '#fff', scrimStrong: 'rgba(0,0,0,0.7)' },
+                shadow: { color: '#000' },
                 input: { background: '#f7f7f7' },
                 userMessageBackground: '#eef',
                 agentEventText: '#777',
@@ -43,8 +47,12 @@ vi.mock('react-native-unistyles', () => ({
                     text: '#111',
                     textSecondary: '#555',
                     link: '#06f',
+                    surface: '#fff',
+                    surfaceHigh: '#f5f5f5',
                     surfaceHighest: '#fff',
                     divider: '#ddd',
+                    overlay: { text: '#fff', scrimStrong: 'rgba(0,0,0,0.7)' },
+                    shadow: { color: '#000' },
                     input: { background: '#f7f7f7' },
                     userMessageBackground: '#eef',
                     agentEventText: '#777',
@@ -127,6 +135,8 @@ vi.mock('@/sync/domains/state/storage', () => ({
         if (key === 'toolViewTimelineChromeMode') return toolChromeMode;
         return null;
     },
+    useSessionMessagesById: () => ({}),
+    useSessionMessagesReducerState: () => null,
 }));
 
 afterEach(() => {
@@ -134,6 +144,40 @@ afterEach(() => {
 });
 
 describe('MessageView (tool timeline chrome mode)', () => {
+    it('passes a stable server route id to ToolTimelineRow when the message is already persisted', async () => {
+        toolChromeMode = 'activity_feed';
+        const { MessageView } = await import('./MessageView');
+
+        const message: any = {
+            kind: 'tool-call',
+            id: 'internal-1',
+            realID: 'server-msg-1',
+            localId: null,
+            createdAt: 1,
+            tool: {
+                id: 'call_read_1',
+                name: 'read',
+                state: 'completed',
+                input: {},
+                createdAt: 1,
+                startedAt: 1,
+                completedAt: 2,
+                description: null,
+                result: {},
+            },
+            children: [],
+        };
+
+        let tree: renderer.ReactTestRenderer | null = null;
+        await act(async () => {
+            tree = renderer.create(<MessageView message={message} metadata={null} sessionId="s1" />);
+        });
+
+        const rows = tree!.root.findAllByType('ToolTimelineRow' as any);
+        expect(rows).toHaveLength(1);
+        expect(rows[0]!.props.messageId).toBe('server:server-msg-1');
+    });
+
     it('renders ToolTimelineRow when toolViewTimelineChromeMode is activity_feed', async () => {
         toolChromeMode = 'activity_feed';
         const { MessageView } = await import('./MessageView');
@@ -164,6 +208,41 @@ describe('MessageView (tool timeline chrome mode)', () => {
         expect(tree!.root.findAllByType('ToolTimelineRow' as any)).toHaveLength(1);
         expect(tree!.root.findAllByType('ToolView' as any)).toHaveLength(0);
     });
+
+    it('passes a stable server route id to ToolView when the message is already persisted', async () => {
+        toolChromeMode = 'cards';
+        const { MessageView } = await import('./MessageView');
+
+        const message: any = {
+            kind: 'tool-call',
+            id: 'internal-1',
+            realID: 'server-msg-1',
+            localId: null,
+            createdAt: 1,
+            tool: {
+                id: 'call_read_1',
+                name: 'read',
+                state: 'completed',
+                input: {},
+                createdAt: 1,
+                startedAt: 1,
+                completedAt: 2,
+                description: null,
+                result: {},
+            },
+            children: [],
+        };
+
+        let tree: renderer.ReactTestRenderer | null = null;
+        await act(async () => {
+            tree = renderer.create(<MessageView message={message} metadata={null} sessionId="s1" />);
+        });
+
+        const cards = tree!.root.findAllByType('ToolView' as any);
+        expect(cards).toHaveLength(1);
+        expect(cards[0]!.props.messageId).toBe('server:server-msg-1');
+    });
+
 
     it('renders ToolView when toolViewTimelineChromeMode is cards', async () => {
         toolChromeMode = 'cards';

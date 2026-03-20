@@ -27,12 +27,22 @@ vi.mock('react-native-unistyles', () => ({
             colors: {
                 surface: '#fff',
                 divider: '#ddd',
+                groupped: { sectionTitle: '#444' },
                 shadow: { color: '#000', opacity: 0.2 },
                 box: { warning: { background: '#fff3cd', text: '#856404' } },
             },
         },
     }),
-    StyleSheet: { create: (input: any) => (typeof input === 'function' ? input({ colors: { shadow: { color: '#000', opacity: 0.2 } } }) : input) },
+    StyleSheet: {
+        create: (input: any) => (typeof input === 'function'
+            ? input({
+                colors: {
+                    groupped: { sectionTitle: '#444' },
+                    shadow: { color: '#000', opacity: 0.2 },
+                },
+            })
+            : input),
+    },
 }));
 
 vi.mock('@/constants/Typography', () => ({
@@ -104,60 +114,13 @@ describe('ChatFooter (local control)', () => {
         });
     });
 
-    it('does not render switch-to-local controls when localControl is not provided', async () => {
+    it('does not render footer actions when the session is not locally controlled', async () => {
         const tree = await renderFooter({
             controlledByUser: false,
         });
 
-        const textNodes = tree.root.findAllByType('Text');
-        expect(textNodes.some((node) => node.props.children === 'chatFooter.localModeAvailable')).toBe(false);
-        expect(textNodes.some((node) => node.props.children === 'chatFooter.localModeUnavailableNeedsResume')).toBe(false);
-
         const pressables = tree.root.findAllByType('Pressable');
-        expect(pressables.some((node) => node.props.accessibilityLabel === 'chatFooter.switchToLocal')).toBe(false);
-
-        await act(async () => {
-            tree.unmount();
-        });
-    });
-
-    it('renders switch-to-local controls when local mode is available', async () => {
-        const onRequestSwitchToLocal = vi.fn();
-        const tree = await renderFooter({
-            controlledByUser: false,
-            localControl: { disabledReason: null, onRequestSwitchToLocal },
-        });
-
-        const textNodes = tree.root.findAllByType('Text');
-        expect(textNodes.some((node) => node.props.children === 'chatFooter.localModeAvailable')).toBe(true);
-
-        const pressables = tree.root.findAllByType('Pressable');
-        const switchToLocal = pressables.find((node) => node.props.accessibilityLabel === 'chatFooter.switchToLocal');
-        expect(Boolean(switchToLocal)).toBe(true);
-
-        await act(async () => {
-            switchToLocal!.props.onPress();
-        });
-        expect(onRequestSwitchToLocal).toHaveBeenCalledTimes(1);
-
-        await act(async () => {
-            tree.unmount();
-        });
-    });
-
-    it('renders a switching-to-local message and hides the action while a control switch is in flight', async () => {
-        const onRequestSwitchToLocal = vi.fn();
-        const tree = await renderFooter({
-            controlledByUser: false,
-            controlSwitchTo: 'local',
-            localControl: { disabledReason: null, onRequestSwitchToLocal },
-        });
-
-        const textNodes = tree.root.findAllByType('Text');
-        expect(textNodes.some((node) => node.props.children === 'chatFooter.switchingToLocal')).toBe(true);
-
-        const pressables = tree.root.findAllByType('Pressable');
-        expect(pressables.some((node) => node.props.accessibilityLabel === 'chatFooter.switchToLocal')).toBe(false);
+        expect(pressables).toHaveLength(0);
 
         await act(async () => {
             tree.unmount();
@@ -182,17 +145,130 @@ describe('ChatFooter (local control)', () => {
         });
     });
 
-    it('renders an unavailable message and no action when local mode is disabled', async () => {
+    it('renders a detach-local action for shared local attachment', async () => {
         const tree = await renderFooter({
-            controlledByUser: false,
-            localControl: { disabledReason: 'machineOffline' },
-        });
+            localControl: {
+                attached: true,
+                topology: 'shared',
+                remoteWritable: true,
+                canAttach: true,
+                canDetach: true,
+            },
+            onRequestSwitchToRemote: vi.fn(),
+        } as any);
 
         const textNodes = tree.root.findAllByType('Text');
-        expect(textNodes.some((node) => node.props.children === 'chatFooter.localModeUnavailableMachineOffline')).toBe(true);
+        expect(textNodes.some((node) => node.props.children === 'chatFooter.sessionRunningLocallyAndRemotely')).toBe(true);
 
         const pressables = tree.root.findAllByType('Pressable');
-        expect(pressables.some((node) => node.props.accessibilityLabel === 'chatFooter.switchToLocal')).toBe(false);
+        expect(pressables.some((node) => node.props.accessibilityLabel === 'chatFooter.detachLocalTerminal')).toBe(true);
+        expect(pressables.some((node) => node.props.accessibilityLabel === 'chatFooter.switchToRemote')).toBe(false);
+
+        await act(async () => {
+            tree.unmount();
+        });
+    });
+
+    it('renders an attach-local action when shared local control can be attached from remote mode', async () => {
+        const tree = await renderFooter({
+            controlledByUser: false,
+            localControl: {
+                attached: false,
+                topology: 'shared',
+                remoteWritable: true,
+                canAttach: true,
+                canDetach: false,
+            },
+            onRequestSwitchToLocal: vi.fn(),
+        } as any);
+
+        const pressables = tree.root.findAllByType('Pressable');
+        expect(pressables.some((node) => node.props.accessibilityLabel === 'chatFooter.switchToLocal')).toBe(true);
+
+        await act(async () => {
+            tree.unmount();
+        });
+    });
+
+    it('renders an attach-local action when exclusive local control can be attached from remote mode', async () => {
+        const tree = await renderFooter({
+            controlledByUser: false,
+            localControl: {
+                attached: false,
+                topology: 'exclusive',
+                remoteWritable: true,
+                canAttach: true,
+                canDetach: false,
+            },
+            onRequestSwitchToLocal: vi.fn(),
+        } as any);
+
+        const pressables = tree.root.findAllByType('Pressable');
+        expect(pressables.some((node) => node.props.accessibilityLabel === 'chatFooter.switchToLocal')).toBe(true);
+
+        await act(async () => {
+            tree.unmount();
+        });
+    });
+
+    it('renders direct takeover actions for linked direct sessions that are not yet controlled by Happier', async () => {
+        const onRequestTakeOverDirect = vi.fn();
+        const onRequestTakeOverPersist = vi.fn();
+        const tree = await renderFooter({
+            controlledByUser: false,
+            directControl: {
+                machineOnline: true,
+                runnerActive: false,
+                activity: 'active_recently',
+                canTakeOverDirect: true,
+                canTakeOverPersist: true,
+                takeoverInFlight: null,
+                onRequestTakeOverDirect,
+                onRequestTakeOverPersist,
+            },
+        } as any);
+
+        const textNodes = tree.root.findAllByType('Text');
+        expect(textNodes.some((node) => node.props.children === 'chatFooter.directSessionTakeoverAvailable')).toBe(true);
+
+        const pressables = tree.root.findAllByType('Pressable');
+        const directButton = pressables.find((node) => node.props.accessibilityLabel === 'chatFooter.takeOverDirect');
+        const persistButton = pressables.find((node) => node.props.accessibilityLabel === 'chatFooter.takeOverPersist');
+        expect(Boolean(directButton)).toBe(true);
+        expect(Boolean(persistButton)).toBe(true);
+
+        await act(async () => {
+            directButton!.props.onPress();
+            persistButton!.props.onPress();
+        });
+
+        expect(onRequestTakeOverDirect).toHaveBeenCalledTimes(1);
+        expect(onRequestTakeOverPersist).toHaveBeenCalledTimes(1);
+
+        await act(async () => {
+            tree.unmount();
+        });
+    });
+
+    it('renders a takeover-in-flight message and hides direct takeover actions while a direct switch is pending', async () => {
+        const tree = await renderFooter({
+            controlledByUser: false,
+            directControl: {
+                machineOnline: true,
+                runnerActive: false,
+                activity: 'running',
+                canTakeOverDirect: true,
+                canTakeOverPersist: true,
+                takeoverInFlight: 'direct',
+            },
+        } as any);
+
+        const textNodes = tree.root.findAllByType('Text');
+        expect(textNodes.some((node) => node.props.children === 'chatFooter.switchingToDirectTakeover')).toBe(true);
+
+        const pressables = tree.root.findAllByType('Pressable');
+        expect(pressables.some((node) => node.props.accessibilityLabel === 'chatFooter.takeOverDirect')).toBe(false);
+        expect(pressables.some((node) => node.props.accessibilityLabel === 'chatFooter.takeOverPersist')).toBe(false);
 
         await act(async () => {
             tree.unmount();

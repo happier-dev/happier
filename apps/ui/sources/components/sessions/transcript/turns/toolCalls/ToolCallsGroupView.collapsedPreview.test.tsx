@@ -1,8 +1,9 @@
 import React from 'react';
-import { describe, expect, it, beforeEach, vi } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import renderer, { act } from 'react-test-renderer';
 
 import type { ToolCallMessage } from '@/sync/domains/messages/messageTypes';
+import { ToolCallsGroupView } from './ToolCallsGroupView';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -37,21 +38,18 @@ vi.mock('@/text', () => ({
 }));
 
 let collapsedPreviewCount: number = 1;
-let toolChromeMode: 'activity_feed' | 'cards' = 'activity_feed';
 vi.mock('@/sync/domains/state/storage', () => ({
     useSetting: (key: string) => {
-        if (key === 'toolViewTimelineChromeMode') return toolChromeMode;
+        if (key === 'toolViewTimelineChromeMode') return 'activity_feed';
         if (key === 'transcriptToolCallsCollapsedPreviewCount') return collapsedPreviewCount;
         return null;
     },
+    useSessionMessagesById: () => ({}),
+    useSessionMessagesReducerState: () => null,
 }));
 
-const renderedToolViewProps: any[] = [];
 vi.mock('@/components/tools/shell/views/ToolView', () => ({
-    ToolView: (props: any) => {
-        renderedToolViewProps.push(props);
-        return React.createElement('ToolView', props);
-    },
+    ToolView: () => null,
 }));
 
 vi.mock('@/components/tools/shell/views/ToolTimelineRow', () => ({
@@ -67,7 +65,11 @@ vi.mock('@/components/sessions/transcript/motion/TranscriptEnterWrapper', () => 
 }));
 
 vi.mock('@/components/sessions/transcript/motion/TranscriptCollapsible', () => ({
-    TranscriptCollapsible: (props: any) => React.createElement('TranscriptCollapsible', props, props.children),
+    TranscriptCollapsible: (props: any) => React.createElement(
+        'TranscriptCollapsible',
+        props,
+        props.expanded ? props.children : null,
+    ),
 }));
 
 function makeToolMessage(id: string, createdAt: number): ToolCallMessage {
@@ -90,51 +92,7 @@ function makeToolMessage(id: string, createdAt: number): ToolCallMessage {
 }
 
 describe('ToolCallsGroupView (collapsed preview)', () => {
-    beforeEach(() => {
-        collapsedPreviewCount = 1;
-        toolChromeMode = 'activity_feed';
-        renderedToolViewProps.length = 0;
-    });
-
-    it('renders subagent previews through the shared card renderer in cards mode', async () => {
-        const { ToolCallsGroupView } = await import('./ToolCallsGroupView');
-        toolChromeMode = 'cards';
-        const toolMessage = makeToolMessage('m2', 2);
-        const toolMessages: ToolCallMessage[] = [
-            {
-                ...toolMessage,
-                tool: {
-                    ...toolMessage.tool,
-                    name: 'SubAgentRun',
-                    input: { intent: 'review' },
-                },
-            },
-        ];
-
-        let tree: ReturnType<typeof renderer.create> | undefined;
-        await act(async () => {
-            tree = renderer.create(
-                <ToolCallsGroupView
-                    id="toolCalls:1"
-                    status="running"
-                    toolMessages={toolMessages}
-                    metadata={null}
-                    sessionId="s1"
-                    interaction={{ canSendMessages: true, canApprovePermissions: true }}
-                    expanded={false}
-                    setExpanded={vi.fn()}
-                />,
-            );
-        });
-
-        const previewRows = tree!.root.findAll((node) => (node.props as any).testID === 'transcript-tool-calls-preview-row');
-        expect(previewRows).toHaveLength(1);
-        expect(tree!.root.findAllByType('ToolView' as any)).toHaveLength(1);
-        expect(renderedToolViewProps[0]?.tool?.name).toBe('SubAgentRun');
-    });
-
     it('renders the last N tool previews when collapsed', async () => {
-        const { ToolCallsGroupView } = await import('./ToolCallsGroupView');
         collapsedPreviewCount = 2;
 
         const toolMessages: ToolCallMessage[] = [makeToolMessage('m1', 1), makeToolMessage('m2', 2), makeToolMessage('m3', 3)];
@@ -178,7 +136,6 @@ describe('ToolCallsGroupView (collapsed preview)', () => {
     });
 
     it('renders no previews when count is 0', async () => {
-        const { ToolCallsGroupView } = await import('./ToolCallsGroupView');
         collapsedPreviewCount = 0;
 
         const toolMessages: ToolCallMessage[] = [makeToolMessage('m1', 1), makeToolMessage('m2', 2)];
@@ -207,7 +164,6 @@ describe('ToolCallsGroupView (collapsed preview)', () => {
     });
 
     it('clamps preview count to 15', async () => {
-        const { ToolCallsGroupView } = await import('./ToolCallsGroupView');
         collapsedPreviewCount = 999;
 
         const toolMessages: ToolCallMessage[] = Array.from({ length: 20 }, (_, i) => makeToolMessage(`m${i + 1}`, i + 1));
@@ -233,7 +189,6 @@ describe('ToolCallsGroupView (collapsed preview)', () => {
     });
 
     it('requests expansion via setExpanded(true) when tapping the +N more row', async () => {
-        const { ToolCallsGroupView } = await import('./ToolCallsGroupView');
         collapsedPreviewCount = 1;
 
         const toolMessages: ToolCallMessage[] = [makeToolMessage('m1', 1), makeToolMessage('m2', 2)];
@@ -261,5 +216,87 @@ describe('ToolCallsGroupView (collapsed preview)', () => {
         });
 
         expect(setExpanded).toHaveBeenCalledWith(true);
+    });
+
+    it('does not pass nested tool message ids when tool navigation is disabled', async () => {
+        collapsedPreviewCount = 2;
+
+        const toolMessages: ToolCallMessage[] = [makeToolMessage('m1', 1), makeToolMessage('m2', 2), makeToolMessage('m3', 3)];
+
+        let tree: ReturnType<typeof renderer.create> | undefined;
+        await act(async () => {
+            tree = renderer.create(
+                <ToolCallsGroupView
+                    id="toolCalls:1"
+                    status="running"
+                    toolMessages={toolMessages}
+                    metadata={null}
+                    sessionId="s1"
+                    interaction={{ canSendMessages: true, canApprovePermissions: true, disableToolNavigation: true }}
+                    expanded={false}
+                    setExpanded={vi.fn()}
+                />,
+            );
+        });
+
+        const previewRows = tree!.root.findAllByType('ToolTimelineRow');
+        expect(previewRows.length).toBeGreaterThan(0);
+        expect(previewRows.every((node) => node.props.messageId === undefined)).toBe(true);
+
+        await act(async () => {
+            tree!.update(
+                <ToolCallsGroupView
+                    id="toolCalls:1"
+                    status="running"
+                    toolMessages={toolMessages}
+                    metadata={null}
+                    sessionId="s1"
+                    interaction={{ canSendMessages: true, canApprovePermissions: true, disableToolNavigation: true }}
+                    expanded={true}
+                    setExpanded={vi.fn()}
+                />,
+            );
+        });
+
+        const expandedRows = tree!.root.findAllByType('ToolTimelineRow');
+        expect(expandedRows.length).toBe(toolMessages.length);
+        expect(expandedRows.every((node) => node.props.messageId === undefined)).toBe(true);
+    });
+
+    it('passes stable route ids to grouped tool rows when server ids exist', async () => {
+        collapsedPreviewCount = 2;
+
+        const toolMessages: ToolCallMessage[] = [
+            {
+                ...makeToolMessage('internal-1', 1),
+                realID: 'server-msg-1',
+                tool: { ...makeToolMessage('internal-1', 1).tool, id: 'call_read_1' },
+            } as ToolCallMessage,
+            {
+                ...makeToolMessage('internal-2', 2),
+                realID: 'server-msg-2',
+                tool: { ...makeToolMessage('internal-2', 2).tool, id: 'call_read_2' },
+            } as ToolCallMessage,
+        ];
+
+        let tree: ReturnType<typeof renderer.create> | undefined;
+        await act(async () => {
+            tree = renderer.create(
+                <ToolCallsGroupView
+                    id="toolCalls:1"
+                    status="running"
+                    toolMessages={toolMessages}
+                    metadata={null}
+                    sessionId="s1"
+                    interaction={{ canSendMessages: true, canApprovePermissions: true }}
+                    expanded={true}
+                    setExpanded={vi.fn()}
+                />,
+            );
+        });
+
+        const rows = tree!.root.findAllByType('ToolTimelineRow');
+        expect(rows).toHaveLength(2);
+        expect(rows.map((node) => node.props.messageId)).toEqual(['server:server-msg-1', 'server:server-msg-2']);
     });
 });

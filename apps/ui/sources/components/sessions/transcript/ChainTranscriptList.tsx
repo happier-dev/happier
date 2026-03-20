@@ -22,6 +22,7 @@ import { buildTranscriptTurnsCached, type TranscriptTurn, type TranscriptTurnsBu
 import { TurnView } from '@/components/sessions/transcript/turns/TurnView';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 import { shouldPrefetchOlderFromTop } from '@/components/sessions/transcript/scroll/shouldPrefetchOlderFromTop';
+import { resolveLatestCommittedMessageId } from '@/components/sessions/transcript/resolveLatestCommittedMessageId';
 import {
     getWebTranscriptDistanceFromBottom,
     isWebTranscriptScrollable,
@@ -98,6 +99,7 @@ export const ChainTranscriptList = React.memo(function ChainTranscriptList(props
     draftMessages?: Message[];
     metadata: Metadata | null;
     interaction: TranscriptInteraction;
+    forcePermissionPromptsInTranscript?: boolean;
     loadOlder?: () => Promise<ChainTranscriptLoadOlderResult>;
     jumpToMessageId?: string | null;
     header?: React.ReactNode;
@@ -181,8 +183,7 @@ export const ChainTranscriptList = React.memo(function ChainTranscriptList(props
         });
     }, [groupToolCalls, groupingMode, linearCache, messageIdsOldestFirst, messagesById, turnsCache]);
 
-    const latestCommittedMessageId =
-        messageIdsOldestFirst.length > 0 ? messageIdsOldestFirst[messageIdsOldestFirst.length - 1]! : null;
+    const latestCommittedMessageId = React.useMemo(() => resolveLatestCommittedMessageId(props.messages), [props.messages]);
     const latestThinkingMessage = React.useMemo(() => findLatestThinkingMessage(props.messages), [props.messages]);
     const latestThinkingMessageId = latestThinkingMessage?.id ?? null;
     const latestThinkingMessageActivityAtMs = latestThinkingMessage?.createdAt ?? null;
@@ -420,6 +421,7 @@ export const ChainTranscriptList = React.memo(function ChainTranscriptList(props
                     turn={item.turn}
                     metadata={props.metadata}
                     sessionId={props.sessionId}
+                    forcePermissionPromptsInTranscript={props.forcePermissionPromptsInTranscript}
                     activeThinkingMessageId={activeThinkingMessageId}
                     getMessageById={(messageId) => messagesById[messageId] ?? null}
                     expandedToolCallsAnchorMessageIds={expandedToolCallsAnchorMessageIds}
@@ -438,6 +440,7 @@ export const ChainTranscriptList = React.memo(function ChainTranscriptList(props
                     toolCallsGroupId={item.id}
                     toolMessageIds={item.toolMessageIds}
                     metadata={props.metadata}
+                    forcePermissionPromptsInTranscript={props.forcePermissionPromptsInTranscript}
                     getMessageById={(messageId) => messagesById[messageId] ?? null}
                     expanded={item.toolMessageIds.some((id) => expandedToolCallsAnchorMessageIds.has(id))}
                     onSetExpanded={setToolCallsGroupExpanded}
@@ -460,6 +463,7 @@ export const ChainTranscriptList = React.memo(function ChainTranscriptList(props
                     message={message}
                     metadata={props.metadata}
                     sessionId={props.sessionId}
+                    forcePermissionPromptsInTranscript={props.forcePermissionPromptsInTranscript}
                     interaction={props.interaction}
                     activeThinkingMessageId={activeThinkingMessageId}
                     thinkingExpanded={isThinking ? resolveThinkingExpanded(message.id) : undefined}
