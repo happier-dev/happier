@@ -4,6 +4,7 @@ import type { ACPProvider } from '@/api/session/sessionMessageTypes';
 import type { OpenCodeServerRuntimeClient } from './client';
 import { extractOpenCodeTextHistoryItems, importOpenCodeTextHistoryCommitted } from './openCodeSessionMessageImport';
 import { normalizeString } from './openCodeParsing';
+import { delay } from '@/utils/time';
 
 function extractChildSessionIdFromTaskOutput(output: string): string | null {
   const text = output.trim();
@@ -42,11 +43,6 @@ export async function importOpenCodeTaskSidechainBestEffort(params: Readonly<{
   const retryBaseDelayMs = resolvePositiveIntEnv(process.env.HAPPIER_OPENCODE_TASK_SIDECHAIN_IMPORT_RETRY_BASE_DELAY_MS, 250, { min: 0, max: 10_000 });
   const retryMaxDelayMs = resolvePositiveIntEnv(process.env.HAPPIER_OPENCODE_TASK_SIDECHAIN_IMPORT_RETRY_MAX_DELAY_MS, 2_000, { min: 0, max: 30_000 });
 
-  const sleep = async (ms: number): Promise<void> => {
-    if (ms <= 0) return;
-    await new Promise<void>((resolve) => setTimeout(resolve, ms));
-  };
-
   let delayMs = retryBaseDelayMs;
   const startMs = Date.now();
   const deadlineMs = startMs + maxWaitMs;
@@ -69,7 +65,7 @@ export async function importOpenCodeTaskSidechainBestEffort(params: Readonly<{
     if (remainingMs <= 0) return false;
 
     const nextDelayMs = delayMs <= 0 ? Math.min(remainingMs, 1) : Math.min(delayMs, remainingMs);
-    await sleep(nextDelayMs);
+    await delay(nextDelayMs);
     if (delayMs > 0) {
       delayMs = Math.min(retryMaxDelayMs, Math.max(delayMs, 1) * 2);
     }
