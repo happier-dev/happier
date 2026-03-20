@@ -204,3 +204,23 @@ export async function captureBugReportSentryEvent(): Promise<BugReportSentryEven
         return null;
     }
 }
+
+export function captureExceptionIfEnabled(
+    error: unknown,
+    context?: Readonly<{
+        tags?: Record<string, string>;
+        extra?: Record<string, unknown>;
+    }>,
+): void {
+    if (getFeatureBuildPolicyDecision(CRASH_REPORTS_FEATURE_ID) === 'deny') return;
+    if (resolveCrashReportsOptOut()) return;
+    if (!resolveSentryEnv()) return;
+
+    initializeSentryOnce();
+
+    try {
+        Sentry.captureException(error, context);
+    } catch {
+        // ignore reporting failures
+    }
+}
