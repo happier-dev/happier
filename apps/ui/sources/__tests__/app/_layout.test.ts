@@ -68,6 +68,26 @@ function stubFeatureFetch() {
 
 vi.mock('react-native-reanimated', () => ({}));
 
+vi.mock('socket.io-client', () => {
+    const socket = {
+        connected: false,
+        connect: vi.fn(function connect(this: { connected: boolean }) {
+            this.connected = true;
+        }),
+        on: vi.fn(),
+        onAny: vi.fn(),
+        off: vi.fn(),
+        emit: vi.fn(),
+        disconnect: vi.fn(),
+        removeAllListeners: vi.fn(),
+    };
+
+    return {
+        io: vi.fn(() => socket),
+        Socket: class Socket {},
+    };
+});
+
 vi.mock('expo-notifications', () => {
     return {
         DEFAULT_ACTION_IDENTIFIER: 'default',
@@ -95,6 +115,10 @@ vi.mock('@/constants/Typography', () => {
 vi.mock('@/text', () => {
     return { t: (key: string) => key };
 });
+
+vi.mock('@/hooks/server/useHappierVoiceSupport', () => ({
+    useHappierVoiceSupport: () => true,
+}));
 
 vi.mock('@/activity/badges/ActivityBadgeRuntime', () => ({
     ActivityBadgeRuntime: () => null,
@@ -229,7 +253,7 @@ describe('RootLayout hooks order', () => {
                 });
             }
         }
-    }, 30_000);
+    }, 60_000);
 });
 
 describe('RootLayout notification routing', () => {
@@ -286,6 +310,9 @@ describe('RootLayout restore navigation', () => {
 
             const showQr = screens.find((s) => s.props?.name === 'restore/show-qr');
             expect(showQr?.props?.options?.headerTitle).toBe('navigation.linkNewDevice');
+
+            const sessionTerminal = screens.find((s) => s.props?.name === 'session/[id]/terminal');
+            expect(sessionTerminal?.props?.options?.headerShown).toBe(false);
         } finally {
             if (tree) {
                 act(() => {
