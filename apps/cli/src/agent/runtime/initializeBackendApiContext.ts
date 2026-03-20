@@ -7,6 +7,10 @@ import { readDaemonState, readSettings } from '@/persistence';
 const DEFAULT_MISSING_MACHINE_ID_MESSAGE =
   '[START] No machine ID found in settings. Please report this issue on https://github.com/happier-dev/happier/issues';
 
+const silentRecoveryLogger = {
+  info: () => undefined,
+} as const;
+
 async function shouldSkipMachineRegistration(explicitSkip: boolean | undefined): Promise<boolean> {
   if (explicitSkip) return true;
 
@@ -26,6 +30,7 @@ export async function initializeBackendApiContext(opts: {
   machineMetadata: MachineMetadata;
   missingMachineIdMessage?: string;
   skipMachineRegistration?: boolean;
+  suppressMachineRegistrationRecoveryLogs?: boolean;
 }): Promise<{
   api: ApiClient;
   machineId: string;
@@ -45,6 +50,7 @@ export async function initializeBackendApiContext(opts: {
     machineId,
     metadata: opts.machineMetadata,
     caller: 'initializeBackendApiContext',
+    ...(opts.suppressMachineRegistrationRecoveryLogs ? { recoveryLogger: silentRecoveryLogger } : {}),
   });
   return { api, machineId: registeredMachineId };
 }

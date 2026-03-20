@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
+import { buildBackendTargetKey } from '@happier-dev/protocol';
 
 import { runStandardAcpProvider, type StandardAcpProviderConfig, type StandardAcpProviderRunOptions } from './runStandardAcpProvider';
 
@@ -104,7 +105,7 @@ function createHarness() {
         attachedToExistingSession: false,
       };
     },
-    createHappierMcpBridgeFn: async () => ({
+    resolveRunnerMcpServersFn: async () => ({
       happierMcpServer: { stop: () => undefined },
       mcpServers: {},
     }),
@@ -141,9 +142,10 @@ function createHarness() {
     archiveAndCloseSessionFn: async () => {
       archiveCalls += 1;
     },
-    cleanupBackendRunResourcesFn: async ({ keepAliveInterval }: any) => {
+    cleanupBackendRunResourcesFn: async ({ keepAliveInterval, unmountUi }: any) => {
       cleanupCalls += 1;
       clearInterval(keepAliveInterval);
+      unmountUi?.();
     },
   };
 
@@ -151,6 +153,8 @@ function createHarness() {
     opts,
     config,
     deps,
+    session,
+    runtime,
     handlers,
     metrics: {
       get defaultReadyCalls() {
@@ -203,20 +207,152 @@ describe('runStandardAcpProvider', () => {
     expect(harness.metrics.cleanupCalls).toBe(1);
   });
 
-  it('passes strictInitialResume when an explicit resume id is provided', async () => {
+  it('passes eager runtime start through to the permission loop when configured', async () => {
     const harness = createHarness();
-    harness.opts.resume = 'resume-1';
+    harness.config.startRuntimeBeforeFirstPrompt = true;
 
-    let receivedParams: any = null;
-    harness.deps.runPermissionModePromptLoopFn = async (params: any) => {
-      receivedParams = params;
-      params.sendReady();
+    let capturedStartRuntimeBeforeFirstPrompt: boolean | undefined;
+    harness.deps.runPermissionModePromptLoopFn = async (params: unknown) => {
+      capturedStartRuntimeBeforeFirstPrompt = (
+        params as Readonly<{ startRuntimeBeforeFirstPrompt?: boolean }>
+      ).startRuntimeBeforeFirstPrompt;
     };
 
     await runStandardAcpProvider(harness.opts, harness.config, harness.deps);
 
-    expect(receivedParams?.initialResumeId).toBe('resume-1');
-    expect(receivedParams?.strictInitialResume).toBe(true);
+    expect(capturedStartRuntimeBeforeFirstPrompt).toBe(true);
+  });
+
+  it('trims the initial resume id before enabling strict resume mode', async () => {
+    const harness = createHarness();
+    harness.opts.resume = '  resume-id  ';
+
+    let receivedInitialResumeId: string | undefined;
+    let receivedStrictInitialResume: boolean | undefined;
+    harness.deps.runPermissionModePromptLoopFn = async (
+      params: Readonly<{ initialResumeId?: string; strictInitialResume?: boolean }>,
+    ) => {
+      receivedInitialResumeId = params.initialResumeId;
+      receivedStrictInitialResume = params.strictInitialResume;
+    };
+
+    await runStandardAcpProvider(harness.opts, harness.config, harness.deps);
+
+    expect(receivedInitialResumeId).toBe('resume-id');
+    expect(receivedStrictInitialResume).toBe(true);
+  });
+
+  it('passes resolved MCP servers to the provider runtime', async () => {
+    const harness = createHarness();
+    harness.config.flavor = 'claude';
+
+    let capturedMcpServers: any = null;
+    const createRuntimeOriginal = harness.config.createRuntime;
+    harness.config.createRuntime = (params: any) => {
+      capturedMcpServers = params.mcpServers;
+      return createRuntimeOriginal(params);
+    };
+
+    harness.deps.resolveRunnerMcpServersFn = async () => ({
+      happierMcpServer: { stop: () => undefined },
+      mcpServers: { happier: { command: 'built-in' }, extra: { command: 'extra' } },
+    });
+
+    await runStandardAcpProvider(harness.opts, harness.config, harness.deps);
+
+    expect(capturedMcpServers).toEqual({ happier: { command: 'built-in' }, extra: { command: 'extra' } });
+  });
+
+  it('uses attached session metadata for runtime metadata, runtime directory, and MCP directory resolution', async () => {
+    const harness = createHarness();
+    harness.config.flavor = 'claude';
+    const attachedMetadata = {
+      path: '/srv/attached-workspace',
+      permissionMode: 'ask',
+      permissionModeUpdatedAt: 42,
+      profileId: 'profile-attached',
+    };
+    harness.session.getMetadataSnapshot = () => attachedMetadata;
+    harness.deps.createSessionMetadataFn = () => ({
+      state: { controlledByUser: false },
+      metadata: { path: '/tmp/local-workspace', permissionMode: 'default', permissionModeUpdatedAt: 1 },
+    });
+    harness.deps.initializeBackendRunSessionFn = async ({ metadata }: any) => {
+      expect(metadata.path).toBe('/tmp/local-workspace');
+      return {
+        session: harness.session,
+        reconnectionHandle: null,
+        reportedSessionId: 'session-1',
+        attachedToExistingSession: true,
+      };
+    };
+
+    let capturedRuntimeParams: any = null;
+    harness.config.createRuntime = (params: any) => {
+      capturedRuntimeParams = params;
+      return harness.runtime;
+    };
+
+    let capturedShouldRenderMetadata: any = null;
+    harness.config.shouldRenderTerminalDisplay = ({ metadata }: any) => {
+      capturedShouldRenderMetadata = metadata;
+      return false;
+    };
+
+    let capturedMcpDirectory: string | null = null;
+    let capturedSessionMetadata: any = null;
+    harness.deps.resolveRunnerMcpServersFn = async (params: any) => {
+      capturedMcpDirectory = params.directory;
+      capturedSessionMetadata = params.sessionMetadata;
+      return {
+        happierMcpServer: { stop: () => undefined },
+        mcpServers: {},
+      };
+    };
+
+    await runStandardAcpProvider(harness.opts, harness.config, harness.deps);
+
+    expect(capturedShouldRenderMetadata).toMatchObject({ path: '/srv/attached-workspace' });
+    expect(capturedRuntimeParams).toMatchObject({
+      directory: '/srv/attached-workspace',
+      metadata: expect.objectContaining({ path: '/srv/attached-workspace', profileId: 'profile-attached' }),
+    });
+    expect(capturedMcpDirectory).toBe('/srv/attached-workspace');
+    expect(capturedSessionMetadata).toMatchObject({ path: '/srv/attached-workspace', profileId: 'profile-attached' });
+  });
+
+  it('skips native MCP resolution for shell-bridge providers', async () => {
+    const harness = createHarness();
+
+    let capturedMcpServers: any = null;
+    harness.config.createRuntime = (params: any) => {
+      capturedMcpServers = params.mcpServers;
+      return {
+        beginTurn: vi.fn(),
+        startOrLoad: vi.fn(async () => undefined),
+        sendPrompt: vi.fn(async () => undefined),
+        flushTurn: vi.fn(),
+        reset: vi.fn(async () => undefined),
+        getSessionId: vi.fn(() => null),
+        cancel: vi.fn(async () => undefined),
+        setSessionMode: vi.fn(async () => undefined),
+        setSessionConfigOption: vi.fn(async () => undefined),
+        setSessionModel: vi.fn(async () => undefined),
+      } as any;
+    };
+
+    const resolveRunnerMcpServersFn = vi.fn(async () => ({
+      happierMcpServer: { stop: () => undefined },
+      mcpServers: { happier: { command: 'built-in' } },
+    }));
+
+    await runStandardAcpProvider(harness.opts, harness.config, {
+      ...harness.deps,
+      resolveRunnerMcpServersFn,
+    });
+
+    expect(resolveRunnerMcpServersFn).not.toHaveBeenCalled();
+    expect(capturedMcpServers).toEqual({});
   });
 
   it('in-flight steer controller calls steerPrompt with correct receiver', async () => {
@@ -280,6 +416,161 @@ describe('runStandardAcpProvider', () => {
     expect(harness.metrics.defaultReadyCalls).toBe(0);
   });
 
+  it('uses provider-controlled keep-alive mode when configured', async () => {
+    const harness = createHarness();
+    const keepAliveModes: string[] = [];
+    harness.session.keepAlive = vi.fn((_thinking: boolean, mode: string) => {
+      keepAliveModes.push(mode);
+    });
+    (harness.config as any).resolveKeepAliveMode = () => 'local';
+
+    await runStandardAcpProvider(harness.opts, harness.config, harness.deps);
+
+    expect(keepAliveModes[0]).toBe('local');
+  });
+
+  it('skips terminal rendering when the provider disables the remote terminal UI', async () => {
+    const harness = createHarness();
+    const renderFn = vi.fn(() => ({ unmount: vi.fn() }));
+    (harness.config as any).shouldRenderTerminalDisplay = () => false;
+
+    const stdoutDescriptor = Object.getOwnPropertyDescriptor(process.stdout, 'isTTY');
+    const stdinDescriptor = Object.getOwnPropertyDescriptor(process.stdin, 'isTTY');
+    Object.defineProperty(process.stdout, 'isTTY', { configurable: true, value: true });
+    Object.defineProperty(process.stdin, 'isTTY', { configurable: true, value: true });
+
+    try {
+      await runStandardAcpProvider(harness.opts, harness.config, {
+        ...harness.deps,
+        renderFn,
+      });
+    } finally {
+      if (stdoutDescriptor) Object.defineProperty(process.stdout, 'isTTY', stdoutDescriptor);
+      if (stdinDescriptor) Object.defineProperty(process.stdin, 'isTTY', stdinDescriptor);
+    }
+
+    expect(renderFn).not.toHaveBeenCalled();
+  });
+
+  it('exposes a terminal display controller for provider-managed mount and unmount transitions', async () => {
+    const harness = createHarness();
+    const renderUnmounts: Array<ReturnType<typeof vi.fn>> = [];
+    const renderFn = vi.fn(() => {
+      const unmount = vi.fn();
+      renderUnmounts.push(unmount);
+      return { unmount };
+    });
+    let controller:
+      | {
+        mount: () => void;
+        unmount: () => Promise<void>;
+        isMounted: () => boolean;
+      }
+      | null = null;
+
+    harness.config.shouldRenderTerminalDisplay = () => false;
+    (harness.config as any).onTerminalDisplayControllerReady = (value: typeof controller) => {
+      controller = value;
+    };
+    harness.deps.runPermissionModePromptLoopFn = async (params: any) => {
+      if (!controller) throw new Error('Expected terminal display controller');
+      expect(controller.isMounted()).toBe(false);
+      controller.mount();
+      expect(controller.isMounted()).toBe(true);
+      await controller.unmount();
+      expect(controller.isMounted()).toBe(false);
+      controller.mount();
+      params.sendReady();
+    };
+
+    const stdoutDescriptor = Object.getOwnPropertyDescriptor(process.stdout, 'isTTY');
+    const stdinDescriptor = Object.getOwnPropertyDescriptor(process.stdin, 'isTTY');
+    Object.defineProperty(process.stdout, 'isTTY', { configurable: true, value: true });
+    Object.defineProperty(process.stdin, 'isTTY', { configurable: true, value: true });
+
+    try {
+      await runStandardAcpProvider(harness.opts, harness.config, {
+        ...harness.deps,
+        renderFn,
+      });
+    } finally {
+      if (stdoutDescriptor) Object.defineProperty(process.stdout, 'isTTY', stdoutDescriptor);
+      if (stdinDescriptor) Object.defineProperty(process.stdin, 'isTTY', stdinDescriptor);
+    }
+
+    expect(renderFn).toHaveBeenCalledTimes(2);
+    const firstUnmount = renderUnmounts.at(0);
+    const secondUnmount = renderUnmounts.at(1);
+    expect(firstUnmount).toBeDefined();
+    expect(secondUnmount).toBeDefined();
+    expect(firstUnmount).toHaveBeenCalledTimes(1);
+    expect(secondUnmount).toHaveBeenCalledTimes(1);
+  });
+
+  it('awaits async provider-specific session swap hooks before continuing', async () => {
+    const harness = createHarness();
+    const callOrder: string[] = [];
+    let swappedHookParams: unknown = null;
+    let finishHook: (() => void) | null = null;
+    const onSessionSwap = vi.fn(async (params: unknown) => {
+      swappedHookParams = params;
+      callOrder.push('hook:start');
+      await new Promise<void>((resolve) => {
+        finishHook = () => {
+          callOrder.push('hook:end');
+          resolve();
+        };
+      });
+    });
+    harness.config.onSessionSwap = onSessionSwap as any;
+
+    harness.deps.initializeBackendRunSessionFn = async ({ onSessionSwap: notifySessionSwap, metadata }: any) => {
+      expect((metadata as any).auggieAllowIndexing).toBe(true);
+      const swappedSession = {
+        ...harness.session,
+        sessionId: 'session-2',
+      };
+      callOrder.push('before-notify');
+      let notifyFinished = false;
+      const notifyPromise = Promise.resolve(notifySessionSwap(swappedSession)).then(() => {
+        notifyFinished = true;
+        callOrder.push('after-notify');
+      });
+      await Promise.resolve();
+      try {
+        expect(notifyFinished).toBe(false);
+        expect(finishHook).toBeTypeOf('function');
+      } finally {
+        finishHook?.();
+        await notifyPromise;
+      }
+      return {
+        session: harness.session,
+        reconnectionHandle: null,
+        reportedSessionId: 'session-1',
+        attachedToExistingSession: false,
+      };
+    };
+
+    await runStandardAcpProvider(harness.opts, harness.config, harness.deps);
+
+    expect(onSessionSwap).toHaveBeenCalledTimes(1);
+    expect(swappedHookParams).toMatchObject({
+      session: expect.objectContaining({ sessionId: 'session-2' }),
+    });
+    expect(callOrder).toEqual(['before-notify', 'hook:start', 'hook:end', 'after-notify']);
+  });
+
+  it('runs provider-specific dispose hooks during cleanup', async () => {
+    const harness = createHarness();
+    const onDispose = vi.fn(async () => undefined);
+    harness.config.onDispose = onDispose as any;
+
+    await runStandardAcpProvider(harness.opts, harness.config, harness.deps);
+
+    expect(onDispose).toHaveBeenCalledTimes(1);
+  });
+
   it('invokes abort handler lifecycle when abort RPC fires', async () => {
     const harness = createHarness();
     harness.deps.runPermissionModePromptLoopFn = async () => {
@@ -332,5 +623,102 @@ describe('runStandardAcpProvider', () => {
 
     await runStandardAcpProvider(harness.opts, harness.config, harness.deps);
     expect(observed).toBe(resolvePermissionModeQueueKey);
+  });
+
+  it('maps configured ACP flavors onto generic ACP permission semantics', async () => {
+    const harness = createHarness();
+    const createSessionMetadataFn = vi.fn(() => ({
+      state: { controlledByUser: false },
+      metadata: { path: '/tmp/workspace', permissionMode: 'default', permissionModeUpdatedAt: Date.now() },
+    }));
+
+    harness.config.flavor = 'acp:custom-kiro';
+    harness.opts.accountSettingsContext = {
+      source: 'network',
+      settings: {
+        sessionDefaultPermissionModeByTargetKey: {
+          [buildBackendTargetKey({ kind: 'builtInAgent', agentId: 'customAcp' })]: 'yolo',
+        },
+      } as any,
+      settingsVersion: 1,
+      loadedAtMs: Date.now(),
+      settingsSecretsReadKeys: [],
+      whenRefreshed: null,
+    };
+    harness.deps.createSessionMetadataFn = createSessionMetadataFn;
+
+    await runStandardAcpProvider(harness.opts, harness.config, harness.deps);
+
+    expect(createSessionMetadataFn).toHaveBeenCalledWith(expect.objectContaining({
+      flavor: 'acp:custom-kiro',
+      permissionMode: 'yolo',
+    }));
+  });
+
+  it('treats unknown ACP flavors as custom ACP policy family instead of falling back to the default built-in agent', async () => {
+    const harness = createHarness();
+    const createSessionMetadataFn = vi.fn(() => ({
+      state: { controlledByUser: false },
+      metadata: { path: '/tmp/workspace', permissionMode: 'default', permissionModeUpdatedAt: Date.now() },
+    }));
+
+    harness.config.flavor = 'custom-kiro';
+    harness.opts.accountSettingsContext = {
+      source: 'network',
+      settings: {
+        sessionDefaultPermissionModeByTargetKey: {
+          [buildBackendTargetKey({ kind: 'builtInAgent', agentId: 'claude' })]: 'read-only',
+          [buildBackendTargetKey({ kind: 'builtInAgent', agentId: 'customAcp' })]: 'yolo',
+        },
+      } as any,
+      settingsVersion: 1,
+      loadedAtMs: Date.now(),
+      settingsSecretsReadKeys: [],
+      whenRefreshed: null,
+    };
+    harness.deps.createSessionMetadataFn = createSessionMetadataFn;
+
+    await runStandardAcpProvider(harness.opts, harness.config, harness.deps);
+
+    expect(createSessionMetadataFn).toHaveBeenCalledWith(expect.objectContaining({
+      flavor: 'custom-kiro',
+      permissionMode: 'yolo',
+    }));
+  });
+
+  it('passes account settings secret read keys into the provider-enforced permission handler', async () => {
+    const harness = createHarness();
+    let observedGetAccountSettingsSecretsReadKeys:
+      | (() => ReadonlyArray<Uint8Array>)
+      | undefined;
+    const createProviderEnforcedPermissionHandlerFn = vi.fn((params: {
+      getAccountSettingsSecretsReadKeys?: () => ReadonlyArray<Uint8Array>;
+    }) => {
+      observedGetAccountSettingsSecretsReadKeys = params.getAccountSettingsSecretsReadKeys;
+      return {
+        setPermissionMode: () => undefined,
+        reset: () => undefined,
+        updateSession: () => undefined,
+      };
+    });
+    harness.deps.createProviderEnforcedPermissionHandlerFn = createProviderEnforcedPermissionHandlerFn;
+    const settingsSecretsReadKeys = [new Uint8Array(32).fill(4)];
+    harness.opts.accountSettingsContext = {
+      source: 'network',
+      settings: {} as any,
+      settingsVersion: 1,
+      loadedAtMs: 1,
+      settingsSecretsReadKeys,
+      whenRefreshed: null,
+    };
+
+    await runStandardAcpProvider(harness.opts, harness.config, harness.deps);
+
+    expect(createProviderEnforcedPermissionHandlerFn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        getAccountSettingsSecretsReadKeys: expect.any(Function),
+      }),
+    );
+    expect(observedGetAccountSettingsSecretsReadKeys?.()).toEqual(settingsSecretsReadKeys);
   });
 });

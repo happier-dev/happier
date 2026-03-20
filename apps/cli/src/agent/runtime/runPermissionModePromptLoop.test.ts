@@ -4,6 +4,8 @@ import { MessageQueue2 } from '@/agent/runtime/modeMessageQueue';
 import { MessageBuffer } from '@/ui/ink/messageBuffer';
 import { runPermissionModePromptLoop } from './runPermissionModePromptLoop';
 import { combinePermissionModeQueuedPrompts, type PermissionModeQueuedPrompt } from '@/agent/runtime/permission/permissionModeQueuedPrompt';
+import { createRuntimeOverrideSynchronizers } from './createRuntimeOverrideSynchronizers';
+import { formatProviderPromptErrorMessage } from './formatProviderPromptErrorMessage';
 
 function createTestSession() {
   let metadata: any = null;
@@ -24,7 +26,7 @@ function createTestSession() {
 }
 
 function createModeQueue() {
-  return new MessageQueue2<{ permissionMode: any }, PermissionModeQueuedPrompt>(
+  return new MessageQueue2<{ permissionMode: any; appendSystemPrompt?: string | null }, PermissionModeQueuedPrompt>(
     (mode) => mode.permissionMode,
     {
       batcher: (messages) => combinePermissionModeQueuedPrompts(messages),
@@ -41,6 +43,7 @@ function createRuntime() {
     flushTurn: vi.fn(),
     reset: vi.fn(async () => {}),
     getSessionId: vi.fn(() => 'resume-from-runtime'),
+    shouldResumeAfterPermissionModeChange: vi.fn(() => true),
   };
 }
 
@@ -151,9 +154,105 @@ describe('runPermissionModePromptLoop', () => {
     expect(runtime.startOrLoad).toHaveBeenCalledWith({});
     expect(runtime.sendPrompt).toHaveBeenCalledWith('hello');
     expect(readySpy).toHaveBeenCalledTimes(1);
-    expect(flushPendingAfterStart).toHaveBeenCalledTimes(1);
+    expect(flushPendingAfterStart).toHaveBeenCalledTimes(2);
     expect(syncFromMetadata).toHaveBeenCalled();
     expect(permissionHandler.setPermissionMode).toHaveBeenCalled();
+  });
+
+  it('can eagerly start the runtime before the first prompt arrives', async () => {
+    const session = createTestSession();
+    const queue = createModeQueue();
+    const runtime = createRuntime();
+    const messageBuffer = new MessageBuffer();
+    const permissionHandler = {
+      setPermissionMode: vi.fn(),
+      reset: vi.fn(),
+    } as any;
+
+    let shouldExit = false;
+    const readySpy = vi.fn();
+    const onAfterStart = vi.fn(async () => {
+      shouldExit = true;
+    });
+
+    await runPermissionModePromptLoop({
+      providerName: 'Test Provider',
+      agentMessageType: 'qwen',
+      explicitPermissionMode: undefined,
+      session,
+      messageQueue: queue,
+      permissionHandler,
+      runtime,
+      createOverrideSynchronizer: () => ({ syncFromMetadata: () => {}, flushPendingAfterStart: async () => {} }),
+      messageBuffer,
+      shouldExit: () => shouldExit,
+      getAbortSignal: () => new AbortController().signal,
+      keepAlive: () => {},
+      setThinking: () => {},
+      sendReady: readySpy,
+      currentPermissionModeUpdatedAt: 0,
+      setCurrentPermissionMode: () => {},
+      setCurrentPermissionModeUpdatedAt: () => {},
+      onAfterStart,
+      startRuntimeBeforeFirstPrompt: true,
+      formatPromptErrorMessage: (error) => `Error: ${String(error)}`,
+    });
+
+    expect(runtime.startOrLoad).toHaveBeenCalledTimes(1);
+    expect(runtime.startOrLoad).toHaveBeenCalledWith({});
+    expect(onAfterStart).toHaveBeenCalledTimes(1);
+    expect(runtime.sendPrompt).not.toHaveBeenCalled();
+    expect(readySpy).not.toHaveBeenCalled();
+  });
+
+  it('preserves the fresh-session system prompt when eager startup happens before the first prompt', async () => {
+    const session = createTestSession();
+    const queue = createModeQueue();
+    const runtime = createRuntime();
+    const messageBuffer = new MessageBuffer();
+    const permissionHandler = {
+      setPermissionMode: vi.fn(),
+      reset: vi.fn(),
+    } as any;
+
+    let shouldExit = false;
+    const readySpy = vi.fn(() => {
+      if (runtime.sendPrompt.mock.calls.length === 0) return;
+      shouldExit = true;
+    });
+    const onAfterStart = vi.fn(async () => {
+      queue.push(
+        { text: 'hello', localId: 'local-eager-1' },
+        { permissionMode: 'default', appendSystemPrompt: 'APPEND' } as any,
+      );
+    });
+
+    await runPermissionModePromptLoop({
+      providerName: 'Test Provider',
+      agentMessageType: 'qwen',
+      explicitPermissionMode: undefined,
+      session,
+      messageQueue: queue as any,
+      permissionHandler,
+      runtime,
+      createOverrideSynchronizer: () => ({ syncFromMetadata: () => {}, flushPendingAfterStart: async () => {} }),
+      messageBuffer,
+      shouldExit: () => shouldExit,
+      getAbortSignal: () => new AbortController().signal,
+      keepAlive: () => {},
+      setThinking: () => {},
+      sendReady: readySpy,
+      currentPermissionModeUpdatedAt: 0,
+      setCurrentPermissionMode: () => {},
+      setCurrentPermissionModeUpdatedAt: () => {},
+      onAfterStart,
+      startRuntimeBeforeFirstPrompt: true,
+      resolveFreshSessionSystemPrompt: async ({ baseOverride }) => baseOverride === undefined ? 'FALLBACK' : baseOverride ?? '',
+      formatPromptErrorMessage: (error) => `Error: ${String(error)}`,
+    });
+
+    expect(runtime.startOrLoad).toHaveBeenCalledTimes(1);
+    expect(runtime.sendPrompt).toHaveBeenCalledWith('APPEND\n\nhello');
   });
 
   it('uses sendPromptWithMeta when provided by the runtime', async () => {
@@ -197,6 +296,467 @@ describe('runPermissionModePromptLoop', () => {
 
     expect(runtime.sendPromptWithMeta).toHaveBeenCalledWith({ text: 'hello', localId: 'local-1' });
     expect(runtime.sendPrompt).not.toHaveBeenCalled();
+  });
+
+  it('formats object-shaped prompt errors without leaking [object Object] into the transcript', async () => {
+    const session = createTestSession();
+    const queue = createModeQueue();
+    const runtime = createRuntime();
+    runtime.sendPrompt = vi.fn(async () => {
+      throw {
+        code: -32603,
+        message: 'Internal error',
+        data: 'Prompt already in progress',
+      };
+    });
+    const messageBuffer = new MessageBuffer();
+    const permissionHandler = {
+      setPermissionMode: vi.fn(),
+      reset: vi.fn(),
+    } as any;
+
+    queue.push({ text: 'hello', localId: 'local-object-error' }, { permissionMode: 'default' });
+
+    let shouldExit = false;
+    await runPermissionModePromptLoop({
+      providerName: 'Test Provider',
+      agentMessageType: 'qwen',
+      explicitPermissionMode: undefined,
+      session,
+      messageQueue: queue,
+      permissionHandler,
+      runtime,
+      createOverrideSynchronizer: () => ({ syncFromMetadata: () => {}, flushPendingAfterStart: async () => {} }),
+      messageBuffer,
+      shouldExit: () => shouldExit,
+      getAbortSignal: () => new AbortController().signal,
+      keepAlive: () => {},
+      setThinking: () => {},
+      sendReady: () => {
+        shouldExit = true;
+      },
+      currentPermissionModeUpdatedAt: 0,
+      setCurrentPermissionMode: () => {},
+      setCurrentPermissionModeUpdatedAt: () => {},
+      formatPromptErrorMessage: formatProviderPromptErrorMessage,
+    });
+
+    expect(session.sendAgentMessage).toHaveBeenCalledWith('qwen', {
+      type: 'message',
+      message: expect.stringContaining('"message": "Internal error"'),
+    });
+    const sentMessages = session.sendAgentMessage.mock.calls.map(([, payload]: [string, { message?: string }]) => payload?.message ?? '');
+    expect(sentMessages.join('\n')).not.toContain('[object Object]');
+  });
+
+  it('refreshes the session snapshot and re-syncs metadata overrides before sending the next queued prompt when queue delivery wins the race', async () => {
+    const session = createTestSession();
+    const initialMetadata = {
+      permissionMode: 'default',
+      permissionModeUpdatedAt: 0,
+    };
+    let serverMetadata: any = initialMetadata;
+    session.__setMetadata(initialMetadata);
+    session.refreshSessionSnapshotFromServerBestEffort = vi.fn(async () => {
+      session.__setMetadata(serverMetadata);
+    });
+
+    const queue = createModeQueue();
+    const runtime = createRuntime() as any;
+    const promptSnapshots: Array<{ modeId: string | null; modelId: string | null }> = [];
+    let selectedModeId: string | null = null;
+    let selectedModelId: string | null = null;
+    runtime.sendPromptWithMeta = vi.fn(async () => {
+      promptSnapshots.push({ modeId: selectedModeId, modelId: selectedModelId });
+    });
+
+    const messageBuffer = new MessageBuffer();
+    const permissionHandler = {
+      setPermissionMode: vi.fn(),
+      reset: vi.fn(),
+    } as any;
+
+    queue.push({ text: 'first', localId: 'local-1' }, { permissionMode: 'default' });
+
+    let shouldExit = false;
+    let readyCount = 0;
+    const readySpy = vi.fn(() => {
+      readyCount += 1;
+      if (readyCount === 1) {
+        serverMetadata = {
+          permissionMode: 'default',
+          permissionModeUpdatedAt: 0,
+          acpSessionModeOverrideV1: { v: 1, updatedAt: 10, modeId: 'plan' },
+          modelOverrideV1: { v: 1, updatedAt: 11, modelId: 'openai/gpt-5.2' },
+        };
+        queue.push({ text: 'second', localId: 'local-2' }, { permissionMode: 'default' });
+        return;
+      }
+      shouldExit = true;
+    });
+
+    await runPermissionModePromptLoop({
+      providerName: 'Test Provider',
+      agentMessageType: 'qwen',
+      explicitPermissionMode: undefined,
+      session,
+      messageQueue: queue,
+      permissionHandler,
+      runtime,
+      createOverrideSynchronizer: (isStarted) =>
+        createRuntimeOverrideSynchronizers({
+          session,
+          runtime: {
+            setSessionMode: async (modeId: string) => {
+              await new Promise((resolve) => setTimeout(resolve, 0));
+              selectedModeId = modeId;
+            },
+            setSessionModel: async (modelId: string) => {
+              await new Promise((resolve) => setTimeout(resolve, 0));
+              selectedModelId = modelId;
+            },
+            setSessionConfigOption: async () => {},
+          },
+          isStarted,
+        }),
+      messageBuffer,
+      shouldExit: () => shouldExit,
+      getAbortSignal: () => new AbortController().signal,
+      keepAlive: () => {},
+      setThinking: () => {},
+      sendReady: readySpy,
+      currentPermissionModeUpdatedAt: 0,
+      setCurrentPermissionMode: () => {},
+      setCurrentPermissionModeUpdatedAt: () => {},
+      formatPromptErrorMessage: (error) => `Error: ${String(error)}`,
+    });
+
+    expect(promptSnapshots).toEqual([
+      { modeId: null, modelId: null },
+      { modeId: 'plan', modelId: 'openai/gpt-5.2' },
+    ]);
+    expect(session.refreshSessionSnapshotFromServerBestEffort.mock.calls.length).toBeGreaterThanOrEqual(2);
+  });
+
+  it('refreshes the session snapshot and applies metadata overrides while idle even without a new queued prompt', async () => {
+    const session = createTestSession();
+    const initialMetadata = {
+      permissionMode: 'default',
+      permissionModeUpdatedAt: 0,
+    };
+    let serverMetadata: any = initialMetadata;
+    session.__setMetadata(initialMetadata);
+    session.refreshSessionSnapshotFromServerBestEffort = vi.fn(async () => {
+      session.__setMetadata(serverMetadata);
+    });
+
+    let resolveMetadataWake: ((value: boolean) => void) | null = null;
+    session.waitForMetadataUpdate = vi.fn(
+      () =>
+        new Promise<boolean>((resolve) => {
+          resolveMetadataWake = resolve;
+        }),
+    );
+
+    const queue = createModeQueue();
+    const runtime = createRuntime() as any;
+    runtime.sendPromptWithMeta = vi.fn(async () => {});
+
+    const messageBuffer = new MessageBuffer();
+    const permissionHandler = {
+      setPermissionMode: vi.fn(),
+      reset: vi.fn(),
+    } as any;
+
+    queue.push({ text: 'first', localId: 'local-1' }, { permissionMode: 'default' });
+
+    const abortController = new AbortController();
+    let shouldExit = false;
+    let appliedModeId: string | null = null;
+    let appliedModelId: string | null = null;
+    let readyCount = 0;
+    const readySpy = vi.fn(() => {
+      readyCount += 1;
+      if (readyCount !== 1) return;
+      serverMetadata = {
+        permissionMode: 'default',
+        permissionModeUpdatedAt: 0,
+        acpSessionModeOverrideV1: { v: 1, updatedAt: 10, modeId: 'plan' },
+        modelOverrideV1: { v: 1, updatedAt: 11, modelId: 'openai/gpt-5.2' },
+      };
+      resolveMetadataWake?.(true);
+    });
+
+    const appliedPromise = new Promise<void>((resolve) => {
+      const maybeResolve = () => {
+        if (appliedModeId !== 'plan' || appliedModelId !== 'openai/gpt-5.2') return;
+        shouldExit = true;
+        abortController.abort();
+        resolve();
+      };
+
+      runtime.__setAppliedMode = (modeId: string) => {
+        appliedModeId = modeId;
+        maybeResolve();
+      };
+      runtime.__setAppliedModel = (modelId: string) => {
+        appliedModelId = modelId;
+        maybeResolve();
+      };
+    });
+
+    await Promise.race([
+      runPermissionModePromptLoop({
+        providerName: 'Test Provider',
+        agentMessageType: 'qwen',
+        explicitPermissionMode: undefined,
+        session,
+        messageQueue: queue,
+        permissionHandler,
+        runtime,
+        createOverrideSynchronizer: (isStarted) =>
+          createRuntimeOverrideSynchronizers({
+            session,
+            runtime: {
+              setSessionMode: async (modeId: string) => {
+                await new Promise((resolve) => setTimeout(resolve, 0));
+                runtime.__setAppliedMode(modeId);
+              },
+              setSessionModel: async (modelId: string) => {
+                await new Promise((resolve) => setTimeout(resolve, 0));
+                runtime.__setAppliedModel(modelId);
+              },
+              setSessionConfigOption: async () => {},
+            },
+            isStarted,
+          }),
+        messageBuffer,
+        shouldExit: () => shouldExit,
+        getAbortSignal: () => abortController.signal,
+        keepAlive: () => {},
+        setThinking: () => {},
+        sendReady: readySpy,
+        currentPermissionModeUpdatedAt: 0,
+        setCurrentPermissionMode: () => {},
+        setCurrentPermissionModeUpdatedAt: () => {},
+        formatPromptErrorMessage: (error) => `Error: ${String(error)}`,
+      }),
+      appliedPromise,
+    ]);
+
+    expect(runtime.sendPromptWithMeta).toHaveBeenCalledTimes(1);
+    expect(appliedModeId).toBe('plan');
+    expect(appliedModelId).toBe('openai/gpt-5.2');
+    expect(session.refreshSessionSnapshotFromServerBestEffort).toHaveBeenCalled();
+  });
+
+  it('refreshes the session snapshot and applies metadata overrides that arrived during the turn before waiting again', async () => {
+    const session = createTestSession();
+    const initialMetadata = {
+      permissionMode: 'default',
+      permissionModeUpdatedAt: 0,
+    };
+    let serverMetadata: any = initialMetadata;
+    session.__setMetadata(initialMetadata);
+    session.refreshSessionSnapshotFromServerBestEffort = vi.fn(async () => {
+      session.__setMetadata(serverMetadata);
+    });
+    session.waitForMetadataUpdate = vi.fn(async () => false);
+
+    const queue = createModeQueue();
+    const runtime = createRuntime() as any;
+    let resolvePromptSend: (() => void) | undefined;
+    const promptStarted = new Promise<void>((resolve) => {
+      runtime.sendPromptWithMeta = vi.fn(
+        () =>
+          new Promise<void>((sendResolve) => {
+            resolvePromptSend = sendResolve;
+            resolve();
+          }),
+      );
+    });
+
+    const messageBuffer = new MessageBuffer();
+    const permissionHandler = {
+      setPermissionMode: vi.fn(),
+      reset: vi.fn(),
+    } as any;
+
+    queue.push({ text: 'first', localId: 'local-1' }, { permissionMode: 'default' });
+
+    const abortController = new AbortController();
+    let shouldExit = false;
+    let appliedModeId: string | null = null;
+    let appliedModelId: string | null = null;
+    const readySpy = vi.fn();
+
+    const appliedPromise = new Promise<void>((resolve) => {
+      const maybeResolve = () => {
+        if (appliedModeId !== 'plan' || appliedModelId !== 'openai/gpt-5.2') return;
+        shouldExit = true;
+        abortController.abort();
+        resolve();
+      };
+
+      runtime.__setAppliedMode = (modeId: string) => {
+        appliedModeId = modeId;
+        maybeResolve();
+      };
+      runtime.__setAppliedModel = (modelId: string) => {
+        appliedModelId = modelId;
+        maybeResolve();
+      };
+    });
+
+    const loopPromise = runPermissionModePromptLoop({
+      providerName: 'Test Provider',
+      agentMessageType: 'qwen',
+      explicitPermissionMode: undefined,
+      session,
+      messageQueue: queue,
+      permissionHandler,
+      runtime,
+      createOverrideSynchronizer: (isStarted) =>
+        createRuntimeOverrideSynchronizers({
+          session,
+          runtime: {
+            setSessionMode: async (modeId: string) => {
+              await new Promise((resolve) => setTimeout(resolve, 0));
+              runtime.__setAppliedMode(modeId);
+            },
+            setSessionModel: async (modelId: string) => {
+              await new Promise((resolve) => setTimeout(resolve, 0));
+              runtime.__setAppliedModel(modelId);
+            },
+            setSessionConfigOption: async () => {},
+          },
+          isStarted,
+        }),
+      messageBuffer,
+      shouldExit: () => shouldExit,
+      getAbortSignal: () => abortController.signal,
+      keepAlive: () => {},
+      setThinking: () => {},
+      sendReady: readySpy,
+      currentPermissionModeUpdatedAt: 0,
+      setCurrentPermissionMode: () => {},
+      setCurrentPermissionModeUpdatedAt: () => {},
+      formatPromptErrorMessage: (error) => `Error: ${String(error)}`,
+    });
+
+    await promptStarted;
+    serverMetadata = {
+      permissionMode: 'default',
+      permissionModeUpdatedAt: 0,
+      acpSessionModeOverrideV1: { v: 1, updatedAt: 10, modeId: 'plan' },
+      modelOverrideV1: { v: 1, updatedAt: 11, modelId: 'openai/gpt-5.2' },
+    };
+    const releasePromptSend = resolvePromptSend;
+    if (!releasePromptSend) {
+      throw new Error('Expected prompt send to be waiting');
+    }
+    releasePromptSend();
+
+    await appliedPromise;
+    await loopPromise;
+
+    expect(runtime.sendPromptWithMeta).toHaveBeenCalledTimes(1);
+    expect(appliedModeId).toBe('plan');
+    expect(appliedModelId).toBe('openai/gpt-5.2');
+    expect(session.refreshSessionSnapshotFromServerBestEffort).toHaveBeenCalled();
+  });
+
+  it('prepends appendSystemPrompt on the first fresh-session prompt only', async () => {
+    const session = createTestSession();
+    const queue = createModeQueue();
+    const runtime = createRuntime();
+    const messageBuffer = new MessageBuffer();
+    const permissionHandler = {
+      setPermissionMode: vi.fn(),
+      reset: vi.fn(),
+    } as any;
+
+    queue.push({ text: 'hello', localId: 'local-1' }, { permissionMode: 'default', appendSystemPrompt: 'APPEND' } as any);
+
+    let shouldExit = false;
+    let readyCount = 0;
+    const readySpy = vi.fn(() => {
+      readyCount += 1;
+      if (readyCount === 1) {
+        queue.push({ text: 'second', localId: 'local-2' }, { permissionMode: 'default', appendSystemPrompt: 'APPEND' } as any);
+        return;
+      }
+      shouldExit = true;
+    });
+
+    await runPermissionModePromptLoop({
+      providerName: 'Test Provider',
+      agentMessageType: 'qwen',
+      explicitPermissionMode: undefined,
+      session,
+      messageQueue: queue as any,
+      permissionHandler,
+      runtime,
+      createOverrideSynchronizer: () => ({ syncFromMetadata: () => {}, flushPendingAfterStart: async () => {} }),
+      messageBuffer,
+      shouldExit: () => shouldExit,
+      getAbortSignal: () => new AbortController().signal,
+      keepAlive: () => {},
+      setThinking: () => {},
+      sendReady: readySpy,
+      currentPermissionModeUpdatedAt: 0,
+      setCurrentPermissionMode: () => {},
+      setCurrentPermissionModeUpdatedAt: () => {},
+      resolveFreshSessionSystemPrompt: async ({ baseOverride }) => baseOverride === undefined ? 'FALLBACK' : baseOverride ?? '',
+      formatPromptErrorMessage: (error) => `Error: ${String(error)}`,
+    });
+
+    expect(runtime.sendPrompt).toHaveBeenNthCalledWith(1, 'APPEND\n\nhello');
+    expect(runtime.sendPrompt).toHaveBeenNthCalledWith(2, 'second');
+  });
+
+  it('does not prepend appendSystemPrompt when resuming an existing provider session', async () => {
+    const session = createTestSession();
+    const queue = createModeQueue();
+    const runtime = createRuntime();
+    const messageBuffer = new MessageBuffer();
+    const permissionHandler = {
+      setPermissionMode: vi.fn(),
+      reset: vi.fn(),
+    } as any;
+
+    queue.push({ text: 'hello', localId: 'local-1' }, { permissionMode: 'default', appendSystemPrompt: 'APPEND' } as any);
+
+    let shouldExit = false;
+    const readySpy = vi.fn(() => {
+      shouldExit = true;
+    });
+
+    await runPermissionModePromptLoop({
+      providerName: 'Test Provider',
+      agentMessageType: 'qwen',
+      explicitPermissionMode: undefined,
+      session,
+      messageQueue: queue as any,
+      permissionHandler,
+      runtime,
+      createOverrideSynchronizer: () => ({ syncFromMetadata: () => {}, flushPendingAfterStart: async () => {} }),
+      messageBuffer,
+      shouldExit: () => shouldExit,
+      getAbortSignal: () => new AbortController().signal,
+      keepAlive: () => {},
+      setThinking: () => {},
+      sendReady: readySpy,
+      currentPermissionModeUpdatedAt: 0,
+      setCurrentPermissionMode: () => {},
+      setCurrentPermissionModeUpdatedAt: () => {},
+      initialResumeId: 'resume-1',
+      resolveFreshSessionSystemPrompt: async ({ baseOverride }) => baseOverride === undefined ? 'FALLBACK' : baseOverride ?? '',
+      formatPromptErrorMessage: (error) => `Error: ${String(error)}`,
+    });
+
+    expect(runtime.startOrLoad).toHaveBeenCalledWith({ resumeId: 'resume-1', importHistory: false });
+    expect(runtime.sendPrompt).toHaveBeenCalledWith('hello');
   });
 
   it('handles /clear by resetting runtime and skipping prompt send', async () => {
@@ -301,6 +861,53 @@ describe('runPermissionModePromptLoop', () => {
     expect(runtime.reset).toHaveBeenCalledTimes(1);
     expect(runtime.startOrLoad).toHaveBeenNthCalledWith(1, {});
     expect(runtime.startOrLoad).toHaveBeenNthCalledWith(2, { resumeId: 'resume-from-runtime', importHistory: false });
+  });
+
+  it('drops vendor resume when permission settings change on a runtime that requires a fresh session', async () => {
+    const session = createTestSession();
+    const queue = createModeQueue();
+    const runtime = createRuntime();
+    runtime.shouldResumeAfterPermissionModeChange = vi.fn(() => false);
+    const messageBuffer = new MessageBuffer();
+    const permissionHandler = {
+      setPermissionMode: vi.fn(),
+      reset: vi.fn(),
+    } as any;
+
+    queue.push({ text: 'first', localId: 'local-3b' }, { permissionMode: 'default' });
+    queue.push({ text: 'second', localId: 'local-4b' }, { permissionMode: 'read-only' });
+
+    let readyCount = 0;
+    const readySpy = vi.fn(() => {
+      readyCount += 1;
+    });
+
+    await runPermissionModePromptLoop({
+      providerName: 'Test Provider',
+      agentMessageType: 'qwen',
+      explicitPermissionMode: undefined,
+      session,
+      messageQueue: queue,
+      permissionHandler,
+      runtime,
+      createOverrideSynchronizer: () => ({ syncFromMetadata: () => {}, flushPendingAfterStart: async () => {} }),
+      messageBuffer,
+      shouldExit: () => readyCount >= 2,
+      getAbortSignal: () => new AbortController().signal,
+      keepAlive: () => {},
+      setThinking: () => {},
+      sendReady: readySpy,
+      currentPermissionModeUpdatedAt: 0,
+      setCurrentPermissionMode: () => {},
+      setCurrentPermissionModeUpdatedAt: () => {},
+      formatPromptErrorMessage: (error) => `Error: ${String(error)}`,
+    });
+
+    expect(runtime.sendPrompt).toHaveBeenNthCalledWith(1, 'first');
+    expect(runtime.sendPrompt).toHaveBeenNthCalledWith(2, 'second');
+    expect(runtime.reset).toHaveBeenCalledTimes(1);
+    expect(runtime.startOrLoad).toHaveBeenNthCalledWith(1, {});
+    expect(runtime.startOrLoad).toHaveBeenNthCalledWith(2, {});
   });
 
   it('falls back to fresh start when resume fails', async () => {
@@ -412,53 +1019,60 @@ describe('runPermissionModePromptLoop', () => {
     expect(runtime.startOrLoad).toHaveBeenCalledWith({ resumeId: 'resume-id', importHistory: false });
   });
 
-	  it('fails closed when strictInitialResume is enabled and the initial resume attempt fails', async () => {
-	    const session = createTestSession();
-	    const queue = createModeQueue();
-	    const runtime = createRuntime();
-	    runtime.startOrLoad = vi.fn(async (opts: { resumeId?: string; importHistory?: boolean }) => {
-	      if (opts.resumeId) {
-	        throw new Error('resume failed');
-	      }
-	    });
-	    const messageBuffer = new MessageBuffer();
-	    const permissionHandler = {
-	      setPermissionMode: vi.fn(),
-	      reset: vi.fn(),
-	    } as any;
+  it('fails closed without masking the strict initial resume error', async () => {
+    const session = createTestSession();
+    const queue = createModeQueue();
+    const runtime = createRuntime();
+    runtime.startOrLoad = vi.fn(async (opts: { resumeId?: string; importHistory?: boolean }) => {
+      if (opts.resumeId) {
+        throw new Error('resume failed');
+      }
+    });
+    runtime.flushTurn = vi.fn(async () => {
+      throw new Error('flush failed');
+    });
+    const messageBuffer = new MessageBuffer();
+    const permissionHandler = {
+      setPermissionMode: vi.fn(),
+      reset: vi.fn(),
+    } as any;
 
     queue.push({ text: 'hello', localId: 'local-6' }, { permissionMode: 'default' });
 
     let shouldExit = false;
-    await expect(
-      (runPermissionModePromptLoop as unknown as (params: any) => Promise<void>)({
-        providerName: 'Test Provider',
-        agentMessageType: 'qwen',
-        explicitPermissionMode: undefined,
-        session,
-        messageQueue: queue,
-        permissionHandler,
-        runtime,
-        createOverrideSynchronizer: () => ({ syncFromMetadata: () => {}, flushPendingAfterStart: async () => {} }),
-        messageBuffer,
-        shouldExit: () => shouldExit,
-        getAbortSignal: () => new AbortController().signal,
-        keepAlive: () => {},
-        setThinking: () => {},
-        sendReady: () => {
-          shouldExit = true;
-        },
-        currentPermissionModeUpdatedAt: 0,
-        setCurrentPermissionMode: () => {},
-        setCurrentPermissionModeUpdatedAt: () => {},
-        initialResumeId: 'resume-id',
-        strictInitialResume: true,
-        formatPromptErrorMessage: (error: unknown) => `Error: ${String(error)}`,
-      }),
-	    ).rejects.toThrow('resume failed');
+    const error = await (runPermissionModePromptLoop as unknown as (params: any) => Promise<void>)({
+      providerName: 'Test Provider',
+      agentMessageType: 'qwen',
+      explicitPermissionMode: undefined,
+      session,
+      messageQueue: queue,
+      permissionHandler,
+      runtime,
+      createOverrideSynchronizer: () => ({ syncFromMetadata: () => {}, flushPendingAfterStart: async () => {} }),
+      messageBuffer,
+      shouldExit: () => shouldExit,
+      getAbortSignal: () => new AbortController().signal,
+      keepAlive: () => {},
+      setThinking: () => {},
+      sendReady: () => {
+        shouldExit = true;
+      },
+      currentPermissionModeUpdatedAt: 0,
+      setCurrentPermissionMode: () => {},
+      setCurrentPermissionModeUpdatedAt: () => {},
+      initialResumeId: 'resume-id',
+      strictInitialResume: true,
+      formatPromptErrorMessage: (error: unknown) => `Error: ${String(error)}`,
+    }).catch((caught: unknown) => caught as Error);
 
-	    expect(runtime.startOrLoad).toHaveBeenCalledWith({ resumeId: 'resume-id', importHistory: false });
-	    expect(runtime.sendPrompt).not.toHaveBeenCalled();
-	    expect(runtime.reset).toHaveBeenCalledTimes(1);
-	  });
+    expect(error).toBeInstanceOf(Error);
+    expect((error as Error).name).toBe('StrictInitialResumeError');
+    expect((error as Error).message).toContain('Strict initial resume failed');
+    expect((error as Error & { cause?: unknown }).cause).toBeInstanceOf(Error);
+    expect(((error as Error & { cause?: Error }).cause as Error).message).toBe('resume failed');
+    expect(runtime.startOrLoad).toHaveBeenCalledWith({ resumeId: 'resume-id', importHistory: false });
+    expect(runtime.sendPrompt).not.toHaveBeenCalled();
+    expect(runtime.reset).toHaveBeenCalledTimes(1);
+    expect(runtime.flushTurn).toHaveBeenCalledTimes(1);
+  });
 });

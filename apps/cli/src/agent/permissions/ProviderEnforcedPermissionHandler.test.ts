@@ -17,6 +17,7 @@ class FakeSession {
   sessionId = 'test-session-id';
   rpcHandlerManager = new FakeRpcHandlerManager();
   agentState: any = { requests: {}, completedRequests: {} };
+  metadata: any = null;
 
   getAgentStateSnapshot() {
     return this.agentState;
@@ -25,6 +26,10 @@ class FakeSession {
   updateAgentState(updater: any) {
     this.agentState = updater(this.agentState);
     return this.agentState;
+  }
+
+  getMetadataSnapshot() {
+    return this.metadata;
   }
 }
 
@@ -60,6 +65,46 @@ describe('ProviderEnforcedPermissionHandler always-auto-approve matching', () =>
     await expect(handler.handleToolCall('fs-write-1', 'writeTextFile', {})).resolves.toEqual({ decision: 'approved' });
     expect(session.agentState.requests['fs-read-1']).toBeFalsy();
     expect(session.agentState.requests['fs-write-1']).toBeFalsy();
+  });
+
+  it('exposes immediate decisions for always-auto-approved tools', () => {
+    const session = new FakeSession();
+    const handler = new ProviderEnforcedPermissionHandler(session as any, { logPrefix: '[Test]' });
+
+    expect(handler.getImmediateDecision('fs-read-1', 'readTextFile', {})).toEqual({ decision: 'approved' });
+    expect(handler.getImmediateDecision('fs-write-1', 'writeTextFile', {})).toEqual({ decision: 'approved' });
+    expect(handler.getImmediateDecision('perm-1', 'bash', { command: 'pwd' })).toBeNull();
+  });
+
+  it('keeps the immediate-decision probe side-effect free until handleToolCall records the approval', async () => {
+    const session = new FakeSession();
+    const handler = new ProviderEnforcedPermissionHandler(session as any, { logPrefix: '[Test]' });
+
+    expect(handler.getImmediateDecision('fs-read-1', 'readTextFile', {})).toEqual({ decision: 'approved' });
+    expect(session.agentState.completedRequests['fs-read-1']).toBeUndefined();
+
+    await expect(handler.handleToolCall('fs-read-1', 'readTextFile', {})).resolves.toEqual({ decision: 'approved' });
+    expect(session.agentState.completedRequests['fs-read-1']).toMatchObject({
+      tool: 'readTextFile',
+      decision: 'approved',
+      status: 'approved',
+    });
+  });
+
+  it('still prompts provider-enforced tool requests in bypassPermissions mode', async () => {
+    const session = new FakeSession();
+    const handler = new ProviderEnforcedPermissionHandler(session as any, { logPrefix: '[Test]' });
+
+    handler.setPermissionMode('bypassPermissions');
+
+    const pending = handler.handleToolCall('perm-1', 'bash', { command: 'echo hello' });
+
+    expect(session.agentState.requests['perm-1']).toBeTruthy();
+    const respond = session.rpcHandlerManager.handlers.get('permission');
+    expect(respond).toBeTruthy();
+    await respond?.({ id: 'perm-1', approved: true, decision: 'approved' });
+    await expect(pending).resolves.toEqual({ decision: 'approved' });
+    expect(session.agentState.requests['perm-1']).toBeFalsy();
   });
 
   it('records permission-request tool trace events when enabled', async () => {

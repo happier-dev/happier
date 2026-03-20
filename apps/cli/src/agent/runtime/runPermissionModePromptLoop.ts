@@ -18,9 +18,10 @@ type PromptRuntime = {
   startOrLoad: (opts: { resumeId?: string; importHistory?: boolean }) => Promise<unknown>;
   sendPrompt: (message: string) => Promise<void>;
   sendPromptWithMeta?: (params: { text: string; localId?: string | null }) => Promise<void>;
-  flushTurn: () => void;
+  flushTurn: () => void | Promise<void>;
   reset: () => Promise<void>;
   getSessionId: () => string | null;
+  shouldResumeAfterPermissionModeChange?: () => boolean;
 };
 
 type OverrideSynchronizer = {
@@ -30,7 +31,7 @@ type OverrideSynchronizer = {
 
 type QueuedPermissionModeMessage = {
   message: PermissionModeQueuedPrompt;
-  mode: { permissionMode: PermissionMode };
+  mode: { permissionMode: PermissionMode; appendSystemPrompt?: string | null };
   hash: string;
 };
 
@@ -48,7 +49,7 @@ export async function runPermissionModePromptLoop(opts: {
   agentMessageType: Parameters<ApiSessionClient['sendAgentMessage']>[0];
   explicitPermissionMode: PermissionMode | undefined;
   session: ApiSessionClient;
-  messageQueue: MessageQueue2<{ permissionMode: PermissionMode }, PermissionModeQueuedPrompt>;
+  messageQueue: MessageQueue2<{ permissionMode: PermissionMode; appendSystemPrompt?: string | null }, PermissionModeQueuedPrompt>;
   permissionHandler: ProviderEnforcedPermissionHandler;
   runtime: PromptRuntime;
   createOverrideSynchronizer: (isStarted: () => boolean) => OverrideSynchronizer;
@@ -63,8 +64,12 @@ export async function runPermissionModePromptLoop(opts: {
   setCurrentPermissionModeUpdatedAt: (updatedAt: number) => void;
   initialResumeId?: string;
   strictInitialResume?: boolean;
+  startRuntimeBeforeFirstPrompt?: boolean;
   onAfterStart?: (() => void | Promise<void>) | null;
   onAfterReset?: (() => void | Promise<void>) | null;
+  resolveFreshSessionSystemPrompt?: (args: {
+    baseOverride?: string | null;
+  }) => Promise<string | null | undefined>;
   formatPromptErrorMessage: (error: unknown) => string;
 }): Promise<void> {
   let wasStarted = false;
@@ -72,6 +77,8 @@ export async function runPermissionModePromptLoop(opts: {
   let pending: QueuedPermissionModeMessage | null = null;
   let storedSessionIdForResume: { value: string; origin: 'initial' | 'restart' } | null = null;
   let didReplaySeedBootstrap = false;
+  let turnInFlight = false;
+  let pendingFreshSessionSystemPrompt = false;
 
   const normalizedResumeId = typeof opts.initialResumeId === 'string' ? opts.initialResumeId.trim() : '';
   if (normalizedResumeId) {
@@ -98,7 +105,80 @@ export async function runPermissionModePromptLoop(opts: {
     opts.setCurrentPermissionModeUpdatedAt(updatedAt);
   };
 
+  const refreshSessionSnapshotBeforeTurnBestEffort = async (): Promise<void> => {
+    if (typeof opts.session.refreshSessionSnapshotFromServerBestEffort === 'function') {
+      try {
+        await opts.session.refreshSessionSnapshotFromServerBestEffort({ reason: 'waitForMetadataUpdate' });
+      } catch {
+        // Best-effort only: prompt delivery must not block on snapshot refresh failures.
+      }
+      return;
+    }
+    if (typeof opts.session.ensureMetadataSnapshot === 'function') {
+      try {
+        await opts.session.ensureMetadataSnapshot();
+      } catch {
+        // Best-effort only.
+      }
+    }
+  };
+
   overrideSync.syncFromMetadata();
+
+  const ensureRuntimeStarted = async (): Promise<{ startedFreshSessionForTurn: boolean }> => {
+    if (wasStarted) return { startedFreshSessionForTurn: false };
+
+    const resume = storedSessionIdForResume;
+    const resumeId = typeof resume?.value === 'string' ? resume.value.trim() : '';
+    let strictAbort: StrictInitialResumeError | null = null;
+    let startedFreshSessionForTurn = false;
+
+    if (resumeId) {
+      storedSessionIdForResume = null; // consume once
+      opts.messageBuffer.addMessage('Resuming previous context…', 'status');
+      try {
+        // Avoid importing ACP replay history into Happier on normal resume; Happier transcript is the source of truth.
+        await opts.runtime.startOrLoad({ resumeId, importHistory: false });
+      } catch (error) {
+        const shouldFailClosed =
+          opts.strictInitialResume === true && resume?.origin === 'initial';
+        if (shouldFailClosed) {
+          const formatted = opts.formatPromptErrorMessage(error);
+          opts.messageBuffer.addMessage(`Resume failed; cannot continue: ${formatted}`, 'status');
+          opts.session.sendAgentMessage(opts.agentMessageType, { type: 'message', message: `Resume failed; cannot continue: ${formatted}` });
+          try {
+            await opts.runtime.reset();
+          } catch {
+            // ignore cleanup failure
+          }
+          strictAbort = new StrictInitialResumeError('Strict initial resume failed', error);
+        } else {
+          opts.messageBuffer.addMessage('Resume failed; starting a new session.', 'status');
+          opts.session.sendAgentMessage(opts.agentMessageType, { type: 'message', message: 'Resume failed; starting a new session.' });
+          await opts.runtime.reset();
+          await opts.runtime.startOrLoad({});
+          startedFreshSessionForTurn = true;
+        }
+      }
+    } else {
+      await opts.runtime.startOrLoad({});
+      startedFreshSessionForTurn = true;
+    }
+
+    if (strictAbort) throw strictAbort;
+
+    await opts.onAfterStart?.();
+    wasStarted = true;
+    await overrideSync.flushPendingAfterStart();
+    return { startedFreshSessionForTurn };
+  };
+
+  if (opts.startRuntimeBeforeFirstPrompt === true && !wasStarted) {
+    await refreshSessionSnapshotBeforeTurnBestEffort();
+    overrideSync.syncFromMetadata();
+    const eagerStart = await ensureRuntimeStarted();
+    pendingFreshSessionSystemPrompt = eagerStart.startedFreshSessionForTurn;
+  }
 
   while (!opts.shouldExit()) {
     let message: QueuedPermissionModeMessage | null = pending;
@@ -109,9 +189,13 @@ export async function runPermissionModePromptLoop(opts: {
         messageQueue: opts.messageQueue,
         abortSignal: opts.getAbortSignal(),
         session: opts.session,
-        onMetadataUpdate: () => {
+        onMetadataUpdate: async () => {
+          await refreshSessionSnapshotBeforeTurnBestEffort();
           syncPermissionModeFromMetadata();
-          overrideSync.syncFromMetadata();
+          if (!turnInFlight) {
+            overrideSync.syncFromMetadata();
+            await overrideSync.flushPendingAfterStart();
+          }
         },
       });
       if (!next) continue;
@@ -124,11 +208,20 @@ export async function runPermissionModePromptLoop(opts: {
     if (wasStarted && currentModeHash && message.hash !== currentModeHash) {
       const resumeId = opts.runtime.getSessionId();
       currentModeHash = message.hash;
-      if (resumeId) storedSessionIdForResume = { value: resumeId, origin: 'restart' };
+      const shouldResumeAfterPermissionModeChange =
+        typeof opts.runtime.shouldResumeAfterPermissionModeChange === 'function'
+          ? opts.runtime.shouldResumeAfterPermissionModeChange()
+          : true;
+      if (resumeId && shouldResumeAfterPermissionModeChange) {
+        storedSessionIdForResume = { value: resumeId, origin: 'restart' };
+      } else {
+        storedSessionIdForResume = null;
+      }
 
       opts.messageBuffer.addMessage(`Restarting ${opts.providerName} session (permission settings changed)…`, 'status');
       await opts.runtime.reset();
       wasStarted = false;
+      pendingFreshSessionSystemPrompt = false;
       await opts.onAfterReset?.();
       opts.permissionHandler.reset();
       opts.setThinking(false);
@@ -139,6 +232,9 @@ export async function runPermissionModePromptLoop(opts: {
     }
 
     currentModeHash = message.hash;
+    await refreshSessionSnapshotBeforeTurnBestEffort();
+    overrideSync.syncFromMetadata();
+    await overrideSync.flushPendingAfterStart();
     opts.messageBuffer.addMessage(message.message.text, 'user');
 
     const special = parseSpecialCommand(message.message.text);
@@ -146,6 +242,7 @@ export async function runPermissionModePromptLoop(opts: {
       opts.messageBuffer.addMessage(`Resetting ${opts.providerName} session…`, 'status');
       await opts.runtime.reset();
       wasStarted = false;
+      pendingFreshSessionSystemPrompt = false;
       await opts.onAfterReset?.();
       opts.permissionHandler.reset();
       opts.setThinking(false);
@@ -156,50 +253,16 @@ export async function runPermissionModePromptLoop(opts: {
     }
 
     let shouldSendReady = true;
+    let suppressFlushTurnFailure = false;
     try {
-      let strictAbort: StrictInitialResumeError | null = null;
+      turnInFlight = true;
+      let shouldApplyFreshSessionSystemPrompt = pendingFreshSessionSystemPrompt;
+      pendingFreshSessionSystemPrompt = false;
       opts.runtime.beginTurn();
       if (!wasStarted) {
-        const resume = storedSessionIdForResume;
-        const resumeId = typeof resume?.value === 'string' ? resume.value.trim() : '';
-        if (resumeId) {
-          storedSessionIdForResume = null; // consume once
-          opts.messageBuffer.addMessage('Resuming previous context…', 'status');
-	          try {
-	            // Avoid importing ACP replay history into Happier on normal resume; Happier transcript is the source of truth.
-	            await opts.runtime.startOrLoad({ resumeId, importHistory: false });
-	          } catch (error) {
-	            const shouldFailClosed =
-	              opts.strictInitialResume === true && resume?.origin === 'initial';
-	            if (shouldFailClosed) {
-	              const formatted = opts.formatPromptErrorMessage(error);
-	              opts.messageBuffer.addMessage(`Resume failed; cannot continue: ${formatted}`, 'status');
-	              opts.session.sendAgentMessage(opts.agentMessageType, { type: 'message', message: `Resume failed; cannot continue: ${formatted}` });
-	              // Best-effort cleanup: a failed resume attempt can partially initialize a runtime
-	              // (and potentially spawn a child process). Since strict initial resume is fail-closed,
-	              // try to reset before aborting so we don't leak resources.
-	              try {
-	                await opts.runtime.reset();
-	              } catch {
-	                // ignore cleanup failure
-	              }
-	              strictAbort = new StrictInitialResumeError('Strict initial resume failed', error);
-	            } else {
-	              opts.messageBuffer.addMessage('Resume failed; starting a new session.', 'status');
-	              opts.session.sendAgentMessage(opts.agentMessageType, { type: 'message', message: 'Resume failed; starting a new session.' });
-	              // Some runtimes may be partially initialized after a failed resume attempt; reset
-              // before falling back to a fresh start to avoid "already initialized" errors.
-              await opts.runtime.reset();
-              await opts.runtime.startOrLoad({});
-            }
-          }
-        } else {
-          await opts.runtime.startOrLoad({});
-        }
-        if (strictAbort) throw strictAbort;
-        await opts.onAfterStart?.();
-        wasStarted = true;
-        await overrideSync.flushPendingAfterStart();
+        const runtimeStart = await ensureRuntimeStarted();
+        shouldApplyFreshSessionSystemPrompt =
+          runtimeStart.startedFreshSessionForTurn || shouldApplyFreshSessionSystemPrompt;
       }
 
       const localId = typeof message.message.localId === 'string' && message.message.localId ? message.message.localId : null;
@@ -214,7 +277,21 @@ export async function runPermissionModePromptLoop(opts: {
         refreshMetadataBeforeRead: !didReplaySeedBootstrap,
       });
       didReplaySeedBootstrap = true;
-      const providerPrompt = seedResolution.providerPrompt;
+      const explicitBaseOverride = shouldApplyFreshSessionSystemPrompt && Object.prototype.hasOwnProperty.call(message.mode, 'appendSystemPrompt')
+        ? (typeof message.mode.appendSystemPrompt === 'string' ? message.mode.appendSystemPrompt : null)
+        : undefined;
+      const freshSessionSystemPrompt = shouldApplyFreshSessionSystemPrompt
+        ? await opts.resolveFreshSessionSystemPrompt?.({
+            baseOverride: explicitBaseOverride,
+          })
+        : undefined;
+      const effectiveAppendSystemPrompt = typeof freshSessionSystemPrompt === 'string'
+        ? freshSessionSystemPrompt.trim()
+        : '';
+      const providerPrompt =
+        shouldApplyFreshSessionSystemPrompt && effectiveAppendSystemPrompt.trim().length > 0
+          ? `${effectiveAppendSystemPrompt.trim()}\n\n${seedResolution.providerPrompt}`
+          : seedResolution.providerPrompt;
 
       if (typeof opts.runtime.sendPromptWithMeta === 'function') {
         await opts.runtime.sendPromptWithMeta({ text: providerPrompt, localId });
@@ -224,11 +301,19 @@ export async function runPermissionModePromptLoop(opts: {
     } catch (error) {
       if (error instanceof StrictInitialResumeError) {
         shouldSendReady = false;
-        throw error.cause;
+        suppressFlushTurnFailure = true;
+        throw error;
       }
       opts.session.sendAgentMessage(opts.agentMessageType, { type: 'message', message: opts.formatPromptErrorMessage(error) });
     } finally {
-      opts.runtime.flushTurn();
+      turnInFlight = false;
+      if (suppressFlushTurnFailure) {
+        try {
+          await opts.runtime.flushTurn();
+        } catch {}
+      } else {
+        await opts.runtime.flushTurn();
+      }
       // Metadata updates can arrive while we're mid-turn.
       overrideSync.syncFromMetadata();
       opts.setThinking(false);

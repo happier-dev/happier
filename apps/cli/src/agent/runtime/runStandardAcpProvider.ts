@@ -2,6 +2,8 @@ import { randomUUID } from 'node:crypto';
 
 import { render } from 'ink';
 import React from 'react';
+import { resolveAgentIdFromFlavor } from '@happier-dev/agents';
+import type { BackendTargetRefV1 } from '@happier-dev/protocol';
 
 import type { ApiClient } from '@/api/api';
 import type { ApiSessionClient } from '@/api/session/sessionClient';
@@ -11,16 +13,17 @@ import { createProviderEnforcedPermissionHandler } from '@/agent/permissions/cre
 import type { ProviderEnforcedPermissionHandler } from '@/agent/permissions/ProviderEnforcedPermissionHandler';
 import { archiveAndCloseSession } from '@/agent/runtime/archiveAndCloseSession';
 import { cleanupBackendRunResources } from '@/agent/runtime/cleanupBackendRunResources';
-import { createAcpRuntimeOverrideSynchronizers } from '@/agent/runtime/createAcpRuntimeOverrideSynchronizers';
+import { createRuntimeOverrideSynchronizers } from '@/agent/runtime/createRuntimeOverrideSynchronizers';
 import { createPermissionModeQueueState } from '@/agent/runtime/createPermissionModeQueueState';
 import { createSessionMetadata, type CreateSessionMetadataOptions } from '@/agent/runtime/createSessionMetadata';
 import { createStartupMetadataOverrides } from '@/agent/runtime/createStartupMetadataOverrides';
-import { createHappierMcpBridge } from '@/agent/runtime/createHappierMcpBridge';
 import { initializeBackendApiContext } from '@/agent/runtime/initializeBackendApiContext';
 import { initializeBackendRunSession } from '@/agent/runtime/initializeBackendRunSession';
 import { registerRunnerTerminationHandlers } from '@/agent/runtime/runnerTerminationHandlers';
 import { runPermissionModePromptLoop } from '@/agent/runtime/runPermissionModePromptLoop';
+import { getLatestAssistantMessagePreview, getSessionNotificationTitle } from '@/agent/runtime/readyNotificationContext';
 import { sendReadyWithPushNotification } from '@/agent/runtime/sendReadyWithPushNotification';
+import { resolveEffectiveCodingPromptText } from '@/agent/prompting/coding/resolveEffectiveCodingPrompt';
 import { shouldSendReadyPushNotification } from '@/settings/notifications/notificationsPolicy';
 import type { InFlightSteerController } from '@/agent/runtime/permission/bindPermissionModeQueue';
 import type { Credentials } from '@/persistence';
@@ -28,6 +31,11 @@ import { registerKillSessionHandler } from '@/rpc/handlers/killSession';
 import { MessageBuffer } from '@/ui/ink/messageBuffer';
 import { logger } from '@/ui/logger';
 import { resolvePermissionModeSeedForAgentStart } from '@/settings/permissions/permissionModeSeed';
+import { resolveRunnerMcpServers } from '@/mcp/runtime/resolveRunnerMcpServers';
+import { resolveCliFeatureDecision } from '@/features/featureDecisionService';
+import { resolveCliMemoryRecallGuidanceEnabled } from '@/agent/promptLibrary/resolveCliMemoryRecallGuidanceEnabled';
+import { resolveAgentToolsDelivery } from '@/agent/tools/happierTools/runtime/resolveAgentToolsDelivery';
+import { resolveAttachedRunRuntimeContext } from '@/agent/runtime/resolveAttachedRunRuntimeContext';
 
 type RuntimeForLoop = {
   beginTurn: () => void;
@@ -36,7 +44,7 @@ type RuntimeForLoop = {
   supportsInFlightSteer?: () => boolean;
   isTurnInFlight?: () => boolean;
   steerPrompt?: (message: string) => Promise<void>;
-  flushTurn: () => void;
+  flushTurn: () => void | Promise<void>;
   reset: () => Promise<void>;
   getSessionId: () => string | null;
   cancel: () => Promise<void>;
@@ -45,14 +53,23 @@ type RuntimeForLoop = {
   setSessionModel: (modelId: string) => Promise<void>;
 };
 
+type KeepAliveMode = 'local' | 'remote';
+
 type TerminalDisplayProps = {
   messageBuffer: MessageBuffer;
   logPath?: string;
   onExit: () => void | Promise<void>;
 };
 
+type TerminalDisplayController = Readonly<{
+  mount: () => void;
+  unmount: () => Promise<void>;
+  isMounted: () => boolean;
+}>;
+
 export type StandardAcpProviderRunOptions = {
   credentials: Credentials;
+  backendTarget?: BackendTargetRefV1;
   startedBy?: 'daemon' | 'terminal';
   terminalRuntime?: import('@/terminal/runtime/terminalRuntimeFlags').TerminalRuntimeFlags | null;
   permissionMode?: PermissionMode;
@@ -73,6 +90,7 @@ export type StandardAcpProviderConfig = {
   providerName: string;
   waitingForCommandLabel: string;
   agentMessageType: Parameters<ApiSessionClient['sendAgentMessage']>[0];
+  supportsMcpServers?: boolean;
   machineMetadata: MachineMetadata;
   terminalDisplay: React.ComponentType<TerminalDisplayProps>;
   formatPromptErrorMessage: (error: unknown) => string;
@@ -85,27 +103,35 @@ export type StandardAcpProviderConfig = {
   createRuntime: (params: {
     directory: string;
     metadata: Metadata;
+    machineId: string;
     session: ApiSessionClient;
     messageBuffer: MessageBuffer;
-    mcpServers: Awaited<ReturnType<typeof createHappierMcpBridge>>['mcpServers'];
+    mcpServers: Record<string, import('@/agent').McpServerConfig>;
     permissionHandler: ProviderEnforcedPermissionHandler;
     getPermissionMode: () => PermissionMode;
     setThinking: (value: boolean) => void;
+    memoryRecallGuidanceEnabled: boolean;
   }) => RuntimeForLoop;
   resolveRuntimeDirectory?: (params: { session: ApiSessionClient; metadata: Metadata }) => string;
   createSendReady?: (params: { session: ApiSessionClient; api: ApiClient }) => () => void;
   beforeInitializeSession?: (params: { metadata: Metadata; opts: StandardAcpProviderRunOptions }) => void;
   onAttachMetadataSnapshotMissing?: (error: unknown | null) => void;
   onAttachMetadataSnapshotError?: (error: unknown) => void;
+  onSessionSwap?: (params: { session: ApiSessionClient }) => void | Promise<void>;
   onAfterStart?: (params: { session: ApiSessionClient; runtime: RuntimeForLoop }) => void | Promise<void>;
   onAfterReset?: (params: { session: ApiSessionClient; runtime: RuntimeForLoop }) => void | Promise<void>;
+  onDispose?: (params: { session: ApiSessionClient; runtime: RuntimeForLoop }) => void | Promise<void>;
+  startRuntimeBeforeFirstPrompt?: boolean;
+  onTerminalDisplayControllerReady?: (controller: TerminalDisplayController) => void;
+  shouldRenderTerminalDisplay?: (params: { opts: StandardAcpProviderRunOptions; session: ApiSessionClient; metadata: Metadata }) => boolean;
+  resolveKeepAliveMode?: () => KeepAliveMode;
 };
 
 type StandardAcpProviderDeps = {
   initializeBackendApiContextFn?: typeof initializeBackendApiContext;
   createSessionMetadataFn?: typeof createSessionMetadata;
   initializeBackendRunSessionFn?: typeof initializeBackendRunSession;
-  createHappierMcpBridgeFn?: typeof createHappierMcpBridge;
+  resolveRunnerMcpServersFn?: typeof resolveRunnerMcpServers;
   createProviderEnforcedPermissionHandlerFn?: typeof createProviderEnforcedPermissionHandler;
   createPermissionModeQueueStateFn?: typeof createPermissionModeQueueState;
   runPermissionModePromptLoopFn?: typeof runPermissionModePromptLoop;
@@ -124,7 +150,7 @@ export async function runStandardAcpProvider(
   const initializeBackendApiContextFn = deps.initializeBackendApiContextFn ?? initializeBackendApiContext;
   const createSessionMetadataFn = deps.createSessionMetadataFn ?? createSessionMetadata;
   const initializeBackendRunSessionFn = deps.initializeBackendRunSessionFn ?? initializeBackendRunSession;
-  const createHappierMcpBridgeFn = deps.createHappierMcpBridgeFn ?? createHappierMcpBridge;
+  const resolveRunnerMcpServersFn = deps.resolveRunnerMcpServersFn ?? resolveRunnerMcpServers;
   const createProviderEnforcedPermissionHandlerFn = deps.createProviderEnforcedPermissionHandlerFn ?? createProviderEnforcedPermissionHandler;
   const createPermissionModeQueueStateFn = deps.createPermissionModeQueueStateFn ?? createPermissionModeQueueState;
   const runPermissionModePromptLoopFn = deps.runPermissionModePromptLoopFn ?? runPermissionModePromptLoop;
@@ -144,15 +170,20 @@ export async function runStandardAcpProvider(
     machineMetadata: config.machineMetadata,
   });
 
+  // This runtime only hosts ACP providers. If a custom flavor string is not recognized,
+  // keep policy/tooling decisions in the ACP family instead of inheriting a built-in default.
+  const policyAgentId = resolveAgentIdFromFlavor(config.flavor) ?? 'customAcp';
   const accountSettings = opts.accountSettingsContext?.settings ?? null;
   const permissionModeSeed = resolvePermissionModeSeedForAgentStart({
-    agentId: config.flavor,
+    agentId: policyAgentId,
+    backendTarget: opts.backendTarget,
     explicitPermissionMode: opts.permissionMode,
     accountSettings,
   });
   const initialPermissionMode = permissionModeSeed.mode;
   const { state, metadata } = createSessionMetadataFn({
     flavor: config.flavor,
+    acpProviderId: config.flavor,
     machineId,
     startedBy: opts.startedBy,
     terminalRuntime: opts.terminalRuntime ?? null,
@@ -175,11 +206,12 @@ export async function runStandardAcpProvider(
     existingSessionId: opts.existingSessionId,
     uiLogPrefix: config.uiLogPrefix,
     startupMetadataOverrides: createStartupMetadataOverrides(opts),
-    onSessionSwap: (newSession) => {
+    onSessionSwap: async (newSession) => {
       session = newSession;
       if (permissionHandler) {
         permissionHandler.updateSession(newSession);
       }
+      await config.onSessionSwap?.({ session: newSession });
     },
     onAttachMetadataSnapshotMissing: config.onAttachMetadataSnapshotMissing,
     onAttachMetadataSnapshotError: config.onAttachMetadataSnapshotError,
@@ -188,14 +220,13 @@ export async function runStandardAcpProvider(
   session = initializedSession.session;
   const reconnectionHandle = initializedSession.reconnectionHandle;
 
-  const { happierMcpServer, mcpServers } = await createHappierMcpBridgeFn(session);
-
   let abortRequestedCallback: (() => void | Promise<void>) | null = null;
   permissionHandler = createProviderEnforcedPermissionHandlerFn({
     session,
     logPrefix: config.uiLogPrefix,
     pushSender: api.push(),
     getAccountSettings: () => opts.accountSettingsContext?.settings ?? null,
+    getAccountSettingsSecretsReadKeys: () => opts.accountSettingsContext?.settingsSecretsReadKeys ?? [],
     onAbortRequested: () => abortRequestedCallback?.(),
     toolTrace: { protocol: 'acp', provider: config.agentMessageType },
   });
@@ -223,11 +254,20 @@ export async function runStandardAcpProvider(
     resolvePermissionModeQueueKey: config.resolvePermissionModeQueueKey,
   });
   const { messageQueue } = permissionModeState;
+  const promptArtifactBodyCache = new Map<string, string | null>();
+  const runtimeContext = resolveAttachedRunRuntimeContext({
+    session,
+    metadata,
+    resolveRuntimeDirectory: config.resolveRuntimeDirectory,
+  });
+  const runtimeMetadata = runtimeContext.resolvedMetadata;
 
   const messageBuffer = new MessageBuffer();
   const hasTTY = process.stdout.isTTY && process.stdin.isTTY;
+  const shouldRenderTerminalDisplay = config.shouldRenderTerminalDisplay?.({ opts, session, metadata: runtimeMetadata }) ?? true;
   let inkInstance: ReturnType<typeof render> | null = null;
-  if (hasTTY) {
+  const mountTerminalDisplay = (): void => {
+    if (!hasTTY || inkInstance) return;
     console.clear();
     inkInstance = renderFn(React.createElement(config.terminalDisplay, {
       messageBuffer,
@@ -237,20 +277,45 @@ export async function runStandardAcpProvider(
         await handleAbort();
       },
     }), { exitOnCtrlC: false, patchConsole: false });
+  };
+  const unmountTerminalDisplay = async (): Promise<void> => {
+    if (!inkInstance) return;
+    inkInstance.unmount();
+    inkInstance = null;
+  };
+  config.onTerminalDisplayControllerReady?.({
+    mount: mountTerminalDisplay,
+    unmount: unmountTerminalDisplay,
+    isMounted: () => inkInstance !== null,
+  });
+  if (hasTTY && shouldRenderTerminalDisplay) {
+    mountTerminalDisplay();
   }
 
   let thinking = false;
   let shouldExit = false;
   let abortController = new AbortController();
-  session.keepAlive(thinking, 'remote');
-  const keepAliveInterval = setInterval(() => session.keepAlive(thinking, 'remote'), 2000);
+  const getKeepAliveMode = (): KeepAliveMode => config.resolveKeepAliveMode?.() ?? 'remote';
+  session.keepAlive(thinking, getKeepAliveMode());
+  const keepAliveInterval = setInterval(() => session.keepAlive(thinking, getKeepAliveMode()), 2000);
 
-  const runtimeDirectory = config.resolveRuntimeDirectory
-    ? config.resolveRuntimeDirectory({ session, metadata })
-    : metadata.path;
+  const runtimeDirectory = runtimeContext.runtimeDirectory;
+  const supportsMcpServers = (config.supportsMcpServers ?? true) && resolveAgentToolsDelivery(policyAgentId) === 'native_mcp';
+  const { happierMcpServer, mcpServers } = supportsMcpServers
+    ? await resolveRunnerMcpServersFn({
+      session,
+      credentials: opts.credentials,
+      accountSettings: opts.accountSettingsContext?.settings ?? null,
+      machineId,
+      directory: runtimeDirectory,
+      sessionMetadata: runtimeContext.sessionMetadataSnapshot ?? runtimeMetadata,
+    })
+    : { happierMcpServer: { url: '', stop: () => {} }, mcpServers: {} };
+  const memoryRecallGuidanceEnabled = await resolveCliMemoryRecallGuidanceEnabled();
   const runtime = config.createRuntime({
     directory: runtimeDirectory,
-    metadata,
+    metadata: runtimeMetadata,
+    machineId,
     session,
     messageBuffer,
     mcpServers,
@@ -259,6 +324,7 @@ export async function runStandardAcpProvider(
     setThinking: (value) => {
       thinking = value;
     },
+    memoryRecallGuidanceEnabled,
   });
   runtimeForInFlightSteer = runtime;
 
@@ -271,8 +337,9 @@ export async function runStandardAcpProvider(
       reconnectionHandle,
       stopMcpServer: () => happierMcpServer.stop(),
       resetRuntime: () => runtime.reset(),
-      unmountUi: () => inkInstance?.unmount(),
+      unmountUi: unmountTerminalDisplay,
     });
+    await config.onDispose?.({ session, runtime });
   };
 
   const handleAbort = async () => {
@@ -322,9 +389,17 @@ export async function runStandardAcpProvider(
         pushSender: api.push(),
         waitingForCommandLabel: config.waitingForCommandLabel,
         logPrefix: config.uiLogPrefix,
+        sessionTitle: getSessionNotificationTitle(session.getMetadataSnapshot?.bind(session) ?? null),
+        assistantPreviewText: getLatestAssistantMessagePreview(messageBuffer),
+        accountSettings: opts.accountSettingsContext?.settings ?? null,
+        settingsSecretsReadKeys: opts.accountSettingsContext?.settingsSecretsReadKeys ?? [],
+        includeAssistantPreviewText:
+          opts.accountSettingsContext?.settings?.notificationsSettingsV1?.readyIncludeMessageText !== false,
         shouldSendPush: () => shouldSendReadyPushNotification(opts.accountSettingsContext?.settings ?? null),
       });
     });
+
+  const initialResumeId = typeof opts.resume === 'string' ? opts.resume.trim() : '';
 
   try {
     await runPermissionModePromptLoopFn({
@@ -335,7 +410,7 @@ export async function runStandardAcpProvider(
       messageQueue,
       permissionHandler,
       runtime,
-      createOverrideSynchronizer: (isStarted) => createAcpRuntimeOverrideSynchronizers({
+      createOverrideSynchronizer: (isStarted) => createRuntimeOverrideSynchronizers({
         session,
         runtime,
         isStarted,
@@ -343,7 +418,7 @@ export async function runStandardAcpProvider(
       messageBuffer,
       shouldExit: () => shouldExit,
       getAbortSignal: () => abortController.signal,
-      keepAlive: () => session.keepAlive(thinking, 'remote'),
+      keepAlive: () => session.keepAlive(thinking, getKeepAliveMode()),
       setThinking: (value) => {
         thinking = value;
       },
@@ -351,8 +426,27 @@ export async function runStandardAcpProvider(
       currentPermissionModeUpdatedAt: permissionModeState.getCurrentPermissionModeUpdatedAt(),
       setCurrentPermissionMode: permissionModeState.setCurrentPermissionMode,
       setCurrentPermissionModeUpdatedAt: permissionModeState.setCurrentPermissionModeUpdatedAt,
-      initialResumeId: opts.resume,
-      strictInitialResume: typeof opts.resume === 'string' && opts.resume.trim().length > 0,
+      initialResumeId: initialResumeId || undefined,
+      strictInitialResume: initialResumeId.length > 0,
+      startRuntimeBeforeFirstPrompt: config.startRuntimeBeforeFirstPrompt === true,
+      resolveFreshSessionSystemPrompt: async ({ baseOverride }) =>
+        await resolveEffectiveCodingPromptText({
+          credentials: opts.credentials,
+          settings: opts.accountSettingsContext?.settings ?? null,
+          profileId: session.getMetadataSnapshot()?.profileId ?? null,
+          baseOverride,
+          executionRunsFeatureEnabled: resolveCliFeatureDecision({
+            featureId: 'execution.runs',
+            env: process.env,
+          }).state === 'enabled',
+          providerId: policyAgentId,
+          toolDelivery: resolveAgentToolsDelivery(policyAgentId),
+          toolDeliverySessionId: runtime.getSessionId(),
+          toolDeliveryDirectory: runtimeDirectory,
+          memoryMachineId: machineId,
+          memoryRecallGuidanceEnabled,
+          cache: promptArtifactBodyCache,
+        }),
       onAfterStart: config.onAfterStart ? () => config.onAfterStart?.({ session, runtime }) : undefined,
       onAfterReset: config.onAfterReset ? () => config.onAfterReset?.({ session, runtime }) : undefined,
       formatPromptErrorMessage: config.formatPromptErrorMessage,
