@@ -15,34 +15,28 @@ describe('ClaudeLocalPermissionBridge', () => {
     vi.useRealTimers();
   });
 
-  it('defaults to a 10 minute timeout before canceling when no UI response arrives', async () => {
+  it('times out non-interactive requests by default when no UI response arrives', async () => {
     const { session, client } = createPermissionHandlerSessionStub('session-default-timeout');
     const bridge = new ClaudeLocalPermissionBridge(session);
     bridge.activate();
 
-    let resolved = false;
     const pending = bridge.handlePermissionHook({
       hook_event_name: 'PermissionRequest',
       tool_name: 'Bash',
       tool_input: { command: 'npm --version' },
       tool_use_id: 'toolu_default_timeout_1',
     });
-    pending.then(() => {
-      resolved = true;
-    });
 
-    await vi.advanceTimersByTimeAsync(90_000);
-    expect(resolved).toBe(false);
-    expect(client.agentState.requests.toolu_default_timeout_1).toBeDefined();
-
-    await vi.advanceTimersByTimeAsync(10 * 60 * 1000 - 90_000);
+    await vi.advanceTimersByTimeAsync(10 * 60 * 1000);
     await expect(pending).resolves.toMatchObject({
       continue: true,
       suppressOutput: true,
       hookSpecificOutput: { hookEventName: 'PermissionRequest' },
     });
+    expect(client.agentState.requests.toolu_default_timeout_1).toBeUndefined();
     expect(client.agentState.completedRequests.toolu_default_timeout_1).toMatchObject({
       status: 'canceled',
+      reason: 'Timed out waiting for permission response',
     });
   });
 
@@ -119,6 +113,125 @@ describe('ClaudeLocalPermissionBridge', () => {
     expect(client.agentState.completedRequests.toolu_allow_updates_1).toMatchObject({
       status: 'approved',
       updatedPermissions: [{ type: 'setMode', mode: 'acceptEdits', destination: 'session' }],
+    });
+  });
+
+  it('auto-approves non-interactive tools immediately when permissionMode=yolo in metadata', async () => {
+    const { session, client } = createPermissionHandlerSessionStub('session-yolo-auto-approve');
+    client.updateMetadata((m) => ({ ...m, permissionMode: 'yolo', permissionModeUpdatedAt: 123 }));
+
+    const bridge = new ClaudeLocalPermissionBridge(session, { responseTimeoutMs: 5_000 });
+    bridge.activate();
+
+    const res = await bridge.handlePermissionHook({
+      hook_event_name: 'PermissionRequest',
+      tool_name: 'mcp__happier__change_title',
+      tool_input: { title: 'QA Agent Team Setup' },
+      tool_use_id: 'toolu_yolo_1',
+    });
+
+    expect(res).toMatchObject({
+      continue: true,
+      suppressOutput: true,
+      hookSpecificOutput: {
+        hookEventName: 'PermissionRequest',
+        decision: { behavior: 'allow' },
+      },
+    });
+    expect(client.agentState.requests.toolu_yolo_1).toBeUndefined();
+  });
+
+  it('auto-approves a pending request when metadata permissionMode flips to yolo', async () => {
+    const { session, client } = createPermissionHandlerSessionStub('session-yolo-auto-approve-pending');
+    const bridge = new ClaudeLocalPermissionBridge(session, { responseTimeoutMs: 5_000 });
+    bridge.activate();
+
+    const pending = bridge.handlePermissionHook({
+      hook_event_name: 'PermissionRequest',
+      tool_name: 'mcp__happier__change_title',
+      tool_input: { title: 'QA Agent Team Setup' },
+      tool_use_id: 'toolu_yolo_pending_1',
+    });
+
+    await vi.advanceTimersByTimeAsync(0);
+    expect(client.agentState.requests.toolu_yolo_pending_1).toBeDefined();
+
+    client.updateMetadata((m) => ({ ...m, permissionMode: 'yolo', permissionModeUpdatedAt: 456 }));
+    await vi.advanceTimersByTimeAsync(0);
+
+    await expect(pending).resolves.toMatchObject({
+      continue: true,
+      suppressOutput: true,
+      hookSpecificOutput: {
+        hookEventName: 'PermissionRequest',
+        decision: { behavior: 'allow' },
+      },
+    });
+    expect(client.agentState.requests.toolu_yolo_pending_1).toBeUndefined();
+    expect(client.agentState.completedRequests.toolu_yolo_pending_1).toMatchObject({ status: 'approved' });
+  });
+
+  it('hard-denies new write-like permission hooks immediately when permissionMode=read-only in metadata', async () => {
+    const { session, client } = createPermissionHandlerSessionStub('session-read-only-immediate-deny');
+    client.updateMetadata((m) => ({ ...m, permissionMode: 'read-only', permissionModeUpdatedAt: 123 }));
+
+    const bridge = new ClaudeLocalPermissionBridge(session, { responseTimeoutMs: 5_000 });
+    bridge.activate();
+
+    const res = await bridge.handlePermissionHook({
+      hook_event_name: 'PermissionRequest',
+      tool_name: 'Write',
+      tool_input: { file_path: '/tmp/test.txt', content: 'hello' },
+      tool_use_id: 'toolu_read_only_1',
+    });
+
+    expect(res).toMatchObject({
+      continue: true,
+      suppressOutput: true,
+      hookSpecificOutput: {
+        hookEventName: 'PermissionRequest',
+        decision: { behavior: 'deny' },
+      },
+    });
+    expect(client.agentState.requests.toolu_read_only_1).toBeUndefined();
+    expect(client.agentState.completedRequests.toolu_read_only_1).toMatchObject({
+      status: 'denied',
+      tool: 'Write',
+      mode: 'read-only',
+    });
+  });
+
+  it('hard-denies a pending write-like request when metadata permissionMode flips to read-only', async () => {
+    const { session, client } = createPermissionHandlerSessionStub('session-read-only-pending-deny');
+    const bridge = new ClaudeLocalPermissionBridge(session, { responseTimeoutMs: 5_000 });
+    bridge.activate();
+
+    const pending = bridge.handlePermissionHook({
+      hook_event_name: 'PermissionRequest',
+      tool_name: 'Write',
+      tool_input: { file_path: '/tmp/test.txt', content: 'hello' },
+      tool_use_id: 'toolu_read_only_pending_1',
+    });
+
+    await vi.advanceTimersByTimeAsync(0);
+    expect(client.agentState.requests.toolu_read_only_pending_1).toBeDefined();
+
+    client.updateMetadata((m) => ({ ...m, permissionMode: 'read-only', permissionModeUpdatedAt: 456 }));
+    await vi.advanceTimersByTimeAsync(0);
+
+    await expect(pending).resolves.toMatchObject({
+      continue: true,
+      suppressOutput: true,
+      hookSpecificOutput: {
+        hookEventName: 'PermissionRequest',
+        decision: { behavior: 'deny' },
+      },
+    });
+    expect(client.agentState.requests.toolu_read_only_pending_1).toBeUndefined();
+    expect(client.agentState.completedRequests.toolu_read_only_pending_1).toMatchObject({
+      status: 'denied',
+      tool: 'Write',
+      mode: 'read-only',
     });
   });
 
@@ -250,6 +363,63 @@ describe('ClaudeLocalPermissionBridge', () => {
     expect(client.agentState.requests.toolu_timeout_1).toBeUndefined();
     expect(client.agentState.completedRequests.toolu_timeout_1).toMatchObject({
       status: 'canceled',
+    });
+  });
+
+  it('does not time out interactive AskUserQuestion requests even when the bridge has a finite timeout', async () => {
+    const { session, client } = createPermissionHandlerSessionStub('session-ask-user-question-no-timeout');
+    const bridge = new ClaudeLocalPermissionBridge(session, { responseTimeoutMs: 200 });
+    bridge.activate();
+
+    let resolved = false;
+    const pending = bridge.handlePermissionHook({
+      hook_event_name: 'PermissionRequest',
+      tool_name: 'AskUserQuestion',
+      tool_input: {
+        questions: [
+          {
+            header: 'File write',
+            question: 'May I create the file /tmp/qa.txt?',
+            multiSelect: false,
+            options: [
+              { label: 'Yes, go ahead', description: 'Create the file' },
+              { label: `No, don't create it`, description: 'Skip file creation' },
+            ],
+          },
+        ],
+      },
+      tool_use_id: 'toolu_ask_1',
+    });
+    pending.then(() => {
+      resolved = true;
+    });
+
+    await vi.advanceTimersByTimeAsync(200);
+    expect(resolved).toBe(false);
+    expect(client.agentState.requests.toolu_ask_1).toMatchObject({
+      tool: 'AskUserQuestion',
+    });
+    expect(client.agentState.completedRequests.toolu_ask_1).toBeUndefined();
+
+    const permissionHandler = client.rpcHandlerManager.getHandler('permission');
+    expect(permissionHandler).toBeDefined();
+    await permissionHandler?.({
+      id: 'toolu_ask_1',
+      approved: true,
+      answers: { 'May I create the file /tmp/qa.txt?': 'Yes, go ahead' },
+    });
+
+    await expect(pending).resolves.toMatchObject({
+      continue: true,
+      suppressOutput: true,
+      hookSpecificOutput: {
+        hookEventName: 'PermissionRequest',
+        decision: { behavior: 'allow' },
+      },
+    });
+    expect(client.agentState.completedRequests.toolu_ask_1).toMatchObject({
+      status: 'approved',
+      tool: 'AskUserQuestion',
     });
   });
 
@@ -430,5 +600,51 @@ describe('ClaudeLocalPermissionBridge', () => {
     } finally {
       await rm(dir, { recursive: true, force: true });
     }
+  });
+
+  it('aborts the metadata watcher when disposed', async () => {
+    const { session, client } = createPermissionHandlerSessionStub('session-dispose-aborts-watcher');
+    const waitSpy = vi.spyOn(client, 'waitForMetadataUpdate');
+
+    const bridge = new ClaudeLocalPermissionBridge(session, { responseTimeoutMs: 5_000 });
+    bridge.activate();
+
+    expect(waitSpy).toHaveBeenCalled();
+    const signal = waitSpy.mock.calls[0]?.[0];
+    expect(signal).toBeDefined();
+    expect(signal?.aborted).toBe(false);
+
+    bridge.dispose();
+
+    expect(signal?.aborted).toBe(true);
+  });
+
+  it('backs off after metadata watcher failures instead of spinning immediately', async () => {
+    const { session, client } = createPermissionHandlerSessionStub('session-metadata-watcher-backoff');
+    let calls = 0;
+    const waitSpy = vi.spyOn(client, 'waitForMetadataUpdate').mockImplementation(async () => {
+      calls += 1;
+      if (calls === 1) {
+        return false;
+      }
+      return await new Promise<boolean>(() => {});
+    });
+
+    const bridge = new ClaudeLocalPermissionBridge(session, { responseTimeoutMs: 5_000 });
+    bridge.activate();
+
+    await Promise.resolve();
+    expect(waitSpy).toHaveBeenCalledTimes(1);
+    const signal = waitSpy.mock.calls[0]?.[0] as AbortSignal;
+    const removeSpy = vi.spyOn(signal, 'removeEventListener');
+
+    await vi.advanceTimersByTimeAsync(25);
+    expect(waitSpy).toHaveBeenCalledTimes(1);
+
+    await vi.advanceTimersByTimeAsync(250);
+    expect(waitSpy).toHaveBeenCalledTimes(2);
+    expect(removeSpy).toHaveBeenCalledWith('abort', expect.any(Function));
+
+    bridge.dispose();
   });
 });

@@ -137,7 +137,7 @@ describe('ClaudeLocalPermissionBridge (response state)', () => {
     bridge.dispose();
   });
 
-  it('allows a newer metadata snapshot to override a mode applied from a permission RPC response', async () => {
+  it('ignores older metadata snapshots after a permission RPC response updates the mode', async () => {
     const { session, client } = createPermissionHandlerSessionStub('session-response-mode-metadata-override');
     const bridge = new ClaudeLocalPermissionBridge(session, { responseTimeoutMs: 5_000 });
     bridge.activate();
@@ -164,11 +164,29 @@ describe('ClaudeLocalPermissionBridge (response state)', () => {
     }));
     await vi.advanceTimersByTimeAsync(0);
 
+    const readAttempt = await bridge.handlePermissionHook({
+      hook_event_name: 'PermissionRequest',
+      tool_name: 'Read',
+      tool_input: { file_path: '/tmp/b.txt' },
+      tool_use_id: 'toolu_mode_override_2',
+    });
+
+    expect(readAttempt).toMatchObject({
+      hookSpecificOutput: { decision: { behavior: 'allow' } },
+    });
+
+    client.updateMetadata((metadata) => ({
+      ...metadata,
+      permissionMode: 'read-only',
+      permissionModeUpdatedAt: Date.now() + 1_000,
+    }));
+    await vi.advanceTimersByTimeAsync(0);
+
     const writeAttempt = await bridge.handlePermissionHook({
       hook_event_name: 'PermissionRequest',
       tool_name: 'Write',
       tool_input: { file_path: '/tmp/a.txt', content: 'hello' },
-      tool_use_id: 'toolu_mode_override_2',
+      tool_use_id: 'toolu_mode_override_3',
     });
 
     expect(writeAttempt).toMatchObject({

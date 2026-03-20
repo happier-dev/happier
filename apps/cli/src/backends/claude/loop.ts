@@ -7,6 +7,7 @@ import { claudeRemoteLauncher } from "./claudeRemoteLauncher"
 import type { JsRuntime } from "./runClaude"
 import type { PushNotificationClient } from "@/api/pushNotifications"
 import type { AccountSettings } from '@happier-dev/protocol';
+import type { McpServerConfig } from '@/agent';
 
 // Re-export permission mode type from api/types
 // Single unified type with 7 modes - Codex modes mapped at SDK boundary
@@ -57,6 +58,7 @@ interface LoopOptions {
     session: SessionClientPort
     pushSender?: PushNotificationClient | null
     accountSettings?: AccountSettings | null
+    accountSettingsSecretsReadKeys?: readonly Uint8Array[]
     claudeArgs?: string[]
     messageQueue: MessageQueue2<EnhancedMode>
     onSessionReady?: (session: Session) => void
@@ -65,6 +67,8 @@ interface LoopOptions {
     /** JavaScript runtime to use for spawning Claude Code (default: 'node') */
     jsRuntime?: JsRuntime
     startedBy?: 'daemon' | 'terminal'
+    defaultSystemPromptText?: string
+    precomputedMcpBridge?: { mcpServers: Record<string, McpServerConfig>; stop: () => void } | null
 }
 
 export async function loop(opts: LoopOptions): Promise<number> {
@@ -75,6 +79,7 @@ export async function loop(opts: LoopOptions): Promise<number> {
         client: opts.session,
         pushSender: opts.pushSender ?? null,
         accountSettings: opts.accountSettings ?? null,
+        accountSettingsSecretsReadKeys: opts.accountSettingsSecretsReadKeys ?? [],
         path: opts.path,
         sessionId: null,
         claudeArgs: opts.claudeArgs,
@@ -84,6 +89,8 @@ export async function loop(opts: LoopOptions): Promise<number> {
         hookSettingsPath: opts.hookSettingsPath,
         jsRuntime: opts.jsRuntime,
         startedBy: opts.startedBy ?? 'terminal',
+        defaultSystemPromptText: opts.defaultSystemPromptText,
+        precomputedMcpBridge: opts.precomputedMcpBridge ?? null,
     });
     session.claudeCodeExperimentalAgentTeamsEnabled = opts.claudeCodeExperimentalAgentTeamsEnabled === true;
 

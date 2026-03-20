@@ -6,29 +6,14 @@ import { query } from '@/backends/claude/sdk/query';
 import type { SDKAssistantMessage, SDKMessage, SDKResultMessage, SDKSystemMessage } from '@/backends/claude/sdk/types';
 import { createSubprocessStderrAppender, type BoundedTextFileAppender } from '@/agent/runtime/subprocessArtifacts';
 import { CHANGE_TITLE_INSTRUCTION } from '@/agent/runtime/changeTitleInstruction';
+import { emitCanonicalTurnDiffTool } from '@/agent/runtime/emitCanonicalTurnDiffTool';
+import { ensureClaudeJsRuntimeExecutable } from '@/backends/claude/utils/ensureClaudeJsRuntimeExecutable';
 import { CHANGE_TITLE_TOOL_NAME_ALIASES } from '@happier-dev/protocol/tools/v2';
+import { ClaudeTurnChangeTracker } from '../utils/ClaudeTurnChangeTracker';
+import { isClaudeExplicitDiffToolInput } from '../utils/isClaudeExplicitDiffToolInput';
+import { isReadOnlyClaudeSdkToolAllowed } from './isReadOnlyClaudeSdkToolAllowed';
 
 export type ClaudeSdkPermissionPolicy = 'no_tools' | 'read_only' | 'workspace_write';
-
-const READ_ONLY_SAFE_TOOL_NAMES = new Set([
-  'fetch',
-  'read',
-  'search',
-  'grep',
-  'glob',
-  'ls',
-  'list',
-  'webfetch',
-  'websearch',
-  'todoread',
-]);
-
-function normalizeToolNameForPolicy(toolName: string): string {
-  return String(toolName ?? '')
-    .trim()
-    .toLowerCase()
-    .replace(/[^a-z0-9]/g, '');
-}
 
 export class ClaudeSdkAgentBackend implements AgentBackend {
   private readonly listeners: AgentMessageHandler[] = [];
@@ -37,6 +22,8 @@ export class ClaudeSdkAgentBackend implements AgentBackend {
   private readonly env: NodeJS.ProcessEnv;
   private stderrAppender: BoundedTextFileAppender | null = null;
   private readonly toolNameByCallId = new Map<string, string>();
+  private readonly suppressedExplicitDiffCallIds = new Set<string>();
+  private readonly turnChangeTracker = new ClaudeTurnChangeTracker();
   private query: ReturnType<typeof query> | null = null;
 
   private readonly localSessionId: SessionId = `voice-agent-claude-${randomUUID()}`;
@@ -49,6 +36,7 @@ export class ClaudeSdkAgentBackend implements AgentBackend {
 
   private queryIter: AsyncIterableIterator<SDKMessage> | null = null;
   private loopPromise: Promise<void> | null = null;
+  private fatalError: Error | null = null;
 
   private sendChain: Promise<void> = Promise.resolve();
   private pendingTurn: { resolve: () => void; reject: (e: Error) => void; buffer: string[] } | null = null;
@@ -125,11 +113,13 @@ export class ClaudeSdkAgentBackend implements AgentBackend {
       pid: null,
       label: 'claude-sdk',
     });
+    const runtimeExecutable = await ensureClaudeJsRuntimeExecutable();
     const q = query({
       prompt: this.promptStream,
       options: {
         cwd: this.opts.cwd,
         model: model ?? undefined,
+        executable: runtimeExecutable,
         canCallTool,
         settingsPath: this.opts.settingsPath,
         env: this.env,
@@ -151,6 +141,7 @@ export class ClaudeSdkAgentBackend implements AgentBackend {
       throw new Error(`Unknown sessionId: ${sessionId}`);
     }
     if (this.disposed) throw new Error('Backend disposed');
+    if (this.fatalError) throw this.fatalError;
     if (!this.started) {
       await this.startSession();
     }
@@ -165,6 +156,7 @@ export class ClaudeSdkAgentBackend implements AgentBackend {
     // Serialize turns: enqueue the prompt only once the previous turn has settled.
     const run = async () => {
       if (this.disposed) throw new Error('Backend disposed');
+      if (this.fatalError) throw this.fatalError;
 
       try {
         let completionResolve!: () => void;
@@ -176,6 +168,7 @@ export class ClaudeSdkAgentBackend implements AgentBackend {
 
         this.pendingTurn = { resolve: completionResolve, reject: completionReject, buffer: [] };
         this.pendingTurnCompletion = completionPromise;
+        this.turnChangeTracker.beginTurn();
 
         const effectivePrompt = (() => {
           const raw = typeof prompt === 'string' ? prompt : '';
@@ -218,6 +211,7 @@ export class ClaudeSdkAgentBackend implements AgentBackend {
       throw new Error(`Unknown sessionId: ${sessionId}`);
     }
     if (this.disposed) throw new Error('Backend disposed');
+    if (this.fatalError) throw this.fatalError;
     if (!this.started) {
       await this.startSession();
     }
@@ -248,6 +242,7 @@ export class ClaudeSdkAgentBackend implements AgentBackend {
       const pending = this.pendingTurn;
       this.pendingTurn = null;
       this.pendingTurnCompletion = null;
+      this.turnChangeTracker.resetTurn();
       pending?.reject(new Error('Turn cancelled'));
     }
 
@@ -262,7 +257,10 @@ export class ClaudeSdkAgentBackend implements AgentBackend {
   async waitForResponseComplete(timeoutMs?: number): Promise<void> {
     if (this.disposed) throw new Error('Backend disposed');
     const completion = this.pendingTurnCompletion;
-    if (!completion) return;
+    if (!completion) {
+      if (this.fatalError) throw this.fatalError;
+      return;
+    }
 
     const ms = typeof timeoutMs === 'number' && Number.isFinite(timeoutMs) && timeoutMs >= 1 ? Math.floor(timeoutMs) : 120_000;
     await Promise.race([
@@ -280,6 +278,7 @@ export class ClaudeSdkAgentBackend implements AgentBackend {
     if (pending) {
       this.pendingTurn = null;
       this.pendingTurnCompletion = null;
+      this.suppressedExplicitDiffCallIds.clear();
       pending.reject(new Error('Agent disposed'));
     }
     try {
@@ -318,8 +317,7 @@ export class ClaudeSdkAgentBackend implements AgentBackend {
     }
 
     return async (toolName: string, input: unknown) => {
-      const normalizedToolName = normalizeToolNameForPolicy(toolName);
-      if (!READ_ONLY_SAFE_TOOL_NAMES.has(normalizedToolName)) {
+      if (!isReadOnlyClaudeSdkToolAllowed(toolName, input)) {
         return { behavior: 'deny', message: `Tool denied by voice agent policy: ${toolName}`, interrupt: true } as const;
       }
       const updatedInput = input && typeof input === 'object' ? (input as Record<string, unknown>) : {};
@@ -329,9 +327,27 @@ export class ClaudeSdkAgentBackend implements AgentBackend {
 
   private async runLoop(): Promise<void> {
     if (!this.queryIter) return;
-    for await (const msg of this.queryIter) {
-      if (this.disposed) return;
-      this.handleSdkMessage(msg);
+    try {
+      for await (const msg of this.queryIter) {
+        if (this.disposed) return;
+        this.handleSdkMessage(msg);
+      }
+    } catch (error) {
+      const fatal = error instanceof Error ? error : new Error(String(error));
+      this.fatalError = fatal;
+
+      const pending = this.pendingTurn;
+      if (pending) {
+        this.pendingTurn = null;
+        this.pendingTurnCompletion = null;
+        this.turnChangeTracker.resetTurn();
+        this.suppressedExplicitDiffCallIds.clear();
+        pending.reject(fatal);
+      }
+
+      if (!this.disposed) {
+        this.emit({ type: 'status', status: 'error', detail: fatal.message });
+      }
     }
   }
 
@@ -357,6 +373,13 @@ export class ClaudeSdkAgentBackend implements AgentBackend {
           if ((block as any).type !== 'tool_result') continue;
           const callId = typeof (block as any).tool_use_id === 'string' ? String((block as any).tool_use_id) : '';
           if (!callId) continue;
+          this.turnChangeTracker.observeToolResult({
+            callId,
+            isError: (block as any).is_error === true,
+          });
+          if (this.suppressedExplicitDiffCallIds.has(callId)) {
+            continue;
+          }
           const toolName = this.toolNameByCallId.get(callId) ?? 'unknown';
           this.emit({
             type: 'tool-result',
@@ -386,6 +409,16 @@ export class ClaudeSdkAgentBackend implements AgentBackend {
             rawInput && typeof rawInput === 'object' && !Array.isArray(rawInput)
               ? (rawInput as Record<string, unknown>)
               : {};
+          this.turnChangeTracker.observeToolCall({
+            callId,
+            toolName,
+            args,
+            parentToolUseId: assistant.parent_tool_use_id,
+          });
+          if (isClaudeExplicitDiffToolInput(toolName, args)) {
+            this.suppressedExplicitDiffCallIds.add(callId);
+            continue;
+          }
           this.emit({ type: 'tool-call', toolName, callId, args });
         }
       }
@@ -408,8 +441,31 @@ export class ClaudeSdkAgentBackend implements AgentBackend {
       this.noteVendorSessionId(result.session_id);
       this.emitTokenCountTelemetry(result);
     if (result.subtype === 'success') {
+      const turnChangeSet = this.turnChangeTracker.completeTurn({
+        sessionId: this.vendorSessionId ?? this.localSessionId,
+        status: 'completed',
+      });
+      if (turnChangeSet) {
+        emitCanonicalTurnDiffTool({
+          turnChangeSet,
+          protocol: 'claude',
+          rawToolName: 'ClaudeTurnDiff',
+          sendToolCall: ({ toolName, input, callId }) => {
+            const resolvedCallId = callId ?? randomUUID();
+            const args = input && typeof input === 'object' && !Array.isArray(input)
+              ? (input as Record<string, unknown>)
+              : {};
+            this.emit({ type: 'tool-call', toolName, callId: resolvedCallId, args });
+            return resolvedCallId;
+          },
+          sendToolResult: ({ callId, output }) => {
+            this.emit({ type: 'tool-result', toolName: 'Diff', callId, result: output });
+          },
+        });
+      }
       // A completed turn means tool call ids won't be reused; keep memory bounded.
       this.toolNameByCallId.clear();
+      this.suppressedExplicitDiffCallIds.clear();
     }
     if (result.subtype === 'success') {
       if (this.ignoreNextNonSuccessResult) {
@@ -428,6 +484,8 @@ export class ClaudeSdkAgentBackend implements AgentBackend {
 
     if (this.ignoreNextNonSuccessResult) {
       this.ignoreNextNonSuccessResult = false;
+      this.turnChangeTracker.resetTurn();
+      this.suppressedExplicitDiffCallIds.clear();
       this.emit({ type: 'status', status: 'idle' });
       return;
     }
@@ -436,6 +494,8 @@ export class ClaudeSdkAgentBackend implements AgentBackend {
     if (pending) {
       this.pendingTurn = null;
       this.pendingTurnCompletion = null;
+      this.turnChangeTracker.resetTurn();
+      this.suppressedExplicitDiffCallIds.clear();
       pending.reject(new Error(`Claude SDK error: ${result.subtype}`));
     }
     this.emit({ type: 'status', status: 'error', detail: String(result.subtype) });

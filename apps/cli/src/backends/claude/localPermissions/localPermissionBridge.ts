@@ -37,7 +37,7 @@ type CompletionStatus = 'approved' | 'denied' | 'canceled';
 
 type AgentStateRequestEntry = NonNullable<AgentState['requests']>[string];
 
-const DEFAULT_RESPONSE_TIMEOUT_MS: number | null = null;
+const DEFAULT_RESPONSE_TIMEOUT_MS = 10 * 60 * 1000;
 const PERMISSION_TIMED_OUT_REASON = 'Timed out waiting for permission response';
 const TRANSCRIPT_TAIL_BYTES = 512 * 1024;
 
@@ -255,6 +255,12 @@ export class ClaudeLocalPermissionBridge {
         this.permissionMode = canonical;
         this.tryAutoCompletePendingRequestsForPermissionMode();
         return canonical;
+    }
+
+    private applyPermissionModeFromRpc(mode: PermissionMode, excludeRequestId?: string): void {
+        this.permissionMode = mode;
+        this.permissionModeUpdatedAt = Math.max(this.permissionModeUpdatedAt, Date.now());
+        this.tryAutoCompletePendingRequestsForPermissionMode(excludeRequestId);
     }
 
     private startMetadataWatcher(): void {
@@ -554,8 +560,7 @@ export class ClaudeLocalPermissionBridge {
         }
 
         if (payload.approved && params.resolvedMode) {
-            this.permissionMode = params.resolvedMode;
-            this.tryAutoCompletePendingRequestsForPermissionMode(params.excludeRequestId);
+            this.applyPermissionModeFromRpc(params.resolvedMode, params.excludeRequestId);
         }
 
         if (payload.approved) {
@@ -648,6 +653,7 @@ export class ClaudeLocalPermissionBridge {
         this.permissionRequestPushNotifier = new PermissionRequestPushNotifier({
             pushSender: this.session.pushSender,
             getSettings: () => this.session.accountSettings ?? null,
+            getSettingsSecretsReadKeys: () => this.session.accountSettingsSecretsReadKeys,
             sessionId: this.session.client.sessionId,
             logPrefix: '[claude-local-permissions]',
             onNotifiedAt: (permissionId, notifiedAtMs) => {

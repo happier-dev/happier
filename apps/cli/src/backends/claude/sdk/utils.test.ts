@@ -3,6 +3,8 @@ import { mkdtempSync, mkdirSync, writeFileSync, chmodSync, rmSync } from 'node:f
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 
+import { getProviderCliRuntimeSpec } from '@happier-dev/agents';
+
 import { getDefaultClaudeCodePath, getDefaultClaudeCodePathForAgentSdk } from './utils';
 
 const originalEnv = { ...process.env };
@@ -84,7 +86,41 @@ describe('Claude SDK utils - getDefaultClaudeCodePath', () => {
         process.env.PATH = join(workDir, 'empty-path-2');
         mkdirSync(process.env.PATH, { recursive: true });
 
-        expect(() => getDefaultClaudeCodePath()).toThrow(/Claude Code.*not installed/i);
+        const runtimeSpec = getProviderCliRuntimeSpec('claude');
+        const installGuideUrl = runtimeSpec.installGuideUrl ?? runtimeSpec.docsUrl ?? '';
+        const unixRecipe = runtimeSpec.manualInstallRecipes?.linux?.[0];
+        const windowsRecipe = runtimeSpec.manualInstallRecipes?.win32?.[0];
+        expect(() => getDefaultClaudeCodePath()).toThrowError(
+            expect.objectContaining({
+                message: expect.stringContaining(`Setup guide: ${installGuideUrl}`),
+            }),
+        );
+        expect(() => getDefaultClaudeCodePath()).toThrowError(
+            expect.objectContaining({
+                message: expect.stringContaining('HAPPIER_CLAUDE_PATH'),
+            }),
+        );
+        if (unixRecipe?.cmd === 'bash' && unixRecipe.args[0] === '-lc' && typeof unixRecipe.args[1] === 'string') {
+            expect(() => getDefaultClaudeCodePath()).toThrowError(
+                expect.objectContaining({
+                    message: expect.stringContaining(unixRecipe.args[1]),
+                }),
+            );
+        }
+        if (
+            windowsRecipe?.cmd === 'powershell'
+            && windowsRecipe.args[0] === '-NoProfile'
+            && windowsRecipe.args[1] === '-ExecutionPolicy'
+            && windowsRecipe.args[2] === 'Bypass'
+            && windowsRecipe.args[3] === '-Command'
+            && typeof windowsRecipe.args[4] === 'string'
+        ) {
+            expect(() => getDefaultClaudeCodePath()).toThrowError(
+                expect.objectContaining({
+                    message: expect.stringContaining(windowsRecipe.args[4]),
+                }),
+            );
+        }
     });
 
     it('returns %USERPROFILE%/.local/bin/claude.exe when installed there on Windows', () => {

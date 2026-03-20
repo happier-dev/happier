@@ -26,6 +26,8 @@ import { getDefaultClaudeCodePath, getCleanEnv, logDebug, streamToStdin } from '
 import type { Writable } from 'node:stream'
 import { logger } from '@/ui/logger'
 import { createManagedChildProcess } from '@/subprocess/supervision/managedChildProcess'
+import { resolveJavaScriptRuntimeExecutable } from '@/runtime/js/resolveJavaScriptRuntimeExecutable'
+import { buildMissingJavaScriptRuntimeMessage } from '@/runtime/js/buildMissingJavaScriptRuntimeMessage'
 import { stripNestedSessionDetectionEnv } from '@/utils/processEnv/stripNestedSessionDetectionEnv'
 import { resolveWindowsCommandInvocation } from '@happier-dev/cli-common/process'
 
@@ -277,10 +279,9 @@ export function query(config: {
 	            appendSystemPrompt,
 	            customSystemPrompt,
 	            cwd,
-	            // Prefer the currently-running Node binary when available to avoid PATH-dependent
-	            // failures on Windows (and GUI-launched shells). When running under Bun we keep
-	            // the historical default ("node") because process.execPath would be Bun.
-	            executable = typeof process.versions.bun === 'string' ? 'node' : process.execPath,
+	            executable = resolveJavaScriptRuntimeExecutable({
+                isBunRuntime: typeof process.versions.bun === 'string',
+              }),
 	            executableArgs = [],
 	            maxTurns,
 	            pathToClaudeCodeExecutable = getDefaultClaudeCodePath(),
@@ -339,21 +340,30 @@ export function query(config: {
     }
 
     // Determine how to spawn Claude Code
-    // - If it's a .js/.cjs file → spawn('node', [path, ...args])
+    // - If it's a .js/.cjs file → spawn the resolved JS runtime with [path, ...args]
     // - If it's just 'claude' command → resolve + wrap on Windows (PATHEXT .cmd/.bat)
     // - If it's a full path to binary → spawn(path, args)
     const isJsFile = pathToClaudeCodeExecutable.endsWith('.js') || pathToClaudeCodeExecutable.endsWith('.cjs')
     const isCommandOnly = pathToClaudeCodeExecutable === 'claude'
     const resolvedExecutable =
-      executable === 'node' && typeof process.versions.bun !== 'string' ? process.execPath : executable
-    
+      executable === 'node'
+        ? resolveJavaScriptRuntimeExecutable({
+            isBunRuntime: typeof process.versions.bun === 'string',
+          })
+        : executable
+
     // Validate executable path (skip for command-only mode)
     if (!isCommandOnly && !existsSync(pathToClaudeCodeExecutable)) {
         throw new ReferenceError(`Claude Code executable not found at ${pathToClaudeCodeExecutable}. Is options.pathToClaudeCodeExecutable set?`)
     }
 
-    const spawnCommand = isJsFile ? resolvedExecutable : pathToClaudeCodeExecutable
-    const spawnArgs = isJsFile 
+    // Fail closed if no JavaScript runtime is available (binary-safe runtime contract)
+    if (isJsFile && !resolvedExecutable) {
+        throw new ReferenceError(buildMissingJavaScriptRuntimeMessage('Claude Code'))
+    }
+
+    const spawnCommand = isJsFile ? resolvedExecutable! : pathToClaudeCodeExecutable
+    const spawnArgs = isJsFile
         ? [...executableArgs, pathToClaudeCodeExecutable, ...args]
         : args
 

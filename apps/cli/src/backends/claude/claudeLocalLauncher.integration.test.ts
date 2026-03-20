@@ -224,6 +224,21 @@ describe('claudeLocalLauncher', () => {
     expect(result).toEqual({ type: 'exit', code: 0 });
   });
 
+  it('preserves CLI bypass-permissions intent on the first local launch before metadata catches up', async () => {
+    const { session } = createLocalHarness();
+    session.claudeArgs = ['--dangerously-skip-permissions'];
+
+    mockClaudeLocal.mockImplementationOnce(async (opts: LocalLaunchOptions) => {
+      expect(opts.claudeArgs).toEqual(['--permission-mode', 'bypassPermissions']);
+    });
+
+    const { claudeLocalLauncher } = await import('./claudeLocalLauncher');
+    const result = await claudeLocalLauncher(session);
+
+    expect(mockClaudeLocal).toHaveBeenCalledTimes(1);
+    expect(result).toEqual({ type: 'exit', code: 0 });
+  });
+
   it('does not block initial local startup on pending-queue inspection', async () => {
     const { session, client } = createLocalHarness();
 
@@ -350,25 +365,169 @@ describe('claudeLocalLauncher', () => {
   });
 
   it('surfaces transcript missing warnings to the UI', async () => {
-    const { session, sendSessionEvent } = createLocalHarness();
+    const previousWarningMs = process.env.HAPPIER_CLAUDE_TRANSCRIPT_MISSING_WARNING_MS;
+    process.env.HAPPIER_CLAUDE_TRANSCRIPT_MISSING_WARNING_MS = '20000';
+    vi.resetModules();
+    try {
+      const { session, sendSessionEvent } = createLocalHarness();
+
+      mockCreateSessionScanner.mockImplementation(async (opts: SessionScannerOptions) => {
+        expect(opts.transcriptMissingWarningMs).toBe(20000);
+        opts.onTranscriptMissing?.({ sessionId: 'sess_1', filePath: '/tmp/sess_1.jsonl' });
+        return createSessionScannerStub();
+      });
+
+      mockClaudeLocal.mockImplementationOnce(async () => {});
+
+      const { claudeLocalLauncher } = await import('./claudeLocalLauncher');
+      const result = await claudeLocalLauncher(session);
+
+      expect(result).toEqual({ type: 'exit', code: 0 });
+      expect(sendSessionEvent).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: 'message',
+          message: expect.stringContaining('transcript not available'),
+        }),
+      );
+      expect(
+        sendSessionEvent.mock.calls
+          .flatMap((call) => call)
+          .map((payload) => (payload as any)?.message)
+          .filter((msg): msg is string => typeof msg === 'string')
+          .some((msg) => msg.toLowerCase().includes('file not found')),
+      ).toBe(false);
+    } finally {
+      process.env.HAPPIER_CLAUDE_TRANSCRIPT_MISSING_WARNING_MS = previousWarningMs;
+      vi.resetModules();
+    }
+  });
+
+  it('emits a canonical Diff transcript tool after a successful local write-like turn', async () => {
+    const { session, client } = createLocalHarness();
+    let scannerOptions: SessionScannerOptions | null = null;
 
     mockCreateSessionScanner.mockImplementation(async (opts: SessionScannerOptions) => {
-      opts.onTranscriptMissing?.({ sessionId: 'sess_1', filePath: '/tmp/sess_1.jsonl' });
+      scannerOptions = opts;
       return createSessionScannerStub();
     });
 
-    mockClaudeLocal.mockImplementationOnce(async () => {});
+    mockClaudeLocal.mockImplementationOnce(async () => {
+      if (!scannerOptions) {
+        throw new Error('scanner options not captured');
+      }
+
+      scannerOptions.onMessage({
+        type: 'assistant',
+        uuid: 'assistant_tool_use_1',
+        isSidechain: false,
+        message: {
+          role: 'assistant',
+          content: [
+            {
+              type: 'tool_use',
+              id: 'tool_write_1',
+              name: 'Write',
+              input: {
+                file_path: '/Users/leeroy/Documents/Development/happier/dev/session-changes-qa-root.txt',
+                content: 'gamma\n',
+              },
+            },
+          ],
+          stop_reason: 'tool_use',
+        },
+      } as any);
+
+      scannerOptions.onMessage({
+        type: 'user',
+        uuid: 'user_tool_result_1',
+        isSidechain: false,
+        message: {
+          role: 'user',
+          content: [
+            {
+              type: 'tool_result',
+              tool_use_id: 'tool_write_1',
+              content: 'updated',
+              is_error: false,
+            },
+          ],
+        },
+        toolUseResult: {
+          type: 'update',
+          filePath: '/Users/leeroy/Documents/Development/happier/dev/session-changes-qa-root.txt',
+          content: 'gamma\n',
+          originalFile: 'beta\n',
+          structuredPatch: [
+            {
+              oldStart: 1,
+              oldLines: 1,
+              newStart: 1,
+              newLines: 1,
+              lines: ['-beta', '+gamma'],
+            },
+          ],
+        },
+      } as any);
+
+      scannerOptions.onMessage({
+        type: 'assistant',
+        uuid: 'assistant_end_turn_1',
+        isSidechain: false,
+        message: {
+          role: 'assistant',
+          content: [{ type: 'text', text: 'Done.' }],
+          stop_reason: 'end_turn',
+        },
+      } as any);
+    });
 
     const { claudeLocalLauncher } = await import('./claudeLocalLauncher');
     const result = await claudeLocalLauncher(session);
 
     expect(result).toEqual({ type: 'exit', code: 0 });
-    expect(sendSessionEvent).toHaveBeenCalledWith(
-      expect.objectContaining({
-        type: 'message',
-        message: expect.any(String),
-      }),
+
+    const sendClaudeSessionMessageMock = client.sendClaudeSessionMessage as ReturnType<typeof vi.fn>;
+    const diffCall = sendClaudeSessionMessageMock.mock.calls.find((call: any[]) => {
+      const content = Array.isArray(call?.[0]?.message?.content) ? call[0].message.content : [];
+      return content.some((block: any) => block?.type === 'tool_use' && block?.name === 'Diff');
+    });
+
+    expect(diffCall).toBeTruthy();
+    const diffCallBlock = diffCall?.[0]?.message?.content?.find(
+      (block: any) => block?.type === 'tool_use' && block?.name === 'Diff',
     );
+    expect(diffCallBlock?.input?._happier).toMatchObject({
+      protocol: 'claude',
+      provider: 'claude',
+      canonicalToolName: 'Diff',
+      sessionChangeScope: 'turn',
+      source: 'provider_tool',
+      confidence: 'exact',
+    });
+    expect(diffCallBlock?.input?.files).toEqual([
+      expect.objectContaining({
+        file_path: '/Users/leeroy/Documents/Development/happier/dev/session-changes-qa-root.txt',
+        oldText: 'beta\n',
+        newText: 'gamma\n',
+      }),
+    ]);
+
+    const finalAssistantIndex = sendClaudeSessionMessageMock.mock.calls.findIndex((call: any[]) => {
+      const content = Array.isArray(call?.[0]?.message?.content) ? call[0].message.content : [];
+      return content.some((block: any) => block?.type === 'text' && block?.text === 'Done.');
+    });
+    const diffCallIndex = sendClaudeSessionMessageMock.mock.calls.findIndex((call: any[]) => {
+      const content = Array.isArray(call?.[0]?.message?.content) ? call[0].message.content : [];
+      return content.some((block: any) => block?.type === 'tool_use' && block?.name === 'Diff');
+    });
+    expect(finalAssistantIndex).toBeGreaterThanOrEqual(0);
+    expect(diffCallIndex).toBeGreaterThan(finalAssistantIndex);
+
+    const diffResult = sendClaudeSessionMessageMock.mock.calls.find((call: any[]) => {
+      const content = Array.isArray(call?.[0]?.message?.content) ? call[0].message.content : [];
+      return content.some((block: any) => block?.type === 'tool_result' && typeof block?.tool_use_id === 'string');
+    });
+    expect(diffResult).toBeTruthy();
   });
 
   it('passes transcriptPath to sessionScanner when already known', async () => {
@@ -448,7 +607,7 @@ describe('claudeLocalLauncher', () => {
     const switchHandler = await switchHandlerReady;
     await localStarted.promise;
 
-    expect(await switchHandler({ to: 'local' })).toBe(false);
+    expect(await switchHandler({ to: 'local' })).toBe(true);
     expect(await switchHandler({ to: 'remote' })).toBe(true);
     await expect(launcherPromise).resolves.toEqual({ type: 'switch' });
   });

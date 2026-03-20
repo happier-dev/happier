@@ -1,12 +1,12 @@
 import { query as agentSdkQuery, AbortError as AgentSdkAbortError, type Query as AgentSdkQueryType } from '@anthropic-ai/claude-agent-sdk';
 
 import { parseSpecialCommand } from '@/cli/parsers/specialCommands';
-import { logger } from '@/lib';
+import { logger } from '@/ui/logger';
 import { PushableAsyncIterable } from '@/utils/PushableAsyncIterable';
 import { recordToolTraceEvent } from '@/agent/tools/trace/toolTrace';
 
 import type { EnhancedMode } from '@/backends/claude/loop';
-import { resolveClaudeSdkPermissionModeFromEnhancedMode } from '@/backends/claude/utils/permissionMode';
+import { mapToClaudeMode, resolveClaudeSdkPermissionModeFromEnhancedMode } from '@/backends/claude/utils/permissionMode';
 import { getDefaultClaudeCodePathForAgentSdk } from '@/backends/claude/sdk/utils';
 import type { SessionHookData } from '@/backends/claude/utils/startHookServer';
 import { getProjectPath } from '@/backends/claude/utils/path';
@@ -17,6 +17,7 @@ import { resolveClaudeConfigDirOverride } from '@/backends/claude/utils/resolveC
 import { resolveClaudeCodeExperimentalEnvOverlay } from '@/backends/claude/spawn/resolveClaudeCodeExperimentalEnvOverlay';
 import { normalizeClaudeToolUseNamesInSdkMessage } from '@/backends/claude/utils/normalizeClaudeToolUseNames';
 import { tryMergeUserMcpConfigArgsIntoHappierMcp } from '@/backends/claude/utils/mcpConfigMerge';
+import { ensureClaudeJsRuntimeExecutable } from '@/backends/claude/utils/ensureClaudeJsRuntimeExecutable';
 import { isValidEnvVarKey } from '@/terminal/runtime/envVarSanitization';
 
 import type { SDKMessage, SDKSystemMessage, SDKUserMessage } from '@/backends/claude/sdk';
@@ -40,7 +41,7 @@ import {
 } from './agentSdk/streamEventToolBlocks';
 
 type AgentSdkQueryFactory = (params: {
-    prompt: string | AsyncIterable<any>;
+    prompt: string | AsyncIterable<SDKUserMessage>;
     options?: Record<string, unknown>;
 }) => AgentSdkQueryType;
 
@@ -144,6 +145,7 @@ export async function claudeRemoteAgentSdk(opts: {
     }
 
     let mode = initial.mode;
+    let response: any;
 
     const mergedMcp = tryMergeUserMcpConfigArgsIntoHappierMcp({
         baseMcpServers: (opts.happierMcpServers ?? Object.create(null)) as Record<string, unknown>,
@@ -168,28 +170,38 @@ export async function claudeRemoteAgentSdk(opts: {
     const remoteSystemPrompt = getClaudeRemoteSystemPrompt({ disableTodos: mode.claudeRemoteDisableTodos === true });
     const enableFileCheckpointing = mode.claudeRemoteEnableFileCheckpointing === true;
     const settingSources = (() => {
+        type SettingSource = 'user' | 'project' | 'local';
+
         const rawV2 = (mode as any).claudeRemoteSettingSourcesV2 as unknown;
         if (Array.isArray(rawV2)) {
             const set = new Set<string>();
             for (const value of rawV2) {
                 if (typeof value === 'string') set.add(value);
             }
-            const normalized: Array<'user' | 'project' | 'local'> = [];
+            const normalized: SettingSource[] = [];
             for (const key of ['user', 'project', 'local'] as const) {
                 if (set.has(key)) normalized.push(key);
             }
-            // When all sources are selected, do not force an explicit override so Claude can apply
-            // its own defaults (future-proof).
-            if (normalized.length === 3) return undefined;
+
+            // Preserve fail-closed behavior: an explicit empty array means "no sources".
+            // Do not widen to defaults; respect the user's explicit choice.
+            if (normalized.length === 0) return [];
+
+            // NOTE: Claude Agent SDK currently defaults `settingSources` to `[]` and will still pass
+            // `--setting-sources ""` (empty string) when we omit the option.
+            // To avoid that footgun we always pass the full default list explicitly.
+            if (normalized.length === 3) return ['user', 'project', 'local'] as const;
             return normalized;
         }
 
         // Legacy v1 mapping (back-compat).
         const value = mode.claudeRemoteSettingSources;
+        if (value === 'user_project') return ['user', 'project'] as const;
+        if (value === 'project') return ['project'] as const;
         if (value === 'none') return [];
-        if (value === 'user_project') return ['user', 'project'];
-        if (value === 'project') return ['project'];
-        return undefined;
+
+        // Default to all sources when not explicitly configured.
+        return ['user', 'project', 'local'] as const;
     })();
     const advancedOptionsJsonRaw = typeof mode.claudeRemoteAdvancedOptionsJson === 'string'
         ? mode.claudeRemoteAdvancedOptionsJson.trim()
@@ -219,6 +231,7 @@ export async function claudeRemoteAgentSdk(opts: {
     }
 
     const createQuery: AgentSdkQueryFactory = opts.createQuery ?? ((params) => agentSdkQuery(params as any) as any);
+    const runtimeExecutable = await ensureClaudeJsRuntimeExecutable(opts.jsRuntime);
 
     const stderrAppender = await createSubprocessStderrAppender({
         agentName: 'claude',
@@ -232,13 +245,97 @@ export async function claudeRemoteAgentSdk(opts: {
         )
         : undefined;
 
+    type RuntimeSettingsSnapshot = Readonly<{
+        permissionMode: string;
+        model: string | null;
+        maxThinkingTokens: number | null | undefined;
+    }>;
+
+    const resolveDesiredRuntimeSettingsSnapshot = (resolvedMode: EnhancedMode): RuntimeSettingsSnapshot => {
+        const permissionMode = resolveClaudeSdkPermissionModeFromEnhancedMode(resolvedMode);
+        const model =
+            typeof argOverrides.model === 'string'
+                ? argOverrides.model
+                : typeof resolvedMode.model === 'string'
+                    ? resolvedMode.model
+                    : null;
+
+        const maxThinkingTokens =
+            typeof resolvedMode.claudeRemoteMaxThinkingTokens === 'number' || resolvedMode.claudeRemoteMaxThinkingTokens === null
+                ? resolvedMode.claudeRemoteMaxThinkingTokens
+                : undefined;
+
+        return { permissionMode, model, maxThinkingTokens };
+    };
+
+    let lastAppliedRuntimeSettings: RuntimeSettingsSnapshot = resolveDesiredRuntimeSettingsSnapshot(mode);
+
+    const applyRuntimeSettingsUpdatesIfNeeded = async (next: RuntimeSettingsSnapshot): Promise<void> => {
+        if (next.permissionMode !== lastAppliedRuntimeSettings.permissionMode) {
+            await response?.setPermissionMode?.(next.permissionMode);
+            lastAppliedRuntimeSettings = { ...lastAppliedRuntimeSettings, permissionMode: next.permissionMode };
+        }
+
+        if (next.model !== lastAppliedRuntimeSettings.model) {
+            await response?.setModel?.(next.model ?? undefined);
+            lastAppliedRuntimeSettings = { ...lastAppliedRuntimeSettings, model: next.model };
+        }
+
+        if (next.maxThinkingTokens !== lastAppliedRuntimeSettings.maxThinkingTokens && next.maxThinkingTokens !== undefined) {
+            await response?.setMaxThinkingTokens?.(next.maxThinkingTokens ?? null);
+            lastAppliedRuntimeSettings = { ...lastAppliedRuntimeSettings, maxThinkingTokens: next.maxThinkingTokens };
+        }
+    };
+
+    const canCallToolWithModeTransitions = async (
+        toolName: string,
+        input: unknown,
+        resolvedMode: EnhancedMode,
+        options: {
+            signal: AbortSignal;
+            toolUseId?: string | null;
+            agentId?: string | null;
+            suggestions?: unknown;
+            blockedPath?: string | null;
+            decisionReason?: string | null;
+        },
+    ): Promise<PermissionResult> => {
+        const result = await opts.canCallTool(toolName, input, resolvedMode, options);
+
+        const normalizedToolName = typeof toolName === 'string' ? toolName.trim() : '';
+        const isExitPlanMode = normalizedToolName === 'ExitPlanMode' || normalizedToolName === 'exit_plan_mode';
+        if (isExitPlanMode && result.behavior === 'allow') {
+            // Claude starts in permissionMode=plan when agentModeId=plan.
+            // Exiting plan mode happens inside the same assistant turn, before the next user message
+            // can propagate a metadata-based agentMode update. We must immediately transition our
+            // runtime mode and Claude's permission mode so subsequent tool calls in the same turn
+            // are evaluated under the selected permissionMode (e.g. yolo → bypassPermissions).
+            mode = { ...mode, agentModeId: null };
+
+            const nextPermissionMode = (() => {
+                const mapped = mapToClaudeMode(mode.permissionMode);
+                return mapped === 'plan' ? 'default' : mapped;
+            })();
+
+            try {
+                await response?.setPermissionMode?.(nextPermissionMode);
+                lastAppliedRuntimeSettings = { ...lastAppliedRuntimeSettings, permissionMode: nextPermissionMode };
+            } catch (error) {
+                logger.debug('[claudeRemoteAgentSdk] Failed to transition permission mode after ExitPlanMode (non-fatal)', error);
+                opts.onCompletionEvent?.('Failed to transition permission mode after exiting plan mode (non-fatal); continuing.');
+            }
+        }
+
+        return result;
+    };
+
     const builtHooks = buildClaudeAgentSdkHooks({
         cwd: opts.path,
         claudeConfigDir: resolveClaudeConfigDirOverride(process.env),
         getMode: () => mode,
         onSessionFound: (sessionId, data) => opts.onSessionFound(sessionId, data as any),
         canCallTool: (toolName, input, resolvedMode, options) =>
-            opts.canCallTool(toolName, input, resolvedMode, {
+            canCallToolWithModeTransitions(toolName, input, resolvedMode, {
                 signal: options.signal,
                 toolUseId: options.toolUseId ?? null,
                 agentId: options.agentId ?? null,
@@ -337,32 +434,29 @@ export async function claudeRemoteAgentSdk(opts: {
             continue: shouldContinue || undefined,
             resume: startFrom ?? undefined,
             ...(startFrom && resumeSessionAt ? { resumeSessionAt } : {}),
+            settingSources,
             permissionMode: mappedPermissionMode,
             allowDangerouslySkipPermissions: mappedPermissionMode === 'bypassPermissions',
             model: argOverrides.model ?? mode.model,
-        fallbackModel: argOverrides.fallbackModel ?? mode.fallbackModel,
-        maxTurns: argOverrides.maxTurns,
+            fallbackModel: argOverrides.fallbackModel ?? mode.fallbackModel,
+            maxTurns: argOverrides.maxTurns,
         systemPrompt: buildSystemPrompt(),
-        strictMcpConfig: mode.claudeRemoteStrictMcpServerConfig === true || argOverrides.strictMcpConfig,
+            strictMcpConfig: mode.claudeRemoteStrictMcpServerConfig === true || argOverrides.strictMcpConfig,
         canUseTool,
         ...(opts.happierMcpServers ? { mcpServers: opts.happierMcpServers } : {}),
             env: { ...buildClaudeSubprocessEnv(), ...experimentalEnvOverlay },
-            executable: opts.jsRuntime ?? 'node',
+            executable: runtimeExecutable,
             pathToClaudeCodeExecutable: opts.claudeExecutablePath ?? getDefaultClaudeCodePathForAgentSdk(),
         includePartialMessages: mode.claudeRemoteIncludePartialMessages === true || undefined,
         enableFileCheckpointing: enableFileCheckpointing || undefined,
         extraArgs: enableFileCheckpointing ? { 'replay-user-messages': null } : undefined,
         maxThinkingTokens: typeof mode.claudeRemoteMaxThinkingTokens === 'number' ? mode.claudeRemoteMaxThinkingTokens : undefined,
-        hooks,
-    };
+            hooks,
+        };
 
-    if (settingSources !== undefined) {
-        queryOptions.settingSources = settingSources;
-    }
-
-    if (debugFilePath) {
-        queryOptions.debugFile = debugFilePath;
-    }
+        if (debugFilePath) {
+            queryOptions.debugFile = debugFilePath;
+        }
     if (stderrAppender) {
         queryOptions.stderr = (data: string) => {
             stderrAppender.append(data);
@@ -412,7 +506,8 @@ export async function claudeRemoteAgentSdk(opts: {
         }
     };
 
-    const messages = new PushableAsyncIterable<any>();
+    // Agent SDK expects objects (SDKUserMessage). It JSON-stringifies them before writing to stdin.
+    const messages = new PushableAsyncIterable<SDKUserMessage>();
     opts.setUserMessageSender?.((message: SDKUserMessage) => messages.push(message));
 
     messages.push({
@@ -425,7 +520,6 @@ export async function claudeRemoteAgentSdk(opts: {
         },
     });
 
-    let response: any;
     let nextMessagePump: Promise<void> | null = null;
     const swallowOptionalPromise = async (promise: Promise<void> | null): Promise<void> => {
         if (!promise) return;
@@ -580,14 +674,7 @@ export async function claudeRemoteAgentSdk(opts: {
                         mode = next.mode;
 
                         try {
-                            await (response as any).setPermissionMode?.(resolveClaudeSdkPermissionModeFromEnhancedMode(mode));
-                            await (response as any).setModel?.(mode.model ?? undefined);
-                            if (
-                                typeof mode.claudeRemoteMaxThinkingTokens === 'number' ||
-                                mode.claudeRemoteMaxThinkingTokens === null
-                            ) {
-                                await (response as any).setMaxThinkingTokens?.(mode.claudeRemoteMaxThinkingTokens ?? null);
-                            }
+                            await applyRuntimeSettingsUpdatesIfNeeded(resolveDesiredRuntimeSettingsSnapshot(mode));
                         } catch (e) {
                             logger.debug('[claudeRemoteAgentSdk] Failed to update runtime settings (non-fatal)', e);
                             opts.onCompletionEvent?.('Failed to update runtime settings (non-fatal); continuing.');
