@@ -1,23 +1,55 @@
 import React from 'react';
-import { Platform, Pressable, View } from 'react-native';
+import { ActivityIndicator, Platform, Pressable, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { ItemList } from '@/components/ui/lists/ItemList';
 import { AutomationsGate } from '@/components/automations/gating/AutomationsGate';
-import { AutomationSettingsForm, type AutomationSettingsValue } from '@/components/automations/editor/AutomationSettingsForm';
+import { buildAutomationScheduleInputFromForm } from '@/components/automations/editor/buildAutomationScheduleInputFromForm';
+import { ExistingSessionAutomationAuthoringSurface } from '@/components/automations/shared/ExistingSessionAutomationAuthoringSurface';
+import { getExistingSessionAutomationUnavailableReason } from '@/components/automations/shared/existingSessionAutomationAvailabilityUi';
+import { useHydrateSessionForRoute } from '@/hooks/session/useHydrateSessionForRoute';
 import { Modal } from '@/modal';
-import { useAutomation } from '@/sync/domains/state/storage';
+import { useAutomation, useSession, useSettings } from '@/sync/domains/state/storage';
 import { sync } from '@/sync/sync';
 import { t } from '@/text';
 import { layout } from '@/components/ui/layout/layout';
-import { ItemGroup } from '@/components/ui/lists/ItemGroup';
-import { Text, TextInput } from '@/components/ui/text/Text';
 import { updateExistingSessionAutomationTemplateMessage } from '@/sync/domains/automations/automationExistingSessionTemplateUpdate';
-import { tryDecodeAutomationTemplateEnvelope } from '@/sync/domains/automations/automationTemplateTransport';
-import { decodeAutomationTemplate } from '@/sync/domains/automations/automationTemplateCodec';
+import {
+    tryReadAutomationTemplateEnvelopeExistingSessionId,
+} from '@/sync/domains/automations/automationTemplateTransport';
 import { fireAndForget } from '@/utils/system/fireAndForget';
+import { navigateWithBlurOnWeb } from '@/utils/platform/deferOnWeb';
+import {
+    buildAutomationEditTemplateSeed,
+    buildExistingSessionAutomationFallbackDraft,
+    buildNewSessionTempDataFromAuthoringDraft,
+    mergeExistingSessionAutomationTemplateDraft,
+} from '@/components/sessions/authoring/draft/sessionAuthoringDraftAdapters';
+import type { SessionAuthoringDraft } from '@/components/sessions/authoring/draft/sessionAuthoringDraft';
+import { useSessionAuthoringDraftState } from '@/components/sessions/authoring/draft/useSessionAuthoringDraftState';
+import { storeTempData } from '@/utils/sessions/tempDataStore';
+import { resolveExistingSessionAutomationAvailability } from '@/sync/domains/automations/existingSessionAutomationAvailability';
+import { isAutomationSettingsDraftValid } from '@/sync/domains/automations/isAutomationSettingsDraftValid';
+import { readMachineTargetForSession } from '@/sync/ops/sessionMachineTarget';
+
+function isExistingSessionAutomationEditDraftValid(params: Readonly<{
+    draft: SessionAuthoringDraft | null;
+    targetType: 'new_session' | 'existing_session' | null;
+    availabilityKind: ReturnType<typeof resolveExistingSessionAutomationAvailability>['kind'] | null;
+    messageLoading: boolean;
+}>): boolean {
+    const automationDraft = params.draft?.automation;
+    const messageOk = params.targetType !== 'existing_session' || (params.draft?.prompt ?? '').trim().length > 0;
+    const existingSessionOk = params.targetType !== 'existing_session'
+        || params.availabilityKind === 'ready';
+    return isAutomationSettingsDraftValid(automationDraft)
+        && messageOk
+        && existingSessionOk
+        && !params.messageLoading
+        && params.availabilityKind !== 'hydrating';
+}
 
 export default React.memo(function AutomationEditScreen() {
     const { theme } = useUnistyles();
@@ -25,39 +57,68 @@ export default React.memo(function AutomationEditScreen() {
     const params = useLocalSearchParams<{ id?: string }>();
     const automationId = typeof params.id === 'string' ? params.id : '';
     const automation = useAutomation(automationId);
+    const settings = useSettings();
+    const existingSessionId = React.useMemo(() => {
+        if (automation?.targetType !== 'existing_session') return null;
+        return tryReadAutomationTemplateEnvelopeExistingSessionId(automation.templateCiphertext);
+    }, [automation?.targetType, automation?.templateCiphertext]);
+    const existingSessionHydrated = useHydrateSessionForRoute(existingSessionId ?? '', 'AutomationEditScreen.hydrateExistingSession');
+    const targetSession = useSession(existingSessionId ?? '');
+    const sessionDekBase64 = sync.getSessionEncryptionKeyBase64ForResume(existingSessionId ?? '');
+    const existingSessionMachineIdOverride = existingSessionId
+        ? readMachineTargetForSession(existingSessionId)?.machineId ?? null
+        : null;
+    const existingSessionAvailability = React.useMemo(() => {
+        if (automation?.targetType !== 'existing_session') return null;
+        return resolveExistingSessionAutomationAvailability({
+            sessionHydrated: existingSessionHydrated,
+            session: targetSession,
+            machineIdOverride: existingSessionMachineIdOverride,
+            sessionDekBase64,
+            accountSettings: settings,
+        });
+    }, [automation?.targetType, existingSessionHydrated, existingSessionMachineIdOverride, sessionDekBase64, settings, targetSession]);
 
-    const [form, setForm] = React.useState<AutomationSettingsValue>(() => ({
-        enabled: false,
-        name: '',
-        description: '',
-        scheduleKind: 'interval',
-        everyMinutes: 60,
-        cronExpr: '0 * * * *',
-        timezone: null,
-    }));
-    const [message, setMessage] = React.useState('');
+    const { draft, setDraft, latestDraftRef } = useSessionAuthoringDraftState();
     const [messageLoading, setMessageLoading] = React.useState(false);
-    const initializedRef = React.useRef(false);
+    const redirectInitializedRef = React.useRef(false);
+    const isWaitingForExistingSessionHydration = existingSessionAvailability?.kind === 'hydrating';
 
     React.useEffect(() => {
-        if (!automation || initializedRef.current) return;
-        initializedRef.current = true;
-        const everyMinutes = automation.schedule.kind === 'interval' && typeof automation.schedule.everyMs === 'number'
-            ? Math.max(1, Math.round(automation.schedule.everyMs / 60_000))
-            : 60;
-        const cronExpr = automation.schedule.kind === 'cron' && typeof automation.schedule.scheduleExpr === 'string'
-            ? automation.schedule.scheduleExpr
-            : '0 * * * *';
-        setForm({
-            enabled: automation.enabled,
-            name: automation.name,
-            description: automation.description ?? '',
-            scheduleKind: automation.schedule.kind,
-            timezone: automation.schedule.timezone ?? null,
-            everyMinutes,
-            cronExpr,
-        });
-    }, [automation]);
+        if (!automation || automation.targetType !== 'new_session' || redirectInitializedRef.current) return;
+        redirectInitializedRef.current = true;
+
+        fireAndForget((async () => {
+            try {
+                setMessageLoading(true);
+                const { hydratedDraft, seededAutomationDraft } = await buildAutomationEditTemplateSeed({
+                    automation,
+                    decryptAutomationTemplateRaw: (payloadCiphertext) =>
+                        sync.encryption.decryptAutomationTemplateRaw(payloadCiphertext),
+                });
+                const assignments = Array.isArray((automation as any).assignments) ? (automation as any).assignments : [];
+                const enabledAssignment = assignments.find((assignment: any) => assignment?.enabled !== false) ?? assignments[0] ?? null;
+                const dataId = storeTempData(buildNewSessionTempDataFromAuthoringDraft({
+                    draft: {
+                        ...hydratedDraft,
+                        automation: seededAutomationDraft,
+                    },
+                    machineId: typeof enabledAssignment?.machineId === 'string' ? enabledAssignment.machineId : null,
+                }));
+
+                navigateWithBlurOnWeb(() => {
+                    router.replace(`/new?automation=1&automationEditId=${automationId}&dataId=${dataId}` as any);
+                });
+            } catch (error) {
+                await Modal.alert(
+                    t('common.error'),
+                    error instanceof Error ? error.message : t('automations.edit.loadTemplateFailed'),
+                );
+            } finally {
+                setMessageLoading(false);
+            }
+        })(), { tag: 'AutomationEditScreen.redirectNewSessionAutomationToSharedComposer' });
+    }, [automation, automationId, router]);
 
     React.useEffect(() => {
         if (!automation || automation.targetType !== 'existing_session') return;
@@ -65,20 +126,21 @@ export default React.memo(function AutomationEditScreen() {
         fireAndForget((async () => {
             try {
                 setMessageLoading(true);
-                const envelope = tryDecodeAutomationTemplateEnvelope(automation.templateCiphertext);
-                if (!envelope) {
-                    throw new Error('Invalid automation template envelope payload');
-                }
-                const raw = envelope.kind === 'happier_automation_template_plain_v1'
-                    ? envelope.payload
-                    : await sync.encryption.decryptAutomationTemplateRaw(envelope.payloadCiphertext);
-                const decoded = decodeAutomationTemplate(JSON.stringify(raw));
-                if (!decoded) {
-                    throw new Error('Invalid decrypted automation template payload');
-                }
-                const initial = (decoded.prompt ?? decoded.displayText ?? '').trim();
+                const { hydratedDraft: hydratedTemplateDraft, seededAutomationDraft } = await buildAutomationEditTemplateSeed({
+                    automation,
+                    decryptAutomationTemplateRaw: (payloadCiphertext) =>
+                        sync.encryption.decryptAutomationTemplateRaw(payloadCiphertext),
+                });
                 if (!alive) return;
-                setMessage(initial);
+                setDraft((current) => {
+                    return mergeExistingSessionAutomationTemplateDraft({
+                        hydratedTemplateDraft,
+                        targetSession,
+                        currentDraft: current,
+                        sessionDekBase64,
+                        seededAutomationDraft,
+                    });
+                });
             } catch (error) {
                 if (!alive) return;
                 await Modal.alert(
@@ -93,59 +155,71 @@ export default React.memo(function AutomationEditScreen() {
         return () => {
             alive = false;
         };
-    }, [automation]);
+    }, [automation, sessionDekBase64, targetSession]);
 
-    const isValid = React.useMemo(() => {
-        const nameOk = form.name.trim().length > 0;
-        const scheduleOk = form.scheduleKind === 'interval'
-            ? Number.isFinite(form.everyMinutes) && form.everyMinutes >= 1
-            : form.cronExpr.trim().length > 0;
-        const messageOk = automation?.targetType !== 'existing_session' || message.trim().length > 0;
-        return nameOk && scheduleOk && messageOk && !messageLoading;
-    }, [automation?.targetType, form, message, messageLoading]);
+    const isValid = React.useMemo(() => isExistingSessionAutomationEditDraftValid({
+        draft,
+        targetType: automation?.targetType ?? null,
+        availabilityKind: existingSessionAvailability?.kind ?? null,
+        messageLoading,
+    }), [automation?.targetType, draft, existingSessionAvailability?.kind, messageLoading]);
+
+    const unavailableReason = React.useMemo(() => {
+        if (automation?.targetType !== 'existing_session') return null;
+        if (!existingSessionAvailability) return null;
+        return getExistingSessionAutomationUnavailableReason(existingSessionAvailability);
+    }, [automation?.targetType, existingSessionAvailability]);
 
     const handleSave = React.useCallback(async () => {
+        const currentDraft = latestDraftRef.current;
         if (!automationId || !automation) return;
-        if (!isValid) return;
+        if (!isExistingSessionAutomationEditDraftValid({
+            draft: currentDraft,
+            targetType: automation.targetType,
+            availabilityKind: existingSessionAvailability?.kind ?? null,
+            messageLoading,
+        })) {
+            return;
+        }
+        const currentAutomationDraft = currentDraft?.automation;
+        if (!currentAutomationDraft) return;
         try {
             const templateCiphertext = automation.targetType === 'existing_session'
                 ? await updateExistingSessionAutomationTemplateMessage({
                     templateCiphertext: automation.templateCiphertext,
-                    message,
+                    message: currentDraft?.prompt ?? '',
+                    draft: currentDraft ?? undefined,
                     decryptRaw: (payloadCiphertext) => sync.encryption.decryptAutomationTemplateRaw(payloadCiphertext),
                     encryptRaw: (value) => sync.encryption.encryptAutomationTemplateRaw(value),
+                    fallbackDraft: buildExistingSessionAutomationFallbackDraft({
+                        targetSession,
+                        message: currentDraft?.prompt ?? '',
+                        sessionDekBase64,
+                    }) ?? undefined,
                 })
                 : undefined;
             await sync.updateAutomation(automationId, {
-                enabled: form.enabled,
-                name: form.name.trim() || automation.name,
-                description: form.description.trim().length > 0 ? form.description.trim() : null,
-                schedule: form.scheduleKind === 'interval'
-                    ? {
-                        kind: 'interval',
-                        everyMs: Math.min(Math.max(Math.floor(form.everyMinutes), 1), 24 * 60) * 60_000,
-                        timezone: form.timezone ?? null,
-                    }
-                    : {
-                        kind: 'cron',
-                        scheduleExpr: form.cronExpr.trim(),
-                        timezone: form.timezone ?? null,
-                    },
+                enabled: currentAutomationDraft.enabled,
+                name: currentAutomationDraft.name.trim() || automation.name,
+                description: currentAutomationDraft.description.trim().length > 0 ? currentAutomationDraft.description.trim() : null,
+                schedule: buildAutomationScheduleInputFromForm(currentAutomationDraft),
                 ...(templateCiphertext ? { templateCiphertext } : {}),
             });
             await sync.refreshAutomations();
-            router.back();
+            navigateWithBlurOnWeb(() => router.replace(`/automations/${automationId}` as any));
         } catch (error) {
             await Modal.alert(
                 t('common.error'),
                 error instanceof Error ? error.message : t('automations.edit.updateFailed')
             );
         }
-    }, [automation, automationId, form, isValid, router]);
+    }, [automation, automationId, existingSessionAvailability?.kind, messageLoading, router, sessionDekBase64, targetSession]);
 
     const headerLeft = React.useCallback(() => (
         <Pressable
-            onPress={() => router.back()}
+            onPress={() => {
+                navigateWithBlurOnWeb(() => router.replace(`/automations/${automationId}` as any));
+            }}
             hitSlop={10}
             style={({ pressed }) => ({ padding: 2, opacity: pressed ? 0.7 : 1 })}
             accessibilityRole="button"
@@ -153,20 +227,9 @@ export default React.memo(function AutomationEditScreen() {
         >
             <Ionicons name="chevron-back" size={22} color={theme.colors.header.tint} />
         </Pressable>
-    ), [router, theme.colors.header.tint]);
+    ), [automationId, router, theme.colors.header.tint]);
 
-    const headerRight = React.useCallback(() => (
-        <Pressable
-            onPress={() => { void handleSave(); }}
-            disabled={!isValid}
-            hitSlop={10}
-            style={({ pressed }) => ({ padding: 2, opacity: !isValid ? 0.4 : pressed ? 0.7 : 1 })}
-            accessibilityRole="button"
-            accessibilityLabel={t('automations.edit.saveAutomationLabel')}
-        >
-            <Ionicons name="checkmark" size={22} color={theme.colors.header.tint} />
-        </Pressable>
-    ), [handleSave, isValid, theme.colors.header.tint]);
+    const headerRight = React.useCallback(() => null, []);
 
     const screenOptions = React.useMemo(() => ({
         headerShown: true,
@@ -183,32 +246,31 @@ export default React.memo(function AutomationEditScreen() {
                 <Stack.Screen options={screenOptions} />
                 <ItemList>
                     <View style={{ maxWidth: layout.maxWidth, alignSelf: 'center', width: '100%' }}>
-                        {automation?.targetType === 'existing_session' ? (
-                            <ItemGroup title={t('common.message')}>
-                                <View style={stylesMessage.contentContainer}>
-                                    <Text style={stylesMessage.label}>{t('automations.edit.messageLabel')}</Text>
-                                    <TextInput
-                                        style={stylesMessage.textInput}
-                                        value={message}
-                                        onChangeText={setMessage}
-                                        placeholder={t('automations.edit.messagePlaceholder')}
-                                        placeholderTextColor={theme.colors.input.placeholder}
-                                        autoCapitalize="sentences"
-                                        autoCorrect={true}
-                                        multiline={true}
-                                        editable={!messageLoading}
-                                    />
-                                    <Text style={stylesMessage.helpText}>
-                                        {t('automations.edit.messageHelpText')}
-                                    </Text>
-                                </View>
-                            </ItemGroup>
+                        {isWaitingForExistingSessionHydration ? (
+                            <View style={stylesMessage.loadingContainer}>
+                                <ActivityIndicator size="small" color={theme.colors.textSecondary} />
+                            </View>
                         ) : null}
-                        <AutomationSettingsForm
-                            variant="edit"
-                            value={form}
-                            onChange={(next) => setForm(next)}
-                        />
+                        {automation?.targetType === 'new_session' && !isWaitingForExistingSessionHydration ? (
+                            <View style={stylesMessage.loadingContainer}>
+                                <ActivityIndicator size="small" color={theme.colors.textSecondary} />
+                            </View>
+                        ) : null}
+                        {automation?.targetType === 'existing_session' && existingSessionAvailability ? (
+                    <ExistingSessionAutomationAuthoringSurface
+                        formVariant="edit"
+                        session={targetSession}
+                        draft={draft}
+                        onChangeDraft={setDraft}
+                                availability={existingSessionAvailability}
+                                isWaiting={isWaitingForExistingSessionHydration}
+                                unavailableReason={unavailableReason}
+                                onSubmit={() => { void handleSave(); }}
+                                submitAccessibilityLabel={t('automations.edit.saveAutomationLabel')}
+                                isSubmitDisabled={!isValid}
+                                editable={!messageLoading}
+                            />
+                        ) : null}
                     </View>
                 </ItemList>
             </>
@@ -216,31 +278,11 @@ export default React.memo(function AutomationEditScreen() {
     );
 });
 
-const stylesMessage = StyleSheet.create((theme) => ({
-    contentContainer: {
+const stylesMessage = StyleSheet.create(() => ({
+    loadingContainer: {
         paddingHorizontal: 16,
-        paddingVertical: 12,
-        gap: 12,
-    },
-    label: {
-        fontSize: 12,
-        fontWeight: '700',
-        color: theme.colors.textSecondary,
-        letterSpacing: 0.6,
-        marginBottom: 6,
-    },
-    textInput: {
-        backgroundColor: theme.colors.input.background,
-        borderRadius: 10,
-        paddingHorizontal: 12,
-        paddingVertical: Platform.select({ ios: 10, default: 12 }),
-        borderWidth: 0.5,
-        borderColor: theme.colors.divider,
-        color: theme.colors.text,
-    },
-    helpText: {
-        fontSize: 12,
-        color: theme.colors.textSecondary,
-        marginTop: 6,
+        paddingVertical: 24,
+        alignItems: 'center',
+        justifyContent: 'center',
     },
 }));
